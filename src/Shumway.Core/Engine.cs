@@ -1,3 +1,5 @@
+using System.Numerics;
+
 namespace Shumway.Core;
 
 /// <summary>
@@ -34,6 +36,11 @@ public sealed class Engine
     private int _bindingTrailTop;
 
     private ExtraTrailEntry[] _extraTrail;
+
+    // ----- Per-engine auxiliary value tables (ADR-002) -----
+    private readonly List<BigInteger> _bigIntTable = new();
+    private readonly List<string> _stringTable = new();
+    private readonly List<object?> _foreignTable = new();
 
     // _stackTop and _extraTrailTop are read-only views of state that will be advanced
     // once stack-frame operations (ADR-005) and extra-trail push (ADR-004) are wired up.
@@ -115,6 +122,77 @@ public sealed class Engine
     public int StackTop => _stackTop;
     public int StackCapacity => _stack.Length;
     public int RegisterCount => _registers.Length;
+
+    // ----- Auxiliary value tables -----
+
+    /// <summary>
+    /// Stores <paramref name="value"/> in the engine's BigInteger table and returns a
+    /// BIGINT cell whose payload is its id. The cell is meaningful only for this engine
+    /// (auxiliary tables are not shared, unlike atoms and functors).
+    /// </summary>
+    public Cell MakeBigInt(BigInteger value)
+    {
+        int id = _bigIntTable.Count;
+        _bigIntTable.Add(value);
+        return Cell.BigInt(id);
+    }
+
+    /// <summary>Returns the <see cref="BigInteger"/> referenced by a BIGINT cell.</summary>
+    public BigInteger AsBigInt(Cell cell)
+    {
+        if (cell.Tag != Tag.BigInt)
+            throw new InvalidOperationException($"Cell tag is {cell.Tag}, expected BigInt.");
+        return _bigIntTable[cell.AsBigIntId];
+    }
+
+    /// <summary>Stores <paramref name="value"/> in the engine's string table and returns
+    /// a STRING cell whose payload is its id.</summary>
+    public Cell MakeString(string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        int id = _stringTable.Count;
+        _stringTable.Add(value);
+        return Cell.String(id);
+    }
+
+    /// <summary>Returns the string referenced by a STRING cell.</summary>
+    public string AsString(Cell cell)
+    {
+        if (cell.Tag != Tag.String)
+            throw new InvalidOperationException($"Cell tag is {cell.Tag}, expected String.");
+        return _stringTable[cell.AsStringId];
+    }
+
+    /// <summary>Stores <paramref name="value"/> in the engine's foreign-object table and
+    /// returns a FOREIGN cell whose payload is its id. The value may be <c>null</c>.</summary>
+    public Cell MakeForeign(object? value)
+    {
+        int id = _foreignTable.Count;
+        _foreignTable.Add(value);
+        return Cell.Foreign(id);
+    }
+
+    /// <summary>Returns the object referenced by a FOREIGN cell (possibly <c>null</c>).</summary>
+    public object? AsForeign(Cell cell)
+    {
+        if (cell.Tag != Tag.Foreign)
+            throw new InvalidOperationException($"Cell tag is {cell.Tag}, expected Foreign.");
+        return _foreignTable[cell.AsForeignId];
+    }
+
+    /// <summary>Typed accessor over <see cref="AsForeign(Cell)"/>. Casts to <typeparamref name="T"/>;
+    /// returns <c>default</c> if the stored value is <c>null</c>.</summary>
+    public T? AsForeign<T>(Cell cell) where T : class
+    {
+        object? value = AsForeign(cell);
+        if (value is null) return null;
+        if (value is T typed) return typed;
+        throw new InvalidCastException($"Foreign value of type {value.GetType()} is not assignable to {typeof(T)}.");
+    }
+
+    internal int BigIntTableCount => _bigIntTable.Count;
+    internal int StringTableCount => _stringTable.Count;
+    internal int ForeignTableCount => _foreignTable.Count;
 
     // ----- Trail accessors -----
 
@@ -223,10 +301,10 @@ public sealed class Engine
             Tag.Int => aCell.AsInt == bCell.AsInt,
             Tag.Str => UnifyStr(aCell.AsHeapIndex, bCell.AsHeapIndex),
             Tag.Lis => UnifyLis(aCell.AsHeapIndex, bCell.AsHeapIndex),
+            Tag.BigInt => _bigIntTable[aCell.AsBigIntId].Equals(_bigIntTable[bCell.AsBigIntId]),
+            Tag.String => string.Equals(_stringTable[aCell.AsStringId], _stringTable[bCell.AsStringId]),
+            Tag.Foreign => ReferenceEquals(_foreignTable[aCell.AsForeignId], _foreignTable[bCell.AsForeignId]),
             Tag.Float => throw new NotImplementedException("Float unification not implemented in this scope."),
-            Tag.BigInt => throw new NotImplementedException("BigInt unification not implemented in this scope."),
-            Tag.String => throw new NotImplementedException("String unification not implemented in this scope."),
-            Tag.Foreign => throw new NotImplementedException("Foreign unification not implemented in this scope."),
             Tag.Pstr => throw new NotImplementedException("PSTR unification not implemented in this scope."),
             _ => throw new InvalidOperationException($"Unify reached cell with unexpected tag {aCell.Tag}."),
         };
