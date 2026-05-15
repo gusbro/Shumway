@@ -308,6 +308,106 @@ public sealed class Engine
         return arity;
     }
 
+    // ----- Cut -----
+
+    /// <summary>
+    /// Discards every choice point above <paramref name="barrier"/>, then compacts the
+    /// binding and extra trails: entries above the parent CP's saved trail tops that bind
+    /// or reference heap cells created after the parent's heap top are dropped (those
+    /// cells will be truncated on any outer backtrack, so the trail entries serve no
+    /// purpose). For each surviving extra-trail entry the <c>BindingTrailMarker</c> is
+    /// adjusted to the compacted binding-trail position so the interleaved unwind from
+    /// <see cref="UnwindTrails"/> still processes mutations in the right order.
+    ///
+    /// <para>If <paramref name="barrier"/> is <c>-1</c>, every remaining CP is discarded
+    /// and the trails are fully compacted with parent-heap-top = 0 — i.e. emptied,
+    /// since nothing can backtrack past a cut to "no choice point at clause entry".</para>
+    /// </summary>
+    public void Cut(int barrier)
+    {
+        if (barrier < -1)
+            throw new ArgumentOutOfRangeException(nameof(barrier));
+        if (barrier > _b)
+            throw new ArgumentOutOfRangeException(nameof(barrier),
+                $"Barrier {barrier} is above current B {_b}; cannot cut upward.");
+        if (_b == barrier)
+            return;
+
+        _b = barrier;
+
+        int parentBindingTop, parentExtraTop, parentHeapTop;
+        if (_b < 0)
+        {
+            parentBindingTop = 0;
+            parentExtraTop = 0;
+            parentHeapTop = 0;
+        }
+        else
+        {
+            int arity = (int)_stack[_b + CpArityOffset].Data;
+            parentBindingTop = (int)_stack[_b + CpBindingTrailOffset(arity)].Data;
+            parentExtraTop = (int)_stack[_b + CpExtraTrailOffset(arity)].Data;
+            parentHeapTop = (int)_stack[_b + CpHeapTopOffset(arity)].Data;
+        }
+
+        CompactTrails(parentBindingTop, parentExtraTop, parentHeapTop);
+    }
+
+    /// <summary>Copies the current <see cref="B"/> into <c>Y[slot]</c> of the current
+    /// environment frame. Used by the WAM <c>get_level</c> instruction to capture the
+    /// cut barrier in a permanent variable.</summary>
+    public void GetLevel(int slot) => SetY(slot, new Cell(_b));
+
+    /// <summary>
+    /// Single-pass interleaved trail compaction (Warren's algorithm extended to the extra
+    /// trail). Both trails are walked in temporal order: for each surviving extra entry,
+    /// its <see cref="ExtraTrailEntry.BindingTrailMarker"/> is rewritten to the index it
+    /// would occupy in the compacted binding trail, preserving the relative ordering that
+    /// <see cref="UnwindTrails"/> relies on.
+    /// </summary>
+    private void CompactTrails(int parentBindingTop, int parentExtraTop, int parentHeapTop)
+    {
+        int bindingRead = parentBindingTop;
+        int bindingWrite = parentBindingTop;
+        int extraRead = parentExtraTop;
+        int extraWrite = parentExtraTop;
+
+        while (extraRead < _extraTrailTop)
+        {
+            var entry = _extraTrail[extraRead];
+            int marker = entry.BindingTrailMarker;
+
+            // Compact all binding entries that came before this extra entry.
+            int stop = marker < _bindingTrailTop ? marker : _bindingTrailTop;
+            while (bindingRead < stop)
+            {
+                int idx = _bindingTrail[bindingRead];
+                if (idx < parentHeapTop)
+                    _bindingTrail[bindingWrite++] = idx;
+                bindingRead++;
+            }
+
+            if (entry.HeapIdx < parentHeapTop)
+            {
+                entry.BindingTrailMarker = bindingWrite;
+                _extraTrail[extraWrite++] = entry;
+            }
+            extraRead++;
+        }
+
+        // Any binding entries left after the last extra entry.
+        while (bindingRead < _bindingTrailTop)
+        {
+            int idx = _bindingTrail[bindingRead];
+            if (idx < parentHeapTop)
+                _bindingTrail[bindingWrite++] = idx;
+            bindingRead++;
+        }
+
+        _bindingTrailTop = bindingWrite;
+        _extraTrailTop = extraWrite;
+    }
+
     // ----- Registers -----
 
     public Cell GetRegister(int idx) => _registers[idx];
