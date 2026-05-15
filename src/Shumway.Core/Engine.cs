@@ -43,12 +43,7 @@ public sealed class Engine
     private readonly List<object?> _foreignTable = new();
 
     private int _stackTop;
-
-    // _extraTrailTop is read-only for now; will be advanced once extra-trail push
-    // (ADR-004 ValueChange and friends) is wired up.
-#pragma warning disable CS0649 // assigned by future operations
     private int _extraTrailTop;
-#pragma warning restore CS0649
 
     // ----- Engine registers (per ADR-005) -----
     // -1 means "none yet" for E and B. P and CP track the program counter and
@@ -202,6 +197,122 @@ public sealed class Engine
         _stack[_e + EnvY1Offset + slot] = value;
     }
 
+    // ----- Choice-point frame layout (ADR-005) -----
+    //
+    // Layout: [arity | A1 .. Aarity | CE | CP | B | BP | BindingTrailTop |
+    //          ExtraTrailTop | HeapTop | Hb]
+    // Total size = 9 + arity cells.
+
+    public const int CpArityOffset = 0;
+    public const int CpArg1Offset = 1;
+
+    public static int CpCeOffset(int arity) => 1 + arity;
+    public static int CpCpOffset(int arity) => 1 + arity + 1;
+    public static int CpBOffset(int arity) => 1 + arity + 2;
+    public static int CpBpOffset(int arity) => 1 + arity + 3;
+    public static int CpBindingTrailOffset(int arity) => 1 + arity + 4;
+    public static int CpExtraTrailOffset(int arity) => 1 + arity + 5;
+    public static int CpHeapTopOffset(int arity) => 1 + arity + 6;
+    public static int CpHbOffset(int arity) => 1 + arity + 7;
+
+    /// <summary>Size in cells of a choice-point frame with <paramref name="arity"/> saved args.</summary>
+    public static int CpSize(int arity) => 9 + arity;
+
+    /// <summary>
+    /// Pushes a choice point onto the stack, snapshotting the first <paramref name="arity"/>
+    /// argument registers and the engine's continuation/trail/heap state. After the call
+    /// <see cref="B"/> points at the new CP and <see cref="Hb"/> is bumped to the current
+    /// <see cref="HeapTop"/> so that subsequent bindings of pre-CP heap cells get trailed.
+    /// </summary>
+    public void PushChoicePoint(int arity, int nextClauseAddr)
+    {
+        if (arity < 0)
+            throw new ArgumentOutOfRangeException(nameof(arity));
+        if (arity > _registers.Length)
+            throw new ArgumentOutOfRangeException(nameof(arity),
+                $"Arity {arity} exceeds register capacity {_registers.Length}.");
+
+        int size = CpSize(arity);
+        EnsureStackCapacity(size);
+
+        int newB = _stackTop;
+        _stack[newB + CpArityOffset] = new Cell(arity);
+        for (int i = 0; i < arity; i++)
+            _stack[newB + CpArg1Offset + i] = _registers[i];
+
+        _stack[newB + CpCeOffset(arity)] = new Cell(_e);
+        _stack[newB + CpCpOffset(arity)] = new Cell(_cp);
+        _stack[newB + CpBOffset(arity)] = new Cell(_b);
+        _stack[newB + CpBpOffset(arity)] = new Cell(nextClauseAddr);
+        _stack[newB + CpBindingTrailOffset(arity)] = new Cell(_bindingTrailTop);
+        _stack[newB + CpExtraTrailOffset(arity)] = new Cell(_extraTrailTop);
+        _stack[newB + CpHeapTopOffset(arity)] = new Cell(_heapTop);
+        _stack[newB + CpHbOffset(arity)] = new Cell(_hb);
+
+        _stackTop = newB + size;
+        _b = newB;
+        _hb = _heapTop;
+    }
+
+    /// <summary>
+    /// Restores engine state from the current choice point and updates its BP slot to
+    /// <paramref name="nextClauseAddr"/>. The CP itself is preserved so subsequent failures
+    /// will retry against the new <c>nextClauseAddr</c>. <see cref="Hb"/> is reset to the
+    /// just-restored <see cref="HeapTop"/> — the CP is still active so its heap boundary
+    /// remains in effect.
+    /// </summary>
+    public void RetryMeElse(int nextClauseAddr)
+    {
+        if (_b < 0)
+            throw new InvalidOperationException("RetryMeElse called without an active choice point.");
+        int arity = RestoreCommonFromCurrentCp();
+        _hb = _heapTop;
+        _stack[_b + CpBpOffset(arity)] = new Cell(nextClauseAddr);
+    }
+
+    /// <summary>
+    /// Restores engine state from the current choice point and discards it: <see cref="B"/>
+    /// reverts to the previous CP and the stack slots occupied by the discarded CP (plus
+    /// any frames above it) are reclaimed. <see cref="Hb"/> is reset to the value saved
+    /// when this CP was pushed — i.e., the boundary of the now-current (previous) CP.
+    /// </summary>
+    public void TrustMe()
+    {
+        if (_b < 0)
+            throw new InvalidOperationException("TrustMe called without an active choice point.");
+        int arity = RestoreCommonFromCurrentCp();
+        _hb = (int)_stack[_b + CpHbOffset(arity)].Data;
+        int oldB = _b;
+        _b = (int)_stack[_b + CpBOffset(arity)].Data;
+        _stackTop = oldB;
+    }
+
+    /// <summary>Restores registers, E, CP, trails, and HeapTop from the current CP. Returns
+    /// the saved arity. Does NOT set <see cref="Hb"/> — that differs between Retry and Trust
+    /// and is the caller's responsibility.</summary>
+    private int RestoreCommonFromCurrentCp()
+    {
+        int arity = (int)_stack[_b + CpArityOffset].Data;
+
+        for (int i = 0; i < arity; i++)
+            _registers[i] = _stack[_b + CpArg1Offset + i];
+
+        _e = (int)_stack[_b + CpCeOffset(arity)].Data;
+        _cp = (int)_stack[_b + CpCpOffset(arity)].Data;
+
+        int bindingTarget = (int)_stack[_b + CpBindingTrailOffset(arity)].Data;
+        int extraTarget = (int)_stack[_b + CpExtraTrailOffset(arity)].Data;
+        UnwindTrails(bindingTarget, extraTarget);
+
+        _heapTop = (int)_stack[_b + CpHeapTopOffset(arity)].Data;
+        return arity;
+    }
+
+    // ----- Registers -----
+
+    public Cell GetRegister(int idx) => _registers[idx];
+    public void SetRegister(int idx, Cell value) => _registers[idx] = value;
+
     // ----- Auxiliary value tables -----
 
     /// <summary>
@@ -344,6 +455,8 @@ public sealed class Engine
     /// <summary>
     /// Restores all bindings recorded after <paramref name="targetTop"/>, leaving the binding
     /// trail at exactly that depth. Each rolled-back cell becomes a self-pointing REF again.
+    /// Use this only when no <see cref="ExtraTrailEntry"/> entries are involved — otherwise
+    /// call <see cref="UnwindTrails"/> for the interleaved version required by ADR-004.
     /// </summary>
     public void UnwindBindingTrail(int targetTop)
     {
@@ -353,6 +466,70 @@ public sealed class Engine
         {
             int idx = _bindingTrail[--_bindingTrailTop];
             _heap[idx] = Cell.UnboundVar(idx);
+        }
+    }
+
+    /// <summary>
+    /// Records a value-change entry on the extra trail. Use this when overwriting an
+    /// already-bound cell whose previous value must survive backtracking. The
+    /// <see cref="ExtraTrailEntry.BindingTrailMarker"/> captures the current binding-trail
+    /// depth so <see cref="UnwindTrails"/> can interleave correctly with binding unwind.
+    /// </summary>
+    public void TrailValueChange(int heapIdx, Cell oldValue)
+    {
+        EnsureExtraTrailCapacity(1);
+        _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
+        {
+            Type = TrailType.ValueChange,
+            HeapIdx = heapIdx,
+            OldValue = oldValue,
+            BindingTrailMarker = _bindingTrailTop,
+        };
+    }
+
+    /// <summary>
+    /// Interleaved unwind of both trails back to the given target depths. Walks the extra
+    /// trail in reverse; for each entry, first rolls back binding-trail entries down to
+    /// the entry's <see cref="ExtraTrailEntry.BindingTrailMarker"/>, then applies the
+    /// extra entry itself. Once the extra trail reaches <paramref name="extraTarget"/>,
+    /// any remaining binding-trail entries above <paramref name="bindingTarget"/> are
+    /// rolled back in a final pass.
+    /// </summary>
+    public void UnwindTrails(int bindingTarget, int extraTarget)
+    {
+        if (bindingTarget < 0 || bindingTarget > _bindingTrailTop)
+            throw new ArgumentOutOfRangeException(nameof(bindingTarget));
+        if (extraTarget < 0 || extraTarget > _extraTrailTop)
+            throw new ArgumentOutOfRangeException(nameof(extraTarget));
+
+        while (_extraTrailTop > extraTarget)
+        {
+            ref var entry = ref _extraTrail[_extraTrailTop - 1];
+            while (_bindingTrailTop > entry.BindingTrailMarker)
+            {
+                int idx = _bindingTrail[--_bindingTrailTop];
+                _heap[idx] = Cell.UnboundVar(idx);
+            }
+            ProcessExtraUnwind(entry);
+            _extraTrailTop--;
+        }
+        while (_bindingTrailTop > bindingTarget)
+        {
+            int idx = _bindingTrail[--_bindingTrailTop];
+            _heap[idx] = Cell.UnboundVar(idx);
+        }
+    }
+
+    private void ProcessExtraUnwind(in ExtraTrailEntry entry)
+    {
+        switch (entry.Type)
+        {
+            case TrailType.ValueChange:
+                _heap[entry.HeapIdx] = entry.OldValue;
+                break;
+            default:
+                throw new InvalidOperationException(
+                    $"Unwind not yet implemented for TrailType.{entry.Type}.");
         }
     }
 
@@ -483,6 +660,9 @@ public sealed class Engine
 
     private void EnsureBindingTrailCapacity(int extra)
         => GrowIfNeeded(ref _bindingTrail, _bindingTrailTop, extra, _config.MaxBindingTrailSize, "binding trail");
+
+    private void EnsureExtraTrailCapacity(int extra)
+        => GrowIfNeeded(ref _extraTrail, _extraTrailTop, extra, _config.MaxExtraTrailSize, "extra trail");
 
     private static void GrowIfNeeded<T>(ref T[] buffer, int top, int extra, int maxSize, string name)
     {
