@@ -190,6 +190,20 @@ public sealed class Engine
         throw new InvalidCastException($"Foreign value of type {value.GetType()} is not assignable to {typeof(T)}.");
     }
 
+    /// <summary>
+    /// Allocates a FLOAT header cell and its paired INT cell contiguously on the heap
+    /// and returns the heap index of the header. Together they encode the 64-bit double
+    /// per the two-cell layout in <see cref="Cell.MakeFloat(double, int)"/>.
+    /// </summary>
+    public int MakeFloat(double value)
+    {
+        int headerIdx = AllocateHeap(2);
+        var (header, paired) = Cell.MakeFloat(value, headerIdx + 1);
+        _heap[headerIdx] = header;
+        _heap[headerIdx + 1] = paired;
+        return headerIdx;
+    }
+
     internal int BigIntTableCount => _bigIntTable.Count;
     internal int StringTableCount => _stringTable.Count;
     internal int ForeignTableCount => _foreignTable.Count;
@@ -304,7 +318,7 @@ public sealed class Engine
             Tag.BigInt => _bigIntTable[aCell.AsBigIntId].Equals(_bigIntTable[bCell.AsBigIntId]),
             Tag.String => string.Equals(_stringTable[aCell.AsStringId], _stringTable[bCell.AsStringId]),
             Tag.Foreign => ReferenceEquals(_foreignTable[aCell.AsForeignId], _foreignTable[bCell.AsForeignId]),
-            Tag.Float => throw new NotImplementedException("Float unification not implemented in this scope."),
+            Tag.Float => UnifyFloat(aCell, bCell),
             Tag.Pstr => throw new NotImplementedException("PSTR unification not implemented in this scope."),
             _ => throw new InvalidOperationException($"Unify reached cell with unexpected tag {aCell.Tag}."),
         };
@@ -342,6 +356,19 @@ public sealed class Engine
     {
         if (!Unify(hA, hB)) return false;
         return Unify(hA + 1, hB + 1);
+    }
+
+    /// <summary>
+    /// Unifies two FLOAT-tagged cells by reconstructing the double from each header and
+    /// its paired INT cell and comparing the raw bit patterns. Bit-exact comparison gives
+    /// NaN unifying with NaN (consistent with SWI-Prolog's <c>=/2</c>) and keeps +0.0 and
+    /// -0.0 distinct (their bits differ even though <c>==</c> returns true).
+    /// </summary>
+    private bool UnifyFloat(Cell aHeader, Cell bHeader)
+    {
+        double a = Cell.DecodeFloat(aHeader, _heap[aHeader.FloatPairedIndex]);
+        double b = Cell.DecodeFloat(bHeader, _heap[bHeader.FloatPairedIndex]);
+        return BitConverter.DoubleToInt64Bits(a) == BitConverter.DoubleToInt64Bits(b);
     }
 
     /// <summary>Young-to-old binding of two unbound variables (ADR-004). The variable with the
