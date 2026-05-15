@@ -42,10 +42,11 @@ public sealed class Engine
     private readonly List<string> _stringTable = new();
     private readonly List<object?> _foreignTable = new();
 
-    // _stackTop and _extraTrailTop are read-only views of state that will be advanced
-    // once stack-frame operations (ADR-005) and extra-trail push (ADR-004) are wired up.
-#pragma warning disable CS0649 // assigned by future operations
     private int _stackTop;
+
+    // _extraTrailTop is read-only for now; will be advanced once extra-trail push
+    // (ADR-004 ValueChange and friends) is wired up.
+#pragma warning disable CS0649 // assigned by future operations
     private int _extraTrailTop;
 #pragma warning restore CS0649
 
@@ -117,11 +118,89 @@ public sealed class Engine
         return idx;
     }
 
-    // ----- Stack & registers (storage only) -----
+    // ----- Stack & registers -----
 
     public int StackTop => _stackTop;
     public int StackCapacity => _stack.Length;
     public int RegisterCount => _registers.Length;
+
+    /// <summary>Reads a raw cell from the stack. The interpretation depends on context —
+    /// frame control slots (CE / CP / B / BP / trail tops) hold raw <c>long</c> values
+    /// rather than tagged cells; argument slots inside choice points hold A-register
+    /// snapshots; Y-slots hold permanent variables.</summary>
+    public Cell GetStack(int idx) => _stack[idx];
+
+    // ----- Environment frame layout (ADR-005) -----
+
+    /// <summary>Offset of <c>CE</c> (previous environment) within a frame.</summary>
+    public const int EnvCeOffset = 0;
+
+    /// <summary>Offset of <c>CP</c> (saved continuation point) within a frame.</summary>
+    public const int EnvCpOffset = 1;
+
+    /// <summary>Offset of <c>Y1</c> within a frame. <c>Yk</c> is at <c>EnvY1Offset + (k-1)</c>.</summary>
+    public const int EnvY1Offset = 2;
+
+    /// <summary>Size in cells of an environment frame with <paramref name="numPermanents"/> Y slots.</summary>
+    public static int EnvSize(int numPermanents) => 2 + numPermanents;
+
+    /// <summary>
+    /// Pushes an environment frame with <paramref name="numPermanents"/> Y slots onto the
+    /// stack, saving the current <see cref="E"/> as CE and <see cref="Cp"/> as CP. The Y
+    /// slots are initialised to a self-pointing REF as an "uninitialised" marker; the
+    /// compiler guarantees each Y is written by an instruction (e.g. <c>get_variable</c>)
+    /// before any read, so this marker is never actually dereferenced. After the call
+    /// <see cref="E"/> points at the new frame.
+    /// </summary>
+    public void Allocate(int numPermanents)
+    {
+        if (numPermanents < 0)
+            throw new ArgumentOutOfRangeException(nameof(numPermanents));
+
+        int frameSize = EnvSize(numPermanents);
+        EnsureStackCapacity(frameSize);
+
+        int newE = _stackTop;
+        _stack[newE + EnvCeOffset] = new Cell(_e);
+        _stack[newE + EnvCpOffset] = new Cell(_cp);
+        for (int i = 0; i < numPermanents; i++)
+        {
+            int slot = newE + EnvY1Offset + i;
+            _stack[slot] = Cell.UnboundVar(slot);
+        }
+        _stackTop = newE + frameSize;
+        _e = newE;
+    }
+
+    /// <summary>
+    /// Restores <see cref="Cp"/> and <see cref="E"/> from the current frame. Does NOT
+    /// reduce <see cref="StackTop"/> — the WAM convention is to leave the popped frame
+    /// in place until a subsequent op (e.g. <c>trust_me</c> or the equivalent reclamation
+    /// pass) determines it is safe to shrink the stack.
+    /// </summary>
+    public void Deallocate()
+    {
+        if (_e < 0)
+            throw new InvalidOperationException("Deallocate called without an active environment frame.");
+        _cp = (int)_stack[_e + EnvCpOffset].Data;
+        _e = (int)_stack[_e + EnvCeOffset].Data;
+    }
+
+    /// <summary>Reads the <c>Y(k+1)</c> slot of the current environment frame.</summary>
+    public Cell GetY(int slot)
+    {
+        if (_e < 0)
+            throw new InvalidOperationException("No environment frame is active.");
+        return _stack[_e + EnvY1Offset + slot];
+    }
+
+    /// <summary>Writes the <c>Y(k+1)</c> slot of the current environment frame.</summary>
+    public void SetY(int slot, Cell value)
+    {
+        if (_e < 0)
+            throw new InvalidOperationException("No environment frame is active.");
+        _stack[_e + EnvY1Offset + slot] = value;
+    }
 
     // ----- Auxiliary value tables -----
 
@@ -399,6 +478,9 @@ public sealed class Engine
     private void EnsureHeapCapacity(int extra)
         => GrowIfNeeded(ref _heap, _heapTop, extra, _config.MaxHeapSize, "heap");
 
+    private void EnsureStackCapacity(int extra)
+        => GrowIfNeeded(ref _stack, _stackTop, extra, _config.MaxStackSize, "stack");
+
     private void EnsureBindingTrailCapacity(int extra)
         => GrowIfNeeded(ref _bindingTrail, _bindingTrailTop, extra, _config.MaxBindingTrailSize, "binding trail");
 
@@ -427,6 +509,10 @@ public sealed class Engine
         if (hb < 0 || hb > _heapTop) throw new ArgumentOutOfRangeException(nameof(hb));
         _hb = hb;
     }
+
+    /// <summary>Test-only setter for <c>CP</c>. Production code sets it through <c>call</c>
+    /// / <c>execute</c> / <c>proceed</c> instructions.</summary>
+    internal void SetCpForTesting(int cp) => _cp = cp;
 
     internal ReadOnlySpan<int> BindingTrailSpan => _bindingTrail.AsSpan(0, _bindingTrailTop);
 }
