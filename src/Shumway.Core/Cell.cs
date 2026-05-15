@@ -1,0 +1,131 @@
+using System.Runtime.InteropServices;
+
+namespace Shumway.Core;
+
+/// <summary>
+/// 64-bit blittable cell: 4-bit <see cref="Tag"/> in bits 63..60 and 60-bit payload in bits 59..0.
+/// Cells are the unit of heap, stack, and register storage. The .NET GC never scans cell
+/// memory for references; all managed-reference data (BigInteger, string, foreign object)
+/// lives in per-engine auxiliary tables and is reached via an integer id stored in the cell.
+/// See ADR-002 and docs/design/cell-layout-detail.md.
+/// </summary>
+[StructLayout(LayoutKind.Sequential, Pack = 1)]
+public readonly struct Cell : IEquatable<Cell>
+{
+    public readonly long Data;
+
+    public const int TagShift = 60;
+    public const long PayloadMask = (1L << 60) - 1;
+    public const long MinInt60 = -(1L << 59);
+    public const long MaxInt60 = (1L << 59) - 1;
+
+    public Cell(long data) => Data = data;
+
+    public Tag Tag => (Tag)((int)(Data >> TagShift) & 0xF);
+
+    public long Payload => Data & PayloadMask;
+
+    // The "AsX" accessors decode the low-32-bit id encoded in the payload. They do NOT
+    // verify the tag; the caller is responsible for dispatching on Tag first.
+    public int AsHeapIndex => (int)Data;
+    public int AsAtomId => (int)Data;
+    public int AsFunctorId => (int)Data;
+    public int AsBigIntId => (int)Data;
+    public int AsStringId => (int)Data;
+    public int AsForeignId => (int)Data;
+
+    /// <summary>
+    /// Decodes the inline 60-bit signed integer, sign-extending into the upper 4 bits.
+    /// Only meaningful for cells with <see cref="Tag.Int"/>.
+    /// </summary>
+    public long AsInt
+    {
+        get
+        {
+            long p = Payload;
+            if ((p & (1L << 59)) != 0)
+                p |= unchecked((long)0xF000_0000_0000_0000UL);
+            return p;
+        }
+    }
+
+    // ---------- Factories ----------
+
+    public static Cell Ref(int heapIdx)
+        => new(((long)Tag.Ref << TagShift) | (uint)heapIdx);
+
+    /// <summary>An unbound variable: a REF cell whose payload points to its own heap index.</summary>
+    public static Cell UnboundVar(int selfHeapIdx) => Ref(selfHeapIdx);
+
+    public static Cell Str(int functorHeapIdx)
+        => new(((long)Tag.Str << TagShift) | (uint)functorHeapIdx);
+
+    public static Cell Lis(int headHeapIdx)
+        => new(((long)Tag.Lis << TagShift) | (uint)headHeapIdx);
+
+    public static Cell Functor(int functorId)
+        => new(((long)Tag.Functor << TagShift) | (uint)functorId);
+
+    public static Cell Atom(int atomId)
+        => new(((long)Tag.Atom << TagShift) | (uint)atomId);
+
+    public static Cell Int(long value)
+    {
+        if (value < MinInt60 || value > MaxInt60)
+            throw new ArgumentOutOfRangeException(nameof(value),
+                $"Integer {value} is outside the 60-bit signed inline range [{MinInt60}, {MaxInt60}]. Use BigInt for larger values.");
+        return new Cell(((long)Tag.Int << TagShift) | (value & PayloadMask));
+    }
+
+    public static Cell BigInt(int tableId)
+        => new(((long)Tag.BigInt << TagShift) | (uint)tableId);
+
+    public static Cell String(int tableId)
+        => new(((long)Tag.String << TagShift) | (uint)tableId);
+
+    public static Cell Foreign(int tableId)
+        => new(((long)Tag.Foreign << TagShift) | (uint)tableId);
+
+    // ---------- Float (spans two cells) ----------
+
+    /// <summary>
+    /// Encodes a double across two cells: a FLOAT header carrying the 4 high bits + the heap
+    /// index of the paired cell, and an INT-tagged paired cell carrying the 60 low bits.
+    /// The paired cell is structurally a valid INT but its numeric int value is meaningless
+    /// — only <see cref="DecodeFloat"/> can reconstruct the original double.
+    /// </summary>
+    public static (Cell Header, Cell Paired) MakeFloat(double value, int pairedHeapIdx)
+    {
+        long bits = BitConverter.DoubleToInt64Bits(value);
+        long highBits = (bits >> 60) & 0xFL;
+        long lowBits = bits & PayloadMask;
+
+        var paired = new Cell(((long)Tag.Int << TagShift) | lowBits);
+        long headerPayload = (highBits << 56) | (uint)pairedHeapIdx;
+        var header = new Cell(((long)Tag.Float << TagShift) | headerPayload);
+        return (header, paired);
+    }
+
+    public static double DecodeFloat(Cell header, Cell paired)
+    {
+        long payload = header.Payload;
+        long highBits = (payload >> 56) & 0xFL;
+        long lowBits = paired.Payload;
+        long bits = (highBits << 60) | lowBits;
+        return BitConverter.Int64BitsToDouble(bits);
+    }
+
+    /// <summary>Heap index of the paired INT cell. Only meaningful when <see cref="Tag"/> is <see cref="Tag.Float"/>.</summary>
+    public int FloatPairedIndex => (int)Data;
+
+    // ---------- Equality ----------
+
+    public bool Equals(Cell other) => Data == other.Data;
+    public override bool Equals(object? obj) => obj is Cell c && Equals(c);
+    public override int GetHashCode() => Data.GetHashCode();
+    public static bool operator ==(Cell a, Cell b) => a.Data == b.Data;
+    public static bool operator !=(Cell a, Cell b) => a.Data != b.Data;
+
+    public override string ToString()
+        => $"Cell(tag={Tag}, payload=0x{Payload:X15}, data=0x{Data:X16})";
+}
