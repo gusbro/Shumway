@@ -118,6 +118,66 @@ public readonly struct Cell : IEquatable<Cell>
     /// <summary>Heap index of the paired INT cell. Only meaningful when <see cref="Tag"/> is <see cref="Tag.Float"/>.</summary>
     public int FloatPairedIndex => (int)Data;
 
+    // ---------- PSTR (partial string) ----------
+    //
+    // PSTR header payload (60 bits): length(28) | bufferIdx(30) | offset(2)
+    //   length:    UTF-16 code units in the string slice, 0..2^28-1
+    //   bufferIdx: heap index of the first buffer cell, 0..2^30-1
+    //   offset:    starting code-unit position within the first buffer cell, 0..2
+    //
+    // PSTR buffer payload (60 bits): reserved(12) | cu0(16) | cu1(16) | cu2(16)
+    //   Three UTF-16 code units packed per buffer cell. The reserved high 12 bits
+    //   are zero; cell tag is PstrBuffer.
+
+    /// <summary>Code units packed per PSTR buffer cell.</summary>
+    public const int PstrCodeUnitsPerBuffer = 3;
+
+    /// <summary>Maximum representable PSTR length in code units.</summary>
+    public const int MaxPstrLength = (1 << 28) - 1;
+
+    /// <summary>Maximum representable heap index for a PSTR buffer cell.</summary>
+    public const int MaxPstrBufferIndex = (1 << 30) - 1;
+
+    public static Cell Pstr(int length, int bufferIdx, int offset)
+    {
+        if ((uint)length > (uint)MaxPstrLength)
+            throw new ArgumentOutOfRangeException(nameof(length),
+                $"PSTR length must be in [0, {MaxPstrLength}].");
+        if ((uint)bufferIdx > (uint)MaxPstrBufferIndex)
+            throw new ArgumentOutOfRangeException(nameof(bufferIdx),
+                $"PSTR buffer index must be in [0, {MaxPstrBufferIndex}].");
+        if ((uint)offset > 2)
+            throw new ArgumentOutOfRangeException(nameof(offset),
+                "PSTR offset must be 0, 1, or 2.");
+
+        long payload = ((long)length << 32) | ((long)bufferIdx << 2) | (uint)offset;
+        return new Cell(((long)Tag.Pstr << TagShift) | payload);
+    }
+
+    public static Cell PstrBuffer(int cu0, int cu1, int cu2)
+    {
+        long payload = ((long)(cu0 & 0xFFFF) << 32)
+                     | ((long)(cu1 & 0xFFFF) << 16)
+                     | (long)(cu2 & 0xFFFF);
+        return new Cell(((long)Tag.PstrBuffer << TagShift) | payload);
+    }
+
+    /// <summary>Length in UTF-16 code units. Only meaningful for <see cref="Tag.Pstr"/> cells.</summary>
+    public int AsPstrLength => (int)((Data >> 32) & 0x0FFF_FFFFL);
+
+    /// <summary>Heap index of the first buffer cell. Only meaningful for <see cref="Tag.Pstr"/> cells.</summary>
+    public int AsPstrBufferIndex => (int)((Data >> 2) & 0x3FFF_FFFFL);
+
+    /// <summary>Starting position (0..2) within the first buffer cell. Only meaningful for <see cref="Tag.Pstr"/> cells.</summary>
+    public int AsPstrOffset => (int)(Data & 0x3L);
+
+    /// <summary>Extracts code unit at <paramref name="pos"/> (0..2). Only meaningful for <see cref="Tag.PstrBuffer"/> cells.</summary>
+    public int AsPstrCodeUnit(int pos)
+    {
+        int shift = 32 - pos * 16;
+        return (int)((Data >> shift) & 0xFFFFL);
+    }
+
     // ---------- Equality ----------
 
     public bool Equals(Cell other) => Data == other.Data;

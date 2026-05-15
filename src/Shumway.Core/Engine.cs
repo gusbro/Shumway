@@ -494,6 +494,81 @@ public sealed class Engine
         return headerIdx;
     }
 
+    /// <summary>
+    /// Allocates a PSTR header, the necessary buffer cells (each holding three UTF-16
+    /// code units), and a tail cell initialised to <c>[]</c>, contiguously on the heap.
+    /// Returns the heap index of the header. Total cells used: <c>1 + ceil(len/3) + 1</c>.
+    /// </summary>
+    public int MakePstr(string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        int codeUnits = value.Length;
+        int bufferCellCount = (codeUnits + Cell.PstrCodeUnitsPerBuffer - 1) / Cell.PstrCodeUnitsPerBuffer;
+        int totalCells = 1 + bufferCellCount + 1;
+
+        int headerIdx = AllocateHeap(totalCells);
+        int bufferStart = headerIdx + 1;
+        int tailIdx = bufferStart + bufferCellCount;
+
+        for (int i = 0; i < bufferCellCount; i++)
+        {
+            int basePos = i * Cell.PstrCodeUnitsPerBuffer;
+            int cu0 = basePos < codeUnits ? value[basePos] : 0;
+            int cu1 = (basePos + 1) < codeUnits ? value[basePos + 1] : 0;
+            int cu2 = (basePos + 2) < codeUnits ? value[basePos + 2] : 0;
+            _heap[bufferStart + i] = Cell.PstrBuffer(cu0, cu1, cu2);
+        }
+
+        _heap[tailIdx] = Cell.Atom(AtomTable.EmptyListId);
+        _heap[headerIdx] = Cell.Pstr(codeUnits, bufferStart, 0);
+        return headerIdx;
+    }
+
+    /// <summary>
+    /// Reconstructs the .NET string represented by the PSTR header at <paramref name="headerIdx"/>.
+    /// Reads only the <c>length</c> code units starting from the encoded offset.
+    /// </summary>
+    public string AsPstrString(int headerIdx)
+    {
+        Cell header = _heap[headerIdx];
+        if (header.Tag != Tag.Pstr)
+            throw new InvalidOperationException($"Cell tag is {header.Tag}, expected Pstr.");
+        int length = header.AsPstrLength;
+        if (length == 0) return "";
+        var sb = new System.Text.StringBuilder(length);
+        for (int i = 0; i < length; i++)
+            sb.Append((char)GetPstrCodeUnit(header, i));
+        return sb.ToString();
+    }
+
+    /// <summary>Heap index of the cell that immediately follows a PSTR's buffer cells.
+    /// That cell is the tail value (typically <c>[]</c>, a variable, another PSTR, or
+    /// a LIS in the "fallback to cons" case).</summary>
+    public int GetPstrTailIndex(int headerIdx)
+    {
+        Cell header = _heap[headerIdx];
+        if (header.Tag != Tag.Pstr)
+            throw new InvalidOperationException($"Cell tag is {header.Tag}, expected Pstr.");
+        return ComputePstrTailIndex(header);
+    }
+
+    private int GetPstrCodeUnit(Cell header, int i)
+    {
+        int absolute = header.AsPstrOffset + i;
+        int cellIdx = header.AsPstrBufferIndex + absolute / Cell.PstrCodeUnitsPerBuffer;
+        int posInCell = absolute % Cell.PstrCodeUnitsPerBuffer;
+        return _heap[cellIdx].AsPstrCodeUnit(posInCell);
+    }
+
+    private static int ComputePstrTailIndex(Cell header)
+    {
+        int length = header.AsPstrLength;
+        int offset = header.AsPstrOffset;
+        int bufferIdx = header.AsPstrBufferIndex;
+        int bufferCellCount = (offset + length + Cell.PstrCodeUnitsPerBuffer - 1) / Cell.PstrCodeUnitsPerBuffer;
+        return bufferIdx + bufferCellCount;
+    }
+
     internal int BigIntTableCount => _bigIntTable.Count;
     internal int StringTableCount => _stringTable.Count;
     internal int ForeignTableCount => _foreignTable.Count;
@@ -663,7 +738,12 @@ public sealed class Engine
             return true;
         }
 
-        // Both bound, neither REF.
+        // PSTR participates in cross-tag unification (with LIS and the [] atom in particular),
+        // so it must be dispatched before the strict tag-equality check.
+        if (aCell.Tag == Tag.Pstr) return UnifyPstr(aAddr, bAddr);
+        if (bCell.Tag == Tag.Pstr) return UnifyPstr(bAddr, aAddr);
+
+        // Both bound, neither REF, neither PSTR.
         if (aCell.Tag != bCell.Tag) return false;
         return aCell.Tag switch
         {
@@ -675,7 +755,6 @@ public sealed class Engine
             Tag.String => string.Equals(_stringTable[aCell.AsStringId], _stringTable[bCell.AsStringId]),
             Tag.Foreign => ReferenceEquals(_foreignTable[aCell.AsForeignId], _foreignTable[bCell.AsForeignId]),
             Tag.Float => UnifyFloat(aCell, bCell),
-            Tag.Pstr => throw new NotImplementedException("PSTR unification not implemented in this scope."),
             _ => throw new InvalidOperationException($"Unify reached cell with unexpected tag {aCell.Tag}."),
         };
     }
@@ -725,6 +804,118 @@ public sealed class Engine
         double a = Cell.DecodeFloat(aHeader, _heap[aHeader.FloatPairedIndex]);
         double b = Cell.DecodeFloat(bHeader, _heap[bHeader.FloatPairedIndex]);
         return BitConverter.DoubleToInt64Bits(a) == BitConverter.DoubleToInt64Bits(b);
+    }
+
+    /// <summary>
+    /// Unifies a PSTR (at <paramref name="pstrAddr"/>) with any other dereferenced cell.
+    /// An empty PSTR is logically just its tail value; non-empty PSTRs can only match a
+    /// LIS (character-by-character decomposition) or another PSTR. Anything else fails —
+    /// including the empty-list atom against a non-empty PSTR.
+    /// </summary>
+    private bool UnifyPstr(int pstrAddr, int otherAddr)
+    {
+        Cell pstrHdr = _heap[pstrAddr];
+        int length = pstrHdr.AsPstrLength;
+
+        if (length == 0)
+        {
+            int tailIdx = ComputePstrTailIndex(pstrHdr);
+            return Unify(tailIdx, otherAddr);
+        }
+
+        Cell otherCell = _heap[otherAddr];
+        return otherCell.Tag switch
+        {
+            Tag.Pstr => UnifyPstrPstr(pstrAddr, otherAddr),
+            Tag.Lis => UnifyPstrLis(pstrAddr, otherAddr),
+            _ => false,
+        };
+    }
+
+    /// <summary>
+    /// Unifies two PSTRs. Compares the first <c>min(aLen, bLen)</c> code units pairwise;
+    /// on equal length, the stored tail values are unified directly. On a length mismatch,
+    /// the longer PSTR is sliced from the shorter's length onward (a virtual header is
+    /// materialised on the heap pointing at the same buffer) and that slice is unified
+    /// with the shorter PSTR's tail.
+    /// </summary>
+    private bool UnifyPstrPstr(int aAddr, int bAddr)
+    {
+        Cell aHdr = _heap[aAddr];
+        Cell bHdr = _heap[bAddr];
+        int aLen = aHdr.AsPstrLength;
+        int bLen = bHdr.AsPstrLength;
+
+        if (aLen > bLen)
+        {
+            (aAddr, bAddr) = (bAddr, aAddr);
+            (aHdr, bHdr) = (bHdr, aHdr);
+            (aLen, bLen) = (bLen, aLen);
+        }
+
+        for (int i = 0; i < aLen; i++)
+        {
+            if (GetPstrCodeUnit(aHdr, i) != GetPstrCodeUnit(bHdr, i))
+                return false;
+        }
+
+        int aTailIdx = ComputePstrTailIndex(aHdr);
+
+        if (aLen == bLen)
+        {
+            int bTailIdx = ComputePstrTailIndex(bHdr);
+            return Unify(aTailIdx, bTailIdx);
+        }
+
+        // Build a virtual slice of B starting at position aLen. The slice points at the
+        // same buffer (no copy) and shares B's tail position by layout.
+        int absoluteStart = bHdr.AsPstrOffset + aLen;
+        int sliceBufferIdx = bHdr.AsPstrBufferIndex + absoluteStart / Cell.PstrCodeUnitsPerBuffer;
+        int sliceOffset = absoluteStart % Cell.PstrCodeUnitsPerBuffer;
+        int sliceLength = bLen - aLen;
+
+        int sliceSlot = AllocateHeap(1);
+        _heap[sliceSlot] = Cell.Pstr(sliceLength, sliceBufferIdx, sliceOffset);
+        return Unify(aTailIdx, sliceSlot);
+    }
+
+    /// <summary>
+    /// Unifies a non-empty PSTR with a cons cell. Decomposes the first code unit as
+    /// <c>Int(cu)</c>, then recurses on the LIS tail with either the PSTR's stored tail
+    /// (length 1) or a virtual one-shorter PSTR slice.
+    ///
+    /// <para>Heads are emitted as 16-bit UTF-16 code units; supplementary codepoints
+    /// (above U+FFFF) appear as two separate surrogate values rather than one combined
+    /// codepoint. This is enough for the BMP-only grammar workloads that motivate Phase 1;
+    /// surrogate-pair fusion is a future refinement.</para>
+    /// </summary>
+    private bool UnifyPstrLis(int pstrAddr, int lisAddr)
+    {
+        Cell pstrHdr = _heap[pstrAddr];
+        int length = pstrHdr.AsPstrLength;
+        int firstUnit = GetPstrCodeUnit(pstrHdr, 0);
+
+        int lisHeadIdx = _heap[lisAddr].AsHeapIndex;
+        int lisTailIdx = lisHeadIdx + 1;
+
+        // Unify the head: a fresh Int cell against the LIS's head slot.
+        int headSlot = AllocateHeap(1);
+        _heap[headSlot] = Cell.Int(firstUnit);
+        if (!Unify(headSlot, lisHeadIdx)) return false;
+
+        if (length == 1)
+        {
+            int origTailIdx = ComputePstrTailIndex(pstrHdr);
+            return Unify(origTailIdx, lisTailIdx);
+        }
+
+        int absoluteStart = pstrHdr.AsPstrOffset + 1;
+        int newBufferIdx = pstrHdr.AsPstrBufferIndex + absoluteStart / Cell.PstrCodeUnitsPerBuffer;
+        int newOffset = absoluteStart % Cell.PstrCodeUnitsPerBuffer;
+
+        int sliceSlot = AllocateHeap(1);
+        _heap[sliceSlot] = Cell.Pstr(length - 1, newBufferIdx, newOffset);
+        return Unify(sliceSlot, lisTailIdx);
     }
 
     /// <summary>Young-to-old binding of two unbound variables (ADR-004). The variable with the
