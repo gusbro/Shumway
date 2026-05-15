@@ -219,7 +219,6 @@ public class CellTests
 
     [Theory]
     [InlineData(0.0)]
-    [InlineData(-0.0)]
     [InlineData(1.0)]
     [InlineData(-1.0)]
     [InlineData(3.141592653589793)]
@@ -241,6 +240,19 @@ public class CellTests
         double decoded = Cell.DecodeFloat(header, paired);
         Assert.Equal(
             BitConverter.DoubleToInt64Bits(value),
+            BitConverter.DoubleToInt64Bits(decoded));
+    }
+
+    [Fact]
+    public void Float_NegativeZero_PreservesSignBit()
+    {
+        // -0.0 is excluded from the Theory above because xUnit treats it as a duplicate of
+        // 0.0 (they compare equal as doubles). The point of this test is to verify the
+        // sign bit survives the round trip, which only a bit-pattern check can confirm.
+        var (header, paired) = Cell.MakeFloat(-0.0, pairedHeapIdx: 42);
+        double decoded = Cell.DecodeFloat(header, paired);
+        Assert.Equal(
+            BitConverter.DoubleToInt64Bits(-0.0),
             BitConverter.DoubleToInt64Bits(decoded));
     }
 
