@@ -266,35 +266,5 @@ public class UnifyTests
         Assert.Equal(Cell.UnboundVar(v2), engine.GetHeap(v2));
     }
 
-    // ---------- Not-yet-implemented cases ----------
-
-    [Fact]
-    public void Unify_StrVsStr_ThrowsNotImplemented()
-    {
-        var engine = new Engine();
-        int s1 = engine.AllocateHeap(2);
-        engine.SetHeap(s1, Cell.Str(s1 + 1));
-        engine.SetHeap(s1 + 1, Cell.Functor(0));
-        int s2 = engine.AllocateHeap(2);
-        engine.SetHeap(s2, Cell.Str(s2 + 1));
-        engine.SetHeap(s2 + 1, Cell.Functor(0));
-
-        Assert.Throws<NotImplementedException>(() => engine.Unify(s1, s2));
-    }
-
-    [Fact]
-    public void Unify_LisVsLis_ThrowsNotImplemented()
-    {
-        var engine = new Engine();
-        int l1 = engine.AllocateHeap(3);
-        engine.SetHeap(l1, Cell.Lis(l1 + 1));
-        engine.SetHeap(l1 + 1, Cell.Atom(1));
-        engine.SetHeap(l1 + 2, Cell.Atom(AtomTable.EmptyListId));
-        int l2 = engine.AllocateHeap(3);
-        engine.SetHeap(l2, Cell.Lis(l2 + 1));
-        engine.SetHeap(l2 + 1, Cell.Atom(1));
-        engine.SetHeap(l2 + 2, Cell.Atom(AtomTable.EmptyListId));
-
-        Assert.Throws<NotImplementedException>(() => engine.Unify(l1, l2));
-    }
+    // STR and LIS unification are exercised in CompoundUnifyTests.
 }

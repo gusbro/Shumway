@@ -221,8 +221,8 @@ public sealed class Engine
         {
             Tag.Atom => aCell.AsAtomId == bCell.AsAtomId,
             Tag.Int => aCell.AsInt == bCell.AsInt,
-            Tag.Str => throw new NotImplementedException("Compound (STR) unification not implemented in this scope."),
-            Tag.Lis => throw new NotImplementedException("List (LIS) unification not implemented in this scope."),
+            Tag.Str => UnifyStr(aCell.AsHeapIndex, bCell.AsHeapIndex),
+            Tag.Lis => UnifyLis(aCell.AsHeapIndex, bCell.AsHeapIndex),
             Tag.Float => throw new NotImplementedException("Float unification not implemented in this scope."),
             Tag.BigInt => throw new NotImplementedException("BigInt unification not implemented in this scope."),
             Tag.String => throw new NotImplementedException("String unification not implemented in this scope."),
@@ -230,6 +230,40 @@ public sealed class Engine
             Tag.Pstr => throw new NotImplementedException("PSTR unification not implemented in this scope."),
             _ => throw new InvalidOperationException($"Unify reached cell with unexpected tag {aCell.Tag}."),
         };
+    }
+
+    /// <summary>
+    /// Unifies two compound (STR) terms. <paramref name="fA"/> and <paramref name="fB"/>
+    /// are heap indices of FUNCTOR cells (the payloads of their containing STR cells).
+    /// Fails fast if the functor ids differ; otherwise recurses on each argument cell.
+    ///
+    /// <para>The recursion uses the C# stack, which is sufficient for the typical
+    /// (shallow) depths produced by Prolog parsing. Pathologically deep terms — most
+    /// notably long cons-cell lists, which is precisely why PSTR exists for strings —
+    /// would warrant a future switch to an explicit push-down list.</para>
+    /// </summary>
+    private bool UnifyStr(int fA, int fB)
+    {
+        int functorIdA = _heap[fA].AsFunctorId;
+        int functorIdB = _heap[fB].AsFunctorId;
+        if (functorIdA != functorIdB) return false;
+        var (_, arity) = FunctorTable.Lookup(functorIdA);
+        for (int i = 1; i <= arity; i++)
+        {
+            if (!Unify(fA + i, fB + i)) return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Unifies two cons cells. <paramref name="hA"/> and <paramref name="hB"/> are heap
+    /// indices of head cells (the payloads of their containing LIS cells); the matching
+    /// tail cells live immediately after.
+    /// </summary>
+    private bool UnifyLis(int hA, int hB)
+    {
+        if (!Unify(hA, hB)) return false;
+        return Unify(hA + 1, hB + 1);
     }
 
     /// <summary>Young-to-old binding of two unbound variables (ADR-004). The variable with the
