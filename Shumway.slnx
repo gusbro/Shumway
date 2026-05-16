@@ -12,6 +12,7 @@
     <Project Path="tests/Shumway.Tests.Benchmarks/Shumway.Tests.Benchmarks.csproj" />
     <Project Path="tests/Shumway.Tests.Compiler/Shumway.Tests.Compiler.csproj" />
     <Project Path="tests/Shumway.Tests.Core/Shumway.Tests.Core.csproj" />
+    <Project Path="tests/Shumway.Tests.Embedding/Shumway.Tests.Embedding.csproj" />
     <Project Path="tests/Shumway.Tests.Interpreter/Shumway.Tests.Interpreter.csproj" />
     <Project Path="tests/Shumway.Tests.IsoConformance/Shumway.Tests.IsoConformance.csproj" />
   </Folder>

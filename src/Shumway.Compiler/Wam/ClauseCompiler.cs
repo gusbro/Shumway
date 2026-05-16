@@ -127,6 +127,14 @@ public sealed class ClauseCompiler
             CompileHeadArg(state, headArgs[i], i);
         DrainPendingCompounds(state);
 
+        // ----- Head→body preservation -----
+        // A head variable whose home register sits inside the body's argument
+        // range (X[0..maxBodyArity-1]) would be clobbered the moment we emit a
+        // put_* for any earlier-positioned body arg. Move such variables to
+        // safe X slots beyond the max body arity, once, before any goal is
+        // emitted. (Permanent variables already live in Y and are unaffected.)
+        PreserveClobberedHeadVars(state, goals);
+
         // ----- Body goals -----
         if (goals.Count == 0)
         {
@@ -219,6 +227,90 @@ public sealed class ClauseCompiler
             if (occurs[name].Count >= 2)
                 perms.Add(name);
         return perms;
+    }
+
+    /// <summary>For each head variable that would be clobbered by an earlier
+    /// body argument before it's read, emits a <c>put_value_x</c> that moves
+    /// it to a fresh slot beyond the body's argument range. This is the
+    /// minimum-correctness fix for the classical WAM argument-shuffling
+    /// problem — a smarter scheduler (Warren's argument optimisation) could
+    /// shrink the move count further but is deferred.
+    ///
+    /// <para>The detection rule, per variable V with home X[h] and per goal
+    /// g: V needs a save if there's a goal where (1) position h falls inside
+    /// g's arg range, (2) the term at position h is not V itself, and (3) V
+    /// appears anywhere in g's args (so the eventual put for h overwrites V
+    /// before another put reads it). When the term at position h IS V, the
+    /// put for that position is a no-op move that the compiler skips, so V's
+    /// home is undisturbed.</para></summary>
+    private static void PreserveClobberedHeadVars(CompileState s, List<Term> goals)
+    {
+        if (goals.Count == 0) return;
+
+        int maxBodyArity = 0;
+        foreach (var g in goals)
+        {
+            if (g is AtomTerm { Name: "!" }) continue;
+            int arity = g is CompoundTerm c ? c.Args.Length : 0;
+            if (arity > maxBodyArity) maxBodyArity = arity;
+        }
+        if (maxBodyArity == 0) return;
+
+        // Snapshot names — we may mutate the map during iteration.
+        foreach (string name in s.Xs.Names.ToList())
+        {
+            if (s.Ys.ContainsKey(name)) continue;          // permanent → in Y, safe
+            int home = s.Xs.GetSlot(name);
+            if (home >= maxBodyArity) continue;            // already in the safe zone
+
+            if (!NeedsSave(name, home, goals)) continue;
+
+            // Make sure the next allocation lands beyond the danger zone, then
+            // emit the save and re-home the variable.
+            s.Xs.EnsureFreeAtLeast(maxBodyArity);
+            int safeSlot = s.Xs.AllocateAnonymousSlot();
+            s.Emitter.EmitPutValueX(home, safeSlot);
+            s.Xs.Rebind(name, safeSlot);
+        }
+    }
+
+    private static bool NeedsSave(string varName, int home, List<Term> goals)
+    {
+        foreach (var g in goals)
+        {
+            if (g is AtomTerm { Name: "!" }) continue;
+            Term[] gArgs = g is CompoundTerm c ? c.Args : Array.Empty<Term>();
+            if (home >= gArgs.Length) continue;            // home isn't an arg of this goal
+
+            bool homeArgIsTheVar = gArgs[home] is VarTerm vh && vh.Name == varName;
+            if (homeArgIsTheVar) continue;                  // put-at-home is a self-copy / no-op
+
+            // Some other term gets put at position `home` — it would clobber
+            // V's value before any later read. Save iff V actually appears
+            // somewhere in the goal (so the later read will happen).
+            if (ContainsVarName(g, varName)) return true;
+        }
+        return false;
+    }
+
+    private static bool ContainsVarName(Term t, string varName) => t switch
+    {
+        VarTerm v => v.Name == varName,
+        CompoundTerm c => c.Args.Any(a => ContainsVarName(a, varName)),
+        _ => false,
+    };
+
+    private static void CollectVarNames(Term t, HashSet<string> sink)
+    {
+        switch (t)
+        {
+            case VarTerm v when v.Name != "_":
+                sink.Add(v.Name);
+                break;
+            case CompoundTerm c:
+                foreach (var arg in c.Args) CollectVarNames(arg, sink);
+                break;
+        }
     }
 
     private static List<Term> FlattenConjunction(Term body)

@@ -59,4 +59,23 @@ public sealed class VariableMap
     /// <summary>Number of X registers the clause needs in total (one past the
     /// highest used slot).</summary>
     public int RegisterCount => _nextFreeSlot;
+
+    /// <summary>Returns the set of named variables currently in the map.</summary>
+    public IEnumerable<string> Names => _slots.Keys;
+
+    /// <summary>Reassigns <paramref name="name"/> to a different slot. Used by
+    /// the head-var preservation pass at the head/body boundary: a head variable
+    /// whose home register would be clobbered by an early body argument is
+    /// moved (via <c>put_value_x</c>) to a slot beyond the body's maximum
+    /// arity, and this method updates the map so subsequent body emission
+    /// references the new slot.</summary>
+    public void Rebind(string name, int slot) => _slots[name] = slot;
+
+    /// <summary>Advances the next-free-slot counter so that it is at least
+    /// <paramref name="minimum"/>. Used to ensure scratch / save slots land in
+    /// the safe zone beyond the body's argument registers.</summary>
+    public void EnsureFreeAtLeast(int minimum)
+    {
+        if (_nextFreeSlot < minimum) _nextFreeSlot = minimum;
+    }
 }
