@@ -10,9 +10,11 @@ namespace Shumway.Interpreter;
 ///
 /// <para>Currently implemented: control flow (halt/proceed/call/execute/allocate/
 /// deallocate), the atomic get/put family (variable, value, constant, integer, atom,
-/// nil — both X and Y forms), and the A1/A2 consolidations. Compound (STR/LIS) and
-/// unify-mode opcodes are still <see cref="NotImplementedException"/>; choice points
-/// and cut land in later chunks.</para>
+/// nil — both X and Y forms), the A1/A2 consolidations, and the
+/// <c>try_me_else</c>/<c>retry_me_else</c>/<c>trust_me</c> choice-point family with
+/// backtrack-on-failure. Compound (STR/LIS) and unify-mode opcodes are still
+/// <see cref="NotImplementedException"/>; cut and indexed try/retry/trust land in
+/// later chunks.</para>
 /// </summary>
 public sealed class BytecodeInterpreter
 {
@@ -96,6 +98,30 @@ public sealed class BytecodeInterpreter
                     _engine.AdvancePc(OpcodeTable.Get(Opcode.Deallocate).Size);
                     break;
 
+                // ---------- Choice point opcodes ----------
+
+                case Opcode.TryMeElse:
+                {
+                    int nextClause = BytecodeIO.ReadInt32(code, pc + 1);
+                    int arity = BytecodeIO.ReadInt32(code, pc + 5);
+                    _engine.PushChoicePoint(arity, nextClause);
+                    _engine.AdvancePc(9);
+                    break;
+                }
+
+                case Opcode.RetryMeElse:
+                {
+                    int nextClause = BytecodeIO.ReadInt32(code, pc + 1);
+                    _engine.RetryMeElse(nextClause);
+                    _engine.AdvancePc(5);
+                    break;
+                }
+
+                case Opcode.TrustMe:
+                    _engine.TrustMe();
+                    _engine.AdvancePc(1);
+                    break;
+
                 // ---------- Get instructions ----------
 
                 case Opcode.GetVariableX:
@@ -121,7 +147,10 @@ public sealed class BytecodeInterpreter
                     int src = BytecodeIO.ReadInt32(code, pc + 1);
                     int arg = BytecodeIO.ReadInt32(code, pc + 5);
                     if (!_engine.UnifyRegisters(src, arg))
-                        return InterpreterResult.Failed;
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
                     _engine.AdvancePc(9);
                     break;
                 }
@@ -131,7 +160,10 @@ public sealed class BytecodeInterpreter
                     int src = BytecodeIO.ReadInt32(code, pc + 1);
                     int arg = BytecodeIO.ReadInt32(code, pc + 5);
                     if (!_engine.UnifyPermanentWithRegister(src, arg))
-                        return InterpreterResult.Failed;
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
                     _engine.AdvancePc(9);
                     break;
                 }
@@ -142,7 +174,10 @@ public sealed class BytecodeInterpreter
                     int atomId = BytecodeIO.ReadInt32(code, pc + 1);
                     int arg = BytecodeIO.ReadInt32(code, pc + 5);
                     if (!_engine.UnifyRegisterWithCell(arg, Cell.Atom(atomId)))
-                        return InterpreterResult.Failed;
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
                     _engine.AdvancePc(9);
                     break;
                 }
@@ -152,7 +187,10 @@ public sealed class BytecodeInterpreter
                     int value = BytecodeIO.ReadInt32(code, pc + 1);
                     int arg = BytecodeIO.ReadInt32(code, pc + 5);
                     if (!_engine.UnifyRegisterWithCell(arg, Cell.Int(value)))
-                        return InterpreterResult.Failed;
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
                     _engine.AdvancePc(9);
                     break;
                 }
@@ -161,7 +199,10 @@ public sealed class BytecodeInterpreter
                 {
                     int arg = BytecodeIO.ReadInt32(code, pc + 1);
                     if (!_engine.UnifyRegisterWithCell(arg, Cell.Atom(AtomTable.EmptyListId)))
-                        return InterpreterResult.Failed;
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
                     _engine.AdvancePc(5);
                     break;
                 }
@@ -243,7 +284,10 @@ public sealed class BytecodeInterpreter
                 {
                     int atomId = BytecodeIO.ReadInt32(code, pc + 1);
                     if (!_engine.UnifyRegisterWithCell(0, Cell.Atom(atomId)))
-                        return InterpreterResult.Failed;
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
                     _engine.AdvancePc(5);
                     break;
                 }
@@ -252,7 +296,10 @@ public sealed class BytecodeInterpreter
                 {
                     int atomId = BytecodeIO.ReadInt32(code, pc + 1);
                     if (!_engine.UnifyRegisterWithCell(1, Cell.Atom(atomId)))
-                        return InterpreterResult.Failed;
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
                     _engine.AdvancePc(5);
                     break;
                 }
@@ -279,5 +326,23 @@ public sealed class BytecodeInterpreter
                         $"Reached at PC=0x{pc:X4}.");
             }
         }
+    }
+
+    /// <summary>
+    /// Handles a unification failure by redirecting control to the current choice point's
+    /// BP. The CP itself is preserved — the BP target (a <c>retry_me_else</c> or
+    /// <c>trust_me</c>) is the instruction that knows whether to keep the CP or discard
+    /// it, and either way it restores the saved engine state before continuing.
+    /// </summary>
+    /// <returns><c>true</c> if a CP exists and PC has been redirected to its BP;
+    /// <c>false</c> if no CP is active, in which case the caller should report
+    /// <see cref="InterpreterResult.Failed"/>.</returns>
+    private bool TryBacktrack()
+    {
+        if (_engine.B < 0) return false;
+        int arity = (int)_engine.GetStack(_engine.B + Engine.CpArityOffset).Data;
+        int bp = (int)_engine.GetStack(_engine.B + Engine.CpBpOffset(arity)).Data;
+        _engine.SetPc(bp);
+        return true;
     }
 }
