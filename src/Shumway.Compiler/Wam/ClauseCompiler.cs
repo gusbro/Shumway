@@ -127,12 +127,14 @@ public sealed class ClauseCompiler
             CompileHeadArg(state, headArgs[i], i);
         DrainPendingCompounds(state);
 
-        // ----- Head→body preservation -----
-        // A head variable whose home register sits inside the body's argument
-        // range (X[0..maxBodyArity-1]) would be clobbered the moment we emit a
-        // put_* for any earlier-positioned body arg. Move such variables to
-        // safe X slots beyond the max body arity, once, before any goal is
-        // emitted. (Permanent variables already live in Y and are unaffected.)
+        // ----- Pre-body preparation -----
+        // First, bump the anonymous-slot counter so any temp register handed
+        // out during body emission lives outside the body's argument range
+        // (otherwise nested-compound captures would clash with put_* writes
+        // to the same slot — see ReserveBodyArgRegisters for the example).
+        // Then run the head-var preservation pass for the argument-shuffling
+        // fix.
+        ReserveBodyArgRegisters(state, goals);
         PreserveClobberedHeadVars(state, goals);
 
         // ----- Body goals -----
@@ -229,6 +231,21 @@ public sealed class ClauseCompiler
         return perms;
     }
 
+    /// <summary>Bumps the X-register counter so any further anonymous
+    /// allocations land beyond the largest body goal's argument range. This
+    /// is essential to avoid <see cref="VariableMap.AllocateAnonymousSlot"/>
+    /// handing out a register that the compiler is about to put a body
+    /// argument into. (Concrete bug it fixes: for <c>X is -(...)</c>, the
+    /// body has is/2 at arity 2 so X[0] and X[1] are live during arg setup;
+    /// without this bump the nested-compound capture inside <c>-/1</c> at
+    /// arg 1 would get handed slot 1 from AllocateAnonymousSlot, clashing
+    /// with the put_structure that just wrote X[1] = Ref(outer).)</summary>
+    private static void ReserveBodyArgRegisters(CompileState s, List<Term> goals)
+    {
+        int maxBodyArity = ComputeMaxBodyArity(goals);
+        if (maxBodyArity > 0) s.Xs.EnsureFreeAtLeast(maxBodyArity);
+    }
+
     /// <summary>For each head variable that would be clobbered by an earlier
     /// body argument before it's read, emits a <c>put_value_x</c> that moves
     /// it to a fresh slot beyond the body's argument range. This is the
@@ -246,14 +263,7 @@ public sealed class ClauseCompiler
     private static void PreserveClobberedHeadVars(CompileState s, List<Term> goals)
     {
         if (goals.Count == 0) return;
-
-        int maxBodyArity = 0;
-        foreach (var g in goals)
-        {
-            if (g is AtomTerm { Name: "!" }) continue;
-            int arity = g is CompoundTerm c ? c.Args.Length : 0;
-            if (arity > maxBodyArity) maxBodyArity = arity;
-        }
+        int maxBodyArity = ComputeMaxBodyArity(goals);
         if (maxBodyArity == 0) return;
 
         // Snapshot names — we may mutate the map during iteration.
@@ -265,13 +275,22 @@ public sealed class ClauseCompiler
 
             if (!NeedsSave(name, home, goals)) continue;
 
-            // Make sure the next allocation lands beyond the danger zone, then
-            // emit the save and re-home the variable.
-            s.Xs.EnsureFreeAtLeast(maxBodyArity);
-            int safeSlot = s.Xs.AllocateAnonymousSlot();
+            int safeSlot = s.Xs.AllocateAnonymousSlot();   // already past maxBodyArity (see ReserveBodyArgRegisters)
             s.Emitter.EmitPutValueX(home, safeSlot);
             s.Xs.Rebind(name, safeSlot);
         }
+    }
+
+    private static int ComputeMaxBodyArity(List<Term> goals)
+    {
+        int max = 0;
+        foreach (var g in goals)
+        {
+            if (g is AtomTerm { Name: "!" }) continue;
+            int arity = g is CompoundTerm c ? c.Args.Length : 0;
+            if (arity > max) max = arity;
+        }
+        return max;
     }
 
     private static bool NeedsSave(string varName, int home, List<Term> goals)

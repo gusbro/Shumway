@@ -28,5 +28,14 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("\\=", 2, UnifyBuiltins.NotUnifiable);
         BuiltinsRegistry.Register("==",  2, UnifyBuiltins.StructurallyEqual);
         BuiltinsRegistry.Register("\\==",2, UnifyBuiltins.StructurallyNotEqual);
+
+        // Arithmetic.
+        BuiltinsRegistry.Register("is",  2, ArithmeticBuiltins.Is);
+        BuiltinsRegistry.Register("=:=", 2, ArithmeticBuiltins.ArithEqual);
+        BuiltinsRegistry.Register("=\\=",2, ArithmeticBuiltins.ArithNotEqual);
+        BuiltinsRegistry.Register("<",   2, ArithmeticBuiltins.ArithLess);
+        BuiltinsRegistry.Register(">",   2, ArithmeticBuiltins.ArithGreater);
+        BuiltinsRegistry.Register("=<",  2, ArithmeticBuiltins.ArithLessOrEqual);
+        BuiltinsRegistry.Register(">=",  2, ArithmeticBuiltins.ArithGreaterOrEqual);
     }
 }
