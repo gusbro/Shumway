@@ -127,9 +127,13 @@ public sealed class PrologEngine
             : new ClauseReader(new Lexer(_accumulatedSource), _operators).ReadAll().ToList();
         allClauses.Add(syntheticClause);
 
-        // Run the meta-call AST rewriting pass. Currently handles \+/1 and
-        // not/1 by emitting helper clauses that piggyback on the existing
-        // cut + fail machinery.
+        // DCG → regular-clause translation runs first: it produces clauses
+        // whose bodies may contain \+ or other meta forms, which the
+        // MetaTransform pass below then rewrites.
+        allClauses = DcgTransform.Apply(allClauses);
+
+        // Meta-call AST rewriting: \+/1 and not/1 turn into helper clauses
+        // that ride on the cut + fail machinery.
         allClauses = MetaTransform.Apply(allClauses);
 
         var module = new ModuleCompiler().Compile(allClauses);
