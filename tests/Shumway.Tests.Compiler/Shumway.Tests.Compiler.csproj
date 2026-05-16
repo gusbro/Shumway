@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Shumway.Compiler\Shumway.Compiler.csproj" />
+    <ProjectReference Include="..\..\src\Shumway.Interpreter\Shumway.Interpreter.csproj" />
   </ItemGroup>
 
 </Project>
