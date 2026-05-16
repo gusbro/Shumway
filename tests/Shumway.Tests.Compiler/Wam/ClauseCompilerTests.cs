@@ -129,13 +129,6 @@ public class ClauseCompilerTests
     // ---------- Unsupported head arg types ----------
 
     [Fact]
-    public void HeadArg_Compound_ThrowsForNow()
-    {
-        // 8b will lift this restriction.
-        Assert.Throws<NotSupportedException>(() => CompileSource("p(foo(x))."));
-    }
-
-    [Fact]
     public void HeadArg_Float_ThrowsForNow()
     {
         Assert.Throws<NotSupportedException>(() => CompileSource("p(3.14)."));

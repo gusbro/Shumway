@@ -47,6 +47,12 @@ public sealed class VariableMap
         return slot;
     }
 
+    /// <summary>Allocates a fresh X slot without binding it to any name. Used as
+    /// scratch space for nested-compound expansion: the worklist captures a temp
+    /// slot via <c>unify_variable_x</c> in the parent compound, then expands the
+    /// child compound by emitting <c>get_structure</c> against that slot.</summary>
+    public int AllocateAnonymousSlot() => _nextFreeSlot++;
+
     /// <summary>Looks up the slot for a previously-bound variable.</summary>
     public int GetSlot(string name) => _slots[name];
 

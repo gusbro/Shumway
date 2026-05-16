@@ -4,33 +4,44 @@ using Shumway.Core;
 namespace Shumway.Compiler.Wam;
 
 /// <summary>
-/// Compiles a single Prolog clause to WAM bytecode. Chunk 8a's scope is the
-/// minimum useful slice that closes the parse → compile → run loop end-to-end:
+/// Compiles a single Prolog clause to WAM bytecode. Current scope (8a + 8b):
 ///
 /// <list type="bullet">
-/// <item>Facts (and rules whose body is just <c>true</c> — i.e. the empty
-///   body). Non-trivial bodies will land in 8c.</item>
-/// <item>Head arguments restricted to atoms, integers, named variables, and
-///   the anonymous variable. Compound and list patterns come in 8b; floats and
-///   strings later when bigger numeric / string handling lands.</item>
+/// <item>Facts and rules whose body is the trivial atom <c>true</c>. Non-trivial
+///   bodies land in 8c.</item>
+/// <item>Head arguments may be atoms, integers, named variables, the anonymous
+///   variable, or compound terms (including lists, which the parser desugars
+///   into nested <c>.</c>/2 compounds). Float and string head arguments are
+///   still deferred.</item>
 /// </list>
 ///
-/// <para>Head-compilation rules:</para>
+/// <para>Head-compilation proceeds in two passes:</para>
+///
+/// <para><b>Pass 1.</b> Top-level head arguments at positions <c>X[0..arity-1]</c>:</para>
 /// <list type="bullet">
-/// <item>An <see cref="AtomTerm"/> at position <c>i</c> emits
-///   <c>get_atom A, X[i]</c>.</item>
-/// <item>An <see cref="IntTerm"/> at position <c>i</c> emits
-///   <c>get_integer N, X[i]</c>.</item>
-/// <item>A first-occurrence <see cref="VarTerm"/> at position <c>i</c> claims
-///   <c>X[i]</c> as the variable's home and emits NO opcode — the value is
-///   already in the right register thanks to the WAM calling convention.</item>
-/// <item>A subsequent occurrence emits <c>get_value_x X[home], X[i]</c>.</item>
-/// <item>The anonymous variable <c>_</c> emits no opcode — it imposes no
-///   constraint on the caller-supplied value.</item>
+/// <item><see cref="AtomTerm"/> → <c>get_atom A, X[i]</c>.</item>
+/// <item><see cref="IntTerm"/> → <c>get_integer N, X[i]</c>.</item>
+/// <item><see cref="VarTerm"/> first occurrence — claim <c>X[i]</c> as the
+///   variable's home, emit no opcode.</item>
+/// <item><see cref="VarTerm"/> subsequent — <c>get_value_x X[home], X[i]</c>.</item>
+/// <item>Anonymous <c>_</c> — emit no opcode (no constraint).</item>
+/// <item><see cref="CompoundTerm"/> — defer onto a worklist; pass 2 will expand
+///   it. No opcode is emitted yet because <c>X[i]</c> already holds the term.</item>
 /// </list>
 ///
-/// <para>After the head, the compiler emits <c>proceed</c>. For 8a that's the
-/// only body opcode supported.</para>
+/// <para><b>Pass 2.</b> Drain the worklist FIFO. Each entry is a pair
+/// <c>(slot, compound)</c> describing a compound that lives at <c>X[slot]</c>:</para>
+/// <list type="bullet">
+/// <item>If the compound's functor is <c>.</c>/2 emit <c>get_list X[slot]</c>;
+///   otherwise emit <c>get_structure F/N, X[slot]</c>.</item>
+/// <item>For each sub-argument, emit a <c>unify_*</c> opcode mirroring the
+///   pass-1 dispatch above. Nested compounds get a fresh anonymous slot, an
+///   <c>unify_variable_x</c> capture, and a worklist entry to expand them
+///   later. This keeps the unify cursor aligned with the current compound
+///   while still recursing depth-by-depth.</item>
+/// </list>
+///
+/// <para>After both passes: <c>proceed</c> (since 8b still has empty bodies).</para>
 /// </summary>
 public sealed class ClauseCompiler
 {
@@ -62,9 +73,21 @@ public sealed class ClauseCompiler
 
         var emitter = new BytecodeEmitter();
         var vars = new VariableMap(args.Length);
+        var pending = new Queue<(int Slot, CompoundTerm Compound)>();
 
+        // Pass 1: emit head opcodes for top-level args; defer compound args.
         for (int i = 0; i < args.Length; i++)
-            CompileHeadArg(emitter, vars, args[i], i);
+            CompileHeadArg(emitter, vars, args[i], i, pending);
+
+        // Pass 2: BFS-expand deferred compounds. Each iteration consumes one
+        // (slot, compound) pair, emits its open instruction, and emits unify_*
+        // for each sub-arg — re-enqueuing for any sub-arg that's itself a
+        // compound.
+        while (pending.Count > 0)
+        {
+            var (slot, comp) = pending.Dequeue();
+            CompileExpandedCompound(emitter, vars, slot, comp, pending);
+        }
 
         emitter.EmitProceed();
 
@@ -87,7 +110,12 @@ public sealed class ClauseCompiler
         return CompileFact(headTerm);
     }
 
-    private void CompileHeadArg(BytecodeEmitter emitter, VariableMap vars, Term arg, int argSlot)
+    private void CompileHeadArg(
+        BytecodeEmitter emitter,
+        VariableMap vars,
+        Term arg,
+        int argSlot,
+        Queue<(int Slot, CompoundTerm Compound)> pending)
     {
         switch (arg)
         {
@@ -96,10 +124,7 @@ public sealed class ClauseCompiler
                 break;
 
             case IntTerm n:
-                if (n.Value < int.MinValue || n.Value > int.MaxValue)
-                    throw new NotSupportedException(
-                        $"Integer literal {n.Value} doesn't fit in a 32-bit operand. "
-                        + "BigInt support lands later.");
+                CheckInt32(n);
                 emitter.EmitGetInteger((int)n.Value, argSlot);
                 break;
 
@@ -122,23 +147,111 @@ public sealed class ClauseCompiler
                 }
                 break;
 
+            case CompoundTerm c:
+                // Defer expansion to pass 2. X[argSlot] already holds the term;
+                // the get_structure / get_list opcode is emitted when the
+                // worklist drains.
+                pending.Enqueue((argSlot, c));
+                break;
+
             case FloatTerm:
                 throw new NotSupportedException(
-                    "Float head arguments are not in scope for chunk 8a.");
+                    "Float head arguments are not yet supported.");
 
             case StringTerm:
                 throw new NotSupportedException(
-                    "String head arguments are not in scope for chunk 8a.");
-
-            case CompoundTerm:
-                throw new NotSupportedException(
-                    "Compound head arguments require get_structure / get_list, which "
-                    + "land with chunk 8b.");
+                    "String head arguments are not yet supported.");
 
             default:
                 throw new NotSupportedException(
                     $"Head argument type {arg.GetType().Name} is not supported.");
         }
+    }
+
+    private void CompileExpandedCompound(
+        BytecodeEmitter emitter,
+        VariableMap vars,
+        int slot,
+        CompoundTerm comp,
+        Queue<(int Slot, CompoundTerm Compound)> pending)
+    {
+        bool isList = comp.Functor == "." && comp.Args.Length == 2;
+        if (isList)
+            emitter.EmitGetList(slot);
+        else
+            emitter.EmitGetStructure(InternFunctor(comp.Functor, comp.Args.Length), slot);
+
+        foreach (Term subArg in comp.Args)
+            CompileUnifyArg(emitter, vars, subArg, pending);
+    }
+
+    private void CompileUnifyArg(
+        BytecodeEmitter emitter,
+        VariableMap vars,
+        Term arg,
+        Queue<(int Slot, CompoundTerm Compound)> pending)
+    {
+        switch (arg)
+        {
+            case AtomTerm a:
+                // [] gets the compact unify_nil; other atoms use unify_atom.
+                if (a.Name == "[]")
+                    emitter.EmitUnifyNil();
+                else
+                    emitter.EmitUnifyAtom(InternAtom(a.Name));
+                break;
+
+            case IntTerm n:
+                CheckInt32(n);
+                emitter.EmitUnifyInteger((int)n.Value);
+                break;
+
+            case VarTerm v:
+                if (v.Name == "_")
+                {
+                    emitter.EmitUnifyVoid(1);
+                    return;
+                }
+                if (vars.IsNewName(v.Name))
+                {
+                    int s = vars.AllocateFresh(v.Name);
+                    emitter.EmitUnifyVariableX(s);
+                }
+                else
+                {
+                    emitter.EmitUnifyValueX(vars.GetSlot(v.Name));
+                }
+                break;
+
+            case CompoundTerm c:
+                // Capture the nested compound's heap reference into a fresh
+                // anonymous slot and defer its expansion to the next worklist
+                // iteration.
+                int temp = vars.AllocateAnonymousSlot();
+                emitter.EmitUnifyVariableX(temp);
+                pending.Enqueue((temp, c));
+                break;
+
+            case FloatTerm:
+                throw new NotSupportedException(
+                    "Float arguments inside compound head terms are not yet supported.");
+
+            case StringTerm:
+                throw new NotSupportedException(
+                    "String arguments inside compound head terms are not yet supported.");
+
+            default:
+                throw new NotSupportedException(
+                    $"Unsupported sub-argument type {arg.GetType().Name} inside a compound.");
+        }
+    }
+
+    private static void CheckInt32(IntTerm n)
+    {
+        if (n.Value < int.MinValue || n.Value > int.MaxValue)
+            throw new NotSupportedException(
+                $"Integer literal {n.Value} doesn't fit in a 32-bit operand. "
+                + "BigInt support lands later.");
     }
 
     /// <summary>Splits a head term into its functor name and argument list. An

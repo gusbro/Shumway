@@ -76,6 +76,19 @@ public sealed class BytecodeEmitter
         EmitInt(argSlot);
     }
 
+    public void EmitGetStructure(int functorId, int argSlot)
+    {
+        _bytes.Add((byte)Opcode.GetStructure);
+        EmitInt(functorId);
+        EmitInt(argSlot);
+    }
+
+    public void EmitGetList(int argSlot)
+    {
+        _bytes.Add((byte)Opcode.GetList);
+        EmitInt(argSlot);
+    }
+
     // ---------- Put-family (argument preparation for calls) ----------
 
     public void EmitPutVariableX(int destSlot, int argSlot)
@@ -110,6 +123,59 @@ public sealed class BytecodeEmitter
     {
         _bytes.Add((byte)Opcode.PutNil);
         EmitInt(argSlot);
+    }
+
+    public void EmitPutStructure(int functorId, int argSlot)
+    {
+        _bytes.Add((byte)Opcode.PutStructure);
+        EmitInt(functorId);
+        EmitInt(argSlot);
+    }
+
+    public void EmitPutList(int argSlot)
+    {
+        _bytes.Add((byte)Opcode.PutList);
+        EmitInt(argSlot);
+    }
+
+    // ---------- Unify-mode family (compound / list args) ----------
+
+    public void EmitUnifyAtom(int atomId)
+    {
+        _bytes.Add((byte)Opcode.UnifyAtom);
+        EmitInt(atomId);
+    }
+
+    public void EmitUnifyConstant(int atomId)
+    {
+        _bytes.Add((byte)Opcode.UnifyConstant);
+        EmitInt(atomId);
+    }
+
+    public void EmitUnifyInteger(int value)
+    {
+        _bytes.Add((byte)Opcode.UnifyInteger);
+        EmitInt(value);
+    }
+
+    public void EmitUnifyNil() => _bytes.Add((byte)Opcode.UnifyNil);
+
+    public void EmitUnifyVariableX(int slot)
+    {
+        _bytes.Add((byte)Opcode.UnifyVariableX);
+        EmitInt(slot);
+    }
+
+    public void EmitUnifyValueX(int slot)
+    {
+        _bytes.Add((byte)Opcode.UnifyValueX);
+        EmitInt(slot);
+    }
+
+    public void EmitUnifyVoid(int count)
+    {
+        _bytes.Add((byte)Opcode.UnifyVoid);
+        EmitInt(count);
     }
 
     // ---------- Helpers ----------
