@@ -766,6 +766,60 @@ public sealed class Engine
         return ComputePstrTailIndex(header);
     }
 
+    /// <summary>
+    /// Reads the <paramref name="i"/>-th code unit (0-indexed within the PSTR's logical
+    /// content) from the PSTR header at <paramref name="headerIdx"/>. Public surface for
+    /// the interpreter's PSTR-aware opcodes.
+    /// </summary>
+    public int GetPstrCodeUnitAt(int headerIdx, int i)
+    {
+        Cell header = _heap[headerIdx];
+        if (header.Tag != Tag.Pstr)
+            throw new InvalidOperationException($"Cell tag is {header.Tag}, expected Pstr.");
+        return GetPstrCodeUnit(header, i);
+    }
+
+    /// <summary>
+    /// Decomposes the PSTR header at heap[<paramref name="headerIdx"/>] into its first
+    /// code unit and a tail header, updating the cell at <paramref name="headerIdx"/>
+    /// in place. When the PSTR had one remaining code unit, the cell is replaced with
+    /// the PSTR's own tail value (typically <c>Atom([])</c>); otherwise it's replaced
+    /// with an advanced PSTR header sharing the original buffer.
+    ///
+    /// <para>The extracted head is returned as <c>Int(code_unit)</c> — Phase 1 only
+    /// supports <c>codes</c> mode for <c>double_quotes</c>; the <c>chars</c> path is
+    /// deferred until the flags subsystem lands.</para>
+    /// </summary>
+    /// <returns>true if a head was extracted; false if the cell was not a PSTR or had
+    /// length zero (in which case no state is changed).</returns>
+    public bool AdvancePstrHead(int headerIdx, out Cell head)
+    {
+        Cell hdr = _heap[headerIdx];
+        if (hdr.Tag != Tag.Pstr || hdr.AsPstrLength == 0)
+        {
+            head = default;
+            return false;
+        }
+
+        int firstUnit = GetPstrCodeUnit(hdr, 0);
+        head = Cell.Int(firstUnit);
+
+        int newLength = hdr.AsPstrLength - 1;
+        if (newLength == 0)
+        {
+            int tailIdx = ComputePstrTailIndex(hdr);
+            _heap[headerIdx] = _heap[tailIdx];
+        }
+        else
+        {
+            int absoluteStart = hdr.AsPstrOffset + 1;
+            int newBufferIdx = hdr.AsPstrBufferIndex + absoluteStart / Cell.PstrCodeUnitsPerBuffer;
+            int newOffset = absoluteStart % Cell.PstrCodeUnitsPerBuffer;
+            _heap[headerIdx] = Cell.Pstr(newLength, newBufferIdx, newOffset);
+        }
+        return true;
+    }
+
     private int GetPstrCodeUnit(Cell header, int i)
     {
         int absolute = header.AsPstrOffset + i;

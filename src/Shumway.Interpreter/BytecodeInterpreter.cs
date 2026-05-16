@@ -12,23 +12,38 @@ namespace Shumway.Interpreter;
 /// deallocate), the atomic get/put family (variable, value, constant, integer, atom,
 /// nil — both X and Y forms), the A1/A2 consolidations, the
 /// <c>try_me_else</c>/<c>retry_me_else</c>/<c>trust_me</c> choice-point family with
-/// backtrack-on-failure, cut (<c>neck_cut</c>/<c>get_level</c>/<c>cut</c>), and the
+/// backtrack-on-failure, cut (<c>neck_cut</c>/<c>get_level</c>/<c>cut</c>), the
 /// compound/list <c>get_*</c>/<c>put_*</c>/<c>unify_*</c> family with read/write mode
-/// dispatch. Still <see cref="NotImplementedException"/>: indexed
-/// <c>switch_on_*</c>/<c>try</c>/<c>retry</c>/<c>trust</c>, PSTR opcodes, builtin
-/// dispatch and the <c>meta</c>/<c>dbg_info</c> escape.</para>
+/// dispatch, and the PSTR family (<c>get_pstr</c>/<c>put_pstr</c>/<c>unify_pstr_head</c>).
+/// Still <see cref="NotImplementedException"/>: indexed
+/// <c>switch_on_*</c>/<c>try</c>/<c>retry</c>/<c>trust</c>, builtin dispatch and the
+/// <c>meta</c>/<c>dbg_info</c> escape.</para>
 /// </summary>
 public sealed class BytecodeInterpreter
 {
     private readonly Engine _engine;
+    private readonly IReadOnlyList<string> _stringLiterals;
 
     public BytecodeInterpreter(Engine engine)
+        : this(engine, Array.Empty<string>())
+    {
+    }
+
+    /// <summary>Constructs an interpreter with a string-literal pool. The pool is the
+    /// runtime resolution of bytecode <c>LiteralId</c> operands — currently the only
+    /// consumers are the PSTR opcodes (<c>get_pstr</c>, <c>put_pstr</c>) which look up
+    /// the literal text by id. Bundles will provide this pool at load time; in
+    /// hand-written tests it's passed directly to this constructor.</summary>
+    public BytecodeInterpreter(Engine engine, IReadOnlyList<string> stringLiterals)
     {
         ArgumentNullException.ThrowIfNull(engine);
+        ArgumentNullException.ThrowIfNull(stringLiterals);
         _engine = engine;
+        _stringLiterals = stringLiterals;
     }
 
     public Engine Engine => _engine;
+    public IReadOnlyList<string> StringLiterals => _stringLiterals;
 
     /// <summary>
     /// Runs <paramref name="code"/> starting at <paramref name="startPc"/> until the
@@ -575,6 +590,48 @@ public sealed class BytecodeInterpreter
                     break;
                 }
 
+                // ---------- PSTR opcodes ----------
+
+                case Opcode.GetPstr:
+                {
+                    int literalId = BytecodeIO.ReadInt32(code, pc + 1);
+                    int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                    int headerIdx = _engine.MakePstr(ResolveLiteral(literalId));
+                    if (!_engine.UnifyRegisterWithHeapAt(arg, headerIdx))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    _engine.AdvancePc(9);
+                    break;
+                }
+
+                case Opcode.PutPstr:
+                {
+                    int literalId = BytecodeIO.ReadInt32(code, pc + 1);
+                    int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                    int headerIdx = _engine.MakePstr(ResolveLiteral(literalId));
+                    _engine.SetRegister(arg, Cell.Ref(headerIdx));
+                    _engine.AdvancePc(9);
+                    break;
+                }
+
+                case Opcode.UnifyPstrHead:
+                {
+                    int dest = BytecodeIO.ReadInt32(code, pc + 1);
+                    if (!_engine.AdvancePstrHead(_engine.UnifyPointer, out Cell head))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    _engine.SetRegister(dest, head);
+                    // The cursor stays put: heap[UnifyPointer] now holds either the
+                    // advanced PSTR header (still iterable) or the PSTR's tail value
+                    // (so subsequent unify_nil / unify_value can match against it).
+                    _engine.AdvancePc(5);
+                    break;
+                }
+
                 default:
                     throw new NotImplementedException(
                         $"Opcode 0x{opByte:X2} ({(Opcode)opByte}) is not implemented yet. " +
@@ -599,5 +656,14 @@ public sealed class BytecodeInterpreter
         int bp = (int)_engine.GetStack(_engine.B + Engine.CpBpOffset(arity)).Data;
         _engine.SetPc(bp);
         return true;
+    }
+
+    private string ResolveLiteral(int literalId)
+    {
+        if (literalId < 0 || literalId >= _stringLiterals.Count)
+            throw new InvalidOperationException(
+                $"String literal id {literalId} is out of range [0, {_stringLiterals.Count}). " +
+                "Pass the literal pool to the BytecodeInterpreter constructor.");
+        return _stringLiterals[literalId];
     }
 }
