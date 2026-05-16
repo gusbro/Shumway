@@ -53,5 +53,18 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("write",   1, IOBuiltins.Write);
         BuiltinsRegistry.Register("nl",      0, IOBuiltins.Nl);
         BuiltinsRegistry.Register("writeln", 1, IOBuiltins.Writeln);
+
+        // Atom / list manipulation.
+        BuiltinsRegistry.Register("length",       2, AtomListBuiltins.Length);
+        BuiltinsRegistry.Register("append",       3, AtomListBuiltins.Append);
+        BuiltinsRegistry.Register("atom_codes",   2, AtomListBuiltins.AtomCodes);
+        BuiltinsRegistry.Register("atom_concat",  3, AtomListBuiltins.AtomConcat);
+
+        // Standard order of terms.
+        BuiltinsRegistry.Register("compare", 3, StandardOrderBuiltins.Compare3);
+        BuiltinsRegistry.Register("@<",      2, StandardOrderBuiltins.TermLess);
+        BuiltinsRegistry.Register("@>",      2, StandardOrderBuiltins.TermGreater);
+        BuiltinsRegistry.Register("@=<",     2, StandardOrderBuiltins.TermLessOrEqual);
+        BuiltinsRegistry.Register("@>=",     2, StandardOrderBuiltins.TermGreaterOrEqual);
     }
 }
