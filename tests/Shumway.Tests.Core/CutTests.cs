@@ -225,34 +225,38 @@ public class CutTests
     // ---------- GetLevel ----------
 
     [Fact]
-    public void GetLevel_SavesCurrentBIntoY()
+    public void GetLevel_SavesB0IntoY()
     {
+        // GetLevel captures _b0 (the procedure-entry barrier), NOT the current
+        // B — so the captured value survives sub-goal calls that overwrite
+        // the engine's B0 register.
         var engine = new Engine();
         engine.PushChoicePoint(0, 0);
-        int barrier = engine.B;
+        engine.SetB0(-1);                                     // simulate "procedure entry saw no CPs"
         engine.Allocate(1);
 
         engine.GetLevel(0);
 
-        Assert.Equal((long)barrier, engine.GetY(0).Data);
+        Assert.Equal(-1L, engine.GetY(0).Data);
     }
 
     [Fact]
     public void GetLevelThenCut_DiscardsCpsCreatedAfterCapture()
     {
         var engine = new Engine();
-        engine.PushChoicePoint(0, 0x100);                     // outer
+        engine.PushChoicePoint(0, 0x100);                     // pre-procedure CP
         int outerB = engine.B;
+        engine.SetB0(outerB);                                 // "procedure entered with B=outerB"
         engine.Allocate(1);
-        engine.GetLevel(0);                                   // capture outerB in Y0
+        engine.GetLevel(0);                                   // Y[0] := _b0 = outerB
 
-        engine.PushChoicePoint(0, 0x200);                     // inner
-        engine.PushChoicePoint(0, 0x300);                     // innermost
+        engine.PushChoicePoint(0, 0x200);                     // sub-goal CP
+        engine.PushChoicePoint(0, 0x300);                     // sub-sub-goal CP
 
         int barrier = (int)engine.GetY(0).Data;
         engine.Cut(barrier);
 
-        Assert.Equal(outerB, engine.B);
+        Assert.Equal(outerB, engine.B);                       // both inner CPs discarded
     }
 
     [Fact]

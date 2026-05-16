@@ -110,17 +110,20 @@ public class CutOpcodeTests
     // ---------- get_level + cut ----------
 
     [Fact]
-    public void GetLevel_SavesCurrentBIntoY()
+    public void GetLevel_SavesB0IntoY()
     {
+        // get_level captures _b0 (the procedure-entry cut barrier), not the
+        // current _b. The Y slot keeps that value across sub-goal calls that
+        // overwrite the engine's B0 register.
         var engine = new Engine();
-        engine.PushChoicePoint(0, 0);
-        int saved = engine.B;
+        engine.PushChoicePoint(0, 0);            // CPs the cut should discard
+        engine.SetB0(-1);                         // simulate "procedure entry saw no CPs"
         engine.Allocate(1);
 
         var code = BuildCode(Opcode.GetLevel, 0, Opcode.Halt);
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
-        Assert.Equal((long)saved, engine.GetY(0).Data);
+        Assert.Equal(-1L, engine.GetY(0).Data);  // _b0 was -1, saved into Y[0]
     }
 
     [Fact]
@@ -142,32 +145,23 @@ public class CutOpcodeTests
     [Fact]
     public void GetLevelThenCut_RoundTrips()
     {
+        // Sets up: outer CP exists at B = outerB, then "procedure entered" with
+        // _b0 = outerB. get_level captures _b0 into Y[0]. An inner CP is pushed
+        // (a sub-goal CP). Cut Y[0] should discard the inner but keep outer.
         var engine = new Engine();
         engine.PushChoicePoint(0, 0);
         int outerB = engine.B;
+        engine.SetB0(outerB);
         engine.Allocate(1);
 
-        // Layout: get_level Y[0]; (inner CP pushed externally); cut Y[0]; halt.
-        var code = BuildCode(Opcode.GetLevel, 0, Opcode.Cut, 0, Opcode.Halt);
         var interp = new BytecodeInterpreter(engine);
-
-        // Simulate executing the bytecode manually around the inner CP push, since
-        // the bytecode itself doesn't push it.
-        // GetLevel runs first, saves outerB into Y[0].
-        // Then we push an inner CP between get_level and cut.
-        // Then Cut runs, cuts back to outerB.
-        //
-        // For this test, run the whole bytecode but inject the CP push between the
-        // get_level instruction and the cut. Easiest: run get_level, then push CP,
-        // then continue from cut's PC.
         Assert.Equal(InterpreterResult.Halted, interp.Run(BuildCode(Opcode.GetLevel, 0, Opcode.Halt), 0));
         Assert.Equal((long)outerB, engine.GetY(0).Data);
 
-        // Now push an inner CP and execute cut Y[0].
+        // Push an inner CP — simulating a sub-goal's try_me_else.
         engine.PushChoicePoint(0, 0);
-        var cutCode = BuildCode(Opcode.Cut, 0, Opcode.Halt);
-        Assert.Equal(InterpreterResult.Halted, interp.Run(cutCode, 0));
-        Assert.Equal(outerB, engine.B);
+        Assert.Equal(InterpreterResult.Halted, interp.Run(BuildCode(Opcode.Cut, 0, Opcode.Halt), 0));
+        Assert.Equal(outerB, engine.B);                  // inner discarded, outer preserved
     }
 
     // ---------- Integration: clause with neck_cut commits ----------

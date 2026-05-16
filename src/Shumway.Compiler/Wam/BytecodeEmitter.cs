@@ -65,6 +65,22 @@ public sealed class BytecodeEmitter
 
     public void EmitTrustMe() => _bytes.Add((byte)Opcode.TrustMe);
 
+    // ---------- Cut family ----------
+
+    public void EmitNeckCut() => _bytes.Add((byte)Opcode.NeckCut);
+
+    public void EmitGetLevel(int permSlot)
+    {
+        _bytes.Add((byte)Opcode.GetLevel);
+        EmitInt(permSlot);
+    }
+
+    public void EmitCut(int permSlot)
+    {
+        _bytes.Add((byte)Opcode.Cut);
+        EmitInt(permSlot);
+    }
+
     /// <summary>Appends a raw byte sequence (typically a single clause's compiled
     /// bytecode) to the emitter's buffer. Used by <c>PredicateCompiler</c> when
     /// inlining each clause's body between the choice-point dispatch

@@ -87,15 +87,40 @@ public sealed class ClauseCompiler
         // For each named (non-anonymous) variable, record which chunk indices it
         // appears in. Chunk 0 = head + first goal; chunk i >= 1 = goal i.
         var permanents = ClassifyPermanents(headArgs, goals);
-        var state = new CompileState(headArgs.Length, permanents);
 
-        // An environment frame is required whenever the body has more than one
-        // goal — even without permanent variables — because the first call's
-        // saved CP would otherwise clobber the original return address.
-        // Single-goal bodies can tail-call directly (no frame, no allocate).
-        bool needFrame = goals.Count > 1;
+        // Cut analysis: a `!` after position 0 in the goal list is a deep cut
+        // and needs an extra Y slot to hold the cut barrier (captured by
+        // get_level at body start). A `!` at position 0 is a neck cut and
+        // uses the engine's _b0 register directly — no slot required.
+        bool needsDeepCut = false;
+        for (int i = 1; i < goals.Count; i++)
+        {
+            if (goals[i] is AtomTerm { Name: "!" })
+            {
+                needsDeepCut = true;
+                break;
+            }
+        }
+
+        int cutSlot = needsDeepCut ? permanents.Count : -1;
+        var state = new CompileState(
+            headArgs.Length,
+            permanents,
+            extraPermanentSlots: needsDeepCut ? 1 : 0);
+
+        // Frame is required if there are multiple goals, or if a deep cut needs
+        // a permanent Y slot to survive intermediate calls. Even with no
+        // ordinary permanents, the frame's purpose is twofold: preserve the
+        // caller's CP across sub-goal calls, and host the cut-barrier slot.
+        bool needFrame = goals.Count > 1 || needsDeepCut;
         if (needFrame)
             state.Emitter.EmitAllocate(state.PermanentCount);
+
+        // For deep cut: capture _b0 right after the frame is allocated and
+        // before the head match. The captured barrier survives every
+        // sub-goal call thanks to being in a Y slot.
+        if (needsDeepCut)
+            state.Emitter.EmitGetLevel(cutSlot);
 
         // ----- Head -----
         for (int i = 0; i < headArgs.Length; i++)
@@ -113,7 +138,31 @@ public sealed class ClauseCompiler
             for (int i = 0; i < goals.Count; i++)
             {
                 bool isLast = i == goals.Count - 1;
-                CompileBodyGoal(state, goals[i], isLast, needFrame);
+                Term goal = goals[i];
+
+                if (goal is AtomTerm { Name: "!" })
+                {
+                    // Cut emission. Neck cut at position 0 reads _b0 directly;
+                    // deep cut anywhere else reads the saved barrier from
+                    // Y[cutSlot].
+                    if (i == 0)
+                        state.Emitter.EmitNeckCut();
+                    else
+                        state.Emitter.EmitCut(cutSlot);
+
+                    if (isLast)
+                    {
+                        // `!` as the final goal: no execute/call follows.
+                        // Just close the frame (if any) and return to caller.
+                        if (needFrame)
+                            state.Emitter.EmitDeallocate();
+                        state.Emitter.EmitProceed();
+                    }
+                }
+                else
+                {
+                    CompileBodyGoal(state, goal, isLast, needFrame);
+                }
             }
         }
 
@@ -510,12 +559,12 @@ public sealed class ClauseCompiler
         public Queue<(int Slot, CompoundTerm Compound)> Pending { get; } = new();
         public List<CallSite> CallSites { get; } = new();
 
-        public CompileState(int arity, IReadOnlyList<string> permanents)
+        public CompileState(int arity, IReadOnlyList<string> permanents, int extraPermanentSlots = 0)
         {
             Xs = new VariableMap(arity);
             for (int i = 0; i < permanents.Count; i++)
                 Ys[permanents[i]] = i;
-            PermanentCount = permanents.Count;
+            PermanentCount = permanents.Count + extraPermanentSlots;
         }
     }
 }

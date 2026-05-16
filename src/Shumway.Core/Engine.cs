@@ -367,10 +367,17 @@ public sealed class Engine
         CompactTrails(parentBindingTop, parentExtraTop, parentHeapTop);
     }
 
-    /// <summary>Copies the current <see cref="B"/> into <c>Y[slot]</c> of the current
+    /// <summary>Copies the current <see cref="B0"/> into <c>Y[slot]</c> of the current
     /// environment frame. Used by the WAM <c>get_level</c> instruction to capture the
-    /// cut barrier in a permanent variable.</summary>
-    public void GetLevel(int slot) => SetY(slot, new Cell(_b));
+    /// cut barrier in a permanent variable.
+    ///
+    /// <para><c>B0</c> is the procedure-entry value of <c>B</c> recorded by every
+    /// <c>call</c> / <c>execute</c>. Capturing it at the start of the body (in a Y
+    /// slot, so it survives sub-goal calls that overwrite the <c>B0</c> register)
+    /// gives the compiler exactly the barrier ISO Prolog's <c>!</c> commits to:
+    /// every choice point above the predicate's entry point, including the
+    /// predicate's own <c>try_me_else</c> CP and any CPs pushed by sub-goals.</para></summary>
+    public void GetLevel(int slot) => SetY(slot, new Cell(_b0));
 
     /// <summary>
     /// Cut back to <see cref="B0"/> — the value of <c>B</c> recorded at the most recent
