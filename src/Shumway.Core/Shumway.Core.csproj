@@ -8,6 +8,8 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Shumway.Tests.Core" />
+    <InternalsVisibleTo Include="Shumway.Interpreter" />
+    <InternalsVisibleTo Include="Shumway.Tests.Interpreter" />
   </ItemGroup>
 
 </Project>

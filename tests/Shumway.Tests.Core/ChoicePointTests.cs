@@ -32,7 +32,7 @@ public class ChoicePointTests
     public void Push_FirstCp_SnapshotsStateAndAdvancesB()
     {
         var engine = new Engine();
-        engine.SetCpForTesting(0x77);
+        engine.SetCp(0x77);
         engine.Allocate(1);                          // env at idx 0, _stackTop = 3
         int eAfterAllocate = engine.E;
         int stackTopBefore = engine.StackTop;
@@ -126,13 +126,13 @@ public class ChoicePointTests
     public void Retry_RestoresEAndCp()
     {
         var engine = new Engine();
-        engine.SetCpForTesting(0x55);
+        engine.SetCp(0x55);
         engine.Allocate(0);
         int eAtPush = engine.E;
         engine.PushChoicePoint(0, 0);
 
         // Mutate state after the CP push.
-        engine.SetCpForTesting(0xAA);
+        engine.SetCp(0xAA);
         engine.Allocate(0);
         Assert.NotEqual(eAtPush, engine.E);
 

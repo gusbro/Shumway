@@ -981,9 +981,17 @@ public sealed class Engine
         _hb = hb;
     }
 
-    /// <summary>Test-only setter for <c>CP</c>. Production code sets it through <c>call</c>
-    /// / <c>execute</c> / <c>proceed</c> instructions.</summary>
-    internal void SetCpForTesting(int cp) => _cp = cp;
+    /// <summary>Sets <c>CP</c> directly. The interpreter uses this from the <c>call</c>
+    /// instruction; tests use it to seed the engine state before running a fragment.</summary>
+    internal void SetCp(int cp) => _cp = cp;
+
+    /// <summary>Sets <c>PC</c> directly. Used by the interpreter for jumps
+    /// (<c>execute</c>, <c>proceed</c>) and by Run for the initial entry point.</summary>
+    internal void SetPc(int pc) => _p = pc;
+
+    /// <summary>Advances <c>PC</c> by <paramref name="delta"/> bytes. Used by the
+    /// interpreter to step past straight-line instructions.</summary>
+    internal void AdvancePc(int delta) => _p += delta;
 
     internal ReadOnlySpan<int> BindingTrailSpan => _bindingTrail.AsSpan(0, _bindingTrailTop);
 }

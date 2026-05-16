@@ -23,7 +23,7 @@ public class EnvFrameTests
     public void Allocate_FirstFrame_SavesPriorRegisters()
     {
         var engine = new Engine();
-        engine.SetCpForTesting(100);
+        engine.SetCp(100);
         Assert.Equal(-1, engine.E);
         Assert.Equal(100, engine.Cp);
 
@@ -50,13 +50,13 @@ public class EnvFrameTests
     public void Allocate_NestedFrames_CeChains()
     {
         var engine = new Engine();
-        engine.SetCpForTesting(7);
+        engine.SetCp(7);
         engine.Allocate(1);                         // frame at idx 0, size 3
         int firstFrame = 0;
         Assert.Equal(firstFrame, engine.E);
         Assert.Equal(3, engine.StackTop);
 
-        engine.SetCpForTesting(8);
+        engine.SetCp(8);
         engine.Allocate(2);                         // frame at idx 3, size 4
         int secondFrame = 3;
         Assert.Equal(secondFrame, engine.E);
@@ -96,10 +96,10 @@ public class EnvFrameTests
     public void Allocate_PreservesPriorFramesAcrossStackGrowth()
     {
         var engine = new Engine(new EngineConfig { InitialStackSize = 2 });
-        engine.SetCpForTesting(99);
+        engine.SetCp(99);
         engine.Allocate(0);                         // frame at idx 0
 
-        engine.SetCpForTesting(100);
+        engine.SetCp(100);
         engine.Allocate(2);                         // forces growth
 
         // First frame's saved CP should still be readable.
@@ -120,7 +120,7 @@ public class EnvFrameTests
     public void Deallocate_RestoresPriorRegisters()
     {
         var engine = new Engine();
-        engine.SetCpForTesting(42);
+        engine.SetCp(42);
         engine.Allocate(2);
 
         int stackTopBefore = engine.StackTop;
@@ -138,11 +138,11 @@ public class EnvFrameTests
         // Allocate captures the *current* _cp into the new frame, so each Deallocate
         // restores _cp to the value that was current at its corresponding Allocate.
         var engine = new Engine();
-        engine.SetCpForTesting(7);
+        engine.SetCp(7);
         engine.Allocate(0);                         // frame 0 saves CP=7
-        engine.SetCpForTesting(8);
+        engine.SetCp(8);
         engine.Allocate(0);                         // frame 2 saves CP=8
-        engine.SetCpForTesting(9);
+        engine.SetCp(9);
         engine.Allocate(0);                         // frame 4 saves CP=9
 
         engine.Deallocate();                        // pops frame 4 → CP=9, E=2
@@ -171,7 +171,7 @@ public class EnvFrameTests
         // The WAM convention is allocate ... deallocate proceed, where deallocate restores
         // CE/CP and proceed jumps to CP. The pair must be transparent to the caller.
         var engine = new Engine();
-        engine.SetCpForTesting(999);
+        engine.SetCp(999);
         int eBefore = engine.E;
         int cpBefore = engine.Cp;
 
