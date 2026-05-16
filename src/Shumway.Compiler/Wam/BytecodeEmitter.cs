@@ -48,6 +48,33 @@ public sealed class BytecodeEmitter
 
     public void EmitDeallocate() => _bytes.Add((byte)Opcode.Deallocate);
 
+    // ---------- Choice-point dispatch ----------
+
+    public void EmitTryMeElse(int nextClauseAddress, int arity)
+    {
+        _bytes.Add((byte)Opcode.TryMeElse);
+        EmitInt(nextClauseAddress);
+        EmitInt(arity);
+    }
+
+    public void EmitRetryMeElse(int nextClauseAddress)
+    {
+        _bytes.Add((byte)Opcode.RetryMeElse);
+        EmitInt(nextClauseAddress);
+    }
+
+    public void EmitTrustMe() => _bytes.Add((byte)Opcode.TrustMe);
+
+    /// <summary>Appends a raw byte sequence (typically a single clause's compiled
+    /// bytecode) to the emitter's buffer. Used by <c>PredicateCompiler</c> when
+    /// inlining each clause's body between the choice-point dispatch
+    /// instructions.</summary>
+    public void AppendBytes(byte[] bytes)
+    {
+        ArgumentNullException.ThrowIfNull(bytes);
+        _bytes.AddRange(bytes);
+    }
+
     // ---------- Get-family (head matching) ----------
 
     public void EmitGetVariableX(int destSlot, int argSlot)
