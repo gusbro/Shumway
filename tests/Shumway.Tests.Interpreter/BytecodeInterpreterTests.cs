@@ -32,10 +32,10 @@ public class BytecodeInterpreterTests
     [Fact]
     public void Run_UnimplementedOpcode_Throws()
     {
-        // get_structure (compound-handling, in scope for 5e) is not implemented yet.
+        // switch_on_atom (indexed dispatch) is not implemented yet — a later chunk.
         var engine = new Engine();
         var interp = new BytecodeInterpreter(engine);
-        byte[] code = { (byte)Opcode.GetStructure, 0, 0, 0, 0, 0, 0, 0, 0 };
+        byte[] code = { (byte)Opcode.SwitchOnAtom, 0, 0, 0, 0 };
 
         var ex = Assert.Throws<NotImplementedException>(() => interp.Run(code, 0));
         Assert.Contains("not implemented", ex.Message);

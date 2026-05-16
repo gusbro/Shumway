@@ -12,9 +12,11 @@ namespace Shumway.Interpreter;
 /// deallocate), the atomic get/put family (variable, value, constant, integer, atom,
 /// nil — both X and Y forms), the A1/A2 consolidations, the
 /// <c>try_me_else</c>/<c>retry_me_else</c>/<c>trust_me</c> choice-point family with
-/// backtrack-on-failure, and cut (<c>neck_cut</c>/<c>get_level</c>/<c>cut</c>).
-/// Compound (STR/LIS) and unify-mode opcodes are still
-/// <see cref="NotImplementedException"/>; indexed try/retry/trust land with 5e.</para>
+/// backtrack-on-failure, cut (<c>neck_cut</c>/<c>get_level</c>/<c>cut</c>), and the
+/// compound/list <c>get_*</c>/<c>put_*</c>/<c>unify_*</c> family with read/write mode
+/// dispatch. Still <see cref="NotImplementedException"/>: indexed
+/// <c>switch_on_*</c>/<c>try</c>/<c>retry</c>/<c>trust</c>, PSTR opcodes, builtin
+/// dispatch and the <c>meta</c>/<c>dbg_info</c> escape.</para>
 /// </summary>
 public sealed class BytecodeInterpreter
 {
@@ -144,6 +146,233 @@ public sealed class BytecodeInterpreter
                     int slot = BytecodeIO.ReadInt32(code, pc + 1);
                     int barrier = (int)_engine.GetY(slot).Data;
                     _engine.Cut(barrier);
+                    _engine.AdvancePc(5);
+                    break;
+                }
+
+                // ---------- Compound (STR) and list (LIS) — open instructions ----------
+
+                case Opcode.GetStructure:
+                {
+                    int functorId = BytecodeIO.ReadInt32(code, pc + 1);
+                    int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                    if (!_engine.GetStructure(functorId, arg))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    _engine.AdvancePc(9);
+                    break;
+                }
+
+                case Opcode.PutStructure:
+                {
+                    int functorId = BytecodeIO.ReadInt32(code, pc + 1);
+                    int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                    _engine.PutStructure(functorId, arg);
+                    _engine.AdvancePc(9);
+                    break;
+                }
+
+                case Opcode.GetList:
+                {
+                    int arg = BytecodeIO.ReadInt32(code, pc + 1);
+                    if (!_engine.GetList(arg))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    _engine.AdvancePc(5);
+                    break;
+                }
+
+                case Opcode.PutList:
+                {
+                    int arg = BytecodeIO.ReadInt32(code, pc + 1);
+                    _engine.PutList(arg);
+                    _engine.AdvancePc(5);
+                    break;
+                }
+
+                case Opcode.GetListA1:
+                    if (!_engine.GetList(0))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    _engine.AdvancePc(1);
+                    break;
+
+                case Opcode.GetListA2:
+                    if (!_engine.GetList(1))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    _engine.AdvancePc(1);
+                    break;
+
+                // ---------- Unify-mode opcodes (consume cells via _unifyPointer) ----------
+
+                case Opcode.UnifyVariableX:
+                {
+                    int target = BytecodeIO.ReadInt32(code, pc + 1);
+                    int ptr = _engine.UnifyPointer;
+                    if (_engine.WriteMode)
+                    {
+                        int idx = _engine.AllocateHeapUnbound();
+                        _engine.SetRegister(target, Cell.Ref(idx));
+                    }
+                    else
+                    {
+                        _engine.SetRegister(target, _engine.GetHeap(ptr));
+                    }
+                    _engine.SetUnifyPointer(ptr + 1);
+                    _engine.AdvancePc(5);
+                    break;
+                }
+
+                case Opcode.UnifyVariableY:
+                {
+                    int target = BytecodeIO.ReadInt32(code, pc + 1);
+                    int ptr = _engine.UnifyPointer;
+                    if (_engine.WriteMode)
+                    {
+                        int idx = _engine.AllocateHeapUnbound();
+                        _engine.SetY(target, Cell.Ref(idx));
+                    }
+                    else
+                    {
+                        _engine.SetY(target, _engine.GetHeap(ptr));
+                    }
+                    _engine.SetUnifyPointer(ptr + 1);
+                    _engine.AdvancePc(5);
+                    break;
+                }
+
+                case Opcode.UnifyValueX:
+                {
+                    int src = BytecodeIO.ReadInt32(code, pc + 1);
+                    int ptr = _engine.UnifyPointer;
+                    if (_engine.WriteMode)
+                    {
+                        int idx = _engine.AllocateHeap(1);
+                        _engine.SetHeap(idx, _engine.GetRegister(src));
+                    }
+                    else
+                    {
+                        if (!_engine.UnifyRegisterWithHeapAt(src, ptr))
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
+                    }
+                    _engine.SetUnifyPointer(ptr + 1);
+                    _engine.AdvancePc(5);
+                    break;
+                }
+
+                case Opcode.UnifyValueY:
+                {
+                    int src = BytecodeIO.ReadInt32(code, pc + 1);
+                    int ptr = _engine.UnifyPointer;
+                    if (_engine.WriteMode)
+                    {
+                        int idx = _engine.AllocateHeap(1);
+                        _engine.SetHeap(idx, _engine.GetY(src));
+                    }
+                    else
+                    {
+                        if (!_engine.UnifyPermanentWithHeapAt(src, ptr))
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
+                    }
+                    _engine.SetUnifyPointer(ptr + 1);
+                    _engine.AdvancePc(5);
+                    break;
+                }
+
+                case Opcode.UnifyConstant:
+                case Opcode.UnifyAtom:
+                {
+                    int atomId = BytecodeIO.ReadInt32(code, pc + 1);
+                    int ptr = _engine.UnifyPointer;
+                    Cell value = Cell.Atom(atomId);
+                    if (_engine.WriteMode)
+                    {
+                        int idx = _engine.AllocateHeap(1);
+                        _engine.SetHeap(idx, value);
+                    }
+                    else
+                    {
+                        if (!_engine.UnifyHeapWithCell(ptr, value))
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
+                    }
+                    _engine.SetUnifyPointer(ptr + 1);
+                    _engine.AdvancePc(5);
+                    break;
+                }
+
+                case Opcode.UnifyInteger:
+                {
+                    int intValue = BytecodeIO.ReadInt32(code, pc + 1);
+                    int ptr = _engine.UnifyPointer;
+                    Cell value = Cell.Int(intValue);
+                    if (_engine.WriteMode)
+                    {
+                        int idx = _engine.AllocateHeap(1);
+                        _engine.SetHeap(idx, value);
+                    }
+                    else
+                    {
+                        if (!_engine.UnifyHeapWithCell(ptr, value))
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
+                    }
+                    _engine.SetUnifyPointer(ptr + 1);
+                    _engine.AdvancePc(5);
+                    break;
+                }
+
+                case Opcode.UnifyNil:
+                {
+                    int ptr = _engine.UnifyPointer;
+                    Cell value = Cell.Atom(AtomTable.EmptyListId);
+                    if (_engine.WriteMode)
+                    {
+                        int idx = _engine.AllocateHeap(1);
+                        _engine.SetHeap(idx, value);
+                    }
+                    else
+                    {
+                        if (!_engine.UnifyHeapWithCell(ptr, value))
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
+                    }
+                    _engine.SetUnifyPointer(ptr + 1);
+                    _engine.AdvancePc(1);
+                    break;
+                }
+
+                case Opcode.UnifyVoid:
+                {
+                    int count = BytecodeIO.ReadInt32(code, pc + 1);
+                    int ptr = _engine.UnifyPointer;
+                    if (_engine.WriteMode)
+                    {
+                        for (int i = 0; i < count; i++)
+                            _engine.AllocateHeapUnbound();
+                    }
+                    _engine.SetUnifyPointer(ptr + count);
                     _engine.AdvancePc(5);
                     break;
                 }

@@ -50,12 +50,16 @@ public sealed class Engine
     // continuation point; they are set when the interpreter is hooked up. B0 is
     // the value of B at the most recent procedure entry — neck_cut uses it as the
     // implicit cut barrier so the call protocol can distinguish CPs created inside
-    // the current procedure from CPs that pre-existed it.
+    // the current procedure from CPs that pre-existed it. _writeMode and
+    // _unifyPointer track the read/write state set up by get_structure/get_list/
+    // put_structure/put_list and stepped through by the unify_* family.
     private int _e = -1;
     private int _b = -1;
     private int _b0 = -1;
     private int _p = -1;
     private int _cp = -1;
+    private bool _writeMode;
+    private int _unifyPointer;
 
     public Engine() : this(new EngineConfig()) { }
 
@@ -470,6 +474,140 @@ public sealed class Engine
         return Unify(permHeap, regHeap);
     }
 
+    /// <summary>Unifies <c>X[<paramref name="regIdx"/>]</c> with the heap cell at
+    /// <paramref name="heapIdx"/>. Used by <c>unify_value_x</c> in read mode.</summary>
+    public bool UnifyRegisterWithHeapAt(int regIdx, int heapIdx)
+    {
+        int regHeap = MaterializeRegister(regIdx);
+        return Unify(regHeap, heapIdx);
+    }
+
+    /// <summary>Unifies <c>Y[<paramref name="permSlot"/>]</c> with the heap cell at
+    /// <paramref name="heapIdx"/>. Used by <c>unify_value_y</c> in read mode.</summary>
+    public bool UnifyPermanentWithHeapAt(int permSlot, int heapIdx)
+    {
+        if (_e < 0)
+            throw new InvalidOperationException("No environment frame is active.");
+        int permHeap = MaterializePermanent(permSlot);
+        return Unify(permHeap, heapIdx);
+    }
+
+    /// <summary>Unifies the heap cell at <paramref name="heapIdx"/> with the immediate
+    /// <paramref name="value"/>. Used by <c>unify_constant/atom/integer/nil</c> in read
+    /// mode (the value is a literal from the bytecode).</summary>
+    public bool UnifyHeapWithCell(int heapIdx, Cell value)
+    {
+        int valueSlot = AllocateHeap(1);
+        _heap[valueSlot] = value;
+        return Unify(heapIdx, valueSlot);
+    }
+
+    // ----- Compound / list construction (write-mode entry points) -----
+
+    /// <summary>
+    /// Implements <c>put_structure</c>: allocates a STR cell pointing to a FUNCTOR cell
+    /// on the heap, stores a REF to the STR in <c>X[<paramref name="regIdx"/>]</c>, and
+    /// enters write mode with <see cref="UnifyPointer"/> at the position where the first
+    /// argument will be written.
+    /// </summary>
+    public void PutStructure(int functorId, int regIdx)
+    {
+        int h = AllocateHeap(2);
+        _heap[h] = Cell.Str(h + 1);
+        _heap[h + 1] = Cell.Functor(functorId);
+        _registers[regIdx] = Cell.Ref(h);
+        _writeMode = true;
+        _unifyPointer = h + 2;
+    }
+
+    /// <summary>
+    /// Implements <c>get_structure</c>: derefs <c>X[<paramref name="regIdx"/>]</c> and
+    /// either enters write mode (allocating a fresh compound and binding the unbound
+    /// variable to it) or read mode (when the dereferenced cell is a matching STR) or
+    /// fails. The <see cref="UnifyPointer"/> is positioned at the first argument cell.
+    /// </summary>
+    public bool GetStructure(int functorId, int regIdx)
+    {
+        Cell regCell = _registers[regIdx];
+        int finalAddr = -1;
+        Cell finalCell = regCell;
+        if (regCell.Tag == Tag.Ref)
+        {
+            finalAddr = Deref(regCell.AsHeapIndex);
+            finalCell = _heap[finalAddr];
+        }
+
+        if (finalCell.Tag == Tag.Ref)
+        {
+            // Unbound — write mode.
+            int h = AllocateHeap(2);
+            _heap[h] = Cell.Str(h + 1);
+            _heap[h + 1] = Cell.Functor(functorId);
+            Bind(finalAddr, Cell.Ref(h));
+            _writeMode = true;
+            _unifyPointer = h + 2;
+            return true;
+        }
+        if (finalCell.Tag == Tag.Str)
+        {
+            int functorIdx = finalCell.AsHeapIndex;
+            if (_heap[functorIdx].AsFunctorId != functorId)
+                return false;
+            _writeMode = false;
+            _unifyPointer = functorIdx + 1;
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Implements <c>put_list</c>: allocates a LIS cell pointing to the head position,
+    /// stores a REF in <c>X[<paramref name="regIdx"/>]</c>, and enters write mode with
+    /// <see cref="UnifyPointer"/> at the head position.
+    /// </summary>
+    public void PutList(int regIdx)
+    {
+        int h = AllocateHeap(1);
+        _heap[h] = Cell.Lis(h + 1);
+        _registers[regIdx] = Cell.Ref(h);
+        _writeMode = true;
+        _unifyPointer = h + 1;
+    }
+
+    /// <summary>
+    /// Implements <c>get_list</c>: enters write mode against an unbound argument, read
+    /// mode against a LIS, or fails. The <see cref="UnifyPointer"/> is positioned at
+    /// the head cell.
+    /// </summary>
+    public bool GetList(int regIdx)
+    {
+        Cell regCell = _registers[regIdx];
+        int finalAddr = -1;
+        Cell finalCell = regCell;
+        if (regCell.Tag == Tag.Ref)
+        {
+            finalAddr = Deref(regCell.AsHeapIndex);
+            finalCell = _heap[finalAddr];
+        }
+
+        if (finalCell.Tag == Tag.Ref)
+        {
+            int h = AllocateHeap(1);
+            _heap[h] = Cell.Lis(h + 1);
+            Bind(finalAddr, Cell.Ref(h));
+            _writeMode = true;
+            _unifyPointer = h + 1;
+            return true;
+        }
+        if (finalCell.Tag == Tag.Lis)
+        {
+            _writeMode = false;
+            _unifyPointer = finalCell.AsHeapIndex;
+            return true;
+        }
+        return false;
+    }
+
     private int MaterializeRegister(int regIdx)
     {
         Cell c = _registers[regIdx];
@@ -663,6 +801,17 @@ public sealed class Engine
     public int B0 => _b0;
     public int P => _p;
     public int Cp => _cp;
+
+    /// <summary>True after a get_structure/get_list against an unbound argument, or
+    /// after a put_structure/put_list — the interpreter is building a fresh compound
+    /// and subsequent <c>unify_*</c> opcodes write cells. False when an existing
+    /// compound on the heap is being matched against.</summary>
+    public bool WriteMode => _writeMode;
+
+    /// <summary>Heap index of the next cell <c>unify_*</c> will read (in read mode)
+    /// or write (in write mode). Advances by one per <c>unify_*</c> instruction
+    /// (or by <c>count</c> for <c>unify_void count</c>).</summary>
+    public int UnifyPointer => _unifyPointer;
 
     // ----- Deref -----
 
@@ -1074,6 +1223,15 @@ public sealed class Engine
     /// before any <c>call</c> or <c>execute</c> so the callee's <c>neck_cut</c> sees
     /// the right barrier.</summary>
     internal void SetB0(int b0) => _b0 = b0;
+
+    /// <summary>Sets the write/read mode flag directly. The interpreter writes this
+    /// from get_structure/put_structure/get_list/put_list. Exposed for tests that
+    /// exercise <c>unify_*</c> opcodes without first running an open instruction.</summary>
+    internal void SetWriteMode(bool writeMode) => _writeMode = writeMode;
+
+    /// <summary>Sets the unify pointer directly. Same usage pattern as
+    /// <see cref="SetWriteMode"/>.</summary>
+    internal void SetUnifyPointer(int idx) => _unifyPointer = idx;
 
     internal ReadOnlySpan<int> BindingTrailSpan => _bindingTrail.AsSpan(0, _bindingTrailTop);
 }
