@@ -22,6 +22,8 @@ public static class MetaBuiltins
             return;
 
         BuiltinsRegistry.Register("findall", 3, Findall);
+        BuiltinsRegistry.Register("bagof",   3, Bagof);
+        BuiltinsRegistry.Register("setof",   3, Setof);
     }
 
     /// <summary><c>findall(Template, Goal, List)</c> — runs <c>Goal</c> in a
@@ -37,28 +39,95 @@ public static class MetaBuiltins
     /// substitution step at the end works.</para></summary>
     public static bool Findall(Engine engine)
     {
+        var results = CollectSolutions(engine, stripExistentials: false);
+        return BindList(engine, results);
+    }
+
+    /// <summary><c>bagof(Template, Goal, Bag)</c> — like <c>findall/3</c> but
+    /// <em>fails</em> when <c>Goal</c> has no solutions instead of returning
+    /// <c>[]</c>. ISO bagof also splits the solution stream by free-variable
+    /// groupings; Phase 1 doesn't do that yet, so this implementation is
+    /// effectively "findall + fail-on-empty". The <c>Var^Goal</c> existential
+    /// quantifier is recognised and stripped (every var is implicitly
+    /// existential without grouping, so it's a no-op).</summary>
+    public static bool Bagof(Engine engine)
+    {
+        var results = CollectSolutions(engine, stripExistentials: true);
+        if (results.Count == 0) return false;
+        return BindList(engine, results);
+    }
+
+    /// <summary><c>setof(Template, Goal, Set)</c> — like <c>bagof/3</c> but
+    /// the result is sorted in standard order and duplicate terms are
+    /// removed. Like bagof, fails when no solutions exist. The sort runs
+    /// on the AST level via <see cref="TermStandardOrder.Compare"/> so the
+    /// outcome only depends on solution content, not on which heap
+    /// addresses the sub-engine happened to allocate.</summary>
+    public static bool Setof(Engine engine)
+    {
+        var results = CollectSolutions(engine, stripExistentials: true);
+        if (results.Count == 0) return false;
+
+        results.Sort(TermStandardOrder.Compare);
+
+        // Dedup adjacent equals in place.
+        int write = 1;
+        for (int read = 1; read < results.Count; read++)
+        {
+            if (TermStandardOrder.Compare(results[read], results[write - 1]) != 0)
+                results[write++] = results[read];
+        }
+        if (write < results.Count) results.RemoveRange(write, results.Count - write);
+
+        return BindList(engine, results);
+    }
+
+    /// <summary>Shared workhorse for findall/bagof/setof: reads Template and
+    /// Goal, optionally strips <c>^/2</c> existential wrappers from the
+    /// goal, runs it in a peer engine, and projects each solution's
+    /// bindings through Template. The result list is built by the
+    /// per-builtin tail logic (which decides what to do on empty).</summary>
+    private static List<Term> CollectSolutions(Engine engine, bool stripExistentials)
+    {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
-                "findall/3 requires the engine to be hosted by a PrologEngine. "
-                + "Engine.Host is "
+                "Collection meta-builtins require the engine to be hosted by "
+                + "a PrologEngine. Engine.Host is "
                 + (engine.Host?.GetType().Name ?? "null") + ".");
 
         Term template = MaterializeRegister(engine, 0);
         Term goal = MaterializeRegister(engine, 1);
+        if (stripExistentials) goal = StripExistentials(goal);
 
         var sub = host.CreateSubEngine();
         var results = new List<Term>();
         foreach (Solution sol in sub.QueryAll(goal))
             results.Add(Substitute(template, sol.Bindings));
+        return results;
+    }
 
-        // Build the result list bottom-up: [] for the empty case, otherwise
-        // a chain of ./2 cons cells.
+    /// <summary>Builds a Prolog list from the collected results and unifies
+    /// it with the caller's third argument.</summary>
+    private static bool BindList(Engine engine, IReadOnlyList<Term> results)
+    {
         Term listTerm = new AtomTerm("[]");
         for (int i = results.Count - 1; i >= 0; i--)
             listTerm = new CompoundTerm(".", new[] { results[i], listTerm });
 
         Cell listCell = Materializer.MaterializeAsCell(engine, listTerm);
         return engine.UnifyRegisterWithCell(2, listCell);
+    }
+
+    /// <summary>Strips any leading <c>^/2</c> existential wrappers off a goal.
+    /// <c>X^Y^Goal</c> reduces to <c>Goal</c>; the stripped variables become
+    /// ordinary free variables of the inner goal. Without solution grouping
+    /// this is purely a no-op syntactically — every variable is already
+    /// existential — but stripping makes ISO-compliant user code work.</summary>
+    private static Term StripExistentials(Term goal)
+    {
+        while (goal is CompoundTerm c && c.Functor == "^" && c.Args.Length == 2)
+            goal = c.Args[1];
+        return goal;
     }
 
     /// <summary>Reads the term currently bound in <c>X[<paramref name="regIdx"/>]</c>

@@ -67,6 +67,10 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("@=<",     2, StandardOrderBuiltins.TermLessOrEqual);
         BuiltinsRegistry.Register("@>=",     2, StandardOrderBuiltins.TermGreaterOrEqual);
 
+        // Sorting.
+        BuiltinsRegistry.Register("sort",  2, SortBuiltins.Sort);
+        BuiltinsRegistry.Register("msort", 2, SortBuiltins.Msort);
+
         // Control.
         BuiltinsRegistry.Register("fail", 0, ControlBuiltins.Fail);
         BuiltinsRegistry.Register("true", 0, ControlBuiltins.True);
