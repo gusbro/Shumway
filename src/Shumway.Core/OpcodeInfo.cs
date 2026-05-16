@@ -51,6 +51,7 @@ public static class OpcodeTable
         Set(Opcode.GetNil, 5, "get_nil", OperandKind.Reg);
         Set(Opcode.GetStructure, 9, "get_structure", OperandKind.Functor, OperandKind.Reg);
         Set(Opcode.GetList, 5, "get_list", OperandKind.Reg);
+        Set(Opcode.GetFloat, 9, "get_float", OperandKind.LiteralId, OperandKind.Reg);
 
         // Put instructions
         Set(Opcode.PutVariableX, 9, "put_variable_x", OperandKind.Reg, OperandKind.Reg);
@@ -63,6 +64,7 @@ public static class OpcodeTable
         Set(Opcode.PutNil, 5, "put_nil", OperandKind.Reg);
         Set(Opcode.PutStructure, 9, "put_structure", OperandKind.Functor, OperandKind.Reg);
         Set(Opcode.PutList, 5, "put_list", OperandKind.Reg);
+        Set(Opcode.PutFloat, 9, "put_float", OperandKind.LiteralId, OperandKind.Reg);
 
         // Unify instructions
         Set(Opcode.UnifyVariableX, 5, "unify_variable_x", OperandKind.Reg);
@@ -74,6 +76,7 @@ public static class OpcodeTable
         Set(Opcode.UnifyAtom, 5, "unify_atom", OperandKind.Atom);
         Set(Opcode.UnifyNil, 1, "unify_nil");
         Set(Opcode.UnifyVoid, 5, "unify_void", OperandKind.Count);
+        Set(Opcode.UnifyFloat, 5, "unify_float", OperandKind.LiteralId);
 
         // Control
         Set(Opcode.Allocate, 5, "allocate", OperandKind.Count);

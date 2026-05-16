@@ -51,6 +51,14 @@ public sealed class Engine
     /// or another sink for testing or for capturing program output.</summary>
     public System.IO.TextWriter Out { get; set; } = Console.Out;
 
+    /// <summary>Opaque back-reference to the embedding-layer object that owns
+    /// this engine (typically a <c>PrologEngine</c>). Engine itself doesn't
+    /// touch the value — it's read by meta-builtins like <c>findall/3</c>
+    /// that need to spawn a peer engine to run a sub-query. The Core layer
+    /// stays free of any embedding-layer types by keeping this typed as
+    /// <see cref="object"/>; callers downcast at the use site.</summary>
+    public object? Host { get; set; }
+
     // ----- Engine registers (per ADR-005) -----
     // -1 means "none yet" for E, B, and B0. P and CP track the program counter and
     // continuation point; they are set when the interpreter is hooked up. B0 is

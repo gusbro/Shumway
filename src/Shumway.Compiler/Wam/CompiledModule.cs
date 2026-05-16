@@ -11,8 +11,22 @@ public sealed class CompiledModule
 {
     public IReadOnlyList<CompiledPredicate> Predicates { get; }
 
-    public CompiledModule(IReadOnlyList<CompiledPredicate> predicates)
+    /// <summary>String literals referenced by <c>get_pstr</c> / <c>put_pstr</c>
+    /// instructions in this module's bytecode. Indexed by the literal id
+    /// baked into the bytecode operand.</summary>
+    public IReadOnlyList<string> StringLiterals { get; }
+
+    /// <summary>Float literals referenced by <c>get_float</c> / <c>put_float</c>
+    /// / <c>unify_float</c> instructions.</summary>
+    public IReadOnlyList<double> FloatLiterals { get; }
+
+    public CompiledModule(
+        IReadOnlyList<CompiledPredicate> predicates,
+        IReadOnlyList<string> stringLiterals,
+        IReadOnlyList<double> floatLiterals)
     {
         Predicates = predicates;
+        StringLiterals = stringLiterals;
+        FloatLiterals = floatLiterals;
     }
 }

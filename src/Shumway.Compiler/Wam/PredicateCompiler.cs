@@ -35,6 +35,12 @@ namespace Shumway.Compiler.Wam;
 public sealed class PredicateCompiler
 {
     public CompiledPredicate Compile(IReadOnlyList<Clause> clauses)
+        => Compile(clauses, new LiteralPool<string>(), new LiteralPool<double>());
+
+    public CompiledPredicate Compile(
+        IReadOnlyList<Clause> clauses,
+        LiteralPool<string> stringLiterals,
+        LiteralPool<double> floatLiterals)
     {
         ArgumentNullException.ThrowIfNull(clauses);
         if (clauses.Count == 0)
@@ -43,7 +49,7 @@ public sealed class PredicateCompiler
         // Compile each clause independently.
         var compiledClauses = new List<CompiledClause>(clauses.Count);
         var compiler = new ClauseCompiler();
-        foreach (var c in clauses) compiledClauses.Add(compiler.Compile(c));
+        foreach (var c in clauses) compiledClauses.Add(compiler.Compile(c, stringLiterals, floatLiterals));
 
         // Verify all clauses share the same functor signature.
         int functorId = compiledClauses[0].FunctorId;

@@ -53,9 +53,21 @@ namespace Shumway.Compiler.Wam;
 /// </summary>
 public sealed class ClauseCompiler
 {
+    private LiteralPool<string> _stringLiterals = new();
+    private LiteralPool<double> _floatLiterals = new();
+
+
     public CompiledClause Compile(Clause clause)
+        => Compile(clause, new LiteralPool<string>(), new LiteralPool<double>());
+
+    public CompiledClause Compile(
+        Clause clause,
+        LiteralPool<string> stringLiterals,
+        LiteralPool<double> floatLiterals)
     {
         ArgumentNullException.ThrowIfNull(clause);
+        _stringLiterals = stringLiterals;
+        _floatLiterals = floatLiterals;
 
         switch (clause.Kind)
         {
@@ -407,12 +419,12 @@ public sealed class ClauseCompiler
                 s.Pending.Enqueue((argSlot, c));
                 break;
 
-            case FloatTerm:
-                throw new NotSupportedException(
-                    "Float head arguments are not yet supported.");
-            case StringTerm:
-                throw new NotSupportedException(
-                    "String head arguments are not yet supported.");
+            case FloatTerm f:
+                s.Emitter.EmitGetFloat(_floatLiterals.Intern(f.Value), argSlot);
+                break;
+            case StringTerm str:
+                s.Emitter.EmitGetPstr(_stringLiterals.Intern(str.Content), argSlot);
+                break;
             default:
                 throw new NotSupportedException(
                     $"Head argument type {arg.GetType().Name} is not supported.");
@@ -429,14 +441,57 @@ public sealed class ClauseCompiler
         {
             var (slot, comp) = s.Pending.Dequeue();
             bool isList = comp.Functor == "." && comp.Args.Length == 2;
+
+            var multiCellTemps = PreEmitMultiCellLiterals(s, comp.Args);
+
             if (isList)
                 s.Emitter.EmitGetList(slot);
             else
                 s.Emitter.EmitGetStructure(InternFunctor(comp.Functor, comp.Args.Length), slot);
 
-            foreach (Term sub in comp.Args)
-                CompileUnifyArg(s, sub);
+            for (int i = 0; i < comp.Args.Length; i++)
+            {
+                if (multiCellTemps.TryGetValue(i, out int t))
+                    s.Emitter.EmitUnifyValueX(t);
+                else
+                    CompileUnifyArg(s, comp.Args[i]);
+            }
         }
+    }
+
+    /// <summary>Pre-emits <c>put_float</c> / <c>put_pstr</c> for any float or
+    /// string literal among the sub-args, allocating an anonymous X slot for
+    /// each. Returns a map from sub-arg index to that slot; the caller emits
+    /// <c>unify_value_x</c> against the slot in lieu of the inline <c>unify_*</c>.
+    ///
+    /// <para>Multi-cell literals can't live inline inside a compound being built
+    /// in write mode: they'd corrupt the contiguous arg layout and break the
+    /// <c>unify_pointer == heap_top</c> invariant for any subsequent
+    /// <c>unify_*</c>. By allocating them ahead of the <c>put_structure</c> we
+    /// keep arg cells one-each and let the compound just reference the literal
+    /// via the temp register.</para></summary>
+    private Dictionary<int, int> PreEmitMultiCellLiterals(CompileState s, Term[] args)
+    {
+        Dictionary<int, int>? temps = null;
+        for (int i = 0; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case FloatTerm f:
+                    temps ??= new Dictionary<int, int>();
+                    int floatSlot = s.Xs.AllocateAnonymousSlot();
+                    s.Emitter.EmitPutFloat(_floatLiterals.Intern(f.Value), floatSlot);
+                    temps[i] = floatSlot;
+                    break;
+                case StringTerm str:
+                    temps ??= new Dictionary<int, int>();
+                    int strSlot = s.Xs.AllocateAnonymousSlot();
+                    s.Emitter.EmitPutPstr(_stringLiterals.Intern(str.Content), strSlot);
+                    temps[i] = strSlot;
+                    break;
+            }
+        }
+        return temps ?? new Dictionary<int, int>();
     }
 
     private void CompileUnifyArg(CompileState s, Term arg)
@@ -486,12 +541,10 @@ public sealed class ClauseCompiler
                 s.Pending.Enqueue((temp, c));
                 break;
 
-            case FloatTerm:
-                throw new NotSupportedException(
-                    "Float arguments inside compound terms are not yet supported.");
-            case StringTerm:
-                throw new NotSupportedException(
-                    "String arguments inside compound terms are not yet supported.");
+            // FloatTerm and StringTerm are handled upstream by
+            // PreEmitMultiCellLiterals — they can't live inline as compound
+            // sub-args in write mode without corrupting the heap layout. If
+            // one slips through to here it's a bug in the caller.
             default:
                 throw new NotSupportedException(
                     $"Unsupported sub-argument type {arg.GetType().Name}.");
@@ -619,6 +672,9 @@ public sealed class ClauseCompiler
 
             case CompoundTerm c:
                 bool isList = c.Functor == "." && c.Args.Length == 2;
+                // Float / string sub-args go through put_*-to-temp + unify_value_x;
+                // see PreEmitMultiCellLiterals for why they can't live inline.
+                var multiCellTemps = PreEmitMultiCellLiterals(s, c.Args);
                 if (isList)
                     s.Emitter.EmitPutList(argSlot);
                 else
@@ -626,16 +682,21 @@ public sealed class ClauseCompiler
                 // Sub-args run in write mode; the same CompileUnifyArg dispatcher
                 // handles them. Nested compounds are deferred onto the pending
                 // queue and drained by DrainPendingCompounds.
-                foreach (Term sub in c.Args)
-                    CompileUnifyArg(s, sub);
+                for (int i = 0; i < c.Args.Length; i++)
+                {
+                    if (multiCellTemps.TryGetValue(i, out int t))
+                        s.Emitter.EmitUnifyValueX(t);
+                    else
+                        CompileUnifyArg(s, c.Args[i]);
+                }
                 break;
 
-            case FloatTerm:
-                throw new NotSupportedException(
-                    "Float body arguments are not yet supported.");
-            case StringTerm:
-                throw new NotSupportedException(
-                    "String body arguments are not yet supported.");
+            case FloatTerm f:
+                s.Emitter.EmitPutFloat(_floatLiterals.Intern(f.Value), argSlot);
+                break;
+            case StringTerm str:
+                s.Emitter.EmitPutPstr(_stringLiterals.Intern(str.Content), argSlot);
+                break;
             default:
                 throw new NotSupportedException(
                     $"Body argument type {arg.GetType().Name} is not supported.");

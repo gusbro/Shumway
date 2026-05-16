@@ -147,6 +147,20 @@ public sealed class BytecodeEmitter
         EmitInt(argSlot);
     }
 
+    public void EmitGetFloat(int floatLitId, int argSlot)
+    {
+        _bytes.Add((byte)Opcode.GetFloat);
+        EmitInt(floatLitId);
+        EmitInt(argSlot);
+    }
+
+    public void EmitGetPstr(int stringLitId, int argSlot)
+    {
+        _bytes.Add((byte)Opcode.GetPstr);
+        EmitInt(stringLitId);
+        EmitInt(argSlot);
+    }
+
     public void EmitGetVariableY(int destPermSlot, int argSlot)
     {
         _bytes.Add((byte)Opcode.GetVariableY);
@@ -207,6 +221,20 @@ public sealed class BytecodeEmitter
     public void EmitPutList(int argSlot)
     {
         _bytes.Add((byte)Opcode.PutList);
+        EmitInt(argSlot);
+    }
+
+    public void EmitPutFloat(int floatLitId, int argSlot)
+    {
+        _bytes.Add((byte)Opcode.PutFloat);
+        EmitInt(floatLitId);
+        EmitInt(argSlot);
+    }
+
+    public void EmitPutPstr(int stringLitId, int argSlot)
+    {
+        _bytes.Add((byte)Opcode.PutPstr);
+        EmitInt(stringLitId);
         EmitInt(argSlot);
     }
 
@@ -274,6 +302,12 @@ public sealed class BytecodeEmitter
     {
         _bytes.Add((byte)Opcode.UnifyVoid);
         EmitInt(count);
+    }
+
+    public void EmitUnifyFloat(int floatLitId)
+    {
+        _bytes.Add((byte)Opcode.UnifyFloat);
+        EmitInt(floatLitId);
     }
 
     // ---------- Helpers ----------

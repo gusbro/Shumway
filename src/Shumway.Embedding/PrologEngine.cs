@@ -38,6 +38,47 @@ public sealed class PrologEngine
         // The standard builtins (=/2, ==/2, etc.) need to be registered before
         // the WAM compiler can recognise them. EnsureRegistered is idempotent.
         Shumway.Builtins.StandardBuiltins.EnsureRegistered();
+        // Meta-builtins (findall/3 etc.) live in the Embedding layer because
+        // they spawn sub-PrologEngines — Builtins can't reference Embedding.
+        MetaBuiltins.EnsureRegistered();
+    }
+
+    /// <summary>Builds a peer <see cref="PrologEngine"/> sharing this engine's
+    /// consulted source and operator declarations. Used by meta-builtins like
+    /// <c>findall/3</c> that need to enumerate every solution of a goal
+    /// independently of the calling engine's choice-point stack.</summary>
+    internal PrologEngine CreateSubEngine()
+    {
+        var sub = new PrologEngine
+        {
+            _accumulatedSource = _accumulatedSource,
+            Out = Out,
+        };
+        // _operators is read-only after default init in our current usage; we
+        // share the table reference rather than deep-copying. If a sub-engine
+        // ever needs to mutate operators independently we'll switch to a copy.
+        // The default table is the same across instances so this is a no-op
+        // for now — kept explicit for when the sub-engine path becomes lossy.
+        return sub;
+    }
+
+    /// <summary>Runs an AST goal through the same machinery as the string
+    /// form, yielding each solution in turn. The free variables of
+    /// <paramref name="goal"/> show up in <see cref="Solution.Bindings"/>
+    /// under the names they carry in the AST (synthetic <c>_GN</c> names if
+    /// the term came from <see cref="TermReader.Materialize"/>).</summary>
+    public IEnumerable<Solution> QueryAll(Term goal)
+    {
+        ArgumentNullException.ThrowIfNull(goal);
+
+        var (program, varNames, varHeapIndices, engine, interp) = SetupQueryFromTerm(goal);
+
+        var result = interp.Run(program, 0);
+        while (result == InterpreterResult.Halted)
+        {
+            yield return BuildSolution(varNames, varHeapIndices, engine);
+            result = interp.Backtrack(program);
+        }
     }
 
     /// <summary>Loads Prolog source. Multiple calls accumulate — later consults
@@ -108,7 +149,21 @@ public sealed class PrologEngine
     {
         var queryParser = new Parser(new Lexer(queryText), _operators);
         Term queryTerm = queryParser.ReadClauseTerm();
+        return SetupQueryFromTerm(queryTerm);
+    }
 
+    /// <summary>Shared workhorse used by both the string-parsing
+    /// <see cref="SetupQuery(string)"/> and the Term-level
+    /// <see cref="QueryAll(Term)"/>: wraps the goal in a synthetic clause
+    /// whose head captures every free variable as an argument, compiles +
+    /// links the program, primes X[0..n-1] with fresh heap unbounds, and
+    /// hands the lot back to the caller's run/backtrack iterator.</summary>
+    private (byte[] Program,
+             List<string> VarNames,
+             int[] VarHeapIndices,
+             Engine Engine,
+             BytecodeInterpreter Interp) SetupQueryFromTerm(Term queryTerm)
+    {
         var varNames = new List<string>();
         var seen = new HashSet<string>();
         CollectVariables(queryTerm, varNames, seen);
@@ -154,8 +209,8 @@ public sealed class PrologEngine
         Array.Copy(prefix, program, prefix.Length);
         Array.Copy(linkResult.Bytecode, 0, program, prefix.Length, linkResult.Bytecode.Length);
 
-        var engine = new Engine { Out = Out };
-        var interp = new BytecodeInterpreter(engine);
+        var engine = new Engine { Out = Out, Host = this };
+        var interp = new BytecodeInterpreter(engine, module.StringLiterals, module.FloatLiterals);
 
         int[] varHeapIndices = new int[varNames.Count];
         for (int i = 0; i < varNames.Count; i++)

@@ -123,9 +123,15 @@ public class ClauseCompilerTests
     // ---------- Unsupported head arg types ----------
 
     [Fact]
-    public void HeadArg_Float_ThrowsForNow()
+    public void HeadArg_Float_EmitsGetFloat()
     {
-        Assert.Throws<NotSupportedException>(() => CompileSource("p(3.14)."));
+        // Float head args go through the new get_float opcode + the module's
+        // float literal pool — see ArithmeticTests for the runtime side.
+        var cc = CompileSource("p(3.14).");
+        var d = Disassemble(cc.Bytecode);
+        Assert.Equal(Opcode.GetFloat, d[0].Opcode);
+        Assert.Equal(0, d[0].Operands[1]);            // arg slot X[0]
+        Assert.Equal(Opcode.Proceed, d[1].Opcode);
     }
 
     // ---------- End-to-end: parse → compile → run ----------

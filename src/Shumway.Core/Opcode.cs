@@ -35,6 +35,7 @@ public enum Opcode : byte
     GetNil = 0x08,
     GetStructure = 0x09,
     GetList = 0x0A,
+    GetFloat = 0x0B,
 
     // Put instructions
     PutVariableX = 0x20,
@@ -47,6 +48,7 @@ public enum Opcode : byte
     PutNil = 0x27,
     PutStructure = 0x28,
     PutList = 0x29,
+    PutFloat = 0x2A,
 
     // Unify instructions (read/write-mode-sensitive)
     UnifyVariableX = 0x40,
@@ -58,6 +60,7 @@ public enum Opcode : byte
     UnifyAtom = 0x46,
     UnifyNil = 0x47,
     UnifyVoid = 0x48,
+    UnifyFloat = 0x49,
 
     // Control
     Allocate = 0x50,

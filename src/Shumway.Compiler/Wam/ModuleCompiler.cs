@@ -43,12 +43,15 @@ public sealed class ModuleCompiler
             list.Add(clause);
         }
 
+        var stringLiterals = new LiteralPool<string>();
+        var floatLiterals = new LiteralPool<double>();
+
         var predicates = new List<CompiledPredicate>(order.Count);
         var predicateCompiler = new PredicateCompiler();
         foreach (int fid in order)
-            predicates.Add(predicateCompiler.Compile(groups[fid]));
+            predicates.Add(predicateCompiler.Compile(groups[fid], stringLiterals, floatLiterals));
 
-        return new CompiledModule(predicates);
+        return new CompiledModule(predicates, stringLiterals.Snapshot(), floatLiterals.Snapshot());
     }
 
     private static int GetFunctorId(Clause clause)

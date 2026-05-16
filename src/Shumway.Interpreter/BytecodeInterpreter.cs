@@ -23,27 +23,39 @@ public sealed class BytecodeInterpreter
 {
     private readonly Engine _engine;
     private readonly IReadOnlyList<string> _stringLiterals;
+    private readonly IReadOnlyList<double> _floatLiterals;
 
     public BytecodeInterpreter(Engine engine)
-        : this(engine, Array.Empty<string>())
+        : this(engine, Array.Empty<string>(), Array.Empty<double>())
     {
     }
 
-    /// <summary>Constructs an interpreter with a string-literal pool. The pool is the
-    /// runtime resolution of bytecode <c>LiteralId</c> operands — currently the only
-    /// consumers are the PSTR opcodes (<c>get_pstr</c>, <c>put_pstr</c>) which look up
-    /// the literal text by id. Bundles will provide this pool at load time; in
-    /// hand-written tests it's passed directly to this constructor.</summary>
     public BytecodeInterpreter(Engine engine, IReadOnlyList<string> stringLiterals)
+        : this(engine, stringLiterals, Array.Empty<double>())
+    {
+    }
+
+    /// <summary>Constructs an interpreter with both literal pools. PSTR opcodes
+    /// (<c>get_pstr</c>, <c>put_pstr</c>) look up strings by id; the float-
+    /// literal opcodes (<c>get_float</c>, <c>put_float</c>, <c>unify_float</c>)
+    /// look up doubles by id. Bundles provide both pools at load time; in
+    /// tests, they're passed directly.</summary>
+    public BytecodeInterpreter(
+        Engine engine,
+        IReadOnlyList<string> stringLiterals,
+        IReadOnlyList<double> floatLiterals)
     {
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(stringLiterals);
+        ArgumentNullException.ThrowIfNull(floatLiterals);
         _engine = engine;
         _stringLiterals = stringLiterals;
+        _floatLiterals = floatLiterals;
     }
 
     public Engine Engine => _engine;
     public IReadOnlyList<string> StringLiterals => _stringLiterals;
+    public IReadOnlyList<double> FloatLiterals => _floatLiterals;
 
     /// <summary>
     /// Runs <paramref name="code"/> starting at <paramref name="startPc"/> until the
@@ -671,6 +683,60 @@ public sealed class BytecodeInterpreter
                     break;
                 }
 
+                // ---------- Float literal opcodes ----------
+
+                case Opcode.GetFloat:
+                {
+                    int literalId = BytecodeIO.ReadInt32(code, pc + 1);
+                    int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                    int headerIdx = _engine.MakeFloat(ResolveFloatLiteral(literalId));
+                    if (!_engine.UnifyRegisterWithHeapAt(arg, headerIdx))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    _engine.AdvancePc(9);
+                    break;
+                }
+
+                case Opcode.PutFloat:
+                {
+                    int literalId = BytecodeIO.ReadInt32(code, pc + 1);
+                    int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                    int headerIdx = _engine.MakeFloat(ResolveFloatLiteral(literalId));
+                    _engine.SetRegister(arg, Cell.Ref(headerIdx));
+                    _engine.AdvancePc(9);
+                    break;
+                }
+
+                case Opcode.UnifyFloat:
+                {
+                    // The compiler doesn't emit this opcode — float sub-args
+                    // are routed through put_float-to-temp + unify_value_x
+                    // by PreEmitMultiCellLiterals so they don't disrupt the
+                    // unify_pointer == heap_top invariant. The dispatch is
+                    // kept for completeness in read mode (write mode can't
+                    // honour the invariant for a 2-cell value inline).
+                    int literalId = BytecodeIO.ReadInt32(code, pc + 1);
+                    int ptr = _engine.UnifyPointer;
+                    double value = ResolveFloatLiteral(literalId);
+                    int idx = _engine.MakeFloat(value);
+                    if (_engine.WriteMode)
+                    {
+                        throw new NotSupportedException(
+                            "unify_float in write mode would corrupt the compound's "
+                            + "arg layout — emit put_float + unify_value_x instead.");
+                    }
+                    if (!_engine.UnifyHeapWithCell(ptr, Cell.Ref(idx)))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    _engine.SetUnifyPointer(ptr + 1);
+                    _engine.AdvancePc(5);
+                    break;
+                }
+
                 default:
                     throw new NotImplementedException(
                         $"Opcode 0x{opByte:X2} ({(Opcode)opByte}) is not implemented yet. " +
@@ -704,5 +770,14 @@ public sealed class BytecodeInterpreter
                 $"String literal id {literalId} is out of range [0, {_stringLiterals.Count}). " +
                 "Pass the literal pool to the BytecodeInterpreter constructor.");
         return _stringLiterals[literalId];
+    }
+
+    private double ResolveFloatLiteral(int literalId)
+    {
+        if (literalId < 0 || literalId >= _floatLiterals.Count)
+            throw new InvalidOperationException(
+                $"Float literal id {literalId} is out of range [0, {_floatLiterals.Count}). " +
+                "Pass the float literal pool to the BytecodeInterpreter constructor.");
+        return _floatLiterals[literalId];
     }
 }

@@ -30,9 +30,7 @@ public class ArithmeticTests
         Assert.Equal(Int(-3), sol["X"]);
     }
 
-    [Fact(Skip = "Float literals in source aren't compiled yet — Phase 2 will "
-                + "introduce a put_float opcode (or a float literal pool) so the "
-                + "compiler can materialise a FloatTerm into a heap Float cell.")]
+    [Fact]
     public void Is_FloatLiteral()
     {
         var engine = new PrologEngine();
@@ -143,7 +141,7 @@ public class ArithmeticTests
         Assert.Equal(Int(7), engine.Query("X is max(3, 7).")["X"]);
     }
 
-    [Fact(Skip = "Same float-literal-in-source limitation as Is_FloatLiteral.")]
+    [Fact]
     public void Is_FloatPromotion()
     {
         var engine = new PrologEngine();
@@ -209,8 +207,8 @@ public class ArithmeticTests
         var engine = new PrologEngine();
         Assert.True(engine.Query("1 + 2 =:= 3.").Success);
         Assert.False(engine.Query("1 + 2 =:= 4.").Success);
-        // Cross-type equality (3 =:= 3.0) needs float literals in source —
-        // covered separately once the put_float opcode lands.
+        // Cross-type equality: 3 =:= 3.0 should be true (numeric equality).
+        Assert.True(engine.Query("3 =:= 3.0.").Success);
     }
 
     [Fact]
