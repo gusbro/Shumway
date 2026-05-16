@@ -10,11 +10,11 @@ namespace Shumway.Interpreter;
 ///
 /// <para>Currently implemented: control flow (halt/proceed/call/execute/allocate/
 /// deallocate), the atomic get/put family (variable, value, constant, integer, atom,
-/// nil — both X and Y forms), the A1/A2 consolidations, and the
+/// nil — both X and Y forms), the A1/A2 consolidations, the
 /// <c>try_me_else</c>/<c>retry_me_else</c>/<c>trust_me</c> choice-point family with
-/// backtrack-on-failure. Compound (STR/LIS) and unify-mode opcodes are still
-/// <see cref="NotImplementedException"/>; cut and indexed try/retry/trust land in
-/// later chunks.</para>
+/// backtrack-on-failure, and cut (<c>neck_cut</c>/<c>get_level</c>/<c>cut</c>).
+/// Compound (STR/LIS) and unify-mode opcodes are still
+/// <see cref="NotImplementedException"/>; indexed try/retry/trust land with 5e.</para>
 /// </summary>
 public sealed class BytecodeInterpreter
 {
@@ -74,6 +74,7 @@ public sealed class BytecodeInterpreter
                     // pc + 5 holds num_live_perms (informational, used by env trimming
                     // in a future chunk). Skip for now.
                     _engine.SetCp(pc + OpcodeTable.Get(Opcode.Call).Size);
+                    _engine.SetB0(_engine.B);   // capture _b at procedure entry for neck_cut
                     _engine.SetPc(target);
                     break;
                 }
@@ -81,7 +82,8 @@ public sealed class BytecodeInterpreter
                 case Opcode.Execute:
                 {
                     int target = BytecodeIO.ReadInt32(code, pc + 1);
-                    _engine.SetPc(target);     // tail call — CP is inherited
+                    _engine.SetB0(_engine.B);   // tail call still enters a new procedure
+                    _engine.SetPc(target);      // CP is inherited; only B0 needs refreshing
                     break;
                 }
 
@@ -121,6 +123,30 @@ public sealed class BytecodeInterpreter
                     _engine.TrustMe();
                     _engine.AdvancePc(1);
                     break;
+
+                // ---------- Cut opcodes ----------
+
+                case Opcode.NeckCut:
+                    _engine.NeckCut();
+                    _engine.AdvancePc(1);
+                    break;
+
+                case Opcode.GetLevel:
+                {
+                    int slot = BytecodeIO.ReadInt32(code, pc + 1);
+                    _engine.GetLevel(slot);
+                    _engine.AdvancePc(5);
+                    break;
+                }
+
+                case Opcode.Cut:
+                {
+                    int slot = BytecodeIO.ReadInt32(code, pc + 1);
+                    int barrier = (int)_engine.GetY(slot).Data;
+                    _engine.Cut(barrier);
+                    _engine.AdvancePc(5);
+                    break;
+                }
 
                 // ---------- Get instructions ----------
 

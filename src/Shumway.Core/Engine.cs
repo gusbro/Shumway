@@ -46,10 +46,14 @@ public sealed class Engine
     private int _extraTrailTop;
 
     // ----- Engine registers (per ADR-005) -----
-    // -1 means "none yet" for E and B. P and CP track the program counter and
-    // continuation point; they are set when the interpreter is hooked up.
+    // -1 means "none yet" for E, B, and B0. P and CP track the program counter and
+    // continuation point; they are set when the interpreter is hooked up. B0 is
+    // the value of B at the most recent procedure entry — neck_cut uses it as the
+    // implicit cut barrier so the call protocol can distinguish CPs created inside
+    // the current procedure from CPs that pre-existed it.
     private int _e = -1;
     private int _b = -1;
+    private int _b0 = -1;
     private int _p = -1;
     private int _cp = -1;
 
@@ -365,6 +369,14 @@ public sealed class Engine
     public void GetLevel(int slot) => SetY(slot, new Cell(_b));
 
     /// <summary>
+    /// Cut back to <see cref="B0"/> — the value of <c>B</c> recorded at the most recent
+    /// procedure entry. This is the implicit barrier used by the WAM <c>neck_cut</c>
+    /// instruction. The interpreter's <c>call</c> and <c>execute</c> opcodes maintain
+    /// <c>B0</c> by writing <c>_b</c> into it before transferring control to the callee.
+    /// </summary>
+    public void NeckCut() => Cut(_b0);
+
+    /// <summary>
     /// Single-pass interleaved trail compaction (Warren's algorithm extended to the extra
     /// trail). Both trails are walked in temporal order: for each surviving extra entry,
     /// its <see cref="ExtraTrailEntry.BindingTrailMarker"/> is rewritten to the index it
@@ -648,6 +660,7 @@ public sealed class Engine
 
     public int E => _e;
     public int B => _b;
+    public int B0 => _b0;
     public int P => _p;
     public int Cp => _cp;
 
@@ -1056,6 +1069,11 @@ public sealed class Engine
     /// <summary>Advances <c>PC</c> by <paramref name="delta"/> bytes. Used by the
     /// interpreter to step past straight-line instructions.</summary>
     internal void AdvancePc(int delta) => _p += delta;
+
+    /// <summary>Sets <c>B0</c> directly. The interpreter writes <c>_b</c> into this
+    /// before any <c>call</c> or <c>execute</c> so the callee's <c>neck_cut</c> sees
+    /// the right barrier.</summary>
+    internal void SetB0(int b0) => _b0 = b0;
 
     internal ReadOnlySpan<int> BindingTrailSpan => _bindingTrail.AsSpan(0, _bindingTrailTop);
 }
