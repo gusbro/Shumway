@@ -8,11 +8,11 @@ namespace Shumway.Interpreter;
 /// actual work. The opcode encoding is defined in ADR-006 and the per-instruction
 /// semantics in docs/design/wam-instruction-set.md.
 ///
-/// <para>This MVP implements only the control-flow subset: <c>halt</c>, <c>proceed</c>,
-/// <c>call</c>, <c>execute</c>, <c>allocate</c>, <c>deallocate</c>, plus the
-/// <c>reserved_invalid</c> canary. Any other opcode throws <see cref="NotImplementedException"/>
-/// — they land in later chunks (get/put/unify, choice points, cut, etc.). This is enough
-/// to drive a hand-crafted "call-and-return" bytecode end-to-end.</para>
+/// <para>Currently implemented: control flow (halt/proceed/call/execute/allocate/
+/// deallocate), the atomic get/put family (variable, value, constant, integer, atom,
+/// nil — both X and Y forms), and the A1/A2 consolidations. Compound (STR/LIS) and
+/// unify-mode opcodes are still <see cref="NotImplementedException"/>; choice points
+/// and cut land in later chunks.</para>
 /// </summary>
 public sealed class BytecodeInterpreter
 {
@@ -96,9 +96,186 @@ public sealed class BytecodeInterpreter
                     _engine.AdvancePc(OpcodeTable.Get(Opcode.Deallocate).Size);
                     break;
 
+                // ---------- Get instructions ----------
+
+                case Opcode.GetVariableX:
+                {
+                    int dest = BytecodeIO.ReadInt32(code, pc + 1);
+                    int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                    _engine.SetRegister(dest, _engine.GetRegister(arg));
+                    _engine.AdvancePc(9);
+                    break;
+                }
+
+                case Opcode.GetVariableY:
+                {
+                    int dest = BytecodeIO.ReadInt32(code, pc + 1);
+                    int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                    _engine.SetY(dest, _engine.GetRegister(arg));
+                    _engine.AdvancePc(9);
+                    break;
+                }
+
+                case Opcode.GetValueX:
+                {
+                    int src = BytecodeIO.ReadInt32(code, pc + 1);
+                    int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                    if (!_engine.UnifyRegisters(src, arg))
+                        return InterpreterResult.Failed;
+                    _engine.AdvancePc(9);
+                    break;
+                }
+
+                case Opcode.GetValueY:
+                {
+                    int src = BytecodeIO.ReadInt32(code, pc + 1);
+                    int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                    if (!_engine.UnifyPermanentWithRegister(src, arg))
+                        return InterpreterResult.Failed;
+                    _engine.AdvancePc(9);
+                    break;
+                }
+
+                case Opcode.GetConstant:
+                case Opcode.GetAtom:
+                {
+                    int atomId = BytecodeIO.ReadInt32(code, pc + 1);
+                    int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                    if (!_engine.UnifyRegisterWithCell(arg, Cell.Atom(atomId)))
+                        return InterpreterResult.Failed;
+                    _engine.AdvancePc(9);
+                    break;
+                }
+
+                case Opcode.GetInteger:
+                {
+                    int value = BytecodeIO.ReadInt32(code, pc + 1);
+                    int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                    if (!_engine.UnifyRegisterWithCell(arg, Cell.Int(value)))
+                        return InterpreterResult.Failed;
+                    _engine.AdvancePc(9);
+                    break;
+                }
+
+                case Opcode.GetNil:
+                {
+                    int arg = BytecodeIO.ReadInt32(code, pc + 1);
+                    if (!_engine.UnifyRegisterWithCell(arg, Cell.Atom(AtomTable.EmptyListId)))
+                        return InterpreterResult.Failed;
+                    _engine.AdvancePc(5);
+                    break;
+                }
+
+                // ---------- Put instructions ----------
+
+                case Opcode.PutVariableX:
+                {
+                    int dest = BytecodeIO.ReadInt32(code, pc + 1);
+                    int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                    int heapIdx = _engine.AllocateHeapUnbound();
+                    Cell refCell = Cell.Ref(heapIdx);
+                    _engine.SetRegister(dest, refCell);
+                    _engine.SetRegister(arg, refCell);
+                    _engine.AdvancePc(9);
+                    break;
+                }
+
+                case Opcode.PutVariableY:
+                {
+                    int dest = BytecodeIO.ReadInt32(code, pc + 1);
+                    int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                    int heapIdx = _engine.AllocateHeapUnbound();
+                    Cell refCell = Cell.Ref(heapIdx);
+                    _engine.SetY(dest, refCell);
+                    _engine.SetRegister(arg, refCell);
+                    _engine.AdvancePc(9);
+                    break;
+                }
+
+                case Opcode.PutValueX:
+                {
+                    int src = BytecodeIO.ReadInt32(code, pc + 1);
+                    int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                    _engine.SetRegister(arg, _engine.GetRegister(src));
+                    _engine.AdvancePc(9);
+                    break;
+                }
+
+                case Opcode.PutValueY:
+                {
+                    int src = BytecodeIO.ReadInt32(code, pc + 1);
+                    int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                    _engine.SetRegister(arg, _engine.GetY(src));
+                    _engine.AdvancePc(9);
+                    break;
+                }
+
+                case Opcode.PutConstant:
+                case Opcode.PutAtom:
+                {
+                    int atomId = BytecodeIO.ReadInt32(code, pc + 1);
+                    int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                    _engine.SetRegister(arg, Cell.Atom(atomId));
+                    _engine.AdvancePc(9);
+                    break;
+                }
+
+                case Opcode.PutInteger:
+                {
+                    int value = BytecodeIO.ReadInt32(code, pc + 1);
+                    int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                    _engine.SetRegister(arg, Cell.Int(value));
+                    _engine.AdvancePc(9);
+                    break;
+                }
+
+                case Opcode.PutNil:
+                {
+                    int arg = BytecodeIO.ReadInt32(code, pc + 1);
+                    _engine.SetRegister(arg, Cell.Atom(AtomTable.EmptyListId));
+                    _engine.AdvancePc(5);
+                    break;
+                }
+
+                // ---------- Consolidated A1/A2 specialisations ----------
+
+                case Opcode.GetConstantA1:
+                {
+                    int atomId = BytecodeIO.ReadInt32(code, pc + 1);
+                    if (!_engine.UnifyRegisterWithCell(0, Cell.Atom(atomId)))
+                        return InterpreterResult.Failed;
+                    _engine.AdvancePc(5);
+                    break;
+                }
+
+                case Opcode.GetConstantA2:
+                {
+                    int atomId = BytecodeIO.ReadInt32(code, pc + 1);
+                    if (!_engine.UnifyRegisterWithCell(1, Cell.Atom(atomId)))
+                        return InterpreterResult.Failed;
+                    _engine.AdvancePc(5);
+                    break;
+                }
+
+                case Opcode.PutConstantA1:
+                {
+                    int atomId = BytecodeIO.ReadInt32(code, pc + 1);
+                    _engine.SetRegister(0, Cell.Atom(atomId));
+                    _engine.AdvancePc(5);
+                    break;
+                }
+
+                case Opcode.PutConstantA2:
+                {
+                    int atomId = BytecodeIO.ReadInt32(code, pc + 1);
+                    _engine.SetRegister(1, Cell.Atom(atomId));
+                    _engine.AdvancePc(5);
+                    break;
+                }
+
                 default:
                     throw new NotImplementedException(
-                        $"Opcode 0x{opByte:X2} ({(Opcode)opByte}) is not implemented in the 5a subset. " +
+                        $"Opcode 0x{opByte:X2} ({(Opcode)opByte}) is not implemented yet. " +
                         $"Reached at PC=0x{pc:X4}.");
             }
         }

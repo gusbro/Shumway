@@ -158,10 +158,16 @@ public sealed class Engine
         int newE = _stackTop;
         _stack[newE + EnvCeOffset] = new Cell(_e);
         _stack[newE + EnvCpOffset] = new Cell(_cp);
+        // Y slots are initialised as REFs to fresh heap-unbound variables. Earlier drafts
+        // used a stack-self-pointing REF as an "uninitialised marker", but that complicates
+        // unify (the REF target would be a stack address rather than a heap index). Going
+        // through the heap on first allocation costs one extra heap cell per permanent
+        // but lets Deref/Bind/Unify treat permanents and ordinary variables uniformly.
         for (int i = 0; i < numPermanents; i++)
         {
             int slot = newE + EnvY1Offset + i;
-            _stack[slot] = Cell.UnboundVar(slot);
+            int heapIdx = AllocateHeapUnbound();
+            _stack[slot] = Cell.Ref(heapIdx);
         }
         _stackTop = newE + frameSize;
         _e = newE;
@@ -412,6 +418,64 @@ public sealed class Engine
 
     public Cell GetRegister(int idx) => _registers[idx];
     public void SetRegister(int idx, Cell value) => _registers[idx] = value;
+
+    // ----- Unify against registers / permanents -----
+    //
+    // The base Unify(int, int) operates on heap addresses. Register and permanent
+    // (Y-slot) cells live outside the heap, so the helpers below "materialise" them:
+    // if the cell already holds a REF we reuse its heap target directly; otherwise we
+    // copy the atomic value into a freshly-allocated heap cell. This costs at most one
+    // extra heap cell per atomic operand and keeps the unify implementation single-form.
+
+    /// <summary>Unifies the cells held in <c>X[<paramref name="aRegIdx"/>]</c> and
+    /// <c>X[<paramref name="bRegIdx"/>]</c>.</summary>
+    public bool UnifyRegisters(int aRegIdx, int bRegIdx)
+    {
+        int aHeap = MaterializeRegister(aRegIdx);
+        int bHeap = MaterializeRegister(bRegIdx);
+        return Unify(aHeap, bHeap);
+    }
+
+    /// <summary>Unifies the cell held in <c>X[<paramref name="regIdx"/>]</c> with an
+    /// immediate <paramref name="value"/> (typically a bytecode-literal cell such as
+    /// <see cref="Cell.Atom"/> or <see cref="Cell.Int"/>).</summary>
+    public bool UnifyRegisterWithCell(int regIdx, Cell value)
+    {
+        int regHeap = MaterializeRegister(regIdx);
+        int valueHeap = AllocateHeap(1);
+        _heap[valueHeap] = value;
+        return Unify(regHeap, valueHeap);
+    }
+
+    /// <summary>Unifies the cell held in <c>Y[<paramref name="permSlot"/>]</c> of the
+    /// current environment frame with <c>X[<paramref name="regIdx"/>]</c>.</summary>
+    public bool UnifyPermanentWithRegister(int permSlot, int regIdx)
+    {
+        if (_e < 0)
+            throw new InvalidOperationException("No environment frame is active.");
+        int permHeap = MaterializePermanent(permSlot);
+        int regHeap = MaterializeRegister(regIdx);
+        return Unify(permHeap, regHeap);
+    }
+
+    private int MaterializeRegister(int regIdx)
+    {
+        Cell c = _registers[regIdx];
+        if (c.Tag == Tag.Ref) return c.AsHeapIndex;
+        int slot = AllocateHeap(1);
+        _heap[slot] = c;
+        return slot;
+    }
+
+    private int MaterializePermanent(int permSlot)
+    {
+        int stackIdx = _e + EnvY1Offset + permSlot;
+        Cell c = _stack[stackIdx];
+        if (c.Tag == Tag.Ref) return c.AsHeapIndex;
+        int slot = AllocateHeap(1);
+        _heap[slot] = c;
+        return slot;
+    }
 
     // ----- Auxiliary value tables -----
 

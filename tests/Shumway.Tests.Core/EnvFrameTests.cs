@@ -33,8 +33,19 @@ public class EnvFrameTests
         Assert.Equal(4, engine.StackTop);          // 2 + 2 Y slots
         Assert.Equal(-1L, engine.GetStack(0).Data); // CE = previous _e
         Assert.Equal(100L, engine.GetStack(1).Data); // CP = previous _cp
-        Assert.Equal(Cell.UnboundVar(2), engine.GetStack(2));
-        Assert.Equal(Cell.UnboundVar(3), engine.GetStack(3));
+
+        // Y slots are REFs to fresh heap unbounds.
+        AssertUnboundHeapRef(engine, engine.GetStack(2));
+        AssertUnboundHeapRef(engine, engine.GetStack(3));
+    }
+
+    /// <summary>Asserts that the cell is a REF pointing to a heap cell that
+    /// self-references — i.e., the canonical unbound-variable representation.</summary>
+    private static void AssertUnboundHeapRef(Engine engine, Cell c)
+    {
+        Assert.Equal(Tag.Ref, c.Tag);
+        int target = c.AsHeapIndex;
+        Assert.Equal(Cell.UnboundVar(target), engine.GetHeap(target));
     }
 
     [Fact]
@@ -191,9 +202,10 @@ public class EnvFrameTests
         engine.Allocate(3);
         engine.SetY(1, Cell.Atom(42));
         Assert.Equal(Cell.Atom(42), engine.GetY(1));
-        // The other two slots still hold their initial markers.
-        Assert.Equal(Cell.UnboundVar(0 + Engine.EnvY1Offset + 0), engine.GetY(0));
-        Assert.Equal(Cell.UnboundVar(0 + Engine.EnvY1Offset + 2), engine.GetY(2));
+
+        // The other two slots still hold their initial unbound-heap REFs.
+        AssertUnboundHeapRef(engine, engine.GetY(0));
+        AssertUnboundHeapRef(engine, engine.GetY(2));
     }
 
     [Fact]
