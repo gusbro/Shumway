@@ -27,6 +27,13 @@ public sealed class PrologEngine
     private string _accumulatedSource = "";
     private readonly OperatorTable _operators = OperatorTable.Default();
 
+    public PrologEngine()
+    {
+        // The standard builtins (=/2, ==/2, etc.) need to be registered before
+        // the WAM compiler can recognise them. EnsureRegistered is idempotent.
+        Shumway.Builtins.StandardBuiltins.EnsureRegistered();
+    }
+
     /// <summary>Loads Prolog source. Multiple calls accumulate — later consults
     /// see the operator declarations from earlier ones. The source is stored
     /// verbatim and re-parsed on every query.

@@ -1,0 +1,53 @@
+using Shumway.Core;
+
+namespace Shumway.Builtins;
+
+/// <summary>
+/// The four ISO unification-comparison predicates. <c>=/2</c> and <c>\=/2</c>
+/// drive unification (with rollback on the negation); <c>==/2</c> and
+/// <c>\==/2</c> compare structures without binding anything.
+/// </summary>
+public static class UnifyBuiltins
+{
+    /// <summary><c>?=(X, Y)</c> — succeeds iff X and Y can be unified, with any
+    /// resulting bindings kept. Just delegates to the existing unify code.</summary>
+    public static bool Unify(Engine engine) =>
+        engine.UnifyRegisters(0, 1);
+
+    /// <summary><c>\=(X, Y)</c> — succeeds iff X and Y CANNOT be unified.
+    /// Performs a trial unification, then unwinds any bindings the trial made
+    /// before reporting the result. The heap-top is restored so any
+    /// freshly-allocated heap cells from the trial are released.
+    /// </summary>
+    public static bool NotUnifiable(Engine engine)
+    {
+        int savedHeapTop = engine.HeapTop;
+        int savedBindingTrail = engine.BindingTrailTop;
+        int savedExtraTrail = engine.ExtraTrailTop;
+        int savedHb = engine.Hb;
+
+        // Push Hb up to the current heap top so any binding made by the trial
+        // unify is trailed — even bindings to "old" variables get trail
+        // entries, which we'll need for the unwind.
+        engine.SetHb(engine.HeapTop);
+
+        bool unified = engine.UnifyRegisters(0, 1);
+
+        // Unwind any bindings (whether the unify succeeded or partially
+        // failed). Restore the heap top so trial-allocated cells are released,
+        // and put Hb back to its original value.
+        engine.UnwindTrails(savedBindingTrail, savedExtraTrail);
+        engine.SetHeapTop(savedHeapTop);
+        engine.SetHb(savedHb);
+
+        return !unified;
+    }
+
+    /// <summary><c>==(X, Y)</c> — structural identity, no unification.</summary>
+    public static bool StructurallyEqual(Engine engine) =>
+        engine.AreStructurallyEqual(engine.GetRegister(0), engine.GetRegister(1));
+
+    /// <summary><c>\==(X, Y)</c> — the negation of <c>==/2</c>.</summary>
+    public static bool StructurallyNotEqual(Engine engine) =>
+        !engine.AreStructurallyEqual(engine.GetRegister(0), engine.GetRegister(1));
+}

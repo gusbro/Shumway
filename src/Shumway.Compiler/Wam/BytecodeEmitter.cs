@@ -40,6 +40,13 @@ public sealed class BytecodeEmitter
         EmitInt(targetAddress);
     }
 
+    public void EmitCallBuiltin(int builtinId, int numLivePermanents)
+    {
+        _bytes.Add((byte)Opcode.CallBuiltin);
+        EmitInt(builtinId);
+        EmitInt(numLivePermanents);
+    }
+
     public void EmitAllocate(int numPermanents)
     {
         _bytes.Add((byte)Opcode.Allocate);

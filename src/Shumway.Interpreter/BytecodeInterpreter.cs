@@ -590,6 +590,23 @@ public sealed class BytecodeInterpreter
                     break;
                 }
 
+                // ---------- Builtin call ----------
+
+                case Opcode.CallBuiltin:
+                {
+                    int builtinId = BytecodeIO.ReadInt32(code, pc + 1);
+                    // pc + 5 holds num_live_perms — unused today (reserved for
+                    // future env trimming, like the regular Call opcode).
+                    var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+                    if (!entry.Impl(_engine))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    _engine.AdvancePc(9);
+                    break;
+                }
+
                 // ---------- PSTR opcodes ----------
 
                 case Opcode.GetPstr:

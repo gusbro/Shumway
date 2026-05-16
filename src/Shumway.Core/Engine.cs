@@ -1262,11 +1262,87 @@ public sealed class Engine
 
     // ----- Internal / test hooks -----
 
-    internal void SetHbForTesting(int hb)
+    /// <summary>Sets <see cref="Hb"/>, the heap-top boundary used by the
+    /// young-to-old binding rule. Setting <c>Hb</c> equal to the current
+    /// <see cref="HeapTop"/> makes every existing heap cell look "old", so any
+    /// subsequent binding to an existing variable will be trailed — useful
+    /// when a builtin performs a trial unification and needs the bindings to
+    /// be reversible via <see cref="UnwindTrails"/>.</summary>
+    public void SetHb(int hb)
     {
         if (hb < 0 || hb > _heapTop) throw new ArgumentOutOfRangeException(nameof(hb));
         _hb = hb;
     }
+
+    /// <summary>Backwards-compatible alias for <see cref="SetHb"/>, retained
+    /// for the test code that referenced it before <c>SetHb</c> became
+    /// public.</summary>
+    internal void SetHbForTesting(int hb) => SetHb(hb);
+
+    /// <summary>Shrinks (or grows back) the heap-top to <paramref name="newTop"/>.
+    /// Builtins that perform a trial allocation and want to release the
+    /// heap range on rollback use this together with <see cref="UnwindTrails"/>.
+    /// Growing past the current top is rejected — cells beyond the top are
+    /// not initialised, and growing here would expose them.</summary>
+    public void SetHeapTop(int newTop)
+    {
+        if (newTop < 0 || newTop > _heapTop)
+            throw new ArgumentOutOfRangeException(nameof(newTop),
+                $"newTop {newTop} must be in [0, {_heapTop}].");
+        _heapTop = newTop;
+    }
+
+    /// <summary>Returns true if the two cells are structurally identical — same
+    /// shape, same atom/integer values, same variable identities (an unbound
+    /// REF is equal to another unbound REF only when they point at the same
+    /// heap cell). Used by <c>==/2</c> and <c>\==/2</c>: unlike unification,
+    /// this never binds anything.</summary>
+    public bool AreStructurallyEqual(Cell a, Cell b)
+    {
+        // Resolve each cell: follow REFs to their dereference target, and
+        // keep the dereferenced REF (a Cell.Ref pointing at the final heap
+        // address) when the chain terminates at an unbound variable. This
+        // lets two unbound vars compare equal iff they're the same heap cell.
+        a = ResolveForStructuralCompare(a);
+        b = ResolveForStructuralCompare(b);
+
+        if (a.Tag != b.Tag) return false;
+        return a.Tag switch
+        {
+            Tag.Ref => a.AsHeapIndex == b.AsHeapIndex,
+            Tag.Atom => a.AsAtomId == b.AsAtomId,
+            Tag.Int => a.AsInt == b.AsInt,
+            Tag.Functor => a.AsFunctorId == b.AsFunctorId,
+            Tag.Str => AreStrStructurallyEqual(a.AsHeapIndex, b.AsHeapIndex),
+            Tag.Lis => AreLisStructurallyEqual(a.AsHeapIndex, b.AsHeapIndex),
+            _ => throw new NotSupportedException(
+                $"AreStructurallyEqual: tag {a.Tag} is not yet supported."),
+        };
+    }
+
+    private Cell ResolveForStructuralCompare(Cell c)
+    {
+        if (c.Tag != Tag.Ref) return c;
+        int addr = Deref(c.AsHeapIndex);
+        Cell target = _heap[addr];
+        return target.Tag == Tag.Ref ? Cell.Ref(addr) : target;
+    }
+
+    private bool AreStrStructurallyEqual(int aFunctorIdx, int bFunctorIdx)
+    {
+        int aFunctorId = _heap[aFunctorIdx].AsFunctorId;
+        int bFunctorId = _heap[bFunctorIdx].AsFunctorId;
+        if (aFunctorId != bFunctorId) return false;
+        var (_, arity) = FunctorTable.Lookup(aFunctorId);
+        for (int i = 1; i <= arity; i++)
+            if (!AreStructurallyEqual(_heap[aFunctorIdx + i], _heap[bFunctorIdx + i]))
+                return false;
+        return true;
+    }
+
+    private bool AreLisStructurallyEqual(int aHeadIdx, int bHeadIdx) =>
+        AreStructurallyEqual(_heap[aHeadIdx], _heap[bHeadIdx])
+        && AreStructurallyEqual(_heap[aHeadIdx + 1], _heap[bHeadIdx + 1]);
 
     /// <summary>Sets <c>CP</c> directly. The interpreter uses this from the <c>call</c>
     /// instruction; tests use it to seed the engine state before running a fragment.</summary>

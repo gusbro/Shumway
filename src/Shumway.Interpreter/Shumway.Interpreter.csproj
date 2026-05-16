@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Shumway.Core\Shumway.Core.csproj" />
+    <ProjectReference Include="..\Shumway.Builtins\Shumway.Builtins.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

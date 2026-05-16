@@ -509,6 +509,22 @@ public sealed class ClauseCompiler
         DrainPendingCompounds(s);
 
         int functorId = InternFunctor(fName, gArgs.Length);
+
+        // Builtin dispatch: if this functor is registered as a builtin, emit
+        // call_builtin instead of call/execute. Builtins don't jump — they run
+        // inline and return — so there's no "execute_builtin" form; the last-
+        // goal path is just "call_builtin; (deallocate; ) proceed".
+        if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out int builtinId))
+        {
+            s.Emitter.EmitCallBuiltin(builtinId, s.PermanentCount);
+            if (isLast)
+            {
+                if (hasFrame) s.Emitter.EmitDeallocate();
+                s.Emitter.EmitProceed();
+            }
+            return;
+        }
+
         if (isLast)
         {
             // Last-call optimization: deallocate (if a frame is live) then execute.
