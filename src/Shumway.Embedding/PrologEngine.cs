@@ -126,6 +126,12 @@ public sealed class PrologEngine
             ? new List<Clause>()
             : new ClauseReader(new Lexer(_accumulatedSource), _operators).ReadAll().ToList();
         allClauses.Add(syntheticClause);
+
+        // Run the meta-call AST rewriting pass. Currently handles \+/1 and
+        // not/1 by emitting helper clauses that piggyback on the existing
+        // cut + fail machinery.
+        allClauses = MetaTransform.Apply(allClauses);
+
         var module = new ModuleCompiler().Compile(allClauses);
 
         var launcher = new BytecodeEmitter();
