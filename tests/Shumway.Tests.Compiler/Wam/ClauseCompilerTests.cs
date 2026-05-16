@@ -120,12 +120,6 @@ public class ClauseCompilerTests
         Assert.Equal(Opcode.Proceed, disasm[0].Opcode);
     }
 
-    [Fact]
-    public void Rule_BodyIsNotTrue_Throws()
-    {
-        Assert.Throws<NotSupportedException>(() => CompileSource("p :- q."));
-    }
-
     // ---------- Unsupported head arg types ----------
 
     [Fact]

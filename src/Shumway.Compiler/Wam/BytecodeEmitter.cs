@@ -40,6 +40,14 @@ public sealed class BytecodeEmitter
         EmitInt(targetAddress);
     }
 
+    public void EmitAllocate(int numPermanents)
+    {
+        _bytes.Add((byte)Opcode.Allocate);
+        EmitInt(numPermanents);
+    }
+
+    public void EmitDeallocate() => _bytes.Add((byte)Opcode.Deallocate);
+
     // ---------- Get-family (head matching) ----------
 
     public void EmitGetVariableX(int destSlot, int argSlot)
@@ -86,6 +94,20 @@ public sealed class BytecodeEmitter
     public void EmitGetList(int argSlot)
     {
         _bytes.Add((byte)Opcode.GetList);
+        EmitInt(argSlot);
+    }
+
+    public void EmitGetVariableY(int destPermSlot, int argSlot)
+    {
+        _bytes.Add((byte)Opcode.GetVariableY);
+        EmitInt(destPermSlot);
+        EmitInt(argSlot);
+    }
+
+    public void EmitGetValueY(int srcPermSlot, int argSlot)
+    {
+        _bytes.Add((byte)Opcode.GetValueY);
+        EmitInt(srcPermSlot);
         EmitInt(argSlot);
     }
 
@@ -138,6 +160,20 @@ public sealed class BytecodeEmitter
         EmitInt(argSlot);
     }
 
+    public void EmitPutVariableY(int destPermSlot, int argSlot)
+    {
+        _bytes.Add((byte)Opcode.PutVariableY);
+        EmitInt(destPermSlot);
+        EmitInt(argSlot);
+    }
+
+    public void EmitPutValueY(int srcPermSlot, int argSlot)
+    {
+        _bytes.Add((byte)Opcode.PutValueY);
+        EmitInt(srcPermSlot);
+        EmitInt(argSlot);
+    }
+
     // ---------- Unify-mode family (compound / list args) ----------
 
     public void EmitUnifyAtom(int atomId)
@@ -170,6 +206,18 @@ public sealed class BytecodeEmitter
     {
         _bytes.Add((byte)Opcode.UnifyValueX);
         EmitInt(slot);
+    }
+
+    public void EmitUnifyVariableY(int permSlot)
+    {
+        _bytes.Add((byte)Opcode.UnifyVariableY);
+        EmitInt(permSlot);
+    }
+
+    public void EmitUnifyValueY(int permSlot)
+    {
+        _bytes.Add((byte)Opcode.UnifyValueY);
+        EmitInt(permSlot);
     }
 
     public void EmitUnifyVoid(int count)
