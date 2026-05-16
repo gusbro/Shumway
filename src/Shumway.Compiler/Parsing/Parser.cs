@@ -59,6 +59,11 @@ public sealed class Parser
         return t;
     }
 
+    /// <summary>Reports whether the lookahead position is at end of input. Useful
+    /// to a clause-stream reader that wants to stop without trying (and failing) to
+    /// parse another clause past the end of file.</summary>
+    public bool IsAtEnd() => PeekToken().Kind == TokenKind.Eof;
+
     // ---------- Core recursive reader ----------
 
     private Term ReadTermInternal(int maxPrec, out int builtPrec)
