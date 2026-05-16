@@ -37,5 +37,21 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register(">",   2, ArithmeticBuiltins.ArithGreater);
         BuiltinsRegistry.Register("=<",  2, ArithmeticBuiltins.ArithLessOrEqual);
         BuiltinsRegistry.Register(">=",  2, ArithmeticBuiltins.ArithGreaterOrEqual);
+
+        // Type tests.
+        BuiltinsRegistry.Register("var",     1, TypeBuiltins.IsVar);
+        BuiltinsRegistry.Register("nonvar",  1, TypeBuiltins.IsNonVar);
+        BuiltinsRegistry.Register("atom",    1, TypeBuiltins.IsAtom);
+        BuiltinsRegistry.Register("integer", 1, TypeBuiltins.IsInteger);
+        BuiltinsRegistry.Register("float",   1, TypeBuiltins.IsFloat);
+        BuiltinsRegistry.Register("number",  1, TypeBuiltins.IsNumber);
+        BuiltinsRegistry.Register("atomic",  1, TypeBuiltins.IsAtomic);
+        BuiltinsRegistry.Register("compound",1, TypeBuiltins.IsCompound);
+        BuiltinsRegistry.Register("is_list", 1, TypeBuiltins.IsList);
+
+        // I/O.
+        BuiltinsRegistry.Register("write",   1, IOBuiltins.Write);
+        BuiltinsRegistry.Register("nl",      0, IOBuiltins.Nl);
+        BuiltinsRegistry.Register("writeln", 1, IOBuiltins.Writeln);
     }
 }

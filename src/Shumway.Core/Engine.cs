@@ -45,6 +45,12 @@ public sealed class Engine
     private int _stackTop;
     private int _extraTrailTop;
 
+    /// <summary>Output sink the I/O builtins (<c>write/1</c>, <c>nl/0</c>,
+    /// <c>writeln/1</c>) write into. Defaults to <see cref="Console.Out"/>;
+    /// embedding callers can swap in a <see cref="System.IO.StringWriter"/>
+    /// or another sink for testing or for capturing program output.</summary>
+    public System.IO.TextWriter Out { get; set; } = Console.Out;
+
     // ----- Engine registers (per ADR-005) -----
     // -1 means "none yet" for E, B, and B0. P and CP track the program counter and
     // continuation point; they are set when the interpreter is hooked up. B0 is

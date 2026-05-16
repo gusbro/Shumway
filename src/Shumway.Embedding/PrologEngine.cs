@@ -27,6 +27,12 @@ public sealed class PrologEngine
     private string _accumulatedSource = "";
     private readonly OperatorTable _operators = OperatorTable.Default();
 
+    /// <summary>The sink that I/O builtins (<c>write/1</c>, <c>nl/0</c>,
+    /// <c>writeln/1</c>) write into. Defaults to <see cref="System.Console.Out"/>;
+    /// swap in a <see cref="System.IO.StringWriter"/> to capture program
+    /// output in tests.</summary>
+    public System.IO.TextWriter Out { get; set; } = Console.Out;
+
     public PrologEngine()
     {
         // The standard builtins (=/2, ==/2, etc.) need to be registered before
@@ -115,7 +121,7 @@ public sealed class PrologEngine
         //    variable. The heap indices are remembered so we can materialise
         //    the final bindings after the run, even though X[0..n-1] may be
         //    clobbered by the callee.
-        var engine = new Engine();
+        var engine = new Engine { Out = Out };
         var interp = new BytecodeInterpreter(engine);
 
         int[] varHeapIndices = new int[varNames.Count];
