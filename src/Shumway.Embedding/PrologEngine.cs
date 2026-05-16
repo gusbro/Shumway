@@ -59,27 +59,60 @@ public sealed class PrologEngine
         _accumulatedSource += "\n" + source;
     }
 
-    /// <summary>Parses and runs a query. The query text must be a single
-    /// clause-terminated goal (e.g. <c>"p(X)."</c> or <c>"p(X), q(Y)."</c>).
-    /// Returns the first solution if there is one, or a failed
-    /// <see cref="Solution"/> otherwise.</summary>
+    /// <summary>Parses and runs a query, returning the first solution if one
+    /// exists or a failed <see cref="Solution"/> otherwise. Equivalent to
+    /// <c>QueryAll(queryText).FirstOrDefault(failed)</c>.</summary>
     public Solution Query(string queryText)
+    {
+        foreach (var sol in QueryAll(queryText))
+            return sol;
+        return new Solution(success: false, bindings: ImmutableDictionary<string, Term>.Empty);
+    }
+
+    /// <summary>Parses and runs a query, lazily yielding every solution. The
+    /// engine state is preserved between yields so the iterator can drive the
+    /// interpreter through backtracking on demand.
+    ///
+    /// <para>Common idioms:</para>
+    /// <list type="bullet">
+    /// <item><c>engine.QueryAll("p(X).").First()</c> — first solution.</item>
+    /// <item><c>engine.QueryAll("p(X).").ToList()</c> — all solutions
+    ///   enumerated eagerly.</item>
+    /// <item><c>engine.QueryAll("p(X).").Count()</c> — how many succeed.</item>
+    /// <item><c>foreach (var s in engine.QueryAll("p(X).")) …</c> — iterate.</item>
+    /// </list></summary>
+    public IEnumerable<Solution> QueryAll(string queryText)
     {
         ArgumentNullException.ThrowIfNull(queryText);
 
-        // 1. Parse the query (with the operator table that's been accumulating
-        //    via consulted :- op directives).
+        var (program, varNames, varHeapIndices, engine, interp) = SetupQuery(queryText);
+
+        var result = interp.Run(program, 0);
+        while (result == InterpreterResult.Halted)
+        {
+            yield return BuildSolution(varNames, varHeapIndices, engine);
+            result = interp.Backtrack(program);
+        }
+    }
+
+    /// <summary>Compiles the consulted source + the query's synthetic wrapper,
+    /// links into a runnable program prefixed by a "call wrapper; halt"
+    /// launcher, allocates fresh heap unbounds for the query's variables and
+    /// stores them in X[0..n-1]. Returns everything the iterator needs to
+    /// run and re-run the program.</summary>
+    private (byte[] Program,
+             List<string> VarNames,
+             int[] VarHeapIndices,
+             Engine Engine,
+             BytecodeInterpreter Interp) SetupQuery(string queryText)
+    {
         var queryParser = new Parser(new Lexer(queryText), _operators);
         Term queryTerm = queryParser.ReadClauseTerm();
 
-        // 2. Collect query variables in first-occurrence order. Anonymous
-        //    variables (_) are skipped — each occurrence is a fresh distinct
-        //    variable that the caller can't name.
         var varNames = new List<string>();
         var seen = new HashSet<string>();
         CollectVariables(queryTerm, varNames, seen);
 
-        // 3. Synthesize a clause: __query__(V1, ..., Vn) :- queryBody.
         const string queryFunctor = "__query__";
         Term head = varNames.Count == 0
             ? new AtomTerm(queryFunctor)
@@ -89,24 +122,18 @@ public sealed class PrologEngine
         Term clauseTerm = new CompoundTerm(":-", new[] { head, queryTerm });
         var syntheticClause = new Clause(ClauseKind.Rule, clauseTerm, queryTerm.Position);
 
-        // 4. Compile everything (consulted source + synthetic clause) into one
-        //    module. Re-parsing the consulted source applies the :- op
-        //    directives idempotently.
         var allClauses = string.IsNullOrEmpty(_accumulatedSource)
             ? new List<Clause>()
             : new ClauseReader(new Lexer(_accumulatedSource), _operators).ReadAll().ToList();
         allClauses.Add(syntheticClause);
         var module = new ModuleCompiler().Compile(allClauses);
 
-        // 5. Generate a launcher: "call __query__/n; halt".
         var launcher = new BytecodeEmitter();
         int callPos = launcher.Position;
         launcher.EmitCall(targetAddress: 0, numLivePermanents: 0);
         launcher.EmitHalt();
         byte[] prefix = launcher.ToBytes();
 
-        // 6. Link, with loadOffset set so every address already accounts for
-        //    the launcher prefix.
         var linkResult = new Linker().Link(module, loadOffset: prefix.Length);
         int queryFunctorId = FunctorTable.Intern(
             AtomTable.Intern(queryFunctor, permanent: true).Id,
@@ -117,10 +144,6 @@ public sealed class PrologEngine
         Array.Copy(prefix, program, prefix.Length);
         Array.Copy(linkResult.Bytecode, 0, program, prefix.Length, linkResult.Bytecode.Length);
 
-        // 7. Set up X[0..n-1] = REFs to fresh heap unbounds, one per query
-        //    variable. The heap indices are remembered so we can materialise
-        //    the final bindings after the run, even though X[0..n-1] may be
-        //    clobbered by the callee.
         var engine = new Engine { Out = Out };
         var interp = new BytecodeInterpreter(engine);
 
@@ -132,13 +155,12 @@ public sealed class PrologEngine
             engine.SetRegister(i, Cell.Ref(h));
         }
 
-        // 8. Run.
-        var result = interp.Run(program, 0);
-        if (result == InterpreterResult.Failed)
-            return new Solution(success: false, bindings: ImmutableDictionary<string, Term>.Empty);
+        return (program, varNames, varHeapIndices, engine, interp);
+    }
 
-        // 9. Materialise each variable's binding by walking the heap from the
-        //    remembered head index.
+    private static Solution BuildSolution(
+        List<string> varNames, int[] varHeapIndices, Engine engine)
+    {
         var bindings = new Dictionary<string, Term>(varNames.Count);
         for (int i = 0; i < varNames.Count; i++)
             bindings[varNames[i]] = TermReader.Materialize(engine, varHeapIndices[i]);

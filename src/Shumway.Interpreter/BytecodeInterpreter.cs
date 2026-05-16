@@ -58,7 +58,29 @@ public sealed class BytecodeInterpreter
                 $"startPc 0x{startPc:X} is outside [0, 0x{code.Length:X}).");
 
         _engine.SetPc(startPc);
+        return Dispatch(code);
+    }
 
+    /// <summary>
+    /// Forces a failure at the current execution point and runs the dispatch
+    /// loop until it halts or runs out of choice points. The standard use is
+    /// "give me the next solution": after <see cref="Run"/> returned
+    /// <see cref="InterpreterResult.Halted"/>, calling <see cref="Backtrack"/>
+    /// re-enters the engine via its current choice point's BP, the saved
+    /// state restores, and execution continues looking for another success.
+    /// Returns <see cref="InterpreterResult.Failed"/> immediately when no
+    /// choice point is alive (the previous run committed to a single solution
+    /// via cut, or the predicate had only one clause and it just finished).
+    /// </summary>
+    public InterpreterResult Backtrack(byte[] code)
+    {
+        ArgumentNullException.ThrowIfNull(code);
+        if (!TryBacktrack()) return InterpreterResult.Failed;
+        return Dispatch(code);
+    }
+
+    private InterpreterResult Dispatch(byte[] code)
+    {
         while (true)
         {
             int pc = _engine.P;
