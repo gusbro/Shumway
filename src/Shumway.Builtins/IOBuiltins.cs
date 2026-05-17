@@ -42,7 +42,7 @@ public static class IOBuiltins
     /// SWI does for unknown options.</summary>
     public static bool WriteTerm(Engine engine)
     {
-        var options = new TermRenderOptions();
+        var options = new TermRenderOptions { Operators = engine.Operators };
         Cell optsCell = Resolve(engine, engine.GetRegister(1));
         while (optsCell.Tag == Tag.Lis)
         {

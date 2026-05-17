@@ -94,6 +94,34 @@ public static class TermRenderer
             }
         }
 
+        // Operator-form rendering: consult the lookup table if enabled.
+        if (!options.IgnoreOps && options.Operators is not null)
+        {
+            if (arity == 2 && options.Operators.TryGetInfix(name, out int _, out var _))
+            {
+                Render(engine, engine.GetHeap(functorIdx + 1), output, options);
+                output.Write(' ');
+                WriteAtomName(name, output, options);
+                output.Write(' ');
+                Render(engine, engine.GetHeap(functorIdx + 2), output, options);
+                return;
+            }
+            if (arity == 1 && options.Operators.TryGetPrefix(name, out int _, out var _))
+            {
+                WriteAtomName(name, output, options);
+                output.Write(' ');
+                Render(engine, engine.GetHeap(functorIdx + 1), output, options);
+                return;
+            }
+            if (arity == 1 && options.Operators.TryGetPostfix(name, out int _, out var _))
+            {
+                Render(engine, engine.GetHeap(functorIdx + 1), output, options);
+                output.Write(' ');
+                WriteAtomName(name, output, options);
+                return;
+            }
+        }
+
         WriteAtomName(name, output, options);
         if (arity == 0) return;
         output.Write('(');

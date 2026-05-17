@@ -254,6 +254,12 @@ public sealed class PrologEngine
     /// shouldn't be mutated directly.</summary>
     public IReadOnlyDictionary<string, ModuleManifest> Modules => _modules;
 
+    /// <summary>If the most recent <see cref="Query"/> / <see cref="QueryAll"/>
+    /// invocation was terminated by <c>halt/0</c> or <c>halt/1</c>, this
+    /// holds the exit code requested. <c>null</c> when no halt has fired.
+    /// Reset to <c>null</c> at the start of each query.</summary>
+    public int? LastHaltExitCode { get; private set; }
+
     /// <summary>Adds an operator to the engine's parser table. Used by the
     /// runtime <c>op/3</c> builtin so user code can introduce operators
     /// that subsequent queries (and asserted clauses) will recognise.</summary>
@@ -290,14 +296,36 @@ public sealed class PrologEngine
     public IEnumerable<Solution> QueryAll(Term goal)
     {
         ArgumentNullException.ThrowIfNull(goal);
+        LastHaltExitCode = null;
+        var setup = SetupQueryFromTerm(goal);
+        return RunIteration(this, setup.Program, setup.VarNames, setup.VarHeapIndices,
+            setup.Engine, setup.Interp);
+    }
 
-        var (program, varNames, varHeapIndices, engine, interp) = SetupQueryFromTerm(goal);
+    /// <summary>Drives the interpreter's run / backtrack loop and yields a
+    /// <see cref="Solution"/> at each <see cref="InterpreterResult.Halted"/>
+    /// outcome. A <see cref="PrologHaltException"/> ends the iteration
+    /// gracefully (the user invoked <c>halt/0</c> or <c>halt/1</c>) — the
+    /// embedding caller stops seeing further solutions rather than a .NET
+    /// exception propagating out of their <c>foreach</c>.</summary>
+    private static IEnumerable<Solution> RunIteration(
+        PrologEngine host,
+        byte[] program,
+        List<string> varNames,
+        int[] varHeapIndices,
+        Engine engine,
+        BytecodeInterpreter interp)
+    {
+        InterpreterResult result;
+        bool halted = false;
+        try { result = interp.Run(program, 0); }
+        catch (PrologHaltException hex) { halted = true; host.LastHaltExitCode = hex.ExitCode; result = InterpreterResult.Failed; }
 
-        var result = interp.Run(program, 0);
-        while (result == InterpreterResult.Halted)
+        while (!halted && result == InterpreterResult.Halted)
         {
             yield return BuildSolution(varNames, varHeapIndices, engine);
-            result = interp.Backtrack(program);
+            try { result = interp.Backtrack(program); }
+            catch (PrologHaltException hex) { halted = true; host.LastHaltExitCode = hex.ExitCode; break; }
         }
     }
 
@@ -565,15 +593,10 @@ public sealed class PrologEngine
     public IEnumerable<Solution> QueryAll(string queryText)
     {
         ArgumentNullException.ThrowIfNull(queryText);
-
-        var (program, varNames, varHeapIndices, engine, interp) = SetupQuery(queryText);
-
-        var result = interp.Run(program, 0);
-        while (result == InterpreterResult.Halted)
-        {
-            yield return BuildSolution(varNames, varHeapIndices, engine);
-            result = interp.Backtrack(program);
-        }
+        LastHaltExitCode = null;
+        var setup = SetupQuery(queryText);
+        return RunIteration(this, setup.Program, setup.VarNames, setup.VarHeapIndices,
+            setup.Engine, setup.Interp);
     }
 
     private (byte[] Program,
@@ -702,7 +725,12 @@ public sealed class PrologEngine
         Array.Copy(prefix, program, prefix.Length);
         Array.Copy(linkResult.Bytecode, 0, program, prefix.Length, linkResult.Bytecode.Length);
 
-        var engine = new Engine { Out = Out, Host = this };
+        var engine = new Engine
+        {
+            Out = Out,
+            Host = this,
+            Operators = new OperatorTableAdapter(_operators),
+        };
         var interp = new BytecodeInterpreter(
             engine, module.StringLiterals, module.FloatLiterals, linkResult.SwitchTables);
 

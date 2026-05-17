@@ -55,6 +55,152 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("read_term_from_atom", 2, ReadTermFromAtom);
 
         BuiltinsRegistry.Register("op", 3, Op);
+        BuiltinsRegistry.Register("with_output_to", 2, WithOutputTo);
+        BuiltinsRegistry.Register("atom_to_term",   3, AtomToTerm);
+    }
+
+    /// <summary><c>with_output_to(Sink, Goal)</c> — runs <c>Goal</c> with
+    /// the engine's output sink temporarily redirected. Phase 1
+    /// recognises <c>atom(A)</c> and <c>string(S)</c> sinks: both capture
+    /// everything <c>Goal</c> writes (via <c>write/1</c>, <c>format/2</c>,
+    /// etc.) and unify the result with their inner variable. The sub-
+    /// engine spawned for <c>Goal</c> uses the redirected sink for the
+    /// duration of the call; the parent's <see cref="PrologEngine.Out"/>
+    /// is untouched.</summary>
+    public static bool WithOutputTo(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "with_output_to/2 requires the engine to be hosted by a PrologEngine.");
+
+        // Read the Sink term (X[0]) and the Goal term (X[1]).
+        Cell sinkCell = ResolveLocal(engine, engine.GetRegister(0));
+        if (sinkCell.Tag != Tag.Str)
+            throw new ShumwayPrologException(
+                IsoError.TypeError("output_sink_spec", new VarTerm("_")));
+        int functorIdx = sinkCell.AsHeapIndex;
+        var (atomId, arity) = FunctorTable.Lookup(
+            engine.GetHeap(functorIdx).AsFunctorId);
+        string sinkType = AtomTable.GetById(atomId)?.Name ?? "";
+        if (arity != 1 || (sinkType != "atom" && sinkType != "string"))
+            throw new ShumwayPrologException(
+                IsoError.DomainError("output_sink", new VarTerm("_")));
+
+        Term goal = MaterializeRegister(engine, 1);
+        var sw = new System.IO.StringWriter();
+        var sub = host.CreateSubEngine();
+        sub.Out = sw;
+
+        bool succeeded = false;
+        foreach (Solution sol in sub.QueryAll(goal))
+        {
+            BindBack(engine, sol.Bindings);
+            succeeded = true;
+            break;
+        }
+
+        // Whether or not Goal succeeded, expose the captured text — that's
+        // the SWI convention. (Caller can still observe failure via the
+        // return value.)
+        string captured = sw.ToString();
+        int sinkArgAddr = functorIdx + 1;
+        if (sinkType == "atom")
+        {
+            int aid = AtomTable.Intern(captured, permanent: false).Id;
+            int slot = engine.AllocateHeap(1);
+            engine.SetHeap(slot, Cell.Atom(aid));
+            if (!engine.Unify(sinkArgAddr, slot)) return false;
+        }
+        else // string
+        {
+            int pstrIdx = engine.MakePstr(captured);
+            int slot = engine.AllocateHeap(1);
+            engine.SetHeap(slot, Cell.Ref(pstrIdx));
+            if (!engine.Unify(sinkArgAddr, slot)) return false;
+        }
+        return succeeded;
+    }
+
+    /// <summary><c>atom_to_term(Atom, Term, Bindings)</c> — parses
+    /// <c>Atom</c>'s text as a Prolog term, unifies the result with
+    /// <c>Term</c>, and unifies <c>Bindings</c> with a list of
+    /// <c>'='(Name, Var)</c> compounds for each named variable.</summary>
+    public static bool AtomToTerm(Engine engine)
+    {
+        Cell atomCell = ResolveLocal(engine, engine.GetRegister(0));
+        if (atomCell.Tag != Tag.Atom)
+            throw new ShumwayPrologException(IsoError.TypeError("atom", new VarTerm("_")));
+        string source = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
+        if (!source.TrimEnd().EndsWith(".", StringComparison.Ordinal))
+            source += ".";
+
+        var parser = new Shumway.Compiler.Parsing.Parser(
+            new Shumway.Compiler.Lexer.Lexer(source),
+            Shumway.Compiler.Parsing.OperatorTable.Default());
+        Term parsed = parser.ReadClauseTerm();
+
+        // Collect variable names from the parsed term in first-occurrence
+        // order. Materialise the term once on the heap so each unique name
+        // resolves to one shared heap cell, then read back each var's
+        // heap-bound value for the bindings list.
+        var names = new List<string>();
+        var seen = new HashSet<string>();
+        CollectNamedVarsFromTerm(parsed, names, seen);
+
+        Cell parsedCell = Materializer.MaterializeAsCell(engine, parsed);
+        if (!engine.UnifyRegisterWithCell(1, parsedCell)) return false;
+
+        // The Materializer's internal varMap is private; re-walk the term to
+        // find each variable's heap address by re-materialising with a
+        // shared map ourselves. Simpler: read each var's binding back via
+        // re-parsing — but parsed already has the names. Re-materialise the
+        // bindings list using fresh vars that match by name into parsed.
+        // We do this by building '=(Name, Var)' terms whose Var slots
+        // share names with the parsed term — Materializer will then
+        // resolve them through its varMap and produce the same heap cells.
+        var pairs = new List<Term>(names.Count);
+        foreach (string name in names)
+        {
+            pairs.Add(new CompoundTerm("=", new Term[]
+            {
+                new AtomTerm(name),
+                new VarTerm(name),
+            }));
+        }
+        // To force shared identity between vars in pairs and vars in parsed,
+        // construct a top-level wrapper term containing both, materialise
+        // together, then extract the bindings half.
+        Term wrapper = new CompoundTerm("$pair", new Term[]
+        {
+            parsed,
+            BuildListTerm(pairs),
+        });
+        Cell wrapCell = Materializer.MaterializeAsCell(engine, wrapper);
+        // wrapCell is Cell.Ref to STR for $pair/2. Args at strBase+2 and +3.
+        int wrapBase = wrapCell.AsHeapIndex;
+        int bindingsAddr = wrapBase + 3;
+        return engine.UnifyRegisterWithHeapAt(2, bindingsAddr);
+    }
+
+    private static void CollectNamedVarsFromTerm(Term t, List<string> order, HashSet<string> seen)
+    {
+        switch (t)
+        {
+            case VarTerm v when v.Name != "_":
+                if (seen.Add(v.Name)) order.Add(v.Name);
+                break;
+            case CompoundTerm c:
+                foreach (Term arg in c.Args) CollectNamedVarsFromTerm(arg, order, seen);
+                break;
+        }
+    }
+
+    private static Term BuildListTerm(IReadOnlyList<Term> items)
+    {
+        Term acc = new AtomTerm("[]");
+        for (int i = items.Count - 1; i >= 0; i--)
+            acc = new CompoundTerm(".", new[] { items[i], acc });
+        return acc;
     }
 
     /// <summary><c>op(Precedence, Type, Name)</c> — runtime operator
@@ -658,6 +804,11 @@ public static class MetaBuiltins
                 BindBack(engine, sol.Bindings);
                 return true;
             }
+            // No solutions. If the sub-engine halted, re-raise so the
+            // parent QueryAll (or surrounding catch) sees the halt — ISO
+            // catch/3 explicitly does NOT intercept halt.
+            if (sub.LastHaltExitCode.HasValue)
+                throw new PrologHaltException(sub.LastHaltExitCode.Value);
             return false;
         }
         catch (ShumwayPrologException ex)

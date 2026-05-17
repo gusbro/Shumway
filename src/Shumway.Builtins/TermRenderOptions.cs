@@ -1,3 +1,5 @@
+using Shumway.Core;
+
 namespace Shumway.Builtins;
 
 /// <summary>
@@ -25,4 +27,11 @@ public sealed class TermRenderOptions
     public bool Quoted { get; set; } = false;
     public bool IgnoreOps { get; set; } = false;
     public bool Numbervars { get; set; } = false;
+
+    /// <summary>Operator-lookup view used by the renderer to decide
+    /// whether a compound's functor should print in operator form
+    /// (<c>a + b</c>) instead of canonical form (<c>+(a, b)</c>). When
+    /// <c>null</c> or <see cref="IgnoreOps"/> is true, the renderer
+    /// always emits canonical form.</summary>
+    public IOperatorLookup? Operators { get; set; }
 }

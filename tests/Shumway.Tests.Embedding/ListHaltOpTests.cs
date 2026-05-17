@@ -135,31 +135,34 @@ public class ListHaltOpTests
     // ---------- halt/0 + halt/1 ----------
 
     [Fact]
-    public void Halt0_TerminatesWithExitCodeZero()
+    public void Halt0_TerminatesIterationWithCodeZero()
     {
+        // halt/0 stops the iteration cleanly. The .NET caller sees no
+        // solutions; the exit code lands in PrologEngine.LastHaltExitCode.
         var engine = new PrologEngine();
-        var ex = Assert.Throws<Shumway.Core.PrologHaltException>(
-            () => engine.Query("halt."));
-        Assert.Equal(0, ex.ExitCode);
+        var sol = engine.Query("halt.");
+        Assert.False(sol.Success);
+        Assert.Equal(0, engine.LastHaltExitCode);
     }
 
     [Fact]
-    public void Halt1_TerminatesWithGivenExitCode()
+    public void Halt1_TerminatesIterationWithGivenCode()
     {
         var engine = new PrologEngine();
-        var ex = Assert.Throws<Shumway.Core.PrologHaltException>(
-            () => engine.Query("halt(42)."));
-        Assert.Equal(42, ex.ExitCode);
+        engine.Query("halt(42).");
+        Assert.Equal(42, engine.LastHaltExitCode);
     }
 
     [Fact]
     public void Halt_NotCaughtByCatch()
     {
-        // halt is a terminating action — catch/3 should NOT intercept it.
-        // (It propagates straight to the .NET caller.)
+        // halt is a terminating action — catch/3 doesn't intercept it.
+        // The Prolog-level catch lets it through; QueryAll's outer
+        // PrologHaltException catcher ends the iteration.
         var engine = new PrologEngine();
-        Assert.Throws<Shumway.Core.PrologHaltException>(
-            () => engine.Query("catch(halt(7), _, true)."));
+        var sol = engine.Query("catch(halt(7), _, true).");
+        Assert.False(sol.Success);
+        Assert.Equal(7, engine.LastHaltExitCode);
     }
 
     // ---------- op/3 runtime ----------

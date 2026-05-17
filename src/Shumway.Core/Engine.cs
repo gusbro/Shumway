@@ -59,6 +59,12 @@ public sealed class Engine
     /// <see cref="object"/>; callers downcast at the use site.</summary>
     public object? Host { get; set; }
 
+    /// <summary>Operator-lookup view used by the renderer to decide whether
+    /// a compound should print in operator form (<c>a + b</c>) or
+    /// canonical form (<c>+(a, b)</c>). Set by the embedding layer; left
+    /// <c>null</c> means "no operator-form rendering, always canonical".</summary>
+    public IOperatorLookup? Operators { get; set; }
+
     // ----- Engine registers (per ADR-005) -----
     // -1 means "none yet" for E, B, and B0. P and CP track the program counter and
     // continuation point; they are set when the interpreter is hooked up. B0 is
