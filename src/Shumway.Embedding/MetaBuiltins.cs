@@ -40,6 +40,142 @@ public static class MetaBuiltins
 
         BuiltinsRegistry.Register("throw", 1, Throw);
         BuiltinsRegistry.Register("catch", 3, Catch);
+
+        BuiltinsRegistry.Register("clause",            2, Clause);
+        BuiltinsRegistry.Register("current_predicate", 1, CurrentPredicate);
+        BuiltinsRegistry.Register("abolish",           1, Abolish);
+    }
+
+    // ============================================================================
+    // clause/2, current_predicate/1, abolish/1
+    // ============================================================================
+
+    /// <summary><c>clause(Head, Body)</c> — succeeds with the first stored
+    /// clause whose head unifies with <c>Head</c> and body with
+    /// <c>Body</c>. Searches the dynamic store first (in assertion order)
+    /// then the static clauses of every loaded module.
+    ///
+    /// <para>Phase-1 limitation: returns only the first match. ISO
+    /// <c>clause/2</c> is multi-solution; full backtracking through clause
+    /// candidates needs the call/N choice-point integration that's not in
+    /// v1.</para></summary>
+    public static bool Clause(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "clause/2 requires the engine to be hosted by a PrologEngine.");
+
+        Term headPattern = MaterializeRegister(engine, 0);
+        int fid = ExtractCallableFunctorId(headPattern, "clause/2");
+
+        var candidates = new List<Clause>();
+        candidates.AddRange(host.DynamicClausesFor(fid));
+        candidates.AddRange(host.StaticClausesFor(fid));
+
+        foreach (var candidate in candidates)
+        {
+            // Build a wrapping `:- /2 Head Body` term so head + body share
+            // one Materialize call (var identity preserved across them).
+            Term head = candidate.Kind == ClauseKind.Rule
+                ? ((CompoundTerm)candidate.Term).Args[0]
+                : candidate.Term;
+            Term body = candidate.Kind == ClauseKind.Rule
+                ? ((CompoundTerm)candidate.Term).Args[1]
+                : new AtomTerm("true");
+            Term pair = new CompoundTerm(":-", new[] { head, body });
+
+            int savedHeapTop = engine.HeapTop;
+            int savedBindingTrail = engine.BindingTrailTop;
+            int savedExtraTrail = engine.ExtraTrailTop;
+            int savedHb = engine.Hb;
+            engine.SetHb(engine.HeapTop);
+
+            Cell wrapperCell = Materializer.MaterializeAsCell(engine, pair);
+            // wrapperCell is Cell.Ref(strBase). Args live at strBase+2 and
+            // strBase+3 (one STR + one Functor cell come first).
+            int strBase = wrapperCell.AsHeapIndex;
+            int headAddr = strBase + 2;
+            int bodyAddr = strBase + 3;
+
+            bool ok = engine.UnifyRegisterWithHeapAt(0, headAddr)
+                   && engine.UnifyRegisterWithHeapAt(1, bodyAddr);
+            if (ok)
+            {
+                engine.SetHb(savedHb);
+                return true;
+            }
+
+            engine.UnwindTrails(savedBindingTrail, savedExtraTrail);
+            engine.SetHeapTop(savedHeapTop);
+            engine.SetHb(savedHb);
+        }
+        return false;
+    }
+
+    /// <summary><c>current_predicate(Name/Arity)</c> — Phase-1 ground-mode
+    /// only: succeeds iff a predicate with the given functor signature is
+    /// loaded (built-in, static, or dynamic). Variable-mode enumeration
+    /// would need a sub-engine wrapper around the full predicate index;
+    /// landing in a later chunk.</summary>
+    public static bool CurrentPredicate(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "current_predicate/1 requires a PrologEngine host.");
+
+        Term spec = MaterializeRegister(engine, 0);
+        if (spec is CompoundTerm c && c.Functor == "/" && c.Args.Length == 2
+            && c.Args[0] is AtomTerm name && c.Args[1] is IntTerm arity)
+        {
+            int fid = FunctorTable.Intern(
+                AtomTable.Intern(name.Name, permanent: true).Id, (int)arity.Value);
+            return host.HasPredicate(fid);
+        }
+
+        if (spec is VarTerm)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        throw new ShumwayPrologException(
+            IsoError.TypeError("predicate_indicator", spec));
+    }
+
+    /// <summary><c>abolish(Name/Arity)</c> — removes every asserted clause
+    /// of the named dynamic predicate and unregisters it so subsequent
+    /// assertions raise the "not declared dynamic" error until a new
+    /// <c>:- dynamic</c> declaration arrives.</summary>
+    public static bool Abolish(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "abolish/1 requires a PrologEngine host.");
+
+        Term spec = MaterializeRegister(engine, 0);
+        if (spec is CompoundTerm c && c.Functor == "/" && c.Args.Length == 2
+            && c.Args[0] is AtomTerm name && c.Args[1] is IntTerm arity)
+        {
+            int fid = FunctorTable.Intern(
+                AtomTable.Intern(name.Name, permanent: true).Id, (int)arity.Value);
+            host.AbolishDynamic(fid);
+            return true;
+        }
+
+        if (spec is VarTerm)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        throw new ShumwayPrologException(
+            IsoError.TypeError("predicate_indicator", spec));
+    }
+
+    private static int ExtractCallableFunctorId(Term head, string builtinName)
+    {
+        return head switch
+        {
+            AtomTerm a => FunctorTable.Intern(
+                AtomTable.Intern(a.Name, permanent: true).Id, 0),
+            CompoundTerm c => FunctorTable.Intern(
+                AtomTable.Intern(c.Functor, permanent: true).Id, c.Args.Length),
+            VarTerm => throw new ShumwayPrologException(IsoError.InstantiationError()),
+            _ => throw new ShumwayPrologException(
+                IsoError.TypeError("callable", head)),
+        };
     }
 
     // ============================================================================
@@ -235,7 +371,7 @@ public static class MetaBuiltins
                 "assert: PrologEngine host required.");
 
         Term clauseTerm = MaterializeRegister(engine, 0);
-        var clause = Clause.From(clauseTerm);
+        var clause = Shumway.Compiler.Ast.Clause.From(clauseTerm);
         if (prepend) host.Asserta(clause);
         else host.Assertz(clause);
         return true;
@@ -252,13 +388,13 @@ public static class MetaBuiltins
                 "retract: PrologEngine host required.");
 
         Term pattern = MaterializeRegister(engine, 0);
-        Clause patternClause = Clause.From(pattern);
+        var patternClause = Shumway.Compiler.Ast.Clause.From(pattern);
         int patternFid = ExtractHeadFunctorIdFromClause(patternClause);
 
         var candidates = host.DynamicClausesFor(patternFid);
         if (candidates.Count == 0) return false;
 
-        foreach (Clause candidate in candidates)
+        foreach (var candidate in candidates)
         {
             // Trial-unify against a fresh copy of the candidate clause. If it
             // matches, commit (keep the bindings, drop the original from the

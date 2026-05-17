@@ -1,0 +1,166 @@
+using Shumway.Compiler.Ast;
+using Shumway.Embedding;
+using Xunit;
+
+namespace Shumway.Tests.Embedding;
+
+/// <summary>
+/// Coverage for chunk 24: <c>clause/2</c>, <c>current_predicate/1</c>,
+/// <c>abolish/1</c> — the introspection family that lets user code reflect
+/// on the engine's loaded predicates.
+/// </summary>
+public class IntrospectionTests
+{
+    private static Term Atom(string n) => new AtomTerm(n);
+    private static Term Int(long v) => new IntTerm(v);
+    private static Term Compound(string f, params Term[] args) => new CompoundTerm(f, args);
+
+    // ---------- clause/2 ----------
+
+    [Fact]
+    public void Clause_StaticFact_BindsHeadAndTrueBody()
+    {
+        var engine = new PrologEngine();
+        engine.ConsultString("greeting(hello).\n");
+        var sol = engine.Query("clause(greeting(X), B).");
+        Assert.True(sol.Success);
+        Assert.Equal(Atom("hello"), sol["X"]);
+        Assert.Equal(Atom("true"), sol["B"]);
+    }
+
+    [Fact]
+    public void Clause_StaticRule_BindsBodyTerm()
+    {
+        var engine = new PrologEngine();
+        engine.ConsultString("double(X, Y) :- Y is X * 2.\n");
+        var sol = engine.Query("clause(double(A, B), Body).");
+        Assert.True(sol.Success);
+        // Body is `B is A * 2` — exact AST shape depends on parser, but it
+        // must be a compound for is/2.
+        var bodyCt = Assert.IsType<CompoundTerm>(sol["Body"]);
+        Assert.Equal("is", bodyCt.Functor);
+        Assert.Equal(2, bodyCt.Args.Length);
+    }
+
+    [Fact]
+    public void Clause_DynamicFact_FoundAfterAssertz()
+    {
+        var engine = new PrologEngine();
+        engine.ConsultString(":- dynamic note/1.\n");
+        engine.Query("assertz(note(first)).");
+        var sol = engine.Query("clause(note(X), _).");
+        Assert.True(sol.Success);
+        Assert.Equal(Atom("first"), sol["X"]);
+    }
+
+    [Fact]
+    public void Clause_NoMatchingPredicate_Fails()
+    {
+        var engine = new PrologEngine();
+        engine.ConsultString("p(1).\n");
+        // No predicate q/1 anywhere → clause/2 fails (doesn't throw in v1).
+        Assert.False(engine.Query("clause(q(X), _).").Success);
+    }
+
+    // ---------- current_predicate/1 ----------
+
+    [Fact]
+    public void CurrentPredicate_StaticPredicate_Succeeds()
+    {
+        var engine = new PrologEngine();
+        engine.ConsultString("foo(a).\nfoo(b).\n");
+        Assert.True(engine.Query("current_predicate(foo/1).").Success);
+    }
+
+    [Fact]
+    public void CurrentPredicate_DynamicPredicate_Succeeds()
+    {
+        var engine = new PrologEngine();
+        engine.ConsultString(":- dynamic bar/2.\n");
+        Assert.True(engine.Query("current_predicate(bar/2).").Success);
+    }
+
+    [Fact]
+    public void CurrentPredicate_Builtin_Succeeds()
+    {
+        // Builtins are visible to current_predicate too (they live in the
+        // "system" pseudo-module per ADR-008).
+        var engine = new PrologEngine();
+        Assert.True(engine.Query("current_predicate(append/3).").Success);
+        Assert.True(engine.Query("current_predicate(is/2).").Success);
+    }
+
+    [Fact]
+    public void CurrentPredicate_Unknown_Fails()
+    {
+        var engine = new PrologEngine();
+        Assert.False(engine.Query("current_predicate(definitely_not_a_predicate/7).").Success);
+    }
+
+    [Fact]
+    public void CurrentPredicate_BadSpec_RaisesIsoError()
+    {
+        var engine = new PrologEngine();
+        var ex = Assert.Throws<ShumwayPrologException>(
+            () => engine.Query("current_predicate(not_a_slash)."));
+        // Should be an ISO type_error.
+        var ct = Assert.IsType<CompoundTerm>(ex.Term);
+        Assert.Equal("error", ct.Functor);
+        var inner = Assert.IsType<CompoundTerm>(ct.Args[0]);
+        Assert.Equal("type_error", inner.Functor);
+    }
+
+    // ---------- abolish/1 ----------
+
+    [Fact]
+    public void Abolish_RemovesAllDynamicClauses()
+    {
+        var engine = new PrologEngine();
+        engine.ConsultString(":- dynamic counter/1.\n");
+        engine.Query("assertz(counter(1)).");
+        engine.Query("assertz(counter(2)).");
+        engine.Query("assertz(counter(3)).");
+
+        Assert.True(engine.Query("counter(2).").Success);
+
+        Assert.True(engine.Query("abolish(counter/1).").Success);
+
+        // Predicate is gone: it's no longer in the dynamic registry, and
+        // asserting again must re-declare it dynamic first.
+        Assert.Throws<InvalidOperationException>(
+            () => engine.Query("assertz(counter(99))."));
+    }
+
+    [Fact]
+    public void Abolish_NonexistentDynamic_SucceedsSilently()
+    {
+        // Per ISO, abolish on a never-declared predicate is a no-op success
+        // (the engine has nothing to remove).
+        var engine = new PrologEngine();
+        Assert.True(engine.Query("abolish(never_existed/3).").Success);
+    }
+
+    [Fact]
+    public void Abolish_BadSpec_RaisesIsoError()
+    {
+        var engine = new PrologEngine();
+        var ex = Assert.Throws<ShumwayPrologException>(
+            () => engine.Query("abolish(not_a_slash)."));
+        var ct = Assert.IsType<CompoundTerm>(ex.Term);
+        Assert.Equal("error", ct.Functor);
+    }
+
+    // ---------- Round trip ----------
+
+    [Fact]
+    public void Assertz_Then_CurrentPredicate_Sees()
+    {
+        var engine = new PrologEngine();
+        engine.ConsultString(":- dynamic registered/1.\n");
+        Assert.True(engine.Query("current_predicate(registered/1).").Success);
+        engine.Query("assertz(registered(item)).");
+        // current_predicate succeeds — registered/1 is in the dynamic set
+        // regardless of how many clauses have been asserted.
+        Assert.True(engine.Query("current_predicate(registered/1).").Success);
+    }
+}

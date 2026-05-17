@@ -144,6 +144,56 @@ public sealed class PrologEngine
         return list.Remove(clause);
     }
 
+    /// <summary>Removes every asserted clause of the given dynamic functor and
+    /// drops the functor from the dynamic registry, so subsequent calls raise
+    /// "not declared dynamic" rather than fail silently. Mirrors ISO
+    /// <c>abolish/1</c>.</summary>
+    internal void AbolishDynamic(int functorId)
+    {
+        _dynamicClauses.Remove(functorId);
+        _dynamicFunctors.Remove(functorId);
+    }
+
+    /// <summary>Static clauses whose head functor matches
+    /// <paramref name="functorId"/>, across every loaded module. Used by
+    /// <c>clause/2</c> as the static half of the lookup; dynamic clauses
+    /// come from <see cref="DynamicClausesFor"/>.</summary>
+    internal IEnumerable<Clause> StaticClausesFor(int functorId)
+    {
+        foreach (var manifest in _modules.Values)
+        {
+            foreach (var c in manifest.Clauses)
+            {
+                if (TryExtractHead(c, out string n, out int a))
+                {
+                    int fid = FunctorTable.Intern(
+                        AtomTable.Intern(n, permanent: true).Id, a);
+                    if (fid == functorId) yield return c;
+                }
+            }
+        }
+    }
+
+    /// <summary>True iff <paramref name="functorId"/> is the functor of any
+    /// loaded predicate — static, dynamic, or builtin. Backs the
+    /// ground-mode case of <c>current_predicate/1</c>.</summary>
+    internal bool HasPredicate(int functorId)
+    {
+        if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out _))
+            return true;
+        if (_dynamicFunctors.Contains(functorId)) return true;
+        foreach (var manifest in _modules.Values)
+        {
+            foreach (var c in manifest.Clauses)
+            {
+                if (TryExtractHead(c, out string n, out int a)
+                    && FunctorTable.Intern(AtomTable.Intern(n, permanent: true).Id, a) == functorId)
+                    return true;
+            }
+        }
+        return false;
+    }
+
     private List<Clause> GetOrCreateDynamicSlot(int fid)
     {
         if (!_dynamicClauses.TryGetValue(fid, out var list))
