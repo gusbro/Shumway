@@ -57,6 +57,52 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("op", 3, Op);
         BuiltinsRegistry.Register("with_output_to", 2, WithOutputTo);
         BuiltinsRegistry.Register("atom_to_term",   3, AtomToTerm);
+        BuiltinsRegistry.Register("read_term_from_stream", 2, ReadTermFromStream);
+    }
+
+    /// <summary><c>read_term_from_stream(Stream, Term)</c> — reads
+    /// characters from a read-mode stream until it sees a clause-ending
+    /// <c>.</c> followed by whitespace or EOF, parses the buffer as a
+    /// Prolog term, and unifies the result with <c>Term</c>. Hits EOF
+    /// before any text yields the atom <c>end_of_file</c>.</summary>
+    public static bool ReadTermFromStream(Engine engine)
+    {
+        Cell handleCell = ResolveLocal(engine, engine.GetRegister(0));
+        if (handleCell.Tag != Tag.Foreign)
+            throw new PrologRuntimeException("type_error", "stream");
+        var reader = engine.AsForeign<System.IO.StreamReader>(handleCell);
+        if (reader is null)
+            throw new PrologRuntimeException("existence_error", "stream");
+
+        var sb = new System.Text.StringBuilder();
+        bool sawAnyChar = false;
+        while (true)
+        {
+            int c = reader.Read();
+            if (c < 0)
+            {
+                if (!sawAnyChar)
+                {
+                    int eofId = AtomTable.Intern("end_of_file", permanent: true).Id;
+                    return engine.UnifyRegisterWithCell(1, Cell.Atom(eofId));
+                }
+                break;
+            }
+            sawAnyChar = true;
+            sb.Append((char)c);
+            if (c == '.')
+            {
+                int next = reader.Peek();
+                if (next < 0 || char.IsWhiteSpace((char)next)) break;
+            }
+        }
+
+        var parser = new Shumway.Compiler.Parsing.Parser(
+            new Shumway.Compiler.Lexer.Lexer(sb.ToString()),
+            Shumway.Compiler.Parsing.OperatorTable.Default());
+        Term parsed = parser.ReadClauseTerm();
+        Cell cell = Materializer.MaterializeAsCell(engine, parsed);
+        return engine.UnifyRegisterWithCell(1, cell);
     }
 
     /// <summary><c>with_output_to(Sink, Goal)</c> — runs <c>Goal</c> with

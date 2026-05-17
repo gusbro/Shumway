@@ -23,6 +23,14 @@ public static class TermRenderer
         => Render(engine, cell, output, TermRenderOptions.Default);
 
     public static void Render(Engine engine, Cell cell, TextWriter output, TermRenderOptions options)
+        => Render(engine, cell, output, options, maxPriority: 1200);
+
+    /// <summary>Renders <paramref name="cell"/> bounded by
+    /// <paramref name="maxPriority"/>: if the term itself is an operator
+    /// of higher priority it gets wrapped in parens so the result is
+    /// re-parseable. Top-level callers pass 1200 (no bound).</summary>
+    public static void Render(Engine engine, Cell cell, TextWriter output,
+        TermRenderOptions options, int maxPriority)
     {
         int derefAddr = Resolve(engine, ref cell);
 
@@ -45,7 +53,7 @@ public static class TermRenderer
                 break;
             }
             case Tag.Str:
-                RenderCompound(engine, cell, output, options);
+                RenderCompound(engine, cell, output, options, maxPriority);
                 break;
             case Tag.Lis:
                 RenderList(engine, cell, output, options);
@@ -71,7 +79,7 @@ public static class TermRenderer
         return addr;
     }
 
-    private static void RenderCompound(Engine engine, Cell strCell, TextWriter output, TermRenderOptions options)
+    private static void RenderCompound(Engine engine, Cell strCell, TextWriter output, TermRenderOptions options, int maxPriority)
     {
         int functorIdx = strCell.AsHeapIndex;
         Cell functorCell = engine.GetHeap(functorIdx);
@@ -94,30 +102,56 @@ public static class TermRenderer
             }
         }
 
-        // Operator-form rendering: consult the lookup table if enabled.
+        // Operator-form rendering: consult the lookup table if enabled. The
+        // priority bound is applied symmetrically — if the term's own
+        // operator priority exceeds maxPriority we wrap in parens and
+        // recurse with a fresh ceiling.
         if (!options.IgnoreOps && options.Operators is not null)
         {
-            if (arity == 2 && options.Operators.TryGetInfix(name, out int _, out var _))
+            if (arity == 2 && options.Operators.TryGetInfix(name, out int infixPrec, out OperatorShape infixShape))
             {
-                Render(engine, engine.GetHeap(functorIdx + 1), output, options);
+                bool needsParens = infixPrec > maxPriority;
+                if (needsParens) output.Write('(');
+                int leftMax = infixShape switch
+                {
+                    OperatorShape.Yfx => infixPrec,       // left can be same prec
+                    OperatorShape.Xfx or OperatorShape.Xfy => infixPrec - 1,
+                    _ => infixPrec - 1,
+                };
+                int rightMax = infixShape switch
+                {
+                    OperatorShape.Xfy => infixPrec,        // right can be same prec
+                    OperatorShape.Xfx or OperatorShape.Yfx => infixPrec - 1,
+                    _ => infixPrec - 1,
+                };
+                Render(engine, engine.GetHeap(functorIdx + 1), output, options, leftMax);
                 output.Write(' ');
                 WriteAtomName(name, output, options);
                 output.Write(' ');
-                Render(engine, engine.GetHeap(functorIdx + 2), output, options);
+                Render(engine, engine.GetHeap(functorIdx + 2), output, options, rightMax);
+                if (needsParens) output.Write(')');
                 return;
             }
-            if (arity == 1 && options.Operators.TryGetPrefix(name, out int _, out var _))
+            if (arity == 1 && options.Operators.TryGetPrefix(name, out int prefixPrec, out OperatorShape prefixShape))
             {
+                bool needsParens = prefixPrec > maxPriority;
+                if (needsParens) output.Write('(');
                 WriteAtomName(name, output, options);
                 output.Write(' ');
-                Render(engine, engine.GetHeap(functorIdx + 1), output, options);
+                int argMax = prefixShape == OperatorShape.Fy ? prefixPrec : prefixPrec - 1;
+                Render(engine, engine.GetHeap(functorIdx + 1), output, options, argMax);
+                if (needsParens) output.Write(')');
                 return;
             }
-            if (arity == 1 && options.Operators.TryGetPostfix(name, out int _, out var _))
+            if (arity == 1 && options.Operators.TryGetPostfix(name, out int postPrec, out OperatorShape postShape))
             {
-                Render(engine, engine.GetHeap(functorIdx + 1), output, options);
+                bool needsParens = postPrec > maxPriority;
+                if (needsParens) output.Write('(');
+                int argMax = postShape == OperatorShape.Yf ? postPrec : postPrec - 1;
+                Render(engine, engine.GetHeap(functorIdx + 1), output, options, argMax);
                 output.Write(' ');
                 WriteAtomName(name, output, options);
+                if (needsParens) output.Write(')');
                 return;
             }
         }
@@ -128,7 +162,9 @@ public static class TermRenderer
         for (int i = 0; i < arity; i++)
         {
             if (i > 0) output.Write(", ");
-            Render(engine, engine.GetHeap(functorIdx + 1 + i), output, options);
+            // Inside argument lists, comma is precedence 1000 in standard
+            // Prolog so each arg can carry up to 999 priority without parens.
+            Render(engine, engine.GetHeap(functorIdx + 1 + i), output, options, 999);
         }
         output.Write(')');
     }

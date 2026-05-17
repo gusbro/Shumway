@@ -11,11 +11,13 @@ namespace Shumway.Builtins;
 /// </summary>
 public static class IOBuiltins
 {
-    /// <summary><c>write(X)</c> — writes the canonical text representation
-    /// of X to the engine's output sink, no trailing newline.</summary>
+    /// <summary><c>write(X)</c> — writes X to the engine's output sink
+    /// using operator-form rendering for known operators (no trailing
+    /// newline). Atom quoting is off; pass <c>quoted(true)</c> through
+    /// <c>write_term/2</c> if you need the parseable form.</summary>
     public static bool Write(Engine engine)
     {
-        TermRenderer.Render(engine, engine.GetRegister(0), engine.Out);
+        TermRenderer.Render(engine, engine.GetRegister(0), engine.Out, DefaultOptions(engine));
         return true;
     }
 
@@ -29,10 +31,13 @@ public static class IOBuiltins
     /// <summary><c>writeln(X)</c> — equivalent to <c>write(X), nl</c>.</summary>
     public static bool Writeln(Engine engine)
     {
-        TermRenderer.Render(engine, engine.GetRegister(0), engine.Out);
+        TermRenderer.Render(engine, engine.GetRegister(0), engine.Out, DefaultOptions(engine));
         engine.Out.WriteLine();
         return true;
     }
+
+    private static TermRenderOptions DefaultOptions(Engine engine) =>
+        new TermRenderOptions { Operators = engine.Operators };
 
     /// <summary><c>write_term(Term, Options)</c> — writes <c>Term</c>
     /// to the engine's output sink, honouring the boolean options
@@ -84,7 +89,7 @@ public static class IOBuiltins
     /// <c>TermRenderer</c>'s option-aware rewrite.</summary>
     public static bool WriteCanonical(Engine engine)
     {
-        TermRenderer.Render(engine, engine.GetRegister(0), engine.Out);
+        TermRenderer.Render(engine, engine.GetRegister(0), engine.Out, DefaultOptions(engine));
         return true;
     }
 
@@ -93,7 +98,7 @@ public static class IOBuiltins
     /// <c>write/1</c> fallback path.</summary>
     public static bool Print(Engine engine)
     {
-        TermRenderer.Render(engine, engine.GetRegister(0), engine.Out);
+        TermRenderer.Render(engine, engine.GetRegister(0), engine.Out, DefaultOptions(engine));
         return true;
     }
 
@@ -109,10 +114,27 @@ public static class IOBuiltins
     /// </list>
     /// <para>The format string may be an atom or a PSTR. The args list
     /// must be a proper list — pass <c>[]</c> when no args are needed.</para></summary>
-    public static bool Format(Engine engine)
+    public static bool Format(Engine engine) =>
+        FormatImpl(engine, engine.Out, fmtReg: 0, argsReg: 1, "format/2");
+
+    /// <summary><c>format(Stream, FormatString, Args)</c> — stream-aware
+    /// variant of <see cref="Format"/>. The stream handle must be a
+    /// FOREIGN cell wrapping a <see cref="System.IO.StreamWriter"/>.</summary>
+    public static bool Format3(Engine engine)
     {
-        string fmt = ReadStringArg(engine, engine.GetRegister(0), "format/2");
-        var args = ReadProperListAsCells(engine, engine.GetRegister(1), "format/2");
+        Cell handle = Resolve(engine, engine.GetRegister(0));
+        if (handle.Tag != Tag.Foreign)
+            throw new PrologRuntimeException("type_error", "stream");
+        var writer = engine.AsForeign<System.IO.StreamWriter>(handle);
+        if (writer is null)
+            throw new PrologRuntimeException("existence_error", "stream");
+        return FormatImpl(engine, writer, fmtReg: 1, argsReg: 2, "format/3");
+    }
+
+    private static bool FormatImpl(Engine engine, System.IO.TextWriter output, int fmtReg, int argsReg, string name)
+    {
+        string fmt = ReadStringArg(engine, engine.GetRegister(fmtReg), name);
+        var args = ReadProperListAsCells(engine, engine.GetRegister(argsReg), name);
         int argIdx = 0;
 
         for (int i = 0; i < fmt.Length; i++)
@@ -120,50 +142,51 @@ public static class IOBuiltins
             char ch = fmt[i];
             if (ch != '~')
             {
-                engine.Out.Write(ch);
+                output.Write(ch);
                 continue;
             }
             if (++i >= fmt.Length)
                 throw new InvalidOperationException(
-                    "format/2: truncated format spec at end of string.");
+                    $"{name}: truncated format spec at end of string.");
             char spec = fmt[i];
             switch (spec)
             {
                 case '~':
-                    engine.Out.Write('~');
+                    output.Write('~');
                     break;
                 case 'n':
-                    engine.Out.WriteLine();
+                    output.WriteLine();
                     break;
                 case 'w':
                 {
-                    Cell arg = ConsumeArg(args, ref argIdx, "format/2");
-                    TermRenderer.Render(engine, arg, engine.Out);
+                    Cell arg = ConsumeArg(args, ref argIdx, name);
+                    TermRenderer.Render(engine, arg, output,
+                        new TermRenderOptions { Operators = engine.Operators });
                     break;
                 }
                 case 'a':
                 {
-                    Cell arg = ConsumeArg(args, ref argIdx, "format/2");
+                    Cell arg = ConsumeArg(args, ref argIdx, name);
                     Cell deref = Resolve(engine, arg);
                     if (deref.Tag != Tag.Atom)
                         throw new InvalidOperationException(
-                            $"format/2: ~a expects an atom, got tag {deref.Tag}.");
-                    engine.Out.Write(AtomTable.GetById(deref.AsAtomId)?.Name ?? "");
+                            $"{name}: ~a expects an atom, got tag {deref.Tag}.");
+                    output.Write(AtomTable.GetById(deref.AsAtomId)?.Name ?? "");
                     break;
                 }
                 case 'd':
                 {
-                    Cell arg = ConsumeArg(args, ref argIdx, "format/2");
+                    Cell arg = ConsumeArg(args, ref argIdx, name);
                     Cell deref = Resolve(engine, arg);
                     if (deref.Tag != Tag.Int)
                         throw new InvalidOperationException(
-                            $"format/2: ~d expects an integer, got tag {deref.Tag}.");
-                    engine.Out.Write(deref.AsInt.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                            $"{name}: ~d expects an integer, got tag {deref.Tag}.");
+                    output.Write(deref.AsInt.ToString(System.Globalization.CultureInfo.InvariantCulture));
                     break;
                 }
                 case 's':
                 {
-                    Cell arg = ConsumeArg(args, ref argIdx, "format/2");
+                    Cell arg = ConsumeArg(args, ref argIdx, name);
                     var sb = new System.Text.StringBuilder();
                     Cell cur = Resolve(engine, arg);
                     while (cur.Tag == Tag.Lis)
@@ -171,16 +194,16 @@ public static class IOBuiltins
                         Cell head = Resolve(engine, engine.GetHeap(cur.AsHeapIndex));
                         if (head.Tag != Tag.Int)
                             throw new InvalidOperationException(
-                                $"format/2: ~s expects a code list, got element tag {head.Tag}.");
+                                $"{name}: ~s expects a code list, got element tag {head.Tag}.");
                         sb.Append((char)head.AsInt);
                         cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
                     }
-                    engine.Out.Write(sb.ToString());
+                    output.Write(sb.ToString());
                     break;
                 }
                 default:
                     throw new InvalidOperationException(
-                        $"format/2: unknown spec '~{spec}'.");
+                        $"{name}: unknown spec '~{spec}'.");
             }
         }
         return true;

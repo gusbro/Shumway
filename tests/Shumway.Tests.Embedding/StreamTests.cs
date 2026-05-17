@@ -107,10 +107,9 @@ public class StreamTests
     public void Open_UnknownMode_Throws()
     {
         var engine = new PrologEngine();
-        // Phase 1 supports write / append only — 'read' surfaces a clear
-        // domain_error (read streams arrive in a later chunk).
+        // 'read' is now supported; an unknown mode (gibberish) raises.
         Assert.Throws<Shumway.Core.PrologRuntimeException>(
-            () => engine.Query("open('/tmp/whatever.txt', read, _)."));
+            () => engine.Query("open('/tmp/whatever.txt', purple, _)."));
     }
 
     [Fact]

@@ -61,11 +61,14 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("write_canonical", 1, IOBuiltins.WriteCanonical);
         BuiltinsRegistry.Register("print",           1, IOBuiltins.Print);
 
-        // Streams (write-only in Phase 1).
-        BuiltinsRegistry.Register("open",  3, StreamBuiltins.Open);
-        BuiltinsRegistry.Register("close", 1, StreamBuiltins.Close);
-        BuiltinsRegistry.Register("write", 2, StreamBuiltins.WriteToStream);
-        BuiltinsRegistry.Register("nl",    1, StreamBuiltins.NlOnStream);
+        // Streams: write + read modes; format/3 stream-aware.
+        BuiltinsRegistry.Register("open",      3, StreamBuiltins.Open);
+        BuiltinsRegistry.Register("close",     1, StreamBuiltins.Close);
+        BuiltinsRegistry.Register("write",     2, StreamBuiltins.WriteToStream);
+        BuiltinsRegistry.Register("nl",        1, StreamBuiltins.NlOnStream);
+        BuiltinsRegistry.Register("get_char",  2, StreamBuiltins.GetChar);
+        BuiltinsRegistry.Register("peek_char", 2, StreamBuiltins.PeekChar);
+        BuiltinsRegistry.Register("format",    3, IOBuiltins.Format3);
 
         // Atom / list manipulation.
         BuiltinsRegistry.Register("length",       2, AtomListBuiltins.Length);

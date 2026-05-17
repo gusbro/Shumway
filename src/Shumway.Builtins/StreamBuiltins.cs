@@ -27,17 +27,18 @@ public static class StreamBuiltins
         string path = AtomTable.GetById(pathCell.AsAtomId)?.Name ?? "";
         string mode = AtomTable.GetById(modeCell.AsAtomId)?.Name ?? "";
 
-        StreamWriter? writer = mode switch
+        object? streamObj = mode switch
         {
             "write"  => new StreamWriter(path, append: false),
             "append" => new StreamWriter(path, append: true),
+            "read"   => new StreamReader(path),
             _ => null,
         };
-        if (writer is null)
+        if (streamObj is null)
             throw new PrologRuntimeException("domain_error",
-                "stream_mode (Phase 1 only supports write / append)");
+                "stream_mode (Phase 1 supports write / append / read)");
 
-        Cell handle = engine.MakeForeign(writer);
+        Cell handle = engine.MakeForeign(streamObj);
         return engine.UnifyRegisterWithCell(2, handle);
     }
 
@@ -46,12 +47,16 @@ public static class StreamBuiltins
         Cell handleCell = Resolve(engine, engine.GetRegister(0));
         if (handleCell.Tag != Tag.Foreign)
             throw new PrologRuntimeException("type_error", "stream");
-        var writer = engine.AsForeign<StreamWriter>(handleCell);
-        if (writer is null)
-            throw new PrologRuntimeException("existence_error", "stream");
-        writer.Flush();
-        writer.Dispose();
-        return true;
+        object? streamObj = engine.AsForeign(handleCell);
+        switch (streamObj)
+        {
+            case StreamWriter w: w.Flush(); w.Dispose(); return true;
+            case StreamReader r: r.Dispose(); return true;
+            case null:
+                throw new PrologRuntimeException("existence_error", "stream");
+            default:
+                throw new PrologRuntimeException("type_error", "stream");
+        }
     }
 
     /// <summary><c>write(Stream, Term)</c> — renders Term to the
@@ -73,6 +78,32 @@ public static class StreamBuiltins
         return true;
     }
 
+    /// <summary><c>get_char(Stream, Char)</c> — reads one character from
+    /// the stream and unifies the result with <c>Char</c> as a
+    /// single-character atom. End of stream returns the atom
+    /// <c>end_of_file</c>.</summary>
+    public static bool GetChar(Engine engine)
+    {
+        StreamReader reader = RequireReader(engine, engine.GetRegister(0));
+        int c = reader.Read();
+        Cell value = c < 0
+            ? Cell.Atom(AtomTable.Intern("end_of_file", permanent: true).Id)
+            : Cell.Atom(AtomTable.Intern(((char)c).ToString(), permanent: false).Id);
+        return engine.UnifyRegisterWithCell(1, value);
+    }
+
+    /// <summary><c>peek_char(Stream, Char)</c> — returns the next char
+    /// without consuming it. EOF yields <c>end_of_file</c>.</summary>
+    public static bool PeekChar(Engine engine)
+    {
+        StreamReader reader = RequireReader(engine, engine.GetRegister(0));
+        int c = reader.Peek();
+        Cell value = c < 0
+            ? Cell.Atom(AtomTable.Intern("end_of_file", permanent: true).Id)
+            : Cell.Atom(AtomTable.Intern(((char)c).ToString(), permanent: false).Id);
+        return engine.UnifyRegisterWithCell(1, value);
+    }
+
     private static StreamWriter RequireWriter(Engine engine, Cell handleCell)
     {
         Cell h = Resolve(engine, handleCell);
@@ -82,6 +113,17 @@ public static class StreamBuiltins
         if (writer is null)
             throw new PrologRuntimeException("existence_error", "stream");
         return writer;
+    }
+
+    private static StreamReader RequireReader(Engine engine, Cell handleCell)
+    {
+        Cell h = Resolve(engine, handleCell);
+        if (h.Tag != Tag.Foreign)
+            throw new PrologRuntimeException("type_error", "stream");
+        var reader = engine.AsForeign<StreamReader>(h);
+        if (reader is null)
+            throw new PrologRuntimeException("existence_error", "stream");
+        return reader;
     }
 
     private static Cell Resolve(Engine engine, Cell c)
