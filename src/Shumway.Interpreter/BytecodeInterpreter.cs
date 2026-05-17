@@ -24,38 +24,52 @@ public sealed class BytecodeInterpreter
     private readonly Engine _engine;
     private readonly IReadOnlyList<string> _stringLiterals;
     private readonly IReadOnlyList<double> _floatLiterals;
+    private readonly IReadOnlyList<SwitchTable> _switchTables;
 
     public BytecodeInterpreter(Engine engine)
-        : this(engine, Array.Empty<string>(), Array.Empty<double>())
+        : this(engine, Array.Empty<string>(), Array.Empty<double>(), Array.Empty<SwitchTable>())
     {
     }
 
     public BytecodeInterpreter(Engine engine, IReadOnlyList<string> stringLiterals)
-        : this(engine, stringLiterals, Array.Empty<double>())
+        : this(engine, stringLiterals, Array.Empty<double>(), Array.Empty<SwitchTable>())
     {
     }
 
-    /// <summary>Constructs an interpreter with both literal pools. PSTR opcodes
-    /// (<c>get_pstr</c>, <c>put_pstr</c>) look up strings by id; the float-
-    /// literal opcodes (<c>get_float</c>, <c>put_float</c>, <c>unify_float</c>)
-    /// look up doubles by id. Bundles provide both pools at load time; in
-    /// tests, they're passed directly.</summary>
     public BytecodeInterpreter(
         Engine engine,
         IReadOnlyList<string> stringLiterals,
         IReadOnlyList<double> floatLiterals)
+        : this(engine, stringLiterals, floatLiterals, Array.Empty<SwitchTable>())
+    {
+    }
+
+    /// <summary>Constructs an interpreter with literal pools and the
+    /// program-absolute switch table list. PSTR opcodes look up strings,
+    /// float-literal opcodes look up doubles, and <c>switch_on_atom</c> /
+    /// <c>switch_on_integer</c> / <c>switch_on_structure</c> look up
+    /// <see cref="SwitchTable"/>s. Bundles provide all three at load time;
+    /// for tests they're passed directly.</summary>
+    public BytecodeInterpreter(
+        Engine engine,
+        IReadOnlyList<string> stringLiterals,
+        IReadOnlyList<double> floatLiterals,
+        IReadOnlyList<SwitchTable> switchTables)
     {
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(stringLiterals);
         ArgumentNullException.ThrowIfNull(floatLiterals);
+        ArgumentNullException.ThrowIfNull(switchTables);
         _engine = engine;
         _stringLiterals = stringLiterals;
         _floatLiterals = floatLiterals;
+        _switchTables = switchTables;
     }
 
     public Engine Engine => _engine;
     public IReadOnlyList<string> StringLiterals => _stringLiterals;
     public IReadOnlyList<double> FloatLiterals => _floatLiterals;
+    public IReadOnlyList<SwitchTable> SwitchTables => _switchTables;
 
     /// <summary>
     /// Runs <paramref name="code"/> starting at <paramref name="startPc"/> until the
@@ -174,6 +188,117 @@ public sealed class BytecodeInterpreter
                     _engine.TrustMe();
                     _engine.AdvancePc(1);
                     break;
+
+                case Opcode.Try:
+                {
+                    int target = BytecodeIO.ReadInt32(code, pc + 1);
+                    int arity = BytecodeIO.ReadInt32(code, pc + 5);
+                    // BP is the next opcode in the indexed bucket — that's
+                    // where we'll backtrack to if this clause fails.
+                    _engine.PushChoicePoint(arity, pc + 9);
+                    _engine.SetPc(target);
+                    break;
+                }
+
+                case Opcode.Retry:
+                {
+                    int target = BytecodeIO.ReadInt32(code, pc + 1);
+                    _engine.RetryMeElse(pc + 5);
+                    _engine.SetPc(target);
+                    break;
+                }
+
+                case Opcode.Trust:
+                {
+                    int target = BytecodeIO.ReadInt32(code, pc + 1);
+                    _engine.TrustMe();
+                    _engine.SetPc(target);
+                    break;
+                }
+
+                // ---------- First-argument indexing ----------
+
+                case Opcode.SwitchOnTerm:
+                {
+                    int varAddr    = BytecodeIO.ReadInt32(code, pc + 1);
+                    int constAddr  = BytecodeIO.ReadInt32(code, pc + 5);
+                    int listAddr   = BytecodeIO.ReadInt32(code, pc + 9);
+                    int structAddr = BytecodeIO.ReadInt32(code, pc + 13);
+
+                    Cell a1 = DerefA1();
+                    int target = a1.Tag switch
+                    {
+                        Tag.Ref => varAddr,
+                        Tag.Atom or Tag.Int or Tag.Float => constAddr,
+                        Tag.Lis => listAddr,
+                        Tag.Str => structAddr,
+                        // PSTR, BigInt, Foreign, String — fall back to the
+                        // var-arg chain. These rarely appear as a clause-head
+                        // first argument anyway.
+                        _ => varAddr,
+                    };
+                    _engine.SetPc(target);
+                    break;
+                }
+
+                case Opcode.SwitchOnAtom:
+                {
+                    int tableId = BytecodeIO.ReadInt32(code, pc + 1);
+                    var table = _switchTables[tableId];
+                    Cell a1 = DerefA1();
+                    int target = a1.Tag == Tag.Atom
+                        ? table.Lookup(a1.AsAtomId)
+                        : table.DefaultAddress;
+                    _engine.SetPc(target);
+                    break;
+                }
+
+                case Opcode.SwitchOnInteger:
+                {
+                    int tableId = BytecodeIO.ReadInt32(code, pc + 1);
+                    var table = _switchTables[tableId];
+                    Cell a1 = DerefA1();
+                    int target;
+                    if (a1.Tag == Tag.Int)
+                    {
+                        long value = a1.AsInt;
+                        // Switch tables key on 32-bit ints. Out-of-range values
+                        // (those that won't fit in an int operand anyway) miss
+                        // the table and fall to default.
+                        target = value >= int.MinValue && value <= int.MaxValue
+                            ? table.Lookup((int)value)
+                            : table.DefaultAddress;
+                    }
+                    else
+                    {
+                        target = table.DefaultAddress;
+                    }
+                    _engine.SetPc(target);
+                    break;
+                }
+
+                case Opcode.SwitchOnStructure:
+                {
+                    int tableId = BytecodeIO.ReadInt32(code, pc + 1);
+                    var table = _switchTables[tableId];
+                    Cell a1 = DerefA1();
+                    int target;
+                    if (a1.Tag == Tag.Str)
+                    {
+                        int functorIdx = a1.AsHeapIndex;
+                        int functorId = _engine.GetHeap(functorIdx).AsFunctorId;
+                        target = table.Lookup(functorId);
+                    }
+                    else
+                    {
+                        // Lis would have routed through switch_on_term's list
+                        // branch already; anything else here is a type
+                        // mismatch and falls to the default chain.
+                        target = table.DefaultAddress;
+                    }
+                    _engine.SetPc(target);
+                    break;
+                }
 
                 // ---------- Cut opcodes ----------
 
@@ -761,6 +886,17 @@ public sealed class BytecodeInterpreter
         int bp = (int)_engine.GetStack(_engine.B + Engine.CpBpOffset(arity)).Data;
         _engine.SetPc(bp);
         return true;
+    }
+
+    /// <summary>Returns the deref'd cell at <c>X[0]</c> (the first argument
+    /// register), following REF chains so the caller sees the concrete tag.
+    /// Used by every <c>switch_on_*</c> opcode to decide where to dispatch.</summary>
+    private Cell DerefA1()
+    {
+        Cell a1 = _engine.GetRegister(0);
+        if (a1.Tag == Tag.Ref)
+            return _engine.GetHeap(_engine.Deref(a1.AsHeapIndex));
+        return a1;
     }
 
     private string ResolveLiteral(int literalId)

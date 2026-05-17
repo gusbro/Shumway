@@ -210,7 +210,8 @@ public sealed class PrologEngine
         Array.Copy(linkResult.Bytecode, 0, program, prefix.Length, linkResult.Bytecode.Length);
 
         var engine = new Engine { Out = Out, Host = this };
-        var interp = new BytecodeInterpreter(engine, module.StringLiterals, module.FloatLiterals);
+        var interp = new BytecodeInterpreter(
+            engine, module.StringLiterals, module.FloatLiterals, linkResult.SwitchTables);
 
         int[] varHeapIndices = new int[varNames.Count];
         for (int i = 0; i < varNames.Count; i++)

@@ -50,10 +50,11 @@ public class PredicateCompilerTests
     // ---------- Two-clause: try_me_else + trust_me ----------
 
     [Fact]
-    public void TwoClauses_EmitsTryAndTrust()
+    public void TwoClauses_VarArgs_EmitsTryAndTrust()
     {
-        // p(a).  p(b).  → try_me_else BP, 1; <c1>; trust_me; <c2>
-        var cp = CompilePredicate("p(a).\np(b).\n");
+        // Variable-headed clauses don't trigger first-arg indexing, so we
+        // stay on the classical try_me_else / trust_me chain.
+        var cp = CompilePredicate("p(X) :- q(X).\np(Y) :- r(Y).\n");
         Assert.Equal(2, cp.ClauseCount);
 
         var d = Disassemble(cp.Bytecode);
@@ -68,10 +69,11 @@ public class PredicateCompilerTests
     // ---------- Three-clause: try + retry + trust ----------
 
     [Fact]
-    public void ThreeClauses_EmitsTryRetryTrust()
+    public void ThreeClauses_VarArgs_EmitsTryRetryTrust()
     {
-        // p(a). p(b). p(c).  → try_me_else BP1, 1; <c1>; retry_me_else BP2; <c2>; trust_me; <c3>
-        var cp = CompilePredicate("p(a).\np(b).\np(c).\n");
+        // Var args again — the indexing-free path under
+        // try_me_else / retry_me_else / trust_me.
+        var cp = CompilePredicate("p(X) :- q(X).\np(Y) :- r(Y).\np(Z) :- s(Z).\n");
         Assert.Equal(3, cp.ClauseCount);
 
         var d = Disassemble(cp.Bytecode);
@@ -86,6 +88,17 @@ public class PredicateCompilerTests
         Assert.Equal(d[retryIdx].Offset, d[0].Operands[0]);
         // retry_me_else's BP points at trust_me.
         Assert.Equal(d[trustIdx].Offset, d[retryIdx].Operands[0]);
+    }
+
+    [Fact]
+    public void TwoClauses_AtomArgs_EmitsSwitchOnTerm()
+    {
+        // p(a). p(b). — both atom first args, so the indexing path runs and
+        // we see switch_on_term + a switch_on_atom inside ConstLbl.
+        var cp = CompilePredicate("p(a).\np(b).\n");
+        var d = Disassemble(cp.Bytecode);
+        Assert.Equal(Opcode.SwitchOnTerm, d[0].Opcode);
+        Assert.Contains(d, r => r.Opcode == Opcode.SwitchOnAtom);
     }
 
     // ---------- Per-clause CallSites get shifted ----------
@@ -129,7 +142,9 @@ public class PredicateCompilerTests
     /// <summary>Helper for end-to-end runs: builds a launcher with the given
     /// argument setup, links the module so all internal references already
     /// account for the launcher's length, then concatenates the two.</summary>
-    private static byte[] AssembleProgram(
+    private record struct AssembledProgram(byte[] Bytecode, IReadOnlyList<SwitchTable> SwitchTables);
+
+    private static AssembledProgram AssembleProgram(
         CompiledModule module,
         int entryFunctorId,
         Action<BytecodeEmitter> setupArgs)
@@ -147,7 +162,7 @@ public class PredicateCompilerTests
         byte[] full = new byte[prefix.Length + linkResult.Bytecode.Length];
         Array.Copy(prefix, full, prefix.Length);
         Array.Copy(linkResult.Bytecode, 0, full, prefix.Length, linkResult.Bytecode.Length);
-        return full;
+        return new AssembledProgram(full, linkResult.SwitchTables);
     }
 
     [Fact]
@@ -165,12 +180,13 @@ public class PredicateCompilerTests
         int pFunctor = FunctorTable.Intern(
             AtomTable.Intern("p", permanent: true).Id, 1);
 
-        byte[] full = AssembleProgram(module, pFunctor,
+        var program = AssembleProgram(module, pFunctor,
             launcher => launcher.EmitPutAtom(atomB, 0));
 
         var engine = new Engine();
-        var interp = new BytecodeInterpreter(engine);
-        Assert.Equal(InterpreterResult.Halted, interp.Run(full, 0));
+        var interp = new BytecodeInterpreter(
+            engine, Array.Empty<string>(), Array.Empty<double>(), program.SwitchTables);
+        Assert.Equal(InterpreterResult.Halted, interp.Run(program.Bytecode, 0));
     }
 
     [Fact]
@@ -184,12 +200,13 @@ public class PredicateCompilerTests
         int pFunctor = FunctorTable.Intern(
             AtomTable.Intern("p", permanent: true).Id, 1);
 
-        byte[] full = AssembleProgram(module, pFunctor,
+        var program = AssembleProgram(module, pFunctor,
             launcher => launcher.EmitPutAtom(atomD, 0));
 
         var engine = new Engine();
-        var interp = new BytecodeInterpreter(engine);
-        Assert.Equal(InterpreterResult.Failed, interp.Run(full, 0));
+        var interp = new BytecodeInterpreter(
+            engine, Array.Empty<string>(), Array.Empty<double>(), program.SwitchTables);
+        Assert.Equal(InterpreterResult.Failed, interp.Run(program.Bytecode, 0));
     }
 
     // ---------- End-to-end: multi-predicate module with cross-calls ----------
@@ -209,11 +226,12 @@ public class PredicateCompilerTests
         int pFunctor = FunctorTable.Intern(
             AtomTable.Intern("p", permanent: true).Id, 0);
 
-        byte[] full = AssembleProgram(module, pFunctor, _ => { });
+        var program = AssembleProgram(module, pFunctor, _ => { });
 
         var engine = new Engine();
-        var interp = new BytecodeInterpreter(engine);
-        Assert.Equal(InterpreterResult.Halted, interp.Run(full, 0));
+        var interp = new BytecodeInterpreter(
+            engine, Array.Empty<string>(), Array.Empty<double>(), program.SwitchTables);
+        Assert.Equal(InterpreterResult.Halted, interp.Run(program.Bytecode, 0));
     }
 
     // ---------- ModuleCompiler: clause grouping ----------

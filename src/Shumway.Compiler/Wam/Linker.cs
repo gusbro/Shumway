@@ -17,11 +17,14 @@ namespace Shumway.Compiler.Wam;
 /// </summary>
 public sealed class Linker
 {
-    /// <summary>Outcome of <see cref="Link"/>: the concatenated bytecode and a
-    /// map from functor id to that predicate's address inside the bytecode.
-    /// Callers needing to wrap the program with a launcher use the address map
-    /// to seed the launcher's <c>call</c> target.</summary>
-    public sealed record LinkResult(byte[] Bytecode, IReadOnlyDictionary<int, int> Addresses);
+    /// <summary>Outcome of <see cref="Link"/>: the concatenated bytecode, a
+    /// map from functor id to that predicate's address inside the bytecode,
+    /// and the module-level switch table list with all addresses already
+    /// shifted into the program-absolute address space.</summary>
+    public sealed record LinkResult(
+        byte[] Bytecode,
+        IReadOnlyDictionary<int, int> Addresses,
+        IReadOnlyList<SwitchTable> SwitchTables);
 
     public LinkResult Link(CompiledModule module, int loadOffset = 0)
     {
@@ -41,7 +44,7 @@ public sealed class Linker
         var bytes = new List<byte>();
         var addresses = new Dictionary<int, int>();
         var unresolvedCalls = new List<(int Offset, int FunctorId)>();
-        var unresolvedDispatch = new List<int>();   // byte offsets, value at each is predicate-local BP
+        var switchTables = new List<SwitchTable>();
 
         foreach (var p in predicates)
         {
@@ -57,21 +60,6 @@ public sealed class Linker
 
             foreach (var site in p.CallSites)
                 unresolvedCalls.Add((basePos + site.OpcodeOffset, site.CalleeFunctorId));
-            foreach (int dispatchSite in p.DispatchSites)
-            {
-                // Each dispatch site currently holds a predicate-local BP. Add
-                // basePos + loadOffset to make it absolute (i.e. the same final
-                // address scheme that call sites and the addresses map use).
-                int siteAbs = basePos + dispatchSite;
-                unresolvedDispatch.Add(siteAbs);
-                // Stash the predicate's basePos via the current value at the
-                // site: it's read-then-written in the patching loop below.
-                // (We can't simply store basePos here because the byte buffer
-                // already has predicate-local values written. So we read the
-                // existing value, add basePos + loadOffset, write back.)
-                // Done in the patching pass below — we just need to remember
-                // siteAbs and the shift to apply.
-            }
         }
 
         byte[] program = bytes.ToArray();
@@ -87,11 +75,11 @@ public sealed class Linker
             BytecodeIO.WriteInt32(program, off + 1, target);
         }
 
-        // Shift dispatch BPs from predicate-local to program-absolute. For each
-        // dispatch site we need to know the predicate's basePos — recover it by
-        // iterating predicates a second time in parallel with their dispatch
-        // sites.
+        // Shift dispatch BPs and switch-table-id operands from predicate-local
+        // to program-absolute. Re-iterate predicates to recover each one's
+        // basePos and switch-table base.
         int basePosTracker = 0;
+        int switchTableBaseTracker = 0;
         foreach (var p in predicates)
         {
             foreach (int dispatchSite in p.DispatchSites)
@@ -100,10 +88,20 @@ public sealed class Linker
                 BytecodeIO.WriteInt32(program, basePosTracker + dispatchSite,
                     basePosTracker + loadOffset + localBp);
             }
+            foreach (int idSite in p.SwitchTableIdSites)
+            {
+                int localId = BytecodeIO.ReadInt32(program, basePosTracker + idSite);
+                BytecodeIO.WriteInt32(program, basePosTracker + idSite,
+                    switchTableBaseTracker + localId);
+            }
+            foreach (var table in p.SwitchTables)
+                switchTables.Add(table.WithShiftedAddresses(basePosTracker + loadOffset));
+
             basePosTracker += p.Bytecode.Length;
+            switchTableBaseTracker += p.SwitchTables.Count;
         }
 
-        return new LinkResult(program, addresses);
+        return new LinkResult(program, addresses, switchTables);
     }
 
     private static string NameForFunctor(int functorId)

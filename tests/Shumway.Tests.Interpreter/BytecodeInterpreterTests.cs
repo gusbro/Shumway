@@ -32,10 +32,13 @@ public class BytecodeInterpreterTests
     [Fact]
     public void Run_UnimplementedOpcode_Throws()
     {
-        // switch_on_atom (indexed dispatch) is not implemented yet — a later chunk.
+        // The specialised arithmetic / comparison opcodes (unify_eq, is_op,
+        // less_than, etc.) are reserved bytecode forms whose dispatch will
+        // land in a later chunk; for now they fall through to the
+        // default-throws branch.
         var engine = new Engine();
         var interp = new BytecodeInterpreter(engine);
-        byte[] code = { (byte)Opcode.SwitchOnAtom, 0, 0, 0, 0 };
+        byte[] code = { (byte)Opcode.UnifyEq };
 
         var ex = Assert.Throws<NotImplementedException>(() => interp.Run(code, 0));
         Assert.Contains("not implemented", ex.Message);

@@ -130,7 +130,9 @@ public class CutCompilationTests
 
     // ---------- End-to-end ----------
 
-    private static byte[] AssembleProgram(
+    private record struct AssembledProgram(byte[] Bytecode, IReadOnlyList<SwitchTable> SwitchTables);
+
+    private static AssembledProgram AssembleProgram(
         CompiledModule module,
         int entryFunctorId,
         Action<BytecodeEmitter> setupArgs)
@@ -148,7 +150,7 @@ public class CutCompilationTests
         byte[] full = new byte[prefix.Length + linkResult.Bytecode.Length];
         Array.Copy(prefix, full, prefix.Length);
         Array.Copy(linkResult.Bytecode, 0, full, prefix.Length, linkResult.Bytecode.Length);
-        return full;
+        return new AssembledProgram(full, linkResult.SwitchTables);
     }
 
     [Fact]
@@ -163,12 +165,13 @@ public class CutCompilationTests
         int pFunctor = FunctorTable.Intern(
             AtomTable.Intern("p", permanent: true).Id, 1);
 
-        byte[] full = AssembleProgram(module, pFunctor,
+        var program = AssembleProgram(module, pFunctor,
             launcher => launcher.EmitPutAtom(atomA, 0));
 
         var engine = new Engine();
-        var interp = new BytecodeInterpreter(engine);
-        Assert.Equal(InterpreterResult.Halted, interp.Run(full, 0));
+        var interp = new BytecodeInterpreter(
+            engine, Array.Empty<string>(), Array.Empty<double>(), program.SwitchTables);
+        Assert.Equal(InterpreterResult.Halted, interp.Run(program.Bytecode, 0));
         Assert.Equal(-1, engine.B);                           // try_me_else CP was cut away
     }
 
@@ -186,12 +189,13 @@ public class CutCompilationTests
         int pFunctor = FunctorTable.Intern(
             AtomTable.Intern("p", permanent: true).Id, 1);
 
-        byte[] full = AssembleProgram(module, pFunctor,
+        var program = AssembleProgram(module, pFunctor,
             launcher => launcher.EmitPutAtom(atomA, 0));
 
         var engine = new Engine();
-        var interp = new BytecodeInterpreter(engine);
-        Assert.Equal(InterpreterResult.Halted, interp.Run(full, 0));
+        var interp = new BytecodeInterpreter(
+            engine, Array.Empty<string>(), Array.Empty<double>(), program.SwitchTables);
+        Assert.Equal(InterpreterResult.Halted, interp.Run(program.Bytecode, 0));
         Assert.Equal(-1, engine.B);                           // q's CP was cut away
     }
 
@@ -211,12 +215,13 @@ public class CutCompilationTests
         int pFunctor = FunctorTable.Intern(
             AtomTable.Intern("p", permanent: true).Id, 1);
 
-        byte[] full = AssembleProgram(module, pFunctor,
+        var program = AssembleProgram(module, pFunctor,
             launcher => launcher.EmitPutAtom(atomA, 0));
 
         var engine = new Engine();
-        var interp = new BytecodeInterpreter(engine);
-        Assert.Equal(InterpreterResult.Failed, interp.Run(full, 0));
+        var interp = new BytecodeInterpreter(
+            engine, Array.Empty<string>(), Array.Empty<double>(), program.SwitchTables);
+        Assert.Equal(InterpreterResult.Failed, interp.Run(program.Bytecode, 0));
     }
 
     [Fact]
@@ -230,11 +235,12 @@ public class CutCompilationTests
         int pFunctor = FunctorTable.Intern(
             AtomTable.Intern("p", permanent: true).Id, 1);
 
-        byte[] full = AssembleProgram(module, pFunctor,
+        var program = AssembleProgram(module, pFunctor,
             launcher => launcher.EmitPutAtom(atomA, 0));
 
         var engine = new Engine();
-        var interp = new BytecodeInterpreter(engine);
-        Assert.Equal(InterpreterResult.Halted, interp.Run(full, 0));
+        var interp = new BytecodeInterpreter(
+            engine, Array.Empty<string>(), Array.Empty<double>(), program.SwitchTables);
+        Assert.Equal(InterpreterResult.Halted, interp.Run(program.Bytecode, 0));
     }
 }

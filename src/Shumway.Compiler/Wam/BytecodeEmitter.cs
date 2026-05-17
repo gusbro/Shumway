@@ -72,6 +72,58 @@ public sealed class BytecodeEmitter
 
     public void EmitTrustMe() => _bytes.Add((byte)Opcode.TrustMe);
 
+    /// <summary>Indexed try: create a CP whose BP is the next opcode and jump
+    /// to <paramref name="targetAddress"/>. Used in the body of an indexing
+    /// bucket where each instruction points at a specific candidate
+    /// clause.</summary>
+    public void EmitTry(int targetAddress, int arity)
+    {
+        _bytes.Add((byte)Opcode.Try);
+        EmitInt(targetAddress);
+        EmitInt(arity);
+    }
+
+    public void EmitRetry(int targetAddress)
+    {
+        _bytes.Add((byte)Opcode.Retry);
+        EmitInt(targetAddress);
+    }
+
+    public void EmitTrust(int targetAddress)
+    {
+        _bytes.Add((byte)Opcode.Trust);
+        EmitInt(targetAddress);
+    }
+
+    // ---------- First-argument indexing ----------
+
+    public void EmitSwitchOnTerm(int varAddr, int constAddr, int listAddr, int structAddr)
+    {
+        _bytes.Add((byte)Opcode.SwitchOnTerm);
+        EmitInt(varAddr);
+        EmitInt(constAddr);
+        EmitInt(listAddr);
+        EmitInt(structAddr);
+    }
+
+    public void EmitSwitchOnAtom(int tableId)
+    {
+        _bytes.Add((byte)Opcode.SwitchOnAtom);
+        EmitInt(tableId);
+    }
+
+    public void EmitSwitchOnInteger(int tableId)
+    {
+        _bytes.Add((byte)Opcode.SwitchOnInteger);
+        EmitInt(tableId);
+    }
+
+    public void EmitSwitchOnStructure(int tableId)
+    {
+        _bytes.Add((byte)Opcode.SwitchOnStructure);
+        EmitInt(tableId);
+    }
+
     // ---------- Cut family ----------
 
     public void EmitNeckCut() => _bytes.Add((byte)Opcode.NeckCut);
@@ -311,6 +363,17 @@ public sealed class BytecodeEmitter
     }
 
     // ---------- Helpers ----------
+
+    /// <summary>Overwrites a 4-byte little-endian integer at
+    /// <paramref name="offset"/>. Used for back-patching forward branch
+    /// addresses once their targets are known.</summary>
+    public void WriteIntAt(int offset, int value)
+    {
+        _bytes[offset]     = (byte)(value & 0xFF);
+        _bytes[offset + 1] = (byte)((value >> 8) & 0xFF);
+        _bytes[offset + 2] = (byte)((value >> 16) & 0xFF);
+        _bytes[offset + 3] = (byte)((value >> 24) & 0xFF);
+    }
 
     private void EmitInt(int value)
     {

@@ -90,7 +90,10 @@ public static class OpcodeTable
         Set(Opcode.TryMeElse, 9, "try_me_else", OperandKind.Address, OperandKind.Count);
         Set(Opcode.RetryMeElse, 5, "retry_me_else", OperandKind.Address);
         Set(Opcode.TrustMe, 1, "trust_me");
-        Set(Opcode.Try, 5, "try", OperandKind.Address);
+        // try carries an arity operand so the indexing entry point can build
+        // a choice point without help from the predicate context. retry/trust
+        // reuse the arity already captured in the active CP.
+        Set(Opcode.Try, 9, "try", OperandKind.Address, OperandKind.Count);
         Set(Opcode.Retry, 5, "retry", OperandKind.Address);
         Set(Opcode.Trust, 5, "trust", OperandKind.Address);
 

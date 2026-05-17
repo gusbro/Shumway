@@ -6,6 +6,12 @@ namespace Shumway.Compiler.Wam;
 /// stream's pre-compilation directives if a downstream stage wants to inspect
 /// them (currently unused; reserved for the consult-style API). Linking a
 /// module to a runnable program is the job of <see cref="Linker"/>.
+///
+/// <para>Switch tables introduced by first-argument indexing live on each
+/// <see cref="CompiledPredicate"/> with predicate-local addresses. The
+/// <see cref="Linker"/> aggregates them, shifts addresses to be
+/// program-absolute, and returns the resulting flat list as part of its
+/// <see cref="Linker.LinkResult"/>.</para>
 /// </summary>
 public sealed class CompiledModule
 {
