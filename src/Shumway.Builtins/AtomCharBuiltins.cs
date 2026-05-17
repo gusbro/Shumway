@@ -32,6 +32,34 @@ public static class AtomCharBuiltins
         return engine.UnifyRegisterWithCell(1, Cell.Int(name.Length));
     }
 
+    // ---------- atom_string/2 ----------
+
+    /// <summary><c>atom_string(Atom, String)</c> — bidirectional atom
+    /// ↔ PSTR conversion. Either argument may be ground; given an atom
+    /// the PSTR is built from the atom's name, and given a PSTR the
+    /// atom is interned from its characters.</summary>
+    public static bool AtomString(Engine engine)
+    {
+        Cell atomCell = Resolve(engine, engine.GetRegister(0));
+        if (atomCell.Tag == Tag.Atom)
+        {
+            string name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
+            int pstrIdx = engine.MakePstr(name);
+            return engine.UnifyRegisterWithCell(1, Cell.Ref(pstrIdx));
+        }
+
+        Cell strCell = Resolve(engine, engine.GetRegister(1));
+        if (strCell.Tag == Tag.Pstr)
+        {
+            string name = engine.AsPstrString(engine.Deref(engine.GetRegister(1).AsHeapIndex));
+            int atomId = AtomTable.Intern(name, permanent: false).Id;
+            return engine.UnifyRegisterWithCell(0, Cell.Atom(atomId));
+        }
+
+        throw new InvalidOperationException(
+            "atom_string/2: at least one of Atom, String must be sufficiently instantiated.");
+    }
+
     // ---------- atom_chars/2 ----------
 
     public static bool AtomChars(Engine engine)

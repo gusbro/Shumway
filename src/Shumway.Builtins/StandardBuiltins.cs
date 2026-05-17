@@ -69,6 +69,7 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("number_codes", 2, AtomCharBuiltins.NumberCodes);
         BuiltinsRegistry.Register("number_chars", 2, AtomCharBuiltins.NumberChars);
         BuiltinsRegistry.Register("sub_atom",     5, AtomCharBuiltins.SubAtom);
+        BuiltinsRegistry.Register("atom_string",  2, AtomCharBuiltins.AtomString);
 
         // Standard order of terms.
         BuiltinsRegistry.Register("compare", 3, StandardOrderBuiltins.Compare3);

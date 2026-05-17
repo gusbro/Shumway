@@ -46,6 +46,48 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("abolish",           1, Abolish);
 
         BuiltinsRegistry.Register("numbervars",        3, NumberVars);
+        BuiltinsRegistry.Register("term_to_atom",      2, TermToAtom);
+    }
+
+    /// <summary><c>term_to_atom(Term, Atom)</c> — bidirectional bridge
+    /// between a Prolog term and its atom-text representation. With
+    /// <c>Term</c> ground the term is rendered through <see cref="TermReader"/>
+    /// (via the standard <see cref="Shumway.Builtins.TermRenderer"/> output)
+    /// and the result interned as an atom. With <c>Atom</c> ground the atom
+    /// text is parsed as a Prolog term via <see cref="Parser"/>.</summary>
+    public static bool TermToAtom(Engine engine)
+    {
+        Cell atomCell = ResolveLocal(engine, engine.GetRegister(1));
+
+        if (atomCell.Tag == Tag.Atom)
+        {
+            // Atom → Term direction: parse the atom name as a Prolog term.
+            string name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
+            // The parser expects a clause-terminating dot; help it by
+            // appending one when the user-supplied text doesn't have one.
+            string source = name.TrimEnd().EndsWith(".", StringComparison.Ordinal)
+                ? name
+                : name + ".";
+            var parser = new Shumway.Compiler.Parsing.Parser(
+                new Shumway.Compiler.Lexer.Lexer(source),
+                Shumway.Compiler.Parsing.OperatorTable.Default());
+            Term parsed = parser.ReadClauseTerm();
+            Cell newCell = Materializer.MaterializeAsCell(engine, parsed);
+            return engine.UnifyRegisterWithCell(0, newCell);
+        }
+
+        // Term → Atom direction: render and intern.
+        using var sw = new System.IO.StringWriter();
+        Shumway.Builtins.TermRenderer.Render(engine, engine.GetRegister(0), sw);
+        string rendered = sw.ToString();
+        int newAtomId = AtomTable.Intern(rendered, permanent: false).Id;
+        return engine.UnifyRegisterWithCell(1, Cell.Atom(newAtomId));
+    }
+
+    private static Cell ResolveLocal(Engine engine, Cell c)
+    {
+        if (c.Tag != Tag.Ref) return c;
+        return engine.GetHeap(engine.Deref(c.AsHeapIndex));
     }
 
     // ============================================================================

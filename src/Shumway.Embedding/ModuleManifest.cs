@@ -33,6 +33,23 @@ public sealed class ModuleManifest
     /// from any module.</summary>
     public HashSet<int> DynamicFunctors { get; }
 
+    /// <summary>Functors the module declares <c>:- discontiguous</c>. The
+    /// metadata is stored verbatim; Phase 1 doesn't yet warn about
+    /// non-contiguous clauses, so this is a placeholder for tooling.</summary>
+    public HashSet<int> DiscontiguousFunctors { get; }
+
+    /// <summary>Functors the module declares <c>:- multifile</c>. Same
+    /// status as <see cref="DiscontiguousFunctors"/> — accepted, not yet
+    /// acted on.</summary>
+    public HashSet<int> MultifileFunctors { get; }
+
+    /// <summary>Per-functor mode declarations from <c>:- mode foo(+,-).</c>
+    /// Keys are the functor ids; values are the argument-mode tuples
+    /// (each entry being one of "+", "-", "?", or "@"). Phase 1 stores
+    /// the metadata for later mode-aware compilation (Phase 3) but
+    /// doesn't consult it during code emission.</summary>
+    public Dictionary<int, string[]> ModeDeclarations { get; }
+
     public ModuleManifest(string name)
     {
         ArgumentNullException.ThrowIfNull(name);
@@ -40,5 +57,8 @@ public sealed class ModuleManifest
         Clauses = new List<Clause>();
         PublicFunctors = new HashSet<int>();
         DynamicFunctors = new HashSet<int>();
+        DiscontiguousFunctors = new HashSet<int>();
+        MultifileFunctors = new HashSet<int>();
+        ModeDeclarations = new Dictionary<int, string[]>();
     }
 }

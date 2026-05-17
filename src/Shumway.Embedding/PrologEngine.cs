@@ -314,6 +314,9 @@ public sealed class PrologEngine
         bool moduleDirectiveSeen = false;
         var publics = new HashSet<int>();
         var clauses = new List<Clause>();
+        HashSet<int>? pendingDiscontiguous = null;
+        HashSet<int>? pendingMultifile = null;
+        Dictionary<int, string[]>? pendingModes = null;
 
         foreach (var clause in rawClauses)
         {
@@ -356,9 +359,33 @@ public sealed class PrologEngine
                         _dynamicClauses[fid] = new List<Clause>();
                 }
             }
-            // op/3 already processed in-place by ClauseReader; other directives
-            // (discontiguous, multifile, …) are not implemented yet and pass
-            // through silently.
+            else if (TryReadFunctorIndicatorDirective(body, "discontiguous", out var discSpecs))
+            {
+                // Store the metadata against the module that's about to be
+                // committed; the writer below picks it up via the
+                // `pendingDiscontiguous` capture.
+                pendingDiscontiguous ??= new HashSet<int>();
+                foreach (var (n, a) in discSpecs)
+                    pendingDiscontiguous.Add(FunctorTable.Intern(
+                        AtomTable.Intern(n, permanent: true).Id, a));
+            }
+            else if (TryReadFunctorIndicatorDirective(body, "multifile", out var multiSpecs))
+            {
+                pendingMultifile ??= new HashSet<int>();
+                foreach (var (n, a) in multiSpecs)
+                    pendingMultifile.Add(FunctorTable.Intern(
+                        AtomTable.Intern(n, permanent: true).Id, a));
+            }
+            else if (TryReadModeDirective(body, out string? modeName, out int modeArity, out string[]? modeArgs))
+            {
+                pendingModes ??= new Dictionary<int, string[]>();
+                int fid = FunctorTable.Intern(
+                    AtomTable.Intern(modeName!, permanent: true).Id, modeArity);
+                pendingModes[fid] = modeArgs!;
+            }
+            // op/3 already processed in-place by ClauseReader. Other
+            // unrecognised directives pass through silently — they may be
+            // implementation-defined hooks that future chunks handle.
         }
 
         if (moduleDirectiveSeen)
@@ -367,6 +394,10 @@ public sealed class PrologEngine
             var manifest = new ModuleManifest(moduleName);
             manifest.Clauses.AddRange(clauses);
             manifest.PublicFunctors.UnionWith(publics);
+            if (pendingDiscontiguous is not null) manifest.DiscontiguousFunctors.UnionWith(pendingDiscontiguous);
+            if (pendingMultifile is not null) manifest.MultifileFunctors.UnionWith(pendingMultifile);
+            if (pendingModes is not null)
+                foreach (var (fid, modes) in pendingModes) manifest.ModeDeclarations[fid] = modes;
             _modules[moduleName] = manifest;
         }
         else
@@ -377,7 +408,64 @@ public sealed class PrologEngine
             var existing = _modules[DefaultModuleName];
             existing.Clauses.AddRange(clauses);
             existing.PublicFunctors.UnionWith(publics);
+            if (pendingDiscontiguous is not null) existing.DiscontiguousFunctors.UnionWith(pendingDiscontiguous);
+            if (pendingMultifile is not null) existing.MultifileFunctors.UnionWith(pendingMultifile);
+            if (pendingModes is not null)
+                foreach (var (fid, modes) in pendingModes) existing.ModeDeclarations[fid] = modes;
         }
+    }
+
+    /// <summary>Matches the shape used by <c>:- discontiguous</c> and
+    /// <c>:- multifile</c> — a Name/Arity term or a list of them. Returns
+    /// <c>false</c> when the directive functor doesn't match, throws on a
+    /// malformed argument.</summary>
+    private static bool TryReadFunctorIndicatorDirective(
+        Term body, string directiveName, out List<(string Name, int Arity)> specs)
+    {
+        specs = new List<(string, int)>();
+        if (body is not CompoundTerm c || c.Functor != directiveName || c.Args.Length != 1)
+            return false;
+        Term arg = c.Args[0];
+        if (TryReadFunctorSpec(arg, out var single))
+        {
+            specs.Add(single);
+            return true;
+        }
+        if (TryReadFunctorSpecList(arg, specs))
+            return true;
+        throw new InvalidOperationException(
+            $"Malformed :- {directiveName} directive (expected Name/Arity or a list of them).");
+    }
+
+    /// <summary>Parses <c>:- mode foo(+, -, ?).</c> — the compound's
+    /// functor names the predicate, the arguments must all be mode atoms
+    /// (<c>+</c>, <c>-</c>, <c>?</c>, <c>@</c>). Returns the canonical
+    /// form for storage; nothing in Phase 1 actually uses it.</summary>
+    private static bool TryReadModeDirective(
+        Term body,
+        out string? name,
+        out int arity,
+        out string[]? modeArgs)
+    {
+        name = null;
+        arity = 0;
+        modeArgs = null;
+        if (body is not CompoundTerm m || m.Functor != "mode" || m.Args.Length != 1)
+            return false;
+        if (m.Args[0] is not CompoundTerm spec)
+            return false;
+        name = spec.Functor;
+        arity = spec.Args.Length;
+        modeArgs = new string[arity];
+        for (int i = 0; i < arity; i++)
+        {
+            if (spec.Args[i] is not AtomTerm modeAtom)
+                throw new InvalidOperationException(
+                    $"Malformed :- mode directive: argument {i + 1} must be an atom "
+                    + "(one of +, -, ?, @).");
+            modeArgs[i] = modeAtom.Name;
+        }
+        return true;
     }
 
     private static bool TryReadModuleDirective(Term body, out string name)

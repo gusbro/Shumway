@@ -112,6 +112,7 @@ public sealed class OperatorTable
         t.Define("module_transparent", 1150, OperatorType.Fx);
         t.Define("volatile", 1150, OperatorType.Fx);
         t.Define("table", 1150, OperatorType.Fx);
+        t.Define("mode", 1150, OperatorType.Fx);
 
         // Control
         t.Define(";", 1100, OperatorType.Xfy);
