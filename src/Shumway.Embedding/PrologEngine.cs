@@ -254,6 +254,12 @@ public sealed class PrologEngine
     /// shouldn't be mutated directly.</summary>
     public IReadOnlyDictionary<string, ModuleManifest> Modules => _modules;
 
+    /// <summary>Adds an operator to the engine's parser table. Used by the
+    /// runtime <c>op/3</c> builtin so user code can introduce operators
+    /// that subsequent queries (and asserted clauses) will recognise.</summary>
+    internal void DefineOperator(string name, int precedence, OperatorType type)
+        => _operators.Define(name, precedence, type);
+
     /// <summary>Loads a Shumway bundle (.shum) from disk and consults every
     /// module inside it. Equivalent to calling <see cref="ConsultString"/>
     /// for each entry in the bundle's manifest, in order. Throws

@@ -53,6 +53,71 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("=..",     2, Univ);
 
         BuiltinsRegistry.Register("read_term_from_atom", 2, ReadTermFromAtom);
+
+        BuiltinsRegistry.Register("op", 3, Op);
+    }
+
+    /// <summary><c>op(Precedence, Type, Name)</c> — runtime operator
+    /// declaration. Mirrors the <c>:- op(...)</c> directive but takes
+    /// effect immediately for subsequent parses (queries, asserted
+    /// clauses, read_term_from_atom). Errors mirror ISO: instantiation
+    /// when any arg is unbound, type_error when one's the wrong shape.</summary>
+    public static bool Op(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "op/3 requires the engine to be hosted by a PrologEngine.");
+
+        Cell precCell = ResolveLocal(engine, engine.GetRegister(0));
+        Cell typeCell = ResolveLocal(engine, engine.GetRegister(1));
+        Cell nameCell = ResolveLocal(engine, engine.GetRegister(2));
+
+        if (precCell.Tag != Tag.Int)
+            throw new ShumwayPrologException(IsoError.TypeError("integer", new VarTerm("_")));
+        int precedence = (int)precCell.AsInt;
+        if (precedence < 0 || precedence > 1200)
+            throw new ShumwayPrologException(
+                IsoError.DomainError("operator_priority", new IntTerm(precedence)));
+
+        if (typeCell.Tag != Tag.Atom)
+            throw new ShumwayPrologException(IsoError.TypeError("atom", new VarTerm("_")));
+        string typeName = AtomTable.GetById(typeCell.AsAtomId)?.Name ?? "";
+        Shumway.Compiler.Parsing.OperatorType opType = typeName switch
+        {
+            "fx" => Shumway.Compiler.Parsing.OperatorType.Fx,
+            "fy" => Shumway.Compiler.Parsing.OperatorType.Fy,
+            "xf" => Shumway.Compiler.Parsing.OperatorType.Xf,
+            "yf" => Shumway.Compiler.Parsing.OperatorType.Yf,
+            "xfx" => Shumway.Compiler.Parsing.OperatorType.Xfx,
+            "xfy" => Shumway.Compiler.Parsing.OperatorType.Xfy,
+            "yfx" => Shumway.Compiler.Parsing.OperatorType.Yfx,
+            _ => throw new ShumwayPrologException(
+                IsoError.DomainError("operator_specifier", new AtomTerm(typeName))),
+        };
+
+        // Name may be a single atom or a list of atoms (the conventional
+        // op/3 multi-name form).
+        if (nameCell.Tag == Tag.Atom)
+        {
+            string name = AtomTable.GetById(nameCell.AsAtomId)?.Name ?? "";
+            host.DefineOperator(name, precedence, opType);
+            return true;
+        }
+        if (nameCell.Tag == Tag.Lis)
+        {
+            Cell cur = nameCell;
+            while (cur.Tag == Tag.Lis)
+            {
+                Cell head = ResolveLocal(engine, engine.GetHeap(cur.AsHeapIndex));
+                if (head.Tag != Tag.Atom)
+                    throw new ShumwayPrologException(IsoError.TypeError("atom", new VarTerm("_")));
+                string name = AtomTable.GetById(head.AsAtomId)?.Name ?? "";
+                host.DefineOperator(name, precedence, opType);
+                cur = ResolveLocal(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+            }
+            return true;
+        }
+        throw new ShumwayPrologException(IsoError.TypeError("atom_or_list", new VarTerm("_")));
     }
 
     /// <summary><c>read_term_from_atom(Atom, Term)</c> — parses the text

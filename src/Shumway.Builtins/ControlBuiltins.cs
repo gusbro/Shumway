@@ -19,4 +19,29 @@ public static class ControlBuiltins
 {
     public static bool Fail(Engine engine) => false;
     public static bool True(Engine engine) => true;
+
+    /// <summary><c>halt/0</c> — terminates execution with exit code 0.
+    /// Implemented by throwing <see cref="PrologHaltException"/>, which
+    /// the outer <c>Query</c> path intercepts and converts into a
+    /// clean termination of the iteration.</summary>
+    public static bool Halt0(Engine engine) =>
+        throw new PrologHaltException(0);
+
+    /// <summary><c>halt(Code)</c> — terminates execution with the given
+    /// integer exit code.</summary>
+    public static bool Halt1(Engine engine)
+    {
+        Cell c = engine.GetRegister(0);
+        if (c.Tag == Tag.Ref)
+        {
+            int addr = engine.Deref(c.AsHeapIndex);
+            c = engine.GetHeap(addr);
+        }
+        if (c.Tag != Tag.Int)
+            throw new PrologRuntimeException("type_error", "integer");
+        long code = c.AsInt;
+        if (code < int.MinValue || code > int.MaxValue)
+            throw new PrologRuntimeException("domain_error", "int32");
+        throw new PrologHaltException((int)code);
+    }
 }

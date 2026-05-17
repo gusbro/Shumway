@@ -88,5 +88,15 @@ public static class StandardBuiltins
         // Control.
         BuiltinsRegistry.Register("fail", 0, ControlBuiltins.Fail);
         BuiltinsRegistry.Register("true", 0, ControlBuiltins.True);
+        BuiltinsRegistry.Register("halt", 0, ControlBuiltins.Halt0);
+        BuiltinsRegistry.Register("halt", 1, ControlBuiltins.Halt1);
+
+        // List manipulation extras.
+        BuiltinsRegistry.Register("member",       2, ListBuiltins.Member);
+        BuiltinsRegistry.Register("nth0",         3, ListBuiltins.Nth0);
+        BuiltinsRegistry.Register("nth1",         3, ListBuiltins.Nth1);
+        BuiltinsRegistry.Register("reverse",      2, ListBuiltins.Reverse);
+        BuiltinsRegistry.Register("last",         2, ListBuiltins.Last);
+        BuiltinsRegistry.Register("list_to_set",  2, ListBuiltins.ListToSet);
     }
 }
