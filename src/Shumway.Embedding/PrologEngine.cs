@@ -298,6 +298,7 @@ public sealed class PrologEngine
         {
             var transformed = DcgTransform.Apply(manifest.Clauses);
             transformed = MetaTransform.Apply(transformed);
+            transformed = PhraseTransform.Apply(transformed);
 
             var locals = ComputeLocalFunctors(transformed, manifest.PublicFunctors);
             if (name == DefaultModuleName) userLocalsCache = locals;
@@ -311,8 +312,9 @@ public sealed class PrologEngine
         // with userLocalsCache (which doesn't include __query__) so the
         // head functor remains bare.
         {
-            var queryTransformed = MetaTransform.Apply(
-                DcgTransform.Apply(new[] { syntheticClause }));
+            var queryTransformed = PhraseTransform.Apply(
+                MetaTransform.Apply(
+                    DcgTransform.Apply(new[] { syntheticClause })));
             var ctx = new ModuleRewrite.Context(
                 DefaultModuleName, userLocalsCache ?? new HashSet<int>());
             foreach (var clause in queryTransformed)

@@ -59,6 +59,11 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("append",       3, AtomListBuiltins.Append);
         BuiltinsRegistry.Register("atom_codes",   2, AtomListBuiltins.AtomCodes);
         BuiltinsRegistry.Register("atom_concat",  3, AtomListBuiltins.AtomConcat);
+        BuiltinsRegistry.Register("atom_length",  2, AtomCharBuiltins.AtomLength);
+        BuiltinsRegistry.Register("atom_chars",   2, AtomCharBuiltins.AtomChars);
+        BuiltinsRegistry.Register("char_code",    2, AtomCharBuiltins.CharCode);
+        BuiltinsRegistry.Register("number_codes", 2, AtomCharBuiltins.NumberCodes);
+        BuiltinsRegistry.Register("number_chars", 2, AtomCharBuiltins.NumberChars);
 
         // Standard order of terms.
         BuiltinsRegistry.Register("compare", 3, StandardOrderBuiltins.Compare3);

@@ -24,6 +24,26 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("findall", 3, Findall);
         BuiltinsRegistry.Register("bagof",   3, Bagof);
         BuiltinsRegistry.Register("setof",   3, Setof);
+        BuiltinsRegistry.Register("copy_term", 2, CopyTerm);
+    }
+
+    /// <summary><c>copy_term(Term, Copy)</c> — unifies <c>Copy</c> with a
+    /// fresh-variable copy of <c>Term</c>. Bound subterms are preserved by
+    /// value; unbound variables become brand-new unbound variables in the
+    /// copy, with sharing preserved (multiple occurrences of the same input
+    /// var map to one new var).
+    ///
+    /// <para>Implementation: <see cref="TermReader.Materialize"/> walks the
+    /// input and turns truly-unbound REFs into <see cref="VarTerm"/>s with
+    /// synthetic <c>_GN</c> names keyed by heap address; the immediately
+    /// following <see cref="Materializer.MaterializeAsCell"/> call uses a
+    /// fresh var-name → heap-index map, so each <c>_GN</c> resolves to a new
+    /// unbound — and shared occurrences in the AST keep sharing.</para></summary>
+    public static bool CopyTerm(Engine engine)
+    {
+        Term original = MaterializeRegister(engine, 0);
+        Cell copyCell = Materializer.MaterializeAsCell(engine, original);
+        return engine.UnifyRegisterWithCell(1, copyCell);
     }
 
     /// <summary><c>findall(Template, Goal, List)</c> — runs <c>Goal</c> in a
