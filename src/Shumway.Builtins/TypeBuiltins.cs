@@ -72,6 +72,45 @@ public static class TypeBuiltins
         }
     }
 
+    /// <summary><c>ground(X)</c> — X contains no unbound variables. Walks
+    /// the heap representation recursively; on the first dereferenced
+    /// REF still pointing at itself the predicate fails.</summary>
+    public static bool IsGround(Engine engine) =>
+        IsGroundCell(engine, engine.GetRegister(0));
+
+    private static bool IsGroundCell(Engine engine, Cell cell)
+    {
+        if (cell.Tag == Tag.Ref)
+        {
+            int addr = engine.Deref(cell.AsHeapIndex);
+            cell = engine.GetHeap(addr);
+            if (cell.Tag == Tag.Ref) return false;
+        }
+        switch (cell.Tag)
+        {
+            case Tag.Atom:
+            case Tag.Int:
+            case Tag.Float:
+            case Tag.Pstr:
+            case Tag.String:
+                return true;
+            case Tag.Str:
+                int functorIdx = cell.AsHeapIndex;
+                var (_, arity) = FunctorTable.Lookup(
+                    engine.GetHeap(functorIdx).AsFunctorId);
+                for (int i = 0; i < arity; i++)
+                    if (!IsGroundCell(engine, engine.GetHeap(functorIdx + 1 + i)))
+                        return false;
+                return true;
+            case Tag.Lis:
+                int headIdx = cell.AsHeapIndex;
+                return IsGroundCell(engine, engine.GetHeap(headIdx))
+                    && IsGroundCell(engine, engine.GetHeap(headIdx + 1));
+            default:
+                return true;
+        }
+    }
+
     private static Tag Tag0(Engine engine) => Resolve(engine, engine.GetRegister(0)).Tag;
 
     private static Cell Resolve(Engine engine, Cell cell)

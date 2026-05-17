@@ -50,6 +50,7 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("atomic",  1, TypeBuiltins.IsAtomic);
         BuiltinsRegistry.Register("compound",1, TypeBuiltins.IsCompound);
         BuiltinsRegistry.Register("is_list", 1, TypeBuiltins.IsList);
+        BuiltinsRegistry.Register("ground",  1, TypeBuiltins.IsGround);
 
         // I/O.
         BuiltinsRegistry.Register("write",      1, IOBuiltins.Write);
