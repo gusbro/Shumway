@@ -172,10 +172,12 @@ public class ArithmeticTests
     }
 
     [Fact]
-    public void Is_UnboundRightSide_Throws()
+    public void Is_UnboundRightSide_RaisesInstantiationError()
     {
         var engine = new PrologEngine();
-        Assert.Throws<InvalidOperationException>(() => engine.Query("X is Y."));
+        var ex = Assert.Throws<Shumway.Core.PrologRuntimeException>(
+            () => engine.Query("X is Y."));
+        Assert.Equal("instantiation_error", ex.Kind);
     }
 
     [Fact]
@@ -186,17 +188,23 @@ public class ArithmeticTests
     }
 
     [Fact]
-    public void Is_DivisionByZero_Throws()
+    public void Is_DivisionByZero_RaisesEvaluationError()
     {
         var engine = new PrologEngine();
-        Assert.Throws<InvalidOperationException>(() => engine.Query("X is 1 / 0."));
+        var ex = Assert.Throws<Shumway.Core.PrologRuntimeException>(
+            () => engine.Query("X is 1 / 0."));
+        Assert.Equal("evaluation_error", ex.Kind);
+        Assert.Equal("zero_divisor", ex.Detail);
     }
 
     [Fact]
-    public void Is_IntegerDivisionByZero_Throws()
+    public void Is_IntegerDivisionByZero_RaisesEvaluationError()
     {
         var engine = new PrologEngine();
-        Assert.Throws<InvalidOperationException>(() => engine.Query("X is 1 // 0."));
+        var ex = Assert.Throws<Shumway.Core.PrologRuntimeException>(
+            () => engine.Query("X is 1 // 0."));
+        Assert.Equal("evaluation_error", ex.Kind);
+        Assert.Equal("zero_divisor", ex.Detail);
     }
 
     // ---------- Comparison predicates ----------

@@ -21,15 +21,17 @@ public sealed class IlPredicateCompiler
 {
     private static readonly MethodInfo CellAtomMethod =
         typeof(Cell).GetMethod(nameof(Cell.Atom), new[] { typeof(int) })!;
+    private static readonly MethodInfo CellIntMethod =
+        typeof(Cell).GetMethod(nameof(Cell.Int), new[] { typeof(long) })!;
     private static readonly MethodInfo EngineUnifyMethod =
         typeof(Engine).GetMethod(
             nameof(Engine.UnifyRegisterWithCell),
             new[] { typeof(int), typeof(Cell) })!;
 
     /// <summary>Returns <c>true</c> iff <paramref name="predicate"/> is in
-    /// the MVP-supported subset: single clause, bytecode made of zero or
-    /// more <c>get_atom</c> opcodes followed by exactly one
-    /// <c>proceed</c>.</summary>
+    /// the supported subset: single clause, bytecode made of zero or
+    /// more <c>get_atom</c> / <c>get_integer</c> opcodes followed by
+    /// exactly one <c>proceed</c>.</summary>
     public bool CanCompile(CompiledPredicate predicate)
     {
         ArgumentNullException.ThrowIfNull(predicate);
@@ -40,7 +42,7 @@ public sealed class IlPredicateCompiler
         while (pc < code.Length)
         {
             var op = (Opcode)code[pc];
-            if (op == Opcode.GetAtom)
+            if (op == Opcode.GetAtom || op == Opcode.GetInteger)
             {
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -90,6 +92,23 @@ public sealed class IlPredicateCompiler
                 emit.LoadConstant(atomId);             // arg 2 setup
                 emit.Call(CellAtomMethod);             // → Cell on stack
                 emit.Call(EngineUnifyMethod);          // bool on stack
+                emit.BranchIfFalse(failLabel);
+
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.GetInteger)
+            {
+                int value = BytecodeIO.ReadInt32(code, pc + 1);
+                int regIdx = BytecodeIO.ReadInt32(code, pc + 5);
+
+                // emit: if (!engine.UnifyRegisterWithCell(regIdx,
+                //              Cell.Int((long)value))) goto fail;
+                emit.LoadArgument(0);
+                emit.LoadConstant(regIdx);
+                emit.LoadConstant((long)value);
+                emit.Call(CellIntMethod);
+                emit.Call(EngineUnifyMethod);
                 emit.BranchIfFalse(failLabel);
 
                 pc += OpcodeTable.Get(op).Size;

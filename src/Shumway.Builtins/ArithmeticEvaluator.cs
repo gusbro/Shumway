@@ -29,11 +29,9 @@ public static class ArithmeticEvaluator
             Tag.Int => new Number(cell.AsInt),
             Tag.Float => new Number(Cell.DecodeFloat(cell, engine.GetHeap(cell.FloatPairedIndex))),
             Tag.Str => EvaluateCompound(engine, cell),
-            Tag.Ref => throw new InvalidOperationException(
-                "Arithmetic expression contains an unbound variable."),
+            Tag.Ref => throw new PrologRuntimeException("instantiation_error"),
             Tag.Atom => EvaluateAtomConstant(cell),
-            _ => throw new InvalidOperationException(
-                $"Cell with tag {cell.Tag} is not a valid arithmetic expression."),
+            _ => throw new PrologRuntimeException("type_error", $"evaluable:{cell.Tag}"),
         };
     }
 
@@ -141,15 +139,15 @@ public static class ArithmeticEvaluator
         // both ints and the result isn't exact; for simplicity we treat it
         // as float division throughout).
         double bv = b.AsDouble();
-        if (bv == 0.0) throw new InvalidOperationException("Division by zero in /.");
+        if (bv == 0.0) throw new PrologRuntimeException("evaluation_error", "zero_divisor");
         return new Number(a.AsDouble() / bv);
     }
 
     private static Number IntegerDivide(Number a, Number b)
     {
         if (a.IsFloat || b.IsFloat)
-            throw new InvalidOperationException("// requires integer operands.");
-        if (b.IntValue == 0) throw new InvalidOperationException("Division by zero in //.");
+            throw new PrologRuntimeException("type_error", "integer");
+        if (b.IntValue == 0) throw new PrologRuntimeException("evaluation_error", "zero_divisor");
         // ISO: truncating integer division (towards zero).
         return new Number(a.IntValue / b.IntValue);
     }
@@ -157,8 +155,8 @@ public static class ArithmeticEvaluator
     private static Number Modulo(Number a, Number b)
     {
         if (a.IsFloat || b.IsFloat)
-            throw new InvalidOperationException("mod requires integer operands.");
-        if (b.IntValue == 0) throw new InvalidOperationException("Division by zero in mod.");
+            throw new PrologRuntimeException("type_error", "integer");
+        if (b.IntValue == 0) throw new PrologRuntimeException("evaluation_error", "zero_divisor");
         // ISO `mod`: result has the sign of the divisor.
         long r = a.IntValue % b.IntValue;
         if ((r != 0) && ((r ^ b.IntValue) < 0)) r += b.IntValue;
@@ -168,8 +166,8 @@ public static class ArithmeticEvaluator
     private static Number Remainder(Number a, Number b)
     {
         if (a.IsFloat || b.IsFloat)
-            throw new InvalidOperationException("rem requires integer operands.");
-        if (b.IntValue == 0) throw new InvalidOperationException("Division by zero in rem.");
+            throw new PrologRuntimeException("type_error", "integer");
+        if (b.IntValue == 0) throw new PrologRuntimeException("evaluation_error", "zero_divisor");
         // ISO `rem`: result has the sign of the dividend (C's % operator).
         return new Number(a.IntValue % b.IntValue);
     }

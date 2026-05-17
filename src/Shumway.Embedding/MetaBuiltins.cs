@@ -248,6 +248,21 @@ public static class MetaBuiltins
             IsoError.TypeError("predicate_indicator", spec));
     }
 
+    /// <summary>Promotes a Core-level <see cref="PrologRuntimeException"/>
+    /// into the canonical ISO <c>error(Kind, _)</c> Prolog term that
+    /// user-written catchers expect.</summary>
+    private static Term TranslateRuntimeError(PrologRuntimeException re) => re.Kind switch
+    {
+        "evaluation_error" => IsoError.EvaluationError(re.Detail),
+        "instantiation_error" => IsoError.InstantiationError(),
+        "type_error" => IsoError.TypeError(re.Detail, new VarTerm("_")),
+        "existence_error" => IsoError.ExistenceError(
+            "procedure", new AtomTerm(re.Detail)),
+        "domain_error" => IsoError.DomainError(re.Detail, new VarTerm("_")),
+        _ => new CompoundTerm("error",
+            new Term[] { new AtomTerm(re.Kind), new AtomTerm(re.Detail) }),
+    };
+
     private static int ExtractCallableFunctorId(Term head, string builtinName)
     {
         return head switch
@@ -297,6 +312,7 @@ public static class MetaBuiltins
         Term goal = MaterializeRegister(engine, 0);
 
         var sub = host.CreateSubEngine();
+        ShumwayPrologException? toCatch = null;
         try
         {
             foreach (Solution sol in sub.QueryAll(goal))
@@ -308,41 +324,50 @@ public static class MetaBuiltins
         }
         catch (ShumwayPrologException ex)
         {
-            // Trial-unify the thrown term with the caller's Catcher register.
-            // The state save / unwind matches retract's pattern: if the
-            // unification fails we must roll back every speculative binding
-            // before re-raising so the surrounding context sees the engine
-            // state it had before the throw.
-            int savedHeapTop = engine.HeapTop;
-            int savedBindingTrail = engine.BindingTrailTop;
-            int savedExtraTrail = engine.ExtraTrailTop;
-            int savedHb = engine.Hb;
-            engine.SetHb(engine.HeapTop);
-
-            Cell thrownCell = Materializer.MaterializeAsCell(engine, ex.Term);
-            int thrownSlot = engine.AllocateHeap(1);
-            engine.SetHeap(thrownSlot, thrownCell);
-
-            if (!engine.UnifyRegisterWithHeapAt(1, thrownSlot))
-            {
-                engine.UnwindTrails(savedBindingTrail, savedExtraTrail);
-                engine.SetHeapTop(savedHeapTop);
-                engine.SetHb(savedHb);
-                throw;   // rethrow the original ShumwayPrologException
-            }
-            engine.SetHb(savedHb);
-
-            // Catcher matched — its bindings stick. Re-read Recovery now so
-            // any variables shared with Catcher show up substituted.
-            Term recovery = MaterializeRegister(engine, 2);
-            var sub2 = host.CreateSubEngine();
-            foreach (Solution sol in sub2.QueryAll(recovery))
-            {
-                BindBack(engine, sol.Bindings);
-                return true;
-            }
-            return false;
+            toCatch = ex;
         }
+        catch (PrologRuntimeException re)
+        {
+            // Promote the Core-level structured error into the ISO
+            // error(Kind, _) term, then funnel into the same recovery
+            // path the user's throw/1 would have hit.
+            toCatch = new ShumwayPrologException(TranslateRuntimeError(re));
+        }
+
+        // Trial-unify the thrown term with the caller's Catcher register.
+        // The state save / unwind matches retract's pattern: if the
+        // unification fails we must roll back every speculative binding
+        // before re-raising so the surrounding context sees the engine
+        // state it had before the throw.
+        int savedHeapTop = engine.HeapTop;
+        int savedBindingTrail = engine.BindingTrailTop;
+        int savedExtraTrail = engine.ExtraTrailTop;
+        int savedHb = engine.Hb;
+        engine.SetHb(engine.HeapTop);
+
+        Cell thrownCell = Materializer.MaterializeAsCell(engine, toCatch!.Term);
+        int thrownSlot = engine.AllocateHeap(1);
+        engine.SetHeap(thrownSlot, thrownCell);
+
+        if (!engine.UnifyRegisterWithHeapAt(1, thrownSlot))
+        {
+            engine.UnwindTrails(savedBindingTrail, savedExtraTrail);
+            engine.SetHeapTop(savedHeapTop);
+            engine.SetHb(savedHb);
+            throw toCatch;   // rethrow the translated (or original) ShumwayPrologException
+        }
+        engine.SetHb(savedHb);
+
+        // Catcher matched — its bindings stick. Re-read Recovery now so
+        // any variables shared with Catcher show up substituted.
+        Term recovery = MaterializeRegister(engine, 2);
+        var sub2 = host.CreateSubEngine();
+        foreach (Solution sol in sub2.QueryAll(recovery))
+        {
+            BindBack(engine, sol.Bindings);
+            return true;
+        }
+        return false;
     }
 
     /// <summary>Shared helper: walks a sub-engine solution's bindings and

@@ -56,10 +56,12 @@ public class IlPredicateCompilerTests
     }
 
     [Fact]
-    public void CanCompile_FactWithIntArg_False()
+    public void CanCompile_FactWithCompoundArg_False()
     {
-        // Integer args use get_integer, which the MVP doesn't translate.
-        var pred = CompileFromSource("p(42).");
+        // Compound args use get_structure, which the extended MVP still
+        // doesn't translate. Integers are now supported (see
+        // IlIntegerOpcodeTests for chunk 27's get_integer coverage).
+        var pred = CompileFromSource("p(foo(a)).");
         Assert.False(new IlPredicateCompiler().CanCompile(pred));
     }
 
@@ -159,7 +161,8 @@ public class IlPredicateCompilerTests
     [Fact]
     public void Compile_UnsupportedPredicate_Throws()
     {
-        var pred = CompileFromSource("p(1).");
+        // Multi-clause predicates still fall outside the supported subset.
+        var pred = CompileFromSource("p(a).\np(b).\n");
         var ic = new IlPredicateCompiler();
         Assert.Throws<NotSupportedException>(() => ic.Compile(pred));
     }
