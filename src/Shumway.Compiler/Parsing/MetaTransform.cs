@@ -79,7 +79,78 @@ public static class MetaTransform
             return SynthesizeNegationHelper(ct.Args[0], ref counter, helpers);
         }
 
+        // Disjunction (A ; B) and if-then-else (A -> B ; C) — both compile
+        // to a two-clause helper that the standard try_me_else / trust_me
+        // dispatch then handles.
+        if (goal is CompoundTerm disj && disj.Functor == ";" && disj.Args.Length == 2)
+        {
+            return SynthesizeDisjunctionHelper(disj.Args[0], disj.Args[1], ref counter, helpers);
+        }
+
         return goal;
+    }
+
+    /// <summary>Rewrites <c>(A ; B)</c> and <c>(A -&gt; B ; C)</c> into a
+    /// call to a freshly-synthesised two-clause helper. The classic
+    /// Aït-Kaci translation: each branch becomes one clause of the helper,
+    /// and the regular WAM choice-point dispatch makes the disjunction
+    /// behave with the right backtracking semantics.</summary>
+    private static Term SynthesizeDisjunctionHelper(
+        Term left, Term right, ref int counter, List<Clause> helpers)
+    {
+        counter++;
+        string helperName = $"$disj_{counter}";
+
+        var freeVars = new List<string>();
+        var seen = new HashSet<string>();
+        CollectNamedVars(left, freeVars, seen);
+        CollectNamedVars(right, freeVars, seen);
+
+        // Recurse into both branches first so nested control structures
+        // (further disjunctions, negations, etc.) get their own helpers.
+        Term recursedLeft = TransformGoal(left, ref counter, helpers);
+        Term recursedRight = TransformGoal(right, ref counter, helpers);
+
+        Term BuildHelperHead() => freeVars.Count == 0
+            ? (Term)new AtomTerm(helperName)
+            : new CompoundTerm(helperName, freeVars.Select(n => (Term)new VarTerm(n)).ToArray());
+
+        // If-then-else: (A -> B ; C) translates to two clauses with a
+        // commit cut between A and B in the first clause.
+        if (left is CompoundTerm ite && ite.Functor == "->" && ite.Args.Length == 2)
+        {
+            Term cond = TransformGoal(ite.Args[0], ref counter, helpers);
+            Term then = TransformGoal(ite.Args[1], ref counter, helpers);
+            // Clause 1: '$disj_N'(...) :- A, !, B.
+            Term clause1Body = new CompoundTerm(",", new[]
+            {
+                cond,
+                new CompoundTerm(",", new[] { (Term)new AtomTerm("!"), then })
+            });
+            helpers.Add(new Clause(
+                ClauseKind.Rule,
+                new CompoundTerm(":-", new[] { BuildHelperHead(), clause1Body }),
+                left.Position));
+            // Clause 2: '$disj_N'(...) :- C.
+            helpers.Add(new Clause(
+                ClauseKind.Rule,
+                new CompoundTerm(":-", new[] { BuildHelperHead(), recursedRight }),
+                right.Position));
+            return BuildHelperHead();
+        }
+
+        // Plain disjunction.
+        // Clause 1: '$disj_N'(...) :- A.
+        helpers.Add(new Clause(
+            ClauseKind.Rule,
+            new CompoundTerm(":-", new[] { BuildHelperHead(), recursedLeft }),
+            left.Position));
+        // Clause 2: '$disj_N'(...) :- B.
+        helpers.Add(new Clause(
+            ClauseKind.Rule,
+            new CompoundTerm(":-", new[] { BuildHelperHead(), recursedRight }),
+            right.Position));
+        return BuildHelperHead();
     }
 
     private static Term SynthesizeNegationHelper(

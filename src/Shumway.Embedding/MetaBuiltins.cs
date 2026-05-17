@@ -51,6 +51,29 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("functor", 3, Functor);
         BuiltinsRegistry.Register("arg",     3, Arg);
         BuiltinsRegistry.Register("=..",     2, Univ);
+
+        BuiltinsRegistry.Register("read_term_from_atom", 2, ReadTermFromAtom);
+    }
+
+    /// <summary><c>read_term_from_atom(Atom, Term)</c> — parses the text
+    /// stored in <c>Atom</c> as a Prolog term and unifies the result with
+    /// <c>Term</c>. The full ISO <c>read_term/2</c> reads from an
+    /// arbitrary stream — Phase 1 only handles the in-memory atom case,
+    /// which is the use the embedding API actually needs.</summary>
+    public static bool ReadTermFromAtom(Engine engine)
+    {
+        Cell atomCell = ResolveLocal(engine, engine.GetRegister(0));
+        if (atomCell.Tag != Tag.Atom)
+            throw new ShumwayPrologException(IsoError.TypeError("atom", new VarTerm("_")));
+        string source = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
+        if (!source.TrimEnd().EndsWith(".", StringComparison.Ordinal))
+            source += ".";
+        var parser = new Shumway.Compiler.Parsing.Parser(
+            new Shumway.Compiler.Lexer.Lexer(source),
+            Shumway.Compiler.Parsing.OperatorTable.Default());
+        Term parsed = parser.ReadClauseTerm();
+        Cell parsedCell = Materializer.MaterializeAsCell(engine, parsed);
+        return engine.UnifyRegisterWithCell(1, parsedCell);
     }
 
     // ============================================================================

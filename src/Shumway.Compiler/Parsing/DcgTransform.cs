@@ -98,6 +98,61 @@ public static class DcgTransform
         if (body is AtomTerm { Name: "!" })
             return (body, sIn);
 
+        // Disjunction: each branch consumes the same input range. We unify
+        // the two branches' outputs with a fresh shared sOut so callers see
+        // one diff-list endpoint regardless of which branch fired.
+        if (body is CompoundTerm { Functor: ";" } disj && disj.Args.Length == 2)
+        {
+            // If-then-else: (A -> B ; C). A and B share an intermediate
+            // sMid; C runs independently from sIn. Both end at the same
+            // sOut.
+            if (disj.Args[0] is CompoundTerm { Functor: "->" } itc && itc.Args.Length == 2)
+            {
+                var (cond, sMid) = TransformBody(itc.Args[0], sIn, ref counter);
+                var (then, sOutA) = TransformBody(itc.Args[1], sMid, ref counter);
+                var (elseBody, sOutB) = TransformBody(disj.Args[1], sIn, ref counter);
+                var sOutMerged = FreshState(ref counter);
+                Term thenWithMerge = new CompoundTerm(",", new[] {
+                    then,
+                    new CompoundTerm("=", new[] { (Term)sOutMerged, sOutA })
+                });
+                Term elseWithMerge = new CompoundTerm(",", new[] {
+                    elseBody,
+                    new CompoundTerm("=", new[] { (Term)sOutMerged, sOutB })
+                });
+                Term newIte = new CompoundTerm(";", new[] {
+                    new CompoundTerm("->", new[] { cond, thenWithMerge }),
+                    elseWithMerge
+                });
+                return (newIte, sOutMerged);
+            }
+
+            // Plain disjunction A ; B. Both branches thread from sIn to the
+            // same shared sOut.
+            var (left2, sOutL) = TransformBody(disj.Args[0], sIn, ref counter);
+            var (right2, sOutR) = TransformBody(disj.Args[1], sIn, ref counter);
+            var sOutShared = FreshState(ref counter);
+            Term leftMerged = new CompoundTerm(",", new[] {
+                left2,
+                new CompoundTerm("=", new[] { (Term)sOutShared, sOutL })
+            });
+            Term rightMerged = new CompoundTerm(",", new[] {
+                right2,
+                new CompoundTerm("=", new[] { (Term)sOutShared, sOutR })
+            });
+            return (new CompoundTerm(";", new[] { leftMerged, rightMerged }), sOutShared);
+        }
+
+        // Bare if-then without an else branch: (A -> B). Treated as the
+        // sequential composition A, B (an if-then with no fallback fails
+        // when A fails, which the sequential form models exactly).
+        if (body is CompoundTerm { Functor: "->" } itoOnly && itoOnly.Args.Length == 2)
+        {
+            var (cond, sMid) = TransformBody(itoOnly.Args[0], sIn, ref counter);
+            var (then, sOut) = TransformBody(itoOnly.Args[1], sMid, ref counter);
+            return (new CompoundTerm("->", new[] { cond, then }), sOut);
+        }
+
         // Non-terminal call — append (sIn, sOut) to the call's args.
         {
             var sOut = FreshState(ref counter);

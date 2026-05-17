@@ -45,6 +45,25 @@ public static class IOBuiltins
         return true;
     }
 
+    /// <summary><c>write_canonical(X)</c> — writes <c>X</c> in canonical
+    /// form. Phase 1 aliases to <c>write/1</c>; the canonical-form switch
+    /// (quoting special characters, qualifying operators) will land with
+    /// <c>TermRenderer</c>'s option-aware rewrite.</summary>
+    public static bool WriteCanonical(Engine engine)
+    {
+        TermRenderer.Render(engine, engine.GetRegister(0), engine.Out);
+        return true;
+    }
+
+    /// <summary><c>print(X)</c> — ISO defines this as a portray/1 hook
+    /// fallback to <c>write/1</c>. Phase 1 implements only the
+    /// <c>write/1</c> fallback path.</summary>
+    public static bool Print(Engine engine)
+    {
+        TermRenderer.Render(engine, engine.GetRegister(0), engine.Out);
+        return true;
+    }
+
     /// <summary><c>format(FormatString, Args)</c> — printf-style formatted
     /// output. The Phase-1 set of specifiers is:
     /// <list type="bullet">

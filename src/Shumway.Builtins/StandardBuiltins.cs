@@ -56,8 +56,10 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("write",      1, IOBuiltins.Write);
         BuiltinsRegistry.Register("nl",         0, IOBuiltins.Nl);
         BuiltinsRegistry.Register("writeln",    1, IOBuiltins.Writeln);
-        BuiltinsRegistry.Register("write_term", 2, IOBuiltins.WriteTerm);
-        BuiltinsRegistry.Register("format",     2, IOBuiltins.Format);
+        BuiltinsRegistry.Register("write_term",      2, IOBuiltins.WriteTerm);
+        BuiltinsRegistry.Register("format",          2, IOBuiltins.Format);
+        BuiltinsRegistry.Register("write_canonical", 1, IOBuiltins.WriteCanonical);
+        BuiltinsRegistry.Register("print",           1, IOBuiltins.Print);
 
         // Atom / list manipulation.
         BuiltinsRegistry.Register("length",       2, AtomListBuiltins.Length);
