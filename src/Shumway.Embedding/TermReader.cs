@@ -33,6 +33,13 @@ public static class TermReader
             Tag.Str => MaterializeStr(engine, cell),
             Tag.Lis => MaterializeLis(engine, cell),
             Tag.Pstr => new StringTerm(engine.AsPstrString(derefAddr)),
+            // Foreign cells round-trip as `'$foreign'(N)` compounds — the
+            // payload's identity (the engine's foreign table entry) is
+            // exposed as the integer id. User code rarely inspects this
+            // directly; it's mostly visible when a stream handle ends up
+            // in a query's bindings.
+            Tag.Foreign => new CompoundTerm("$foreign",
+                new Term[] { new IntTerm(cell.AsForeignId) }),
             _ => throw new NotSupportedException(
                 $"TermReader.Materialize does not yet handle the {cell.Tag} tag."),
         };
