@@ -34,16 +34,49 @@ public static class IOBuiltins
         return true;
     }
 
-    /// <summary><c>write_term(Term, Options)</c> — writes <c>Term</c> to the
-    /// engine's output sink. Phase-1: <c>Options</c> is accepted but
-    /// ignored — the rendering matches plain <c>write/1</c>. Real option
-    /// support (<c>quoted(true)</c>, <c>numbervars(true)</c>, etc.) lands
-    /// once <see cref="TermRenderer"/> grows the corresponding switches.</summary>
+    /// <summary><c>write_term(Term, Options)</c> — writes <c>Term</c>
+    /// to the engine's output sink, honouring the boolean options
+    /// <c>quoted/1</c>, <c>ignore_ops/1</c>, and <c>numbervars/1</c>.
+    /// Any other option name is silently ignored — Phase 1 doesn't yet
+    /// support the full ISO menu, and silent skipping matches what
+    /// SWI does for unknown options.</summary>
     public static bool WriteTerm(Engine engine)
     {
-        TermRenderer.Render(engine, engine.GetRegister(0), engine.Out);
+        var options = new TermRenderOptions();
+        Cell optsCell = Resolve(engine, engine.GetRegister(1));
+        while (optsCell.Tag == Tag.Lis)
+        {
+            int headIdx = optsCell.AsHeapIndex;
+            Cell head = Resolve(engine, engine.GetHeap(headIdx));
+            ApplyOption(engine, head, options);
+            optsCell = Resolve(engine, engine.GetHeap(headIdx + 1));
+        }
+        TermRenderer.Render(engine, engine.GetRegister(0), engine.Out, options);
         return true;
     }
+
+    private static void ApplyOption(Engine engine, Cell optCell, TermRenderOptions options)
+    {
+        if (optCell.Tag != Tag.Str) return;
+        int functorIdx = optCell.AsHeapIndex;
+        var (atomId, arity) = FunctorTable.Lookup(
+            engine.GetHeap(functorIdx).AsFunctorId);
+        if (arity != 1) return;
+        string name = AtomTable.GetById(atomId)?.Name ?? "";
+        Cell valCell = Resolve(engine, engine.GetHeap(functorIdx + 1));
+        bool value = IsTrueAtom(valCell);
+        switch (name)
+        {
+            case "quoted": options.Quoted = value; break;
+            case "ignore_ops": options.IgnoreOps = value; break;
+            case "numbervars": options.Numbervars = value; break;
+            // Unknown options ignored silently.
+        }
+    }
+
+    private static bool IsTrueAtom(Cell c) =>
+        c.Tag == Tag.Atom &&
+        (AtomTable.GetById(c.AsAtomId)?.Name ?? "") == "true";
 
     /// <summary><c>write_canonical(X)</c> — writes <c>X</c> in canonical
     /// form. Phase 1 aliases to <c>write/1</c>; the canonical-form switch
