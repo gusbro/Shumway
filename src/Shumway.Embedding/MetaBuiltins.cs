@@ -37,6 +37,111 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("assertz", 1, Assertz);
         BuiltinsRegistry.Register("asserta", 1, Asserta);
         BuiltinsRegistry.Register("retract", 1, Retract);
+
+        BuiltinsRegistry.Register("throw", 1, Throw);
+        BuiltinsRegistry.Register("catch", 3, Catch);
+    }
+
+    // ============================================================================
+    // throw / catch
+    // ============================================================================
+
+    /// <summary><c>throw(Error)</c> — raises <see cref="ShumwayPrologException"/>
+    /// carrying <c>Error</c>'s materialised term. Propagates up the C# stack
+    /// until a <c>catch/3</c> or the engine's top-level intercepts it.</summary>
+    public static bool Throw(Engine engine)
+    {
+        Term error = MaterializeRegister(engine, 0);
+        throw new ShumwayPrologException(error);
+    }
+
+    /// <summary><c>catch(Goal, Catcher, Recovery)</c> — runs <c>Goal</c> in a
+    /// peer sub-engine.
+    /// <list type="bullet">
+    /// <item>If <c>Goal</c> succeeds, the first solution's bindings flow back
+    ///   to the caller and <c>catch</c> succeeds without consulting
+    ///   <c>Catcher</c> / <c>Recovery</c>.</item>
+    /// <item>If <c>Goal</c> fails cleanly, <c>catch</c> fails too.</item>
+    /// <item>If <c>Goal</c> throws (via <c>throw/1</c>), the thrown term is
+    ///   materialised on the caller's heap and trial-unified with
+    ///   <c>Catcher</c>. On a match, the bindings stick and <c>Recovery</c>
+    ///   runs in a fresh sub-engine; on a mismatch, the trial bindings are
+    ///   unwound and the original exception is re-raised.</item>
+    /// </list></summary>
+    public static bool Catch(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "catch/3 requires the engine to be hosted by a PrologEngine.");
+
+        Term goal = MaterializeRegister(engine, 0);
+
+        var sub = host.CreateSubEngine();
+        try
+        {
+            foreach (Solution sol in sub.QueryAll(goal))
+            {
+                BindBack(engine, sol.Bindings);
+                return true;
+            }
+            return false;
+        }
+        catch (ShumwayPrologException ex)
+        {
+            // Trial-unify the thrown term with the caller's Catcher register.
+            // The state save / unwind matches retract's pattern: if the
+            // unification fails we must roll back every speculative binding
+            // before re-raising so the surrounding context sees the engine
+            // state it had before the throw.
+            int savedHeapTop = engine.HeapTop;
+            int savedBindingTrail = engine.BindingTrailTop;
+            int savedExtraTrail = engine.ExtraTrailTop;
+            int savedHb = engine.Hb;
+            engine.SetHb(engine.HeapTop);
+
+            Cell thrownCell = Materializer.MaterializeAsCell(engine, ex.Term);
+            int thrownSlot = engine.AllocateHeap(1);
+            engine.SetHeap(thrownSlot, thrownCell);
+
+            if (!engine.UnifyRegisterWithHeapAt(1, thrownSlot))
+            {
+                engine.UnwindTrails(savedBindingTrail, savedExtraTrail);
+                engine.SetHeapTop(savedHeapTop);
+                engine.SetHb(savedHb);
+                throw;   // rethrow the original ShumwayPrologException
+            }
+            engine.SetHb(savedHb);
+
+            // Catcher matched — its bindings stick. Re-read Recovery now so
+            // any variables shared with Catcher show up substituted.
+            Term recovery = MaterializeRegister(engine, 2);
+            var sub2 = host.CreateSubEngine();
+            foreach (Solution sol in sub2.QueryAll(recovery))
+            {
+                BindBack(engine, sol.Bindings);
+                return true;
+            }
+            return false;
+        }
+    }
+
+    /// <summary>Shared helper: walks a sub-engine solution's bindings and
+    /// unifies each caller-heap variable (identified by the <c>_GN</c> name
+    /// convention) with the bound value materialised onto the caller's
+    /// heap. Returns <c>false</c> at the first unification failure so the
+    /// outer builtin can give up its current iteration.</summary>
+    private static bool BindBack(Engine engine, IReadOnlyDictionary<string, Term> bindings)
+    {
+        foreach (var (name, value) in bindings)
+        {
+            int addr = ExtractAddrFromName(name);
+            if (addr < 0) continue;
+            Cell boundCell = Materializer.MaterializeAsCell(engine, value);
+            int slot = engine.AllocateHeap(1);
+            engine.SetHeap(slot, boundCell);
+            if (!engine.Unify(addr, slot)) return false;
+        }
+        return true;
     }
 
     // ============================================================================
