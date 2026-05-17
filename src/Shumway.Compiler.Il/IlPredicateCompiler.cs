@@ -27,11 +27,16 @@ public sealed class IlPredicateCompiler
         typeof(Engine).GetMethod(
             nameof(Engine.UnifyRegisterWithCell),
             new[] { typeof(int), typeof(Cell) })!;
+    private static readonly MethodInfo EngineUnifyRegistersMethod =
+        typeof(Engine).GetMethod(
+            nameof(Engine.UnifyRegisters),
+            new[] { typeof(int), typeof(int) })!;
 
     /// <summary>Returns <c>true</c> iff <paramref name="predicate"/> is in
-    /// the supported subset: single clause, bytecode made of zero or
-    /// more <c>get_atom</c> / <c>get_integer</c> opcodes followed by
-    /// exactly one <c>proceed</c>.</summary>
+    /// the supported subset: single clause whose bytecode is made of
+    /// zero or more head-matching opcodes followed by exactly one
+    /// <c>proceed</c>. The current set is <c>get_atom</c>,
+    /// <c>get_integer</c>, <c>get_nil</c>, <c>get_value_x</c>.</summary>
     public bool CanCompile(CompiledPredicate predicate)
     {
         ArgumentNullException.ThrowIfNull(predicate);
@@ -42,7 +47,10 @@ public sealed class IlPredicateCompiler
         while (pc < code.Length)
         {
             var op = (Opcode)code[pc];
-            if (op == Opcode.GetAtom || op == Opcode.GetInteger)
+            if (op == Opcode.GetAtom
+                || op == Opcode.GetInteger
+                || op == Opcode.GetNil
+                || op == Opcode.GetValueX)
             {
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -109,6 +117,37 @@ public sealed class IlPredicateCompiler
                 emit.LoadConstant((long)value);
                 emit.Call(CellIntMethod);
                 emit.Call(EngineUnifyMethod);
+                emit.BranchIfFalse(failLabel);
+
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.GetNil)
+            {
+                int regIdx = BytecodeIO.ReadInt32(code, pc + 1);
+
+                // emit: if (!engine.UnifyRegisterWithCell(regIdx,
+                //              Cell.Atom(AtomTable.EmptyListId))) goto fail;
+                emit.LoadArgument(0);
+                emit.LoadConstant(regIdx);
+                emit.LoadConstant(AtomTable.EmptyListId);
+                emit.Call(CellAtomMethod);
+                emit.Call(EngineUnifyMethod);
+                emit.BranchIfFalse(failLabel);
+
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.GetValueX)
+            {
+                int srcReg = BytecodeIO.ReadInt32(code, pc + 1);
+                int argReg = BytecodeIO.ReadInt32(code, pc + 5);
+
+                // emit: if (!engine.UnifyRegisters(srcReg, argReg)) goto fail;
+                emit.LoadArgument(0);
+                emit.LoadConstant(srcReg);
+                emit.LoadConstant(argReg);
+                emit.Call(EngineUnifyRegistersMethod);
                 emit.BranchIfFalse(failLabel);
 
                 pc += OpcodeTable.Get(op).Size;
