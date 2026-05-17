@@ -10,21 +10,24 @@ namespace Shumway.Embedding;
 
 /// <summary>
 /// High-level entry point for embedding Shumway in a .NET host. Accumulates
-/// consulted Prolog source, then satisfies queries by compiling the source and
-/// the query into a single bytecode program, running it through the
-/// interpreter, and reading back the resulting variable bindings.
+/// consulted Prolog source into a set of named modules, then satisfies queries
+/// by compiling every module's clauses with module-aware functor mangling,
+/// linking, and running the result through the interpreter.
 ///
-/// <para>This is the chunk-9 MVP: every <see cref="Query"/> compiles, links and
-/// runs from scratch on a fresh engine. That's adequate for tests and for
-/// experimenting interactively, but the embedding ADR's full API surface
-/// (engine pooling, multi-solution streaming, foreign predicates, struct
-/// mapping, etc.) is not yet built. Single-solution queries are all that's
-/// supported here — to get the next solution today you'd have to add a
-/// failure-after-success goal explicitly.</para>
+/// <para>The default module is <c>user</c>: source without an explicit
+/// <c>:- module(name).</c> directive is appended there. An explicit
+/// <c>:- module(name).</c> at the top of a consult creates / replaces the
+/// named module — re-consulting the same module overwrites the previous
+/// contents, matching ADR-008.</para>
 /// </summary>
 public sealed class PrologEngine
 {
-    private string _accumulatedSource = "";
+    public const string DefaultModuleName = "user";
+
+    private readonly Dictionary<string, ModuleManifest> _modules = new()
+    {
+        [DefaultModuleName] = new ModuleManifest(DefaultModuleName),
+    };
     private readonly OperatorTable _operators = OperatorTable.Default();
 
     /// <summary>The sink that I/O builtins (<c>write/1</c>, <c>nl/0</c>,
@@ -44,23 +47,29 @@ public sealed class PrologEngine
     }
 
     /// <summary>Builds a peer <see cref="PrologEngine"/> sharing this engine's
-    /// consulted source and operator declarations. Used by meta-builtins like
+    /// consulted modules and operator declarations. Used by meta-builtins like
     /// <c>findall/3</c> that need to enumerate every solution of a goal
     /// independently of the calling engine's choice-point stack.</summary>
     internal PrologEngine CreateSubEngine()
     {
-        var sub = new PrologEngine
+        var sub = new PrologEngine { Out = Out };
+        // Replace the sub-engine's default empty module set with deep copies
+        // of ours so modifications in the sub-engine never bleed back.
+        sub._modules.Clear();
+        foreach (var (name, manifest) in _modules)
         {
-            _accumulatedSource = _accumulatedSource,
-            Out = Out,
-        };
-        // _operators is read-only after default init in our current usage; we
-        // share the table reference rather than deep-copying. If a sub-engine
-        // ever needs to mutate operators independently we'll switch to a copy.
-        // The default table is the same across instances so this is a no-op
-        // for now — kept explicit for when the sub-engine path becomes lossy.
+            var copy = new ModuleManifest(name);
+            copy.Clauses.AddRange(manifest.Clauses);
+            copy.PublicFunctors.UnionWith(manifest.PublicFunctors);
+            sub._modules[name] = copy;
+        }
         return sub;
     }
+
+    /// <summary>Snapshot of every module currently loaded into the engine.
+    /// Useful for tests and tooling; the underlying objects are live and
+    /// shouldn't be mutated directly.</summary>
+    public IReadOnlyDictionary<string, ModuleManifest> Modules => _modules;
 
     /// <summary>Runs an AST goal through the same machinery as the string
     /// form, yielding each solution in turn. The free variables of
@@ -81,23 +90,130 @@ public sealed class PrologEngine
         }
     }
 
-    /// <summary>Loads Prolog source. Multiple calls accumulate — later consults
-    /// see the operator declarations from earlier ones. The source is stored
-    /// verbatim and re-parsed on every query.
+    /// <summary>Loads Prolog source. The first <c>:- module(name).</c>
+    /// directive in the source (if any) chooses the target module — re-consulting
+    /// the same module replaces its previous contents. Source with no module
+    /// directive appends to the default <see cref="DefaultModuleName"/>
+    /// module.
     ///
     /// <para>The call drives the source through <see cref="ClauseReader"/> once
-    /// up front, which executes any <c>:- op</c> directives so the operator
-    /// table is up-to-date for a subsequent <see cref="Query"/> on the
-    /// just-consulted operators. The parsed clauses are otherwise discarded;
-    /// the final compile happens at query time.</para></summary>
+    /// up front so any <c>:- op</c> declarations take effect immediately; the
+    /// returned clause stream is sorted into module-local storage and a final
+    /// compile happens at query time.</para></summary>
     public void ConsultString(string source)
     {
         ArgumentNullException.ThrowIfNull(source);
-        // Run the source through the reader to apply :- op directives — the
-        // ReadAll().ToList() materialises the iterator so directives are
-        // processed immediately even though we don't keep the clauses here.
-        _ = new ClauseReader(new Lexer(source), _operators).ReadAll().ToList();
-        _accumulatedSource += "\n" + source;
+        var rawClauses = new ClauseReader(new Lexer(source), _operators).ReadAll().ToList();
+
+        string moduleName = DefaultModuleName;
+        bool moduleDirectiveSeen = false;
+        var publics = new HashSet<int>();
+        var clauses = new List<Clause>();
+
+        foreach (var clause in rawClauses)
+        {
+            if (clause.Kind != ClauseKind.Directive)
+            {
+                clauses.Add(clause);
+                continue;
+            }
+
+            // Strip the leading `:- /1` wrapper to get the directive body.
+            if (clause.Term is not CompoundTerm dWrap || dWrap.Args.Length != 1) continue;
+            Term body = dWrap.Args[0];
+
+            if (TryReadModuleDirective(body, out string? name))
+            {
+                if (moduleDirectiveSeen)
+                    throw new InvalidOperationException(
+                        "Multiple :- module(...) directives in one ConsultString call.");
+                moduleName = name;
+                moduleDirectiveSeen = true;
+            }
+            else if (TryReadPublicDirective(body, out var publicSpecs))
+            {
+                foreach (var (n, a) in publicSpecs)
+                    publics.Add(FunctorTable.Intern(
+                        AtomTable.Intern(n, permanent: true).Id, a));
+            }
+            // op/3 already processed in-place by ClauseReader; other directives
+            // (dynamic, discontiguous, …) are not implemented yet and pass
+            // through silently.
+        }
+
+        if (moduleDirectiveSeen)
+        {
+            // Explicit module: replace any previous load of this module.
+            var manifest = new ModuleManifest(moduleName);
+            manifest.Clauses.AddRange(clauses);
+            manifest.PublicFunctors.UnionWith(publics);
+            _modules[moduleName] = manifest;
+        }
+        else
+        {
+            // Default user module: append. Multiple unrelated consults share
+            // a single rolling 'user' module — matches the historic behaviour
+            // from before the module system landed.
+            var existing = _modules[DefaultModuleName];
+            existing.Clauses.AddRange(clauses);
+            existing.PublicFunctors.UnionWith(publics);
+        }
+    }
+
+    private static bool TryReadModuleDirective(Term body, out string name)
+    {
+        if (body is CompoundTerm m && m.Functor == "module" && m.Args.Length == 1
+            && m.Args[0] is AtomTerm a)
+        {
+            name = a.Name;
+            return true;
+        }
+        name = "";
+        return false;
+    }
+
+    private static bool TryReadPublicDirective(
+        Term body, out List<(string Name, int Arity)> publics)
+    {
+        publics = new List<(string, int)>();
+        if (body is not CompoundTerm c || c.Functor != "public" || c.Args.Length != 1)
+            return false;
+
+        // A single Name/Arity term or a list of them.
+        Term arg = c.Args[0];
+        if (TryReadFunctorSpec(arg, out var single))
+        {
+            publics.Add(single);
+            return true;
+        }
+        if (TryReadFunctorSpecList(arg, publics))
+            return true;
+        throw new InvalidOperationException(
+            "Malformed :- public directive (expected Name/Arity or a list of them).");
+    }
+
+    private static bool TryReadFunctorSpec(Term term, out (string Name, int Arity) spec)
+    {
+        if (term is CompoundTerm slash && slash.Functor == "/" && slash.Args.Length == 2
+            && slash.Args[0] is AtomTerm name && slash.Args[1] is IntTerm arity)
+        {
+            spec = (name.Name, (int)arity.Value);
+            return true;
+        }
+        spec = ("", 0);
+        return false;
+    }
+
+    private static bool TryReadFunctorSpecList(Term list, List<(string, int)> output)
+    {
+        Term cursor = list;
+        while (cursor is CompoundTerm cons && cons.Functor == "." && cons.Args.Length == 2)
+        {
+            if (!TryReadFunctorSpec(cons.Args[0], out var spec)) return false;
+            output.Add(spec);
+            cursor = cons.Args[1];
+        }
+        return cursor is AtomTerm { Name: "[]" };
     }
 
     /// <summary>Parses and runs a query, returning the first solution if one
@@ -112,16 +228,7 @@ public sealed class PrologEngine
 
     /// <summary>Parses and runs a query, lazily yielding every solution. The
     /// engine state is preserved between yields so the iterator can drive the
-    /// interpreter through backtracking on demand.
-    ///
-    /// <para>Common idioms:</para>
-    /// <list type="bullet">
-    /// <item><c>engine.QueryAll("p(X).").First()</c> — first solution.</item>
-    /// <item><c>engine.QueryAll("p(X).").ToList()</c> — all solutions
-    ///   enumerated eagerly.</item>
-    /// <item><c>engine.QueryAll("p(X).").Count()</c> — how many succeed.</item>
-    /// <item><c>foreach (var s in engine.QueryAll("p(X).")) …</c> — iterate.</item>
-    /// </list></summary>
+    /// interpreter through backtracking on demand.</summary>
     public IEnumerable<Solution> QueryAll(string queryText)
     {
         ArgumentNullException.ThrowIfNull(queryText);
@@ -136,11 +243,6 @@ public sealed class PrologEngine
         }
     }
 
-    /// <summary>Compiles the consulted source + the query's synthetic wrapper,
-    /// links into a runnable program prefixed by a "call wrapper; halt"
-    /// launcher, allocates fresh heap unbounds for the query's variables and
-    /// stores them in X[0..n-1]. Returns everything the iterator needs to
-    /// run and re-run the program.</summary>
     private (byte[] Program,
              List<string> VarNames,
              int[] VarHeapIndices,
@@ -154,10 +256,11 @@ public sealed class PrologEngine
 
     /// <summary>Shared workhorse used by both the string-parsing
     /// <see cref="SetupQuery(string)"/> and the Term-level
-    /// <see cref="QueryAll(Term)"/>: wraps the goal in a synthetic clause
-    /// whose head captures every free variable as an argument, compiles +
-    /// links the program, primes X[0..n-1] with fresh heap unbounds, and
-    /// hands the lot back to the caller's run/backtrack iterator.</summary>
+    /// <see cref="QueryAll(Term)"/>: gathers every module's clauses through
+    /// DCG / meta / module-mangle transforms, wraps the goal in a synthetic
+    /// clause in the user module, compiles + links, primes X[0..n-1] with
+    /// fresh heap unbounds, and hands the lot back to the caller's
+    /// run/backtrack iterator.</summary>
     private (byte[] Program,
              List<string> VarNames,
              int[] VarHeapIndices,
@@ -177,21 +280,46 @@ public sealed class PrologEngine
         Term clauseTerm = new CompoundTerm(":-", new[] { head, queryTerm });
         var syntheticClause = new Clause(ClauseKind.Rule, clauseTerm, queryTerm.Position);
 
-        var allClauses = string.IsNullOrEmpty(_accumulatedSource)
-            ? new List<Clause>()
-            : new ClauseReader(new Lexer(_accumulatedSource), _operators).ReadAll().ToList();
-        allClauses.Add(syntheticClause);
+        // Validate public uniqueness across modules. The check raises before
+        // any compilation so the error message points squarely at the user's
+        // module declarations rather than at the bytecode that wouldn't link.
+        ValidatePublicUniqueness();
 
-        // DCG → regular-clause translation runs first: it produces clauses
-        // whose bodies may contain \+ or other meta forms, which the
-        // MetaTransform pass below then rewrites.
-        allClauses = DcgTransform.Apply(allClauses);
+        // Apply DCG → clause and meta-call (\+ / not) transforms per module,
+        // then mangle local functors so each module ends up with its own
+        // private namespace. The synthetic query clause is transformed and
+        // rewritten under the user module's context but kept out of that
+        // module's local set — its head functor stays bare so the launcher
+        // can call it by name.
+        var allRewritten = new List<Clause>();
+        HashSet<int>? userLocalsCache = null;
 
-        // Meta-call AST rewriting: \+/1 and not/1 turn into helper clauses
-        // that ride on the cut + fail machinery.
-        allClauses = MetaTransform.Apply(allClauses);
+        foreach (var (name, manifest) in _modules)
+        {
+            var transformed = DcgTransform.Apply(manifest.Clauses);
+            transformed = MetaTransform.Apply(transformed);
 
-        var module = new ModuleCompiler().Compile(allClauses);
+            var locals = ComputeLocalFunctors(transformed, manifest.PublicFunctors);
+            if (name == DefaultModuleName) userLocalsCache = locals;
+
+            var ctx = new ModuleRewrite.Context(name, locals);
+            foreach (var clause in transformed)
+                allRewritten.Add(ModuleRewrite.Rewrite(clause, ctx));
+        }
+
+        // Synthetic query clause — rewrite in the user module's context, but
+        // with userLocalsCache (which doesn't include __query__) so the
+        // head functor remains bare.
+        {
+            var queryTransformed = MetaTransform.Apply(
+                DcgTransform.Apply(new[] { syntheticClause }));
+            var ctx = new ModuleRewrite.Context(
+                DefaultModuleName, userLocalsCache ?? new HashSet<int>());
+            foreach (var clause in queryTransformed)
+                allRewritten.Add(ModuleRewrite.Rewrite(clause, ctx));
+        }
+
+        var module = new ModuleCompiler().Compile(allRewritten);
 
         var launcher = new BytecodeEmitter();
         int callPos = launcher.Position;
@@ -200,6 +328,10 @@ public sealed class PrologEngine
         byte[] prefix = launcher.ToBytes();
 
         var linkResult = new Linker().Link(module, loadOffset: prefix.Length);
+        // The synthetic query stays under its bare functor (it's local to
+        // user but ModuleRewrite never mangles __query__ because it's not
+        // present in user's local set: it was added after locals were
+        // computed and isn't part of the user-defined predicates).
         int queryFunctorId = FunctorTable.Intern(
             AtomTable.Intern(queryFunctor, permanent: true).Id,
             varNames.Count);
@@ -222,6 +354,60 @@ public sealed class PrologEngine
         }
 
         return (program, varNames, varHeapIndices, engine, interp);
+    }
+
+    /// <summary>Returns the functor ids that are <em>local</em> to a module
+    /// (defined as a head functor but not exported via <c>:- public</c>).
+    /// Used by <see cref="ModuleRewrite"/> to decide which call targets need
+    /// the synthetic <c>module$name</c> prefix.</summary>
+    private static HashSet<int> ComputeLocalFunctors(
+        IEnumerable<Clause> clauses, HashSet<int> publicFunctors)
+    {
+        var locals = new HashSet<int>();
+        foreach (var c in clauses)
+        {
+            if (!TryExtractHead(c, out string name, out int arity)) continue;
+            int fid = FunctorTable.Intern(
+                AtomTable.Intern(name, permanent: true).Id, arity);
+            if (!publicFunctors.Contains(fid)) locals.Add(fid);
+        }
+        return locals;
+    }
+
+    private static bool TryExtractHead(Clause clause, out string name, out int arity)
+    {
+        Term headTerm = clause.Kind == ClauseKind.Rule
+            ? ((CompoundTerm)clause.Term).Args[0]
+            : clause.Term;
+        switch (headTerm)
+        {
+            case AtomTerm a: name = a.Name; arity = 0; return true;
+            case CompoundTerm c: name = c.Functor; arity = c.Args.Length; return true;
+            default: name = ""; arity = 0; return false;
+        }
+    }
+
+    /// <summary>Throws if more than one module declares the same functor
+    /// public — the public namespace is flat across all loaded modules.</summary>
+    private void ValidatePublicUniqueness()
+    {
+        var owner = new Dictionary<int, string>();
+        foreach (var (name, manifest) in _modules)
+        {
+            foreach (int fid in manifest.PublicFunctors)
+            {
+                if (owner.TryGetValue(fid, out var other))
+                {
+                    var (atomId, arity) = FunctorTable.Lookup(fid);
+                    string functorName = AtomTable.GetById(atomId)?.Name ?? "?";
+                    throw new InvalidOperationException(
+                        $"Functor {functorName}/{arity} is declared :- public in both "
+                        + $"module '{other}' and module '{name}'. Public predicates must "
+                        + "be unique across the engine.");
+                }
+                owner[fid] = name;
+            }
+        }
     }
 
     private static Solution BuildSolution(
