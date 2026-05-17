@@ -204,6 +204,28 @@ public sealed class PrologEngine
     /// shouldn't be mutated directly.</summary>
     public IReadOnlyDictionary<string, ModuleManifest> Modules => _modules;
 
+    /// <summary>Loads a Shumway bundle (.shum) from disk and consults every
+    /// module inside it. Equivalent to calling <see cref="ConsultString"/>
+    /// for each entry in the bundle's manifest, in order. Throws
+    /// <see cref="InvalidDataException"/> if the file isn't a valid
+    /// bundle.</summary>
+    public void LoadBundle(string path)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        Bundle bundle = BundleReader.ReadFromFile(path);
+        LoadBundle(bundle);
+    }
+
+    /// <summary>Loads an in-memory <see cref="Bundle"/> into this engine —
+    /// useful for tests and for in-process pipelines that prefer not to
+    /// round-trip through disk.</summary>
+    public void LoadBundle(Bundle bundle)
+    {
+        ArgumentNullException.ThrowIfNull(bundle);
+        foreach (var entry in bundle.Entries)
+            ConsultString(entry.Source);
+    }
+
     /// <summary>Runs an AST goal through the same machinery as the string
     /// form, yielding each solution in turn. The free variables of
     /// <paramref name="goal"/> show up in <see cref="Solution.Bindings"/>

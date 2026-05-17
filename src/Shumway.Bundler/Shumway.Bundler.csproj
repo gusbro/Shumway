@@ -3,7 +3,13 @@
   <ItemGroup>
     <ProjectReference Include="..\Shumway.Core\Shumway.Core.csproj" />
     <ProjectReference Include="..\Shumway.Compiler\Shumway.Compiler.csproj" />
+    <ProjectReference Include="..\Shumway.Embedding\Shumway.Embedding.csproj" />
   </ItemGroup>
+
+  <PropertyGroup>
+    <AssemblyName>shumway-bundler</AssemblyName>
+    <RootNamespace>Shumway.Bundler</RootNamespace>
+  </PropertyGroup>
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
