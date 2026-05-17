@@ -85,8 +85,11 @@ public static class ModuleRewrite
         if (goal is AtomTerm a)
         {
             if (IsControlFlow(a.Name, 0)) return goal;
+            // Local predicates shadow builtins (ADR-008). Check local first.
+            if (IsLocal(a.Name, 0, ctx))
+                return new AtomTerm(MangledName(a.Name, ctx));
             if (IsBuiltin(a.Name, 0)) return goal;
-            return MangleIfLocal(a.Name, 0, ctx, () => new AtomTerm(MangledName(a.Name, ctx))) ?? goal;
+            return goal;
         }
 
         if (goal is CompoundTerm c)
@@ -109,9 +112,10 @@ public static class ModuleRewrite
                 }
                 return newArgs is null ? goal : new CompoundTerm(c.Functor, newArgs);
             }
+            if (IsLocal(c.Functor, c.Args.Length, ctx))
+                return new CompoundTerm(MangledName(c.Functor, ctx), c.Args);
             if (IsBuiltin(c.Functor, c.Args.Length)) return goal;
-            return MangleIfLocal(c.Functor, c.Args.Length, ctx,
-                () => new CompoundTerm(MangledName(c.Functor, ctx), c.Args)) ?? goal;
+            return goal;
         }
 
         return goal;
@@ -126,6 +130,18 @@ public static class ModuleRewrite
         // their callers.
         if (ctx.DynamicFunctors.Contains(functorId)) return null;
         return ctx.LocalFunctors.Contains(functorId) ? build() : null;
+    }
+
+    /// <summary>Per ADR-008 the resolution order at call sites is "local
+    /// predicates of the module ▸ builtins ▸ publics of other modules". A
+    /// user-defined local shadows a same-named builtin within its module.
+    /// The check is folded into <see cref="RewriteGoal"/> so the goal
+    /// walker can short-circuit before falling back to the builtin path.</summary>
+    private static bool IsLocal(string name, int arity, Context ctx)
+    {
+        int functorId = FunctorTable.Intern(
+            AtomTable.Intern(name, permanent: true).Id, arity);
+        return ctx.LocalFunctors.Contains(functorId);
     }
 
     private static string MangledName(string name, Context ctx) => ctx.ModuleName + "$" + name;

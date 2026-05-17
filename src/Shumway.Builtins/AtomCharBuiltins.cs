@@ -149,6 +149,61 @@ public static class AtomCharBuiltins
             $"{builtinName}: first argument must be a number or an unbound variable.");
     }
 
+    /// <summary><c>sub_atom(Atom, Before, Length, After, SubAtom)</c> —
+    /// substring extraction. Phase-1 deterministic modes:
+    /// <list type="bullet">
+    /// <item><c>(+, +, +, ?, ?)</c>: extract the substring at the given
+    ///   offset and length.</item>
+    /// <item><c>(+, ?, ?, ?, +)</c>: find the first occurrence of
+    ///   <c>SubAtom</c> in <c>Atom</c> and bind the three index
+    ///   variables accordingly.</item>
+    /// </list>
+    /// Non-deterministic enumeration of every match is deferred to the
+    /// chunk that wires call/N choice-points.</summary>
+    public static bool SubAtom(Engine engine)
+    {
+        Cell atomC = Resolve(engine, engine.GetRegister(0));
+        if (atomC.Tag != Tag.Atom)
+            throw new InvalidOperationException(
+                "sub_atom/5: first argument must be a bound atom.");
+        string atomName = AtomTable.GetById(atomC.AsAtomId)?.Name ?? "";
+
+        Cell beforeC = Resolve(engine, engine.GetRegister(1));
+        Cell lengthC = Resolve(engine, engine.GetRegister(2));
+        Cell subC    = Resolve(engine, engine.GetRegister(4));
+
+        // Mode 1: Before + Length both ground integers.
+        if (beforeC.Tag == Tag.Int && lengthC.Tag == Tag.Int)
+        {
+            int before = (int)beforeC.AsInt;
+            int length = (int)lengthC.AsInt;
+            if (before < 0 || length < 0 || before + length > atomName.Length)
+                return false;
+            int after = atomName.Length - before - length;
+            string sub = atomName.Substring(before, length);
+            int subAtomId = AtomTable.Intern(sub, permanent: false).Id;
+            if (!engine.UnifyRegisterWithCell(3, Cell.Int(after))) return false;
+            if (!engine.UnifyRegisterWithCell(4, Cell.Atom(subAtomId))) return false;
+            return true;
+        }
+
+        // Mode 2: SubAtom ground — find first occurrence.
+        if (subC.Tag == Tag.Atom)
+        {
+            string sub = AtomTable.GetById(subC.AsAtomId)?.Name ?? "";
+            int idx = atomName.IndexOf(sub, StringComparison.Ordinal);
+            if (idx < 0) return false;
+            int after = atomName.Length - idx - sub.Length;
+            if (!engine.UnifyRegisterWithCell(1, Cell.Int(idx))) return false;
+            if (!engine.UnifyRegisterWithCell(2, Cell.Int(sub.Length))) return false;
+            if (!engine.UnifyRegisterWithCell(3, Cell.Int(after))) return false;
+            return true;
+        }
+
+        throw new InvalidOperationException(
+            "sub_atom/5: Phase 1 requires either (Before, Length) ground or SubAtom ground.");
+    }
+
     // ---------- List-building helpers ----------
 
     private static int BuildIntCodesList(Engine engine, string s)

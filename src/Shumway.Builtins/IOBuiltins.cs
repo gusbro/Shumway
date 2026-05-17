@@ -33,4 +33,146 @@ public static class IOBuiltins
         engine.Out.WriteLine();
         return true;
     }
+
+    /// <summary><c>write_term(Term, Options)</c> — writes <c>Term</c> to the
+    /// engine's output sink. Phase-1: <c>Options</c> is accepted but
+    /// ignored — the rendering matches plain <c>write/1</c>. Real option
+    /// support (<c>quoted(true)</c>, <c>numbervars(true)</c>, etc.) lands
+    /// once <see cref="TermRenderer"/> grows the corresponding switches.</summary>
+    public static bool WriteTerm(Engine engine)
+    {
+        TermRenderer.Render(engine, engine.GetRegister(0), engine.Out);
+        return true;
+    }
+
+    /// <summary><c>format(FormatString, Args)</c> — printf-style formatted
+    /// output. The Phase-1 set of specifiers is:
+    /// <list type="bullet">
+    /// <item><c>~w</c> — writes the next arg via <see cref="TermRenderer"/>.</item>
+    /// <item><c>~a</c> — writes the next arg's atom name (must be an atom).</item>
+    /// <item><c>~d</c> — writes the next arg's integer value.</item>
+    /// <item><c>~s</c> — writes the next arg's code list as a string.</item>
+    /// <item><c>~n</c> — writes a newline (no arg consumed).</item>
+    /// <item><c>~~</c> — writes a literal <c>~</c>.</item>
+    /// </list>
+    /// <para>The format string may be an atom or a PSTR. The args list
+    /// must be a proper list — pass <c>[]</c> when no args are needed.</para></summary>
+    public static bool Format(Engine engine)
+    {
+        string fmt = ReadStringArg(engine, engine.GetRegister(0), "format/2");
+        var args = ReadProperListAsCells(engine, engine.GetRegister(1), "format/2");
+        int argIdx = 0;
+
+        for (int i = 0; i < fmt.Length; i++)
+        {
+            char ch = fmt[i];
+            if (ch != '~')
+            {
+                engine.Out.Write(ch);
+                continue;
+            }
+            if (++i >= fmt.Length)
+                throw new InvalidOperationException(
+                    "format/2: truncated format spec at end of string.");
+            char spec = fmt[i];
+            switch (spec)
+            {
+                case '~':
+                    engine.Out.Write('~');
+                    break;
+                case 'n':
+                    engine.Out.WriteLine();
+                    break;
+                case 'w':
+                {
+                    Cell arg = ConsumeArg(args, ref argIdx, "format/2");
+                    TermRenderer.Render(engine, arg, engine.Out);
+                    break;
+                }
+                case 'a':
+                {
+                    Cell arg = ConsumeArg(args, ref argIdx, "format/2");
+                    Cell deref = Resolve(engine, arg);
+                    if (deref.Tag != Tag.Atom)
+                        throw new InvalidOperationException(
+                            $"format/2: ~a expects an atom, got tag {deref.Tag}.");
+                    engine.Out.Write(AtomTable.GetById(deref.AsAtomId)?.Name ?? "");
+                    break;
+                }
+                case 'd':
+                {
+                    Cell arg = ConsumeArg(args, ref argIdx, "format/2");
+                    Cell deref = Resolve(engine, arg);
+                    if (deref.Tag != Tag.Int)
+                        throw new InvalidOperationException(
+                            $"format/2: ~d expects an integer, got tag {deref.Tag}.");
+                    engine.Out.Write(deref.AsInt.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    break;
+                }
+                case 's':
+                {
+                    Cell arg = ConsumeArg(args, ref argIdx, "format/2");
+                    var sb = new System.Text.StringBuilder();
+                    Cell cur = Resolve(engine, arg);
+                    while (cur.Tag == Tag.Lis)
+                    {
+                        Cell head = Resolve(engine, engine.GetHeap(cur.AsHeapIndex));
+                        if (head.Tag != Tag.Int)
+                            throw new InvalidOperationException(
+                                $"format/2: ~s expects a code list, got element tag {head.Tag}.");
+                        sb.Append((char)head.AsInt);
+                        cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+                    }
+                    engine.Out.Write(sb.ToString());
+                    break;
+                }
+                default:
+                    throw new InvalidOperationException(
+                        $"format/2: unknown spec '~{spec}'.");
+            }
+        }
+        return true;
+    }
+
+    // ---------- Helpers ----------
+
+    private static Cell ConsumeArg(List<Cell> args, ref int idx, string builtinName)
+    {
+        if (idx >= args.Count)
+            throw new InvalidOperationException(
+                $"{builtinName}: ran out of arguments (format string asked for more).");
+        return args[idx++];
+    }
+
+    private static string ReadStringArg(Engine engine, Cell c, string builtinName)
+    {
+        Cell d = Resolve(engine, c);
+        if (d.Tag == Tag.Atom)
+            return AtomTable.GetById(d.AsAtomId)?.Name ?? "";
+        if (d.Tag == Tag.Pstr)
+            return engine.AsPstrString(engine.Deref(c.AsHeapIndex));
+        throw new InvalidOperationException(
+            $"{builtinName}: expected an atom or string as the format spec, got tag {d.Tag}.");
+    }
+
+    private static List<Cell> ReadProperListAsCells(Engine engine, Cell c, string builtinName)
+    {
+        var result = new List<Cell>();
+        Cell cur = Resolve(engine, c);
+        while (cur.Tag == Tag.Lis)
+        {
+            result.Add(engine.GetHeap(cur.AsHeapIndex));
+            cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+        }
+        if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)
+            throw new InvalidOperationException(
+                $"{builtinName}: argument list must be a proper list (got tag {cur.Tag}).");
+        return result;
+    }
+
+    private static Cell Resolve(Engine engine, Cell c)
+    {
+        if (c.Tag != Tag.Ref) return c;
+        return engine.GetHeap(engine.Deref(c.AsHeapIndex));
+    }
 }

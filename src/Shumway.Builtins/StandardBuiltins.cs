@@ -37,6 +37,8 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register(">",   2, ArithmeticBuiltins.ArithGreater);
         BuiltinsRegistry.Register("=<",  2, ArithmeticBuiltins.ArithLessOrEqual);
         BuiltinsRegistry.Register(">=",  2, ArithmeticBuiltins.ArithGreaterOrEqual);
+        BuiltinsRegistry.Register("between", 3, ArithmeticBuiltins.Between);
+        BuiltinsRegistry.Register("succ",    2, ArithmeticBuiltins.Succ);
 
         // Type tests.
         BuiltinsRegistry.Register("var",     1, TypeBuiltins.IsVar);
@@ -50,9 +52,11 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("is_list", 1, TypeBuiltins.IsList);
 
         // I/O.
-        BuiltinsRegistry.Register("write",   1, IOBuiltins.Write);
-        BuiltinsRegistry.Register("nl",      0, IOBuiltins.Nl);
-        BuiltinsRegistry.Register("writeln", 1, IOBuiltins.Writeln);
+        BuiltinsRegistry.Register("write",      1, IOBuiltins.Write);
+        BuiltinsRegistry.Register("nl",         0, IOBuiltins.Nl);
+        BuiltinsRegistry.Register("writeln",    1, IOBuiltins.Writeln);
+        BuiltinsRegistry.Register("write_term", 2, IOBuiltins.WriteTerm);
+        BuiltinsRegistry.Register("format",     2, IOBuiltins.Format);
 
         // Atom / list manipulation.
         BuiltinsRegistry.Register("length",       2, AtomListBuiltins.Length);
@@ -64,6 +68,7 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("char_code",    2, AtomCharBuiltins.CharCode);
         BuiltinsRegistry.Register("number_codes", 2, AtomCharBuiltins.NumberCodes);
         BuiltinsRegistry.Register("number_chars", 2, AtomCharBuiltins.NumberChars);
+        BuiltinsRegistry.Register("sub_atom",     5, AtomCharBuiltins.SubAtom);
 
         // Standard order of terms.
         BuiltinsRegistry.Register("compare", 3, StandardOrderBuiltins.Compare3);

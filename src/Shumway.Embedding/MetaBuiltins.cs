@@ -44,6 +44,90 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("clause",            2, Clause);
         BuiltinsRegistry.Register("current_predicate", 1, CurrentPredicate);
         BuiltinsRegistry.Register("abolish",           1, Abolish);
+
+        BuiltinsRegistry.Register("numbervars",        3, NumberVars);
+    }
+
+    // ============================================================================
+    // numbervars/3
+    // ============================================================================
+
+    /// <summary><c>numbervars(Term, Start, End)</c> — walks <c>Term</c>
+    /// left-to-right and binds every distinct unbound variable to a
+    /// compound <c>'$VAR'(N)</c> with consecutive integers starting at
+    /// <c>Start</c>. The next-free integer is unified with <c>End</c>.
+    ///
+    /// <para>Shared variables (same heap address visited twice) get the
+    /// same number — the walk derefs each cell before deciding. Already-
+    /// bound variables and non-variable subterms pass through unchanged.
+    /// Mostly used to make terms presentable before printing or
+    /// asserting.</para></summary>
+    public static bool NumberVars(Engine engine)
+    {
+        Cell startC = engine.GetRegister(1);
+        Cell startDeref = startC.Tag == Tag.Ref
+            ? engine.GetHeap(engine.Deref(startC.AsHeapIndex))
+            : startC;
+        if (startDeref.Tag != Tag.Int)
+            throw new InvalidOperationException(
+                "numbervars/3: second argument (Start) must be a ground integer.");
+        long start = startDeref.AsInt;
+
+        // Copy the input register to a heap slot so we have a stable address
+        // to walk from. The walk visits each cell, derefs, and on the first
+        // sight of an unbound REF binds it to a fresh '$VAR'(N) compound.
+        int rootSlot = engine.AllocateHeap(1);
+        engine.SetHeap(rootSlot, engine.GetRegister(0));
+
+        var visited = new HashSet<int>();
+        long counter = start;
+        WalkAndNumber(engine, rootSlot, visited, ref counter);
+
+        return engine.UnifyRegisterWithCell(2, Cell.Int(counter));
+    }
+
+    private static void WalkAndNumber(
+        Engine engine, int heapIdx, HashSet<int> visited, ref long counter)
+    {
+        int addr = engine.Deref(heapIdx);
+        if (!visited.Add(addr)) return;
+
+        Cell cell = engine.GetHeap(addr);
+        switch (cell.Tag)
+        {
+            case Tag.Ref:
+                // Unbound — bind to '$VAR'(counter).
+                int varAtom = AtomTable.Intern("$VAR", permanent: true).Id;
+                int functorId = FunctorTable.Intern(varAtom, 1);
+                int strBase = engine.AllocateHeap(3);
+                engine.SetHeap(strBase, Cell.Str(strBase + 1));
+                engine.SetHeap(strBase + 1, Cell.Functor(functorId));
+                engine.SetHeap(strBase + 2, Cell.Int(counter));
+                counter++;
+                // Bind addr to the new STR via a Ref to it (so trail catches it).
+                int strRefSlot = engine.AllocateHeap(1);
+                engine.SetHeap(strRefSlot, Cell.Ref(strBase));
+                engine.Unify(addr, strRefSlot);
+                break;
+
+            case Tag.Str:
+            {
+                int functorIdx = cell.AsHeapIndex;
+                var (_, arity) = FunctorTable.Lookup(
+                    engine.GetHeap(functorIdx).AsFunctorId);
+                for (int i = 0; i < arity; i++)
+                    WalkAndNumber(engine, functorIdx + 1 + i, visited, ref counter);
+                break;
+            }
+            case Tag.Lis:
+            {
+                int headIdx = cell.AsHeapIndex;
+                WalkAndNumber(engine, headIdx, visited, ref counter);
+                WalkAndNumber(engine, headIdx + 1, visited, ref counter);
+                break;
+            }
+            // Atoms, ints, floats, PSTRs: leaf, nothing to do.
+        }
     }
 
     // ============================================================================

@@ -38,9 +38,74 @@ public static class ArithmeticBuiltins
     public static bool ArithGreaterOrEqual(Engine engine) =>
         Number.Compare(EvaluateA(engine), EvaluateB(engine)) >= 0;
 
+    /// <summary><c>between(Low, High, X)</c> — integer range. Phase-1
+    /// scope: <c>Low</c> and <c>High</c> must be ground integers; <c>X</c>
+    /// is either ground (in which case we check <c>Low ≤ X ≤ High</c>) or
+    /// unbound (in which case <c>X</c> binds to <c>Low</c>). Multi-solution
+    /// enumeration of every integer in the range lands when call/N gets a
+    /// runtime choice-point integration.</summary>
+    public static bool Between(Engine engine)
+    {
+        Cell lo = Resolve(engine, engine.GetRegister(0));
+        Cell hi = Resolve(engine, engine.GetRegister(1));
+        Cell x = Resolve(engine, engine.GetRegister(2));
+        if (lo.Tag != Tag.Int || hi.Tag != Tag.Int)
+            throw new InvalidOperationException(
+                "between/3: Low and High must be ground integers in Phase 1.");
+        long loVal = lo.AsInt;
+        long hiVal = hi.AsInt;
+        if (loVal > hiVal) return false;
+
+        if (x.Tag == Tag.Int)
+        {
+            long xVal = x.AsInt;
+            return xVal >= loVal && xVal <= hiVal;
+        }
+        if (x.Tag == Tag.Ref)
+        {
+            // Bind X to Low (first solution).
+            return engine.UnifyRegisterWithCell(2, Cell.Int(loVal));
+        }
+        return false;
+    }
+
+    /// <summary><c>succ(X, Y)</c> — successor of a non-negative integer.
+    /// Either <c>X</c> or <c>Y</c> must be ground. With <c>X</c> ground
+    /// (non-negative) the result is <c>Y = X + 1</c>; with <c>Y</c> ground
+    /// (positive) the result is <c>X = Y - 1</c>. Negative inputs raise
+    /// <c>InvalidOperationException</c>.</summary>
+    public static bool Succ(Engine engine)
+    {
+        Cell xc = Resolve(engine, engine.GetRegister(0));
+        Cell yc = Resolve(engine, engine.GetRegister(1));
+
+        if (xc.Tag == Tag.Int)
+        {
+            long xv = xc.AsInt;
+            if (xv < 0)
+                throw new InvalidOperationException(
+                    $"succ/2: first argument must be non-negative, got {xv}.");
+            return engine.UnifyRegisterWithCell(1, Cell.Int(xv + 1));
+        }
+        if (yc.Tag == Tag.Int)
+        {
+            long yv = yc.AsInt;
+            if (yv <= 0) return false;   // succ(_, 0) has no solution
+            return engine.UnifyRegisterWithCell(0, Cell.Int(yv - 1));
+        }
+        throw new InvalidOperationException(
+            "succ/2: at least one of X, Y must be sufficiently instantiated.");
+    }
+
     private static Number EvaluateA(Engine engine) =>
         ArithmeticEvaluator.Evaluate(engine, engine.GetRegister(0));
 
     private static Number EvaluateB(Engine engine) =>
         ArithmeticEvaluator.Evaluate(engine, engine.GetRegister(1));
+
+    private static Cell Resolve(Engine engine, Cell c)
+    {
+        if (c.Tag != Tag.Ref) return c;
+        return engine.GetHeap(engine.Deref(c.AsHeapIndex));
+    }
 }
