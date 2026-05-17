@@ -25,6 +25,178 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("bagof",   3, Bagof);
         BuiltinsRegistry.Register("setof",   3, Setof);
         BuiltinsRegistry.Register("copy_term", 2, CopyTerm);
+
+        BuiltinsRegistry.Register("call", 1, Call1);
+        BuiltinsRegistry.Register("call", 2, Call2);
+        BuiltinsRegistry.Register("call", 3, Call3);
+        BuiltinsRegistry.Register("call", 4, Call4);
+        BuiltinsRegistry.Register("call", 5, Call5);
+        BuiltinsRegistry.Register("call", 6, Call6);
+        BuiltinsRegistry.Register("call", 7, Call7);
+
+        BuiltinsRegistry.Register("assertz", 1, Assertz);
+        BuiltinsRegistry.Register("asserta", 1, Asserta);
+        BuiltinsRegistry.Register("retract", 1, Retract);
+    }
+
+    // ============================================================================
+    // call/N — runtime meta-call via sub-engine + bind-back of input vars
+    // ============================================================================
+
+    public static bool Call1(Engine engine) => CallN(engine, totalArity: 1);
+    public static bool Call2(Engine engine) => CallN(engine, totalArity: 2);
+    public static bool Call3(Engine engine) => CallN(engine, totalArity: 3);
+    public static bool Call4(Engine engine) => CallN(engine, totalArity: 4);
+    public static bool Call5(Engine engine) => CallN(engine, totalArity: 5);
+    public static bool Call6(Engine engine) => CallN(engine, totalArity: 6);
+    public static bool Call7(Engine engine) => CallN(engine, totalArity: 7);
+
+    /// <summary><c>call(Goal, ExtraArgs...)</c> — runs <c>Goal</c> (optionally
+    /// extended with extra args appended to its argument list) in a peer
+    /// sub-engine and propagates the first solution's bindings back into the
+    /// caller's heap.
+    ///
+    /// <para>Implementation: the input registers are read as
+    /// <see cref="Term"/>s with synthetic <c>_GN</c> variable names that
+    /// encode the caller's heap address. The composed goal runs in the
+    /// sub-engine; the resulting <see cref="Solution"/> binds each
+    /// <c>_GN</c>, and we use the embedded address to find the caller's
+    /// variable cell and unify it with the materialised bound term. Only the
+    /// first solution is taken — multi-solution call/N would need a runtime
+    /// "execute-by-functor" opcode that's not in v1.</para></summary>
+    private static bool CallN(Engine engine, int totalArity)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "call/N requires the engine to be hosted by a PrologEngine.");
+
+        Term goal = MaterializeRegister(engine, 0);
+        var extras = new Term[totalArity - 1];
+        for (int i = 0; i < extras.Length; i++)
+            extras[i] = MaterializeRegister(engine, i + 1);
+
+        Term callGoal = AppendArgs(goal, extras);
+
+        var sub = host.CreateSubEngine();
+        foreach (Solution sol in sub.QueryAll(callGoal))
+        {
+            foreach (var (name, value) in sol.Bindings)
+            {
+                int addr = ExtractAddrFromName(name);
+                if (addr < 0) continue;
+                Cell boundCell = Materializer.MaterializeAsCell(engine, value);
+                int slot = engine.AllocateHeap(1);
+                engine.SetHeap(slot, boundCell);
+                if (!engine.Unify(addr, slot)) return false;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private static Term AppendArgs(Term goal, Term[] extras)
+    {
+        if (extras.Length == 0) return goal;
+        return goal switch
+        {
+            AtomTerm a => new CompoundTerm(a.Name, extras),
+            CompoundTerm c => new CompoundTerm(
+                c.Functor,
+                c.Args.Concat(extras).ToArray()),
+            _ => throw new InvalidOperationException(
+                "call/N: goal must be an atom or compound."),
+        };
+    }
+
+    private static int ExtractAddrFromName(string name)
+    {
+        if (name.Length >= 3 && name[0] == '_' && name[1] == 'G'
+            && int.TryParse(name.AsSpan(2), out int addr))
+            return addr;
+        return -1;
+    }
+
+    // ============================================================================
+    // assertz / asserta / retract
+    // ============================================================================
+
+    public static bool Assertz(Engine engine) => AssertImpl(engine, prepend: false);
+    public static bool Asserta(Engine engine) => AssertImpl(engine, prepend: true);
+
+    private static bool AssertImpl(Engine engine, bool prepend)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "assert: PrologEngine host required.");
+
+        Term clauseTerm = MaterializeRegister(engine, 0);
+        var clause = Clause.From(clauseTerm);
+        if (prepend) host.Asserta(clause);
+        else host.Assertz(clause);
+        return true;
+    }
+
+    /// <summary><c>retract(Clause)</c> — finds the first asserted clause
+    /// whose head (and body, if <c>Clause</c> is a rule) unifies with the
+    /// pattern, removes it from the dynamic store, and keeps the resulting
+    /// bindings. Fails when no clause matches.</summary>
+    public static bool Retract(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "retract: PrologEngine host required.");
+
+        Term pattern = MaterializeRegister(engine, 0);
+        Clause patternClause = Clause.From(pattern);
+        int patternFid = ExtractHeadFunctorIdFromClause(patternClause);
+
+        var candidates = host.DynamicClausesFor(patternFid);
+        if (candidates.Count == 0) return false;
+
+        foreach (Clause candidate in candidates)
+        {
+            // Trial-unify against a fresh copy of the candidate clause. If it
+            // matches, commit (keep the bindings, drop the original from the
+            // dynamic store); if it doesn't, unwind every speculative
+            // binding the trial made before trying the next candidate.
+            int savedHeapTop = engine.HeapTop;
+            int savedBindingTrail = engine.BindingTrailTop;
+            int savedExtraTrail = engine.ExtraTrailTop;
+            int savedHb = engine.Hb;
+            engine.SetHb(engine.HeapTop);
+
+            Cell candidateCell = Materializer.MaterializeAsCell(engine, candidate.Term);
+            int candSlot = engine.AllocateHeap(1);
+            engine.SetHeap(candSlot, candidateCell);
+
+            if (engine.UnifyRegisterWithHeapAt(0, candSlot))
+            {
+                host.RemoveDynamicByReference(patternFid, candidate);
+                engine.SetHb(savedHb);
+                return true;
+            }
+
+            engine.UnwindTrails(savedBindingTrail, savedExtraTrail);
+            engine.SetHeapTop(savedHeapTop);
+            engine.SetHb(savedHb);
+        }
+        return false;
+    }
+
+    private static int ExtractHeadFunctorIdFromClause(Clause clause)
+    {
+        Term head = clause.Kind == ClauseKind.Rule
+            ? ((CompoundTerm)clause.Term).Args[0]
+            : clause.Term;
+        return head switch
+        {
+            AtomTerm a => FunctorTable.Intern(
+                AtomTable.Intern(a.Name, permanent: true).Id, 0),
+            CompoundTerm c => FunctorTable.Intern(
+                AtomTable.Intern(c.Functor, permanent: true).Id, c.Args.Length),
+            _ => throw new InvalidOperationException(
+                "retract: clause pattern head must be atom or compound."),
+        };
     }
 
     /// <summary><c>copy_term(Term, Copy)</c> — unifies <c>Copy</c> with a

@@ -27,11 +27,18 @@ public sealed class ModuleManifest
     public List<Clause> Clauses { get; }
     public HashSet<int> PublicFunctors { get; }
 
+    /// <summary>Functors the module declares <c>:- dynamic</c>. These bypass
+    /// local-functor mangling so the runtime <c>assertz</c> / <c>retract</c>
+    /// store (a flat global table on the engine) can reach the same predicate
+    /// from any module.</summary>
+    public HashSet<int> DynamicFunctors { get; }
+
     public ModuleManifest(string name)
     {
         ArgumentNullException.ThrowIfNull(name);
         Name = name;
         Clauses = new List<Clause>();
         PublicFunctors = new HashSet<int>();
+        DynamicFunctors = new HashSet<int>();
     }
 }

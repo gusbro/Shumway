@@ -24,11 +24,18 @@ public static class ModuleRewrite
     {
         public string ModuleName { get; }
         public HashSet<int> LocalFunctors { get; }
+        public HashSet<int> DynamicFunctors { get; }
 
         public Context(string moduleName, HashSet<int> localFunctors)
+            : this(moduleName, localFunctors, new HashSet<int>())
+        {
+        }
+
+        public Context(string moduleName, HashSet<int> localFunctors, HashSet<int> dynamicFunctors)
         {
             ModuleName = moduleName;
             LocalFunctors = localFunctors;
+            DynamicFunctors = dynamicFunctors;
         }
     }
 
@@ -114,6 +121,10 @@ public static class ModuleRewrite
     {
         int functorId = FunctorTable.Intern(
             AtomTable.Intern(name, permanent: true).Id, arity);
+        // Dynamic predicates live in a global namespace (their clauses get
+        // appended at runtime via assertz from any module), so we never mangle
+        // their callers.
+        if (ctx.DynamicFunctors.Contains(functorId)) return null;
         return ctx.LocalFunctors.Contains(functorId) ? build() : null;
     }
 

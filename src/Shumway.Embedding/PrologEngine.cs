@@ -30,6 +30,20 @@ public sealed class PrologEngine
     };
     private readonly OperatorTable _operators = OperatorTable.Default();
 
+    /// <summary>Runtime store for clauses added via <c>assertz/1</c> /
+    /// <c>asserta/1</c>. Keyed by functor id; the value is the ordered list
+    /// of clauses (in source / assertion order). Merged with each module's
+    /// static clauses at query-compile time so subsequent queries see every
+    /// asserted clause. Mutations made during an in-flight query are NOT
+    /// visible to that query — they take effect on the next compilation.</summary>
+    private readonly Dictionary<int, List<Clause>> _dynamicClauses = new();
+
+    /// <summary>Set of functor ids declared <c>:- dynamic</c> across every
+    /// module. The set is global so a single shared store can satisfy
+    /// assertz / retract from any module; <see cref="ModuleRewrite"/> reads
+    /// it to skip mangling dynamic functors.</summary>
+    private readonly HashSet<int> _dynamicFunctors = new();
+
     /// <summary>The sink that I/O builtins (<c>write/1</c>, <c>nl/0</c>,
     /// <c>writeln/1</c>) write into. Defaults to <see cref="System.Console.Out"/>;
     /// swap in a <see cref="System.IO.StringWriter"/> to capture program
@@ -61,9 +75,128 @@ public sealed class PrologEngine
             var copy = new ModuleManifest(name);
             copy.Clauses.AddRange(manifest.Clauses);
             copy.PublicFunctors.UnionWith(manifest.PublicFunctors);
+            copy.DynamicFunctors.UnionWith(manifest.DynamicFunctors);
             sub._modules[name] = copy;
         }
+        sub._dynamicFunctors.UnionWith(_dynamicFunctors);
+        foreach (var (fid, clauses) in _dynamicClauses)
+            sub._dynamicClauses[fid] = new List<Clause>(clauses);
         return sub;
+    }
+
+    // ============================================================================
+    // Dynamic predicate runtime store (asserts / retracts)
+    // ============================================================================
+
+    /// <summary>Adds <paramref name="clause"/> to the end of its predicate's
+    /// dynamic clause list. The predicate must have been declared
+    /// <c>:- dynamic foo/N</c> previously (in any module).</summary>
+    internal void Assertz(Clause clause)
+    {
+        int fid = ExtractHeadFunctorId(clause);
+        EnsureDynamic(fid);
+        GetOrCreateDynamicSlot(fid).Add(clause);
+    }
+
+    /// <summary>Adds <paramref name="clause"/> at the front of its predicate's
+    /// dynamic clause list.</summary>
+    internal void Asserta(Clause clause)
+    {
+        int fid = ExtractHeadFunctorId(clause);
+        EnsureDynamic(fid);
+        GetOrCreateDynamicSlot(fid).Insert(0, clause);
+    }
+
+    /// <summary>Removes the first clause whose <see cref="Clause"/> is
+    /// structurally equal to <paramref name="clause"/>. Returns
+    /// <c>true</c> if a match was removed.</summary>
+    internal bool RemoveDynamic(Clause clause)
+    {
+        int fid = ExtractHeadFunctorId(clause);
+        if (!_dynamicClauses.TryGetValue(fid, out var list)) return false;
+        for (int i = 0; i < list.Count; i++)
+        {
+            if (TermsStructurallyEqual(list[i].Term, clause.Term))
+            {
+                list.RemoveAt(i);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>Snapshot of currently asserted clauses for a given functor —
+    /// used by the runtime <c>retract/1</c> path to enumerate candidates
+    /// before unifying with the user's pattern.</summary>
+    internal IReadOnlyList<Clause> DynamicClausesFor(int functorId)
+    {
+        return _dynamicClauses.TryGetValue(functorId, out var list)
+            ? list
+            : Array.Empty<Clause>();
+    }
+
+    /// <summary>Removes the clause object identical to <paramref name="clause"/>
+    /// from the dynamic store (used after the runtime caller has matched it
+    /// via unification on a materialised heap copy).</summary>
+    internal bool RemoveDynamicByReference(int functorId, Clause clause)
+    {
+        if (!_dynamicClauses.TryGetValue(functorId, out var list)) return false;
+        return list.Remove(clause);
+    }
+
+    private List<Clause> GetOrCreateDynamicSlot(int fid)
+    {
+        if (!_dynamicClauses.TryGetValue(fid, out var list))
+        {
+            list = new List<Clause>();
+            _dynamicClauses[fid] = list;
+        }
+        return list;
+    }
+
+    private void EnsureDynamic(int fid)
+    {
+        if (!_dynamicFunctors.Contains(fid))
+        {
+            var (atomId, arity) = FunctorTable.Lookup(fid);
+            string name = AtomTable.GetById(atomId)?.Name ?? "?";
+            throw new InvalidOperationException(
+                $"assertz/retract: predicate {name}/{arity} is not declared dynamic. "
+                + $"Add `:- dynamic {name}/{arity}.` to the source.");
+        }
+    }
+
+    private static int ExtractHeadFunctorId(Clause clause)
+    {
+        Term head = clause.Kind == ClauseKind.Rule
+            ? ((CompoundTerm)clause.Term).Args[0]
+            : clause.Term;
+        return head switch
+        {
+            AtomTerm a => FunctorTable.Intern(
+                AtomTable.Intern(a.Name, permanent: true).Id, 0),
+            CompoundTerm c => FunctorTable.Intern(
+                AtomTable.Intern(c.Functor, permanent: true).Id, c.Args.Length),
+            _ => throw new InvalidOperationException(
+                "assertz/retract: clause head must be atom or compound."),
+        };
+    }
+
+    private static bool TermsStructurallyEqual(Term a, Term b)
+    {
+        return (a, b) switch
+        {
+            (AtomTerm ax, AtomTerm bx) => ax.Name == bx.Name,
+            (IntTerm ax, IntTerm bx) => ax.Value == bx.Value,
+            (FloatTerm ax, FloatTerm bx) => ax.Value == bx.Value,
+            (StringTerm ax, StringTerm bx) => ax.Content == bx.Content,
+            (VarTerm ax, VarTerm bx) => ax.Name == bx.Name,
+            (CompoundTerm ax, CompoundTerm bx) when ax.Functor == bx.Functor
+                && ax.Args.Length == bx.Args.Length
+                => Enumerable.Range(0, ax.Args.Length)
+                    .All(i => TermsStructurallyEqual(ax.Args[i], bx.Args[i])),
+            _ => false,
+        };
     }
 
     /// <summary>Snapshot of every module currently loaded into the engine.
@@ -136,8 +269,23 @@ public sealed class PrologEngine
                     publics.Add(FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a));
             }
+            else if (TryReadDynamicDirective(body, out var dynamicSpecs))
+            {
+                // Dynamic functors are tracked engine-wide so assertz / retract
+                // hit a single store regardless of which module declared them.
+                foreach (var (n, a) in dynamicSpecs)
+                {
+                    int fid = FunctorTable.Intern(
+                        AtomTable.Intern(n, permanent: true).Id, a);
+                    _dynamicFunctors.Add(fid);
+                    // Reserve an entry so retract on a never-asserted dynamic
+                    // predicate fails cleanly instead of throwing.
+                    if (!_dynamicClauses.ContainsKey(fid))
+                        _dynamicClauses[fid] = new List<Clause>();
+                }
+            }
             // op/3 already processed in-place by ClauseReader; other directives
-            // (dynamic, discontiguous, …) are not implemented yet and pass
+            // (discontiguous, multifile, …) are not implemented yet and pass
             // through silently.
         }
 
@@ -170,6 +318,25 @@ public sealed class PrologEngine
         }
         name = "";
         return false;
+    }
+
+    private static bool TryReadDynamicDirective(
+        Term body, out List<(string Name, int Arity)> specs)
+    {
+        specs = new List<(string, int)>();
+        if (body is not CompoundTerm c || c.Functor != "dynamic" || c.Args.Length != 1)
+            return false;
+
+        Term arg = c.Args[0];
+        if (TryReadFunctorSpec(arg, out var single))
+        {
+            specs.Add(single);
+            return true;
+        }
+        if (TryReadFunctorSpecList(arg, specs))
+            return true;
+        throw new InvalidOperationException(
+            "Malformed :- dynamic directive (expected Name/Arity or a list of them).");
     }
 
     private static bool TryReadPublicDirective(
@@ -303,10 +470,34 @@ public sealed class PrologEngine
             var locals = ComputeLocalFunctors(transformed, manifest.PublicFunctors);
             if (name == DefaultModuleName) userLocalsCache = locals;
 
-            var ctx = new ModuleRewrite.Context(name, locals);
+            var ctx = new ModuleRewrite.Context(name, locals, _dynamicFunctors);
             foreach (var clause in transformed)
                 allRewritten.Add(ModuleRewrite.Rewrite(clause, ctx));
         }
+
+        // Dynamic clauses asserted at runtime. They share a flat global
+        // namespace (no module prefix), so the rewrite happens with an empty
+        // local set and the engine's dynamic functor set in scope.
+        if (_dynamicClauses.Count > 0)
+        {
+            var dynCtx = new ModuleRewrite.Context(
+                DefaultModuleName, new HashSet<int>(), _dynamicFunctors);
+            foreach (var (_, clauses) in _dynamicClauses)
+            {
+                if (clauses.Count == 0) continue;
+                var transformed = PhraseTransform.Apply(
+                    MetaTransform.Apply(DcgTransform.Apply(clauses)));
+                foreach (var clause in transformed)
+                    allRewritten.Add(ModuleRewrite.Rewrite(clause, dynCtx));
+            }
+        }
+
+        // Stub clauses for declared-but-empty dynamic functors. Without
+        // these, calls to a dynamic predicate that's been declared but
+        // never assertz'd would fail at link time with an unresolved-call
+        // error. The stub always fails — its purpose is just to give the
+        // predicate a valid bytecode home.
+        EmitEmptyDynamicStubs(allRewritten, queryTerm.Position);
 
         // Synthetic query clause — rewrite in the user module's context, but
         // with userLocalsCache (which doesn't include __query__) so the
@@ -316,7 +507,9 @@ public sealed class PrologEngine
                 MetaTransform.Apply(
                     DcgTransform.Apply(new[] { syntheticClause })));
             var ctx = new ModuleRewrite.Context(
-                DefaultModuleName, userLocalsCache ?? new HashSet<int>());
+                DefaultModuleName,
+                userLocalsCache ?? new HashSet<int>(),
+                _dynamicFunctors);
             foreach (var clause in queryTransformed)
                 allRewritten.Add(ModuleRewrite.Rewrite(clause, ctx));
         }
@@ -356,6 +549,36 @@ public sealed class PrologEngine
         }
 
         return (program, varNames, varHeapIndices, engine, interp);
+    }
+
+    /// <summary>Adds a fail-only stub clause for every dynamic functor that
+    /// has neither static nor asserted clauses yet, so that calls to it
+    /// resolve at link time (and fail at runtime — which is what an
+    /// "empty dynamic predicate" should do).</summary>
+    private void EmitEmptyDynamicStubs(
+        List<Clause> allRewritten, Shumway.Compiler.Lexer.SourcePosition pos)
+    {
+        if (_dynamicFunctors.Count == 0) return;
+
+        var seen = new HashSet<int>();
+        foreach (var c in allRewritten)
+            if (TryExtractHead(c, out string n, out int a))
+                seen.Add(FunctorTable.Intern(
+                    AtomTable.Intern(n, permanent: true).Id, a));
+
+        foreach (int fid in _dynamicFunctors)
+        {
+            if (seen.Contains(fid)) continue;
+            var (atomId, arity) = FunctorTable.Lookup(fid);
+            string name = AtomTable.GetById(atomId)?.Name ?? "?";
+            Term head = arity == 0
+                ? (Term)new AtomTerm(name)
+                : new CompoundTerm(
+                    name,
+                    Enumerable.Range(0, arity).Select(_ => (Term)new VarTerm("_")).ToArray());
+            Term stubTerm = new CompoundTerm(":-", new[] { head, (Term)new AtomTerm("fail") });
+            allRewritten.Add(new Clause(ClauseKind.Rule, stubTerm, pos));
+        }
     }
 
     /// <summary>Returns the functor ids that are <em>local</em> to a module
