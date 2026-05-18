@@ -20,6 +20,7 @@ public sealed class ClauseReader
 {
     private readonly Parser _parser;
     private readonly OperatorTable _operators;
+    private readonly PrologFlags _flags;
 
     public ClauseReader(string source)
         : this(new global::Shumway.Compiler.Lexer.Lexer(source), OperatorTable.Default())
@@ -27,11 +28,21 @@ public sealed class ClauseReader
     }
 
     public ClauseReader(global::Shumway.Compiler.Lexer.Lexer lexer, OperatorTable operators)
+        : this(lexer, operators, new PrologFlags())
+    {
+    }
+
+    public ClauseReader(
+        global::Shumway.Compiler.Lexer.Lexer lexer,
+        OperatorTable operators,
+        PrologFlags flags)
     {
         ArgumentNullException.ThrowIfNull(lexer);
         ArgumentNullException.ThrowIfNull(operators);
+        ArgumentNullException.ThrowIfNull(flags);
         _operators = operators;
-        _parser = new Parser(lexer, operators);
+        _flags = flags;
+        _parser = new Parser(lexer, operators, flags);
     }
 
     public OperatorTable Operators => _operators;
@@ -60,6 +71,35 @@ public sealed class ClauseReader
 
         if (body is CompoundTerm { Functor: "op", Args: var opArgs } && opArgs.Length == 3)
             ApplyOpDirective(opArgs, clause.Position);
+        else if (body is CompoundTerm { Functor: "set_prolog_flag", Args: var spfArgs }
+                 && spfArgs.Length == 2)
+            ApplySetPrologFlagDirective(spfArgs, clause.Position);
+    }
+
+    private void ApplySetPrologFlagDirective(Term[] args, SourcePosition pos)
+    {
+        if (args[0] is not AtomTerm flagName)
+            throw new ParseException(
+                "set_prolog_flag/2 directive: first argument must be an atom.", pos);
+        if (args[1] is not AtomTerm valueName)
+            throw new ParseException(
+                "set_prolog_flag/2 directive: second argument must be an atom.", pos);
+        if (flagName.Name == "double_quotes")
+        {
+            _flags.DoubleQuotes = valueName.Name switch
+            {
+                "codes"  => DoubleQuotesMode.Codes,
+                "chars"  => DoubleQuotesMode.Chars,
+                "atom"   => DoubleQuotesMode.Atom,
+                "string" => DoubleQuotesMode.String,
+                _ => throw new ParseException(
+                    $"set_prolog_flag/2 directive: unknown double_quotes value '{valueName.Name}' "
+                    + "(expected codes / chars / atom / string).", pos),
+            };
+        }
+        // Unknown flags are silently ignored at parse time — the
+        // runtime builtin raises a domain_error instead, which is
+        // where the diagnostic is more useful.
     }
 
     private void ApplyOpDirective(Term[] args, SourcePosition pos)

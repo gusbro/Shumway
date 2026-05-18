@@ -28,18 +28,26 @@ public sealed class Parser
 {
     private readonly Lexer.Lexer _lexer;
     private readonly OperatorTable _operators;
+    private readonly PrologFlags _flags;
     private readonly List<Token> _lookahead = new();
 
-    public Parser(Lexer.Lexer lexer) : this(lexer, OperatorTable.Default())
+    public Parser(Lexer.Lexer lexer) : this(lexer, OperatorTable.Default(), new PrologFlags())
     {
     }
 
     public Parser(Lexer.Lexer lexer, OperatorTable operators)
+        : this(lexer, operators, new PrologFlags())
+    {
+    }
+
+    public Parser(Lexer.Lexer lexer, OperatorTable operators, PrologFlags flags)
     {
         ArgumentNullException.ThrowIfNull(lexer);
         ArgumentNullException.ThrowIfNull(operators);
+        ArgumentNullException.ThrowIfNull(flags);
         _lexer = lexer;
         _operators = operators;
+        _flags = flags;
     }
 
     /// <summary>Reads a single term (no trailing dot expected). Returns when an
@@ -217,7 +225,7 @@ public sealed class Parser
                 return new FloatTerm(tok.FloatValue) { Position = pos };
 
             case TokenKind.String:
-                return new StringTerm(tok.Text) { Position = pos };
+                return BuildStringLiteral(tok.Text, pos);
 
             case TokenKind.Atom:
                 // foo(arg1, arg2, ...) — only when '(' immediately follows, no operator
@@ -252,6 +260,42 @@ public sealed class Parser
             default:
                 throw new ParseException(
                     $"Unexpected {DescribeToken(tok)} when a term was expected.", pos);
+        }
+    }
+
+    /// <summary>Materialises a <c>"..."</c> literal according to the
+    /// <see cref="PrologFlags.DoubleQuotes"/> setting at parse time
+    /// (chunk 58). The default <see cref="DoubleQuotesMode.String"/>
+    /// preserves Shumway's native PSTR representation; <c>codes</c>
+    /// and <c>chars</c> expand into proper cons lists at parse time
+    /// so the rest of the pipeline sees plain Prolog terms.</summary>
+    private Term BuildStringLiteral(string text, Shumway.Compiler.Lexer.SourcePosition pos)
+    {
+        switch (_flags.DoubleQuotes)
+        {
+            case DoubleQuotesMode.Codes:
+            {
+                Term acc = new AtomTerm("[]") { Position = pos };
+                for (int i = text.Length - 1; i >= 0; i--)
+                    acc = new CompoundTerm(".", new Term[] { new IntTerm(text[i]), acc }) { Position = pos };
+                return acc;
+            }
+            case DoubleQuotesMode.Chars:
+            {
+                Term acc = new AtomTerm("[]") { Position = pos };
+                for (int i = text.Length - 1; i >= 0; i--)
+                    acc = new CompoundTerm(".", new Term[]
+                    {
+                        new AtomTerm(text[i].ToString()),
+                        acc
+                    }) { Position = pos };
+                return acc;
+            }
+            case DoubleQuotesMode.Atom:
+                return new AtomTerm(text) { Position = pos };
+            case DoubleQuotesMode.String:
+            default:
+                return new StringTerm(text) { Position = pos };
         }
     }
 

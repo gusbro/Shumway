@@ -30,6 +30,21 @@ public sealed class PrologEngine
     };
     private readonly OperatorTable _operators = OperatorTable.Default();
 
+    /// <summary>Engine-wide mutable flag state (chunk 58). Builtins
+    /// <c>set_prolog_flag/2</c> and <c>current_prolog_flag/2</c> read
+    /// and write here. The parser instances created during ConsultString
+    /// and SetupQuery receive the same instance by reference, so a
+    /// <c>:- set_prolog_flag(double_quotes, codes).</c> directive at the
+    /// top of a source affects every subsequent parse of that source
+    /// and every query made against this engine.</summary>
+    private readonly PrologFlags _flags = new();
+
+    /// <summary>Diagnostic accessor for the flag state (chunk 58). Tests
+    /// can read <see cref="PrologFlags.DoubleQuotes"/> through this to
+    /// verify <c>set_prolog_flag</c> took effect, but mutations should
+    /// go through the builtin or a future host-side API.</summary>
+    public PrologFlags Flags => _flags;
+
     /// <summary>Runtime store for clauses added via <c>assertz/1</c> /
     /// <c>asserta/1</c>. Keyed by functor id; the value is the ordered list
     /// of clauses (in source / assertion order). Merged with each module's
@@ -606,7 +621,7 @@ public sealed class PrologEngine
     public void ConsultString(string source)
     {
         ArgumentNullException.ThrowIfNull(source);
-        var rawClauses = new ClauseReader(new Lexer(source), _operators).ReadAll().ToList();
+        var rawClauses = new ClauseReader(new Lexer(source), _operators, _flags).ReadAll().ToList();
 
         string moduleName = DefaultModuleName;
         bool moduleDirectiveSeen = false;
@@ -869,7 +884,7 @@ public sealed class PrologEngine
              Engine Engine,
              BytecodeInterpreter Interp) SetupQuery(string queryText)
     {
-        var queryParser = new Parser(new Lexer(queryText), _operators);
+        var queryParser = new Parser(new Lexer(queryText), _operators, _flags);
         Term queryTerm = queryParser.ReadClauseTerm();
         return SetupQueryFromTerm(queryTerm);
     }

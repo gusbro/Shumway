@@ -25,13 +25,15 @@ namespace Shumway.Compiler.Parsing;
 ///   extra args (input and output state) are appended.</item>
 /// </list>
 ///
-/// <para>Not yet supported inside DCG bodies: disjunction <c>;/2</c>,
-/// if-then <c>-&gt;/2</c>, and raw <c>\+/1</c> (use <c>{ \+ G }</c> as a
-/// workaround). Users invoke the resulting predicate directly via its
-/// expanded arity — for instance, after <c>sentence --&gt; noun_phrase,
-/// verb_phrase.</c> the query is <c>?- sentence(Input, []).</c>. A
-/// <c>phrase/2</c> wrapper that hides this is a separate concern that needs
-/// runtime meta-call support.</para>
+/// <para>Disjunction <c>;/2</c>, if-then-else <c>(A -&gt; B ; C)</c>, and
+/// negation <c>\+/1</c> in rule bodies thread the diff-list through
+/// each branch and unify their sOut endpoints with a shared output
+/// state so the caller sees one diff-list pair regardless of which
+/// branch fired (chunk 58). Users invoke the resulting predicate
+/// directly via its expanded arity — for instance, after
+/// <c>sentence --&gt; noun_phrase, verb_phrase.</c> the query is
+/// <c>?- sentence(Input, []).</c>. A <c>phrase/2</c> wrapper that
+/// hides this is a separate concern.</para>
 /// </summary>
 public static class DcgTransform
 {

@@ -60,6 +60,8 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("read_term_from_atom", 2, ReadTermFromAtom);
 
         BuiltinsRegistry.Register("op", 3, Op);
+        BuiltinsRegistry.Register("set_prolog_flag",     2, SetPrologFlag);
+        BuiltinsRegistry.Register("current_prolog_flag", 2, CurrentPrologFlag);
         BuiltinsRegistry.Register("with_output_to", 2, WithOutputTo);
         BuiltinsRegistry.Register("atom_to_term",   3, AtomToTerm);
         BuiltinsRegistry.Register("read_term_from_stream", 2, ReadTermFromStream);
@@ -252,6 +254,81 @@ public static class MetaBuiltins
         for (int i = items.Count - 1; i >= 0; i--)
             acc = new CompoundTerm(".", new[] { items[i], acc });
         return acc;
+    }
+
+    /// <summary><c>set_prolog_flag(Flag, Value)</c> — updates a parser-
+    /// visible flag (chunk 58). Phase 1 recognises only
+    /// <c>double_quotes</c> with values <c>codes</c>, <c>chars</c>,
+    /// <c>atom</c>, or <c>string</c>; other flags raise a domain error.
+    /// Setting <c>double_quotes</c> takes effect for the next parse —
+    /// either a query, an <c>assertz</c> of a clause carrying a string
+    /// literal, or a <c>:- consult</c> reading more source.</summary>
+    public static bool SetPrologFlag(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "set_prolog_flag/2 requires the engine to be hosted by a PrologEngine.");
+
+        Cell flagCell = ResolveLocal(engine, engine.GetRegister(0));
+        Cell valueCell = ResolveLocal(engine, engine.GetRegister(1));
+        if (flagCell.Tag == Tag.Ref || valueCell.Tag == Tag.Ref)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        if (flagCell.Tag != Tag.Atom)
+            throw new ShumwayPrologException(
+                IsoError.TypeError("atom", new VarTerm("_")));
+        if (valueCell.Tag != Tag.Atom)
+            throw new ShumwayPrologException(
+                IsoError.TypeError("atom", new VarTerm("_")));
+
+        string flagName = AtomTable.GetById(flagCell.AsAtomId)?.Name ?? "";
+        string valueName = AtomTable.GetById(valueCell.AsAtomId)?.Name ?? "";
+
+        if (flagName == "double_quotes")
+        {
+            host.Flags.DoubleQuotes = valueName switch
+            {
+                "codes"  => Shumway.Compiler.Parsing.DoubleQuotesMode.Codes,
+                "chars"  => Shumway.Compiler.Parsing.DoubleQuotesMode.Chars,
+                "atom"   => Shumway.Compiler.Parsing.DoubleQuotesMode.Atom,
+                "string" => Shumway.Compiler.Parsing.DoubleQuotesMode.String,
+                _ => throw new ShumwayPrologException(
+                    IsoError.DomainError("flag_value", new AtomTerm(valueName))),
+            };
+            return true;
+        }
+
+        throw new ShumwayPrologException(
+            IsoError.DomainError("prolog_flag", new AtomTerm(flagName)));
+    }
+
+    /// <summary><c>current_prolog_flag(Flag, Value)</c> — reads a flag's
+    /// current value (chunk 58). With Flag bound, unifies Value with
+    /// the stored value; with Flag unbound, Phase 1 just fails (full
+    /// enumeration of every flag isn't worth the runtime CP plumbing
+    /// for the small set of flags v1 actually supports).</summary>
+    public static bool CurrentPrologFlag(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "current_prolog_flag/2 requires the engine to be hosted by a PrologEngine.");
+
+        Cell flagCell = ResolveLocal(engine, engine.GetRegister(0));
+        if (flagCell.Tag != Tag.Atom) return false;
+        string flagName = AtomTable.GetById(flagCell.AsAtomId)?.Name ?? "";
+
+        if (flagName == "double_quotes")
+        {
+            string valueName = host.Flags.DoubleQuotes switch
+            {
+                Shumway.Compiler.Parsing.DoubleQuotesMode.Codes  => "codes",
+                Shumway.Compiler.Parsing.DoubleQuotesMode.Chars  => "chars",
+                Shumway.Compiler.Parsing.DoubleQuotesMode.Atom   => "atom",
+                _ => "string",
+            };
+            int aid = AtomTable.Intern(valueName, permanent: true).Id;
+            return engine.UnifyRegisterWithCell(1, Cell.Atom(aid));
+        }
+        return false;
     }
 
     /// <summary><c>op(Precedence, Type, Name)</c> — runtime operator
