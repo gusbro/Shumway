@@ -76,6 +76,30 @@ public sealed class PrologEngine
     public IReadOnlyList<(string Name, int Arity)> LastErrorStackTrace { get; private set; }
         = Array.Empty<(string, int)>();
 
+    /// <summary>Source-position-enriched view of
+    /// <see cref="LastErrorStackTrace"/> (chunk 53). Each frame carries
+    /// the first-clause <c>SourcePosition</c> of the predicate, when
+    /// the bytecode came from a source consult; synthetic predicates
+    /// surface as <see cref="Shumway.Compiler.Lexer.SourcePosition.Start"/>.</summary>
+    public IReadOnlyList<StackFrame> LastErrorStackTraceWithPositions { get; private set; }
+        = Array.Empty<StackFrame>();
+
+    /// <summary>One frame in <see cref="LastErrorStackTraceWithPositions"/>:
+    /// the predicate's <c>Name/Arity</c> plus the source position of its
+    /// first clause (or <see cref="Shumway.Compiler.Lexer.SourcePosition.Start"/>
+    /// for synthetic / blob-loaded predicates without source info).</summary>
+    public readonly record struct StackFrame(
+        string Name, int Arity, Shumway.Compiler.Lexer.SourcePosition Position)
+    {
+        public override string ToString()
+        {
+            // "name/arity at line:col" reads naturally in trace lines.
+            if (Position.Line <= 1 && Position.Column <= 1 && Position.Offset == 0)
+                return $"{Name}/{Arity}";
+            return $"{Name}/{Arity} at {Position}";
+        }
+    }
+
     private IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? _currentPredicatesByAddress;
 
     public PrologEngine()
@@ -342,8 +366,9 @@ public sealed class PrologEngine
     /// round-trip through disk. Entries that carry a pre-compiled
     /// bytecode blob (chunk 38 / chunk 45) get their IL-eligible
     /// predicates eagerly warmed via <see cref="IlPromotion"/>'s
-    /// <c>Warm</c> path — call 1 hits IL instead of waiting for the
-    /// invocation counter to cross the threshold.</summary>
+    /// <c>Warm</c> path; the precompiled clause list is cached on
+    /// <see cref="PrecompiledClauseCache"/> so subsequent query setups
+    /// can skip the WAM compile for those clauses (chunk 53).</summary>
     public void LoadBundle(Bundle bundle)
     {
         ArgumentNullException.ThrowIfNull(bundle);
@@ -355,18 +380,34 @@ public sealed class PrologEngine
         // predicate the IL compiler can handle. Predicates outside the
         // subset stay on Tier 0; the existing counter still works for
         // anything new the loaded blob hasn't covered. The decoded
-        // module is also stashed on PrecompiledModules so callers can
-        // see what was warmed and so future chunks can skip the WAM
-        // compile path entirely.
+        // module is also stashed on PrecompiledModules + indexed by
+        // functor id on PrecompiledClauseCache so the query setup
+        // path can re-use the precompiled bytecode instead of running
+        // ModuleCompiler over the consulted source a second time.
         foreach (var entry in bundle.Entries)
         {
             if (entry.CompiledBytecode is null) continue;
             var module = CompiledModuleCodec.Decode(entry.CompiledBytecode);
             _precompiledModules[entry.ModuleName] = module;
             foreach (var pred in module.Predicates)
+            {
                 IlPromotion.Warm(pred.FunctorId, pred);
+                _precompiledClauseCache[pred.FunctorId] = pred;
+            }
         }
     }
+
+    /// <summary>Per-engine cache of precompiled predicates from any
+    /// bundle blob loaded with <see cref="LoadBundle(Bundle)"/>
+    /// (chunk 53). The query-setup path consults this cache before
+    /// running ModuleCompiler over the consulted source — for any
+    /// predicate whose functor id is in the cache, the cached
+    /// <see cref="Shumway.Compiler.Wam.CompiledPredicate"/> is reused
+    /// verbatim. Mutating the cache directly is not supported; use
+    /// <see cref="LoadBundle(Bundle)"/> to populate it.</summary>
+    public IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> PrecompiledClauseCache
+        => _precompiledClauseCache;
+    private readonly Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> _precompiledClauseCache = new();
 
     /// <summary>Runs an AST goal through the same machinery as the string
     /// form, yielding each solution in turn. The free variables of
@@ -422,8 +463,9 @@ public sealed class PrologEngine
     /// at index 0, its caller at index 1, and so on. Exposed for
     /// debugging and used internally to populate
     /// <see cref="LastErrorStackTrace"/> when a runtime error escapes
-    /// (chunk 51).</summary>
-    private IReadOnlyList<(string Name, int Arity)> CaptureStackTrace(Engine engine)
+    /// (chunks 51 + 53).</summary>
+    private (IReadOnlyList<(string, int)> Plain, IReadOnlyList<StackFrame> WithPositions)
+        CaptureStackTrace(Engine engine)
     {
         // Innermost address: the predicate the engine's PC is sitting
         // inside. Walk the env chain via the engine helper for the
@@ -432,7 +474,41 @@ public sealed class PrologEngine
         addresses.Add(engine.P);
         foreach (int retAddr in engine.EnumerateCallReturnAddresses())
             addresses.Add(retAddr);
-        return ResolveAddressesToFunctors(addresses);
+        return ResolveAddressesWithPositions(addresses);
+    }
+
+    /// <summary>Variant of <see cref="ResolveAddressesToFunctors"/>
+    /// that also returns each frame's source position (chunk 53).
+    /// Returned as a pair: the legacy <c>(name, arity)</c> tuples for
+    /// <see cref="LastErrorStackTrace"/> back-compat, plus the
+    /// position-enriched <see cref="StackFrame"/> list for the new
+    /// chunk-53 surface.</summary>
+    private (IReadOnlyList<(string Name, int Arity)> Plain,
+             IReadOnlyList<StackFrame> WithPositions)
+        ResolveAddressesWithPositions(IEnumerable<int> addresses)
+    {
+        var map = _currentPredicatesByAddress;
+        if (map is null)
+            return (Array.Empty<(string, int)>(), Array.Empty<StackFrame>());
+        int[] sortedEntries = map.Keys.OrderBy(a => a).ToArray();
+        var plain = new List<(string, int)>();
+        var frames = new List<StackFrame>();
+        var seen = new HashSet<int>();
+        foreach (int addr in addresses)
+        {
+            int idx = Array.BinarySearch(sortedEntries, addr);
+            if (idx < 0) idx = ~idx - 1;
+            if (idx < 0) continue;
+            int entryAddr = sortedEntries[idx];
+            if (!seen.Add(entryAddr)) continue;
+            var pred = map[entryAddr];
+            var (atomId, arity) = FunctorTable.Lookup(pred.FunctorId);
+            string name = AtomTable.GetById(atomId)?.Name ?? "?";
+            if (name == "__query__") continue;
+            plain.Add((name, arity));
+            frames.Add(new StackFrame(name, arity, pred.SourcePosition));
+        }
+        return (plain, frames);
     }
 
     /// <summary>Drives the interpreter's run / backtrack loop and yields a
@@ -453,16 +529,16 @@ public sealed class PrologEngine
         bool halted = false;
         try { result = interp.Run(program, 0); }
         catch (PrologHaltException hex) { halted = true; host.LastHaltExitCode = hex.ExitCode; result = InterpreterResult.Failed; }
-        catch (ShumwayPrologException) { host.LastErrorStackTrace = host.CaptureStackTrace(engine); throw; }
-        catch (PrologRuntimeException) { host.LastErrorStackTrace = host.CaptureStackTrace(engine); throw; }
+        catch (ShumwayPrologException) { { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; throw; } }
+        catch (PrologRuntimeException) { { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; throw; } }
 
         while (!halted && result == InterpreterResult.Halted)
         {
             yield return BuildSolution(varNames, varHeapIndices, engine);
             try { result = interp.Backtrack(program); }
             catch (PrologHaltException hex) { halted = true; host.LastHaltExitCode = hex.ExitCode; break; }
-            catch (ShumwayPrologException) { host.LastErrorStackTrace = host.CaptureStackTrace(engine); throw; }
-            catch (PrologRuntimeException) { host.LastErrorStackTrace = host.CaptureStackTrace(engine); throw; }
+            catch (ShumwayPrologException) { { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; throw; } }
+            catch (PrologRuntimeException) { { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; throw; } }
         }
     }
 

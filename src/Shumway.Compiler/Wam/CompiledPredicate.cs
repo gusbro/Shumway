@@ -1,3 +1,4 @@
+using Shumway.Compiler.Lexer;
 using Shumway.Core;
 
 namespace Shumway.Compiler.Wam;
@@ -43,6 +44,14 @@ public sealed class CompiledPredicate
     /// the predicate's switch-table base offset to each.</summary>
     public IReadOnlyList<int> SwitchTableIdSites { get; }
 
+    /// <summary>The source position of the predicate's first clause, or
+    /// <see cref="SourcePosition.Start"/> when no position is available
+    /// (e.g. synthetic predicates produced by the engine, or predicates
+    /// reconstructed from a bundle blob). Used by the runtime stack
+    /// trace path (chunk 53) to point users back to the right source
+    /// location.</summary>
+    public SourcePosition SourcePosition { get; }
+
     public CompiledPredicate(
         byte[] bytecode,
         int functorId,
@@ -64,6 +73,21 @@ public sealed class CompiledPredicate
         IReadOnlyList<int> dispatchSites,
         IReadOnlyList<SwitchTable> switchTables,
         IReadOnlyList<int> switchTableIdSites)
+        : this(bytecode, functorId, arity, clauseCount, callSites, dispatchSites,
+               switchTables, switchTableIdSites, SourcePosition.Start)
+    {
+    }
+
+    public CompiledPredicate(
+        byte[] bytecode,
+        int functorId,
+        int arity,
+        int clauseCount,
+        IReadOnlyList<CallSite> callSites,
+        IReadOnlyList<int> dispatchSites,
+        IReadOnlyList<SwitchTable> switchTables,
+        IReadOnlyList<int> switchTableIdSites,
+        SourcePosition sourcePosition)
     {
         Bytecode = bytecode;
         FunctorId = functorId;
@@ -73,5 +97,6 @@ public sealed class CompiledPredicate
         DispatchSites = dispatchSites;
         SwitchTables = switchTables;
         SwitchTableIdSites = switchTableIdSites;
+        SourcePosition = sourcePosition;
     }
 }

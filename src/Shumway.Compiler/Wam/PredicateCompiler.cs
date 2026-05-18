@@ -81,7 +81,10 @@ public sealed class PredicateCompiler
                 arity,
                 clauseCount: 1,
                 callSites: compiledClauses[0].CallSites,
-                dispatchSites: Array.Empty<int>());
+                dispatchSites: Array.Empty<int>(),
+                switchTables: Array.Empty<SwitchTable>(),
+                switchTableIdSites: Array.Empty<int>(),
+                sourcePosition: clauses[0].Position);
         }
 
         // Decide whether first-argument indexing pays off. It does whenever at
@@ -93,8 +96,8 @@ public sealed class PredicateCompiler
             && firstArgs.Any(f => f.Kind != FirstArgKind.Var && f.Kind != FirstArgKind.Other);
 
         return indexable
-            ? CompileIndexed(compiledClauses, firstArgs, functorId, arity)
-            : CompileTryMeElseChain(compiledClauses, functorId, arity);
+            ? CompileIndexed(compiledClauses, firstArgs, functorId, arity, clauses[0].Position)
+            : CompileTryMeElseChain(compiledClauses, functorId, arity, clauses[0].Position);
     }
 
     // ============================================================================
@@ -102,7 +105,8 @@ public sealed class PredicateCompiler
     // ============================================================================
 
     private static CompiledPredicate CompileTryMeElseChain(
-        IReadOnlyList<CompiledClause> compiledClauses, int functorId, int arity)
+        IReadOnlyList<CompiledClause> compiledClauses, int functorId, int arity,
+        Shumway.Compiler.Lexer.SourcePosition position)
     {
         int n = compiledClauses.Count;
         int[] clauseBodyOffsets = new int[n];
@@ -147,7 +151,8 @@ public sealed class PredicateCompiler
         }
 
         return new CompiledPredicate(
-            emitter.ToBytes(), functorId, arity, n, callSites, dispatchSites);
+            emitter.ToBytes(), functorId, arity, n, callSites, dispatchSites,
+            Array.Empty<SwitchTable>(), Array.Empty<int>(), position);
     }
 
     private static int DispatchSizeFor(int clauseIndex, int totalClauses) =>
@@ -199,7 +204,8 @@ public sealed class PredicateCompiler
         IReadOnlyList<CompiledClause> compiledClauses,
         IReadOnlyList<FirstArgInfo> firstArgs,
         int functorId,
-        int arity)
+        int arity,
+        Shumway.Compiler.Lexer.SourcePosition position)
     {
         int n = compiledClauses.Count;
 
@@ -403,7 +409,7 @@ public sealed class PredicateCompiler
 
         return new CompiledPredicate(
             emitter.ToBytes(), functorId, arity, n,
-            callSites, dispatchSites, switchTables, switchTableIdSites);
+            callSites, dispatchSites, switchTables, switchTableIdSites, position);
     }
 
     /// <summary>Emits a <c>try</c> / (zero or more <c>retry</c>) / <c>trust</c>
