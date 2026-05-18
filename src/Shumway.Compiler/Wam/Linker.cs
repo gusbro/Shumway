@@ -24,7 +24,8 @@ public sealed class Linker
     public sealed record LinkResult(
         byte[] Bytecode,
         IReadOnlyDictionary<int, int> Addresses,
-        IReadOnlyList<SwitchTable> SwitchTables);
+        IReadOnlyList<SwitchTable> SwitchTables,
+        IReadOnlyDictionary<int, CompiledPredicate> PredicatesByAddress);
 
     public LinkResult Link(CompiledModule module, int loadOffset = 0)
     {
@@ -43,6 +44,7 @@ public sealed class Linker
 
         var bytes = new List<byte>();
         var addresses = new Dictionary<int, int>();
+        var predicatesByAddress = new Dictionary<int, CompiledPredicate>();
         var unresolvedCalls = new List<(int Offset, int FunctorId)>();
         var switchTables = new List<SwitchTable>();
 
@@ -55,7 +57,9 @@ public sealed class Linker
                     + "appears in two predicates of the same module.");
 
             int basePos = bytes.Count;
-            addresses[p.FunctorId] = basePos + loadOffset;
+            int absAddr = basePos + loadOffset;
+            addresses[p.FunctorId] = absAddr;
+            predicatesByAddress[absAddr] = p;
             bytes.AddRange(p.Bytecode);
 
             foreach (var site in p.CallSites)
@@ -101,7 +105,7 @@ public sealed class Linker
             switchTableBaseTracker += p.SwitchTables.Count;
         }
 
-        return new LinkResult(program, addresses, switchTables);
+        return new LinkResult(program, addresses, switchTables, predicatesByAddress);
     }
 
     private static string NameForFunctor(int functorId)

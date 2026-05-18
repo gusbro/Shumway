@@ -27,6 +27,13 @@ public sealed class BytecodeInterpreter
     private readonly IReadOnlyList<System.Numerics.BigInteger> _bigIntLiterals;
     private readonly IReadOnlyList<SwitchTable> _switchTables;
 
+    /// <summary>Optional hook the interpreter consults on every
+    /// <c>call</c> / <c>execute</c> to ask whether a Tier-1 IL
+    /// replacement exists for the target predicate. <c>null</c> disables
+    /// the Tier-1 path; set via <see cref="Tier1Dispatcher"/> once an
+    /// embedder has wired in a promotion store.</summary>
+    public ITier1Dispatcher? Tier1Dispatcher { get; set; }
+
     public BytecodeInterpreter(Engine engine)
         : this(engine, Array.Empty<string>(), Array.Empty<double>(), Array.Empty<SwitchTable>())
     {
@@ -156,6 +163,20 @@ public sealed class BytecodeInterpreter
                     // in a future chunk). Skip for now.
                     _engine.SetCp(pc + OpcodeTable.Get(Opcode.Call).Size);
                     _engine.SetB0(_engine.B);   // capture _b at procedure entry for neck_cut
+
+                    // Tier-1 hook: ask the dispatcher whether an IL replacement
+                    // exists for this target. On success, the IL delegate runs
+                    // the entire predicate to completion and we resume at CP
+                    // (mirroring what proceed would have done at bytecode end).
+                    var ilFn = Tier1Dispatcher?.OnDispatch(target);
+                    if (ilFn is not null)
+                    {
+                        if (ilFn(_engine))
+                            _engine.SetPc(_engine.Cp);
+                        else if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+
                     _engine.SetPc(target);
                     break;
                 }
@@ -164,6 +185,19 @@ public sealed class BytecodeInterpreter
                 {
                     int target = BytecodeIO.ReadInt32(code, pc + 1);
                     _engine.SetB0(_engine.B);   // tail call still enters a new procedure
+
+                    // Tail-call Tier-1 hook: the inherited CP already points
+                    // at the right continuation, so success just resumes at
+                    // CP without touching it.
+                    var ilFn = Tier1Dispatcher?.OnDispatch(target);
+                    if (ilFn is not null)
+                    {
+                        if (ilFn(_engine))
+                            _engine.SetPc(_engine.Cp);
+                        else if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+
                     _engine.SetPc(target);      // CP is inherited; only B0 needs refreshing
                     break;
                 }

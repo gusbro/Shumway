@@ -50,6 +50,15 @@ public sealed class PrologEngine
     /// output in tests.</summary>
     public System.IO.TextWriter Out { get; set; } = Console.Out;
 
+    /// <summary>Per-engine state for Tier-0 → Tier-1 auto-promotion: an
+    /// invocation counter per functor plus a cache of successfully
+    /// IL-compiled delegates. The store's <c>Threshold</c> property
+    /// gates the promotion machinery — left at <c>0</c> nothing ever
+    /// promotes, which is the default. Set
+    /// <c>engine.IlPromotion.Threshold = N</c> to enable; future
+    /// <c>:- option(...)</c> directives may surface a friendlier knob.</summary>
+    public IlPromotionStore IlPromotion { get; } = new();
+
     public PrologEngine()
     {
         // The standard builtins (=/2, ==/2, etc.) need to be registered before
@@ -735,6 +744,14 @@ public sealed class PrologEngine
         var interp = new BytecodeInterpreter(
             engine, module.StringLiterals, module.FloatLiterals,
             linkResult.SwitchTables, module.BigIntLiterals);
+        // Tier-1 promotion: hook the interpreter up to this engine's
+        // IlPromotionStore via an address-keyed adapter. The store itself
+        // is functor-keyed and persists across queries; the adapter holds
+        // the per-query PredicatesByAddress map so it can translate the
+        // bytecode-PC the interpreter has into the functor the store
+        // wants.
+        interp.Tier1Dispatcher = new Tier1DispatcherAdapter(
+            IlPromotion, linkResult.PredicatesByAddress);
 
         int[] varHeapIndices = new int[varNames.Count];
         for (int i = 0; i < varNames.Count; i++)
