@@ -59,6 +59,32 @@ public sealed class IlPredicateCompiler
         typeof(Cell).GetProperty(nameof(Cell.AsHeapIndex))!.GetGetMethod()!;
     private static readonly MethodInfo CellAsAtomIdGetter =
         typeof(Cell).GetProperty(nameof(Cell.AsAtomId))!.GetGetMethod()!;
+    private static readonly MethodInfo EngineSetRegisterMethod =
+        typeof(Engine).GetMethod(nameof(Engine.SetRegister), new[] { typeof(int), typeof(Cell) })!;
+    private static readonly MethodInfo EngineGetYMethod =
+        typeof(Engine).GetMethod(nameof(Engine.GetY), new[] { typeof(int) })!;
+    private static readonly MethodInfo EngineSetYMethod =
+        typeof(Engine).GetMethod(nameof(Engine.SetY), new[] { typeof(int), typeof(Cell) })!;
+    private static readonly MethodInfo EngineAllocateMethod =
+        typeof(Engine).GetMethod(nameof(Engine.Allocate), new[] { typeof(int) })!;
+    private static readonly MethodInfo EngineDeallocateMethod =
+        typeof(Engine).GetMethod(nameof(Engine.Deallocate), Type.EmptyTypes)!;
+    private static readonly MethodInfo EngineNeckCutMethod =
+        typeof(Engine).GetMethod(nameof(Engine.NeckCut), Type.EmptyTypes)!;
+    private static readonly MethodInfo EngineAllocateHeapUnboundMethod =
+        typeof(Engine).GetMethod(nameof(Engine.AllocateHeapUnbound), Type.EmptyTypes)!;
+    private static readonly MethodInfo CellRefMethod =
+        typeof(Cell).GetMethod(nameof(Cell.Ref), new[] { typeof(int) })!;
+    private static readonly MethodInfo BuiltinsRegistryGetByIdMethod =
+        typeof(Shumway.Builtins.BuiltinsRegistry).GetMethod(
+            nameof(Shumway.Builtins.BuiltinsRegistry.GetById),
+            new[] { typeof(int) })!;
+    private static readonly MethodInfo BuiltinEntryImplGetter =
+        typeof(Shumway.Builtins.BuiltinEntry).GetProperty(
+            nameof(Shumway.Builtins.BuiltinEntry.Impl))!.GetGetMethod()!;
+    private static readonly MethodInfo BuiltinImplInvokeMethod =
+        typeof(Shumway.Builtins.BuiltinImpl).GetMethod(
+            nameof(Shumway.Builtins.BuiltinImpl.Invoke))!;
 
     /// <summary>Returns <c>true</c> iff <paramref name="predicate"/> is in
     /// the supported subset. See the class docstring for the catalog.</summary>
@@ -102,10 +128,7 @@ public sealed class IlPredicateCompiler
         while (pc < code.Length)
         {
             var op = (Opcode)code[pc];
-            if (op == Opcode.GetAtom
-                || op == Opcode.GetInteger
-                || op == Opcode.GetNil
-                || op == Opcode.GetValueX)
+            if (IsSupportedOpcode(op))
             {
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -120,6 +143,35 @@ public sealed class IlPredicateCompiler
         }
         return sawProceed;
     }
+
+    /// <summary>Catalog of opcodes that <see cref="EmitClauseBody"/>
+    /// knows how to translate to IL. Excludes the control-flow tail
+    /// (<c>proceed</c>), which is handled inline by the emit loop.</summary>
+    private static bool IsSupportedOpcode(Opcode op) => op switch
+    {
+        // Head matching.
+        Opcode.GetAtom => true,
+        Opcode.GetInteger => true,
+        Opcode.GetNil => true,
+        Opcode.GetValueX => true,
+        Opcode.GetVariableX => true,
+        Opcode.GetVariableY => true,
+        Opcode.GetValueY => true,
+        // Body argument setup.
+        Opcode.PutAtom => true,
+        Opcode.PutInteger => true,
+        Opcode.PutNil => true,
+        Opcode.PutValueX => true,
+        Opcode.PutValueY => true,
+        Opcode.PutVariableX => true,
+        Opcode.PutVariableY => true,
+        // Body control.
+        Opcode.CallBuiltin => true,
+        Opcode.Allocate => true,
+        Opcode.Deallocate => true,
+        Opcode.NeckCut => true,
+        _ => false,
+    };
 
     private PredicateDelegate CompileSingleClause(CompiledPredicate predicate)
     {
@@ -193,6 +245,195 @@ public sealed class IlPredicateCompiler
                 emit.LoadConstant(srcReg);
                 emit.LoadConstant(argReg);
                 emit.Call(EngineUnifyRegistersMethod);
+                emit.BranchIfFalse(failLabel);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.GetVariableX)
+            {
+                // X[dest] := X[arg]
+                int dest = BytecodeIO.ReadInt32(code, pc + 1);
+                int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                emit.LoadArgument(0);
+                emit.LoadConstant(dest);
+                emit.LoadArgument(0);
+                emit.LoadConstant(arg);
+                emit.Call(EngineGetRegisterMethod);
+                emit.Call(EngineSetRegisterMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.GetVariableY)
+            {
+                // Y[slot] := X[arg]
+                int slot = BytecodeIO.ReadInt32(code, pc + 1);
+                int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                emit.LoadArgument(0);
+                emit.LoadConstant(slot);
+                emit.LoadArgument(0);
+                emit.LoadConstant(arg);
+                emit.Call(EngineGetRegisterMethod);
+                emit.Call(EngineSetYMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.GetValueY)
+            {
+                // unify(Y[slot], X[arg])
+                int slot = BytecodeIO.ReadInt32(code, pc + 1);
+                int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                emit.LoadArgument(0);
+                emit.LoadConstant(arg);
+                emit.LoadArgument(0);
+                emit.LoadConstant(slot);
+                emit.Call(EngineGetYMethod);
+                emit.Call(EngineUnifyMethod);
+                emit.BranchIfFalse(failLabel);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.PutAtom)
+            {
+                int atomId = BytecodeIO.ReadInt32(code, pc + 1);
+                int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                emit.LoadArgument(0);
+                emit.LoadConstant(arg);
+                emit.LoadConstant(atomId);
+                emit.Call(CellAtomMethod);
+                emit.Call(EngineSetRegisterMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.PutInteger)
+            {
+                int value = BytecodeIO.ReadInt32(code, pc + 1);
+                int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                emit.LoadArgument(0);
+                emit.LoadConstant(arg);
+                emit.LoadConstant((long)value);
+                emit.Call(CellIntMethod);
+                emit.Call(EngineSetRegisterMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.PutNil)
+            {
+                int arg = BytecodeIO.ReadInt32(code, pc + 1);
+                emit.LoadArgument(0);
+                emit.LoadConstant(arg);
+                emit.LoadConstant(AtomTable.EmptyListId);
+                emit.Call(CellAtomMethod);
+                emit.Call(EngineSetRegisterMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.PutValueX)
+            {
+                // X[arg] := X[src]
+                int src = BytecodeIO.ReadInt32(code, pc + 1);
+                int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                emit.LoadArgument(0);
+                emit.LoadConstant(arg);
+                emit.LoadArgument(0);
+                emit.LoadConstant(src);
+                emit.Call(EngineGetRegisterMethod);
+                emit.Call(EngineSetRegisterMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.PutValueY)
+            {
+                // X[arg] := Y[slot]
+                int slot = BytecodeIO.ReadInt32(code, pc + 1);
+                int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                emit.LoadArgument(0);
+                emit.LoadConstant(arg);
+                emit.LoadArgument(0);
+                emit.LoadConstant(slot);
+                emit.Call(EngineGetYMethod);
+                emit.Call(EngineSetRegisterMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.PutVariableX)
+            {
+                // X[arg] := X[dest] := Cell.Ref(engine.AllocateHeapUnbound())
+                int dest = BytecodeIO.ReadInt32(code, pc + 1);
+                int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                // Allocate fresh unbound, save its REF cell in a local, then
+                // assign it to both X[dest] and X[arg].
+                var refLocal = emit.DeclareLocal<Cell>($"freshRef_pc{pc}");
+                emit.LoadArgument(0);
+                emit.Call(EngineAllocateHeapUnboundMethod);
+                emit.Call(CellRefMethod);
+                emit.StoreLocal(refLocal);
+                // X[dest] = local
+                emit.LoadArgument(0);
+                emit.LoadConstant(dest);
+                emit.LoadLocal(refLocal);
+                emit.Call(EngineSetRegisterMethod);
+                // X[arg] = local
+                emit.LoadArgument(0);
+                emit.LoadConstant(arg);
+                emit.LoadLocal(refLocal);
+                emit.Call(EngineSetRegisterMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.PutVariableY)
+            {
+                // Y[slot] := X[arg] := Cell.Ref(engine.AllocateHeapUnbound())
+                int slot = BytecodeIO.ReadInt32(code, pc + 1);
+                int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                var refLocal = emit.DeclareLocal<Cell>($"freshRefY_pc{pc}");
+                emit.LoadArgument(0);
+                emit.Call(EngineAllocateHeapUnboundMethod);
+                emit.Call(CellRefMethod);
+                emit.StoreLocal(refLocal);
+                emit.LoadArgument(0);
+                emit.LoadConstant(slot);
+                emit.LoadLocal(refLocal);
+                emit.Call(EngineSetYMethod);
+                emit.LoadArgument(0);
+                emit.LoadConstant(arg);
+                emit.LoadLocal(refLocal);
+                emit.Call(EngineSetRegisterMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.Allocate)
+            {
+                int n = BytecodeIO.ReadInt32(code, pc + 1);
+                emit.LoadArgument(0);
+                emit.LoadConstant(n);
+                emit.Call(EngineAllocateMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.Deallocate)
+            {
+                emit.LoadArgument(0);
+                emit.Call(EngineDeallocateMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.NeckCut)
+            {
+                emit.LoadArgument(0);
+                emit.Call(EngineNeckCutMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.CallBuiltin)
+            {
+                // entry = BuiltinsRegistry.GetById(id)
+                // if (!entry.Impl(engine)) goto fail
+                int builtinId = BytecodeIO.ReadInt32(code, pc + 1);
+                emit.LoadConstant(builtinId);
+                emit.Call(BuiltinsRegistryGetByIdMethod);
+                emit.Call(BuiltinEntryImplGetter);
+                emit.LoadArgument(0);
+                emit.Call(BuiltinImplInvokeMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;

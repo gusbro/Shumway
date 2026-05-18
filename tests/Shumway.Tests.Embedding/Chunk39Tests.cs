@@ -175,13 +175,19 @@ public class Chunk39Tests
     [Fact]
     public void Engine_UnpromotablePredicate_StaysOnTier0Forever()
     {
-        // A rule with a body goal is outside the IL subset. The store sees
-        // it once, marks it unpromotable, and never retries.
+        // A predicate whose body calls another user-defined predicate is
+        // outside the IL subset (the IL handles call_builtin but not the
+        // address-based Call/Execute for user-defined predicates yet).
+        // The store sees it once, marks it unpromotable, and never retries.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(":- public greet/0.\ngreet :- write(hi).\n");
-        for (int i = 0; i < 5; i++) engine.Query("greet.");
-        int fid = FunctorId("greet", 0);
+        engine.ConsultString(
+            ":- public foo/0.\n" +
+            ":- public bar/0.\n" +
+            "bar.\n" +
+            "foo :- bar.\n");
+        for (int i = 0; i < 5; i++) engine.Query("foo.");
+        int fid = FunctorId("foo", 0);
         Assert.True(engine.IlPromotion.IsUnpromotable(fid));
         Assert.False(engine.IlPromotion.IsPromoted(fid));
     }

@@ -82,6 +82,25 @@ public static class ArithmeticEvaluator
             "-" => Negate(a),
             "+" => a,
             "abs" => Abs(a),
+            "sign" => Sign(a),
+            "\\" => BitwiseNot(a),
+            "sqrt" => new Number(Math.Sqrt(a.AsDouble())),
+            "sin" => new Number(Math.Sin(a.AsDouble())),
+            "cos" => new Number(Math.Cos(a.AsDouble())),
+            "tan" => new Number(Math.Tan(a.AsDouble())),
+            "asin" => new Number(Math.Asin(a.AsDouble())),
+            "acos" => new Number(Math.Acos(a.AsDouble())),
+            "atan" => new Number(Math.Atan(a.AsDouble())),
+            "exp" => new Number(Math.Exp(a.AsDouble())),
+            "log" => new Number(Math.Log(a.AsDouble())),
+            "ceiling" => new Number((long)Math.Ceiling(a.AsDouble())),
+            "floor" => new Number((long)Math.Floor(a.AsDouble())),
+            "round" => new Number((long)Math.Round(a.AsDouble(), MidpointRounding.AwayFromZero)),
+            "truncate" => new Number((long)Math.Truncate(a.AsDouble())),
+            "float" => new Number(a.AsDouble()),
+            "float_integer_part" => new Number(Math.Truncate(a.AsDouble())),
+            "float_fractional_part" => new Number(a.AsDouble() - Math.Truncate(a.AsDouble())),
+            "integer" => a.IsFloat ? new Number((long)Math.Truncate(a.AsDouble())) : a,
             _ => throw new InvalidOperationException(
                 $"No arithmetic function '{name}/1'."),
         };
@@ -102,9 +121,98 @@ public static class ArithmeticEvaluator
             "rem" => Remainder(a, b),
             "min" => Compare(a, b) <= 0 ? a : b,
             "max" => Compare(a, b) >= 0 ? a : b,
+            "**" or "^" => Power(a, b),
+            "/\\" => BitwiseAnd(a, b),
+            "\\/" => BitwiseOr(a, b),
+            "xor" => BitwiseXor(a, b),
+            "<<" => ShiftLeft(a, b),
+            ">>" => ShiftRight(a, b),
+            "gcd" => Gcd(a, b),
+            "atan2" => new Number(Math.Atan2(a.AsDouble(), b.AsDouble())),
             _ => throw new InvalidOperationException(
                 $"No arithmetic function '{name}/2'."),
         };
+    }
+
+    private static Number Sign(Number a)
+    {
+        if (a.IsFloat) return new Number((double)Math.Sign(a.FloatValue));
+        if (a.IsBig) return new Number(a.BigValue.Sign);
+        return new Number((long)Math.Sign(a.IntValue));
+    }
+
+    private static Number BitwiseNot(Number a)
+    {
+        if (a.IsFloat)
+            throw new PrologRuntimeException("type_error", "integer");
+        if (a.IsBig) return new Number(~a.BigValue);
+        return new Number(~a.IntValue);
+    }
+
+    private static Number BitwiseAnd(Number a, Number b)
+    {
+        EnsureBothInt(a, b, "/\\");
+        if (a.IsBig || b.IsBig) return new Number(a.AsBigInteger() & b.AsBigInteger());
+        return new Number(a.IntValue & b.IntValue);
+    }
+
+    private static Number BitwiseOr(Number a, Number b)
+    {
+        EnsureBothInt(a, b, "\\/");
+        if (a.IsBig || b.IsBig) return new Number(a.AsBigInteger() | b.AsBigInteger());
+        return new Number(a.IntValue | b.IntValue);
+    }
+
+    private static Number BitwiseXor(Number a, Number b)
+    {
+        EnsureBothInt(a, b, "xor");
+        if (a.IsBig || b.IsBig) return new Number(a.AsBigInteger() ^ b.AsBigInteger());
+        return new Number(a.IntValue ^ b.IntValue);
+    }
+
+    private static Number ShiftLeft(Number a, Number b)
+    {
+        EnsureBothInt(a, b, "<<");
+        int shift = (int)b.IntValue;
+        if (a.IsBig) return new Number(a.BigValue << shift);
+        // long << large amounts overflows easily — promote to BigInteger.
+        try { return new Number(checked(a.IntValue << shift)); }
+        catch (OverflowException) { return new Number((System.Numerics.BigInteger)a.IntValue << shift); }
+    }
+
+    private static Number ShiftRight(Number a, Number b)
+    {
+        EnsureBothInt(a, b, ">>");
+        int shift = (int)b.IntValue;
+        if (a.IsBig) return new Number(a.BigValue >> shift);
+        return new Number(a.IntValue >> shift);
+    }
+
+    private static Number Gcd(Number a, Number b)
+    {
+        EnsureBothInt(a, b, "gcd");
+        return new Number(System.Numerics.BigInteger.GreatestCommonDivisor(
+            a.AsBigInteger(), b.AsBigInteger()));
+    }
+
+    private static Number Power(Number a, Number b)
+    {
+        // ISO: if both operands are integers and exponent >= 0, the result is
+        // integer; otherwise it's a float.
+        if (!a.IsFloat && !b.IsFloat && b.IsInt && b.IntValue >= 0)
+        {
+            if (b.IntValue > int.MaxValue)
+                throw new PrologRuntimeException("evaluation_error", "exponent_too_large");
+            return new Number(System.Numerics.BigInteger.Pow(a.AsBigInteger(), (int)b.IntValue));
+        }
+        return new Number(Math.Pow(a.AsDouble(), b.AsDouble()));
+    }
+
+    private static void EnsureBothInt(Number a, Number b, string op)
+    {
+        if (a.IsFloat || b.IsFloat)
+            throw new PrologRuntimeException("type_error",
+                $"integer (left of {op})");
     }
 
     // ---------- Operations ----------
