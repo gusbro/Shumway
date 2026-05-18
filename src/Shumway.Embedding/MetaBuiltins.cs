@@ -938,7 +938,7 @@ public static class MetaBuiltins
 
     /// <summary><c>call(Goal, ExtraArgs...)</c> — runs <c>Goal</c> (optionally
     /// extended with extra args appended to its argument list) in a peer
-    /// sub-engine and propagates the first solution's bindings back into the
+    /// sub-engine and propagates each solution's bindings back into the
     /// caller's heap.
     ///
     /// <para>Implementation: the input registers are read as
@@ -946,9 +946,16 @@ public static class MetaBuiltins
     /// encode the caller's heap address. The composed goal runs in the
     /// sub-engine; the resulting <see cref="Solution"/> binds each
     /// <c>_GN</c>, and we use the embedded address to find the caller's
-    /// variable cell and unify it with the materialised bound term. Only the
-    /// first solution is taken — multi-solution call/N would need a runtime
-    /// "execute-by-functor" opcode that's not in v1.</para></summary>
+    /// variable cell and unify it with the materialised bound term.</para>
+    ///
+    /// <para><b>Multi-solution support (chunk 56)</b>: when the goal has
+    /// alternatives the builtin pushes a runtime IL-style choice point
+    /// before binding the first solution. On backtrack the CP's resume
+    /// delegate advances the sub-engine's enumerator, undoing the current
+    /// bindings (via the standard trail unwind) and applying the next
+    /// solution. This is what makes <c>maplist</c>, <c>forall</c>, and
+    /// other prelude predicates that meta-call backtracking goals work
+    /// correctly when the goal has more than one solution.</para></summary>
     private static bool CallN(Engine engine, int totalArity)
     {
         if (engine.Host is not PrologEngine host)
@@ -962,21 +969,62 @@ public static class MetaBuiltins
 
         Term callGoal = AppendArgs(goal, extras);
 
+        // The call_builtin instruction is 9 bytes long; the return PC
+        // for our CP is the byte immediately after it. We capture this
+        // here (before the sub-engine runs) so the closure recursion in
+        // AdvanceCallNEnumerator carries the right value.
+        int returnPc = engine.P + 9;
+
         var sub = host.CreateSubEngine();
-        foreach (Solution sol in sub.QueryAll(callGoal))
+        var iter = sub.QueryAll(callGoal).GetEnumerator();
+        return AdvanceCallNEnumerator(engine, iter, returnPc, isResume: false);
+    }
+
+    /// <summary>Pulls the next solution from <paramref name="iter"/> and
+    /// binds it back into <paramref name="engine"/>. The first
+    /// invocation (<paramref name="isResume"/> <c>false</c>) is from
+    /// inside <see cref="CallN"/> — the interpreter's call_builtin
+    /// success path advances PC by 9 (the opcode's size) so we don't
+    /// need to set it ourselves. Subsequent invocations (from a
+    /// backtrack-popped CP) <em>do</em> need to set PC explicitly via
+    /// <see cref="Engine.ResumeAtReturnPc"/> because the
+    /// PopIlChoicePointAndRestore path would otherwise drop us at the
+    /// outer continuation (the saved Cp), not the next instruction
+    /// after the original call_builtin.
+    ///
+    /// <para>The CP push happens <em>before</em> the bind-back so the
+    /// trail unwind on backtrack peels off the current solution's
+    /// bindings and leaves the heap in the state expected by the next
+    /// solution.</para></summary>
+    private static bool AdvanceCallNEnumerator(
+        Engine engine, IEnumerator<Solution> iter, int returnPc, bool isResume)
+    {
+        if (!iter.MoveNext())
         {
-            foreach (var (name, value) in sol.Bindings)
-            {
-                int addr = ExtractAddrFromName(name);
-                if (addr < 0) continue;
-                Cell boundCell = Materializer.MaterializeAsCell(engine, value);
-                int slot = engine.AllocateHeap(1);
-                engine.SetHeap(slot, boundCell);
-                if (!engine.Unify(addr, slot)) return false;
-            }
-            return true;
+            iter.Dispose();
+            return false;
         }
-        return false;
+
+        // Push a CP optimistically — we don't know without consuming
+        // whether there's another solution, but if there isn't the
+        // resume delegate's first MoveNext returns false and the CP
+        // collapses cleanly.
+        Func<Engine, int, bool> resume = (e, _) =>
+            AdvanceCallNEnumerator(e, iter, returnPc, isResume: true);
+        engine.PushBuiltinChoicePoint(resume, arity: 0);
+
+        Solution sol = iter.Current;
+        foreach (var (name, value) in sol.Bindings)
+        {
+            int addr = ExtractAddrFromName(name);
+            if (addr < 0) continue;
+            Cell boundCell = Materializer.MaterializeAsCell(engine, value);
+            int slot = engine.AllocateHeap(1);
+            engine.SetHeap(slot, boundCell);
+            if (!engine.Unify(addr, slot)) return false;
+        }
+        if (isResume) engine.ResumeAtReturnPc(returnPc);
+        return true;
     }
 
     private static Term AppendArgs(Term goal, Term[] extras)

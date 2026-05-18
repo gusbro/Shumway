@@ -850,6 +850,40 @@ public sealed class Engine
         _ilCpInfo[_b] = new IlChoicePointEntry { Del = del, Cursor = nextCursor };
     }
 
+    /// <summary>Wrapper around <see cref="PushIlChoicePoint"/> for
+    /// builtins that need runtime choice-point semantics (chunk 56's
+    /// multi-solution <c>call/N</c>, the non-deterministic split modes
+    /// of <c>append/3</c> and <c>atom_concat/3</c>). The push itself is
+    /// identical to <see cref="PushIlChoicePoint"/>; the wrapper exists
+    /// so the resume mechanism's "post-call PC" convention is named
+    /// consistently across builtin sites.
+    ///
+    /// <para>On a successful retry the resume delegate is expected to
+    /// call <see cref="ResumeAtReturnPc(int)"/> with the address of the
+    /// instruction immediately after the <c>call_builtin</c> opcode
+    /// that originally invoked the builtin. That sets the engine's PC
+    /// and IL-tail-call flag so the interpreter resumes execution at
+    /// the next goal instead of falling back on the saved <c>Cp</c>
+    /// (which points at the parent procedure's continuation, not the
+    /// next instruction in the current clause).</para></summary>
+    public void PushBuiltinChoicePoint(
+        Func<Engine, int, bool> del, int arity)
+    {
+        PushIlChoicePoint(del, nextCursor: 0, arity: arity);
+    }
+
+    /// <summary>Sets the engine's PC to <paramref name="returnPc"/> and
+    /// flags an IL-style tail call so the interpreter, on this
+    /// retry-success, leaves PC alone instead of overriding it with
+    /// <see cref="Cp"/>. Used by builtin choice-point resume delegates
+    /// (chunk 56) to land execution on the instruction immediately
+    /// after the <c>call_builtin</c> that pushed the CP.</summary>
+    public void ResumeAtReturnPc(int returnPc)
+    {
+        _p = returnPc;
+        IlTailCallPending = true;
+    }
+
     /// <summary>True when the topmost choice point is an IL CP — the
     /// bytecode interpreter consults this on backtrack to choose between
     /// the standard PC-jump path and the IL re-dispatch path.</summary>
