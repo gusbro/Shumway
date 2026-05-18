@@ -56,7 +56,8 @@ internal static class Program
             var bundle = new Bundle(entries);
             try
             {
-                BundleWriter.WriteToFile(bundle, opts.OutputPath);
+                BundleWriter.WriteToFile(bundle, opts.OutputPath,
+                    includeCompiledBytecode: opts.WithBytecode);
             }
             catch (Exception ex)
             {
@@ -135,6 +136,7 @@ internal static class Program
         public string OutputPath { get; set; } = "";
         public List<EntryPointSpec> EntryPoints { get; } = new();
         public bool Verbose { get; set; }
+        public bool WithBytecode { get; set; }
     }
 
     private readonly record struct EntryPointSpec(string Name, int Arity);
@@ -173,6 +175,14 @@ internal static class Program
                 case "--verbose":
                 case "-v":
                     opts.Verbose = true;
+                    break;
+
+                case "--with-bytecode":
+                    // Chunk 45: embed the pre-compiled bytecode alongside the
+                    // source. LoadBundle uses it to pre-warm the Tier-1 IL
+                    // promotion store so the first call into each eligible
+                    // predicate already hits IL — no warm-up window.
+                    opts.WithBytecode = true;
                     break;
 
                 default:
@@ -225,6 +235,9 @@ internal static class Program
             + "  -o, --output <path>           Output bundle path (required).\n"
             + "      --entry-points list       Comma-separated list of Name/Arity entries\n"
             + "                                to validate after writing.\n"
+            + "      --with-bytecode           Embed pre-compiled WAM bytecode in the\n"
+            + "                                bundle. LoadBundle uses it to pre-warm\n"
+            + "                                Tier-1 IL — first call hits IL.\n"
             + "  -v, --verbose                 Verbose progress output to stderr.\n"
             + "  -h, --help                    Show this message.");
     }

@@ -320,12 +320,29 @@ public sealed class PrologEngine
 
     /// <summary>Loads an in-memory <see cref="Bundle"/> into this engine —
     /// useful for tests and for in-process pipelines that prefer not to
-    /// round-trip through disk.</summary>
+    /// round-trip through disk. Entries that carry a pre-compiled
+    /// bytecode blob (chunk 38 / chunk 45) get their IL-eligible
+    /// predicates eagerly warmed via <see cref="IlPromotion"/>'s
+    /// <c>Warm</c> path — call 1 hits IL instead of waiting for the
+    /// invocation counter to cross the threshold.</summary>
     public void LoadBundle(Bundle bundle)
     {
         ArgumentNullException.ThrowIfNull(bundle);
         foreach (var entry in bundle.Entries)
             ConsultString(entry.Source);
+
+        // Phase-1 runtime use of the compiled blob: decode each entry's
+        // CompiledModule and try to install Tier-1 IL delegates for every
+        // predicate the IL compiler can handle. Predicates outside the
+        // subset stay on Tier 0; the existing counter still works for
+        // anything new the loaded blob hasn't covered.
+        foreach (var entry in bundle.Entries)
+        {
+            if (entry.CompiledBytecode is null) continue;
+            var module = CompiledModuleCodec.Decode(entry.CompiledBytecode);
+            foreach (var pred in module.Predicates)
+                IlPromotion.Warm(pred.FunctorId, pred);
+        }
     }
 
     /// <summary>Runs an AST goal through the same machinery as the string
