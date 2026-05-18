@@ -153,6 +153,33 @@ public static class DcgTransform
             return (new CompoundTerm("->", new[] { cond, then }), sOut);
         }
 
+        // Negation: `\+ NT` — succeeds iff NT cannot parse from sIn. The
+        // outer state stays at sIn (no input is consumed, even if NT
+        // would have advanced it). We thread a fresh sigma for the
+        // discarded NT output so the inner transform produces a valid
+        // diff-list endpoint that we then throw away.
+        if (body is CompoundTerm { Functor: "\\+" } neg && neg.Args.Length == 1)
+        {
+            var (inner, _) = TransformBody(neg.Args[0], sIn, ref counter);
+            return (new CompoundTerm("\\+", new[] { inner }), sIn);
+        }
+
+        // Meta-call inside a DCG body: `call(G)` is a non-terminal whose
+        // identity is bound at runtime. Transform to `call(G, sIn, sOut)`
+        // — the runtime call/N then dispatches to the right diff-list
+        // continuation. Higher-arity forms (`call(G, X)` etc.) tack their
+        // user args on first, then the diff-list pair.
+        if (body is CompoundTerm callForm && callForm.Functor == "call"
+            && callForm.Args.Length >= 1)
+        {
+            var sOut = FreshState(ref counter);
+            var newArgs = new Term[callForm.Args.Length + 2];
+            Array.Copy(callForm.Args, newArgs, callForm.Args.Length);
+            newArgs[callForm.Args.Length] = sIn;
+            newArgs[callForm.Args.Length + 1] = sOut;
+            return (new CompoundTerm("call", newArgs), sOut);
+        }
+
         // Non-terminal call — append (sIn, sOut) to the call's args.
         {
             var sOut = FreshState(ref counter);
