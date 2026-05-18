@@ -71,7 +71,11 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("format",    3, IOBuiltins.Format3);
 
         // Atom / list manipulation.
-        BuiltinsRegistry.Register("length",       2, AtomListBuiltins.Length);
+        // length/2 and sub_atom/5 moved to the prelude (chunk 43) so they
+        // get full multi-mode semantics — length(L, N) with both args
+        // free now enumerates 0, 1, 2, …, and sub_atom/5 backtracks
+        // through every (Before, Length, After, Sub) decomposition. The
+        // C# logic survives as the enumerating $-helpers below.
         BuiltinsRegistry.Register("append",       3, AtomListBuiltins.Append);
         BuiltinsRegistry.Register("atom_codes",   2, AtomListBuiltins.AtomCodes);
         BuiltinsRegistry.Register("atom_concat",  3, AtomListBuiltins.AtomConcat);
@@ -80,8 +84,12 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("char_code",    2, AtomCharBuiltins.CharCode);
         BuiltinsRegistry.Register("number_codes", 2, AtomCharBuiltins.NumberCodes);
         BuiltinsRegistry.Register("number_chars", 2, AtomCharBuiltins.NumberChars);
-        BuiltinsRegistry.Register("sub_atom",     5, AtomCharBuiltins.SubAtom);
         BuiltinsRegistry.Register("atom_string",  2, AtomCharBuiltins.AtomString);
+
+        // Multi-solution helpers (chunk 43) called from the prelude.
+        BuiltinsRegistry.Register("$list_length",              2, MultiSolutionHelpers.ListLength);
+        BuiltinsRegistry.Register("$make_var_list",            2, MultiSolutionHelpers.MakeVarList);
+        BuiltinsRegistry.Register("$sub_atom_decompositions",  2, MultiSolutionHelpers.SubAtomDecompositions);
 
         // String-oriented builtins (chunk 40).
         BuiltinsRegistry.Register("string_length", 2, StringBuiltins.StringLength);

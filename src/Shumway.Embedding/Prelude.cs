@@ -29,6 +29,8 @@ internal static class Prelude
         :- public member/2.
         :- public clause/2.
         :- public current_predicate/1.
+        :- public length/2.
+        :- public sub_atom/5.
 
         member(X, [X|_]).
         member(X, [_|T]) :- member(X, T).
@@ -47,5 +49,20 @@ internal static class Prelude
         '$check_predicate_indicator'(_/_) :- !.
         '$check_predicate_indicator'(I) :-
             throw(error(type_error(predicate_indicator, I), _)).
+
+        length(L, N) :-
+            nonvar(L), !, '$list_length'(L, N).
+        length(L, N) :-
+            integer(N), !, '$make_var_list'(N, L).
+        length(L, N) :- '$length_enum'(L, N, 0).
+
+        '$length_enum'([], N, N).
+        '$length_enum'([_|T], N, Acc) :-
+            Acc1 is Acc + 1,
+            '$length_enum'(T, N, Acc1).
+
+        sub_atom(Atom, Before, Length, After, Sub) :-
+            '$sub_atom_decompositions'(Atom, Decomps),
+            member([Before, Length, After, Sub], Decomps).
         """;
 }

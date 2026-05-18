@@ -59,10 +59,18 @@ public class AtomListBuiltinsTests
     }
 
     [Fact]
-    public void Length_BothUnbound_Throws()
+    public void Length_BothUnbound_EnumeratesLengths()
     {
+        // Chunk 43: length/2 moved to the prelude with full multi-mode
+        // semantics — the both-free case now enumerates 0, 1, 2, … in
+        // sync with the list growing one fresh var at a time. Take the
+        // first three solutions and verify the (List, N) pairs.
         var engine = new PrologEngine();
-        Assert.Throws<InvalidOperationException>(() => engine.Query("length(L, N)."));
+        var sols = engine.QueryAll("length(L, N).").Take(3).ToList();
+        Assert.Equal(3, sols.Count);
+        Assert.Equal(new IntTerm(0), sols[0]["N"]);
+        Assert.Equal(new IntTerm(1), sols[1]["N"]);
+        Assert.Equal(new IntTerm(2), sols[2]["N"]);
     }
 
     // ---------- append/3 ----------
