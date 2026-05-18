@@ -150,7 +150,8 @@ public sealed class IlPredicateCompiler
     {
         ArgumentNullException.ThrowIfNull(predicate);
         if (predicate.ClauseCount == 1) return CanCompileSingleClause(predicate, calleeMap);
-        return TryDescribeIndexedAtomPredicate(predicate, out _);
+        if (TryDescribeIndexedAtomPredicate(predicate, out _)) return true;
+        return TryDescribeTryMeElseChain(predicate, calleeMap, out _);
     }
 
     /// <summary>Emits a <see cref="PredicateDelegate"/> for the predicate.
@@ -168,11 +169,13 @@ public sealed class IlPredicateCompiler
                     $"Single-clause predicate (fid={predicate.FunctorId}) is outside the IL subset.");
             return CompileSingleClause(predicate);
         }
-        if (!TryDescribeIndexedAtomPredicate(predicate, out var info))
-            throw new NotSupportedException(
-                $"Multi-clause predicate (fid={predicate.FunctorId}, clauses={predicate.ClauseCount}) "
-                + "is outside the IL subset.");
-        return CompileIndexedAtomPredicate(predicate, info!);
+        if (TryDescribeIndexedAtomPredicate(predicate, out var info))
+            return CompileIndexedAtomPredicate(predicate, info!);
+        if (TryDescribeTryMeElseChain(predicate, calleeMap, out var chain))
+            return CompileTryMeElseChain(predicate, chain!);
+        throw new NotSupportedException(
+            $"Multi-clause predicate (fid={predicate.FunctorId}, clauses={predicate.ClauseCount}) "
+            + "is outside the IL subset.");
     }
 
     // ============================================================================
@@ -851,6 +854,180 @@ public sealed class IlPredicateCompiler
     private sealed class IndexedAtomInfo
     {
         public required IReadOnlyList<(int AtomId, int BodyOffset)> Clauses { get; init; }
+    }
+
+    /// <summary>Per-clause layout extracted from a try_me_else chain
+    /// (chunk 52): the [start, end) byte offsets of each clause's body
+    /// in the predicate's bytecode. Cursor N during IL dispatch runs
+    /// the body at <c>Clauses[N]</c>.</summary>
+    private sealed class TryMeElseChainInfo
+    {
+        public required IReadOnlyList<(int Start, int End)> Clauses { get; init; }
+    }
+
+    /// <summary>Recognises the classical non-indexed multi-clause shape
+    /// <c>try_me_else / retry_me_else* / trust_me</c> with each clause
+    /// body in the IL subset. This is the WAM compiler's output for
+    /// multi-clause predicates that don't take first-argument indexing
+    /// (e.g. arity 0, or every clause's first arg is a variable). When
+    /// recognised, <paramref name="info"/> reports the per-clause body
+    /// byte ranges so <see cref="CompileTryMeElseChain"/> can emit a
+    /// cursor switch + IL choice points.</summary>
+    private static bool TryDescribeTryMeElseChain(
+        CompiledPredicate predicate,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
+        out TryMeElseChainInfo? info)
+    {
+        info = null;
+        byte[] code = predicate.Bytecode;
+        if (code.Length == 0) return false;
+        // First instruction must be try_me_else (size 9: opcode + bp +
+        // arity). After that we expect alternating "clause body"
+        // chunks separated by retry_me_else (size 5) and terminated by
+        // trust_me (size 1) preceding the last clause.
+        if ((Opcode)code[0] != Opcode.TryMeElse) return false;
+        var clauseStarts = new List<int>();
+        int pc = 0;
+        while (pc < code.Length)
+        {
+            var op = (Opcode)code[pc];
+            if (op == Opcode.TryMeElse || op == Opcode.RetryMeElse)
+            {
+                pc += OpcodeTable.Get(op).Size;
+                clauseStarts.Add(pc);
+                continue;
+            }
+            if (op == Opcode.TrustMe)
+            {
+                pc += 1;
+                clauseStarts.Add(pc);
+                continue;
+            }
+            // Skip clause-body opcodes until the next dispatch op or
+            // end of bytecode. Body opcodes must all be in the IL
+            // subset (the per-clause emission walks them again to emit
+            // IL; we just need to size-walk here).
+            if (!IsClauseBodyOpcode(op, predicate, pc, calleeMap)) return false;
+            pc += OpcodeTable.Get(op).Size;
+        }
+
+        // Derive (Start, End) for each clause body.
+        if (clauseStarts.Count != predicate.ClauseCount) return false;
+        var ranges = new List<(int, int)>(clauseStarts.Count);
+        for (int i = 0; i < clauseStarts.Count; i++)
+        {
+            int start = clauseStarts[i];
+            int end = i + 1 < clauseStarts.Count
+                ? FindDispatchOpBefore(code, clauseStarts[i + 1])
+                : code.Length;
+            ranges.Add((start, end));
+        }
+        info = new TryMeElseChainInfo { Clauses = ranges };
+        return true;
+    }
+
+    /// <summary>True iff <paramref name="op"/> is part of the IL-supported
+    /// clause-body opcode set (anything that <see cref="EmitClauseBody"/>
+    /// emits). Used by <see cref="TryDescribeTryMeElseChain"/> to verify
+    /// each clause body fits the IL subset without re-emitting.</summary>
+    private static bool IsClauseBodyOpcode(
+        Opcode op, CompiledPredicate predicate, int pc,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+    {
+        if (op == Opcode.Proceed) return true;
+        if (op == Opcode.Execute) return true;
+        if (op == Opcode.Call)
+        {
+            // Same leaf-callee restriction as the single-clause path.
+            if (calleeMap is null) return false;
+            int siteFid = FindCallSiteFunctorId(predicate.CallSites, pc);
+            if (siteFid < 0) return false;
+            if (!calleeMap.TryGetValue(siteFid, out var callee)) return false;
+            return IsLeafPredicate(callee);
+        }
+        return IsSupportedOpcode(op);
+    }
+
+    private static int FindDispatchOpBefore(byte[] code, int clauseStart)
+    {
+        // Dispatch opcodes immediately precede each clauseStart except
+        // for the first (which starts at pc=9, after the leading
+        // try_me_else). Sizes: try_me_else 9, retry_me_else 5, trust_me 1.
+        if (clauseStart == 0) return 0;
+        // Walk backwards: the dispatch is either trust_me (1) or
+        // retry_me_else (5). We check the byte just before clauseStart.
+        if (clauseStart - 1 >= 0 && (Opcode)code[clauseStart - 1] == Opcode.TrustMe)
+            return clauseStart - 1;
+        if (clauseStart - 5 >= 0 && (Opcode)code[clauseStart - 5] == Opcode.RetryMeElse)
+            return clauseStart - 5;
+        // For clause 0, dispatch is try_me_else (9 bytes) at pc=0.
+        if (clauseStart - 9 >= 0 && (Opcode)code[clauseStart - 9] == Opcode.TryMeElse)
+            return clauseStart - 9;
+        return clauseStart;
+    }
+
+    /// <summary>Emits the IL for a non-indexed multi-clause predicate
+    /// (try_me_else chain). cursor 0 runs clause 1 with an IL CP push
+    /// pointing at cursor 1, cursor N runs clause N+1, etc. The last
+    /// clause runs without a CP push, matching the trust_me semantics.
+    /// The CP-push trampoline reuses the same <see cref="IndexedDelegateHolder"/>
+    /// machinery as the indexed path.</summary>
+    private PredicateDelegate CompileTryMeElseChain(
+        CompiledPredicate predicate, TryMeElseChainInfo info)
+    {
+        lock (IndexedDelegateHolder.RegistrationLock)
+        {
+            return CompileTryMeElseChainUnlocked(predicate, info);
+        }
+    }
+
+    private PredicateDelegate CompileTryMeElseChainUnlocked(
+        CompiledPredicate predicate, TryMeElseChainInfo info)
+    {
+        var clauses = info.Clauses;
+        int holderKey = _nextHolderKey;
+
+        var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
+            $"ShumwayIl_tryelse_{predicate.FunctorId}");
+        var failLabel = emit.DefineLabel("fail");
+
+        for (int i = 0; i < clauses.Count; i++)
+        {
+            var nextLabel = emit.DefineLabel($"after_clause_{i}");
+            emit.LoadArgument(1);
+            emit.LoadConstant(i);
+            emit.UnsignedBranchIfNotEqual(nextLabel);
+
+            // If there's a later clause, push an IL CP for it before
+            // running this clause's body.
+            if (i < clauses.Count - 1)
+            {
+                emit.LoadArgument(0);                      // engine
+                emit.LoadConstant(holderKey);
+                emit.Call(IndexedDelegateHolderGet);       // → PredicateDelegate
+                emit.LoadConstant(i + 1);                  // next cursor
+                emit.LoadConstant(predicate.Arity);
+                emit.Call(EnginePushIlCpMethod);
+            }
+
+            // Emit the clause body. EmitClauseBody walks the slice and
+            // returns true on Proceed / sets IlTailCallPending on Execute.
+            EmitClauseBody(emit, predicate.Bytecode, clauses[i].Start, clauses[i].End,
+                failLabel, predicate.CallSites);
+
+            emit.MarkLabel(nextLabel);
+        }
+
+        // cursor out of [0..N-1] → fail.
+        emit.Branch(failLabel);
+        emit.MarkLabel(failLabel);
+        emit.LoadConstant(false);
+        emit.Return();
+
+        var del = emit.CreateDelegate();
+        IndexedDelegateHolder.Register(holderKey, del);
+        _nextHolderKey = holderKey + 1;
+        return del;
     }
 
     /// <summary>Recognises the shape:

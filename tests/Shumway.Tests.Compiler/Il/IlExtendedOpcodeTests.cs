@@ -140,9 +140,10 @@ public class IlExtendedOpcodeTests
     [Fact]
     public void Tier1Promoter_RejectsUnsupportedPredicate_ReturnsNull()
     {
-        // Multi-clause predicates with rule BODIES are still outside the
-        // IL subset (chunk 42 lifted the multi-clause restriction for
-        // fact-only indexed predicates).
-        Assert.Null(Tier1Promoter.TryCompile("p(X) :- q(X).\np(X) :- r(X).\n"));
+        // Tier1Promoter.TryCompile invokes CanCompile without a callee
+        // map — non-tail Call opcodes need the map to verify the
+        // leaf-callee restriction (chunk 50), so multi-clause bodies
+        // that include a Call still surface as null here.
+        Assert.Null(Tier1Promoter.TryCompile("p(X) :- q(X), r(X).\np(X) :- s(X).\n"));
     }
 }

@@ -180,6 +180,34 @@ public static class DcgTransform
             return (new CompoundTerm("call", newArgs), sOut);
         }
 
+        // Lookahead: `peek(X)` (chunk 52) — succeeds iff X is the next
+        // element of the input, consuming nothing. Transforms to
+        // `sIn = [X | _]` so the head of the diff-list state is
+        // pattern-matched but the state itself stays at sIn.
+        if (body is CompoundTerm { Functor: "peek" } peek && peek.Args.Length == 1)
+        {
+            Term peekList = new CompoundTerm(".", new[] {
+                peek.Args[0],
+                new VarTerm("_")
+            });
+            Term unifyGoal = new CompoundTerm("=", new[] { (Term)sIn, peekList });
+            return (unifyGoal, sIn);
+        }
+
+        // Pushback: `pushback(L)` (chunk 52) — extends the diff-list
+        // residue by prepending the elements of L, so the *next*
+        // non-terminal sees them. After `a --> [x], pushback([y]).`,
+        // calling `a([x, z], R)` yields R = [y, z] (the y was pushed
+        // back into the residue, the z was already there). Transforms
+        // to `sOut = [y | sIn]` materialised as a cons chain.
+        if (body is CompoundTerm { Functor: "pushback" } pb && pb.Args.Length == 1)
+        {
+            var sOut = FreshState(ref counter);
+            Term consChain = BuildConsChainEndingIn(pb.Args[0], sIn);
+            Term goal = new CompoundTerm("=", new[] { (Term)sOut, consChain });
+            return (goal, sOut);
+        }
+
         // Non-terminal call — append (sIn, sOut) to the call's args.
         {
             var sOut = FreshState(ref counter);
@@ -192,6 +220,33 @@ public static class DcgTransform
     {
         counter++;
         return new VarTerm($"$S{counter}");
+    }
+
+    /// <summary>Builds <c>[l1, l2, …, ln | tail]</c> for a list term
+    /// <paramref name="listTerm"/> ending in <paramref name="tail"/>.
+    /// Used by the DCG pushback transform (chunk 52) to splice the
+    /// pushed-back elements onto the residual diff-list endpoint.</summary>
+    private static Term BuildConsChainEndingIn(Term listTerm, Term tail)
+    {
+        // Walk the list term left-to-right collecting elements; emit the
+        // chain back-to-front so the result is a properly-shaped
+        // cons cell. Improper lists (variable / atom tails) are
+        // passed through to the unify step which will throw at runtime
+        // if the binding doesn't make sense.
+        var elements = new List<Term>();
+        Term cur = listTerm;
+        while (cur is CompoundTerm { Functor: "." } cons && cons.Args.Length == 2)
+        {
+            elements.Add(cons.Args[0]);
+            cur = cons.Args[1];
+        }
+        if (!(cur is AtomTerm { Name: "[]" }))
+            throw new InvalidOperationException(
+                "DCG pushback/1 requires a ground proper list of tokens.");
+        Term acc = tail;
+        for (int i = elements.Count - 1; i >= 0; i--)
+            acc = new CompoundTerm(".", new[] { elements[i], acc });
+        return acc;
     }
 
     private static Term AppendDiffListArgs(Term call, Term sIn, Term sOut)

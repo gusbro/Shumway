@@ -49,10 +49,14 @@ public class IlPredicateCompilerTests
     }
 
     [Fact]
-    public void CanCompile_MultiClauseWithBody_False()
+    public void CanCompile_MultiClauseWithNonTailCall_False()
     {
-        // Bodies that call other predicates are still outside the subset.
-        var pred = CompileFromSource("p(X) :- q(X).\np(X) :- r(X).\n");
+        // Chunk 52 added try_me_else IL support; tail-only multi-clause
+        // bodies (`p :- q.` form) now compile. The IL subset still
+        // rejects non-tail Call opcodes when CanCompile is invoked
+        // without a callee map (the conservative leaf-callee check
+        // requires knowing the callee predicate).
+        var pred = CompileFromSource("p(X) :- q(X), r(X).\np(X) :- s(X).\n");
         Assert.False(new IlPredicateCompiler().CanCompile(pred));
     }
 
@@ -173,11 +177,12 @@ public class IlPredicateCompilerTests
     [Fact]
     public void Compile_UnsupportedPredicate_Throws()
     {
-        // Predicates with rule bodies are still outside the supported
-        // subset — the IL compiler accepts multi-clause facts (chunk 42)
-        // but not body calls (which need allocate / call / proceed
-        // sequencing it doesn't handle yet).
-        var pred = CompileFromSource("p(X) :- q(X).\np(X) :- r(X).\n");
+        // Chunk 50 added IL Call (with the leaf-callee restriction); a
+        // body with a non-tail Call invoked without a callee map keeps
+        // failing. Use a multi-clause non-indexed body whose first
+        // clause has a non-tail Call so the chunk-52 try_me_else path
+        // still rejects when calleeMap is omitted.
+        var pred = CompileFromSource("p(X) :- q(X), r(X).\np(X) :- s(X).\n");
         var ic = new IlPredicateCompiler();
         Assert.Throws<NotSupportedException>(() => ic.Compile(pred));
     }
