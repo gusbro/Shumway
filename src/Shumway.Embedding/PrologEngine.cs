@@ -787,6 +787,11 @@ public sealed class PrologEngine
             Out = Out,
             Host = this,
             Operators = new OperatorTableAdapter(_operators),
+            // The current-query address map lets IL-emitted Execute
+            // opcodes (chunk 47) resolve their tail-call target via a
+            // stable functor-id lookup instead of an embedded address
+            // that would only be valid for one query's linked layout.
+            CurrentFunctorAddresses = linkResult.Addresses,
         };
         var interp = new BytecodeInterpreter(
             engine, module.StringLiterals, module.FloatLiterals,

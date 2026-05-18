@@ -71,6 +71,24 @@ public sealed class IlPredicateCompiler
         typeof(Engine).GetMethod(nameof(Engine.Deallocate), Type.EmptyTypes)!;
     private static readonly MethodInfo EngineNeckCutMethod =
         typeof(Engine).GetMethod(nameof(Engine.NeckCut), Type.EmptyTypes)!;
+    private static readonly MethodInfo EngineSetPcMethod =
+        typeof(Engine).GetMethod(
+            nameof(Engine.SetPc),
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            null, new[] { typeof(int) }, null)!;
+    private static readonly MethodInfo EngineSetB0Method =
+        typeof(Engine).GetMethod(
+            nameof(Engine.SetB0),
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            null, new[] { typeof(int) }, null)!;
+    private static readonly MethodInfo EngineBGetter =
+        typeof(Engine).GetProperty(nameof(Engine.B))!.GetGetMethod()!;
+    private static readonly MethodInfo EngineIlTailCallPendingSetter =
+        typeof(Engine).GetProperty(nameof(Engine.IlTailCallPending))!.GetSetMethod()!;
+    private static readonly MethodInfo EngineCurrentFunctorAddressesGetter =
+        typeof(Engine).GetProperty(nameof(Engine.CurrentFunctorAddresses))!.GetGetMethod()!;
+    private static readonly MethodInfo IlExecuteHelperResolveMethod =
+        typeof(IlExecuteHelper).GetMethod(nameof(IlExecuteHelper.Resolve))!;
     private static readonly MethodInfo EngineAllocateHeapUnboundMethod =
         typeof(Engine).GetMethod(nameof(Engine.AllocateHeapUnbound), Type.EmptyTypes)!;
     private static readonly MethodInfo CellRefMethod =
@@ -124,10 +142,22 @@ public sealed class IlPredicateCompiler
     {
         byte[] code = predicate.Bytecode;
         int pc = 0;
-        bool sawProceed = false;
+        bool sawTerminator = false;
         while (pc < code.Length)
         {
             var op = (Opcode)code[pc];
+            if (op == Opcode.Execute)
+            {
+                // Execute is a body-tail terminator: control transfers
+                // to the callee, which proceeds back to our caller's
+                // continuation. The IL emission for Execute returns
+                // from the delegate (with the IlTailCallPending flag
+                // set), so any opcodes after it in the bytecode are
+                // unreachable.
+                sawTerminator = true;
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
             if (IsSupportedOpcode(op))
             {
                 pc += OpcodeTable.Get(op).Size;
@@ -135,13 +165,13 @@ public sealed class IlPredicateCompiler
             }
             if (op == Opcode.Proceed)
             {
-                sawProceed = true;
+                sawTerminator = true;
                 pc += 1;
                 continue;
             }
             return false;
         }
-        return sawProceed;
+        return sawTerminator;
     }
 
     /// <summary>Catalog of opcodes that <see cref="EmitClauseBody"/>
@@ -170,6 +200,7 @@ public sealed class IlPredicateCompiler
         Opcode.Allocate => true,
         Opcode.Deallocate => true,
         Opcode.NeckCut => true,
+        Opcode.Execute => true,
         _ => false,
     };
 
@@ -179,7 +210,8 @@ public sealed class IlPredicateCompiler
             $"ShumwayIl_{predicate.FunctorId}_{predicate.Arity}");
         var failLabel = emit.DefineLabel("fail");
 
-        EmitClauseBody(emit, predicate.Bytecode, 0, predicate.Bytecode.Length, failLabel);
+        EmitClauseBody(emit, predicate.Bytecode, 0, predicate.Bytecode.Length,
+            failLabel, predicate.CallSites);
 
         emit.MarkLabel(failLabel);
         emit.LoadConstant(false);
@@ -190,10 +222,13 @@ public sealed class IlPredicateCompiler
     /// <summary>Emits IL for a contiguous span of supported-opcode
     /// clause-body bytes. <paramref name="failLabel"/> is jumped to on any
     /// unification failure; a successful <c>proceed</c> emits an inline
-    /// <c>return true</c>.</summary>
+    /// <c>return true</c>. <paramref name="callSites"/> is consulted by
+    /// the Execute emission to resolve each call site's callee functor
+    /// id (which is stable across queries, unlike the absolute bytecode
+    /// address embedded in the operand).</summary>
     private static void EmitClauseBody(
         Sigil.Emit<PredicateDelegate> emit, byte[] code, int start, int end,
-        Sigil.Label failLabel)
+        Sigil.Label failLabel, IReadOnlyList<CallSite> callSites)
     {
         int pc = start;
         while (pc < end)
@@ -435,6 +470,48 @@ public sealed class IlPredicateCompiler
                 emit.LoadArgument(0);
                 emit.Call(BuiltinImplInvokeMethod);
                 emit.BranchIfFalse(failLabel);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.Execute)
+            {
+                // Tail call. The operand in the bytecode is a per-query
+                // resolved address that's only valid for the link that
+                // produced it; if we cached this delegate and the engine
+                // re-links the program for a later query, the address
+                // would point at the wrong place. So instead we look up
+                // the callee's address via the engine's current functor
+                // address map (set per query) using the stable functor
+                // id from the call site metadata.
+                int siteFunctorId = -1;
+                for (int i = 0; i < callSites.Count; i++)
+                {
+                    if (callSites[i].OpcodeOffset == pc)
+                    {
+                        siteFunctorId = callSites[i].CalleeFunctorId;
+                        break;
+                    }
+                }
+                if (siteFunctorId < 0)
+                    throw new InvalidOperationException(
+                        $"Execute opcode at pc={pc} has no matching call site in the predicate's metadata.");
+                // int target = IlExecuteHelper.Resolve(engine, siteFunctorId);
+                // engine.SetB0(engine.B); engine.SetPc(target);
+                // engine.IlTailCallPending = true; return true;
+                emit.LoadArgument(0);
+                emit.LoadArgument(0);
+                emit.Call(EngineBGetter);
+                emit.Call(EngineSetB0Method);
+                emit.LoadArgument(0);
+                emit.LoadArgument(0);
+                emit.LoadConstant(siteFunctorId);
+                emit.Call(IlExecuteHelperResolveMethod);
+                emit.Call(EngineSetPcMethod);
+                emit.LoadArgument(0);
+                emit.LoadConstant(true);
+                emit.Call(EngineIlTailCallPendingSetter);
+                emit.LoadConstant(true);
+                emit.Return();
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -726,6 +803,28 @@ public sealed class IlPredicateCompiler
             PredicateDelegate del;
             lock (_lock) del = _byKey[key];
             return new Func<Engine, int, bool>(del);
+        }
+    }
+
+    /// <summary>Resolves a callee functor id to its current-query
+    /// bytecode address by consulting <see cref="Engine.CurrentFunctorAddresses"/>.
+    /// Called from IL-emitted Execute opcodes (chunk 47) so the tail-call
+    /// target stays correct across queries even when the link layout
+    /// changes between them.</summary>
+    public static class IlExecuteHelper
+    {
+        public static int Resolve(Engine engine, int functorId)
+        {
+            var map = engine.CurrentFunctorAddresses;
+            if (map is null)
+                throw new InvalidOperationException(
+                    "IL Execute: engine has no CurrentFunctorAddresses set. "
+                    + "The embedding layer must populate it at query setup.");
+            if (!map.TryGetValue(functorId, out int address))
+                throw new InvalidOperationException(
+                    $"IL Execute: callee functor id {functorId} is not in the engine's current address map. "
+                    + "The callee may not be loaded in this query's program.");
+            return address;
         }
     }
 

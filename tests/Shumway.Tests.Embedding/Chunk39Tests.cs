@@ -73,7 +73,7 @@ public class Chunk39Tests
     {
         // A predicate that calls a body goal is outside the IL subset.
         var store = new IlPromotionStore { Threshold = 1 };
-        var pred = CompileSinglePredicate("rule(X) :- other(X).");
+        var pred = CompileSinglePredicate("rule(X) :- other(X), more(X).");
         Assert.Null(store.RecordInvocation(pred.FunctorId, pred));
         Assert.True(store.IsUnpromotable(pred.FunctorId));
         // Future attempts return null without re-trying compilation.
@@ -97,7 +97,7 @@ public class Chunk39Tests
     public void Store_Warm_OnUnpromotableReturnsNull()
     {
         var store = new IlPromotionStore();
-        var pred = CompileSinglePredicate("rule(X) :- other(X).");
+        var pred = CompileSinglePredicate("rule(X) :- other(X), more(X).");
         Assert.Null(store.Warm(pred.FunctorId, pred));
         Assert.True(store.IsUnpromotable(pred.FunctorId));
     }
@@ -184,8 +184,9 @@ public class Chunk39Tests
         engine.ConsultString(
             ":- public foo/0.\n" +
             ":- public bar/0.\n" +
-            "bar.\n" +
-            "foo :- bar.\n");
+            ":- public baz/0.\n" +
+            "bar. baz.\n" +
+            "foo :- bar, baz.\n");
         for (int i = 0; i < 5; i++) engine.Query("foo.");
         int fid = FunctorId("foo", 0);
         Assert.True(engine.IlPromotion.IsUnpromotable(fid));

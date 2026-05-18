@@ -10,6 +10,8 @@
     <InternalsVisibleTo Include="Shumway.Tests.Core" />
     <InternalsVisibleTo Include="Shumway.Interpreter" />
     <InternalsVisibleTo Include="Shumway.Tests.Interpreter" />
+    <!-- Chunk 47: IL emission for Execute needs SetPc / SetB0. -->
+    <InternalsVisibleTo Include="Shumway.Compiler.Il" />
   </ItemGroup>
 
 </Project>

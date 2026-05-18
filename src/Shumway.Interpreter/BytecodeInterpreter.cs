@@ -107,7 +107,8 @@ public sealed class BytecodeInterpreter
                 $"startPc 0x{startPc:X} is outside [0, 0x{code.Length:X}).");
 
         _engine.SetPc(startPc);
-        return Dispatch(code);
+        try { return Dispatch(code); }
+        catch (TopLevelFailure) { return InterpreterResult.Failed; }
     }
 
     /// <summary>
@@ -125,7 +126,8 @@ public sealed class BytecodeInterpreter
     {
         ArgumentNullException.ThrowIfNull(code);
         if (!TryBacktrack()) return InterpreterResult.Failed;
-        return Dispatch(code);
+        try { return Dispatch(code); }
+        catch (TopLevelFailure) { return InterpreterResult.Failed; }
     }
 
     private InterpreterResult Dispatch(byte[] code)
@@ -163,21 +165,7 @@ public sealed class BytecodeInterpreter
                     // in a future chunk). Skip for now.
                     _engine.SetCp(pc + OpcodeTable.Get(Opcode.Call).Size);
                     _engine.SetB0(_engine.B);   // capture _b at procedure entry for neck_cut
-
-                    // Tier-1 hook: ask the dispatcher whether an IL replacement
-                    // exists for this target. On success, the IL delegate runs
-                    // the entire predicate to completion and we resume at CP
-                    // (mirroring what proceed would have done at bytecode end).
-                    var ilFn = Tier1Dispatcher?.OnDispatch(target);
-                    if (ilFn is not null)
-                    {
-                        if (ilFn(_engine))
-                            _engine.SetPc(_engine.Cp);
-                        else if (!TryBacktrack()) return InterpreterResult.Failed;
-                        break;
-                    }
-
-                    _engine.SetPc(target);
+                    DispatchToTier1OrBytecode(target);
                     break;
                 }
 
@@ -185,20 +173,7 @@ public sealed class BytecodeInterpreter
                 {
                     int target = BytecodeIO.ReadInt32(code, pc + 1);
                     _engine.SetB0(_engine.B);   // tail call still enters a new procedure
-
-                    // Tail-call Tier-1 hook: the inherited CP already points
-                    // at the right continuation, so success just resumes at
-                    // CP without touching it.
-                    var ilFn = Tier1Dispatcher?.OnDispatch(target);
-                    if (ilFn is not null)
-                    {
-                        if (ilFn(_engine))
-                            _engine.SetPc(_engine.Cp);
-                        else if (!TryBacktrack()) return InterpreterResult.Failed;
-                        break;
-                    }
-
-                    _engine.SetPc(target);      // CP is inherited; only B0 needs refreshing
+                    DispatchToTier1OrBytecode(target);
                     break;
                 }
 
@@ -977,6 +952,48 @@ public sealed class BytecodeInterpreter
     /// <returns><c>true</c> if a CP exists and PC has been redirected to its BP;
     /// <c>false</c> if no CP is active, in which case the caller should report
     /// <see cref="InterpreterResult.Failed"/>.</returns>
+    /// <summary>Shared dispatch logic for <c>Call</c> and <c>Execute</c>:
+    /// if the target has an IL replacement, invoke it; otherwise set Pc
+    /// to the target so the loop dispatches the target's bytecode. When
+    /// an IL delegate returns with <c>IlTailCallPending</c>, the helper
+    /// repeats the dispatch on the new target — so a chain of IL
+    /// predicates that each tail-call another stays entirely in IL
+    /// without bouncing through bytecode (chunk 47).</summary>
+    private void DispatchToTier1OrBytecode(int target)
+    {
+        while (true)
+        {
+            var ilFn = Tier1Dispatcher?.OnDispatch(target);
+            if (ilFn is null)
+            {
+                _engine.SetPc(target);
+                return;
+            }
+            if (!ilFn(_engine))
+            {
+                if (!TryBacktrack()) throw new TopLevelFailure();
+                return;
+            }
+            if (_engine.IlTailCallPending)
+            {
+                // The IL set Pc to its tail-call target. Try IL on
+                // *that* target too.
+                _engine.IlTailCallPending = false;
+                target = _engine.P;
+                continue;
+            }
+            _engine.SetPc(_engine.Cp);
+            return;
+        }
+    }
+
+    /// <summary>Internal flow-control exception used by
+    /// <see cref="DispatchToTier1OrBytecode"/> to propagate
+    /// "backtrack failed, return InterpreterResult.Failed" out of the
+    /// IL-chained dispatch loop without restructuring the outer
+    /// switch.</summary>
+    private sealed class TopLevelFailure : Exception { }
+
     private bool TryBacktrack()
     {
         // Loop so that an IL retry that itself fails immediately falls
@@ -988,9 +1005,14 @@ public sealed class BytecodeInterpreter
                 var (del, cursor) = _engine.PopIlChoicePointAndRestore();
                 if (del(_engine, cursor))
                 {
-                    // Success: resume at the caller's continuation, just
-                    // like bytecode proceed would.
-                    _engine.SetPc(_engine.Cp);
+                    // Success: if the IL signalled a tail-call (chunk 47),
+                    // leave Pc alone so the next dispatch picks up at the
+                    // tail-call target. Otherwise resume at the caller's
+                    // continuation, just like bytecode proceed would.
+                    if (_engine.IlTailCallPending)
+                        _engine.IlTailCallPending = false;
+                    else
+                        _engine.SetPc(_engine.Cp);
                     return true;
                 }
                 // The IL clause that cursor selected didn't unify — try

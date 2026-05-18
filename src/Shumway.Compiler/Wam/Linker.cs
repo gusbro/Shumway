@@ -105,6 +105,15 @@ public sealed class Linker
             switchTableBaseTracker += p.SwitchTables.Count;
         }
 
+        // predicatesByAddress carries the *un-patched* per-predicate
+        // bytecode views. The Tier-1 IL compiler reads operand values
+        // straight from these — call targets stay at their placeholder
+        // zeros (the IL resolves call sites via callee functor id, not
+        // the embedded address) and switch-table ids stay at predicate-
+        // local indices (so `predicate.SwitchTables[tableId]` doesn't
+        // overflow). The Tier-0 interpreter dispatches on the patched
+        // `program` byte array, so it gets resolved addresses without
+        // help.
         return new LinkResult(program, addresses, switchTables, predicatesByAddress);
     }
 

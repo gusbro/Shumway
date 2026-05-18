@@ -77,12 +77,14 @@ public class IlPredicateCompilerTests
     }
 
     [Fact]
-    public void CanCompile_RuleWithBody_False()
+    public void CanCompile_RuleWithNonTailCall_False()
     {
-        // A non-trivial body produces a Call (or Execute) opcode that the
-        // MVP doesn't translate. `true` would optimise away to a bare
-        // Proceed, so we use a real predicate call.
-        var pred = CompileFromSource("p :- q.");
+        // Chunk 47 added IL Execute (tail-call) emission, so a body
+        // ending in a single user-predicate call (`p :- q.`) now
+        // compiles. The IL subset still rejects the non-tail Call
+        // opcode that earlier body goals produce — a two-goal body
+        // emits Call+Execute, and Call has no IL handler yet.
+        var pred = CompileFromSource("p :- q, r.");
         Assert.False(new IlPredicateCompiler().CanCompile(pred));
     }
 

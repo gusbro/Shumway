@@ -54,6 +54,11 @@ public sealed class IlPromotionStore
         if (Threshold <= 0) return null;
         if (_delegates.ContainsKey(functorId)) return _delegates[functorId];
         if (_unpromotable.Contains(functorId)) return null;
+        if (IsExcludedFromPromotion(functorId))
+        {
+            _unpromotable.Add(functorId);
+            return null;
+        }
 
         _counters.TryGetValue(functorId, out int count);
         count++;
@@ -72,6 +77,19 @@ public sealed class IlPromotionStore
         return del;
     }
 
+    /// <summary>The synthetic <c>__query__/N</c> predicates that
+    /// <see cref="PrologEngine.SetupQueryFromTerm"/> wraps every query
+    /// in have a *different body per query* but the same functor id
+    /// (one per arity). IL-caching them would cache the body of the
+    /// first query and replay it for every subsequent query of the
+    /// same arity — almost certainly a wrong answer. Skip them.</summary>
+    private static bool IsExcludedFromPromotion(int functorId)
+    {
+        var (atomId, _) = Shumway.Core.FunctorTable.Lookup(functorId);
+        string name = Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "";
+        return name == "__query__";
+    }
+
     /// <summary>Eagerly promotes <paramref name="predicate"/> without
     /// going through the counter, returning the resulting delegate on
     /// success. Useful for warm-up paths (e.g. AOT bundles) that want
@@ -80,6 +98,11 @@ public sealed class IlPromotionStore
     {
         if (_delegates.TryGetValue(functorId, out var existing)) return existing;
         if (_unpromotable.Contains(functorId)) return null;
+        if (IsExcludedFromPromotion(functorId))
+        {
+            _unpromotable.Add(functorId);
+            return null;
+        }
         if (!_compiler.CanCompile(predicate))
         {
             _unpromotable.Add(functorId);

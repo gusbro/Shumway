@@ -654,6 +654,27 @@ public sealed class Engine
         return slot;
     }
 
+    // ----- Current-query functor address map (Tier-1, chunk 47) -----
+    //
+    // Set by the embedding-layer query setup once per query, this map
+    // gives the bytecode address of every functor in the linked program.
+    // IL-emitted Execute opcodes resolve their tail-call target by
+    // looking up the *functor id* (stable across queries) here, instead
+    // of embedding the address as a constant (which would only be valid
+    // for one query's linked layout).
+    public IReadOnlyDictionary<int, int>? CurrentFunctorAddresses { get; set; }
+
+    // ----- IL tail-call signal (Tier-1, chunk 47) -----
+    //
+    // When an IL delegate emits an Execute opcode, it sets _pc to the
+    // tail-call target and raises this flag. The interpreter's Call /
+    // Execute handlers consult the flag after the IL returns: when set,
+    // they leave _pc alone instead of overriding it with _cp, so the
+    // dispatch picks up at the target rather than returning to the
+    // caller's continuation immediately. Cleared by the handler that
+    // observes it.
+    public bool IlTailCallPending { get; set; }
+
     // ----- IL choice points (Tier-1, chunk 41) -----
     //
     // A side table mapping a choice-point frame's stack index to the IL

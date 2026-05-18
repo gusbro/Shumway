@@ -100,15 +100,17 @@ public class Chunk45Tests
     [Fact]
     public void LoadBundle_PreWarm_UnsupportedPredicatesStayOnTier0()
     {
-        // Predicates outside the IL subset (a body calling a user
-        // predicate) survive the pre-warm pass cleanly — the IL store
-        // marks them unpromotable and moves on, the source still runs
-        // via Tier 0.
+        // Predicates outside the IL subset (a body with non-tail
+        // user-predicate calls — chunk 47 supports tail-call Execute
+        // but not the intermediate Call opcode) survive the pre-warm
+        // pass cleanly: the IL store marks them unpromotable, and the
+        // source still runs via Tier 0.
         var bundle = new Bundle(new[]
         {
             new BundleEntry("calls",
                 ":- public bar/0.\nbar.\n" +
-                ":- public foo/0.\nfoo :- bar."),
+                ":- public baz/0.\nbaz.\n" +
+                ":- public foo/0.\nfoo :- bar, baz."),
         });
         byte[] bytes = BundleWriter.ToBytes(bundle, includeCompiledBytecode: true);
         var engine = new PrologEngine();
@@ -116,7 +118,8 @@ public class Chunk45Tests
 
         // bar/0 IS promotable (single-clause fact, no body).
         Assert.True(engine.IlPromotion.IsPromoted(FunctorId("bar", 0)));
-        // foo/0 is NOT promotable (its body calls bar/0).
+        // foo/0 is NOT promotable (its body has a non-tail Call to
+        // bar/0 before the tail-call to baz/0).
         Assert.True(engine.IlPromotion.IsUnpromotable(FunctorId("foo", 0)));
         // Both still work via the consulted source.
         Assert.True(engine.Query("foo.").Success);
