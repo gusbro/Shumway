@@ -167,6 +167,44 @@ public sealed class Engine
     /// <summary>Size in cells of an environment frame with <paramref name="numPermanents"/> Y slots.</summary>
     public static int EnvSize(int numPermanents) => 2 + numPermanents;
 
+    /// <summary>Env trimming (chunk 57 — gate currently disabled,
+    /// see notes). Shrinks the current environment frame to keep
+    /// only <paramref name="numLivePerms"/> Y slots, reclaiming the
+    /// stack space the dead Y slots occupied. The interpreter calls
+    /// this just before dispatching a <c>Call</c> or before a
+    /// <c>call_builtin</c> runs, using the opcode's
+    /// <c>num_live_perms</c> operand to drive the trim. Dead slots
+    /// whose only remaining role is to "fill out" the frame can be
+    /// overwritten by the next stack push (a CP, an environment for
+    /// the callee, etc.) without disturbing the live Y[0..K-1].
+    ///
+    /// <para><b>Why this is a no-op for now:</b> the compile-time
+    /// analysis (ClauseCompiler.ComputeLivePermsAfterEachGoal) runs
+    /// and emits correct <c>num_live_perms</c> operands, but enabling
+    /// the runtime trim interacts badly with Tier-1 IL promotion: IL
+    /// delegates emitted before a trim point read Y slots via fixed
+    /// stack offsets and don't notice when the parent has been
+    /// shrunk between successive entries. The clean fix is either to
+    /// teach the IL compiler about trim boundaries or to suppress
+    /// trims for any procedure whose code might run as IL. That work
+    /// is deferred — keeping the analysis live + the runtime gate off
+    /// means the bytecode carries the right metadata for when the
+    /// trim is re-enabled, without paying any of its risk today.</para></summary>
+    public void TrimEnv(int numLivePerms)
+    {
+        // Compile-time analysis runs and produces a meaningful operand
+        // (see ClauseCompiler.ComputeLivePermsAfterEachGoal); the
+        // runtime trim itself stays off pending the soundness fix
+        // outlined above.
+        return;
+        if (_e < 0) return;
+        if (numLivePerms < 0) numLivePerms = 0;
+        int desired = _e + EnvSize(numLivePerms);
+        // Only ever shrink; trying to "grow" the frame post-allocate is
+        // a contract violation by the compiler.
+        if (_stackTop > desired) _stackTop = desired;
+    }
+
     /// <summary>
     /// Pushes an environment frame with <paramref name="numPermanents"/> Y slots onto the
     /// stack, saving the current <see cref="E"/> as CE and <see cref="Cp"/> as CP. The Y

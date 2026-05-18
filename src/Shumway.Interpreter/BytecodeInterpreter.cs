@@ -195,8 +195,12 @@ public sealed class BytecodeInterpreter
                 case Opcode.Call:
                 {
                     int target = BytecodeIO.ReadInt32(code, pc + 1);
-                    // pc + 5 holds num_live_perms (informational, used by env trimming
-                    // in a future chunk). Skip for now.
+                    int numLivePerms = BytecodeIO.ReadInt32(code, pc + 5);
+                    // Env trimming (chunk 57): shrink the current frame to
+                    // num_live_perms Y slots before dispatching, so the callee's
+                    // pushes (CP, allocate) sit just above the live region of
+                    // the parent frame.
+                    _engine.TrimEnv(numLivePerms);
                     _engine.SetCp(pc + OpcodeTable.Get(Opcode.Call).Size);
                     _engine.SetB0(_engine.B);   // capture _b at procedure entry for neck_cut
                     DispatchToTier1OrBytecode(target);
@@ -813,9 +817,18 @@ public sealed class BytecodeInterpreter
                 case Opcode.CallBuiltin:
                 {
                     int builtinId = BytecodeIO.ReadInt32(code, pc + 1);
-                    // pc + 5 holds num_live_perms — unused today (reserved for
-                    // future env trimming, like the regular Call opcode).
+                    int numLivePerms = BytecodeIO.ReadInt32(code, pc + 5);
                     var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+                    // Env trimming (chunk 57): shrink the current frame BEFORE
+                    // the builtin runs, so any choice point the builtin pushes
+                    // (e.g. multi-solution call/N, non-deterministic
+                    // append/atom_concat splits) lands at the trimmed _stackTop
+                    // and isn't overwritten by a post-Impl trim. Trimming
+                    // before is safe because the builtin reads its arguments
+                    // from X registers — Y-slot reads from this frame happen
+                    // in the get_value_y / put_value_y instructions that
+                    // precede this call_builtin in source order.
+                    _engine.TrimEnv(numLivePerms);
                     if (!entry.Impl(_engine))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;

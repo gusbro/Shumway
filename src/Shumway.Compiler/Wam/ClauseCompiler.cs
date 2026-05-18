@@ -156,6 +156,13 @@ public sealed class ClauseCompiler
         PreserveClobberedHeadVars(state, goals);
 
         // ----- Body goals -----
+        // Per-call env trimming (chunk 57): for each Call / CallBuiltin
+        // emission, compute how many Y slots are still live AFTER the
+        // call returns. The interpreter trims the frame accordingly so
+        // subsequent CPs / sub-frames pack tightly. The vector is
+        // indexed by goal position.
+        int[] liveAfter = ComputeLivePermsAfterEachGoal(
+            goals, state.Ys, cutSlot, state.PermanentCount);
         if (goals.Count == 0)
         {
             // Pure fact / trivial-body rule.
@@ -189,7 +196,7 @@ public sealed class ClauseCompiler
                 }
                 else
                 {
-                    CompileBodyGoal(state, goal, isLast, needFrame);
+                    CompileBodyGoal(state, goal, isLast, needFrame, liveAfter[i]);
                 }
             }
         }
@@ -576,7 +583,7 @@ public sealed class ClauseCompiler
     // Body compilation
     // ============================================================================
 
-    private void CompileBodyGoal(CompileState s, Term goal, bool isLast, bool hasFrame)
+    private void CompileBodyGoal(CompileState s, Term goal, bool isLast, bool hasFrame, int livePermsAfter)
     {
         // Decompose into functor name + args.
         string fName;
@@ -609,7 +616,7 @@ public sealed class ClauseCompiler
         // goal path is just "call_builtin; (deallocate; ) proceed".
         if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out int builtinId))
         {
-            s.Emitter.EmitCallBuiltin(builtinId, s.PermanentCount);
+            s.Emitter.EmitCallBuiltin(builtinId, livePermsAfter);
             if (isLast)
             {
                 if (hasFrame) s.Emitter.EmitDeallocate();
@@ -630,11 +637,64 @@ public sealed class ClauseCompiler
         else
         {
             int callPos = s.Emitter.Position;
-            // num_live_perms — passed informationally so the env trimming pass
-            // (a future optimisation) can shrink the frame. For now we always
-            // pass the full count; the interpreter ignores it.
-            s.Emitter.EmitCall(targetAddress: 0, numLivePermanents: s.PermanentCount);
+            s.Emitter.EmitCall(targetAddress: 0, numLivePermanents: livePermsAfter);
             s.CallSites.Add(new CallSite(callPos, functorId, IsExecute: false));
+        }
+    }
+
+    /// <summary>For each body-goal position <c>i</c>, computes how many Y
+    /// slots are still live <em>after</em> goal <c>i</c> completes — i.e.
+    /// referenced by any later goal. The result is one more than the
+    /// highest Y index used in <c>goals[i+1..]</c> (or 0 when no later
+    /// goal touches any permanent). Walking right-to-left in a single
+    /// pass keeps the computation linear in clause length.
+    ///
+    /// <para>The deep-cut Y slot (if one was allocated) counts as a
+    /// "permanent" for trimming purposes: it must survive every call
+    /// up to the deep <c>!</c> that reads it. <paramref name="cutSlot"/>
+    /// is the Y index of that slot when applicable, or -1 when there's
+    /// no deep cut.</para></summary>
+    private static int[] ComputeLivePermsAfterEachGoal(
+        List<Term> goals, IReadOnlyDictionary<string, int> ys,
+        int cutSlot, int totalPerms)
+    {
+        int n = goals.Count;
+        var result = new int[n];
+        int maxLiveYIdx = -1;
+        for (int i = n - 1; i >= 0; i--)
+        {
+            // result[i] is the live count AFTER goal i, so it reflects
+            // accumulated uses from goals[i+1..n-1] only.
+            result[i] = Math.Min(maxLiveYIdx + 1, totalPerms);
+            // Now fold in goal[i]'s own usage so result[i-1] sees it.
+            if (goals[i] is AtomTerm { Name: "!" })
+            {
+                // Deep cut at position > 0 reads Y[cutSlot]; neck cut at
+                // position 0 reads _b0 directly and doesn't touch any Y.
+                if (i > 0 && cutSlot >= 0 && cutSlot > maxLiveYIdx)
+                    maxLiveYIdx = cutSlot;
+            }
+            else
+            {
+                UpdateMaxLiveYIdxFromTerm(goals[i], ys, ref maxLiveYIdx);
+            }
+        }
+        return result;
+    }
+
+    private static void UpdateMaxLiveYIdxFromTerm(
+        Term t, IReadOnlyDictionary<string, int> ys, ref int maxYIdx)
+    {
+        switch (t)
+        {
+            case VarTerm v:
+                if (ys.TryGetValue(v.Name, out int idx) && idx > maxYIdx)
+                    maxYIdx = idx;
+                break;
+            case CompoundTerm c:
+                foreach (Term arg in c.Args)
+                    UpdateMaxLiveYIdxFromTerm(arg, ys, ref maxYIdx);
+                break;
         }
     }
 
