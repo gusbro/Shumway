@@ -167,41 +167,39 @@ public sealed class Engine
     /// <summary>Size in cells of an environment frame with <paramref name="numPermanents"/> Y slots.</summary>
     public static int EnvSize(int numPermanents) => 2 + numPermanents;
 
-    /// <summary>Env trimming (chunk 57 — gate currently disabled,
-    /// see notes). Shrinks the current environment frame to keep
-    /// only <paramref name="numLivePerms"/> Y slots, reclaiming the
-    /// stack space the dead Y slots occupied. The interpreter calls
-    /// this just before dispatching a <c>Call</c> or before a
-    /// <c>call_builtin</c> runs, using the opcode's
-    /// <c>num_live_perms</c> operand to drive the trim. Dead slots
-    /// whose only remaining role is to "fill out" the frame can be
-    /// overwritten by the next stack push (a CP, an environment for
-    /// the callee, etc.) without disturbing the live Y[0..K-1].
+    /// <summary>Env trimming (chunk 57 / chunk 61 — gate disabled).
+    /// Would shrink the current environment frame to keep only
+    /// <paramref name="numLivePerms"/> Y slots, reclaiming the stack
+    /// space the dead slots occupied. The compile-time analysis side
+    /// (<c>ClauseCompiler.ComputeLivePermsAfterEachGoal</c>) ships the
+    /// right <c>num_live_perms</c> operand on every Call /
+    /// CallBuiltin, so the bytecode is ready for the day the runtime
+    /// gate flips on.
     ///
-    /// <para><b>Why this is a no-op for now:</b> the compile-time
-    /// analysis (ClauseCompiler.ComputeLivePermsAfterEachGoal) runs
-    /// and emits correct <c>num_live_perms</c> operands, but enabling
-    /// the runtime trim interacts badly with Tier-1 IL promotion: IL
-    /// delegates emitted before a trim point read Y slots via fixed
-    /// stack offsets and don't notice when the parent has been
-    /// shrunk between successive entries. The clean fix is either to
-    /// teach the IL compiler about trim boundaries or to suppress
-    /// trims for any procedure whose code might run as IL. That work
-    /// is deferred — keeping the analysis live + the runtime gate off
-    /// means the bytecode carries the right metadata for when the
-    /// trim is re-enabled, without paying any of its risk today.</para></summary>
+    /// <para><b>Why it stays disabled:</b> enabling the runtime trim
+    /// deadlocks tests in <c>Chunk52Tests</c> that force-promote
+    /// predicates to Tier-1 IL via <c>IlPromotion.Threshold = 1</c>.
+    /// The IL compiler emits Y reads at fixed <c>_e + 2 + slot</c>
+    /// offsets and doesn't notice when a sibling builtin call's trim
+    /// has shrunk <c>_stackTop</c> below where a subsequent push
+    /// (a CP, a callee env) would land — the push overwrites a Y
+    /// slot the IL still considers live, and the next IL re-entry
+    /// reads back garbage. Chunk 61 investigated the gate and
+    /// confirmed the failure is reproducible; a clean enablement
+    /// needs the IL compiler to either (a) emit Y reads through a
+    /// trim-aware accessor, or (b) opt out of trim emission for any
+    /// procedure whose body may run as IL. Both are larger than this
+    /// chunk's scope and land as Phase-2 work.</para></summary>
     public void TrimEnv(int numLivePerms)
     {
-        // Compile-time analysis runs and produces a meaningful operand
-        // (see ClauseCompiler.ComputeLivePermsAfterEachGoal); the
-        // runtime trim itself stays off pending the soundness fix
-        // outlined above.
+        // Gate stays off — see the XML doc above for the failure
+        // mode. The Call / CallBuiltin opcodes still pass the operand
+        // through to this method so the wiring is exercised and stays
+        // alive against compiler refactors.
         return;
         if (_e < 0) return;
         if (numLivePerms < 0) numLivePerms = 0;
         int desired = _e + EnvSize(numLivePerms);
-        // Only ever shrink; trying to "grow" the frame post-allocate is
-        // a contract violation by the compiler.
         if (_stackTop > desired) _stackTop = desired;
     }
 
