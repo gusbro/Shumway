@@ -56,6 +56,17 @@ public static class BuiltinsRegistry
         }
     }
 
+    /// <summary>Snapshot of every functor id currently bound to a builtin.
+    /// Used by <c>current_predicate/1</c>'s helper to enumerate the
+    /// builtin namespace alongside user-defined predicates.</summary>
+    public static IReadOnlyCollection<int> AllRegisteredFunctorIds()
+    {
+        lock (_lock)
+        {
+            return _byFunctorId.Keys.ToArray();
+        }
+    }
+
     /// <summary>Returns the entry for the given builtin id. The interpreter
     /// uses this on every <c>call_builtin</c> dispatch — the lookup happens
     /// once per call, no allocation.</summary>

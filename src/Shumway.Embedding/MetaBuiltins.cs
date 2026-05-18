@@ -41,9 +41,13 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("throw", 1, Throw);
         BuiltinsRegistry.Register("catch", 3, Catch);
 
-        BuiltinsRegistry.Register("clause",            2, Clause);
-        BuiltinsRegistry.Register("current_predicate", 1, CurrentPredicate);
-        BuiltinsRegistry.Register("abolish",           1, Abolish);
+        // clause/2 and current_predicate/1 are now Prolog-level predicates
+        // defined in the prelude (chunk 40). They call these helpers to
+        // bridge into the engine's clause and functor stores, then iterate
+        // via the prelude's member/2.
+        BuiltinsRegistry.Register("$all_clauses_of",            2, AllClausesOf);
+        BuiltinsRegistry.Register("$all_predicate_indicators",  1, AllPredicateIndicators);
+        BuiltinsRegistry.Register("abolish",                    1, Abolish);
 
         BuiltinsRegistry.Register("numbervars",        3, NumberVars);
         BuiltinsRegistry.Register("term_to_atom",      2, TermToAtom);
@@ -664,92 +668,87 @@ public static class MetaBuiltins
     // clause/2, current_predicate/1, abolish/1
     // ============================================================================
 
-    /// <summary><c>clause(Head, Body)</c> — succeeds with the first stored
-    /// clause whose head unifies with <c>Head</c> and body with
-    /// <c>Body</c>. Searches the dynamic store first (in assertion order)
-    /// then the static clauses of every loaded module.
+    /// <summary><c>'$all_clauses_of'(HeadPattern, Pairs)</c> — returns a
+    /// proper list of <c>Head-Body</c> pairs whose head functor matches
+    /// the <em>functor</em> of <paramref name="HeadPattern"/>. Each
+    /// returned head/body is a freshly materialised heap copy so the
+    /// caller can unify with each pair's first element (the head) and
+    /// then with the second element (the body) without sharing variable
+    /// identity between candidates.
     ///
-    /// <para>Phase-1 limitation: returns only the first match. ISO
-    /// <c>clause/2</c> is multi-solution; full backtracking through clause
-    /// candidates needs the call/N choice-point integration that's not in
-    /// v1.</para></summary>
-    public static bool Clause(Engine engine)
+    /// <para>The prelude's <c>clause/2</c> uses this helper to fan out
+    /// across candidates via <c>member/2</c>, so backtracking through
+    /// matching clauses happens via the standard WAM choice-point
+    /// machinery rather than through builtin-internal state.</para></summary>
+    public static bool AllClausesOf(Engine engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
-                "clause/2 requires the engine to be hosted by a PrologEngine.");
+                "'$all_clauses_of'/2 requires a PrologEngine host.");
 
         Term headPattern = MaterializeRegister(engine, 0);
-        int fid = ExtractCallableFunctorId(headPattern, "clause/2");
+        int fid = ExtractCallableFunctorId(headPattern, "'$all_clauses_of'/2");
 
         var candidates = new List<Clause>();
         candidates.AddRange(host.DynamicClausesFor(fid));
         candidates.AddRange(host.StaticClausesFor(fid));
 
-        foreach (var candidate in candidates)
+        // Build the list of '-/2'(Head, Body) pairs as AST terms, then
+        // materialise the whole list onto the heap in one pass — that
+        // way each candidate's variables stay independent of the others
+        // and of the caller's head pattern.
+        Term tail = new AtomTerm("[]");
+        for (int i = candidates.Count - 1; i >= 0; i--)
         {
-            // Build a wrapping `:- /2 Head Body` term so head + body share
-            // one Materialize call (var identity preserved across them).
+            var candidate = candidates[i];
             Term head = candidate.Kind == ClauseKind.Rule
                 ? ((CompoundTerm)candidate.Term).Args[0]
                 : candidate.Term;
             Term body = candidate.Kind == ClauseKind.Rule
                 ? ((CompoundTerm)candidate.Term).Args[1]
                 : new AtomTerm("true");
-            Term pair = new CompoundTerm(":-", new[] { head, body });
-
-            int savedHeapTop = engine.HeapTop;
-            int savedBindingTrail = engine.BindingTrailTop;
-            int savedExtraTrail = engine.ExtraTrailTop;
-            int savedHb = engine.Hb;
-            engine.SetHb(engine.HeapTop);
-
-            Cell wrapperCell = Materializer.MaterializeAsCell(engine, pair);
-            // wrapperCell is Cell.Ref(strBase). Args live at strBase+2 and
-            // strBase+3 (one STR + one Functor cell come first).
-            int strBase = wrapperCell.AsHeapIndex;
-            int headAddr = strBase + 2;
-            int bodyAddr = strBase + 3;
-
-            bool ok = engine.UnifyRegisterWithHeapAt(0, headAddr)
-                   && engine.UnifyRegisterWithHeapAt(1, bodyAddr);
-            if (ok)
-            {
-                engine.SetHb(savedHb);
-                return true;
-            }
-
-            engine.UnwindTrails(savedBindingTrail, savedExtraTrail);
-            engine.SetHeapTop(savedHeapTop);
-            engine.SetHb(savedHb);
+            // Pair shape `-(Head, Body)` matches how Prolog spells
+            // `H-B` after operator parsing.
+            Term pair = new CompoundTerm("-", new[] { head, body });
+            tail = new CompoundTerm(".", new[] { pair, tail });
         }
-        return false;
+        Cell listCell = Materializer.MaterializeAsCell(engine, tail);
+        return engine.UnifyRegisterWithCell(1, listCell);
     }
 
-    /// <summary><c>current_predicate(Name/Arity)</c> — Phase-1 ground-mode
-    /// only: succeeds iff a predicate with the given functor signature is
-    /// loaded (built-in, static, or dynamic). Variable-mode enumeration
-    /// would need a sub-engine wrapper around the full predicate index;
-    /// landing in a later chunk.</summary>
-    public static bool CurrentPredicate(Engine engine)
+    /// <summary><c>'$all_predicate_indicators'(List)</c> — returns a list
+    /// of <c>Name/Arity</c> terms covering every predicate the engine
+    /// knows about: builtins, dynamic functors, and static predicates
+    /// from every loaded module. The prelude's <c>current_predicate/1</c>
+    /// uses this helper to back-enumerate via <c>member/2</c>.</summary>
+    public static bool AllPredicateIndicators(Engine engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
-                "current_predicate/1 requires a PrologEngine host.");
+                "'$all_predicate_indicators'/1 requires a PrologEngine host.");
 
-        Term spec = MaterializeRegister(engine, 0);
-        if (spec is CompoundTerm c && c.Functor == "/" && c.Args.Length == 2
-            && c.Args[0] is AtomTerm name && c.Args[1] is IntTerm arity)
+        var seen = new HashSet<int>();
+        var indicators = new List<Term>();
+
+        void AddIndicator(int functorId)
         {
-            int fid = FunctorTable.Intern(
-                AtomTable.Intern(name.Name, permanent: true).Id, (int)arity.Value);
-            return host.HasPredicate(fid);
+            if (!seen.Add(functorId)) return;
+            var (atomId, arity) = FunctorTable.Lookup(functorId);
+            string name = AtomTable.GetById(atomId)?.Name ?? "?";
+            indicators.Add(new CompoundTerm("/",
+                new Term[] { new AtomTerm(name), new IntTerm(arity) }));
         }
 
-        if (spec is VarTerm)
-            throw new ShumwayPrologException(IsoError.InstantiationError());
-        throw new ShumwayPrologException(
-            IsoError.TypeError("predicate_indicator", spec));
+        foreach (int fid in BuiltinsRegistry.AllRegisteredFunctorIds())
+            AddIndicator(fid);
+        foreach (int fid in host.AllStaticAndDynamicFunctors())
+            AddIndicator(fid);
+
+        Term listTerm = new AtomTerm("[]");
+        for (int i = indicators.Count - 1; i >= 0; i--)
+            listTerm = new CompoundTerm(".", new[] { indicators[i], listTerm });
+        Cell listCell = Materializer.MaterializeAsCell(engine, listTerm);
+        return engine.UnifyRegisterWithCell(0, listCell);
     }
 
     /// <summary><c>abolish(Name/Arity)</c> — removes every asserted clause

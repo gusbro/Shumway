@@ -83,6 +83,15 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("sub_atom",     5, AtomCharBuiltins.SubAtom);
         BuiltinsRegistry.Register("atom_string",  2, AtomCharBuiltins.AtomString);
 
+        // String-oriented builtins (chunk 40).
+        BuiltinsRegistry.Register("string_length", 2, StringBuiltins.StringLength);
+        BuiltinsRegistry.Register("string_concat", 3, StringBuiltins.StringConcat);
+        BuiltinsRegistry.Register("string_chars",  2, StringBuiltins.StringChars);
+        BuiltinsRegistry.Register("string_codes",  2, StringBuiltins.StringCodes);
+        BuiltinsRegistry.Register("split_string",  4, StringBuiltins.SplitString);
+        BuiltinsRegistry.Register("upcase_atom",   2, StringBuiltins.UpcaseAtom);
+        BuiltinsRegistry.Register("downcase_atom", 2, StringBuiltins.DowncaseAtom);
+
         // Standard order of terms.
         BuiltinsRegistry.Register("compare", 3, StandardOrderBuiltins.Compare3);
         BuiltinsRegistry.Register("@<",      2, StandardOrderBuiltins.TermLess);
@@ -100,8 +109,12 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("halt", 0, ControlBuiltins.Halt0);
         BuiltinsRegistry.Register("halt", 1, ControlBuiltins.Halt1);
 
-        // List manipulation extras.
-        BuiltinsRegistry.Register("member",       2, ListBuiltins.Member);
+        // List manipulation extras. member/2 is intentionally NOT here —
+        // chunk 40 moved it to the Prolog prelude so it can enumerate
+        // solutions via standard backtracking rather than being a one-shot
+        // first-solution builtin. ListBuiltins.Member is kept as a
+        // private helper for the moment but no longer reachable from
+        // Prolog source.
         BuiltinsRegistry.Register("nth0",         3, ListBuiltins.Nth0);
         BuiltinsRegistry.Register("nth1",         3, ListBuiltins.Nth1);
         BuiltinsRegistry.Register("reverse",      2, ListBuiltins.Reverse);

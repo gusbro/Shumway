@@ -67,6 +67,12 @@ public sealed class PrologEngine
         // Meta-builtins (findall/3 etc.) live in the Embedding layer because
         // they spawn sub-PrologEngines — Builtins can't reference Embedding.
         MetaBuiltins.EnsureRegistered();
+
+        // Consult the internal prelude — Prolog-level definitions of
+        // multi-solution predicates (member/2, clause/2, current_predicate/1)
+        // that ride the standard WAM choice-point machinery instead of
+        // faking backtracking inside a single-shot builtin.
+        ConsultString(Prelude.Source);
     }
 
     /// <summary>Builds a peer <see cref="PrologEngine"/> sharing this engine's
@@ -178,6 +184,30 @@ public sealed class PrologEngine
                     int fid = FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a);
                     if (fid == functorId) yield return c;
+                }
+            }
+        }
+    }
+
+    /// <summary>Snapshot of every static and dynamic functor id across all
+    /// loaded modules. Backs the prelude's <c>current_predicate/1</c>
+    /// enumeration; the builtin namespace comes from
+    /// <see cref="Shumway.Builtins.BuiltinsRegistry.AllRegisteredFunctorIds"/>
+    /// separately so the two snapshots can be merged with deduping.</summary>
+    internal IEnumerable<int> AllStaticAndDynamicFunctors()
+    {
+        var seen = new HashSet<int>();
+        foreach (int fid in _dynamicFunctors)
+            if (seen.Add(fid)) yield return fid;
+        foreach (var manifest in _modules.Values)
+        {
+            foreach (var c in manifest.Clauses)
+            {
+                if (TryExtractHead(c, out string n, out int a))
+                {
+                    int fid = FunctorTable.Intern(
+                        AtomTable.Intern(n, permanent: true).Id, a);
+                    if (seen.Add(fid)) yield return fid;
                 }
             }
         }
