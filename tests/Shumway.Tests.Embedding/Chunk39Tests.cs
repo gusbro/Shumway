@@ -175,18 +175,20 @@ public class Chunk39Tests
     [Fact]
     public void Engine_UnpromotablePredicate_StaysOnTier0Forever()
     {
-        // A predicate whose body calls another user-defined predicate is
-        // outside the IL subset (the IL handles call_builtin but not the
-        // address-based Call/Execute for user-defined predicates yet).
-        // The store sees it once, marks it unpromotable, and never retries.
+        // A predicate whose body has a non-tail Call to a non-leaf
+        // callee — i.e. a callee whose own body has further calls or
+        // try_me_else — is outside the IL subset (the IL Call helper
+        // only handles leaf callees; chunk 50). The store sees it once,
+        // marks it unpromotable, and never retries.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
         engine.ConsultString(
             ":- public foo/0.\n" +
-            ":- public bar/0.\n" +
-            ":- public baz/0.\n" +
-            "bar. baz.\n" +
-            "foo :- bar, baz.\n");
+            ":- public mid/0.\n" +
+            ":- public deep/0.\n" +
+            "deep.\n" +
+            "mid :- deep, deep.\n" +    // mid has a non-tail body call → not leaf
+            "foo :- mid, deep.\n");     // foo calls mid (non-leaf) before its tail call
         for (int i = 0; i < 5; i++) engine.Query("foo.");
         int fid = FunctorId("foo", 0);
         Assert.True(engine.IlPromotion.IsUnpromotable(fid));

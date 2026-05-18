@@ -792,6 +792,11 @@ public sealed class PrologEngine
             // stable functor-id lookup instead of an embedded address
             // that would only be valid for one query's linked layout.
             CurrentFunctorAddresses = linkResult.Addresses,
+            // String literal pool for IL-emitted get_pstr/put_pstr
+            // (chunk 50) and the linked program byte array for the
+            // IL Call re-entry helper.
+            CurrentStringLiterals = module.StringLiterals,
+            CurrentProgram = program,
         };
         var interp = new BytecodeInterpreter(
             engine, module.StringLiterals, module.FloatLiterals,
@@ -804,6 +809,9 @@ public sealed class PrologEngine
         // wants.
         interp.Tier1Dispatcher = new Tier1DispatcherAdapter(
             IlPromotion, linkResult.PredicatesByAddress);
+        // IL Call (chunk 50): runs a sub-predicate synchronously by
+        // re-entering the bytecode interpreter on the linked program.
+        engine.IlSubroutineRunner = target => interp.RunSubroutine(program, target);
 
         int[] varHeapIndices = new int[varNames.Count];
         for (int i = 0; i < varNames.Count; i++)

@@ -763,6 +763,28 @@ public sealed class Engine
     // for one query's linked layout).
     public IReadOnlyDictionary<int, int>? CurrentFunctorAddresses { get; set; }
 
+    /// <summary>Per-query string literal pool. Set by the embedding
+    /// layer at query setup so IL-emitted <c>get_pstr</c> / <c>put_pstr</c>
+    /// opcodes (chunk 50) can resolve a literal id to its string at
+    /// runtime — same lookup the bytecode interpreter does, but
+    /// accessible from the Engine surface so Tier-1 IL doesn't need
+    /// to carry its own pool reference.</summary>
+    public IReadOnlyList<string>? CurrentStringLiterals { get; set; }
+
+    /// <summary>Per-query bytecode program, set alongside
+    /// <see cref="CurrentFunctorAddresses"/>. IL-emitted <c>Call</c>
+    /// opcodes (chunk 50) re-enter the bytecode interpreter on this
+    /// program to run sub-predicates synchronously.</summary>
+    public byte[]? CurrentProgram { get; set; }
+
+    /// <summary>Synchronous subroutine runner that IL <c>Call</c>
+    /// emission delegates to (chunk 50). Takes a target bytecode
+    /// address, runs the sub-predicate to completion, returns
+    /// <c>true</c> on success / <c>false</c> on failure. The embedding
+    /// layer wires this to <see cref="BytecodeInterpreter"/>'s
+    /// re-entrant dispatch at query-setup time.</summary>
+    public Func<int, bool>? IlSubroutineRunner { get; set; }
+
     // ----- IL tail-call signal (Tier-1, chunk 47) -----
     //
     // When an IL delegate emits an Execute opcode, it sets _pc to the

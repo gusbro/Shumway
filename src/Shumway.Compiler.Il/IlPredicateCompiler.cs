@@ -117,6 +117,12 @@ public sealed class IlPredicateCompiler
         typeof(Engine).GetMethod(
             nameof(Engine.UnifyRegisterWithHeapAt),
             new[] { typeof(int), typeof(int) })!;
+    private static readonly MethodInfo IlGetPstrHelperMethod =
+        typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.GetPstr))!;
+    private static readonly MethodInfo IlPutPstrHelperMethod =
+        typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.PutPstr))!;
+    private static readonly MethodInfo IlCallHelperRunMethod =
+        typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.Call))!;
     private static readonly MethodInfo EngineAllocateHeapUnboundMethod =
         typeof(Engine).GetMethod(nameof(Engine.AllocateHeapUnbound), Type.EmptyTypes)!;
     private static readonly MethodInfo CellRefMethod =
@@ -133,11 +139,17 @@ public sealed class IlPredicateCompiler
             nameof(Shumway.Builtins.BuiltinImpl.Invoke))!;
 
     /// <summary>Returns <c>true</c> iff <paramref name="predicate"/> is in
-    /// the supported subset. See the class docstring for the catalog.</summary>
-    public bool CanCompile(CompiledPredicate predicate)
+    /// the supported subset. See the class docstring for the catalog.
+    /// <paramref name="calleeMap"/> (chunk 50) lets the check inspect
+    /// <c>Call</c> targets — an IL <c>Call</c> only compiles when the
+    /// callee is itself a "leaf" predicate (single-clause, body-less,
+    /// only head matching + proceed), so the synchronous sub-call can
+    /// never push choice points that would survive past the IL caller.</summary>
+    public bool CanCompile(CompiledPredicate predicate,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
         ArgumentNullException.ThrowIfNull(predicate);
-        if (predicate.ClauseCount == 1) return CanCompileSingleClause(predicate);
+        if (predicate.ClauseCount == 1) return CanCompileSingleClause(predicate, calleeMap);
         return TryDescribeIndexedAtomPredicate(predicate, out _);
     }
 
@@ -145,12 +157,13 @@ public sealed class IlPredicateCompiler
     /// The caller is responsible for first checking
     /// <see cref="CanCompile"/>; passing in an unsupported predicate
     /// throws <see cref="NotSupportedException"/>.</summary>
-    public PredicateDelegate Compile(CompiledPredicate predicate)
+    public PredicateDelegate Compile(CompiledPredicate predicate,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
         ArgumentNullException.ThrowIfNull(predicate);
         if (predicate.ClauseCount == 1)
         {
-            if (!CanCompileSingleClause(predicate))
+            if (!CanCompileSingleClause(predicate, calleeMap))
                 throw new NotSupportedException(
                     $"Single-clause predicate (fid={predicate.FunctorId}) is outside the IL subset.");
             return CompileSingleClause(predicate);
@@ -166,7 +179,8 @@ public sealed class IlPredicateCompiler
     // Shape 1: single-clause facts
     // ============================================================================
 
-    private static bool CanCompileSingleClause(CompiledPredicate predicate)
+    private static bool CanCompileSingleClause(CompiledPredicate predicate,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
     {
         byte[] code = predicate.Bytecode;
         int pc = 0;
@@ -186,6 +200,21 @@ public sealed class IlPredicateCompiler
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
+            if (op == Opcode.Call)
+            {
+                // Non-tail Call: only safe when the callee can't push
+                // choice points (chunk 50). The conservative check is
+                // "callee is a leaf predicate": single-clause, body-less,
+                // only head matching + proceed. Without a calleeMap we
+                // can't verify the callee, so reject defensively.
+                if (calleeMap is null) return false;
+                int siteFid = FindCallSiteFunctorId(predicate.CallSites, pc);
+                if (siteFid < 0) return false;
+                if (!calleeMap.TryGetValue(siteFid, out var callee)) return false;
+                if (!IsLeafPredicate(callee)) return false;
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
             if (IsSupportedOpcode(op))
             {
                 pc += OpcodeTable.Get(op).Size;
@@ -201,6 +230,58 @@ public sealed class IlPredicateCompiler
         }
         return sawTerminator;
     }
+
+    private static int FindCallSiteFunctorId(
+        IReadOnlyList<CallSite> sites, int opcodeOffset)
+    {
+        for (int i = 0; i < sites.Count; i++)
+            if (sites[i].OpcodeOffset == opcodeOffset) return sites[i].CalleeFunctorId;
+        return -1;
+    }
+
+    /// <summary>A "leaf" predicate is a single-clause predicate whose
+    /// body is purely head matching + a trailing proceed — no body
+    /// calls, no cut, no allocate. Calling it can't push choice points
+    /// (no try_me_else) and can't escape with a tail call (no Execute
+    /// / Call). The IL <c>Call</c> emission relies on this so the
+    /// sub-call always runs to completion in one shot.</summary>
+    private static bool IsLeafPredicate(CompiledPredicate pred)
+    {
+        if (pred.ClauseCount != 1) return false;
+        byte[] code = pred.Bytecode;
+        int pc = 0;
+        bool sawProceed = false;
+        while (pc < code.Length)
+        {
+            var op = (Opcode)code[pc];
+            if (op == Opcode.Proceed) { sawProceed = true; pc += 1; continue; }
+            if (IsHeadMatchingOpcode(op))
+            {
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            return false;
+        }
+        return sawProceed;
+    }
+
+    private static bool IsHeadMatchingOpcode(Opcode op) => op switch
+    {
+        Opcode.GetAtom => true,
+        Opcode.GetInteger => true,
+        Opcode.GetNil => true,
+        Opcode.GetValueX => true,
+        Opcode.GetVariableX => true,
+        Opcode.GetStructure => true,
+        Opcode.GetList => true,
+        Opcode.UnifyAtom => true,
+        Opcode.UnifyInteger => true,
+        Opcode.UnifyNil => true,
+        Opcode.UnifyVariableX => true,
+        Opcode.UnifyValueX => true,
+        Opcode.UnifyVoid => true,
+        _ => false,
+    };
 
     /// <summary>Catalog of opcodes that <see cref="EmitClauseBody"/>
     /// knows how to translate to IL. Excludes the control-flow tail
@@ -243,6 +324,10 @@ public sealed class IlPredicateCompiler
         // List head matching (chunk 49).
         Opcode.GetList => true,
         Opcode.PutList => true,
+        // PSTR + Call (chunk 50).
+        Opcode.GetPstr => true,
+        Opcode.PutPstr => true,
+        Opcode.Call => true,
         _ => false,
     };
 
@@ -633,6 +718,71 @@ public sealed class IlPredicateCompiler
                 emit.LoadArgument(0);
                 emit.LoadConstant(arg);
                 emit.Call(EnginePutListMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.GetPstr)
+            {
+                int literalId = BytecodeIO.ReadInt32(code, pc + 1);
+                int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                emit.LoadArgument(0);
+                emit.LoadConstant(literalId);
+                emit.LoadConstant(arg);
+                emit.Call(IlGetPstrHelperMethod);
+                emit.BranchIfFalse(failLabel);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.PutPstr)
+            {
+                int literalId = BytecodeIO.ReadInt32(code, pc + 1);
+                int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                emit.LoadArgument(0);
+                emit.LoadConstant(literalId);
+                emit.LoadConstant(arg);
+                emit.Call(IlPutPstrHelperMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.Call)
+            {
+                // Non-tail Call. The IL hands off to a runtime helper
+                // that re-enters the bytecode interpreter at the callee
+                // synchronously. CanCompile restricts this to callees
+                // that are single-clause + body-less (or whose body is
+                // purely the IL-safe subset with no further Call/Execute),
+                // so no choice points can survive the sub-call and the
+                // sentinel-Cp trick stays safe.
+                int siteFunctorId = -1;
+                for (int i = 0; i < callSites.Count; i++)
+                {
+                    if (callSites[i].OpcodeOffset == pc)
+                    {
+                        siteFunctorId = callSites[i].CalleeFunctorId;
+                        break;
+                    }
+                }
+                if (siteFunctorId < 0)
+                    throw new InvalidOperationException(
+                        $"Call opcode at pc={pc} has no matching call site in the predicate's metadata.");
+                // engine.SetCp(pcAfterCall)   — pcAfterCall is the saved
+                // continuation. For IL we don't have a bytecode address
+                // to set Cp to; the sub-call returns synchronously via
+                // the helper, so we leave Cp alone (the inherited Cp from
+                // the outer caller is still correct after we return).
+                // Actually we do need to set B0 = B so the callee sees a
+                // proper procedure entry.
+                emit.LoadArgument(0);
+                emit.LoadArgument(0);
+                emit.Call(EngineBGetter);
+                emit.Call(EngineSetB0Method);
+                // engine.SetPc(IlCallHelper.Resolve(engine, fid));
+                // bool ok = IlCallHelper.Run(engine);
+                // if (!ok) goto fail;
+                emit.LoadArgument(0);
+                emit.LoadConstant(siteFunctorId);
+                emit.Call(IlCallHelperRunMethod);
+                emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }

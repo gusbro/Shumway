@@ -21,6 +21,7 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
 {
     private readonly IlPromotionStore _store;
     private readonly IReadOnlyDictionary<int, CompiledPredicate> _predicatesByAddress;
+    private readonly Dictionary<int, CompiledPredicate> _calleeMap;
 
     public Tier1DispatcherAdapter(
         IlPromotionStore store,
@@ -28,6 +29,13 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
     {
         _store = store;
         _predicatesByAddress = predicatesByAddress;
+        // Build a functor-id-keyed view so IL CanCompile can inspect
+        // callees by id (chunk 50). predicatesByAddress is keyed by
+        // bytecode address; the same predicate appears under each of
+        // its addresses, but the functor id is unique.
+        _calleeMap = new Dictionary<int, CompiledPredicate>(predicatesByAddress.Count);
+        foreach (var (_, pred) in predicatesByAddress)
+            _calleeMap[pred.FunctorId] = pred;
     }
 
     public Func<Engine, bool>? OnDispatch(int targetAddress)
@@ -44,8 +52,9 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
         if (existing is not null) return Wrap(existing);
 
         // Otherwise let the store decide whether the counter has crossed
-        // the threshold and a compile should fire now.
-        var fresh = _store.RecordInvocation(functorId, pred);
+        // the threshold and a compile should fire now. Hand the
+        // callee map through so IL Call eligibility can be evaluated.
+        var fresh = _store.RecordInvocation(functorId, pred, _calleeMap);
         return fresh is null ? null : Wrap(fresh);
     }
 

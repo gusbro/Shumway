@@ -49,7 +49,8 @@ public sealed class IlPromotionStore
     /// delegate is registered and returned. Returns <c>null</c> in every
     /// other case (under-threshold, already promoted, or outside the
     /// IL subset).</summary>
-    public PredicateDelegate? RecordInvocation(int functorId, CompiledPredicate predicate)
+    public PredicateDelegate? RecordInvocation(int functorId, CompiledPredicate predicate,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
         if (Threshold <= 0) return null;
         if (_delegates.ContainsKey(functorId)) return _delegates[functorId];
@@ -66,13 +67,13 @@ public sealed class IlPromotionStore
 
         if (count < Threshold) return null;
 
-        if (!_compiler.CanCompile(predicate))
+        if (!_compiler.CanCompile(predicate, calleeMap))
         {
             _unpromotable.Add(functorId);
             return null;
         }
 
-        var del = _compiler.Compile(predicate);
+        var del = _compiler.Compile(predicate, calleeMap);
         _delegates[functorId] = del;
         return del;
     }
@@ -94,7 +95,8 @@ public sealed class IlPromotionStore
     /// going through the counter, returning the resulting delegate on
     /// success. Useful for warm-up paths (e.g. AOT bundles) that want
     /// hot predicates IL-compiled before the first query.</summary>
-    public PredicateDelegate? Warm(int functorId, CompiledPredicate predicate)
+    public PredicateDelegate? Warm(int functorId, CompiledPredicate predicate,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
         if (_delegates.TryGetValue(functorId, out var existing)) return existing;
         if (_unpromotable.Contains(functorId)) return null;
@@ -103,12 +105,12 @@ public sealed class IlPromotionStore
             _unpromotable.Add(functorId);
             return null;
         }
-        if (!_compiler.CanCompile(predicate))
+        if (!_compiler.CanCompile(predicate, calleeMap))
         {
             _unpromotable.Add(functorId);
             return null;
         }
-        var del = _compiler.Compile(predicate);
+        var del = _compiler.Compile(predicate, calleeMap);
         _delegates[functorId] = del;
         return del;
     }

@@ -111,6 +111,40 @@ public sealed class BytecodeInterpreter
         catch (TopLevelFailure) { return InterpreterResult.Failed; }
     }
 
+    /// <summary>Synchronous sub-predicate dispatch (chunk 50): saves
+    /// the current Pc / Cp, sets Cp to the sub-routine sentinel
+    /// (any negative value), points Pc at <paramref name="target"/>,
+    /// and runs Dispatch until the sub-predicate's <c>proceed</c> sets
+    /// Pc=Cp=sentinel which trips <c>Proceed</c>'s "returned past the
+    /// top" early exit. Returns <c>true</c> on the sub-predicate's
+    /// success / <c>false</c> on failure.
+    ///
+    /// <para>The IL <c>Call</c> emission's CanCompile only accepts
+    /// callees that are leaf predicates (single-clause body-less head
+    /// matching), so the sub-predicate never pushes choice points — the
+    /// sentinel trick is safe (no later backtrack restores the sentinel
+    /// as the saved Cp of a still-active CP).</para></summary>
+    public bool RunSubroutine(byte[] code, int target)
+    {
+        ArgumentNullException.ThrowIfNull(code);
+        int savedPc = _engine.P;
+        int savedCp = _engine.Cp;
+        _engine.SetCp(SubroutineSentinelCp);
+        _engine.SetPc(target);
+        InterpreterResult result;
+        try { result = Dispatch(code); }
+        catch (TopLevelFailure) { result = InterpreterResult.Failed; }
+        _engine.SetPc(savedPc);
+        _engine.SetCp(savedCp);
+        return result == InterpreterResult.Halted;
+    }
+
+    /// <summary>Cp sentinel used by <see cref="RunSubroutine"/>. Any
+    /// negative value works because <c>Proceed</c> already returns
+    /// <see cref="InterpreterResult.Halted"/> when Cp &lt; 0; we pick
+    /// a distinctive value to make stack-traces friendlier.</summary>
+    public const int SubroutineSentinelCp = -2;
+
     /// <summary>
     /// Forces a failure at the current execution point and runs the dispatch
     /// loop until it halts or runs out of choice points. The standard use is
