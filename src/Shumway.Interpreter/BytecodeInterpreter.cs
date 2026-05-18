@@ -995,6 +995,7 @@ public sealed class BytecodeInterpreter
     /// without bouncing through bytecode (chunk 47).</summary>
     private void DispatchToTier1OrBytecode(int target)
     {
+
         while (true)
         {
             var ilFn = Tier1Dispatcher?.OnDispatch(target);

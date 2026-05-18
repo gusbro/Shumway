@@ -785,6 +785,32 @@ public sealed class Engine
     /// re-entrant dispatch at query-setup time.</summary>
     public Func<int, bool>? IlSubroutineRunner { get; set; }
 
+    /// <summary>Walks the environment-frame chain starting at the
+    /// current frame, yielding each frame's saved return address
+    /// (<c>CP</c>) — the bytecode location the caller will resume at
+    /// when the current procedure proceeds. The embedding layer
+    /// translates these to predicate names via the per-query address
+    /// map to assemble a stack trace at error reporting time
+    /// (chunk 51).</summary>
+    public IEnumerable<int> EnumerateCallReturnAddresses()
+    {
+        // The first frame to surface is the IMMEDIATE return target —
+        // _cp is the caller's "next instruction after Call". After that
+        // we walk env frames; each frame stores the *caller's* CP at
+        // EnvCpOffset, and EnvCeOffset chains back to the next frame
+        // up the call tree.
+        if (_cp >= 0) yield return _cp;
+        int e = _e;
+        while (e >= 0)
+        {
+            int cp = (int)_stack[e + EnvCpOffset].Data;
+            if (cp >= 0 && cp != _cp) yield return cp;
+            int prevE = (int)_stack[e + EnvCeOffset].Data;
+            if (prevE == e || prevE < 0) yield break;
+            e = prevE;
+        }
+    }
+
     // ----- IL tail-call signal (Tier-1, chunk 47) -----
     //
     // When an IL delegate emits an Execute opcode, it sets _pc to the

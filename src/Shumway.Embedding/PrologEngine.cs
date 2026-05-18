@@ -59,6 +59,25 @@ public sealed class PrologEngine
     /// <c>:- option(...)</c> directives may surface a friendlier knob.</summary>
     public IlPromotionStore IlPromotion { get; } = new();
 
+    /// <summary>Pre-decoded compiled modules from any bundle loaded
+    /// with a <see cref="BundleEntry.CompiledBytecode"/> blob
+    /// (chunk 38 / chunk 45). Future runtime paths (chunk 51 onward)
+    /// can consult this cache to skip the WAM compile step entirely
+    /// when the consulted source matches a precompiled module — for
+    /// now it surfaces purely as a diagnostic property.</summary>
+    public IReadOnlyDictionary<string, Shumway.Compiler.Wam.CompiledModule> PrecompiledModules
+        => _precompiledModules;
+    private readonly Dictionary<string, Shumway.Compiler.Wam.CompiledModule> _precompiledModules = new();
+
+    /// <summary>Snapshot of the most recent query's call stack as a
+    /// list of <c>Name/Arity</c> predicate indicators (chunk 51).
+    /// Captured automatically when a runtime error escapes; available
+    /// via <see cref="ShumwayPrologException.StackTrace"/>.</summary>
+    public IReadOnlyList<(string Name, int Arity)> LastErrorStackTrace { get; private set; }
+        = Array.Empty<(string, int)>();
+
+    private IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? _currentPredicatesByAddress;
+
     public PrologEngine()
     {
         // The standard builtins (=/2, ==/2, etc.) need to be registered before
@@ -335,11 +354,15 @@ public sealed class PrologEngine
         // CompiledModule and try to install Tier-1 IL delegates for every
         // predicate the IL compiler can handle. Predicates outside the
         // subset stay on Tier 0; the existing counter still works for
-        // anything new the loaded blob hasn't covered.
+        // anything new the loaded blob hasn't covered. The decoded
+        // module is also stashed on PrecompiledModules so callers can
+        // see what was warmed and so future chunks can skip the WAM
+        // compile path entirely.
         foreach (var entry in bundle.Entries)
         {
             if (entry.CompiledBytecode is null) continue;
             var module = CompiledModuleCodec.Decode(entry.CompiledBytecode);
+            _precompiledModules[entry.ModuleName] = module;
             foreach (var pred in module.Predicates)
                 IlPromotion.Warm(pred.FunctorId, pred);
         }
@@ -357,6 +380,59 @@ public sealed class PrologEngine
         var setup = SetupQueryFromTerm(goal);
         return RunIteration(this, setup.Program, setup.VarNames, setup.VarHeapIndices,
             setup.Engine, setup.Interp);
+    }
+
+    /// <summary>Translates each address in <paramref name="addresses"/>
+    /// to the <c>Name/Arity</c> of the predicate that *contains* it
+    /// (the largest predicate-entry address ≤ the given address) via
+    /// the current query's link-time predicates-by-address map.
+    /// Used by the runtime error path to assemble a Prolog-side stack
+    /// trace (chunk 51).</summary>
+    private IReadOnlyList<(string Name, int Arity)> ResolveAddressesToFunctors(
+        IEnumerable<int> addresses)
+    {
+        var map = _currentPredicatesByAddress;
+        if (map is null) return Array.Empty<(string, int)>();
+        // Sort predicate-entry addresses once so we can binary-search
+        // each query for its containing predicate.
+        int[] sortedEntries = map.Keys.OrderBy(a => a).ToArray();
+        var result = new List<(string, int)>();
+        var seen = new HashSet<int>();
+        foreach (int addr in addresses)
+        {
+            int idx = Array.BinarySearch(sortedEntries, addr);
+            if (idx < 0) idx = ~idx - 1;
+            if (idx < 0) continue;
+            int entryAddr = sortedEntries[idx];
+            if (!seen.Add(entryAddr)) continue;
+            var pred = map[entryAddr];
+            var (atomId, arity) = FunctorTable.Lookup(pred.FunctorId);
+            string name = AtomTable.GetById(atomId)?.Name ?? "?";
+            // Hide the synthetic __query__ predicate from user-visible
+            // stack traces — it's an implementation detail of how the
+            // engine wraps queries in a top-level clause.
+            if (name == "__query__") continue;
+            result.Add((name, arity));
+        }
+        return result;
+    }
+
+    /// <summary>Captures the current call stack as a list of
+    /// <c>Name/Arity</c> entries — the innermost active predicate is
+    /// at index 0, its caller at index 1, and so on. Exposed for
+    /// debugging and used internally to populate
+    /// <see cref="LastErrorStackTrace"/> when a runtime error escapes
+    /// (chunk 51).</summary>
+    private IReadOnlyList<(string Name, int Arity)> CaptureStackTrace(Engine engine)
+    {
+        // Innermost address: the predicate the engine's PC is sitting
+        // inside. Walk the env chain via the engine helper for the
+        // ancestors.
+        var addresses = new List<int>();
+        addresses.Add(engine.P);
+        foreach (int retAddr in engine.EnumerateCallReturnAddresses())
+            addresses.Add(retAddr);
+        return ResolveAddressesToFunctors(addresses);
     }
 
     /// <summary>Drives the interpreter's run / backtrack loop and yields a
@@ -377,12 +453,16 @@ public sealed class PrologEngine
         bool halted = false;
         try { result = interp.Run(program, 0); }
         catch (PrologHaltException hex) { halted = true; host.LastHaltExitCode = hex.ExitCode; result = InterpreterResult.Failed; }
+        catch (ShumwayPrologException) { host.LastErrorStackTrace = host.CaptureStackTrace(engine); throw; }
+        catch (PrologRuntimeException) { host.LastErrorStackTrace = host.CaptureStackTrace(engine); throw; }
 
         while (!halted && result == InterpreterResult.Halted)
         {
             yield return BuildSolution(varNames, varHeapIndices, engine);
             try { result = interp.Backtrack(program); }
             catch (PrologHaltException hex) { halted = true; host.LastHaltExitCode = hex.ExitCode; break; }
+            catch (ShumwayPrologException) { host.LastErrorStackTrace = host.CaptureStackTrace(engine); throw; }
+            catch (PrologRuntimeException) { host.LastErrorStackTrace = host.CaptureStackTrace(engine); throw; }
         }
     }
 
@@ -812,6 +892,10 @@ public sealed class PrologEngine
         // IL Call (chunk 50): runs a sub-predicate synchronously by
         // re-entering the bytecode interpreter on the linked program.
         engine.IlSubroutineRunner = target => interp.RunSubroutine(program, target);
+        // Remember the per-query address → predicate map so error
+        // reporting (chunk 51) can translate the engine's PC and env-
+        // chain return addresses into Name/Arity stack frames.
+        _currentPredicatesByAddress = linkResult.PredicatesByAddress;
 
         int[] varHeapIndices = new int[varNames.Count];
         for (int i = 0; i < varNames.Count; i++)
