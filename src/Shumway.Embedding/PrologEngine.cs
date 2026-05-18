@@ -701,6 +701,15 @@ public sealed class PrologEngine
             // implementation-defined hooks that future chunks handle.
         }
 
+        // Discontiguous enforcement (chunk 60): clauses for a given
+        // functor must appear contiguously in source unless the
+        // functor is declared :- discontiguous. We walk the just-read
+        // clauses in source order, tracking which functors have been
+        // "closed" (another functor's clauses started after them),
+        // and throw if a closed functor is revisited without a
+        // discontiguous declaration.
+        ValidateContiguity(clauses, pendingDiscontiguous);
+
         if (moduleDirectiveSeen)
         {
             // Explicit module: replace any previous load of this module.
@@ -726,6 +735,60 @@ public sealed class PrologEngine
             if (pendingModes is not null)
                 foreach (var (fid, modes) in pendingModes) existing.ModeDeclarations[fid] = modes;
         }
+    }
+
+    /// <summary>Enforces the contiguity rule for clauses inside a single
+    /// consulted source (chunk 60). Clauses for the same functor must
+    /// be adjacent unless the functor is declared <c>:- discontiguous</c>.
+    /// Splitting them is almost always a bug — the discontiguous
+    /// declaration is the explicit opt-in that turns the diagnostic
+    /// off for predicates that legitimately need scattered
+    /// definitions.</summary>
+    private static void ValidateContiguity(
+        IReadOnlyList<Clause> clauses, HashSet<int>? discontiguous)
+    {
+        int? currentFid = null;
+        var closed = new HashSet<int>();
+        foreach (var clause in clauses)
+        {
+            int fid = HeadFunctorIdOf(clause);
+            if (currentFid is null)
+            {
+                currentFid = fid;
+                continue;
+            }
+            if (fid == currentFid) continue;
+            // Functor changed: mark the previous one as closed.
+            closed.Add(currentFid.Value);
+            currentFid = fid;
+            if (closed.Contains(fid)
+                && (discontiguous is null || !discontiguous.Contains(fid)))
+            {
+                var (atomId, arity) = FunctorTable.Lookup(fid);
+                string functorName = AtomTable.GetById(atomId)?.Name ?? "?";
+                throw new InvalidOperationException(
+                    $"Clauses for {functorName}/{arity} are not contiguous. "
+                    + $"Either reorder them so they appear together, or add "
+                    + $":- discontiguous {functorName}/{arity}. at the top of "
+                    + "the source.");
+            }
+        }
+    }
+
+    private static int HeadFunctorIdOf(Clause clause)
+    {
+        Term head = clause.Kind == ClauseKind.Rule
+            ? ((CompoundTerm)clause.Term).Args[0]
+            : clause.Term;
+        return head switch
+        {
+            AtomTerm a => FunctorTable.Intern(
+                AtomTable.Intern(a.Name, permanent: true).Id, 0),
+            CompoundTerm c => FunctorTable.Intern(
+                AtomTable.Intern(c.Functor, permanent: true).Id, c.Args.Length),
+            _ => throw new InvalidOperationException(
+                $"Clause head must be an atom or compound, got {head.GetType().Name}."),
+        };
     }
 
     /// <summary>Matches the shape used by <c>:- discontiguous</c> and
@@ -1129,12 +1192,24 @@ public sealed class PrologEngine
             {
                 if (owner.TryGetValue(fid, out var other))
                 {
+                    // Multifile escape hatch (chunk 60): if both the
+                    // already-owning module and the current one declare
+                    // the functor :- multifile, the duplicate is
+                    // intentional. Each module's clauses live
+                    // independently; the linker concatenates them as if
+                    // they came from one source.
+                    bool bothMultifile =
+                        _modules[other].MultifileFunctors.Contains(fid)
+                        && manifest.MultifileFunctors.Contains(fid);
+                    if (bothMultifile) continue;
+
                     var (atomId, arity) = FunctorTable.Lookup(fid);
                     string functorName = AtomTable.GetById(atomId)?.Name ?? "?";
                     throw new InvalidOperationException(
                         $"Functor {functorName}/{arity} is declared :- public in both "
                         + $"module '{other}' and module '{name}'. Public predicates must "
-                        + "be unique across the engine.");
+                        + "be unique across the engine (unless both modules also "
+                        + "declare it :- multifile).");
                 }
                 owner[fid] = name;
             }
