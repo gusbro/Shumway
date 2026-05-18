@@ -106,6 +106,17 @@ public sealed class IlPredicateCompiler
         typeof(Engine).GetMethod(nameof(Engine.UnifyValueY), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineUnifyVoidMethod =
         typeof(Engine).GetMethod(nameof(Engine.UnifyVoid), new[] { typeof(int) })!;
+    // ---------- get_list / put_list / pstr (chunk 49) ----------
+    private static readonly MethodInfo EngineGetListMethod =
+        typeof(Engine).GetMethod(nameof(Engine.GetList), new[] { typeof(int) })!;
+    private static readonly MethodInfo EnginePutListMethod =
+        typeof(Engine).GetMethod(nameof(Engine.PutList), new[] { typeof(int) })!;
+    private static readonly MethodInfo EngineMakePstrMethod =
+        typeof(Engine).GetMethod(nameof(Engine.MakePstr), new[] { typeof(string) })!;
+    private static readonly MethodInfo EngineUnifyRegisterWithHeapAtMethod =
+        typeof(Engine).GetMethod(
+            nameof(Engine.UnifyRegisterWithHeapAt),
+            new[] { typeof(int), typeof(int) })!;
     private static readonly MethodInfo EngineAllocateHeapUnboundMethod =
         typeof(Engine).GetMethod(nameof(Engine.AllocateHeapUnbound), Type.EmptyTypes)!;
     private static readonly MethodInfo CellRefMethod =
@@ -229,6 +240,9 @@ public sealed class IlPredicateCompiler
         Opcode.UnifyVariableY => true,
         Opcode.UnifyValueY => true,
         Opcode.UnifyVoid => true,
+        // List head matching (chunk 49).
+        Opcode.GetList => true,
+        Opcode.PutList => true,
         _ => false,
     };
 
@@ -600,6 +614,25 @@ public sealed class IlPredicateCompiler
                 emit.LoadArgument(0);
                 emit.LoadConstant(count);
                 emit.Call(EngineUnifyVoidMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.GetList)
+            {
+                int arg = BytecodeIO.ReadInt32(code, pc + 1);
+                emit.LoadArgument(0);
+                emit.LoadConstant(arg);
+                emit.Call(EngineGetListMethod);
+                emit.BranchIfFalse(failLabel);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.PutList)
+            {
+                int arg = BytecodeIO.ReadInt32(code, pc + 1);
+                emit.LoadArgument(0);
+                emit.LoadConstant(arg);
+                emit.Call(EnginePutListMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
