@@ -144,6 +144,30 @@ public sealed class Parser
         Token tok = PeekToken();
         SourcePosition pos = tok.Position;
 
+        // Negative numeric literals — collapse `-` followed by an Integer
+        // or Float token into a single numeric term. This is what callers
+        // mean by `-1` / `-3.14` in source: an actual negative number,
+        // not the compound `-/1`. Explicit `- (3)` (with parens) still
+        // produces the compound via the standard prefix-op path below.
+        if (tok.Kind == TokenKind.Atom && tok.Text == "-")
+        {
+            Token next = PeekTokenAt(1);
+            if (next.Kind == TokenKind.Integer)
+            {
+                NextToken();   // consume '-'
+                Token numTok = NextToken();
+                builtPrec = 0;
+                return new IntTerm(-numTok.IntValue) { Position = pos };
+            }
+            if (next.Kind == TokenKind.Float)
+            {
+                NextToken();
+                Token numTok = NextToken();
+                builtPrec = 0;
+                return new FloatTerm(-numTok.FloatValue) { Position = pos };
+            }
+        }
+
         if (tok.Kind == TokenKind.Atom
             && _operators.TryGetPrefix(tok.Text, out int opPrec, out OperatorType opType)
             && opPrec <= maxPrec)

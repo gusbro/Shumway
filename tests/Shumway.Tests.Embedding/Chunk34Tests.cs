@@ -43,11 +43,14 @@ public class Chunk34Tests
     }
 
     [Fact]
-    public void WriteTerm_PrefixMinus_RendersInOperatorForm()
+    public void WriteTerm_PrefixOperatorOnNonNumeric_RendersInOperatorForm()
     {
+        // `-` applied to a non-numeric arg stays as a compound (the
+        // negative-literal collapse only fires for Integer / Float
+        // tokens), so the renderer's prefix-op path kicks in.
         var engine = WithCaptureOut(out var sw);
-        engine.Query("write_term(- 5, []).");
-        Assert.Equal("- 5", sw.ToString());
+        engine.Query("write_term(- foo, []).");
+        Assert.Equal("- foo", sw.ToString());
     }
 
     [Fact]

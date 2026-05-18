@@ -43,10 +43,31 @@ public class ParserTests
     }
 
     [Fact]
-    public void Integer_NegativeIsCompoundUnaryMinus()
+    public void Integer_NegativeLiteral_ParsesAsIntegerCell()
     {
-        // Standard ISO: -3 parses as -(3), not Integer(-3).
-        Assert.Equal(Cmp("-", Int(3)), Parse("-3"));
+        // Chunk 37: `-3` collapses to Integer(-3) instead of the compound
+        // `-(3)`. This matches what almost every Prolog system does in
+        // practice — the strict ISO reading produces a compound, but every
+        // built-in we ship (integer/1, arg/3, between/3, …) expects the
+        // numeric literal here.
+        Assert.Equal(Int(-3), Parse("-3"));
+    }
+
+    [Fact]
+    public void Integer_NegativeWithSpace_AlsoCollapses()
+    {
+        // `- 3` (with a space) is the same — the parser collapses the
+        // minus + numeric pair regardless of intervening whitespace.
+        Assert.Equal(Int(-3), Parse("- 3"));
+    }
+
+    [Fact]
+    public void Integer_ExplicitMinusCompound_StaysCompound()
+    {
+        // Explicit `-(3)` (parens after the minus) is still the unary-minus
+        // compound — the prefix-op disambiguation rule blocks the collapse
+        // when '(' follows.
+        Assert.Equal(Cmp("-", Int(3)), Parse("-(3)"));
     }
 
     [Fact]
