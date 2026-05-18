@@ -39,11 +39,19 @@ public static class Materializer
                 return Cell.Atom(AtomTable.Intern(a.Name, permanent: true).Id);
 
             case IntTerm n:
+                // 60-bit inline range: anything wider hops to the BigInteger
+                // side table so the cell still fits in 8 bytes.
                 if (n.Value < Cell.MinInt60 || n.Value > Cell.MaxInt60)
-                    throw new NotSupportedException(
-                        $"Integer {n.Value} doesn't fit in a 60-bit inline cell. "
-                        + "BigInt materialisation lands later.");
+                    return engine.MakeBigInt(new System.Numerics.BigInteger(n.Value));
                 return Cell.Int(n.Value);
+
+            case BigIntTerm bn:
+                // BigIntegers that happen to fit in the inline range collapse
+                // to Tag.Int — keeps the hot path tag-uniform for small values
+                // produced by arithmetic that *could* have stayed inline.
+                if (bn.Value >= Cell.MinInt60 && bn.Value <= Cell.MaxInt60)
+                    return Cell.Int((long)bn.Value);
+                return engine.MakeBigInt(bn.Value);
 
             case FloatTerm f:
                 return Cell.Ref(engine.MakeFloat(f.Value));

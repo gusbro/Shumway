@@ -660,9 +660,17 @@ public sealed class Engine
     /// Stores <paramref name="value"/> in the engine's BigInteger table and returns a
     /// BIGINT cell whose payload is its id. The cell is meaningful only for this engine
     /// (auxiliary tables are not shared, unlike atoms and functors).
+    ///
+    /// <para>Values that fit in the 60-bit inline range collapse to <see cref="Cell.Int"/>
+    /// instead of consuming a side-table slot. The runtime invariant is that a value
+    /// in 60-bit range is always represented as <c>Tag.Int</c>, never <c>Tag.BigInt</c>;
+    /// keeping the canonical form unique lets unification compare values by raw cell
+    /// equality without crossing tag boundaries.</para>
     /// </summary>
     public Cell MakeBigInt(BigInteger value)
     {
+        if (value >= Cell.MinInt60 && value <= Cell.MaxInt60)
+            return Cell.Int((long)value);
         int id = _bigIntTable.Count;
         _bigIntTable.Add(value);
         return Cell.BigInt(id);

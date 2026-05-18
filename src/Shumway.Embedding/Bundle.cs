@@ -16,18 +16,23 @@ public sealed class Bundle
     }
 }
 
-/// <summary>One module inside a bundle: its name and the original Prolog
-/// source for that module. The source includes its own
-/// <c>:- module(name).</c> directive (if any) so loading round-trips
-/// through the standard consult path.</summary>
+/// <summary>One module inside a bundle: its name, the original Prolog source,
+/// and an optional pre-compiled bytecode payload. The source includes its
+/// own <c>:- module(name).</c> directive (if any) so loading round-trips
+/// through the standard consult path. The compiled payload is the
+/// <see cref="CompiledModuleCodec"/> output for the module's clauses; when
+/// present, future runtime paths can use it to skip parser / compiler work
+/// at consult time.</summary>
 public sealed class BundleEntry
 {
     public string ModuleName { get; }
     public string Source { get; }
+    public byte[]? CompiledBytecode { get; }
 
-    public BundleEntry(string moduleName, string source)
+    public BundleEntry(string moduleName, string source, byte[]? compiledBytecode = null)
     {
         ModuleName = moduleName;
         Source = source;
+        CompiledBytecode = compiledBytecode;
     }
 }

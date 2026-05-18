@@ -1,3 +1,4 @@
+using System.Numerics;
 using Shumway.Core;
 
 namespace Shumway.Builtins;
@@ -6,16 +7,15 @@ namespace Shumway.Builtins;
 /// Recursive arithmetic-expression evaluator. ISO Prolog arithmetic isn't
 /// directly term-evaluating — the right-hand side of <c>is/2</c> is a term
 /// that the builtin walks, recognising specific functor names (<c>+</c>,
-/// <c>-</c>, <c>*</c>, …) as operations and integer/float cells as leaves.
-/// Variables in arithmetic position must be bound to evaluable terms,
-/// otherwise an "instantiation" error is raised.
+/// <c>-</c>, <c>*</c>, …) as operations and integer / bigint / float cells
+/// as leaves. Variables in arithmetic position must be bound to evaluable
+/// terms, otherwise an <c>instantiation_error</c> is raised.
 ///
 /// <para>The evaluator is leaf-recursive over the heap. Integer / float
 /// promotion follows ISO: any operand being a float floats the whole
-/// expression. Integer overflow throws — BigInt promotion is a future
-/// chunk. Division by zero, type errors, and instantiation errors all
-/// surface as <see cref="InvalidOperationException"/> with a clear message;
-/// a future chunk will translate them into Prolog error terms.</para>
+/// expression. <c>+</c> / <c>-</c> / <c>*</c> / unary <c>-</c> / <c>abs</c>
+/// fall back to <see cref="BigInteger"/> on long overflow; the result
+/// auto-collapses to inline range when it fits.</para>
 /// </summary>
 public static class ArithmeticEvaluator
 {
@@ -27,6 +27,7 @@ public static class ArithmeticEvaluator
         return cell.Tag switch
         {
             Tag.Int => new Number(cell.AsInt),
+            Tag.BigInt => new Number(engine.AsBigInt(cell)),
             Tag.Float => new Number(Cell.DecodeFloat(cell, engine.GetHeap(cell.FloatPairedIndex))),
             Tag.Str => EvaluateCompound(engine, cell),
             Tag.Ref => throw new PrologRuntimeException("instantiation_error"),
@@ -108,29 +109,55 @@ public static class ArithmeticEvaluator
 
     // ---------- Operations ----------
 
-    private static Number Negate(Number a) =>
-        a.IsFloat ? new Number(-a.FloatValue) : new Number(checked(-a.IntValue));
+    private static Number Negate(Number a)
+    {
+        if (a.IsFloat) return new Number(-a.FloatValue);
+        if (a.IsBig) return new Number(-a.BigValue);
+        // long.MinValue: negation overflows long but fits in BigInteger.
+        try { return new Number(checked(-a.IntValue)); }
+        catch (OverflowException) { return new Number(-(BigInteger)a.IntValue); }
+    }
 
-    private static Number Abs(Number a) =>
-        a.IsFloat ? new Number(Math.Abs(a.FloatValue))
-                  : new Number(a.IntValue < 0 ? checked(-a.IntValue) : a.IntValue);
+    private static Number Abs(Number a)
+    {
+        if (a.IsFloat) return new Number(Math.Abs(a.FloatValue));
+        if (a.IsBig) return new Number(BigInteger.Abs(a.BigValue));
+        if (a.IntValue >= 0) return a;
+        try { return new Number(checked(-a.IntValue)); }
+        catch (OverflowException) { return new Number(-(BigInteger)a.IntValue); }
+    }
 
     private static Number Add(Number a, Number b)
     {
         if (a.IsFloat || b.IsFloat) return new Number(a.AsDouble() + b.AsDouble());
-        return new Number(checked(a.IntValue + b.IntValue));
+        if (a.IsBig || b.IsBig) return new Number(a.AsBigInteger() + b.AsBigInteger());
+        try { return new Number(checked(a.IntValue + b.IntValue)); }
+        catch (OverflowException)
+        {
+            return new Number((BigInteger)a.IntValue + (BigInteger)b.IntValue);
+        }
     }
 
     private static Number Subtract(Number a, Number b)
     {
         if (a.IsFloat || b.IsFloat) return new Number(a.AsDouble() - b.AsDouble());
-        return new Number(checked(a.IntValue - b.IntValue));
+        if (a.IsBig || b.IsBig) return new Number(a.AsBigInteger() - b.AsBigInteger());
+        try { return new Number(checked(a.IntValue - b.IntValue)); }
+        catch (OverflowException)
+        {
+            return new Number((BigInteger)a.IntValue - (BigInteger)b.IntValue);
+        }
     }
 
     private static Number Multiply(Number a, Number b)
     {
         if (a.IsFloat || b.IsFloat) return new Number(a.AsDouble() * b.AsDouble());
-        return new Number(checked(a.IntValue * b.IntValue));
+        if (a.IsBig || b.IsBig) return new Number(a.AsBigInteger() * b.AsBigInteger());
+        try { return new Number(checked(a.IntValue * b.IntValue)); }
+        catch (OverflowException)
+        {
+            return new Number((BigInteger)a.IntValue * (BigInteger)b.IntValue);
+        }
     }
 
     private static Number Divide(Number a, Number b)
@@ -147,6 +174,12 @@ public static class ArithmeticEvaluator
     {
         if (a.IsFloat || b.IsFloat)
             throw new PrologRuntimeException("type_error", "integer");
+        if (a.IsBig || b.IsBig)
+        {
+            BigInteger bb = b.AsBigInteger();
+            if (bb.IsZero) throw new PrologRuntimeException("evaluation_error", "zero_divisor");
+            return new Number(a.AsBigInteger() / bb);
+        }
         if (b.IntValue == 0) throw new PrologRuntimeException("evaluation_error", "zero_divisor");
         // ISO: truncating integer division (towards zero).
         return new Number(a.IntValue / b.IntValue);
@@ -156,6 +189,15 @@ public static class ArithmeticEvaluator
     {
         if (a.IsFloat || b.IsFloat)
             throw new PrologRuntimeException("type_error", "integer");
+        if (a.IsBig || b.IsBig)
+        {
+            BigInteger bigA = a.AsBigInteger();
+            BigInteger bigB = b.AsBigInteger();
+            if (bigB.IsZero) throw new PrologRuntimeException("evaluation_error", "zero_divisor");
+            BigInteger bigR = bigA % bigB;
+            if (!bigR.IsZero && bigR.Sign != bigB.Sign) bigR += bigB;
+            return new Number(bigR);
+        }
         if (b.IntValue == 0) throw new PrologRuntimeException("evaluation_error", "zero_divisor");
         // ISO `mod`: result has the sign of the divisor.
         long r = a.IntValue % b.IntValue;
@@ -167,6 +209,12 @@ public static class ArithmeticEvaluator
     {
         if (a.IsFloat || b.IsFloat)
             throw new PrologRuntimeException("type_error", "integer");
+        if (a.IsBig || b.IsBig)
+        {
+            BigInteger bigB = b.AsBigInteger();
+            if (bigB.IsZero) throw new PrologRuntimeException("evaluation_error", "zero_divisor");
+            return new Number(a.AsBigInteger() % bigB);
+        }
         if (b.IntValue == 0) throw new PrologRuntimeException("evaluation_error", "zero_divisor");
         // ISO `rem`: result has the sign of the dividend (C's % operator).
         return new Number(a.IntValue % b.IntValue);

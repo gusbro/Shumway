@@ -24,6 +24,7 @@ public sealed class BytecodeInterpreter
     private readonly Engine _engine;
     private readonly IReadOnlyList<string> _stringLiterals;
     private readonly IReadOnlyList<double> _floatLiterals;
+    private readonly IReadOnlyList<System.Numerics.BigInteger> _bigIntLiterals;
     private readonly IReadOnlyList<SwitchTable> _switchTables;
 
     public BytecodeInterpreter(Engine engine)
@@ -44,31 +45,46 @@ public sealed class BytecodeInterpreter
     {
     }
 
-    /// <summary>Constructs an interpreter with literal pools and the
-    /// program-absolute switch table list. PSTR opcodes look up strings,
-    /// float-literal opcodes look up doubles, and <c>switch_on_atom</c> /
-    /// <c>switch_on_integer</c> / <c>switch_on_structure</c> look up
-    /// <see cref="SwitchTable"/>s. Bundles provide all three at load time;
-    /// for tests they're passed directly.</summary>
     public BytecodeInterpreter(
         Engine engine,
         IReadOnlyList<string> stringLiterals,
         IReadOnlyList<double> floatLiterals,
         IReadOnlyList<SwitchTable> switchTables)
+        : this(engine, stringLiterals, floatLiterals, switchTables,
+               Array.Empty<System.Numerics.BigInteger>())
+    {
+    }
+
+    /// <summary>Constructs an interpreter with literal pools and the
+    /// program-absolute switch table list. PSTR opcodes look up strings,
+    /// float-literal opcodes look up doubles, bigint-literal opcodes look
+    /// up BigIntegers, and <c>switch_on_atom</c> / <c>switch_on_integer</c>
+    /// / <c>switch_on_structure</c> look up <see cref="SwitchTable"/>s.
+    /// Bundles provide all four at load time; for tests they're passed
+    /// directly.</summary>
+    public BytecodeInterpreter(
+        Engine engine,
+        IReadOnlyList<string> stringLiterals,
+        IReadOnlyList<double> floatLiterals,
+        IReadOnlyList<SwitchTable> switchTables,
+        IReadOnlyList<System.Numerics.BigInteger> bigIntLiterals)
     {
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(stringLiterals);
         ArgumentNullException.ThrowIfNull(floatLiterals);
         ArgumentNullException.ThrowIfNull(switchTables);
+        ArgumentNullException.ThrowIfNull(bigIntLiterals);
         _engine = engine;
         _stringLiterals = stringLiterals;
         _floatLiterals = floatLiterals;
         _switchTables = switchTables;
+        _bigIntLiterals = bigIntLiterals;
     }
 
     public Engine Engine => _engine;
     public IReadOnlyList<string> StringLiterals => _stringLiterals;
     public IReadOnlyList<double> FloatLiterals => _floatLiterals;
+    public IReadOnlyList<System.Numerics.BigInteger> BigIntLiterals => _bigIntLiterals;
     public IReadOnlyList<SwitchTable> SwitchTables => _switchTables;
 
     /// <summary>
@@ -862,6 +878,54 @@ public sealed class BytecodeInterpreter
                     break;
                 }
 
+                // ---------- BigInteger literal opcodes ----------
+
+                case Opcode.GetBigInt:
+                {
+                    int literalId = BytecodeIO.ReadInt32(code, pc + 1);
+                    int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                    Cell bigCell = _engine.MakeBigInt(ResolveBigIntLiteral(literalId));
+                    if (!_engine.UnifyRegisterWithCell(arg, bigCell))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    _engine.AdvancePc(9);
+                    break;
+                }
+
+                case Opcode.PutBigInt:
+                {
+                    int literalId = BytecodeIO.ReadInt32(code, pc + 1);
+                    int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                    _engine.SetRegister(arg, _engine.MakeBigInt(ResolveBigIntLiteral(literalId)));
+                    _engine.AdvancePc(9);
+                    break;
+                }
+
+                case Opcode.UnifyBigInt:
+                {
+                    int literalId = BytecodeIO.ReadInt32(code, pc + 1);
+                    int ptr = _engine.UnifyPointer;
+                    Cell value = _engine.MakeBigInt(ResolveBigIntLiteral(literalId));
+                    if (_engine.WriteMode)
+                    {
+                        int idx = _engine.AllocateHeap(1);
+                        _engine.SetHeap(idx, value);
+                    }
+                    else
+                    {
+                        if (!_engine.UnifyHeapWithCell(ptr, value))
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            break;
+                        }
+                    }
+                    _engine.SetUnifyPointer(ptr + 1);
+                    _engine.AdvancePc(5);
+                    break;
+                }
+
                 default:
                     throw new NotImplementedException(
                         $"Opcode 0x{opByte:X2} ({(Opcode)opByte}) is not implemented yet. " +
@@ -915,5 +979,14 @@ public sealed class BytecodeInterpreter
                 $"Float literal id {literalId} is out of range [0, {_floatLiterals.Count}). " +
                 "Pass the float literal pool to the BytecodeInterpreter constructor.");
         return _floatLiterals[literalId];
+    }
+
+    private System.Numerics.BigInteger ResolveBigIntLiteral(int literalId)
+    {
+        if (literalId < 0 || literalId >= _bigIntLiterals.Count)
+            throw new InvalidOperationException(
+                $"BigInt literal id {literalId} is out of range [0, {_bigIntLiterals.Count}). " +
+                "Pass the BigInt literal pool to the BytecodeInterpreter constructor.");
+        return _bigIntLiterals[literalId];
     }
 }

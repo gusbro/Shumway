@@ -25,8 +25,18 @@ public readonly record struct Token(
     public long IntValue { get; init; }
     public double FloatValue { get; init; }
 
+    /// <summary>The BigInteger value for integer literals that exceed
+    /// <see cref="long"/> range. <see cref="IntValue"/> is unset in this
+    /// case; consult <see cref="HasBigValue"/> first.</summary>
+    public System.Numerics.BigInteger BigValue { get; init; }
+
+    /// <summary><c>true</c> for integer tokens whose source literal didn't
+    /// fit in a long and was therefore captured in <see cref="BigValue"/>.</summary>
+    public bool HasBigValue { get; init; }
+
     public override string ToString() => Kind switch
     {
+        TokenKind.Integer when HasBigValue => $"{Kind}({BigValue}) @ {Position}",
         TokenKind.Integer => $"{Kind}({IntValue}) @ {Position}",
         TokenKind.Float => $"{Kind}({FloatValue}) @ {Position}",
         TokenKind.Eof => $"{Kind} @ {Position}",

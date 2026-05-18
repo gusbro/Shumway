@@ -157,6 +157,8 @@ public sealed class Parser
                 NextToken();   // consume '-'
                 Token numTok = NextToken();
                 builtPrec = 0;
+                if (numTok.HasBigValue)
+                    return new BigIntTerm(-numTok.BigValue) { Position = pos };
                 return new IntTerm(-numTok.IntValue) { Position = pos };
             }
             if (next.Kind == TokenKind.Float)
@@ -207,7 +209,9 @@ public sealed class Parser
                 return new VarTerm(tok.Text) { Position = pos };
 
             case TokenKind.Integer:
-                return new IntTerm(tok.IntValue) { Position = pos };
+                return tok.HasBigValue
+                    ? new BigIntTerm(tok.BigValue) { Position = pos }
+                    : new IntTerm(tok.IntValue) { Position = pos };
 
             case TokenKind.Float:
                 return new FloatTerm(tok.FloatValue) { Position = pos };

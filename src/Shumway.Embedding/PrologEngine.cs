@@ -238,6 +238,7 @@ public sealed class PrologEngine
         {
             (AtomTerm ax, AtomTerm bx) => ax.Name == bx.Name,
             (IntTerm ax, IntTerm bx) => ax.Value == bx.Value,
+            (BigIntTerm ax, BigIntTerm bx) => ax.Value == bx.Value,
             (FloatTerm ax, FloatTerm bx) => ax.Value == bx.Value,
             (StringTerm ax, StringTerm bx) => ax.Content == bx.Content,
             (VarTerm ax, VarTerm bx) => ax.Name == bx.Name,
@@ -732,7 +733,8 @@ public sealed class PrologEngine
             Operators = new OperatorTableAdapter(_operators),
         };
         var interp = new BytecodeInterpreter(
-            engine, module.StringLiterals, module.FloatLiterals, linkResult.SwitchTables);
+            engine, module.StringLiterals, module.FloatLiterals,
+            linkResult.SwitchTables, module.BigIntLiterals);
 
         int[] varHeapIndices = new int[varNames.Count];
         for (int i = 0; i < varNames.Count; i++)

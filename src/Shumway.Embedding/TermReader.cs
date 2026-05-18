@@ -29,6 +29,7 @@ public static class TermReader
             Tag.Ref => new VarTerm($"_G{derefAddr}"),
             Tag.Atom => new AtomTerm(NameOfAtom(cell.AsAtomId)),
             Tag.Int => new IntTerm(cell.AsInt),
+            Tag.BigInt => new BigIntTerm(engine.AsBigInt(cell)),
             Tag.Float => new FloatTerm(Cell.DecodeFloat(cell, engine.GetHeap(cell.FloatPairedIndex))),
             Tag.Str => MaterializeStr(engine, cell),
             Tag.Lis => MaterializeLis(engine, cell),

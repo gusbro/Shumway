@@ -49,6 +49,21 @@ public sealed class IntTerm : Term
     public override string ToString() => Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
 }
 
+/// <summary>An integer too large for the 60-bit inline cell range. Materialised
+/// onto the heap via the engine's BigInteger side-table (<c>Tag.BigInt</c>).
+/// Surfaces at the AST layer whenever an arithmetic operation overflows
+/// <see cref="IntTerm.Value"/>'s long range or whenever the heap is read back
+/// and finds a BIGINT cell.</summary>
+public sealed class BigIntTerm : Term
+{
+    public System.Numerics.BigInteger Value { get; }
+    public BigIntTerm(System.Numerics.BigInteger value) => Value = value;
+
+    public override bool Equals(object? obj) => obj is BigIntTerm o && Value == o.Value;
+    public override int GetHashCode() => HashCode.Combine(typeof(BigIntTerm), Value);
+    public override string ToString() => Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+}
+
 public sealed class FloatTerm : Term
 {
     public double Value { get; }

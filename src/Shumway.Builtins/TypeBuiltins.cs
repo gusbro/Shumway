@@ -20,25 +20,31 @@ public static class TypeBuiltins
     /// and <c>{}</c>, which are atoms in ISO).</summary>
     public static bool IsAtom(Engine engine) => Tag0(engine) == Tag.Atom;
 
-    /// <summary><c>integer(X)</c> — X is an integer cell.</summary>
-    public static bool IsInteger(Engine engine) => Tag0(engine) == Tag.Int;
+    /// <summary><c>integer(X)</c> — X is an integer cell. Both inline ints
+    /// and BigInteger cells satisfy the predicate.</summary>
+    public static bool IsInteger(Engine engine)
+    {
+        var t = Tag0(engine);
+        return t == Tag.Int || t == Tag.BigInt;
+    }
 
     /// <summary><c>float(X)</c> — X is a float cell.</summary>
     public static bool IsFloat(Engine engine) => Tag0(engine) == Tag.Float;
 
-    /// <summary><c>number(X)</c> — X is either an integer or a float.</summary>
+    /// <summary><c>number(X)</c> — X is either an integer (inline or big) or
+    /// a float.</summary>
     public static bool IsNumber(Engine engine)
     {
         var t = Tag0(engine);
-        return t == Tag.Int || t == Tag.Float;
+        return t is Tag.Int or Tag.BigInt or Tag.Float;
     }
 
     /// <summary><c>atomic(X)</c> — X is a non-compound, non-variable term
-    /// (atom, integer, float, string, PSTR).</summary>
+    /// (atom, integer, bigint, float, string, PSTR).</summary>
     public static bool IsAtomic(Engine engine)
     {
         var t = Tag0(engine);
-        return t is Tag.Atom or Tag.Int or Tag.Float or Tag.String or Tag.Pstr;
+        return t is Tag.Atom or Tag.Int or Tag.BigInt or Tag.Float or Tag.String or Tag.Pstr;
     }
 
     /// <summary><c>compound(X)</c> — X is a compound term (STR or non-empty
@@ -90,6 +96,7 @@ public static class TypeBuiltins
         {
             case Tag.Atom:
             case Tag.Int:
+            case Tag.BigInt:
             case Tag.Float:
             case Tag.Pstr:
             case Tag.String:

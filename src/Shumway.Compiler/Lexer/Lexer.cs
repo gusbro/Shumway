@@ -272,8 +272,12 @@ public sealed class Lexer
         }
 
         string intSource = _source[start.._offset];
-        long i = long.Parse(intSource, CultureInfo.InvariantCulture);
-        return new Token(TokenKind.Integer, pos, intSource) { IntValue = i };
+        // Try the narrow path first (the overwhelming common case); fall back
+        // to BigInteger only when the literal genuinely exceeds long range.
+        if (long.TryParse(intSource, NumberStyles.Integer, CultureInfo.InvariantCulture, out long i))
+            return new Token(TokenKind.Integer, pos, intSource) { IntValue = i };
+        var big = System.Numerics.BigInteger.Parse(intSource, CultureInfo.InvariantCulture);
+        return new Token(TokenKind.Integer, pos, intSource) { BigValue = big, HasBigValue = true };
     }
 
     private int ReadCharCodeLiteral(SourcePosition pos)

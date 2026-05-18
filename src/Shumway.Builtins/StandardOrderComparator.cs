@@ -41,10 +41,10 @@ public static class StandardOrderComparator
     private static int TypeOrder(Cell c) => c.Tag switch
     {
         Tag.Ref => 0,
-        Tag.Int or Tag.Float => 1,
+        Tag.Int or Tag.Float or Tag.BigInt => 1,
         Tag.Atom => 2,
         Tag.Str or Tag.Lis => 3,
-        _ => 4,                                            // PSTR, BigInt, etc. — defer
+        _ => 4,                                            // PSTR etc. — defer
     };
 
     private static int CompareNumbers(Engine engine, Cell a, Cell b)
@@ -62,9 +62,10 @@ public static class StandardOrderComparator
     private static Number ToNumber(Engine engine, Cell c) => c.Tag switch
     {
         Tag.Int => new Number(c.AsInt),
+        Tag.BigInt => new Number(engine.AsBigInt(c)),
         Tag.Float => new Number(Cell.DecodeFloat(c, engine.GetHeap(c.FloatPairedIndex))),
         _ => throw new InvalidOperationException(
-            $"StandardOrderComparator.ToNumber: cell has tag {c.Tag}, expected Int or Float."),
+            $"StandardOrderComparator.ToNumber: cell has tag {c.Tag}, expected Int / BigInt / Float."),
     };
 
     private static int CompareAtoms(Cell a, Cell b)

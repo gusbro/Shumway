@@ -1,61 +1,140 @@
 using System.Globalization;
+using System.Numerics;
 using Shumway.Core;
 
 namespace Shumway.Builtins;
 
 /// <summary>
-/// The runtime value type used by the arithmetic evaluator: an integer (which
-/// fits in the inline 60-bit signed range — BigInt promotion is not yet
-/// implemented) or a double. Arithmetic operations promote the result to
-/// double whenever either operand is a float, matching ISO Prolog semantics
-/// for the standard <c>+</c>, <c>-</c>, <c>*</c>, <c>/</c> family.
+/// The runtime value type used by the arithmetic evaluator: an integer (within
+/// <see cref="long"/> range), a <see cref="BigInteger"/> for results that
+/// overflowed, or a double. Promotion is automatic: any <c>+</c> / <c>-</c> /
+/// <c>*</c> overflowing long retries with BigInteger; any operand being a
+/// float floats the whole expression.
 /// </summary>
 public readonly struct Number : IEquatable<Number>
 {
-    public bool IsFloat { get; }
+    public enum Kind : byte { Int, Big, Float }
+
+    public Kind ValueKind { get; }
     public long IntValue { get; }
+    public BigInteger BigValue { get; }
     public double FloatValue { get; }
+
+    public bool IsFloat => ValueKind == Kind.Float;
+    public bool IsBig => ValueKind == Kind.Big;
+    public bool IsInt => ValueKind == Kind.Int;
 
     public Number(long intValue)
     {
-        IsFloat = false;
-        IntValue = intValue;
-        FloatValue = intValue;
+        // Anything outside the 60-bit inline range has to live on the
+        // BigInteger side table even though it fits in a long — Cell.Int
+        // refuses to encode values that don't fit in the 60-bit payload.
+        if (intValue < Cell.MinInt60 || intValue > Cell.MaxInt60)
+        {
+            ValueKind = Kind.Big;
+            IntValue = 0;
+            BigValue = new BigInteger(intValue);
+            FloatValue = intValue;
+        }
+        else
+        {
+            ValueKind = Kind.Int;
+            IntValue = intValue;
+            BigValue = default;
+            FloatValue = intValue;
+        }
+    }
+
+    public Number(BigInteger bigValue)
+    {
+        // Collapse to inline int when it fits in the 60-bit range —
+        // keeps the cell path on the fast track for results that *would*
+        // have fit if computed directly without overflow.
+        if (bigValue >= Cell.MinInt60 && bigValue <= Cell.MaxInt60)
+        {
+            ValueKind = Kind.Int;
+            IntValue = (long)bigValue;
+            BigValue = default;
+            FloatValue = IntValue;
+        }
+        else
+        {
+            ValueKind = Kind.Big;
+            IntValue = 0;
+            BigValue = bigValue;
+            FloatValue = (double)bigValue;
+        }
     }
 
     public Number(double floatValue)
     {
-        IsFloat = true;
+        ValueKind = Kind.Float;
         IntValue = 0;
+        BigValue = default;
         FloatValue = floatValue;
     }
 
     /// <summary>The value as a double — exact for integers within
-    /// <see cref="long"/> precision.</summary>
-    public double AsDouble() => IsFloat ? FloatValue : (double)IntValue;
+    /// <see cref="long"/> precision; lossy for BigInteger results that
+    /// don't round-trip through double.</summary>
+    public double AsDouble() => ValueKind switch
+    {
+        Kind.Float => FloatValue,
+        Kind.Big => (double)BigValue,
+        _ => IntValue,
+    };
 
-    /// <summary>Materialises the number as a heap cell. Integers go in inline
-    /// <see cref="Cell.Int"/> cells; floats are placed on the heap via
-    /// <see cref="Engine.MakeFloat"/> and the returned cell is a REF to the
-    /// header (the binding policy from <c>BindVarToValue</c>).</summary>
-    public Cell ToCell(Engine engine) =>
-        IsFloat ? Cell.Ref(engine.MakeFloat(FloatValue)) : Cell.Int(IntValue);
+    /// <summary>The value as a <see cref="BigInteger"/>. Throws when the
+    /// number is a float — arithmetic that mixes ints and floats produces
+    /// a float result, so callers asking for a BigInteger have already
+    /// checked the integer-only path.</summary>
+    public BigInteger AsBigInteger() => ValueKind switch
+    {
+        Kind.Big => BigValue,
+        Kind.Int => new BigInteger(IntValue),
+        _ => throw new InvalidOperationException("Number is a float; no BigInteger view."),
+    };
 
-    public bool Equals(Number other) =>
-        IsFloat == other.IsFloat
-        && (IsFloat ? FloatValue == other.FloatValue : IntValue == other.IntValue);
+    /// <summary>Materialises the number as a heap cell. Inline-range ints go
+    /// in <see cref="Cell.Int"/>; BigIntegers are stored in the engine's
+    /// big-int side table and the returned cell is a <see cref="Cell.BigInt"/>;
+    /// floats are placed on the heap via <see cref="Engine.MakeFloat"/> and
+    /// the returned cell is a REF to the header.</summary>
+    public Cell ToCell(Engine engine) => ValueKind switch
+    {
+        Kind.Float => Cell.Ref(engine.MakeFloat(FloatValue)),
+        Kind.Big => engine.MakeBigInt(BigValue),
+        _ => Cell.Int(IntValue),
+    };
+
+    public bool Equals(Number other) => ValueKind == other.ValueKind && ValueKind switch
+    {
+        Kind.Float => FloatValue == other.FloatValue,
+        Kind.Big => BigValue.Equals(other.BigValue),
+        _ => IntValue == other.IntValue,
+    };
 
     public override bool Equals(object? obj) => obj is Number n && Equals(n);
-    public override int GetHashCode() => IsFloat ? FloatValue.GetHashCode() : IntValue.GetHashCode();
+    public override int GetHashCode() => ValueKind switch
+    {
+        Kind.Float => FloatValue.GetHashCode(),
+        Kind.Big => BigValue.GetHashCode(),
+        _ => IntValue.GetHashCode(),
+    };
 
-    public override string ToString() =>
-        IsFloat ? FloatValue.ToString("R", CultureInfo.InvariantCulture)
-                : IntValue.ToString(CultureInfo.InvariantCulture);
+    public override string ToString() => ValueKind switch
+    {
+        Kind.Float => FloatValue.ToString("R", CultureInfo.InvariantCulture),
+        Kind.Big => BigValue.ToString(CultureInfo.InvariantCulture),
+        _ => IntValue.ToString(CultureInfo.InvariantCulture),
+    };
 
     public static int Compare(Number a, Number b)
     {
         if (a.IsFloat || b.IsFloat)
             return a.AsDouble().CompareTo(b.AsDouble());
+        if (a.IsBig || b.IsBig)
+            return a.AsBigInteger().CompareTo(b.AsBigInteger());
         return a.IntValue.CompareTo(b.IntValue);
     }
 }

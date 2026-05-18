@@ -46,6 +46,9 @@ public static class TermRenderer
             case Tag.Int:
                 output.Write(cell.AsInt.ToString(CultureInfo.InvariantCulture));
                 break;
+            case Tag.BigInt:
+                output.Write(engine.AsBigInt(cell).ToString(CultureInfo.InvariantCulture));
+                break;
             case Tag.Float:
             {
                 double v = Cell.DecodeFloat(cell, engine.GetHeap(cell.FloatPairedIndex));

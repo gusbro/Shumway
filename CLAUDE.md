@@ -242,6 +242,7 @@ When proposing changes:
 | Embedding API | ADR-010 |
 | IL compiler architecture | ADR-011 |
 | Mode inference roadmap | ADR-012 |
+| BigInt literal opcodes | ADR-013 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | Builtins catalog | docs/design/builtins-catalog.md |

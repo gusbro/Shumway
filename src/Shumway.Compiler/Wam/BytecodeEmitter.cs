@@ -206,6 +206,13 @@ public sealed class BytecodeEmitter
         EmitInt(argSlot);
     }
 
+    public void EmitGetBigInt(int bigIntLitId, int argSlot)
+    {
+        _bytes.Add((byte)Opcode.GetBigInt);
+        EmitInt(bigIntLitId);
+        EmitInt(argSlot);
+    }
+
     public void EmitGetPstr(int stringLitId, int argSlot)
     {
         _bytes.Add((byte)Opcode.GetPstr);
@@ -280,6 +287,13 @@ public sealed class BytecodeEmitter
     {
         _bytes.Add((byte)Opcode.PutFloat);
         EmitInt(floatLitId);
+        EmitInt(argSlot);
+    }
+
+    public void EmitPutBigInt(int bigIntLitId, int argSlot)
+    {
+        _bytes.Add((byte)Opcode.PutBigInt);
+        EmitInt(bigIntLitId);
         EmitInt(argSlot);
     }
 
@@ -360,6 +374,12 @@ public sealed class BytecodeEmitter
     {
         _bytes.Add((byte)Opcode.UnifyFloat);
         EmitInt(floatLitId);
+    }
+
+    public void EmitUnifyBigInt(int bigIntLitId)
+    {
+        _bytes.Add((byte)Opcode.UnifyBigInt);
+        EmitInt(bigIntLitId);
     }
 
     // ---------- Helpers ----------

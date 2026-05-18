@@ -26,13 +26,30 @@ public sealed class CompiledModule
     /// / <c>unify_float</c> instructions.</summary>
     public IReadOnlyList<double> FloatLiterals { get; }
 
+    /// <summary>BigInteger literals referenced by <c>get_bigint</c> /
+    /// <c>put_bigint</c> / <c>unify_bigint</c> instructions. Integer
+    /// literals that don't fit in a 32-bit operand are routed through this
+    /// pool by the compiler (see ADR-013).</summary>
+    public IReadOnlyList<System.Numerics.BigInteger> BigIntLiterals { get; }
+
     public CompiledModule(
         IReadOnlyList<CompiledPredicate> predicates,
         IReadOnlyList<string> stringLiterals,
         IReadOnlyList<double> floatLiterals)
+        : this(predicates, stringLiterals, floatLiterals,
+               Array.Empty<System.Numerics.BigInteger>())
+    {
+    }
+
+    public CompiledModule(
+        IReadOnlyList<CompiledPredicate> predicates,
+        IReadOnlyList<string> stringLiterals,
+        IReadOnlyList<double> floatLiterals,
+        IReadOnlyList<System.Numerics.BigInteger> bigIntLiterals)
     {
         Predicates = predicates;
         StringLiterals = stringLiterals;
         FloatLiterals = floatLiterals;
+        BigIntLiterals = bigIntLiterals;
     }
 }

@@ -55,19 +55,25 @@ public sealed class ClauseCompiler
 {
     private LiteralPool<string> _stringLiterals = new();
     private LiteralPool<double> _floatLiterals = new();
+    private LiteralPool<System.Numerics.BigInteger> _bigIntLiterals = new();
 
 
     public CompiledClause Compile(Clause clause)
-        => Compile(clause, new LiteralPool<string>(), new LiteralPool<double>());
+        => Compile(clause,
+            new LiteralPool<string>(),
+            new LiteralPool<double>(),
+            new LiteralPool<System.Numerics.BigInteger>());
 
     public CompiledClause Compile(
         Clause clause,
         LiteralPool<string> stringLiterals,
-        LiteralPool<double> floatLiterals)
+        LiteralPool<double> floatLiterals,
+        LiteralPool<System.Numerics.BigInteger> bigIntLiterals)
     {
         ArgumentNullException.ThrowIfNull(clause);
         _stringLiterals = stringLiterals;
         _floatLiterals = floatLiterals;
+        _bigIntLiterals = bigIntLiterals;
 
         switch (clause.Kind)
         {
@@ -382,8 +388,16 @@ public sealed class ClauseCompiler
                 break;
 
             case IntTerm n:
-                CheckInt32(n);
-                s.Emitter.EmitGetInteger((int)n.Value, argSlot);
+                if (FitsInt32(n.Value))
+                    s.Emitter.EmitGetInteger((int)n.Value, argSlot);
+                else
+                    s.Emitter.EmitGetBigInt(
+                        _bigIntLiterals.Intern(new System.Numerics.BigInteger(n.Value)),
+                        argSlot);
+                break;
+
+            case BigIntTerm bn:
+                s.Emitter.EmitGetBigInt(_bigIntLiterals.Intern(bn.Value), argSlot);
                 break;
 
             case VarTerm v when v.Name == "_":
@@ -506,8 +520,15 @@ public sealed class ClauseCompiler
                 break;
 
             case IntTerm n:
-                CheckInt32(n);
-                s.Emitter.EmitUnifyInteger((int)n.Value);
+                if (FitsInt32(n.Value))
+                    s.Emitter.EmitUnifyInteger((int)n.Value);
+                else
+                    s.Emitter.EmitUnifyBigInt(
+                        _bigIntLiterals.Intern(new System.Numerics.BigInteger(n.Value)));
+                break;
+
+            case BigIntTerm bn:
+                s.Emitter.EmitUnifyBigInt(_bigIntLiterals.Intern(bn.Value));
                 break;
 
             case VarTerm v when v.Name == "_":
@@ -629,8 +650,16 @@ public sealed class ClauseCompiler
                 break;
 
             case IntTerm n:
-                CheckInt32(n);
-                s.Emitter.EmitPutInteger((int)n.Value, argSlot);
+                if (FitsInt32(n.Value))
+                    s.Emitter.EmitPutInteger((int)n.Value, argSlot);
+                else
+                    s.Emitter.EmitPutBigInt(
+                        _bigIntLiterals.Intern(new System.Numerics.BigInteger(n.Value)),
+                        argSlot);
+                break;
+
+            case BigIntTerm bn:
+                s.Emitter.EmitPutBigInt(_bigIntLiterals.Intern(bn.Value), argSlot);
                 break;
 
             case VarTerm v when v.Name == "_":
@@ -718,13 +747,13 @@ public sealed class ClauseCompiler
         };
     }
 
-    private static void CheckInt32(IntTerm n)
-    {
-        if (n.Value < int.MinValue || n.Value > int.MaxValue)
-            throw new NotSupportedException(
-                $"Integer literal {n.Value} doesn't fit in a 32-bit operand. "
-                + "BigInt support lands later.");
-    }
+    /// <summary>Whether <paramref name="value"/> fits in the WAM bytecode's
+    /// 32-bit integer-operand encoding. Anything wider rides the
+    /// <c>BigInt</c> literal pool via <see cref="Opcode.GetBigInt"/> /
+    /// <see cref="Opcode.PutBigInt"/> / <see cref="Opcode.UnifyBigInt"/>
+    /// (see ADR-013).</summary>
+    private static bool FitsInt32(long value) =>
+        value >= int.MinValue && value <= int.MaxValue;
 
     private static int InternAtom(string name) =>
         AtomTable.Intern(name, permanent: true).Id;

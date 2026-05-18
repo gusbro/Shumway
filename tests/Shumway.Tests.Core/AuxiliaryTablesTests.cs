@@ -19,25 +19,47 @@ public class AuxiliaryTablesTests
     }
 
     [Theory]
-    [InlineData("0")]
-    [InlineData("1")]
-    [InlineData("-1")]
     [InlineData("99999999999999999999999999")]
     [InlineData("-99999999999999999999999999")]
     public void MakeBigInt_AcceptsRange(string decimalLiteral)
     {
+        // Values must be outside the 60-bit inline range — anything that
+        // fits inline auto-collapses to Tag.Int to keep cell representations
+        // canonical for unification.
         var engine = new Engine();
         var value = BigInteger.Parse(decimalLiteral);
         Cell cell = engine.MakeBigInt(value);
+        Assert.Equal(Tag.BigInt, cell.Tag);
         Assert.Equal(value, engine.AsBigInt(cell));
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("1")]
+    [InlineData("-1")]
+    [InlineData("576460752303423487")]    // 2^59 - 1 (MaxInt60)
+    [InlineData("-576460752303423488")]   // -2^59 (MinInt60)
+    public void MakeBigInt_CollapsesToInlineWhenWithinSixtyBitRange(string decimalLiteral)
+    {
+        // Values inside the 60-bit signed range collapse to Tag.Int so that
+        // unification doesn't have to cross tag boundaries to recognise that
+        // BigInteger(5) and Int(5) represent the same value (ADR-013).
+        var engine = new Engine();
+        var value = BigInteger.Parse(decimalLiteral);
+        Cell cell = engine.MakeBigInt(value);
+        Assert.Equal(Tag.Int, cell.Tag);
+        Assert.Equal((long)value, cell.AsInt);
     }
 
     [Fact]
     public void MakeBigInt_DistinctCallsGetDistinctIds()
     {
+        // Two BigInt cells with the same outside-range value get separate
+        // side-table slots. The collapse only fires for inline-range values.
         var engine = new Engine();
-        Cell a = engine.MakeBigInt(new BigInteger(1));
-        Cell b = engine.MakeBigInt(new BigInteger(1));   // same value, separate slot
+        var big = BigInteger.Parse("999999999999999999999");
+        Cell a = engine.MakeBigInt(big);
+        Cell b = engine.MakeBigInt(big);
         Assert.NotEqual(a.AsBigIntId, b.AsBigIntId);
         Assert.Equal(2, engine.BigIntTableCount);
     }
@@ -164,14 +186,18 @@ public class AuxiliaryTablesTests
     }
 
     [Fact]
-    public void Unify_BigIntVsInt_Fails()
+    public void Unify_BigIntInRange_CollapsesAndMatchesInlineInt()
     {
-        // Tag mismatch: Int and BigInt are distinct representations even if a BigInt's
-        // value would fit in 60 bits. The canonical form is for callers to normalise.
+        // MakeBigInt auto-collapses 60-bit-fitting values to Tag.Int — so an
+        // explicit Int(5) and MakeBigInt(5) end up structurally identical and
+        // unify. The invariant (ADR-013) is that the canonical form for a
+        // 60-bit-fitting integer is always Tag.Int, regardless of how it was
+        // produced.
         var engine = new Engine();
         int a = engine.AllocateHeap(1); engine.SetHeap(a, Cell.Int(5));
         int b = engine.AllocateHeap(1); engine.SetHeap(b, engine.MakeBigInt(new BigInteger(5)));
-        Assert.False(engine.Unify(a, b));
+        Assert.Equal(Tag.Int, engine.GetHeap(b).Tag);
+        Assert.True(engine.Unify(a, b));
     }
 
     [Fact]
