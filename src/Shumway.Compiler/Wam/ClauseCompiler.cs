@@ -329,10 +329,44 @@ public sealed class ClauseCompiler
             bool homeArgIsTheVar = gArgs[home] is VarTerm vh && vh.Name == varName;
             if (homeArgIsTheVar) continue;                  // put-at-home is a self-copy / no-op
 
-            // Some other term gets put at position `home` — it would clobber
-            // V's value before any later read. Save iff V actually appears
-            // somewhere in the goal (so the later read will happen).
-            if (ContainsVarName(g, varName)) return true;
+            // Refinement (chunk 62, Warren-direction): the home-clobbering
+            // put happens at position `home` during this goal's arg
+            // setup, which is emitted in arg-index order. If V is also
+            // read at arg position k <= home, that read fires before
+            // the clobber and uses the still-intact V — no save needed
+            // for this goal. Save iff V is referenced strictly *after*
+            // position home, or inside a compound argument at any
+            // position (because compound args spill across temporaries
+            // and we can't easily prove their reads precede the home
+            // write without a fuller pass).
+            if (NeedsSaveForGoal(gArgs, varName, home)) return true;
+        }
+        return false;
+    }
+
+    /// <summary>True when goal arg-array <paramref name="gArgs"/> reads
+    /// <paramref name="varName"/> in a way that the put-to-home write
+    /// (at arg position <paramref name="home"/>) would clobber before
+    /// the read fires. Cheap refinement of the original
+    /// "any-occurrence" check — flags reads at arg position &gt;
+    /// <paramref name="home"/>, plus any read inside a compound arg
+    /// (where the put order across temporaries is harder to reason
+    /// about locally). Reads at flat arg positions ≤ home are safe
+    /// since the WAM emits arg puts in index order.</summary>
+    private static bool NeedsSaveForGoal(Term[] gArgs, string varName, int home)
+    {
+        for (int i = 0; i < gArgs.Length; i++)
+        {
+            Term arg = gArgs[i];
+            switch (arg)
+            {
+                case VarTerm v when v.Name == varName:
+                    if (i > home) return true;
+                    break;
+                case CompoundTerm c:
+                    if (ContainsVarName(c, varName)) return true;
+                    break;
+            }
         }
         return false;
     }
