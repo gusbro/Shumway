@@ -89,6 +89,23 @@ public sealed class IlPredicateCompiler
         typeof(Engine).GetProperty(nameof(Engine.CurrentFunctorAddresses))!.GetGetMethod()!;
     private static readonly MethodInfo IlExecuteHelperResolveMethod =
         typeof(IlExecuteHelper).GetMethod(nameof(IlExecuteHelper.Resolve))!;
+    // ---------- get_structure / put_structure (chunk 48) ----------
+    private static readonly MethodInfo EngineGetStructureMethod =
+        typeof(Engine).GetMethod(nameof(Engine.GetStructure), new[] { typeof(int), typeof(int) })!;
+    private static readonly MethodInfo EnginePutStructureMethod =
+        typeof(Engine).GetMethod(nameof(Engine.PutStructure), new[] { typeof(int), typeof(int) })!;
+    private static readonly MethodInfo EngineUnifyArgCellMethod =
+        typeof(Engine).GetMethod(nameof(Engine.UnifyArgCell), new[] { typeof(Cell) })!;
+    private static readonly MethodInfo EngineUnifyVariableXMethod =
+        typeof(Engine).GetMethod(nameof(Engine.UnifyVariableX), new[] { typeof(int) })!;
+    private static readonly MethodInfo EngineUnifyValueXMethod =
+        typeof(Engine).GetMethod(nameof(Engine.UnifyValueX), new[] { typeof(int) })!;
+    private static readonly MethodInfo EngineUnifyVariableYMethod =
+        typeof(Engine).GetMethod(nameof(Engine.UnifyVariableY), new[] { typeof(int) })!;
+    private static readonly MethodInfo EngineUnifyValueYMethod =
+        typeof(Engine).GetMethod(nameof(Engine.UnifyValueY), new[] { typeof(int) })!;
+    private static readonly MethodInfo EngineUnifyVoidMethod =
+        typeof(Engine).GetMethod(nameof(Engine.UnifyVoid), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineAllocateHeapUnboundMethod =
         typeof(Engine).GetMethod(nameof(Engine.AllocateHeapUnbound), Type.EmptyTypes)!;
     private static readonly MethodInfo CellRefMethod =
@@ -201,6 +218,17 @@ public sealed class IlPredicateCompiler
         Opcode.Deallocate => true,
         Opcode.NeckCut => true,
         Opcode.Execute => true,
+        // Compound argument structure (chunk 48).
+        Opcode.GetStructure => true,
+        Opcode.PutStructure => true,
+        Opcode.UnifyAtom => true,
+        Opcode.UnifyInteger => true,
+        Opcode.UnifyNil => true,
+        Opcode.UnifyVariableX => true,
+        Opcode.UnifyValueX => true,
+        Opcode.UnifyVariableY => true,
+        Opcode.UnifyValueY => true,
+        Opcode.UnifyVoid => true,
         _ => false,
     };
 
@@ -470,6 +498,108 @@ public sealed class IlPredicateCompiler
                 emit.LoadArgument(0);
                 emit.Call(BuiltinImplInvokeMethod);
                 emit.BranchIfFalse(failLabel);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.GetStructure)
+            {
+                int functorId = BytecodeIO.ReadInt32(code, pc + 1);
+                int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                emit.LoadArgument(0);
+                emit.LoadConstant(functorId);
+                emit.LoadConstant(arg);
+                emit.Call(EngineGetStructureMethod);
+                emit.BranchIfFalse(failLabel);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.PutStructure)
+            {
+                int functorId = BytecodeIO.ReadInt32(code, pc + 1);
+                int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                emit.LoadArgument(0);
+                emit.LoadConstant(functorId);
+                emit.LoadConstant(arg);
+                emit.Call(EnginePutStructureMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.UnifyAtom)
+            {
+                int atomId = BytecodeIO.ReadInt32(code, pc + 1);
+                emit.LoadArgument(0);
+                emit.LoadConstant(atomId);
+                emit.Call(CellAtomMethod);
+                emit.Call(EngineUnifyArgCellMethod);
+                emit.BranchIfFalse(failLabel);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.UnifyInteger)
+            {
+                int value = BytecodeIO.ReadInt32(code, pc + 1);
+                emit.LoadArgument(0);
+                emit.LoadConstant((long)value);
+                emit.Call(CellIntMethod);
+                emit.Call(EngineUnifyArgCellMethod);
+                emit.BranchIfFalse(failLabel);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.UnifyNil)
+            {
+                emit.LoadArgument(0);
+                emit.LoadConstant(AtomTable.EmptyListId);
+                emit.Call(CellAtomMethod);
+                emit.Call(EngineUnifyArgCellMethod);
+                emit.BranchIfFalse(failLabel);
+                pc += 1;
+                continue;
+            }
+            if (op == Opcode.UnifyVariableX)
+            {
+                int slot = BytecodeIO.ReadInt32(code, pc + 1);
+                emit.LoadArgument(0);
+                emit.LoadConstant(slot);
+                emit.Call(EngineUnifyVariableXMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.UnifyValueX)
+            {
+                int slot = BytecodeIO.ReadInt32(code, pc + 1);
+                emit.LoadArgument(0);
+                emit.LoadConstant(slot);
+                emit.Call(EngineUnifyValueXMethod);
+                emit.BranchIfFalse(failLabel);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.UnifyVariableY)
+            {
+                int slot = BytecodeIO.ReadInt32(code, pc + 1);
+                emit.LoadArgument(0);
+                emit.LoadConstant(slot);
+                emit.Call(EngineUnifyVariableYMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.UnifyValueY)
+            {
+                int slot = BytecodeIO.ReadInt32(code, pc + 1);
+                emit.LoadArgument(0);
+                emit.LoadConstant(slot);
+                emit.Call(EngineUnifyValueYMethod);
+                emit.BranchIfFalse(failLabel);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.UnifyVoid)
+            {
+                int count = BytecodeIO.ReadInt32(code, pc + 1);
+                emit.LoadArgument(0);
+                emit.LoadConstant(count);
+                emit.Call(EngineUnifyVoidMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }

@@ -11,7 +11,8 @@ public sealed class ParseException : Exception
 {
     public SourcePosition Position { get; }
 
-    public ParseException(string message, SourcePosition position) : base(message)
+    public ParseException(string message, SourcePosition position)
+        : base($"{position.Line}:{position.Column}: {message}")
     {
         Position = position;
     }

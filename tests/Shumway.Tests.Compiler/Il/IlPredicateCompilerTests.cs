@@ -67,13 +67,12 @@ public class IlPredicateCompilerTests
     }
 
     [Fact]
-    public void CanCompile_FactWithCompoundArg_False()
+    public void CanCompile_FactWithCompoundArg_True()
     {
-        // Compound args use get_structure, which the extended MVP still
-        // doesn't translate. Integers are now supported (see
-        // IlIntegerOpcodeTests for chunk 27's get_integer coverage).
+        // Chunk 48 added get_structure / put_structure + the unify_*
+        // family, so compound head args now compile to IL.
         var pred = CompileFromSource("p(foo(a)).");
-        Assert.False(new IlPredicateCompiler().CanCompile(pred));
+        Assert.True(new IlPredicateCompiler().CanCompile(pred));
     }
 
     [Fact]

@@ -9,7 +9,8 @@ public sealed class LexerException : Exception
 {
     public SourcePosition Position { get; }
 
-    public LexerException(string message, SourcePosition position) : base(message)
+    public LexerException(string message, SourcePosition position)
+        : base($"{position.Line}:{position.Column}: {message}")
     {
         Position = position;
     }

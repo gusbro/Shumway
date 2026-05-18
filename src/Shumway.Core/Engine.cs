@@ -587,6 +587,105 @@ public sealed class Engine
         return false;
     }
 
+    // ----- Unify-mode-aware dispatch helpers (chunk 48) -----
+    //
+    // Each of these matches the bytecode interpreter's <c>unify_*</c>
+    // opcode behaviour: in write mode allocate one heap slot and write
+    // a cell; in read mode unify the cell at <c>UnifyPointer</c> against
+    // the supplied value. The unify pointer advances by one in either
+    // case. The Tier-1 IL compiler emits a call into the matching
+    // helper instead of inlining the dispatch — saves IL volume at the
+    // cost of one extra method call per unify operand.
+
+    /// <summary>Mode-aware <c>unify_*</c> for ground value cells
+    /// (atom / int / nil / float-via-ref / etc.).</summary>
+    public bool UnifyArgCell(Cell value)
+    {
+        int ptr = _unifyPointer;
+        if (_writeMode)
+        {
+            int idx = AllocateHeap(1);
+            _heap[idx] = value;
+        }
+        else
+        {
+            if (!UnifyHeapWithCell(ptr, value)) return false;
+        }
+        _unifyPointer = ptr + 1;
+        return true;
+    }
+
+    /// <summary><c>unify_variable_x</c>: first occurrence of a temp
+    /// variable inside a compound. In write mode allocate an unbound
+    /// var on the heap and stash a REF to it in X[slot]; in read mode
+    /// copy the cell at <c>UnifyPointer</c> into X[slot].</summary>
+    public void UnifyVariableX(int slot)
+    {
+        int ptr = _unifyPointer;
+        if (_writeMode)
+        {
+            int idx = AllocateHeap(1);
+            _heap[idx] = Cell.UnboundVar(idx);
+            _registers[slot] = Cell.Ref(idx);
+        }
+        else
+        {
+            _registers[slot] = _heap[ptr];
+        }
+        _unifyPointer = ptr + 1;
+    }
+
+    /// <summary><c>unify_value_x</c>: subsequent occurrence of a temp
+    /// variable inside a compound. Same as <see cref="UnifyArgCell"/>
+    /// with the cell drawn from <c>X[slot]</c>.</summary>
+    public bool UnifyValueX(int slot)
+    {
+        Cell regVal = _registers[slot];
+        return UnifyArgCell(regVal);
+    }
+
+    /// <summary><c>unify_variable_y</c>: first occurrence of a
+    /// permanent variable inside a compound.</summary>
+    public void UnifyVariableY(int slot)
+    {
+        int ptr = _unifyPointer;
+        if (_writeMode)
+        {
+            int idx = AllocateHeap(1);
+            _heap[idx] = Cell.UnboundVar(idx);
+            SetY(slot, Cell.Ref(idx));
+        }
+        else
+        {
+            SetY(slot, _heap[ptr]);
+        }
+        _unifyPointer = ptr + 1;
+    }
+
+    /// <summary><c>unify_value_y</c>: subsequent occurrence of a
+    /// permanent variable.</summary>
+    public bool UnifyValueY(int slot)
+    {
+        Cell yVal = GetY(slot);
+        return UnifyArgCell(yVal);
+    }
+
+    /// <summary><c>unify_void</c>: skips <paramref name="count"/>
+    /// anonymous variable slots. In write mode allocates fresh unbound
+    /// cells; in read mode just advances the pointer.</summary>
+    public void UnifyVoid(int count)
+    {
+        if (_writeMode)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                int idx = AllocateHeap(1);
+                _heap[idx] = Cell.UnboundVar(idx);
+            }
+        }
+        _unifyPointer += count;
+    }
+
     /// <summary>
     /// Implements <c>put_list</c>: allocates a LIS cell pointing to the head position,
     /// stores a REF in <c>X[<paramref name="regIdx"/>]</c>, and enters write mode with
