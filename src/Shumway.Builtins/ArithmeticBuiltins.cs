@@ -38,20 +38,21 @@ public static class ArithmeticBuiltins
     public static bool ArithGreaterOrEqual(Engine engine) =>
         Number.Compare(EvaluateA(engine), EvaluateB(engine)) >= 0;
 
-    /// <summary><c>between(Low, High, X)</c> — integer range. Phase-1
-    /// scope: <c>Low</c> and <c>High</c> must be ground integers; <c>X</c>
-    /// is either ground (in which case we check <c>Low ≤ X ≤ High</c>) or
-    /// unbound (in which case <c>X</c> binds to <c>Low</c>). Multi-solution
-    /// enumeration of every integer in the range lands when call/N gets a
-    /// runtime choice-point integration.</summary>
+    /// <summary><c>between(Low, High, X)</c> — integer range. <c>Low</c>
+    /// and <c>High</c> must be ground integers. With <c>X</c> ground the
+    /// builtin verifies <c>Low ≤ X ≤ High</c>. With <c>X</c> unbound it
+    /// binds <c>X</c> to <c>Low</c> and pushes a runtime choice point
+    /// for the next integer (chunk 59) — each backtrack advances to
+    /// <c>Low + 1</c>, <c>Low + 2</c>, etc., until <c>High</c> is reached.</summary>
     public static bool Between(Engine engine)
     {
         Cell lo = Resolve(engine, engine.GetRegister(0));
         Cell hi = Resolve(engine, engine.GetRegister(1));
         Cell x = Resolve(engine, engine.GetRegister(2));
         if (lo.Tag != Tag.Int || hi.Tag != Tag.Int)
-            throw new InvalidOperationException(
-                "between/3: Low and High must be ground integers in Phase 1.");
+            throw new PrologRuntimeException(
+                "instantiation_error",
+                "between/3 requires Low and High to be ground integers");
         long loVal = lo.AsInt;
         long hiVal = hi.AsInt;
         if (loVal > hiVal) return false;
@@ -63,10 +64,26 @@ public static class ArithmeticBuiltins
         }
         if (x.Tag == Tag.Ref)
         {
-            // Bind X to Low (first solution).
-            return engine.UnifyRegisterWithCell(2, Cell.Int(loVal));
+            int returnPc = engine.P + 9;
+            return BetweenStep(engine, current: loVal, hiVal, returnPc, isResume: false);
         }
         return false;
+    }
+
+    private static bool BetweenStep(
+        Engine engine, long current, long hi, int returnPc, bool isResume)
+    {
+        if (current > hi) return false;
+        if (current < hi)
+        {
+            long next = current + 1;
+            Func<Engine, int, bool> resume = (e, _) =>
+                BetweenStep(e, next, hi, returnPc, isResume: true);
+            engine.PushBuiltinChoicePoint(resume, arity: 0);
+        }
+        if (!engine.UnifyRegisterWithCell(2, Cell.Int(current))) return false;
+        if (isResume) engine.ResumeAtReturnPc(returnPc);
+        return true;
     }
 
     /// <summary><c>succ(X, Y)</c> — successor of a non-negative integer.

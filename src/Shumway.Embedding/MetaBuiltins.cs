@@ -65,6 +65,10 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("with_output_to", 2, WithOutputTo);
         BuiltinsRegistry.Register("atom_to_term",   3, AtomToTerm);
         BuiltinsRegistry.Register("read_term_from_stream", 2, ReadTermFromStream);
+        // ISO read_term/2 — accepts a stream handle in arg 1 and unifies
+        // the parsed term with arg 2. Chunk 59: delegate to the existing
+        // stream-aware reader so the builtin set covers both names.
+        BuiltinsRegistry.Register("read_term", 2, ReadTermFromStream);
     }
 
     /// <summary><c>read_term_from_stream(Stream, Term)</c> — reads

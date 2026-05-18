@@ -28,15 +28,58 @@ public static class StringBuiltins
         return engine.UnifyRegisterWithCell(1, Cell.Int(s.Length));
     }
 
-    /// <summary><c>string_concat(A, B, AB)</c> — concatenates the two
-    /// input strings (or atoms) and unifies the result with <c>AB</c>
-    /// (always a PSTR). Phase-1 supports +,+,? mode only.</summary>
+    /// <summary><c>string_concat(A, B, AB)</c>. Supported modes:
+    /// <list type="bullet">
+    /// <item>(+, +, ?): concatenates <c>A</c> and <c>B</c> and unifies
+    ///   with <c>AB</c>.</item>
+    /// <item>(?, ?, +): with <c>AB</c> ground and one or both of
+    ///   <c>A</c>, <c>B</c> unbound, enumerates every prefix/suffix
+    ///   split of <c>AB</c> via a runtime CP (chunk 59) — same shape as
+    ///   <c>atom_concat/3</c>'s split mode.</item>
+    /// </list></summary>
     public static bool StringConcat(Engine engine)
     {
-        string a = ReadStringOrAtom(engine, 0, "string_concat/3");
-        string b = ReadStringOrAtom(engine, 1, "string_concat/3");
-        int pstrIdx = engine.MakePstr(a + b);
-        return engine.UnifyRegisterWithCell(2, Cell.Ref(pstrIdx));
+        Cell aCell = Resolve(engine, engine.GetRegister(0));
+        Cell bCell = Resolve(engine, engine.GetRegister(1));
+
+        bool aGround = aCell.Tag == Tag.Pstr || aCell.Tag == Tag.Atom;
+        bool bGround = bCell.Tag == Tag.Pstr || bCell.Tag == Tag.Atom;
+
+        if (aGround && bGround)
+        {
+            string a = ReadStringOrAtom(engine, 0, "string_concat/3");
+            string b = ReadStringOrAtom(engine, 1, "string_concat/3");
+            int pstrIdx = engine.MakePstr(a + b);
+            return engine.UnifyRegisterWithCell(2, Cell.Ref(pstrIdx));
+        }
+
+        Cell abCell = Resolve(engine, engine.GetRegister(2));
+        if (abCell.Tag != Tag.Pstr && abCell.Tag != Tag.Atom)
+            throw new PrologRuntimeException(
+                "instantiation_error",
+                "string_concat/3 requires either A+B or AB to be ground");
+        string ab = ReadStringOrAtom(engine, 2, "string_concat/3");
+        int returnPc = engine.P + 9;
+        return StringConcatSplitAttempt(engine, ab, splitIdx: 0, returnPc, isResume: false);
+    }
+
+    private static bool StringConcatSplitAttempt(
+        Engine engine, string ab, int splitIdx, int returnPc, bool isResume)
+    {
+        if (splitIdx > ab.Length) return false;
+        if (splitIdx < ab.Length)
+        {
+            int nextSplit = splitIdx + 1;
+            Func<Engine, int, bool> resume = (e, _) =>
+                StringConcatSplitAttempt(e, ab, nextSplit, returnPc, isResume: true);
+            engine.PushBuiltinChoicePoint(resume, arity: 0);
+        }
+        int aPstr = engine.MakePstr(ab.Substring(0, splitIdx));
+        int bPstr = engine.MakePstr(ab.Substring(splitIdx));
+        if (!engine.UnifyRegisterWithCell(0, Cell.Ref(aPstr))) return false;
+        if (!engine.UnifyRegisterWithCell(1, Cell.Ref(bPstr))) return false;
+        if (isResume) engine.ResumeAtReturnPc(returnPc);
+        return true;
     }
 
     /// <summary><c>string_chars(String, Chars)</c> — bidirectional
