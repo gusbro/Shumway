@@ -5,17 +5,29 @@ using Shumway.Core;
 namespace Shumway.Compiler.Il;
 
 /// <summary>
-/// Tier-1 IL compiler MVP. Translates a tiny subset of the WAM bytecode
-/// — single-clause facts whose head args are all bare atoms, with no
-/// body — into a <see cref="PredicateDelegate"/> via Sigil's typed IL
-/// emission. The output runs without going through the bytecode
-/// dispatch loop, giving a first taste of the Tier-1 path the rest of
-/// ADR-011 will fill out.
+/// Tier-1 IL compiler. Translates supported WAM bytecode shapes into a
+/// <see cref="PredicateDelegate"/> via Sigil's typed IL emission so the
+/// promoted predicate runs without going through the bytecode dispatch
+/// loop. The Tier-0/1 promotion infrastructure (counter, store,
+/// dispatcher) lives in <see cref="Shumway.Embedding.IlPromotionStore"/>.
 ///
-/// <para>Supported opcodes (Phase-1 MVP): <c>get_atom</c>,
-/// <c>proceed</c>. Everything else throws
-/// <see cref="NotSupportedException"/> — gracefully fall back to Tier 0
-/// in the caller.</para>
+/// <para>Supported shapes (Phase 1):</para>
+/// <list type="bullet">
+/// <item><b>Single-clause facts</b> whose body uses only
+///   <c>get_atom</c>, <c>get_integer</c>, <c>get_nil</c>,
+///   <c>get_value_x</c>, and a trailing <c>proceed</c>.</item>
+/// <item><b>Multi-clause indexed predicates</b> shaped as
+///   <c>switch_on_term + switch_on_atom + per-clause bodies</c> where
+///   every clause is the trivial <c>get_atom &lt;id&gt; A0 ; proceed</c>
+///   form (i.e. each clause matches a distinct atom in argument 1).
+///   This shape is what the WAM compiler emits for predicates like
+///   <c>color(red). color(green). color(blue).</c></item>
+/// </list>
+///
+/// <para>Predicates outside the supported subset cause
+/// <see cref="CanCompile"/> to return <c>false</c>; <see cref="Compile"/>
+/// throws <see cref="NotSupportedException"/>. Callers (the promotion
+/// store) fall back to Tier 0 in either case.</para>
 /// </summary>
 public sealed class IlPredicateCompiler
 {
@@ -31,16 +43,59 @@ public sealed class IlPredicateCompiler
         typeof(Engine).GetMethod(
             nameof(Engine.UnifyRegisters),
             new[] { typeof(int), typeof(int) })!;
+    private static readonly MethodInfo EngineGetRegisterMethod =
+        typeof(Engine).GetMethod(nameof(Engine.GetRegister), new[] { typeof(int) })!;
+    private static readonly MethodInfo EngineGetHeapMethod =
+        typeof(Engine).GetMethod(nameof(Engine.GetHeap), new[] { typeof(int) })!;
+    private static readonly MethodInfo EngineDerefMethod =
+        typeof(Engine).GetMethod(nameof(Engine.Deref), new[] { typeof(int) })!;
+    private static readonly MethodInfo EnginePushIlCpMethod =
+        typeof(Engine).GetMethod(
+            nameof(Engine.PushIlChoicePoint),
+            new[] { typeof(Func<Engine, int, bool>), typeof(int), typeof(int) })!;
+    private static readonly MethodInfo CellTagGetter =
+        typeof(Cell).GetProperty(nameof(Cell.Tag))!.GetGetMethod()!;
+    private static readonly MethodInfo CellAsHeapIndexGetter =
+        typeof(Cell).GetProperty(nameof(Cell.AsHeapIndex))!.GetGetMethod()!;
+    private static readonly MethodInfo CellAsAtomIdGetter =
+        typeof(Cell).GetProperty(nameof(Cell.AsAtomId))!.GetGetMethod()!;
 
     /// <summary>Returns <c>true</c> iff <paramref name="predicate"/> is in
-    /// the supported subset: single clause whose bytecode is made of
-    /// zero or more head-matching opcodes followed by exactly one
-    /// <c>proceed</c>. The current set is <c>get_atom</c>,
-    /// <c>get_integer</c>, <c>get_nil</c>, <c>get_value_x</c>.</summary>
+    /// the supported subset. See the class docstring for the catalog.</summary>
     public bool CanCompile(CompiledPredicate predicate)
     {
         ArgumentNullException.ThrowIfNull(predicate);
-        if (predicate.ClauseCount != 1) return false;
+        if (predicate.ClauseCount == 1) return CanCompileSingleClause(predicate);
+        return TryDescribeIndexedAtomPredicate(predicate, out _);
+    }
+
+    /// <summary>Emits a <see cref="PredicateDelegate"/> for the predicate.
+    /// The caller is responsible for first checking
+    /// <see cref="CanCompile"/>; passing in an unsupported predicate
+    /// throws <see cref="NotSupportedException"/>.</summary>
+    public PredicateDelegate Compile(CompiledPredicate predicate)
+    {
+        ArgumentNullException.ThrowIfNull(predicate);
+        if (predicate.ClauseCount == 1)
+        {
+            if (!CanCompileSingleClause(predicate))
+                throw new NotSupportedException(
+                    $"Single-clause predicate (fid={predicate.FunctorId}) is outside the IL subset.");
+            return CompileSingleClause(predicate);
+        }
+        if (!TryDescribeIndexedAtomPredicate(predicate, out var info))
+            throw new NotSupportedException(
+                $"Multi-clause predicate (fid={predicate.FunctorId}, clauses={predicate.ClauseCount}) "
+                + "is outside the IL subset.");
+        return CompileIndexedAtomPredicate(predicate, info!);
+    }
+
+    // ============================================================================
+    // Shape 1: single-clause facts
+    // ============================================================================
+
+    private static bool CanCompileSingleClause(CompiledPredicate predicate)
+    {
         byte[] code = predicate.Bytecode;
         int pc = 0;
         bool sawProceed = false;
@@ -66,42 +121,42 @@ public sealed class IlPredicateCompiler
         return sawProceed;
     }
 
-    /// <summary>Emits a <see cref="PredicateDelegate"/> for the predicate.
-    /// The caller is responsible for first checking
-    /// <see cref="CanCompile"/>; passing in an unsupported predicate
-    /// raises <see cref="NotSupportedException"/> partway through
-    /// emission.</summary>
-    public PredicateDelegate Compile(CompiledPredicate predicate)
+    private PredicateDelegate CompileSingleClause(CompiledPredicate predicate)
     {
-        ArgumentNullException.ThrowIfNull(predicate);
-        if (!CanCompile(predicate))
-            throw new NotSupportedException(
-                $"Predicate is outside the MVP IL subset (clauses="
-                + $"{predicate.ClauseCount}, bytecode bytes={predicate.Bytecode.Length}).");
-
         var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
             $"ShumwayIl_{predicate.FunctorId}_{predicate.Arity}");
         var failLabel = emit.DefineLabel("fail");
 
-        byte[] code = predicate.Bytecode;
-        int pc = 0;
-        while (pc < code.Length)
+        EmitClauseBody(emit, predicate.Bytecode, 0, predicate.Bytecode.Length, failLabel);
+
+        emit.MarkLabel(failLabel);
+        emit.LoadConstant(false);
+        emit.Return();
+        return emit.CreateDelegate();
+    }
+
+    /// <summary>Emits IL for a contiguous span of supported-opcode
+    /// clause-body bytes. <paramref name="failLabel"/> is jumped to on any
+    /// unification failure; a successful <c>proceed</c> emits an inline
+    /// <c>return true</c>.</summary>
+    private static void EmitClauseBody(
+        Sigil.Emit<PredicateDelegate> emit, byte[] code, int start, int end,
+        Sigil.Label failLabel)
+    {
+        int pc = start;
+        while (pc < end)
         {
             var op = (Opcode)code[pc];
             if (op == Opcode.GetAtom)
             {
                 int atomId = BytecodeIO.ReadInt32(code, pc + 1);
                 int regIdx = BytecodeIO.ReadInt32(code, pc + 5);
-
-                // emit: if (!engine.UnifyRegisterWithCell(regIdx,
-                //              Cell.Atom(atomId))) goto fail;
-                emit.LoadArgument(0);                  // engine
-                emit.LoadConstant(regIdx);             // arg 1: regIdx
-                emit.LoadConstant(atomId);             // arg 2 setup
-                emit.Call(CellAtomMethod);             // → Cell on stack
-                emit.Call(EngineUnifyMethod);          // bool on stack
+                emit.LoadArgument(0);
+                emit.LoadConstant(regIdx);
+                emit.LoadConstant(atomId);
+                emit.Call(CellAtomMethod);
+                emit.Call(EngineUnifyMethod);
                 emit.BranchIfFalse(failLabel);
-
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -109,32 +164,24 @@ public sealed class IlPredicateCompiler
             {
                 int value = BytecodeIO.ReadInt32(code, pc + 1);
                 int regIdx = BytecodeIO.ReadInt32(code, pc + 5);
-
-                // emit: if (!engine.UnifyRegisterWithCell(regIdx,
-                //              Cell.Int((long)value))) goto fail;
                 emit.LoadArgument(0);
                 emit.LoadConstant(regIdx);
                 emit.LoadConstant((long)value);
                 emit.Call(CellIntMethod);
                 emit.Call(EngineUnifyMethod);
                 emit.BranchIfFalse(failLabel);
-
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
             if (op == Opcode.GetNil)
             {
                 int regIdx = BytecodeIO.ReadInt32(code, pc + 1);
-
-                // emit: if (!engine.UnifyRegisterWithCell(regIdx,
-                //              Cell.Atom(AtomTable.EmptyListId))) goto fail;
                 emit.LoadArgument(0);
                 emit.LoadConstant(regIdx);
                 emit.LoadConstant(AtomTable.EmptyListId);
                 emit.Call(CellAtomMethod);
                 emit.Call(EngineUnifyMethod);
                 emit.BranchIfFalse(failLabel);
-
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -142,35 +189,332 @@ public sealed class IlPredicateCompiler
             {
                 int srcReg = BytecodeIO.ReadInt32(code, pc + 1);
                 int argReg = BytecodeIO.ReadInt32(code, pc + 5);
-
-                // emit: if (!engine.UnifyRegisters(srcReg, argReg)) goto fail;
                 emit.LoadArgument(0);
                 emit.LoadConstant(srcReg);
                 emit.LoadConstant(argReg);
                 emit.Call(EngineUnifyRegistersMethod);
                 emit.BranchIfFalse(failLabel);
-
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
             if (op == Opcode.Proceed)
             {
-                // emit: return true;
                 emit.LoadConstant(true);
                 emit.Return();
                 pc += 1;
                 continue;
             }
-            // CanCompile rejected this above; defensive guard.
             throw new NotSupportedException(
                 $"IL emission hit unsupported opcode 0x{(byte)op:X2} at pc={pc}.");
         }
+    }
 
-        // Failure tail. Reached when one of the get_atom branches missed.
+    // ============================================================================
+    // Shape 2: switch_on_atom indexed multi-clause
+    // ============================================================================
+
+    /// <summary>The result of parsing an indexed-atom predicate's
+    /// bytecode: each clause's first-arg atom id and the byte offset of
+    /// its body in the bytecode. Used both as a "yes I can compile this"
+    /// signal and as the dispatch table the IL emission consumes.</summary>
+    private sealed class IndexedAtomInfo
+    {
+        public required IReadOnlyList<(int AtomId, int BodyOffset)> Clauses { get; init; }
+    }
+
+    /// <summary>Recognises the shape:
+    /// <code>
+    ///   switch_on_term VarLbl ConstLbl ListLbl StructLbl   (17 bytes)
+    ///   [VarLbl: try / retry / trust chain over all clauses]
+    ///   [ConstLbl: switch_on_atom tableId                  (5 bytes)]
+    ///   [clause bodies: each `get_atom &lt;id&gt; A0 ; proceed`]
+    /// </code>
+    /// where the switch_on_atom table maps each clause's first-arg atom
+    /// to its body offset, and every clause body is the trivial
+    /// <c>get_atom &lt;id&gt; A0; proceed</c> form.</summary>
+    private static bool TryDescribeIndexedAtomPredicate(
+        CompiledPredicate predicate, out IndexedAtomInfo? info)
+    {
+        info = null;
+        if (predicate.Arity != 1) return false;
+        byte[] code = predicate.Bytecode;
+        if (code.Length < 17) return false;
+        if ((Opcode)code[0] != Opcode.SwitchOnTerm) return false;
+
+        // VarLbl, ConstLbl, ListLbl, StructLbl operand offsets.
+        int varLbl = BytecodeIO.ReadInt32(code, 1);
+        int constLbl = BytecodeIO.ReadInt32(code, 5);
+        // The shape we recognise has list and struct paths both pointing
+        // at the var label (i.e. nothing concrete to dispatch). Allow them
+        // to point anywhere — we only emit IL for atom dispatch — but
+        // demand const points at a switch_on_atom.
+        if (constLbl < 0 || constLbl >= code.Length) return false;
+        if ((Opcode)code[constLbl] != Opcode.SwitchOnAtom) return false;
+
+        int tableId = BytecodeIO.ReadInt32(code, constLbl + 1);
+        if (tableId < 0 || tableId >= predicate.SwitchTables.Count) return false;
+
+        // Verify the var-dispatch path is the standard try/retry/trust
+        // chain — we don't need to walk it for IL emission (we'll handle
+        // var-dispatch via IL CPs ourselves) but it's a sanity check that
+        // we're looking at the shape we expect.
+        if (varLbl < 0 || varLbl >= code.Length) return false;
+        if ((Opcode)code[varLbl] != Opcode.Try) return false;
+
+        var table = predicate.SwitchTables[tableId];
+        // The switch table is sorted by atom id (the WAM compiler uses a
+        // SortedDictionary) but the var-dispatch path must enumerate
+        // clauses in *source* order — that's what every other Prolog
+        // engine does. We recover source order by sorting on the body
+        // offset, since the per-predicate bytecode lays clauses out in
+        // source order.
+        var clauses = new List<(int AtomId, int BodyOffset)>(table.Count);
+        for (int i = 0; i < table.Count; i++)
+        {
+            int bodyOffset = table.Values[i];
+            if (bodyOffset < 0 || bodyOffset + 10 > code.Length) return false;
+            if ((Opcode)code[bodyOffset] != Opcode.GetAtom) return false;
+            // get_atom <id>, <reg> ; proceed
+            int reg = BytecodeIO.ReadInt32(code, bodyOffset + 5);
+            if (reg != 0) return false;
+            if (bodyOffset + 9 >= code.Length) return false;
+            if ((Opcode)code[bodyOffset + 9] != Opcode.Proceed) return false;
+            int atomId = BytecodeIO.ReadInt32(code, bodyOffset + 1);
+            clauses.Add((atomId, bodyOffset));
+        }
+        // Empty switch tables are degenerate.
+        if (clauses.Count == 0) return false;
+        clauses.Sort((a, b) => a.BodyOffset.CompareTo(b.BodyOffset));
+        info = new IndexedAtomInfo { Clauses = clauses };
+        return true;
+    }
+
+    /// <summary>Emits the IL for an indexed-atom multi-clause predicate.
+    /// The emitted delegate handles both the ground-A1 fast path (direct
+    /// atom-id dispatch) and the unbound-A1 path (enumerate via the IL
+    /// choice-point machinery from ADR-014).</summary>
+    private PredicateDelegate CompileIndexedAtomPredicate(
+        CompiledPredicate predicate, IndexedAtomInfo info)
+    {
+        // Take the holder lock for the entire emit-and-register sequence so
+        // two concurrent Compile calls don't both observe the same
+        // _nextHolderKey, embed it into their IL, and overwrite each other
+        // in the holder. The lock is short-lived (one emit call) and only
+        // contended when two engines promote at the same wall-clock moment.
+        lock (IndexedDelegateHolder.RegistrationLock)
+        {
+            return CompileIndexedAtomPredicateUnlocked(predicate, info);
+        }
+    }
+
+    private PredicateDelegate CompileIndexedAtomPredicateUnlocked(
+        CompiledPredicate predicate, IndexedAtomInfo info)
+    {
+        var clauses = info.Clauses;
+        // Build the dispatch arrays *outside* IL so the emitted method
+        // doesn't have to allocate them per call.
+        int[] atomIds = clauses.Select(c => c.AtomId).ToArray();
+        int holderKey = _nextHolderKey;
+
+        var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
+            $"ShumwayIl_indexed_{predicate.FunctorId}");
+
+        var failLabel = emit.DefineLabel("fail");
+        var varDispatchLabel = emit.DefineLabel("var_dispatch");
+        var groundDispatchLabel = emit.DefineLabel("ground_dispatch");
+
+        // cursor != 0 → re-entry, jump straight to var-dispatch switch.
+        emit.LoadArgument(1);
+        emit.LoadConstant(0);
+        var notCursorZero = emit.DefineLabel("not_cursor_zero");
+        emit.UnsignedBranchIfNotEqual(notCursorZero);
+
+        // cursor == 0: deref A1 (read X[0], chase REF if needed) and
+        // dispatch on its tag.
+        EmitDerefA0(emit);
+        // Now top of stack is a Cell. Save it in a local since we'll
+        // need .Tag and .AsAtomId.
+        var a1Local = emit.DeclareLocal<Cell>("a1");
+        emit.StoreLocal(a1Local);
+
+        // tag = a1.Tag
+        emit.LoadLocalAddress(a1Local);
+        emit.Call(CellTagGetter);
+        // tag on stack as byte
+        var tagLocal = emit.DeclareLocal<byte>("tag");
+        emit.StoreLocal(tagLocal);
+
+        // if (tag == Tag.Ref) goto var_dispatch
+        emit.LoadLocal(tagLocal);
+        emit.LoadConstant((int)Tag.Ref);
+        emit.BranchIfEqual(varDispatchLabel);
+        // if (tag == Tag.Atom) goto ground_dispatch
+        emit.LoadLocal(tagLocal);
+        emit.LoadConstant((int)Tag.Atom);
+        emit.BranchIfEqual(groundDispatchLabel);
+        // Any other tag → fail (no clause can match a list/struct/etc).
+        emit.Branch(failLabel);
+
+        // ground_dispatch: compare a1.AsAtomId against each clause's
+        // atom id, returning true on a hit. The chain is a linear
+        // sequence of cmp + branch-if-equal; for the small predicate
+        // counts we typically deal with (5-20 clauses) it beats a hash
+        // lookup in cache-friendliness.
+        emit.MarkLabel(groundDispatchLabel);
+        emit.LoadLocalAddress(a1Local);
+        emit.Call(CellAsAtomIdGetter);
+        var atomIdLocal = emit.DeclareLocal<int>("atomId");
+        emit.StoreLocal(atomIdLocal);
+        var groundSuccess = emit.DefineLabel("ground_success");
+        for (int i = 0; i < atomIds.Length; i++)
+        {
+            emit.LoadLocal(atomIdLocal);
+            emit.LoadConstant(atomIds[i]);
+            emit.BranchIfEqual(groundSuccess);
+        }
+        // No match in ground dispatch: fail.
+        emit.Branch(failLabel);
+        emit.MarkLabel(groundSuccess);
+        // The switch_on_atom dispatch already unified A1 with the
+        // matching atom (since A1 already *was* that atom). Just return
+        // success.
+        emit.LoadConstant(true);
+        emit.Return();
+
+        // var_dispatch and cursor>0 share the same dispatch logic: pick
+        // the clause to try based on the cursor. cursor==0 enters here
+        // when A1 is unbound; cursor>0 enters here after a backtrack.
+        emit.MarkLabel(varDispatchLabel);
+        emit.MarkLabel(notCursorZero);
+
+        // The dispatch is a sequence of: "is cursor == N? if yes, push
+        // CP for cursor=N+1 (unless last) and unify A0 with atom N".
+        for (int i = 0; i < atomIds.Length; i++)
+        {
+            var nextLabel = emit.DefineLabel($"after_clause_{i}");
+            emit.LoadArgument(1);
+            emit.LoadConstant(i);
+            emit.UnsignedBranchIfNotEqual(nextLabel);
+
+            // If there's a later clause, push an IL CP for it before
+            // attempting unification.
+            if (i < atomIds.Length - 1)
+            {
+                // engine.PushIlChoicePoint(this_delegate, i + 1, 1)
+                //   — but the IL doesn't know "this delegate" at emit time.
+                //   We thread it via a static singleton built after creation:
+                //   a delegate-typed local that the engine fills in for us
+                //   on first invocation. Simpler approach: capture via a
+                //   closure-equivalent — emit a call into a thunk that
+                //   accepts the delegate. We reuse the engine's
+                //   PushIlChoicePoint and resolve "this delegate" via the
+                //   reflection-emit closure mechanism Sigil doesn't directly
+                //   support; instead we pass the delegate via a static
+                //   field. See IndexedDelegateHolder below.
+                //
+                // emit: engine.PushIlChoicePoint(IndexedDelegateHolder.GetFor(holderKey), i+1, 1)
+                emit.LoadArgument(0);                  // engine
+                emit.LoadConstant(holderKey);          // holder key (captured before lock)
+                emit.Call(IndexedDelegateHolderGet);   // → PredicateDelegate
+                emit.LoadConstant(i + 1);              // next cursor
+                emit.LoadConstant(1);                  // arity
+                emit.Call(EnginePushIlCpMethod);
+            }
+            // engine.UnifyRegisterWithCell(0, Cell.Atom(atomIds[i]))
+            emit.LoadArgument(0);
+            emit.LoadConstant(0);                      // reg 0
+            emit.LoadConstant(atomIds[i]);
+            emit.Call(CellAtomMethod);
+            emit.Call(EngineUnifyMethod);
+            // Return whatever unify returned.
+            emit.Return();
+
+            emit.MarkLabel(nextLabel);
+        }
+
+        // cursor not in [0..N-1] → fail.
+        emit.Branch(failLabel);
+
         emit.MarkLabel(failLabel);
         emit.LoadConstant(false);
         emit.Return();
 
-        return emit.CreateDelegate();
+        var del = emit.CreateDelegate();
+        // Now bind the delegate into the holder so the CP-push path can
+        // pull it back out. Both the LoadConstant calls above and this
+        // registration use `holderKey` captured at the start of the
+        // method, so they always match.
+        IndexedDelegateHolder.Register(holderKey, del);
+        _nextHolderKey = holderKey + 1;
+        return del;
+    }
+
+    /// <summary>A counter the IL emission embeds into the bytecode as a
+    /// constant to look up the freshly-emitted delegate at runtime. This
+    /// is the Tier-1 equivalent of a self-reference; Sigil doesn't expose
+    /// the dynamic method's delegate during emission, so we route through
+    /// a static side table keyed by an integer.</summary>
+    private static int _nextHolderKey = 1;
+    private static readonly MethodInfo IndexedDelegateHolderGet =
+        typeof(IndexedDelegateHolder).GetMethod(nameof(IndexedDelegateHolder.Get))!;
+
+    /// <summary>Side table that lets a freshly-emitted IL delegate
+    /// reference itself for the <c>PushIlChoicePoint</c> call without
+    /// running into the chicken-and-egg of "the delegate must exist
+    /// before we can name it in IL". The IL embeds an integer key; at
+    /// runtime <see cref="Get"/> resolves it to the stored delegate. The
+    /// table is process-wide but write-once-per-key, so there's no
+    /// thread-safety concern beyond the lock around the dictionary.</summary>
+    internal static class IndexedDelegateHolder
+    {
+        private static readonly Dictionary<int, PredicateDelegate> _byKey = new();
+        private static readonly object _lock = new();
+
+        /// <summary>The lock the IL emission takes around the
+        /// emit-and-register sequence so two concurrent compiles don't
+        /// race on <c>_nextHolderKey</c>.</summary>
+        public static object RegistrationLock => _lock;
+
+        public static void Register(int key, PredicateDelegate del)
+        {
+            lock (_lock) _byKey[key] = del;
+        }
+
+        public static Func<Engine, int, bool> Get(int key)
+        {
+            PredicateDelegate del;
+            lock (_lock) del = _byKey[key];
+            return new Func<Engine, int, bool>(del);
+        }
+    }
+
+    /// <summary>Emits IL that loads <c>engine.GetRegister(0)</c>, derefs
+    /// it if it's a REF, and leaves the resulting <see cref="Cell"/> on
+    /// the evaluation stack.</summary>
+    private static void EmitDerefA0(Sigil.Emit<PredicateDelegate> emit)
+    {
+        var a1Tmp = emit.DeclareLocal<Cell>("a1Tmp");
+        var notRef = emit.DefineLabel("a1_not_ref");
+        emit.LoadArgument(0);
+        emit.LoadConstant(0);
+        emit.Call(EngineGetRegisterMethod);
+        emit.StoreLocal(a1Tmp);
+
+        emit.LoadLocalAddress(a1Tmp);
+        emit.Call(CellTagGetter);
+        emit.LoadConstant((int)Tag.Ref);
+        emit.UnsignedBranchIfNotEqual(notRef);
+
+        // a1 is a REF: follow the chain. engine.GetHeap(engine.Deref(a1.AsHeapIndex)).
+        emit.LoadArgument(0);
+        emit.LoadArgument(0);
+        emit.LoadLocalAddress(a1Tmp);
+        emit.Call(CellAsHeapIndexGetter);
+        emit.Call(EngineDerefMethod);
+        emit.Call(EngineGetHeapMethod);
+        emit.StoreLocal(a1Tmp);
+
+        emit.MarkLabel(notRef);
+        emit.LoadLocal(a1Tmp);
     }
 }

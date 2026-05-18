@@ -140,7 +140,9 @@ public class IlExtendedOpcodeTests
     [Fact]
     public void Tier1Promoter_RejectsUnsupportedPredicate_ReturnsNull()
     {
-        // Multi-clause predicates are still outside the IL subset.
-        Assert.Null(Tier1Promoter.TryCompile("p(a).\np(b).\n"));
+        // Multi-clause predicates with rule BODIES are still outside the
+        // IL subset (chunk 42 lifted the multi-clause restriction for
+        // fact-only indexed predicates).
+        Assert.Null(Tier1Promoter.TryCompile("p(X) :- q(X).\np(X) :- r(X).\n"));
     }
 }

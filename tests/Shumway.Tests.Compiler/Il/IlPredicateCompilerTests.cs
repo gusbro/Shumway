@@ -39,9 +39,20 @@ public class IlPredicateCompilerTests
     }
 
     [Fact]
-    public void CanCompile_MultiClause_False()
+    public void CanCompile_MultiClauseIndexedAtoms_True()
     {
+        // Chunk 42: switch_on_atom-indexed predicates whose clause bodies
+        // are all trivial `get_atom <id> A0; proceed` are now compilable
+        // (multi-clause IL via the ADR-014 cursor ABI).
         var pred = CompileFromSource("colour(red).\ncolour(green).\n");
+        Assert.True(new IlPredicateCompiler().CanCompile(pred));
+    }
+
+    [Fact]
+    public void CanCompile_MultiClauseWithBody_False()
+    {
+        // Bodies that call other predicates are still outside the subset.
+        var pred = CompileFromSource("p(X) :- q(X).\np(X) :- r(X).\n");
         Assert.False(new IlPredicateCompiler().CanCompile(pred));
     }
 
@@ -161,8 +172,11 @@ public class IlPredicateCompilerTests
     [Fact]
     public void Compile_UnsupportedPredicate_Throws()
     {
-        // Multi-clause predicates still fall outside the supported subset.
-        var pred = CompileFromSource("p(a).\np(b).\n");
+        // Predicates with rule bodies are still outside the supported
+        // subset — the IL compiler accepts multi-clause facts (chunk 42)
+        // but not body calls (which need allocate / call / proceed
+        // sequencing it doesn't handle yet).
+        var pred = CompileFromSource("p(X) :- q(X).\np(X) :- r(X).\n");
         var ic = new IlPredicateCompiler();
         Assert.Throws<NotSupportedException>(() => ic.Compile(pred));
     }
