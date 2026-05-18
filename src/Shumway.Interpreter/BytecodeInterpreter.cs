@@ -969,6 +969,23 @@ public sealed class BytecodeInterpreter
                     break;
                 }
 
+                case Opcode.Meta:
+                {
+                    // Runtime no-op. Meta opcodes (currently only DbgInfo)
+                    // carry compile-time metadata for the stack-trace path;
+                    // their byte size is determined by their sub-opcode
+                    // (DbgInfo = 6: opcode + sub + 4-byte entry id).
+                    var sub = (MetaSubOpcode)code[pc + 1];
+                    int metaSize = sub switch
+                    {
+                        MetaSubOpcode.DbgInfo => 6,
+                        _ => throw new InvalidOperationException(
+                            $"Unknown meta sub-opcode 0x{(byte)sub:X2} at PC=0x{pc:X4}."),
+                    };
+                    _engine.AdvancePc(metaSize);
+                    break;
+                }
+
                 default:
                     throw new NotImplementedException(
                         $"Opcode 0x{opByte:X2} ({(Opcode)opByte}) is not implemented yet. " +

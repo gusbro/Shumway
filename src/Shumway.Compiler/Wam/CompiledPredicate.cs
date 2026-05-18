@@ -52,6 +52,17 @@ public sealed class CompiledPredicate
     /// location.</summary>
     public SourcePosition SourcePosition { get; }
 
+    /// <summary>One <see cref="SourcePosition"/> per clause, in source
+    /// order. Aligned with the <c>Meta(DbgInfo, clauseIndex)</c> opcodes
+    /// the predicate compiler emits at each clause boundary (chunk 55):
+    /// the entry id encoded in the Meta payload is the clause's index
+    /// into this list. The stack-trace path scans backward from the
+    /// error PC for the most recent Meta opcode and reads its
+    /// payload to look up the precise clause position. Empty for
+    /// predicates with no usable position data (e.g. ones rebuilt from
+    /// a bundle blob produced before chunk 55).</summary>
+    public IReadOnlyList<SourcePosition> ClauseSourcePositions { get; }
+
     public CompiledPredicate(
         byte[] bytecode,
         int functorId,
@@ -88,6 +99,23 @@ public sealed class CompiledPredicate
         IReadOnlyList<SwitchTable> switchTables,
         IReadOnlyList<int> switchTableIdSites,
         SourcePosition sourcePosition)
+        : this(bytecode, functorId, arity, clauseCount, callSites, dispatchSites,
+               switchTables, switchTableIdSites, sourcePosition,
+               Array.Empty<SourcePosition>())
+    {
+    }
+
+    public CompiledPredicate(
+        byte[] bytecode,
+        int functorId,
+        int arity,
+        int clauseCount,
+        IReadOnlyList<CallSite> callSites,
+        IReadOnlyList<int> dispatchSites,
+        IReadOnlyList<SwitchTable> switchTables,
+        IReadOnlyList<int> switchTableIdSites,
+        SourcePosition sourcePosition,
+        IReadOnlyList<SourcePosition> clauseSourcePositions)
     {
         Bytecode = bytecode;
         FunctorId = functorId;
@@ -98,5 +126,6 @@ public sealed class CompiledPredicate
         SwitchTables = switchTables;
         SwitchTableIdSites = switchTableIdSites;
         SourcePosition = sourcePosition;
+        ClauseSourcePositions = clauseSourcePositions;
     }
 }

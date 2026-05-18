@@ -102,6 +102,15 @@ public sealed class PrologEngine
 
     private IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? _currentPredicatesByAddress;
 
+    /// <summary>Diagnostic accessor for the most recently linked query's
+    /// address → predicate map. Used by tests that need to verify which
+    /// predicate instances ended up in the linked program (e.g. confirming
+    /// the bundle skip-compile path reused the cached
+    /// <see cref="Shumway.Compiler.Wam.CompiledPredicate"/> by reference).
+    /// Returns <c>null</c> before the first query runs.</summary>
+    public IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? CurrentPredicatesByAddressForTest
+        => _currentPredicatesByAddress;
+
     public PrologEngine()
     {
         // The standard builtins (=/2, ==/2, etc.) need to be registered before
@@ -506,9 +515,51 @@ public sealed class PrologEngine
             string name = AtomTable.GetById(atomId)?.Name ?? "?";
             if (name == "__query__") continue;
             plain.Add((name, arity));
-            frames.Add(new StackFrame(name, arity, pred.SourcePosition));
+            // Locate the most recent Meta(DbgInfo) opcode at or before the
+            // PC inside this predicate's bytecode (chunk 55). Its payload
+            // is the clause index; we use it to pick the precise per-clause
+            // source position from ClauseSourcePositions, falling back to
+            // the predicate's first-clause position when no Meta opcode is
+            // present (single-clause predicates or older bundle blobs).
+            SourcePosition framePos = FindClausePosition(pred, addr - entryAddr);
+            frames.Add(new StackFrame(name, arity, framePos));
         }
         return (plain, frames);
+    }
+
+    /// <summary>Scans <paramref name="pred"/>'s bytecode from offset 0 up to
+    /// (but not past) <paramref name="predLocalPc"/> for the most recent
+    /// <see cref="Opcode.Meta"/> + <see cref="MetaSubOpcode.DbgInfo"/>
+    /// opcode and returns the clause position its 4-byte payload indexes
+    /// into. Returns the predicate's first-clause position when no Meta
+    /// opcode is found (single-clause predicates, or bundle-rebuilt
+    /// predicates whose <see cref="CompiledPredicate.ClauseSourcePositions"/>
+    /// is empty).</summary>
+    private static SourcePosition FindClausePosition(
+        Shumway.Compiler.Wam.CompiledPredicate pred, int predLocalPc)
+    {
+        if (pred.ClauseSourcePositions.Count == 0) return pred.SourcePosition;
+        byte[] code = pred.Bytecode;
+        int pc = 0;
+        int lastClauseIndex = -1;
+        while (pc < code.Length && pc <= predLocalPc)
+        {
+            byte opByte = code[pc];
+            if (opByte == (byte)Opcode.Meta
+                && pc + 1 < code.Length
+                && (MetaSubOpcode)code[pc + 1] == MetaSubOpcode.DbgInfo)
+            {
+                lastClauseIndex = BytecodeIO.ReadInt32(code, pc + 2);
+                pc += 6;
+                continue;
+            }
+            var info = OpcodeTable.Get(opByte);
+            if (!info.IsDefined || info.Size == 0) break;
+            pc += info.Size;
+        }
+        if (lastClauseIndex >= 0 && lastClauseIndex < pred.ClauseSourcePositions.Count)
+            return pred.ClauseSourcePositions[lastClauseIndex];
+        return pred.SourcePosition;
     }
 
     /// <summary>Drives the interpreter's run / backtrack loop and yields a
@@ -916,7 +967,14 @@ public sealed class PrologEngine
                 allRewritten.Add(ModuleRewrite.Rewrite(clause, ctx));
         }
 
-        var module = new ModuleCompiler().Compile(allRewritten);
+        // Bundle skip-compile (chunk 55): the precompiled-clause cache,
+        // populated by LoadBundle from a bundle's compiled bytecode blob,
+        // shortcuts ModuleCompiler for any functor whose cached
+        // CompiledPredicate doesn't reference per-module literal pools.
+        var skipCompileCache = _precompiledClauseCache.Count > 0
+            ? _precompiledClauseCache
+            : null;
+        var module = new ModuleCompiler().Compile(allRewritten, skipCompileCache);
 
         var launcher = new BytecodeEmitter();
         int callPos = launcher.Position;

@@ -19,6 +19,22 @@ namespace Shumway.Compiler.Wam;
 public sealed class ModuleCompiler
 {
     public CompiledModule Compile(IEnumerable<Clause> clauses)
+        => Compile(clauses, cache: null);
+
+    /// <summary><paramref name="cache"/> short-circuits compilation: any
+    /// predicate-group whose functor id is in the cache <em>and</em> whose
+    /// cached <see cref="CompiledPredicate"/> doesn't reference per-module
+    /// literal-pool indices reuses the cached bytecode verbatim instead of
+    /// running <see cref="PredicateCompiler"/> over the source clauses.
+    /// This is the Tier-0 half of the bundle pipeline's skip-compile path
+    /// (chunk 55) — a loaded bundle's <c>CompiledPredicate</c>s can be
+    /// re-served at query setup without the consulted-source round trip.
+    /// Cache misses (functor not in the cache, or the cached predicate
+    /// uses literals whose indices wouldn't survive a fresh pool) fall
+    /// through to normal compilation.</summary>
+    public CompiledModule Compile(
+        IEnumerable<Clause> clauses,
+        IReadOnlyDictionary<int, CompiledPredicate>? cache)
     {
         ArgumentNullException.ThrowIfNull(clauses);
 
@@ -50,14 +66,51 @@ public sealed class ModuleCompiler
         var predicates = new List<CompiledPredicate>(order.Count);
         var predicateCompiler = new PredicateCompiler();
         foreach (int fid in order)
+        {
+            if (cache is not null
+                && cache.TryGetValue(fid, out var cached)
+                && IsCachedPredicateReusable(cached))
+            {
+                predicates.Add(cached);
+                continue;
+            }
             predicates.Add(predicateCompiler.Compile(
                 groups[fid], stringLiterals, floatLiterals, bigIntLiterals));
+        }
 
         return new CompiledModule(
             predicates,
             stringLiterals.Snapshot(),
             floatLiterals.Snapshot(),
             bigIntLiterals.Snapshot());
+    }
+
+    /// <summary>True iff <paramref name="pred"/>'s bytecode references no
+    /// per-module literal pool (string / float / big-integer) — i.e. it
+    /// can be lifted into a freshly-compiled module without its
+    /// <see cref="OperandKind.LiteralId"/> operands needing to be
+    /// re-keyed to the new pools. Atom ids, functor ids, and builtin
+    /// ids are all globally interned so they don't need this guard.</summary>
+    private static bool IsCachedPredicateReusable(CompiledPredicate pred)
+    {
+        byte[] code = pred.Bytecode;
+        int pc = 0;
+        while (pc < code.Length)
+        {
+            byte opByte = code[pc];
+            var info = OpcodeTable.Get(opByte);
+            if (!info.IsDefined || info.Size == 0) return false;
+            if (info.OperandKinds is not null)
+            {
+                for (int i = 0; i < info.OperandKinds.Length; i++)
+                {
+                    if (info.OperandKinds[i] == OperandKind.LiteralId)
+                        return false;
+                }
+            }
+            pc += info.Size;
+        }
+        return true;
     }
 
     private static int GetFunctorId(Clause clause)

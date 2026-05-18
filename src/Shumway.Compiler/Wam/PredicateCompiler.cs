@@ -72,7 +72,13 @@ public sealed class PredicateCompiler
                     + $"(clause 0 = id {functorId}, clause {i} = id {compiledClauses[i].FunctorId}).");
         }
 
-        // Single-clause shortcut.
+        // Per-clause source positions, in source order. Used by the
+        // stack-trace path together with the Meta(DbgInfo, clauseIndex)
+        // opcodes the multi-clause paths emit before each clause body.
+        var clausePositions = clauses.Select(c => c.Position).ToArray();
+
+        // Single-clause shortcut. No Meta opcode needed: any PC inside the
+        // predicate is by definition inside clause 0.
         if (compiledClauses.Count == 1)
         {
             return new CompiledPredicate(
@@ -84,7 +90,8 @@ public sealed class PredicateCompiler
                 dispatchSites: Array.Empty<int>(),
                 switchTables: Array.Empty<SwitchTable>(),
                 switchTableIdSites: Array.Empty<int>(),
-                sourcePosition: clauses[0].Position);
+                sourcePosition: clauses[0].Position,
+                clauseSourcePositions: clausePositions);
         }
 
         // Decide whether first-argument indexing pays off. It does whenever at
@@ -96,9 +103,15 @@ public sealed class PredicateCompiler
             && firstArgs.Any(f => f.Kind != FirstArgKind.Var && f.Kind != FirstArgKind.Other);
 
         return indexable
-            ? CompileIndexed(compiledClauses, firstArgs, functorId, arity, clauses[0].Position)
-            : CompileTryMeElseChain(compiledClauses, functorId, arity, clauses[0].Position);
+            ? CompileIndexed(compiledClauses, firstArgs, functorId, arity,
+                             clauses[0].Position, clausePositions)
+            : CompileTryMeElseChain(compiledClauses, functorId, arity,
+                                    clauses[0].Position, clausePositions);
     }
+
+    /// <summary>Size of one <see cref="Opcode.Meta"/> + <see cref="MetaSubOpcode.DbgInfo"/>
+    /// instruction: 1 opcode byte + 1 sub-byte + 4-byte entry id payload.</summary>
+    private const int MetaDbgInfoSize = 6;
 
     // ============================================================================
     // try_me_else / retry_me_else / trust_me chain (no first-arg indexing)
@@ -106,8 +119,15 @@ public sealed class PredicateCompiler
 
     private static CompiledPredicate CompileTryMeElseChain(
         IReadOnlyList<CompiledClause> compiledClauses, int functorId, int arity,
-        Shumway.Compiler.Lexer.SourcePosition position)
+        Shumway.Compiler.Lexer.SourcePosition position,
+        IReadOnlyList<Shumway.Compiler.Lexer.SourcePosition> clausePositions)
     {
+        // Per-clause layout: dispatch instruction (try/retry/trust),
+        // then Meta(DbgInfo, clauseIndex), then the clause body. The
+        // dispatch BPs point at the next clause's dispatch instruction;
+        // the Meta opcode sits inside the body region so any PC inside
+        // (Meta + clause body) maps back to that clause via a backward
+        // scan from the runtime PC.
         int n = compiledClauses.Count;
         int[] clauseBodyOffsets = new int[n];
         int pos = 0;
@@ -116,6 +136,7 @@ public sealed class PredicateCompiler
             int dispatchSize = i == 0 ? 9 : i == n - 1 ? 1 : 5;
             pos += dispatchSize;
             clauseBodyOffsets[i] = pos;
+            pos += MetaDbgInfoSize;
             pos += compiledClauses[i].Bytecode.Length;
         }
 
@@ -143,6 +164,7 @@ public sealed class PredicateCompiler
                 dispatchSites.Add(opPos + 1);
             }
 
+            emitter.EmitMetaDbgInfo(i);
             int clauseStart = emitter.Position;
             emitter.AppendBytes(compiledClauses[i].Bytecode);
             foreach (var site in compiledClauses[i].CallSites)
@@ -152,7 +174,8 @@ public sealed class PredicateCompiler
 
         return new CompiledPredicate(
             emitter.ToBytes(), functorId, arity, n, callSites, dispatchSites,
-            Array.Empty<SwitchTable>(), Array.Empty<int>(), position);
+            Array.Empty<SwitchTable>(), Array.Empty<int>(), position,
+            clausePositions);
     }
 
     private static int DispatchSizeFor(int clauseIndex, int totalClauses) =>
@@ -205,7 +228,8 @@ public sealed class PredicateCompiler
         IReadOnlyList<FirstArgInfo> firstArgs,
         int functorId,
         int arity,
-        Shumway.Compiler.Lexer.SourcePosition position)
+        Shumway.Compiler.Lexer.SourcePosition position,
+        IReadOnlyList<Shumway.Compiler.Lexer.SourcePosition> clausePositions)
     {
         int n = compiledClauses.Count;
 
@@ -298,7 +322,14 @@ public sealed class PredicateCompiler
         int[] clauseBodyPos = new int[n];
         for (int i = 0; i < n; i++)
         {
+            // Each clause body is preceded by a Meta(DbgInfo, i) opcode
+            // so the stack-trace path can map any PC inside the clause
+            // back to its source position. The dispatch targets stored in
+            // switch tables and try/retry/trust addresses point at the
+            // Meta opcode (not the body byte after it) so the runtime
+            // executes the no-op Meta first, then the body.
             clauseBodyPos[i] = pos;
+            pos += MetaDbgInfoSize;
             pos += compiledClauses[i].Bytecode.Length;
         }
 
@@ -400,6 +431,7 @@ public sealed class PredicateCompiler
 
         for (int i = 0; i < n; i++)
         {
+            emitter.EmitMetaDbgInfo(i);
             int clauseStart = emitter.Position;
             emitter.AppendBytes(compiledClauses[i].Bytecode);
             foreach (var site in compiledClauses[i].CallSites)
@@ -409,7 +441,8 @@ public sealed class PredicateCompiler
 
         return new CompiledPredicate(
             emitter.ToBytes(), functorId, arity, n,
-            callSites, dispatchSites, switchTables, switchTableIdSites, position);
+            callSites, dispatchSites, switchTables, switchTableIdSites, position,
+            clausePositions);
     }
 
     /// <summary>Emits a <c>try</c> / (zero or more <c>retry</c>) / <c>trust</c>

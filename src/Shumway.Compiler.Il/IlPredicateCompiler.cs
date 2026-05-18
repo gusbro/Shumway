@@ -331,6 +331,9 @@ public sealed class IlPredicateCompiler
         Opcode.GetPstr => true,
         Opcode.PutPstr => true,
         Opcode.Call => true,
+        // Meta dbg_info (chunk 55) — pure compile-time metadata; the
+        // emit path skips it without producing any IL.
+        Opcode.Meta => true,
         _ => false,
     };
 
@@ -364,6 +367,14 @@ public sealed class IlPredicateCompiler
         while (pc < end)
         {
             var op = (Opcode)code[pc];
+            if (op == Opcode.Meta)
+            {
+                // Dbg-info Meta opcode (chunk 55) — runtime no-op. Skip
+                // the 6 bytes (opcode + sub-byte + 4-byte payload) without
+                // emitting any IL.
+                pc += 6;
+                continue;
+            }
             if (op == Opcode.GetAtom)
             {
                 int atomId = BytecodeIO.ReadInt32(code, pc + 1);
@@ -1080,6 +1091,15 @@ public sealed class IlPredicateCompiler
         for (int i = 0; i < table.Count; i++)
         {
             int bodyOffset = table.Values[i];
+            // Skip a leading Meta(DbgInfo) opcode (chunk 55) — the WAM
+            // emitter places one at the start of each clause body for
+            // stack-trace mapping; from the IL detector's perspective it's
+            // pure metadata that lives before the actual head-matching ops.
+            if (bodyOffset >= 0 && bodyOffset + 6 <= code.Length
+                && (Opcode)code[bodyOffset] == Opcode.Meta)
+            {
+                bodyOffset += 6;
+            }
             if (bodyOffset < 0 || bodyOffset + 10 > code.Length) return false;
             if ((Opcode)code[bodyOffset] != Opcode.GetAtom) return false;
             // get_atom <id>, <reg> ; proceed

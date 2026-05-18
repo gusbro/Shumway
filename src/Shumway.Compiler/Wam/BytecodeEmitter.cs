@@ -150,6 +150,20 @@ public sealed class BytecodeEmitter
         _bytes.AddRange(bytes);
     }
 
+    // ---------- Meta ----------
+
+    /// <summary>Emits a <see cref="Opcode.Meta"/> instruction carrying a
+    /// <see cref="MetaSubOpcode.DbgInfo"/> sub-byte and a 4-byte entry id
+    /// payload. The interpreter treats Meta as a runtime no-op; the
+    /// payload is consumed by the stack-trace path to find each clause's
+    /// source position (chunk 55).</summary>
+    public void EmitMetaDbgInfo(int entryId)
+    {
+        _bytes.Add((byte)Opcode.Meta);
+        _bytes.Add((byte)MetaSubOpcode.DbgInfo);
+        EmitInt(entryId);
+    }
+
     // ---------- Get-family (head matching) ----------
 
     public void EmitGetVariableX(int destSlot, int argSlot)

@@ -27,7 +27,12 @@ public static class CompiledModuleCodec
     /// blob. Lets a downstream reader fail fast on accidental wrong-data
     /// input rather than crashing mid-parse.</summary>
     public static readonly byte[] Magic = new byte[] { (byte)'S', (byte)'M', (byte)'C', (byte)'M' };
-    public const int CurrentVersion = 1;
+    /// <summary>v2 adds per-clause source positions for stack traces (chunk
+    /// 55). The wire format gains a trailing block per predicate carrying
+    /// each clause's <see cref="Shumway.Compiler.Lexer.SourcePosition"/>;
+    /// v1 readers stop before that block so the new field is purely
+    /// additive on the wire even though the version number bumped.</summary>
+    public const int CurrentVersion = 2;
 
     public static byte[] Encode(CompiledModule module)
     {
@@ -131,6 +136,18 @@ public static class CompiledModuleCodec
         bw.Write(pred.SwitchTables.Count);
         for (int i = 0; i < pred.SwitchTables.Count; i++)
             WriteSwitchTable(bw, pred.SwitchTables[i], switchKinds[i]);
+
+        // Predicate-level source position + per-clause positions (chunk 55).
+        bw.Write(pred.SourcePosition.Line);
+        bw.Write(pred.SourcePosition.Column);
+        bw.Write(pred.SourcePosition.Offset);
+        bw.Write(pred.ClauseSourcePositions.Count);
+        foreach (var p in pred.ClauseSourcePositions)
+        {
+            bw.Write(p.Line);
+            bw.Write(p.Column);
+            bw.Write(p.Offset);
+        }
     }
 
     private static CompiledPredicate ReadPredicate(BinaryReader br)
@@ -179,11 +196,29 @@ public static class CompiledModuleCodec
         var switchTables = new SwitchTable[switchTableCount];
         for (int i = 0; i < switchTableCount; i++) switchTables[i] = ReadSwitchTable(br);
 
+        // v2: predicate-level source position + per-clause positions (chunk 55).
+        int predLine = br.ReadInt32();
+        int predColumn = br.ReadInt32();
+        int predOffset = br.ReadInt32();
+        var predicatePosition = new Shumway.Compiler.Lexer.SourcePosition(
+            predLine, predColumn, predOffset);
+
+        int clausePosCount = br.ReadInt32();
+        var clausePositions = new Shumway.Compiler.Lexer.SourcePosition[clausePosCount];
+        for (int i = 0; i < clausePosCount; i++)
+        {
+            int line = br.ReadInt32();
+            int column = br.ReadInt32();
+            int offset = br.ReadInt32();
+            clausePositions[i] = new Shumway.Compiler.Lexer.SourcePosition(line, column, offset);
+        }
+
         int functorId = FunctorTable.Intern(
             AtomTable.Intern(name, permanent: true).Id, arity);
         return new CompiledPredicate(
             bytecode, functorId, arity, clauseCount,
-            callSites, dispatchSites, switchTables, switchTableIdSites);
+            callSites, dispatchSites, switchTables, switchTableIdSites,
+            predicatePosition, clausePositions);
     }
 
     // ---------- Switch tables ----------
