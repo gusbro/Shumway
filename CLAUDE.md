@@ -243,6 +243,7 @@ When proposing changes:
 | IL compiler architecture | ADR-011 |
 | Mode inference roadmap | ADR-012 |
 | BigInt literal opcodes | ADR-013 |
+| IL choice points (multi-clause ABI) | ADR-014 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | Builtins catalog | docs/design/builtins-catalog.md |

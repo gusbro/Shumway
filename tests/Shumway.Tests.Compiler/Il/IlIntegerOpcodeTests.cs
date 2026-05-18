@@ -1,4 +1,4 @@
-using Shumway.Compiler.Il;
+﻿using Shumway.Compiler.Il;
 using Shumway.Compiler.Parsing;
 using Shumway.Compiler.Wam;
 using Shumway.Core;
@@ -42,11 +42,11 @@ public class IlIntegerOpcodeTests
 
         var engine = new Engine();
         engine.SetRegister(0, Cell.Int(42));
-        Assert.True(del(engine));
+        Assert.True(del(engine, 0));
 
         var engine2 = new Engine();
         engine2.SetRegister(0, Cell.Int(99));
-        Assert.False(del(engine2));
+        Assert.False(del(engine2, 0));
     }
 
     [Fact]
@@ -59,7 +59,7 @@ public class IlIntegerOpcodeTests
         int h = engine.AllocateHeapUnbound();
         engine.SetRegister(0, Cell.Ref(h));
 
-        Assert.True(del(engine));
+        Assert.True(del(engine, 0));
         Cell bound = engine.GetHeap(engine.Deref(h));
         Assert.Equal(Cell.Int(42), bound);
     }
@@ -77,18 +77,18 @@ public class IlIntegerOpcodeTests
         var engine1 = new Engine();
         engine1.SetRegister(0, Cell.Atom(nameId));
         engine1.SetRegister(1, Cell.Int(7));
-        Assert.True(del(engine1));
+        Assert.True(del(engine1, 0));
 
         // Atom mismatch.
         var engine2 = new Engine();
         engine2.SetRegister(0, Cell.Atom(otherId));
         engine2.SetRegister(1, Cell.Int(7));
-        Assert.False(del(engine2));
+        Assert.False(del(engine2, 0));
 
         // Integer mismatch.
         var engine3 = new Engine();
         engine3.SetRegister(0, Cell.Atom(nameId));
         engine3.SetRegister(1, Cell.Int(99));
-        Assert.False(del(engine3));
+        Assert.False(del(engine3, 0));
     }
 }

@@ -1,4 +1,4 @@
-using Shumway.Compiler.Il;
+﻿using Shumway.Compiler.Il;
 using Shumway.Compiler.Parsing;
 using Shumway.Compiler.Wam;
 using Shumway.Core;
@@ -50,7 +50,7 @@ public class IlPredicateCompilerTests
     {
         // A var arg compiles to no head opcode (the slot is "claimed"
         // silently), so the bytecode is just [proceed] and the MVP
-        // happily accepts it — it succeeds for any caller value.
+        // happily accepts it â€” it succeeds for any caller value.
         var pred = CompileFromSource("p(X).");
         Assert.True(new IlPredicateCompiler().CanCompile(pred));
     }
@@ -83,7 +83,7 @@ public class IlPredicateCompilerTests
         var pred = CompileFromSource("ready.");
         var del = new IlPredicateCompiler().Compile(pred);
         var engine = new Engine();
-        Assert.True(del(engine));
+        Assert.True(del(engine, 0));
     }
 
     [Fact]
@@ -96,15 +96,15 @@ public class IlPredicateCompilerTests
         var pred = CompileFromSource("colour(red).");
         var del = new IlPredicateCompiler().Compile(pred);
 
-        // Caller passes 'red' in X[0] → match.
+        // Caller passes 'red' in X[0] â†’ match.
         var engine1 = new Engine();
         engine1.SetRegister(0, Cell.Atom(redId));
-        Assert.True(del(engine1));
+        Assert.True(del(engine1, 0));
 
-        // Caller passes 'green' → no match.
+        // Caller passes 'green' â†’ no match.
         var engine2 = new Engine();
         engine2.SetRegister(0, Cell.Atom(greenId));
-        Assert.False(del(engine2));
+        Assert.False(del(engine2, 0));
     }
 
     [Fact]
@@ -121,25 +121,25 @@ public class IlPredicateCompilerTests
         var engine1 = new Engine();
         engine1.SetRegister(0, Cell.Atom(aId));
         engine1.SetRegister(1, Cell.Atom(bId));
-        Assert.True(del(engine1));
+        Assert.True(del(engine1, 0));
 
         // First matches, second doesn't.
         var engine2 = new Engine();
         engine2.SetRegister(0, Cell.Atom(aId));
         engine2.SetRegister(1, Cell.Atom(xId));
-        Assert.False(del(engine2));
+        Assert.False(del(engine2, 0));
 
-        // First doesn't match — never gets to the second.
+        // First doesn't match â€” never gets to the second.
         var engine3 = new Engine();
         engine3.SetRegister(0, Cell.Atom(xId));
         engine3.SetRegister(1, Cell.Atom(bId));
-        Assert.False(del(engine3));
+        Assert.False(del(engine3, 0));
     }
 
     [Fact]
     public void Compile_AtomFact_BindsUnboundCaller()
     {
-        // Caller passes an unbound REF — it should get bound to the head's
+        // Caller passes an unbound REF â€” it should get bound to the head's
         // atom after the call succeeds. Mirrors what the Tier 0 interpreter
         // does via get_atom in write-like mode.
         int redId = AtomTable.Intern("red", permanent: true).Id;
@@ -150,7 +150,7 @@ public class IlPredicateCompilerTests
         int h = engine.AllocateHeapUnbound();
         engine.SetRegister(0, Cell.Ref(h));
 
-        Assert.True(del(engine));
+        Assert.True(del(engine, 0));
         // After call, heap[h] should be bound to atom 'red'.
         Cell bound = engine.GetHeap(engine.Deref(h));
         Assert.Equal(Cell.Atom(redId), bound);

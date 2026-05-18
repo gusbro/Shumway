@@ -50,5 +50,8 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
     }
 
     private static Func<Engine, bool> Wrap(Shumway.Compiler.Il.PredicateDelegate del)
-        => engine => del(engine);
+        // Fresh call from a Call/Execute dispatch — clauseCursor 0.
+        // Re-entries from backtracking go through the engine's IL CP
+        // machinery directly, not back through this adapter.
+        => engine => del(engine, 0);
 }

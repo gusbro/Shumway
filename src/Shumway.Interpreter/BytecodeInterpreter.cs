@@ -979,11 +979,31 @@ public sealed class BytecodeInterpreter
     /// <see cref="InterpreterResult.Failed"/>.</returns>
     private bool TryBacktrack()
     {
-        if (_engine.B < 0) return false;
-        int arity = (int)_engine.GetStack(_engine.B + Engine.CpArityOffset).Data;
-        int bp = (int)_engine.GetStack(_engine.B + Engine.CpBpOffset(arity)).Data;
-        _engine.SetPc(bp);
-        return true;
+        // Loop so that an IL retry that itself fails immediately falls
+        // through to the next choice point without burning stack.
+        while (_engine.B >= 0)
+        {
+            if (_engine.TopChoicePointIsIl)
+            {
+                var (del, cursor) = _engine.PopIlChoicePointAndRestore();
+                if (del(_engine, cursor))
+                {
+                    // Success: resume at the caller's continuation, just
+                    // like bytecode proceed would.
+                    _engine.SetPc(_engine.Cp);
+                    return true;
+                }
+                // The IL clause that cursor selected didn't unify — try
+                // the next CP (which may be another IL CP that the just-
+                // failed IL pushed before its match attempt).
+                continue;
+            }
+            int arity = (int)_engine.GetStack(_engine.B + Engine.CpArityOffset).Data;
+            int bp = (int)_engine.GetStack(_engine.B + Engine.CpBpOffset(arity)).Data;
+            _engine.SetPc(bp);
+            return true;
+        }
+        return false;
     }
 
     /// <summary>Returns the deref'd cell at <c>X[0]</c> (the first argument

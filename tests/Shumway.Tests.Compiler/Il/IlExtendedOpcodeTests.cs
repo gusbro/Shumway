@@ -1,4 +1,4 @@
-using Shumway.Compiler.Il;
+﻿using Shumway.Compiler.Il;
 using Shumway.Compiler.Parsing;
 using Shumway.Compiler.Wam;
 using Shumway.Core;
@@ -7,8 +7,8 @@ using Xunit;
 namespace Shumway.Tests.Compiler.Il;
 
 /// <summary>
-/// Chunk 29: the IL compiler grows two more head-matching opcodes —
-/// <c>get_nil</c> and <c>get_value_x</c> — extending the supported MVP
+/// Chunk 29: the IL compiler grows two more head-matching opcodes â€”
+/// <c>get_nil</c> and <c>get_value_x</c> â€” extending the supported MVP
 /// subset to single-clause facts with a nil literal arg and to
 /// facts with shared variables in the head (the <c>p(X, X)</c>
 /// pattern). Cross-validated against Tier 0 results.
@@ -46,16 +46,16 @@ public class IlExtendedOpcodeTests
         var pred = CompileFromSource("empty([]).");
         var del = new IlPredicateCompiler().Compile(pred);
 
-        // Caller passes [] — match.
+        // Caller passes [] â€” match.
         var engine1 = new Engine();
         engine1.SetRegister(0, Cell.Atom(AtomTable.EmptyListId));
-        Assert.True(del(engine1));
+        Assert.True(del(engine1, 0));
 
-        // Caller passes any other atom — fail.
+        // Caller passes any other atom â€” fail.
         int otherId = AtomTable.Intern("nope", permanent: true).Id;
         var engine2 = new Engine();
         engine2.SetRegister(0, Cell.Atom(otherId));
-        Assert.False(del(engine2));
+        Assert.False(del(engine2, 0));
     }
 
     // ---------- get_value_x ----------
@@ -71,17 +71,17 @@ public class IlExtendedOpcodeTests
         var pred = CompileFromSource("p(X, X).");
         var del = new IlPredicateCompiler().Compile(pred);
 
-        // Same atom in both slots → match.
+        // Same atom in both slots â†’ match.
         var engine1 = new Engine();
         engine1.SetRegister(0, Cell.Atom(aId));
         engine1.SetRegister(1, Cell.Atom(aId));
-        Assert.True(del(engine1));
+        Assert.True(del(engine1, 0));
 
-        // Different atoms → no match.
+        // Different atoms â†’ no match.
         var engine2 = new Engine();
         engine2.SetRegister(0, Cell.Atom(aId));
         engine2.SetRegister(1, Cell.Atom(bId));
-        Assert.False(del(engine2));
+        Assert.False(del(engine2, 0));
     }
 
     [Fact]
@@ -97,7 +97,7 @@ public class IlExtendedOpcodeTests
         engine.SetRegister(0, Cell.Ref(h0));
         engine.SetRegister(1, Cell.Ref(h1));
 
-        Assert.True(del(engine));
+        Assert.True(del(engine, 0));
         // After unification, both heap cells deref to the same target.
         Assert.Equal(engine.Deref(h0), engine.Deref(h1));
     }
@@ -114,13 +114,13 @@ public class IlExtendedOpcodeTests
         var engine1 = new Engine();
         engine1.SetRegister(0, Cell.Atom(markerId));
         engine1.SetRegister(1, Cell.Atom(AtomTable.EmptyListId));
-        Assert.True(del(engine1));
+        Assert.True(del(engine1, 0));
 
         // [] in arg 0 doesn't match atom 'end'.
         var engine2 = new Engine();
         engine2.SetRegister(0, Cell.Atom(AtomTable.EmptyListId));
         engine2.SetRegister(1, Cell.Atom(AtomTable.EmptyListId));
-        Assert.False(del(engine2));
+        Assert.False(del(engine2, 0));
     }
 
     // ---------- Tier1Promoter convenience surface ----------
@@ -134,7 +134,7 @@ public class IlExtendedOpcodeTests
         int barId = AtomTable.Intern("bar", permanent: true).Id;
         var engine = new Engine();
         engine.SetRegister(0, Cell.Atom(barId));
-        Assert.True(del!(engine));
+        Assert.True(del!(engine, 0));
     }
 
     [Fact]

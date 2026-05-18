@@ -654,6 +654,62 @@ public sealed class Engine
         return slot;
     }
 
+    // ----- IL choice points (Tier-1, chunk 41) -----
+    //
+    // A side table mapping a choice-point frame's stack index to the IL
+    // delegate + cursor that should run when backtracking pops that frame.
+    // The CP frame itself uses a sentinel BP (-1) so the bytecode
+    // interpreter's standard PC-based backtrack path doesn't accidentally
+    // jump into bytecode 0xFFFFFFFF.
+    public const int IlChoicePointSentinelBp = -1;
+    private readonly Dictionary<int, IlChoicePointEntry> _ilCpInfo = new();
+
+    private struct IlChoicePointEntry
+    {
+        public Func<Engine, int, bool> Del;
+        public int Cursor;
+    }
+
+    /// <summary>Pushes a choice point that, on backtrack, re-enters an IL
+    /// delegate at <paramref name="nextCursor"/> instead of jumping to a
+    /// bytecode address. State preservation matches the bytecode CP
+    /// machinery exactly — the only difference is what happens at retry
+    /// time.</summary>
+    public void PushIlChoicePoint(Func<Engine, int, bool> del, int nextCursor, int arity)
+    {
+        ArgumentNullException.ThrowIfNull(del);
+        PushChoicePoint(arity, IlChoicePointSentinelBp);
+        _ilCpInfo[_b] = new IlChoicePointEntry { Del = del, Cursor = nextCursor };
+    }
+
+    /// <summary>True when the topmost choice point is an IL CP — the
+    /// bytecode interpreter consults this on backtrack to choose between
+    /// the standard PC-jump path and the IL re-dispatch path.</summary>
+    public bool TopChoicePointIsIl => _b >= 0 && _ilCpInfo.ContainsKey(_b);
+
+    /// <summary>Pops the topmost IL choice point, restoring engine state
+    /// (heap top, trails, registers, …) the same way <c>TrustMe</c> would
+    /// for a bytecode CP, and returns the delegate + cursor that should
+    /// be re-invoked. The caller (usually the interpreter's
+    /// <c>TryBacktrack</c>) is responsible for actually calling the
+    /// delegate.</summary>
+    public (Func<Engine, int, bool> Del, int Cursor) PopIlChoicePointAndRestore()
+    {
+        if (_b < 0)
+            throw new InvalidOperationException("PopIlChoicePointAndRestore: no active choice point.");
+        if (!_ilCpInfo.TryGetValue(_b, out var info))
+            throw new InvalidOperationException(
+                "PopIlChoicePointAndRestore: the topmost choice point isn't an IL CP.");
+
+        int arity = RestoreCommonFromCurrentCp();
+        _hb = (int)_stack[_b + CpHbOffset(arity)].Data;
+        int oldB = _b;
+        _b = (int)_stack[_b + CpBOffset(arity)].Data;
+        _stackTop = oldB;
+        _ilCpInfo.Remove(oldB);
+        return (info.Del, info.Cursor);
+    }
+
     // ----- Auxiliary value tables -----
 
     /// <summary>
@@ -673,7 +729,23 @@ public sealed class Engine
             return Cell.Int((long)value);
         int id = _bigIntTable.Count;
         _bigIntTable.Add(value);
+        // Record the allocation on the extra trail so a later backtrack
+        // truncates the table back to its pre-allocation size and frees
+        // the slot (chunk 41 — BigInt trail-aware allocation).
+        TrailBigIntAlloc(id);
         return Cell.BigInt(id);
+    }
+
+    private void TrailBigIntAlloc(int oldCount)
+    {
+        EnsureExtraTrailCapacity(1);
+        _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
+        {
+            Type = TrailType.BigIntAlloc,
+            HeapIdx = oldCount,
+            OldValue = default,
+            BindingTrailMarker = _bindingTrailTop,
+        };
     }
 
     /// <summary>Returns the <see cref="BigInteger"/> referenced by a BIGINT cell.</summary>
@@ -1016,6 +1088,14 @@ public sealed class Engine
         {
             case TrailType.ValueChange:
                 _heap[entry.HeapIdx] = entry.OldValue;
+                break;
+            case TrailType.BigIntAlloc:
+                // entry.HeapIdx holds the table size *before* the allocation
+                // that this trail entry records. Drop everything appended
+                // since (in this case, exactly the one slot) so the table
+                // is back to its pre-allocation shape.
+                if (_bigIntTable.Count > entry.HeapIdx)
+                    _bigIntTable.RemoveRange(entry.HeapIdx, _bigIntTable.Count - entry.HeapIdx);
                 break;
             default:
                 throw new InvalidOperationException(
