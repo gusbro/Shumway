@@ -97,6 +97,40 @@ public static class ArithmeticBuiltins
             "succ/2: at least one of X, Y must be sufficiently instantiated.");
     }
 
+    /// <summary><c>plus(X, Y, Z)</c> — integer addition relation with
+    /// any one of the three arguments allowed to be free. With X+Y
+    /// bound it computes Z; with X+Z bound it computes Y = Z-X; with
+    /// Y+Z bound it computes X = Z-Y. (Chunk 54.)</summary>
+    public static bool Plus(Engine engine)
+    {
+        Cell xc = Resolve(engine, engine.GetRegister(0));
+        Cell yc = Resolve(engine, engine.GetRegister(1));
+        Cell zc = Resolve(engine, engine.GetRegister(2));
+
+        bool xBound = xc.Tag == Tag.Int;
+        bool yBound = yc.Tag == Tag.Int;
+        bool zBound = zc.Tag == Tag.Int;
+        int boundCount = (xBound ? 1 : 0) + (yBound ? 1 : 0) + (zBound ? 1 : 0);
+        if (boundCount < 2)
+            throw new PrologRuntimeException("instantiation_error");
+
+        if (xBound && yBound)
+        {
+            long sum = checked(xc.AsInt + yc.AsInt);
+            return engine.UnifyRegisterWithCell(2, Cell.Int(sum));
+        }
+        if (xBound && zBound)
+        {
+            long y = checked(zc.AsInt - xc.AsInt);
+            return engine.UnifyRegisterWithCell(1, Cell.Int(y));
+        }
+        // yBound && zBound
+        {
+            long x = checked(zc.AsInt - yc.AsInt);
+            return engine.UnifyRegisterWithCell(0, Cell.Int(x));
+        }
+    }
+
     private static Number EvaluateA(Engine engine) =>
         ArithmeticEvaluator.Evaluate(engine, engine.GetRegister(0));
 

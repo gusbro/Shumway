@@ -31,6 +31,12 @@ internal static class Prelude
         :- public current_predicate/1.
         :- public length/2.
         :- public sub_atom/5.
+        :- public maplist/2.
+        :- public maplist/3.
+        :- public maplist/4.
+        :- public foldl/4.
+        :- public foldl/5.
+        :- public aggregate_all/3.
 
         member(X, [X|_]).
         member(X, [_|T]) :- member(X, T).
@@ -64,5 +70,41 @@ internal static class Prelude
         sub_atom(Atom, Before, Length, After, Sub) :-
             '$sub_atom_decompositions'(Atom, Decomps),
             member([Before, Length, After, Sub], Decomps).
+
+        maplist(_, []).
+        maplist(G, [X|Xs]) :- call(G, X), maplist(G, Xs).
+
+        maplist(_, [], []).
+        maplist(G, [X|Xs], [Y|Ys]) :- call(G, X, Y), maplist(G, Xs, Ys).
+
+        maplist(_, [], [], []).
+        maplist(G, [X|Xs], [Y|Ys], [Z|Zs]) :-
+            call(G, X, Y, Z), maplist(G, Xs, Ys, Zs).
+
+        foldl(_, [], Acc, Acc).
+        foldl(G, [X|Xs], Acc, Out) :-
+            call(G, X, Acc, Acc1),
+            foldl(G, Xs, Acc1, Out).
+
+        foldl(_, [], [], Acc, Acc).
+        foldl(G, [X|Xs], [Y|Ys], Acc, Out) :-
+            call(G, X, Y, Acc, Acc1),
+            foldl(G, Xs, Ys, Acc1, Out).
+
+        aggregate_all(count, Goal, Count) :-
+            findall(t, Goal, L),
+            length(L, Count).
+        aggregate_all(sum(Expr), Goal, Sum) :-
+            findall(Expr, Goal, L),
+            '$sum_list'(L, 0, Sum).
+        aggregate_all(bag(X), Goal, Bag) :- findall(X, Goal, Bag).
+        aggregate_all(set(X), Goal, Set) :-
+            findall(X, Goal, L),
+            sort(L, Set).
+
+        '$sum_list'([], Acc, Acc).
+        '$sum_list'([H|T], Acc, Out) :-
+            Acc1 is Acc + H,
+            '$sum_list'(T, Acc1, Out).
         """;
 }

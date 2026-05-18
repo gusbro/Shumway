@@ -39,6 +39,7 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register(">=",  2, ArithmeticBuiltins.ArithGreaterOrEqual);
         BuiltinsRegistry.Register("between", 3, ArithmeticBuiltins.Between);
         BuiltinsRegistry.Register("succ",    2, ArithmeticBuiltins.Succ);
+        BuiltinsRegistry.Register("plus",    3, ArithmeticBuiltins.Plus);
 
         // Type tests.
         BuiltinsRegistry.Register("var",     1, TypeBuiltins.IsVar);

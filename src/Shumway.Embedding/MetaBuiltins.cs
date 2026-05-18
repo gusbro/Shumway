@@ -24,6 +24,7 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("findall", 3, Findall);
         BuiltinsRegistry.Register("bagof",   3, Bagof);
         BuiltinsRegistry.Register("setof",   3, Setof);
+        BuiltinsRegistry.Register("forall",  2, Forall);
         BuiltinsRegistry.Register("copy_term", 2, CopyTerm);
 
         BuiltinsRegistry.Register("call", 1, Call1);
@@ -1156,6 +1157,44 @@ public static class MetaBuiltins
         if (write < results.Count) results.RemoveRange(write, results.Count - write);
 
         return BindList(engine, results);
+    }
+
+    /// <summary><c>forall(Cond, Then)</c> — succeeds iff every solution
+    /// of <c>Cond</c> makes <c>Then</c> succeed too. Implemented by
+    /// running <c>Cond</c> in a peer sub-engine to fully enumerate its
+    /// solutions, then for each solution applying its bindings to
+    /// <c>Then</c> and running that in a fresh sub-engine. Bails on the
+    /// first counter-example.
+    ///
+    /// <para>This sits as a C# builtin (rather than the obvious Prolog
+    /// <c>\+ (Cond, \+ Then)</c>) because Phase-1 <c>call/N</c> only
+    /// returns one solution; a Prolog-level forall would silently miss
+    /// counter-examples from goals whose first solution happens to
+    /// satisfy <c>Then</c>. Going via the sub-engine bypasses the
+    /// single-solution call/N restriction entirely.</para></summary>
+    public static bool Forall(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "forall/2 requires the engine to be hosted by a PrologEngine.");
+
+        Term cond = MaterializeRegister(engine, 0);
+        Term then = MaterializeRegister(engine, 1);
+
+        var subCond = host.CreateSubEngine();
+        foreach (Solution sol in subCond.QueryAll(cond))
+        {
+            Term thenInstance = Substitute(then, sol.Bindings);
+            var subThen = host.CreateSubEngine();
+            bool thenSucceeded = false;
+            foreach (Solution _ in subThen.QueryAll(thenInstance))
+            {
+                thenSucceeded = true;
+                break;
+            }
+            if (!thenSucceeded) return false;
+        }
+        return true;
     }
 
     /// <summary>Shared workhorse for findall/bagof/setof: reads Template and
