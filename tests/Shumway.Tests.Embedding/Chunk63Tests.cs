@@ -31,13 +31,14 @@ namespace Shumway.Tests.Embedding;
 public class Chunk63Tests
 {
     [Fact]
-    public void LeafOnly_Restriction_StillEnforced()
+    public void LeafOnly_Restriction_LiftedByChunk66()
     {
-        // Sanity check that the IL Call's leaf-callee restriction
-        // is still active — a non-leaf callee keeps the parent on
-        // Tier 0. (The same shape is tested at Chunk50Tests; we
-        // re-pin it here so chunk 63's investigation context stays
-        // legible.)
+        // Chunk 66 implemented the meta-CP machinery the chunk 63
+        // investigation identified as the missing piece. Each IL Call
+        // site now pushes a per-site CP that on backtrack drives
+        // Engine.BacktrackRunner and re-enters the IL caller at a
+        // post-call cursor, so a non-leaf callee is welcome in
+        // single-clause IL bodies.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
         engine.ConsultString(
@@ -50,7 +51,7 @@ public class Chunk63Tests
         engine.Query("outer.");
         int fid = Shumway.Core.FunctorTable.Intern(
             Shumway.Core.AtomTable.Intern("outer", permanent: true).Id, 0);
-        Assert.True(engine.IlPromotion.IsUnpromotable(fid));
+        Assert.False(engine.IlPromotion.IsUnpromotable(fid));
     }
 
     [Fact]

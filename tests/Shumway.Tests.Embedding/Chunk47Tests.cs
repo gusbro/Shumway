@@ -122,12 +122,12 @@ public class Chunk47Tests
     }
 
     [Fact]
-    public void IlExecute_RuleWithNonTailCall_StaysOnTier0()
+    public void IlExecute_RuleWithNonTailMultiClauseCall_PromotesWithMetaCp()
     {
-        // p(X) :- q(X), r(X). The body has TWO user-pred calls — the
-        // first is a non-tail Call whose callee is multi-clause, so
-        // the IL Call helper's leaf-only restriction still rejects
-        // p/1.
+        // p(X) :- q(X), r(X). Chunk 66's meta-CP machinery at IL Call
+        // sites drives the multi-clause callee's leftover try_me_else
+        // CPs on backtrack and rejoins the body at a post-call cursor,
+        // so the cross-product enumeration works under Tier-1 IL.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
         engine.ConsultString(
@@ -138,9 +138,10 @@ public class Chunk47Tests
             "r(a). r(b).\n" +
             "p(X) :- q(X), r(X).\n");
         engine.Query("p(a).");
-        Assert.True(engine.IlPromotion.IsUnpromotable(FunctorId("p", 1)));
-        // Tier-0 still produces the right answers.
+        Assert.False(engine.IlPromotion.IsUnpromotable(FunctorId("p", 1)));
         Assert.True(engine.Query("p(a).").Success);
+        Assert.True(engine.Query("p(b).").Success);
         Assert.False(engine.Query("p(c).").Success);
+        Assert.Equal(2, engine.QueryAll("p(_).").Count());
     }
 }

@@ -78,4 +78,26 @@ public static class IlRuntimeHelpers
                 $"IL Call: callee functor id {calleeFunctorId} not in the current address map.");
         return runner(target);
     }
+
+    /// <summary>Meta-CP support (chunk 66): drive one backtrack round
+    /// on the bytecode interpreter so an IL Call site's meta-CP can
+    /// fetch the next solution from a non-leaf callee. Returns
+    /// <c>true</c> when the backtrack landed on an alternative that
+    /// proceeded to a halt (success), <c>false</c> when no further
+    /// CPs were available.</summary>
+    public static bool RunBacktrack(Engine engine)
+    {
+        var runner = engine.BacktrackRunner
+            ?? throw new InvalidOperationException(
+                "IL meta-CP: engine.BacktrackRunner is null. "
+                + "The embedding layer must populate it at query setup.");
+        return runner();
+    }
+
+    /// <summary>Meta-CP support (chunk 66): reads back the preCallB
+    /// value the meta-CP saved into X[0]. Pushed as
+    /// <c>Cell.Int(preCallB)</c> with arity=1 so it survives the CP
+    /// frame's restore on pop.</summary>
+    public static int ReadPreCallB(Engine engine) =>
+        (int)engine.GetRegister(0).AsInt;
 }

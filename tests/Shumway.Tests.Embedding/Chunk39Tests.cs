@@ -175,22 +175,23 @@ public class Chunk39Tests
     [Fact]
     public void Engine_UnpromotablePredicate_StaysOnTier0Forever()
     {
-        // A predicate whose body has a non-tail Call to a non-leaf
-        // callee — i.e. a callee whose own body has further calls or
-        // try_me_else — is outside the IL subset (the IL Call helper
-        // only handles leaf callees; chunk 50). The store sees it once,
-        // marks it unpromotable, and never retries.
+        // Chunk 66 made non-leaf callees IL-eligible via the meta-CP
+        // machinery, so the foo→mid→deep shape this test used to
+        // assert stayed on Tier 0 now promotes correctly. Switch to a
+        // shape the IL subset still doesn't cover: a deep cut in the
+        // body. Deep cut emits get_level + Cut, both outside
+        // IsSupportedOpcode. The promotion store sees the predicate
+        // once, marks unpromotable, and never retries.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
         engine.ConsultString(
-            ":- public foo/0.\n" +
-            ":- public mid/0.\n" +
-            ":- public deep/0.\n" +
-            "deep.\n" +
-            "mid :- deep, deep.\n" +    // mid has a non-tail body call → not leaf
-            "foo :- mid, deep.\n");     // foo calls mid (non-leaf) before its tail call
-        for (int i = 0; i < 5; i++) engine.Query("foo.");
-        int fid = FunctorId("foo", 0);
+            ":- public foo/1.\n" +
+            ":- public a/0.\n" +
+            "a.\n" +
+            // ! at goal position 1 is a deep cut → get_level + Cut.
+            "foo(X) :- a, !, X = chosen.\n");
+        for (int i = 0; i < 5; i++) engine.Query("foo(_).");
+        int fid = FunctorId("foo", 1);
         Assert.True(engine.IlPromotion.IsUnpromotable(fid));
         Assert.False(engine.IlPromotion.IsPromoted(fid));
     }

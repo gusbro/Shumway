@@ -94,11 +94,13 @@ public class Chunk50Tests
     }
 
     [Fact]
-    public void IlCall_ToNonLeafCallee_StaysOnTier0()
+    public void IlCall_ToNonLeafCallee_Promotes_AndAnswersCorrectly()
     {
-        // mid :- a, a.  — mid has a body call, so it isn't a leaf.
-        // foo :- mid, a. — foo can't IL-promote because the Call to
-        // mid wouldn't survive the IL Call's leaf-only restriction.
+        // Chunk 66 lifted the leaf-only callee restriction. mid is
+        // non-leaf (its body has two calls) but deterministic, so the
+        // meta-CP guard skips pushing when engine.B doesn't grow
+        // across the call. foo promotes and Tier-1 produces the same
+        // result as Tier-0.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
         engine.ConsultString(
@@ -109,8 +111,7 @@ public class Chunk50Tests
             "mid :- a, a.\n" +
             "foo :- mid, a.\n");
         engine.Query("foo.");
-        Assert.True(engine.IlPromotion.IsUnpromotable(FunctorId("foo", 0)));
-        // Tier-0 still answers correctly.
+        Assert.False(engine.IlPromotion.IsUnpromotable(FunctorId("foo", 0)));
         Assert.True(engine.Query("foo.").Success);
     }
 

@@ -123,6 +123,13 @@ public sealed class IlPredicateCompiler
         typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.PutPstr))!;
     private static readonly MethodInfo IlCallHelperRunMethod =
         typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.Call))!;
+    // Meta-CP support (chunk 66): drive a backtrack from an IL
+    // delegate's resume path to fetch the next solution from a
+    // non-leaf callee.
+    private static readonly MethodInfo IlRunBacktrackHelperMethod =
+        typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.RunBacktrack))!;
+    private static readonly MethodInfo IlReadPreCallBHelperMethod =
+        typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.ReadPreCallB))!;
     private static readonly MethodInfo EngineAllocateHeapUnboundMethod =
         typeof(Engine).GetMethod(nameof(Engine.AllocateHeapUnbound), Type.EmptyTypes)!;
     private static readonly MethodInfo CellRefMethod =
@@ -205,33 +212,16 @@ public sealed class IlPredicateCompiler
             }
             if (op == Opcode.Call)
             {
-                // Non-tail Call: only safe when the callee can't push
-                // choice points (chunk 50). The conservative check is
-                // "callee is a leaf predicate": single-clause, body-less,
-                // only head matching + proceed. Without a calleeMap we
-                // can't verify the callee, so reject defensively.
+                // Non-tail Call: chunk 66 emits a meta-CP at every IL
+                // Call site that drives Engine.BacktrackRunner on
+                // resume to retry callee alternatives and rejoin the
+                // body at a post-call cursor. No leaf restriction
+                // needed — just confirm we have a calleeMap entry so
+                // the runtime can resolve the functor.
                 if (calleeMap is null) return false;
                 int siteFid = FindCallSiteFunctorId(predicate.CallSites, pc);
                 if (siteFid < 0) return false;
-                if (!calleeMap.TryGetValue(siteFid, out var callee)) return false;
-                // Chunk 63 investigated lifting the leaf-only check.
-                // The semantic issue: when the callee pushes try_me_else
-                // CPs inside RunSubroutine, each CP captures the
-                // engine's Cp at push time, which is the
-                // SubroutineSentinelCp. A later backtrack pops the CP,
-                // runs the alternative clause, and proceeds — proceed
-                // reads Cp = sentinel and halts, dropping out of the
-                // IL caller's body without running the goals that
-                // followed the Call. We see this as the multi-clause
-                // callee producing fewer cross-product solutions than
-                // Tier 0 (e.g. choose(X):-color(X),size(_) yielding 4
-                // instead of 6 with three colors and two sizes).
-                //
-                // The fix wants the IL caller to push a meta-CP that
-                // re-runs the goals after the Call on each callee
-                // alternative — that's a deeper IL emission change.
-                // Until then, keep the leaf-only restriction.
-                if (!IsLeafPredicate(callee)) return false;
+                if (!calleeMap.TryGetValue(siteFid, out _)) return false;
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -356,17 +346,151 @@ public sealed class IlPredicateCompiler
 
     private PredicateDelegate CompileSingleClause(CompiledPredicate predicate)
     {
-        var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
-            $"ShumwayIl_{predicate.FunctorId}_{predicate.Arity}");
-        var failLabel = emit.DefineLabel("fail");
+        int callSiteCount = CountNonTailCallOpcodes(predicate.Bytecode);
+        if (callSiteCount == 0)
+        {
+            // No meta-CP needed: pure head match + tail call (or no body).
+            var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
+                $"ShumwayIl_{predicate.FunctorId}_{predicate.Arity}");
+            var failLabel = emit.DefineLabel("fail");
+            EmitClauseBody(emit, predicate.Bytecode, 0, predicate.Bytecode.Length,
+                failLabel, predicate.CallSites,
+                callSiteIndexCounter: null, resumeLabels: null);
+            emit.MarkLabel(failLabel);
+            emit.LoadConstant(false);
+            emit.Return();
+            return emit.CreateDelegate();
+        }
+        lock (IndexedDelegateHolder.RegistrationLock)
+            return CompileSingleClauseWithMetaCpUnlocked(predicate, callSiteCount);
+    }
 
+    private PredicateDelegate CompileSingleClauseWithMetaCpUnlocked(
+        CompiledPredicate predicate, int callSiteCount)
+    {
+        int holderKey = _nextHolderKey;
+        var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
+            $"ShumwayIl_metacp_{predicate.FunctorId}_{predicate.Arity}");
+        var failLabel = emit.DefineLabel("fail");
+        var startLabel = emit.DefineLabel("start");
+        var resumeLabels = new Sigil.Label[callSiteCount];
+        var postCallLabels = new Sigil.Label[callSiteCount];
+        for (int i = 0; i < callSiteCount; i++)
+        {
+            resumeLabels[i] = emit.DefineLabel($"resume_{i + 1}");
+            postCallLabels[i] = emit.DefineLabel($"post_call_{i + 1}");
+        }
+
+        // Cursor dispatch: 0 → start; N → resume_N.
+        for (int i = 0; i < callSiteCount; i++)
+        {
+            emit.LoadArgument(1);
+            emit.LoadConstant(i + 1);
+            emit.BranchIfEqual(resumeLabels[i]);
+        }
+        emit.Branch(startLabel);
+
+        // Resume bodies: read preCallB from X[0] (saved by the popped
+        // meta-CP's arity=1 slot), drive a backtrack on the callee.
+        // If the backtrack cascaded past our own Call site (engine.B
+        // ended up at or below preCallB), the new solution was
+        // produced by an outer CP — set IlTailCallPending so the
+        // interpreter resumes at whatever Pc the cascade ended at,
+        // and return true to propagate. Otherwise our callee still
+        // has CPs to retry; re-push a fresh meta-CP, rejoin the body
+        // at post_call_N.
+        for (int i = 0; i < callSiteCount; i++)
+        {
+            emit.MarkLabel(resumeLabels[i]);
+            var preCallBLocal = emit.DeclareLocal<int>($"preCallB_resume_{i + 1}");
+            emit.LoadArgument(0);
+            emit.Call(IlReadPreCallBHelperMethod);
+            emit.StoreLocal(preCallBLocal);
+            emit.LoadArgument(0);
+            emit.Call(IlRunBacktrackHelperMethod);
+            emit.BranchIfFalse(failLabel);
+            // Three-way branch on (engine.B vs preCallB):
+            //   B  >  preCallB → callee CPs still alive: re-push meta-CP
+            //                    and rejoin body at post_call_N.
+            //   B  == preCallB → callee just consumed its last CP via
+            //                    trust_me: solution is valid, but no
+            //                    meta-CP re-push (no more alternatives).
+            //                    Rejoin body at post_call_N anyway.
+            //   B  <  preCallB → cascade: an outer CP fired below our
+            //                    Call site. Set IlTailCallPending and
+            //                    propagate up.
+            var cascadeLabel = emit.DefineLabel($"resume_{i + 1}_cascade");
+            var noRePushLabel = emit.DefineLabel($"resume_{i + 1}_no_repush");
+            emit.LoadArgument(0);
+            emit.Call(EngineBGetter);
+            emit.LoadLocal(preCallBLocal);
+            emit.BranchIfLess(cascadeLabel);
+            emit.LoadArgument(0);
+            emit.Call(EngineBGetter);
+            emit.LoadLocal(preCallBLocal);
+            emit.BranchIfEqual(noRePushLabel);
+            // B > preCallB: callee CPs survive; re-push meta-CP.
+            emit.LoadArgument(0);
+            emit.LoadConstant(0);
+            emit.LoadLocal(preCallBLocal);
+            emit.Convert<long>();
+            emit.Call(CellIntMethod);
+            emit.Call(EngineSetRegisterMethod);
+            emit.LoadArgument(0);
+            emit.LoadConstant(holderKey);
+            emit.Call(IndexedDelegateHolderGet);
+            emit.LoadConstant(i + 1);
+            emit.LoadConstant(1);
+            emit.Call(EnginePushIlCpMethod);
+            emit.Branch(postCallLabels[i]);
+            // B == preCallB: rejoin body without re-pushing meta-CP.
+            emit.MarkLabel(noRePushLabel);
+            emit.Branch(postCallLabels[i]);
+            // B < preCallB: cascade. An outer CP produced the solution.
+            // Signal tail-call so the interpreter keeps Pc where the
+            // cascade halted (sentinel-Cp halt or otherwise).
+            emit.MarkLabel(cascadeLabel);
+            emit.LoadArgument(0);
+            emit.LoadConstant(true);
+            emit.Call(EngineIlTailCallPendingSetter);
+            emit.LoadConstant(true);
+            emit.Return();
+        }
+
+        emit.MarkLabel(startLabel);
+        int idxCounter = 0;
         EmitClauseBody(emit, predicate.Bytecode, 0, predicate.Bytecode.Length,
-            failLabel, predicate.CallSites);
+            failLabel, predicate.CallSites,
+            callSiteIndexCounter: () => ++idxCounter,
+            resumeLabels: postCallLabels,
+            holderKey: holderKey);
 
         emit.MarkLabel(failLabel);
         emit.LoadConstant(false);
         emit.Return();
-        return emit.CreateDelegate();
+
+        var del = emit.CreateDelegate();
+        IndexedDelegateHolder.Register(holderKey, del);
+        _nextHolderKey = holderKey + 1;
+        return del;
+    }
+
+    /// <summary>Counts non-tail <c>Call</c> opcodes in a clause's
+    /// bytecode (Opcode.Call only — Opcode.Execute is the tail-call
+    /// form and doesn't need a meta-CP).</summary>
+    private static int CountNonTailCallOpcodes(byte[] bytecode)
+    {
+        int count = 0;
+        int pc = 0;
+        while (pc < bytecode.Length)
+        {
+            byte b = bytecode[pc];
+            if (b == (byte)Opcode.Call) count++;
+            var info = OpcodeTable.Get(b);
+            if (!info.IsDefined || info.Size == 0) break;
+            pc += info.Size;
+        }
+        return count;
     }
 
     /// <summary>Emits IL for a contiguous span of supported-opcode
@@ -378,7 +502,10 @@ public sealed class IlPredicateCompiler
     /// address embedded in the operand).</summary>
     private static void EmitClauseBody(
         Sigil.Emit<PredicateDelegate> emit, byte[] code, int start, int end,
-        Sigil.Label failLabel, IReadOnlyList<CallSite> callSites)
+        Sigil.Label failLabel, IReadOnlyList<CallSite> callSites,
+        Func<int>? callSiteIndexCounter = null,
+        Sigil.Label[]? resumeLabels = null,
+        int holderKey = -1)
     {
         int pc = start;
         while (pc < end)
@@ -777,13 +904,14 @@ public sealed class IlPredicateCompiler
             }
             if (op == Opcode.Call)
             {
-                // Non-tail Call. The IL hands off to a runtime helper
-                // that re-enters the bytecode interpreter at the callee
-                // synchronously. CanCompile restricts this to callees
-                // that are single-clause + body-less (or whose body is
-                // purely the IL-safe subset with no further Call/Execute),
-                // so no choice points can survive the sub-call and the
-                // sentinel-Cp trick stays safe.
+                // Non-tail Call. With chunk 66 the IL site captures
+                // engine.B (preCallB) before invoking the sub-call
+                // helper, then on success pushes a meta-CP that saves
+                // preCallB as Cell.Int(preCallB) in arity-1 of the
+                // CP frame. On backtrack the resume path reads
+                // preCallB back, drives Engine.BacktrackRunner to
+                // fetch the callee's next solution, and re-enters
+                // the body at the post-call label.
                 int siteFunctorId = -1;
                 for (int i = 0; i < callSites.Count; i++)
                 {
@@ -796,24 +924,57 @@ public sealed class IlPredicateCompiler
                 if (siteFunctorId < 0)
                     throw new InvalidOperationException(
                         $"Call opcode at pc={pc} has no matching call site in the predicate's metadata.");
-                // engine.SetCp(pcAfterCall)   — pcAfterCall is the saved
-                // continuation. For IL we don't have a bytecode address
-                // to set Cp to; the sub-call returns synchronously via
-                // the helper, so we leave Cp alone (the inherited Cp from
-                // the outer caller is still correct after we return).
-                // Actually we do need to set B0 = B so the callee sees a
-                // proper procedure entry.
+
+                // preCallB = engine.B;
+                var preCallBLocal = emit.DeclareLocal<int>($"preCallB_{pc}");
+                emit.LoadArgument(0);
+                emit.Call(EngineBGetter);
+                emit.StoreLocal(preCallBLocal);
+
+                // engine.SetB0(engine.B);
                 emit.LoadArgument(0);
                 emit.LoadArgument(0);
                 emit.Call(EngineBGetter);
                 emit.Call(EngineSetB0Method);
-                // engine.SetPc(IlCallHelper.Resolve(engine, fid));
-                // bool ok = IlCallHelper.Run(engine);
-                // if (!ok) goto fail;
+
+                // bool ok = IlCallHelper.Run(engine, siteFunctorId);
                 emit.LoadArgument(0);
                 emit.LoadConstant(siteFunctorId);
                 emit.Call(IlCallHelperRunMethod);
                 emit.BranchIfFalse(failLabel);
+
+                if (callSiteIndexCounter is not null && resumeLabels is not null)
+                {
+                    int siteIdx = callSiteIndexCounter();
+                    var skipPushLabel = emit.DefineLabel($"skip_metacp_{siteIdx}");
+                    // if (engine.B <= preCallB) goto skip; (no leftover CPs)
+                    // Signed comparison: preCallB can be -1 when no CPs
+                    // existed pre-call, and unsigned would treat that as
+                    // a huge value and always branch.
+                    emit.LoadArgument(0);
+                    emit.Call(EngineBGetter);
+                    emit.LoadLocal(preCallBLocal);
+                    emit.BranchIfLessOrEqual(skipPushLabel);
+
+                    // engine.SetRegister(0, Cell.Int(preCallB));
+                    emit.LoadArgument(0);
+                    emit.LoadConstant(0);
+                    emit.LoadLocal(preCallBLocal);
+                    emit.Convert<long>();
+                    emit.Call(CellIntMethod);
+                    emit.Call(EngineSetRegisterMethod);
+
+                    // engine.PushIlChoicePoint(self, cursor=siteIdx, arity=1)
+                    emit.LoadArgument(0);
+                    emit.LoadConstant(holderKey);
+                    emit.Call(IndexedDelegateHolderGet);
+                    emit.LoadConstant(siteIdx);
+                    emit.LoadConstant(1);
+                    emit.Call(EnginePushIlCpMethod);
+
+                    emit.MarkLabel(skipPushLabel);
+                    emit.MarkLabel(resumeLabels[siteIdx - 1]);
+                }
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
