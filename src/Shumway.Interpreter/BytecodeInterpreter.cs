@@ -371,6 +371,85 @@ public sealed class BytecodeInterpreter
                     break;
                 }
 
+                // ---------- Multi-arg indexing (chunk 67) ----------
+
+                case Opcode.SwitchOnArg:
+                {
+                    int argIdx    = BytecodeIO.ReadInt32(code, pc + 1);
+                    int varAddr    = BytecodeIO.ReadInt32(code, pc + 5);
+                    int constAddr  = BytecodeIO.ReadInt32(code, pc + 9);
+                    int listAddr   = BytecodeIO.ReadInt32(code, pc + 13);
+                    int structAddr = BytecodeIO.ReadInt32(code, pc + 17);
+
+                    Cell ak = DerefArg(argIdx);
+                    int target = ak.Tag switch
+                    {
+                        Tag.Ref => varAddr,
+                        Tag.Atom or Tag.Int or Tag.Float => constAddr,
+                        Tag.Lis => listAddr,
+                        Tag.Str => structAddr,
+                        _ => varAddr,
+                    };
+                    _engine.SetPc(target);
+                    break;
+                }
+
+                case Opcode.SwitchOnAtomArg:
+                {
+                    int argIdx  = BytecodeIO.ReadInt32(code, pc + 1);
+                    int tableId = BytecodeIO.ReadInt32(code, pc + 5);
+                    var table = _switchTables[tableId];
+                    Cell ak = DerefArg(argIdx);
+                    int target = ak.Tag == Tag.Atom
+                        ? table.Lookup(ak.AsAtomId)
+                        : table.DefaultAddress;
+                    _engine.SetPc(target);
+                    break;
+                }
+
+                case Opcode.SwitchOnIntegerArg:
+                {
+                    int argIdx  = BytecodeIO.ReadInt32(code, pc + 1);
+                    int tableId = BytecodeIO.ReadInt32(code, pc + 5);
+                    var table = _switchTables[tableId];
+                    Cell ak = DerefArg(argIdx);
+                    int target;
+                    if (ak.Tag == Tag.Int)
+                    {
+                        long value = ak.AsInt;
+                        target = value >= int.MinValue && value <= int.MaxValue
+                            ? table.Lookup((int)value)
+                            : table.DefaultAddress;
+                    }
+                    else
+                    {
+                        target = table.DefaultAddress;
+                    }
+                    _engine.SetPc(target);
+                    break;
+                }
+
+                case Opcode.SwitchOnStructureArg:
+                {
+                    int argIdx  = BytecodeIO.ReadInt32(code, pc + 1);
+                    int tableId = BytecodeIO.ReadInt32(code, pc + 5);
+                    var table = _switchTables[tableId];
+                    Cell ak = DerefArg(argIdx);
+                    int target;
+                    if (ak.Tag == Tag.Str)
+                    {
+                        int functorIdx = ak.AsHeapIndex;
+                        int functorId = _engine.GetHeap(functorIdx).AsFunctorId;
+                        target = table.Lookup(functorId);
+                    }
+                    else
+                    {
+                        target = table.DefaultAddress;
+                    }
+                    _engine.SetPc(target);
+                    break;
+                }
+
                 // ---------- Cut opcodes ----------
 
                 case Opcode.NeckCut:
@@ -1103,13 +1182,19 @@ public sealed class BytecodeInterpreter
 
     /// <summary>Returns the deref'd cell at <c>X[0]</c> (the first argument
     /// register), following REF chains so the caller sees the concrete tag.
-    /// Used by every <c>switch_on_*</c> opcode to decide where to dispatch.</summary>
-    private Cell DerefA1()
+    /// Used by every arg-0 <c>switch_on_*</c> opcode to decide where to
+    /// dispatch.</summary>
+    private Cell DerefA1() => DerefArg(0);
+
+    /// <summary>Generalised <see cref="DerefA1"/>: returns the deref'd cell at
+    /// <c>X[argIdx]</c>. The multi-arg indexing opcodes (chunk 67) read
+    /// arbitrary <c>A[k]</c> rather than just A1.</summary>
+    private Cell DerefArg(int argIdx)
     {
-        Cell a1 = _engine.GetRegister(0);
-        if (a1.Tag == Tag.Ref)
-            return _engine.GetHeap(_engine.Deref(a1.AsHeapIndex));
-        return a1;
+        Cell c = _engine.GetRegister(argIdx);
+        if (c.Tag == Tag.Ref)
+            return _engine.GetHeap(_engine.Deref(c.AsHeapIndex));
+        return c;
     }
 
     private string ResolveLiteral(int literalId)

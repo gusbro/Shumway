@@ -232,17 +232,33 @@ public static class CompiledModuleCodec
 
         foreach (int siteOffset in pred.SwitchTableIdSites)
         {
-            // The operand site is the 4-byte int *after* the opcode byte.
-            int opcodeByteOffset = siteOffset - 1;
-            byte opcodeByte = pred.Bytecode[opcodeByteOffset];
+            // The operand site is the 4-byte table-id int. For the arg-0
+            // opcodes (SwitchOnAtom etc.) the opcode byte is at site - 1
+            // (table-id immediately follows opcode). For the multi-arg
+            // variants (SwitchOnAtomArg etc.) the opcode byte is at
+            // site - 5 (a 4-byte arg_idx operand sits between opcode and
+            // table-id).
             int tableId = BytecodeIO.ReadInt32(pred.Bytecode, siteOffset);
-            kinds[tableId] = (Opcode)opcodeByte switch
+            byte opcodeByteOld = pred.Bytecode[siteOffset - 1];
+            SwitchTableKind? kind = (Opcode)opcodeByteOld switch
             {
                 Opcode.SwitchOnAtom => SwitchTableKind.Atom,
                 Opcode.SwitchOnInteger => SwitchTableKind.Integer,
                 Opcode.SwitchOnStructure => SwitchTableKind.Structure,
-                _ => kinds[tableId],
+                _ => null,
             };
+            if (kind is null && siteOffset >= 5)
+            {
+                byte opcodeByteArg = pred.Bytecode[siteOffset - 5];
+                kind = (Opcode)opcodeByteArg switch
+                {
+                    Opcode.SwitchOnAtomArg => SwitchTableKind.Atom,
+                    Opcode.SwitchOnIntegerArg => SwitchTableKind.Integer,
+                    Opcode.SwitchOnStructureArg => SwitchTableKind.Structure,
+                    _ => null,
+                };
+            }
+            if (kind is not null) kinds[tableId] = kind.Value;
         }
         return kinds;
     }

@@ -106,6 +106,17 @@ public static class OpcodeTable
         Set(Opcode.SwitchOnAtom, 5, "switch_on_atom", OperandKind.TableId);
         Set(Opcode.SwitchOnInteger, 5, "switch_on_integer", OperandKind.TableId);
         Set(Opcode.SwitchOnStructure, 5, "switch_on_structure", OperandKind.TableId);
+        // Multi-arg indexing: opcode + arg_idx + (same operands as the arg-0
+        // variant above). Reads X[arg_idx] instead of A1.
+        Set(Opcode.SwitchOnArg, 21, "switch_on_arg",
+            OperandKind.Reg,
+            OperandKind.Address, OperandKind.Address, OperandKind.Address, OperandKind.Address);
+        Set(Opcode.SwitchOnAtomArg, 9, "switch_on_atom_arg",
+            OperandKind.Reg, OperandKind.TableId);
+        Set(Opcode.SwitchOnIntegerArg, 9, "switch_on_integer_arg",
+            OperandKind.Reg, OperandKind.TableId);
+        Set(Opcode.SwitchOnStructureArg, 9, "switch_on_structure_arg",
+            OperandKind.Reg, OperandKind.TableId);
 
         // Cut
         Set(Opcode.NeckCut, 1, "neck_cut");

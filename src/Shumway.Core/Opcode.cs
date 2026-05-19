@@ -86,6 +86,13 @@ public enum Opcode : byte
     SwitchOnAtom = 0x71,
     SwitchOnInteger = 0x72,
     SwitchOnStructure = 0x73,
+    // Multi-arg indexing (Phase 2): same semantics as the four above, but
+    // dispatch on an arbitrary argument register A[k] (encoded as the first
+    // operand) instead of A1 (X[0]).
+    SwitchOnArg = 0x74,
+    SwitchOnAtomArg = 0x75,
+    SwitchOnIntegerArg = 0x76,
+    SwitchOnStructureArg = 0x77,
 
     // Cut
     NeckCut = 0x80,

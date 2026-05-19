@@ -124,6 +124,39 @@ public sealed class BytecodeEmitter
         EmitInt(tableId);
     }
 
+    // ---------- Multi-arg indexing (Phase 2) ----------
+
+    public void EmitSwitchOnArg(int argIdx, int varAddr, int constAddr, int listAddr, int structAddr)
+    {
+        _bytes.Add((byte)Opcode.SwitchOnArg);
+        EmitInt(argIdx);
+        EmitInt(varAddr);
+        EmitInt(constAddr);
+        EmitInt(listAddr);
+        EmitInt(structAddr);
+    }
+
+    public void EmitSwitchOnAtomArg(int argIdx, int tableId)
+    {
+        _bytes.Add((byte)Opcode.SwitchOnAtomArg);
+        EmitInt(argIdx);
+        EmitInt(tableId);
+    }
+
+    public void EmitSwitchOnIntegerArg(int argIdx, int tableId)
+    {
+        _bytes.Add((byte)Opcode.SwitchOnIntegerArg);
+        EmitInt(argIdx);
+        EmitInt(tableId);
+    }
+
+    public void EmitSwitchOnStructureArg(int argIdx, int tableId)
+    {
+        _bytes.Add((byte)Opcode.SwitchOnStructureArg);
+        EmitInt(argIdx);
+        EmitInt(tableId);
+    }
+
     // ---------- Cut family ----------
 
     public void EmitNeckCut() => _bytes.Add((byte)Opcode.NeckCut);

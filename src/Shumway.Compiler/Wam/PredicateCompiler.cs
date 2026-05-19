@@ -94,16 +94,24 @@ public sealed class PredicateCompiler
                 clauseSourcePositions: clausePositions);
         }
 
-        // Decide whether first-argument indexing pays off. It does whenever at
-        // least one clause discriminates by the type/value of A1; if every
-        // clause has a variable first arg, the switch dispatch would just add
-        // a constant overhead with no skipped work.
-        var firstArgs = clauses.Select(ClassifyFirstArg).ToArray();
-        bool indexable = arity > 0
-            && firstArgs.Any(f => f.Kind != FirstArgKind.Var && f.Kind != FirstArgKind.Other);
+        // Decide whether indexing pays off. ADR-007's Phase-1 model only
+        // considered A1; Phase 2 adds sequential multi-arg fallback (chunk
+        // 67) — when A1 is var in the call, dispatch consults A2, then A3,
+        // etc. An arg position k is indexable iff some clause has a
+        // concrete (non-var, non-other) value at position k. If no arg
+        // position is indexable, fall through to the plain try_me_else
+        // chain.
+        var perArgInfo = new ArgInfo[arity][];
+        var indexableArgs = new List<int>();
+        for (int k = 0; k < arity; k++)
+        {
+            perArgInfo[k] = clauses.Select(c => ClassifyArg(c, k)).ToArray();
+            if (perArgInfo[k].Any(f => f.Kind != ArgKind.Var && f.Kind != ArgKind.Other))
+                indexableArgs.Add(k);
+        }
 
-        return indexable
-            ? CompileIndexed(compiledClauses, firstArgs, functorId, arity,
+        return indexableArgs.Count > 0
+            ? CompileIndexed(compiledClauses, perArgInfo, indexableArgs, functorId, arity,
                              clauses[0].Position, clausePositions)
             : CompileTryMeElseChain(compiledClauses, functorId, arity,
                                     clauses[0].Position, clausePositions);
@@ -186,46 +194,89 @@ public sealed class PredicateCompiler
                 : 5;
 
     // ============================================================================
-    // First-argument indexing (ADR-007)
+    // Indexing (ADR-007 first-arg + chunk 67 multi-arg fallback)
     // ============================================================================
 
-    private enum FirstArgKind { Var, Atom, Int, List, Struct, Other }
+    private enum ArgKind { Var, Atom, Int, List, Struct, Other }
 
-    private readonly record struct FirstArgInfo(FirstArgKind Kind, int Key);
+    private readonly record struct ArgInfo(ArgKind Kind, int Key);
 
-    private static FirstArgInfo ClassifyFirstArg(Clause clause)
+    /// <summary>Classifies <paramref name="clause"/>'s argument at index
+    /// <paramref name="argIdx"/> for indexing purposes. Mirrors the
+    /// ADR-007 classification but parameterised on the arg position so
+    /// the multi-arg scheduler can build per-position buckets.</summary>
+    private static ArgInfo ClassifyArg(Clause clause, int argIdx)
     {
         // For a Rule the clause Term is `:-/2` with head at Args[0]; for a Fact
         // the clause Term IS the head.
         Term headTerm = clause.Kind == ClauseKind.Rule
             ? ((CompoundTerm)clause.Term).Args[0]
             : clause.Term;
-        if (headTerm is not CompoundTerm compound || compound.Args.Length == 0)
-            return new FirstArgInfo(FirstArgKind.Var, 0);
+        if (headTerm is not CompoundTerm compound || argIdx >= compound.Args.Length)
+            return new ArgInfo(ArgKind.Var, 0);
 
-        return compound.Args[0] switch
+        return compound.Args[argIdx] switch
         {
-            VarTerm => new FirstArgInfo(FirstArgKind.Var, 0),
-            AtomTerm a => new FirstArgInfo(
-                FirstArgKind.Atom, AtomTable.Intern(a.Name, permanent: true).Id),
+            VarTerm => new ArgInfo(ArgKind.Var, 0),
+            AtomTerm a => new ArgInfo(
+                ArgKind.Atom, AtomTable.Intern(a.Name, permanent: true).Id),
             IntTerm n when n.Value >= int.MinValue && n.Value <= int.MaxValue
-                => new FirstArgInfo(FirstArgKind.Int, (int)n.Value),
+                => new ArgInfo(ArgKind.Int, (int)n.Value),
             CompoundTerm c when c.Functor == "." && c.Args.Length == 2
-                => new FirstArgInfo(FirstArgKind.List, 0),
-            CompoundTerm c => new FirstArgInfo(
-                FirstArgKind.Struct,
+                => new ArgInfo(ArgKind.List, 0),
+            CompoundTerm c => new ArgInfo(
+                ArgKind.Struct,
                 FunctorTable.Intern(
                     AtomTable.Intern(c.Functor, permanent: true).Id, c.Args.Length)),
             // FloatTerm / StringTerm / IntTerm out of int range / etc. behave
             // like a variable for indexing purposes — they fall through to the
             // full chain.
-            _ => new FirstArgInfo(FirstArgKind.Other, 0),
+            _ => new ArgInfo(ArgKind.Other, 0),
         };
+    }
+
+    /// <summary>Per-arg-level bucket data computed in pass 1 and consumed
+    /// by passes 2 and 3 of <see cref="CompileIndexed"/>.</summary>
+    private sealed class ArgLevel
+    {
+        public int ArgIdx;
+        public List<int> VarIdxs = new();
+        public SortedDictionary<int, List<int>> AtomMap = new();
+        public SortedDictionary<int, List<int>> IntMap = new();
+        public List<int> ListIdxs = new();
+        public SortedDictionary<int, List<int>> StructMap = new();
+
+        // Merged-with-var buckets (what actually gets dispatched into).
+        public Dictionary<int, List<int>> AtomBuckets = new();
+        public Dictionary<int, List<int>> IntBuckets = new();
+        public List<int> ListBucket = new();
+        public Dictionary<int, List<int>> StructBuckets = new();
+
+        public bool HasAtoms => AtomBuckets.Count > 0;
+        public bool HasInts => IntBuckets.Count > 0;
+        public bool HasStructs => StructBuckets.Count > 0;
+
+        // Positions resolved in pass 1.
+        public int SwitchPos;          // start of switch_on_term / switch_on_arg
+        public int VarLblPos;          // var-fallthrough target (next level or final chain)
+        public int ConstLblPos;        // start of switch_on_atom (or _arg)
+        public int ListLblPos;
+        public int StructLblPos;
+        public int SwitchOnAtomPos;
+        public int SwitchOnIntegerPos;
+        public int SwitchOnStructurePos;
+        public int AtomTableId = -1;
+        public int IntTableId = -1;
+        public int StructTableId = -1;
+        public Dictionary<int, int> AtomGroupPos = new();
+        public Dictionary<int, int> IntGroupPos = new();
+        public Dictionary<int, int> StructGroupPos = new();
     }
 
     private static CompiledPredicate CompileIndexed(
         IReadOnlyList<CompiledClause> compiledClauses,
-        IReadOnlyList<FirstArgInfo> firstArgs,
+        ArgInfo[][] perArgInfo,
+        List<int> indexableArgs,
         int functorId,
         int arity,
         Shumway.Compiler.Lexer.SourcePosition position,
@@ -235,46 +286,43 @@ public sealed class PredicateCompiler
 
         // ----- Bucketise -----
 
-        var varIdxs = new List<int>();
-        var atomMap = new SortedDictionary<int, List<int>>();
-        var intMap = new SortedDictionary<int, List<int>>();
-        var listIdxs = new List<int>();
-        var structMap = new SortedDictionary<int, List<int>>();
+        // ----- Build per-arg-level buckets -----
 
-        for (int i = 0; i < n; i++)
+        var levels = new ArgLevel[indexableArgs.Count];
+        for (int li = 0; li < indexableArgs.Count; li++)
         {
-            FirstArgInfo info = firstArgs[i];
-            switch (info.Kind)
+            int k = indexableArgs[li];
+            var lvl = new ArgLevel { ArgIdx = k };
+            for (int i = 0; i < n; i++)
             {
-                case FirstArgKind.Var: varIdxs.Add(i); break;
-                case FirstArgKind.Atom: GetOrAdd(atomMap, info.Key).Add(i); break;
-                case FirstArgKind.Int: GetOrAdd(intMap, info.Key).Add(i); break;
-                case FirstArgKind.List: listIdxs.Add(i); break;
-                case FirstArgKind.Struct: GetOrAdd(structMap, info.Key).Add(i); break;
-                case FirstArgKind.Other: varIdxs.Add(i); break;
+                ArgInfo info = perArgInfo[k][i];
+                switch (info.Kind)
+                {
+                    case ArgKind.Var:   lvl.VarIdxs.Add(i); break;
+                    case ArgKind.Atom:  GetOrAdd(lvl.AtomMap, info.Key).Add(i); break;
+                    case ArgKind.Int:   GetOrAdd(lvl.IntMap, info.Key).Add(i); break;
+                    case ArgKind.List:  lvl.ListIdxs.Add(i); break;
+                    case ArgKind.Struct:GetOrAdd(lvl.StructMap, info.Key).Add(i); break;
+                    case ArgKind.Other: lvl.VarIdxs.Add(i); break;
+                }
             }
+            // Var-arg-at-this-position clauses match every concrete value;
+            // they're tried alongside the type-specific clauses in every
+            // bucket.
+            List<int> MergeWithVar(List<int> specifics)
+            {
+                var seen = new HashSet<int>(specifics);
+                foreach (int v in lvl.VarIdxs) seen.Add(v);
+                var merged = seen.ToList();
+                merged.Sort();
+                return merged;
+            }
+            lvl.AtomBuckets = lvl.AtomMap.ToDictionary(kv => kv.Key, kv => MergeWithVar(kv.Value));
+            lvl.IntBuckets = lvl.IntMap.ToDictionary(kv => kv.Key, kv => MergeWithVar(kv.Value));
+            lvl.StructBuckets = lvl.StructMap.ToDictionary(kv => kv.Key, kv => MergeWithVar(kv.Value));
+            lvl.ListBucket = MergeWithVar(lvl.ListIdxs);
+            levels[li] = lvl;
         }
-
-        // Each specific bucket gets the var clauses interleaved at their
-        // source positions — var clauses match every concrete value.
-        List<int> MergeWithVar(List<int> specifics)
-        {
-            var seen = new HashSet<int>(specifics);
-            foreach (int v in varIdxs) seen.Add(v);
-            var merged = seen.ToList();
-            merged.Sort();
-            return merged;
-        }
-
-        var atomBuckets = atomMap.ToDictionary(kv => kv.Key, kv => MergeWithVar(kv.Value));
-        var intBuckets = intMap.ToDictionary(kv => kv.Key, kv => MergeWithVar(kv.Value));
-        var structBuckets = structMap.ToDictionary(kv => kv.Key, kv => MergeWithVar(kv.Value));
-        var listBucket = MergeWithVar(listIdxs);
-        var varBucket = Enumerable.Range(0, n).ToList();   // VarLbl tries everything
-
-        bool hasAtoms = atomBuckets.Count > 0;
-        bool hasInts = intBuckets.Count > 0;
-        bool hasStructs = structBuckets.Count > 0;
 
         // ----- Pass 1: layout offsets -----
 
@@ -284,57 +332,74 @@ public sealed class PredicateCompiler
             1 => 0,             // single-target buckets jump directly to the clause body
             _ => 9 + 5 * (count - 1),    // try(9) + (count-2)*retry(5) + trust(5)
         };
+        static int SwitchSize(int argIdx) => argIdx == 0 ? 17 : 21;
+        static int SubDispatchSize(int argIdx) => argIdx == 0 ? 5 : 9;
 
-        int pos = 17;             // after switch_on_term
-        int varLblPos = pos;
-        pos += ChainSize(varBucket.Count);
+        int pos = 0;
 
-        int switchOnAtomPos = hasAtoms ? pos : -1;
-        if (hasAtoms) pos += 5;
-        int switchOnIntPos = hasInts ? pos : -1;
-        if (hasInts) pos += 5;
+        // Top-level: one switch_on_term (arg 0) or switch_on_arg (arg k > 0)
+        // per indexable arg, chained head-to-tail. Each switch's var label
+        // jumps to the next switch (or to the final chain if last).
+        for (int li = 0; li < levels.Length; li++)
+        {
+            levels[li].SwitchPos = pos;
+            pos += SwitchSize(levels[li].ArgIdx);
+        }
 
-        int constLblPos = hasAtoms
-            ? switchOnAtomPos
-            : hasInts
-                ? switchOnIntPos
-                : varLblPos;
+        // Final chain (try/retry/trust over all clauses in source order).
+        // This is the var-fallthrough target of the LAST indexable arg.
+        int finalChainPos = pos;
+        pos += ChainSize(n);
 
-        int listLblPos;
-        if (listBucket.Count == 0) listLblPos = varLblPos;
-        else if (listBucket.Count == 1) listLblPos = -1;   // patched after clause body offsets known
-        else { listLblPos = pos; pos += ChainSize(listBucket.Count); }
+        // Wire var labels: each level's var-fallthrough points to the next
+        // level's switch, or to the final chain when it's the last level.
+        for (int li = 0; li < levels.Length; li++)
+            levels[li].VarLblPos = li + 1 < levels.Length
+                ? levels[li + 1].SwitchPos
+                : finalChainPos;
 
-        int switchOnStructPos = hasStructs ? pos : -1;
-        if (hasStructs) pos += 5;
-        int structLblPos = hasStructs ? switchOnStructPos : varLblPos;
+        // Per-level sub-dispatches and bucket chains.
+        for (int li = 0; li < levels.Length; li++)
+        {
+            var lvl = levels[li];
+            int sub = SubDispatchSize(lvl.ArgIdx);
+            if (lvl.HasAtoms)    { lvl.SwitchOnAtomPos = pos;      pos += sub; }
+            if (lvl.HasInts)     { lvl.SwitchOnIntegerPos = pos;   pos += sub; }
+            lvl.ConstLblPos = lvl.HasAtoms ? lvl.SwitchOnAtomPos
+                            : lvl.HasInts  ? lvl.SwitchOnIntegerPos
+                                           : lvl.VarLblPos;
 
-        var atomGroupPos = new Dictionary<int, int>();
-        foreach (var (key, group) in atomBuckets)
-            if (group.Count >= 2) { atomGroupPos[key] = pos; pos += ChainSize(group.Count); }
-        var intGroupPos = new Dictionary<int, int>();
-        foreach (var (key, group) in intBuckets)
-            if (group.Count >= 2) { intGroupPos[key] = pos; pos += ChainSize(group.Count); }
-        var structGroupPos = new Dictionary<int, int>();
-        foreach (var (key, group) in structBuckets)
-            if (group.Count >= 2) { structGroupPos[key] = pos; pos += ChainSize(group.Count); }
+            if (lvl.ListBucket.Count == 0)      lvl.ListLblPos = lvl.VarLblPos;
+            else if (lvl.ListBucket.Count == 1) lvl.ListLblPos = -1;  // patched after clause body offsets are known
+            else                                { lvl.ListLblPos = pos; pos += ChainSize(lvl.ListBucket.Count); }
+
+            if (lvl.HasStructs) { lvl.SwitchOnStructurePos = pos;  pos += sub; }
+            lvl.StructLblPos = lvl.HasStructs ? lvl.SwitchOnStructurePos : lvl.VarLblPos;
+
+            foreach (var (key, group) in lvl.AtomBuckets)
+                if (group.Count >= 2) { lvl.AtomGroupPos[key] = pos; pos += ChainSize(group.Count); }
+            foreach (var (key, group) in lvl.IntBuckets)
+                if (group.Count >= 2) { lvl.IntGroupPos[key] = pos; pos += ChainSize(group.Count); }
+            foreach (var (key, group) in lvl.StructBuckets)
+                if (group.Count >= 2) { lvl.StructGroupPos[key] = pos; pos += ChainSize(group.Count); }
+        }
 
         int[] clauseBodyPos = new int[n];
         for (int i = 0; i < n; i++)
         {
             // Each clause body is preceded by a Meta(DbgInfo, i) opcode
             // so the stack-trace path can map any PC inside the clause
-            // back to its source position. The dispatch targets stored in
-            // switch tables and try/retry/trust addresses point at the
-            // Meta opcode (not the body byte after it) so the runtime
-            // executes the no-op Meta first, then the body.
+            // back to its source position. Dispatch targets in switch
+            // tables and try/retry/trust addresses point at the Meta
+            // opcode; the runtime executes the no-op Meta then the body.
             clauseBodyPos[i] = pos;
             pos += MetaDbgInfoSize;
             pos += compiledClauses[i].Bytecode.Length;
         }
-
-        // Now we can resolve any "single-clause direct jump" addresses.
-        if (listBucket.Count == 1) listLblPos = clauseBodyPos[listBucket[0]];
+        // Resolve any single-clause list-bucket direct-jump addresses.
+        for (int li = 0; li < levels.Length; li++)
+            if (levels[li].ListBucket.Count == 1)
+                levels[li].ListLblPos = clauseBodyPos[levels[li].ListBucket[0]];
 
         // ----- Pass 2: build switch tables (predicate-local addresses) -----
 
@@ -358,24 +423,25 @@ public sealed class PredicateCompiler
         }
 
         var switchTables = new List<SwitchTable>();
-        int atomTableLocalId = -1, intTableLocalId = -1, structTableLocalId = -1;
-        if (hasAtoms)
+        for (int li = 0; li < levels.Length; li++)
         {
-            // Atom default chains to switch_on_integer if present; if not (or
-            // the int lookup also misses), we end up at VarLbl.
-            int defaultAddr = hasInts ? switchOnIntPos : varLblPos;
-            atomTableLocalId = switchTables.Count;
-            switchTables.Add(BuildTable(atomBuckets, atomGroupPos, defaultAddr));
-        }
-        if (hasInts)
-        {
-            intTableLocalId = switchTables.Count;
-            switchTables.Add(BuildTable(intBuckets, intGroupPos, varLblPos));
-        }
-        if (hasStructs)
-        {
-            structTableLocalId = switchTables.Count;
-            switchTables.Add(BuildTable(structBuckets, structGroupPos, varLblPos));
+            var lvl = levels[li];
+            if (lvl.HasAtoms)
+            {
+                int defaultAddr = lvl.HasInts ? lvl.SwitchOnIntegerPos : lvl.VarLblPos;
+                lvl.AtomTableId = switchTables.Count;
+                switchTables.Add(BuildTable(lvl.AtomBuckets, lvl.AtomGroupPos, defaultAddr));
+            }
+            if (lvl.HasInts)
+            {
+                lvl.IntTableId = switchTables.Count;
+                switchTables.Add(BuildTable(lvl.IntBuckets, lvl.IntGroupPos, lvl.VarLblPos));
+            }
+            if (lvl.HasStructs)
+            {
+                lvl.StructTableId = switchTables.Count;
+                switchTables.Add(BuildTable(lvl.StructBuckets, lvl.StructGroupPos, lvl.VarLblPos));
+            }
         }
 
         // ----- Pass 3: emit bytecode -----
@@ -385,50 +451,98 @@ public sealed class PredicateCompiler
         var dispatchSites = new List<int>();
         var switchTableIdSites = new List<int>();
 
-        int switchOnTermStart = emitter.Position;
-        emitter.EmitSwitchOnTerm(varLblPos, constLblPos, listLblPos, structLblPos);
-        // The four address operands of switch_on_term need predicate-local →
-        // program-absolute translation by the linker.
-        dispatchSites.Add(switchOnTermStart + 1);
-        dispatchSites.Add(switchOnTermStart + 5);
-        dispatchSites.Add(switchOnTermStart + 9);
-        dispatchSites.Add(switchOnTermStart + 13);
-
-        EmitChain(emitter, varBucket, clauseBodyPos, arity, dispatchSites);
-
-        if (hasAtoms)
+        // 3a — top-level switch chain (one per indexable arg).
+        for (int li = 0; li < levels.Length; li++)
         {
-            int site = emitter.Position + 1;
-            switchTableIdSites.Add(site);
-            emitter.EmitSwitchOnAtom(atomTableLocalId);
-        }
-        if (hasInts)
-        {
-            int site = emitter.Position + 1;
-            switchTableIdSites.Add(site);
-            emitter.EmitSwitchOnInteger(intTableLocalId);
-        }
-
-        if (listBucket.Count >= 2)
-            EmitChain(emitter, listBucket, clauseBodyPos, arity, dispatchSites);
-
-        if (hasStructs)
-        {
-            int site = emitter.Position + 1;
-            switchTableIdSites.Add(site);
-            emitter.EmitSwitchOnStructure(structTableLocalId);
+            var lvl = levels[li];
+            int start = emitter.Position;
+            if (lvl.ArgIdx == 0)
+            {
+                emitter.EmitSwitchOnTerm(lvl.VarLblPos, lvl.ConstLblPos, lvl.ListLblPos, lvl.StructLblPos);
+                dispatchSites.Add(start + 1);
+                dispatchSites.Add(start + 5);
+                dispatchSites.Add(start + 9);
+                dispatchSites.Add(start + 13);
+            }
+            else
+            {
+                emitter.EmitSwitchOnArg(lvl.ArgIdx, lvl.VarLblPos, lvl.ConstLblPos, lvl.ListLblPos, lvl.StructLblPos);
+                // arg_idx operand is at start+1 (literal, no patching); the
+                // four addresses follow at +5, +9, +13, +17.
+                dispatchSites.Add(start + 5);
+                dispatchSites.Add(start + 9);
+                dispatchSites.Add(start + 13);
+                dispatchSites.Add(start + 17);
+            }
         }
 
-        foreach (var (key, group) in atomBuckets)
-            if (group.Count >= 2)
-                EmitChain(emitter, group, clauseBodyPos, arity, dispatchSites);
-        foreach (var (key, group) in intBuckets)
-            if (group.Count >= 2)
-                EmitChain(emitter, group, clauseBodyPos, arity, dispatchSites);
-        foreach (var (key, group) in structBuckets)
-            if (group.Count >= 2)
-                EmitChain(emitter, group, clauseBodyPos, arity, dispatchSites);
+        // 3b — final chain (full try/retry/trust over all clauses).
+        EmitChain(emitter, Enumerable.Range(0, n).ToList(), clauseBodyPos, arity, dispatchSites);
 
+        // 3c — per-level sub-dispatches.
+        for (int li = 0; li < levels.Length; li++)
+        {
+            var lvl = levels[li];
+            if (lvl.HasAtoms)
+            {
+                if (lvl.ArgIdx == 0)
+                {
+                    int site = emitter.Position + 1;
+                    switchTableIdSites.Add(site);
+                    emitter.EmitSwitchOnAtom(lvl.AtomTableId);
+                }
+                else
+                {
+                    int site = emitter.Position + 5;
+                    switchTableIdSites.Add(site);
+                    emitter.EmitSwitchOnAtomArg(lvl.ArgIdx, lvl.AtomTableId);
+                }
+            }
+            if (lvl.HasInts)
+            {
+                if (lvl.ArgIdx == 0)
+                {
+                    int site = emitter.Position + 1;
+                    switchTableIdSites.Add(site);
+                    emitter.EmitSwitchOnInteger(lvl.IntTableId);
+                }
+                else
+                {
+                    int site = emitter.Position + 5;
+                    switchTableIdSites.Add(site);
+                    emitter.EmitSwitchOnIntegerArg(lvl.ArgIdx, lvl.IntTableId);
+                }
+            }
+            if (lvl.ListBucket.Count >= 2)
+                EmitChain(emitter, lvl.ListBucket, clauseBodyPos, arity, dispatchSites);
+            if (lvl.HasStructs)
+            {
+                if (lvl.ArgIdx == 0)
+                {
+                    int site = emitter.Position + 1;
+                    switchTableIdSites.Add(site);
+                    emitter.EmitSwitchOnStructure(lvl.StructTableId);
+                }
+                else
+                {
+                    int site = emitter.Position + 5;
+                    switchTableIdSites.Add(site);
+                    emitter.EmitSwitchOnStructureArg(lvl.ArgIdx, lvl.StructTableId);
+                }
+            }
+
+            foreach (var (key, group) in lvl.AtomBuckets)
+                if (group.Count >= 2)
+                    EmitChain(emitter, group, clauseBodyPos, arity, dispatchSites);
+            foreach (var (key, group) in lvl.IntBuckets)
+                if (group.Count >= 2)
+                    EmitChain(emitter, group, clauseBodyPos, arity, dispatchSites);
+            foreach (var (key, group) in lvl.StructBuckets)
+                if (group.Count >= 2)
+                    EmitChain(emitter, group, clauseBodyPos, arity, dispatchSites);
+        }
+
+        // 3d — clause bodies.
         for (int i = 0; i < n; i++)
         {
             emitter.EmitMetaDbgInfo(i);
