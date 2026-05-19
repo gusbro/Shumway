@@ -181,18 +181,20 @@ These are areas where coherence across the codebase is critical and ad-hoc chang
 
 Shumway is designed in phases. Be explicit about what phase a change targets.
 
-**Phase 1 (v1) — Core functional Prolog with embedding**
-- Interpreter (Tier 0).
-- WAM compiler (Prolog → bytecode).
-- Atom GC, trail, heap, stack, unification.
-- PSTR (partial strings) for grammar processing.
-- Builtins: subset oriented to grammar processing (~150 builtins).
-- Module system with public/local visibility.
-- Embedding API.
-- Bundler CLI (bytecode bundles).
-- IL compiler (Tier 1) with `DynamicMethod` + Sigil.
-- `:- mode` directive accepted (parsed, stored as metadata; not used by compiler).
-- First-argument indexing for static predicates.
+**Phase 1 (v1) — Core functional Prolog with embedding** — ✅ **Complete** (tagged `phase-1`; closure summary in [`docs/phase-1-closure.md`](docs/phase-1-closure.md)).
+- ✓ Interpreter (Tier 0).
+- ✓ WAM compiler (Prolog → bytecode).
+- ✓ Atom GC, trail, heap, stack, unification.
+- ✓ PSTR (partial strings) for grammar processing.
+- ✓ Builtins: subset oriented to grammar processing (~120 predicates delivered: 73 standard + 33 meta + 12 prelude).
+- ✓ Module system with public/local visibility.
+- ✓ Embedding API.
+- ✓ Bundler CLI (bytecode bundles).
+- ✓ IL compiler (Tier 1) with `DynamicMethod` + Sigil. Non-leaf callees handled via per-call-site meta-CP.
+- ✓ `:- mode` directive accepted (parsed, stored as metadata; not used by compiler).
+- ✓ First-argument indexing for static predicates.
+- ✓ Per-call Warren argument scheduler (cycle-aware, replaces conservative head-var preservation).
+- ✓ Per-call environment trimming (live-Y analysis on every Call / CallBuiltin).
 
 **Phase 2 — Production-grade optimizations**
 - Multi-argument indexing.
