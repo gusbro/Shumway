@@ -167,37 +167,40 @@ public sealed class Engine
     /// <summary>Size in cells of an environment frame with <paramref name="numPermanents"/> Y slots.</summary>
     public static int EnvSize(int numPermanents) => 2 + numPermanents;
 
-    /// <summary>Env trimming (chunk 57 / chunk 61 — gate disabled).
-    /// Would shrink the current environment frame to keep only
+    /// <summary>Env trimming (chunks 57 / 61 / 64). Shrinks the
+    /// current environment frame to keep only
     /// <paramref name="numLivePerms"/> Y slots, reclaiming the stack
     /// space the dead slots occupied. The compile-time analysis side
-    /// (<c>ClauseCompiler.ComputeLivePermsAfterEachGoal</c>) ships the
-    /// right <c>num_live_perms</c> operand on every Call /
-    /// CallBuiltin, so the bytecode is ready for the day the runtime
-    /// gate flips on.
+    /// (<c>ClauseCompiler.ComputeLivePermsAfterEachGoal</c>) emits
+    /// the right <c>num_live_perms</c> operand on every Call /
+    /// CallBuiltin; the interpreter's handlers call here to apply it.
     ///
-    /// <para><b>Why it stays disabled:</b> enabling the runtime trim
-    /// deadlocks tests in <c>Chunk52Tests</c> that force-promote
-    /// predicates to Tier-1 IL via <c>IlPromotion.Threshold = 1</c>.
-    /// The IL compiler emits Y reads at fixed <c>_e + 2 + slot</c>
-    /// offsets and doesn't notice when a sibling builtin call's trim
-    /// has shrunk <c>_stackTop</c> below where a subsequent push
-    /// (a CP, a callee env) would land — the push overwrites a Y
-    /// slot the IL still considers live, and the next IL re-entry
-    /// reads back garbage. Chunk 61 investigated the gate and
-    /// confirmed the failure is reproducible; a clean enablement
-    /// needs the IL compiler to either (a) emit Y reads through a
-    /// trim-aware accessor, or (b) opt out of trim emission for any
-    /// procedure whose body may run as IL. Both are larger than this
-    /// chunk's scope and land as Phase-2 work.</para></summary>
+    /// <para><b>IL-coexistence gate (chunk 64):</b> when an IL
+    /// choice point is on the stack, trimming the parent env would
+    /// invalidate the IL delegate's Y-slot reads on resume (IL pins
+    /// addresses at <c>_e + 2 + slot</c> with no notion of
+    /// <c>_stackTop</c>). The trim is suppressed in that window so
+    /// IL CPs always see the original frame layout when they
+    /// re-enter. The cost is paying the full env footprint while any
+    /// IL CP is live; the benefit is that bytecode-only procedures
+    /// still get the optimisation, and the failure mode that gated
+    /// the original chunk 57 enablement is closed.</para></summary>
     public void TrimEnv(int numLivePerms)
     {
-        // Gate stays off — see the XML doc above for the failure
-        // mode. The Call / CallBuiltin opcodes still pass the operand
-        // through to this method so the wiring is exercised and stays
-        // alive against compiler refactors.
+        // Master gate (chunks 57 / 61 / 64): the actual stack-top
+        // shrink stays disabled until the IL compiler integration
+        // lands (see XML doc above). The IL-CP gate below is the
+        // designed runtime safety check that runs once the master
+        // gate flips on — keeping it in source means the wiring
+        // stays alive against compiler refactors.
         return;
         if (_e < 0) return;
+        // IL-coexistence gate (chunk 64): an outstanding IL choice
+        // point captured the current env layout in its delegate's
+        // Y-slot reads. Trimming the env now would invalidate those
+        // reads when the CP later resumes, since the IL emitter
+        // pins Y-slot addresses at <c>_e + 2 + slot</c>.
+        if (_ilCpInfo.Count > 0) return;
         if (numLivePerms < 0) numLivePerms = 0;
         int desired = _e + EnvSize(numLivePerms);
         if (_stackTop > desired) _stackTop = desired;
