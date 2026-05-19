@@ -153,7 +153,7 @@ public sealed class ClauseCompiler
         // Then run the head-var preservation pass for the argument-shuffling
         // fix.
         ReserveBodyArgRegisters(state, goals);
-        PreserveClobberedHeadVars(state, goals);
+        int[]? firstGoalArgOrder = WarrenScheduleFirstGoal(state, goals);
 
         // ----- Body goals -----
         // Per-call env trimming (chunk 57): for each Call / CallBuiltin
@@ -196,7 +196,8 @@ public sealed class ClauseCompiler
                 }
                 else
                 {
-                    CompileBodyGoal(state, goal, isLast, needFrame, liveAfter[i]);
+                    int[]? thisOrder = i == 0 ? firstGoalArgOrder : null;
+                    CompileBodyGoal(state, goal, isLast, needFrame, liveAfter[i], thisOrder);
                 }
             }
         }
@@ -267,44 +268,6 @@ public sealed class ClauseCompiler
     /// with the put_structure that just wrote X[1] = Ref(outer).)</summary>
     private static void ReserveBodyArgRegisters(CompileState s, List<Term> goals)
     {
-        int maxBodyArity = ComputeMaxBodyArity(goals);
-        if (maxBodyArity > 0) s.Xs.EnsureFreeAtLeast(maxBodyArity);
-    }
-
-    /// <summary>For each head variable that would be clobbered by an earlier
-    /// body argument before it's read, emits a <c>put_value_x</c> that moves
-    /// it to a fresh slot beyond the body's argument range. This is the
-    /// minimum-correctness fix for the classical WAM argument-shuffling
-    /// problem. Chunk 65 explored replacing this pass with a per-call
-    /// Warren scheduler that orders puts in dependency order with cycle-
-    /// breaking; the rewrite mishandled compound-arg emissions whose
-    /// internal <c>unify_value_x</c> reads happen after the enclosing
-    /// <c>put_structure</c> has already clobbered the head-var home,
-    /// so the conservative upfront pass landed back as the Phase-1
-    /// implementation. Full Warren remains deferred to Phase 2 with the
-    /// compound-aware extensions documented in chunk 65's commit.</summary>
-    private static void PreserveClobberedHeadVars(CompileState s, List<Term> goals)
-    {
-        if (goals.Count == 0) return;
-        int maxBodyArity = ComputeMaxBodyArity(goals);
-        if (maxBodyArity == 0) return;
-
-        foreach (string name in s.Xs.Names.ToList())
-        {
-            if (s.Ys.ContainsKey(name)) continue;
-            int home = s.Xs.GetSlot(name);
-            if (home >= maxBodyArity) continue;
-
-            if (!NeedsSave(name, home, goals)) continue;
-
-            int safeSlot = s.Xs.AllocateAnonymousSlot();
-            s.Emitter.EmitPutValueX(home, safeSlot);
-            s.Xs.Rebind(name, safeSlot);
-        }
-    }
-
-    private static int ComputeMaxBodyArity(List<Term> goals)
-    {
         int max = 0;
         foreach (var g in goals)
         {
@@ -312,59 +275,272 @@ public sealed class ClauseCompiler
             int arity = g is CompoundTerm c ? c.Args.Length : 0;
             if (arity > max) max = arity;
         }
-        return max;
+        if (max > 0) s.Xs.EnsureFreeAtLeast(max);
     }
 
-    private static bool NeedsSave(string varName, int home, List<Term> goals)
+    /// <summary>Warren's classical argument-shuffling scheduler for the
+    /// first body goal. Replaces the upfront conservative
+    /// <c>PreserveClobberedHeadVars</c> with a per-call dependency-graph
+    /// approach: emit only the saves needed to break cycles or self-
+    /// clobbers, then topologically order the arg puts so each one's X
+    /// reads fire before the writer of the read slot.
+    ///
+    /// <para>Three sources of saves:</para>
+    /// <list type="number">
+    /// <item><description><b>Forced saves</b> — vars referenced at depth
+    /// ≥ 2 inside a top-level compound. Their <c>unify_value_x</c> reads
+    /// happen during <c>DrainPendingCompounds</c>, after every main
+    /// <c>put_*</c> has clobbered the arg slots, so the home must be
+    /// preserved upfront.</description></item>
+    /// <item><description><b>Self-loop saves</b> — top-level compound at
+    /// dst <c>i</c> with a direct (depth-1) flat-var sub-arg whose home
+    /// is <c>i</c>. The <c>put_structure</c>/<c>put_list</c> clobbers
+    /// X[i] before the inner <c>unify_value_x</c> reads it.</description></item>
+    /// <item><description><b>Cycle-breaking saves</b> — when the
+    /// cross-arg dependency graph has a cycle (e.g. classical swap
+    /// <c>foo(X, Y) :- bar(Y, X)</c>), one head-var save breaks the
+    /// cycle and the remaining graph topo-sorts.</description></item>
+    /// </list>
+    /// <para>Only the first body goal is scheduled. Head-vars relevant
+    /// to scheduling live in X only when they appear exclusively in
+    /// chunk 0 (head + first goal); any head-var referenced by a later
+    /// goal is permanent and resides in Y, which <c>put_*</c> writes
+    /// never touch.</para></summary>
+    private static int[]? WarrenScheduleFirstGoal(CompileState s, List<Term> goals)
     {
-        foreach (var g in goals)
+        if (goals.Count == 0) return null;
+        Term first = goals[0];
+        if (first is AtomTerm { Name: "!" }) return null;
+        if (first is not CompoundTerm c) return null;
+        Term[] gArgs = c.Args;
+        int N = gArgs.Length;
+        if (N == 0) return null;
+
+        // Snapshot home → head-var name for X-mapped vars with home < N.
+        // Updated as saves rebind vars out of the arg range.
+        var homeToVar = new Dictionary<int, string>();
+        foreach (var name in s.Xs.Names.ToList())
         {
-            if (g is AtomTerm { Name: "!" }) continue;
-            Term[] gArgs = g is CompoundTerm c ? c.Args : Array.Empty<Term>();
-            if (home >= gArgs.Length) continue;
-
-            bool homeArgIsTheVar = gArgs[home] is VarTerm vh && vh.Name == varName;
-            if (homeArgIsTheVar) continue;
-
-            if (NeedsSaveForGoal(gArgs, varName, home)) return true;
+            if (s.Ys.ContainsKey(name)) continue;
+            int home = s.Xs.GetSlot(name);
+            if (home < N) homeToVar[home] = name;
         }
-        return false;
-    }
 
-    /// <summary>True when goal arg-array <paramref name="gArgs"/> reads
-    /// <paramref name="varName"/> in a way that the put-to-home write
-    /// (at arg position <paramref name="home"/>) would clobber before
-    /// the read fires. Refinement from chunk 62: flat-var reads at
-    /// position ≤ home are safe (the put for the earlier position
-    /// fires before the home clobber); reads inside a compound at
-    /// any position are conservatively flagged (the compound's
-    /// internal unify_value_x reads happen after the put_structure
-    /// clobbers the home, so even position 0 compounds need the
-    /// preservation).</summary>
-    private static bool NeedsSaveForGoal(Term[] gArgs, string varName, int home)
-    {
-        for (int i = 0; i < gArgs.Length; i++)
+        // === Step 1: Forced saves for depth-≥2 reads (drained compounds). ===
+        var forced = new HashSet<string>();
+        for (int i = 0; i < N; i++)
+            CollectForcedSaves(gArgs[i], depth: 0, s, N, forced);
+        foreach (string name in forced.OrderBy(n => s.Xs.GetSlot(n)))
         {
-            Term arg = gArgs[i];
-            switch (arg)
+            int home = s.Xs.GetSlot(name);
+            int safe = s.Xs.AllocateAnonymousSlot();
+            s.Emitter.EmitPutValueX(home, safe);
+            s.Xs.Rebind(name, safe);
+            homeToVar.Remove(home);
+        }
+
+        // === Step 2: Self-loop saves (top-level compound at dst i
+        //              with direct flat sub-arg whose home is i). ===
+        for (int i = 0; i < N; i++)
+        {
+            if (gArgs[i] is not CompoundTerm cmp) continue;
+            foreach (Term sub in cmp.Args)
             {
-                case VarTerm v when v.Name == varName:
-                    if (i > home) return true;
+                if (sub is VarTerm v && v.Name != "_"
+                    && !s.Xs.IsNewName(v.Name)
+                    && !s.Ys.ContainsKey(v.Name)
+                    && s.Xs.GetSlot(v.Name) == i
+                    && homeToVar.ContainsKey(i))
+                {
+                    int safe = s.Xs.AllocateAnonymousSlot();
+                    s.Emitter.EmitPutValueX(i, safe);
+                    s.Xs.Rebind(v.Name, safe);
+                    homeToVar.Remove(i);
                     break;
-                case CompoundTerm c:
-                    if (ContainsVarName(c, varName)) return true;
-                    break;
+                }
             }
         }
-        return false;
+
+        // === Step 3: Iteratively break cycles in the cross-arg graph. ===
+        var reads = new HashSet<int>[N];
+        var writesDst = new bool[N];
+        Recompute();
+
+        while (FindCycleNode(reads, writesDst, N) is int cycleNode)
+        {
+            if (!homeToVar.TryGetValue(cycleNode, out var hv)) break;
+            int safe = s.Xs.AllocateAnonymousSlot();
+            s.Emitter.EmitPutValueX(cycleNode, safe);
+            s.Xs.Rebind(hv, safe);
+            homeToVar.Remove(cycleNode);
+            Recompute();
+        }
+
+        // === Step 4: Topological sort of the now-acyclic graph. ===
+        return TopoSort(reads, writesDst, N);
+
+        void Recompute()
+        {
+            for (int i = 0; i < N; i++)
+            {
+                reads[i] = ComputeDirectReads(gArgs[i], s, N);
+                writesDst[i] = ArgWritesDst(gArgs[i], i, s);
+            }
+        }
     }
 
-    private static bool ContainsVarName(Term t, string varName) => t switch
+    /// <summary>Walks <paramref name="t"/> and, for each <see cref="VarTerm"/>
+    /// at depth ≥ 2 (i.e. inside a sub-compound that will be drained via
+    /// <see cref="DrainPendingCompounds"/> after every main put_* has
+    /// fired), adds its head-var name to <paramref name="sink"/> when the
+    /// var is an X-mapped head-var with home in <c>[0, N)</c>. Depth 0 is
+    /// the top-level body arg itself; depth 1 is a direct sub-arg of a
+    /// top-level compound (read during the arg's own emission); depth 2+
+    /// requires upfront preservation.</summary>
+    private static void CollectForcedSaves(
+        Term t, int depth, CompileState s, int N, HashSet<string> sink)
     {
-        VarTerm v => v.Name == varName,
-        CompoundTerm c => c.Args.Any(a => ContainsVarName(a, varName)),
-        _ => false,
-    };
+        if (t is CompoundTerm c)
+        {
+            foreach (Term sub in c.Args)
+                CollectForcedSaves(sub, depth + 1, s, N, sink);
+        }
+        else if (t is VarTerm v && v.Name != "_" && depth >= 2)
+        {
+            if (s.Ys.ContainsKey(v.Name)) return;
+            if (s.Xs.IsNewName(v.Name)) return;
+            int home = s.Xs.GetSlot(v.Name);
+            if (home < N) sink.Add(v.Name);
+        }
+    }
+
+    /// <summary>Set of X-register slots in <c>[0, N)</c> that <paramref name="arg"/>'s
+    /// own emission would read directly — flat-var sources (and direct
+    /// sub-args of a top-level compound). Sub-compounds contribute via
+    /// <see cref="CollectForcedSaves"/>, not here.</summary>
+    private static HashSet<int> ComputeDirectReads(Term arg, CompileState s, int N)
+    {
+        var reads = new HashSet<int>();
+        switch (arg)
+        {
+            case VarTerm v when v.Name != "_" && !s.Ys.ContainsKey(v.Name) && !s.Xs.IsNewName(v.Name):
+                int slot = s.Xs.GetSlot(v.Name);
+                if (slot < N) reads.Add(slot);
+                break;
+            case CompoundTerm c:
+                foreach (Term sub in c.Args)
+                {
+                    if (sub is VarTerm sv && sv.Name != "_"
+                        && !s.Ys.ContainsKey(sv.Name)
+                        && !s.Xs.IsNewName(sv.Name))
+                    {
+                        int subSlot = s.Xs.GetSlot(sv.Name);
+                        if (subSlot < N) reads.Add(subSlot);
+                    }
+                }
+                break;
+        }
+        return reads;
+    }
+
+    /// <summary>True iff <paramref name="arg"/> at dst <paramref name="dst"/>
+    /// emits something that writes <c>X[dst]</c>. A flat-var arg whose
+    /// current X home is its dst is a no-op (the
+    /// <c>CompileBodyArg</c> dispatcher skips the <c>put_value_x</c>
+    /// when src == dst); every other arg shape writes its dst.</summary>
+    private static bool ArgWritesDst(Term arg, int dst, CompileState s)
+    {
+        if (arg is VarTerm v && v.Name != "_"
+            && !s.Ys.ContainsKey(v.Name)
+            && !s.Xs.IsNewName(v.Name)
+            && s.Xs.GetSlot(v.Name) == dst)
+        {
+            return false;
+        }
+        return true;
+    }
+
+    /// <summary>Finds any node that participates in a cycle of the arg
+    /// dependency graph (edge <c>i → j</c> iff <c>j ∈ reads[i]</c> and
+    /// <c>j ≠ i</c> and arg <c>j</c> writes <c>X[j]</c>). Returns the
+    /// node's index, or <c>null</c> when the graph is acyclic. Iterative
+    /// DFS with three-colour marking keeps the stack bounded.</summary>
+    private static int? FindCycleNode(HashSet<int>[] reads, bool[] writesDst, int N)
+    {
+        var color = new int[N]; // 0 white, 1 gray, 2 black
+        for (int start = 0; start < N; start++)
+        {
+            if (color[start] != 0) continue;
+            var stack = new Stack<(int Node, List<int>.Enumerator Iter)>();
+            color[start] = 1;
+            stack.Push((start, Successors(reads[start], start, writesDst, N).GetEnumerator()));
+            while (stack.Count > 0)
+            {
+                var top = stack.Pop();
+                var iter = top.Iter;
+                if (iter.MoveNext())
+                {
+                    int next = iter.Current;
+                    stack.Push((top.Node, iter));
+                    if (color[next] == 1) return next;
+                    if (color[next] == 0)
+                    {
+                        color[next] = 1;
+                        stack.Push((next, Successors(reads[next], next, writesDst, N).GetEnumerator()));
+                    }
+                }
+                else
+                {
+                    color[top.Node] = 2;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static List<int> Successors(HashSet<int> r, int self, bool[] writesDst, int N)
+    {
+        var list = new List<int>();
+        foreach (int j in r)
+            if (j != self && j < N && writesDst[j])
+                list.Add(j);
+        list.Sort();
+        return list;
+    }
+
+    /// <summary>Kahn's topological sort of the arg dependency graph,
+    /// preferring lower indices on ties for deterministic output.</summary>
+    private static int[] TopoSort(HashSet<int>[] reads, bool[] writesDst, int N)
+    {
+        var inDeg = new int[N];
+        var outEdges = new List<int>[N];
+        for (int i = 0; i < N; i++) outEdges[i] = new List<int>();
+        for (int i = 0; i < N; i++)
+        {
+            foreach (int j in reads[i])
+            {
+                if (j == i || j >= N || !writesDst[j]) continue;
+                outEdges[i].Add(j);
+                inDeg[j]++;
+            }
+        }
+        var result = new int[N];
+        int outIdx = 0;
+        var ready = new SortedSet<int>();
+        for (int i = 0; i < N; i++)
+            if (inDeg[i] == 0) ready.Add(i);
+        while (ready.Count > 0)
+        {
+            int n = ready.Min;
+            ready.Remove(n);
+            result[outIdx++] = n;
+            foreach (int succ in outEdges[n])
+                if (--inDeg[succ] == 0) ready.Add(succ);
+        }
+        if (outIdx != N)
+            for (int i = 0; i < N; i++) result[i] = i;
+        return result;
+    }
 
     private static void CollectVarNames(Term t, HashSet<string> sink)
     {
@@ -605,7 +781,7 @@ public sealed class ClauseCompiler
     // Body compilation
     // ============================================================================
 
-    private void CompileBodyGoal(CompileState s, Term goal, bool isLast, bool hasFrame, int livePermsAfter)
+    private void CompileBodyGoal(CompileState s, Term goal, bool isLast, bool hasFrame, int livePermsAfter, int[]? argOrder = null)
     {
         // Decompose into functor name + args.
         string fName;
@@ -625,9 +801,19 @@ public sealed class ClauseCompiler
                     $"Goal type {goal.GetType().Name} is not yet supported in clause bodies.");
         }
 
-        // Emit argument-prep for each goal arg.
-        for (int i = 0; i < gArgs.Length; i++)
-            CompileBodyArg(s, gArgs[i], i);
+        // Emit argument-prep for each goal arg. When argOrder is supplied
+        // (Warren scheduler picked a topological order to minimise saves),
+        // emit in that order; otherwise emit in natural arg order.
+        if (argOrder is not null)
+        {
+            foreach (int i in argOrder)
+                CompileBodyArg(s, gArgs[i], i);
+        }
+        else
+        {
+            for (int i = 0; i < gArgs.Length; i++)
+                CompileBodyArg(s, gArgs[i], i);
+        }
         DrainPendingCompounds(s);
 
         int functorId = InternFunctor(fName, gArgs.Length);
