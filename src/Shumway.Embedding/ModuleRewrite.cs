@@ -86,7 +86,10 @@ public static class ModuleRewrite
         {
             if (IsControlFlow(a.Name, 0)) return goal;
             // Local predicates shadow builtins (ADR-008). Check local first.
-            if (IsLocal(a.Name, 0, ctx))
+            // Dynamic predicates live in a flat global namespace (their
+            // clauses can land from any module via assertz) so call sites
+            // skip the mangle just like the head does in MangleIfLocal.
+            if (IsLocal(a.Name, 0, ctx) && !IsDynamic(a.Name, 0, ctx))
                 return new AtomTerm(MangledName(a.Name, ctx));
             if (IsBuiltin(a.Name, 0)) return goal;
             return goal;
@@ -112,13 +115,20 @@ public static class ModuleRewrite
                 }
                 return newArgs is null ? goal : new CompoundTerm(c.Functor, newArgs);
             }
-            if (IsLocal(c.Functor, c.Args.Length, ctx))
+            if (IsLocal(c.Functor, c.Args.Length, ctx) && !IsDynamic(c.Functor, c.Args.Length, ctx))
                 return new CompoundTerm(MangledName(c.Functor, ctx), c.Args);
             if (IsBuiltin(c.Functor, c.Args.Length)) return goal;
             return goal;
         }
 
         return goal;
+    }
+
+    private static bool IsDynamic(string name, int arity, Context ctx)
+    {
+        int functorId = FunctorTable.Intern(
+            AtomTable.Intern(name, permanent: true).Id, arity);
+        return ctx.DynamicFunctors.Contains(functorId);
     }
 
     private static Term? MangleIfLocal(string name, int arity, Context ctx, Func<Term> build)

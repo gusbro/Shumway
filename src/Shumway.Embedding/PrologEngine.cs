@@ -163,6 +163,8 @@ public sealed class PrologEngine
         sub._dynamicFunctors.UnionWith(_dynamicFunctors);
         foreach (var (fid, clauses) in _dynamicClauses)
             sub._dynamicClauses[fid] = new List<Clause>(clauses);
+        foreach (var (fid, pred) in _dynamicPredicateCache)
+            sub._dynamicPredicateCache[fid] = pred;
         return sub;
     }
 
@@ -178,6 +180,7 @@ public sealed class PrologEngine
         int fid = ExtractHeadFunctorId(clause);
         EnsureDynamic(fid);
         GetOrCreateDynamicSlot(fid).Add(clause);
+        InvalidateDynamicCache(fid);
     }
 
     /// <summary>Adds <paramref name="clause"/> at the front of its predicate's
@@ -187,6 +190,7 @@ public sealed class PrologEngine
         int fid = ExtractHeadFunctorId(clause);
         EnsureDynamic(fid);
         GetOrCreateDynamicSlot(fid).Insert(0, clause);
+        InvalidateDynamicCache(fid);
     }
 
     /// <summary>Removes the first clause whose <see cref="Clause"/> is
@@ -201,6 +205,7 @@ public sealed class PrologEngine
             if (TermsStructurallyEqual(list[i].Term, clause.Term))
             {
                 list.RemoveAt(i);
+                InvalidateDynamicCache(fid);
                 return true;
             }
         }
@@ -223,7 +228,9 @@ public sealed class PrologEngine
     internal bool RemoveDynamicByReference(int functorId, Clause clause)
     {
         if (!_dynamicClauses.TryGetValue(functorId, out var list)) return false;
-        return list.Remove(clause);
+        bool removed = list.Remove(clause);
+        if (removed) InvalidateDynamicCache(functorId);
+        return removed;
     }
 
     /// <summary>Removes every asserted clause of the given dynamic functor and
@@ -234,6 +241,7 @@ public sealed class PrologEngine
     {
         _dynamicClauses.Remove(functorId);
         _dynamicFunctors.Remove(functorId);
+        InvalidateDynamicCache(functorId);
     }
 
     /// <summary>Static clauses whose head functor matches
@@ -432,6 +440,29 @@ public sealed class PrologEngine
     public IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> PrecompiledClauseCache
         => _precompiledClauseCache;
     private readonly Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> _precompiledClauseCache = new();
+
+    /// <summary>Per-engine cache of compiled dynamic predicates (chunk 68).
+    /// The query-setup path consults this cache alongside
+    /// <see cref="_precompiledClauseCache"/> so the ModuleCompiler can
+    /// skip recompiling a dynamic predicate's bytecode + switch tables
+    /// when its clause set hasn't changed since the last compile.
+    /// Invalidated on every <c>assertz</c> / <c>asserta</c> /
+    /// <c>retract</c> / <c>abolish</c> against the same functor.
+    /// Predicates whose bytecode references per-module literal pools
+    /// (string / float / big-integer) are filtered out at populate time
+    /// — see <see cref="Shumway.Compiler.Wam.ModuleCompiler.IsCachedPredicateReusable"/>.</summary>
+    public IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> DynamicPredicateCache
+        => _dynamicPredicateCache;
+    private readonly Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> _dynamicPredicateCache = new();
+
+    /// <summary>Drops the cached compiled predicate for
+    /// <paramref name="functorId"/>. Called by every mutation path
+    /// (<see cref="Assertz"/>, <see cref="Asserta"/>,
+    /// <see cref="RemoveDynamic"/>, <see cref="RemoveDynamicByReference"/>,
+    /// <see cref="AbolishDynamic"/>) so the next query sees a fresh
+    /// compile that picks up the modification.</summary>
+    private void InvalidateDynamicCache(int functorId)
+        => _dynamicPredicateCache.Remove(functorId);
 
     /// <summary>Runs an AST goal through the same machinery as the string
     /// form, yielding each solution in turn. The free variables of
@@ -710,6 +741,31 @@ public sealed class PrologEngine
         // discontiguous declaration.
         ValidateContiguity(clauses, pendingDiscontiguous);
 
+        // Source-declared clauses for dynamic predicates (chunk 68): route
+        // them to the runtime _dynamicClauses store so retract / assertz
+        // see them just like runtime-asserted clauses do. Without this
+        // routing, source-declared facts for a `:- dynamic foo/N.`
+        // predicate would be invisible to retract/2 and clause/2.
+        if (_dynamicFunctors.Count > 0)
+        {
+            var keptClauses = new List<Clause>(clauses.Count);
+            foreach (var c in clauses)
+            {
+                if (TryExtractHead(c, out string n, out int a))
+                {
+                    int fid = FunctorTable.Intern(
+                        AtomTable.Intern(n, permanent: true).Id, a);
+                    if (_dynamicFunctors.Contains(fid))
+                    {
+                        GetOrCreateDynamicSlot(fid).Add(c);
+                        continue;
+                    }
+                }
+                keptClauses.Add(c);
+            }
+            clauses = keptClauses;
+        }
+
         if (moduleDirectiveSeen)
         {
             // Explicit module: replace any previous load of this module.
@@ -735,6 +791,13 @@ public sealed class PrologEngine
             if (pendingModes is not null)
                 foreach (var (fid, modes) in pendingModes) existing.ModeDeclarations[fid] = modes;
         }
+
+        // Consulting may have added source clauses for an already-cached
+        // dynamic predicate (chunk 68). Drop the cache wholesale — the
+        // next query will recompile each dynamic predicate against the
+        // updated clause set. Consult is one-shot at engine setup in the
+        // common case, so this is amortised away.
+        _dynamicPredicateCache.Clear();
     }
 
     /// <summary>Enforces the contiguity rule for clauses inside a single
@@ -1045,14 +1108,51 @@ public sealed class PrologEngine
                 allRewritten.Add(ModuleRewrite.Rewrite(clause, ctx));
         }
 
-        // Bundle skip-compile (chunk 55): the precompiled-clause cache,
-        // populated by LoadBundle from a bundle's compiled bytecode blob,
-        // shortcuts ModuleCompiler for any functor whose cached
-        // CompiledPredicate doesn't reference per-module literal pools.
-        var skipCompileCache = _precompiledClauseCache.Count > 0
-            ? _precompiledClauseCache
-            : null;
+        // Skip-compile cache. Two contributors live here:
+        //   - Bundle skip-compile (chunk 55): populated by LoadBundle from
+        //     a bundle's compiled bytecode blob.
+        //   - Dynamic predicate cache (chunk 68): populated lazily by the
+        //     query-setup path itself; invalidated on every assertz /
+        //     asserta / retract / abolish that touches the functor.
+        // ModuleCompiler reuses any cached predicate whose bytecode doesn't
+        // reference per-module literal pools.
+        IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? skipCompileCache;
+        if (_precompiledClauseCache.Count == 0 && _dynamicPredicateCache.Count == 0)
+        {
+            skipCompileCache = null;
+        }
+        else if (_dynamicPredicateCache.Count == 0)
+        {
+            skipCompileCache = _precompiledClauseCache;
+        }
+        else
+        {
+            var merged = new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>(
+                _precompiledClauseCache);
+            foreach (var (fid, pred) in _dynamicPredicateCache)
+                merged[fid] = pred;
+            skipCompileCache = merged;
+        }
         var module = new ModuleCompiler().Compile(allRewritten, skipCompileCache);
+
+        // Populate the dynamic cache with any newly-compiled dynamic
+        // predicate whose bytecode is safe to reuse next query (no
+        // pool-specific literal ids). A predicate is "dynamic" iff its
+        // functor is in _dynamicFunctors — whether its clauses live in
+        // _modules (source-declared `:- dynamic foo/N.` plus inline
+        // facts) or _dynamicClauses (runtime assertz / asserta), both
+        // contribute to the same predicate. Cached entries are kept
+        // until the next assertz / retract / abolish invalidates them.
+        if (_dynamicFunctors.Count > 0)
+        {
+            foreach (var pred in module.Predicates)
+            {
+                if (!_dynamicFunctors.Contains(pred.FunctorId)) continue;
+                if (_dynamicPredicateCache.ContainsKey(pred.FunctorId)) continue;
+                if (Shumway.Compiler.Wam.ModuleCompiler.IsCachedPredicateReusable(pred))
+                    _dynamicPredicateCache[pred.FunctorId] = pred;
+            }
+        }
 
         var launcher = new BytecodeEmitter();
         int callPos = launcher.Position;

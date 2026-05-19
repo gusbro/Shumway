@@ -90,8 +90,13 @@ public sealed class ModuleCompiler
     /// can be lifted into a freshly-compiled module without its
     /// <see cref="OperandKind.LiteralId"/> operands needing to be
     /// re-keyed to the new pools. Atom ids, functor ids, and builtin
-    /// ids are all globally interned so they don't need this guard.</summary>
-    private static bool IsCachedPredicateReusable(CompiledPredicate pred)
+    /// ids are all globally interned so they don't need this guard.
+    ///
+    /// <para>Exposed (chunk 68) so the embedding layer can decide which
+    /// dynamic predicates are eligible for cross-query caching: a freshly
+    /// compiled dynamic predicate is safe to reuse next query only if
+    /// none of its operands carry pool-specific literal ids.</para></summary>
+    public static bool IsCachedPredicateReusable(CompiledPredicate pred)
     {
         byte[] code = pred.Bytecode;
         int pc = 0;
