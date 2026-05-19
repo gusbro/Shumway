@@ -174,12 +174,12 @@ public sealed class IlPredicateCompiler
             if (!CanCompileSingleClause(predicate, calleeMap))
                 throw new NotSupportedException(
                     $"Single-clause predicate (fid={predicate.FunctorId}) is outside the IL subset.");
-            return CompileSingleClause(predicate);
+            return CompileSingleClause(predicate, calleeMap);
         }
         if (TryDescribeIndexedAtomPredicate(predicate, out var info))
             return CompileIndexedAtomPredicate(predicate, info!);
         if (TryDescribeTryMeElseChain(predicate, calleeMap, out var chain))
-            return CompileTryMeElseChain(predicate, chain!);
+            return CompileTryMeElseChain(predicate, chain!, calleeMap);
         throw new NotSupportedException(
             $"Multi-clause predicate (fid={predicate.FunctorId}, clauses={predicate.ClauseCount}) "
             + "is outside the IL subset.");
@@ -344,7 +344,8 @@ public sealed class IlPredicateCompiler
         _ => false,
     };
 
-    private PredicateDelegate CompileSingleClause(CompiledPredicate predicate)
+    private PredicateDelegate CompileSingleClause(CompiledPredicate predicate,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
         int callSiteCount = CountNonTailCallOpcodes(predicate.Bytecode);
         if (callSiteCount == 0)
@@ -355,18 +356,20 @@ public sealed class IlPredicateCompiler
             var failLabel = emit.DefineLabel("fail");
             EmitClauseBody(emit, predicate.Bytecode, 0, predicate.Bytecode.Length,
                 failLabel, predicate.CallSites,
-                callSiteIndexCounter: null, resumeLabels: null);
+                callSiteIndexCounter: null, resumeLabels: null,
+                calleeMap: calleeMap);
             emit.MarkLabel(failLabel);
             emit.LoadConstant(false);
             emit.Return();
             return emit.CreateDelegate();
         }
         lock (IndexedDelegateHolder.RegistrationLock)
-            return CompileSingleClauseWithMetaCpUnlocked(predicate, callSiteCount);
+            return CompileSingleClauseWithMetaCpUnlocked(predicate, callSiteCount, calleeMap);
     }
 
     private PredicateDelegate CompileSingleClauseWithMetaCpUnlocked(
-        CompiledPredicate predicate, int callSiteCount)
+        CompiledPredicate predicate, int callSiteCount,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
         int holderKey = _nextHolderKey;
         var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
@@ -463,7 +466,8 @@ public sealed class IlPredicateCompiler
             failLabel, predicate.CallSites,
             callSiteIndexCounter: () => ++idxCounter,
             resumeLabels: postCallLabels,
-            holderKey: holderKey);
+            holderKey: holderKey,
+            calleeMap: calleeMap);
 
         emit.MarkLabel(failLabel);
         emit.LoadConstant(false);
@@ -499,13 +503,28 @@ public sealed class IlPredicateCompiler
     /// <c>return true</c>. <paramref name="callSites"/> is consulted by
     /// the Execute emission to resolve each call site's callee functor
     /// id (which is stable across queries, unlike the absolute bytecode
-    /// address embedded in the operand).</summary>
+    /// address embedded in the operand).
+    ///
+    /// <para><paramref name="calleeMap"/> turns on chunk-69 inlining of
+    /// small leaf callees: when a Call or Execute site references a
+    /// predicate that's in the map and passes <see cref="IsLeafPredicate"/>,
+    /// the callee's body opcodes are emitted directly into the caller's
+    /// IL stream instead of going through the
+    /// <see cref="IlRuntimeHelpers.Call"/> / <c>IlExecuteHelper.Resolve</c>
+    /// thunk. Saves a managed call, a Pc-set, and the bytecode-interpreter
+    /// re-entry per call site.</para>
+    /// <para><paramref name="suppressProceedReturn"/> applies inside the
+    /// inlined-Call case: the callee's <c>proceed</c> becomes a fall-through
+    /// (the caller has more body to execute after the inlined block)
+    /// instead of <c>return true</c>.</para></summary>
     private static void EmitClauseBody(
         Sigil.Emit<PredicateDelegate> emit, byte[] code, int start, int end,
         Sigil.Label failLabel, IReadOnlyList<CallSite> callSites,
         Func<int>? callSiteIndexCounter = null,
         Sigil.Label[]? resumeLabels = null,
-        int holderKey = -1)
+        int holderKey = -1,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null,
+        bool suppressProceedReturn = false)
     {
         int pc = start;
         while (pc < end)
@@ -925,6 +944,32 @@ public sealed class IlPredicateCompiler
                     throw new InvalidOperationException(
                         $"Call opcode at pc={pc} has no matching call site in the predicate's metadata.");
 
+                // Inlining (chunk 69): if the callee is a small static
+                // leaf, emit its body opcodes inline instead of routing
+                // through IlCallHelper.Run. Leaves push no CPs so no
+                // meta-CP is needed; the post-call label still gets
+                // marked for any outer logic but no choice point lives
+                // there.
+                if (calleeMap is not null
+                    && calleeMap.TryGetValue(siteFunctorId, out var calleePred)
+                    && IsLeafPredicate(calleePred))
+                {
+                    EmitClauseBody(emit, calleePred.Bytecode, 0, calleePred.Bytecode.Length,
+                        failLabel, Array.Empty<CallSite>(),
+                        calleeMap: calleeMap, suppressProceedReturn: true);
+                    if (callSiteIndexCounter is not null && resumeLabels is not null)
+                    {
+                        int siteIdx = callSiteIndexCounter();
+                        // Leaves leave no CPs behind so the meta-CP guard would
+                        // have skipped the push anyway. Mark the resume label
+                        // so any outer cascade logic still has a join point,
+                        // but emit no CP-push machinery.
+                        emit.MarkLabel(resumeLabels[siteIdx - 1]);
+                    }
+                    pc += OpcodeTable.Get(op).Size;
+                    continue;
+                }
+
                 // preCallB = engine.B;
                 var preCallBLocal = emit.DeclareLocal<int>($"preCallB_{pc}");
                 emit.LoadArgument(0);
@@ -1000,6 +1045,23 @@ public sealed class IlPredicateCompiler
                 if (siteFunctorId < 0)
                     throw new InvalidOperationException(
                         $"Execute opcode at pc={pc} has no matching call site in the predicate's metadata.");
+
+                // Inlining (chunk 69): if the callee is a small static
+                // leaf, emit its body opcodes inline instead of going
+                // through the Pc-set / IlTailCallPending / outer-
+                // dispatch dance. The callee's own proceed (= return
+                // true) is exactly what the caller needs at the
+                // tail-call site, so suppressProceedReturn stays false.
+                if (calleeMap is not null
+                    && calleeMap.TryGetValue(siteFunctorId, out var calleePredX)
+                    && IsLeafPredicate(calleePredX))
+                {
+                    EmitClauseBody(emit, calleePredX.Bytecode, 0, calleePredX.Bytecode.Length,
+                        failLabel, Array.Empty<CallSite>(),
+                        calleeMap: calleeMap, suppressProceedReturn: false);
+                    pc += OpcodeTable.Get(op).Size;
+                    continue;
+                }
                 // int target = IlExecuteHelper.Resolve(engine, siteFunctorId);
                 // engine.SetB0(engine.B); engine.SetPc(target);
                 // engine.IlTailCallPending = true; return true;
@@ -1022,8 +1084,15 @@ public sealed class IlPredicateCompiler
             }
             if (op == Opcode.Proceed)
             {
-                emit.LoadConstant(true);
-                emit.Return();
+                // In inlined-Call mode the caller has more body after the
+                // inlined block; skip the return and fall through to the
+                // next opcode in the caller's stream. In normal mode (and
+                // in inlined-Execute mode) proceed = return true.
+                if (!suppressProceedReturn)
+                {
+                    emit.LoadConstant(true);
+                    emit.Return();
+                }
                 pc += 1;
                 continue;
             }
@@ -1162,16 +1231,18 @@ public sealed class IlPredicateCompiler
     /// The CP-push trampoline reuses the same <see cref="IndexedDelegateHolder"/>
     /// machinery as the indexed path.</summary>
     private PredicateDelegate CompileTryMeElseChain(
-        CompiledPredicate predicate, TryMeElseChainInfo info)
+        CompiledPredicate predicate, TryMeElseChainInfo info,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
         lock (IndexedDelegateHolder.RegistrationLock)
         {
-            return CompileTryMeElseChainUnlocked(predicate, info);
+            return CompileTryMeElseChainUnlocked(predicate, info, calleeMap);
         }
     }
 
     private PredicateDelegate CompileTryMeElseChainUnlocked(
-        CompiledPredicate predicate, TryMeElseChainInfo info)
+        CompiledPredicate predicate, TryMeElseChainInfo info,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
         var clauses = info.Clauses;
         int holderKey = _nextHolderKey;
@@ -1202,7 +1273,8 @@ public sealed class IlPredicateCompiler
             // Emit the clause body. EmitClauseBody walks the slice and
             // returns true on Proceed / sets IlTailCallPending on Execute.
             EmitClauseBody(emit, predicate.Bytecode, clauses[i].Start, clauses[i].End,
-                failLabel, predicate.CallSites);
+                failLabel, predicate.CallSites,
+                calleeMap: calleeMap);
 
             emit.MarkLabel(nextLabel);
         }
