@@ -214,6 +214,23 @@ public sealed class IlPredicateCompiler
                 int siteFid = FindCallSiteFunctorId(predicate.CallSites, pc);
                 if (siteFid < 0) return false;
                 if (!calleeMap.TryGetValue(siteFid, out var callee)) return false;
+                // Chunk 63 investigated lifting the leaf-only check.
+                // The semantic issue: when the callee pushes try_me_else
+                // CPs inside RunSubroutine, each CP captures the
+                // engine's Cp at push time, which is the
+                // SubroutineSentinelCp. A later backtrack pops the CP,
+                // runs the alternative clause, and proceeds — proceed
+                // reads Cp = sentinel and halts, dropping out of the
+                // IL caller's body without running the goals that
+                // followed the Call. We see this as the multi-clause
+                // callee producing fewer cross-product solutions than
+                // Tier 0 (e.g. choose(X):-color(X),size(_) yielding 4
+                // instead of 6 with three colors and two sizes).
+                //
+                // The fix wants the IL caller to push a meta-CP that
+                // re-runs the goals after the Call on each callee
+                // alternative — that's a deeper IL emission change.
+                // Until then, keep the leaf-only restriction.
                 if (!IsLeafPredicate(callee)) return false;
                 pc += OpcodeTable.Get(op).Size;
                 continue;

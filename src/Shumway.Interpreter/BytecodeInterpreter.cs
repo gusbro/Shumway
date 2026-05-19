@@ -169,7 +169,15 @@ public sealed class BytecodeInterpreter
         while (true)
         {
             int pc = _engine.P;
-            if (pc < 0 || pc >= code.Length)
+            // Negative PC indicates "returned past the top" — the same
+            // semantics as proceed's Cp<0 early-return. Used by
+            // RunSubroutine (chunk 63): when an IL subroutine call
+            // returns success but the caller's Cp is the
+            // SubroutineSentinelCp, the IL dispatch path sets
+            // Pc=Cp=sentinel; the next dispatch iteration sees it and
+            // halts cleanly here instead of indexing into code[].
+            if (pc < 0) return InterpreterResult.Halted;
+            if (pc >= code.Length)
                 throw new InvalidOperationException(
                     $"Program counter 0x{pc:X} is outside code range [0, 0x{code.Length:X}).");
 

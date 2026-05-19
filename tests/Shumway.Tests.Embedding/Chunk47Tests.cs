@@ -125,8 +125,9 @@ public class Chunk47Tests
     public void IlExecute_RuleWithNonTailCall_StaysOnTier0()
     {
         // p(X) :- q(X), r(X). The body has TWO user-pred calls — the
-        // first is a non-tail Call (still unsupported), so the IL
-        // subset rejects p/1.
+        // first is a non-tail Call whose callee is multi-clause, so
+        // the IL Call helper's leaf-only restriction still rejects
+        // p/1.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
         engine.ConsultString(
