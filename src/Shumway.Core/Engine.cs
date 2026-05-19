@@ -820,6 +820,18 @@ public sealed class Engine
     /// re-entrant dispatch at query-setup time.</summary>
     public Func<int, bool>? IlSubroutineRunner { get; set; }
 
+    /// <summary>Backtrack runner for IL Call sites whose callee is
+    /// non-leaf (chunk 66). The meta-CP that IL emits at non-tail
+    /// Call sites calls into this on resume to pop the topmost CP
+    /// (typically a callee try_me_else CP the sub-call left on the
+    /// stack) and run its alternative clause. Returns <c>true</c>
+    /// when an alternative yielded another solution, <c>false</c>
+    /// when no more CPs are available. The embedding layer wires
+    /// this to <see cref="BytecodeInterpreter.Backtrack"/> at
+    /// query-setup time, same pattern as
+    /// <see cref="IlSubroutineRunner"/>.</summary>
+    public Func<bool>? BacktrackRunner { get; set; }
+
     /// <summary>Walks the environment-frame chain starting at the
     /// current frame, yielding each frame's saved return address
     /// (<c>CP</c>) — the bytecode location the caller will resume at

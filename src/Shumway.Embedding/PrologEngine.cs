@@ -1104,6 +1104,14 @@ public sealed class PrologEngine
         // IL Call (chunk 50): runs a sub-predicate synchronously by
         // re-entering the bytecode interpreter on the linked program.
         engine.IlSubroutineRunner = target => interp.RunSubroutine(program, target);
+        // IL meta-CP backtrack hook (chunk 66): drives one round of
+        // backtrack inside the bytecode interpreter so an IL Call
+        // site's meta-CP can fetch the next solution from a non-leaf
+        // callee on resume. Returns true when the backtrack landed on
+        // an alternative that proceeded to a halt (success), false
+        // when no further CPs were available.
+        engine.BacktrackRunner = () =>
+            interp.Backtrack(program) == Shumway.Interpreter.InterpreterResult.Halted;
         // Remember the per-query address → predicate map so error
         // reporting (chunk 51) can translate the engine's PC and env-
         // chain return addresses into Name/Arity stack frames.
