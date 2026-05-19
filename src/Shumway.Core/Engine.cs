@@ -170,39 +170,35 @@ public sealed class Engine
     /// <summary>Env trimming (chunks 57 / 61 / 64). Shrinks the
     /// current environment frame to keep only
     /// <paramref name="numLivePerms"/> Y slots, reclaiming the stack
-    /// space the dead slots occupied. The compile-time analysis side
+    /// space the dead slots occupied so subsequent pushes pack
+    /// tighter. The compile-time analysis side
     /// (<c>ClauseCompiler.ComputeLivePermsAfterEachGoal</c>) emits
     /// the right <c>num_live_perms</c> operand on every Call /
     /// CallBuiltin; the interpreter's handlers call here to apply it.
     ///
-    /// <para><b>IL-coexistence gate (chunk 64):</b> when an IL
-    /// choice point is on the stack, trimming the parent env would
-    /// invalidate the IL delegate's Y-slot reads on resume (IL pins
-    /// addresses at <c>_e + 2 + slot</c> with no notion of
-    /// <c>_stackTop</c>). The trim is suppressed in that window so
-    /// IL CPs always see the original frame layout when they
-    /// re-enter. The cost is paying the full env footprint while any
-    /// IL CP is live; the benefit is that bytecode-only procedures
-    /// still get the optimisation, and the failure mode that gated
-    /// the original chunk 57 enablement is closed.</para></summary>
+    /// <para><b>CP-frame protection (chunk 64):</b> the trim must
+    /// never push <c>_stackTop</c> below the top of the most recent
+    /// choice-point frame. Doing so would let the next stack push
+    /// (a sub-call's CP, a sub-call's env, etc.) overwrite the
+    /// active CP's saved slots — and on backtrack the CP restore
+    /// would read back corrupted state. The check raises
+    /// <c>desired</c> to <c>_b + CpSize(arity_at_b)</c> when the
+    /// computed shrink would intrude on the active CP frame, so the
+    /// trim degrades to a no-op for that call without losing
+    /// correctness. (This protects both bytecode try_me_else CPs
+    /// and IL choice points uniformly — they share the same _b
+    /// chain.)</para></summary>
     public void TrimEnv(int numLivePerms)
     {
-        // Master gate (chunks 57 / 61 / 64): the actual stack-top
-        // shrink stays disabled until the IL compiler integration
-        // lands (see XML doc above). The IL-CP gate below is the
-        // designed runtime safety check that runs once the master
-        // gate flips on — keeping it in source means the wiring
-        // stays alive against compiler refactors.
-        return;
         if (_e < 0) return;
-        // IL-coexistence gate (chunk 64): an outstanding IL choice
-        // point captured the current env layout in its delegate's
-        // Y-slot reads. Trimming the env now would invalidate those
-        // reads when the CP later resumes, since the IL emitter
-        // pins Y-slot addresses at <c>_e + 2 + slot</c>.
-        if (_ilCpInfo.Count > 0) return;
         if (numLivePerms < 0) numLivePerms = 0;
         int desired = _e + EnvSize(numLivePerms);
+        if (_b >= 0)
+        {
+            int cpArity = (int)_stack[_b + CpArityOffset].Data;
+            int cpTop = _b + CpSize(cpArity);
+            if (cpTop > desired) desired = cpTop;
+        }
         if (_stackTop > desired) _stackTop = desired;
     }
 
