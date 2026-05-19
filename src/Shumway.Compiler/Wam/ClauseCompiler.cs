@@ -275,32 +275,29 @@ public sealed class ClauseCompiler
     /// body argument before it's read, emits a <c>put_value_x</c> that moves
     /// it to a fresh slot beyond the body's argument range. This is the
     /// minimum-correctness fix for the classical WAM argument-shuffling
-    /// problem — a smarter scheduler (Warren's argument optimisation) could
-    /// shrink the move count further but is deferred.
-    ///
-    /// <para>The detection rule, per variable V with home X[h] and per goal
-    /// g: V needs a save if there's a goal where (1) position h falls inside
-    /// g's arg range, (2) the term at position h is not V itself, and (3) V
-    /// appears anywhere in g's args (so the eventual put for h overwrites V
-    /// before another put reads it). When the term at position h IS V, the
-    /// put for that position is a no-op move that the compiler skips, so V's
-    /// home is undisturbed.</para></summary>
+    /// problem. Chunk 65 explored replacing this pass with a per-call
+    /// Warren scheduler that orders puts in dependency order with cycle-
+    /// breaking; the rewrite mishandled compound-arg emissions whose
+    /// internal <c>unify_value_x</c> reads happen after the enclosing
+    /// <c>put_structure</c> has already clobbered the head-var home,
+    /// so the conservative upfront pass landed back as the Phase-1
+    /// implementation. Full Warren remains deferred to Phase 2 with the
+    /// compound-aware extensions documented in chunk 65's commit.</summary>
     private static void PreserveClobberedHeadVars(CompileState s, List<Term> goals)
     {
         if (goals.Count == 0) return;
         int maxBodyArity = ComputeMaxBodyArity(goals);
         if (maxBodyArity == 0) return;
 
-        // Snapshot names — we may mutate the map during iteration.
         foreach (string name in s.Xs.Names.ToList())
         {
-            if (s.Ys.ContainsKey(name)) continue;          // permanent → in Y, safe
+            if (s.Ys.ContainsKey(name)) continue;
             int home = s.Xs.GetSlot(name);
-            if (home >= maxBodyArity) continue;            // already in the safe zone
+            if (home >= maxBodyArity) continue;
 
             if (!NeedsSave(name, home, goals)) continue;
 
-            int safeSlot = s.Xs.AllocateAnonymousSlot();   // already past maxBodyArity (see ReserveBodyArgRegisters)
+            int safeSlot = s.Xs.AllocateAnonymousSlot();
             s.Emitter.EmitPutValueX(home, safeSlot);
             s.Xs.Rebind(name, safeSlot);
         }
@@ -324,21 +321,11 @@ public sealed class ClauseCompiler
         {
             if (g is AtomTerm { Name: "!" }) continue;
             Term[] gArgs = g is CompoundTerm c ? c.Args : Array.Empty<Term>();
-            if (home >= gArgs.Length) continue;            // home isn't an arg of this goal
+            if (home >= gArgs.Length) continue;
 
             bool homeArgIsTheVar = gArgs[home] is VarTerm vh && vh.Name == varName;
-            if (homeArgIsTheVar) continue;                  // put-at-home is a self-copy / no-op
+            if (homeArgIsTheVar) continue;
 
-            // Refinement (chunk 62, Warren-direction): the home-clobbering
-            // put happens at position `home` during this goal's arg
-            // setup, which is emitted in arg-index order. If V is also
-            // read at arg position k <= home, that read fires before
-            // the clobber and uses the still-intact V — no save needed
-            // for this goal. Save iff V is referenced strictly *after*
-            // position home, or inside a compound argument at any
-            // position (because compound args spill across temporaries
-            // and we can't easily prove their reads precede the home
-            // write without a fuller pass).
             if (NeedsSaveForGoal(gArgs, varName, home)) return true;
         }
         return false;
@@ -347,12 +334,13 @@ public sealed class ClauseCompiler
     /// <summary>True when goal arg-array <paramref name="gArgs"/> reads
     /// <paramref name="varName"/> in a way that the put-to-home write
     /// (at arg position <paramref name="home"/>) would clobber before
-    /// the read fires. Cheap refinement of the original
-    /// "any-occurrence" check — flags reads at arg position &gt;
-    /// <paramref name="home"/>, plus any read inside a compound arg
-    /// (where the put order across temporaries is harder to reason
-    /// about locally). Reads at flat arg positions ≤ home are safe
-    /// since the WAM emits arg puts in index order.</summary>
+    /// the read fires. Refinement from chunk 62: flat-var reads at
+    /// position ≤ home are safe (the put for the earlier position
+    /// fires before the home clobber); reads inside a compound at
+    /// any position are conservatively flagged (the compound's
+    /// internal unify_value_x reads happen after the put_structure
+    /// clobbers the home, so even position 0 compounds need the
+    /// preservation).</summary>
     private static bool NeedsSaveForGoal(Term[] gArgs, string varName, int home)
     {
         for (int i = 0; i < gArgs.Length; i++)
