@@ -1096,19 +1096,138 @@ public sealed class Engine
 
     /// <summary>
     /// Reconstructs the .NET string represented by the PSTR header at <paramref name="headerIdx"/>.
-    /// Reads only the <c>length</c> code units starting from the encoded offset.
+    /// Reads each segment's code units then follows the tail cell — chunk 70's lazy concat
+    /// chains multiple PSTR pieces together by storing a <see cref="Tag.Pstr"/> cell in the
+    /// tail position, and this walker treats such tails as continuation segments.
     /// </summary>
     public string AsPstrString(int headerIdx)
     {
         Cell header = _heap[headerIdx];
         if (header.Tag != Tag.Pstr)
             throw new InvalidOperationException($"Cell tag is {header.Tag}, expected Pstr.");
-        int length = header.AsPstrLength;
-        if (length == 0) return "";
-        var sb = new System.Text.StringBuilder(length);
-        for (int i = 0; i < length; i++)
-            sb.Append((char)GetPstrCodeUnit(header, i));
+        var sb = new System.Text.StringBuilder(header.AsPstrLength);
+        AppendPstrChain(sb, header);
         return sb.ToString();
+    }
+
+    private void AppendPstrChain(System.Text.StringBuilder sb, Cell header)
+    {
+        while (header.Tag == Tag.Pstr)
+        {
+            int length = header.AsPstrLength;
+            for (int i = 0; i < length; i++)
+                sb.Append((char)GetPstrCodeUnit(header, i));
+            int tailIdx = ComputePstrTailIndex(header);
+            Cell tail = _heap[tailIdx];
+            if (tail.Tag == Tag.Ref)
+            {
+                int derefIdx = Deref(tail.AsHeapIndex);
+                tail = _heap[derefIdx];
+            }
+            header = tail;
+        }
+    }
+
+    /// <summary>Total logical length of a PSTR chain in UTF-16 code units —
+    /// follows tail cells when they are <see cref="Tag.Pstr"/> (chunk 70's
+    /// lazy concat representation). Returns the immediate segment's length
+    /// when the tail is anything else.</summary>
+    public int GetPstrChainLength(int headerIdx)
+    {
+        int total = 0;
+        Cell header = _heap[headerIdx];
+        while (header.Tag == Tag.Pstr)
+        {
+            total += header.AsPstrLength;
+            int tailIdx = ComputePstrTailIndex(header);
+            Cell tail = _heap[tailIdx];
+            if (tail.Tag == Tag.Ref)
+            {
+                int derefIdx = Deref(tail.AsHeapIndex);
+                tail = _heap[derefIdx];
+            }
+            header = tail;
+        }
+        return total;
+    }
+
+    /// <summary>Lazy <c>pstr_concat</c> (chunk 70): builds a new PSTR whose
+    /// buffer holds <paramref name="aIdx"/>'s logical content (flattening
+    /// any pre-existing tail chain) and whose tail cell stores a
+    /// <see cref="Tag.Pstr"/> reference to <paramref name="bIdx"/>'s
+    /// header. The result's right side (B) is shared without copying;
+    /// only the left side is materialised into a fresh buffer. For
+    /// concat-then-decompose grammar pipelines this avoids the
+    /// <c>O(N_b)</c> cell allocation per join that the eager
+    /// <c>MakePstr(aStr + bStr)</c> path used to pay.
+    ///
+    /// <para>Special cases: when A or B is logically empty, the result
+    /// is just the non-empty side (no allocation). When B is empty but
+    /// non-PSTR (e.g. the <c>[]</c> atom — caller's responsibility to
+    /// recognise that case), the caller should fall back to the eager
+    /// path.</para></summary>
+    public int MakePstrConcat(int aIdx, int bIdx)
+    {
+        Cell aHdr = _heap[aIdx];
+        Cell bHdr = _heap[bIdx];
+        if (aHdr.Tag != Tag.Pstr)
+            throw new InvalidOperationException(
+                $"MakePstrConcat: A's cell tag is {aHdr.Tag}, expected Pstr.");
+        if (bHdr.Tag != Tag.Pstr)
+            throw new InvalidOperationException(
+                $"MakePstrConcat: B's cell tag is {bHdr.Tag}, expected Pstr.");
+
+        int totalALength = GetPstrChainLength(aIdx);
+        int bChainLength = GetPstrChainLength(bIdx);
+        if (totalALength == 0) return bIdx;
+        if (bChainLength == 0) return aIdx;
+
+        int bufferCellCount =
+            (totalALength + Cell.PstrCodeUnitsPerBuffer - 1) / Cell.PstrCodeUnitsPerBuffer;
+        int totalCells = 1 + bufferCellCount + 1;
+        int headerIdx = AllocateHeap(totalCells);
+        int bufferStart = headerIdx + 1;
+        int tailIdx = bufferStart + bufferCellCount;
+
+        // Copy A's full content (following any existing chain) into the
+        // new buffer in 3-code-unit groups.
+        var aChars = new char[totalALength];
+        FillCharsFromPstrChain(_heap[aIdx], aChars);
+        for (int i = 0; i < bufferCellCount; i++)
+        {
+            int basePos = i * Cell.PstrCodeUnitsPerBuffer;
+            int cu0 = basePos < totalALength ? aChars[basePos] : 0;
+            int cu1 = (basePos + 1) < totalALength ? aChars[basePos + 1] : 0;
+            int cu2 = (basePos + 2) < totalALength ? aChars[basePos + 2] : 0;
+            _heap[bufferStart + i] = Cell.PstrBuffer(cu0, cu1, cu2);
+        }
+
+        // Tail of the new PSTR is B's header value — by storing a Pstr
+        // cell here we extend the chain without copying B's buffer. The
+        // unification path's recursive Unify on tail indices follows the
+        // chain transparently (UnifyPstrPstr dispatches on Pstr-Pstr).
+        _heap[tailIdx] = _heap[bIdx];
+        _heap[headerIdx] = Cell.Pstr(totalALength, bufferStart, 0);
+        return headerIdx;
+    }
+
+    private void FillCharsFromPstrChain(Cell header, char[] dst)
+    {
+        int writeIdx = 0;
+        while (header.Tag == Tag.Pstr)
+        {
+            int length = header.AsPstrLength;
+            for (int i = 0; i < length; i++)
+                dst[writeIdx++] = (char)GetPstrCodeUnit(header, i);
+            int tailIdx = ComputePstrTailIndex(header);
+            Cell tail = _heap[tailIdx];
+            if (tail.Tag == Tag.Ref)
+            {
+                int derefIdx = Deref(tail.AsHeapIndex);
+                tail = _heap[derefIdx];
+            }
+            header = tail;
+        }
     }
 
     /// <summary>Heap index of the cell that immediately follows a PSTR's buffer cells.

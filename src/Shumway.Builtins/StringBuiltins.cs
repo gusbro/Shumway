@@ -39,14 +39,28 @@ public static class StringBuiltins
     /// </list></summary>
     public static bool StringConcat(Engine engine)
     {
-        Cell aCell = Resolve(engine, engine.GetRegister(0));
-        Cell bCell = Resolve(engine, engine.GetRegister(1));
+        Cell aRaw = engine.GetRegister(0);
+        Cell bRaw = engine.GetRegister(1);
+        int aIdx = ResolveIndex(engine, aRaw);
+        int bIdx = ResolveIndex(engine, bRaw);
+        Cell aCell = aIdx >= 0 ? engine.GetHeap(aIdx) : aRaw;
+        Cell bCell = bIdx >= 0 ? engine.GetHeap(bIdx) : bRaw;
 
         bool aGround = aCell.Tag == Tag.Pstr || aCell.Tag == Tag.Atom;
         bool bGround = bCell.Tag == Tag.Pstr || bCell.Tag == Tag.Atom;
 
         if (aGround && bGround)
         {
+            // Lazy concat (chunk 70): when both sides are already PSTRs,
+            // build the result by copying A's content into a fresh buffer
+            // and pointing the tail at B — no allocation for B's content.
+            // Mixed PSTR/atom inputs fall back to the eager path because
+            // atoms need to be materialised into a buffer regardless.
+            if (aCell.Tag == Tag.Pstr && bCell.Tag == Tag.Pstr)
+            {
+                int resultIdx = engine.MakePstrConcat(aIdx, bIdx);
+                return engine.UnifyRegisterWithCell(2, Cell.Ref(resultIdx));
+            }
             string a = ReadStringOrAtom(engine, 0, "string_concat/3");
             string b = ReadStringOrAtom(engine, 1, "string_concat/3");
             int pstrIdx = engine.MakePstr(a + b);
@@ -218,6 +232,18 @@ public static class StringBuiltins
         if (c.Tag != Tag.Ref) return c;
         int addr = engine.Deref(c.AsHeapIndex);
         return engine.GetHeap(addr);
+    }
+
+    /// <summary>Returns the heap index where the dereferenced cell
+    /// lives, or <c>-1</c> when <paramref name="c"/> isn't a Ref (no
+    /// heap address to talk about — the value already lives in the
+    /// register). Used by chunk-70's lazy <c>string_concat</c> when
+    /// it needs the source PSTR header's address to chain a new
+    /// header to it.</summary>
+    private static int ResolveIndex(Engine engine, Cell c)
+    {
+        if (c.Tag != Tag.Ref) return -1;
+        return engine.Deref(c.AsHeapIndex);
     }
 
     private static int BuildCharAtomList(Engine engine, string s)
