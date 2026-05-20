@@ -6,16 +6,16 @@ namespace Shumway.Builtins;
 /// The attributed-variable access predicates (chunk 77, Phase 4). An
 /// attributed variable is an unbound variable that additionally carries
 /// a set of (module, value) attribute pairs. <c>put_attr/3</c>,
-/// <c>get_attr/3</c> and <c>del_attr/2</c> are the SWI-compatible
-/// surface for attaching, reading and removing those pairs; the
-/// <c>attvar/1</c> type test lives in <see cref="TypeBuiltins.IsAttVar"/>.
+/// <c>get_attr/3</c> and <c>del_attr/2</c> are the surface for
+/// attaching, reading and removing those pairs; the <c>attvar/1</c>
+/// type test lives in <see cref="TypeBuiltins.IsAttVar"/>.
 ///
 /// <para>The attributes themselves live in the engine's attribute table
 /// — keyed by a module's atom id, valued by the heap index of the
 /// attribute term. Every mutation is trailed, so attributes attached or
-/// removed inside a choice point revert on backtracking. This chunk is
-/// the hook-less foundation: unifying an attributed variable still
-/// binds it, but no <c>attr_unify_hook</c> fires yet.</para>
+/// removed inside a choice point revert on backtracking. Unifying an
+/// attributed variable with a value runs the module's
+/// <c>verify_attributes/4</c> hook (chunk 79).</para>
 /// </summary>
 public static class AttvarBuiltins
 {

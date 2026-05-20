@@ -57,12 +57,12 @@ public sealed class Engine
     // module was absent). ExtraTrailEntry.HeapIdx indexes into this list.
     private readonly List<(int Home, int Module, int OldValue)> _attrTrailLog = new();
 
-    // ----- attr_unify_hook wakeups (chunk 78) -----
+    // ----- attributed-variable unify-hook wakeups (chunk 78, 79) -----
     // When an attributed variable is bound, one wakeup per attribute
     // module is queued here: (module atom id, heap index of that
     // module's attribute value, heap index of the term the variable
     // was bound to). The interpreter drains the queue at the next goal
-    // boundary and runs attr_unify_hook/3 for each entry; a hook
+    // boundary and runs verify_attributes/4 for each entry; a hook
     // failure fails the triggering unification. The queue is transient
     // — not trailed — because it is consumed before the next goal and
     // cleared outright on backtracking.
@@ -85,12 +85,13 @@ public sealed class Engine
     /// <see cref="object"/>; callers downcast at the use site.</summary>
     public object? Host { get; set; }
 
-    /// <summary>Delegate that runs the queued <c>attr_unify_hook</c>
-    /// wakeups (chunk 78). Installed by the embedding layer, which alone
-    /// can execute Prolog goals; the Core engine only queues wakeups and
-    /// calls back through here. Null on a bare Core engine, in which
-    /// case attributed variables behave hooklessly (the chunk-77
-    /// foundation) — see <see cref="RunPendingWakeups"/>.</summary>
+    /// <summary>Delegate that runs the queued attributed-variable
+    /// unify-hook wakeups — <c>verify_attributes/4</c> (chunk 79).
+    /// Installed by the embedding layer, which alone can execute Prolog
+    /// goals; the Core engine only queues wakeups and calls back through
+    /// here. Null on a bare Core engine, in which case attributed
+    /// variables behave hooklessly (the chunk-77 foundation) — see
+    /// <see cref="RunPendingWakeups"/>.</summary>
     public Func<Engine, bool>? AttrHookRunner { get; set; }
 
     /// <summary>Operator-lookup view used by the renderer to decide whether
@@ -1875,10 +1876,9 @@ public sealed class Engine
     /// <item>attvar + attvar — the younger binds to the older and the
     /// younger's attributes merge onto the older's record; a module
     /// present on both must have unifiable values.</item>
-    /// <item>attvar + bound value — the attvar binds to the value.
-    /// Chunk 77 has no unify hook, so this just succeeds — the correct
-    /// behaviour for an attributed variable whose module declares no
-    /// <c>attr_unify_hook</c>. Chunk 78 fires the hook here.</item>
+    /// <item>attvar + bound value — the attvar binds to the value, and
+    /// a wakeup is queued so the next goal boundary runs the module's
+    /// <c>verify_attributes/4</c> hook (chunk 79).</item>
     /// </list></summary>
     private bool UnifyAttVar(int aAddr, Cell aCell, int bAddr, Cell bCell)
     {
@@ -1919,11 +1919,11 @@ public sealed class Engine
         return true;
     }
 
-    /// <summary>Queues one <c>attr_unify_hook</c> wakeup per attribute
-    /// module carried by the attributed variable at
+    /// <summary>Queues one unify-hook wakeup per attribute module
+    /// carried by the attributed variable at
     /// <paramref name="attvarHome"/>, recording the term it was bound
     /// to (<paramref name="otherIdx"/>). A no-op when the variable
-    /// carries no attributes. (chunk 78)</summary>
+    /// carries no attributes. (chunk 79)</summary>
     private void QueueAttrWakeups(int attvarHome, int otherIdx)
     {
         if (!_attrTable.TryGetValue(attvarHome, out var record)) return;
@@ -1948,7 +1948,7 @@ public sealed class Engine
     /// on backtracking — wakeups belong to the abandoned computation.</summary>
     public void ClearPendingWakeups() => _pendingWakeups.Clear();
 
-    /// <summary>Runs the queued <c>attr_unify_hook</c> wakeups through
+    /// <summary>Runs the queued <c>verify_attributes</c> wakeups through
     /// the installed <see cref="AttrHookRunner"/>. Returns true when
     /// every hook succeeded — or when no runner is installed, in which
     /// case attributed variables stay hookless (chunk 77) and the

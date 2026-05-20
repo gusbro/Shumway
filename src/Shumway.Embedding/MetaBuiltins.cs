@@ -1006,27 +1006,31 @@ public static class MetaBuiltins
     }
 
     // ============================================================================
-    // attr_unify_hook wakeups (chunk 78)
+    // verify_attributes wakeups (chunk 79)
     // ============================================================================
 
-    /// <summary>Runs the <c>attr_unify_hook</c> wakeups an
+    /// <summary>Runs the <c>verify_attributes</c> wakeups an
     /// attributed-variable unification queued on <paramref name="engine"/>.
     /// Installed as the engine's <see cref="Engine.AttrHookRunner"/>: the
     /// interpreter calls it at the next goal boundary after a unification.
     ///
-    /// <para>For each queued <c>(module, attribute value, bound-to term)</c>
-    /// it runs the user goal <c>attr_unify_hook(Module, AttrValue, Other)</c>
-    /// in a peer sub-engine; the first solution's bindings flow back to the
-    /// caller. A hook with no solution fails the whole call — the
-    /// interpreter turns that into a backtrack, so the triggering
-    /// unification fails. A hook's bind-back can itself unify further
-    /// attributed variables and queue more wakeups, so the queue is drained
-    /// in a loop.</para>
+    /// <para>For every queued <c>(module, attribute value, bound-to term)</c>
+    /// it calls the user hook
+    /// <c>verify_attributes(Module, AttrValue, Value, Goals)</c>, which
+    /// inspects the attribute and yields a list of <c>Goals</c>. Within one
+    /// batch every module's hook runs first, then every returned goal —
+    /// the SICStus/Scryer ordering — as a single conjunction in a peer
+    /// sub-engine (<c>maplist(call, Goals)</c> runs each list). A hook with
+    /// no solution, or a returned goal that fails, fails the whole call;
+    /// the interpreter turns that into a backtrack, so the triggering
+    /// unification fails. Bindings flow back to the caller, and since a
+    /// bind-back can unify further attributed variables, the queue is
+    /// drained in a loop.</para>
     ///
-    /// <para>When the program defines no <c>attr_unify_hook/3</c>, every
+    /// <para>When the program defines no <c>verify_attributes/4</c>, every
     /// wakeup is a silent no-op and attributed variables behave exactly as
     /// the hookless chunk-77 foundation.</para></summary>
-    internal static bool RunAttrUnifyHooks(Engine engine)
+    internal static bool RunVerifyAttributes(Engine engine)
     {
         if (engine.Host is not PrologEngine host)
         {
@@ -1035,42 +1039,67 @@ public static class MetaBuiltins
         }
 
         int hookFunctor = FunctorTable.Intern(
-            AtomTable.Intern("attr_unify_hook", permanent: true).Id, 3);
+            AtomTable.Intern("verify_attributes", permanent: true).Id, 4);
         if (!host.HasPredicate(hookFunctor))
         {
-            // No attr_unify_hook/3 defined — hookless attvars (chunk 77).
+            // No verify_attributes/4 defined — hookless attvars (chunk 77).
             engine.ClearPendingWakeups();
             return true;
         }
 
         while (engine.HasPendingWakeups)
         {
-            foreach (var (moduleId, attrValueIdx, otherIdx) in engine.TakePendingWakeups())
+            var batch = engine.TakePendingWakeups();
+            // One conjunction: every module's verify_attributes call first,
+            // then every returned goal list — so each hook observes the
+            // pre-goal state (the SICStus/Scryer ordering).
+            var verifyCalls = new List<Term>(batch.Count);
+            var runCalls = new List<Term>(batch.Count);
+            for (int i = 0; i < batch.Count; i++)
             {
+                var (moduleId, attrValueIdx, otherIdx) = batch[i];
                 string moduleName = AtomTable.GetById(moduleId)?.Name
                     ?? throw new InvalidOperationException(
-                        $"attr_unify_hook: module atom id {moduleId} is not registered.");
-                // Materialised per hook so each one sees the bindings the
-                // previous hooks bound back into the caller's heap.
-                Term goal = new CompoundTerm("attr_unify_hook", new Term[]
+                        $"verify_attributes: module atom id {moduleId} is not registered.");
+                // A non-_GN name, so BindBack treats it as plumbing rather
+                // than a caller variable to propagate.
+                var goalsVar = new VarTerm($"VerifyGoals{i}");
+                verifyCalls.Add(new CompoundTerm("verify_attributes", new Term[]
                 {
                     new AtomTerm(moduleName),
                     TermReader.Materialize(engine, attrValueIdx),
                     TermReader.Materialize(engine, otherIdx),
-                });
-
-                var sub = host.CreateSubEngine();
-                bool succeeded = false;
-                foreach (Solution sol in sub.QueryAll(goal))
+                    goalsVar,
+                }));
+                runCalls.Add(new CompoundTerm("maplist", new Term[]
                 {
-                    if (!BindBack(engine, sol.Bindings)) return false;
-                    succeeded = true;
-                    break;
-                }
-                if (!succeeded) return false;
+                    new AtomTerm("call"),
+                    goalsVar,
+                }));
             }
+            verifyCalls.AddRange(runCalls);
+
+            var sub = host.CreateSubEngine();
+            bool succeeded = false;
+            foreach (Solution sol in sub.QueryAll(Conjoin(verifyCalls)))
+            {
+                if (!BindBack(engine, sol.Bindings)) return false;
+                succeeded = true;
+                break;
+            }
+            if (!succeeded) return false;
         }
         return true;
+    }
+
+    /// <summary>Folds a non-empty goal list into a right-nested
+    /// <c>,/2</c> conjunction term.</summary>
+    private static Term Conjoin(List<Term> goals)
+    {
+        Term acc = goals[goals.Count - 1];
+        for (int i = goals.Count - 2; i >= 0; i--)
+            acc = new CompoundTerm(",", new[] { goals[i], acc });
+        return acc;
     }
 
     // ============================================================================

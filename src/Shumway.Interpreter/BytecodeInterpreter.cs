@@ -1175,8 +1175,8 @@ public sealed class BytecodeInterpreter
     /// switch.</summary>
     private sealed class TopLevelFailure : Exception { }
 
-    /// <summary>Runs any <c>attr_unify_hook</c> wakeups queued by a
-    /// just-completed unification (chunk 78). Checked at every goal
+    /// <summary>Runs any <c>verify_attributes</c> wakeups queued by a
+    /// just-completed unification (chunk 78/79). Checked at every goal
     /// boundary — Call / Execute / CallBuiltin / Proceed. Returns false
     /// when a hook failed, which the caller turns into a backtrack so
     /// the triggering unification fails. A no-op (returns true) when
