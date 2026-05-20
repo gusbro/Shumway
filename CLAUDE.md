@@ -204,11 +204,11 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
 - ✓ More aggressive IL inlining (leaf-callee inlining; chunk 69).
 - ✓ PSTR concatenation lazy (single-step; chunk 70).
 
-**Phase 3 — Advanced optimizations**
-- Mode inference (using `:- mode` directives).
-- Specialized code generation per mode.
-- Profile-guided optimization (PGO) of IL code.
-- JIT indexing.
+**Phase 3 — Advanced optimizations** — ✅ **Complete** (tagged `phase-3`; closure summary in [`docs/phase-3-closure.md`](docs/phase-3-closure.md)).
+- ✓ Mode inference (consumes `:- mode` directives; chunk 73).
+- ✓ Specialized code generation per mode (det/semidet implicit cut; chunk 74).
+- ✓ Profile-guided optimization (PGO) of IL code (two-phase instrumented→optimised; chunk 76).
+- ✓ JIT indexing (deferred dynamic-predicate switch tables; chunk 75).
 
 **Phase 4 — Extended features**
 - Attributed variables (attvars).
