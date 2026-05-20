@@ -1006,6 +1006,74 @@ public static class MetaBuiltins
     }
 
     // ============================================================================
+    // attr_unify_hook wakeups (chunk 78)
+    // ============================================================================
+
+    /// <summary>Runs the <c>attr_unify_hook</c> wakeups an
+    /// attributed-variable unification queued on <paramref name="engine"/>.
+    /// Installed as the engine's <see cref="Engine.AttrHookRunner"/>: the
+    /// interpreter calls it at the next goal boundary after a unification.
+    ///
+    /// <para>For each queued <c>(module, attribute value, bound-to term)</c>
+    /// it runs the user goal <c>attr_unify_hook(Module, AttrValue, Other)</c>
+    /// in a peer sub-engine; the first solution's bindings flow back to the
+    /// caller. A hook with no solution fails the whole call — the
+    /// interpreter turns that into a backtrack, so the triggering
+    /// unification fails. A hook's bind-back can itself unify further
+    /// attributed variables and queue more wakeups, so the queue is drained
+    /// in a loop.</para>
+    ///
+    /// <para>When the program defines no <c>attr_unify_hook/3</c>, every
+    /// wakeup is a silent no-op and attributed variables behave exactly as
+    /// the hookless chunk-77 foundation.</para></summary>
+    internal static bool RunAttrUnifyHooks(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+        {
+            engine.ClearPendingWakeups();
+            return true;
+        }
+
+        int hookFunctor = FunctorTable.Intern(
+            AtomTable.Intern("attr_unify_hook", permanent: true).Id, 3);
+        if (!host.HasPredicate(hookFunctor))
+        {
+            // No attr_unify_hook/3 defined — hookless attvars (chunk 77).
+            engine.ClearPendingWakeups();
+            return true;
+        }
+
+        while (engine.HasPendingWakeups)
+        {
+            foreach (var (moduleId, attrValueIdx, otherIdx) in engine.TakePendingWakeups())
+            {
+                string moduleName = AtomTable.GetById(moduleId)?.Name
+                    ?? throw new InvalidOperationException(
+                        $"attr_unify_hook: module atom id {moduleId} is not registered.");
+                // Materialised per hook so each one sees the bindings the
+                // previous hooks bound back into the caller's heap.
+                Term goal = new CompoundTerm("attr_unify_hook", new Term[]
+                {
+                    new AtomTerm(moduleName),
+                    TermReader.Materialize(engine, attrValueIdx),
+                    TermReader.Materialize(engine, otherIdx),
+                });
+
+                var sub = host.CreateSubEngine();
+                bool succeeded = false;
+                foreach (Solution sol in sub.QueryAll(goal))
+                {
+                    if (!BindBack(engine, sol.Bindings)) return false;
+                    succeeded = true;
+                    break;
+                }
+                if (!succeeded) return false;
+            }
+        }
+        return true;
+    }
+
+    // ============================================================================
     // call/N — runtime meta-call via sub-engine + bind-back of input vars
     // ============================================================================
 

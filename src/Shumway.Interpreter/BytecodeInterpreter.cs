@@ -193,6 +193,11 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.Proceed:
                 {
+                    if (!FlushPendingWakeups())
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
                     int returnPc = _engine.Cp;
                     if (returnPc < 0)
                         return InterpreterResult.Halted;       // returned past the top
@@ -202,6 +207,11 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.Call:
                 {
+                    if (!FlushPendingWakeups())
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
                     int target = BytecodeIO.ReadInt32(code, pc + 1);
                     int numLivePerms = BytecodeIO.ReadInt32(code, pc + 5);
                     // Env trimming (chunk 57): shrink the current frame to
@@ -217,6 +227,11 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.Execute:
                 {
+                    if (!FlushPendingWakeups())
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
                     int target = BytecodeIO.ReadInt32(code, pc + 1);
                     _engine.SetB0(_engine.B);   // tail call still enters a new procedure
                     DispatchToTier1OrBytecode(target);
@@ -912,6 +927,11 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.CallBuiltin:
                 {
+                    if (!FlushPendingWakeups())
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
                     int builtinId = BytecodeIO.ReadInt32(code, pc + 1);
                     int numLivePerms = BytecodeIO.ReadInt32(code, pc + 5);
                     var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
@@ -1155,8 +1175,20 @@ public sealed class BytecodeInterpreter
     /// switch.</summary>
     private sealed class TopLevelFailure : Exception { }
 
+    /// <summary>Runs any <c>attr_unify_hook</c> wakeups queued by a
+    /// just-completed unification (chunk 78). Checked at every goal
+    /// boundary — Call / Execute / CallBuiltin / Proceed. Returns false
+    /// when a hook failed, which the caller turns into a backtrack so
+    /// the triggering unification fails. A no-op (returns true) when
+    /// nothing is queued, which is the overwhelmingly common case.</summary>
+    private bool FlushPendingWakeups() =>
+        !_engine.HasPendingWakeups || _engine.RunPendingWakeups();
+
     private bool TryBacktrack()
     {
+        // Wakeups belong to the computation being abandoned — drop any
+        // that a failed clause queued but never ran (chunk 78).
+        _engine.ClearPendingWakeups();
         // Loop so that an IL retry that itself fails immediately falls
         // through to the next choice point without burning stack.
         while (_engine.B >= 0)

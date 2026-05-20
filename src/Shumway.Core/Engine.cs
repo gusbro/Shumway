@@ -57,6 +57,17 @@ public sealed class Engine
     // module was absent). ExtraTrailEntry.HeapIdx indexes into this list.
     private readonly List<(int Home, int Module, int OldValue)> _attrTrailLog = new();
 
+    // ----- attr_unify_hook wakeups (chunk 78) -----
+    // When an attributed variable is bound, one wakeup per attribute
+    // module is queued here: (module atom id, heap index of that
+    // module's attribute value, heap index of the term the variable
+    // was bound to). The interpreter drains the queue at the next goal
+    // boundary and runs attr_unify_hook/3 for each entry; a hook
+    // failure fails the triggering unification. The queue is transient
+    // — not trailed — because it is consumed before the next goal and
+    // cleared outright on backtracking.
+    private readonly List<(int Module, int AttrValueIdx, int OtherIdx)> _pendingWakeups = new();
+
     private int _stackTop;
     private int _extraTrailTop;
 
@@ -73,6 +84,14 @@ public sealed class Engine
     /// stays free of any embedding-layer types by keeping this typed as
     /// <see cref="object"/>; callers downcast at the use site.</summary>
     public object? Host { get; set; }
+
+    /// <summary>Delegate that runs the queued <c>attr_unify_hook</c>
+    /// wakeups (chunk 78). Installed by the embedding layer, which alone
+    /// can execute Prolog goals; the Core engine only queues wakeups and
+    /// calls back through here. Null on a bare Core engine, in which
+    /// case attributed variables behave hooklessly (the chunk-77
+    /// foundation) — see <see cref="RunPendingWakeups"/>.</summary>
+    public Func<Engine, bool>? AttrHookRunner { get; set; }
 
     /// <summary>Operator-lookup view used by the renderer to decide whether
     /// a compound should print in operator form (<c>a + b</c>) or
@@ -1871,6 +1890,10 @@ public sealed class Engine
             int olderAddr = aAddr < bAddr ? aAddr : bAddr;
             int youngerAddr = aAddr < bAddr ? bAddr : aAddr;
             if (!MergeAttributes(youngerAddr, olderAddr)) return false;
+            // The younger variable is the one being bound (to the
+            // older); queue its modules' hooks with the older variable
+            // as the "other" term. (chunk 78)
+            QueueAttrWakeups(youngerAddr, olderAddr);
             BindAttVarToValue(youngerAddr, olderAddr, Cell.Ref(olderAddr));
             return true;
         }
@@ -1882,15 +1905,65 @@ public sealed class Engine
         if (otherCell.Tag == Tag.Ref)
         {
             // Plain unbound variable binds to the attvar — the attvar
-            // (with its attributes) survives. The plain var pre-dates
-            // nothing special, so a normal trailed Bind is right.
+            // (with its attributes) survives. Nothing is bound to a
+            // value, so no hook fires; a normal trailed Bind is right.
             Bind(otherAddr, Cell.Ref(attAddr));
             return true;
         }
 
-        // attvar + bound value: bind the attvar to the value (no hook).
+        // attvar + bound value: queue the attvar's modules' hooks (with
+        // the value as the "other" term), then bind. The interpreter
+        // runs the queued hooks at the next goal boundary.
+        QueueAttrWakeups(attAddr, otherAddr);
         BindAttVarToValue(attAddr, otherAddr, otherCell);
         return true;
+    }
+
+    /// <summary>Queues one <c>attr_unify_hook</c> wakeup per attribute
+    /// module carried by the attributed variable at
+    /// <paramref name="attvarHome"/>, recording the term it was bound
+    /// to (<paramref name="otherIdx"/>). A no-op when the variable
+    /// carries no attributes. (chunk 78)</summary>
+    private void QueueAttrWakeups(int attvarHome, int otherIdx)
+    {
+        if (!_attrTable.TryGetValue(attvarHome, out var record)) return;
+        foreach (var (moduleId, attrValueIdx) in record)
+            _pendingWakeups.Add((moduleId, attrValueIdx, otherIdx));
+    }
+
+    /// <summary>True when attribute hooks are queued and waiting to run.
+    /// The interpreter checks this at every goal boundary.</summary>
+    public bool HasPendingWakeups => _pendingWakeups.Count > 0;
+
+    /// <summary>Returns the queued wakeups and empties the queue — the
+    /// hook runner's way of consuming them.</summary>
+    public IReadOnlyList<(int Module, int AttrValueIdx, int OtherIdx)> TakePendingWakeups()
+    {
+        var taken = _pendingWakeups.ToArray();
+        _pendingWakeups.Clear();
+        return taken;
+    }
+
+    /// <summary>Discards every queued wakeup. Called by the interpreter
+    /// on backtracking — wakeups belong to the abandoned computation.</summary>
+    public void ClearPendingWakeups() => _pendingWakeups.Clear();
+
+    /// <summary>Runs the queued <c>attr_unify_hook</c> wakeups through
+    /// the installed <see cref="AttrHookRunner"/>. Returns true when
+    /// every hook succeeded — or when no runner is installed, in which
+    /// case attributed variables stay hookless (chunk 77) and the
+    /// wakeups are simply dropped. Returns false when a hook failed;
+    /// the interpreter turns that into a backtrack so the triggering
+    /// unification fails.</summary>
+    public bool RunPendingWakeups()
+    {
+        if (_pendingWakeups.Count == 0) return true;
+        if (AttrHookRunner is null)
+        {
+            _pendingWakeups.Clear();
+            return true;
+        }
+        return AttrHookRunner(this);
     }
 
     /// <summary>Binds the attributed variable at <paramref name="attAddr"/>

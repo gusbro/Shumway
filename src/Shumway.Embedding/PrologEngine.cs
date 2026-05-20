@@ -1301,6 +1301,10 @@ public sealed class PrologEngine
         {
             Out = Out,
             Host = this,
+            // Lets attributed-variable unification (chunk 78) run
+            // attr_unify_hook/3 goals — only the embedding layer can
+            // execute Prolog goals, so the Core engine calls back here.
+            AttrHookRunner = MetaBuiltins.RunAttrUnifyHooks,
             Operators = new OperatorTableAdapter(_operators),
             // The current-query address map lets IL-emitted Execute
             // opcodes (chunk 47) resolve their tail-call target via a
