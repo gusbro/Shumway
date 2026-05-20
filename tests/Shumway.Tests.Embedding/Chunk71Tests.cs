@@ -62,13 +62,13 @@ public class Chunk71Tests
     }
 
     [Fact]
-    public void CanPersist_RejectsMultiClause()
+    public void CanPersist_AcceptsMultiClause()
     {
-        // Multi-clause predicates need self-referential IL CPs which
-        // the MVP doesn't support yet.
-        var clauses = new ClauseReader("foo. foo.").ReadAll().ToList();
+        // Multi-clause predicates now persist too via the static
+        // delegates field for self-reference.
+        var clauses = new ClauseReader("foo(a). foo(b).").ReadAll().ToList();
         var pred = new PredicateCompiler().Compile(clauses);
-        Assert.False(PersistedIlBuilder.CanPersist(pred));
+        Assert.True(PersistedIlBuilder.CanPersist(pred));
     }
 
     [Fact]
@@ -185,5 +185,122 @@ public class Chunk71Tests
         engine.LoadBundle(rt);
         Assert.True(engine.Query("check(ok).").Success);
         Assert.False(engine.Query("check(nope).").Success);
+    }
+
+    [Fact]
+    public void PersistedIl_MultiClauseIndexedAtomDispatchesCorrectly()
+    {
+        // Indexed-atom shape: multi-clause predicate where each clause
+        // discriminates on a single atom at arg 0. The persisted IL
+        // uses the static delegates field to push the per-clause
+        // choice point.
+        var bundle = new Bundle(new[]
+        {
+            new BundleEntry("color",
+                ":- public color/1.\n" +
+                "color(red).\ncolor(green).\ncolor(blue).")
+        });
+        var rt = BundleReader.FromBytes(BundleWriter.ToBytes(bundle,
+            includeCompiledBytecode: true, includeCompiledIl: true));
+        Assert.NotNull(rt.Entries[0].CompiledIl);
+
+        var engine = new PrologEngine();
+        engine.LoadBundle(rt);
+        Assert.True(engine.IlPromotion.IsPromoted(Fid("color", 1)));
+        Assert.True(engine.Query("color(red).").Success);
+        Assert.True(engine.Query("color(blue).").Success);
+        Assert.False(engine.Query("color(yellow).").Success);
+        // Backtracking through every clause via the IL CP chain.
+        var sols = engine.QueryAll("color(X).").Select(s => s["X"]).ToList();
+        Assert.Equal(3, sols.Count);
+    }
+
+    [Fact]
+    public void PersistedIl_TryMeElseChainBacktracks()
+    {
+        // Multi-clause predicate where every clause has a variable
+        // first arg → the IL compiler emits a try_me_else chain
+        // (indexed-atom dispatch doesn't apply when no clause
+        // discriminates on arg 0). Persisted IL routes the per-clause
+        // CP push through the same delegates-field self-reference.
+        var bundle = new Bundle(new[]
+        {
+            new BundleEntry("emit",
+                ":- public emit/2.\n" +
+                "emit(_, 1).\n" +
+                "emit(_, 2).\n" +
+                "emit(_, 3).\n")
+        });
+        var rt = BundleReader.FromBytes(BundleWriter.ToBytes(bundle,
+            includeCompiledBytecode: true, includeCompiledIl: true));
+        var engine = new PrologEngine();
+        engine.LoadBundle(rt);
+        Assert.True(engine.Query("emit(anything, 1).").Success);
+        Assert.True(engine.Query("emit(anything, 2).").Success);
+        Assert.True(engine.Query("emit(anything, 3).").Success);
+        Assert.False(engine.Query("emit(anything, 4).").Success);
+        // Backtracking via the IL CP chain enumerates all 3.
+        Assert.Equal(3, engine.QueryAll("emit(_, _).").Count());
+    }
+
+    [Fact]
+    public void PersistedIl_SingleClauseMetaCp_DrivesNonLeafCallee()
+    {
+        // Single-clause predicate whose body has a non-tail Call to a
+        // multi-clause callee. Chunk-66's meta-CP machinery has to
+        // drive the callee's backtracking — the IL emits a meta-CP
+        // that re-fires on every retry. The persisted form reads its
+        // own delegate from the static field to re-push.
+        var bundle = new Bundle(new[]
+        {
+            new BundleEntry("pair",
+                ":- public pair/2.\n" +
+                ":- public l/1.\n" +
+                ":- public r/1.\n" +
+                "l(a). l(b).\n" +
+                "r(1). r(2).\n" +
+                "pair(X, Y) :- l(X), r(Y).\n")
+        });
+        var rt = BundleReader.FromBytes(BundleWriter.ToBytes(bundle,
+            includeCompiledBytecode: true, includeCompiledIl: true));
+        var engine = new PrologEngine();
+        engine.LoadBundle(rt);
+        // Cross product: 2 × 2 = 4 solutions.
+        Assert.Equal(4, engine.QueryAll("pair(_, _).").Count());
+    }
+
+    [Fact]
+    public void PersistedIl_MatchesRuntimeIl_AcrossShapes()
+    {
+        // Same program emitted via persisted IL vs runtime IL should
+        // produce identical solution sets across all the shapes the
+        // chunk now covers.
+        const string src =
+            ":- public color/1.\n" +
+            ":- public size/1.\n" +
+            ":- public choose/2.\n" +
+            "color(red). color(green). color(blue).\n" +
+            "size(small). size(large).\n" +
+            "choose(C, S) :- color(C), size(S).\n";
+
+        var bundle = new Bundle(new[] { new BundleEntry("inv", src) });
+        var persisted = new PrologEngine();
+        persisted.LoadBundle(BundleReader.FromBytes(
+            BundleWriter.ToBytes(bundle,
+                includeCompiledBytecode: true, includeCompiledIl: true)));
+
+        var runtime = new PrologEngine();
+        runtime.IlPromotion.Threshold = 1;
+        runtime.ConsultString(src);
+        runtime.Query("color(red).");
+        runtime.Query("size(small).");
+        runtime.Query("choose(red, small).");
+
+        Assert.Equal(
+            runtime.QueryAll("color(X).").Select(s => s["X"]).ToList(),
+            persisted.QueryAll("color(X).").Select(s => s["X"]).ToList());
+        Assert.Equal(
+            runtime.QueryAll("choose(C, S).").Count(),
+            persisted.QueryAll("choose(C, S).").Count());
     }
 }

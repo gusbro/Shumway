@@ -64,21 +64,42 @@ public static class PersistedIlBuilder
             TypeName,
             TypeAttributes.Public | TypeAttributes.Abstract | TypeAttributes.Sealed);
 
-        // Single-clause, no-IL-CP shape: deterministic body emit, no
-        // self-reference needed. Filter the predicate set to that shape
-        // for the MVP — multi-clause and meta-CP shapes need the
-        // _delegates field plus a load-time bind, which the next chunk
-        // builds on top of this scaffolding.
+        // The static field's array size must be known at type definition
+        // time, but the slot count depends on how many predicates we
+        // actually emit. Pre-pass to filter the persistable set.
         var ic = new IlPredicateCompiler();
-        var entries = new List<Entry>();
         var probeCalleeMap = predicates;
-        int slot = 0;
+        var eligible = new List<(int FunctorId, CompiledPredicate Pred)>();
         foreach (var (functorId, pred) in predicates)
         {
-            if (!CanPersist(pred)) continue;
+            if (CanPersist(pred, probeCalleeMap)) eligible.Add((functorId, pred));
+        }
+
+        // Static field _delegates: PredicateDelegate[] populated at load
+        // time. Each persisted method references it for self-CP push and
+        // for chain-style cross-predicate IL CP targets. Empty bundles
+        // still get the field so the load path's reflection lookup
+        // doesn't have to special-case "no eligible predicates".
+        var delegatesField = typeBuilder.DefineField(
+            DelegatesFieldName,
+            typeof(PredicateDelegate[]),
+            FieldAttributes.Public | FieldAttributes.Static);
+
+        var entries = new List<Entry>();
+        int slot = 0;
+        foreach (var (functorId, pred) in eligible)
+        {
             string functorName = ResolveFunctorName(functorId);
-            string methodName = SanitiseMethodName($"P_{functorId}_{functorName}");
-            ic.EmitPersistedMethod(typeBuilder, methodName, pred, probeCalleeMap);
+            // Method name layout: P_{slot}_{functorId}_{sanitisedName}.
+            // The load path's reflection enumeration order isn't
+            // guaranteed by the runtime, so slot and functorId both
+            // live in the name where they can be parsed unambiguously.
+            string methodName = SanitiseMethodName($"P_{slot}_{functorId}_{functorName}");
+            ic.EmitPersistedMethod(
+                typeBuilder, methodName, pred,
+                delegatesField: delegatesField,
+                slot: slot,
+                calleeMap: probeCalleeMap);
             entries.Add(new Entry
             {
                 FunctorId = functorId,
@@ -89,14 +110,6 @@ public static class PersistedIlBuilder
             });
         }
 
-        // Even if no eligible predicates exist, define an empty
-        // _delegates field so the loader's reflection lookup is
-        // consistent.
-        typeBuilder.DefineField(
-            DelegatesFieldName,
-            typeof(PredicateDelegate[]),
-            FieldAttributes.Public | FieldAttributes.Static);
-
         typeBuilder.CreateType();
 
         using var stream = new MemoryStream();
@@ -104,34 +117,17 @@ public static class PersistedIlBuilder
         return (stream.ToArray(), entries);
     }
 
-    /// <summary>The persistable subset for the MVP: single-clause
-    /// predicates with no non-tail Call sites in the body. They emit
-    /// a pure head-match + (optional) tail-call sequence, no IL CPs,
-    /// no self-reference, no <see cref="IlPredicateCompiler.IndexedDelegateHolder"/>
-    /// touches. Multi-clause and meta-CP shapes need the static
-    /// delegates field which the next chunk wires.</summary>
-    public static bool CanPersist(CompiledPredicate pred)
+    /// <summary>Returns true iff <paramref name="pred"/> falls inside
+    /// the IL compiler's promotable subset — exactly the set
+    /// <see cref="IlPredicateCompiler.CanCompile"/> accepts. Chunk 71
+    /// covers single-clause-leaf, single-clause-with-meta-CP, indexed-
+    /// atom dispatch, and try-me-else chains; the runtime path and
+    /// the persisted path share the same eligibility check now.</summary>
+    public static bool CanPersist(
+        CompiledPredicate pred,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
-        if (pred.ClauseCount != 1) return false;
-        var ic = new IlPredicateCompiler();
-        if (!ic.CanCompile(pred)) return false;
-        // No non-tail Call opcodes → no IL CPs / self-references needed.
-        return CountNonTailCalls(pred.Bytecode) == 0;
-    }
-
-    private static int CountNonTailCalls(byte[] code)
-    {
-        int count = 0;
-        int pc = 0;
-        while (pc < code.Length)
-        {
-            byte b = code[pc];
-            if (b == (byte)Opcode.Call) count++;
-            var info = OpcodeTable.Get(b);
-            if (!info.IsDefined || info.Size == 0) break;
-            pc += info.Size;
-        }
-        return count;
+        return new IlPredicateCompiler().CanCompile(pred, calleeMap);
     }
 
     private static string ResolveFunctorName(int functorId)

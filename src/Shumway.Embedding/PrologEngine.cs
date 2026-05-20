@@ -433,25 +433,53 @@ public sealed class PrologEngine
         // as a PredicateDelegate. This skips the Sigil emit step that
         // IlPromotion.Warm would otherwise run and surfaces the
         // already-JIT-able IL directly to the engine.
+        //
+        // Self-referential IL CPs (multi-clause / meta-CP shapes)
+        // dispatch through a static PredicateDelegate[] field on the
+        // emitted type; we populate it here before any predicate runs
+        // so the first IL CP push finds its target.
         foreach (var entry in bundle.Entries)
         {
             if (entry.CompiledIl is null || entry.CompiledIl.Length == 0) continue;
             var asm = System.Reflection.Assembly.Load(entry.CompiledIl);
             var type = asm.GetType(Shumway.Compiler.Il.PersistedIlBuilder.TypeName);
             if (type is null) continue;
+
+            // Method-name layout from PersistedIlBuilder:
+            //   P_{slot}_{functorId}_{sanitisedName}
+            // The slot lookup goes into the static delegates array,
+            // the functorId binds the engine's IL promotion entry.
+            // Reflection ordering isn't guaranteed; sort by slot so
+            // the array population is deterministic.
+            var bound = new List<(int Slot, int FunctorId,
+                Shumway.Compiler.Il.PredicateDelegate Delegate)>();
             foreach (var method in type.GetMethods(
                 System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static))
             {
                 if (!method.Name.StartsWith("P_")) continue;
-                // Method names are "P_{functorId}_{sanitisedName}".
-                int firstUnderscore = method.Name.IndexOf('_');
-                int secondUnderscore = method.Name.IndexOf('_', firstUnderscore + 1);
-                if (firstUnderscore < 0 || secondUnderscore < 0) continue;
-                if (!int.TryParse(
-                    method.Name.AsSpan(firstUnderscore + 1, secondUnderscore - firstUnderscore - 1),
-                    out int functorId)) continue;
+                int u1 = method.Name.IndexOf('_');
+                int u2 = method.Name.IndexOf('_', u1 + 1);
+                int u3 = method.Name.IndexOf('_', u2 + 1);
+                if (u1 < 0 || u2 < 0 || u3 < 0) continue;
+                if (!int.TryParse(method.Name.AsSpan(u1 + 1, u2 - u1 - 1), out int slot)) continue;
+                if (!int.TryParse(method.Name.AsSpan(u2 + 1, u3 - u2 - 1), out int functorId)) continue;
                 var del = method.CreateDelegate<Shumway.Compiler.Il.PredicateDelegate>();
+                bound.Add((slot, functorId, del));
                 IlPromotion.RegisterBoundDelegate(functorId, del);
+            }
+
+            // Populate the static delegates array (chunk 71 multi-clause
+            // self-reference). The array is sized to fit max(slot)+1
+            // and each entry lands at its parsed slot.
+            var delegatesField = type.GetField(
+                Shumway.Compiler.Il.PersistedIlBuilder.DelegatesFieldName,
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+            if (delegatesField is not null && bound.Count > 0)
+            {
+                int size = bound.Max(b => b.Slot) + 1;
+                var arr = new Shumway.Compiler.Il.PredicateDelegate[size];
+                foreach (var (slot, _, del) in bound) arr[slot] = del;
+                delegatesField.SetValue(null, arr);
             }
         }
     }

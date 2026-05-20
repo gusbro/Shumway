@@ -386,34 +386,78 @@ public sealed class IlPredicateCompiler
     /// <paramref name="methodName"/> on <paramref name="typeBuilder"/>
     /// and emits the predicate's IL into it. Returns the
     /// <c>MethodBuilder</c> so the caller can later bake the type and
-    /// resolve the method via reflection. Only the single-clause-leaf
-    /// shape is supported in this chunk — the same shape
-    /// <see cref="PersistedIlBuilder.CanPersist"/> filters on.
-    /// Multi-clause / meta-CP shapes need static delegate-slot fields
-    /// for self-reference, which a later chunk extends.</summary>
+    /// resolve the method via reflection.
+    ///
+    /// <para>Routes to the right emission shape based on the predicate:
+    /// single-clause-leaf (no IL CPs), single-clause-with-meta-CP,
+    /// indexed-atom, or general try-me-else chain. The latter three
+    /// need a static self-reference — they read their own delegate
+    /// from <paramref name="delegatesField"/>[<paramref name="slot"/>],
+    /// which the loader populates at runtime from the same method's
+    /// <c>MethodInfo.CreateDelegate</c>.</para>
+    ///
+    /// <para><paramref name="delegatesField"/> and
+    /// <paramref name="slot"/> are unused (and may be passed as
+    /// <c>null</c> / <c>-1</c>) for the leaf shape, which never emits
+    /// an IL CP push.</para></summary>
     public System.Reflection.Emit.MethodBuilder EmitPersistedMethod(
         System.Reflection.Emit.TypeBuilder typeBuilder,
         string methodName,
         CompiledPredicate predicate,
+        System.Reflection.FieldInfo? delegatesField,
+        int slot,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
         ArgumentNullException.ThrowIfNull(typeBuilder);
         ArgumentNullException.ThrowIfNull(methodName);
         ArgumentNullException.ThrowIfNull(predicate);
-        if (predicate.ClauseCount != 1)
-            throw new NotSupportedException(
-                "Persisted-IL emission supports single-clause predicates only in chunk 71.");
-        int callSiteCount = CountNonTailCallOpcodes(predicate.Bytecode);
-        if (callSiteCount != 0)
-            throw new NotSupportedException(
-                "Persisted-IL emission supports leaf single-clause predicates only in chunk 71.");
 
         var emit = Sigil.Emit<PredicateDelegate>.BuildMethod(
             typeBuilder,
             methodName,
             System.Reflection.MethodAttributes.Public | System.Reflection.MethodAttributes.Static,
             System.Reflection.CallingConventions.Standard);
-        EmitSingleClauseLeafBody(emit, predicate, calleeMap);
+
+        SelfDelegateEmitter? emitSelf = delegatesField is null
+            ? null
+            : SelfFromArrayField(delegatesField, slot);
+
+        if (predicate.ClauseCount == 1)
+        {
+            int callSiteCount = CountNonTailCallOpcodes(predicate.Bytecode);
+            if (callSiteCount == 0)
+            {
+                EmitSingleClauseLeafBody(emit, predicate, calleeMap);
+            }
+            else
+            {
+                if (emitSelf is null)
+                    throw new InvalidOperationException(
+                        "Single-clause meta-CP predicate needs a delegates field for self-reference.");
+                EmitSingleClauseMetaCpBody(emit, predicate, callSiteCount, calleeMap, emitSelf);
+            }
+        }
+        else if (TryDescribeIndexedAtomPredicate(predicate, out var atomInfo))
+        {
+            if (emitSelf is null)
+                throw new InvalidOperationException(
+                    "Indexed-atom predicate needs a delegates field for self-reference.");
+            EmitIndexedAtomBody(emit, predicate, atomInfo!, emitSelf);
+        }
+        else if (TryDescribeTryMeElseChain(predicate, calleeMap, out var chainInfo))
+        {
+            if (emitSelf is null)
+                throw new InvalidOperationException(
+                    "Try-me-else chain predicate needs a delegates field for self-reference.");
+            EmitTryMeElseChainBody(emit, predicate, chainInfo!, calleeMap, emitSelf);
+        }
+        else
+        {
+            throw new NotSupportedException(
+                $"Predicate (fid={predicate.FunctorId}, clauses={predicate.ClauseCount}) "
+                + "is outside the IL subset.");
+        }
+
         return emit.CreateMethod();
     }
 
@@ -422,8 +466,27 @@ public sealed class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
         int holderKey = _nextHolderKey;
+        var emitSelf = SelfFromHolder(holderKey);
         var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
             $"ShumwayIl_metacp_{predicate.FunctorId}_{predicate.Arity}");
+        EmitSingleClauseMetaCpBody(emit, predicate, callSiteCount, calleeMap, emitSelf);
+        var del = emit.CreateDelegate();
+        IndexedDelegateHolder.Register(holderKey, del);
+        _nextHolderKey = holderKey + 1;
+        return del;
+    }
+
+    /// <summary>Shared meta-CP body emitter — used by both the
+    /// DynamicMethod path (above) and the persisted path. The
+    /// self-reference for re-pushing the meta-CP on each retry routes
+    /// through <paramref name="emitSelf"/>.</summary>
+    private static void EmitSingleClauseMetaCpBody(
+        Sigil.Emit<PredicateDelegate> emit,
+        CompiledPredicate predicate,
+        int callSiteCount,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
+        SelfDelegateEmitter emitSelf)
+    {
         var failLabel = emit.DefineLabel("fail");
         var startLabel = emit.DefineLabel("start");
         var resumeLabels = new Sigil.Label[callSiteCount];
@@ -490,8 +553,7 @@ public sealed class IlPredicateCompiler
             emit.Call(CellIntMethod);
             emit.Call(EngineSetRegisterMethod);
             emit.LoadArgument(0);
-            emit.LoadConstant(holderKey);
-            emit.Call(IndexedDelegateHolderGet);
+            emitSelf(emit);
             emit.LoadConstant(i + 1);
             emit.LoadConstant(1);
             emit.Call(EnginePushIlCpMethod);
@@ -516,17 +578,12 @@ public sealed class IlPredicateCompiler
             failLabel, predicate.CallSites,
             callSiteIndexCounter: () => ++idxCounter,
             resumeLabels: postCallLabels,
-            holderKey: holderKey,
+            emitSelfDelegate: emitSelf,
             calleeMap: calleeMap);
 
         emit.MarkLabel(failLabel);
         emit.LoadConstant(false);
         emit.Return();
-
-        var del = emit.CreateDelegate();
-        IndexedDelegateHolder.Register(holderKey, del);
-        _nextHolderKey = holderKey + 1;
-        return del;
     }
 
     /// <summary>Counts non-tail <c>Call</c> opcodes in a clause's
@@ -572,7 +629,7 @@ public sealed class IlPredicateCompiler
         Sigil.Label failLabel, IReadOnlyList<CallSite> callSites,
         Func<int>? callSiteIndexCounter = null,
         Sigil.Label[]? resumeLabels = null,
-        int holderKey = -1,
+        SelfDelegateEmitter? emitSelfDelegate = null,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null,
         bool suppressProceedReturn = false)
     {
@@ -1061,8 +1118,7 @@ public sealed class IlPredicateCompiler
 
                     // engine.PushIlChoicePoint(self, cursor=siteIdx, arity=1)
                     emit.LoadArgument(0);
-                    emit.LoadConstant(holderKey);
-                    emit.Call(IndexedDelegateHolderGet);
+                    emitSelfDelegate!(emit);
                     emit.LoadConstant(siteIdx);
                     emit.LoadConstant(1);
                     emit.Call(EnginePushIlCpMethod);
@@ -1294,11 +1350,33 @@ public sealed class IlPredicateCompiler
         CompiledPredicate predicate, TryMeElseChainInfo info,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
-        var clauses = info.Clauses;
         int holderKey = _nextHolderKey;
+        var emitSelf = SelfFromHolder(holderKey);
 
         var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
             $"ShumwayIl_tryelse_{predicate.FunctorId}");
+        EmitTryMeElseChainBody(emit, predicate, info, calleeMap, emitSelf);
+
+        var del = emit.CreateDelegate();
+        IndexedDelegateHolder.Register(holderKey, del);
+        _nextHolderKey = holderKey + 1;
+        return del;
+    }
+
+    /// <summary>Shared try-me-else-chain emit body used by both the
+    /// DynamicMethod runtime path (above) and the chunk-71 persisted
+    /// assembly path (<see cref="EmitPersistedTryMeElseChain"/>). All
+    /// self-references for the per-clause IL CP push route through
+    /// <paramref name="emitSelf"/>; callers pick the holder-based or
+    /// field-based variant.</summary>
+    private static void EmitTryMeElseChainBody(
+        Sigil.Emit<PredicateDelegate> emit,
+        CompiledPredicate predicate,
+        TryMeElseChainInfo info,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
+        SelfDelegateEmitter emitSelf)
+    {
+        var clauses = info.Clauses;
         var failLabel = emit.DefineLabel("fail");
 
         for (int i = 0; i < clauses.Count; i++)
@@ -1313,8 +1391,7 @@ public sealed class IlPredicateCompiler
             if (i < clauses.Count - 1)
             {
                 emit.LoadArgument(0);                      // engine
-                emit.LoadConstant(holderKey);
-                emit.Call(IndexedDelegateHolderGet);       // → PredicateDelegate
+                emitSelf(emit);                            // → PredicateDelegate
                 emit.LoadConstant(i + 1);                  // next cursor
                 emit.LoadConstant(predicate.Arity);
                 emit.Call(EnginePushIlCpMethod);
@@ -1324,6 +1401,7 @@ public sealed class IlPredicateCompiler
             // returns true on Proceed / sets IlTailCallPending on Execute.
             EmitClauseBody(emit, predicate.Bytecode, clauses[i].Start, clauses[i].End,
                 failLabel, predicate.CallSites,
+                emitSelfDelegate: emitSelf,
                 calleeMap: calleeMap);
 
             emit.MarkLabel(nextLabel);
@@ -1334,11 +1412,6 @@ public sealed class IlPredicateCompiler
         emit.MarkLabel(failLabel);
         emit.LoadConstant(false);
         emit.Return();
-
-        var del = emit.CreateDelegate();
-        IndexedDelegateHolder.Register(holderKey, del);
-        _nextHolderKey = holderKey + 1;
-        return del;
     }
 
     /// <summary>Recognises the shape:
@@ -1438,14 +1511,33 @@ public sealed class IlPredicateCompiler
     private PredicateDelegate CompileIndexedAtomPredicateUnlocked(
         CompiledPredicate predicate, IndexedAtomInfo info)
     {
+        int holderKey = _nextHolderKey;
+        var emitSelf = SelfFromHolder(holderKey);
+
+        var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
+            $"ShumwayIl_indexed_{predicate.FunctorId}");
+        EmitIndexedAtomBody(emit, predicate, info, emitSelf);
+
+        var del = emit.CreateDelegate();
+        IndexedDelegateHolder.Register(holderKey, del);
+        _nextHolderKey = holderKey + 1;
+        return del;
+    }
+
+    /// <summary>Shared indexed-atom-shape emit body used by both the
+    /// DynamicMethod runtime path (above) and the chunk-71 persisted
+    /// assembly path. Self-references for the per-clause IL CP push
+    /// route through <paramref name="emitSelf"/>.</summary>
+    private static void EmitIndexedAtomBody(
+        Sigil.Emit<PredicateDelegate> emit,
+        CompiledPredicate predicate,
+        IndexedAtomInfo info,
+        SelfDelegateEmitter emitSelf)
+    {
         var clauses = info.Clauses;
         // Build the dispatch arrays *outside* IL so the emitted method
         // doesn't have to allocate them per call.
         int[] atomIds = clauses.Select(c => c.AtomId).ToArray();
-        int holderKey = _nextHolderKey;
-
-        var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
-            $"ShumwayIl_indexed_{predicate.FunctorId}");
 
         var failLabel = emit.DefineLabel("fail");
         var varDispatchLabel = emit.DefineLabel("var_dispatch");
@@ -1525,25 +1617,14 @@ public sealed class IlPredicateCompiler
             emit.UnsignedBranchIfNotEqual(nextLabel);
 
             // If there's a later clause, push an IL CP for it before
-            // attempting unification.
+            // attempting unification. The "this delegate" reference
+            // routes through emitSelf — IndexedDelegateHolder for the
+            // DynamicMethod path, a static array slot for the
+            // persisted path (chunk 71).
             if (i < atomIds.Length - 1)
             {
-                // engine.PushIlChoicePoint(this_delegate, i + 1, 1)
-                //   — but the IL doesn't know "this delegate" at emit time.
-                //   We thread it via a static singleton built after creation:
-                //   a delegate-typed local that the engine fills in for us
-                //   on first invocation. Simpler approach: capture via a
-                //   closure-equivalent — emit a call into a thunk that
-                //   accepts the delegate. We reuse the engine's
-                //   PushIlChoicePoint and resolve "this delegate" via the
-                //   reflection-emit closure mechanism Sigil doesn't directly
-                //   support; instead we pass the delegate via a static
-                //   field. See IndexedDelegateHolder below.
-                //
-                // emit: engine.PushIlChoicePoint(IndexedDelegateHolder.GetFor(holderKey), i+1, 1)
                 emit.LoadArgument(0);                  // engine
-                emit.LoadConstant(holderKey);          // holder key (captured before lock)
-                emit.Call(IndexedDelegateHolderGet);   // → PredicateDelegate
+                emitSelf(emit);                        // → PredicateDelegate
                 emit.LoadConstant(i + 1);              // next cursor
                 emit.LoadConstant(1);                  // arity
                 emit.Call(EnginePushIlCpMethod);
@@ -1566,15 +1647,6 @@ public sealed class IlPredicateCompiler
         emit.MarkLabel(failLabel);
         emit.LoadConstant(false);
         emit.Return();
-
-        var del = emit.CreateDelegate();
-        // Now bind the delegate into the holder so the CP-push path can
-        // pull it back out. Both the LoadConstant calls above and this
-        // registration use `holderKey` captured at the start of the
-        // method, so they always match.
-        IndexedDelegateHolder.Register(holderKey, del);
-        _nextHolderKey = holderKey + 1;
-        return del;
     }
 
     /// <summary>A counter the IL emission embeds into the bytecode as a
@@ -1585,6 +1657,34 @@ public sealed class IlPredicateCompiler
     private static int _nextHolderKey = 1;
     private static readonly MethodInfo IndexedDelegateHolderGet =
         typeof(IndexedDelegateHolder).GetMethod(nameof(IndexedDelegateHolder.Get))!;
+
+    /// <summary>Emits IL that leaves a <see cref="PredicateDelegate"/> on
+    /// the evaluation stack — the running predicate's own delegate, used
+    /// as the callback target for <c>engine.PushIlChoicePoint</c>. Two
+    /// implementations:
+    /// <list type="bullet">
+    /// <item>DynamicMethod: <c>LoadConstant(holderKey); Call(IndexedDelegateHolderGet)</c>,
+    /// resolved at runtime from a process-wide dictionary.</item>
+    /// <item>Persisted assembly: <c>LoadField(arrayField); LoadConstant(slot); LoadElement&lt;PredicateDelegate&gt;()</c>,
+    /// resolved at load time from a static array field on the emitted type.</item>
+    /// </list></summary>
+    internal delegate void SelfDelegateEmitter(Sigil.Emit<PredicateDelegate> emit);
+
+    internal static SelfDelegateEmitter SelfFromHolder(int holderKey) =>
+        e =>
+        {
+            e.LoadConstant(holderKey);
+            e.Call(IndexedDelegateHolderGet);
+        };
+
+    internal static SelfDelegateEmitter SelfFromArrayField(
+        System.Reflection.FieldInfo arrayField, int slot) =>
+        e =>
+        {
+            e.LoadField(arrayField);
+            e.LoadConstant(slot);
+            e.LoadElement<PredicateDelegate>();
+        };
 
     /// <summary>Side table that lets a freshly-emitted IL delegate
     /// reference itself for the <c>PushIlChoicePoint</c> call without
