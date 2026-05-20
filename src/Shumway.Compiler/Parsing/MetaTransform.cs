@@ -29,6 +29,18 @@ namespace Shumway.Compiler.Parsing;
 /// <para>Helper names use the prefix <c>$neg_</c> to keep them disjoint
 /// from anything the user can write (the parser rejects atoms whose name
 /// starts with <c>$</c> when unquoted).</para>
+///
+/// <para><b>All-solutions and control predicates.</b> The same pass also
+/// rewrites <c>findall/3</c> (chunk 83) and <c>bagof/3</c>, <c>setof/3</c>,
+/// <c>forall/2</c> (chunk 84) when their goal argument is callable at
+/// compile time, so they run in the live engine instead of an isolated
+/// sub-engine. <c>forall(C, A)</c> becomes <c>\+ (C, \+ A)</c>; the
+/// all-solutions predicates become a fail-driven collect loop over a
+/// per-engine solution buffer. <c>bagof/3</c> and <c>setof/3</c> additionally
+/// pair each solution with a witness term — the variables free in the goal
+/// but not in the template and not bound by a <c>^/2</c> wrapper — and
+/// backtrack the grouped result over <c>member/2</c>. A goal still a variable
+/// at compile time is left for the runtime builtin.</para>
 /// </summary>
 public static class MetaTransform
 {
@@ -112,6 +124,43 @@ public static class MetaTransform
                 collectLoop,
                 (Term)new CompoundTerm("$findall_collect", new[] { fa.Args[2] }),
             }) { Position = goal.Position };
+            return TransformGoal(rewritten, ref counter, helpers);
+        }
+
+        // bagof/3 and setof/3 with a callable (non-variable) Goal — rewrite
+        // to an in-engine collect loop that groups solutions by the goal's
+        // witness variables (chunk 84). See RewriteBagof and the class
+        // remarks. A bare-variable Goal falls through to the runtime builtin.
+        if (goal is CompoundTerm bs
+            && (bs.Functor == "bagof" || bs.Functor == "setof")
+            && bs.Args.Length == 3
+            && bs.Args[1] is not VarTerm)
+        {
+            Term rewritten = RewriteBagof(
+                bs.Functor, bs.Args[0], bs.Args[1], bs.Args[2], ref counter);
+            return TransformGoal(rewritten, ref counter, helpers);
+        }
+
+        // forall(Cond, Action) with callable arguments — the textbook
+        // \+ (Cond, \+ Action). Cond and Action are spliced as ordinary body
+        // goals, so they enumerate with real choice points in the live
+        // engine; the negation pair makes forall succeed exactly when no
+        // solution of Cond falsifies Action.
+        if (goal is CompoundTerm fl
+            && fl.Functor == "forall"
+            && fl.Args.Length == 2
+            && fl.Args[0] is not VarTerm
+            && fl.Args[1] is not VarTerm)
+        {
+            Term inner = new CompoundTerm(",", new[]
+            {
+                fl.Args[0],
+                new CompoundTerm("\\+", new[] { fl.Args[1] }),
+            });
+            Term rewritten = new CompoundTerm("\\+", new[] { inner })
+            {
+                Position = goal.Position,
+            };
             return TransformGoal(rewritten, ref counter, helpers);
         }
 
@@ -228,6 +277,121 @@ public static class MetaTransform
         // The call site uses the same names, so the outer clause's
         // variables flow through to the helper.
         return BuildHelperHead();
+    }
+
+    /// <summary>Rewrites <c>bagof(T, Goal, B)</c> / <c>setof(T, Goal, B)</c>
+    /// into the chunk-84 in-engine form
+    /// <code>
+    ///   ( '$findall_push', Goal', '$findall_record'(Wt-T), fail
+    ///   ; '$bagof_collect'(Groups) ),
+    ///   member(Wt-B, Groups)
+    /// </code>
+    /// where <c>Wt</c> is the witness term — <c>'$w'(W1..Wk)</c> over the
+    /// variables free in <c>Goal</c> but not in <c>T</c> and not bound by a
+    /// <c>^/2</c> existential wrapper, or the atom <c>'$w'</c> when there are
+    /// none. <c>Goal'</c> is <c>Goal</c> with its <c>^</c> wrappers removed
+    /// and its anonymous variables named, since an anonymous variable not in
+    /// <c>T</c> is a witness exactly like a named one.
+    ///
+    /// <para>The collect loop runs <c>Goal'</c> in the live engine and the
+    /// trailing <c>fail</c> enumerates it; <c>'$bagof_collect'</c> groups the
+    /// buffered <c>Wt-T</c> pairs by witness; <c>member/2</c> then backtracks
+    /// over the groups, binding the witness variables and the result.</para></summary>
+    private static Term RewriteBagof(
+        string functor, Term template, Term goal, Term bag, ref int counter)
+    {
+        var position = goal.Position;
+
+        // Strip ^/2 existential wrappers; collect the quantified variables.
+        var existential = new HashSet<string>();
+        while (goal is CompoundTerm caret && caret.Functor == "^" && caret.Args.Length == 2)
+        {
+            CollectNamedVars(caret.Args[0], new List<string>(), existential);
+            goal = caret.Args[1];
+        }
+
+        // Name anonymous variables so they can be collected as witnesses.
+        goal = NameAnonymousVars(goal, ref counter);
+
+        // Witness = vars(goal) \ vars(template) \ existential, in
+        // first-occurrence order. A variable local to a nested all-solutions
+        // call (the template of an inner findall/bagof/setof) is counted here
+        // too, but harmlessly: such a variable is unbound once the nested call
+        // returns, so every solution's witness shares it as a free variable
+        // and the canonical-form grouping folds those snapshots together.
+        var templateVars = new HashSet<string>();
+        CollectNamedVars(template, new List<string>(), templateVars);
+        var goalVars = new List<string>();
+        CollectNamedVars(goal, goalVars, new HashSet<string>());
+        var witnessVars = new List<string>();
+        foreach (string v in goalVars)
+        {
+            if (!templateVars.Contains(v) && !existential.Contains(v))
+                witnessVars.Add(v);
+        }
+
+        Term Witness() => witnessVars.Count == 0
+            ? new AtomTerm("$w")
+            : new CompoundTerm("$w", witnessVars.Select(n => (Term)new VarTerm(n)).ToArray());
+
+        var groups = new VarTerm("$BG" + counter++);
+        string collector = functor == "setof" ? "$setof_collect" : "$bagof_collect";
+
+        // '$findall_push', Goal', '$findall_record'(Wt-T), fail
+        Term collectLoop = new CompoundTerm(",", new[]
+        {
+            (Term)new AtomTerm("$findall_push"),
+            new CompoundTerm(",", new[]
+            {
+                goal,
+                new CompoundTerm(",", new[]
+                {
+                    (Term)new CompoundTerm("$findall_record", new[]
+                    {
+                        (Term)new CompoundTerm("-", new[] { Witness(), template }),
+                    }),
+                    new AtomTerm("fail"),
+                }),
+            }),
+        });
+
+        // ( collectLoop ; '$<bag|set>of_collect'(Groups) )
+        Term disjunction = new CompoundTerm(";", new[]
+        {
+            collectLoop,
+            (Term)new CompoundTerm(collector, new Term[] { groups }),
+        }) { Position = position };
+
+        // ( disjunction , member(Wt-B, Groups) )
+        return new CompoundTerm(",", new[]
+        {
+            disjunction,
+            new CompoundTerm("member", new Term[]
+            {
+                new CompoundTerm("-", new[] { Witness(), bag }),
+                groups,
+            }),
+        });
+    }
+
+    /// <summary>Returns a copy of <paramref name="term"/> with every anonymous
+    /// variable (<c>_</c>) replaced by a freshly-named one. bagof/3 and
+    /// setof/3 treat an anonymous variable in the goal as an ordinary witness
+    /// variable, so it has to carry a name to be collected as one.</summary>
+    private static Term NameAnonymousVars(Term term, ref int counter)
+    {
+        switch (term)
+        {
+            case VarTerm v when v.Name == "_":
+                return new VarTerm("$A" + counter++);
+            case CompoundTerm c:
+                var args = new Term[c.Args.Length];
+                for (int i = 0; i < c.Args.Length; i++)
+                    args[i] = NameAnonymousVars(c.Args[i], ref counter);
+                return new CompoundTerm(c.Functor, args) { Position = c.Position };
+            default:
+                return term;
+        }
     }
 
     private static void CollectNamedVars(Term t, List<string> order, HashSet<string> seen)

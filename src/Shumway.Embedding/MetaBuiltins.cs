@@ -27,6 +27,11 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("$findall_push",    0, FindallPush);
         BuiltinsRegistry.Register("$findall_record",  1, FindallRecord);
         BuiltinsRegistry.Register("$findall_collect", 1, FindallCollect);
+        // In-engine bagof/setof plumbing (chunk 84) — reuse the findall
+        // frame stack ('$findall_push' / '$findall_record'); only the
+        // collect step differs (it groups the solutions by witness).
+        BuiltinsRegistry.Register("$bagof_collect",   1, BagofCollect);
+        BuiltinsRegistry.Register("$setof_collect",   1, SetofCollect);
         BuiltinsRegistry.Register("bagof",   3, Bagof);
         BuiltinsRegistry.Register("setof",   3, Setof);
         BuiltinsRegistry.Register("forall",  2, Forall);
@@ -1391,13 +1396,226 @@ public static class MetaBuiltins
         ?? throw new InvalidOperationException(
             "The in-engine findall builtins require a PrologEngine host.");
 
-    /// <summary><c>bagof(Template, Goal, Bag)</c> — like <c>findall/3</c> but
-    /// <em>fails</em> when <c>Goal</c> has no solutions instead of returning
-    /// <c>[]</c>. ISO bagof also splits the solution stream by free-variable
-    /// groupings; Phase 1 doesn't do that yet, so this implementation is
-    /// effectively "findall + fail-on-empty". The <c>Var^Goal</c> existential
-    /// quantifier is recognised and stripped (every var is implicitly
-    /// existential without grouping, so it's a no-op).</summary>
+    /// <summary><c>'$bagof_collect'(Groups)</c> (chunk 84) — closes the open
+    /// solution buffer (the bagof/3 rewrite shares findall's '$findall_push'
+    /// and '$findall_record') and unifies its argument with the list of
+    /// <c>Witness-Bag</c> pairs that bagof/3 backtracks over: one pair per
+    /// distinct witness, in standard order of the witness, each bag holding
+    /// its solutions in generation order.</summary>
+    public static bool BagofCollect(Engine engine)
+    {
+        var frame = FindallHost(engine).PopFindallFrame();
+        Cell groups = Materializer.MaterializeAsCell(
+            engine, BuildWitnessGroups(frame, sortBags: false));
+        return engine.UnifyRegisterWithCell(0, groups);
+    }
+
+    /// <summary><c>'$setof_collect'(Groups)</c> (chunk 84) — as
+    /// <see cref="BagofCollect"/>, but each bag is sorted into standard order
+    /// and stripped of duplicates — the only difference between bagof/3 and
+    /// setof/3.</summary>
+    public static bool SetofCollect(Engine engine)
+    {
+        var frame = FindallHost(engine).PopFindallFrame();
+        Cell groups = Materializer.MaterializeAsCell(
+            engine, BuildWitnessGroups(frame, sortBags: true));
+        return engine.UnifyRegisterWithCell(0, groups);
+    }
+
+    private sealed class WitnessGroup
+    {
+        public readonly Term Canonical;
+        public readonly List<(Term Witness, Term Template)> Pairs = new();
+        public WitnessGroup(Term canonical) => Canonical = canonical;
+    }
+
+    /// <summary>Turns the buffer of <c>Witness-Template</c> pairs collected by
+    /// a bagof/3 or setof/3 goal into the <c>[Witness-Bag, ...]</c> list the
+    /// rewrite backtracks over with member/2.
+    ///
+    /// <para>Two pairs join the same group when their witnesses are variants
+    /// of one another (equal up to variable renaming); the groups come out in
+    /// standard order of the witness. Within a group the witness variables
+    /// are rebound to a single shared set — SWI's <c>bind_bagof_keys</c> step
+    /// — so a witness variable a solution happens to share with its template
+    /// stays shared across the whole bag. Bag elements keep generation order
+    /// (<paramref name="sortBags"/> false, bagof/3) or are sorted and
+    /// de-duplicated (<paramref name="sortBags"/> true, setof/3).</para></summary>
+    private static Term BuildWitnessGroups(List<Term> pairs, bool sortBags)
+    {
+        var groups = new List<WitnessGroup>();
+        foreach (Term pair in pairs)
+        {
+            var cons = (CompoundTerm)pair;          // '-'(Witness, Template)
+            Term witness = cons.Args[0];
+            Term canonical = CanonicalizeVars(witness, new Dictionary<string, string>());
+
+            WitnessGroup? group = null;
+            foreach (WitnessGroup candidate in groups)
+            {
+                if (TermStandardOrder.Compare(candidate.Canonical, canonical) == 0)
+                {
+                    group = candidate;
+                    break;
+                }
+            }
+            if (group is null)
+            {
+                group = new WitnessGroup(canonical);
+                groups.Add(group);
+            }
+            group.Pairs.Add((witness, cons.Args[1]));
+        }
+
+        groups.Sort((a, b) => TermStandardOrder.Compare(a.Canonical, b.Canonical));
+
+        int fresh = 0;
+        var groupTerms = new List<Term>(groups.Count);
+        foreach (WitnessGroup group in groups)
+        {
+            Term[] slotVars = Array.Empty<Term>();
+            // Every group has at least one pair, so the i == 0 iteration
+            // always replaces this placeholder with the real witness.
+            Term representative = new AtomTerm("$w");
+            var bag = new List<Term>(group.Pairs.Count);
+
+            for (int i = 0; i < group.Pairs.Count; i++)
+            {
+                (Term witness, Term template) = group.Pairs[i];
+
+                // Index the witness's distinct variables in first-occurrence
+                // order. Variant witnesses index identically, so slot k names
+                // the same logical variable in every pair of the group.
+                var witnessSlots = new Dictionary<string, int>();
+                IndexVars(witness, witnessSlots);
+                if (i == 0)
+                {
+                    slotVars = new Term[witnessSlots.Count];
+                    for (int s = 0; s < slotVars.Length; s++)
+                        slotVars[s] = new VarTerm("$BV" + fresh++);
+                    representative = RebindVars(
+                        witness, witnessSlots, slotVars,
+                        new Dictionary<string, Term>(), ref fresh);
+                }
+
+                // A template variable the witness also binds maps to the
+                // shared slot variable; every other one gets a per-solution
+                // fresh variable, so distinct solutions never share by chance.
+                bag.Add(RebindVars(
+                    template, witnessSlots, slotVars,
+                    new Dictionary<string, Term>(), ref fresh));
+            }
+
+            if (sortBags)
+            {
+                bag.Sort(TermStandardOrder.Compare);
+                int write = bag.Count == 0 ? 0 : 1;
+                for (int read = 1; read < bag.Count; read++)
+                {
+                    if (TermStandardOrder.Compare(bag[read], bag[write - 1]) != 0)
+                        bag[write++] = bag[read];
+                }
+                if (write < bag.Count) bag.RemoveRange(write, bag.Count - write);
+            }
+
+            groupTerms.Add(new CompoundTerm(
+                "-", new[] { representative, MakeProperList(bag) }));
+        }
+
+        return MakeProperList(groupTerms);
+    }
+
+    /// <summary>Copies a term, renaming every variable to a canonical name in
+    /// first-occurrence order. Two terms are variants of one another exactly
+    /// when their canonical forms are structurally equal — how
+    /// <see cref="BuildWitnessGroups"/> decides group membership.</summary>
+    private static Term CanonicalizeVars(Term term, Dictionary<string, string> map)
+    {
+        switch (term)
+        {
+            case VarTerm v:
+                if (!map.TryGetValue(v.Name, out string? canonical))
+                {
+                    canonical = "_C" + map.Count.ToString("D8");
+                    map[v.Name] = canonical;
+                }
+                return new VarTerm(canonical);
+            case CompoundTerm c:
+                var args = new Term[c.Args.Length];
+                for (int i = 0; i < c.Args.Length; i++)
+                    args[i] = CanonicalizeVars(c.Args[i], map);
+                return new CompoundTerm(c.Functor, args);
+            default:
+                return term;
+        }
+    }
+
+    /// <summary>Records each distinct variable of <paramref name="term"/> in
+    /// first-occurrence order, mapping its name to a slot index.</summary>
+    private static void IndexVars(Term term, Dictionary<string, int> slots)
+    {
+        switch (term)
+        {
+            case VarTerm v:
+                if (!slots.ContainsKey(v.Name)) slots[v.Name] = slots.Count;
+                break;
+            case CompoundTerm c:
+                foreach (Term arg in c.Args) IndexVars(arg, slots);
+                break;
+        }
+    }
+
+    /// <summary>Copies a term, replacing variables: one named in
+    /// <paramref name="witnessSlots"/> becomes the shared
+    /// <paramref name="slotVars"/> entry for its slot; any other becomes a
+    /// fresh variable, reused within this call through
+    /// <paramref name="localMap"/> but distinct from every other
+    /// solution's variables.</summary>
+    private static Term RebindVars(
+        Term term,
+        Dictionary<string, int> witnessSlots,
+        Term[] slotVars,
+        Dictionary<string, Term> localMap,
+        ref int fresh)
+    {
+        switch (term)
+        {
+            case VarTerm v:
+                if (witnessSlots.TryGetValue(v.Name, out int slot))
+                    return slotVars[slot];
+                if (!localMap.TryGetValue(v.Name, out Term? local))
+                {
+                    local = new VarTerm("$BV" + fresh++);
+                    localMap[v.Name] = local;
+                }
+                return local;
+            case CompoundTerm c:
+                var args = new Term[c.Args.Length];
+                for (int i = 0; i < c.Args.Length; i++)
+                    args[i] = RebindVars(
+                        c.Args[i], witnessSlots, slotVars, localMap, ref fresh);
+                return new CompoundTerm(c.Functor, args);
+            default:
+                return term;
+        }
+    }
+
+    /// <summary>Builds a proper Prolog list term from <paramref name="elems"/>.</summary>
+    private static Term MakeProperList(IReadOnlyList<Term> elems)
+    {
+        Term list = new AtomTerm("[]");
+        for (int i = elems.Count - 1; i >= 0; i--)
+            list = new CompoundTerm(".", new[] { elems[i], list });
+        return list;
+    }
+
+    /// <summary><c>bagof(Template, Goal, Bag)</c> — the variable-goal fallback
+    /// for bagof/3. When <c>Goal</c> is callable at compile time the
+    /// MetaTransform rewrite handles bagof/3 in the live engine with full
+    /// witness grouping (chunk 84); this builtin only runs when <c>Goal</c> is
+    /// a variable bound at run time, and keeps the pre-chunk-84 behaviour —
+    /// "findall + fail-on-empty", no witness grouping. <c>Var^Goal</c>
+    /// existential wrappers are stripped.</summary>
     public static bool Bagof(Engine engine)
     {
         var results = CollectSolutions(engine, stripExistentials: true);
@@ -1405,12 +1623,12 @@ public static class MetaBuiltins
         return BindList(engine, results);
     }
 
-    /// <summary><c>setof(Template, Goal, Set)</c> — like <c>bagof/3</c> but
-    /// the result is sorted in standard order and duplicate terms are
-    /// removed. Like bagof, fails when no solutions exist. The sort runs
-    /// on the AST level via <see cref="TermStandardOrder.Compare"/> so the
-    /// outcome only depends on solution content, not on which heap
-    /// addresses the sub-engine happened to allocate.</summary>
+    /// <summary><c>setof(Template, Goal, Set)</c> — the variable-goal fallback
+    /// for setof/3 (see <see cref="Bagof"/> for the bagof/setof split). Sorts
+    /// the bag into standard order and removes duplicates, but keeps the
+    /// pre-chunk-84 no-grouping behaviour; the compile-time path with full
+    /// witness grouping is the MetaTransform rewrite. The sort runs at the AST
+    /// level via <see cref="TermStandardOrder.Compare"/>.</summary>
     public static bool Setof(Engine engine)
     {
         var results = CollectSolutions(engine, stripExistentials: true);
@@ -1430,19 +1648,14 @@ public static class MetaBuiltins
         return BindList(engine, results);
     }
 
-    /// <summary><c>forall(Cond, Then)</c> — succeeds iff every solution
-    /// of <c>Cond</c> makes <c>Then</c> succeed too. Implemented by
-    /// running <c>Cond</c> in a peer sub-engine to fully enumerate its
-    /// solutions, then for each solution applying its bindings to
-    /// <c>Then</c> and running that in a fresh sub-engine. Bails on the
-    /// first counter-example.
-    ///
-    /// <para>This sits as a C# builtin (rather than the obvious Prolog
-    /// <c>\+ (Cond, \+ Then)</c>) because Phase-1 <c>call/N</c> only
-    /// returns one solution; a Prolog-level forall would silently miss
-    /// counter-examples from goals whose first solution happens to
-    /// satisfy <c>Then</c>. Going via the sub-engine bypasses the
-    /// single-solution call/N restriction entirely.</para></summary>
+    /// <summary><c>forall(Cond, Then)</c> — the variable-goal fallback for
+    /// forall/2. With callable arguments the MetaTransform rewrites
+    /// <c>forall(C, T)</c> to <c>\+ (C, \+ T)</c>, which splices both goals
+    /// into the clause body and runs them in the live engine (chunk 84); this
+    /// builtin only runs when an argument is still a variable at compile time.
+    /// It succeeds iff every solution of <c>Cond</c> makes <c>Then</c> succeed,
+    /// enumerating <c>Cond</c> in a peer sub-engine and checking <c>Then</c>
+    /// per solution, bailing on the first counter-example.</summary>
     public static bool Forall(Engine engine)
     {
         if (engine.Host is not PrologEngine host)
