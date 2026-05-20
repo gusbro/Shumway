@@ -79,6 +79,42 @@ public static class MetaTransform
             return SynthesizeNegationHelper(ct.Args[0], ref counter, helpers);
         }
 
+        // findall(Template, Goal, List) with a callable (non-variable)
+        // Goal — rewrite to an in-engine collect loop (chunk 83):
+        //   ( '$findall_push', Goal, '$findall_record'(Template), fail
+        //   ; '$findall_collect'(List) )
+        // Goal is spliced in as a body goal, so it compiles inline with
+        // real choice points and runs in the live engine — no sub-engine,
+        // and side effects (assertz) persist. The fail drives the
+        // backtracking that enumerates every solution; the disjunction
+        // then routes to '$findall_collect'. A bare-variable Goal is left
+        // alone — it falls through to the runtime findall/3 builtin.
+        if (goal is CompoundTerm fa
+            && fa.Functor == "findall"
+            && fa.Args.Length == 3
+            && fa.Args[1] is not VarTerm)
+        {
+            Term collectLoop = new CompoundTerm(",", new[]
+            {
+                (Term)new AtomTerm("$findall_push"),
+                new CompoundTerm(",", new[]
+                {
+                    fa.Args[1],
+                    new CompoundTerm(",", new[]
+                    {
+                        (Term)new CompoundTerm("$findall_record", new[] { fa.Args[0] }),
+                        new AtomTerm("fail"),
+                    }),
+                }),
+            });
+            Term rewritten = new CompoundTerm(";", new[]
+            {
+                collectLoop,
+                (Term)new CompoundTerm("$findall_collect", new[] { fa.Args[2] }),
+            }) { Position = goal.Position };
+            return TransformGoal(rewritten, ref counter, helpers);
+        }
+
         // Disjunction (A ; B) and if-then-else (A -> B ; C) — both compile
         // to a two-clause helper that the standard try_me_else / trust_me
         // dispatch then handles.

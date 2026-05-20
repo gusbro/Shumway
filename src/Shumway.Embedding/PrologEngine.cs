@@ -576,6 +576,37 @@ public sealed class PrologEngine
         => _staticPredicateCache;
     private readonly Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> _staticPredicateCache = new();
 
+    /// <summary>Stack of in-flight findall solution buffers (chunk 83).
+    /// MetaTransform rewrites <c>findall/3</c> with a callable goal into a
+    /// goal sequence driven by the <c>'$findall_*'</c> builtins, which run
+    /// in this engine: <c>'$findall_push'</c> pushes a frame here,
+    /// <c>'$findall_record'</c> appends a template copy to the top frame,
+    /// <c>'$findall_collect'</c> pops it. Solutions live as AST terms off
+    /// the WAM heap, so the <c>fail</c>-driven backtracking that
+    /// enumerates the goal doesn't unwind them. A stack so nested findall
+    /// calls each get their own frame.</summary>
+    private readonly List<List<Term>> _findallStack = new();
+
+    internal void PushFindallFrame() => _findallStack.Add(new List<Term>());
+
+    internal void RecordFindallSolution(Term solution)
+    {
+        if (_findallStack.Count == 0)
+            throw new InvalidOperationException(
+                "'$findall_record' invoked with no active findall frame.");
+        _findallStack[^1].Add(solution);
+    }
+
+    internal List<Term> PopFindallFrame()
+    {
+        if (_findallStack.Count == 0)
+            throw new InvalidOperationException(
+                "'$findall_collect' invoked with no active findall frame.");
+        var frame = _findallStack[^1];
+        _findallStack.RemoveAt(_findallStack.Count - 1);
+        return frame;
+    }
+
     /// <summary>Drops the cached compiled predicate for
     /// <paramref name="functorId"/>. Called by every mutation path
     /// (<see cref="Assertz"/>, <see cref="Asserta"/>,

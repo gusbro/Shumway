@@ -22,6 +22,11 @@ public static class MetaBuiltins
             return;
 
         BuiltinsRegistry.Register("findall", 3, Findall);
+        // In-engine findall plumbing (chunk 83) — MetaTransform rewrites
+        // findall/3 with a callable goal into a goal sequence using these.
+        BuiltinsRegistry.Register("$findall_push",    0, FindallPush);
+        BuiltinsRegistry.Register("$findall_record",  1, FindallRecord);
+        BuiltinsRegistry.Register("$findall_collect", 1, FindallCollect);
         BuiltinsRegistry.Register("bagof",   3, Bagof);
         BuiltinsRegistry.Register("setof",   3, Setof);
         BuiltinsRegistry.Register("forall",  2, Forall);
@@ -1340,6 +1345,51 @@ public static class MetaBuiltins
         var results = CollectSolutions(engine, stripExistentials: false);
         return BindList(engine, results);
     }
+
+    /// <summary><c>'$findall_push'/0</c> (chunk 83) — opens a fresh
+    /// solution buffer on the engine's findall stack. Emitted by the
+    /// MetaTransform rewrite of <c>findall/3</c> as the first goal of the
+    /// collect loop.</summary>
+    public static bool FindallPush(Engine engine)
+    {
+        FindallHost(engine).PushFindallFrame();
+        return true;
+    }
+
+    /// <summary><c>'$findall_record'(Template)</c> (chunk 83) — copies the
+    /// current value of <c>Template</c> (a snapshot AST term, off the WAM
+    /// heap so backtracking can't unwind it) into the open findall
+    /// buffer, then succeeds so the trailing <c>fail</c> drives
+    /// enumeration on to the goal's next solution.</summary>
+    public static bool FindallRecord(Engine engine)
+    {
+        FindallHost(engine).RecordFindallSolution(MaterializeRegister(engine, 0));
+        return true;
+    }
+
+    /// <summary><c>'$findall_collect'(List)</c> (chunk 83) — closes the
+    /// open findall buffer and unifies <c>List</c> with its collected
+    /// solutions. Each solution is materialised with its own variable map
+    /// so distinct solutions never accidentally share a variable.</summary>
+    public static bool FindallCollect(Engine engine)
+    {
+        var frame = FindallHost(engine).PopFindallFrame();
+        Cell list = Cell.Atom(AtomTable.EmptyListId);
+        for (int i = frame.Count - 1; i >= 0; i--)
+        {
+            Cell elem = Materializer.MaterializeAsCell(engine, frame[i]);
+            int cons = engine.AllocateHeap(2);
+            engine.SetHeap(cons, elem);
+            engine.SetHeap(cons + 1, list);
+            list = Cell.Lis(cons);
+        }
+        return engine.UnifyRegisterWithCell(0, list);
+    }
+
+    private static PrologEngine FindallHost(Engine engine) =>
+        engine.Host as PrologEngine
+        ?? throw new InvalidOperationException(
+            "The in-engine findall builtins require a PrologEngine host.");
 
     /// <summary><c>bagof(Template, Goal, Bag)</c> — like <c>findall/3</c> but
     /// <em>fails</em> when <c>Goal</c> has no solutions instead of returning
