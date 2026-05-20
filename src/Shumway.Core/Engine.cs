@@ -68,6 +68,12 @@ public sealed class Engine
     // cleared outright on backtracking.
     private readonly List<(int Module, int AttrValueIdx, int OtherIdx)> _pendingWakeups = new();
 
+    // catch/3 scopes, innermost last. Pushed by '$catch_begin', deactivated
+    // by '$catch_end'; both operations are recorded on the extra trail
+    // (TrailType.CatchFrame) so backtracking restores the stack. The throw
+    // handler walks it from the top to find a matching catcher.
+    private readonly List<CatchFrame> _catchFrames = new();
+
     private int _stackTop;
     private int _extraTrailTop;
 
@@ -230,6 +236,107 @@ public sealed class Engine
             if (cpTop > desired) desired = cpTop;
         }
         if (_stackTop > desired) _stackTop = desired;
+    }
+
+    // ----- catch/3 frame stack -----
+
+    private const long CatchTrailPush = 0;
+    private const long CatchTrailDeactivate = 1;
+
+    /// <summary>Number of catch frames on the stack (active or not).</summary>
+    public int CatchFrameCount => _catchFrames.Count;
+
+    /// <summary>Reads the catch frame at <paramref name="index"/>.</summary>
+    public CatchFrame GetCatchFrame(int index) => _catchFrames[index];
+
+    /// <summary>Pushes a catch frame for a <c>catch/3</c> entry, snapshotting
+    /// the live machine. The push is recorded on the extra trail, so
+    /// backtracking past the catch removes the frame again.
+    /// <paramref name="catcherHeapIdx"/> and <paramref name="recoveryHeapIdx"/>
+    /// name heap slots that must already be allocated (so the snapshot's
+    /// heap top covers them and they survive a caught throw's truncation).
+    ///
+    /// <para>The recovery continuation — where the enclosing clause resumes
+    /// after recovery — is the current environment's CE / CP header: this
+    /// method must be called as the first goal of the catch goal-helper, so
+    /// the live environment is that helper's frame and its header points at
+    /// the clause that contained the original <c>catch/3</c>.</para></summary>
+    public void PushCatchFrame(int catcherHeapIdx, int recoveryHeapIdx)
+    {
+        int index = _catchFrames.Count;
+        _catchFrames.Add(new CatchFrame
+        {
+            CatcherHeapIdx = catcherHeapIdx,
+            RecoveryHeapIdx = recoveryHeapIdx,
+            Active = true,
+            SnapB = _b,
+            SnapE = _e,
+            SnapHeapTop = _heapTop,
+            SnapHb = _hb,
+            SnapBindingTrailTop = _bindingTrailTop,
+            SnapExtraTrailTop = _extraTrailTop,
+            RecoveryE = (int)_stack[_e + EnvCeOffset].Data,
+            RecoveryCp = (int)_stack[_e + EnvCpOffset].Data,
+        });
+        EnsureExtraTrailCapacity(1);
+        _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
+        {
+            Type = TrailType.CatchFrame,
+            HeapIdx = index,
+            OldValue = new Cell(CatchTrailPush),
+            BindingTrailMarker = _bindingTrailTop,
+        };
+        // Lower the heap boundary like a choice point would: a caught throw
+        // rolls the heap back to here, so every binding the guarded goal
+        // makes to an older cell must be trailed to be reversible. The
+        // pre-catch _hb is kept in the frame's snapshot and restored on a
+        // catch (UnwindToCatchFrame).
+        _hb = _heapTop;
+    }
+
+    /// <summary>Deactivates the top-most still-active catch frame: control
+    /// has left its guarded goal, so a later throw must not be caught
+    /// there. The change is trailed, so backtracking into the guarded goal
+    /// re-activates it. A no-op when there is no active frame.</summary>
+    public void DeactivateTopCatchFrame()
+    {
+        for (int i = _catchFrames.Count - 1; i >= 0; i--)
+        {
+            if (!_catchFrames[i].Active) continue;
+            CatchFrame f = _catchFrames[i];
+            f.Active = false;
+            _catchFrames[i] = f;
+            EnsureExtraTrailCapacity(1);
+            _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
+            {
+                Type = TrailType.CatchFrame,
+                HeapIdx = i,
+                OldValue = new Cell(CatchTrailDeactivate),
+                BindingTrailMarker = _bindingTrailTop,
+            };
+            return;
+        }
+    }
+
+    /// <summary>Rolls the machine back to the state captured when catch
+    /// frame <paramref name="index"/> was pushed — undoing everything the
+    /// guarded goal did — and resumes at that catch's recovery
+    /// continuation. The extra-trail unwind also discards that frame and
+    /// every frame above it. Used by the throw handler after a catcher has
+    /// matched; the caller then runs the recovery goal.</summary>
+    public void UnwindToCatchFrame(int index)
+    {
+        CatchFrame f = _catchFrames[index];
+        UnwindTrails(f.SnapBindingTrailTop, f.SnapExtraTrailTop);
+        _heapTop = f.SnapHeapTop;
+        _hb = f.SnapHb;
+        _b = f.SnapB;
+        // The recovery goal runs as a fresh predicate activation, so its cut
+        // barrier is the restored choice-point level.
+        _b0 = f.SnapB;
+        _e = f.RecoveryE;
+        _cp = f.RecoveryCp;
+        _stackTop = f.SnapE;
     }
 
     /// <summary>
@@ -501,7 +608,11 @@ public sealed class Engine
                 bindingRead++;
             }
 
-            if (entry.HeapIdx < parentHeapTop)
+            // CatchFrame entries record control state, not a heap cell, so
+            // the "young heap cell" drop rule does not apply — they must
+            // always survive so a later backtrack still restores the
+            // catch-frame stack.
+            if (entry.Type == TrailType.CatchFrame || entry.HeapIdx < parentHeapTop)
             {
                 entry.BindingTrailMarker = bindingWrite;
                 _extraTrail[extraWrite++] = entry;
@@ -1629,6 +1740,24 @@ public sealed class Engine
                     var record = _attrTable[home];
                     if (oldValue < 0) record.Remove(mod);
                     else record[mod] = oldValue;
+                }
+                break;
+            case TrailType.CatchFrame:
+                // Reverse a catch-frame stack operation. A push (recorded by
+                // '$catch_begin') is undone by removing the top frame — by
+                // the time this fires, every frame above it has already
+                // been removed by its own entry. A deactivate (recorded by
+                // '$catch_end') is undone by re-activating that frame, so
+                // backtracking into a guarded goal restores its catcher.
+                if (entry.OldValue.Data == CatchTrailPush)
+                {
+                    _catchFrames.RemoveAt(_catchFrames.Count - 1);
+                }
+                else
+                {
+                    CatchFrame f = _catchFrames[entry.HeapIdx];
+                    f.Active = true;
+                    _catchFrames[entry.HeapIdx] = f;
                 }
                 break;
             default:

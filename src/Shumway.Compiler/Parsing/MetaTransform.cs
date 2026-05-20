@@ -31,16 +31,20 @@ namespace Shumway.Compiler.Parsing;
 /// starts with <c>$</c> when unquoted).</para>
 ///
 /// <para><b>All-solutions and control predicates.</b> The same pass also
-/// rewrites <c>findall/3</c> (chunk 83) and <c>bagof/3</c>, <c>setof/3</c>,
-/// <c>forall/2</c> (chunk 84) when their goal argument is callable at
-/// compile time, so they run in the live engine instead of an isolated
-/// sub-engine. <c>forall(C, A)</c> becomes <c>\+ (C, \+ A)</c>; the
-/// all-solutions predicates become a fail-driven collect loop over a
-/// per-engine solution buffer. <c>bagof/3</c> and <c>setof/3</c> additionally
-/// pair each solution with a witness term — the variables free in the goal
-/// but not in the template and not bound by a <c>^/2</c> wrapper — and
-/// backtrack the grouped result over <c>member/2</c>. A goal still a variable
-/// at compile time is left for the runtime builtin.</para>
+/// rewrites <c>findall/3</c> (chunk 83); <c>bagof/3</c>, <c>setof/3</c>,
+/// <c>forall/2</c> (chunk 84); and <c>catch/3</c> (chunk 85) when their goal
+/// argument is callable at compile time, so they run in the live engine
+/// instead of an isolated sub-engine. <c>forall(C, A)</c> becomes
+/// <c>\+ (C, \+ A)</c>; the all-solutions predicates become a fail-driven
+/// collect loop over a per-engine solution buffer. <c>bagof/3</c> and
+/// <c>setof/3</c> additionally pair each solution with a witness term — the
+/// variables free in the goal but not in the template and not bound by a
+/// <c>^/2</c> wrapper — and backtrack the grouped result over
+/// <c>member/2</c>. <c>catch/3</c> becomes a guarded goal helper plus a
+/// recovery helper, bracketed by <c>'$catch_begin'</c> / <c>'$catch_end'</c>
+/// so the engine's throw handler can roll back to the catch and run the
+/// recovery. A goal still a variable at compile time is left for the
+/// runtime builtin.</para>
 /// </summary>
 public static class MetaTransform
 {
@@ -162,6 +166,18 @@ public static class MetaTransform
                 Position = goal.Position,
             };
             return TransformGoal(rewritten, ref counter, helpers);
+        }
+
+        // catch(Goal, Catcher, Recovery) with a callable Goal and Recovery —
+        // rewrite to an in-engine guarded call (chunk 85). See RewriteCatch.
+        // A variable Goal or Recovery falls through to the runtime builtin.
+        if (goal is CompoundTerm ca
+            && ca.Functor == "catch"
+            && ca.Args.Length == 3
+            && ca.Args[0] is not VarTerm
+            && ca.Args[2] is not VarTerm)
+        {
+            return RewriteCatch(ca.Args[0], ca.Args[1], ca.Args[2], ref counter, helpers);
         }
 
         // Disjunction (A ; B) and if-then-else (A -> B ; C) — both compile
@@ -392,6 +408,78 @@ public static class MetaTransform
             default:
                 return term;
         }
+    }
+
+    /// <summary>Rewrites <c>catch(Goal, Catcher, Recovery)</c> into the
+    /// chunk-85 in-engine form: a call to a synthesised goal helper
+    /// <code>
+    ///   '$catchgoal_N'(AllVars) :-
+    ///       '$catch_begin'(Catcher, '$catchrec_N'(RecVars)),
+    ///       Goal', '$catch_end'.
+    /// </code>
+    /// plus a recovery helper <c>'$catchrec_N'(RecVars) :- Recovery'.</c>
+    ///
+    /// <para>Goal' is compiled inline in the goal helper, so it runs in the
+    /// live engine with full backtracking. <c>'$catch_begin'</c> pushes a
+    /// catch frame snapshotting the machine; on a matching <c>throw/1</c>
+    /// the engine rolls back to the frame and runs the recovery helper.
+    /// <c>'$catch_end'</c> deactivates the frame once the goal succeeds.
+    /// The goal helper takes every variable of the whole <c>catch/3</c> so
+    /// surrounding bindings flow in; the recovery helper takes only the
+    /// recovery goal's variables.</para></summary>
+    private static Term RewriteCatch(
+        Term goal, Term catcher, Term recovery, ref int counter, List<Clause> helpers)
+    {
+        counter++;
+        string goalName = $"$catchgoal_{counter}";
+        string recName = $"$catchrec_{counter}";
+
+        var allVars = new List<string>();
+        var allSeen = new HashSet<string>();
+        CollectNamedVars(goal, allVars, allSeen);
+        CollectNamedVars(catcher, allVars, allSeen);
+        CollectNamedVars(recovery, allVars, allSeen);
+        var recVars = new List<string>();
+        CollectNamedVars(recovery, recVars, new HashSet<string>());
+
+        Term transformedGoal = TransformGoal(goal, ref counter, helpers);
+        Term transformedRecovery = TransformGoal(recovery, ref counter, helpers);
+
+        static Term Invoke(string name, List<string> vars) => vars.Count == 0
+            ? new AtomTerm(name)
+            : new CompoundTerm(name, vars.Select(n => (Term)new VarTerm(n)).ToArray());
+
+        // '$catchgoal_N'(AllVars) :-
+        //   '$catch_begin'(Catcher, '$catchrec_N'(RecVars)), Goal', '$catch_end'.
+        Term goalBody = new CompoundTerm(",", new Term[]
+        {
+            new CompoundTerm("$catch_begin", new Term[]
+            {
+                catcher,
+                Invoke(recName, recVars),
+            }),
+            new CompoundTerm(",", new Term[]
+            {
+                transformedGoal,
+                new AtomTerm("$catch_end"),
+            }),
+        });
+        helpers.Add(new Clause(
+            ClauseKind.Rule,
+            new CompoundTerm(":-", new Term[] { Invoke(goalName, allVars), goalBody }),
+            goal.Position));
+
+        // '$catchrec_N'(RecVars) :- Recovery'.
+        helpers.Add(new Clause(
+            ClauseKind.Rule,
+            new CompoundTerm(":-", new Term[]
+            {
+                Invoke(recName, recVars),
+                transformedRecovery,
+            }),
+            recovery.Position));
+
+        return Invoke(goalName, allVars);
     }
 
     private static void CollectNamedVars(Term t, List<string> order, HashSet<string> seen)

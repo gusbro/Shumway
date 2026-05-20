@@ -24,4 +24,14 @@ public enum TrailType : byte
 
     // 32..63 reserved for mutable globals (b_setval/2 etc., optional Phase 2+).
     MutableSet = 32,
+
+    // 64..79 reserved for control / exception state.
+
+    /// <summary>A catch-frame stack operation (push or deactivate) made by
+    /// <c>'$catch_begin'</c> / <c>'$catch_end'</c>. The entry's
+    /// <see cref="ExtraTrailEntry.HeapIdx"/> field carries the catch-frame
+    /// index and <see cref="ExtraTrailEntry.OldValue"/> the operation to
+    /// reverse, so backtracking past a catch/3 restores the frame stack —
+    /// see <see cref="Engine"/>'s catch-frame methods.</summary>
+    CatchFrame = 64,
 }

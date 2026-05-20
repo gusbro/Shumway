@@ -776,7 +776,7 @@ public sealed class PrologEngine
     {
         InterpreterResult result;
         bool halted = false;
-        try { result = interp.Run(program, 0); }
+        try { result = host.RunCatching(interp, program, engine, () => interp.Run(program, 0)); }
         catch (PrologHaltException hex) { halted = true; host.LastHaltExitCode = hex.ExitCode; result = InterpreterResult.Failed; }
         catch (ShumwayPrologException) { { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; throw; } }
         catch (PrologRuntimeException) { { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; throw; } }
@@ -784,11 +784,135 @@ public sealed class PrologEngine
         while (!halted && result == InterpreterResult.Halted)
         {
             yield return BuildSolution(varNames, varHeapIndices, engine);
-            try { result = interp.Backtrack(program); }
+            try { result = host.RunCatching(interp, program, engine, () => interp.Backtrack(program)); }
             catch (PrologHaltException hex) { halted = true; host.LastHaltExitCode = hex.ExitCode; break; }
             catch (ShumwayPrologException) { { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; throw; } }
             catch (PrologRuntimeException) { { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; throw; } }
         }
+    }
+
+    /// <summary>Runs an interpreter step, intercepting <c>throw/1</c> for
+    /// in-engine <c>catch/3</c> (chunk 85). When the thrown ball unifies
+    /// with the catcher of an active catch frame, the engine rolls back to
+    /// that frame and resumes at its recovery goal; the loop repeats if
+    /// recovery (or the continuation) throws again. A ball that no frame
+    /// catches propagates unchanged. A Core <see cref="PrologRuntimeException"/>
+    /// is funnelled through the same path as its ISO <c>error/2</c> term.</summary>
+    private InterpreterResult RunCatching(
+        BytecodeInterpreter interp, byte[] program, Engine engine,
+        Func<InterpreterResult> action)
+    {
+        Func<InterpreterResult> step = action;
+        while (true)
+        {
+            try
+            {
+                return step();
+            }
+            catch (ShumwayPrologException ex)
+            {
+                int addr = TryCatch(engine, ex.Term, out _);
+                if (addr < 0) throw;
+                step = () => interp.Run(program, addr);
+            }
+            catch (PrologRuntimeException ex)
+            {
+                Term ball = MetaBuiltins.TranslateRuntimeError(ex);
+                int addr = TryCatch(engine, ball, out bool insideCatch);
+                if (addr >= 0)
+                    step = () => interp.Run(program, addr);
+                else if (insideCatch)
+                    // It passed through a catch (just no catcher matched),
+                    // so it propagates as the Prolog-visible error/2 term.
+                    throw new ShumwayPrologException(ball);
+                else
+                    // No catch at all — keep the raw Core exception.
+                    throw;
+            }
+        }
+    }
+
+    /// <summary>Walks the catch-frame stack from the innermost frame out,
+    /// trial-unifying <paramref name="ballTerm"/> with each active frame's
+    /// catcher. On the first match it rolls the machine back to that frame,
+    /// binds the catcher to the ball for real, loads the recovery goal's
+    /// arguments into the registers, and returns the recovery predicate's
+    /// code address. Returns -1 when no frame catches the ball;
+    /// <paramref name="hadActiveFrame"/> then reports whether any active
+    /// catch frame was seen at all (it was just a catcher mismatch) — used
+    /// to decide whether an uncaught runtime error keeps its raw form.</summary>
+    private static int TryCatch(Engine engine, Term ballTerm, out bool hadActiveFrame)
+    {
+        hadActiveFrame = false;
+        for (int i = engine.CatchFrameCount - 1; i >= 0; i--)
+        {
+            CatchFrame frame = engine.GetCatchFrame(i);
+            if (!frame.Active) continue;
+            hadActiveFrame = true;
+
+            // Speculatively unify the ball with the catcher, then undo —
+            // testing the match must not disturb the machine.
+            int savedHeapTop = engine.HeapTop;
+            int savedBindingTrail = engine.BindingTrailTop;
+            int savedExtraTrail = engine.ExtraTrailTop;
+            int savedHb = engine.Hb;
+            engine.SetHb(engine.HeapTop);
+            Cell trialBall = Materializer.MaterializeAsCell(engine, ballTerm);
+            bool matched = engine.UnifyHeapWithCell(frame.CatcherHeapIdx, trialBall);
+            engine.UnwindTrails(savedBindingTrail, savedExtraTrail);
+            engine.SetHeapTop(savedHeapTop);
+            engine.SetHb(savedHb);
+            if (!matched) continue;
+
+            // Commit: roll back everything the guarded goal did, then bind
+            // the catcher to the ball for keeps and prime the recovery call.
+            engine.UnwindToCatchFrame(i);
+            Cell ball = Materializer.MaterializeAsCell(engine, ballTerm);
+            engine.UnifyHeapWithCell(frame.CatcherHeapIdx, ball);
+            return SetupRecoveryCall(engine, frame.RecoveryHeapIdx);
+        }
+        return -1;
+    }
+
+    /// <summary>Decodes the recovery goal cell — a <c>'$catchrec_N'(Vars)</c>
+    /// helper call — into argument registers and returns its code address,
+    /// so the interpreter can be re-entered to run the recovery.</summary>
+    private static int SetupRecoveryCall(Engine engine, int recoveryHeapIdx)
+    {
+        Cell goal = engine.GetHeap(recoveryHeapIdx);
+        if (goal.Tag == Tag.Ref)
+            goal = engine.GetHeap(engine.Deref(goal.AsHeapIndex));
+
+        int functorId;
+        int argBase;
+        int arity;
+        if (goal.Tag == Tag.Atom)
+        {
+            functorId = FunctorTable.Intern(goal.AsAtomId, 0);
+            arity = 0;
+            argBase = -1;
+        }
+        else if (goal.Tag == Tag.Str)
+        {
+            int functorIdx = goal.AsHeapIndex;
+            functorId = engine.GetHeap(functorIdx).AsFunctorId;
+            (_, arity) = FunctorTable.Lookup(functorId);
+            argBase = functorIdx + 1;
+        }
+        else
+        {
+            throw new InvalidOperationException(
+                "catch/3 recovery goal is not callable.");
+        }
+
+        for (int i = 0; i < arity; i++)
+            engine.SetRegister(i, engine.GetHeap(argBase + i));
+
+        var addresses = engine.CurrentFunctorAddresses;
+        if (addresses is not null && addresses.TryGetValue(functorId, out int address))
+            return address;
+        throw new InvalidOperationException(
+            "catch/3 recovery helper predicate has no compiled address.");
     }
 
     /// <summary>Loads Prolog source. The first <c>:- module(name).</c>

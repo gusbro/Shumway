@@ -52,6 +52,10 @@ public static class MetaBuiltins
 
         BuiltinsRegistry.Register("throw", 1, Throw);
         BuiltinsRegistry.Register("catch", 3, Catch);
+        // In-engine catch/3 plumbing (chunk 85) — MetaTransform rewrites a
+        // catch/3 with a callable goal into a goal-helper guarded by these.
+        BuiltinsRegistry.Register("$catch_begin", 2, CatchBegin);
+        BuiltinsRegistry.Register("$catch_end",   0, CatchEnd);
 
         // clause/2 and current_predicate/1 are now Prolog-level predicates
         // defined in the prelude (chunk 40). They call these helpers to
@@ -873,7 +877,7 @@ public static class MetaBuiltins
     /// <summary>Promotes a Core-level <see cref="PrologRuntimeException"/>
     /// into the canonical ISO <c>error(Kind, _)</c> Prolog term that
     /// user-written catchers expect.</summary>
-    private static Term TranslateRuntimeError(PrologRuntimeException re) => re.Kind switch
+    internal static Term TranslateRuntimeError(PrologRuntimeException re) => re.Kind switch
     {
         "evaluation_error" => IsoError.EvaluationError(re.Detail),
         "instantiation_error" => IsoError.InstantiationError(),
@@ -995,6 +999,33 @@ public static class MetaBuiltins
             return true;
         }
         return false;
+    }
+
+    /// <summary><c>'$catch_begin'(Catcher, RecoveryGoal)</c> (chunk 85) —
+    /// opens a catch/3 scope. Copies the catcher and the recovery-goal call
+    /// onto the heap (so they survive a caught throw's heap truncation) and
+    /// pushes a catch frame snapshotting the live machine. Emitted by the
+    /// MetaTransform rewrite of catch/3 as the first goal of the goal
+    /// helper, so the engine reads the recovery continuation off that
+    /// helper's environment header.</summary>
+    public static bool CatchBegin(Engine engine)
+    {
+        int catcherSlot = engine.AllocateHeap(1);
+        engine.SetHeap(catcherSlot, engine.GetRegister(0));
+        int recoverySlot = engine.AllocateHeap(1);
+        engine.SetHeap(recoverySlot, engine.GetRegister(1));
+        engine.PushCatchFrame(catcherSlot, recoverySlot);
+        return true;
+    }
+
+    /// <summary><c>'$catch_end'/0</c> (chunk 85) — closes a catch/3 scope:
+    /// the guarded goal has produced a solution, so the catch frame is
+    /// deactivated and a throw from the continuation will no longer be
+    /// caught here. Backtracking into the guarded goal re-activates it.</summary>
+    public static bool CatchEnd(Engine engine)
+    {
+        engine.DeactivateTopCatchFrame();
+        return true;
     }
 
     /// <summary>Shared helper: walks a sub-engine solution's bindings and
