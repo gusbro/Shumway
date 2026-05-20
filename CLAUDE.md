@@ -196,13 +196,13 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
 - ✓ Per-call Warren argument scheduler (cycle-aware, replaces conservative head-var preservation).
 - ✓ Per-call environment trimming (live-Y analysis on every Call / CallBuiltin).
 
-**Phase 2 — Production-grade optimizations**
-- Multi-argument indexing.
-- Indexing for dynamic predicates (with invalidation on modify).
-- Compiled bundles (.dll) via `PersistedAssemblyBuilder`.
-- Bundler API for .NET integration (in addition to CLI).
-- More aggressive IL inlining.
-- PSTR concatenation lazy (instead of eager).
+**Phase 2 — Production-grade optimizations** — ✅ **Complete** (tagged `phase-2`; closure summary in [`docs/phase-2-closure.md`](docs/phase-2-closure.md)).
+- ✓ Multi-argument indexing (sequential fallback; chunk 67).
+- ✓ Indexing for dynamic predicates (cross-query cache, invalidation on modify; chunk 68).
+- ✓ Compiled bundles (.dll) via `PersistedAssemblyBuilder` (chunk 71).
+- ✓ Bundler API for .NET integration (in addition to CLI; chunk 72).
+- ✓ More aggressive IL inlining (leaf-callee inlining; chunk 69).
+- ✓ PSTR concatenation lazy (single-step; chunk 70).
 
 **Phase 3 — Advanced optimizations**
 - Mode inference (using `:- mode` directives).
