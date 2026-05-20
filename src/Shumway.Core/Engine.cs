@@ -216,8 +216,12 @@ public sealed class Engine
     /// chain.)</para></summary>
     public void TrimEnv(int numLivePerms)
     {
+        // A negative count is the compiler's no-trim sentinel, emitted for a
+        // clause's last goal: there the environment is the caller's (the
+        // clause has no frame) or is about to be deallocated, so trimming it
+        // would corrupt the caller's frame.
+        if (numLivePerms < 0) return;
         if (_e < 0) return;
-        if (numLivePerms < 0) numLivePerms = 0;
         int desired = _e + EnvSize(numLivePerms);
         if (_b >= 0)
         {

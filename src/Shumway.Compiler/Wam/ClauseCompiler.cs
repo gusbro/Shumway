@@ -824,7 +824,13 @@ public sealed class ClauseCompiler
         // goal path is just "call_builtin; (deallocate; ) proceed".
         if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out int builtinId))
         {
-            s.Emitter.EmitCallBuiltin(builtinId, livePermsAfter);
+            // A last goal must not trim the environment. When the clause has
+            // no frame the "current" environment is the caller's, and trimming
+            // it would discard the caller's still-live Y slots; when the clause
+            // does have a frame, the deallocate emitted right after reclaims it
+            // anyway. -1 is the interpreter's no-trim sentinel — the parallel
+            // to Execute, which carries no trim operand at all.
+            s.Emitter.EmitCallBuiltin(builtinId, isLast ? -1 : livePermsAfter);
             if (isLast)
             {
                 if (hasFrame) s.Emitter.EmitDeallocate();
