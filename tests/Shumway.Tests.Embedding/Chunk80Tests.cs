@@ -204,6 +204,23 @@ public class Chunk80Tests
             "put_attr(X, m, _), ( X = bad ; X = good ).").Success);
     }
 
+    [Fact]
+    public void DynamicPredicate_NamedByAReturnedGoal_ResolvesWithoutPublic()
+    {
+        // The hook itself is :- public; the predicate it *names in a
+        // returned goal* (check/1) is :- dynamic but not :- public.
+        // Dynamic predicates are never module-mangled, so the in-engine
+        // meta-call still resolves check/1 by its bare functor.
+        var engine = new PrologEngine();
+        engine.ConsultString(
+            ":- public verify_attributes/4.\n" +
+            ":- dynamic check/1.\n" +
+            "verify_attributes(m, _, V, [check(V)]).\n" +
+            "check(ok).");
+        Assert.True(engine.Query("put_attr(X, m, _), X = ok.").Success);
+        Assert.False(engine.Query("put_attr(X, m, _), X = bad.").Success);
+    }
+
     // ---- domain-constraint worked example ------------------------------
 
     [Fact]
