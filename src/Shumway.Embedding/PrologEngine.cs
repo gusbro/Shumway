@@ -173,6 +173,12 @@ public sealed class PrologEngine
             sub._dynamicClauses[fid] = new List<Clause>(clauses);
         foreach (var (fid, pred) in _dynamicPredicateCache)
             sub._dynamicPredicateCache[fid] = pred;
+        // The sub-engine shares the parent's static program, so the
+        // parent's compiled-static-predicate cache (chunk 82) is valid
+        // for it — pass it through so a meta-call's sub-engine query
+        // doesn't recompile the whole program from scratch.
+        foreach (var (fid, pred) in _staticPredicateCache)
+            sub._staticPredicateCache[fid] = pred;
         _jitIndexProfile.CopyInto(sub._jitIndexProfile);
         return sub;
     }
@@ -557,6 +563,19 @@ public sealed class PrologEngine
         => _dynamicPredicateCache;
     private readonly Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> _dynamicPredicateCache = new();
 
+    /// <summary>Per-engine cache of compiled <em>static</em> predicates
+    /// (chunk 82). Static predicates are immutable between consults, so
+    /// once compiled their bytecode is reused on every subsequent query
+    /// instead of being recompiled from source — which is the dominant
+    /// cost a meta-call (findall / call / forall, each a fresh query
+    /// setup) used to pay. Cleared wholesale by <see cref="ConsultString"/>,
+    /// the only operation that changes the static program. Predicates
+    /// whose bytecode references per-module literal pools are filtered
+    /// out at populate time, exactly as for the dynamic cache.</summary>
+    public IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> StaticPredicateCache
+        => _staticPredicateCache;
+    private readonly Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> _staticPredicateCache = new();
+
     /// <summary>Drops the cached compiled predicate for
     /// <paramref name="functorId"/>. Called by every mutation path
     /// (<see cref="Assertz"/>, <see cref="Asserta"/>,
@@ -754,6 +773,9 @@ public sealed class PrologEngine
     public void ConsultString(string source)
     {
         ArgumentNullException.ThrowIfNull(source);
+        // The static program is about to change — drop the chunk-82
+        // compiled-static-predicate cache so the next query recompiles.
+        _staticPredicateCache.Clear();
         var rawClauses = new ClauseReader(new Lexer(source), _operators, _flags).ReadAll().ToList();
 
         string moduleName = DefaultModuleName;
@@ -1189,6 +1211,17 @@ public sealed class PrologEngine
         // predicate a valid bytecode home.
         EmitEmptyDynamicStubs(allRewritten, queryTerm.Position);
 
+        // Snapshot the functor ids of every clause that exists *before*
+        // the synthetic query clause is added — the static + dynamic
+        // program. Only these are eligible for the chunk-82 static cache:
+        // the __query__ clause, and any auxiliary predicate a transform
+        // or the compiler derives from a query's control constructs, are
+        // query-specific — caching them would let one query's goal leak
+        // into the next.
+        var cacheableFunctors = new HashSet<int>();
+        foreach (var c in allRewritten)
+            cacheableFunctors.Add(HeadFunctorIdOf(c));
+
         // Synthetic query clause — rewrite in the user module's context, but
         // with userLocalsCache (which doesn't include __query__) so the
         // head functor remains bare.
@@ -1235,18 +1268,22 @@ public sealed class PrologEngine
         // ModuleCompiler reuses any cached predicate whose bytecode doesn't
         // reference per-module literal pools.
         IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? skipCompileCache;
-        if (_precompiledClauseCache.Count == 0 && _dynamicPredicateCache.Count == 0)
+        if (_precompiledClauseCache.Count == 0
+            && _dynamicPredicateCache.Count == 0
+            && _staticPredicateCache.Count == 0)
         {
             skipCompileCache = null;
         }
-        else if (_dynamicPredicateCache.Count == 0)
-        {
-            skipCompileCache = _precompiledClauseCache;
-        }
         else
         {
+            // Merge the three caches: bundle precompiled (chunk 55),
+            // static (chunk 82), then dynamic (chunk 68) — dynamic last
+            // so a predicate that turned dynamic wins over a stale static
+            // entry (a consult clears the static cache anyway).
             var merged = new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>(
                 _precompiledClauseCache);
+            foreach (var (fid, pred) in _staticPredicateCache)
+                merged[fid] = pred;
             foreach (var (fid, pred) in _dynamicPredicateCache)
                 merged[fid] = pred;
             skipCompileCache = merged;
@@ -1292,6 +1329,21 @@ public sealed class PrologEngine
             AtomTable.Intern(queryFunctor, permanent: true).Id,
             varNames.Count);
         BytecodeIO.WriteInt32(prefix, callPos + 1, linkResult.Addresses[queryFunctorId]);
+
+        // Cache freshly-compiled static predicates (chunk 82). A predicate
+        // is cacheable only if its functor headed a clause in the static +
+        // dynamic program (cacheableFunctors) — that excludes the
+        // __query__ clause and every query-derived auxiliary — and it is
+        // not dynamic. The literal-pool reusability guard is the same one
+        // the dynamic cache uses.
+        foreach (var pred in module.Predicates)
+        {
+            int fid = pred.FunctorId;
+            if (!cacheableFunctors.Contains(fid) || _dynamicFunctors.Contains(fid)) continue;
+            if (_staticPredicateCache.ContainsKey(fid)) continue;
+            if (Shumway.Compiler.Wam.ModuleCompiler.IsCachedPredicateReusable(pred))
+                _staticPredicateCache[fid] = pred;
+        }
 
         byte[] program = new byte[prefix.Length + linkResult.Bytecode.Length];
         Array.Copy(prefix, program, prefix.Length);
