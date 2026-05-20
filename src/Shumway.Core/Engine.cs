@@ -1509,8 +1509,9 @@ public sealed class Engine
 
     /// <summary>The module ids that carry an attribute on the variable
     /// at <paramref name="varAddr"/> — empty when it isn't attributed.
-    /// Used by the attvar-unification merge.</summary>
-    internal IReadOnlyCollection<int> AttrModules(int varAddr)
+    /// Used by the attvar-unification merge and by <c>copy_term/3</c>'s
+    /// residual-goal projection (chunk 81).</summary>
+    public IReadOnlyCollection<int> AttrModules(int varAddr)
     {
         int addr = Deref(varAddr);
         return _heap[addr].Tag == Tag.AttVar

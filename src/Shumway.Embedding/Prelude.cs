@@ -37,6 +37,8 @@ internal static class Prelude
         :- public foldl/4.
         :- public foldl/5.
         :- public aggregate_all/3.
+        :- public copy_term/3.
+        :- dynamic attribute_goals/4.
 
         member(X, [X|_]).
         member(X, [_|T]) :- member(X, T).
@@ -106,5 +108,22 @@ internal static class Prelude
         '$sum_list'([H|T], Acc, Out) :-
             Acc1 is Acc + H,
             '$sum_list'(T, Acc1, Out).
+
+        % Residual-constraint projection (chunk 81). copy_term/3 copies a
+        % term and, for every attributed variable in it, collects the
+        % goals each module's attribute_goals/4 hook produces — already
+        % re-expressed over the copy's variables. '$copy_term_3_prep'/3
+        % does the structural copy and hands back ag(Module, Attr, Var)
+        % triples; attribute_goals/4 is pre-declared dynamic so user
+        % clauses simply join it and a hook-less program still links.
+        copy_term(Term, Copy, Goals) :-
+            '$copy_term_3_prep'(Term, Copy, AttrInfo),
+            '$attr_goals_of'(AttrInfo, Goals).
+
+        '$attr_goals_of'([], []).
+        '$attr_goals_of'([ag(M, A, V)|Rest], Goals) :-
+            ( attribute_goals(M, A, V, G) -> true ; G = [] ),
+            '$attr_goals_of'(Rest, RestGoals),
+            append(G, RestGoals, Goals).
         """;
 }

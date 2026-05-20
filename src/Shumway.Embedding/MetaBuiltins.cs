@@ -26,6 +26,7 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("setof",   3, Setof);
         BuiltinsRegistry.Register("forall",  2, Forall);
         BuiltinsRegistry.Register("copy_term", 2, CopyTerm);
+        BuiltinsRegistry.Register("$copy_term_3_prep", 3, CopyTerm3Prep);
 
         BuiltinsRegistry.Register("call", 1, Call1);
         BuiltinsRegistry.Register("call", 2, Call2);
@@ -1230,6 +1231,97 @@ public static class MetaBuiltins
         Term original = MaterializeRegister(engine, 0);
         Cell copyCell = Materializer.MaterializeAsCell(engine, original);
         return engine.UnifyRegisterWithCell(1, copyCell);
+    }
+
+    /// <summary><c>'$copy_term_3_prep'(Term, Copy, AttrInfo)</c> — the C#
+    /// half of <c>copy_term/3</c> (chunk 81). Copies <c>Term</c> into
+    /// <c>Copy</c> with fresh plain variables and produces
+    /// <c>AttrInfo</c>: a list of <c>ag(Module, AttrValue, Var)</c>
+    /// triples, one per (attributed variable, module) pair found in
+    /// <c>Term</c>. <c>Copy</c> and <c>AttrInfo</c> are materialised in a
+    /// single pass so a variable shared between the term and an
+    /// attribute value is the <em>same</em> fresh variable in both — the
+    /// prelude's <c>copy_term/3</c> then runs <c>attribute_goals/4</c>
+    /// over the triples, and the residual goals come out expressed over
+    /// <c>Copy</c>'s variables.</summary>
+    public static bool CopyTerm3Prep(Engine engine)
+    {
+        // Distinct attributed variables reachable from the term at X[0].
+        var attvars = new System.Collections.Generic.List<int>();
+        var seen = new System.Collections.Generic.HashSet<int>();
+        CollectAttvars(engine, engine.GetRegister(0), attvars, seen);
+
+        Term original = MaterializeRegister(engine, 0);
+
+        var infos = new System.Collections.Generic.List<Term>();
+        foreach (int vAddr in attvars)
+        {
+            // The same _G<addr> name TermReader.Materialize gives this
+            // attributed variable, so the shared-var-map join lands it on
+            // the copy's variable.
+            var vVar = new VarTerm("_G" + vAddr);
+            foreach (int moduleId in engine.AttrModules(vAddr))
+            {
+                int attrValueIdx = engine.GetAttr(vAddr, moduleId);
+                Term attrValue = TermReader.Materialize(engine, attrValueIdx);
+                string moduleName = AtomTable.GetById(moduleId)?.Name
+                    ?? throw new InvalidOperationException(
+                        $"copy_term/3: module atom id {moduleId} is not registered.");
+                infos.Add(new CompoundTerm("ag", new Term[]
+                    { new AtomTerm(moduleName), attrValue, vVar }));
+            }
+        }
+
+        // One materialisation of Copy + AttrInfo, so a _G name occurring
+        // in both maps to a single fresh variable.
+        Term combined = new CompoundTerm("-", new[] { original, MakeListTerm(infos) });
+        // MaterializeAsCell hands back Ref(strBase) for a compound; the STR
+        // cell at strBase points at the functor, and the two args follow
+        // the functor cell — so the args are at functorIdx+1 / functorIdx+2.
+        Cell combinedCell = Materializer.MaterializeAsCell(engine, combined);
+        int functorIdx = engine.GetHeap(combinedCell.AsHeapIndex).AsHeapIndex;
+        return engine.UnifyRegisterWithHeapAt(1, functorIdx + 1)
+            && engine.UnifyRegisterWithHeapAt(2, functorIdx + 2);
+    }
+
+    /// <summary>Collects the distinct heap addresses of attributed
+    /// variables reachable from <paramref name="cell"/>. The shared
+    /// visited set also guards against a cyclic term looping.</summary>
+    private static void CollectAttvars(Engine engine, Cell cell,
+        System.Collections.Generic.List<int> addrs,
+        System.Collections.Generic.HashSet<int> seen)
+    {
+        if (cell.Tag == Tag.Ref)
+            cell = engine.GetHeap(engine.Deref(cell.AsHeapIndex));
+        switch (cell.Tag)
+        {
+            case Tag.AttVar:
+                int va = cell.AsHeapIndex;
+                if (seen.Add(va)) addrs.Add(va);
+                break;
+            case Tag.Str:
+                int fIdx = cell.AsHeapIndex;
+                if (!seen.Add(fIdx)) break;
+                var (_, arity) = FunctorTable.Lookup(engine.GetHeap(fIdx).AsFunctorId);
+                for (int i = 0; i < arity; i++)
+                    CollectAttvars(engine, engine.GetHeap(fIdx + 1 + i), addrs, seen);
+                break;
+            case Tag.Lis:
+                int h = cell.AsHeapIndex;
+                if (!seen.Add(h)) break;
+                CollectAttvars(engine, engine.GetHeap(h), addrs, seen);
+                CollectAttvars(engine, engine.GetHeap(h + 1), addrs, seen);
+                break;
+        }
+    }
+
+    /// <summary>Builds a proper-list AST term from the given items.</summary>
+    private static Term MakeListTerm(System.Collections.Generic.List<Term> items)
+    {
+        Term list = new AtomTerm("[]");
+        for (int i = items.Count - 1; i >= 0; i--)
+            list = new CompoundTerm(".", new[] { items[i], list });
+        return list;
     }
 
     /// <summary><c>findall(Template, Goal, List)</c> — runs <c>Goal</c> in a
