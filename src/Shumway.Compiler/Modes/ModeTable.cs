@@ -60,6 +60,24 @@ public sealed class ModeTable
         return false;
     }
 
+    /// <summary>True iff <paramref name="functorId"/> has at least one
+    /// mode declaration <em>and every</em> declared mode is
+    /// deterministic (det / semidet). This is the safe condition for
+    /// the chunk-74 cut-append specialisation: when every declared
+    /// usage yields at most one solution, an implicit trailing cut on
+    /// each clause never truncates a solution the caller wanted —
+    /// regardless of which mode the call site picks. A predicate that
+    /// also has a multi / nondet mode fails this test and is left
+    /// un-specialised.</summary>
+    public bool AllModesDeterministic(int functorId)
+    {
+        var modes = ModesFor(functorId);
+        if (modes.Count == 0) return false;
+        foreach (var decl in modes)
+            if (!decl.IsDeterministic) return false;
+        return true;
+    }
+
     /// <summary>Semantic validation pass. <paramref name="definedFunctors"/>
     /// is the set of functor ids the loaded program actually defines
     /// (static or dynamic). Produces:

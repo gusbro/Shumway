@@ -1131,11 +1131,20 @@ public sealed class PrologEngine
         var allRewritten = new List<Clause>();
         HashSet<int>? userLocalsCache = null;
 
+        // Chunk 74 — mode specialization. Built once per query setup; the
+        // transform appends an implicit cut to every clause of a
+        // predicate whose declared modes are all deterministic. Applied
+        // after DCG / meta / phrase expansion so it conjoins onto the
+        // final plain-rule body.
+        var modeTable = Modes;
+
         foreach (var (name, manifest) in _modules)
         {
             var transformed = DcgTransform.Apply(manifest.Clauses);
             transformed = MetaTransform.Apply(transformed);
             transformed = PhraseTransform.Apply(transformed);
+            transformed = Shumway.Compiler.Modes.ModeSpecializationTransform.Apply(
+                transformed, modeTable);
 
             var locals = ComputeLocalFunctors(transformed, manifest.PublicFunctors);
             if (name == DefaultModuleName) userLocalsCache = locals;
@@ -1157,6 +1166,8 @@ public sealed class PrologEngine
                 if (clauses.Count == 0) continue;
                 var transformed = PhraseTransform.Apply(
                     MetaTransform.Apply(DcgTransform.Apply(clauses)));
+                transformed = Shumway.Compiler.Modes.ModeSpecializationTransform.Apply(
+                    transformed, modeTable);
                 foreach (var clause in transformed)
                     allRewritten.Add(ModuleRewrite.Rewrite(clause, dynCtx));
             }
