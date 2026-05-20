@@ -427,6 +427,33 @@ public sealed class PrologEngine
                 _precompiledClauseCache[pred.FunctorId] = pred;
             }
         }
+
+        // Chunk 71: when an entry carries a persisted-IL .dll blob,
+        // load the assembly in-memory and bind each pre-emitted method
+        // as a PredicateDelegate. This skips the Sigil emit step that
+        // IlPromotion.Warm would otherwise run and surfaces the
+        // already-JIT-able IL directly to the engine.
+        foreach (var entry in bundle.Entries)
+        {
+            if (entry.CompiledIl is null || entry.CompiledIl.Length == 0) continue;
+            var asm = System.Reflection.Assembly.Load(entry.CompiledIl);
+            var type = asm.GetType(Shumway.Compiler.Il.PersistedIlBuilder.TypeName);
+            if (type is null) continue;
+            foreach (var method in type.GetMethods(
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static))
+            {
+                if (!method.Name.StartsWith("P_")) continue;
+                // Method names are "P_{functorId}_{sanitisedName}".
+                int firstUnderscore = method.Name.IndexOf('_');
+                int secondUnderscore = method.Name.IndexOf('_', firstUnderscore + 1);
+                if (firstUnderscore < 0 || secondUnderscore < 0) continue;
+                if (!int.TryParse(
+                    method.Name.AsSpan(firstUnderscore + 1, secondUnderscore - firstUnderscore - 1),
+                    out int functorId)) continue;
+                var del = method.CreateDelegate<Shumway.Compiler.Il.PredicateDelegate>();
+                IlPromotion.RegisterBoundDelegate(functorId, del);
+            }
+        }
     }
 
     /// <summary>Per-engine cache of precompiled predicates from any

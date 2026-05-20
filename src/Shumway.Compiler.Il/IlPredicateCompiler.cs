@@ -353,18 +353,68 @@ public sealed class IlPredicateCompiler
             // No meta-CP needed: pure head match + tail call (or no body).
             var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
                 $"ShumwayIl_{predicate.FunctorId}_{predicate.Arity}");
-            var failLabel = emit.DefineLabel("fail");
-            EmitClauseBody(emit, predicate.Bytecode, 0, predicate.Bytecode.Length,
-                failLabel, predicate.CallSites,
-                callSiteIndexCounter: null, resumeLabels: null,
-                calleeMap: calleeMap);
-            emit.MarkLabel(failLabel);
-            emit.LoadConstant(false);
-            emit.Return();
+            EmitSingleClauseLeafBody(emit, predicate, calleeMap);
             return emit.CreateDelegate();
         }
         lock (IndexedDelegateHolder.RegistrationLock)
             return CompileSingleClauseWithMetaCpUnlocked(predicate, callSiteCount, calleeMap);
+    }
+
+    /// <summary>The shared single-clause-leaf body emit used by both the
+    /// runtime path (<see cref="CompileSingleClause"/>, which builds a
+    /// <c>DynamicMethod</c>) and the chunk-71 persisted-assembly path
+    /// (<see cref="EmitToMethodBuilder"/>, which builds a static method
+    /// on a <see cref="System.Reflection.Emit.TypeBuilder"/>). Pure head
+    /// match + optional tail call, no IL choice points, no
+    /// self-reference into <see cref="IndexedDelegateHolder"/>.</summary>
+    private static void EmitSingleClauseLeafBody(
+        Sigil.Emit<PredicateDelegate> emit,
+        CompiledPredicate predicate,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+    {
+        var failLabel = emit.DefineLabel("fail");
+        EmitClauseBody(emit, predicate.Bytecode, 0, predicate.Bytecode.Length,
+            failLabel, predicate.CallSites,
+            callSiteIndexCounter: null, resumeLabels: null,
+            calleeMap: calleeMap);
+        emit.MarkLabel(failLabel);
+        emit.LoadConstant(false);
+        emit.Return();
+    }
+
+    /// <summary>Chunk 71: defines a static method named
+    /// <paramref name="methodName"/> on <paramref name="typeBuilder"/>
+    /// and emits the predicate's IL into it. Returns the
+    /// <c>MethodBuilder</c> so the caller can later bake the type and
+    /// resolve the method via reflection. Only the single-clause-leaf
+    /// shape is supported in this chunk — the same shape
+    /// <see cref="PersistedIlBuilder.CanPersist"/> filters on.
+    /// Multi-clause / meta-CP shapes need static delegate-slot fields
+    /// for self-reference, which a later chunk extends.</summary>
+    public System.Reflection.Emit.MethodBuilder EmitPersistedMethod(
+        System.Reflection.Emit.TypeBuilder typeBuilder,
+        string methodName,
+        CompiledPredicate predicate,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
+    {
+        ArgumentNullException.ThrowIfNull(typeBuilder);
+        ArgumentNullException.ThrowIfNull(methodName);
+        ArgumentNullException.ThrowIfNull(predicate);
+        if (predicate.ClauseCount != 1)
+            throw new NotSupportedException(
+                "Persisted-IL emission supports single-clause predicates only in chunk 71.");
+        int callSiteCount = CountNonTailCallOpcodes(predicate.Bytecode);
+        if (callSiteCount != 0)
+            throw new NotSupportedException(
+                "Persisted-IL emission supports leaf single-clause predicates only in chunk 71.");
+
+        var emit = Sigil.Emit<PredicateDelegate>.BuildMethod(
+            typeBuilder,
+            methodName,
+            System.Reflection.MethodAttributes.Public | System.Reflection.MethodAttributes.Static,
+            System.Reflection.CallingConventions.Standard);
+        EmitSingleClauseLeafBody(emit, predicate, calleeMap);
+        return emit.CreateMethod();
     }
 
     private PredicateDelegate CompileSingleClauseWithMetaCpUnlocked(

@@ -124,6 +124,20 @@ public sealed class IlPromotionStore
     /// an IL delegate. Diagnostic surface for tests.</summary>
     public bool IsPromoted(int functorId) => _delegates.ContainsKey(functorId);
 
+    /// <summary>Binds a pre-built <see cref="PredicateDelegate"/>
+    /// (typically created from a persisted-IL <c>MethodInfo</c> by
+    /// <see cref="PrologEngine.LoadBundle(Bundle)"/>) for the given
+    /// functor. Subsequent calls into the predicate dispatch through
+    /// the bound delegate without going through the Sigil emit path.
+    /// Idempotent: a second registration with the same functor id is
+    /// silently dropped — the first delegate wins.</summary>
+    public void RegisterBoundDelegate(int functorId, PredicateDelegate del)
+    {
+        if (_delegates.ContainsKey(functorId)) return;
+        if (_unpromotable.Contains(functorId)) _unpromotable.Remove(functorId);
+        _delegates[functorId] = del;
+    }
+
     /// <summary>True when <paramref name="functorId"/> has been examined
     /// and rejected by the IL compiler — no further compile attempts
     /// will fire for it.</summary>

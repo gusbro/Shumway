@@ -48,7 +48,17 @@ public static class BundleReader
                         $"Bundle: truncated compiled-bytecode section (expected "
                         + $"{compiledLength} bytes, got {compiled.Length}).");
             }
-            entries[i] = new BundleEntry(name, source, compiled);
+            uint compiledIlLength = br.ReadUInt32();
+            byte[]? compiledIl = null;
+            if (compiledIlLength > 0)
+            {
+                compiledIl = br.ReadBytes((int)compiledIlLength);
+                if (compiledIl.Length != compiledIlLength)
+                    throw new InvalidDataException(
+                        $"Bundle: truncated compiled-IL section (expected "
+                        + $"{compiledIlLength} bytes, got {compiledIl.Length}).");
+            }
+            entries[i] = new BundleEntry(name, source, compiled, compiledIl);
         }
         return new Bundle(entries);
     }

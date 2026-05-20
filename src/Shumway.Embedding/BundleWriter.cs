@@ -21,14 +21,18 @@ namespace Shumway.Embedding;
 /// </summary>
 public static class BundleWriter
 {
-    public static void WriteToFile(Bundle bundle, string path, bool includeCompiledBytecode = false)
+    public static void WriteToFile(Bundle bundle, string path,
+        bool includeCompiledBytecode = false,
+        bool includeCompiledIl = false)
     {
         ArgumentNullException.ThrowIfNull(bundle);
         ArgumentNullException.ThrowIfNull(path);
-        File.WriteAllBytes(path, ToBytes(bundle, includeCompiledBytecode));
+        File.WriteAllBytes(path, ToBytes(bundle, includeCompiledBytecode, includeCompiledIl));
     }
 
-    public static byte[] ToBytes(Bundle bundle, bool includeCompiledBytecode = false)
+    public static byte[] ToBytes(Bundle bundle,
+        bool includeCompiledBytecode = false,
+        bool includeCompiledIl = false)
     {
         ArgumentNullException.ThrowIfNull(bundle);
         ValidateOrThrow(bundle);
@@ -37,14 +41,22 @@ public static class BundleWriter
         // carry one, synthesise it now from the source — keeping the writer
         // ergonomic for hand-built bundles (the typical case in tests / CLI).
         BundleEntry[] effective = bundle.Entries.ToArray();
-        if (includeCompiledBytecode)
+        if (includeCompiledBytecode || includeCompiledIl)
         {
             for (int i = 0; i < effective.Length; i++)
-                if (effective[i].CompiledBytecode is null)
-                    effective[i] = new BundleEntry(
-                        effective[i].ModuleName,
-                        effective[i].Source,
-                        CompileEntryToBytes(effective[i].Source));
+            {
+                byte[]? compiledBytecode = effective[i].CompiledBytecode;
+                byte[]? compiledIl = effective[i].CompiledIl;
+                if (includeCompiledBytecode && compiledBytecode is null)
+                    compiledBytecode = CompileEntryToBytes(effective[i].Source);
+                if (includeCompiledIl && compiledIl is null)
+                    compiledIl = CompileEntryToIl(effective[i]);
+                effective[i] = new BundleEntry(
+                    effective[i].ModuleName,
+                    effective[i].Source,
+                    compiledBytecode,
+                    compiledIl);
+            }
         }
 
         using var ms = new MemoryStream();
@@ -59,9 +71,49 @@ public static class BundleWriter
             byte[] compiled = entry.CompiledBytecode ?? Array.Empty<byte>();
             bw.Write((uint)compiled.Length);
             bw.Write(compiled);
+            byte[] compiledIl = entry.CompiledIl ?? Array.Empty<byte>();
+            bw.Write((uint)compiledIl.Length);
+            bw.Write(compiledIl);
         }
         bw.Flush();
         return ms.ToArray();
+    }
+
+    /// <summary>Compiles <paramref name="entry"/>'s source through the WAM
+    /// pipeline, then through
+    /// <see cref="Shumway.Compiler.Il.PersistedIlBuilder"/> to produce a
+    /// .NET assembly containing one static method per IL-eligible
+    /// predicate. The resulting .dll bytes embed into the bundle and the
+    /// load path uses them to bind <c>PredicateDelegate</c>s without
+    /// re-running the Sigil pipeline at consult time.</summary>
+    private static byte[] CompileEntryToIl(BundleEntry entry)
+    {
+        Shumway.Builtins.StandardBuiltins.EnsureRegistered();
+        // Run through a full PrologEngine.ConsultString + warm-up so the
+        // module rewriter, dynamic-functor routing, prelude, and per-query
+        // synthetic launcher all agree on which functor ids end up
+        // representing each predicate. PersistedIlBuilder then sees the
+        // same CompiledPredicate the runtime path would compile.
+        var engine = new Shumway.Embedding.PrologEngine();
+        engine.ConsultString(entry.Source);
+        engine.Query("true.");
+        var predicates = new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>();
+        foreach (var (fid, pred) in engine.PrecompiledClauseCache)
+            predicates[fid] = pred;
+        // Cache wasn't populated by query? Fall through to an empty
+        // assembly (the load path simply finds no methods to bind).
+        var (dllBytes, _) = Shumway.Compiler.Il.PersistedIlBuilder.Build(
+            "ShumwayCompiledIl_" + SanitiseModuleName(entry.ModuleName),
+            predicates);
+        return dllBytes;
+    }
+
+    private static string SanitiseModuleName(string raw)
+    {
+        var sb = new System.Text.StringBuilder(raw.Length);
+        foreach (char c in raw)
+            sb.Append(char.IsLetterOrDigit(c) || c == '_' ? c : '_');
+        return sb.ToString();
     }
 
     /// <summary>Compiles every entry through a fresh engine and runs a tiny

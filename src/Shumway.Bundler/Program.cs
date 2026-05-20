@@ -57,7 +57,8 @@ internal static class Program
             try
             {
                 BundleWriter.WriteToFile(bundle, opts.OutputPath,
-                    includeCompiledBytecode: opts.WithBytecode);
+                    includeCompiledBytecode: opts.WithBytecode,
+                    includeCompiledIl: opts.WithCompiledIl);
             }
             catch (Exception ex)
             {
@@ -137,6 +138,7 @@ internal static class Program
         public List<EntryPointSpec> EntryPoints { get; } = new();
         public bool Verbose { get; set; }
         public bool WithBytecode { get; set; }
+        public bool WithCompiledIl { get; set; }
     }
 
     private readonly record struct EntryPointSpec(string Name, int Arity);
@@ -183,6 +185,14 @@ internal static class Program
                     // promotion store so the first call into each eligible
                     // predicate already hits IL — no warm-up window.
                     opts.WithBytecode = true;
+                    break;
+
+                case "--with-compiled-il":
+                    // Chunk 71: emit a persisted .NET assembly holding the
+                    // IL for every IL-eligible predicate. LoadBundle loads
+                    // the .dll and binds each method as a PredicateDelegate
+                    // — no Sigil emit at consult time.
+                    opts.WithCompiledIl = true;
                     break;
 
                 default:
@@ -238,6 +248,11 @@ internal static class Program
             + "      --with-bytecode           Embed pre-compiled WAM bytecode in the\n"
             + "                                bundle. LoadBundle uses it to pre-warm\n"
             + "                                Tier-1 IL — first call hits IL.\n"
+            + "      --with-compiled-il        Emit a persisted .NET assembly holding\n"
+            + "                                Tier-1 IL for every IL-eligible predicate\n"
+            + "                                and embed it in the bundle. LoadBundle\n"
+            + "                                binds methods directly — no Sigil emit\n"
+            + "                                at consult time.\n"
             + "  -v, --verbose                 Verbose progress output to stderr.\n"
             + "  -h, --help                    Show this message.");
     }

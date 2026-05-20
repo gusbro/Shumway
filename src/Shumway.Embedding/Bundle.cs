@@ -22,17 +22,30 @@ public sealed class Bundle
 /// through the standard consult path. The compiled payload is the
 /// <see cref="CompiledModuleCodec"/> output for the module's clauses; when
 /// present, future runtime paths can use it to skip parser / compiler work
-/// at consult time.</summary>
+/// at consult time.
+///
+/// <para><see cref="CompiledIl"/> (chunk 71) optionally holds a persisted
+/// .NET assembly (.dll bytes) emitted by
+/// <c>Shumway.Compiler.Il.PersistedIlBuilder</c>. When present, the load
+/// path resolves each emitted predicate's <c>MethodInfo</c> and binds it
+/// directly as a <c>PredicateDelegate</c>, skipping the Sigil emission
+/// pass that warms <see cref="PrologEngine.IlPromotion"/> from the
+/// bytecode blob alone.</para></summary>
 public sealed class BundleEntry
 {
     public string ModuleName { get; }
     public string Source { get; }
     public byte[]? CompiledBytecode { get; }
+    public byte[]? CompiledIl { get; }
 
-    public BundleEntry(string moduleName, string source, byte[]? compiledBytecode = null)
+    public BundleEntry(
+        string moduleName, string source,
+        byte[]? compiledBytecode = null,
+        byte[]? compiledIl = null)
     {
         ModuleName = moduleName;
         Source = source;
         CompiledBytecode = compiledBytecode;
+        CompiledIl = compiledIl;
     }
 }
