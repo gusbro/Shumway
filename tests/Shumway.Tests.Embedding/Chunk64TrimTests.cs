@@ -18,6 +18,13 @@ namespace Shumway.Tests.Embedding;
 /// indexed try/retry/trust CPs, and IL choice points — they all
 /// share the same <c>_b</c> chain, so reading <c>_b + CpSize(arity)</c>
 /// gives the right safety floor for any kind.</para>
+///
+/// <para>A later fix in the same area stops env trimming from running
+/// on a clause's <em>last</em> goal: there the environment is the
+/// caller's (a last goal allocates no frame) or is about to be
+/// deallocated, so trimming it discarded the caller's still-live Y
+/// slots. The last two tests guard that fix — a transform-free repro
+/// and the findall/3 pattern that first surfaced it.</para>
 /// </summary>
 public class Chunk64TrimTests
 {
@@ -81,5 +88,43 @@ public class Chunk64TrimTests
         // 2 * 2 * 2 = 8 solutions, each one tested via a chain of
         // multi-clause backtrack returns.
         Assert.Equal(8, engine.QueryAll("a(X), b(Y), c(Z).").Count());
+    }
+
+    [Fact]
+    public void Trim_OnLastGoalBuiltin_DoesNotCorruptTheCallerFrame()
+    {
+        // Regression: a clause whose last goal is a builtin (=/2 here)
+        // allocates no frame, so its "current" environment is the
+        // caller's. ClauseCompiler used to emit that CallBuiltin with a
+        // live-permanents trim operand anyway, and the trim shrank the
+        // caller's environment, discarding its still-live Y slots — so
+        // the third goal here read a corrupted L. The fix emits the
+        // no-trim sentinel for a last goal.
+        var engine = new PrologEngine();
+        engine.ConsultString(
+            ":- public ff/2.\n" +
+            "ff(N, _) :- member(N, [1,2]), fail.\n" +
+            "ff(_, L) :- L = [1,2].\n" +
+            ":- public gg/2.\n" +
+            "gg(M, _) :- member(M, [3,4]), fail.\n" +
+            "gg(_, K) :- K = [3,4].\n");
+        // L is bound by ff and must survive the gg call to reach the
+        // L == [1,2] test; likewise K must survive nothing but still
+        // not be corrupted by ff's earlier trim.
+        Assert.True(engine.Query("ff(N, L), gg(M, K), L == [1,2].").Success);
+        Assert.True(engine.Query("ff(N, L), gg(M, K), K == [3,4].").Success);
+    }
+
+    [Fact]
+    public void Trim_TwoFindallsThenAGoal_KeepTheirResults()
+    {
+        // The same bug reached through findall/3: its synthesised
+        // collect-loop helper clauses end in builtin goals, so two
+        // findalls followed by a goal reading the first result used to
+        // fail. This is the pattern that first surfaced the bug.
+        var engine = new PrologEngine();
+        Assert.True(engine.Query(
+            "findall(N, member(N, [1,2]), L), " +
+            "findall(M, member(M, [3,4]), K), L == [1,2].").Success);
     }
 }
