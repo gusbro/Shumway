@@ -105,7 +105,7 @@ Tags defined in v1:
 | 0x7 | BIGINT   | Id in per-engine bigint table |
 | 0x8 | STRING   | Id in per-engine string table (opaque, non-list) |
 | 0x9 | FOREIGN  | Id in per-engine foreign object table |
-| 0xA | ATTVAR   | (reserved, not implemented in v1) |
+| 0xA | ATTVAR   | Heap index to own home cell (Phase 4, chunk 77) |
 | 0xB | PSTR     | Partial string (Scryer-style, UTF-16) |
 
 The heap is fully blittable. The .NET GC never scans it for references.

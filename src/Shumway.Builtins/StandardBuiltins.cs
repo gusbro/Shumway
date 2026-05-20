@@ -52,6 +52,12 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("compound",1, TypeBuiltins.IsCompound);
         BuiltinsRegistry.Register("is_list", 1, TypeBuiltins.IsList);
         BuiltinsRegistry.Register("ground",  1, TypeBuiltins.IsGround);
+        BuiltinsRegistry.Register("attvar",  1, TypeBuiltins.IsAttVar);
+
+        // Attributed variables (chunk 77, Phase 4).
+        BuiltinsRegistry.Register("put_attr", 3, AttvarBuiltins.PutAttr);
+        BuiltinsRegistry.Register("get_attr", 3, AttvarBuiltins.GetAttr);
+        BuiltinsRegistry.Register("del_attr", 2, AttvarBuiltins.DelAttr);
 
         // I/O.
         BuiltinsRegistry.Register("write",      1, IOBuiltins.Write);

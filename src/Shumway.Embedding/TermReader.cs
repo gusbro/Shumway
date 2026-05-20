@@ -26,7 +26,10 @@ public static class TermReader
 
         return cell.Tag switch
         {
-            Tag.Ref => new VarTerm($"_G{derefAddr}"),
+            // An attributed variable is materialized as a plain unbound
+            // variable — its attributes are engine-side metadata, not
+            // part of the term's AST shape. (chunk 77)
+            Tag.Ref or Tag.AttVar => new VarTerm($"_G{derefAddr}"),
             Tag.Atom => new AtomTerm(NameOfAtom(cell.AsAtomId)),
             Tag.Int => new IntTerm(cell.AsInt),
             Tag.BigInt => new BigIntTerm(engine.AsBigInt(cell)),

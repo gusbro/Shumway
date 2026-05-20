@@ -48,7 +48,7 @@ Bits 59..0:  payload (60 bits, interpretation depends on tag)
 | 0x7 | BIGINT   | Id in the per-engine BigInteger table. |
 | 0x8 | STRING   | Id in the per-engine string table (opaque, non-list). |
 | 0x9 | FOREIGN  | Id in the per-engine foreign object table. |
-| 0xA | ATTVAR   | (reserved, not used in v1) |
+| 0xA | ATTVAR   | Heap index to the variable's own home cell (a self-referencing variable, like REF). Implemented in Phase 4 — see chunk 77. |
 | 0xB | PSTR     | Partial string header (see PSTR design doc). |
 | 0xC..0xF | (reserved) | Available for future extensions. |
 
@@ -200,7 +200,7 @@ public enum Tag : byte
     BigInt = 0x7,
     String = 0x8,
     Foreign = 0x9,
-    AttVar = 0xA,  // reserved, not implemented in v1
+    AttVar = 0xA,  // attributed variable (Phase 4, chunk 77): payload = own home index
     Pstr = 0xB,
     // 0xC..0xF reserved
 }

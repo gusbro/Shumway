@@ -549,7 +549,12 @@ public sealed class BytecodeInterpreter
                     }
                     else
                     {
-                        _engine.SetRegister(target, _engine.GetHeap(ptr));
+                        // A bare ATTVAR (chunk 77) at the unify pointer
+                        // is a variable at its home — capture it as a
+                        // REF to that home, never a copied ATTVAR cell.
+                        Cell src = _engine.GetHeap(ptr);
+                        _engine.SetRegister(target,
+                            src.Tag == Tag.AttVar ? Cell.Ref(ptr) : src);
                     }
                     _engine.SetUnifyPointer(ptr + 1);
                     _engine.AdvancePc(5);
@@ -567,7 +572,11 @@ public sealed class BytecodeInterpreter
                     }
                     else
                     {
-                        _engine.SetY(target, _engine.GetHeap(ptr));
+                        // See UnifyVariableX: a bare ATTVAR is captured
+                        // as a REF to its home. (chunk 77)
+                        Cell src = _engine.GetHeap(ptr);
+                        _engine.SetY(target,
+                            src.Tag == Tag.AttVar ? Cell.Ref(ptr) : src);
                     }
                     _engine.SetUnifyPointer(ptr + 1);
                     _engine.AdvancePc(5);

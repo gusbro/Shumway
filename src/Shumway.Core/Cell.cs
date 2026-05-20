@@ -86,6 +86,16 @@ public readonly struct Cell : IEquatable<Cell>
     public static Cell Foreign(int tableId)
         => new(((long)Tag.Foreign << TagShift) | (uint)tableId);
 
+    /// <summary>An attributed variable (chunk 77): tag 0xA, payload =
+    /// the heap index of the variable's own home cell — exactly like a
+    /// self-referencing <see cref="Ref"/>, but tagged ATTVAR so
+    /// <see cref="Deref"/> stops at it instead of following it. The
+    /// home index is also the key into the engine's attribute table,
+    /// so a bare ATTVAR cell is fully self-describing (its identity
+    /// and its attributes are both reachable from the payload alone).</summary>
+    public static Cell AttVar(int homeHeapIdx)
+        => new(((long)Tag.AttVar << TagShift) | (uint)homeHeapIdx);
+
     // ---------- Float (spans two cells) ----------
 
     /// <summary>

@@ -37,6 +37,10 @@ public static class TermRenderer
         switch (cell.Tag)
         {
             case Tag.Ref:
+            case Tag.AttVar:
+                // An attributed variable is still an unbound variable —
+                // it renders exactly like a plain one. Its attributes
+                // are not part of its written form. (chunk 77)
                 output.Write("_G");
                 output.Write(derefAddr.ToString(CultureInfo.InvariantCulture));
                 break;
@@ -76,6 +80,10 @@ public static class TermRenderer
 
     private static int Resolve(Engine engine, ref Cell cell)
     {
+        // A bare ATTVAR cell (chunk 77) carries its own home index as
+        // payload — surface that as the deref address and leave the
+        // AttVar-tagged cell for the caller's switch.
+        if (cell.Tag == Tag.AttVar) return cell.AsHeapIndex;
         if (cell.Tag != Tag.Ref) return -1;
         int addr = engine.Deref(cell.AsHeapIndex);
         cell = engine.GetHeap(addr);

@@ -42,6 +42,21 @@ public sealed class Engine
     private readonly List<string> _stringTable = new();
     private readonly List<object?> _foreignTable = new();
 
+    // ----- Attributed-variable storage (chunk 77, Phase 4) -----
+    // Maps the heap home index of an attributed variable to its
+    // attribute record — itself a map from a module's atom id to the
+    // heap index of that module's attribute value. An ATTVAR cell's
+    // payload is its home index (like a self-REF), which is also its
+    // key here, so a bare ATTVAR cell is fully self-describing.
+    // Backtracking reverts the ATTVAR cell to a plain REF (via the
+    // ValueChange trail); the orphaned record is left in place and is
+    // overwritten outright if the heap slot is later reused.
+    private readonly Dictionary<int, Dictionary<int, int>> _attrTable = new();
+    // Side log for AttrModify trail entries: each records (attvar home
+    // index, module id, previous value heap index — or -1 when the
+    // module was absent). ExtraTrailEntry.HeapIdx indexes into this list.
+    private readonly List<(int Home, int Module, int OldValue)> _attrTrailLog = new();
+
     private int _stackTop;
     private int _extraTrailTop;
 
@@ -593,19 +608,28 @@ public sealed class Engine
         Cell regCell = _registers[regIdx];
         int finalAddr = -1;
         Cell finalCell = regCell;
-        if (regCell.Tag == Tag.Ref)
+        // A register may hold a REF or — once chunk 77's attvars exist —
+        // a bare ATTVAR cell (its payload is its own home index, so
+        // Deref of it is the identity). Both name a heap home.
+        if (regCell.Tag is Tag.Ref or Tag.AttVar)
         {
             finalAddr = Deref(regCell.AsHeapIndex);
             finalCell = _heap[finalAddr];
         }
 
-        if (finalCell.Tag == Tag.Ref)
+        if (finalCell.Tag == Tag.Ref || finalCell.Tag == Tag.AttVar)
         {
-            // Unbound — write mode.
+            // Unbound (plain or attributed) — write mode. An attributed
+            // variable binds to the fresh structure via the
+            // AttVar-aware bind so backtracking restores the ATTVAR
+            // cell; chunk 78 will fire its unify hook here.
             int h = AllocateHeap(2);
             _heap[h] = Cell.Str(h + 1);
             _heap[h + 1] = Cell.Functor(functorId);
-            Bind(finalAddr, Cell.Ref(h));
+            if (finalCell.Tag == Tag.AttVar)
+                BindAttVarToValue(finalAddr, h, _heap[h]);
+            else
+                Bind(finalAddr, Cell.Ref(h));
             _writeMode = true;
             _unifyPointer = h + 2;
             return true;
@@ -665,7 +689,13 @@ public sealed class Engine
         }
         else
         {
-            _registers[slot] = _heap[ptr];
+            // A bare ATTVAR at the unify pointer is a variable at its
+            // home; capture it as a REF to that home, never as a copied
+            // ATTVAR cell (a copy's payload would no longer name its
+            // own slot). A plain REF copies fine — it's already a
+            // pointer. (chunk 77)
+            Cell src = _heap[ptr];
+            _registers[slot] = src.Tag == Tag.AttVar ? Cell.Ref(ptr) : src;
         }
         _unifyPointer = ptr + 1;
     }
@@ -692,7 +722,10 @@ public sealed class Engine
         }
         else
         {
-            SetY(slot, _heap[ptr]);
+            // See UnifyVariableX: a bare ATTVAR is captured as a REF to
+            // its home so its identity survives the copy. (chunk 77)
+            Cell src = _heap[ptr];
+            SetY(slot, src.Tag == Tag.AttVar ? Cell.Ref(ptr) : src);
         }
         _unifyPointer = ptr + 1;
     }
@@ -745,17 +778,22 @@ public sealed class Engine
         Cell regCell = _registers[regIdx];
         int finalAddr = -1;
         Cell finalCell = regCell;
-        if (regCell.Tag == Tag.Ref)
+        // REF or a bare ATTVAR cell (chunk 77) — both name a heap home;
+        // Deref of an ATTVAR is the identity since it isn't a REF.
+        if (regCell.Tag is Tag.Ref or Tag.AttVar)
         {
             finalAddr = Deref(regCell.AsHeapIndex);
             finalCell = _heap[finalAddr];
         }
 
-        if (finalCell.Tag == Tag.Ref)
+        if (finalCell.Tag == Tag.Ref || finalCell.Tag == Tag.AttVar)
         {
             int h = AllocateHeap(1);
             _heap[h] = Cell.Lis(h + 1);
-            Bind(finalAddr, Cell.Ref(h));
+            if (finalCell.Tag == Tag.AttVar)
+                BindAttVarToValue(finalAddr, h, _heap[h]);
+            else
+                Bind(finalAddr, Cell.Ref(h));
             _writeMode = true;
             _unifyPointer = h + 1;
             return true;
@@ -772,7 +810,9 @@ public sealed class Engine
     private int MaterializeRegister(int regIdx)
     {
         Cell c = _registers[regIdx];
-        if (c.Tag == Tag.Ref) return c.AsHeapIndex;
+        // REF and ATTVAR (chunk 77) both carry a heap home index in
+        // their payload, so either already names a heap cell.
+        if (c.Tag is Tag.Ref or Tag.AttVar) return c.AsHeapIndex;
         int slot = AllocateHeap(1);
         _heap[slot] = c;
         return slot;
@@ -782,7 +822,7 @@ public sealed class Engine
     {
         int stackIdx = _e + EnvY1Offset + permSlot;
         Cell c = _stack[stackIdx];
-        if (c.Tag == Tag.Ref) return c.AsHeapIndex;
+        if (c.Tag is Tag.Ref or Tag.AttVar) return c.AsHeapIndex;
         int slot = AllocateHeap(1);
         _heap[slot] = c;
         return slot;
@@ -1382,6 +1422,104 @@ public sealed class Engine
         _bindingTrail[_bindingTrailTop++] = heapIdx;
     }
 
+    // ============================================================================
+    // Attributed variables (chunk 77, Phase 4)
+    // ============================================================================
+
+    /// <summary>True iff the deref'd cell at <paramref name="heapAddr"/>
+    /// is an attributed variable.</summary>
+    public bool IsAttVar(int heapAddr) => _heap[Deref(heapAddr)].Tag == Tag.AttVar;
+
+    /// <summary>Number of attribute records allocated — diagnostic surface.</summary>
+    internal int AttrTableCount => _attrTable.Count;
+
+    /// <summary>Attaches (or replaces) the attribute for
+    /// <paramref name="moduleId"/> on the variable at
+    /// <paramref name="varAddr"/>, whose value lives at
+    /// <paramref name="valueHeapIdx"/>. A plain unbound variable is
+    /// promoted to an attributed variable; an existing attributed
+    /// variable's record is updated. Every mutation is trailed so it
+    /// reverts on backtracking. Throws when the target isn't a
+    /// variable.</summary>
+    public void PutAttr(int varAddr, int moduleId, int valueHeapIdx)
+    {
+        int addr = Deref(varAddr);
+        Cell cell = _heap[addr];
+        if (cell.Tag == Tag.Ref && cell.AsHeapIndex == addr)
+        {
+            // Plain unbound variable → promote to an attributed
+            // variable. The cell change is trailed as a ValueChange so
+            // backtracking restores the plain REF. A fresh record is
+            // installed under the home index, overwriting any orphan
+            // left by a backtracked-then-reused heap slot.
+            TrailValueChange(addr, cell);
+            _heap[addr] = Cell.AttVar(addr);
+            _attrTable[addr] = new Dictionary<int, int>();
+        }
+        else if (cell.Tag != Tag.AttVar)
+        {
+            // ISO shape: the embedding layer renders Detail as the
+            // expected-type atom, so error(type_error(var, _), _).
+            throw new PrologRuntimeException("type_error", "var");
+        }
+
+        var record = _attrTable[addr];
+        int oldValue = record.TryGetValue(moduleId, out int prev) ? prev : -1;
+        TrailAttrChange(addr, moduleId, oldValue);
+        record[moduleId] = valueHeapIdx;
+    }
+
+    /// <summary>Reads the attribute for <paramref name="moduleId"/> on
+    /// the variable at <paramref name="varAddr"/>. Returns the heap
+    /// index of the stored attribute value, or <c>-1</c> when the
+    /// variable carries no such attribute (or isn't an attributed
+    /// variable at all).</summary>
+    public int GetAttr(int varAddr, int moduleId)
+    {
+        int addr = Deref(varAddr);
+        if (_heap[addr].Tag != Tag.AttVar) return -1;
+        var record = _attrTable[addr];
+        return record.TryGetValue(moduleId, out int value) ? value : -1;
+    }
+
+    /// <summary>Removes the attribute for <paramref name="moduleId"/>
+    /// from the variable at <paramref name="varAddr"/>. A no-op (still
+    /// succeeds) when the variable isn't attributed or carries no such
+    /// attribute. The removal is trailed.</summary>
+    public void DelAttr(int varAddr, int moduleId)
+    {
+        int addr = Deref(varAddr);
+        if (_heap[addr].Tag != Tag.AttVar) return;
+        var record = _attrTable[addr];
+        if (!record.TryGetValue(moduleId, out int oldValue)) return;
+        TrailAttrChange(addr, moduleId, oldValue);
+        record.Remove(moduleId);
+    }
+
+    /// <summary>The module ids that carry an attribute on the variable
+    /// at <paramref name="varAddr"/> — empty when it isn't attributed.
+    /// Used by the attvar-unification merge.</summary>
+    internal IReadOnlyCollection<int> AttrModules(int varAddr)
+    {
+        int addr = Deref(varAddr);
+        return _heap[addr].Tag == Tag.AttVar
+            ? _attrTable[addr].Keys
+            : Array.Empty<int>();
+    }
+
+    private void TrailAttrChange(int homeAddr, int moduleId, int oldValue)
+    {
+        int logIndex = _attrTrailLog.Count;
+        _attrTrailLog.Add((homeAddr, moduleId, oldValue));
+        EnsureExtraTrailCapacity(1);
+        _extraTrail[_extraTrailTop++] = new ExtraTrailEntry
+        {
+            Type = TrailType.AttrModify,
+            HeapIdx = logIndex,
+            BindingTrailMarker = _bindingTrailTop,
+        };
+    }
+
     /// <summary>
     /// Restores all bindings recorded after <paramref name="targetTop"/>, leaving the binding
     /// trail at exactly that depth. Each rolled-back cell becomes a self-pointing REF again.
@@ -1465,6 +1603,18 @@ public sealed class Engine
                 if (_bigIntTable.Count > entry.HeapIdx)
                     _bigIntTable.RemoveRange(entry.HeapIdx, _bigIntTable.Count - entry.HeapIdx);
                 break;
+            case TrailType.AttrModify:
+                // entry.HeapIdx indexes _attrTrailLog, which records the
+                // (attvar home, module, previous value) of one attribute
+                // mutation. Restore the previous value, or remove the
+                // module entirely when it was absent before (-1).
+                {
+                    var (home, mod, oldValue) = _attrTrailLog[entry.HeapIdx];
+                    var record = _attrTable[home];
+                    if (oldValue < 0) record.Remove(mod);
+                    else record[mod] = oldValue;
+                }
+                break;
             default:
                 throw new InvalidOperationException(
                     $"Unwind not yet implemented for TrailType.{entry.Type}.");
@@ -1486,6 +1636,11 @@ public sealed class Engine
 
         Cell aCell = _heap[aAddr];
         Cell bCell = _heap[bAddr];
+
+        // Attributed variables (chunk 77) participate in cross-tag
+        // unification, so dispatch them before the plain-REF handling.
+        if (aCell.Tag == Tag.AttVar || bCell.Tag == Tag.AttVar)
+            return UnifyAttVar(aAddr, aCell, bAddr, bCell);
 
         if (aCell.Tag == Tag.Ref)
         {
@@ -1693,6 +1848,97 @@ public sealed class Engine
             Bind(aAddr, Cell.Ref(bAddr));
     }
 
+    /// <summary>Unifies when at least one side is an attributed
+    /// variable (chunk 77). Three cases:
+    /// <list type="bullet">
+    /// <item>attvar + plain unbound REF — the plain variable binds to
+    /// the attvar, which survives carrying its attributes.</item>
+    /// <item>attvar + attvar — the younger binds to the older and the
+    /// younger's attributes merge onto the older's record; a module
+    /// present on both must have unifiable values.</item>
+    /// <item>attvar + bound value — the attvar binds to the value.
+    /// Chunk 77 has no unify hook, so this just succeeds — the correct
+    /// behaviour for an attributed variable whose module declares no
+    /// <c>attr_unify_hook</c>. Chunk 78 fires the hook here.</item>
+    /// </list></summary>
+    private bool UnifyAttVar(int aAddr, Cell aCell, int bAddr, Cell bCell)
+    {
+        bool aAtt = aCell.Tag == Tag.AttVar;
+        bool bAtt = bCell.Tag == Tag.AttVar;
+
+        if (aAtt && bAtt)
+        {
+            int olderAddr = aAddr < bAddr ? aAddr : bAddr;
+            int youngerAddr = aAddr < bAddr ? bAddr : aAddr;
+            if (!MergeAttributes(youngerAddr, olderAddr)) return false;
+            BindAttVarToValue(youngerAddr, olderAddr, Cell.Ref(olderAddr));
+            return true;
+        }
+
+        int attAddr = aAtt ? aAddr : bAddr;
+        int otherAddr = aAtt ? bAddr : aAddr;
+        Cell otherCell = aAtt ? bCell : aCell;
+
+        if (otherCell.Tag == Tag.Ref)
+        {
+            // Plain unbound variable binds to the attvar — the attvar
+            // (with its attributes) survives. The plain var pre-dates
+            // nothing special, so a normal trailed Bind is right.
+            Bind(otherAddr, Cell.Ref(attAddr));
+            return true;
+        }
+
+        // attvar + bound value: bind the attvar to the value (no hook).
+        BindAttVarToValue(attAddr, otherAddr, otherCell);
+        return true;
+    }
+
+    /// <summary>Binds the attributed variable at <paramref name="attAddr"/>
+    /// to <paramref name="valueCell"/>. Unlike a plain bind this trails
+    /// a <see cref="TrailType.ValueChange"/> carrying the original
+    /// ATTVAR cell, so backtracking restores the attributed variable
+    /// (not a bare unbound REF).</summary>
+    private void BindAttVarToValue(int attAddr, int valueAddr, Cell valueCell)
+    {
+        Cell newCell = valueCell.Tag is Tag.Str or Tag.Lis or Tag.Pstr
+            ? Cell.Ref(valueAddr)
+            : valueCell;
+        TrailValueChange(attAddr, _heap[attAddr]);
+        _heap[attAddr] = newCell;
+    }
+
+    /// <summary>Copies every attribute of the attributed variable at
+    /// <paramref name="fromAddr"/> onto the one at <paramref name="toAddr"/>.
+    /// A module the destination lacks is added outright; a module both
+    /// carry must have unifiable values (chunk 77's hookless merge
+    /// rule) — a clash fails the whole unification.</summary>
+    private bool MergeAttributes(int fromAddr, int toAddr)
+    {
+        int fromHome = Deref(fromAddr);
+        int toHome = Deref(toAddr);
+        if (_heap[fromHome].Tag != Tag.AttVar || _heap[toHome].Tag != Tag.AttVar)
+            return true;
+        var fromRecord = _attrTable[fromHome];
+        var toRecord = _attrTable[toHome];
+        // Snapshot the source modules: the Unify below can't mutate
+        // fromRecord, but iterating a dictionary we may also be reading
+        // is fragile — copy the pairs first.
+        foreach (var (moduleId, fromValueIdx) in fromRecord.ToArray())
+        {
+            int toValueIdx = toRecord.TryGetValue(moduleId, out int v) ? v : -1;
+            if (toValueIdx < 0)
+            {
+                TrailAttrChange(toHome, moduleId, -1);
+                toRecord[moduleId] = fromValueIdx;
+            }
+            else if (!Unify(toValueIdx, fromValueIdx))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /// <summary>Binds an unbound variable to a bound value. For compound-valued cells
     /// (STR / LIS / PSTR) the variable receives a REF pointing at the value's heap
     /// position; for atomic values the cell is copied in place (ADR-002 binding policy).</summary>
@@ -1798,10 +2044,16 @@ public sealed class Engine
 
     private Cell ResolveForStructuralCompare(Cell c)
     {
+        // An attributed variable (chunk 77) is still a variable: it
+        // normalizes to a REF at its home address — its payload already
+        // *is* that address — so == compares it by identity, like any
+        // unbound variable. This also handles a bare ATTVAR cell read
+        // straight out of a structure-argument slot.
+        if (c.Tag == Tag.AttVar) return Cell.Ref(c.AsHeapIndex);
         if (c.Tag != Tag.Ref) return c;
         int addr = Deref(c.AsHeapIndex);
         Cell target = _heap[addr];
-        return target.Tag == Tag.Ref ? Cell.Ref(addr) : target;
+        return target.Tag is Tag.Ref or Tag.AttVar ? Cell.Ref(addr) : target;
     }
 
     private bool AreStrStructurallyEqual(int aFunctorIdx, int bFunctorIdx)
