@@ -1,24 +1,19 @@
-using System.Text.RegularExpressions;
 using Shumway.Embedding;
 
 namespace Shumway.Bundler;
 
 /// <summary>
-/// <c>shumway-bundler</c> — Phase-1 command-line tool. Takes one or more
-/// Prolog source files plus an output path, validates that every file
-/// parses and compiles end-to-end through a throwaway
-/// <see cref="PrologEngine"/>, and writes the result as a <c>.shum</c>
-/// bundle ready for <see cref="PrologEngine.LoadBundle(string)"/>.
+/// <c>shumway-bundler</c> CLI. Since chunk 72 this is a thin wrapper
+/// around <see cref="Shumway.Embedding.Bundler.Build"/>: argument
+/// parsing here, orchestration in the library.
 ///
 /// <para>Usage:</para>
 /// <code>
-///   shumway-bundler --output app.shum [--entry-points pred/N,...] file1.pl file2.pl ...
+///   shumway-bundler --output app.shum [--entry-points pred/N,...] file1.pl file2.pl
 /// </code>
 ///
-/// <para>Exit codes follow ADR-009: 0 on success, 1 on bundle errors, 3 on
-/// usage errors. Entry points are accepted but in v1 only validated for
-/// existence — the reachability-pruning rule from the ADR lands when
-/// bytecode-level bundles do.</para>
+/// <para>Exit codes follow ADR-009: 0 on success, 1 on bundle errors,
+/// 3 on usage errors.</para>
 /// </summary>
 internal static class Program
 {
@@ -28,103 +23,35 @@ internal static class Program
 
     public static int Main(string[] args)
     {
-        try
+        var opts = ParseArgs(args);
+        if (opts is null) return ExitUsageError;
+
+        var config = new BundleConfig
         {
-            var opts = ParseArgs(args);
-            if (opts is null) return ExitUsageError;
+            SourceFiles = opts.SourceFiles,
+            OutputPath = opts.OutputPath,
+            EntryPoints = opts.EntryPoints,
+            IncludeCompiledBytecode = opts.WithBytecode,
+            IncludeCompiledIl = opts.WithCompiledIl,
+            Verbose = opts.Verbose,
+            VerboseOut = opts.Verbose ? Console.Error : null,
+        };
 
-            var entries = new List<BundleEntry>(opts.SourceFiles.Count);
-            foreach (string file in opts.SourceFiles)
-            {
-                if (!File.Exists(file))
-                {
-                    Console.Error.WriteLine($"shumway-bundler: source file not found: {file}");
-                    return ExitBundleError;
-                }
-                string source = File.ReadAllText(file);
-                string moduleName = ExtractModuleName(source) ?? Path.GetFileNameWithoutExtension(file);
-                entries.Add(new BundleEntry(moduleName, source));
-            }
-
-            if (opts.Verbose)
-            {
-                Console.Error.WriteLine($"shumway-bundler: {entries.Count} module(s) staged.");
-                foreach (var e in entries)
-                    Console.Error.WriteLine($"  - {e.ModuleName} ({e.Source.Length} chars)");
-            }
-
-            var bundle = new Bundle(entries);
-            try
-            {
-                BundleWriter.WriteToFile(bundle, opts.OutputPath,
-                    includeCompiledBytecode: opts.WithBytecode,
-                    includeCompiledIl: opts.WithCompiledIl);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"shumway-bundler: bundle failed: {ex.Message}");
-                return ExitBundleError;
-            }
-
-            if (opts.EntryPoints.Count > 0)
-            {
-                // v1 entry-point validation: load into a throwaway engine and
-                // confirm every named predicate is reachable as a query.
-                var engine = new PrologEngine();
-                engine.LoadBundle(bundle);
-                foreach (var ep in opts.EntryPoints)
-                {
-                    if (!CheckEntryPointExists(engine, ep, out string error))
-                    {
-                        Console.Error.WriteLine($"shumway-bundler: entry-point check failed: {error}");
-                        return ExitBundleError;
-                    }
-                }
-            }
-
-            if (opts.Verbose)
-                Console.Error.WriteLine($"shumway-bundler: wrote {opts.OutputPath}.");
-            return ExitOk;
-        }
-        catch (Exception ex)
+        var result = Shumway.Embedding.Bundler.Build(config);
+        foreach (var d in result.Diagnostics)
         {
-            Console.Error.WriteLine($"shumway-bundler: {ex.Message}");
-            return ExitBundleError;
+            var stream = d.Severity == BundleSeverity.Error
+                ? Console.Error : Console.Out;
+            string prefix = d.Severity switch
+            {
+                BundleSeverity.Error => "error",
+                BundleSeverity.Warning => "warning",
+                _ => "info",
+            };
+            string sourcePart = d.Source is null ? "" : $" ({d.Source})";
+            stream.WriteLine($"shumway-bundler: {prefix}: {d.Message}{sourcePart}");
         }
-    }
-
-    private static bool CheckEntryPointExists(PrologEngine engine, EntryPointSpec ep, out string error)
-    {
-        // Build a goal that calls ep with arity anonymous variables and
-        // immediately succeeds without binding anything — just verifies the
-        // call resolves.
-        var goalArgs = ep.Arity == 0
-            ? ""
-            : "(" + string.Join(", ", Enumerable.Range(0, ep.Arity).Select(_ => "_")) + ")";
-        string probe = $"({ep.Name}{goalArgs} ; true).";
-        try
-        {
-            engine.Query(probe);
-            error = "";
-            return true;
-        }
-        catch (Exception ex)
-        {
-            error = $"{ep.Name}/{ep.Arity}: {ex.Message}";
-            return false;
-        }
-    }
-
-    private static string? ExtractModuleName(string source)
-    {
-        // Look for `:- module(name).` on a non-comment line. The compiler's
-        // own ClauseReader does the canonical parse; this regex is just a
-        // pre-filter so the bundle's module-name metadata is populated
-        // without having to re-parse here.
-        var m = Regex.Match(source,
-            @"^\s*:-\s*module\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*\.",
-            RegexOptions.Multiline);
-        return m.Success ? m.Groups[1].Value : null;
+        return result.Success ? ExitOk : ExitBundleError;
     }
 
     // ------------------------------------------------------------------------
@@ -140,8 +67,6 @@ internal static class Program
         public bool WithBytecode { get; set; }
         public bool WithCompiledIl { get; set; }
     }
-
-    private readonly record struct EntryPointSpec(string Name, int Arity);
 
     private static Options? ParseArgs(string[] args)
     {
@@ -170,8 +95,16 @@ internal static class Program
 
                 case "--entry-points":
                     if (++i >= args.Length) { ReportMissing(arg); return null; }
-                    foreach (var spec in ParseEntryPoints(args[i]))
-                        opts.EntryPoints.Add(spec);
+                    try
+                    {
+                        foreach (var spec in ParseEntryPoints(args[i]))
+                            opts.EntryPoints.Add(spec);
+                    }
+                    catch (ArgumentException ex)
+                    {
+                        Console.Error.WriteLine(ex.Message);
+                        return null;
+                    }
                     break;
 
                 case "--verbose":
@@ -180,18 +113,10 @@ internal static class Program
                     break;
 
                 case "--with-bytecode":
-                    // Chunk 45: embed the pre-compiled bytecode alongside the
-                    // source. LoadBundle uses it to pre-warm the Tier-1 IL
-                    // promotion store so the first call into each eligible
-                    // predicate already hits IL — no warm-up window.
                     opts.WithBytecode = true;
                     break;
 
                 case "--with-compiled-il":
-                    // Chunk 71: emit a persisted .NET assembly holding the
-                    // IL for every IL-eligible predicate. LoadBundle loads
-                    // the .dll and binds each method as a PredicateDelegate
-                    // — no Sigil emit at consult time.
                     opts.WithCompiledIl = true;
                     break;
 
@@ -227,8 +152,7 @@ internal static class Program
             int slash = trimmed.LastIndexOf('/');
             if (slash <= 0 || !int.TryParse(trimmed.AsSpan(slash + 1), out int arity) || arity < 0)
                 throw new ArgumentException(
-                    $"shumway-bundler: malformed entry point '{trimmed}' "
-                    + "(expected Name/Arity).");
+                    $"shumway-bundler: malformed entry point '{trimmed}' (expected Name/Arity).");
             yield return new EntryPointSpec(trimmed[..slash], arity);
         }
     }
