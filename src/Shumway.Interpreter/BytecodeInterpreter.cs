@@ -27,6 +27,26 @@ public sealed class BytecodeInterpreter
     private readonly IReadOnlyList<System.Numerics.BigInteger> _bigIntLiterals;
     private readonly IReadOnlyList<SwitchTable> _switchTables;
 
+    /// <summary>Floor for <see cref="TryBacktrack"/>: choice points at or
+    /// below this stack index belong to an outer computation and must
+    /// not be unwound. <c>-1</c> (no floor) during normal execution;
+    /// <see cref="RunGoalInEngine"/> raises it so an in-engine sub-goal's
+    /// backtracking stays contained at its entry level (chunk 80).</summary>
+    private int _backtrackFloor = -1;
+
+    // Functor ids the chunk-80 attributed-variable wakeup driver needs,
+    // interned once: the verify_attributes/4 user hook (its presence in
+    // the linked program is what enables wakeups at all) and the few
+    // control-construct functors the in-engine meta-call recognises.
+    private static readonly int VerifyAttributesFunctorId =
+        FunctorTable.Intern(AtomTable.Intern("verify_attributes", permanent: true).Id, 4);
+    private static readonly int ConjFunctorId =
+        FunctorTable.Intern(AtomTable.Intern(",", permanent: true).Id, 2);
+    private static readonly int TrueFunctorId =
+        FunctorTable.Intern(AtomTable.Intern("true", permanent: true).Id, 0);
+    private static readonly int FailFunctorId =
+        FunctorTable.Intern(AtomTable.Intern("fail", permanent: true).Id, 0);
+
     /// <summary>Optional hook the interpreter consults on every
     /// <c>call</c> / <c>execute</c> to ask whether a Tier-1 IL
     /// replacement exists for the target predicate. <c>null</c> disables
@@ -193,7 +213,7 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.Proceed:
                 {
-                    if (!FlushPendingWakeups())
+                    if (!FlushPendingWakeups(code))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
@@ -207,7 +227,7 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.Call:
                 {
-                    if (!FlushPendingWakeups())
+                    if (!FlushPendingWakeups(code))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
@@ -227,7 +247,7 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.Execute:
                 {
-                    if (!FlushPendingWakeups())
+                    if (!FlushPendingWakeups(code))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
@@ -927,7 +947,7 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.CallBuiltin:
                 {
-                    if (!FlushPendingWakeups())
+                    if (!FlushPendingWakeups(code))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
@@ -1176,13 +1196,202 @@ public sealed class BytecodeInterpreter
     private sealed class TopLevelFailure : Exception { }
 
     /// <summary>Runs any <c>verify_attributes</c> wakeups queued by a
-    /// just-completed unification (chunk 78/79). Checked at every goal
-    /// boundary — Call / Execute / CallBuiltin / Proceed. Returns false
-    /// when a hook failed, which the caller turns into a backtrack so
-    /// the triggering unification fails. A no-op (returns true) when
-    /// nothing is queued, which is the overwhelmingly common case.</summary>
-    private bool FlushPendingWakeups() =>
-        !_engine.HasPendingWakeups || _engine.RunPendingWakeups();
+    /// just-completed unification (chunk 80). Checked at every goal
+    /// boundary — Call / Execute / CallBuiltin / Proceed. The
+    /// <c>'$wakeup_attributes'/1</c> driver runs in the *live* engine
+    /// (via <see cref="RunGoalInEngine"/>) so the hooks observe the real
+    /// attributed variables. Returns false when a hook — or a goal it
+    /// returned — failed, which the caller turns into a backtrack so the
+    /// triggering unification fails. A no-op (returns true) when nothing
+    /// is queued, the overwhelmingly common case.</summary>
+    private bool FlushPendingWakeups(byte[] code)
+    {
+        if (!_engine.HasPendingWakeups) return true;
+
+        var addrs = _engine.CurrentFunctorAddresses;
+        if (addrs is null || !addrs.ContainsKey(VerifyAttributesFunctorId))
+        {
+            // No verify_attributes/4 linked into this program — attributed
+            // variables stay hookless (the chunk-77 foundation).
+            _engine.ClearPendingWakeups();
+            return true;
+        }
+
+        // The wakeup processing clobbers X registers and may push choice
+        // points; snapshot the registers and the CP level so the goal
+        // boundary we resume into is left exactly as it was.
+        int regCount = _engine.RegisterCount;
+        Cell[] savedRegs = new Cell[regCount];
+        for (int i = 0; i < regCount; i++) savedRegs[i] = _engine.GetRegister(i);
+        int savedB = _engine.B;
+
+        bool ok = RunWakeups(code);
+
+        if (ok && _engine.B > savedB) _engine.Cut(savedB);   // once-semantics
+        for (int i = 0; i < regCount; i++) _engine.SetRegister(i, savedRegs[i]);
+        return ok;
+    }
+
+    /// <summary>Drains the wakeup queue (chunk 80): for each batch, runs
+    /// every module's <c>verify_attributes/4</c> hook, then every goal
+    /// the hooks returned — all in the live engine. A hook's goal can
+    /// unify further attributed variables and queue more wakeups, so the
+    /// queue is drained in a loop.</summary>
+    private bool RunWakeups(byte[] code)
+    {
+        while (_engine.HasPendingWakeups)
+        {
+            var batch = _engine.TakePendingWakeups();
+            // All modules' hooks run first, then every returned goal —
+            // the SICStus/Scryer ordering, so each hook sees the
+            // pre-goal state.
+            var goalLists = new Cell[batch.Count];
+            for (int i = 0; i < batch.Count; i++)
+            {
+                var (moduleId, attrValueIdx, otherIdx) = batch[i];
+                int goalsVarIdx = _engine.AllocateHeapUnbound();
+                Cell verifyGoal = BuildVerifyGoal(moduleId, attrValueIdx, otherIdx, goalsVarIdx);
+                if (!MetaCallInEngine(code, verifyGoal)) return false;
+                goalLists[i] = Cell.Ref(goalsVarIdx);
+            }
+            for (int i = 0; i < batch.Count; i++)
+                if (!RunGoalList(code, goalLists[i])) return false;
+        }
+        return true;
+    }
+
+    /// <summary>Builds <c>verify_attributes(Module, AttrValue, Value,
+    /// Goals)</c> on the heap and returns the goal cell. <c>Goals</c> is
+    /// the fresh variable at <paramref name="goalsVarIdx"/> the hook
+    /// binds to its returned goal list.</summary>
+    private Cell BuildVerifyGoal(int moduleId, int attrValueIdx, int otherIdx, int goalsVarIdx)
+    {
+        int f = _engine.AllocateHeap(5);
+        _engine.SetHeap(f,     Cell.Functor(VerifyAttributesFunctorId));
+        _engine.SetHeap(f + 1, Cell.Atom(moduleId));
+        _engine.SetHeap(f + 2, Cell.Ref(attrValueIdx));
+        _engine.SetHeap(f + 3, Cell.Ref(otherIdx));
+        _engine.SetHeap(f + 4, Cell.Ref(goalsVarIdx));
+        return Cell.Str(f);
+    }
+
+    /// <summary>Meta-calls every goal in a hook's returned list, in
+    /// order. An unbound or empty list runs nothing; a non-list term is
+    /// a malformed hook result and fails.</summary>
+    private bool RunGoalList(byte[] code, Cell listCell)
+    {
+        Cell cursor = DerefCell(listCell);
+        while (cursor.Tag == Tag.Lis)
+        {
+            int headIdx = cursor.AsHeapIndex;
+            if (!MetaCallInEngine(code, _engine.GetHeap(headIdx))) return false;
+            cursor = DerefCell(_engine.GetHeap(headIdx + 1));
+        }
+        // [] or an unbound tail → no (more) goals; anything else is malformed.
+        return cursor.Tag == Tag.Ref
+            || cursor.Tag == Tag.AttVar
+            || (cursor.Tag == Tag.Atom && cursor.AsAtomId == AtomTable.EmptyListId);
+    }
+
+    /// <summary>Runs one goal term in the live engine (chunk 80). Handles
+    /// the <c>,/2</c> conjunction and the <c>true</c> / <c>fail</c>
+    /// constants; any other goal is dispatched as a plain call — a
+    /// builtin runs directly, a user/prelude predicate runs via
+    /// <see cref="RunGoalInEngine"/>. An undefined predicate raises an
+    /// existence error.</summary>
+    private bool MetaCallInEngine(byte[] code, Cell goal)
+    {
+        goal = DerefCell(goal);
+        int functorId;
+        int argBase;
+        int arity;
+        switch (goal.Tag)
+        {
+            case Tag.Atom:
+                functorId = FunctorTable.Intern(goal.AsAtomId, 0);
+                arity = 0;
+                argBase = -1;
+                break;
+            case Tag.Str:
+                int fIdx = goal.AsHeapIndex;
+                functorId = _engine.GetHeap(fIdx).AsFunctorId;
+                (_, arity) = FunctorTable.Lookup(functorId);
+                argBase = fIdx + 1;
+                break;
+            case Tag.Ref:
+            case Tag.AttVar:
+                throw new PrologRuntimeException("instantiation_error");
+            default:
+                throw new PrologRuntimeException("type_error", "callable");
+        }
+
+        if (functorId == ConjFunctorId)
+            return MetaCallInEngine(code, _engine.GetHeap(argBase))
+                && MetaCallInEngine(code, _engine.GetHeap(argBase + 1));
+        if (functorId == TrueFunctorId) return true;
+        if (functorId == FailFunctorId) return false;
+
+        // Plain goal: load X0..X[arity-1] from the goal's arguments.
+        for (int i = 0; i < arity; i++)
+            _engine.SetRegister(i, _engine.GetHeap(argBase + i));
+
+        if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out int builtinId))
+            return Shumway.Builtins.BuiltinsRegistry.GetById(builtinId).Impl(_engine);
+
+        var addrs = _engine.CurrentFunctorAddresses;
+        if (addrs is not null && addrs.TryGetValue(functorId, out int addr))
+            return RunGoalInEngine(code, addr);
+
+        var (atomId, predArity) = FunctorTable.Lookup(functorId);
+        throw new PrologRuntimeException("existence_error",
+            (AtomTable.GetById(atomId)?.Name ?? "?") + "/" + predArity);
+    }
+
+    /// <summary>Dereferences a cell, following REF chains to the term it
+    /// names (or to an unbound REF / ATTVAR).</summary>
+    private Cell DerefCell(Cell c) =>
+        c.Tag == Tag.Ref ? _engine.GetHeap(_engine.Deref(c.AsHeapIndex)) : c;
+
+    /// <summary>Runs the predicate at <paramref name="target"/> as a goal
+    /// in the <em>current</em> engine — same heap, trail, stack and
+    /// attribute table — then resumes the caller. Unlike
+    /// <see cref="RunSubroutine"/> this is safe for a goal that pushes
+    /// choice points or fails: a backtrack floor pins inner backtracking
+    /// at the entry choice-point level, and on success any choice points
+    /// the goal left are cut away (once semantics). Returns true iff the
+    /// goal succeeded. The caller saves/restores X registers (chunk 80).</summary>
+    private bool RunGoalInEngine(byte[] code, int target)
+    {
+        int savedPc    = _engine.P;
+        int savedCp    = _engine.Cp;
+        int savedB0    = _engine.B0;
+        int savedB     = _engine.B;
+        int savedFloor = _backtrackFloor;
+
+        // Inner backtracking may not unwind past the entry CP level.
+        _backtrackFloor = savedB;
+        _engine.SetB0(savedB);               // a cut inside the goal stops here
+        _engine.SetCp(SubroutineSentinelCp); // the goal's final proceed → Halted
+        _engine.SetPc(target);
+
+        InterpreterResult result;
+        try { result = Dispatch(code); }
+        catch (TopLevelFailure) { result = InterpreterResult.Failed; }
+
+        _backtrackFloor = savedFloor;
+        _engine.SetPc(savedPc);
+        _engine.SetCp(savedCp);
+        _engine.SetB0(savedB0);
+
+        if (result == InterpreterResult.Halted)
+        {
+            // Once-semantics: discard any choice points the goal left so
+            // the outer computation never backtracks into it.
+            if (_engine.B > savedB) _engine.Cut(savedB);
+            return true;
+        }
+        return false;
+    }
 
     private bool TryBacktrack()
     {
@@ -1190,8 +1399,10 @@ public sealed class BytecodeInterpreter
         // that a failed clause queued but never ran (chunk 78).
         _engine.ClearPendingWakeups();
         // Loop so that an IL retry that itself fails immediately falls
-        // through to the next choice point without burning stack.
-        while (_engine.B >= 0)
+        // through to the next choice point without burning stack. The
+        // floor (chunk 80) keeps an in-engine sub-goal's backtracking
+        // from unwinding choice points the outer computation owns.
+        while (_engine.B > _backtrackFloor)
         {
             if (_engine.TopChoicePointIsIl)
             {

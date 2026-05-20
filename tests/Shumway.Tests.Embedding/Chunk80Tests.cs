@@ -5,28 +5,30 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// Chunk 79 — <c>verify_attributes/4</c>, the Scryer/SICStus-style
-/// attributed-variable unify hook. It supersedes chunk 78's SWI-style
-/// <c>attr_unify_hook/3</c>: instead of the hook doing the check inline,
-/// it inspects the attribute and <em>returns a list of goals</em> the
-/// engine runs after the binding. Collecting goals composes better
-/// across modules and is the substrate residual-constraint projection
-/// will plug into.
+/// Chunk 80 — <c>verify_attributes</c> hooks run in the <em>live</em>
+/// engine. Chunks 78–79 ran the wakeup machinery in an isolated
+/// sub-engine, so a hook (and the goals it returned) could not see the
+/// real attributed variables — fatal for a constraint library like
+/// clpz, whose propagation goals introspect the live constraint store.
 ///
-/// <para>The hook is <c>verify_attributes(Module, AttrValue, Value, Goals)</c>
-/// — a single global predicate dispatching on the <c>Module</c> atom
-/// (Shumway's flat-namespace take on SICStus's <c>/3</c>). All modules'
-/// hooks run, then every returned goal runs; a failing hook or a failing
-/// goal fails the triggering unification. With no <c>verify_attributes/4</c>
-/// defined the wakeups are silent no-ops, so attributed variables stay
-/// exactly as hookless as the chunk-77 foundation.</para>
+/// <para>Chunk 80 replaces the sub-engine runner with an in-engine
+/// meta-call: at a goal boundary the interpreter builds a
+/// <c>verify_attributes(Module, AttrValue, Value, Goals)</c> goal per
+/// queued wakeup and runs it — and every goal it returns — against the
+/// live heap, with a backtrack floor containing inner failure and a
+/// once-style cut discarding any choice points left behind. The
+/// <c>verify_attributes/4</c> hook must be declared <c>:- public</c> so
+/// the interpreter can resolve it by its bare functor.</para>
 /// </summary>
-public class Chunk79Tests
+public class Chunk80Tests
 {
+    /// <summary>An engine whose program defines a <c>verify_attributes/4</c>
+    /// hook. The <c>:- public</c> declaration is required — the
+    /// interpreter resolves the hook by its bare functor id.</summary>
     private static PrologEngine WithHook(string hookClauses)
     {
         var engine = new PrologEngine();
-        engine.ConsultString(hookClauses);
+        engine.ConsultString(":- public verify_attributes/4.\n" + hookClauses);
         return engine;
     }
 
@@ -58,34 +60,30 @@ public class Chunk79Tests
     [Fact]
     public void Verify_ReceivesModuleAttributeValueAndBoundValue()
     {
-        // The hook only succeeds for one exact (module, attr, value)
-        // triple, so its success pins all three arguments.
         var engine = WithHook("verify_attributes(m, the_attr, the_value, []).");
         Assert.True(engine.Query("put_attr(X, m, the_attr), X = the_value.").Success);
         Assert.False(engine.Query("put_attr(X, m, wrong_attr), X = the_value.").Success);
         Assert.False(engine.Query("put_attr(X, m, the_attr), X = wrong_value.").Success);
     }
 
-    // ---- the returned goals ------------------------------------------
+    // ---- the returned goals -------------------------------------------
 
     [Fact]
     public void ReturnedGoal_RunsAndGatesTheUnification()
     {
-        // verify_attributes returns [check(Value)]; the engine runs it.
+        // A predicate named directly in a returned goal must be public —
+        // the interpreter resolves it by its bare functor.
         var engine = WithHook(
+            ":- public check/1.\n" +
             "verify_attributes(m, _, V, [check(V)]).\n" +
             "check(ok).");
         Assert.True(engine.Query("put_attr(X, m, _), X = ok.").Success);
-        // check(bad) has no matching clause — the returned goal fails,
-        // and that fails the unification.
         Assert.False(engine.Query("put_attr(X, m, _), X = bad.").Success);
     }
 
     [Fact]
     public void ReturnedGoal_CanBindCallerVariables()
     {
-        // The returned goal unifies the caller's Result with the
-        // attribute value; that binding flows back out of the query.
         var engine = WithHook(
             "verify_attributes(m, AttrVal, wrapped(R), [R = AttrVal]).");
         var sol = engine.Query("put_attr(X, m, payload), X = wrapped(Result).");
@@ -97,6 +95,8 @@ public class Chunk79Tests
     public void MultipleReturnedGoals_AllRun()
     {
         var engine = WithHook(
+            ":- public first_goal/0.\n" +
+            ":- public second_goal/0.\n" +
             "verify_attributes(m, _, _, [first_goal, second_goal]).\n" +
             "first_goal.\n" +
             "second_goal.");
@@ -106,11 +106,25 @@ public class Chunk79Tests
     [Fact]
     public void OneReturnedGoalFailing_FailsTheUnification()
     {
-        // Two goals returned; the second fails outright.
         var engine = WithHook(
+            ":- public first_goal/0.\n" +
             "verify_attributes(m, _, _, [first_goal, fail]).\n" +
             "first_goal.");
         Assert.False(engine.Query("put_attr(X, m, 1), X = v.").Success);
+    }
+
+    [Fact]
+    public void ReturnedGoal_RunsInTheLiveEngine_SoSideEffectsPersist()
+    {
+        // The defining proof of chunk 80: a returned goal runs in the
+        // live engine, not an isolated sub-engine, so an assertz/1 it
+        // performs is still visible once the query completes. Under the
+        // chunks 78-79 sub-engine runner this assertion would be lost.
+        var engine = WithHook(
+            ":- dynamic marker/0.\n" +
+            "verify_attributes(m, _, _, [assertz(marker)]).");
+        Assert.True(engine.Query("put_attr(X, m, 1), X = v.").Success);
+        Assert.True(engine.Query("marker.").Success);
     }
 
     // ---- multiple modules ---------------------------------------------
@@ -160,9 +174,6 @@ public class Chunk79Tests
     [Fact]
     public void AttvarBoundToPlainVariable_FiresNoHook()
     {
-        // Unifying an attributed variable with a plain variable doesn't
-        // bind it to a value — the attvar survives — so no hook fires,
-        // even one that would fail.
         var engine = WithHook("verify_attributes(m, _, _, _) :- fail.");
         Assert.True(engine.Query("put_attr(X, m, 1), X = Y, var(Y).").Success);
     }

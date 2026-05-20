@@ -85,15 +85,6 @@ public sealed class Engine
     /// <see cref="object"/>; callers downcast at the use site.</summary>
     public object? Host { get; set; }
 
-    /// <summary>Delegate that runs the queued attributed-variable
-    /// unify-hook wakeups — <c>verify_attributes/4</c> (chunk 79).
-    /// Installed by the embedding layer, which alone can execute Prolog
-    /// goals; the Core engine only queues wakeups and calls back through
-    /// here. Null on a bare Core engine, in which case attributed
-    /// variables behave hooklessly (the chunk-77 foundation) — see
-    /// <see cref="RunPendingWakeups"/>.</summary>
-    public Func<Engine, bool>? AttrHookRunner { get; set; }
-
     /// <summary>Operator-lookup view used by the renderer to decide whether
     /// a compound should print in operator form (<c>a + b</c>) or
     /// canonical form (<c>+(a, b)</c>). Set by the embedding layer; left
@@ -1935,35 +1926,20 @@ public sealed class Engine
     /// The interpreter checks this at every goal boundary.</summary>
     public bool HasPendingWakeups => _pendingWakeups.Count > 0;
 
-    /// <summary>Returns the queued wakeups and empties the queue — the
-    /// hook runner's way of consuming them.</summary>
+    /// <summary>Discards every queued wakeup. Called by the interpreter
+    /// on backtracking — wakeups belong to the abandoned computation.</summary>
+    public void ClearPendingWakeups() => _pendingWakeups.Clear();
+
+    /// <summary>Returns the queued wakeups and empties the queue. The
+    /// interpreter drains them at a goal boundary (chunk 80), building a
+    /// <c>verify_attributes/4</c> goal per entry and meta-calling it in
+    /// this (live) engine so the hooks see the real attributed
+    /// variables.</summary>
     public IReadOnlyList<(int Module, int AttrValueIdx, int OtherIdx)> TakePendingWakeups()
     {
         var taken = _pendingWakeups.ToArray();
         _pendingWakeups.Clear();
         return taken;
-    }
-
-    /// <summary>Discards every queued wakeup. Called by the interpreter
-    /// on backtracking — wakeups belong to the abandoned computation.</summary>
-    public void ClearPendingWakeups() => _pendingWakeups.Clear();
-
-    /// <summary>Runs the queued <c>verify_attributes</c> wakeups through
-    /// the installed <see cref="AttrHookRunner"/>. Returns true when
-    /// every hook succeeded — or when no runner is installed, in which
-    /// case attributed variables stay hookless (chunk 77) and the
-    /// wakeups are simply dropped. Returns false when a hook failed;
-    /// the interpreter turns that into a backtrack so the triggering
-    /// unification fails.</summary>
-    public bool RunPendingWakeups()
-    {
-        if (_pendingWakeups.Count == 0) return true;
-        if (AttrHookRunner is null)
-        {
-            _pendingWakeups.Clear();
-            return true;
-        }
-        return AttrHookRunner(this);
     }
 
     /// <summary>Binds the attributed variable at <paramref name="attAddr"/>
