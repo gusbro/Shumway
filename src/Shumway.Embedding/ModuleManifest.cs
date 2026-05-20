@@ -1,4 +1,5 @@
 using Shumway.Compiler.Ast;
+using Shumway.Compiler.Modes;
 
 namespace Shumway.Embedding;
 
@@ -44,11 +45,13 @@ public sealed class ModuleManifest
     public HashSet<int> MultifileFunctors { get; }
 
     /// <summary>Per-functor mode declarations from <c>:- mode foo(+,-).</c>
-    /// Keys are the functor ids; values are the argument-mode tuples
-    /// (each entry being one of "+", "-", "?", or "@"). Phase 1 stores
-    /// the metadata for later mode-aware compilation (Phase 3) but
-    /// doesn't consult it during code emission.</summary>
-    public Dictionary<int, string[]> ModeDeclarations { get; }
+    /// and <c>:- mode foo(+,-) is det.</c>. Keys are functor ids;
+    /// values are the list of declarations for that functor — a
+    /// predicate may declare several callable modes (chunk 73).
+    /// Phase 3 consumes these via <see cref="PrologEngine.Modes"/>;
+    /// chunk 73 is the foundation (parse + store + validate) and
+    /// later chunks add the specialised code generation.</summary>
+    public Dictionary<int, List<ModeDeclaration>> ModeDeclarations { get; }
 
     public ModuleManifest(string name)
     {
@@ -59,6 +62,6 @@ public sealed class ModuleManifest
         DynamicFunctors = new HashSet<int>();
         DiscontiguousFunctors = new HashSet<int>();
         MultifileFunctors = new HashSet<int>();
-        ModeDeclarations = new Dictionary<int, string[]>();
+        ModeDeclarations = new Dictionary<int, List<ModeDeclaration>>();
     }
 }

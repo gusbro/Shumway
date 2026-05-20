@@ -369,6 +369,44 @@ public sealed class PrologEngine
     /// shouldn't be mutated directly.</summary>
     public IReadOnlyDictionary<string, ModuleManifest> Modules => _modules;
 
+    /// <summary>Chunk 73 — every <c>:- mode</c> declaration the engine
+    /// has consulted, aggregated across all modules into one
+    /// <see cref="Shumway.Compiler.Modes.ModeTable"/>. Built fresh on
+    /// each access so it always reflects the current module set. The
+    /// Phase-3 specialised code generator reads this; tooling can call
+    /// <see cref="Shumway.Compiler.Modes.ModeTable.Validate"/> to
+    /// surface declarations on never-defined predicates.</summary>
+    public Shumway.Compiler.Modes.ModeTable Modes
+    {
+        get
+        {
+            var table = new Shumway.Compiler.Modes.ModeTable();
+            foreach (var manifest in _modules.Values)
+                foreach (var declList in manifest.ModeDeclarations.Values)
+                    foreach (var decl in declList)
+                        table.Add(decl);
+            return table;
+        }
+    }
+
+    /// <summary>Functor ids the engine has clauses for — static
+    /// (consulted source, in any module) or dynamic (declared
+    /// <c>:- dynamic</c> or runtime-asserted). Used as the
+    /// "defined predicates" input to
+    /// <see cref="Shumway.Compiler.Modes.ModeTable.Validate"/>.</summary>
+    public IReadOnlySet<int> DefinedFunctors()
+    {
+        var set = new HashSet<int>();
+        foreach (var manifest in _modules.Values)
+            foreach (var clause in manifest.Clauses)
+                if (TryExtractHead(clause, out string n, out int a))
+                    set.Add(FunctorTable.Intern(
+                        AtomTable.Intern(n, permanent: true).Id, a));
+        foreach (int fid in _dynamicFunctors) set.Add(fid);
+        foreach (int fid in _dynamicClauses.Keys) set.Add(fid);
+        return set;
+    }
+
     /// <summary>If the most recent <see cref="Query"/> / <see cref="QueryAll"/>
     /// invocation was terminated by <c>halt/0</c> or <c>halt/1</c>, this
     /// holds the exit code requested. <c>null</c> when no halt has fired.
@@ -715,7 +753,7 @@ public sealed class PrologEngine
         var clauses = new List<Clause>();
         HashSet<int>? pendingDiscontiguous = null;
         HashSet<int>? pendingMultifile = null;
-        Dictionary<int, string[]>? pendingModes = null;
+        Dictionary<int, List<Shumway.Compiler.Modes.ModeDeclaration>>? pendingModes = null;
 
         foreach (var clause in rawClauses)
         {
@@ -775,12 +813,18 @@ public sealed class PrologEngine
                     pendingMultifile.Add(FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a));
             }
-            else if (TryReadModeDirective(body, out string? modeName, out int modeArity, out string[]? modeArgs))
+            else if (Shumway.Compiler.Modes.ModeDirectiveParser.TryParse(
+                body, out var modeDecl, out string? modeError))
             {
-                pendingModes ??= new Dictionary<int, string[]>();
-                int fid = FunctorTable.Intern(
-                    AtomTable.Intern(modeName!, permanent: true).Id, modeArity);
-                pendingModes[fid] = modeArgs!;
+                if (modeError is not null)
+                    throw new InvalidOperationException(modeError);
+                pendingModes ??= new Dictionary<int, List<Shumway.Compiler.Modes.ModeDeclaration>>();
+                if (!pendingModes.TryGetValue(modeDecl!.FunctorId, out var declList))
+                {
+                    declList = new List<Shumway.Compiler.Modes.ModeDeclaration>();
+                    pendingModes[modeDecl.FunctorId] = declList;
+                }
+                declList.Add(modeDecl);
             }
             // op/3 already processed in-place by ClauseReader. Other
             // unrecognised directives pass through silently — they may be
@@ -844,7 +888,15 @@ public sealed class PrologEngine
             if (pendingDiscontiguous is not null) existing.DiscontiguousFunctors.UnionWith(pendingDiscontiguous);
             if (pendingMultifile is not null) existing.MultifileFunctors.UnionWith(pendingMultifile);
             if (pendingModes is not null)
-                foreach (var (fid, modes) in pendingModes) existing.ModeDeclarations[fid] = modes;
+                foreach (var (fid, modes) in pendingModes)
+                {
+                    // Append, not replace: a later consult declaring more
+                    // modes for the same functor adds to what's there.
+                    if (existing.ModeDeclarations.TryGetValue(fid, out var prior))
+                        prior.AddRange(modes);
+                    else
+                        existing.ModeDeclarations[fid] = modes;
+                }
         }
 
         // Consulting may have added source clauses for an already-cached
@@ -929,37 +981,6 @@ public sealed class PrologEngine
             return true;
         throw new InvalidOperationException(
             $"Malformed :- {directiveName} directive (expected Name/Arity or a list of them).");
-    }
-
-    /// <summary>Parses <c>:- mode foo(+, -, ?).</c> — the compound's
-    /// functor names the predicate, the arguments must all be mode atoms
-    /// (<c>+</c>, <c>-</c>, <c>?</c>, <c>@</c>). Returns the canonical
-    /// form for storage; nothing in Phase 1 actually uses it.</summary>
-    private static bool TryReadModeDirective(
-        Term body,
-        out string? name,
-        out int arity,
-        out string[]? modeArgs)
-    {
-        name = null;
-        arity = 0;
-        modeArgs = null;
-        if (body is not CompoundTerm m || m.Functor != "mode" || m.Args.Length != 1)
-            return false;
-        if (m.Args[0] is not CompoundTerm spec)
-            return false;
-        name = spec.Functor;
-        arity = spec.Args.Length;
-        modeArgs = new string[arity];
-        for (int i = 0; i < arity; i++)
-        {
-            if (spec.Args[i] is not AtomTerm modeAtom)
-                throw new InvalidOperationException(
-                    $"Malformed :- mode directive: argument {i + 1} must be an atom "
-                    + "(one of +, -, ?, @).");
-            modeArgs[i] = modeAtom.Name;
-        }
-        return true;
     }
 
     private static bool TryReadModuleDirective(Term body, out string name)

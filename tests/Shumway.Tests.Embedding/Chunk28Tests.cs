@@ -116,7 +116,16 @@ public class Chunk28Tests
         int fid = Shumway.Core.FunctorTable.Intern(
             Shumway.Core.AtomTable.Intern("add", permanent: true).Id, 3);
         Assert.True(manifest.ModeDeclarations.ContainsKey(fid));
-        Assert.Equal(new[] { "+", "+", "-" }, manifest.ModeDeclarations[fid]);
+        // Chunk 73: storage is now a list of ModeDeclaration objects.
+        var decl = Assert.Single(manifest.ModeDeclarations[fid]);
+        Assert.Equal(
+            new[]
+            {
+                Shumway.Compiler.Modes.ModeIndicator.Input,
+                Shumway.Compiler.Modes.ModeIndicator.Input,
+                Shumway.Compiler.Modes.ModeIndicator.Output,
+            },
+            decl.ArgModes);
     }
 
     [Fact]
