@@ -30,11 +30,24 @@ public sealed class IlPromotionStore
     private readonly HashSet<int> _unpromotable = new();
     private readonly IlPredicateCompiler _compiler = new();
 
+    // Chunk 76 — PGO. A promoted predicate whose shape supports
+    // profile-guided optimisation gets a profile key here; once enough
+    // samples accumulate the engine recompiles it (phase 2) and the
+    // functor moves into _pgoOptimized.
+    private readonly Dictionary<int, int> _pgoProfileKeys = new();
+    private readonly HashSet<int> _pgoOptimized = new();
+
     /// <summary>Invocation count required before the store attempts an IL
     /// compile for a predicate. <c>0</c> disables promotion entirely (the
     /// store still works but never produces a delegate). Defaults to
     /// <c>0</c>; callers / tests opt in by setting a positive value.</summary>
     public int Threshold { get; set; }
+
+    /// <summary>Chunk 76 — total profile samples a PGO-instrumented
+    /// predicate must accumulate before the engine recompiles it to its
+    /// optimised (profile-reordered) form. Tunable so tests can force
+    /// the phase-2 transition cheaply.</summary>
+    public int PgoSampleThreshold { get; set; } = 32;
 
     /// <summary>Returns the IL delegate currently bound to
     /// <paramref name="functorId"/>, or <c>null</c> if no promotion has
@@ -73,10 +86,56 @@ public sealed class IlPromotionStore
             return null;
         }
 
-        var del = _compiler.Compile(predicate, calleeMap);
-        _delegates[functorId] = del;
-        return del;
+        // Chunk 76 — phase-1 PGO compile. For a PGO-eligible shape this
+        // is the instrumented form (profile key ≥ 0); otherwise it's a
+        // plain compile (profile key -1) and no phase 2 will fire.
+        var result = _compiler.CompileInstrumented(predicate, calleeMap);
+        _delegates[functorId] = result.Delegate;
+        if (result.ProfileKey >= 0)
+            _pgoProfileKeys[functorId] = result.ProfileKey;
+        return result.Delegate;
     }
+
+    /// <summary>Chunk 76 — phase-2 PGO pass. For every promoted,
+    /// instrumented predicate whose accumulated profile has reached
+    /// <see cref="PgoSampleThreshold"/> samples, recompiles it to the
+    /// optimised (dispatch-reordered) form and swaps the bound
+    /// delegate. <paramref name="predicateLookup"/> resolves a functor
+    /// id to its current <see cref="CompiledPredicate"/> — the engine
+    /// supplies the per-query functor→predicate view. Called once per
+    /// query setup, off the hot path.</summary>
+    public void ConsiderPgoRecompiles(
+        IReadOnlyDictionary<int, CompiledPredicate> predicateLookup,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
+    {
+        if (_pgoProfileKeys.Count == 0) return;
+        // Snapshot the keys — the loop mutates _pgoProfileKeys.
+        foreach (var functorId in _pgoProfileKeys.Keys.ToList())
+        {
+            int profileKey = _pgoProfileKeys[functorId];
+            if (Shumway.Compiler.Il.IlProfileCounters.TotalSamples(profileKey)
+                < PgoSampleThreshold)
+            {
+                continue;
+            }
+            if (!predicateLookup.TryGetValue(functorId, out var predicate))
+                continue;   // predicate not in this query's program — retry later
+            var optimized = _compiler.CompileOptimized(predicate, profileKey, calleeMap);
+            _delegates[functorId] = optimized;
+            _pgoProfileKeys.Remove(functorId);
+            _pgoOptimized.Add(functorId);
+        }
+    }
+
+    /// <summary>True once <paramref name="functorId"/> has been
+    /// recompiled to its profile-optimised form. Diagnostic surface
+    /// for tests.</summary>
+    public bool IsPgoOptimized(int functorId) => _pgoOptimized.Contains(functorId);
+
+    /// <summary>True while <paramref name="functorId"/> is running in
+    /// the instrumented phase-1 form, awaiting enough samples for the
+    /// phase-2 recompile. Diagnostic surface for tests.</summary>
+    public bool IsPgoInstrumented(int functorId) => _pgoProfileKeys.ContainsKey(functorId);
 
     /// <summary>The synthetic <c>__query__/N</c> predicates that
     /// <see cref="PrologEngine.SetupQueryFromTerm"/> wraps every query

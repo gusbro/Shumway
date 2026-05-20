@@ -1324,6 +1324,16 @@ public sealed class PrologEngine
         // wants.
         interp.Tier1Dispatcher = new Tier1DispatcherAdapter(
             IlPromotion, linkResult.PredicatesByAddress, _jitIndexProfile);
+
+        // Chunk 76 — PGO phase-2 pass. Once per query setup, off the
+        // hot path: any promoted, instrumented predicate that has
+        // accumulated enough profile samples is recompiled to its
+        // optimised (dispatch-reordered) form. Build a functor-keyed
+        // view of this query's program for the recompile to read.
+        var functorToPredicate = new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>();
+        foreach (var (_, pred) in linkResult.PredicatesByAddress)
+            functorToPredicate[pred.FunctorId] = pred;
+        IlPromotion.ConsiderPgoRecompiles(functorToPredicate, functorToPredicate);
         // IL Call (chunk 50): runs a sub-predicate synchronously by
         // re-entering the bytecode interpreter on the linked program.
         engine.IlSubroutineRunner = target => interp.RunSubroutine(program, target);

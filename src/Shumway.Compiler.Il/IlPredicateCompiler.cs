@@ -53,6 +53,9 @@ public sealed class IlPredicateCompiler
         typeof(Engine).GetMethod(
             nameof(Engine.PushIlChoicePoint),
             new[] { typeof(Func<Engine, int, bool>), typeof(int), typeof(int) })!;
+    // Chunk 76 — PGO: instrumented IL calls this on each clause success.
+    private static readonly MethodInfo IlProfileCountersBump =
+        typeof(IlProfileCounters).GetMethod(nameof(IlProfileCounters.Bump))!;
     private static readonly MethodInfo CellTagGetter =
         typeof(Cell).GetProperty(nameof(Cell.Tag))!.GetGetMethod()!;
     private static readonly MethodInfo CellAsHeapIndexGetter =
@@ -183,6 +186,83 @@ public sealed class IlPredicateCompiler
         throw new NotSupportedException(
             $"Multi-clause predicate (fid={predicate.FunctorId}, clauses={predicate.ClauseCount}) "
             + "is outside the IL subset.");
+    }
+
+    // ============================================================================
+    // Chunk 76 — PGO: two-phase profile-guided IL compilation
+    // ============================================================================
+
+    /// <summary>Profile key counter — allocated per instrumented
+    /// predicate, indexing <see cref="IlProfileCounters"/>. Separate
+    /// namespace from <see cref="_nextHolderKey"/>.</summary>
+    private static int _nextProfileKey = 1;
+
+    /// <summary>Result of a phase-1 PGO compile: the (instrumented)
+    /// delegate plus the profile key the engine later passes to
+    /// <see cref="CompileOptimized"/>. A <see cref="ProfileKey"/> of
+    /// <c>-1</c> means the predicate's shape isn't PGO-eligible — it
+    /// was compiled normally and no phase-2 recompile should fire.</summary>
+    public readonly record struct PgoCompileResult(
+        PredicateDelegate Delegate, int ProfileKey);
+
+    /// <summary>Phase-1 PGO compile. For the indexed-atom shape this
+    /// emits the <em>instrumented</em> form whose ground dispatch
+    /// records which atom matched; for every other shape it's an
+    /// ordinary <see cref="Compile"/> with <see cref="PgoCompileResult.ProfileKey"/>
+    /// set to <c>-1</c>.</summary>
+    public PgoCompileResult CompileInstrumented(
+        CompiledPredicate predicate,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
+    {
+        ArgumentNullException.ThrowIfNull(predicate);
+        if (predicate.ClauseCount > 1
+            && TryDescribeIndexedAtomPredicate(predicate, out var info))
+        {
+            lock (IndexedDelegateHolder.RegistrationLock)
+            {
+                int profileKey = _nextProfileKey++;
+                IlProfileCounters.Allocate(profileKey, info!.Clauses.Count);
+                var del = CompileIndexedAtomPredicateUnlocked(
+                    predicate, info, profileKey, groundOrder: null);
+                return new PgoCompileResult(del, profileKey);
+            }
+        }
+        return new PgoCompileResult(Compile(predicate, calleeMap), -1);
+    }
+
+    /// <summary>Phase-2 PGO compile. Reads the hit counts accumulated
+    /// under <paramref name="profileKey"/> and recompiles the
+    /// indexed-atom predicate with the ground-dispatch <c>cmp</c> chain
+    /// ordered most-frequently-matched-atom first. Releases the profile
+    /// counters afterwards. Falls back to a plain compile when the
+    /// shape isn't indexed-atom (defensive — the engine only calls this
+    /// for keys produced by an indexed-atom phase 1).</summary>
+    public PredicateDelegate CompileOptimized(
+        CompiledPredicate predicate, int profileKey,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
+    {
+        ArgumentNullException.ThrowIfNull(predicate);
+        if (profileKey < 0
+            || !TryDescribeIndexedAtomPredicate(predicate, out var info))
+        {
+            return Compile(predicate, calleeMap);
+        }
+        long[]? counts = IlProfileCounters.Get(profileKey);
+        int n = info!.Clauses.Count;
+        var order = Enumerable.Range(0, n).ToArray();
+        if (counts is not null)
+        {
+            // Descending by hit count; Array.Sort isn't stable but ties
+            // among equally-cold atoms don't matter.
+            Array.Sort(order, (a, b) => counts[b].CompareTo(counts[a]));
+        }
+        lock (IndexedDelegateHolder.RegistrationLock)
+        {
+            var del = CompileIndexedAtomPredicateUnlocked(
+                predicate, info, profileKey: -1, groundOrder: order);
+            IlProfileCounters.Release(profileKey);
+            return del;
+        }
     }
 
     // ============================================================================
@@ -1509,14 +1589,15 @@ public sealed class IlPredicateCompiler
     }
 
     private PredicateDelegate CompileIndexedAtomPredicateUnlocked(
-        CompiledPredicate predicate, IndexedAtomInfo info)
+        CompiledPredicate predicate, IndexedAtomInfo info,
+        int profileKey = -1, int[]? groundOrder = null)
     {
         int holderKey = _nextHolderKey;
         var emitSelf = SelfFromHolder(holderKey);
 
         var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
             $"ShumwayIl_indexed_{predicate.FunctorId}");
-        EmitIndexedAtomBody(emit, predicate, info, emitSelf);
+        EmitIndexedAtomBody(emit, predicate, info, emitSelf, profileKey, groundOrder);
 
         var del = emit.CreateDelegate();
         IndexedDelegateHolder.Register(holderKey, del);
@@ -1527,12 +1608,27 @@ public sealed class IlPredicateCompiler
     /// <summary>Shared indexed-atom-shape emit body used by both the
     /// DynamicMethod runtime path (above) and the chunk-71 persisted
     /// assembly path. Self-references for the per-clause IL CP push
-    /// route through <paramref name="emitSelf"/>.</summary>
+    /// route through <paramref name="emitSelf"/>.
+    ///
+    /// <para>Chunk 76 — PGO. <paramref name="profileKey"/> ≥ 0 emits
+    /// the <em>instrumented</em> ground-dispatch: each atom match
+    /// lands on its own success label that records a hit via
+    /// <see cref="IlProfileCounters.Bump"/>. <paramref name="groundOrder"/>,
+    /// when non-null, is a permutation of clause indices giving the
+    /// order in which to emit the ground-dispatch <c>cmp</c> chain —
+    /// the phase-2 <em>optimised</em> form puts the
+    /// most-frequently-matched atom first. The ground dispatch is a
+    /// pure lookup (whichever atom matches, the answer is the same),
+    /// so reordering it is always semantics-preserving. The
+    /// var-dispatch path is never reordered — its clause order is the
+    /// observable solution order.</para></summary>
     private static void EmitIndexedAtomBody(
         Sigil.Emit<PredicateDelegate> emit,
         CompiledPredicate predicate,
         IndexedAtomInfo info,
-        SelfDelegateEmitter emitSelf)
+        SelfDelegateEmitter emitSelf,
+        int profileKey = -1,
+        int[]? groundOrder = null)
     {
         var clauses = info.Clauses;
         // Build the dispatch arrays *outside* IL so the emitted method
@@ -1585,21 +1681,53 @@ public sealed class IlPredicateCompiler
         emit.Call(CellAsAtomIdGetter);
         var atomIdLocal = emit.DeclareLocal<int>("atomId");
         emit.StoreLocal(atomIdLocal);
-        var groundSuccess = emit.DefineLabel("ground_success");
-        for (int i = 0; i < atomIds.Length; i++)
+
+        // The cmp chain is emitted in groundOrder when given (phase-2
+        // PGO puts the hottest atom first); identity order otherwise.
+        int n = atomIds.Length;
+        int[] order = groundOrder ?? Enumerable.Range(0, n).ToArray();
+
+        if (profileKey >= 0)
         {
-            emit.LoadLocal(atomIdLocal);
-            emit.LoadConstant(atomIds[i]);
-            emit.BranchIfEqual(groundSuccess);
+            // Instrumented (phase-1): a per-clause success label that
+            // records the hit before returning true.
+            var successLabels = new Sigil.Label[n];
+            for (int ci = 0; ci < n; ci++)
+                successLabels[ci] = emit.DefineLabel($"ground_success_{ci}");
+            foreach (int ci in order)
+            {
+                emit.LoadLocal(atomIdLocal);
+                emit.LoadConstant(atomIds[ci]);
+                emit.BranchIfEqual(successLabels[ci]);
+            }
+            emit.Branch(failLabel);
+            for (int ci = 0; ci < n; ci++)
+            {
+                emit.MarkLabel(successLabels[ci]);
+                emit.LoadConstant(profileKey);
+                emit.LoadConstant(ci);
+                emit.Call(IlProfileCountersBump);
+                emit.LoadConstant(true);
+                emit.Return();
+            }
         }
-        // No match in ground dispatch: fail.
-        emit.Branch(failLabel);
-        emit.MarkLabel(groundSuccess);
-        // The switch_on_atom dispatch already unified A1 with the
-        // matching atom (since A1 already *was* that atom). Just return
-        // success.
-        emit.LoadConstant(true);
-        emit.Return();
+        else
+        {
+            // Uninstrumented (no PGO, or phase-2 optimised): shared
+            // success label. The switch_on_atom dispatch already
+            // unified A1 with the matching atom, so just return true.
+            var groundSuccess = emit.DefineLabel("ground_success");
+            foreach (int ci in order)
+            {
+                emit.LoadLocal(atomIdLocal);
+                emit.LoadConstant(atomIds[ci]);
+                emit.BranchIfEqual(groundSuccess);
+            }
+            emit.Branch(failLabel);
+            emit.MarkLabel(groundSuccess);
+            emit.LoadConstant(true);
+            emit.Return();
+        }
 
         // var_dispatch and cursor>0 share the same dispatch logic: pick
         // the clause to try based on the cursor. cursor==0 enters here
