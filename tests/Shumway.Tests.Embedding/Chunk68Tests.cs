@@ -30,15 +30,20 @@ public class Chunk68Tests
     public void DynamicPredicate_CompilesWithIndexing()
     {
         // Build a dynamic predicate with discriminating arg 0 atoms.
-        // After the first call, the cached compiled bytecode must
-        // contain switch_on_term + switch_on_atom — the same shape a
+        // Chunk 75 (JIT indexing) defers the switch tables until the
+        // predicate is hot, so drop the threshold to 1 — the first
+        // call then makes it hot and the next query recompiles indexed
+        // with switch_on_term + switch_on_atom, the same shape a
         // static indexed predicate gets.
         var engine = new PrologEngine();
+        engine.JitIndexing.Threshold = 1;
         engine.ConsultString(":- dynamic color/1.");
         foreach (var c in new[] { "red", "green", "blue", "yellow", "purple" })
             engine.Query($"assertz(color({c})).");
-        // First query primes the cache.
+        // First query: predicate crosses the (lowered) threshold.
         Assert.True(engine.Query("color(red).").Success);
+        // Second query: recompiled indexed now that it's hot.
+        Assert.True(engine.Query("color(green).").Success);
 
         Assert.True(engine.DynamicPredicateCache.TryGetValue(Fid("color", 1), out var cached));
         Assert.NotNull(cached);
@@ -129,13 +134,17 @@ public class Chunk68Tests
     {
         // The chunk-67 multi-arg fallback works on dynamic predicates too,
         // because dynamic compile goes through the same PredicateCompiler.
+        // Chunk 75 (JIT indexing) defers the switch tables until hot —
+        // threshold 1 makes the first call promote it.
         var engine = new PrologEngine();
+        engine.JitIndexing.Threshold = 1;
         engine.ConsultString(":- dynamic shape/2.");
         engine.Query("assertz(shape(circle, area)).");
         engine.Query("assertz(shape(square, area)).");
         engine.Query("assertz(shape(circle, perimeter)).");
         engine.Query("assertz(shape(triangle, area)).");
-        engine.Query("shape(circle, area).");   // prime cache
+        engine.Query("shape(circle, area).");   // crosses threshold
+        engine.Query("shape(circle, area).");   // recompiled indexed
         // Cached bytecode should contain both switch_on_term (arg 0)
         // and switch_on_arg (arg 1 fallback).
         Assert.True(engine.DynamicPredicateCache.TryGetValue(Fid("shape", 2), out var cached));

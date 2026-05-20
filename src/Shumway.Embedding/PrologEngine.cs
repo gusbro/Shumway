@@ -74,6 +74,14 @@ public sealed class PrologEngine
     /// <c>:- option(...)</c> directives may surface a friendlier knob.</summary>
     public IlPromotionStore IlPromotion { get; } = new();
 
+    /// <summary>Chunk 75 — JIT indexing profile. Tracks per-predicate
+    /// runtime call counts so the engine can defer building switch
+    /// tables for a dynamic predicate until it proves hot. Set
+    /// <c>engine.JitIndexing.Threshold</c> to tune (or, in tests, to
+    /// force) the cold→hot transition.</summary>
+    public JitIndexProfile JitIndexing => _jitIndexProfile;
+    private readonly JitIndexProfile _jitIndexProfile = new();
+
     /// <summary>Pre-decoded compiled modules from any bundle loaded
     /// with a <see cref="BundleEntry.CompiledBytecode"/> blob
     /// (chunk 38 / chunk 45). Future runtime paths (chunk 51 onward)
@@ -165,6 +173,7 @@ public sealed class PrologEngine
             sub._dynamicClauses[fid] = new List<Clause>(clauses);
         foreach (var (fid, pred) in _dynamicPredicateCache)
             sub._dynamicPredicateCache[fid] = pred;
+        _jitIndexProfile.CopyInto(sub._jitIndexProfile);
         return sub;
     }
 
@@ -1195,6 +1204,28 @@ public sealed class PrologEngine
                 allRewritten.Add(ModuleRewrite.Rewrite(clause, ctx));
         }
 
+        // JIT indexing (chunk 75): a dynamic predicate compiles
+        // unindexed until its runtime call count crosses the JIT
+        // threshold. A cold-but-now-hot predicate (or vice versa) has
+        // a stale cached compile at the wrong indexing level — drop it
+        // so ModuleCompiler rebuilds it. The unindexed set then names
+        // every dynamic functor still below the threshold.
+        var unindexedFunctors = new HashSet<int>();
+        foreach (int fid in _dynamicFunctors)
+        {
+            if (_jitIndexProfile.HotnessChangedSinceCompile(fid))
+                _dynamicPredicateCache.Remove(fid);
+            if (!_jitIndexProfile.IsHot(fid))
+                unindexedFunctors.Add(fid);
+        }
+        foreach (int fid in _dynamicClauses.Keys)
+        {
+            if (_jitIndexProfile.HotnessChangedSinceCompile(fid))
+                _dynamicPredicateCache.Remove(fid);
+            if (!_jitIndexProfile.IsHot(fid))
+                unindexedFunctors.Add(fid);
+        }
+
         // Skip-compile cache. Two contributors live here:
         //   - Bundle skip-compile (chunk 55): populated by LoadBundle from
         //     a bundle's compiled bytecode blob.
@@ -1220,7 +1251,8 @@ public sealed class PrologEngine
                 merged[fid] = pred;
             skipCompileCache = merged;
         }
-        var module = new ModuleCompiler().Compile(allRewritten, skipCompileCache);
+        var module = new ModuleCompiler().Compile(
+            allRewritten, skipCompileCache, unindexedFunctors);
 
         // Populate the dynamic cache with any newly-compiled dynamic
         // predicate whose bytecode is safe to reuse next query (no
@@ -1235,6 +1267,10 @@ public sealed class PrologEngine
             foreach (var pred in module.Predicates)
             {
                 if (!_dynamicFunctors.Contains(pred.FunctorId)) continue;
+                // Snapshot the JIT-indexing decision this compile used so
+                // a later query can detect a cold→hot flip.
+                _jitIndexProfile.RecordCompileDecision(
+                    pred.FunctorId, _jitIndexProfile.IsHot(pred.FunctorId));
                 if (_dynamicPredicateCache.ContainsKey(pred.FunctorId)) continue;
                 if (Shumway.Compiler.Wam.ModuleCompiler.IsCachedPredicateReusable(pred))
                     _dynamicPredicateCache[pred.FunctorId] = pred;
@@ -1287,7 +1323,7 @@ public sealed class PrologEngine
         // bytecode-PC the interpreter has into the functor the store
         // wants.
         interp.Tier1Dispatcher = new Tier1DispatcherAdapter(
-            IlPromotion, linkResult.PredicatesByAddress);
+            IlPromotion, linkResult.PredicatesByAddress, _jitIndexProfile);
         // IL Call (chunk 50): runs a sub-predicate synchronously by
         // re-entering the bytecode interpreter on the linked program.
         engine.IlSubroutineRunner = target => interp.RunSubroutine(program, target);

@@ -21,6 +21,14 @@ public sealed class ModuleCompiler
     public CompiledModule Compile(IEnumerable<Clause> clauses)
         => Compile(clauses, cache: null);
 
+    /// <summary>Overload accepting the chunk-75 JIT-indexing
+    /// <paramref name="unindexedFunctors"/> set without a skip-compile
+    /// cache.</summary>
+    public CompiledModule Compile(
+        IEnumerable<Clause> clauses,
+        IReadOnlySet<int>? unindexedFunctors)
+        => Compile(clauses, cache: null, unindexedFunctors);
+
     /// <summary><paramref name="cache"/> short-circuits compilation: any
     /// predicate-group whose functor id is in the cache <em>and</em> whose
     /// cached <see cref="CompiledPredicate"/> doesn't reference per-module
@@ -35,6 +43,18 @@ public sealed class ModuleCompiler
     public CompiledModule Compile(
         IEnumerable<Clause> clauses,
         IReadOnlyDictionary<int, CompiledPredicate>? cache)
+        => Compile(clauses, cache, unindexedFunctors: null);
+
+    /// <summary><paramref name="unindexedFunctors"/> (chunk 75) is the
+    /// set of functor ids the engine wants compiled without indexing —
+    /// dynamic predicates that haven't proven hot at runtime. Each such
+    /// functor's group goes to <see cref="PredicateCompiler.Compile"/>
+    /// with <c>enableIndexing: false</c>, producing a plain
+    /// <c>try_me_else</c> chain instead of switch tables.</summary>
+    public CompiledModule Compile(
+        IEnumerable<Clause> clauses,
+        IReadOnlyDictionary<int, CompiledPredicate>? cache,
+        IReadOnlySet<int>? unindexedFunctors)
     {
         ArgumentNullException.ThrowIfNull(clauses);
 
@@ -74,8 +94,10 @@ public sealed class ModuleCompiler
                 predicates.Add(cached);
                 continue;
             }
+            bool enableIndexing = unindexedFunctors is null
+                || !unindexedFunctors.Contains(fid);
             predicates.Add(predicateCompiler.Compile(
-                groups[fid], stringLiterals, floatLiterals, bigIntLiterals));
+                groups[fid], stringLiterals, floatLiterals, bigIntLiterals, enableIndexing));
         }
 
         return new CompiledModule(

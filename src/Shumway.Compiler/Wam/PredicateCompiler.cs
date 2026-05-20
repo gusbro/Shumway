@@ -45,11 +45,21 @@ public sealed class PredicateCompiler
             new LiteralPool<double>(),
             new LiteralPool<System.Numerics.BigInteger>());
 
+    /// <summary><paramref name="enableIndexing"/> (chunk 75 — JIT
+    /// indexing) gates first-arg / multi-arg indexing. When false the
+    /// predicate always compiles to the plain <c>try_me_else</c> chain,
+    /// even if its clauses would otherwise discriminate. The engine
+    /// passes <c>false</c> for dynamic predicates that haven't proven
+    /// hot yet: building switch tables is wasted work for a predicate
+    /// that's rarely called or constantly churning. Once the runtime
+    /// call count crosses the JIT threshold the engine recompiles with
+    /// <c>enableIndexing: true</c>.</summary>
     public CompiledPredicate Compile(
         IReadOnlyList<Clause> clauses,
         LiteralPool<string> stringLiterals,
         LiteralPool<double> floatLiterals,
-        LiteralPool<System.Numerics.BigInteger> bigIntLiterals)
+        LiteralPool<System.Numerics.BigInteger> bigIntLiterals,
+        bool enableIndexing = true)
     {
         ArgumentNullException.ThrowIfNull(clauses);
         if (clauses.Count == 0)
@@ -103,11 +113,18 @@ public sealed class PredicateCompiler
         // chain.
         var perArgInfo = new ArgInfo[arity][];
         var indexableArgs = new List<int>();
-        for (int k = 0; k < arity; k++)
+        // JIT indexing (chunk 75): when the engine hasn't yet proven
+        // this predicate hot, skip the indexability scan entirely and
+        // emit the plain chain. Cold / churning dynamic predicates
+        // don't pay the switch-table build cost.
+        if (enableIndexing)
         {
-            perArgInfo[k] = clauses.Select(c => ClassifyArg(c, k)).ToArray();
-            if (perArgInfo[k].Any(f => f.Kind != ArgKind.Var && f.Kind != ArgKind.Other))
-                indexableArgs.Add(k);
+            for (int k = 0; k < arity; k++)
+            {
+                perArgInfo[k] = clauses.Select(c => ClassifyArg(c, k)).ToArray();
+                if (perArgInfo[k].Any(f => f.Kind != ArgKind.Var && f.Kind != ArgKind.Other))
+                    indexableArgs.Add(k);
+            }
         }
 
         return indexableArgs.Count > 0

@@ -22,13 +22,16 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
     private readonly IlPromotionStore _store;
     private readonly IReadOnlyDictionary<int, CompiledPredicate> _predicatesByAddress;
     private readonly Dictionary<int, CompiledPredicate> _calleeMap;
+    private readonly JitIndexProfile _jitProfile;
 
     public Tier1DispatcherAdapter(
         IlPromotionStore store,
-        IReadOnlyDictionary<int, CompiledPredicate> predicatesByAddress)
+        IReadOnlyDictionary<int, CompiledPredicate> predicatesByAddress,
+        JitIndexProfile jitProfile)
     {
         _store = store;
         _predicatesByAddress = predicatesByAddress;
+        _jitProfile = jitProfile;
         // Build a functor-id-keyed view so IL CanCompile can inspect
         // callees by id (chunk 50). predicatesByAddress is keyed by
         // bytecode address; the same predicate appears under each of
@@ -46,6 +49,12 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
             return null;
 
         int functorId = pred.FunctorId;
+
+        // Chunk 75 — JIT indexing profile. Every Call/Execute dispatch
+        // bumps the predicate's runtime call count; once a dynamic
+        // predicate crosses the threshold the next query setup
+        // recompiles it with indexing enabled.
+        _jitProfile.RecordCall(functorId);
 
         // Already promoted? Return the cached delegate immediately.
         var existing = _store.TryGet(functorId);
