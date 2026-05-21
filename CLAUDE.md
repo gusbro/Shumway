@@ -266,6 +266,20 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
   re-running the suite with the `SHUMWAY_REGEN_DOCS` environment variable set
   rewrites it. (The hand-written `docs/design/builtins-catalog.md` remains as
   a design-level catalogue for now.)
+- Common library predicates, so typical Prolog programs run unchanged. The
+  gaps a portability pass would close:
+  - list utilities: `select/3`, `permutation/2`, `subtract/3`,
+    `intersection/3`, `union/3`, `delete/3`, `numlist/3`, `sum_list/2`,
+    `max_list/2`, `min_list/2`, `max_member/2`, `min_member/2`,
+    `include/3`, `exclude/3`, `partition/4`, `sort/4`, `predsort/3`,
+    `pairs_keys_values/3`;
+  - atom/number conversion: `atom_number/2`, `atomic_list_concat/2`,
+    `atomic_list_concat/3`, `number_string/2`, `char_type/2`;
+  - control & misc: `once/1`, `ignore/1`, `tab/1`, `apply/2`, `findall/4`.
+  Each new predicate carries doc metadata so it lands in `docs/predicates.md`
+  automatically. Most belong in the Prolog prelude (or a small library
+  module); a few are C# builtins where performance or primitive access
+  warrants it.
 - Attributed-variable-based constraints: CLP(R) if needed.
 - Native AOT support.
 - Tabling.
