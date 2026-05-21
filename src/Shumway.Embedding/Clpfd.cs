@@ -28,7 +28,9 @@ namespace Shumway.Embedding;
 /// the boolean connectives <c>#/\</c>, <c>#\/</c>, <c>#\</c>. Chunk 92
 /// adds the remaining arithmetic expression functions <c>min</c>,
 /// <c>max</c>, <c>abs</c> and <c>//</c>, and the <c>sum/3</c>
-/// constraint.</para>
+/// constraint. Chunk 93 completes CLP(FD): <c>all_distinct/1</c> gains
+/// Hall-interval pruning, <c>scalar_product/4</c> is added, and
+/// <c>//</c> accepts a variable divisor.</para>
 /// </summary>
 internal static class Clpfd
 {
@@ -71,7 +73,9 @@ internal static class Clpfd
         :- public '$fd_idiv'/3.
         :- public '$fd_set'/3.
         :- public '$fd_reif'/4.
+        :- public '$fd_alldiff'/1.
         :- public sum/3.
+        :- public scalar_product/4.
         :- public verify_attributes/4.
         :- public clpfd_attr_goals/3.
         :- public label/1.
@@ -469,14 +473,30 @@ internal static class Clpfd
             clpfd_bneg(CMax, NCMax),
             clpfd_narrow_bounds(A, NCMax, CMax).
 
-        % V = A // B (truncating). Propagates once the divisor is a known
-        % positive integer; stays suspended while it is still unbound.
+        % V = A // B (truncating). A known positive integer divisor gives
+        % two-way propagation; a variable divisor whose domain is wholly
+        % positive gives a forward bound on V (truncating division is
+        % monotone in each argument, so the extreme quotients lie at the
+        % operand-domain corners).
         '$fd_idiv'(A, B, V) :-
             ( integer(B) ->
                 ( B =:= 0 -> throw(error(evaluation_error(zero_divisor), _))
                 ; B > 0 -> clpfd_idiv_pos(A, B, V)
                 ; throw(error(type_error(fd_positive_divisor, B), _))
                 )
+            ; clpfd_idiv_var(A, B, V)
+            ).
+
+        clpfd_idiv_var(A, B, V) :-
+            clpfd_dom_of(B, DB), clpfd_dom_min(DB, BMin), clpfd_dom_max(DB, BMax),
+            clpfd_dom_of(A, DA), clpfd_dom_min(DA, AMin), clpfd_dom_max(DA, AMax),
+            ( integer(BMin), BMin >= 1, integer(BMax),
+              integer(AMin), integer(AMax) ->
+                T1 is AMin // BMin, T2 is AMin // BMax,
+                T3 is AMax // BMin, T4 is AMax // BMax,
+                VLo is min(min(T1, T2), min(T3, T4)),
+                VHi is max(max(T1, T2), max(T3, T4)),
+                clpfd_narrow_bounds(V, VLo, VHi)
             ; true
             ).
 
@@ -511,6 +531,23 @@ internal static class Clpfd
         clpfd_apply_rel('#>',   E, T) :- E #> T.
         clpfd_apply_rel('#=<',  E, T) :- E #=< T.
         clpfd_apply_rel('#>=',  E, T) :- E #>= T.
+
+        % ===== scalar_product/4 =====
+        % scalar_product(Coeffs, Vars, Rel, Total): Total stands in
+        % relation Rel to the dot product of the equal-length lists
+        % Coeffs and Vars.
+        scalar_product(Coeffs, Vars, Rel, Total) :-
+            ( clpfd_rel_ok(Rel) -> true
+            ; throw(error(domain_error(clpfd_relation, Rel), _))
+            ),
+            clpfd_sp_expr(Coeffs, Vars, 0, Expr),
+            clpfd_apply_rel(Rel, Expr, Total).
+
+        clpfd_sp_expr([], [], Acc, Acc) :- !.
+        clpfd_sp_expr([C|Cs], [V|Vs], Acc, S) :- !,
+            clpfd_sp_expr(Cs, Vs, Acc + C * V, S).
+        clpfd_sp_expr(_, _, _, _) :-
+            throw(error(type_error(clpfd_scalar_product_lengths, _), _)).
 
         % ===== labeling =====
         % label/1 and labeling/2 assign each variable a value from its
@@ -606,14 +643,81 @@ internal static class Clpfd
         clpfd_rev([X|Xs], A, R) :- clpfd_rev(Xs, [X|A], R).
 
         % ===== all_different / all_distinct =====
-        % every pair of list elements is constrained unequal; whenever a
-        % variable grounds, '#\='/2 prunes its value from the others.
+        % all_different posts pairwise disequality: whenever a variable
+        % grounds, '#\='/2 prunes its value from the others.
         all_different([]).
         all_different([X|Xs]) :- clpfd_diff_all(Xs, X), all_different(Xs).
-        all_distinct(L) :- all_different(L).
 
         clpfd_diff_all([], _).
         clpfd_diff_all([Y|Ys], X) :- X #\= Y, clpfd_diff_all(Ys, X).
+
+        % all_distinct is stronger: a single $fd_alldiff propagator does
+        % Hall-interval pruning. An interval [Lo,Hi] holding exactly as
+        % many variables (whose domains it contains) as it has values is
+        % a tight Hall interval — those variables consume every value, so
+        % [Lo,Hi] is removed from all the others; more variables than
+        % values fails immediately.
+        all_distinct(List) :-
+            clpfd_makevars(List),
+            clpfd_post('$fd_alldiff'(List), List).
+
+        clpfd_makevars([]).
+        clpfd_makevars([X|Xs]) :- clpfd_makevar(X), clpfd_makevars(Xs).
+
+        '$fd_alldiff'(Vars) :-
+            clpfd_ad_bounds(Vars, Lows, Highs),
+            clpfd_ad_los(Lows, Highs, Vars).
+
+        % collect the integer domain minima (Lows) and maxima (Highs);
+        % inf/sup endpoints cannot bound a Hall interval and are dropped.
+        clpfd_ad_bounds([], [], []).
+        clpfd_ad_bounds([V|Vs], Lows, Highs) :-
+            clpfd_ad_bounds(Vs, L0, H0),
+            clpfd_dom_of(V, D), clpfd_dom_min(D, Mn), clpfd_dom_max(D, Mx),
+            ( integer(Mn) -> Lows = [Mn|L0] ; Lows = L0 ),
+            ( integer(Mx) -> Highs = [Mx|H0] ; Highs = H0 ).
+
+        clpfd_ad_los([], _, _).
+        clpfd_ad_los([Lo|Ls], Highs, Vars) :-
+            clpfd_ad_his(Highs, Lo, Vars),
+            clpfd_ad_los(Ls, Highs, Vars).
+
+        clpfd_ad_his([], _, _).
+        clpfd_ad_his([Hi|Hs], Lo, Vars) :-
+            ( Lo =< Hi -> clpfd_ad_hall(Vars, Lo, Hi) ; true ),
+            clpfd_ad_his(Hs, Lo, Vars).
+
+        clpfd_ad_hall(Vars, Lo, Hi) :-
+            clpfd_ad_count(Vars, Lo, Hi, K),
+            Size is Hi - Lo + 1,
+            ( K > Size -> fail
+            ; K =:= Size -> clpfd_ad_remove(Vars, Lo, Hi)
+            ; true
+            ).
+
+        clpfd_ad_count([], _, _, 0).
+        clpfd_ad_count([V|Vs], Lo, Hi, K) :-
+            clpfd_ad_count(Vs, Lo, Hi, K0),
+            ( clpfd_ad_within(V, Lo, Hi) -> K is K0 + 1 ; K = K0 ).
+
+        clpfd_ad_within(V, Lo, Hi) :-
+            clpfd_dom_of(V, D), clpfd_dom_min(D, Mn), clpfd_dom_max(D, Mx),
+            clpfd_ble(Lo, Mn), clpfd_ble(Mx, Hi).
+
+        clpfd_ad_remove([], _, _).
+        clpfd_ad_remove([V|Vs], Lo, Hi) :-
+            ( clpfd_ad_within(V, Lo, Hi) -> true
+            ; clpfd_dom_of(V, D), clpfd_dom_sub_iv(D, Lo, Hi, D2),
+              clpfd_narrow(V, D2)
+            ),
+            clpfd_ad_remove(Vs, Lo, Hi).
+
+        % D with the integer interval [Lo,Hi] removed.
+        clpfd_dom_sub_iv(D, Lo, Hi, Out) :-
+            Lo1 is Lo - 1, Hi1 is Hi + 1,
+            clpfd_dom_above(D, Lo1, Lower),
+            clpfd_dom_below(D, Hi1, Upper),
+            clpfd_app(Lower, Upper, Out).
 
         % ===== reification =====
         % B #<==> C : the 0/1 variable B is 1 exactly when constraint C

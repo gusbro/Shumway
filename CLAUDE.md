@@ -248,11 +248,15 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
 - ✓ CLP(FD) remaining arithmetic and `sum/3` (chunk 92): the expression
   functions `min`, `max`, `abs` and truncating integer division `//` (with a
   positive integer divisor), and `sum(List, Rel, Total)` for the six relations.
-- → CLP(FD) refinements, CLP(R), Native AOT and tabling moved to Phase 7.
+- ✓ CLP(FD) refinements completing the library (chunk 93): `all_distinct/1`
+  gains Hall-interval pruning (a single `$fd_alldiff` propagator — an interval
+  holding exactly as many variables as values removes that range from the
+  others, more variables than values fails); `scalar_product/4`; and `//`
+  with a variable divisor (forward-bounds the quotient when the divisor's
+  domain is wholly positive).
+- → CLP(R), Native AOT and tabling moved to Phase 7.
 
-**Phase 7 — CLP(FD) refinements, CLP(R), AOT, tabling**
-- CLP(FD) refinements: a stronger `all_distinct` with Hall-interval pruning,
-  `scalar_product/4`, and `//` with a variable (non-constant) divisor.
+**Phase 7 — CLP(R), AOT, tabling**
 - Attributed-variable-based constraints: CLP(R) if needed.
 - Native AOT support.
 - Tabling.
