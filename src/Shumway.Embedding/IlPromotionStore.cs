@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Shumway.Compiler.Il;
 using Shumway.Compiler.Wam;
 
@@ -28,7 +29,20 @@ public sealed class IlPromotionStore
     private readonly Dictionary<int, int> _counters = new();
     private readonly Dictionary<int, PredicateDelegate> _delegates = new();
     private readonly HashSet<int> _unpromotable = new();
-    private readonly IlPredicateCompiler _compiler = new();
+
+    // Tier-1 is runtime code generation, so it is unavailable under
+    // Native AOT. Under AOT the store stays a pure Tier-0 counter — it
+    // never compiles, and the IL compiler (which itself does reflection
+    // at type-init) is never even constructed.
+    private static readonly bool DynamicCodeSupported =
+        RuntimeFeature.IsDynamicCodeSupported;
+
+    private IlPredicateCompiler? _compilerInstance;
+
+    /// <summary>The IL compiler, created on first use. Left null forever
+    /// when Tier-1 never runs (the default, and always under AOT), so the
+    /// reflection in its type initialiser is not reached.</summary>
+    private IlPredicateCompiler Compiler => _compilerInstance ??= new IlPredicateCompiler();
 
     // Chunk 76 — PGO. A promoted predicate whose shape supports
     // profile-guided optimisation gets a profile key here; once enough
@@ -65,7 +79,7 @@ public sealed class IlPromotionStore
     public PredicateDelegate? RecordInvocation(int functorId, CompiledPredicate predicate,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
-        if (Threshold <= 0) return null;
+        if (Threshold <= 0 || !DynamicCodeSupported) return null;
         if (_delegates.ContainsKey(functorId)) return _delegates[functorId];
         if (_unpromotable.Contains(functorId)) return null;
         if (IsExcludedFromPromotion(functorId))
@@ -80,7 +94,7 @@ public sealed class IlPromotionStore
 
         if (count < Threshold) return null;
 
-        if (!_compiler.CanCompile(predicate, calleeMap))
+        if (!Compiler.CanCompile(predicate, calleeMap))
         {
             _unpromotable.Add(functorId);
             return null;
@@ -89,7 +103,7 @@ public sealed class IlPromotionStore
         // Chunk 76 — phase-1 PGO compile. For a PGO-eligible shape this
         // is the instrumented form (profile key ≥ 0); otherwise it's a
         // plain compile (profile key -1) and no phase 2 will fire.
-        var result = _compiler.CompileInstrumented(predicate, calleeMap);
+        var result = Compiler.CompileInstrumented(predicate, calleeMap);
         _delegates[functorId] = result.Delegate;
         if (result.ProfileKey >= 0)
             _pgoProfileKeys[functorId] = result.ProfileKey;
@@ -108,7 +122,7 @@ public sealed class IlPromotionStore
         IReadOnlyDictionary<int, CompiledPredicate> predicateLookup,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
-        if (_pgoProfileKeys.Count == 0) return;
+        if (_pgoProfileKeys.Count == 0 || !DynamicCodeSupported) return;
         // Snapshot the keys — the loop mutates _pgoProfileKeys.
         foreach (var functorId in _pgoProfileKeys.Keys.ToList())
         {
@@ -120,7 +134,7 @@ public sealed class IlPromotionStore
             }
             if (!predicateLookup.TryGetValue(functorId, out var predicate))
                 continue;   // predicate not in this query's program — retry later
-            var optimized = _compiler.CompileOptimized(predicate, profileKey, calleeMap);
+            var optimized = Compiler.CompileOptimized(predicate, profileKey, calleeMap);
             _delegates[functorId] = optimized;
             _pgoProfileKeys.Remove(functorId);
             _pgoOptimized.Add(functorId);
@@ -157,6 +171,7 @@ public sealed class IlPromotionStore
     public PredicateDelegate? Warm(int functorId, CompiledPredicate predicate,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
+        if (!DynamicCodeSupported) return null;
         if (_delegates.TryGetValue(functorId, out var existing)) return existing;
         if (_unpromotable.Contains(functorId)) return null;
         if (IsExcludedFromPromotion(functorId))
@@ -164,12 +179,12 @@ public sealed class IlPromotionStore
             _unpromotable.Add(functorId);
             return null;
         }
-        if (!_compiler.CanCompile(predicate, calleeMap))
+        if (!Compiler.CanCompile(predicate, calleeMap))
         {
             _unpromotable.Add(functorId);
             return null;
         }
-        var del = _compiler.Compile(predicate, calleeMap);
+        var del = Compiler.Compile(predicate, calleeMap);
         _delegates[functorId] = del;
         return del;
     }

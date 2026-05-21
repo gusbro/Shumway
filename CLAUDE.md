@@ -139,6 +139,10 @@ dotnet publish src/Shumway.Bundler/ -c Release
 
 # Run the interactive top-level (REPL); any files listed are consulted at startup
 dotnet run --project src/Shumway.Repl/ -- [file.pl ...]
+
+# Publish the REPL as a self-contained Native AOT executable
+# (Windows: needs the Visual C++ build tools for the native link step)
+dotnet publish src/Shumway.Repl/ -r win-x64 -c Release
 ```
 
 ---
@@ -307,7 +311,15 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
   term's variables, re-expressed over the copy as `{...}` goals (each shared
   constraint emitted once, by the variable that owns it). (CLP(R) and CLP(FD)
   cannot share an engine — both define a public `verify_attributes/4`.)
-- Native AOT support.
+- ✓ Native AOT support (chunk 103). The Tier-0 bytecode interpreter is
+  AOT-compatible; Tier-1 IL promotion is runtime code generation, so it is
+  cleanly skipped under AOT — `IlPromotionStore` checks
+  `RuntimeFeature.IsDynamicCodeSupported`, never constructs the IL compiler
+  (its reflection-laden type initialiser is never reached), and the
+  persisted-IL bundle path in `LoadBundle` falls back to the entry's
+  bytecode. The REPL (`src/Shumway.Repl/`, `<PublishAot>true</PublishAot>`)
+  is the publish target: `dotnet publish` produces a self-contained native
+  `shumway` executable running the full engine, interpreter-only.
 - Tabling.
 
 ---

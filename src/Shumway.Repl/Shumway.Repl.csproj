@@ -4,6 +4,14 @@
     <OutputType>Exe</OutputType>
     <AssemblyName>shumway</AssemblyName>
     <RootNamespace>Shumway.Repl</RootNamespace>
+
+    <!-- Native AOT. The REPL is the AOT-publish target: `dotnet publish`
+         produces a self-contained native `shumway` executable. The engine
+         runs Tier-0 (the bytecode interpreter) only — Tier-1 IL promotion
+         is runtime code generation and is cleanly skipped under AOT (see
+         IlPromotionStore / PrologEngine). -->
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
 
   <ItemGroup>

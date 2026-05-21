@@ -516,7 +516,12 @@ public sealed class PrologEngine
         // so the first IL CP push finds its target.
         foreach (var entry in bundle.Entries)
         {
-            if (entry.CompiledIl is null || entry.CompiledIl.Length == 0) continue;
+            // A persisted-IL blob is JIT-able IL — loading and running it
+            // is runtime code generation, so under Native AOT the entry's
+            // bytecode (decoded above) is used instead.
+            if (entry.CompiledIl is null || entry.CompiledIl.Length == 0
+                || !System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported)
+                continue;
             var asm = System.Reflection.Assembly.Load(entry.CompiledIl);
             var type = asm.GetType(Shumway.Compiler.Il.PersistedIlBuilder.TypeName);
             if (type is null) continue;
