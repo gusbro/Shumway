@@ -214,7 +214,7 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
 - ✓ Profile-guided optimization (PGO) of IL code (two-phase instrumented→optimised; chunk 76).
 - ✓ JIT indexing (deferred dynamic-predicate switch tables; chunk 75).
 
-**Phase 4 — Extended features** — ✅ **Complete**.
+**Phase 4 — Extended features** — ✅ **Complete** (tagged `phase-4`; closure summary in [`docs/phase-4-closure.md`](docs/phase-4-closure.md)).
 - ✓ Attributed variables (attvars): the ATTVAR cell tag, the `put_attr`/`get_attr`/`del_attr` family, `attvar/1`, the `attr_unify_hook` unification hook, and residual-goal projection (chunks 77–81).
 - ✓ In-engine meta-call (added to this phase mid-stream): `findall/3`, `bagof/3`, `setof/3`, `forall/2`, `catch/3` and `call/1..7` now run in the live engine rather than an isolated sub-engine — side effects persist and there is no per-call sub-engine cost. `bagof`/`setof` do real witness grouping; `catch` and `call/N` are fully backtrackable per ISO (chunks 82–86).
 - → CLP, Native AOT and tabling were moved to Phase 6.
