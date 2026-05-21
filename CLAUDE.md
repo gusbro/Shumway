@@ -286,7 +286,7 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
   `docs/predicates.md` automatically. Two engine fixes fell out of this work:
   `==/2` and `\==/2` now handle floats, and `retract/1` is re-satisfiable
   (ISO requires it to enumerate matching clauses on backtracking).
-- ◐ CLP(R) — constraints over the reals. Chunk 99 delivers the linear-equality
+- ✓ CLP(R) — constraints over the reals. Chunk 99 delivers the linear-equality
   core: the opt-in `clpr` library (`engine.UseClpr()`), the `{Constraint}`
   wrapper, and a Gaussian-elimination solver built on attributed variables
   with lazy expansion — each posted equality is normalised against the
@@ -302,9 +302,11 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
   and non-linear constraints (a product or quotient of non-constants is
   delayed and retried whenever a variable it mentions is determined, posted
   for real once it turns linear; a residual non-linear constraint that never
-  resolves is left as a conditional answer). Constraint projection is a later
-  chunk. (CLP(R) and CLP(FD) cannot yet share an engine — both define a
-  public `verify_attributes/4`.)
+  resolves is left as a conditional answer). Chunk 102 adds constraint
+  projection: `copy_term/3` collects the residual constraints on the copied
+  term's variables, re-expressed over the copy as `{...}` goals (each shared
+  constraint emitted once, by the variable that owns it). (CLP(R) and CLP(FD)
+  cannot share an engine — both define a public `verify_attributes/4`.)
 - Native AOT support.
 - Tabling.
 

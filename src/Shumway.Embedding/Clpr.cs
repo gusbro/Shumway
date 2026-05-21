@@ -29,6 +29,7 @@ internal static class Clpr
         :- public '{}'/1.
         :- public verify_attributes/4.
         :- public '$clpr_dep_eq'/2.
+        :- public clpr_attr_goals/3.
 
         % ===== linear forms: lin(Constant, [Var-Coeff, ...]) =====
         clpr_add(lin(C1, T1), lin(C2, T2), lin(C3, T3)) :-
@@ -402,5 +403,50 @@ internal static class Clpr
             clpr_norm(Value, VLF),
             clpr_sub(FLF, VLF, D),
             clpr_solve(D).
+
+        % ===== constraint projection =====
+        % copy_term/3 collects, for every constrained variable of the
+        % copied term, the residual constraints re-expressed over the
+        % copy. attribute_goals/4 is dynamic (pre-declared by the prelude);
+        % a dynamic clause's body is not module-mangled, so it delegates to
+        % the public clpr_attr_goals/3, whose body resolves clpr locals.
+        attribute_goals(clpr, Attr, V, Goals) :- clpr_attr_goals(Attr, V, Goals).
+
+        % a solved variable projects as `{V =:= Expr}`; every constraint
+        % is projected once, by the variable that owns it (the first in
+        % its term list), so a shared constraint is not duplicated.
+        clpr_attr_goals(dep(Form, Cons), V, Goals) :- !,
+            clpr_lin_expr(Form, Expr),
+            clpr_owned_goals(Cons, V, CG),
+            Goals = [{V =:= Expr}|CG].
+        clpr_attr_goals(par(Cons), V, Goals) :- !,
+            clpr_owned_goals(Cons, V, Goals).
+        clpr_attr_goals(_, _, []).
+
+        clpr_owned_goals([], _, []).
+        clpr_owned_goals([Con|R], V, Goals) :-
+            ( clpr_owns(Con, V) -> clpr_render(Con, G), Goals = [G|Rest]
+            ; Goals = Rest
+            ),
+            clpr_owned_goals(R, V, Rest).
+
+        clpr_owns(iq(lin(_, [W-_|_]), _), V) :- W == V.
+        clpr_owns(dq(lin(_, [W-_|_])), V) :- W == V.
+        clpr_owns(nl(C), V) :- clpr_cvars(C, [], [W|_]), W == V.
+
+        clpr_render(iq(Lin, 0), {Expr >= 0}) :- clpr_lin_expr(Lin, Expr).
+        clpr_render(iq(Lin, 1), {Expr > 0}) :- clpr_lin_expr(Lin, Expr).
+        clpr_render(dq(Lin), {Expr =\= 0}) :- clpr_lin_expr(Lin, Expr).
+        clpr_render(nl(C), {C}).
+
+        % render a linear form as an arithmetic expression.
+        clpr_lin_expr(lin(C, []), C) :- !.
+        clpr_lin_expr(lin(0, [T|Ts]), Expr) :- !, clpr_terms_expr([T|Ts], Expr).
+        clpr_lin_expr(lin(C, [T|Ts]), C + Rest) :- clpr_terms_expr([T|Ts], Rest).
+        clpr_terms_expr([W-K], TE) :- !, clpr_term_expr(W, K, TE).
+        clpr_terms_expr([W-K|R], TE + Rest) :-
+            clpr_term_expr(W, K, TE), clpr_terms_expr(R, Rest).
+        clpr_term_expr(W, 1, W) :- !.
+        clpr_term_expr(W, K, K * W).
         """;
 }
