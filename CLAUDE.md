@@ -291,9 +291,15 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
   wrapper, and a Gaussian-elimination solver built on attributed variables
   with lazy expansion — each posted equality is normalised against the
   current solution, an inconsistent one fails, a free variable is pivoted
-  out otherwise, and determined variables are bound. Inequalities, non-linear
-  constraints and constraint projection are later chunks. (CLP(R) and CLP(FD)
-  cannot yet share an engine — both define a public `verify_attributes/4`.)
+  out otherwise, and determined variables are bound. Chunk 100 adds the
+  inequalities `<`, `>`, `=<`, `>=`: each is stored on the variables it
+  mentions, and every post gathers the connected component of inequalities,
+  re-expands it through the current equality solution, and tests
+  satisfiability by Fourier–Motzkin elimination — so an unsatisfiable system
+  (even one of purely multi-variable inequalities) fails on the spot.
+  Disequality (`=\=`), non-linear constraints and constraint projection are
+  later chunks. (CLP(R) and CLP(FD) cannot yet share an engine — both define
+  a public `verify_attributes/4`.)
 - Native AOT support.
 - Tabling.
 
