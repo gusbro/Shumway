@@ -19,7 +19,10 @@ namespace Shumway.Embedding;
 /// <para>Chunk 89 delivers the core plus the six arithmetic constraints
 /// <c>#=</c>, <c>#\=</c>, <c>#&lt;</c>, <c>#&gt;</c>, <c>#=&lt;</c>,
 /// <c>#&gt;=</c> over additive expressions (<c>+</c>, <c>-</c>, unary
-/// <c>-</c>). Multiplication, labeling, global constraints and
+/// <c>-</c>). Chunk 90 adds multiplication (<c>*</c>) with bounds
+/// consistency and the labeling predicates <c>label/1</c>,
+/// <c>labeling/2</c> (options <c>leftmost</c>/<c>ff</c> and
+/// <c>up</c>/<c>down</c>) and <c>indomain/1</c>. Global constraints and
 /// reification are later chunks.</para>
 /// </summary>
 internal static class Clpfd
@@ -51,9 +54,13 @@ internal static class Clpfd
         :- public '$fd_le'/2.
         :- public '$fd_neq'/2.
         :- public '$fd_plus'/3.
+        :- public '$fd_times'/3.
         :- public '$fd_set'/3.
         :- public verify_attributes/4.
         :- public clpfd_attr_goals/3.
+        :- public label/1.
+        :- public labeling/2.
+        :- public indomain/1.
 
         % ===== bound order: inf < every integer < sup =====
         clpfd_ble(A, B) :-
@@ -73,6 +80,32 @@ internal static class Clpfd
         clpfd_add_hi(A, B, R) :- ( ( A == sup ; B == sup ) -> R = sup ; R is A + B ).
         clpfd_sub_lo(A, B, R) :- ( A == inf -> R = inf ; B == sup -> R = inf ; R is A - B ).
         clpfd_sub_hi(A, B, R) :- ( A == sup -> R = sup ; B == inf -> R = sup ; R is A - B ).
+
+        % negate a bound
+        clpfd_bneg(inf, sup) :- !.
+        clpfd_bneg(sup, inf) :- !.
+        clpfd_bneg(X, Y) :- Y is -X.
+
+        % multiply a bound by a nonzero integer constant K
+        clpfd_bmul(B, K, R) :-
+            ( B == inf -> ( K > 0 -> R = inf ; R = sup )
+            ; B == sup -> ( K > 0 -> R = sup ; R = inf )
+            ; R is B * K
+            ).
+
+        % floor / ceil of a bound divided by a nonzero integer constant K.
+        % `mod` is floored (sign of divisor), so C - (C mod K) is the exact
+        % multiple of K at or below C, making the // division exact.
+        clpfd_bfloordiv(C, K, R) :-
+            ( C == inf -> ( K > 0 -> R = inf ; R = sup )
+            ; C == sup -> ( K > 0 -> R = sup ; R = inf )
+            ; M is C mod K, R is (C - M) // K
+            ).
+        clpfd_bceildiv(C, K, R) :-
+            ( C == inf -> ( K > 0 -> R = inf ; R = sup )
+            ; C == sup -> ( K > 0 -> R = sup ; R = inf )
+            ; NC is -C, M is NC mod K, R0 is (NC - M) // K, R is -R0
+            ).
 
         % ===== domains: sorted lists of disjoint L-H intervals =====
         clpfd_universal([inf-sup]).
@@ -135,6 +168,13 @@ internal static class Clpfd
         % render a domain as an `in` domain expression for projection
         clpfd_dom_expr([L-H], L..H) :- !.
         clpfd_dom_expr([L-H|T], (L..H \/ Rest)) :- clpfd_dom_expr(T, Rest).
+
+        % number of integers a domain admits; an unbounded interval counts
+        % as a large constant — enough to deprioritise it under first-fail.
+        clpfd_dom_size([], 0).
+        clpfd_dom_size([L-H|T], N) :-
+            ( integer(L), integer(H) -> S is H - L + 1 ; S = 1000000000 ),
+            clpfd_dom_size(T, N0), N is N0 + S.
 
         % ===== FD variables =====
         % the domain of X: a singleton for an integer, the attribute's
@@ -247,6 +287,10 @@ internal static class Clpfd
             clpfd_expr(A, VA), clpfd_expr(B, VB),
             clpfd_makevar(V),
             clpfd_post('$fd_plus'(V, VB, VA), [V, VB, VA]).
+        clpfd_expr(A * B, V) :- !,
+            clpfd_expr(A, VA), clpfd_expr(B, VB),
+            clpfd_makevar(V),
+            clpfd_post('$fd_times'(VA, VB, V), [VA, VB, V]).
         clpfd_expr(- A, V) :- !, clpfd_expr(0 - A, V).
         clpfd_expr(E, _) :-
             throw(error(type_error(fd_expression, E), _)).
@@ -297,5 +341,138 @@ internal static class Clpfd
             clpfd_narrow_bounds(A, ALo, AHi),
             clpfd_sub_lo(CMin, AMax, BLo), clpfd_sub_hi(CMax, AMin, BHi),
             clpfd_narrow_bounds(B, BLo, BHi).
+
+        % A * B = C — bounds consistency. A factor that is a (nonzero)
+        % integer constant gives exact two-way scaling; with both factors
+        % still variable only the product C is narrowed, from the four
+        % corner products, and only while every endpoint is finite.
+        '$fd_times'(A, B, C) :-
+            ( integer(A), integer(B) -> P is A * B, clpfd_narrow(C, [P-P])
+            ; integer(A) -> clpfd_times_one(A, B, C)
+            ; integer(B) -> clpfd_times_one(B, A, C)
+            ; clpfd_times_gen(A, B, C)
+            ).
+
+        % K * Y = C with K an integer constant.
+        clpfd_times_one(0, _, C) :- !, clpfd_narrow(C, [0-0]).
+        clpfd_times_one(K, Y, C) :-
+            clpfd_dom_of(Y, DY),
+            clpfd_dom_min(DY, YMin), clpfd_dom_max(DY, YMax),
+            ( K > 0 -> clpfd_bmul(YMin, K, CLo), clpfd_bmul(YMax, K, CHi)
+            ;          clpfd_bmul(YMax, K, CLo), clpfd_bmul(YMin, K, CHi)
+            ),
+            clpfd_narrow_bounds(C, CLo, CHi),
+            clpfd_dom_of(C, DC),
+            clpfd_dom_min(DC, CMin), clpfd_dom_max(DC, CMax),
+            ( K > 0 -> clpfd_bceildiv(CMin, K, YLo), clpfd_bfloordiv(CMax, K, YHi)
+            ;          clpfd_bceildiv(CMax, K, YLo), clpfd_bfloordiv(CMin, K, YHi)
+            ),
+            clpfd_narrow_bounds(Y, YLo, YHi).
+
+        clpfd_times_gen(A, B, C) :-
+            clpfd_dom_of(A, DA), clpfd_dom_of(B, DB),
+            clpfd_dom_min(DA, AMin), clpfd_dom_max(DA, AMax),
+            clpfd_dom_min(DB, BMin), clpfd_dom_max(DB, BMax),
+            ( integer(AMin), integer(AMax), integer(BMin), integer(BMax) ->
+                P1 is AMin * BMin, P2 is AMin * BMax,
+                P3 is AMax * BMin, P4 is AMax * BMax,
+                CLo is min(min(P1, P2), min(P3, P4)),
+                CHi is max(max(P1, P2), max(P3, P4)),
+                clpfd_narrow_bounds(C, CLo, CHi)
+            ; true
+            ).
+
+        % ===== labeling =====
+        % label/1 and labeling/2 assign each variable a value from its
+        % domain, backtracking over the choices; propagation runs between
+        % assignments and prunes the remaining search.
+        label(Vars) :- labeling([], Vars).
+
+        labeling(Options, Vars) :-
+            clpfd_label_opts(Options, Sel, Ord),
+            clpfd_label(Vars, Sel, Ord).
+
+        % option list -> variable-selection and value-ordering strategy.
+        clpfd_label_opts([], leftmost, up).
+        clpfd_label_opts([O|Os], Sel, Ord) :-
+            clpfd_label_opts(Os, Sel0, Ord0),
+            ( O == leftmost -> Sel = leftmost, Ord = Ord0
+            ; O == ff       -> Sel = ff,       Ord = Ord0
+            ; O == up       -> Ord = up,       Sel = Sel0
+            ; O == down     -> Ord = down,     Sel = Sel0
+            ; throw(error(domain_error(labeling_option, O), _))
+            ).
+
+        clpfd_label([], _, _).
+        clpfd_label([V|Vs], Sel, Ord) :-
+            ( integer(V) -> clpfd_label(Vs, Sel, Ord)
+            ; Sel == ff  -> clpfd_pick_ff([V|Vs], Ord, Rest),
+                            clpfd_label(Rest, Sel, Ord)
+            ; clpfd_pick(V, Ord),
+              clpfd_label(Vs, Sel, Ord)
+            ).
+
+        % first-fail: label the unbound variable with the smallest domain.
+        clpfd_pick_ff(Vars, Ord, Rest) :-
+            clpfd_choose_ff(Vars, Best),
+            clpfd_del1(Vars, Best, Rest),
+            clpfd_pick(Best, Ord).
+
+        clpfd_choose_ff([V|Vs], Best) :-
+            ( integer(V) -> clpfd_choose_ff(Vs, Best)
+            ; clpfd_var_size(V, S), clpfd_choose_ff_(Vs, V, S, Best)
+            ).
+        clpfd_choose_ff_([], Best, _, Best).
+        clpfd_choose_ff_([V|Vs], CurBest, CurS, Best) :-
+            ( integer(V) -> clpfd_choose_ff_(Vs, CurBest, CurS, Best)
+            ; clpfd_var_size(V, S),
+              ( S < CurS -> clpfd_choose_ff_(Vs, V, S, Best)
+              ;             clpfd_choose_ff_(Vs, CurBest, CurS, Best)
+              )
+            ).
+        clpfd_var_size(V, N) :- clpfd_dom_of(V, D), clpfd_dom_size(D, N).
+
+        clpfd_del1([], _, []).
+        clpfd_del1([X|Xs], Y, Rest) :-
+            ( X == Y -> Rest = Xs
+            ; Rest = [X|Rest1], clpfd_del1(Xs, Y, Rest1)
+            ).
+
+        % bind V to a value of its domain, on backtracking the next one.
+        clpfd_pick(V, up)   :- clpfd_dom_of(V, D), clpfd_indomain_up(V, D).
+        clpfd_pick(V, down) :- clpfd_dom_of(V, D),
+                               clpfd_rev(D, [], R), clpfd_indomain_down(V, R).
+
+        indomain(X) :-
+            ( integer(X) -> true
+            ; clpfd_dom_of(X, D), clpfd_indomain_up(X, D)
+            ).
+
+        clpfd_indomain_up(_, []) :- fail.
+        clpfd_indomain_up(V, [L-H|T]) :-
+            ( L == inf -> throw(error(instantiation_error, _)) ; true ),
+            ( clpfd_enum_up(V, L, H)
+            ; clpfd_indomain_up(V, T)
+            ).
+        clpfd_enum_up(V, L, H) :-
+            ( H == sup -> throw(error(instantiation_error, _))
+            ; L =< H -> ( V = L ; L1 is L + 1, clpfd_enum_up(V, L1, H) )
+            ; fail
+            ).
+
+        clpfd_indomain_down(_, []) :- fail.
+        clpfd_indomain_down(V, [L-H|T]) :-
+            ( H == sup -> throw(error(instantiation_error, _)) ; true ),
+            ( clpfd_enum_down(V, H, L)
+            ; clpfd_indomain_down(V, T)
+            ).
+        clpfd_enum_down(V, H, L) :-
+            ( L == inf -> throw(error(instantiation_error, _))
+            ; L =< H -> ( V = H ; H1 is H - 1, clpfd_enum_down(V, H1, L) )
+            ; fail
+            ).
+
+        clpfd_rev([], A, A).
+        clpfd_rev([X|Xs], A, R) :- clpfd_rev(Xs, [X|A], R).
         """;
 }

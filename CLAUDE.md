@@ -235,8 +235,13 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
   constraint library whose two variables carry deliberately different domains.
   `MergeAttributes` now defers a shared module's merge to the hook when one
   exists; the hookless rule still applies verbatim when no hook is defined.
-- CLP(FD): multiplication / remaining arithmetic, `label`/`labeling`, global
-  constraints (`all_different`), reification.
+- ✓ CLP(FD) multiplication and labeling (chunk 90): the `*` expression posts a
+  bounds-consistent product propagator (exact two-way scaling when a factor is
+  an integer constant; corner-product narrowing of the product otherwise);
+  `label/1`, `labeling/2` (options `leftmost`/`ff` and `up`/`down`) and
+  `indomain/1` enumerate domain values, running propagation between assignments.
+- CLP(FD): remaining arithmetic (`min`/`max`/`abs`/`//`), global constraints
+  (`all_different`), reification.
 - Attributed-variable-based constraints: CLP(R) if needed.
 - Native AOT support.
 - Tabling.
