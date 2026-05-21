@@ -2249,6 +2249,8 @@ public sealed class Engine
             Tag.Ref => a.AsHeapIndex == b.AsHeapIndex,
             Tag.Atom => a.AsAtomId == b.AsAtomId,
             Tag.Int => a.AsInt == b.AsInt,
+            Tag.Float => Cell.DecodeFloat(a, _heap[a.FloatPairedIndex])
+                      == Cell.DecodeFloat(b, _heap[b.FloatPairedIndex]),
             Tag.Functor => a.AsFunctorId == b.AsFunctorId,
             Tag.Str => AreStrStructurallyEqual(a.AsHeapIndex, b.AsHeapIndex),
             Tag.Lis => AreLisStructurallyEqual(a.AsHeapIndex, b.AsHeapIndex),

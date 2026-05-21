@@ -230,10 +230,12 @@ public class Chunk75Tests
         // never indexes — the common "consult, query once" shape pays
         // no switch-table build cost.
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic once/1.\nonce(a).\nonce(b).");
-        engine.Query("once(a).");
-        Assert.False(engine.JitIndexing.IsHot(Fid("once", 1)));
-        Assert.True(engine.DynamicPredicateCache.TryGetValue(Fid("once", 1), out var cached));
+        // `rare` is just an arbitrary data predicate here — not once/1,
+        // which is now a library control predicate in the prelude.
+        engine.ConsultString(":- dynamic rare/1.\nrare(a).\nrare(b).");
+        engine.Query("rare(a).");
+        Assert.False(engine.JitIndexing.IsHot(Fid("rare", 1)));
+        Assert.True(engine.DynamicPredicateCache.TryGetValue(Fid("rare", 1), out var cached));
         Assert.False(HasOpcode(cached!.Bytecode, Opcode.SwitchOnTerm));
     }
 }

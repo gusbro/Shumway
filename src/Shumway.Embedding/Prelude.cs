@@ -60,6 +60,15 @@ internal static class Prelude
         :- public atomic_list_concat/2.
         :- public atomic_list_concat/3.
         :- public char_type/2.
+        :- public once/1.
+        :- public ignore/1.
+        :- public tab/1.
+        :- public apply/2.
+        :- public findall/4.
+        :- public retractall/1.
+        :- public listing/0.
+        :- public listing/1.
+        :- public format_to_atom/3.
         :- public '$call_conj'/3.
         :- public '$call_disj'/3.
         :- public '$call_arrow'/3.
@@ -386,5 +395,73 @@ internal static class Prelude
         '$ascii_digit'(C) :- C >= 48, C =< 57.
         '$ascii_space'(32) :- !.
         '$ascii_space'(C) :- C >= 9, C =< 13.
+
+        % ===== control, database & inspection (chunk 98) =====
+
+        %! once(:Goal) | Control | Succeeds at most once — commits to the first solution of Goal.
+        once(Goal) :- call(Goal), !.
+
+        %! ignore(:Goal) | Control | Runs Goal, succeeding whether or not Goal does.
+        ignore(Goal) :- ( call(Goal) -> true ; true ).
+
+        %! apply(:Goal, +ExtraArgs) | Control | Calls Goal with the list of extra arguments appended.
+        apply(Goal, Extra) :-
+            Goal =.. List0,
+            append(List0, Extra, List),
+            Call =.. List,
+            call(Call).
+
+        %! tab(+N) | Input / output | Writes N spaces to the current output stream.
+        tab(N) :- ( N =< 0 -> true ; write(' '), N1 is N - 1, tab(N1) ).
+
+        %! findall(?Template, :Goal, -List, ?Tail) | Findall & aggregation | Like findall/3 but the result is a difference list ending in Tail.
+        findall(Template, Goal, List, Tail) :-
+            findall(Template, Goal, List0),
+            append(List0, Tail, List).
+
+        %! retractall(+Head) | Database | Removes every clause whose head unifies with Head.
+        % retract/1 is re-satisfiable, so a failure-driven loop retracts
+        % every match; the `fail` undoes each solution's bindings, keeping
+        % Head general. Facts are retracted by the head form, rules by the
+        % (Head :- Body) form.
+        retractall(Head) :-
+            ( retract(Head), fail ; true ),
+            ( retract((Head :- _)), fail ; true ).
+
+        %! listing | Database | Lists the clauses of every defined predicate.
+        listing :-
+            ( current_predicate(Name/Arity),
+              functor(Head, Name, Arity),
+              '$listing_one'(Head),
+              fail
+            ; true
+            ).
+
+        %! listing(+Spec) | Database | Lists the clauses of the predicate named by Spec (Name or Name/Arity).
+        listing(Name/Arity) :-
+            !,
+            functor(Head, Name, Arity),
+            '$listing_one'(Head).
+        listing(Name) :-
+            ( current_predicate(Name/Arity),
+              functor(Head, Name, Arity),
+              '$listing_one'(Head),
+              fail
+            ; true
+            ).
+
+        '$listing_one'(Head) :-
+            ( clause(Head, Body),
+              '$portray_clause'(Head, Body),
+              fail
+            ; true
+            ).
+        '$portray_clause'(Head, true) :- !, write(Head), write('.'), nl.
+        '$portray_clause'(Head, Body) :-
+            write(Head), write(' :- '), write(Body), write('.'), nl.
+
+        %! format_to_atom(-Atom, +Format, +Args) | Input / output | Like format/2 but captures the formatted output into an atom.
+        format_to_atom(Atom, Format, Args) :-
+            with_output_to(atom(Atom), format(Format, Args)).
         """;
 }

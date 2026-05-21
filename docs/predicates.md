@@ -75,6 +75,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 
 | Predicate | Description |
 | --- | --- |
+| `apply(:Goal, +ExtraArgs)` | Calls Goal with the list of extra arguments appended. |
 | `call(:Goal)` | Calls a goal. |
 | `call(:Goal, +Extra1)` | Calls a goal extended with one extra argument. |
 | `call(:Goal, +Extra1, +Extra2)` | Calls a goal extended with two extra arguments. |
@@ -86,6 +87,8 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `fail` | Always fails. |
 | `halt` | Halts the engine with exit code 0. |
 | `halt(+Status)` | Halts the engine with the given exit code. |
+| `ignore(:Goal)` | Runs Goal, succeeding whether or not Goal does. |
+| `once(:Goal)` | Succeeds at most once — commits to the first solution of Goal. |
 | `throw(+Exception)` | Throws an exception term, unwinding to the nearest catch/3. |
 | `true` | Always succeeds. |
 
@@ -96,6 +99,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `aggregate_all(+Template, :Goal, -Result)` | Aggregates Goal's solutions with a count, sum, bag or set template. |
 | `bagof(?Template, :Goal, -List)` | Collects Goal's solutions, grouped by free-variable witness; fails when there are none. |
 | `findall(?Template, :Goal, -List)` | Collects an instance of Template for every solution of Goal into a list. |
+| `findall(?Template, :Goal, -List, ?Tail)` | Like findall/3 but the result is a difference list ending in Tail. |
 | `forall(:Condition, :Action)` | Succeeds if Action holds for every solution of Condition. |
 | `setof(?Template, :Goal, -List)` | Like bagof/3 but the result list is sorted and duplicate-free. |
 
@@ -108,7 +112,10 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `assertz(+Clause)` | Adds a clause to the end of its dynamic predicate. |
 | `clause(+Head, ?Body)` | Enumerates the clauses (Head :- Body) of a predicate. |
 | `current_predicate(?PredicateIndicator)` | Enumerates the defined predicates as Name/Arity indicators. |
+| `listing` | Lists the clauses of every defined predicate. |
+| `listing(+Spec)` | Lists the clauses of the predicate named by Spec (Name or Name/Arity). |
 | `retract(+Clause)` | Removes the first clause that unifies with the argument. |
+| `retractall(+Head)` | Removes every clause whose head unifies with Head. |
 
 ## Lists
 
@@ -190,6 +197,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `close(+Stream)` | Closes an open stream. |
 | `format(+Format, +Arguments)` | Writes formatted output from a control string and an argument list. |
 | `format(+Stream, +Format, +Arguments)` | Writes formatted output to the given stream. |
+| `format_to_atom(-Atom, +Format, +Args)` | Like format/2 but captures the formatted output into an atom. |
 | `get_char(+Stream, -Char)` | Reads and consumes one character from a stream. |
 | `nl` | Writes a newline to the current output stream. |
 | `nl(+Stream)` | Writes a newline to the given stream. |
@@ -198,6 +206,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `print(+Term)` | Writes a term using print conventions. |
 | `read_term(+Stream, -Term)` | Reads one term from a read-mode stream. |
 | `read_term_from_stream(+Stream, -Term)` | Reads one term from a read-mode stream. |
+| `tab(+N)` | Writes N spaces to the current output stream. |
 | `with_output_to(+Sink, :Goal)` | Runs a goal, capturing its output into an atom, string or code list. |
 | `write(+Term)` | Writes a term to the current output stream. |
 | `write(+Stream, +Term)` | Writes a term to the given stream. |

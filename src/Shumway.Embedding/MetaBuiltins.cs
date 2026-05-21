@@ -1247,6 +1247,11 @@ public static class MetaBuiltins
     /// whose head (and body, if <c>Clause</c> is a rule) unifies with the
     /// pattern, removes it from the dynamic store, and keeps the resulting
     /// bindings. Fails when no clause matches.</summary>
+    /// <summary><c>retract/1</c> — removes a clause unifying with the
+    /// pattern. It is <em>re-satisfiable</em> per ISO: on backtracking it
+    /// retracts the next matching clause, so <c>(retract(C), fail ; true)</c>
+    /// removes every match. The candidate set is snapshotted at call time
+    /// (ISO's logical-update view).</summary>
     public static bool Retract(Engine engine)
     {
         if (engine.Host is not PrologEngine host)
@@ -1257,37 +1262,78 @@ public static class MetaBuiltins
         var patternClause = Shumway.Compiler.Ast.Clause.From(pattern);
         int patternFid = ExtractHeadFunctorIdFromClause(patternClause);
 
-        var candidates = host.DynamicClausesFor(patternFid);
-        if (candidates.Count == 0) return false;
+        var candidates = new List<Clause>(host.DynamicClausesFor(patternFid));
+        // The call_builtin opcode is 9 bytes; a resumed step continues at
+        // the instruction after it.
+        int returnPc = engine.P + 9;
+        return RetractStep(engine, host, patternFid, candidates, 0, returnPc,
+            isResume: false);
+    }
 
-        foreach (var candidate in candidates)
+    /// <summary>Removes the next clause (from <paramref name="startIndex"/>
+    /// onward) that unifies with the retract pattern. When later candidates
+    /// remain it leaves a choice point whose resume retracts the following
+    /// match — that is what makes <c>retract/1</c> enumerate every matching
+    /// clause on backtracking.</summary>
+    private static bool RetractStep(Engine engine, PrologEngine host,
+        int patternFid, List<Clause> candidates, int startIndex, int returnPc,
+        bool isResume)
+    {
+        int matchIndex = FindRetractMatch(engine, candidates, startIndex);
+        if (matchIndex < 0) return false;
+
+        // Push the choice point before the real unification below, so a
+        // backtrack's trail unwind peels off exactly this solution's
+        // bindings before the resume retracts the next match.
+        if (matchIndex + 1 < candidates.Count)
         {
-            // Trial-unify against a fresh copy of the candidate clause. If it
-            // matches, commit (keep the bindings, drop the original from the
-            // dynamic store); if it doesn't, unwind every speculative
-            // binding the trial made before trying the next candidate.
+            int next = matchIndex + 1;
+            Func<Engine, int, bool> resume = (e, _) => RetractStep(
+                e, host, patternFid, candidates, next, returnPc, isResume: true);
+            engine.PushBuiltinChoicePoint(resume, arity: 0);
+        }
+
+        Clause candidate = candidates[matchIndex];
+        int savedHb = engine.Hb;
+        engine.SetHb(engine.HeapTop);
+        Cell candidateCell = Materializer.MaterializeAsCell(engine, candidate.Term);
+        int candSlot = engine.AllocateHeap(1);
+        engine.SetHeap(candSlot, candidateCell);
+        engine.UnifyRegisterWithHeapAt(0, candSlot);   // matched in FindRetractMatch
+        host.RemoveDynamicByReference(patternFid, candidate);
+        engine.SetHb(savedHb);
+        if (isResume) engine.ResumeAtReturnPc(returnPc);
+        return true;
+    }
+
+    /// <summary>Index of the first candidate (from <paramref name="startIndex"/>)
+    /// whose clause unifies with the retract pattern in register 0, or −1
+    /// when none does. The trial unification is fully rolled back; the
+    /// caller re-does it for the chosen candidate after its choice point
+    /// is in place.</summary>
+    private static int FindRetractMatch(
+        Engine engine, List<Clause> candidates, int startIndex)
+    {
+        for (int i = startIndex; i < candidates.Count; i++)
+        {
             int savedHeapTop = engine.HeapTop;
             int savedBindingTrail = engine.BindingTrailTop;
             int savedExtraTrail = engine.ExtraTrailTop;
             int savedHb = engine.Hb;
             engine.SetHb(engine.HeapTop);
 
-            Cell candidateCell = Materializer.MaterializeAsCell(engine, candidate.Term);
+            Cell candidateCell =
+                Materializer.MaterializeAsCell(engine, candidates[i].Term);
             int candSlot = engine.AllocateHeap(1);
             engine.SetHeap(candSlot, candidateCell);
-
-            if (engine.UnifyRegisterWithHeapAt(0, candSlot))
-            {
-                host.RemoveDynamicByReference(patternFid, candidate);
-                engine.SetHb(savedHb);
-                return true;
-            }
+            bool matches = engine.UnifyRegisterWithHeapAt(0, candSlot);
 
             engine.UnwindTrails(savedBindingTrail, savedExtraTrail);
             engine.SetHeapTop(savedHeapTop);
             engine.SetHb(savedHb);
+            if (matches) return i;
         }
-        return false;
+        return -1;
     }
 
     private static int ExtractHeadFunctorIdFromClause(Clause clause)
