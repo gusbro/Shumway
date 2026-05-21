@@ -257,15 +257,18 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
 - → CLP(R), Native AOT and tabling moved to Phase 7.
 
 **Phase 7 — Predicate documentation, CLP(R), AOT, tabling**
-- ✓ Generated user-facing predicate documentation (chunk 94). Predicate doc
-  metadata lives *next to each definition* — a category + summary passed to
-  `BuiltinsRegistry.Register` for C# builtins, a structured `%!` comment in
-  the Prolog library sources (prelude, CLP(FD)). `PredicateDoc.Generate()`
-  walks all three sources, groups by area, and emits `docs/predicates.md`.
-  A unit test regenerates and fails if the committed file is stale;
-  re-running the suite with the `SHUMWAY_REGEN_DOCS` environment variable set
-  rewrites it. (The hand-written `docs/design/builtins-catalog.md` remains as
-  a design-level catalogue for now.)
+- ✓ Generated user-facing predicate documentation (chunks 94, 95). Predicate
+  doc metadata lives *next to each definition* — a category, a moded call
+  template and a summary passed to `BuiltinsRegistry.Register` for C#
+  builtins, a structured `%! Template | Category | Summary` comment in the
+  Prolog library sources (prelude, CLP(FD)). The template names every
+  parameter with its mode (e.g. `between(+Low, +High, ?X)`).
+  `PredicateDoc.Generate()` walks all three sources, groups by area, and
+  emits `docs/predicates.md`. A unit test regenerates and fails if the
+  committed file is stale; re-running the suite with the `SHUMWAY_REGEN_DOCS`
+  environment variable set rewrites it. (The hand-written
+  `docs/design/builtins-catalog.md` remains as a design-level catalogue for
+  now.)
 - Common library predicates, so typical Prolog programs run unchanged. The
   gaps a portability pass would close:
   - list utilities: `select/3`, `permutation/2`, `subtract/3`,
@@ -275,7 +278,9 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
     `pairs_keys_values/3`;
   - atom/number conversion: `atom_number/2`, `atomic_list_concat/2`,
     `atomic_list_concat/3`, `number_string/2`, `char_type/2`;
-  - control & misc: `once/1`, `ignore/1`, `tab/1`, `apply/2`, `findall/4`.
+  - control & misc: `once/1`, `ignore/1`, `tab/1`, `apply/2`, `findall/4`;
+  - database, inspection & I/O: `retractall/1`, `listing/0`, `listing/1`,
+    `format_to_atom/3`.
   Each new predicate carries doc metadata so it lands in `docs/predicates.md`
   automatically. Most belong in the Prolog prelude (or a small library
   module); a few are C# builtins where performance or primitive access

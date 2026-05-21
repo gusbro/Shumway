@@ -5,230 +5,232 @@ _Regenerate by running the test suite with the `SHUMWAY_REGEN_DOCS` environment 
 
 Predicates available to programs embedding Shumway, grouped by area. The CLP(FD) sections require the constraint library to be loaded with `engine.UseClpfd()`.
 
+Each template names its parameters and their mode: `+` bound at call, `-` an output, `?` either, `@` not modified, `:` a meta-called goal.
+
 ## Unification & comparison
 
 | Predicate | Description |
 | --- | --- |
-| `=/2` | Unifies the two terms. |
-| `==/2` | Succeeds if the two terms are structurally identical. |
-| `\=/2` | Succeeds if the two terms do not unify. |
-| `\==/2` | Succeeds if the two terms are not structurally identical. |
+| `=(?Term1, ?Term2)` | Unifies the two terms. |
+| `==(@Term1, @Term2)` | Succeeds if the two terms are structurally identical. |
+| `\=(?Term1, ?Term2)` | Succeeds if the two terms do not unify. |
+| `\==(@Term1, @Term2)` | Succeeds if the two terms are not structurally identical. |
 
 ## Type checking
 
 | Predicate | Description |
 | --- | --- |
-| `atom/1` | Succeeds if the argument is an atom. |
-| `atomic/1` | Succeeds if the argument is atomic (atom, number or string). |
-| `attvar/1` | Succeeds if the argument is an attributed variable. |
-| `compound/1` | Succeeds if the argument is a compound term. |
-| `float/1` | Succeeds if the argument is a float. |
-| `ground/1` | Succeeds if the argument contains no unbound variables. |
-| `integer/1` | Succeeds if the argument is an integer. |
-| `is_list/1` | Succeeds if the argument is a proper list. |
-| `nonvar/1` | Succeeds if the argument is not an unbound variable. |
-| `number/1` | Succeeds if the argument is a number. |
-| `var/1` | Succeeds if the argument is an unbound variable. |
+| `atom(@Term)` | Succeeds if the argument is an atom. |
+| `atomic(@Term)` | Succeeds if the argument is atomic (atom, number or string). |
+| `attvar(@Term)` | Succeeds if the argument is an attributed variable. |
+| `compound(@Term)` | Succeeds if the argument is a compound term. |
+| `float(@Term)` | Succeeds if the argument is a float. |
+| `ground(@Term)` | Succeeds if the argument contains no unbound variables. |
+| `integer(@Term)` | Succeeds if the argument is an integer. |
+| `is_list(@Term)` | Succeeds if the argument is a proper list. |
+| `nonvar(@Term)` | Succeeds if the argument is not an unbound variable. |
+| `number(@Term)` | Succeeds if the argument is a number. |
+| `var(@Term)` | Succeeds if the argument is an unbound variable. |
 
 ## Arithmetic
 
 | Predicate | Description |
 | --- | --- |
-| `</2` | Arithmetic less-than comparison. |
-| `=:=/2` | Succeeds if the two arithmetic expressions are equal. |
-| `=</2` | Arithmetic less-than-or-equal comparison. |
-| `=\=/2` | Succeeds if the two arithmetic expressions are unequal. |
-| `>/2` | Arithmetic greater-than comparison. |
-| `>=/2` | Arithmetic greater-than-or-equal comparison. |
-| `between/3` | Succeeds when the third argument is in the inclusive integer range; enumerates it when unbound. |
-| `is/2` | Evaluates the arithmetic expression on the right and unifies it with the left. |
-| `plus/3` | Relates X + Y = Z, solving for whichever single argument is unbound. |
-| `succ/2` | Relates a non-negative integer to its successor, in either direction. |
+| `<(+Expr1, +Expr2)` | Arithmetic less-than comparison. |
+| `=:=(+Expr1, +Expr2)` | Succeeds if the two arithmetic expressions are equal. |
+| `=<(+Expr1, +Expr2)` | Arithmetic less-than-or-equal comparison. |
+| `=\=(+Expr1, +Expr2)` | Succeeds if the two arithmetic expressions are unequal. |
+| `>(+Expr1, +Expr2)` | Arithmetic greater-than comparison. |
+| `>=(+Expr1, +Expr2)` | Arithmetic greater-than-or-equal comparison. |
+| `between(+Low, +High, ?X)` | Succeeds when X is in the inclusive integer range; enumerates it when unbound. |
+| `is(?Result, +Expr)` | Evaluates the arithmetic expression on the right and unifies it with the left. |
+| `plus(?Int1, ?Int2, ?Sum)` | Relates Int1 + Int2 = Sum, solving for whichever single argument is unbound. |
+| `succ(?Int1, ?Int2)` | Relates a non-negative integer to its successor, in either direction. |
 
 ## Term ordering
 
 | Predicate | Description |
 | --- | --- |
-| `@</2` | Standard-order-of-terms less-than comparison. |
-| `@=</2` | Standard-order-of-terms less-than-or-equal comparison. |
-| `@>/2` | Standard-order-of-terms greater-than comparison. |
-| `@>=/2` | Standard-order-of-terms greater-than-or-equal comparison. |
-| `compare/3` | Unifies the first argument with the order (<, = or >) of the other two. |
+| `@<(@Term1, @Term2)` | Standard-order-of-terms less-than comparison. |
+| `@=<(@Term1, @Term2)` | Standard-order-of-terms less-than-or-equal comparison. |
+| `@>(@Term1, @Term2)` | Standard-order-of-terms greater-than comparison. |
+| `@>=(@Term1, @Term2)` | Standard-order-of-terms greater-than-or-equal comparison. |
+| `compare(?Order, @Term1, @Term2)` | Unifies Order with the relation (<, = or >) between the two terms. |
 
 ## Term inspection & construction
 
 | Predicate | Description |
 | --- | --- |
-| `=../2` | Relates a term to the list of its functor and arguments. |
-| `arg/3` | Relates an argument position to the corresponding subterm of a compound. |
-| `atom_to_term/3` | Parses an atom into a term plus its variable bindings. |
-| `copy_term/2` | Copies a term with fresh variables. |
-| `copy_term/3` | Copies a term with fresh variables and collects the residual attribute goals. |
-| `functor/3` | Relates a term to its functor name and arity. |
-| `numbervars/3` | Binds the unbound variables of a term to '$VAR'(N) terms with consecutive N. |
-| `read_term_from_atom/2` | Parses an atom into a term. |
-| `term_to_atom/2` | Converts between a term and its textual atom representation. |
+| `=..(?Term, ?List)` | Relates a term to the list of its functor and arguments. |
+| `arg(+N, +Term, ?Arg)` | Unifies Arg with the Nth argument of the compound term. |
+| `atom_to_term(+Atom, -Term, -Bindings)` | Parses an atom into a term plus its variable bindings. |
+| `copy_term(+Term, -Copy)` | Copies a term with fresh variables. |
+| `copy_term(+Term, -Copy, -Goals)` | Copies a term with fresh variables and collects the residual attribute goals. |
+| `functor(?Term, ?Name, ?Arity)` | Relates a term to its functor name and arity. |
+| `numbervars(+Term, +Start, -End)` | Binds the unbound variables of Term to '$VAR'(N) terms with consecutive N from Start. |
+| `read_term_from_atom(+Atom, -Term)` | Parses an atom into a term. |
+| `term_to_atom(?Term, ?Atom)` | Converts between a term and its textual atom representation. |
 
 ## Control
 
 | Predicate | Description |
 | --- | --- |
-| `call/1` | Calls a goal. |
-| `call/2` | Calls a goal, appending one extra argument. |
-| `call/3` | Calls a goal, appending two extra arguments. |
-| `call/4` | Calls a goal, appending three extra arguments. |
-| `call/5` | Calls a goal, appending four extra arguments. |
-| `call/6` | Calls a goal, appending five extra arguments. |
-| `call/7` | Calls a goal, appending six extra arguments. |
-| `catch/3` | Runs a goal, recovering from a matching thrown exception. |
-| `fail/0` | Always fails. |
-| `halt/0` | Halts the engine with exit code 0. |
-| `halt/1` | Halts the engine with the given exit code. |
-| `throw/1` | Throws an exception term, unwinding to the nearest catch/3. |
-| `true/0` | Always succeeds. |
+| `call(:Goal)` | Calls a goal. |
+| `call(:Goal, +Extra1)` | Calls a goal extended with one extra argument. |
+| `call(:Goal, +Extra1, +Extra2)` | Calls a goal extended with two extra arguments. |
+| `call(:Goal, +Extra1, ..., +Extra3)` | Calls a goal extended with three extra arguments. |
+| `call(:Goal, +Extra1, ..., +Extra4)` | Calls a goal extended with four extra arguments. |
+| `call(:Goal, +Extra1, ..., +Extra5)` | Calls a goal extended with five extra arguments. |
+| `call(:Goal, +Extra1, ..., +Extra6)` | Calls a goal extended with six extra arguments. |
+| `catch(:Goal, +Catcher, :Recovery)` | Runs Goal, running Recovery if a thrown exception unifies with Catcher. |
+| `fail` | Always fails. |
+| `halt` | Halts the engine with exit code 0. |
+| `halt(+Status)` | Halts the engine with the given exit code. |
+| `throw(+Exception)` | Throws an exception term, unwinding to the nearest catch/3. |
+| `true` | Always succeeds. |
 
 ## Findall & aggregation
 
 | Predicate | Description |
 | --- | --- |
-| `aggregate_all/3` | Aggregates a goal's solutions with a count, sum, bag or set template. |
-| `bagof/3` | Collects a goal's solutions, grouped by free-variable witness; fails when there are none. |
-| `findall/3` | Collects every solution of a goal into a list. |
-| `forall/2` | Succeeds if the action holds for every solution of the condition. |
-| `setof/3` | Like bagof/3 but the result list is sorted and duplicate-free. |
+| `aggregate_all(+Template, :Goal, -Result)` | Aggregates Goal's solutions with a count, sum, bag or set template. |
+| `bagof(?Template, :Goal, -List)` | Collects Goal's solutions, grouped by free-variable witness; fails when there are none. |
+| `findall(?Template, :Goal, -List)` | Collects an instance of Template for every solution of Goal into a list. |
+| `forall(:Condition, :Action)` | Succeeds if Action holds for every solution of Condition. |
+| `setof(?Template, :Goal, -List)` | Like bagof/3 but the result list is sorted and duplicate-free. |
 
 ## Database
 
 | Predicate | Description |
 | --- | --- |
-| `abolish/1` | Removes every clause of the named dynamic predicate. |
-| `asserta/1` | Adds a clause to the front of its dynamic predicate. |
-| `assertz/1` | Adds a clause to the end of its dynamic predicate. |
-| `clause/2` | Enumerates the clauses (Head :- Body) of a predicate. |
-| `current_predicate/1` | Enumerates the defined predicates as Name/Arity indicators. |
-| `retract/1` | Removes the first clause that unifies with the argument. |
+| `abolish(+PredicateIndicator)` | Removes every clause of the named dynamic predicate. |
+| `asserta(+Clause)` | Adds a clause to the front of its dynamic predicate. |
+| `assertz(+Clause)` | Adds a clause to the end of its dynamic predicate. |
+| `clause(+Head, ?Body)` | Enumerates the clauses (Head :- Body) of a predicate. |
+| `current_predicate(?PredicateIndicator)` | Enumerates the defined predicates as Name/Arity indicators. |
+| `retract(+Clause)` | Removes the first clause that unifies with the argument. |
 
 ## Lists
 
 | Predicate | Description |
 | --- | --- |
-| `append/3` | Concatenates the first two lists into the third; backtracks over splits of the third. |
-| `foldl/4` | Folds a goal over a list, threading an accumulator. |
-| `foldl/5` | Folds a goal over two lists, threading an accumulator. |
-| `last/2` | Relates a list to its last element. |
-| `length/2` | Relates a list to its length; enumerates lists of growing length when both arguments are unbound. |
-| `list_to_set/2` | Removes duplicates from a list, keeping the first occurrence of each. |
-| `maplist/2` | Succeeds if a goal holds for every element of a list. |
-| `maplist/3` | Succeeds if a goal holds for corresponding elements of two lists. |
-| `maplist/4` | Succeeds if a goal holds for corresponding elements of three lists. |
-| `member/2` | Succeeds when the element is a member of the list; enumerates members on backtracking. |
-| `msort/2` | Sorts a list into standard order, keeping duplicates. |
-| `nth0/3` | Relates a 0-based index to the list element at that position. |
-| `nth1/3` | Relates a 1-based index to the list element at that position. |
-| `reverse/2` | Relates a list to its reverse. |
-| `sort/2` | Sorts a list into standard order, removing duplicates. |
+| `append(?List1, ?List2, ?List)` | Concatenates List1 and List2 into List; backtracks over splits of List. |
+| `foldl(:Goal, ?List, +V0, -V)` | Folds Goal over a list, threading an accumulator from V0 to V. |
+| `foldl(:Goal, ?List1, ?List2, +V0, -V)` | Folds Goal over two lists, threading an accumulator from V0 to V. |
+| `last(?List, ?Last)` | Relates a list to its last element. |
+| `length(?List, ?Length)` | Relates a list to its length; enumerates lists of growing length when both arguments are unbound. |
+| `list_to_set(+List, -Set)` | Removes duplicates from a list, keeping the first occurrence of each. |
+| `maplist(:Goal, ?List)` | Succeeds if Goal holds for every element of List. |
+| `maplist(:Goal, ?List1, ?List2)` | Succeeds if Goal holds for corresponding elements of two lists. |
+| `maplist(:Goal, ?List1, ?List2, ?List3)` | Succeeds if Goal holds for corresponding elements of three lists. |
+| `member(?Elem, ?List)` | Succeeds when Elem is a member of List; enumerates members on backtracking. |
+| `msort(+List, -Sorted)` | Sorts a list into standard order, keeping duplicates. |
+| `nth0(?Index, ?List, ?Elem)` | Relates a 0-based index to the list element at that position. |
+| `nth1(?Index, ?List, ?Elem)` | Relates a 1-based index to the list element at that position. |
+| `reverse(?List, ?Reversed)` | Relates a list to its reverse. |
+| `sort(+List, -Sorted)` | Sorts a list into standard order, removing duplicates. |
 
 ## Atoms & strings
 
 | Predicate | Description |
 | --- | --- |
-| `atom_chars/2` | Converts between an atom and its list of one-character atoms. |
-| `atom_codes/2` | Converts between an atom and its list of character codes. |
-| `atom_concat/3` | Concatenates two atoms; backtracks over splits of the third. |
-| `atom_length/2` | Relates an atom to its length in characters. |
-| `atom_string/2` | Converts between an atom and a string. |
-| `char_code/2` | Relates a one-character atom to its character code. |
-| `downcase_atom/2` | Relates an atom to its lower-cased form. |
-| `number_chars/2` | Converts between a number and its list of one-character atoms. |
-| `number_codes/2` | Converts between a number and its list of character codes. |
-| `split_string/4` | Splits a string on separator characters, trimming pad characters. |
-| `string_chars/2` | Converts between a string and its list of one-character atoms. |
-| `string_codes/2` | Converts between a string and its list of character codes. |
-| `string_concat/3` | Concatenates the first two strings into the third. |
-| `string_length/2` | Relates a string to its length in characters. |
-| `sub_atom/5` | Backtracks over every (Before, Length, After, SubAtom) decomposition of an atom. |
-| `upcase_atom/2` | Relates an atom to its upper-cased form. |
+| `atom_chars(?Atom, ?Chars)` | Converts between an atom and its list of one-character atoms. |
+| `atom_codes(?Atom, ?Codes)` | Converts between an atom and its list of character codes. |
+| `atom_concat(?Atom1, ?Atom2, ?Atom)` | Concatenates Atom1 and Atom2 into Atom; backtracks over splits of Atom. |
+| `atom_length(+Atom, ?Length)` | Relates an atom to its length in characters. |
+| `atom_string(?Atom, ?String)` | Converts between an atom and a string. |
+| `char_code(?Char, ?Code)` | Relates a one-character atom to its character code. |
+| `downcase_atom(+Atom, -Lower)` | Relates an atom to its lower-cased form. |
+| `number_chars(?Number, ?Chars)` | Converts between a number and its list of one-character atoms. |
+| `number_codes(?Number, ?Codes)` | Converts between a number and its list of character codes. |
+| `split_string(+String, +SepChars, +PadChars, -SubStrings)` | Splits a string on separator characters, trimming pad characters. |
+| `string_chars(?String, ?Chars)` | Converts between a string and its list of one-character atoms. |
+| `string_codes(?String, ?Codes)` | Converts between a string and its list of character codes. |
+| `string_concat(?String1, ?String2, ?String)` | Concatenates String1 and String2 into String. |
+| `string_length(+String, ?Length)` | Relates a string to its length in characters. |
+| `sub_atom(+Atom, ?Before, ?Length, ?After, ?SubAtom)` | Backtracks over every (Before, Length, After, SubAtom) decomposition of an atom. |
+| `upcase_atom(+Atom, -Upper)` | Relates an atom to its upper-cased form. |
 
 ## Attributed variables
 
 | Predicate | Description |
 | --- | --- |
-| `del_attr/2` | Removes a module's attribute from a variable. |
-| `get_attr/3` | Reads a module's attribute from a variable. |
-| `put_attr/3` | Attaches (or replaces) a module's attribute on a variable. |
+| `del_attr(+Var, +Module)` | Removes a module's attribute from a variable. |
+| `get_attr(+Var, +Module, -Value)` | Reads a module's attribute from a variable. |
+| `put_attr(+Var, +Module, +Value)` | Attaches (or replaces) a module's attribute on a variable. |
 
 ## Input / output
 
 | Predicate | Description |
 | --- | --- |
-| `close/1` | Closes an open stream. |
-| `format/2` | Writes formatted output from a control string and an argument list. |
-| `format/3` | Writes formatted output to the given stream. |
-| `get_char/2` | Reads and consumes one character from a stream. |
-| `nl/0` | Writes a newline to the current output stream. |
-| `nl/1` | Writes a newline to the given stream. |
-| `open/3` | Opens a file as a stream handle. |
-| `peek_char/2` | Peeks the next character of a stream without consuming it. |
-| `print/1` | Writes a term using print conventions. |
-| `read_term/2` | Reads one term from a read-mode stream. |
-| `read_term_from_stream/2` | Reads one term from a read-mode stream. |
-| `with_output_to/2` | Runs a goal capturing its output into an atom, string or code list. |
-| `write/1` | Writes a term to the current output stream. |
-| `write/2` | Writes a term to the given stream. |
-| `write_canonical/1` | Writes a term in a quoted, operator-free form that reads back. |
-| `write_term/2` | Writes a term honouring the given list of write options. |
-| `writeln/1` | Writes a term followed by a newline. |
+| `close(+Stream)` | Closes an open stream. |
+| `format(+Format, +Arguments)` | Writes formatted output from a control string and an argument list. |
+| `format(+Stream, +Format, +Arguments)` | Writes formatted output to the given stream. |
+| `get_char(+Stream, -Char)` | Reads and consumes one character from a stream. |
+| `nl` | Writes a newline to the current output stream. |
+| `nl(+Stream)` | Writes a newline to the given stream. |
+| `open(+File, +Mode, -Stream)` | Opens a file as a stream handle. |
+| `peek_char(+Stream, -Char)` | Peeks the next character of a stream without consuming it. |
+| `print(+Term)` | Writes a term using print conventions. |
+| `read_term(+Stream, -Term)` | Reads one term from a read-mode stream. |
+| `read_term_from_stream(+Stream, -Term)` | Reads one term from a read-mode stream. |
+| `with_output_to(+Sink, :Goal)` | Runs a goal, capturing its output into an atom, string or code list. |
+| `write(+Term)` | Writes a term to the current output stream. |
+| `write(+Stream, +Term)` | Writes a term to the given stream. |
+| `write_canonical(+Term)` | Writes a term in a quoted, operator-free form that reads back. |
+| `write_term(+Term, +Options)` | Writes a term honouring the given list of write options. |
+| `writeln(+Term)` | Writes a term followed by a newline. |
 
 ## Flags, operators & reflection
 
 | Predicate | Description |
 | --- | --- |
-| `current_prolog_flag/2` | Reads the value of a Prolog flag. |
-| `op/3` | Declares an operator of the given priority and type. |
-| `set_prolog_flag/2` | Sets a Prolog flag. |
+| `current_prolog_flag(?Flag, ?Value)` | Reads the value of a Prolog flag. |
+| `op(+Priority, +Type, +Name)` | Declares an operator of the given priority and type. |
+| `set_prolog_flag(+Flag, +Value)` | Sets a Prolog flag. |
 
 ## CLP(FD) — domains
 
 | Predicate | Description |
 | --- | --- |
-| `in/2` | Constrains a variable to a finite domain (e.g. X in 1..9). |
-| `ins/2` | Constrains every variable in a list to a finite domain. |
+| `in(?Var, +Domain)` | Constrains a variable to a finite domain (e.g. X in 1..9). |
+| `ins(?Vars, +Domain)` | Constrains every variable in a list to a finite domain. |
 
 ## CLP(FD) — arithmetic constraints
 
 | Predicate | Description |
 | --- | --- |
-| `#</2` | The first integer expression is strictly less than the second. |
-| `#=/2` | The two integer expressions are equal. |
-| `#=</2` | The first integer expression is at most the second. |
-| `#>/2` | The first integer expression is strictly greater than the second. |
-| `#>=/2` | The first integer expression is at least the second. |
-| `#\=/2` | The two integer expressions are different. |
+| `#<(?Expr1, ?Expr2)` | The first integer expression is strictly less than the second. |
+| `#=(?Expr1, ?Expr2)` | The two integer expressions are equal. |
+| `#=<(?Expr1, ?Expr2)` | The first integer expression is at most the second. |
+| `#>(?Expr1, ?Expr2)` | The first integer expression is strictly greater than the second. |
+| `#>=(?Expr1, ?Expr2)` | The first integer expression is at least the second. |
+| `#\=(?Expr1, ?Expr2)` | The two integer expressions are different. |
 
 ## CLP(FD) — global constraints
 
 | Predicate | Description |
 | --- | --- |
-| `all_different/1` | Every element of the list takes a distinct value (pairwise). |
-| `all_distinct/1` | Every element of the list takes a distinct value, with Hall-interval pruning. |
-| `scalar_product/4` | The total stands in the given relation to the dot product of the coefficient and variable lists. |
-| `sum/3` | The total stands in the given relation to the sum of the list. |
+| `all_different(?Vars)` | Every element of the list takes a distinct value (pairwise). |
+| `all_distinct(?Vars)` | Every element of the list takes a distinct value, with Hall-interval pruning. |
+| `scalar_product(+Coeffs, +Vars, +Rel, ?Total)` | Total stands in relation Rel to the dot product of the coefficient and variable lists. |
+| `sum(+Vars, +Rel, ?Total)` | Total stands in relation Rel to the sum of the list of variables. |
 
 ## CLP(FD) — labeling
 
 | Predicate | Description |
 | --- | --- |
-| `indomain/1` | Binds one variable to each value of its domain in turn, on backtracking. |
-| `label/1` | Assigns each variable in the list a value from its domain, searching by backtracking. |
-| `labeling/2` | Like label/1 with options for variable selection (leftmost, ff) and value order (up, down). |
+| `indomain(?Var)` | Binds one variable to each value of its domain in turn, on backtracking. |
+| `label(+Vars)` | Assigns each variable in the list a value from its domain, searching by backtracking. |
+| `labeling(+Options, +Vars)` | Like label/1 with options for variable selection (leftmost, ff) and value order (up, down). |
 
 ## CLP(FD) — reification
 
 | Predicate | Description |
 | --- | --- |
-| `#/\/2` | Both constraints hold (conjunction). |
-| `#<==/2` | The second constraint implies the first. |
-| `#<==>/2` | The 0/1 variable is 1 exactly when the constraint holds. |
-| `#==>/2` | The first constraint implies the second. |
-| `#\/1` | The constraint does not hold (negation). |
-| `#\//2` | At least one constraint holds (disjunction). |
+| `#/\(+Constraint1, +Constraint2)` | Both constraints hold (conjunction). |
+| `#<==(+Constraint1, +Constraint2)` | Constraint2 implies Constraint1. |
+| `#<==>(?Bool, +Constraint)` | Bool is 1 exactly when the constraint holds, 0 otherwise. |
+| `#==>(+Constraint1, +Constraint2)` | Constraint1 implies Constraint2. |
+| `#\(+Constraint)` | The constraint does not hold (negation). |
+| `#\/(+Constraint1, +Constraint2)` | At least one constraint holds (disjunction). |

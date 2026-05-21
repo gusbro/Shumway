@@ -66,10 +66,20 @@ public class Chunk94Tests
     public void Generated_IncludesBuiltinPreludeAndClpfdPredicates()
     {
         string doc = PredicateDoc.Generate();
-        Assert.Contains("`is/2`", doc);          // C# builtin
-        Assert.Contains("`member/2`", doc);      // prelude
-        Assert.Contains("`label/1`", doc);       // CLP(FD)
-        Assert.Contains("`all_distinct/1`", doc);
+        Assert.Contains("`is(?Result, +Expr)`", doc);     // C# builtin
+        Assert.Contains("`member(?Elem, ?List)`", doc);   // prelude
+        Assert.Contains("`label(+Vars)`", doc);           // CLP(FD)
+        Assert.Contains("`all_distinct(?Vars)`", doc);
+    }
+
+    [Fact]
+    public void Generated_ShowsModedCallTemplates()
+    {
+        string doc = PredicateDoc.Generate();
+        // The predicate column is a call template with named, moded
+        // parameters rather than a bare name/arity indicator.
+        Assert.Contains("`between(+Low, +High, ?X)`", doc);
+        Assert.DoesNotContain("`between/3`", doc);
     }
 
     [Fact]

@@ -29,7 +29,7 @@ public static class MetaBuiltins
         const string Io = "Input / output";
 
         BuiltinsRegistry.Register("findall", 3, Findall,
-            FindAgg, "Collects every solution of a goal into a list.");
+            FindAgg, "findall(?Template, :Goal, -List)", "Collects an instance of Template for every solution of Goal into a list.");
         // In-engine findall plumbing (chunk 83) — MetaTransform rewrites
         // findall/3 with a callable goal into a goal sequence using these.
         BuiltinsRegistry.Register("$findall_push",    0, FindallPush);
@@ -41,29 +41,29 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("$bagof_collect",   1, BagofCollect);
         BuiltinsRegistry.Register("$setof_collect",   1, SetofCollect);
         BuiltinsRegistry.Register("bagof",   3, Bagof,
-            FindAgg, "Collects a goal's solutions, grouped by free-variable witness; fails when there are none.");
+            FindAgg, "bagof(?Template, :Goal, -List)", "Collects Goal's solutions, grouped by free-variable witness; fails when there are none.");
         BuiltinsRegistry.Register("setof",   3, Setof,
-            FindAgg, "Like bagof/3 but the result list is sorted and duplicate-free.");
+            FindAgg, "setof(?Template, :Goal, -List)", "Like bagof/3 but the result list is sorted and duplicate-free.");
         BuiltinsRegistry.Register("forall",  2, Forall,
-            FindAgg, "Succeeds if the action holds for every solution of the condition.");
+            FindAgg, "forall(:Condition, :Action)", "Succeeds if Action holds for every solution of Condition.");
         BuiltinsRegistry.Register("copy_term", 2, CopyTerm,
-            Term, "Copies a term with fresh variables.");
+            Term, "copy_term(+Term, -Copy)", "Copies a term with fresh variables.");
         BuiltinsRegistry.Register("$copy_term_3_prep", 3, CopyTerm3Prep);
 
         BuiltinsRegistry.Register("call", 1, Call1,
-            Control, "Calls a goal.");
+            Control, "call(:Goal)", "Calls a goal.");
         BuiltinsRegistry.Register("call", 2, Call2,
-            Control, "Calls a goal, appending one extra argument.");
+            Control, "call(:Goal, +Extra1)", "Calls a goal extended with one extra argument.");
         BuiltinsRegistry.Register("call", 3, Call3,
-            Control, "Calls a goal, appending two extra arguments.");
+            Control, "call(:Goal, +Extra1, +Extra2)", "Calls a goal extended with two extra arguments.");
         BuiltinsRegistry.Register("call", 4, Call4,
-            Control, "Calls a goal, appending three extra arguments.");
+            Control, "call(:Goal, +Extra1, ..., +Extra3)", "Calls a goal extended with three extra arguments.");
         BuiltinsRegistry.Register("call", 5, Call5,
-            Control, "Calls a goal, appending four extra arguments.");
+            Control, "call(:Goal, +Extra1, ..., +Extra4)", "Calls a goal extended with four extra arguments.");
         BuiltinsRegistry.Register("call", 6, Call6,
-            Control, "Calls a goal, appending five extra arguments.");
+            Control, "call(:Goal, +Extra1, ..., +Extra5)", "Calls a goal extended with five extra arguments.");
         BuiltinsRegistry.Register("call", 7, Call7,
-            Control, "Calls a goal, appending six extra arguments.");
+            Control, "call(:Goal, +Extra1, ..., +Extra6)", "Calls a goal extended with six extra arguments.");
         // '$call'/2 (chunk 88): a cut-barrier-carrying meta-call. The
         // $call_* control helpers re-enter call dispatch through it so a
         // `!` in a runtime compound goal cuts to the enclosing call's
@@ -71,16 +71,16 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("$call", 2, CallWithBarrier);
 
         BuiltinsRegistry.Register("assertz", 1, Assertz,
-            Database, "Adds a clause to the end of its dynamic predicate.");
+            Database, "assertz(+Clause)", "Adds a clause to the end of its dynamic predicate.");
         BuiltinsRegistry.Register("asserta", 1, Asserta,
-            Database, "Adds a clause to the front of its dynamic predicate.");
+            Database, "asserta(+Clause)", "Adds a clause to the front of its dynamic predicate.");
         BuiltinsRegistry.Register("retract", 1, Retract,
-            Database, "Removes the first clause that unifies with the argument.");
+            Database, "retract(+Clause)", "Removes the first clause that unifies with the argument.");
 
         BuiltinsRegistry.Register("throw", 1, Throw,
-            Control, "Throws an exception term, unwinding to the nearest catch/3.");
+            Control, "throw(+Exception)", "Throws an exception term, unwinding to the nearest catch/3.");
         BuiltinsRegistry.Register("catch", 3, Catch,
-            Control, "Runs a goal, recovering from a matching thrown exception.");
+            Control, "catch(:Goal, +Catcher, :Recovery)", "Runs Goal, running Recovery if a thrown exception unifies with Catcher.");
         // In-engine catch/3 plumbing (chunk 85) — MetaTransform rewrites a
         // catch/3 with a callable goal into a goal-helper guarded by these.
         BuiltinsRegistry.Register("$catch_begin", 2, CatchBegin);
@@ -93,40 +93,40 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("$all_clauses_of",            2, AllClausesOf);
         BuiltinsRegistry.Register("$all_predicate_indicators",  1, AllPredicateIndicators);
         BuiltinsRegistry.Register("abolish",                    1, Abolish,
-            Database, "Removes every clause of the named dynamic predicate.");
+            Database, "abolish(+PredicateIndicator)", "Removes every clause of the named dynamic predicate.");
 
         BuiltinsRegistry.Register("numbervars",        3, NumberVars,
-            Term, "Binds the unbound variables of a term to '$VAR'(N) terms with consecutive N.");
+            Term, "numbervars(+Term, +Start, -End)", "Binds the unbound variables of Term to '$VAR'(N) terms with consecutive N from Start.");
         BuiltinsRegistry.Register("term_to_atom",      2, TermToAtom,
-            Term, "Converts between a term and its textual atom representation.");
+            Term, "term_to_atom(?Term, ?Atom)", "Converts between a term and its textual atom representation.");
 
         BuiltinsRegistry.Register("functor", 3, Functor,
-            Term, "Relates a term to its functor name and arity.");
+            Term, "functor(?Term, ?Name, ?Arity)", "Relates a term to its functor name and arity.");
         BuiltinsRegistry.Register("arg",     3, Arg,
-            Term, "Relates an argument position to the corresponding subterm of a compound.");
+            Term, "arg(+N, +Term, ?Arg)", "Unifies Arg with the Nth argument of the compound term.");
         BuiltinsRegistry.Register("=..",     2, Univ,
-            Term, "Relates a term to the list of its functor and arguments.");
+            Term, "=..(?Term, ?List)", "Relates a term to the list of its functor and arguments.");
 
         BuiltinsRegistry.Register("read_term_from_atom", 2, ReadTermFromAtom,
-            Term, "Parses an atom into a term.");
+            Term, "read_term_from_atom(+Atom, -Term)", "Parses an atom into a term.");
 
         BuiltinsRegistry.Register("op", 3, Op,
-            Reflect, "Declares an operator of the given priority and type.");
+            Reflect, "op(+Priority, +Type, +Name)", "Declares an operator of the given priority and type.");
         BuiltinsRegistry.Register("set_prolog_flag",     2, SetPrologFlag,
-            Reflect, "Sets a Prolog flag.");
+            Reflect, "set_prolog_flag(+Flag, +Value)", "Sets a Prolog flag.");
         BuiltinsRegistry.Register("current_prolog_flag", 2, CurrentPrologFlag,
-            Reflect, "Reads the value of a Prolog flag.");
+            Reflect, "current_prolog_flag(?Flag, ?Value)", "Reads the value of a Prolog flag.");
         BuiltinsRegistry.Register("with_output_to", 2, WithOutputTo,
-            Io, "Runs a goal capturing its output into an atom, string or code list.");
+            Io, "with_output_to(+Sink, :Goal)", "Runs a goal, capturing its output into an atom, string or code list.");
         BuiltinsRegistry.Register("atom_to_term",   3, AtomToTerm,
-            Term, "Parses an atom into a term plus its variable bindings.");
+            Term, "atom_to_term(+Atom, -Term, -Bindings)", "Parses an atom into a term plus its variable bindings.");
         BuiltinsRegistry.Register("read_term_from_stream", 2, ReadTermFromStream,
-            Io, "Reads one term from a read-mode stream.");
+            Io, "read_term_from_stream(+Stream, -Term)", "Reads one term from a read-mode stream.");
         // ISO read_term/2 — accepts a stream handle in arg 1 and unifies
         // the parsed term with arg 2. Chunk 59: delegate to the existing
         // stream-aware reader so the builtin set covers both names.
         BuiltinsRegistry.Register("read_term", 2, ReadTermFromStream,
-            Io, "Reads one term from a read-mode stream.");
+            Io, "read_term(+Stream, -Term)", "Reads one term from a read-mode stream.");
     }
 
     /// <summary><c>read_term_from_stream(Stream, Term)</c> — reads

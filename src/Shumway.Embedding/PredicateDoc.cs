@@ -8,15 +8,20 @@ namespace Shumway.Embedding;
 /// Generates the user-facing predicate reference (<c>docs/predicates.md</c>)
 /// from the predicate definitions themselves, so it never drifts.
 ///
-/// <para>Two metadata sources, both living next to the definition:</para>
+/// <para>Two metadata sources, both living next to the definition. Each
+/// carries a category, a moded call template (e.g. <c>between(+Low, +High,
+/// ?X)</c>) and a one-line summary:</para>
 /// <list type="bullet">
-/// <item>C# builtins carry a category and summary passed to
-/// <see cref="BuiltinsRegistry.Register"/>; internal <c>$</c>-named helpers
-/// leave them null and are skipped.</item>
+/// <item>C# builtins pass the three to <see cref="BuiltinsRegistry.Register"/>;
+/// internal <c>$</c>-named helpers leave them null and are skipped.</item>
 /// <item>Prolog library predicates (the prelude and CLP(FD)) carry a
-/// structured <c>%! name/arity | Category | Summary</c> comment in their
+/// structured <c>%! Template | Category | Summary</c> comment in their
 /// source.</item>
 /// </list>
+///
+/// <para>The template's parameter modes follow the usual convention:
+/// <c>+</c> bound at call, <c>-</c> output, <c>?</c> either, <c>@</c> not
+/// modified, <c>:</c> a meta-called goal.</para>
 ///
 /// <para>A unit test regenerates the document and fails if the committed copy
 /// is stale; running the suite with the <c>SHUMWAY_REGEN_DOCS</c> environment
@@ -25,13 +30,12 @@ namespace Shumway.Embedding;
 /// </summary>
 public static class PredicateDoc
 {
-    private sealed record Entry(string Category, string Name, int Arity, string Summary);
+    private sealed record Entry(
+        string Category, string Name, int Arity, string Template, string Summary);
 
-    /// <summary>Matches a <c>%! name/arity | Category | Summary</c> comment.
-    /// The name may itself contain <c>/</c> (operator atoms such as
-    /// <c>#/\</c>), so the arity is taken as the final <c>/digits</c>.</summary>
+    /// <summary>Matches a <c>%! Template | Category | Summary</c> comment.</summary>
     private static readonly Regex DocComment = new(
-        @"^\s*%!\s*(.+)/(\d+)\s*\|\s*([^|]+?)\s*\|\s*(.+?)\s*$",
+        @"^\s*%!\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*(.+?)\s*$",
         RegexOptions.Compiled);
 
     /// <summary>Preferred section order. Categories not listed here are
@@ -67,8 +71,9 @@ public static class PredicateDoc
 
         var entries = new List<Entry>();
         foreach (var b in BuiltinsRegistry.AllEntries())
-            if (b.Category is not null && b.Summary is not null && !b.Name.StartsWith('$'))
-                entries.Add(new Entry(b.Category, b.Name, b.Arity, b.Summary));
+            if (b.Category is not null && b.Template is not null &&
+                b.Summary is not null && !b.Name.StartsWith('$'))
+                entries.Add(new Entry(b.Category, b.Name, b.Arity, b.Template, b.Summary));
         CollectDocComments(Prelude.Source, entries);
         CollectDocComments(Clpfd.Source, entries);
 
@@ -77,16 +82,29 @@ public static class PredicateDoc
 
     private static void CollectDocComments(string source, List<Entry> into)
     {
-        foreach (var line in source.Split('\n'))
+        foreach (string line in source.Split('\n'))
         {
             Match m = DocComment.Match(line);
             if (!m.Success) continue;
+            string template = m.Groups[1].Value.Trim();
+            (string name, int arity) = ParseTemplate(template);
             into.Add(new Entry(
-                m.Groups[3].Value.Trim(),
-                m.Groups[1].Value.Trim(),
-                int.Parse(m.Groups[2].Value),
-                m.Groups[4].Value.Trim()));
+                m.Groups[2].Value.Trim(), name, arity, template,
+                m.Groups[3].Value.Trim()));
         }
+    }
+
+    /// <summary>Derives the name and arity from a call template:
+    /// <c>append(?A, ?B, ?C)</c> is <c>append/3</c>, <c>nl</c> is
+    /// <c>nl/0</c>.</summary>
+    private static (string Name, int Arity) ParseTemplate(string template)
+    {
+        int open = template.IndexOf('(');
+        if (open < 0) return (template, 0);
+        string name = template[..open].Trim();
+        int close = template.LastIndexOf(')');
+        string inner = template.Substring(open + 1, close - open - 1).Trim();
+        return (name, inner.Length == 0 ? 0 : inner.Split(',').Length);
     }
 
     private static string Render(List<Entry> entries)
@@ -98,7 +116,9 @@ public static class PredicateDoc
         sb.Append("environment variable set._\n\n");
         sb.Append("Predicates available to programs embedding Shumway, grouped by area. ");
         sb.Append("The CLP(FD) sections require the constraint library to be loaded with ");
-        sb.Append("`engine.UseClpfd()`.\n");
+        sb.Append("`engine.UseClpfd()`.\n\n");
+        sb.Append("Each template names its parameters and their mode: `+` bound at call, ");
+        sb.Append("`-` an output, `?` either, `@` not modified, `:` a meta-called goal.\n");
 
         foreach (string category in OrderedCategories(entries))
         {
@@ -110,8 +130,8 @@ public static class PredicateDoc
                 .OrderBy(e => e.Name, StringComparer.Ordinal)
                 .ThenBy(e => e.Arity);
             foreach (Entry e in inCategory)
-                sb.Append("| `").Append(e.Name).Append('/').Append(e.Arity)
-                  .Append("` | ").Append(e.Summary.Replace("|", "\\|")).Append(" |\n");
+                sb.Append("| `").Append(e.Template).Append("` | ")
+                  .Append(e.Summary.Replace("|", "\\|")).Append(" |\n");
         }
         return sb.ToString();
     }

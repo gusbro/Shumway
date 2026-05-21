@@ -27,12 +27,14 @@ public static class BuiltinsRegistry
     /// its id. If a builtin with the same functor is already registered, the
     /// existing id is returned and <paramref name="impl"/> is ignored.
     ///
-    /// <para><paramref name="category"/> and <paramref name="summary"/> are
-    /// optional user documentation; supply them for user-facing predicates so
-    /// the predicate-reference generator picks them up. Leave them null for
-    /// internal <c>$</c>-named helpers.</para></summary>
+    /// <para><paramref name="category"/>, <paramref name="template"/> and
+    /// <paramref name="summary"/> are optional user documentation; supply them
+    /// for user-facing predicates so the predicate-reference generator picks
+    /// them up. <paramref name="template"/> is the moded call template, e.g.
+    /// <c>between(+Low, +High, ?X)</c>. Leave them null for internal
+    /// <c>$</c>-named helpers.</para></summary>
     public static int Register(string name, int arity, BuiltinImpl impl,
-        string? category = null, string? summary = null)
+        string? category = null, string? template = null, string? summary = null)
     {
         ArgumentNullException.ThrowIfNull(name);
         ArgumentNullException.ThrowIfNull(impl);
@@ -47,7 +49,8 @@ public static class BuiltinsRegistry
                 return existing;
             int id = _nextId++;
             _byFunctorId[functorId] = id;
-            _byId[id] = new BuiltinEntry(id, name, arity, impl, category, summary);
+            _byId[id] = new BuiltinEntry(
+                id, name, arity, impl, category, template, summary);
             return id;
         }
     }

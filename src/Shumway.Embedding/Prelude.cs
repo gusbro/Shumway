@@ -44,7 +44,7 @@ internal static class Prelude
         :- public '$call_neg'/1.
         :- dynamic attribute_goals/4.
 
-        %! member/2 | Lists | Succeeds when the element is a member of the list; enumerates members on backtracking.
+        %! member(?Elem, ?List) | Lists | Succeeds when Elem is a member of List; enumerates members on backtracking.
         member(X, [X|_]).
         member(X, [_|T]) :- member(X, T).
 
@@ -65,13 +65,13 @@ internal static class Prelude
         '$call_arrow'(C, T, K) :- call(C), !, '$call'(T, K).
         '$call_neg'(G) :- ( call(G) -> fail ; true ).
 
-        %! clause/2 | Database | Enumerates the clauses (Head :- Body) of a predicate.
+        %! clause(+Head, ?Body) | Database | Enumerates the clauses (Head :- Body) of a predicate.
         clause(H, B) :-
             nonvar(H),
             '$all_clauses_of'(H, Pairs),
             member(H-B, Pairs).
 
-        %! current_predicate/1 | Database | Enumerates the defined predicates as Name/Arity indicators.
+        %! current_predicate(?PredicateIndicator) | Database | Enumerates the defined predicates as Name/Arity indicators.
         current_predicate(I) :-
             '$check_predicate_indicator'(I),
             '$all_predicate_indicators'(All),
@@ -82,7 +82,7 @@ internal static class Prelude
         '$check_predicate_indicator'(I) :-
             throw(error(type_error(predicate_indicator, I), _)).
 
-        %! length/2 | Lists | Relates a list to its length; enumerates lists of growing length when both arguments are unbound.
+        %! length(?List, ?Length) | Lists | Relates a list to its length; enumerates lists of growing length when both arguments are unbound.
         length(L, N) :-
             nonvar(L), !, '$list_length'(L, N).
         length(L, N) :-
@@ -94,37 +94,37 @@ internal static class Prelude
             Acc1 is Acc + 1,
             '$length_enum'(T, N, Acc1).
 
-        %! sub_atom/5 | Atoms & strings | Backtracks over every (Before, Length, After, SubAtom) decomposition of an atom.
+        %! sub_atom(+Atom, ?Before, ?Length, ?After, ?SubAtom) | Atoms & strings | Backtracks over every (Before, Length, After, SubAtom) decomposition of an atom.
         sub_atom(Atom, Before, Length, After, Sub) :-
             '$sub_atom_decompositions'(Atom, Decomps),
             member([Before, Length, After, Sub], Decomps).
 
-        %! maplist/2 | Lists | Succeeds if a goal holds for every element of a list.
+        %! maplist(:Goal, ?List) | Lists | Succeeds if Goal holds for every element of List.
         maplist(_, []).
         maplist(G, [X|Xs]) :- call(G, X), maplist(G, Xs).
 
-        %! maplist/3 | Lists | Succeeds if a goal holds for corresponding elements of two lists.
+        %! maplist(:Goal, ?List1, ?List2) | Lists | Succeeds if Goal holds for corresponding elements of two lists.
         maplist(_, [], []).
         maplist(G, [X|Xs], [Y|Ys]) :- call(G, X, Y), maplist(G, Xs, Ys).
 
-        %! maplist/4 | Lists | Succeeds if a goal holds for corresponding elements of three lists.
+        %! maplist(:Goal, ?List1, ?List2, ?List3) | Lists | Succeeds if Goal holds for corresponding elements of three lists.
         maplist(_, [], [], []).
         maplist(G, [X|Xs], [Y|Ys], [Z|Zs]) :-
             call(G, X, Y, Z), maplist(G, Xs, Ys, Zs).
 
-        %! foldl/4 | Lists | Folds a goal over a list, threading an accumulator.
+        %! foldl(:Goal, ?List, +V0, -V) | Lists | Folds Goal over a list, threading an accumulator from V0 to V.
         foldl(_, [], Acc, Acc).
         foldl(G, [X|Xs], Acc, Out) :-
             call(G, X, Acc, Acc1),
             foldl(G, Xs, Acc1, Out).
 
-        %! foldl/5 | Lists | Folds a goal over two lists, threading an accumulator.
+        %! foldl(:Goal, ?List1, ?List2, +V0, -V) | Lists | Folds Goal over two lists, threading an accumulator from V0 to V.
         foldl(_, [], [], Acc, Acc).
         foldl(G, [X|Xs], [Y|Ys], Acc, Out) :-
             call(G, X, Y, Acc, Acc1),
             foldl(G, Xs, Ys, Acc1, Out).
 
-        %! aggregate_all/3 | Findall & aggregation | Aggregates a goal's solutions with a count, sum, bag or set template.
+        %! aggregate_all(+Template, :Goal, -Result) | Findall & aggregation | Aggregates Goal's solutions with a count, sum, bag or set template.
         aggregate_all(count, Goal, Count) :-
             findall(t, Goal, L),
             length(L, Count).
@@ -148,7 +148,7 @@ internal static class Prelude
         % does the structural copy and hands back ag(Module, Attr, Var)
         % triples; attribute_goals/4 is pre-declared dynamic so user
         % clauses simply join it and a hook-less program still links.
-        %! copy_term/3 | Term inspection & construction | Copies a term with fresh variables and collects the residual attribute goals.
+        %! copy_term(+Term, -Copy, -Goals) | Term inspection & construction | Copies a term with fresh variables and collects the residual attribute goals.
         copy_term(Term, Copy, Goals) :-
             '$copy_term_3_prep'(Term, Copy, AttrInfo),
             '$attr_goals_of'(AttrInfo, Goals).
