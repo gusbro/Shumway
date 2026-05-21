@@ -964,6 +964,23 @@ public sealed class Engine
     // for one query's linked layout).
     public IReadOnlyDictionary<int, int>? CurrentFunctorAddresses { get; set; }
 
+    /// <summary>Functor id of the user hook <c>verify_attributes/4</c>.
+    /// Interned once; used by <see cref="MergeAttributes"/> to detect
+    /// whether the program defines an attribute-unification hook (its
+    /// presence in <see cref="CurrentFunctorAddresses"/> means it does).</summary>
+    private static readonly int VerifyAttributesFunctorId =
+        FunctorTable.Intern(AtomTable.Intern("verify_attributes", permanent: true).Id, 4);
+
+    /// <summary>True when the linked program defines a
+    /// <c>verify_attributes/4</c> hook. When set, that hook owns the
+    /// merge of a shared module's attribute values on an attvar+attvar
+    /// unification — the engine no longer applies the chunk-77 hookless
+    /// "values must unify" rule, which would fail before the hook could
+    /// run (fatal for constraint libraries like CLP(FD), whose two
+    /// variables carry deliberately different domains).</summary>
+    private bool HasVerifyAttributesHook =>
+        CurrentFunctorAddresses?.ContainsKey(VerifyAttributesFunctorId) ?? false;
+
     /// <summary>Per-query string literal pool. Set by the embedding
     /// layer at query setup so IL-emitted <c>get_pstr</c> / <c>put_pstr</c>
     /// opcodes (chunk 50) can resolve a literal id to its string at
@@ -2092,9 +2109,17 @@ public sealed class Engine
 
     /// <summary>Copies every attribute of the attributed variable at
     /// <paramref name="fromAddr"/> onto the one at <paramref name="toAddr"/>.
-    /// A module the destination lacks is added outright; a module both
-    /// carry must have unifiable values (chunk 77's hookless merge
-    /// rule) — a clash fails the whole unification.</summary>
+    /// A module the destination lacks is added outright. A module both
+    /// carry is resolved differently depending on whether the program
+    /// defines a <c>verify_attributes/4</c> hook:
+    /// <list type="bullet">
+    /// <item>No hook — chunk 77's hookless merge rule: the two values
+    /// must unify, or the whole unification fails.</item>
+    /// <item>Hook present — the destination keeps its own value and the
+    /// hook (run from the queued wakeup) owns the merge. Pre-unifying
+    /// here would fail before the hook could run, which is wrong for a
+    /// constraint library whose variables carry different domains.</item>
+    /// </list></summary>
     private bool MergeAttributes(int fromAddr, int toAddr)
     {
         int fromHome = Deref(fromAddr);
@@ -2103,6 +2128,7 @@ public sealed class Engine
             return true;
         var fromRecord = _attrTable[fromHome];
         var toRecord = _attrTable[toHome];
+        bool hasHook = HasVerifyAttributesHook;
         // Snapshot the source modules: the Unify below can't mutate
         // fromRecord, but iterating a dictionary we may also be reading
         // is fragile — copy the pairs first.
@@ -2113,6 +2139,12 @@ public sealed class Engine
             {
                 TrailAttrChange(toHome, moduleId, -1);
                 toRecord[moduleId] = fromValueIdx;
+            }
+            else if (hasHook)
+            {
+                // The hook owns this shared module's merge — leave the
+                // destination value untouched; the queued wakeup runs
+                // verify_attributes/4, which reads both sides.
             }
             else if (!Unify(toValueIdx, fromValueIdx))
             {

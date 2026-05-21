@@ -915,6 +915,14 @@ public sealed class PrologEngine
             "catch/3 recovery helper predicate has no compiled address.");
     }
 
+    /// <summary>Loads the CLP(FD) constraint library (chunk 89) into this
+    /// engine, making the finite-domain constraints — <c>#=</c>, <c>#\=</c>,
+    /// <c>#&lt;</c>, <c>#&gt;</c>, <c>#=&lt;</c>, <c>#&gt;=</c>, <c>in</c>,
+    /// <c>ins</c> — and their operators available to subsequently consulted
+    /// source and queries. CLP(FD) is opt-in: an engine that never calls
+    /// this carries none of the library's weight.</summary>
+    public void UseClpfd() => ConsultString(Clpfd.Source);
+
     /// <summary>Loads Prolog source. The first <c>:- module(name).</c>
     /// directive in the source (if any) chooses the target module — re-consulting
     /// the same module replaces its previous contents. Source with no module

@@ -225,7 +225,19 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
 
 **Phase 6 — Constraints, AOT, tabling**
 - ✓ Fixed `!` inside a runtime compound `call` goal (chunk 88). `call((a,!,b))` treated the cut as a no-op — *unsound*: backtracking re-ran clauses ISO would have cut away, re-executing their side effects. `DispatchCall` now threads the enclosing call's cut barrier through the `$call_*` helpers via `'$call'/2`, so a `!` in a runtime `,`/`;`/`->` goal commits exactly as far as the call — and no further.
-- Attributed-variable-based constraints: CLP(FD), CLP(R) if needed.
+- ✓ CLP(FD) core — opt-in library (`engine.UseClpfd()`, module `clpfd`) over sorted
+  interval-list finite domains: `in`/`ins`, the six arithmetic constraints
+  (`#=` `#\=` `#<` `#>` `#=<` `#>=`) over additive expressions, with bounds
+  propagation, built on the `verify_attributes/4` hook (chunk 89). Chunk 89 also
+  fixed a Phase-4 attvar bug: chunk-77's hookless "shared-module values must
+  unify" merge rule ran even when a `verify_attributes/4` hook was defined,
+  failing an attvar+attvar unification before the hook could run — fatal for a
+  constraint library whose two variables carry deliberately different domains.
+  `MergeAttributes` now defers a shared module's merge to the hook when one
+  exists; the hookless rule still applies verbatim when no hook is defined.
+- CLP(FD): multiplication / remaining arithmetic, `label`/`labeling`, global
+  constraints (`all_different`), reification.
+- Attributed-variable-based constraints: CLP(R) if needed.
 - Native AOT support.
 - Tabling.
 
