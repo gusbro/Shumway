@@ -2,7 +2,10 @@
 
 **Status**: complete.
 
-**Tagged**: `phase-4` (this commit).
+**Tagged**: `phase-4` — on chunk 86 (`0ad5543`), the last Phase 4
+commit. Unlike phases 1–3, the tag is not on this closure commit: the
+Phase 5 top-level (chunk 87) had already landed, so `phase-4` is placed
+to mark the true end of Phase 4 work.
 
 Phase 4 is the extended-features phase. It set out to deliver attributed
 variables and the constraint / AOT / tabling work the earlier phases had
