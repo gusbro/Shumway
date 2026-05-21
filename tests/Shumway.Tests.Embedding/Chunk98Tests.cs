@@ -154,10 +154,37 @@ public class Chunk98Tests
     }
 
     [Fact]
-    public void Listing_OmitsBuiltinsAndStaticLibraryPredicates()
+    public void Listing_ListsStaticConsultedPredicates()
     {
-        // Only dynamic predicates are listed — never builtins (append/3)
-        // or static library predicates (member/2).
+        // A consulted program — predicates that are NOT :- dynamic — must
+        // still be listable; no `:- dynamic` header is printed for them.
+        var engine = new PrologEngine();
+        engine.ConsultString("color(red).\ncolor(blue).");
+        Assert.True(engine.Query(
+            "with_output_to(atom(A), listing(color/1)), " +
+            "sub_atom(A, _, _, _, 'color(red).'), " +
+            "sub_atom(A, _, _, _, 'color(blue).').").Success);
+        Assert.False(engine.Query(
+            "with_output_to(atom(A), listing(color/1)), " +
+            "sub_atom(A, _, _, _, ':- dynamic').").Success);
+    }
+
+    [Fact]
+    public void Listing0_ListsBothStaticAndDynamicUserPredicates()
+    {
+        var engine = new PrologEngine();
+        engine.ConsultString("shape(square).\n:- dynamic count/1.\ncount(3).");
+        Assert.True(engine.Query(
+            "with_output_to(atom(A), listing), " +
+            "sub_atom(A, _, _, _, 'shape(square).'), " +
+            "sub_atom(A, _, _, _, 'count(3).').").Success);
+    }
+
+    [Fact]
+    public void Listing_OmitsBuiltinsAndLibraryPredicates()
+    {
+        // User predicates are listed — never builtins (append/3) or the
+        // library predicates of the prelude (member/2).
         var engine = new PrologEngine();
         engine.ConsultString(":- dynamic item/1.\nitem(apple).");
         var sol = engine.Query(

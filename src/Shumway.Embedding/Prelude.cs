@@ -428,39 +428,42 @@ internal static class Prelude
             ( retract(Head), fail ; true ),
             ( retract((Head :- _)), fail ; true ).
 
-        %! listing | Database | Lists the clauses of every dynamic predicate (never builtins or static library predicates).
+        %! listing | Database | Lists the clauses of every user-defined predicate — consulted or asserted, never builtins or library predicates.
         listing :-
-            '$dynamic_predicate_indicators'(All),
+            '$listable_predicates'(All),
             '$listing_all'(All).
 
-        %! listing(+Spec) | Database | Lists the clauses of the dynamic predicate named by Spec (Name or Name/Arity).
+        %! listing(+Spec) | Database | Lists the clauses of the user-defined predicate named by Spec (Name or Name/Arity).
         listing(Name/Arity) :-
             !,
-            '$dynamic_predicate_indicators'(All),
-            ( memberchk(Name/Arity, All) -> '$listing_pred'(Name, Arity)
+            '$listable_predicates'(All),
+            ( member(pi(Name, Arity, Dyn), All) -> '$listing_pred'(Name, Arity, Dyn)
             ; true
             ).
         listing(Name) :-
-            '$dynamic_predicate_indicators'(All),
+            '$listable_predicates'(All),
             '$listing_named'(All, Name).
 
         '$listing_all'([]).
-        '$listing_all'([Name/Arity|Rest]) :-
-            '$listing_pred'(Name, Arity),
+        '$listing_all'([pi(Name, Arity, Dyn)|Rest]) :-
+            '$listing_pred'(Name, Arity, Dyn),
             '$listing_all'(Rest).
 
         '$listing_named'([], _).
-        '$listing_named'([Name/Arity|Rest], Want) :-
-            ( Name == Want -> '$listing_pred'(Name, Arity) ; true ),
+        '$listing_named'([pi(Name, Arity, Dyn)|Rest], Want) :-
+            ( Name == Want -> '$listing_pred'(Name, Arity, Dyn) ; true ),
             '$listing_named'(Rest, Want).
 
-        % print one predicate: a `:- dynamic` header, then a clause per
-        % line, then a blank separator line. The Name/Arity indicator is
-        % written piecewise so it reads `foo/1`, not the operator-spaced
-        % `foo / 1` the term writer would produce.
-        '$listing_pred'(Name, Arity) :-
-            write(':- dynamic '), write(Name), write('/'), write(Arity),
-            write('.'), nl,
+        % print one predicate: a `:- dynamic` header for a dynamic
+        % predicate, then a clause per line, then a blank separator line.
+        % The Name/Arity indicator is written piecewise so it reads
+        % `foo/1`, not the operator-spaced `foo / 1` the term writer gives.
+        '$listing_pred'(Name, Arity, Dyn) :-
+            ( Dyn == true ->
+                write(':- dynamic '), write(Name), write('/'), write(Arity),
+                write('.'), nl
+            ; true
+            ),
             functor(Head, Name, Arity),
             ( clause(Head, Body),
               '$portray_clause'(Head, Body),

@@ -279,10 +279,28 @@ public sealed class PrologEngine
         }
     }
 
-    /// <summary>The functor ids of every predicate declared <c>:- dynamic</c>.
-    /// Backs the prelude's <c>listing/0,1</c>, which list dynamic predicates
-    /// only — never builtins or static library predicates.</summary>
-    internal IReadOnlyCollection<int> DynamicFunctorIds() => _dynamicFunctors;
+    /// <summary>The user-defined predicates eligible for <c>listing/0,1</c>:
+    /// every static predicate of a user module (never <c>$prelude</c> or
+    /// <c>clpfd</c>, and never a builtin) plus every dynamic predicate that
+    /// currently holds clauses. Each is flagged dynamic-or-not so listing
+    /// can print a <c>:- dynamic</c> header for the dynamic ones.</summary>
+    internal IEnumerable<(int FunctorId, bool IsDynamic)> ListablePredicates()
+    {
+        var seen = new HashSet<int>();
+        foreach (var (name, manifest) in _modules)
+        {
+            if (name == Prelude.ModuleName || name == Clpfd.ModuleName) continue;
+            foreach (var c in manifest.Clauses)
+                if (TryExtractHead(c, out string n, out int a))
+                {
+                    int fid = FunctorTable.Intern(
+                        AtomTable.Intern(n, permanent: true).Id, a);
+                    if (seen.Add(fid)) yield return (fid, false);
+                }
+        }
+        foreach (var (fid, clauses) in _dynamicClauses)
+            if (clauses.Count > 0 && seen.Add(fid)) yield return (fid, true);
+    }
 
     /// <summary>Snapshot of every static and dynamic functor id across all
     /// loaded modules. Backs the prelude's <c>current_predicate/1</c>

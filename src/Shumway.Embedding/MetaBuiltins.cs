@@ -92,7 +92,7 @@ public static class MetaBuiltins
         // via the prelude's member/2.
         BuiltinsRegistry.Register("$all_clauses_of",            2, AllClausesOf);
         BuiltinsRegistry.Register("$all_predicate_indicators",  1, AllPredicateIndicators);
-        BuiltinsRegistry.Register("$dynamic_predicate_indicators", 1, DynamicPredicateIndicators);
+        BuiltinsRegistry.Register("$listable_predicates", 1, ListablePredicates);
         BuiltinsRegistry.Register("abolish",                    1, Abolish,
             Database, "abolish(+PredicateIndicator)", "Removes every clause of the named dynamic predicate.");
 
@@ -892,28 +892,33 @@ public static class MetaBuiltins
         return engine.UnifyRegisterWithCell(0, listCell);
     }
 
-    /// <summary><c>'$dynamic_predicate_indicators'/1</c> — the
-    /// <c>Name/Arity</c> list of every predicate declared <c>:- dynamic</c>.
-    /// Backs the prelude's <c>listing/0,1</c>, which list dynamic predicates
-    /// only.</summary>
-    public static bool DynamicPredicateIndicators(Engine engine)
+    /// <summary><c>'$listable_predicates'/1</c> — the user-defined
+    /// predicates <c>listing/0,1</c> may print, each as a
+    /// <c>pi(Name, Arity, Dynamic)</c> term where <c>Dynamic</c> is
+    /// <c>true</c> or <c>false</c>. Builtins and the library predicates of
+    /// <c>$prelude</c> / <c>clpfd</c> are excluded.</summary>
+    public static bool ListablePredicates(Engine engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
-                "'$dynamic_predicate_indicators'/1 requires a PrologEngine host.");
+                "'$listable_predicates'/1 requires a PrologEngine host.");
 
-        var indicators = new List<Term>();
-        foreach (int fid in host.DynamicFunctorIds())
+        var entries = new List<Term>();
+        foreach (var (fid, isDynamic) in host.ListablePredicates())
         {
             var (atomId, arity) = FunctorTable.Lookup(fid);
             string name = AtomTable.GetById(atomId)?.Name ?? "?";
-            indicators.Add(new CompoundTerm("/",
-                new Term[] { new AtomTerm(name), new IntTerm(arity) }));
+            entries.Add(new CompoundTerm("pi", new Term[]
+            {
+                new AtomTerm(name),
+                new IntTerm(arity),
+                new AtomTerm(isDynamic ? "true" : "false"),
+            }));
         }
 
         Term listTerm = new AtomTerm("[]");
-        for (int i = indicators.Count - 1; i >= 0; i--)
-            listTerm = new CompoundTerm(".", new[] { indicators[i], listTerm });
+        for (int i = entries.Count - 1; i >= 0; i--)
+            listTerm = new CompoundTerm(".", new[] { entries[i], listTerm });
         Cell listCell = Materializer.MaterializeAsCell(engine, listTerm);
         return engine.UnifyRegisterWithCell(0, listCell);
     }
