@@ -245,8 +245,11 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
   to a 0/1 variable — `#<==>`, `#==>`, `#<==` and the boolean connectives
   `#/\`, `#\/`, `#\`, each comparison reified through an entailment-checking
   `$fd_reif` propagator.
-- CLP(FD): remaining arithmetic (`min`/`max`/`abs`/`//`), stronger
-  `all_distinct` (Hall intervals), `sum/3`, `scalar_product`.
+- ✓ CLP(FD) remaining arithmetic and `sum/3` (chunk 92): the expression
+  functions `min`, `max`, `abs` and truncating integer division `//` (with a
+  positive integer divisor), and `sum(List, Rel, Total)` for the six relations.
+- CLP(FD): stronger `all_distinct` (Hall intervals), `scalar_product`,
+  variable-divisor `//`.
 - Attributed-variable-based constraints: CLP(R) if needed.
 - Native AOT support.
 - Tabling.

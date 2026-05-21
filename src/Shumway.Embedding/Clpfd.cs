@@ -25,7 +25,10 @@ namespace Shumway.Embedding;
 /// <c>up</c>/<c>down</c>) and <c>indomain/1</c>. Chunk 91 adds the
 /// <c>all_different/1</c> / <c>all_distinct/1</c> global constraint and
 /// reification: <c>#&lt;==&gt;</c>, <c>#==&gt;</c>, <c>#&lt;==</c> and
-/// the boolean connectives <c>#/\</c>, <c>#\/</c>, <c>#\</c>.</para>
+/// the boolean connectives <c>#/\</c>, <c>#\/</c>, <c>#\</c>. Chunk 92
+/// adds the remaining arithmetic expression functions <c>min</c>,
+/// <c>max</c>, <c>abs</c> and <c>//</c>, and the <c>sum/3</c>
+/// constraint.</para>
 /// </summary>
 internal static class Clpfd
 {
@@ -62,8 +65,13 @@ internal static class Clpfd
         :- public '$fd_neq'/2.
         :- public '$fd_plus'/3.
         :- public '$fd_times'/3.
+        :- public '$fd_min'/3.
+        :- public '$fd_max'/3.
+        :- public '$fd_abs'/2.
+        :- public '$fd_idiv'/3.
         :- public '$fd_set'/3.
         :- public '$fd_reif'/4.
+        :- public sum/3.
         :- public verify_attributes/4.
         :- public clpfd_attr_goals/3.
         :- public label/1.
@@ -126,6 +134,13 @@ internal static class Clpfd
             ( C == inf -> ( K > 0 -> R = inf ; R = sup )
             ; C == sup -> ( K > 0 -> R = sup ; R = inf )
             ; NC is -C, M is NC mod K, R0 is (NC - M) // K, R is -R0
+            ).
+
+        % truncating (toward zero) division of a bound by a positive K.
+        clpfd_btruncdiv(C, K, R) :-
+            ( C == inf -> R = inf
+            ; C == sup -> R = sup
+            ; R is C // K
             ).
 
         % ===== domains: sorted lists of disjoint L-H intervals =====
@@ -312,6 +327,22 @@ internal static class Clpfd
             clpfd_expr(A, VA), clpfd_expr(B, VB),
             clpfd_makevar(V),
             clpfd_post('$fd_times'(VA, VB, V), [VA, VB, V]).
+        clpfd_expr(min(A, B), V) :- !,
+            clpfd_expr(A, VA), clpfd_expr(B, VB),
+            clpfd_makevar(V),
+            clpfd_post('$fd_min'(VA, VB, V), [VA, VB, V]).
+        clpfd_expr(max(A, B), V) :- !,
+            clpfd_expr(A, VA), clpfd_expr(B, VB),
+            clpfd_makevar(V),
+            clpfd_post('$fd_max'(VA, VB, V), [VA, VB, V]).
+        clpfd_expr(abs(A), V) :- !,
+            clpfd_expr(A, VA),
+            clpfd_makevar(V),
+            clpfd_post('$fd_abs'(VA, V), [VA, V]).
+        clpfd_expr(A // B, V) :- !,
+            clpfd_expr(A, VA), clpfd_expr(B, VB),
+            clpfd_makevar(V),
+            clpfd_post('$fd_idiv'(VA, VB, V), [VA, VB, V]).
         clpfd_expr(- A, V) :- !, clpfd_expr(0 - A, V).
         clpfd_expr(E, _) :-
             throw(error(type_error(fd_expression, E), _)).
@@ -402,6 +433,84 @@ internal static class Clpfd
                 clpfd_narrow_bounds(C, CLo, CHi)
             ; true
             ).
+
+        % C = min(A, B) — C tracks the smaller max/min of the two; since
+        % C is below both operands, each operand's lower bound rises to C.
+        '$fd_min'(A, B, C) :-
+            clpfd_dom_of(A, DA), clpfd_dom_of(B, DB),
+            clpfd_dom_min(DA, AMin), clpfd_dom_max(DA, AMax),
+            clpfd_dom_min(DB, BMin), clpfd_dom_max(DB, BMax),
+            clpfd_bmin(AMin, BMin, CLo), clpfd_bmin(AMax, BMax, CHi),
+            clpfd_narrow_bounds(C, CLo, CHi),
+            clpfd_dom_of(C, DC), clpfd_dom_min(DC, CMin),
+            clpfd_narrow_bounds(A, CMin, sup),
+            clpfd_narrow_bounds(B, CMin, sup).
+
+        % C = max(A, B) — dual of min: each operand's upper bound drops to C.
+        '$fd_max'(A, B, C) :-
+            clpfd_dom_of(A, DA), clpfd_dom_of(B, DB),
+            clpfd_dom_min(DA, AMin), clpfd_dom_max(DA, AMax),
+            clpfd_dom_min(DB, BMin), clpfd_dom_max(DB, BMax),
+            clpfd_bmax(AMin, BMin, CLo), clpfd_bmax(AMax, BMax, CHi),
+            clpfd_narrow_bounds(C, CLo, CHi),
+            clpfd_dom_of(C, DC), clpfd_dom_max(DC, CMax),
+            clpfd_narrow_bounds(A, inf, CMax),
+            clpfd_narrow_bounds(B, inf, CMax).
+
+        % C = abs(A) — C is non-negative; A is confined to [-Cmax, Cmax].
+        '$fd_abs'(A, C) :-
+            clpfd_dom_of(A, DA), clpfd_dom_min(DA, AMin), clpfd_dom_max(DA, AMax),
+            ( clpfd_ble(0, AMin) -> CLo = AMin, CHi = AMax
+            ; clpfd_ble(AMax, 0) -> clpfd_bneg(AMax, CLo), clpfd_bneg(AMin, CHi)
+            ; CLo = 0, clpfd_bneg(AMin, NA), clpfd_bmax(NA, AMax, CHi)
+            ),
+            clpfd_narrow_bounds(C, CLo, CHi),
+            clpfd_dom_of(C, DC), clpfd_dom_max(DC, CMax),
+            clpfd_bneg(CMax, NCMax),
+            clpfd_narrow_bounds(A, NCMax, CMax).
+
+        % V = A // B (truncating). Propagates once the divisor is a known
+        % positive integer; stays suspended while it is still unbound.
+        '$fd_idiv'(A, B, V) :-
+            ( integer(B) ->
+                ( B =:= 0 -> throw(error(evaluation_error(zero_divisor), _))
+                ; B > 0 -> clpfd_idiv_pos(A, B, V)
+                ; throw(error(type_error(fd_positive_divisor, B), _))
+                )
+            ; true
+            ).
+
+        clpfd_idiv_pos(A, K, V) :-
+            clpfd_dom_of(A, DA), clpfd_dom_min(DA, AMin), clpfd_dom_max(DA, AMax),
+            clpfd_btruncdiv(AMin, K, VLo), clpfd_btruncdiv(AMax, K, VHi),
+            clpfd_narrow_bounds(V, VLo, VHi),
+            clpfd_dom_of(V, DV), clpfd_dom_min(DV, VMin), clpfd_dom_max(DV, VMax),
+            K1 is K - 1,
+            clpfd_bmul(VMin, K, P1), clpfd_sub_lo(P1, K1, ALo),
+            clpfd_bmul(VMax, K, P2), clpfd_add_hi(P2, K1, AHi),
+            clpfd_narrow_bounds(A, ALo, AHi).
+
+        % ===== sum/3 =====
+        % sum(List, Rel, Total): Total stands in relation Rel to the sum
+        % of List. Rel is one of the six arithmetic-constraint operators.
+        sum(List, Rel, Total) :-
+            clpfd_sum_expr(List, 0, Expr),
+            ( clpfd_rel_ok(Rel) -> clpfd_apply_rel(Rel, Expr, Total)
+            ; throw(error(domain_error(clpfd_relation, Rel), _))
+            ).
+
+        clpfd_sum_expr([], Acc, Acc).
+        clpfd_sum_expr([X|Xs], Acc, S) :- clpfd_sum_expr(Xs, Acc + X, S).
+
+        clpfd_rel_ok('#=').  clpfd_rel_ok('#\\=').  clpfd_rel_ok('#<').
+        clpfd_rel_ok('#>').  clpfd_rel_ok('#=<').   clpfd_rel_ok('#>=').
+
+        clpfd_apply_rel('#=',   E, T) :- E #= T.
+        clpfd_apply_rel('#\\=', E, T) :- E #\= T.
+        clpfd_apply_rel('#<',   E, T) :- E #< T.
+        clpfd_apply_rel('#>',   E, T) :- E #> T.
+        clpfd_apply_rel('#=<',  E, T) :- E #=< T.
+        clpfd_apply_rel('#>=',  E, T) :- E #>= T.
 
         % ===== labeling =====
         % label/1 and labeling/2 assign each variable a value from its
