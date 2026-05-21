@@ -223,7 +223,7 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
 - ✓ `src/Shumway.Repl/` — a console-app project (the `shumway` executable) with a basic Prolog top-level: it consults files named on the command line, reads queries, prints each solution with `;` to search for the next, and exits on `halt.` or end of input. A thin client over the `PrologEngine` embedding API, for interactively exercising Shumway (chunk 87).
 - ✓ Undefined-predicate calls raise a catchable ISO `existence_error(procedure, Name/Arity)` when reached, instead of an uncatchable link-time failure — a correctness fix the REPL surfaced.
 
-**Phase 6 — Constraint logic programming over finite domains**
+**Phase 6 — Constraint logic programming over finite domains** — ✅ **Complete** (tagged `phase-6`; closure summary in [`docs/phase-6-closure.md`](docs/phase-6-closure.md)).
 - ✓ Fixed `!` inside a runtime compound `call` goal (chunk 88). `call((a,!,b))` treated the cut as a no-op — *unsound*: backtracking re-ran clauses ISO would have cut away, re-executing their side effects. `DispatchCall` now threads the enclosing call's cut barrier through the `$call_*` helpers via `'$call'/2`, so a `!` in a runtime `,`/`;`/`->` goal commits exactly as far as the call — and no further.
 - ✓ CLP(FD) core — opt-in library (`engine.UseClpfd()`, module `clpfd`) over sorted
   interval-list finite domains: `in`/`ins`, the six arithmetic constraints
