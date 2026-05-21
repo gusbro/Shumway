@@ -286,7 +286,14 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
   `docs/predicates.md` automatically. Two engine fixes fell out of this work:
   `==/2` and `\==/2` now handle floats, and `retract/1` is re-satisfiable
   (ISO requires it to enumerate matching clauses on backtracking).
-- Attributed-variable-based constraints: CLP(R) if needed.
+- ◐ CLP(R) — constraints over the reals. Chunk 99 delivers the linear-equality
+  core: the opt-in `clpr` library (`engine.UseClpr()`), the `{Constraint}`
+  wrapper, and a Gaussian-elimination solver built on attributed variables
+  with lazy expansion — each posted equality is normalised against the
+  current solution, an inconsistent one fails, a free variable is pivoted
+  out otherwise, and determined variables are bound. Inequalities, non-linear
+  constraints and constraint projection are later chunks. (CLP(R) and CLP(FD)
+  cannot yet share an engine — both define a public `verify_attributes/4`.)
 - Native AOT support.
 - Tabling.
 

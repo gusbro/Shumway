@@ -60,6 +60,7 @@ public static class PredicateDoc
         "CLP(FD) — global constraints",
         "CLP(FD) — labeling",
         "CLP(FD) — reification",
+        "CLP(R)",
     };
 
     /// <summary>Builds the predicate-reference markdown. Newlines are

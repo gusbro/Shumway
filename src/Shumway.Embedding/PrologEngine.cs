@@ -946,6 +946,16 @@ public sealed class PrologEngine
     /// this carries none of the library's weight.</summary>
     public void UseClpfd() => ConsultString(Clpfd.Source);
 
+    /// <summary>Loads the CLP(R) constraint library (chunk 99) into this
+    /// engine, making linear-equality constraints over the reals available
+    /// through the <c>{Constraint}</c> wrapper. CLP(R) is opt-in: an engine
+    /// that never calls this carries none of the library's weight.
+    ///
+    /// <para>CLP(R) and CLP(FD) both define a <c>verify_attributes/4</c>
+    /// hook as a public predicate, so for now only one of the two may be
+    /// loaded into a given engine.</para></summary>
+    public void UseClpr() => ConsultString(Clpr.Source);
+
     /// <summary>Loads Prolog source. The first <c>:- module(name).</c>
     /// directive in the source (if any) chooses the target module — re-consulting
     /// the same module replaces its previous contents. Source with no module
