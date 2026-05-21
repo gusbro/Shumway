@@ -45,6 +45,11 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("call", 5, Call5);
         BuiltinsRegistry.Register("call", 6, Call6);
         BuiltinsRegistry.Register("call", 7, Call7);
+        // '$call'/2 (chunk 88): a cut-barrier-carrying meta-call. The
+        // $call_* control helpers re-enter call dispatch through it so a
+        // `!` in a runtime compound goal cuts to the enclosing call's
+        // barrier. Like call/N it is intercepted by the interpreter.
+        BuiltinsRegistry.Register("$call", 2, CallWithBarrier);
 
         BuiltinsRegistry.Register("assertz", 1, Assertz);
         BuiltinsRegistry.Register("asserta", 1, Asserta);
@@ -1058,6 +1063,14 @@ public static class MetaBuiltins
     public static bool Call5(Engine engine) => CallN(engine, totalArity: 5);
     public static bool Call6(Engine engine) => CallN(engine, totalArity: 6);
     public static bool Call7(Engine engine) => CallN(engine, totalArity: 7);
+
+    /// <summary><c>'$call'(Goal, Barrier)</c> — the cut-barrier-carrying
+    /// meta-call (chunk 88). It is intercepted by the bytecode interpreter
+    /// exactly like <c>call/N</c> and never reaches this body; the entry
+    /// exists only so the compiler emits a <c>call_builtin</c> for it.</summary>
+    public static bool CallWithBarrier(Engine engine) =>
+        throw new InvalidOperationException(
+            "'$call'/2 must be dispatched by the interpreter, not invoked directly.");
 
     /// <summary><c>call(Goal, ExtraArgs...)</c> — runs <c>Goal</c> (optionally
     /// extended with extra args appended to its argument list) in a peer

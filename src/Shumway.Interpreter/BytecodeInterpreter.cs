@@ -57,12 +57,15 @@ public sealed class BytecodeInterpreter
         FunctorTable.Intern(AtomTable.Intern("->", permanent: true).Id, 2);
     private static readonly int NegFunctorId =
         FunctorTable.Intern(AtomTable.Intern("\\+", permanent: true).Id, 1);
+    // conj/disj/arrow take a third argument — the cut barrier K — so a
+    // `!` inside a runtime compound goal commits to the enclosing call
+    // (chunk 88). $call_neg is opaque to cut and stays arity 1.
     private static readonly int CallConjFunctorId =
-        FunctorTable.Intern(AtomTable.Intern("$call_conj", permanent: true).Id, 2);
+        FunctorTable.Intern(AtomTable.Intern("$call_conj", permanent: true).Id, 3);
     private static readonly int CallDisjFunctorId =
-        FunctorTable.Intern(AtomTable.Intern("$call_disj", permanent: true).Id, 2);
+        FunctorTable.Intern(AtomTable.Intern("$call_disj", permanent: true).Id, 3);
     private static readonly int CallArrowFunctorId =
-        FunctorTable.Intern(AtomTable.Intern("$call_arrow", permanent: true).Id, 2);
+        FunctorTable.Intern(AtomTable.Intern("$call_arrow", permanent: true).Id, 3);
     private static readonly int CallNegFunctorId =
         FunctorTable.Intern(AtomTable.Intern("$call_neg", permanent: true).Id, 1);
 
@@ -995,7 +998,20 @@ public sealed class BytecodeInterpreter
                     // rather than running the sub-engine builtin.
                     if (entry.Name == "call")
                     {
-                        if (!DispatchCall(code, entry.Arity))
+                        // A top-level call/N: a `!` written as the goal
+                        // commits no further than the call itself, so the
+                        // barrier is B as the call is entered.
+                        if (!DispatchCall(code, entry.Arity, _engine.B))
+                            return InterpreterResult.Failed;
+                        break;
+                    }
+                    if (entry.Name == "$call")
+                    {
+                        // Cut-barrier-carrying meta-call from a $call_*
+                        // control helper (chunk 88): X1 carries the barrier
+                        // the enclosing call established for a `!` in X0.
+                        int barrier = (int)DerefCell(_engine.GetRegister(1)).AsInt;
+                        if (!DispatchCall(code, 1, barrier))
                             return InterpreterResult.Failed;
                         break;
                     }
@@ -1385,10 +1401,19 @@ public sealed class BytecodeInterpreter
     /// goal in the live engine: a user or prelude predicate is entered with
     /// a tail jump so it keeps its choice points and the call's
     /// continuation flows on success; a builtin runs inline. Control
-    /// constructs in a runtime goal reach the prelude <c>,/2</c>,
-    /// <c>;/2</c>, <c>-&gt;/2</c>, <c>\+/1</c> predicates. Returns false
-    /// only on an unrecoverable failure (no choice point remains).</summary>
-    private bool DispatchCall(byte[] code, int callArity)
+    /// constructs in a runtime goal reach the prelude <c>$call_conj</c>,
+    /// <c>$call_disj</c>, <c>$call_arrow</c>, <c>$call_neg</c> helpers.
+    ///
+    /// <para><paramref name="barrier"/> is the choice-point level a
+    /// <c>!</c> reached as the goal cuts back to (chunk 88). For a
+    /// top-level <c>call/N</c> it is B at entry, so a bare <c>call(!)</c>
+    /// is a no-op; the conj/disj/arrow helpers thread it on through
+    /// <c>'$call'/2</c> so a <c>!</c> inside a runtime compound goal
+    /// commits exactly as far as the enclosing call — no further.</para>
+    ///
+    /// <para>Returns false only on an unrecoverable failure (no choice
+    /// point remains).</para></summary>
+    private bool DispatchCall(byte[] code, int callArity, int barrier)
     {
         int pc = _engine.P;
         Cell goal = DerefCell(_engine.GetRegister(0));
@@ -1430,15 +1455,42 @@ public sealed class BytecodeInterpreter
         int functorId = FunctorTable.Intern(atomId, totalArity);
 
         // A control construct in a runtime goal routes to its prelude
-        // helper, which re-enters call/1 with full backtracking semantics.
-        if (functorId == ConjFunctorId) functorId = CallConjFunctorId;
-        else if (functorId == DisjFunctorId) functorId = CallDisjFunctorId;
-        else if (functorId == ArrowFunctorId) functorId = CallArrowFunctorId;
-        else if (functorId == NegFunctorId) functorId = CallNegFunctorId;
+        // helper. conj/disj/arrow are cut-transparent, so they take the
+        // barrier as a third argument (X2): a `!` threaded down through
+        // them commits to the enclosing call (chunk 88). \+ is opaque to
+        // cut, so $call_neg needs no barrier.
+        if (functorId == ConjFunctorId)
+        {
+            _engine.SetRegister(2, Cell.Int(barrier));
+            functorId = CallConjFunctorId;
+        }
+        else if (functorId == DisjFunctorId)
+        {
+            _engine.SetRegister(2, Cell.Int(barrier));
+            functorId = CallDisjFunctorId;
+        }
+        else if (functorId == ArrowFunctorId)
+        {
+            _engine.SetRegister(2, Cell.Int(barrier));
+            functorId = CallArrowFunctorId;
+        }
+        else if (functorId == NegFunctorId)
+        {
+            functorId = CallNegFunctorId;
+        }
 
-        // true / fail / ! as the whole goal. A cut reached as a bare goal
-        // through call/1 has nothing of its own to commit, so it is a no-op.
-        if (functorId == TrueFunctorId || functorId == CutFunctorId)
+        // ! as the whole goal: commit to the barrier the enclosing call
+        // established (chunk 88). For a top-level call(!) the barrier is B
+        // at call entry, so Cut() removes nothing; for a `!` threaded in
+        // from a $call_* helper it cuts the runtime goal's choice points,
+        // and no further — the parent's CPs sit at or below the barrier.
+        if (functorId == CutFunctorId)
+        {
+            _engine.Cut(barrier);
+            _engine.AdvancePc(9);
+            return true;
+        }
+        if (functorId == TrueFunctorId)
         {
             _engine.AdvancePc(9);
             return true;
@@ -1449,9 +1501,11 @@ public sealed class BytecodeInterpreter
         if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out int builtinId))
         {
             var builtin = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
-            // call(call(...)): recurse rather than invoking the call builtin.
+            // call(call(...)): recurse rather than invoking the call
+            // builtin. The inner call is itself a fresh cut barrier, so
+            // capture B again rather than passing the outer `barrier`.
             if (builtin.Name == "call")
-                return DispatchCall(code, builtin.Arity);
+                return DispatchCall(code, builtin.Arity, _engine.B);
             if (!builtin.Impl(_engine))
                 return TryBacktrack();
             _engine.AdvancePc(9);

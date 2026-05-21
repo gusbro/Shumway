@@ -38,9 +38,9 @@ internal static class Prelude
         :- public foldl/5.
         :- public aggregate_all/3.
         :- public copy_term/3.
-        :- public '$call_conj'/2.
-        :- public '$call_disj'/2.
-        :- public '$call_arrow'/2.
+        :- public '$call_conj'/3.
+        :- public '$call_disj'/3.
+        :- public '$call_arrow'/3.
         :- public '$call_neg'/1.
         :- dynamic attribute_goals/4.
 
@@ -52,11 +52,16 @@ internal static class Prelude
         % gets here — the MetaTransform rewrites it at compile time; the
         % interpreter's call dispatch routes ,/2 ;/2 ->/2 \+/1 to these
         % plainly-named helpers (operator atoms are awkward to declare).
-        '$call_conj'(A, B) :- call(A), call(B).
-        '$call_disj'((C -> T), E) :- !, ( call(C) -> call(T) ; call(E) ).
-        '$call_disj'(A, _) :- call(A).
-        '$call_disj'(_, B) :- call(B).
-        '$call_arrow'(C, T) :- call(C), !, call(T).
+        % K is the cut barrier of the enclosing call (chunk 88): '$call'/2
+        % re-enters call dispatch carrying it, so a `!` inside a runtime
+        % compound goal commits exactly as far as the call — no further.
+        % ,/2 ;/2 and the then/else of ->/2 are cut-transparent (they pass
+        % K on); a ->/2 condition and \+/1 are opaque, so they use call/1.
+        '$call_conj'(A, B, K) :- '$call'(A, K), '$call'(B, K).
+        '$call_disj'((C -> T), E, K) :- !, ( call(C) -> '$call'(T, K) ; '$call'(E, K) ).
+        '$call_disj'(A, _, K) :- '$call'(A, K).
+        '$call_disj'(_, B, K) :- '$call'(B, K).
+        '$call_arrow'(C, T, K) :- call(C), !, '$call'(T, K).
         '$call_neg'(G) :- ( call(G) -> fail ; true ).
 
         clause(H, B) :-

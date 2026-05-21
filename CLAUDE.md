@@ -224,7 +224,7 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
 - ✓ Undefined-predicate calls raise a catchable ISO `existence_error(procedure, Name/Arity)` when reached, instead of an uncatchable link-time failure — a correctness fix the REPL surfaced.
 
 **Phase 6 — Constraints, AOT, tabling**
-- **Fix `!` inside a runtime compound `call` goal** (first item). `call((a,!,b))` currently treats the cut as a no-op; this is *unsound*, not merely over-generous — backtracking into clauses ISO would have cut away re-runs their side effects, and the non-backtrackable ones (`retract`/`abolish`/`assertz`) corrupt the database. See chunk 86's known limitation.
+- ✓ Fixed `!` inside a runtime compound `call` goal (chunk 88). `call((a,!,b))` treated the cut as a no-op — *unsound*: backtracking re-ran clauses ISO would have cut away, re-executing their side effects. `DispatchCall` now threads the enclosing call's cut barrier through the `$call_*` helpers via `'$call'/2`, so a `!` in a runtime `,`/`;`/`->` goal commits exactly as far as the call — and no further.
 - Attributed-variable-based constraints: CLP(FD), CLP(R) if needed.
 - Native AOT support.
 - Tabling.
