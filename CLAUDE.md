@@ -297,9 +297,14 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
   re-expands it through the current equality solution, and tests
   satisfiability by Fourier–Motzkin elimination — so an unsatisfiable system
   (even one of purely multi-variable inequalities) fails on the spot.
-  Disequality (`=\=`), non-linear constraints and constraint projection are
-  later chunks. (CLP(R) and CLP(FD) cannot yet share an engine — both define
-  a public `verify_attributes/4`.)
+  Chunk 101 adds disequality (`=\=` — it fails only when the inequalities
+  entail its linear form is pinned to zero, decided with two more FM checks)
+  and non-linear constraints (a product or quotient of non-constants is
+  delayed and retried whenever a variable it mentions is determined, posted
+  for real once it turns linear; a residual non-linear constraint that never
+  resolves is left as a conditional answer). Constraint projection is a later
+  chunk. (CLP(R) and CLP(FD) cannot yet share an engine — both define a
+  public `verify_attributes/4`.)
 - Native AOT support.
 - Tabling.
 

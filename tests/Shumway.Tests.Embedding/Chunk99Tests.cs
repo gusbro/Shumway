@@ -108,10 +108,11 @@ public class Chunk99Tests
     }
 
     [Fact]
-    public void NonLinearProduct_RaisesTypeError()
+    public void NonLinearConstraint_IsDelayed()
     {
-        Assert.True(Holds(
-            "catch({X * Y =:= 6}, error(type_error(clpr_linear, _), _), true)."));
+        // X*Y =:= 6 is non-linear with both factors free — it is delayed
+        // (kept as a residual), so the post itself succeeds.
+        Assert.True(Holds("{X * Y =:= 6}."));
     }
 
     [Fact]

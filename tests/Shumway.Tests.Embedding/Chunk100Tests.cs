@@ -133,9 +133,9 @@ public class Chunk100Tests
     // ---- unsupported ----
 
     [Fact]
-    public void Disequality_NotYetSupported()
+    public void Disequality_DistinguishesValues()
     {
-        Assert.True(Holds(
-            "catch({X =\\= Y}, error(type_error(clpr_constraint, _), _), true)."));
+        Assert.True(Holds("{X =\\= Y, X =:= 3, Y =:= 4}."));
+        Assert.False(Holds("{X =\\= Y, X =:= 3, Y =:= 3}."));
     }
 }
