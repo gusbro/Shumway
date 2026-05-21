@@ -223,7 +223,7 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
 - ✓ `src/Shumway.Repl/` — a console-app project (the `shumway` executable) with a basic Prolog top-level: it consults files named on the command line, reads queries, prints each solution with `;` to search for the next, and exits on `halt.` or end of input. A thin client over the `PrologEngine` embedding API, for interactively exercising Shumway (chunk 87).
 - ✓ Undefined-predicate calls raise a catchable ISO `existence_error(procedure, Name/Arity)` when reached, instead of an uncatchable link-time failure — a correctness fix the REPL surfaced.
 
-**Phase 6 — Constraints, AOT, tabling**
+**Phase 6 — Constraint logic programming over finite domains**
 - ✓ Fixed `!` inside a runtime compound `call` goal (chunk 88). `call((a,!,b))` treated the cut as a no-op — *unsound*: backtracking re-ran clauses ISO would have cut away, re-executing their side effects. `DispatchCall` now threads the enclosing call's cut barrier through the `$call_*` helpers via `'$call'/2`, so a `!` in a runtime `,`/`;`/`->` goal commits exactly as far as the call — and no further.
 - ✓ CLP(FD) core — opt-in library (`engine.UseClpfd()`, module `clpfd`) over sorted
   interval-list finite domains: `in`/`ins`, the six arithmetic constraints
@@ -248,8 +248,11 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
 - ✓ CLP(FD) remaining arithmetic and `sum/3` (chunk 92): the expression
   functions `min`, `max`, `abs` and truncating integer division `//` (with a
   positive integer divisor), and `sum(List, Rel, Total)` for the six relations.
-- CLP(FD): stronger `all_distinct` (Hall intervals), `scalar_product`,
-  variable-divisor `//`.
+- → CLP(FD) refinements, CLP(R), Native AOT and tabling moved to Phase 7.
+
+**Phase 7 — CLP(FD) refinements, CLP(R), AOT, tabling**
+- CLP(FD) refinements: a stronger `all_distinct` with Hall-interval pruning,
+  `scalar_product/4`, and `//` with a variable (non-constant) divisor.
 - Attributed-variable-based constraints: CLP(R) if needed.
 - Native AOT support.
 - Tabling.
