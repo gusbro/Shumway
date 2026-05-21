@@ -115,20 +115,39 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | Predicate | Description |
 | --- | --- |
 | `append(?List1, ?List2, ?List)` | Concatenates List1 and List2 into List; backtracks over splits of List. |
+| `delete(+List, +Elem, -Rest)` | Rest is List with every element that unifies with Elem removed. |
+| `exclude(:Goal, +List, -Excluded)` | Excluded holds the elements of List for which Goal fails. |
 | `foldl(:Goal, ?List, +V0, -V)` | Folds Goal over a list, threading an accumulator from V0 to V. |
 | `foldl(:Goal, ?List1, ?List2, +V0, -V)` | Folds Goal over two lists, threading an accumulator from V0 to V. |
+| `include(:Goal, +List, -Included)` | Included holds the elements of List for which Goal succeeds. |
+| `intersection(+Set1, +Set2, -Intersection)` | Intersection holds the elements of Set1 that also occur in Set2. |
 | `last(?List, ?Last)` | Relates a list to its last element. |
 | `length(?List, ?Length)` | Relates a list to its length; enumerates lists of growing length when both arguments are unbound. |
 | `list_to_set(+List, -Set)` | Removes duplicates from a list, keeping the first occurrence of each. |
 | `maplist(:Goal, ?List)` | Succeeds if Goal holds for every element of List. |
 | `maplist(:Goal, ?List1, ?List2)` | Succeeds if Goal holds for corresponding elements of two lists. |
 | `maplist(:Goal, ?List1, ?List2, ?List3)` | Succeeds if Goal holds for corresponding elements of three lists. |
+| `max_list(+List, -Max)` | Max is the largest number in the non-empty list. |
+| `max_member(?Max, +List)` | Max is the largest element of List in the standard order of terms. |
 | `member(?Elem, ?List)` | Succeeds when Elem is a member of List; enumerates members on backtracking. |
+| `memberchk(?Elem, +List)` | Like member/2 but succeeds at most once — no backtracking over further matches. |
+| `min_list(+List, -Min)` | Min is the smallest number in the non-empty list. |
+| `min_member(?Min, +List)` | Min is the smallest element of List in the standard order of terms. |
 | `msort(+List, -Sorted)` | Sorts a list into standard order, keeping duplicates. |
 | `nth0(?Index, ?List, ?Elem)` | Relates a 0-based index to the list element at that position. |
 | `nth1(?Index, ?List, ?Elem)` | Relates a 1-based index to the list element at that position. |
+| `numlist(+Low, +High, -List)` | List is the consecutive integers from Low to High inclusive. |
+| `pairs_keys_values(?Pairs, ?Keys, ?Values)` | Relates a list of Key-Value pairs to its lists of keys and values. |
+| `partition(:Goal, +List, -Included, -Excluded)` | Splits List by whether Goal succeeds on each element. |
+| `permutation(?List, ?Permutation)` | True when the two lists are permutations of each other; enumerates permutations. |
+| `predsort(:Pred, +List, -Sorted)` | Sorts List by a three-way comparison predicate, dropping elements compared equal. |
 | `reverse(?List, ?Reversed)` | Relates a list to its reverse. |
+| `select(?Elem, ?List, ?Rest)` | Rest is List with one occurrence of Elem removed; backtracks over occurrences. |
 | `sort(+List, -Sorted)` | Sorts a list into standard order, removing duplicates. |
+| `sort(+Key, +Order, +List, -Sorted)` | Sorts List by the given argument key (0 = whole term) and order (@<, @=<, @> or @>=). |
+| `subtract(+Set, +Delete, -Rest)` | Rest is Set without the elements that also occur in Delete. |
+| `sum_list(+List, -Sum)` | Sum is the sum of the numbers in List. |
+| `union(+Set1, +Set2, -Union)` | Union holds the elements of Set1 not in Set2, followed by all of Set2. |
 
 ## Atoms & strings
 

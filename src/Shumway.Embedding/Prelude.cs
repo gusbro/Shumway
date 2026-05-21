@@ -38,6 +38,25 @@ internal static class Prelude
         :- public foldl/5.
         :- public aggregate_all/3.
         :- public copy_term/3.
+        :- public select/3.
+        :- public permutation/2.
+        :- public memberchk/2.
+        :- public subtract/3.
+        :- public intersection/3.
+        :- public union/3.
+        :- public delete/3.
+        :- public numlist/3.
+        :- public sum_list/2.
+        :- public max_list/2.
+        :- public min_list/2.
+        :- public max_member/2.
+        :- public min_member/2.
+        :- public include/3.
+        :- public exclude/3.
+        :- public partition/4.
+        :- public pairs_keys_values/3.
+        :- public predsort/3.
+        :- public sort/4.
         :- public '$call_conj'/3.
         :- public '$call_disj'/3.
         :- public '$call_arrow'/3.
@@ -158,5 +177,134 @@ internal static class Prelude
             ( attribute_goals(M, A, V, G) -> true ; G = [] ),
             '$attr_goals_of'(Rest, RestGoals),
             append(G, RestGoals, Goals).
+
+        % ===== common list-library predicates (chunk 96) =====
+
+        %! select(?Elem, ?List, ?Rest) | Lists | Rest is List with one occurrence of Elem removed; backtracks over occurrences.
+        select(X, [X|T], T).
+        select(X, [H|T], [H|R]) :- select(X, T, R).
+
+        %! permutation(?List, ?Permutation) | Lists | True when the two lists are permutations of each other; enumerates permutations.
+        permutation([], []).
+        permutation(L, [X|P]) :- select(X, L, R), permutation(R, P).
+
+        %! memberchk(?Elem, +List) | Lists | Like member/2 but succeeds at most once — no backtracking over further matches.
+        memberchk(X, [Y|T]) :- ( X = Y -> true ; memberchk(X, T) ).
+
+        %! subtract(+Set, +Delete, -Rest) | Lists | Rest is Set without the elements that also occur in Delete.
+        subtract([], _, []).
+        subtract([H|T], D, R) :-
+            ( memberchk(H, D) -> R = R1 ; R = [H|R1] ),
+            subtract(T, D, R1).
+
+        %! intersection(+Set1, +Set2, -Intersection) | Lists | Intersection holds the elements of Set1 that also occur in Set2.
+        intersection([], _, []).
+        intersection([H|T], S2, R) :-
+            ( memberchk(H, S2) -> R = [H|R1] ; R = R1 ),
+            intersection(T, S2, R1).
+
+        %! union(+Set1, +Set2, -Union) | Lists | Union holds the elements of Set1 not in Set2, followed by all of Set2.
+        union([], S2, S2).
+        union([H|T], S2, R) :-
+            ( memberchk(H, S2) -> R = R1 ; R = [H|R1] ),
+            union(T, S2, R1).
+
+        %! delete(+List, +Elem, -Rest) | Lists | Rest is List with every element that unifies with Elem removed.
+        delete([], _, []).
+        delete([H|T], X, R) :-
+            ( H \= X -> R = [H|R1] ; R = R1 ),
+            delete(T, X, R1).
+
+        %! numlist(+Low, +High, -List) | Lists | List is the consecutive integers from Low to High inclusive.
+        numlist(L, H, List) :-
+            ( L =< H -> L1 is L + 1, List = [L|Rest], numlist(L1, H, Rest)
+            ; List = []
+            ).
+
+        %! sum_list(+List, -Sum) | Lists | Sum is the sum of the numbers in List.
+        sum_list(L, S) :- '$sum_list'(L, 0, S).
+
+        %! max_list(+List, -Max) | Lists | Max is the largest number in the non-empty list.
+        max_list([H|T], M) :- '$maxlist'(T, H, M).
+        '$maxlist'([], M, M).
+        '$maxlist'([H|T], A, M) :- ( H > A -> A1 = H ; A1 = A ), '$maxlist'(T, A1, M).
+
+        %! min_list(+List, -Min) | Lists | Min is the smallest number in the non-empty list.
+        min_list([H|T], M) :- '$minlist'(T, H, M).
+        '$minlist'([], M, M).
+        '$minlist'([H|T], A, M) :- ( H < A -> A1 = H ; A1 = A ), '$minlist'(T, A1, M).
+
+        %! max_member(?Max, +List) | Lists | Max is the largest element of List in the standard order of terms.
+        max_member(Max, [H|T]) :- '$maxmember'(T, H, Max).
+        '$maxmember'([], M, M).
+        '$maxmember'([H|T], A, M) :- ( H @> A -> A1 = H ; A1 = A ), '$maxmember'(T, A1, M).
+
+        %! min_member(?Min, +List) | Lists | Min is the smallest element of List in the standard order of terms.
+        min_member(Min, [H|T]) :- '$minmember'(T, H, Min).
+        '$minmember'([], M, M).
+        '$minmember'([H|T], A, M) :- ( H @< A -> A1 = H ; A1 = A ), '$minmember'(T, A1, M).
+
+        %! include(:Goal, +List, -Included) | Lists | Included holds the elements of List for which Goal succeeds.
+        include(_, [], []).
+        include(G, [H|T], R) :-
+            ( call(G, H) -> R = [H|R1] ; R = R1 ),
+            include(G, T, R1).
+
+        %! exclude(:Goal, +List, -Excluded) | Lists | Excluded holds the elements of List for which Goal fails.
+        exclude(_, [], []).
+        exclude(G, [H|T], R) :-
+            ( call(G, H) -> R = R1 ; R = [H|R1] ),
+            exclude(G, T, R1).
+
+        %! partition(:Goal, +List, -Included, -Excluded) | Lists | Splits List by whether Goal succeeds on each element.
+        partition(_, [], [], []).
+        partition(G, [H|T], I, E) :-
+            ( call(G, H) -> I = [H|I1], E = E1 ; I = I1, E = [H|E1] ),
+            partition(G, T, I1, E1).
+
+        %! pairs_keys_values(?Pairs, ?Keys, ?Values) | Lists | Relates a list of Key-Value pairs to its lists of keys and values.
+        pairs_keys_values([], [], []).
+        pairs_keys_values([K-V|Ps], [K|Ks], [V|Vs]) :-
+            pairs_keys_values(Ps, Ks, Vs).
+
+        %! predsort(:Pred, +List, -Sorted) | Lists | Sorts List by a three-way comparison predicate, dropping elements compared equal.
+        predsort(P, List, Sorted) :- '$predsort_all'(List, P, [], Sorted).
+        '$predsort_all'([], _, Acc, Acc).
+        '$predsort_all'([H|T], P, Acc, Sorted) :-
+            '$predsort_ins'(Acc, P, H, Acc1),
+            '$predsort_all'(T, P, Acc1, Sorted).
+        '$predsort_ins'([], _, X, [X]).
+        '$predsort_ins'([Y|Ys], P, X, Out) :-
+            call(P, Ord, X, Y),
+            ( Ord == '<' -> Out = [X, Y|Ys]
+            ; Ord == '=' -> Out = [Y|Ys]
+            ; Out = [Y|Out1], '$predsort_ins'(Ys, P, X, Out1)
+            ).
+
+        %! sort(+Key, +Order, +List, -Sorted) | Lists | Sorts List by the given argument key (0 = whole term) and order (@<, @=<, @> or @>=).
+        sort(Key, Order, List, Sorted) :-
+            '$sort4_tag'(List, Key, 0, Tagged),
+            msort(Tagged, Asc),
+            ( ( Order == '@<' ; Order == '@>' ) -> '$sort4_dedup'(Asc, Uniq)
+            ; Uniq = Asc
+            ),
+            ( ( Order == '@>' ; Order == '@>=' ) -> reverse(Uniq, Ordered)
+            ; Ordered = Uniq
+            ),
+            '$sort4_elems'(Ordered, Sorted).
+        '$sort4_tag'([], _, _, []).
+        '$sort4_tag'([E|Es], Key, I, [k(K, I, E)|Ps]) :-
+            ( Key =:= 0 -> K = E ; arg(Key, E, K) ),
+            I1 is I + 1,
+            '$sort4_tag'(Es, Key, I1, Ps).
+        '$sort4_elems'([], []).
+        '$sort4_elems'([k(_, _, E)|Ps], [E|Es]) :- '$sort4_elems'(Ps, Es).
+        '$sort4_dedup'([], []).
+        '$sort4_dedup'([k(K, I, E)|T], [k(K, I, E)|R]) :- '$sort4_skip'(T, K, R).
+        '$sort4_skip'([], _, []).
+        '$sort4_skip'([k(K2, I2, E2)|T], K, R) :-
+            ( K2 == K -> '$sort4_skip'(T, K, R)
+            ; R = [k(K2, I2, E2)|R1], '$sort4_skip'(T, K2, R1)
+            ).
         """;
 }
