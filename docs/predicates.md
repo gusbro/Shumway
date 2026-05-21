@@ -112,8 +112,8 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `assertz(+Clause)` | Adds a clause to the end of its dynamic predicate. |
 | `clause(+Head, ?Body)` | Enumerates the clauses (Head :- Body) of a predicate. |
 | `current_predicate(?PredicateIndicator)` | Enumerates the defined predicates as Name/Arity indicators. |
-| `listing` | Lists the clauses of every defined predicate. |
-| `listing(+Spec)` | Lists the clauses of the predicate named by Spec (Name or Name/Arity). |
+| `listing` | Lists the clauses of every dynamic predicate (never builtins or static library predicates). |
+| `listing(+Spec)` | Lists the clauses of the dynamic predicate named by Spec (Name or Name/Arity). |
 | `retract(+Clause)` | Removes the first clause that unifies with the argument. |
 | `retractall(+Head)` | Removes every clause whose head unifies with Head. |
 

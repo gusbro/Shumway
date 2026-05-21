@@ -279,6 +279,11 @@ public sealed class PrologEngine
         }
     }
 
+    /// <summary>The functor ids of every predicate declared <c>:- dynamic</c>.
+    /// Backs the prelude's <c>listing/0,1</c>, which list dynamic predicates
+    /// only — never builtins or static library predicates.</summary>
+    internal IReadOnlyCollection<int> DynamicFunctorIds() => _dynamicFunctors;
+
     /// <summary>Snapshot of every static and dynamic functor id across all
     /// loaded modules. Backs the prelude's <c>current_predicate/1</c>
     /// enumeration; the builtin namespace comes from

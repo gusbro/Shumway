@@ -428,37 +428,57 @@ internal static class Prelude
             ( retract(Head), fail ; true ),
             ( retract((Head :- _)), fail ; true ).
 
-        %! listing | Database | Lists the clauses of every defined predicate.
+        %! listing | Database | Lists the clauses of every dynamic predicate (never builtins or static library predicates).
         listing :-
-            ( current_predicate(Name/Arity),
-              functor(Head, Name, Arity),
-              '$listing_one'(Head),
-              fail
-            ; true
-            ).
+            '$dynamic_predicate_indicators'(All),
+            '$listing_all'(All).
 
-        %! listing(+Spec) | Database | Lists the clauses of the predicate named by Spec (Name or Name/Arity).
+        %! listing(+Spec) | Database | Lists the clauses of the dynamic predicate named by Spec (Name or Name/Arity).
         listing(Name/Arity) :-
             !,
-            functor(Head, Name, Arity),
-            '$listing_one'(Head).
-        listing(Name) :-
-            ( current_predicate(Name/Arity),
-              functor(Head, Name, Arity),
-              '$listing_one'(Head),
-              fail
+            '$dynamic_predicate_indicators'(All),
+            ( memberchk(Name/Arity, All) -> '$listing_pred'(Name, Arity)
             ; true
             ).
+        listing(Name) :-
+            '$dynamic_predicate_indicators'(All),
+            '$listing_named'(All, Name).
 
-        '$listing_one'(Head) :-
+        '$listing_all'([]).
+        '$listing_all'([Name/Arity|Rest]) :-
+            '$listing_pred'(Name, Arity),
+            '$listing_all'(Rest).
+
+        '$listing_named'([], _).
+        '$listing_named'([Name/Arity|Rest], Want) :-
+            ( Name == Want -> '$listing_pred'(Name, Arity) ; true ),
+            '$listing_named'(Rest, Want).
+
+        % print one predicate: a `:- dynamic` header, then a clause per
+        % line, then a blank separator line. The Name/Arity indicator is
+        % written piecewise so it reads `foo/1`, not the operator-spaced
+        % `foo / 1` the term writer would produce.
+        '$listing_pred'(Name, Arity) :-
+            write(':- dynamic '), write(Name), write('/'), write(Arity),
+            write('.'), nl,
+            functor(Head, Name, Arity),
             ( clause(Head, Body),
               '$portray_clause'(Head, Body),
               fail
             ; true
-            ).
+            ),
+            nl.
+
+        % a fact prints on one line; a rule prints its head, then each
+        % goal of the body on its own indented line.
         '$portray_clause'(Head, true) :- !, write(Head), write('.'), nl.
         '$portray_clause'(Head, Body) :-
-            write(Head), write(' :- '), write(Body), write('.'), nl.
+            write(Head), write(' :-'), nl, '$portray_body'(Body).
+        '$portray_body'((A, B)) :- !,
+            write('    '), write(A), write(','), nl,
+            '$portray_body'(B).
+        '$portray_body'(Goal) :-
+            write('    '), write(Goal), write('.'), nl.
 
         %! format_to_atom(-Atom, +Format, +Args) | Input / output | Like format/2 but captures the formatted output into an atom.
         format_to_atom(Atom, Format, Args) :-

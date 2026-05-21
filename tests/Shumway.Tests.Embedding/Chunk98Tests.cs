@@ -144,10 +144,43 @@ public class Chunk98Tests
     }
 
     [Fact]
-    public void Listing0_RunsOverEveryPredicate()
+    public void Listing0_ListsTheDynamicPredicates()
     {
         var engine = new PrologEngine();
-        engine.ConsultString(":- dynamic mark/0.\nmark.");
-        Assert.True(engine.Query("with_output_to(atom(_), listing).").Success);
+        engine.ConsultString(":- dynamic mark/1.\nmark(here).");
+        Assert.True(engine.Query(
+            "with_output_to(atom(A), listing), " +
+            "sub_atom(A, _, _, _, 'mark(here).').").Success);
+    }
+
+    [Fact]
+    public void Listing_OmitsBuiltinsAndStaticLibraryPredicates()
+    {
+        // Only dynamic predicates are listed — never builtins (append/3)
+        // or static library predicates (member/2).
+        var engine = new PrologEngine();
+        engine.ConsultString(":- dynamic item/1.\nitem(apple).");
+        var sol = engine.Query(
+            "with_output_to(atom(A), listing), " +
+            "sub_atom(A, _, _, _, 'item(apple).').");
+        Assert.True(sol.Success);
+        Assert.False(engine.Query(
+            "with_output_to(atom(A), listing), sub_atom(A, _, _, _, 'append(').")
+            .Success);
+        Assert.False(engine.Query(
+            "with_output_to(atom(A), listing), sub_atom(A, _, _, _, 'member(').")
+            .Success);
+    }
+
+    [Fact]
+    public void Listing_PrintsADynamicHeaderAndIndentsRuleBodies()
+    {
+        var engine = new PrologEngine();
+        engine.ConsultString(
+            ":- dynamic step/2.\nstep(X, Y) :- X > 0, Y is X - 1.");
+        Assert.True(engine.Query(
+            "with_output_to(atom(A), listing(step/2)), " +
+            "sub_atom(A, _, _, _, ':- dynamic step/2.'), " +
+            "sub_atom(A, _, _, _, 'step(').").Success);
     }
 }

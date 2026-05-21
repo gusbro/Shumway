@@ -92,6 +92,7 @@ public static class MetaBuiltins
         // via the prelude's member/2.
         BuiltinsRegistry.Register("$all_clauses_of",            2, AllClausesOf);
         BuiltinsRegistry.Register("$all_predicate_indicators",  1, AllPredicateIndicators);
+        BuiltinsRegistry.Register("$dynamic_predicate_indicators", 1, DynamicPredicateIndicators);
         BuiltinsRegistry.Register("abolish",                    1, Abolish,
             Database, "abolish(+PredicateIndicator)", "Removes every clause of the named dynamic predicate.");
 
@@ -883,6 +884,32 @@ public static class MetaBuiltins
             AddIndicator(fid);
         foreach (int fid in host.AllStaticAndDynamicFunctors())
             AddIndicator(fid);
+
+        Term listTerm = new AtomTerm("[]");
+        for (int i = indicators.Count - 1; i >= 0; i--)
+            listTerm = new CompoundTerm(".", new[] { indicators[i], listTerm });
+        Cell listCell = Materializer.MaterializeAsCell(engine, listTerm);
+        return engine.UnifyRegisterWithCell(0, listCell);
+    }
+
+    /// <summary><c>'$dynamic_predicate_indicators'/1</c> — the
+    /// <c>Name/Arity</c> list of every predicate declared <c>:- dynamic</c>.
+    /// Backs the prelude's <c>listing/0,1</c>, which list dynamic predicates
+    /// only.</summary>
+    public static bool DynamicPredicateIndicators(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "'$dynamic_predicate_indicators'/1 requires a PrologEngine host.");
+
+        var indicators = new List<Term>();
+        foreach (int fid in host.DynamicFunctorIds())
+        {
+            var (atomId, arity) = FunctorTable.Lookup(fid);
+            string name = AtomTable.GetById(atomId)?.Name ?? "?";
+            indicators.Add(new CompoundTerm("/",
+                new Term[] { new AtomTerm(name), new IntTerm(arity) }));
+        }
 
         Term listTerm = new AtomTerm("[]");
         for (int i = indicators.Count - 1; i >= 0; i--)
