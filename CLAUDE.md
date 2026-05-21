@@ -257,16 +257,15 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
 - → CLP(R), Native AOT and tabling moved to Phase 7.
 
 **Phase 7 — Predicate documentation, CLP(R), AOT, tabling**
-- Generated user-facing predicate documentation. Each predicate carries doc
-  metadata (category + short description, optionally modes/ISO/errors)
-  *next to its definition* — a structured `%!` comment above each Prolog
-  predicate (prelude, CLP(FD)) and equivalent metadata at the C# builtin
-  registration site. A generator walks all three predicate sources
-  (`BuiltinsRegistry`, `Prelude.Source`, `Clpfd.Source`), groups by area, and
-  emits a markdown reference (superseding the hand-written
-  `docs/design/builtins-catalog.md`). A CLI/command regenerates it; a unit
-  test regenerates and fails if the committed doc is stale, so it cannot
-  drift as predicates are added or changed.
+- ✓ Generated user-facing predicate documentation (chunk 94). Predicate doc
+  metadata lives *next to each definition* — a category + summary passed to
+  `BuiltinsRegistry.Register` for C# builtins, a structured `%!` comment in
+  the Prolog library sources (prelude, CLP(FD)). `PredicateDoc.Generate()`
+  walks all three sources, groups by area, and emits `docs/predicates.md`.
+  A unit test regenerates and fails if the committed file is stale;
+  re-running the suite with the `SHUMWAY_REGEN_DOCS` environment variable set
+  rewrites it. (The hand-written `docs/design/builtins-catalog.md` remains as
+  a design-level catalogue for now.)
 - Attributed-variable-based constraints: CLP(R) if needed.
 - Native AOT support.
 - Tabling.

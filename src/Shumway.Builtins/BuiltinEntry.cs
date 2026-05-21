@@ -4,6 +4,11 @@ namespace Shumway.Builtins;
 /// One entry in the <see cref="BuiltinsRegistry"/>: the integer id baked into
 /// <c>call_builtin</c> bytecode operands, the predicate name and arity (for
 /// diagnostics), and the implementation function.
+///
+/// <para><see cref="Category"/> and <see cref="Summary"/> are optional user
+/// documentation recorded at the registration site and consumed by the
+/// predicate-reference generator. Internal helper builtins (the <c>$</c>-named
+/// ones) leave them null and are omitted from the generated reference.</para>
 /// </summary>
 public sealed class BuiltinEntry
 {
@@ -12,12 +17,23 @@ public sealed class BuiltinEntry
     public int Arity { get; }
     public BuiltinImpl Impl { get; }
 
-    public BuiltinEntry(int id, string name, int arity, BuiltinImpl impl)
+    /// <summary>Documentation area this builtin belongs to, or null for an
+    /// undocumented internal helper.</summary>
+    public string? Category { get; }
+
+    /// <summary>One-line description for the generated predicate reference,
+    /// or null for an undocumented internal helper.</summary>
+    public string? Summary { get; }
+
+    public BuiltinEntry(int id, string name, int arity, BuiltinImpl impl,
+        string? category = null, string? summary = null)
     {
         Id = id;
         Name = name;
         Arity = arity;
         Impl = impl;
+        Category = category;
+        Summary = summary;
     }
 
     public override string ToString() => $"{Name}/{Arity} (#{Id})";

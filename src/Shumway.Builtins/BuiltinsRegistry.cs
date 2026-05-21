@@ -25,8 +25,14 @@ public static class BuiltinsRegistry
 
     /// <summary>Registers a builtin under the given name and arity, returning
     /// its id. If a builtin with the same functor is already registered, the
-    /// existing id is returned and <paramref name="impl"/> is ignored.</summary>
-    public static int Register(string name, int arity, BuiltinImpl impl)
+    /// existing id is returned and <paramref name="impl"/> is ignored.
+    ///
+    /// <para><paramref name="category"/> and <paramref name="summary"/> are
+    /// optional user documentation; supply them for user-facing predicates so
+    /// the predicate-reference generator picks them up. Leave them null for
+    /// internal <c>$</c>-named helpers.</para></summary>
+    public static int Register(string name, int arity, BuiltinImpl impl,
+        string? category = null, string? summary = null)
     {
         ArgumentNullException.ThrowIfNull(name);
         ArgumentNullException.ThrowIfNull(impl);
@@ -41,7 +47,7 @@ public static class BuiltinsRegistry
                 return existing;
             int id = _nextId++;
             _byFunctorId[functorId] = id;
-            _byId[id] = new BuiltinEntry(id, name, arity, impl);
+            _byId[id] = new BuiltinEntry(id, name, arity, impl, category, summary);
             return id;
         }
     }
@@ -64,6 +70,16 @@ public static class BuiltinsRegistry
         lock (_lock)
         {
             return _byFunctorId.Keys.ToArray();
+        }
+    }
+
+    /// <summary>Snapshot of every registered builtin entry. Used by the
+    /// predicate-reference generator to enumerate the documented builtins.</summary>
+    public static IReadOnlyCollection<BuiltinEntry> AllEntries()
+    {
+        lock (_lock)
+        {
+            return _byId.Values.ToArray();
         }
     }
 
