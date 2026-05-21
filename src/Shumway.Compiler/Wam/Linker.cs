@@ -68,14 +68,15 @@ public sealed class Linker
 
         byte[] program = bytes.ToArray();
 
-        // Patch call site target operands with the callee's absolute address.
+        // Patch call site target operands with the callee's absolute
+        // address. A call to an undefined predicate is not a link error:
+        // it is patched with a CallTarget sentinel so the interpreter
+        // raises existence_error if (and only if) the call is reached.
         foreach (var (off, fid) in unresolvedCalls)
         {
-            if (!addresses.TryGetValue(fid, out int target))
-                throw new InvalidOperationException(
-                    $"Unresolved call to functor id {fid} "
-                    + $"(name '{NameForFunctor(fid)}'): the predicate has no clauses in "
-                    + "this module.");
+            int target = addresses.TryGetValue(fid, out int addr)
+                ? addr
+                : CallTarget.ForUndefined(fid);
             BytecodeIO.WriteInt32(program, off + 1, target);
         }
 

@@ -1871,9 +1871,7 @@ public sealed class IlPredicateCompiler
                     "IL Execute: engine has no CurrentFunctorAddresses set. "
                     + "The embedding layer must populate it at query setup.");
             if (!map.TryGetValue(functorId, out int address))
-                throw new InvalidOperationException(
-                    $"IL Execute: callee functor id {functorId} is not in the engine's current address map. "
-                    + "The callee may not be loaded in this query's program.");
+                throw PrologRuntimeException.UndefinedProcedure(functorId);
             return address;
         }
     }

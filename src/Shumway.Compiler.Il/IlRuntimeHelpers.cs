@@ -74,8 +74,7 @@ public static class IlRuntimeHelpers
             ?? throw new InvalidOperationException(
                 "IL Call: engine.CurrentFunctorAddresses is null.");
         if (!addresses.TryGetValue(calleeFunctorId, out int target))
-            throw new InvalidOperationException(
-                $"IL Call: callee functor id {calleeFunctorId} not in the current address map.");
+            throw PrologRuntimeException.UndefinedProcedure(calleeFunctorId);
         return runner(target);
     }
 

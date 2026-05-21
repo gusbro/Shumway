@@ -1,4 +1,5 @@
 using Shumway.Compiler.Ast;
+using Shumway.Core;
 using Shumway.Embedding;
 using Xunit;
 
@@ -52,11 +53,12 @@ public class ModuleSystemTests
     public void ExplicitModule_LocalPredicateNotCallableFromUser()
     {
         // p/1 is local to 'parser', so a query in the user context can't
-        // reach it — it tries to call the bare 'p/1' which doesn't exist
-        // outside parser.
+        // reach it — calling the bare 'p/1' raises existence_error, just
+        // like any other undefined predicate.
         var engine = new PrologEngine();
         engine.ConsultString(":- module(parser).\np(a).");
-        Assert.Throws<InvalidOperationException>(() => engine.Query("p(X)."));
+        var ex = Assert.Throws<PrologRuntimeException>(() => engine.Query("p(X)."));
+        Assert.Equal("existence_error", ex.Kind);
     }
 
     [Fact]

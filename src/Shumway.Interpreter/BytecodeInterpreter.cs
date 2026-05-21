@@ -252,6 +252,9 @@ public sealed class BytecodeInterpreter
                         break;
                     }
                     int target = BytecodeIO.ReadInt32(code, pc + 1);
+                    if (CallTarget.IsUnresolved(target))
+                        throw PrologRuntimeException.UndefinedProcedure(
+                            CallTarget.FunctorIdOf(target));
                     int numLivePerms = BytecodeIO.ReadInt32(code, pc + 5);
                     // Env trimming (chunk 57): shrink the current frame to
                     // num_live_perms Y slots before dispatching, so the callee's
@@ -272,6 +275,9 @@ public sealed class BytecodeInterpreter
                         break;
                     }
                     int target = BytecodeIO.ReadInt32(code, pc + 1);
+                    if (CallTarget.IsUnresolved(target))
+                        throw PrologRuntimeException.UndefinedProcedure(
+                            CallTarget.FunctorIdOf(target));
                     _engine.SetB0(_engine.B);   // tail call still enters a new procedure
                     DispatchToTier1OrBytecode(target);
                     break;
@@ -1370,9 +1376,7 @@ public sealed class BytecodeInterpreter
         if (addrs is not null && addrs.TryGetValue(functorId, out int addr))
             return RunGoalInEngine(code, addr);
 
-        var (atomId, predArity) = FunctorTable.Lookup(functorId);
-        throw new PrologRuntimeException("existence_error",
-            (AtomTable.GetById(atomId)?.Name ?? "?") + "/" + predArity);
+        throw PrologRuntimeException.UndefinedProcedure(functorId);
     }
 
     /// <summary>Backtrackable runtime dispatch for <c>call/1..7</c> (chunk
@@ -1471,9 +1475,7 @@ public sealed class BytecodeInterpreter
             return true;
         }
 
-        var (predAtom, predArity) = FunctorTable.Lookup(functorId);
-        throw new PrologRuntimeException("existence_error",
-            (AtomTable.GetById(predAtom)?.Name ?? "?") + "/" + predArity);
+        throw PrologRuntimeException.UndefinedProcedure(functorId);
     }
 
     /// <summary>Dereferences a cell, following REF chains to the term it

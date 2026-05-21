@@ -1,4 +1,5 @@
 using Shumway.Compiler.Ast;
+using Shumway.Core;
 using Shumway.Embedding;
 using Xunit;
 
@@ -23,16 +24,16 @@ public class PrologEngineTests
     }
 
     [Fact]
-    public void Query_AgainstMissingPredicate_Fails()
+    public void Query_AgainstMissingPredicate_RaisesExistenceError()
     {
         var engine = new PrologEngine();
         engine.ConsultString("foo.");
-        // 'bar/0' isn't defined — the compiler still emits a call, the linker
-        // resolves it (we have no graceful unresolved-symbol mode yet) so this
-        // would actually throw. For now, querying an undefined predicate is
-        // an error rather than a `false` solution. The test asserts that
-        // behaviour.
-        Assert.Throws<InvalidOperationException>(() => engine.Query("bar."));
+        // 'bar/0' is undefined. ISO requires the call to raise
+        // existence_error(procedure, bar/0) when reached — not a link
+        // failure, and not a silent `false`.
+        var ex = Assert.Throws<PrologRuntimeException>(() => engine.Query("bar."));
+        Assert.Equal("existence_error", ex.Kind);
+        Assert.Equal("bar/0", ex.Detail);
     }
 
     [Fact]
