@@ -1500,6 +1500,25 @@ public sealed class PrologEngine
                 _staticPredicateCache[fid] = pred;
         }
 
+        // Runtime call/1 (chunk 86) dispatches a goal by its bare functor,
+        // but a module-local predicate is linked under its mangled
+        // "module$name" functor. Add a bare-functor alias for each so a
+        // runtime call/N can resolve a local predicate by its plain name.
+        var addressMap = new Dictionary<int, int>(linkResult.Addresses);
+        foreach (var (mangledFunctorId, address) in linkResult.Addresses)
+        {
+            var (atomId, arity) = FunctorTable.Lookup(mangledFunctorId);
+            string mangledName = AtomTable.GetById(atomId)?.Name ?? "";
+            int dollar = mangledName.IndexOf('$');
+            if (dollar <= 0) continue;
+            if (!_modules.ContainsKey(mangledName.Substring(0, dollar))) continue;
+            int bareFunctorId = FunctorTable.Intern(
+                AtomTable.Intern(mangledName.Substring(dollar + 1), permanent: true).Id,
+                arity);
+            if (!addressMap.ContainsKey(bareFunctorId))
+                addressMap[bareFunctorId] = address;
+        }
+
         byte[] program = new byte[prefix.Length + linkResult.Bytecode.Length];
         Array.Copy(prefix, program, prefix.Length);
         Array.Copy(linkResult.Bytecode, 0, program, prefix.Length, linkResult.Bytecode.Length);
@@ -1513,7 +1532,7 @@ public sealed class PrologEngine
             // opcodes (chunk 47) resolve their tail-call target via a
             // stable functor-id lookup instead of an embedded address
             // that would only be valid for one query's linked layout.
-            CurrentFunctorAddresses = linkResult.Addresses,
+            CurrentFunctorAddresses = addressMap,
             // String literal pool for IL-emitted get_pstr/put_pstr
             // (chunk 50) and the linked program byte array for the
             // IL Call re-entry helper.

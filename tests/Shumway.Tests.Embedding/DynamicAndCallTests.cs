@@ -144,7 +144,8 @@ public class DynamicAndCallTests
         engine.ConsultString("colour(red).\ncolour(green).\n");
         var sol = engine.Query("call(colour(X)).");
         Assert.True(sol.Success);
-        // call/N only takes the first solution.
+        // Query/1 reports the first solution; call/N is backtrackable for
+        // the rest (chunk 86 — see Chunk86Tests).
         Assert.Equal(Atom("red"), sol["X"]);
     }
 

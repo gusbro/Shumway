@@ -38,10 +38,26 @@ internal static class Prelude
         :- public foldl/5.
         :- public aggregate_all/3.
         :- public copy_term/3.
+        :- public '$call_conj'/2.
+        :- public '$call_disj'/2.
+        :- public '$call_arrow'/2.
+        :- public '$call_neg'/1.
         :- dynamic attribute_goals/4.
 
         member(X, [X|_]).
         member(X, [_|T]) :- member(X, T).
+
+        % Control constructs reached through a runtime call/1 goal (chunk
+        % 86). A control construct written directly in a clause body never
+        % gets here — the MetaTransform rewrites it at compile time; the
+        % interpreter's call dispatch routes ,/2 ;/2 ->/2 \+/1 to these
+        % plainly-named helpers (operator atoms are awkward to declare).
+        '$call_conj'(A, B) :- call(A), call(B).
+        '$call_disj'((C -> T), E) :- !, ( call(C) -> call(T) ; call(E) ).
+        '$call_disj'(A, _) :- call(A).
+        '$call_disj'(_, B) :- call(B).
+        '$call_arrow'(C, T) :- call(C), !, call(T).
+        '$call_neg'(G) :- ( call(G) -> fail ; true ).
 
         clause(H, B) :-
             nonvar(H),

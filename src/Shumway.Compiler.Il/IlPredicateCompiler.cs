@@ -305,6 +305,18 @@ public sealed class IlPredicateCompiler
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
+            if (op == Opcode.CallBuiltin)
+            {
+                // call/1..7 needs the interpreter's runtime goal dispatch
+                // (chunk 86); the IL builtin-invoke path would bypass it
+                // and fall back to the once-semantics builtin. Keep a
+                // call-bearing clause in Tier 0.
+                int builtinId = BytecodeIO.ReadInt32(code, pc + 1);
+                if (Shumway.Builtins.BuiltinsRegistry.GetById(builtinId).Name == "call")
+                    return false;
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
             if (IsSupportedOpcode(op))
             {
                 pc += OpcodeTable.Get(op).Size;

@@ -46,6 +46,25 @@ public sealed class BytecodeInterpreter
         FunctorTable.Intern(AtomTable.Intern("true", permanent: true).Id, 0);
     private static readonly int FailFunctorId =
         FunctorTable.Intern(AtomTable.Intern("fail", permanent: true).Id, 0);
+    private static readonly int CutFunctorId =
+        FunctorTable.Intern(AtomTable.Intern("!", permanent: true).Id, 0);
+    // Control-construct functors and their plainly-named prelude helpers:
+    // a runtime call/1 goal that is a control construct is routed to the
+    // helper (chunk 86), since the operator atoms are awkward to compile.
+    private static readonly int DisjFunctorId =
+        FunctorTable.Intern(AtomTable.Intern(";", permanent: true).Id, 2);
+    private static readonly int ArrowFunctorId =
+        FunctorTable.Intern(AtomTable.Intern("->", permanent: true).Id, 2);
+    private static readonly int NegFunctorId =
+        FunctorTable.Intern(AtomTable.Intern("\\+", permanent: true).Id, 1);
+    private static readonly int CallConjFunctorId =
+        FunctorTable.Intern(AtomTable.Intern("$call_conj", permanent: true).Id, 2);
+    private static readonly int CallDisjFunctorId =
+        FunctorTable.Intern(AtomTable.Intern("$call_disj", permanent: true).Id, 2);
+    private static readonly int CallArrowFunctorId =
+        FunctorTable.Intern(AtomTable.Intern("$call_arrow", permanent: true).Id, 2);
+    private static readonly int CallNegFunctorId =
+        FunctorTable.Intern(AtomTable.Intern("$call_neg", permanent: true).Id, 1);
 
     /// <summary>Optional hook the interpreter consults on every
     /// <c>call</c> / <c>execute</c> to ask whether a Tier-1 IL
@@ -965,6 +984,15 @@ public sealed class BytecodeInterpreter
                     // in the get_value_y / put_value_y instructions that
                     // precede this call_builtin in source order.
                     _engine.TrimEnv(numLivePerms);
+                    // call/1..7 — dispatch the runtime goal as a real goal
+                    // in the live engine, with full backtracking (chunk 86),
+                    // rather than running the sub-engine builtin.
+                    if (entry.Name == "call")
+                    {
+                        if (!DispatchCall(code, entry.Arity))
+                            return InterpreterResult.Failed;
+                        break;
+                    }
                     if (!entry.Impl(_engine))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
@@ -1345,6 +1373,107 @@ public sealed class BytecodeInterpreter
         var (atomId, predArity) = FunctorTable.Lookup(functorId);
         throw new PrologRuntimeException("existence_error",
             (AtomTable.GetById(atomId)?.Name ?? "?") + "/" + predArity);
+    }
+
+    /// <summary>Backtrackable runtime dispatch for <c>call/1..7</c> (chunk
+    /// 86). The goal in <c>X0</c> — with <c>call/N</c>'s extra arguments
+    /// <c>X1..X[callArity-1]</c> appended — is decoded and run as a real
+    /// goal in the live engine: a user or prelude predicate is entered with
+    /// a tail jump so it keeps its choice points and the call's
+    /// continuation flows on success; a builtin runs inline. Control
+    /// constructs in a runtime goal reach the prelude <c>,/2</c>,
+    /// <c>;/2</c>, <c>-&gt;/2</c>, <c>\+/1</c> predicates. Returns false
+    /// only on an unrecoverable failure (no choice point remains).</summary>
+    private bool DispatchCall(byte[] code, int callArity)
+    {
+        int pc = _engine.P;
+        Cell goal = DerefCell(_engine.GetRegister(0));
+
+        // Save call/N's extra arguments before the registers are reloaded.
+        Cell[] extra = callArity > 1 ? new Cell[callArity - 1] : System.Array.Empty<Cell>();
+        for (int i = 0; i < callArity - 1; i++)
+            extra[i] = _engine.GetRegister(i + 1);
+
+        int atomId;
+        int goalArity;
+        int argBase;
+        switch (goal.Tag)
+        {
+            case Tag.Atom:
+                atomId = goal.AsAtomId;
+                goalArity = 0;
+                argBase = -1;
+                break;
+            case Tag.Str:
+                int functorIdx = goal.AsHeapIndex;
+                (atomId, goalArity) =
+                    FunctorTable.Lookup(_engine.GetHeap(functorIdx).AsFunctorId);
+                argBase = functorIdx + 1;
+                break;
+            case Tag.Ref:
+            case Tag.AttVar:
+                throw new PrologRuntimeException("instantiation_error");
+            default:
+                throw new PrologRuntimeException("type_error", "callable");
+        }
+
+        int totalArity = goalArity + (callArity - 1);
+        for (int i = 0; i < goalArity; i++)
+            _engine.SetRegister(i, _engine.GetHeap(argBase + i));
+        for (int i = 0; i < callArity - 1; i++)
+            _engine.SetRegister(goalArity + i, extra[i]);
+
+        int functorId = FunctorTable.Intern(atomId, totalArity);
+
+        // A control construct in a runtime goal routes to its prelude
+        // helper, which re-enters call/1 with full backtracking semantics.
+        if (functorId == ConjFunctorId) functorId = CallConjFunctorId;
+        else if (functorId == DisjFunctorId) functorId = CallDisjFunctorId;
+        else if (functorId == ArrowFunctorId) functorId = CallArrowFunctorId;
+        else if (functorId == NegFunctorId) functorId = CallNegFunctorId;
+
+        // true / fail / ! as the whole goal. A cut reached as a bare goal
+        // through call/1 has nothing of its own to commit, so it is a no-op.
+        if (functorId == TrueFunctorId || functorId == CutFunctorId)
+        {
+            _engine.AdvancePc(9);
+            return true;
+        }
+        if (functorId == FailFunctorId)
+            return TryBacktrack();
+
+        if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out int builtinId))
+        {
+            var builtin = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+            // call(call(...)): recurse rather than invoking the call builtin.
+            if (builtin.Name == "call")
+                return DispatchCall(code, builtin.Arity);
+            if (!builtin.Impl(_engine))
+                return TryBacktrack();
+            _engine.AdvancePc(9);
+            return true;
+        }
+
+        var addresses = _engine.CurrentFunctorAddresses;
+        if (addresses is not null && addresses.TryGetValue(functorId, out int address))
+        {
+            // Last-call optimisation: when this call is the clause's final
+            // goal, tail-jump so the goal returns to the clause's caller.
+            // Setting Cp to the Proceed sitting right after this
+            // CallBuiltin would spin — Proceed does not advance Cp.
+            Opcode following = (Opcode)code[pc + 9];
+            if (following == Opcode.Deallocate)
+                _engine.Deallocate();              // last goal, frame: pop it
+            else if (following != Opcode.Proceed)
+                _engine.SetCp(pc + 9);             // non-last: resume after the call
+            _engine.SetB0(_engine.B);
+            DispatchToTier1OrBytecode(address);
+            return true;
+        }
+
+        var (predAtom, predArity) = FunctorTable.Lookup(functorId);
+        throw new PrologRuntimeException("existence_error",
+            (AtomTable.GetById(predAtom)?.Name ?? "?") + "/" + predArity);
     }
 
     /// <summary>Dereferences a cell, following REF chains to the term it
