@@ -157,11 +157,16 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `atom_codes(?Atom, ?Codes)` | Converts between an atom and its list of character codes. |
 | `atom_concat(?Atom1, ?Atom2, ?Atom)` | Concatenates Atom1 and Atom2 into Atom; backtracks over splits of Atom. |
 | `atom_length(+Atom, ?Length)` | Relates an atom to its length in characters. |
+| `atom_number(?Atom, ?Number)` | Converts between an atom and the number it denotes; fails if the atom is not numeric. |
 | `atom_string(?Atom, ?String)` | Converts between an atom and a string. |
+| `atomic_list_concat(+List, -Atom)` | Concatenates a list of atomic terms into a single atom. |
+| `atomic_list_concat(?List, +Separator, ?Atom)` | Joins a list of atomics with a separator, or splits an atom on the separator. |
 | `char_code(?Char, ?Code)` | Relates a one-character atom to its character code. |
+| `char_type(+Char, ?Type)` | Tests or computes a character's type — alpha, alnum, digit(W), space, upper(L), to_lower(L), and so on (ASCII range). |
 | `downcase_atom(+Atom, -Lower)` | Relates an atom to its lower-cased form. |
 | `number_chars(?Number, ?Chars)` | Converts between a number and its list of one-character atoms. |
 | `number_codes(?Number, ?Codes)` | Converts between a number and its list of character codes. |
+| `number_string(?Number, ?String)` | Converts between a number and its string representation; fails if the string is not numeric. |
 | `split_string(+String, +SepChars, +PadChars, -SubStrings)` | Splits a string on separator characters, trimming pad characters. |
 | `string_chars(?String, ?Chars)` | Converts between a string and its list of one-character atoms. |
 | `string_codes(?String, ?Codes)` | Converts between a string and its list of character codes. |

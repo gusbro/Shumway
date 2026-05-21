@@ -150,6 +150,10 @@ public static class StandardBuiltins
             Strings, "number_chars(?Number, ?Chars)", "Converts between a number and its list of one-character atoms.");
         BuiltinsRegistry.Register("atom_string",  2, AtomCharBuiltins.AtomString,
             Strings, "atom_string(?Atom, ?String)", "Converts between an atom and a string.");
+        BuiltinsRegistry.Register("atom_number",  2, AtomCharBuiltins.AtomNumber,
+            Strings, "atom_number(?Atom, ?Number)", "Converts between an atom and the number it denotes; fails if the atom is not numeric.");
+        BuiltinsRegistry.Register("number_string",2, AtomCharBuiltins.NumberString,
+            Strings, "number_string(?Number, ?String)", "Converts between a number and its string representation; fails if the string is not numeric.");
 
         // Multi-solution helpers (chunk 43) called from the prelude.
         BuiltinsRegistry.Register("$list_length",              2, MultiSolutionHelpers.ListLength);

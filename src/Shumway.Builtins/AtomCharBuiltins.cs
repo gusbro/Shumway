@@ -169,12 +169,88 @@ public static class AtomCharBuiltins
                 int idx = engine.MakeFloat(dv);
                 return engine.UnifyRegisterWithHeapAt(0, idx);
             }
-            throw new InvalidOperationException(
-                $"{builtinName}: '{s}' is not a valid number.");
+            // ISO: text that does not denote a number is a syntax error —
+            // a catchable one, so catch/3 can recover.
+            throw new PrologRuntimeException("syntax_error", "illegal_number");
         }
 
         throw new InvalidOperationException(
             $"{builtinName}: first argument must be a number or an unbound variable.");
+    }
+
+    // ---------- atom_number/2 ----------
+
+    /// <summary><c>atom_number(?Atom, ?Number)</c> — converts between an
+    /// atom and the number it denotes. Unlike <c>number_codes/2</c> this
+    /// <em>fails</em> (rather than raising a syntax error) when the atom is
+    /// not numeric, matching the conventional <c>atom_number/2</c>.</summary>
+    public static bool AtomNumber(Engine engine)
+    {
+        Cell atomCell = Resolve(engine, engine.GetRegister(0));
+        if (atomCell.Tag == Tag.Atom)
+        {
+            string name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
+            if (long.TryParse(name, NumberStyles.Integer,
+                    CultureInfo.InvariantCulture, out long iv))
+                return engine.UnifyRegisterWithCell(1, Cell.Int(iv));
+            if (double.TryParse(name, NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out double dv))
+                return engine.UnifyRegisterWithHeapAt(1, engine.MakeFloat(dv));
+            return false;   // not numeric — fail, do not throw
+        }
+
+        Cell numCell = Resolve(engine, engine.GetRegister(1));
+        string? text = NumberText(engine, numCell);
+        if (text is null)
+            throw new InvalidOperationException(
+                "atom_number/2: at least one of (Atom, Number) must be bound.");
+        return engine.UnifyRegisterWithCell(
+            0, Cell.Atom(AtomTable.Intern(text, permanent: false).Id));
+    }
+
+    // ---------- number_string/2 ----------
+
+    /// <summary><c>number_string(?Number, ?String)</c> — converts between a
+    /// number and its string representation, failing when the string is not
+    /// numeric.</summary>
+    public static bool NumberString(Engine engine)
+    {
+        Cell strCell = Resolve(engine, engine.GetRegister(1));
+        if (strCell.Tag == Tag.Pstr)
+        {
+            string s = engine.AsPstrString(
+                engine.Deref(engine.GetRegister(1).AsHeapIndex));
+            if (long.TryParse(s, NumberStyles.Integer,
+                    CultureInfo.InvariantCulture, out long iv))
+                return engine.UnifyRegisterWithCell(0, Cell.Int(iv));
+            if (double.TryParse(s, NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out double dv))
+                return engine.UnifyRegisterWithHeapAt(0, engine.MakeFloat(dv));
+            return false;   // not numeric — fail, do not throw
+        }
+
+        Cell numCell = Resolve(engine, engine.GetRegister(0));
+        string? text = NumberText(engine, numCell);
+        if (text is null)
+            throw new InvalidOperationException(
+                "number_string/2: at least one of (Number, String) must be bound.");
+        return engine.UnifyRegisterWithCell(1, Cell.Ref(engine.MakePstr(text)));
+    }
+
+    /// <summary>The decimal text of an integer or float cell; null when the
+    /// cell is neither.</summary>
+    private static string? NumberText(Engine engine, Cell numCell)
+    {
+        if (numCell.Tag == Tag.Int)
+            return numCell.AsInt.ToString(CultureInfo.InvariantCulture);
+        if (numCell.Tag == Tag.Float)
+        {
+            double v = Cell.DecodeFloat(numCell, engine.GetHeap(numCell.FloatPairedIndex));
+            string s = v.ToString("R", CultureInfo.InvariantCulture);
+            if (!s.Contains('.') && !s.Contains('e') && !s.Contains('E')) s += ".0";
+            return s;
+        }
+        return null;
     }
 
     /// <summary><c>sub_atom(Atom, Before, Length, After, SubAtom)</c> —

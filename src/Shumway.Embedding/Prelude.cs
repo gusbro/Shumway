@@ -57,6 +57,9 @@ internal static class Prelude
         :- public pairs_keys_values/3.
         :- public predsort/3.
         :- public sort/4.
+        :- public atomic_list_concat/2.
+        :- public atomic_list_concat/3.
+        :- public char_type/2.
         :- public '$call_conj'/3.
         :- public '$call_disj'/3.
         :- public '$call_arrow'/3.
@@ -306,5 +309,82 @@ internal static class Prelude
             ( K2 == K -> '$sort4_skip'(T, K, R)
             ; R = [k(K2, I2, E2)|R1], '$sort4_skip'(T, K2, R1)
             ).
+
+        % ===== atom / number conversion (chunk 97) =====
+        % atom_number/2 and number_string/2 are C# builtins (parse-or-fail
+        % via TryParse); atomic_list_concat/2,3 and char_type/2 are below.
+
+        % render an atomic term (atom, number or string) as an atom.
+        '$atomic_to_atom'(X, X) :- atom(X), !.
+        '$atomic_to_atom'(X, A) :- number(X), !, number_codes(X, Cs), atom_codes(A, Cs).
+        '$atomic_to_atom'(X, A) :- atom_string(A, X).
+
+        %! atomic_list_concat(+List, -Atom) | Atoms & strings | Concatenates a list of atomic terms into a single atom.
+        atomic_list_concat([], '').
+        atomic_list_concat([X|Xs], Atom) :-
+            '$atomic_to_atom'(X, AX),
+            atomic_list_concat(Xs, Rest),
+            atom_concat(AX, Rest, Atom).
+
+        %! atomic_list_concat(?List, +Separator, ?Atom) | Atoms & strings | Joins a list of atomics with a separator, or splits an atom on the separator.
+        atomic_list_concat(List, Sep, Atom) :-
+            var(List), nonvar(Atom), Sep \== '', !,
+            '$alc_split'(Atom, Sep, List).
+        atomic_list_concat([], _, '').
+        atomic_list_concat([X], _, Atom) :- !, '$atomic_to_atom'(X, Atom).
+        atomic_list_concat([X, Y|Xs], Sep, Atom) :-
+            '$atomic_to_atom'(X, AX),
+            atomic_list_concat([Y|Xs], Sep, Rest),
+            atom_concat(AX, Sep, P),
+            atom_concat(P, Rest, Atom).
+
+        % split Atom at each occurrence of the separator Sep.
+        '$alc_split'(Atom, Sep, Parts) :-
+            ( '$alc_first_sep'(Atom, Sep, B, A) ->
+                sub_atom(Atom, 0, B, _, Head),
+                sub_atom(Atom, _, A, 0, Tail),
+                Parts = [Head|Rest],
+                '$alc_split'(Tail, Sep, Rest)
+            ; Parts = [Atom]
+            ).
+        % Before / After of the leftmost occurrence of Sep in Atom.
+        '$alc_first_sep'(Atom, Sep, B, A) :-
+            findall(B0, sub_atom(Atom, B0, _, _, Sep), Bs),
+            Bs = [_|_],
+            min_list(Bs, B),
+            sub_atom(Atom, B, _, A, Sep).
+
+        %! char_type(+Char, ?Type) | Atoms & strings | Tests or computes a character's type — alpha, alnum, digit(W), space, upper(L), to_lower(L), and so on (ASCII range).
+        char_type(Char, Type) :- char_code(Char, Code), '$char_type'(Type, Code).
+
+        '$char_type'(alpha, Code) :- '$ascii_alpha'(Code).
+        '$char_type'(alnum, Code) :- ( '$ascii_alpha'(Code) -> true ; '$ascii_digit'(Code) ).
+        '$char_type'(digit(W), Code) :- '$ascii_digit'(Code), W is Code - 48.
+        '$char_type'(space, Code) :- '$ascii_space'(Code).
+        '$char_type'(white, Code) :- ( Code =:= 32 -> true ; Code =:= 9 ).
+        '$char_type'(end_of_line, Code) :- ( Code =:= 10 -> true ; Code =:= 13 ).
+        '$char_type'(punct, Code) :-
+            Code >= 33, Code =< 126,
+            \+ '$ascii_alpha'(Code), \+ '$ascii_digit'(Code).
+        '$char_type'(csym, Code) :-
+            ( '$ascii_alpha'(Code) -> true ; '$ascii_digit'(Code) -> true ; Code =:= 95 ).
+        '$char_type'(csymf, Code) :-
+            ( '$ascii_alpha'(Code) -> true ; Code =:= 95 ).
+        '$char_type'(upper(L), Code) :-
+            Code >= 65, Code =< 90, LC is Code + 32, char_code(L, LC).
+        '$char_type'(lower(U), Code) :-
+            Code >= 97, Code =< 122, UC is Code - 32, char_code(U, UC).
+        '$char_type'(to_lower(L), Code) :-
+            ( Code >= 65, Code =< 90 -> LC is Code + 32 ; LC = Code ),
+            char_code(L, LC).
+        '$char_type'(to_upper(U), Code) :-
+            ( Code >= 97, Code =< 122 -> UC is Code - 32 ; UC = Code ),
+            char_code(U, UC).
+
+        '$ascii_alpha'(C) :- C >= 65, C =< 90, !.
+        '$ascii_alpha'(C) :- C >= 97, C =< 122.
+        '$ascii_digit'(C) :- C >= 48, C =< 57.
+        '$ascii_space'(32) :- !.
+        '$ascii_space'(C) :- C >= 9, C =< 13.
         """;
 }
