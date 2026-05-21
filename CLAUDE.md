@@ -96,7 +96,8 @@ src/
 ├── Shumway.Compiler.Il/    # Tier 1: WAM → IL compilation
 ├── Shumway.Bundler/        # CLI tool + library for bundling
 ├── Shumway.Embedding/      # Public API for .NET embedding
-└── Shumway.Builtins/       # ISO-conformant builtin implementations
+├── Shumway.Builtins/       # ISO-conformant builtin implementations
+└── Shumway.Repl/           # Interactive top-level (REPL) console app
 
 tests/
 ├── Shumway.Tests.Core/
@@ -135,6 +136,9 @@ dotnet run -c Release --project tests/Shumway.Tests.Benchmarks/
 
 # Build the bundler CLI tool
 dotnet publish src/Shumway.Bundler/ -c Release
+
+# Run the interactive top-level (REPL); any files listed are consulted at startup
+dotnet run --project src/Shumway.Repl/ -- [file.pl ...]
 ```
 
 ---
@@ -210,9 +214,17 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
 - ✓ Profile-guided optimization (PGO) of IL code (two-phase instrumented→optimised; chunk 76).
 - ✓ JIT indexing (deferred dynamic-predicate switch tables; chunk 75).
 
-**Phase 4 — Extended features**
-- Attributed variables (attvars).
-- CLP(FD), CLP(R) if needed.
+**Phase 4 — Extended features** — ✅ **Complete**.
+- ✓ Attributed variables (attvars): the ATTVAR cell tag, the `put_attr`/`get_attr`/`del_attr` family, `attvar/1`, the `attr_unify_hook` unification hook, and residual-goal projection (chunks 77–81).
+- ✓ In-engine meta-call (added to this phase mid-stream): `findall/3`, `bagof/3`, `setof/3`, `forall/2`, `catch/3` and `call/1..7` now run in the live engine rather than an isolated sub-engine — side effects persist and there is no per-call sub-engine cost. `bagof`/`setof` do real witness grouping; `catch` and `call/N` are fully backtrackable per ISO (chunks 82–86).
+- → CLP, Native AOT and tabling were moved to Phase 6.
+
+**Phase 5 — Interactive top-level** — ✅ **Complete**.
+- ✓ `src/Shumway.Repl/` — a console-app project (the `shumway` executable) with a basic Prolog top-level: it consults files named on the command line, reads queries, prints each solution with `;` to search for the next, and exits on `halt.` or end of input. A thin client over the `PrologEngine` embedding API, for interactively exercising Shumway (chunk 87).
+
+**Phase 6 — Constraints, AOT, tabling**
+- **Fix `!` inside a runtime compound `call` goal** (first item). `call((a,!,b))` currently treats the cut as a no-op; this is *unsound*, not merely over-generous — backtracking into clauses ISO would have cut away re-runs their side effects, and the non-backtrackable ones (`retract`/`abolish`/`assertz`) corrupt the database. See chunk 86's known limitation.
+- Attributed-variable-based constraints: CLP(FD), CLP(R) if needed.
 - Native AOT support.
 - Tabling.
 

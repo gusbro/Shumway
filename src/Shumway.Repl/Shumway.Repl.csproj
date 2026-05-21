@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>shumway</AssemblyName>
+    <RootNamespace>Shumway.Repl</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Shumway.Embedding\Shumway.Embedding.csproj" />
+  </ItemGroup>
+
+</Project>
