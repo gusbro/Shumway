@@ -240,8 +240,13 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
   an integer constant; corner-product narrowing of the product otherwise);
   `label/1`, `labeling/2` (options `leftmost`/`ff` and `up`/`down`) and
   `indomain/1` enumerate domain values, running propagation between assignments.
-- CLP(FD): remaining arithmetic (`min`/`max`/`abs`/`//`), global constraints
-  (`all_different`), reification.
+- ✓ CLP(FD) `all_different`/`all_distinct` and reification (chunk 91):
+  `all_different/1` posts pairwise disequality; reification ties a constraint
+  to a 0/1 variable — `#<==>`, `#==>`, `#<==` and the boolean connectives
+  `#/\`, `#\/`, `#\`, each comparison reified through an entailment-checking
+  `$fd_reif` propagator.
+- CLP(FD): remaining arithmetic (`min`/`max`/`abs`/`//`), stronger
+  `all_distinct` (Hall intervals), `sum/3`, `scalar_product`.
 - Attributed-variable-based constraints: CLP(R) if needed.
 - Native AOT support.
 - Tabling.

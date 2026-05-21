@@ -22,8 +22,10 @@ namespace Shumway.Embedding;
 /// <c>-</c>). Chunk 90 adds multiplication (<c>*</c>) with bounds
 /// consistency and the labeling predicates <c>label/1</c>,
 /// <c>labeling/2</c> (options <c>leftmost</c>/<c>ff</c> and
-/// <c>up</c>/<c>down</c>) and <c>indomain/1</c>. Global constraints and
-/// reification are later chunks.</para>
+/// <c>up</c>/<c>down</c>) and <c>indomain/1</c>. Chunk 91 adds the
+/// <c>all_different/1</c> / <c>all_distinct/1</c> global constraint and
+/// reification: <c>#&lt;==&gt;</c>, <c>#==&gt;</c>, <c>#&lt;==</c> and
+/// the boolean connectives <c>#/\</c>, <c>#\/</c>, <c>#\</c>.</para>
 /// </summary>
 internal static class Clpfd
 {
@@ -41,6 +43,11 @@ internal static class Clpfd
         :- op(700, xfx, #>=).
         :- op(700, xfx, in).
         :- op(700, xfx, ins).
+        :- op(720, yfx, #/\).
+        :- op(740, yfx, #\/).
+        :- op(760, yfx, #<==>).
+        :- op(760, yfx, #==>).
+        :- op(760, yfx, #<==).
 
         :- public '#='/2.
         :- public '#\\='/2.
@@ -56,11 +63,25 @@ internal static class Clpfd
         :- public '$fd_plus'/3.
         :- public '$fd_times'/3.
         :- public '$fd_set'/3.
+        :- public '$fd_reif'/4.
         :- public verify_attributes/4.
         :- public clpfd_attr_goals/3.
         :- public label/1.
         :- public labeling/2.
         :- public indomain/1.
+        :- public all_different/1.
+        :- public all_distinct/1.
+        :- public '#<==>'/2.
+        :- public '#==>'/2.
+        :- public '#<=='/2.
+        :- public '#/\\'/2.
+        :- public '#\\/'/2.
+        :- public '#\\'/1.
+
+        % the prefix-negation operator is declared after the public block:
+        % once `#\` is a prefix operator, the quoted atom in `'#\\'/1`
+        % above would be misparsed as an operator awaiting an argument.
+        :- op(710, fy, #\).
 
         % ===== bound order: inf < every integer < sup =====
         clpfd_ble(A, B) :-
@@ -474,5 +495,121 @@ internal static class Clpfd
 
         clpfd_rev([], A, A).
         clpfd_rev([X|Xs], A, R) :- clpfd_rev(Xs, [X|A], R).
+
+        % ===== all_different / all_distinct =====
+        % every pair of list elements is constrained unequal; whenever a
+        % variable grounds, '#\='/2 prunes its value from the others.
+        all_different([]).
+        all_different([X|Xs]) :- clpfd_diff_all(Xs, X), all_different(Xs).
+        all_distinct(L) :- all_different(L).
+
+        clpfd_diff_all([], _).
+        clpfd_diff_all([Y|Ys], X) :- X #\= Y, clpfd_diff_all(Ys, X).
+
+        % ===== reification =====
+        % B #<==> C : the 0/1 variable B is 1 exactly when constraint C
+        % holds. #==>/#<== are (reverse) implication, #/\ / #\/ / #\ the
+        % boolean connectives. Each is reified to a 0/1 variable and the
+        % connective posted as an arithmetic constraint over those.
+        '#<==>'(B, C) :- clpfd_reify(C, B).
+        '#==>'(C1, C2) :-
+            clpfd_reify(C1, B1), clpfd_reify(C2, B2), B1 #=< B2.
+        '#<=='(C1, C2) :-
+            clpfd_reify(C1, B1), clpfd_reify(C2, B2), B2 #=< B1.
+        '#/\\'(C1, C2) :- clpfd_reify(C1, 1), clpfd_reify(C2, 1).
+        '#\\/'(C1, C2) :-
+            clpfd_reify(C1, B1), clpfd_reify(C2, B2), B1 + B2 #>= 1.
+        '#\\'(C) :- clpfd_reify(C, 0).
+
+        % reify constraint expression C to the 0/1 variable B.
+        clpfd_reify(C, B) :-
+            ( clpfd_reif_cmp(C, Kind, L, R) ->
+                B in 0..1,
+                clpfd_expr(L, X), clpfd_expr(R, Y),
+                clpfd_post('$fd_reif'(B, Kind, X, Y), [B, X, Y])
+            ; C = (C1 #/\ C2) ->
+                clpfd_reify(C1, B1), clpfd_reify(C2, B2), B #= B1 * B2
+            ; C = (C1 #\/ C2) ->
+                clpfd_reify(C1, B1), clpfd_reify(C2, B2),
+                B #= B1 + B2 - B1 * B2
+            ; C = (#\ C1) ->
+                clpfd_reify(C1, B1), B #= 1 - B1
+            ; C = (C1 #==> C2) ->
+                clpfd_reify(C1, B1), clpfd_reify(C2, B2),
+                B #= 1 - B1 + B1 * B2
+            ; C = (C1 #<== C2) ->
+                clpfd_reify(C2, B1), clpfd_reify(C1, B2),
+                B #= 1 - B1 + B1 * B2
+            ; C == true -> B #= 1
+            ; C == false -> B #= 0
+            ; throw(error(type_error(clpfd_reifiable, C), _))
+            ).
+
+        clpfd_reif_cmp((L #= R),   '#=',   L, R).
+        clpfd_reif_cmp((L #\= R),  '#\\=', L, R).
+        clpfd_reif_cmp((L #< R),   '#<',   L, R).
+        clpfd_reif_cmp((L #> R),   '#>',   L, R).
+        clpfd_reif_cmp((L #=< R),  '#=<',  L, R).
+        clpfd_reif_cmp((L #>= R),  '#>=',  L, R).
+
+        % B #<==> Kind(X,Y). Once B is decided the constraint (or its
+        % negation) is enforced; while B is open, an entailed constraint
+        % sets B = 1 and a disentailed one sets B = 0.
+        '$fd_reif'(B, Kind, X, Y) :-
+            ( B == 1 -> clpfd_kind_run(Kind, X, Y)
+            ; B == 0 -> clpfd_neg(Kind, NKind), clpfd_kind_run(NKind, X, Y)
+            ; clpfd_entail(Kind, X, Y, E),
+              ( E == true  -> B = 1
+              ; E == false -> B = 0
+              ; true
+              )
+            ).
+
+        clpfd_kind_run('#<',   X, Y) :- '$fd_lt'(X, Y).
+        clpfd_kind_run('#=<',  X, Y) :- '$fd_le'(X, Y).
+        clpfd_kind_run('#>',   X, Y) :- '$fd_lt'(Y, X).
+        clpfd_kind_run('#>=',  X, Y) :- '$fd_le'(Y, X).
+        clpfd_kind_run('#=',   X, Y) :- X = Y.
+        clpfd_kind_run('#\\=', X, Y) :- '$fd_neq'(X, Y).
+
+        clpfd_neg('#=',   '#\\=').
+        clpfd_neg('#\\=', '#=').
+        clpfd_neg('#<',   '#>=').
+        clpfd_neg('#>=',  '#<').
+        clpfd_neg('#=<',  '#>').
+        clpfd_neg('#>',   '#=<').
+
+        % E = true / false / unknown: whether Kind(X,Y) is entailed,
+        % disentailed, or undecided by the current domains.
+        clpfd_entail(Kind, X, Y, E) :-
+            clpfd_dom_of(X, DX), clpfd_dom_of(Y, DY),
+            clpfd_dom_min(DX, XL), clpfd_dom_max(DX, XH),
+            clpfd_dom_min(DY, YL), clpfd_dom_max(DY, YH),
+            clpfd_entail_(Kind, DX, DY, XL, XH, YL, YH, E).
+
+        clpfd_entail_('#<', _, _, XL, XH, YL, YH, E) :-
+            ( clpfd_blt(XH, YL) -> E = true
+            ; clpfd_ble(YH, XL) -> E = false
+            ; E = unknown
+            ).
+        clpfd_entail_('#=<', _, _, XL, XH, YL, YH, E) :-
+            ( clpfd_ble(XH, YL) -> E = true
+            ; clpfd_blt(YH, XL) -> E = false
+            ; E = unknown
+            ).
+        clpfd_entail_('#>', DX, DY, XL, XH, YL, YH, E) :-
+            clpfd_entail_('#<', DY, DX, YL, YH, XL, XH, E).
+        clpfd_entail_('#>=', DX, DY, XL, XH, YL, YH, E) :-
+            clpfd_entail_('#=<', DY, DX, YL, YH, XL, XH, E).
+        clpfd_entail_('#=', DX, DY, _, _, _, _, E) :-
+            ( clpfd_dom_isect(DX, DY, I), I == [] -> E = false
+            ; DX = [V-V], DY = [V-V] -> E = true
+            ; E = unknown
+            ).
+        clpfd_entail_('#\\=', DX, DY, _, _, _, _, E) :-
+            ( clpfd_dom_isect(DX, DY, I), I == [] -> E = true
+            ; DX = [V-V], DY = [V-V] -> E = false
+            ; E = unknown
+            ).
         """;
 }
