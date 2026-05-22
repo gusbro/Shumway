@@ -2,9 +2,17 @@
 
 ## Status
 
-Accepted (Phase 8) — design agreed in review. Implementation is phased
-across several chunks and not yet landed; this ADR is the contract those
-chunks build to.
+Accepted (Phase 8) — design agreed in review, implemented in chunks
+A–C (114–118). The same-query dynamic-visibility bug is fixed.
+
+The implementation followed the leaner §4.1 design (recompile-on-modify
+with an address redirect), not the §3/§4 born/died generation-filtered
+sketch — so §3 (generation-filtered clause iteration), §4 (entry
+trampolines, incremental chain relink) and §6 (the `PrologQuery`
+lifecycle) describe a path not taken; §4.1 and the chunk A–C/D notes
+under "Implementation phasing" record what was actually built. Chunk D
+is obviated and dropped; chunk E (code-space compaction) is the only
+open follow-up.
 
 ## Context
 
@@ -287,9 +295,27 @@ Each is its own chunk, landing with the test suite green:
   view, entry trampolines and incremental chain relink (a perf refinement
   over whole-predicate recompile) remain future work — the recompile-on-
   modify redirect already delivers correct same-query visibility.
-- **D — Query lifecycle.** `PrologQuery : IDisposable`; finalizer that
-  enqueues; safe-point drain releasing generation pins.
-- **E — Code-space compaction (follow-up).** Reclaim unreachable bytecode.
+- **D — Query lifecycle — obviated, dropped.** D existed to release a
+  query's *generation pin* on `Dispose` so deferred physical `retract`
+  could reclaim a clause once no live query could still see it. But chunk
+  C was implemented as recompile-on-modify (§4.1), not the born/died
+  generation-filtered design of §3: it keeps **no generation pins** and
+  defers **no** physical removal. A per-query `Engine` — its program
+  buffer, choice points, heap — is ordinary managed state the GC reclaims
+  when the query's enumeration ends or is abandoned; there is no pin to
+  release, no unmanaged resource, no leak. A `PrologQuery : IDisposable`
+  would therefore be an empty-`Dispose` wrapper, so D is dropped. The
+  logical update view it was partly meant to serve is already delivered
+  by §4.1 (a new call recompiles; an in-progress call keeps its retained
+  body). Should a future change reintroduce deferred physical removal,
+  the lifecycle returns with it.
+- **E — Code-space compaction (follow-up).** Now the only open item. Each
+  mid-query dynamic recompile appends to the program buffer and the
+  superseded body is never reclaimed, so a single long-running query that
+  repeatedly asserts-then-calls a dynamic predicate grows the buffer
+  without bound (across queries there is no leak — the per-query buffer
+  is GC'd). A compaction pass would reclaim unreachable bytecode. Low
+  urgency: ordinary queries do few recompiles.
 
 ## Quick reference
 

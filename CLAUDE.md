@@ -407,9 +407,11 @@ pass rather than patched ad hoc.
   static program a persistent linked region so a query links only its
   transient part; chunk C made a dynamic-predicate call live — the program
   buffer grows, and a predicate modified mid-query is lazily recompiled
-  from its live clauses and the call redirected to it. ADR-015 chunks D
-  (`PrologQuery : IDisposable` lifecycle) and E (code-space compaction)
-  remain future work.
+  from its live clauses and the call redirected to it. ADR-015 chunk D
+  (a `PrologQuery : IDisposable` lifecycle) was obviated by the
+  recompile-on-modify design — it keeps no generation pins to release —
+  and dropped; chunk E (code-space compaction) is the only open
+  follow-up.
 
 ---
 
