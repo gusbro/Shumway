@@ -1919,7 +1919,8 @@ public static class MetaBuiltins
             throw new InvalidOperationException(
                 "'$tbl_seen'/1 requires a PrologEngine host.");
         var sb = new System.Text.StringBuilder();
-        Canonicalize(MaterializeRegister(engine, 0), sb);
+        Canonicalize(MaterializeRegister(engine, 0), sb,
+            new Dictionary<string, int>());
         return host.RegisterTablingKey(sb.ToString());
     }
 
@@ -1956,12 +1957,25 @@ public static class MetaBuiltins
     }
 
     /// <summary>Appends a structurally faithful, injective encoding of a
-    /// ground term to <paramref name="sb"/> — length-prefixed names so no
-    /// two distinct ground terms can collide.</summary>
-    private static void Canonicalize(Term t, System.Text.StringBuilder sb)
+    /// term to <paramref name="sb"/> — length-prefixed names so no two
+    /// distinct terms can collide. Variables are encoded by first-occurrence
+    /// index (tracked in <paramref name="vars"/>), so the encoding is
+    /// invariant under variable renaming: two variant non-ground answers
+    /// (e.g. <c>p(X)</c> and <c>p(Y)</c>) canonicalise to the same string
+    /// and the tabling driver deduplicates them as one answer.</summary>
+    private static void Canonicalize(
+        Term t, System.Text.StringBuilder sb, Dictionary<string, int> vars)
     {
         switch (t)
         {
+            case VarTerm v:
+                if (!vars.TryGetValue(v.Name, out int vid))
+                {
+                    vid = vars.Count;
+                    vars[v.Name] = vid;
+                }
+                sb.Append('v').Append(vid).Append('.');
+                break;
             case AtomTerm a:
                 sb.Append('a').Append(a.Name.Length).Append('_').Append(a.Name);
                 break;
@@ -1971,7 +1985,7 @@ public static class MetaBuiltins
             case CompoundTerm c:
                 sb.Append('c').Append(c.Functor.Length).Append('_').Append(c.Functor)
                   .Append('/').Append(c.Args.Length).Append('(');
-                foreach (var arg in c.Args) Canonicalize(arg, sb);
+                foreach (var arg in c.Args) Canonicalize(arg, sb, vars);
                 sb.Append(')');
                 break;
             default:

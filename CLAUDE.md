@@ -332,7 +332,12 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
   sees only the query-setup snapshot — `clause/2` consults the live store, so
   a write made earlier in the same query is visible, and running the tabled
   goal via `call/1` keeps `findall` in-engine so its `assertz`es persist.
-  Documented limitations: answers assumed ground.
+  Chunk 108 handles **non-ground answers**: a tabled answer may contain
+  unbound variables, and the duplicate test (`'$tbl_seen'`) canonicalises
+  variables by first-occurrence index, so variant answers (`p(X)` and
+  `p(Y)`) deduplicate to one — variant tabling. Without this a non-ground
+  answer re-derived with a fresh variable each round never deduplicates and
+  the fixpoint loops forever.
   Chunk 107 adds **table invalidation** — `abolish_all_tables/0` and
   `abolish_table/1` (by `Name/Arity`) discard cached answers so a later
   query recomputes against the current program — and **tabled negation**:
