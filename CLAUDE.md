@@ -377,18 +377,23 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
 **Phase 8 — Engine robustness (backlog)**
 
 Problems surfaced while building Phases 6–7, recorded here for a dedicated
-pass rather than patched ad hoc. The first four are interrelated — all about
-deep loops overflowing the control stack.
+pass rather than patched ad hoc.
 
-- **Last-call optimisation (LCO).** The interpreter does not reclaim a
-  clause's environment on a last call, so a deep tail-recursive predicate
-  grows the control stack one frame per call. A left-recursive predicate is
-  expected to overflow (that is what tabling is for), but a *properly
-  tail-recursive* loop overflows too — surfaced by tabling's semi-naive
-  fixpoint loop (`'$table_seminaive'`), which recurses once per round and
-  overflows past ~1000 rounds. Restructuring the loop as a plain syntactic
-  last call did not help, confirming there is no LCO. This is the root
-  engine fix and the highest-value item.
+- **Deep-recursion stack overflow.** *Corrected (chunk 110): the engine does
+  have last-call optimisation.* The WAM compiler emits `deallocate` before
+  the final `execute`, and a plain tail-recursive predicate runs 100 000+
+  calls deep in constant control stack (`Chunk110Tests`). The original "no
+  LCO" diagnosis — inferred from the tabling fixpoint overflowing — was
+  wrong. The *real* open problem is narrower and not yet isolated: a tail
+  recursion that threads a deep data structure (e.g. accumulating a 50 000-
+  element list) overflows, and so does the tabling semi-naive fixpoint loop
+  past ~1500 rounds — a `StackOverflowException` that crashes the process,
+  so genuine C# recursion proportional to a depth, somewhere in the
+  meta-call / materialisation path. Needs a dedicated diagnosis — the
+  highest-value Phase-8 item. (An attempt to `once`-wrap a retained
+  `clause/2` choice point in the tabling loop neither fixed the overflow
+  nor was behaviour-preserving, so it was reverted — the loop relies on
+  that backtracking.)
 - **`between/3` in a failure-driven loop.** Replacing the fixpoint loop with
   `between(1, BigN, _), ( Step -> fail ; ! )` — the textbook constant-stack
   loop idiom — hung / crashed. `between/3` works for ordinary enumeration;
