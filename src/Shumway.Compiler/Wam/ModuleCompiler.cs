@@ -55,6 +55,18 @@ public sealed class ModuleCompiler
         IEnumerable<Clause> clauses,
         IReadOnlyDictionary<int, CompiledPredicate>? cache,
         IReadOnlySet<int>? unindexedFunctors)
+        => Compile(clauses, cache, unindexedFunctors, pools: null);
+
+    /// <summary><paramref name="pools"/> (ADR-015 chunk B) lets the caller
+    /// supply persistent literal pools instead of the fresh per-call set.
+    /// Passed pools accumulate across compilations, so a literal keeps a
+    /// stable id from one query to the next. When <c>null</c> a fresh set
+    /// is used — the original per-module behaviour.</summary>
+    public CompiledModule Compile(
+        IEnumerable<Clause> clauses,
+        IReadOnlyDictionary<int, CompiledPredicate>? cache,
+        IReadOnlySet<int>? unindexedFunctors,
+        LiteralPools? pools)
     {
         ArgumentNullException.ThrowIfNull(clauses);
 
@@ -79,9 +91,13 @@ public sealed class ModuleCompiler
             list.Add(clause);
         }
 
-        var stringLiterals = new LiteralPool<string>();
-        var floatLiterals = new LiteralPool<double>();
-        var bigIntLiterals = new LiteralPool<System.Numerics.BigInteger>();
+        // Persistent pools (ADR-015) accumulate across compilations so
+        // literal ids stay stable query to query; absent them, a fresh
+        // per-module set — the original behaviour.
+        pools ??= new LiteralPools();
+        var stringLiterals = pools.Strings;
+        var floatLiterals = pools.Floats;
+        var bigIntLiterals = pools.BigInts;
 
         var predicates = new List<CompiledPredicate>(order.Count);
         var predicateCompiler = new PredicateCompiler();

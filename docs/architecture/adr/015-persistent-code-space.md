@@ -199,17 +199,19 @@ Each is its own chunk, landing with the test suite green:
     set can be linked against an already-linked region's functor→address
     map, so its `Call`s into that region are patched to real addresses
     rather than the undefined sentinel.
-  - *Prerequisite that surfaced during scoping:* the string / float /
-    bigint **literal pools must become engine-persistent** with stable
-    ids. Today a pool is rebuilt per query, so a cached static region's
-    embedded pool ids would not survive to the next query. (The existing
-    `IsCachedPredicateReusable` guard sidesteps this for the per-predicate
-    caches by simply not caching predicates that touch pool literals;
-    caching the *whole* static region cannot dodge it.)
+  - *Done (chunk 116):* persistent literal pools. The string / float /
+    bigint pools had to become engine-persistent with stable ids — a pool
+    rebuilt per query would not let a cached static region's embedded pool
+    ids survive to the next query. `ModuleCompiler.Compile` now takes an
+    optional `LiteralPools`; passed pools accumulate (interning dedupes),
+    so a literal keeps its id query to query. `null` keeps the original
+    fresh-per-module behaviour.
   - *Remaining:* the `SetupQueryFromTerm` split — partition static vs
-    query+dynamic, cache the static link, link the query part with
-    external symbols, merge the address maps / switch tables /
-    `PredicatesByAddress`.
+    query+dynamic, cache the static link (built with persistent pools and
+    linked once), link the query part with external symbols, merge the
+    address maps / switch tables / `PredicatesByAddress`. This is the
+    intricate restructure of the embedding layer's hottest path and is
+    best done as one focused unit.
 - **C — Live dynamic dispatch.** `born`/`died` stamps on dynamic clauses
   with logical (deferred) `retract`; entry trampolines; `assertz` append +
   local relink; generation-filtered clause iteration. This is the chunk
