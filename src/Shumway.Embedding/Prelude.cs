@@ -76,7 +76,7 @@ internal static class Prelude
         :- dynamic attribute_goals/4.
         :- dynamic '$tbl_running'/0.
         :- dynamic '$tbl_subgoal'/3.
-        :- dynamic '$tbl_answer'/2.
+        :- dynamic '$tbl_answers'/2.
         :- public '$table_call'/2.
 
         %! member(?Elem, ?List) | Lists | Succeeds when Elem is a member of List; enumerates members on backtracking.
@@ -520,18 +520,23 @@ internal static class Prelude
 
         '$tbl_is_running' :- clause('$tbl_running', true), !.
 
+        % each subgoal's answers are kept as one fact holding a sorted,
+        % duplicate-free list — '$tbl_answers'(Key, SortedList). A pass
+        % deduplicates with a single sort/2 (O(n log n)) instead of a
+        % membership scan per solution (which made a pass O(n^2)).
         '$table_register'(Key, Goal, RunGoal) :-
             ( clause('$tbl_subgoal'(Key, _, _), true) -> true
-            ; assertz('$tbl_subgoal'(Key, Goal, RunGoal))
+            ; assertz('$tbl_subgoal'(Key, Goal, RunGoal)),
+              assertz('$tbl_answers'(Key, []))
             ).
 
         % naive fixpoint: re-run every registered subgoal until a pass
-        % adds no answer and discovers no new subgoal.
+        % grows no answer set and discovers no new subgoal.
         '$table_fixpoint' :-
             '$table_count'(Before),
-            '$table_pass'(no, AnsChanged),
+            '$table_pass'(no, Changed),
             '$table_count'(After),
-            ( ( AnsChanged == yes ; After > Before ) -> '$table_fixpoint'
+            ( ( Changed == yes ; After > Before ) -> '$table_fixpoint'
             ; true
             ).
         '$table_count'(N) :-
@@ -542,18 +547,25 @@ internal static class Prelude
             '$table_pass_each'(Subgoals, Acc, Changed).
         '$table_pass_each'([], Acc, Acc).
         '$table_pass_each'([K-G-R|Rest], Acc, Changed) :-
-            findall(G, call(R), Sols),
-            '$table_add'(K, Sols, no, C),
+            '$table_step'(K, G, R, C),
             ( C == yes -> Acc2 = yes ; Acc2 = Acc ),
             '$table_pass_each'(Rest, Acc2, Changed).
 
-        '$table_add'(_, [], Acc, Acc).
-        '$table_add'(Key, [S|Ss], Acc, Changed) :-
-            ( clause('$tbl_answer'(Key, S), true) -> Acc2 = Acc
-            ; assertz('$tbl_answer'(Key, S)), Acc2 = yes
-            ),
-            '$table_add'(Key, Ss, Acc2, Changed).
+        % re-run one subgoal; sort/2 collapses the re-derived solutions to
+        % a canonical set, and the answer set is monotone, so a changed
+        % set is simply one that differs from the stored list.
+        '$table_step'(Key, Goal, RunGoal, Changed) :-
+            findall(Goal, call(RunGoal), Raw),
+            sort(Raw, NewAnswers),
+            clause('$tbl_answers'(Key, OldAnswers), true),
+            ( NewAnswers == OldAnswers -> Changed = no
+            ; retract('$tbl_answers'(Key, OldAnswers)),
+              assertz('$tbl_answers'(Key, NewAnswers)),
+              Changed = yes
+            ).
 
-        '$table_emit'(Key, Goal) :- clause('$tbl_answer'(Key, Goal), true).
+        '$table_emit'(Key, Goal) :-
+            clause('$tbl_answers'(Key, Answers), true),
+            member(Goal, Answers).
         """;
 }

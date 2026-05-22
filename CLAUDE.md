@@ -332,10 +332,16 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
   sees only the query-setup snapshot — `clause/2` consults the live store, so
   a write made earlier in the same query is visible, and running the tabled
   goal via `call/1` keeps `findall` in-engine so its `assertz`es persist.
-  Documented limitations: naive (not semi-naive) evaluation; definite
-  programs only (no tabled negation); answers assumed ground; the table
-  persists per engine, so retracting a clause after a tabled query can leave
-  a stale answer.
+  Documented limitations: definite programs only (no tabled negation);
+  answers assumed ground; the table persists per engine, so retracting a
+  clause after a tabled query can leave a stale answer.
+  Chunk 105 makes a fixpoint pass O(n log n) rather than O(n²): each
+  subgoal's answers are one sorted, duplicate-free list deduplicated with
+  `sort/2`, instead of one asserted fact per answer rescanned for every
+  re-derived solution (~17× faster on moderate transitive closures, and the
+  gap widens with size). Evaluation is still *naive* — every pass re-derives
+  from scratch — so true semi-naive (rule-differential) evaluation, which
+  would remove the fixpoint-depth re-derivation factor, remains future work.
 
 ---
 
