@@ -141,7 +141,7 @@ dotnet publish src/Shumway.Bundler/ -c Release
 dotnet run --project src/Shumway.Repl/ -- [file.pl ...]
 
 # Publish the REPL as a self-contained Native AOT executable
-# (Windows: needs the Visual C++ build tools for the native link step)
+# (see docs/native-aot.md — Windows needs the Visual C++ build tools)
 dotnet publish src/Shumway.Repl/ -r win-x64 -c Release
 ```
 
@@ -319,7 +319,9 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
   persisted-IL bundle path in `LoadBundle` falls back to the entry's
   bytecode. The REPL (`src/Shumway.Repl/`, `<PublishAot>true</PublishAot>`)
   is the publish target: `dotnet publish` produces a self-contained native
-  `shumway` executable running the full engine, interpreter-only.
+  `shumway` executable running the full engine, interpreter-only. See
+  [`docs/native-aot.md`](docs/native-aot.md) (incl. the Windows native-link
+  toolchain requirement).
 - Tabling.
 
 ---
