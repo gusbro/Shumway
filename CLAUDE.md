@@ -260,7 +260,7 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
   domain is wholly positive).
 - → CLP(R), Native AOT and tabling moved to Phase 7.
 
-**Phase 7 — Predicate documentation, CLP(R), AOT, tabling**
+**Phase 7 — Predicate documentation, CLP(R), AOT, tabling** — ✅ **Complete** (tagged `phase-7`; closure summary in [`docs/phase-7-closure.md`](docs/phase-7-closure.md)).
 - ✓ Generated user-facing predicate documentation (chunks 94, 95). Predicate
   doc metadata lives *next to each definition* — a category, a moded call
   template and a summary passed to `BuiltinsRegistry.Register` for C#
