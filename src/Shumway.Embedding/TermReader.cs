@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Shumway.Compiler.Ast;
 using Shumway.Core;
 
@@ -64,10 +65,25 @@ public static class TermReader
 
     private static Term MaterializeLis(Engine engine, Cell lisCell)
     {
-        int headIdx = lisCell.AsHeapIndex;
-        Term head = Materialize(engine, headIdx);
-        Term tail = Materialize(engine, headIdx + 1);
-        return new CompoundTerm(".", new[] { head, tail });
+        // Walk the list spine iteratively: a recursive descent down the
+        // tail would use one C# stack frame per element and overflow on a
+        // long list. Only the (shallow) elements recurse.
+        var heads = new List<Term>();
+        Cell cur = lisCell;
+        int tailIdx;
+        while (true)
+        {
+            int headIdx = cur.AsHeapIndex;
+            heads.Add(Materialize(engine, headIdx));
+            tailIdx = headIdx + 1;
+            Cell tailCell = engine.GetHeap(engine.Deref(tailIdx));
+            if (tailCell.Tag != Tag.Lis) break;
+            cur = tailCell;
+        }
+        Term result = Materialize(engine, tailIdx);
+        for (int i = heads.Count - 1; i >= 0; i--)
+            result = new CompoundTerm(".", new[] { heads[i], result });
+        return result;
     }
 
     private static string NameOfAtom(int id)

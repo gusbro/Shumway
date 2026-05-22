@@ -70,15 +70,35 @@ public static class Materializer
 
             case CompoundTerm c when c.Functor == "." && c.Args.Length == 2:
             {
-                int pair = engine.AllocateHeap(2);
-                // Materialise head / tail *after* reserving the pair cells so
-                // the pair stays at a stable index even if the children
-                // allocate more heap themselves.
-                Cell head = MaterializeAsCell(engine, c.Args[0], varMap);
-                Cell tail = MaterializeAsCell(engine, c.Args[1], varMap);
-                engine.SetHeap(pair, head);
-                engine.SetHeap(pair + 1, tail);
-                return Cell.Lis(pair);
+                // Walk the list spine iteratively: a recursive descent down
+                // the tail would use one C# stack frame per element and
+                // overflow on a long list. Only the (shallow) elements and
+                // the final tail recurse.
+                var heads = new List<Term>();
+                Term cursor = term;
+                while (cursor is CompoundTerm cc
+                       && cc.Functor == "." && cc.Args.Length == 2)
+                {
+                    heads.Add(cc.Args[0]);
+                    cursor = cc.Args[1];
+                }
+                int count = heads.Count;
+                // Reserve every pair cell up front so the indices are stable
+                // while the elements (which may extend the heap) materialise.
+                int firstPair = engine.AllocateHeap(2 * count);
+                Cell tailCell = MaterializeAsCell(engine, cursor, varMap);
+                var headCells = new Cell[count];
+                for (int i = 0; i < count; i++)
+                    headCells[i] = MaterializeAsCell(engine, heads[i], varMap);
+                for (int i = 0; i < count; i++)
+                {
+                    int pair = firstPair + 2 * i;
+                    engine.SetHeap(pair, headCells[i]);
+                    engine.SetHeap(pair + 1, i + 1 < count
+                        ? Cell.Lis(firstPair + 2 * (i + 1))
+                        : tailCell);
+                }
+                return Cell.Lis(firstPair);
             }
 
             case CompoundTerm c:

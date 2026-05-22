@@ -379,27 +379,21 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
 Problems surfaced while building Phases 6–7, recorded here for a dedicated
 pass rather than patched ad hoc.
 
-- **Deep-recursion stack overflow.** *Corrected (chunk 110): the engine does
-  have last-call optimisation.* The WAM compiler emits `deallocate` before
-  the final `execute`, and a plain tail-recursive predicate runs 100 000+
-  calls deep in constant control stack (`Chunk110Tests`). The original "no
-  LCO" diagnosis — inferred from the tabling fixpoint overflowing — was
-  wrong. The *real* open problem is narrower and not yet isolated: a tail
-  recursion that threads a deep data structure (e.g. accumulating a 50 000-
-  element list) overflows, and so does the tabling semi-naive fixpoint loop
-  past ~1500 rounds — a `StackOverflowException` that crashes the process,
-  so genuine C# recursion proportional to a depth, somewhere in the
-  meta-call / materialisation path. Needs a dedicated diagnosis — the
-  highest-value Phase-8 item. (An attempt to `once`-wrap a retained
-  `clause/2` choice point in the tabling loop neither fixed the overflow
-  nor was behaviour-preserving, so it was reverted — the loop relies on
-  that backtracking.)
-- **`between/3` in a failure-driven loop.** Replacing the fixpoint loop with
-  `between(1, BigN, _), ( Step -> fail ; ! )` — the textbook constant-stack
-  loop idiom — hung / crashed. `between/3` works for ordinary enumeration;
-  its behaviour *driving a failure-driven loop* was never diagnosed.
-  Investigate (suspected: it is not a constant-stack choice-point generator,
-  or backtracking through it interacts badly with the tabling asserts).
+- ✅ **Deep-recursion stack overflow — resolved (chunks 110–111).** Chunk
+  110 established the engine *does* have last-call optimisation — a plain
+  tail-recursive predicate runs 100 000+ calls deep in constant control
+  stack (`Chunk110Tests`); the original "no LCO" diagnosis was wrong.
+  Chunk 111 found and fixed the actual cause: `Materializer.MaterializeAsCell`
+  and `TermReader.Materialize` — the WAM-cell ↔ `Term`-AST converters —
+  recursed once per list element, so a long list (a tabled predicate's
+  thousands of `clause/2`-visible facts, or a tail recursion accumulating a
+  list) overflowed the C# stack. Both now walk the list spine iteratively;
+  the tabling fixpoint and deep list-building recursions that overflowed at
+  ~1500–2000 run to 2500+ / 50 000+ (`Chunk111Tests`).
+- **`between/3` in a failure-driven loop.** An attempt to write the tabling
+  fixpoint loop as `between(1, BigN, _), ( Step -> fail ; ! )` — the textbook
+  constant-stack idiom — hung / crashed. May have been the chunk-111
+  materialiser overflow; worth re-checking now, and otherwise diagnosing.
 - **`repeat`.** There is no `repeat` builtin — the ISO constant-stack
   choice-point generator (`repeat/0`; a bounded `repeat/1` is also useful).
   A correct `repeat` lets the tabling fixpoint loop — and any other deep
