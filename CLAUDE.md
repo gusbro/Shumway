@@ -335,13 +335,24 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
   Documented limitations: definite programs only (no tabled negation);
   answers assumed ground; the table persists per engine, so retracting a
   clause after a tabled query can leave a stale answer.
-  Chunk 105 makes a fixpoint pass O(n log n) rather than O(n²): each
-  subgoal's answers are one sorted, duplicate-free list deduplicated with
-  `sort/2`, instead of one asserted fact per answer rescanned for every
-  re-derived solution (~17× faster on moderate transitive closures, and the
-  gap widens with size). Evaluation is still *naive* — every pass re-derives
-  from scratch — so true semi-naive (rule-differential) evaluation, which
-  would remove the fixpoint-depth re-derivation factor, remains future work.
+  Chunk 105 made a fixpoint pass O(n log n) rather than O(n²) by keeping
+  each subgoal's answers as one sorted, duplicate-free list. Chunk 106 goes
+  to genuine *semi-naive* evaluation: the consult-time transform splits each
+  tabled clause into base clauses (`'$tbase$p'`) and recursive clauses
+  (`'$trec$p'`), and a recursive clause's single tabled body literal becomes
+  a `'$tbl_consume'` call that yields only the producer's *delta* — the
+  answers it gained in the previous round — so a round re-derives only what
+  is newly possible, not the whole relation. A clause with two-plus tabled
+  literals, or a tabled call nested in a control construct, is re-run every
+  round undifferentiated (correct, just not accelerated). The per-answer
+  duplicate test is the engine-backed `'$tbl_seen'` set, O(1) — the dynamic
+  store copies on every assert, so a list-per-subgoal answer table would be
+  O(n) per round and mask the win; answers, deltas and subgoals are instead
+  individual asserted facts. Measured ~3.5× faster on a 500-deep transitive
+  closure, widening with depth. Remaining limitation: the fixpoint loop
+  recurses once per round and Shumway has no last-call optimisation, so a
+  fixpoint deeper than ~1000 rounds (a very long recursive chain) overflows
+  the control stack.
 
 ---
 

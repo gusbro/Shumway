@@ -604,6 +604,17 @@ public sealed class PrologEngine
         => _staticPredicateCache;
     private readonly Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> _staticPredicateCache = new();
 
+    /// <summary>Canonical encodings of every (subgoal, answer) pair the
+    /// tabling driver has recorded (chunk 106). Backs the <c>'$tbl_seen'/1</c>
+    /// builtin — an O(1) duplicate-answer test for the semi-naive fixpoint.
+    /// Persists for the engine's life, alongside the tabling dynamic
+    /// predicates it mirrors.</summary>
+    private readonly HashSet<string> _tablingSeen = new();
+
+    /// <summary>Records <paramref name="key"/>; returns <c>true</c> when it
+    /// was not present (the answer is new), <c>false</c> when it was.</summary>
+    internal bool RegisterTablingKey(string key) => _tablingSeen.Add(key);
+
     /// <summary>Stack of in-flight findall solution buffers (chunk 83).
     /// MetaTransform rewrites <c>findall/3</c> with a callable goal into a
     /// goal sequence driven by the <c>'$findall_*'</c> builtins, which run
@@ -1230,22 +1241,32 @@ public sealed class PrologEngine
             $"Malformed :- {directiveName} directive (expected Name/Arity or a list of them).");
     }
 
-    /// <summary>Rewrites the clauses of every <c>:- table</c>d predicate:
-    /// each clause head <c>p(..)</c> becomes <c>'$tabled$p'(..)</c>, and a
-    /// driver clause <c>p(..) :- '$table_call'(p(..), '$tabled$p'(..))</c>
-    /// is appended. The tabled predicate's bodies still call <c>p</c>, so
-    /// every (recursive) call routes through the memoising driver.
-    ///
-    /// <para>Both <c>p/N</c> and <c>'$tabled$p'/N</c> are added to
-    /// <paramref name="publics"/>: the driver carries them in argument
-    /// (data) position where module mangling does not reach, so keeping
-    /// them unmangled is what makes the driver's references resolve to the
-    /// renamed clauses.</para></summary>
+    /// <summary>Rewrites the clauses of every <c>:- table</c>d predicate
+    /// for semi-naive evaluation. Each clause is classified:
+    /// <list type="bullet">
+    /// <item>a <em>base</em> clause (no tabled body call) → <c>'$tbase$p'</c>;</item>
+    /// <item>a <em>simple recursive</em> clause (exactly one tabled body
+    /// literal, as a direct conjunct) → <c>'$trec$p'</c> with that literal
+    /// rewritten to a <c>'$tbl_consume'</c> call that reads the producer's
+    /// delta;</item>
+    /// <item>a <em>complex</em> clause (two-plus tabled literals, or a
+    /// tabled call nested in a control construct) → kept verbatim in both
+    /// <c>'$tbase$p'</c> and <c>'$trec$p'</c>, so it is re-run every round
+    /// (correct, just not differentiated).</item>
+    /// </list>
+    /// A driver clause <c>p(..) :- '$table_call'(p(..), '$tbase$p'(..),
+    /// '$trec$p'(..))</c> is added. <c>p/N</c>, <c>'$tbase$p'/N</c> and
+    /// <c>'$trec$p'/N</c> are made public so module mangling — which does
+    /// not reach the driver's data-position references — cannot desync
+    /// them.</summary>
     private static List<Clause> TransformTabledPredicates(
         List<Clause> clauses, HashSet<int> tabled, HashSet<int> publics)
     {
-        var result = new List<Clause>(clauses.Count + tabled.Count);
-        var withClauses = new HashSet<int>();
+        var result = new List<Clause>();
+        var baseClauses = new Dictionary<int, List<Clause>>();
+        var recClauses = new Dictionary<int, List<Clause>>();
+        var present = new List<int>();
+
         foreach (var c in clauses)
         {
             if (TryExtractHead(c, out string n, out int a))
@@ -1254,33 +1275,172 @@ public sealed class PrologEngine
                     AtomTable.Intern(n, permanent: true).Id, a);
                 if (tabled.Contains(fid))
                 {
-                    result.Add(ReheadClause(c, "$tabled$" + n));
-                    withClauses.Add(fid);
+                    if (!baseClauses.ContainsKey(fid))
+                    {
+                        baseClauses[fid] = new List<Clause>();
+                        recClauses[fid] = new List<Clause>();
+                        present.Add(fid);
+                    }
+                    TransformTabledClause(c, n, tabled,
+                        baseClauses[fid], recClauses[fid]);
                     continue;
                 }
             }
             result.Add(c);
         }
-        foreach (int fid in withClauses)
+
+        foreach (int fid in present)
         {
             var (atomId, arity) = FunctorTable.Lookup(fid);
             string name = AtomTable.GetById(atomId)!.Name;
+            var bs = baseClauses[fid];
+            var rs = recClauses[fid];
+            if (bs.Count == 0) bs.Add(MakeFailStub("$tbase$" + name, arity));
+            if (rs.Count == 0) rs.Add(MakeFailStub("$trec$" + name, arity));
+            result.AddRange(bs);
+            result.AddRange(rs);
             result.Add(MakeTableDriverClause(name, arity));
             publics.Add(fid);
             publics.Add(FunctorTable.Intern(
-                AtomTable.Intern("$tabled$" + name, permanent: true).Id, arity));
+                AtomTable.Intern("$tbase$" + name, permanent: true).Id, arity));
+            publics.Add(FunctorTable.Intern(
+                AtomTable.Intern("$trec$" + name, permanent: true).Id, arity));
         }
         return result;
     }
 
-    /// <summary>Returns <paramref name="c"/> with its head functor
-    /// renamed to <paramref name="newName"/> (a fact or a rule head).</summary>
-    private static Clause ReheadClause(Clause c, string newName)
+    /// <summary>Classifies one tabled clause and appends its rewritten
+    /// form(s) to the predicate's base / recursive clause lists.</summary>
+    private static void TransformTabledClause(
+        Clause c, string name, HashSet<int> tabled,
+        List<Clause> baseOut, List<Clause> recOut)
     {
+        Term head;
+        Term? body;
         if (c.Term is CompoundTerm rule && rule.Functor == ":-" && rule.Args.Length == 2)
-            return Clause.From(new CompoundTerm(":-",
-                new[] { Rehead(rule.Args[0], newName), rule.Args[1] }));
-        return Clause.From(Rehead(c.Term, newName));
+        {
+            head = rule.Args[0];
+            body = rule.Args[1];
+        }
+        else
+        {
+            head = c.Term;
+            body = null;
+        }
+
+        var conjuncts = body is null ? new List<Term>() : FlattenConjunction(body);
+        int cleanCount = 0, cleanIndex = -1;
+        bool hasComplex = false;
+        for (int i = 0; i < conjuncts.Count; i++)
+        {
+            if (IsCleanTabledCall(conjuncts[i], tabled))
+            {
+                cleanCount++;
+                cleanIndex = i;
+            }
+            else if (ContainsTabledFunctor(conjuncts[i], tabled))
+            {
+                hasComplex = true;
+            }
+        }
+
+        Term baseHead = Rehead(head, "$tbase$" + name);
+        Term recHead = Rehead(head, "$trec$" + name);
+
+        if (hasComplex || cleanCount >= 2)
+        {
+            baseOut.Add(MakeRule(baseHead, body!));
+            recOut.Add(MakeRule(recHead, body!));
+        }
+        else if (cleanCount == 1)
+        {
+            var rewritten = new List<Term>(conjuncts);
+            rewritten[cleanIndex] = MakeConsume(conjuncts[cleanIndex]);
+            recOut.Add(MakeRule(recHead, RebuildConjunction(rewritten)));
+        }
+        else
+        {
+            baseOut.Add(body is null
+                ? Clause.From(baseHead)
+                : MakeRule(baseHead, body));
+        }
+    }
+
+    private static Clause MakeRule(Term head, Term body)
+        => Clause.From(new CompoundTerm(":-", new[] { head, body }));
+
+    private static List<Term> FlattenConjunction(Term body)
+    {
+        var goals = new List<Term>();
+        FlattenInto(body, goals);
+        return goals;
+    }
+    private static void FlattenInto(Term t, List<Term> goals)
+    {
+        if (t is CompoundTerm c && c.Functor == "," && c.Args.Length == 2)
+        {
+            FlattenInto(c.Args[0], goals);
+            FlattenInto(c.Args[1], goals);
+        }
+        else goals.Add(t);
+    }
+    private static Term RebuildConjunction(List<Term> goals)
+    {
+        Term acc = goals[^1];
+        for (int i = goals.Count - 2; i >= 0; i--)
+            acc = new CompoundTerm(",", new[] { goals[i], acc });
+        return acc;
+    }
+
+    /// <summary>True when <paramref name="t"/>'s principal functor is a
+    /// tabled predicate.</summary>
+    private static bool IsTabledFunctor(Term t, HashSet<int> tabled)
+    {
+        string name;
+        int arity;
+        if (t is CompoundTerm c) { name = c.Functor; arity = c.Args.Length; }
+        else if (t is AtomTerm at) { name = at.Name; arity = 0; }
+        else return false;
+        return tabled.Contains(FunctorTable.Intern(
+            AtomTable.Intern(name, permanent: true).Id, arity));
+    }
+
+    /// <summary>True when <paramref name="g"/> is a plain call to a tabled
+    /// predicate with no tabled functor buried in its arguments.</summary>
+    private static bool IsCleanTabledCall(Term g, HashSet<int> tabled)
+    {
+        if (!IsTabledFunctor(g, tabled)) return false;
+        if (g is CompoundTerm c)
+            foreach (var arg in c.Args)
+                if (ContainsTabledFunctor(arg, tabled)) return false;
+        return true;
+    }
+
+    private static bool ContainsTabledFunctor(Term t, HashSet<int> tabled)
+    {
+        if (IsTabledFunctor(t, tabled)) return true;
+        if (t is CompoundTerm c)
+            foreach (var arg in c.Args)
+                if (ContainsTabledFunctor(arg, tabled)) return true;
+        return false;
+    }
+
+    /// <summary>Rewrites a tabled body literal <c>q(A..)</c> into
+    /// <c>'$tbl_consume'(q(A..), '$tbase$q'(A..), '$trec$q'(A..))</c>.</summary>
+    private static Term MakeConsume(Term lit)
+    {
+        if (lit is CompoundTerm c)
+            return new CompoundTerm("$tbl_consume", new[]
+            {
+                lit,
+                new CompoundTerm("$tbase$" + c.Functor, c.Args),
+                new CompoundTerm("$trec$" + c.Functor, c.Args),
+            });
+        var at = (AtomTerm)lit;
+        return new CompoundTerm("$tbl_consume", new Term[]
+        {
+            lit, new AtomTerm("$tbase$" + at.Name), new AtomTerm("$trec$" + at.Name),
+        });
     }
 
     private static Term Rehead(Term head, string newName) => head switch
@@ -1289,25 +1449,42 @@ public sealed class PrologEngine
         _ => new AtomTerm(newName),
     };
 
-    /// <summary>Builds <c>p(V..) :- '$table_call'(p(V..), '$tabled$p'(V..))</c>
-    /// for a tabled predicate of the given name and arity.</summary>
+    /// <summary>A failing stub <c>name(_..) :- fail</c> — gives an empty
+    /// <c>'$tbase$p'</c> / <c>'$trec$p'</c> a defined bytecode home.</summary>
+    private static Clause MakeFailStub(string name, int arity)
+    {
+        Term head;
+        if (arity == 0) head = new AtomTerm(name);
+        else
+        {
+            var vars = new Term[arity];
+            for (int i = 0; i < arity; i++) vars[i] = new VarTerm("_TblS" + i);
+            head = new CompoundTerm(name, vars);
+        }
+        return MakeRule(head, new AtomTerm("fail"));
+    }
+
+    /// <summary>Builds <c>p(V..) :- '$table_call'(p(V..), '$tbase$p'(V..),
+    /// '$trec$p'(V..))</c> for a tabled predicate.</summary>
     private static Clause MakeTableDriverClause(string name, int arity)
     {
-        Term head, runGoal;
+        Term head, baseRun, recRun;
         if (arity == 0)
         {
             head = new AtomTerm(name);
-            runGoal = new AtomTerm("$tabled$" + name);
+            baseRun = new AtomTerm("$tbase$" + name);
+            recRun = new AtomTerm("$trec$" + name);
         }
         else
         {
             var vars = new Term[arity];
             for (int i = 0; i < arity; i++) vars[i] = new VarTerm("_Tbl" + i);
             head = new CompoundTerm(name, vars);
-            runGoal = new CompoundTerm("$tabled$" + name, vars);
+            baseRun = new CompoundTerm("$tbase$" + name, vars);
+            recRun = new CompoundTerm("$trec$" + name, vars);
         }
-        Term body = new CompoundTerm("$table_call", new[] { head, runGoal });
-        return Clause.From(new CompoundTerm(":-", new[] { head, body }));
+        Term body = new CompoundTerm("$table_call", new[] { head, baseRun, recRun });
+        return MakeRule(head, body);
     }
 
     private static bool TryReadModuleDirective(Term body, out string name)

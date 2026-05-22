@@ -75,9 +75,14 @@ internal static class Prelude
         :- public '$call_neg'/1.
         :- dynamic attribute_goals/4.
         :- dynamic '$tbl_running'/0.
-        :- dynamic '$tbl_subgoal'/3.
-        :- dynamic '$tbl_answers'/2.
-        :- public '$table_call'/2.
+        :- dynamic '$tbl_subgoal'/4.
+        :- dynamic '$tbl_ans'/2.
+        :- dynamic '$tbl_delta'/2.
+        :- dynamic '$tbl_newd'/2.
+        :- dynamic '$tbl_fresh'/1.
+        :- dynamic '$tbl_mode'/1.
+        :- public '$table_call'/3.
+        :- public '$tbl_consume'/3.
 
         %! member(?Elem, ?List) | Lists | Succeeds when Elem is a member of List; enumerates members on backtracking.
         member(X, [X|_]).
@@ -491,26 +496,43 @@ internal static class Prelude
         format_to_atom(Atom, Format, Args) :-
             with_output_to(atom(Atom), format(Format, Args)).
 
-        % ===== tabling (chunk 104) =====
-        % A `:- table p/N` predicate is transformed at consult time: its
-        % clauses are re-headed to '$tabled$p'/N and a driver clause
-        %   p(Args) :- '$table_call'(p(Args), '$tabled$p'(Args))
-        % is added. '$table_call' memoises answers and drives a global
-        % naive fixpoint, so left-recursive and cyclic definitions
-        % terminate. A subgoal's table entry is keyed by its variant.
+        % ===== tabling (chunks 104-106) =====
+        % A `:- table p/N` predicate is transformed at consult time. Its
+        % clauses are split: base clauses (no tabled body call) become
+        % '$tbase$p'/N, recursive clauses become '$trec$p'/N with the
+        % single tabled body literal turned into a '$tbl_consume' call. A
+        % driver clause routes p through '$table_call'.
         %
-        % The table lives in the runtime-asserted dynamic store. A direct
-        % call to a dynamic predicate sees only the query-setup snapshot,
-        % so the table is *read* with clause/2 (which consults the live
-        % store) — that is what makes a write earlier in the same query
-        % visible. The tabled goal is run inside findall via call/1, which
-        % keeps the findall in-engine so its assertz side effects persist.
-        '$table_call'(Goal, RunGoal) :-
+        % '$table_call' drives a *semi-naive* fixpoint: a subgoal's base
+        % answers are its first delta, and each round re-derives only what
+        % a producer's delta makes newly possible ('$tbl_consume' yields a
+        % producer's delta, not its whole answer set). A clause with two
+        % or more tabled literals, or a tabled call nested in a control
+        % construct, is left undifferentiated and re-run every round (it
+        % stays correct, just not accelerated).
+        %
+        % The table is the runtime dynamic store: answers, deltas and
+        % subgoals are individual asserted facts, so every update is O(1)
+        % (a list-per-subgoal would copy O(n) on every assert). It is read
+        % with clause/2 — a direct call to a dynamic predicate sees only
+        % the query-setup snapshot, whereas clause/2 consults the live
+        % store, so writes made earlier in the same query are visible.
+        % Duplicate answers are filtered by the engine-backed '$tbl_seen'
+        % set, an O(1) test — the semi-naive fixpoint would be quadratic
+        % if it instead scanned the asserted answers.
+        %
+        % The '$tbl_running' flag is raised before registering, because
+        % registration computes base answers and a base clause of a
+        % *complex* predicate can call a tabled predicate — that nested
+        % call must take the consumer path, not start a second fixpoint.
+        '$table_call'(Goal, BaseRun, RecRun) :-
             '$table_key'(Goal, Key),
-            '$table_register'(Key, Goal, RunGoal),
-            ( '$tbl_is_running' -> '$table_emit'(Key, Goal)
+            ( '$tbl_is_running' ->
+                '$table_register'(Key, Goal, BaseRun, RecRun),
+                '$table_emit'(Key, Goal)
             ; assertz('$tbl_running'),
-              '$table_fixpoint',
+              '$table_register'(Key, Goal, BaseRun, RecRun),
+              '$table_seminaive',
               retract('$tbl_running'),
               '$table_emit'(Key, Goal)
             ).
@@ -520,52 +542,91 @@ internal static class Prelude
 
         '$tbl_is_running' :- clause('$tbl_running', true), !.
 
-        % each subgoal's answers are kept as one fact holding a sorted,
-        % duplicate-free list — '$tbl_answers'(Key, SortedList). A pass
-        % deduplicates with a single sort/2 (O(n log n)) instead of a
-        % membership scan per solution (which made a pass O(n^2)).
-        '$table_register'(Key, Goal, RunGoal) :-
-            ( clause('$tbl_subgoal'(Key, _, _), true) -> true
-            ; assertz('$tbl_subgoal'(Key, Goal, RunGoal)),
-              assertz('$tbl_answers'(Key, []))
+        % register a subgoal. A new one has its base clauses evaluated at
+        % once — base clauses make no tabled call, so this is self-
+        % contained — and the result becomes both its answers and its
+        % first pending delta.
+        '$table_register'(Key, Goal, BaseRun, RecRun) :-
+            ( clause('$tbl_subgoal'(Key, _, _, _), true) -> true
+            ; assertz('$tbl_subgoal'(Key, Goal, BaseRun, RecRun)),
+              assertz('$tbl_fresh'(Key)),
+              findall(Goal, call(BaseRun), Raw),
+              '$table_absorb'(Key, Raw)
             ).
 
-        % naive fixpoint: re-run every registered subgoal until a pass
-        % grows no answer set and discovers no new subgoal.
-        '$table_fixpoint' :-
+        % file each derived answer that is new for this subgoal — '$tbl_seen'
+        % both tests and records — as both an answer and a pending delta.
+        '$table_absorb'(_, []).
+        '$table_absorb'(Key, [A|As]) :-
+            ( '$tbl_seen'(Key - A)
+              -> assertz('$tbl_ans'(Key, A)), assertz('$tbl_newd'(Key, A))
+              ;  true
+            ),
+            '$table_absorb'(Key, As).
+
+        '$table_emit'(Key, Goal) :- clause('$tbl_ans'(Key, Goal), true).
+
+        % the differentiated tabled call. It normally yields the producer
+        % subgoal's delta (the answers gained in the previous round); but
+        % when the *consuming* subgoal is running its first round (mode
+        % full) it yields the producer's whole answer set — a freshly
+        % discovered consumer must catch up on deltas emitted before it
+        % existed.
+        '$tbl_consume'(Goal, BaseRun, RecRun) :-
+            '$table_key'(Goal, Key),
+            '$table_register'(Key, Goal, BaseRun, RecRun),
+            ( clause('$tbl_mode'(full), true)
+              -> clause('$tbl_ans'(Key, Goal), true)
+              ;  clause('$tbl_delta'(Key, Goal), true)
+            ).
+
+        % semi-naive fixpoint: each iteration commits the pending deltas
+        % and re-runs every subgoal's recursive clauses against them.
+        % Running '$trec' is also what discovers new subgoals (its
+        % '$tbl_consume' calls register them), so a round runs even when
+        % every delta is empty; the loop ends when a round adds no answer
+        % and discovers no new subgoal. The loop recurses once per round,
+        % so a fixpoint deeper than the control stack (very long recursive
+        % chains) overflows — see the chunk-106 notes.
+        '$table_seminaive' :-
             '$table_count'(Before),
-            '$table_pass'(no, Changed),
+            '$table_commit',
+            '$table_round',
             '$table_count'(After),
-            ( ( Changed == yes ; After > Before ) -> '$table_fixpoint'
+            ( ( '$table_progress' ; After > Before ) -> '$table_seminaive'
             ; true
             ).
         '$table_count'(N) :-
-            findall(x, clause('$tbl_subgoal'(_, _, _), true), L), length(L, N).
+            findall(x, clause('$tbl_subgoal'(_, _, _, _), true), L), length(L, N).
+        '$table_progress' :- clause('$tbl_newd'(_, _), true), !.
 
-        '$table_pass'(Acc, Changed) :-
-            findall(K-G-R, clause('$tbl_subgoal'(K, G, R), true), Subgoals),
-            '$table_pass_each'(Subgoals, Acc, Changed).
-        '$table_pass_each'([], Acc, Acc).
-        '$table_pass_each'([K-G-R|Rest], Acc, Changed) :-
-            '$table_step'(K, G, R, C),
-            ( C == yes -> Acc2 = yes ; Acc2 = Acc ),
-            '$table_pass_each'(Rest, Acc2, Changed).
+        % the pending deltas ('$tbl_newd') become the deltas the next round
+        % consumes; old deltas are discarded.
+        '$table_commit' :-
+            retractall('$tbl_delta'(_, _)),
+            findall(K - A, clause('$tbl_newd'(K, A), true), Pairs),
+            retractall('$tbl_newd'(_, _)),
+            '$table_install'(Pairs).
+        '$table_install'([]).
+        '$table_install'([K - A|Rest]) :-
+            assertz('$tbl_delta'(K, A)),
+            '$table_install'(Rest).
 
-        % re-run one subgoal; sort/2 collapses the re-derived solutions to
-        % a canonical set, and the answer set is monotone, so a changed
-        % set is simply one that differs from the stored list.
-        '$table_step'(Key, Goal, RunGoal, Changed) :-
-            findall(Goal, call(RunGoal), Raw),
-            sort(Raw, NewAnswers),
-            clause('$tbl_answers'(Key, OldAnswers), true),
-            ( NewAnswers == OldAnswers -> Changed = no
-            ; retract('$tbl_answers'(Key, OldAnswers)),
-              assertz('$tbl_answers'(Key, NewAnswers)),
-              Changed = yes
-            ).
+        '$table_round' :-
+            findall(K, clause('$tbl_subgoal'(K, _, _, _), true), Keys),
+            '$table_round_each'(Keys).
+        '$table_round_each'([]).
+        '$table_round_each'([K|Ks]) :-
+            clause('$tbl_subgoal'(K, G, _, Rec), true),
+            ( retract('$tbl_fresh'(K)) -> '$tbl_set_mode'(full)
+            ; '$tbl_set_mode'(delta)
+            ),
+            findall(G, call(Rec), Raw),
+            '$table_absorb'(K, Raw),
+            '$table_round_each'(Ks).
 
-        '$table_emit'(Key, Goal) :-
-            clause('$tbl_answers'(Key, Answers), true),
-            member(Goal, Answers).
+        '$tbl_set_mode'(M) :-
+            ( retract('$tbl_mode'(_)) -> true ; true ),
+            assertz('$tbl_mode'(M)).
         """;
 }

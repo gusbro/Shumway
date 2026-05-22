@@ -93,6 +93,9 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("$all_clauses_of",            2, AllClausesOf);
         BuiltinsRegistry.Register("$all_predicate_indicators",  1, AllPredicateIndicators);
         BuiltinsRegistry.Register("$listable_predicates", 1, ListablePredicates);
+        // Tabling (chunk 106) — a per-engine string set giving the
+        // semi-naive driver an O(1) "is this answer new?" test.
+        BuiltinsRegistry.Register("$tbl_seen", 1, TableSeen);
         BuiltinsRegistry.Register("abolish",                    1, Abolish,
             Database, "abolish(+PredicateIndicator)", "Removes every clause of the named dynamic predicate.");
 
@@ -1899,6 +1902,48 @@ public static class MetaBuiltins
         int slot = engine.AllocateHeap(1);
         engine.SetHeap(slot, engine.GetRegister(regIdx));
         return TermReader.Materialize(engine, slot);
+    }
+
+    /// <summary><c>'$tbl_seen'/1</c> (chunk 106) — succeeds, recording the
+    /// argument, the first time it is called with a given (structurally
+    /// canonicalised) ground term; fails on every later call with an
+    /// equal term. The tabling driver uses it as an O(1) duplicate-answer
+    /// test, which is what makes the semi-naive fixpoint sub-quadratic —
+    /// the alternative, scanning the asserted answers, is O(n) per check.</summary>
+    public static bool TableSeen(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "'$tbl_seen'/1 requires a PrologEngine host.");
+        var sb = new System.Text.StringBuilder();
+        Canonicalize(MaterializeRegister(engine, 0), sb);
+        return host.RegisterTablingKey(sb.ToString());
+    }
+
+    /// <summary>Appends a structurally faithful, injective encoding of a
+    /// ground term to <paramref name="sb"/> — length-prefixed names so no
+    /// two distinct ground terms can collide.</summary>
+    private static void Canonicalize(Term t, System.Text.StringBuilder sb)
+    {
+        switch (t)
+        {
+            case AtomTerm a:
+                sb.Append('a').Append(a.Name.Length).Append('_').Append(a.Name);
+                break;
+            case IntTerm i:
+                sb.Append('i').Append(i.Value).Append('.');
+                break;
+            case CompoundTerm c:
+                sb.Append('c').Append(c.Functor.Length).Append('_').Append(c.Functor)
+                  .Append('/').Append(c.Args.Length).Append('(');
+                foreach (var arg in c.Args) Canonicalize(arg, sb);
+                sb.Append(')');
+                break;
+            default:
+                string s = t.ToString() ?? "";
+                sb.Append('o').Append(s.Length).Append('_').Append(s);
+                break;
+        }
     }
 
     /// <summary>Walks <paramref name="term"/> and replaces every
