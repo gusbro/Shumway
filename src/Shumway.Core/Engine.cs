@@ -1044,17 +1044,34 @@ public sealed class Engine
         return current;
     }
 
-    /// <summary>Appends a linked bytecode chunk to <see cref="CurrentProgram"/>,
-    /// growing it, and returns the chunk's start offset. Existing offsets
-    /// stay valid — the copy is append-only.</summary>
+    private int _programLength = -1;
+
+    /// <summary>Logical length of the program (ADR-015 chunk E).
+    /// <see cref="CurrentProgram"/> is over-allocated — capacity grows by
+    /// doubling — so <see cref="AppendCode"/> is amortised O(1) instead of
+    /// copying the whole buffer each call. The slack tail is zero (the
+    /// Invalid opcode), so a stray PC into it still fails loudly.</summary>
+    public int ProgramLength =>
+        _programLength >= 0 ? _programLength : (CurrentProgram?.Length ?? 0);
+
+    /// <summary>Appends a linked bytecode chunk to <see cref="CurrentProgram"/>
+    /// and returns its start offset. Existing offsets stay valid — the
+    /// content is only ever appended, never moved. Capacity doubling keeps
+    /// a long-running query's repeated dynamic recompiles from re-copying
+    /// the whole (growing) buffer each time.</summary>
     public int AppendCode(byte[] chunk)
     {
         byte[] program = CurrentProgram ?? Array.Empty<byte>();
-        int offset = program.Length;
-        var grown = new byte[offset + chunk.Length];
-        Array.Copy(program, grown, offset);
-        Array.Copy(chunk, 0, grown, offset, chunk.Length);
-        CurrentProgram = grown;
+        int offset = ProgramLength;
+        int needed = offset + chunk.Length;
+        if (needed > program.Length)
+        {
+            var grown = new byte[Math.Max(needed, program.Length * 2)];
+            Array.Copy(program, grown, offset);
+            CurrentProgram = program = grown;
+        }
+        Array.Copy(chunk, 0, program, offset, chunk.Length);
+        _programLength = needed;
         return offset;
     }
 

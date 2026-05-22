@@ -2108,7 +2108,7 @@ public sealed class PrologEngine
             rewritten, cache: null,
             unindexedFunctors: new HashSet<int> { fid },
             pools: _literalPools);
-        int loadOffset = engine.CurrentProgram!.Length;
+        int loadOffset = engine.ProgramLength;
         var link = new Linker().Link(module, loadOffset, externalSymbols: addressMap);
         engine.AppendCode(link.Bytecode);
         // A clause asserted mid-query may have interned new literals; give

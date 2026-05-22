@@ -410,8 +410,10 @@ pass rather than patched ad hoc.
   from its live clauses and the call redirected to it. ADR-015 chunk D
   (a `PrologQuery : IDisposable` lifecycle) was obviated by the
   recompile-on-modify design — it keeps no generation pins to release —
-  and dropped; chunk E (code-space compaction) is the only open
-  follow-up.
+  and dropped; chunk E fixed the program buffer's O(n³) growth under a
+  pathological assert-then-call loop (capacity doubling; chunk 119),
+  leaving incremental clause append as a profiling-driven refinement.
+  ADR-015 is substantially complete.
 
 ---
 

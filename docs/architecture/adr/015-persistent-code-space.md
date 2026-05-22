@@ -3,7 +3,8 @@
 ## Status
 
 Accepted (Phase 8) — design agreed in review, implemented in chunks
-A–C (114–118). The same-query dynamic-visibility bug is fixed.
+A–C (114–118) with chunk E's program-growth cost addressed (119). The
+same-query dynamic-visibility bug is fixed.
 
 The implementation followed the leaner §4.1 design (recompile-on-modify
 with an address redirect), not the §3/§4 born/died generation-filtered
@@ -11,8 +12,9 @@ sketch — so §3 (generation-filtered clause iteration), §4 (entry
 trampolines, incremental chain relink) and §6 (the `PrologQuery`
 lifecycle) describe a path not taken; §4.1 and the chunk A–C/D notes
 under "Implementation phasing" record what was actually built. Chunk D
-is obviated and dropped; chunk E (code-space compaction) is the only
-open follow-up.
+is obviated and dropped; chunk E's catastrophic program-growth cost is
+fixed (chunk 119), leaving incremental clause append as a
+profiling-driven refinement — the ADR is substantially complete.
 
 ## Context
 
@@ -309,13 +311,21 @@ Each is its own chunk, landing with the test suite green:
   by §4.1 (a new call recompiles; an in-progress call keeps its retained
   body). Should a future change reintroduce deferred physical removal,
   the lifecycle returns with it.
-- **E — Code-space compaction (follow-up).** Now the only open item. Each
-  mid-query dynamic recompile appends to the program buffer and the
-  superseded body is never reclaimed, so a single long-running query that
-  repeatedly asserts-then-calls a dynamic predicate grows the buffer
-  without bound (across queries there is no leak — the per-query buffer
-  is GC'd). A compaction pass would reclaim unreachable bytecode. Low
-  urgency: ordinary queries do few recompiles.
+- **E — Program-growth cost — addressed (chunk 119).** Measured the
+  pathological pattern (one query asserting-then-calling a dynamic
+  predicate in a loop, forcing a recompile each iteration):
+  `Engine.AppendCode` re-copied the whole growing buffer on every append
+  — O(n³) overall (n=1500: 11.5 s, 12.7 GB allocated). Capacity doubling
+  makes the append amortised O(1); n=1500 fell to 3.9 s / 1.5 GB. The
+  residual is O(n²), now dominated by recompiling the *whole* predicate
+  on each modification rather than buffer copying — its fix is
+  *incremental append* (compile and chain-link only the new clause,
+  §4), genuinely profiling-driven now that the catastrophic case is
+  gone. A moving "compaction" GC was the wrong framing: incremental
+  append *prevents* the superseded bodies rather than collecting them,
+  and relocating live code past in-flight choice points would be far
+  harder. (Across queries there is no leak regardless — the per-query
+  buffer is reclaimed by the GC when the query ends.)
 
 ## Quick reference
 
