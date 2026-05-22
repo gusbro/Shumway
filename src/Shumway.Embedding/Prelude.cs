@@ -74,6 +74,10 @@ internal static class Prelude
         :- public '$call_arrow'/3.
         :- public '$call_neg'/1.
         :- dynamic attribute_goals/4.
+        :- dynamic '$tbl_running'/0.
+        :- dynamic '$tbl_subgoal'/3.
+        :- dynamic '$tbl_answer'/2.
+        :- public '$table_call'/2.
 
         %! member(?Elem, ?List) | Lists | Succeeds when Elem is a member of List; enumerates members on backtracking.
         member(X, [X|_]).
@@ -486,5 +490,70 @@ internal static class Prelude
         %! format_to_atom(-Atom, +Format, +Args) | Input / output | Like format/2 but captures the formatted output into an atom.
         format_to_atom(Atom, Format, Args) :-
             with_output_to(atom(Atom), format(Format, Args)).
+
+        % ===== tabling (chunk 104) =====
+        % A `:- table p/N` predicate is transformed at consult time: its
+        % clauses are re-headed to '$tabled$p'/N and a driver clause
+        %   p(Args) :- '$table_call'(p(Args), '$tabled$p'(Args))
+        % is added. '$table_call' memoises answers and drives a global
+        % naive fixpoint, so left-recursive and cyclic definitions
+        % terminate. A subgoal's table entry is keyed by its variant.
+        %
+        % The table lives in the runtime-asserted dynamic store. A direct
+        % call to a dynamic predicate sees only the query-setup snapshot,
+        % so the table is *read* with clause/2 (which consults the live
+        % store) — that is what makes a write earlier in the same query
+        % visible. The tabled goal is run inside findall via call/1, which
+        % keeps the findall in-engine so its assertz side effects persist.
+        '$table_call'(Goal, RunGoal) :-
+            '$table_key'(Goal, Key),
+            '$table_register'(Key, Goal, RunGoal),
+            ( '$tbl_is_running' -> '$table_emit'(Key, Goal)
+            ; assertz('$tbl_running'),
+              '$table_fixpoint',
+              retract('$tbl_running'),
+              '$table_emit'(Key, Goal)
+            ).
+
+        % canonical (ground) key — variant subgoals share one entry.
+        '$table_key'(Goal, Key) :- copy_term(Goal, Key), numbervars(Key, 0, _).
+
+        '$tbl_is_running' :- clause('$tbl_running', true), !.
+
+        '$table_register'(Key, Goal, RunGoal) :-
+            ( clause('$tbl_subgoal'(Key, _, _), true) -> true
+            ; assertz('$tbl_subgoal'(Key, Goal, RunGoal))
+            ).
+
+        % naive fixpoint: re-run every registered subgoal until a pass
+        % adds no answer and discovers no new subgoal.
+        '$table_fixpoint' :-
+            '$table_count'(Before),
+            '$table_pass'(no, AnsChanged),
+            '$table_count'(After),
+            ( ( AnsChanged == yes ; After > Before ) -> '$table_fixpoint'
+            ; true
+            ).
+        '$table_count'(N) :-
+            findall(x, clause('$tbl_subgoal'(_, _, _), true), L), length(L, N).
+
+        '$table_pass'(Acc, Changed) :-
+            findall(K-G-R, clause('$tbl_subgoal'(K, G, R), true), Subgoals),
+            '$table_pass_each'(Subgoals, Acc, Changed).
+        '$table_pass_each'([], Acc, Acc).
+        '$table_pass_each'([K-G-R|Rest], Acc, Changed) :-
+            findall(G, call(R), Sols),
+            '$table_add'(K, Sols, no, C),
+            ( C == yes -> Acc2 = yes ; Acc2 = Acc ),
+            '$table_pass_each'(Rest, Acc2, Changed).
+
+        '$table_add'(_, [], Acc, Acc).
+        '$table_add'(Key, [S|Ss], Acc, Changed) :-
+            ( clause('$tbl_answer'(Key, S), true) -> Acc2 = Acc
+            ; assertz('$tbl_answer'(Key, S)), Acc2 = yes
+            ),
+            '$table_add'(Key, Ss, Acc2, Changed).
+
+        '$table_emit'(Key, Goal) :- clause('$tbl_answer'(Key, Goal), true).
         """;
 }

@@ -322,7 +322,20 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
   `shumway` executable running the full engine, interpreter-only. See
   [`docs/native-aot.md`](docs/native-aot.md) (incl. the Windows native-link
   toolchain requirement).
-- Tabling.
+- ✓ Tabling (chunk 104). `:- table p/N` memoises a predicate. At consult time
+  its clauses are re-headed to `'$tabled$p'/N` and a driver clause routes
+  every call through `'$table_call'`, which memoises answers and drives a
+  *global naive fixpoint* — so left-recursive and cyclic definitions
+  (transitive closure, mutual recursion) that loop under plain SLD resolution
+  now terminate. The answer/subgoal table lives in the runtime dynamic store
+  and is read with `clause/2`, since a direct call to a dynamic predicate
+  sees only the query-setup snapshot — `clause/2` consults the live store, so
+  a write made earlier in the same query is visible, and running the tabled
+  goal via `call/1` keeps `findall` in-engine so its `assertz`es persist.
+  Documented limitations: naive (not semi-naive) evaluation; definite
+  programs only (no tabled negation); answers assumed ground; the table
+  persists per engine, so retracting a clause after a tabled query can leave
+  a stale answer.
 
 ---
 

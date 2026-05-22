@@ -985,6 +985,7 @@ public sealed class PrologEngine
         var clauses = new List<Clause>();
         HashSet<int>? pendingDiscontiguous = null;
         HashSet<int>? pendingMultifile = null;
+        HashSet<int>? tabledFunctors = null;
         Dictionary<int, List<Shumway.Compiler.Modes.ModeDeclaration>>? pendingModes = null;
 
         foreach (var clause in rawClauses)
@@ -1045,6 +1046,13 @@ public sealed class PrologEngine
                     pendingMultifile.Add(FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a));
             }
+            else if (TryReadFunctorIndicatorDirective(body, "table", out var tableSpecs))
+            {
+                tabledFunctors ??= new HashSet<int>();
+                foreach (var (n, a) in tableSpecs)
+                    tabledFunctors.Add(FunctorTable.Intern(
+                        AtomTable.Intern(n, permanent: true).Id, a));
+            }
             else if (Shumway.Compiler.Modes.ModeDirectiveParser.TryParse(
                 body, out var modeDecl, out string? modeError))
             {
@@ -1096,6 +1104,13 @@ public sealed class PrologEngine
             }
             clauses = keptClauses;
         }
+
+        // Tabling (chunk 104): a `:- table p/N` predicate's clauses are
+        // re-headed to '$tabled$p'/N and a driver clause that routes
+        // through '$table_call' is synthesised. Done after the dynamic
+        // routing so it only sees the static clauses.
+        if (tabledFunctors is not null && tabledFunctors.Count > 0)
+            clauses = TransformTabledPredicates(clauses, tabledFunctors, publics);
 
         if (moduleDirectiveSeen)
         {
@@ -1213,6 +1228,86 @@ public sealed class PrologEngine
             return true;
         throw new InvalidOperationException(
             $"Malformed :- {directiveName} directive (expected Name/Arity or a list of them).");
+    }
+
+    /// <summary>Rewrites the clauses of every <c>:- table</c>d predicate:
+    /// each clause head <c>p(..)</c> becomes <c>'$tabled$p'(..)</c>, and a
+    /// driver clause <c>p(..) :- '$table_call'(p(..), '$tabled$p'(..))</c>
+    /// is appended. The tabled predicate's bodies still call <c>p</c>, so
+    /// every (recursive) call routes through the memoising driver.
+    ///
+    /// <para>Both <c>p/N</c> and <c>'$tabled$p'/N</c> are added to
+    /// <paramref name="publics"/>: the driver carries them in argument
+    /// (data) position where module mangling does not reach, so keeping
+    /// them unmangled is what makes the driver's references resolve to the
+    /// renamed clauses.</para></summary>
+    private static List<Clause> TransformTabledPredicates(
+        List<Clause> clauses, HashSet<int> tabled, HashSet<int> publics)
+    {
+        var result = new List<Clause>(clauses.Count + tabled.Count);
+        var withClauses = new HashSet<int>();
+        foreach (var c in clauses)
+        {
+            if (TryExtractHead(c, out string n, out int a))
+            {
+                int fid = FunctorTable.Intern(
+                    AtomTable.Intern(n, permanent: true).Id, a);
+                if (tabled.Contains(fid))
+                {
+                    result.Add(ReheadClause(c, "$tabled$" + n));
+                    withClauses.Add(fid);
+                    continue;
+                }
+            }
+            result.Add(c);
+        }
+        foreach (int fid in withClauses)
+        {
+            var (atomId, arity) = FunctorTable.Lookup(fid);
+            string name = AtomTable.GetById(atomId)!.Name;
+            result.Add(MakeTableDriverClause(name, arity));
+            publics.Add(fid);
+            publics.Add(FunctorTable.Intern(
+                AtomTable.Intern("$tabled$" + name, permanent: true).Id, arity));
+        }
+        return result;
+    }
+
+    /// <summary>Returns <paramref name="c"/> with its head functor
+    /// renamed to <paramref name="newName"/> (a fact or a rule head).</summary>
+    private static Clause ReheadClause(Clause c, string newName)
+    {
+        if (c.Term is CompoundTerm rule && rule.Functor == ":-" && rule.Args.Length == 2)
+            return Clause.From(new CompoundTerm(":-",
+                new[] { Rehead(rule.Args[0], newName), rule.Args[1] }));
+        return Clause.From(Rehead(c.Term, newName));
+    }
+
+    private static Term Rehead(Term head, string newName) => head switch
+    {
+        CompoundTerm ct => new CompoundTerm(newName, ct.Args),
+        _ => new AtomTerm(newName),
+    };
+
+    /// <summary>Builds <c>p(V..) :- '$table_call'(p(V..), '$tabled$p'(V..))</c>
+    /// for a tabled predicate of the given name and arity.</summary>
+    private static Clause MakeTableDriverClause(string name, int arity)
+    {
+        Term head, runGoal;
+        if (arity == 0)
+        {
+            head = new AtomTerm(name);
+            runGoal = new AtomTerm("$tabled$" + name);
+        }
+        else
+        {
+            var vars = new Term[arity];
+            for (int i = 0; i < arity; i++) vars[i] = new VarTerm("_Tbl" + i);
+            head = new CompoundTerm(name, vars);
+            runGoal = new CompoundTerm("$tabled$" + name, vars);
+        }
+        Term body = new CompoundTerm("$table_call", new[] { head, runGoal });
+        return Clause.From(new CompoundTerm(":-", new[] { head, body }));
     }
 
     private static bool TryReadModuleDirective(Term body, out string name)
