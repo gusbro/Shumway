@@ -404,14 +404,11 @@ pass rather than patched ad hoc.
   `abolish/1` — *do* see a change made earlier in the same query. What does
   not is a **direct call** to a dynamic predicate (and a `findall/3` over
   one): a query is compiled to a fixed bytecode program at setup, so the
-  predicate's clauses are baked in — `assertz(d(1)), d(1)` fails, though
-  ISO's logical update view says `d(1)` should see it. A correct fix is an
-  *architecture change* — a dynamic-predicate call must dispatch over the
-  live clause list at runtime. The contained-looking options were all
-  rejected: a sub-engine per call loses a dynamic clause body's side
-  effects; the proper path is a unified, growable code segment so
-  `assertz`/`retract` can append a recompiled predicate and relink, with
-  dynamic calls resolved through an indirection. Its own focused chunk.
+  predicate's clauses are baked in — `assertz(d(1)), d(1)` fails. The fix is
+  an architecture change — **designed in [ADR-015](docs/architecture/adr/015-persistent-code-space.md)**
+  (persistent code space, transient queries, generation-counter logical
+  update view, `PrologQuery : IDisposable` lifecycle). ADR-015 phases it
+  into chunks A–E; this backlog item is superseded by that ADR.
 
 ---
 
@@ -443,6 +440,7 @@ When proposing changes:
 | Mode inference roadmap | ADR-012 |
 | BigInt literal opcodes | ADR-013 |
 | IL choice points (multi-clause ABI) | ADR-014 |
+| Persistent code space & live dynamic dispatch | ADR-015 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | Builtins catalog | docs/design/builtins-catalog.md |
