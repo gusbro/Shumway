@@ -354,6 +354,43 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
   fixpoint deeper than ~1000 rounds (a very long recursive chain) overflows
   the control stack.
 
+**Phase 8 — Engine robustness (backlog)**
+
+Problems surfaced while building Phases 6–7, recorded here for a dedicated
+pass rather than patched ad hoc. The first four are interrelated — all about
+deep loops overflowing the control stack.
+
+- **Last-call optimisation (LCO).** The interpreter does not reclaim a
+  clause's environment on a last call, so a deep tail-recursive predicate
+  grows the control stack one frame per call. A left-recursive predicate is
+  expected to overflow (that is what tabling is for), but a *properly
+  tail-recursive* loop overflows too — surfaced by tabling's semi-naive
+  fixpoint loop (`'$table_seminaive'`), which recurses once per round and
+  overflows past ~1000 rounds. Restructuring the loop as a plain syntactic
+  last call did not help, confirming there is no LCO. This is the root
+  engine fix and the highest-value item.
+- **`between/3` in a failure-driven loop.** Replacing the fixpoint loop with
+  `between(1, BigN, _), ( Step -> fail ; ! )` — the textbook constant-stack
+  loop idiom — hung / crashed. `between/3` works for ordinary enumeration;
+  its behaviour *driving a failure-driven loop* was never diagnosed.
+  Investigate (suspected: it is not a constant-stack choice-point generator,
+  or backtracking through it interacts badly with the tabling asserts).
+- **`repeat`.** There is no `repeat` builtin — the ISO constant-stack
+  choice-point generator (`repeat/0`; a bounded `repeat/1` is also useful).
+  A correct `repeat` lets the tabling fixpoint loop — and any other deep
+  loop — be written failure-driven and constant-stack.
+- **Tabling fixpoint depth.** Consequence of the three above: the semi-naive
+  fixpoint overflows on a fixpoint deeper than ~1000 rounds. Resolved for
+  free once LCO lands, or once the loop can be made failure-driven.
+- **Same-query `assertz` visibility (ISO logical update view).** A query is
+  compiled to a fixed program at setup, so a direct call to a dynamic
+  predicate sees only that snapshot — `assertz(d(1)), d(X)` does not see
+  `d(1)` within the same query, though ISO's logical update view says a
+  goal sees the database as of when the goal began. `clause/2` *does*
+  consult the live store — that is the workaround the chunk-104 tabling
+  driver relies on. A real fix makes a compiled call to a dynamic predicate
+  re-resolve against the live `_dynamicClauses` store.
+
 ---
 
 ## Communication and Iteration
