@@ -81,8 +81,12 @@ internal static class Prelude
         :- dynamic '$tbl_newd'/2.
         :- dynamic '$tbl_fresh'/1.
         :- dynamic '$tbl_mode'/1.
+        :- dynamic '$tbl_neg_cache'/2.
         :- public '$table_call'/3.
         :- public '$tbl_consume'/3.
+        :- public '$tbl_negate'/1.
+        :- public abolish_all_tables/0.
+        :- public abolish_table/1.
 
         %! member(?Elem, ?List) | Lists | Succeeds when Elem is a member of List; enumerates members on backtracking.
         member(X, [X|_]).
@@ -628,5 +632,55 @@ internal static class Prelude
         '$tbl_set_mode'(M) :-
             ( retract('$tbl_mode'(_)) -> true ; true ),
             assertz('$tbl_mode'(M)).
+
+        % ----- tabled negation -----
+        % `\+ G` / `not(G)` over a tabled goal is rewritten at consult time
+        % to '$tbl_negate'(G). A monotone fixpoint cannot read a negated
+        % subgoal incrementally — the answer would depend on how far that
+        % subgoal had grown — so '$tbl_negate' evaluates G to *completion*
+        % in a fresh-table sub-engine ('$tbl_solve_complete') and caches the
+        % verdict. Sound for stratified programs (the negated subgoal does
+        % not depend on the negating one); a negative cycle does not
+        % terminate (true well-founded negation is future work).
+        '$tbl_negate'(Goal) :-
+            '$table_key'(Goal, Key),
+            ( clause('$tbl_neg_cache'(Key, Verdict), true) -> true
+            ; ( '$tbl_solve_complete'(Goal) -> Verdict = solutions
+              ; Verdict = none
+              ),
+              assertz('$tbl_neg_cache'(Key, Verdict))
+            ),
+            Verdict == none.
+
+        % ----- table invalidation -----
+        %! abolish_all_tables | Database | Discards every tabled answer; later queries recompute against the current program.
+        abolish_all_tables :-
+            retractall('$tbl_subgoal'(_, _, _, _)),
+            retractall('$tbl_ans'(_, _)),
+            retractall('$tbl_delta'(_, _)),
+            retractall('$tbl_newd'(_, _)),
+            retractall('$tbl_fresh'(_)),
+            retractall('$tbl_mode'(_)),
+            retractall('$tbl_running'),
+            retractall('$tbl_neg_cache'(_, _)),
+            '$tbl_seen_clear'.
+
+        %! abolish_table(+PredicateIndicator) | Database | Discards the tabled answers of one predicate, given as Name/Arity.
+        abolish_table(Name/Arity) :-
+            functor(Template, Name, Arity),
+            findall(K,
+                ( clause('$tbl_subgoal'(K, G, _, _), true), \+ \+ G = Template ),
+                Keys),
+            '$tbl_drop_each'(Keys),
+            retractall('$tbl_neg_cache'(_, _)),
+            '$tbl_seen_clear'.
+        '$tbl_drop_each'([]).
+        '$tbl_drop_each'([K|Ks]) :-
+            retractall('$tbl_subgoal'(K, _, _, _)),
+            retractall('$tbl_ans'(K, _)),
+            retractall('$tbl_delta'(K, _)),
+            retractall('$tbl_newd'(K, _)),
+            retractall('$tbl_fresh'(K)),
+            '$tbl_drop_each'(Ks).
         """;
 }

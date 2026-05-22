@@ -332,9 +332,17 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
   sees only the query-setup snapshot — `clause/2` consults the live store, so
   a write made earlier in the same query is visible, and running the tabled
   goal via `call/1` keeps `findall` in-engine so its `assertz`es persist.
-  Documented limitations: definite programs only (no tabled negation);
-  answers assumed ground; the table persists per engine, so retracting a
-  clause after a tabled query can leave a stale answer.
+  Documented limitations: answers assumed ground.
+  Chunk 107 adds **table invalidation** — `abolish_all_tables/0` and
+  `abolish_table/1` (by `Name/Arity`) discard cached answers so a later
+  query recomputes against the current program — and **tabled negation**:
+  the transform rewrites `\+ G` / `not(G)` over a tabled goal to
+  `'$tbl_negate'(G)`, which evaluates `G` to *completion* in a fresh-table
+  sub-engine (a monotone fixpoint cannot read a negated subgoal
+  incrementally) and caches the verdict. This is sound for **stratified**
+  programs — the negated subgoal must not depend on the negating one; a
+  negative cycle (e.g. `p :- \+ q` with `q :- \+ p`) does not terminate.
+  True well-founded negation is future work.
   Chunk 105 made a fixpoint pass O(n log n) rather than O(n²) by keeping
   each subgoal's answers as one sorted, duplicate-free list. Chunk 106 goes
   to genuine *semi-naive* evaluation: the consult-time transform splits each

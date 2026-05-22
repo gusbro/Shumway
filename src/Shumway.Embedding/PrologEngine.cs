@@ -615,6 +615,10 @@ public sealed class PrologEngine
     /// was not present (the answer is new), <c>false</c> when it was.</summary>
     internal bool RegisterTablingKey(string key) => _tablingSeen.Add(key);
 
+    /// <summary>Empties the tabling key set — part of table invalidation
+    /// (<c>abolish_all_tables/0</c>).</summary>
+    internal void ClearTablingKeys() => _tablingSeen.Clear();
+
     /// <summary>Stack of in-flight findall solution buffers (chunk 83).
     /// MetaTransform rewrites <c>findall/3</c> with a callable goal into a
     /// goal sequence driven by the <c>'$findall_*'</c> builtins, which run
@@ -1329,6 +1333,12 @@ public sealed class PrologEngine
         }
 
         var conjuncts = body is null ? new List<Term>() : FlattenConjunction(body);
+        // `\+ G` / `not(G)` over a tabled goal cannot be read off a
+        // monotone fixpoint — rewrite it to '$tbl_negate'(G), which
+        // evaluates G to completion before testing it.
+        for (int i = 0; i < conjuncts.Count; i++)
+            conjuncts[i] = RewriteNegation(conjuncts[i], tabled);
+
         int cleanCount = 0, cleanIndex = -1;
         bool hasComplex = false;
         for (int i = 0; i < conjuncts.Count; i++)
@@ -1347,23 +1357,37 @@ public sealed class PrologEngine
         Term baseHead = Rehead(head, "$tbase$" + name);
         Term recHead = Rehead(head, "$trec$" + name);
 
-        if (hasComplex || cleanCount >= 2)
+        if (conjuncts.Count == 0)
         {
-            baseOut.Add(MakeRule(baseHead, body!));
-            recOut.Add(MakeRule(recHead, body!));
+            baseOut.Add(Clause.From(baseHead));   // a fact
+        }
+        else if (hasComplex || cleanCount >= 2)
+        {
+            Term b = RebuildConjunction(conjuncts);
+            baseOut.Add(MakeRule(baseHead, b));
+            recOut.Add(MakeRule(recHead, b));
         }
         else if (cleanCount == 1)
         {
-            var rewritten = new List<Term>(conjuncts);
-            rewritten[cleanIndex] = MakeConsume(conjuncts[cleanIndex]);
-            recOut.Add(MakeRule(recHead, RebuildConjunction(rewritten)));
+            conjuncts[cleanIndex] = MakeConsume(conjuncts[cleanIndex]);
+            recOut.Add(MakeRule(recHead, RebuildConjunction(conjuncts)));
         }
         else
         {
-            baseOut.Add(body is null
-                ? Clause.From(baseHead)
-                : MakeRule(baseHead, body));
+            baseOut.Add(MakeRule(baseHead, RebuildConjunction(conjuncts)));
         }
+    }
+
+    /// <summary>Rewrites a body conjunct <c>\+ G</c> or <c>not(G)</c> whose
+    /// negated goal mentions a tabled predicate into <c>'$tbl_negate'(G)</c>;
+    /// every other conjunct is returned unchanged.</summary>
+    private static Term RewriteNegation(Term conjunct, HashSet<int> tabled)
+    {
+        if (conjunct is CompoundTerm c && c.Args.Length == 1
+            && (c.Functor == "\\+" || c.Functor == "not")
+            && ContainsTabledFunctor(c.Args[0], tabled))
+            return new CompoundTerm("$tbl_negate", new[] { c.Args[0] });
+        return conjunct;
     }
 
     private static Clause MakeRule(Term head, Term body)

@@ -108,6 +108,8 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | Predicate | Description |
 | --- | --- |
 | `abolish(+PredicateIndicator)` | Removes every clause of the named dynamic predicate. |
+| `abolish_all_tables` | Discards every tabled answer; later queries recompute against the current program. |
+| `abolish_table(+PredicateIndicator)` | Discards the tabled answers of one predicate, given as Name/Arity. |
 | `asserta(+Clause)` | Adds a clause to the front of its dynamic predicate. |
 | `assertz(+Clause)` | Adds a clause to the end of its dynamic predicate. |
 | `clause(+Head, ?Body)` | Enumerates the clauses (Head :- Body) of a predicate. |

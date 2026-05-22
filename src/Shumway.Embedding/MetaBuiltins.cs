@@ -96,6 +96,9 @@ public static class MetaBuiltins
         // Tabling (chunk 106) — a per-engine string set giving the
         // semi-naive driver an O(1) "is this answer new?" test.
         BuiltinsRegistry.Register("$tbl_seen", 1, TableSeen);
+        // Tabling (chunk 107) — table invalidation and tabled negation.
+        BuiltinsRegistry.Register("$tbl_seen_clear", 0, TableSeenClear);
+        BuiltinsRegistry.Register("$tbl_solve_complete", 1, TableSolveComplete);
         BuiltinsRegistry.Register("abolish",                    1, Abolish,
             Database, "abolish(+PredicateIndicator)", "Removes every clause of the named dynamic predicate.");
 
@@ -1918,6 +1921,38 @@ public static class MetaBuiltins
         var sb = new System.Text.StringBuilder();
         Canonicalize(MaterializeRegister(engine, 0), sb);
         return host.RegisterTablingKey(sb.ToString());
+    }
+
+    /// <summary><c>'$tbl_seen_clear'/0</c> (chunk 107) — empties the
+    /// engine's tabling key set, so a later re-derivation of a subgoal is
+    /// not deduplicated against answers from before a table invalidation.</summary>
+    public static bool TableSeenClear(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "'$tbl_seen_clear'/0 requires a PrologEngine host.");
+        host.ClearTablingKeys();
+        return true;
+    }
+
+    /// <summary><c>'$tbl_solve_complete'(+Goal)</c> (chunk 107) — succeeds
+    /// iff <paramref name="Goal"/> has at least one solution when run to a
+    /// <em>complete</em> tabled evaluation. It runs in a sub-engine whose
+    /// table is first abolished, so the negated subgoal's fixpoint is
+    /// computed in full and in isolation — which is what makes <c>\+</c>
+    /// over a tabled goal sound for a stratified program.</summary>
+    public static bool TableSolveComplete(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "'$tbl_solve_complete'/1 requires a PrologEngine host.");
+        Term goal = MaterializeRegister(engine, 0);
+        Term wrapped = new CompoundTerm(",",
+            new[] { (Term)new AtomTerm("abolish_all_tables"), goal });
+        var sub = host.CreateSubEngine();
+        foreach (var _ in sub.QueryAll(wrapped))
+            return true;
+        return false;
     }
 
     /// <summary>Appends a structurally faithful, injective encoding of a
