@@ -390,10 +390,12 @@ pass rather than patched ad hoc.
   list) overflowed the C# stack. Both now walk the list spine iteratively;
   the tabling fixpoint and deep list-building recursions that overflowed at
   ~1500–2000 run to 2500+ / 50 000+ (`Chunk111Tests`).
-- **`between/3` in a failure-driven loop.** An attempt to write the tabling
-  fixpoint loop as `between(1, BigN, _), ( Step -> fail ; ! )` — the textbook
-  constant-stack idiom — hung / crashed. May have been the chunk-111
-  materialiser overflow; worth re-checking now, and otherwise diagnosing.
+- ✅ **`between/3` in a failure-driven loop — resolved (chunk 112).**
+  Re-verified directly: `between(1, 500000, _), ( Step -> fail ; ! )` and
+  the `( between(...), fail ; true )` idiom run in constant stack, and
+  side effects from inside the loop persist (`Chunk112Tests`). The original
+  "hung / crashed" was the chunk-111 list-materialisation overflow inside
+  the loop body (the tabling round's `clause/2`), not `between/3`.
 - **`repeat`.** There is no `repeat` builtin — the ISO constant-stack
   choice-point generator (`repeat/0`; a bounded `repeat/1` is also useful).
   A correct `repeat` lets the tabling fixpoint loop — and any other deep
