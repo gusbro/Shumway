@@ -192,8 +192,24 @@ Each is its own chunk, landing with the test suite green:
   consumes them in the dynamic-dispatch clause iteration — stamping
   clauses before anything reads the stamps would be unconsumed
   speculative state.
-- **B — Persistent code space.** Compile static predicates once into the
-  persistent space; a query compiles only its transient `__query__<Id>`.
+- **B — Persistent code space.** Compile + link static predicates once
+  into a cached region; a query links only its transient `__query__<Id>`
+  (plus the dynamic snapshot, until chunk C) against that region.
+  - *Done (chunk 115):* the `Linker` external-symbols path — a predicate
+    set can be linked against an already-linked region's functor→address
+    map, so its `Call`s into that region are patched to real addresses
+    rather than the undefined sentinel.
+  - *Prerequisite that surfaced during scoping:* the string / float /
+    bigint **literal pools must become engine-persistent** with stable
+    ids. Today a pool is rebuilt per query, so a cached static region's
+    embedded pool ids would not survive to the next query. (The existing
+    `IsCachedPredicateReusable` guard sidesteps this for the per-predicate
+    caches by simply not caching predicates that touch pool literals;
+    caching the *whole* static region cannot dodge it.)
+  - *Remaining:* the `SetupQueryFromTerm` split — partition static vs
+    query+dynamic, cache the static link, link the query part with
+    external symbols, merge the address maps / switch tables /
+    `PredicatesByAddress`.
 - **C — Live dynamic dispatch.** `born`/`died` stamps on dynamic clauses
   with logical (deferred) `retract`; entry trampolines; `assertz` append +
   local relink; generation-filtered clause iteration. This is the chunk

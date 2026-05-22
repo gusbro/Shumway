@@ -27,18 +27,29 @@ public sealed class Linker
         IReadOnlyList<SwitchTable> SwitchTables,
         IReadOnlyDictionary<int, CompiledPredicate> PredicatesByAddress);
 
-    public LinkResult Link(CompiledModule module, int loadOffset = 0)
+    public LinkResult Link(
+        CompiledModule module, int loadOffset = 0,
+        IReadOnlyDictionary<int, int>? externalSymbols = null)
     {
         ArgumentNullException.ThrowIfNull(module);
-        return Link(module.Predicates, loadOffset);
+        return Link(module.Predicates, loadOffset, externalSymbols);
     }
 
     /// <summary>Concatenates the predicates' bytecode and patches every internal
     /// reference (call sites and choice-point dispatch BPs) so the result is
     /// runnable starting at byte <paramref name="loadOffset"/>. Pass a non-zero
     /// <paramref name="loadOffset"/> when the linked program will be appended
-    /// to a prefix (e.g. a launcher); every address is shifted by that much.</summary>
-    public LinkResult Link(IReadOnlyList<CompiledPredicate> predicates, int loadOffset = 0)
+    /// to a prefix (e.g. a launcher); every address is shifted by that much.
+    ///
+    /// <para><paramref name="externalSymbols"/> (ADR-015) maps functor ids to
+    /// already-linked absolute addresses outside this predicate set. A call
+    /// whose callee is not among <paramref name="predicates"/> is resolved
+    /// against it before falling back to the undefined-predicate sentinel —
+    /// so a transient query chunk can be linked against a persistent code
+    /// region that was linked earlier.</para></summary>
+    public LinkResult Link(
+        IReadOnlyList<CompiledPredicate> predicates, int loadOffset = 0,
+        IReadOnlyDictionary<int, int>? externalSymbols = null)
     {
         ArgumentNullException.ThrowIfNull(predicates);
 
@@ -74,9 +85,14 @@ public sealed class Linker
         // raises existence_error if (and only if) the call is reached.
         foreach (var (off, fid) in unresolvedCalls)
         {
-            int target = addresses.TryGetValue(fid, out int addr)
-                ? addr
-                : CallTarget.ForUndefined(fid);
+            int target;
+            if (addresses.TryGetValue(fid, out int addr))
+                target = addr;
+            else if (externalSymbols is not null
+                     && externalSymbols.TryGetValue(fid, out int extAddr))
+                target = extAddr;
+            else
+                target = CallTarget.ForUndefined(fid);
             BytecodeIO.WriteInt32(program, off + 1, target);
         }
 
