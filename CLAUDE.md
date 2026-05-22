@@ -342,12 +342,19 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
   `abolish_table/1` (by `Name/Arity`) discard cached answers so a later
   query recomputes against the current program — and **tabled negation**:
   the transform rewrites `\+ G` / `not(G)` over a tabled goal to
-  `'$tbl_negate'(G)`, which evaluates `G` to *completion* in a fresh-table
-  sub-engine (a monotone fixpoint cannot read a negated subgoal
-  incrementally) and caches the verdict. This is sound for **stratified**
-  programs — the negated subgoal must not depend on the negating one; a
-  negative cycle (e.g. `p :- \+ q` with `q :- \+ p`) does not terminate.
-  True well-founded negation is future work.
+  `'$tbl_negate'(G)`.
+  Chunk 109 makes that negation **well-founded**. A program with tabled
+  negation is evaluated by the *alternating fixpoint*: `W(K)` is one tabled
+  least-fixpoint in which `\+ a` succeeds iff `a ∉ K`; iterating `W` from
+  the empty set gives an increasing chain (limit `U`, the well-founded
+  *true* atoms) and a decreasing chain (limit `O`), with `U ⊆ O` and
+  `O \ U` the *undefined* atoms. So a negative cycle now **terminates** —
+  `p :- \+ p` makes `p` undefined; the win/lose/draw game gives draws as
+  undefined — where plain SLD would loop. A tabled query yields the true
+  answers; `well_founded(Goal, Status)` reports `true` / `false` /
+  `undefined`. (Negated atoms are assumed ground.) This subsumes the
+  chunk-107 stratified mechanism — for a stratified program the
+  alternation converges to the two-valued model.
   Chunk 105 made a fixpoint pass O(n log n) rather than O(n²) by keeping
   each subgoal's answers as one sorted, duplicate-free list. Chunk 106 goes
   to genuine *semi-naive* evaluation: the consult-time transform splits each

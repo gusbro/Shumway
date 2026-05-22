@@ -118,6 +118,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `listing(+Spec)` | Lists the clauses of the user-defined predicate named by Spec (Name or Name/Arity). |
 | `retract(+Clause)` | Removes the first clause that unifies with the argument. |
 | `retractall(+Head)` | Removes every clause whose head unifies with Head. |
+| `well_founded(+Goal, -Status)` | The well-founded truth value of a tabled Goal — true, false or undefined. |
 
 ## Lists
 

@@ -82,11 +82,16 @@ internal static class Prelude
         :- dynamic '$tbl_fresh'/1.
         :- dynamic '$tbl_mode'/1.
         :- dynamic '$tbl_neg_cache'/2.
+        :- dynamic '$wfs_mode'/0.
+        :- dynamic '$wfs_active'/0.
+        :- dynamic '$wfs_k'/1.
         :- public '$table_call'/3.
+        :- public '$tbl_dispatch'/3.
         :- public '$tbl_consume'/3.
         :- public '$tbl_negate'/1.
         :- public abolish_all_tables/0.
         :- public abolish_table/1.
+        :- public well_founded/2.
 
         %! member(?Elem, ?List) | Lists | Succeeds when Elem is a member of List; enumerates members on backtracking.
         member(X, [X|_]).
@@ -633,24 +638,82 @@ internal static class Prelude
             ( retract('$tbl_mode'(_)) -> true ; true ),
             assertz('$tbl_mode'(M)).
 
-        % ----- tabled negation -----
-        % `\+ G` / `not(G)` over a tabled goal is rewritten at consult time
-        % to '$tbl_negate'(G). A monotone fixpoint cannot read a negated
-        % subgoal incrementally — the answer would depend on how far that
-        % subgoal had grown — so '$tbl_negate' evaluates G to *completion*
-        % in a fresh-table sub-engine ('$tbl_solve_complete') and caches the
-        % verdict. Sound for stratified programs (the negated subgoal does
-        % not depend on the negating one); a negative cycle does not
-        % terminate (true well-founded negation is future work).
+        % ----- tabled negation: well-founded semantics -----
+        % `\+ G` over a tabled goal is rewritten at consult time to
+        % '$tbl_negate'(G). A monotone fixpoint cannot read a negated
+        % subgoal incrementally, so a program with tabled negation is
+        % evaluated by the *alternating fixpoint*. W(K) is one tabled
+        % least-fixpoint in which `\+ a` succeeds iff a is not in the
+        % assumption set K; iterating W from the empty set yields an
+        % increasing chain (limit U — the well-founded *true* atoms) and a
+        % decreasing chain (limit O), with U subset-of O. O minus U is the
+        % *undefined* atoms. This terminates on negative cycles — e.g.
+        % `p :- \+ p` makes p undefined — where plain SLD would loop.
+        %
+        % A tabled call routes through '$tbl_dispatch': inside a W-run
+        % ('$wfs_active') it is a plain '$table_call'; at the top level of
+        % a program that uses tabled negation ('$wfs_mode', a fact the
+        % consult-time transform adds) it runs the alternating fixpoint.
+        '$tbl_dispatch'(Goal, Base, Rec) :-
+            ( clause('$wfs_active', true) -> '$table_call'(Goal, Base, Rec)
+            ; clause('$wfs_mode', true)   -> '$wfs_query'(Goal)
+            ; '$table_call'(Goal, Base, Rec)
+            ).
+
+        % during a W-run `\+ G` is decided against the assumption K — but
+        % G is still run first (for its side effect of registering its
+        % subgoal) so its atoms are part of the model the fixpoint builds.
         '$tbl_negate'(Goal) :-
-            '$table_key'(Goal, Key),
-            ( clause('$tbl_neg_cache'(Key, Verdict), true) -> true
-            ; ( '$tbl_solve_complete'(Goal) -> Verdict = solutions
-              ; Verdict = none
-              ),
-              assertz('$tbl_neg_cache'(Key, Verdict))
-            ),
-            Verdict == none.
+            ( call(Goal), fail ; true ),
+            \+ clause('$wfs_k'(Goal), true).
+
+        '$wfs_query'(Goal) :-
+            assertz('$wfs_active'),
+            '$wfs_solve'(Goal, U, _),
+            retractall('$wfs_active'),
+            member(Goal, U).
+
+        %! well_founded(+Goal, -Status) | Database | The well-founded truth value of a tabled Goal — true, false or undefined.
+        well_founded(Goal, Status) :-
+            assertz('$wfs_active'),
+            '$wfs_solve'(Goal, U, O),
+            retractall('$wfs_active'),
+            ( '$wfs_memq'(Goal, U) -> Status = true
+            ; '$wfs_memq'(Goal, O) -> Status = undefined
+            ; Status = false
+            ).
+
+        % the alternating fixpoint: U = well-founded true atoms, O the
+        % over-estimate; O minus U are undefined.
+        '$wfs_solve'(Goal, U, O) :-
+            '$wfs_eval'(Goal, [], K1),
+            '$wfs_iterate'(Goal, [], K1, U, O).
+
+        % A = K(n-2), B = K(n-1); compute K(n) = W(B). Once K(n) = K(n-2)
+        % the sequence has entered its period-2 cycle and {B, K(n)} are
+        % the two limits — the smaller is U, the larger O.
+        '$wfs_iterate'(Goal, A, B, U, O) :-
+            '$wfs_eval'(Goal, B, Kn),
+            ( Kn == A
+              -> ( '$wfs_subset'(Kn, B) -> U = Kn, O = B ; U = B, O = Kn )
+              ;  '$wfs_iterate'(Goal, B, Kn, U, O)
+            ).
+
+        % W(K): one tabled least-fixpoint with `\+` resolved against K;
+        % yields the sorted set of every atom derived.
+        '$wfs_eval'(Goal, K, Atoms) :-
+            abolish_all_tables,
+            retractall('$wfs_k'(_)),
+            '$wfs_install'(K),
+            ( call(Goal), fail ; true ),   % run for side effect; do not bind Goal
+            findall(A, clause('$tbl_ans'(_, A), true), Raw),
+            sort(Raw, Atoms).
+        '$wfs_install'([]).
+        '$wfs_install'([A|As]) :- assertz('$wfs_k'(A)), '$wfs_install'(As).
+
+        '$wfs_subset'([], _).
+        '$wfs_subset'([X|Xs], Ys) :- '$wfs_memq'(X, Ys), '$wfs_subset'(Xs, Ys).
+        '$wfs_memq'(X, [Y|Ys]) :- ( X == Y -> true ; '$wfs_memq'(X, Ys) ).
 
         % ----- table invalidation -----
         %! abolish_all_tables | Database | Discards every tabled answer; later queries recompute against the current program.

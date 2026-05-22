@@ -1310,7 +1310,30 @@ public sealed class PrologEngine
             publics.Add(FunctorTable.Intern(
                 AtomTable.Intern("$trec$" + name, permanent: true).Id, arity));
         }
+
+        // If any clause body negates a tabled goal, mark the program for
+        // well-founded evaluation — '$tbl_dispatch' then routes a
+        // top-level tabled call through the alternating fixpoint.
+        foreach (var cl in result)
+            if (TermMentions(cl.Term, "$tbl_negate"))
+            {
+                result.Add(Clause.From(new AtomTerm("$wfs_mode")));
+                break;
+            }
         return result;
+    }
+
+    /// <summary>True when any subterm of <paramref name="t"/> is a
+    /// compound with the given functor.</summary>
+    private static bool TermMentions(Term t, string functor)
+    {
+        if (t is CompoundTerm c)
+        {
+            if (c.Functor == functor) return true;
+            foreach (var arg in c.Args)
+                if (TermMentions(arg, functor)) return true;
+        }
+        return false;
     }
 
     /// <summary>Classifies one tabled clause and appends its rewritten
@@ -1507,7 +1530,7 @@ public sealed class PrologEngine
             baseRun = new CompoundTerm("$tbase$" + name, vars);
             recRun = new CompoundTerm("$trec$" + name, vars);
         }
-        Term body = new CompoundTerm("$table_call", new[] { head, baseRun, recRun });
+        Term body = new CompoundTerm("$tbl_dispatch", new[] { head, baseRun, recRun });
         return MakeRule(head, body);
     }
 
