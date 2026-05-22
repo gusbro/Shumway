@@ -89,6 +89,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `halt(+Status)` | Halts the engine with the given exit code. |
 | `ignore(:Goal)` | Runs Goal, succeeding whether or not Goal does. |
 | `once(:Goal)` | Succeeds at most once — commits to the first solution of Goal. |
+| `repeat` | Succeeds, and succeeds again on every backtrack — an unbounded choice point. |
 | `throw(+Exception)` | Throws an exception term, unwinding to the nearest catch/3. |
 | `true` | Always succeeds. |
 

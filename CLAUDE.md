@@ -396,21 +396,22 @@ pass rather than patched ad hoc.
   side effects from inside the loop persist (`Chunk112Tests`). The original
   "hung / crashed" was the chunk-111 list-materialisation overflow inside
   the loop body (the tabling round's `clause/2`), not `between/3`.
-- **`repeat`.** There is no `repeat` builtin — the ISO constant-stack
-  choice-point generator (`repeat/0`; a bounded `repeat/1` is also useful).
-  A correct `repeat` lets the tabling fixpoint loop — and any other deep
-  loop — be written failure-driven and constant-stack.
-- **Tabling fixpoint depth.** Consequence of the three above: the semi-naive
-  fixpoint overflows on a fixpoint deeper than ~1000 rounds. Resolved for
-  free once LCO lands, or once the loop can be made failure-driven.
-- **Same-query `assertz` visibility (ISO logical update view).** A query is
-  compiled to a fixed program at setup, so a direct call to a dynamic
-  predicate sees only that snapshot — `assertz(d(1)), d(X)` does not see
-  `d(1)` within the same query, though ISO's logical update view says a
-  goal sees the database as of when the goal began. `clause/2` *does*
-  consult the live store — that is the workaround the chunk-104 tabling
-  driver relies on. A real fix makes a compiled call to a dynamic predicate
-  re-resolve against the live `_dynamicClauses` store.
+- ✅ **`repeat/0` — done (chunk 113).** A builtin: succeeds, and pushes a
+  self-re-arming choice point so it re-succeeds on every backtrack — the ISO
+  constant-stack failure-loop generator.
+- **Same-query dynamic-predicate visibility (ISO logical update view).**
+  Verified (chunk 113): the live-store builtins — `clause/2`, `retract/1`,
+  `abolish/1` — *do* see a change made earlier in the same query. What does
+  not is a **direct call** to a dynamic predicate (and a `findall/3` over
+  one): a query is compiled to a fixed bytecode program at setup, so the
+  predicate's clauses are baked in — `assertz(d(1)), d(1)` fails, though
+  ISO's logical update view says `d(1)` should see it. A correct fix is an
+  *architecture change* — a dynamic-predicate call must dispatch over the
+  live clause list at runtime. The contained-looking options were all
+  rejected: a sub-engine per call loses a dynamic clause body's side
+  effects; the proper path is a unified, growable code segment so
+  `assertz`/`retract` can append a recompiled predicate and relink, with
+  dynamic calls resolved through an indirection. Its own focused chunk.
 
 ---
 

@@ -69,6 +69,9 @@ public static class MetaBuiltins
         // `!` in a runtime compound goal cuts to the enclosing call's
         // barrier. Like call/N it is intercepted by the interpreter.
         BuiltinsRegistry.Register("$call", 2, CallWithBarrier);
+        BuiltinsRegistry.Register("repeat", 0, Repeat,
+            Control, "repeat",
+            "Succeeds, and succeeds again on every backtrack — an unbounded choice point.");
 
         BuiltinsRegistry.Register("assertz", 1, Assertz,
             Database, "assertz(+Clause)", "Adds a clause to the end of its dynamic predicate.");
@@ -1208,6 +1211,28 @@ public static class MetaBuiltins
     /// trail unwind on backtrack peels off the current solution's
     /// bindings and leaves the heap in the state expected by the next
     /// solution.</para></summary>
+    /// <summary><c>repeat/0</c> — succeeds, and pushes a choice point that
+    /// re-succeeds on every backtrack, re-arming itself each time. The
+    /// classic non-terminating generator for failure-driven loops.</summary>
+    public static bool Repeat(Engine engine)
+    {
+        // call_builtin is 9 bytes; resume execution at the goal after it.
+        ArmRepeat(engine, engine.P + 9);
+        return true;
+    }
+
+    private static void ArmRepeat(Engine engine, int returnPc)
+    {
+        engine.PushBuiltinChoicePoint(
+            (e, _) =>
+            {
+                ArmRepeat(e, returnPc);
+                e.ResumeAtReturnPc(returnPc);
+                return true;
+            },
+            arity: 0);
+    }
+
     private static bool AdvanceCallNEnumerator(
         Engine engine, IEnumerator<Solution> iter, int returnPc, bool isResume)
     {
