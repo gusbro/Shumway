@@ -113,44 +113,52 @@ and relinks the predicate's `try/retry/trust` chain locally (O(1) — patch
 the previous last clause). `retract` sets `died`. Because the *entry*
 address never moves, callers' linked `Call`s never go stale.
 
-#### 4.1 Concrete design (refined while scoping chunk C)
+#### 4.1 Concrete design — recompile-on-modify with an address redirect
 
 After chunk B the program is `prefix | static region | query region`,
 and a dynamic predicate is still snapshot-compiled into the per-query
-region. The remaining work — making a *direct call* see the live store —
-needs the dynamic predicates to leave the transient region:
+region — correct as of query setup, stale after a mid-query `assertz`.
+The implementation scoping settled on this design (leaner than the
+two-segment sketch it replaces — no new code-addressing mechanism):
 
-- **Two code segments.** The engine holds two buffers. The *persistent*
-  one is `prefix | static | dynamic`; its dynamic sub-region is
-  append-only — each dynamic predicate has a fixed-address entry
-  trampoline, and `assertz` appends the new clause's bytecode and
-  relinks the `try/retry/trust` chain (trampoline + chain head stay
-  put). The *transient* buffer holds the per-query region, rebuilt and
-  discarded each query. The interpreter selects the buffer by address
-  range — below a fixed boundary is persistent, at/above is transient;
-  `Call` / `Execute` / `Cp` stay plain ints. This range check on each
-  code fetch is the one interpreter change.
-- **Why the two segments.** The dynamic region must be persistent and
-  growable; the query region is transient. Both "want the end" of a
-  single append-only buffer and would interleave — so they are separate
-  buffers.
-- **Clauses stay compiled, so cut is free.** Because a dynamic clause
-  is real bytecode, a `!` in its body is an ordinary `cut` opcode
-  cutting to the predicate entry — no special handling. The rejected
-  alternative — a builtin that interprets clause terms — cannot get cut
-  right without re-implementing clause dispatch (a `!` reached through
-  `call/1` is local to the call, not the predicate).
-- **Generation-filtered chain walk.** The `try`/`retry`/`trust` dispatch
-  skips a clause whose `[born, died)` range does not contain the calling
-  query's captured generation — the logical update view (§3).
-- **Static→dynamic calls** (chunk B's `UnresolvedSites`): once a dynamic
-  predicate has a stable trampoline address, a static predicate's
-  `Call dynamic` is patched once to the trampoline and chunk B's
-  per-query re-patch is no longer needed.
+- **Growable program, with slack.** The query program buffer is
+  allocated with spare capacity; the engine can append to it. The
+  interpreter re-reads `code` from `engine.CurrentProgram` at the top of
+  its dispatch loop, so an append (or, on slack exhaustion, a realloc)
+  is picked up. Choice-point and `Cp` addresses are offsets — stable
+  across an append.
+- **Address redirect.** `engine` holds a map *setup-address →
+  current-address*, empty for a query that never modifies the database
+  (so the common path pays only one emptiness check per call). When
+  `assertz` / `retract` / `abolish` touches a dynamic predicate `d/N`
+  mid-query, it marks `d`'s setup entry address *stale* in the map —
+  O(1), no recompilation yet.
+- **Lazy recompile.** A `Call` / `Execute` whose target is redirected to
+  the *stale* marker triggers a host recompile: `d/N`'s current clauses
+  are compiled (unindexed — so no switch-table-table growth), linked at
+  the program's end against the query's symbol map, appended, and the
+  redirect updated to the real new address. So a bulk `assertz` loop
+  stays O(1) per assert; a predicate is recompiled at most once per
+  call that follows a batch of edits.
+- **The logical update view falls out.** Old compiled bodies are never
+  freed, so a call already backtracking through an old body keeps its
+  clause set, while a *new* call redirects to the freshly compiled body
+  — a goal sees the database as of when it began.
+- **Clauses stay compiled, so cut is free.** A `!` in a dynamic clause
+  body is an ordinary `cut` opcode. The rejected alternative — a builtin
+  that interprets clause terms — cannot get cut right without
+  re-implementing clause dispatch (a `!` reached through `call/1` is
+  local to the call, not the predicate).
+- **Literal pools.** A clause asserted mid-query may carry a new string
+  / float / bigint literal; the interpreter re-reads the literal pools
+  from the engine alongside `code`, since the persistent pools (chunk B)
+  may have grown. Atoms and inline integers are unaffected (global atom
+  table / in-cell payload).
 
-This is the single largest chunk of the ADR — a new code-addressing
-mechanism plus generation-aware clause dispatch — and is best taken as
-its own focused effort rather than appended to an A/B session.
+This is the single largest chunk of the ADR — a growable program plus
+the redirect/recompile machinery, ~5 interacting pieces with no
+green-landable sub-increment — and is best taken as its own focused
+effort with incremental build/test cycles.
 
 ### 5. Re-consult relink
 
