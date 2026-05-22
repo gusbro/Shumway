@@ -2001,9 +2001,21 @@ public sealed class PrologEngine
             CurrentStringLiterals = module.StringLiterals,
             CurrentProgram = program,
         };
+
         var interp = new BytecodeInterpreter(
             engine, module.StringLiterals, module.FloatLiterals,
             linkResult.SwitchTables, module.BigIntLiterals);
+
+        // ADR-015 chunk C: live dynamic dispatch. Map each dynamic
+        // predicate's query-setup entry address back to its functor, and
+        // wire the recompiler so an assertz / retract / abolish during
+        // this query is picked up on the predicate's next call.
+        var dynReverse = new Dictionary<int, int>();
+        foreach (var (fid, addr) in addressMap)
+            if (_dynamicFunctors.Contains(fid))
+                dynReverse[addr] = fid;
+        engine.DynamicRecompiler = setupAddr =>
+            RecompileDynamicPredicate(dynReverse[setupAddr], engine, interp, addressMap);
         // Tier-1 promotion: hook the interpreter up to this engine's
         // IlPromotionStore via an address-keyed adapter. The store itself
         // is functor-keyed and persists across queries; the adapter holds
@@ -2047,6 +2059,65 @@ public sealed class PrologEngine
         }
 
         return (program, varNames, varHeapIndices, engine, interp);
+    }
+
+    /// <summary>ADR-015 chunk C: recompiles a dynamic predicate from its
+    /// current clauses and appends the bytecode to the running program,
+    /// returning the new entry address. Invoked lazily — on the first call
+    /// to the predicate after an <c>assertz</c> / <c>retract</c> /
+    /// <c>abolish</c> marked it stale. The clauses run through the same
+    /// transform pipeline as query setup; the predicate is compiled
+    /// unindexed (so there are no switch tables to merge into the running
+    /// interpreter) and linked against the query's existing symbol map, so
+    /// its body's calls into static — or other dynamic — predicates
+    /// resolve. Old compiled bodies are left in place, so a call already
+    /// backtracking through one keeps its clause set (the logical update
+    /// view).</summary>
+    private int RecompileDynamicPredicate(
+        int fid, Engine engine, BytecodeInterpreter interp,
+        IReadOnlyDictionary<int, int> addressMap)
+    {
+        IEnumerable<Clause> clauses = _dynamicClauses.TryGetValue(fid, out var cs)
+            ? cs : System.Array.Empty<Clause>();
+        var transformed = PhraseTransform.Apply(
+            MetaTransform.Apply(DcgTransform.Apply(clauses)));
+        transformed = Shumway.Compiler.Modes.ModeSpecializationTransform.Apply(
+            transformed, Modes);
+        var dynCtx = new ModuleRewrite.Context(
+            DefaultModuleName, new HashSet<int>(), _dynamicFunctors);
+        var rewritten = new List<Clause>();
+        foreach (var clause in transformed)
+            rewritten.Add(ModuleRewrite.Rewrite(clause, dynCtx));
+
+        // No clauses (all retracted, or only ever declared): a fail-only
+        // stub so the predicate still links and a call to it fails.
+        if (rewritten.Count == 0)
+        {
+            var (atomId, arity) = FunctorTable.Lookup(fid);
+            string name = AtomTable.GetById(atomId)?.Name ?? "?";
+            Term head = arity == 0
+                ? (Term)new AtomTerm(name)
+                : new CompoundTerm(name, Enumerable.Range(0, arity)
+                    .Select(_ => (Term)new VarTerm("_")).ToArray());
+            rewritten.Add(new Clause(ClauseKind.Rule,
+                new CompoundTerm(":-", new[] { head, (Term)new AtomTerm("fail") }),
+                default));
+        }
+
+        var module = new ModuleCompiler().Compile(
+            rewritten, cache: null,
+            unindexedFunctors: new HashSet<int> { fid },
+            pools: _literalPools);
+        int loadOffset = engine.CurrentProgram!.Length;
+        var link = new Linker().Link(module, loadOffset, externalSymbols: addressMap);
+        engine.AppendCode(link.Bytecode);
+        // A clause asserted mid-query may have interned new literals; give
+        // the interpreter (and the IL path) the grown pools.
+        var strings = _literalPools.Strings.Snapshot();
+        interp.RefreshLiteralPools(
+            strings, _literalPools.Floats.Snapshot(), _literalPools.BigInts.Snapshot());
+        engine.CurrentStringLiterals = strings;
+        return link.Addresses[fid];
     }
 
     /// <summary>Adds a fail-only stub clause for every dynamic functor that

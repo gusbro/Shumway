@@ -399,16 +399,17 @@ pass rather than patched ad hoc.
 - ✅ **`repeat/0` — done (chunk 113).** A builtin: succeeds, and pushes a
   self-re-arming choice point so it re-succeeds on every backtrack — the ISO
   constant-stack failure-loop generator.
-- **Same-query dynamic-predicate visibility (ISO logical update view).**
-  Verified (chunk 113): the live-store builtins — `clause/2`, `retract/1`,
-  `abolish/1` — *do* see a change made earlier in the same query. What does
-  not is a **direct call** to a dynamic predicate (and a `findall/3` over
-  one): a query is compiled to a fixed bytecode program at setup, so the
-  predicate's clauses are baked in — `assertz(d(1)), d(1)` fails. The fix is
-  an architecture change — **designed in [ADR-015](docs/architecture/adr/015-persistent-code-space.md)**
-  (persistent code space, transient queries, generation-counter logical
-  update view, `PrologQuery : IDisposable` lifecycle). ADR-015 phases it
-  into chunks A–E; this backlog item is superseded by that ADR.
+- ✅ **Same-query dynamic-predicate visibility (ISO logical update view) —
+  resolved (chunks 114–118, [ADR-015](docs/architecture/adr/015-persistent-code-space.md)).**
+  A direct call to a dynamic predicate (and a `findall/3` over one) now
+  sees a change made earlier in the same query — `assertz(d(1)), d(1)`
+  succeeds. ADR-015 chunk A added the generation counter; chunk B made the
+  static program a persistent linked region so a query links only its
+  transient part; chunk C made a dynamic-predicate call live — the program
+  buffer grows, and a predicate modified mid-query is lazily recompiled
+  from its live clauses and the call redirected to it. ADR-015 chunks D
+  (`PrologQuery : IDisposable` lifecycle) and E (code-space compaction)
+  remain future work.
 
 ---
 

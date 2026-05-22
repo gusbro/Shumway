@@ -949,6 +949,7 @@ public static class MetaBuiltins
             int fid = FunctorTable.Intern(
                 AtomTable.Intern(name.Name, permanent: true).Id, (int)arity.Value);
             host.AbolishDynamic(fid);
+            MarkDynamicModified(engine, fid);
             return true;
         }
 
@@ -1293,6 +1294,17 @@ public static class MetaBuiltins
     public static bool Assertz(Engine engine) => AssertImpl(engine, prepend: false);
     public static bool Asserta(Engine engine) => AssertImpl(engine, prepend: true);
 
+    /// <summary>ADR-015 chunk C: marks the dynamic predicate
+    /// <paramref name="fid"/> modified since query setup, so the next
+    /// call to it triggers a recompile against the live clause store.
+    /// A no-op when the predicate was never linked into this query.</summary>
+    private static void MarkDynamicModified(Engine engine, int fid)
+    {
+        if (engine.CurrentFunctorAddresses is { } map
+            && map.TryGetValue(fid, out int setupAddress))
+            engine.MarkDynamicStale(setupAddress);
+    }
+
     private static bool AssertImpl(Engine engine, bool prepend)
     {
         if (engine.Host is not PrologEngine host)
@@ -1303,6 +1315,7 @@ public static class MetaBuiltins
         var clause = Shumway.Compiler.Ast.Clause.From(clauseTerm);
         if (prepend) host.Asserta(clause);
         else host.Assertz(clause);
+        MarkDynamicModified(engine, ExtractHeadFunctorIdFromClause(clause));
         return true;
     }
 
@@ -1364,6 +1377,7 @@ public static class MetaBuiltins
         engine.SetHeap(candSlot, candidateCell);
         engine.UnifyRegisterWithHeapAt(0, candSlot);   // matched in FindRetractMatch
         host.RemoveDynamicByReference(patternFid, candidate);
+        MarkDynamicModified(engine, patternFid);
         engine.SetHb(savedHb);
         if (isResume) engine.ResumeAtReturnPc(returnPc);
         return true;

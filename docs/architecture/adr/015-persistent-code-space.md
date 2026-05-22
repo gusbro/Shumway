@@ -269,10 +269,24 @@ Each is its own chunk, landing with the test suite green:
     `program` once the dynamic addresses are known. (A fully stable
     dynamic entry address — chunk C's trampolines — will later let even
     those sites link once.)
-- **C — Live dynamic dispatch.** `born`/`died` stamps on dynamic clauses
-  with logical (deferred) `retract`; entry trampolines; `assertz` append +
-  local relink; generation-filtered clause iteration. This is the chunk
-  that fixes the headline bug.
+- **C — Live dynamic dispatch.** ✅ *Done (chunk 118)* — the headline bug
+  is fixed: `assertz(d(1)), d(1)` succeeds in one query, as does a
+  `findall/3` over a dynamic predicate. Implemented per §4.1: the program
+  buffer grows (`Engine.AppendCode`); the interpreter re-reads `code` each
+  dispatch-loop iteration; `Engine` holds a setup-address → current-address
+  redirect map (empty for queries that never touch the database, so the
+  common path pays one emptiness check per call). `assertz` / `retract` /
+  `abolish` mark the predicate's entry stale; the first `Call` / `Execute`
+  that hits the stale marker lazily recompiles the predicate (unindexed)
+  from its live clauses, links it at the program's end against the query's
+  symbol map, appends it, and updates the redirect. Old compiled bodies
+  are retained, so an in-progress backtracking call keeps its clause set —
+  the logical update view. The interpreter's literal pools are refreshed
+  (`RefreshLiteralPools`) since a mid-query clause may intern new literals.
+  *Deferred:* `born`/`died` generation stamps for a finer logical update
+  view, entry trampolines and incremental chain relink (a perf refinement
+  over whole-predicate recompile) remain future work — the recompile-on-
+  modify redirect already delivers correct same-query visibility.
 - **D — Query lifecycle.** `PrologQuery : IDisposable`; finalizer that
   enqueues; safe-point drain releasing generation pins.
 - **E — Code-space compaction (follow-up).** Reclaim unreachable bytecode.

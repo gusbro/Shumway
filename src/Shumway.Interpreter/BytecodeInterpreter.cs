@@ -22,9 +22,12 @@ namespace Shumway.Interpreter;
 public sealed class BytecodeInterpreter
 {
     private readonly Engine _engine;
-    private readonly IReadOnlyList<string> _stringLiterals;
-    private readonly IReadOnlyList<double> _floatLiterals;
-    private readonly IReadOnlyList<System.Numerics.BigInteger> _bigIntLiterals;
+    // Not readonly: ADR-015 chunk C recompiles a dynamic predicate
+    // mid-query, which may intern new literals into the persistent pools;
+    // RefreshLiteralPools swaps in the grown snapshots.
+    private IReadOnlyList<string> _stringLiterals;
+    private IReadOnlyList<double> _floatLiterals;
+    private IReadOnlyList<System.Numerics.BigInteger> _bigIntLiterals;
     private readonly IReadOnlyList<SwitchTable> _switchTables;
 
     /// <summary>Floor for <see cref="TryBacktrack"/>: choice points at or
@@ -134,6 +137,18 @@ public sealed class BytecodeInterpreter
     public IReadOnlyList<string> StringLiterals => _stringLiterals;
     public IReadOnlyList<double> FloatLiterals => _floatLiterals;
     public IReadOnlyList<System.Numerics.BigInteger> BigIntLiterals => _bigIntLiterals;
+
+    /// <summary>ADR-015 chunk C: swaps in the grown literal pools after a
+    /// mid-query dynamic-predicate recompile interned new literals.</summary>
+    public void RefreshLiteralPools(
+        IReadOnlyList<string> strings,
+        IReadOnlyList<double> floats,
+        IReadOnlyList<System.Numerics.BigInteger> bigInts)
+    {
+        _stringLiterals = strings;
+        _floatLiterals = floats;
+        _bigIntLiterals = bigInts;
+    }
     public IReadOnlyList<SwitchTable> SwitchTables => _switchTables;
 
     /// <summary>
@@ -210,6 +225,9 @@ public sealed class BytecodeInterpreter
     {
         while (true)
         {
+            // ADR-015 chunk C: a dynamic-predicate recompile appends to
+            // the program, replacing the array — pick the current one up.
+            code = _engine.CurrentProgram ?? code;
             int pc = _engine.P;
             // Negative PC indicates "returned past the top" — the same
             // semantics as proceed's Cp<0 early-return. Used by
@@ -255,10 +273,14 @@ public sealed class BytecodeInterpreter
                         break;
                     }
                     int target = BytecodeIO.ReadInt32(code, pc + 1);
+                    int numLivePerms = BytecodeIO.ReadInt32(code, pc + 5);
+                    // ADR-015 chunk C: a dynamic predicate modified mid-
+                    // query is redirected (lazily recompiled) here.
+                    if (_engine.HasDynamicRedirects)
+                        target = _engine.ResolveDynamicTarget(target);
                     if (CallTarget.IsUnresolved(target))
                         throw PrologRuntimeException.UndefinedProcedure(
                             CallTarget.FunctorIdOf(target));
-                    int numLivePerms = BytecodeIO.ReadInt32(code, pc + 5);
                     // Env trimming (chunk 57): shrink the current frame to
                     // num_live_perms Y slots before dispatching, so the callee's
                     // pushes (CP, allocate) sit just above the live region of
@@ -278,6 +300,8 @@ public sealed class BytecodeInterpreter
                         break;
                     }
                     int target = BytecodeIO.ReadInt32(code, pc + 1);
+                    if (_engine.HasDynamicRedirects)
+                        target = _engine.ResolveDynamicTarget(target);
                     if (CallTarget.IsUnresolved(target))
                         throw PrologRuntimeException.UndefinedProcedure(
                             CallTarget.FunctorIdOf(target));

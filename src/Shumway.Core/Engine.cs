@@ -992,8 +992,71 @@ public sealed class Engine
     /// <summary>Per-query bytecode program, set alongside
     /// <see cref="CurrentFunctorAddresses"/>. IL-emitted <c>Call</c>
     /// opcodes (chunk 50) re-enter the bytecode interpreter on this
-    /// program to run sub-predicates synchronously.</summary>
+    /// program to run sub-predicates synchronously. ADR-015 chunk C: the
+    /// program grows — a dynamic predicate modified mid-query is
+    /// recompiled and appended via <see cref="AppendCode"/>.</summary>
     public byte[]? CurrentProgram { get; set; }
+
+    // --- ADR-015 chunk C: live dynamic-predicate dispatch --------------
+
+    /// <summary>Redirect map from a dynamic predicate's query-setup entry
+    /// address to its current one. Empty for a query that never modifies
+    /// the database, so a call pays only an emptiness check. A
+    /// <see cref="DynamicStale"/> value means the predicate was modified
+    /// and must be recompiled on the next call.</summary>
+    private Dictionary<int, int>? _dynamicRedirects;
+
+    /// <summary>Sentinel: a dynamic predicate marked modified-since-setup,
+    /// awaiting lazy recompilation on its next call.</summary>
+    public const int DynamicStale = int.MinValue;
+
+    /// <summary>True once any dynamic predicate has been marked stale —
+    /// the interpreter only consults the redirect map when this holds.</summary>
+    public bool HasDynamicRedirects => _dynamicRedirects is { Count: > 0 };
+
+    /// <summary>Host-supplied recompiler: given a dynamic predicate's
+    /// query-setup entry address, recompiles its current clauses, appends
+    /// the bytecode (<see cref="AppendCode"/>), and returns the new entry
+    /// address.</summary>
+    public Func<int, int>? DynamicRecompiler { get; set; }
+
+    /// <summary>Marks the dynamic predicate entered at
+    /// <paramref name="setupAddress"/> as modified since query setup.</summary>
+    public void MarkDynamicStale(int setupAddress)
+    {
+        _dynamicRedirects ??= new Dictionary<int, int>();
+        _dynamicRedirects[setupAddress] = DynamicStale;
+    }
+
+    /// <summary>Maps a <c>call</c> / <c>execute</c> target through the
+    /// redirect map. A target with no redirect is returned unchanged; a
+    /// stale one is recompiled (once) and the map updated.</summary>
+    public int ResolveDynamicTarget(int target)
+    {
+        if (_dynamicRedirects is null
+            || !_dynamicRedirects.TryGetValue(target, out int current))
+            return target;
+        if (current == DynamicStale)
+        {
+            current = DynamicRecompiler!(target);
+            _dynamicRedirects[target] = current;
+        }
+        return current;
+    }
+
+    /// <summary>Appends a linked bytecode chunk to <see cref="CurrentProgram"/>,
+    /// growing it, and returns the chunk's start offset. Existing offsets
+    /// stay valid — the copy is append-only.</summary>
+    public int AppendCode(byte[] chunk)
+    {
+        byte[] program = CurrentProgram ?? Array.Empty<byte>();
+        int offset = program.Length;
+        var grown = new byte[offset + chunk.Length];
+        Array.Copy(program, grown, offset);
+        Array.Copy(chunk, 0, grown, offset, chunk.Length);
+        CurrentProgram = grown;
+        return offset;
+    }
 
     /// <summary>Synchronous subroutine runner that IL <c>Call</c>
     /// emission delegates to (chunk 50). Takes a target bytecode
