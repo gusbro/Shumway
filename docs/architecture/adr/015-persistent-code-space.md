@@ -113,6 +113,45 @@ and relinks the predicate's `try/retry/trust` chain locally (O(1) — patch
 the previous last clause). `retract` sets `died`. Because the *entry*
 address never moves, callers' linked `Call`s never go stale.
 
+#### 4.1 Concrete design (refined while scoping chunk C)
+
+After chunk B the program is `prefix | static region | query region`,
+and a dynamic predicate is still snapshot-compiled into the per-query
+region. The remaining work — making a *direct call* see the live store —
+needs the dynamic predicates to leave the transient region:
+
+- **Two code segments.** The engine holds two buffers. The *persistent*
+  one is `prefix | static | dynamic`; its dynamic sub-region is
+  append-only — each dynamic predicate has a fixed-address entry
+  trampoline, and `assertz` appends the new clause's bytecode and
+  relinks the `try/retry/trust` chain (trampoline + chain head stay
+  put). The *transient* buffer holds the per-query region, rebuilt and
+  discarded each query. The interpreter selects the buffer by address
+  range — below a fixed boundary is persistent, at/above is transient;
+  `Call` / `Execute` / `Cp` stay plain ints. This range check on each
+  code fetch is the one interpreter change.
+- **Why the two segments.** The dynamic region must be persistent and
+  growable; the query region is transient. Both "want the end" of a
+  single append-only buffer and would interleave — so they are separate
+  buffers.
+- **Clauses stay compiled, so cut is free.** Because a dynamic clause
+  is real bytecode, a `!` in its body is an ordinary `cut` opcode
+  cutting to the predicate entry — no special handling. The rejected
+  alternative — a builtin that interprets clause terms — cannot get cut
+  right without re-implementing clause dispatch (a `!` reached through
+  `call/1` is local to the call, not the predicate).
+- **Generation-filtered chain walk.** The `try`/`retry`/`trust` dispatch
+  skips a clause whose `[born, died)` range does not contain the calling
+  query's captured generation — the logical update view (§3).
+- **Static→dynamic calls** (chunk B's `UnresolvedSites`): once a dynamic
+  predicate has a stable trampoline address, a static predicate's
+  `Call dynamic` is patched once to the trampoline and chunk B's
+  per-query re-patch is no longer needed.
+
+This is the single largest chunk of the ADR — a new code-addressing
+mechanism plus generation-aware clause dispatch — and is best taken as
+its own focused effort rather than appended to an A/B session.
+
 ### 5. Re-consult relink
 
 Re-consulting a module recompiles and relocates its predicates; callers
