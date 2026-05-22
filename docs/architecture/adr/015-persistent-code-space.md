@@ -184,12 +184,18 @@ lands the code space grows monotonically.
 
 Each is its own chunk, landing with the test suite green:
 
-- **A — Generation counters.** Add the per-engine counter and `born` /
-  `died` on dynamic clauses; make `clause/2` / `retract/1` honour the
-  logical update view; logical (deferred) `retract`. Foundational.
+- **A — Generation counter.** ✅ *Done.* The monotonic per-engine counter
+  (`PrologEngine.DbGeneration`), bumped by every `assertz` / `asserta` /
+  `retract` / `abolish` through the single dynamic-store mutation
+  chokepoint. A query captures it at start. The `born`/`died` clause
+  stamps and logical (deferred) `retract` are deferred to chunk C, which
+  consumes them in the dynamic-dispatch clause iteration — stamping
+  clauses before anything reads the stamps would be unconsumed
+  speculative state.
 - **B — Persistent code space.** Compile static predicates once into the
   persistent space; a query compiles only its transient `__query__<Id>`.
-- **C — Live dynamic dispatch.** Entry trampolines; `assertz` append +
+- **C — Live dynamic dispatch.** `born`/`died` stamps on dynamic clauses
+  with logical (deferred) `retract`; entry trampolines; `assertz` append +
   local relink; generation-filtered clause iteration. This is the chunk
   that fixes the headline bug.
 - **D — Query lifecycle.** `PrologQuery : IDisposable`; finalizer that

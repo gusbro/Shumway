@@ -53,6 +53,20 @@ public sealed class PrologEngine
     /// visible to that query — they take effect on the next compilation.</summary>
     private readonly Dictionary<int, List<Clause>> _dynamicClauses = new();
 
+    private long _dbGeneration;
+
+    /// <summary>A monotonic counter bumped by every <c>assertz</c> /
+    /// <c>asserta</c> / <c>retract</c> / <c>abolish</c> — the
+    /// logical-update-view clock of ADR-015. A query captures the value at
+    /// start; a later chunk (C) has a dynamic-predicate call see only the
+    /// clauses whose born/died range contains the captured value, so a
+    /// goal observes the database as of when that goal began. Chunk A
+    /// (this) lays the counter; the born/died clause stamps that consume
+    /// it land with the dynamic-dispatch chunk that reads them. Also a
+    /// useful public signal: an embedder can detect whether the dynamic
+    /// database changed since it last looked.</summary>
+    public long DbGeneration => _dbGeneration;
+
     /// <summary>Set of functor ids declared <c>:- dynamic</c> across every
     /// module. The set is global so a single shared store can satisfy
     /// assertz / retract from any module; <see cref="ModuleRewrite"/> reads
@@ -657,7 +671,13 @@ public sealed class PrologEngine
     /// <see cref="AbolishDynamic"/>) so the next query sees a fresh
     /// compile that picks up the modification.</summary>
     private void InvalidateDynamicCache(int functorId)
-        => _dynamicPredicateCache.Remove(functorId);
+    {
+        // Every dynamic-store mutation funnels through here (assertz,
+        // asserta, retract, abolish), so this is the one place the
+        // ADR-015 generation clock has to advance.
+        _dbGeneration++;
+        _dynamicPredicateCache.Remove(functorId);
+    }
 
     /// <summary>Runs an AST goal through the same machinery as the string
     /// form, yielding each solution in turn. The free variables of
