@@ -20,19 +20,31 @@ public sealed class Linker
     /// <summary>Outcome of <see cref="Link"/>: the concatenated bytecode, a
     /// map from functor id to that predicate's address inside the bytecode,
     /// and the module-level switch table list with all addresses already
-    /// shifted into the program-absolute address space.</summary>
+    /// shifted into the program-absolute address space.
+    ///
+    /// <para><see cref="UnresolvedSites"/> (ADR-015) lists every call site
+    /// whose callee was not in this predicate set nor in the supplied
+    /// external symbols — it received the undefined-predicate sentinel.
+    /// A caller that links a stable region before the predicates it calls
+    /// (a cached static region calling later-laid-out dynamic predicates)
+    /// uses this to re-patch those sites once the callee addresses are
+    /// known. <see cref="(int, int).Item1">Offset</see> is the call
+    /// opcode's position in <see cref="Bytecode"/>; the operand is at
+    /// <c>Offset + 1</c>.</para></summary>
     public sealed record LinkResult(
         byte[] Bytecode,
         IReadOnlyDictionary<int, int> Addresses,
         IReadOnlyList<SwitchTable> SwitchTables,
-        IReadOnlyDictionary<int, CompiledPredicate> PredicatesByAddress);
+        IReadOnlyDictionary<int, CompiledPredicate> PredicatesByAddress,
+        IReadOnlyList<(int Offset, int FunctorId)> UnresolvedSites);
 
     public LinkResult Link(
         CompiledModule module, int loadOffset = 0,
-        IReadOnlyDictionary<int, int>? externalSymbols = null)
+        IReadOnlyDictionary<int, int>? externalSymbols = null,
+        int switchTableIdBase = 0)
     {
         ArgumentNullException.ThrowIfNull(module);
-        return Link(module.Predicates, loadOffset, externalSymbols);
+        return Link(module.Predicates, loadOffset, externalSymbols, switchTableIdBase);
     }
 
     /// <summary>Concatenates the predicates' bytecode and patches every internal
@@ -49,7 +61,8 @@ public sealed class Linker
     /// region that was linked earlier.</para></summary>
     public LinkResult Link(
         IReadOnlyList<CompiledPredicate> predicates, int loadOffset = 0,
-        IReadOnlyDictionary<int, int>? externalSymbols = null)
+        IReadOnlyDictionary<int, int>? externalSymbols = null,
+        int switchTableIdBase = 0)
     {
         ArgumentNullException.ThrowIfNull(predicates);
 
@@ -83,6 +96,7 @@ public sealed class Linker
         // address. A call to an undefined predicate is not a link error:
         // it is patched with a CallTarget sentinel so the interpreter
         // raises existence_error if (and only if) the call is reached.
+        var unresolvedSites = new List<(int Offset, int FunctorId)>();
         foreach (var (off, fid) in unresolvedCalls)
         {
             int target;
@@ -92,7 +106,10 @@ public sealed class Linker
                      && externalSymbols.TryGetValue(fid, out int extAddr))
                 target = extAddr;
             else
+            {
                 target = CallTarget.ForUndefined(fid);
+                unresolvedSites.Add((off, fid));
+            }
             BytecodeIO.WriteInt32(program, off + 1, target);
         }
 
@@ -100,7 +117,7 @@ public sealed class Linker
         // to program-absolute. Re-iterate predicates to recover each one's
         // basePos and switch-table base.
         int basePosTracker = 0;
-        int switchTableBaseTracker = 0;
+        int switchTableBaseTracker = switchTableIdBase;
         foreach (var p in predicates)
         {
             foreach (int dispatchSite in p.DispatchSites)
@@ -131,7 +148,8 @@ public sealed class Linker
         // overflow). The Tier-0 interpreter dispatches on the patched
         // `program` byte array, so it gets resolved addresses without
         // help.
-        return new LinkResult(program, addresses, switchTables, predicatesByAddress);
+        return new LinkResult(
+            program, addresses, switchTables, predicatesByAddress, unresolvedSites);
     }
 
     private static string NameForFunctor(int functorId)

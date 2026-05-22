@@ -517,6 +517,9 @@ public sealed class PrologEngine
                 _precompiledClauseCache[pred.FunctorId] = pred;
             }
         }
+        // A bundle's predicates join the static program — drop the
+        // ADR-015 cached static linked region so the next query rebuilds it.
+        _staticLink = null;
 
         // Chunk 71: when an entry carries a persisted-IL .dll blob,
         // load the assembly in-memory and bind each pre-emitted method
@@ -617,6 +620,18 @@ public sealed class PrologEngine
     public IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> StaticPredicateCache
         => _staticPredicateCache;
     private readonly Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> _staticPredicateCache = new();
+
+    /// <summary>Persistent literal pools (ADR-015 chunk B). One set for the
+    /// engine's life, so a literal keeps a stable id across queries — the
+    /// precondition for caching the static linked region, whose bytecode
+    /// embeds those ids.</summary>
+    private readonly Shumway.Compiler.Wam.LiteralPools _literalPools = new();
+
+    /// <summary>The static program, linked once and reused across queries
+    /// (ADR-015 chunk B). Null until the first query builds it; nulled
+    /// whenever the static program changes (<see cref="ConsultString"/> /
+    /// bundle load). A query links only its transient region against this.</summary>
+    private Shumway.Compiler.Wam.Linker.LinkResult? _staticLink;
 
     /// <summary>Canonical encodings of every (subgoal, answer) pair the
     /// tabling driver has recorded (chunk 106). Backs the <c>'$tbl_seen'/1</c>
@@ -1010,8 +1025,10 @@ public sealed class PrologEngine
     {
         ArgumentNullException.ThrowIfNull(source);
         // The static program is about to change — drop the chunk-82
-        // compiled-static-predicate cache so the next query recompiles.
+        // compiled-static-predicate cache so the next query recompiles,
+        // and the ADR-015 cached static linked region with it.
         _staticPredicateCache.Clear();
+        _staticLink = null;
         var rawClauses = new ClauseReader(new Lexer(source), _operators, _flags).ReadAll().ToList();
 
         string moduleName = DefaultModuleName;
@@ -1829,7 +1846,7 @@ public sealed class PrologEngine
             skipCompileCache = merged;
         }
         var module = new ModuleCompiler().Compile(
-            allRewritten, skipCompileCache, unindexedFunctors);
+            allRewritten, skipCompileCache, unindexedFunctors, _literalPools);
 
         // Populate the dynamic cache with any newly-compiled dynamic
         // predicate whose bytecode is safe to reuse next query (no
@@ -1860,7 +1877,69 @@ public sealed class PrologEngine
         launcher.EmitHalt();
         byte[] prefix = launcher.ToBytes();
 
-        var linkResult = new Linker().Link(module, loadOffset: prefix.Length);
+        // --- ADR-015 chunk B: persistent code space --------------------
+        // Partition the compiled predicates into the static region —
+        // linked once and cached — and the per-query region (dynamic
+        // predicates plus the __query__ clause and its auxiliaries).
+        var staticPreds = new List<Shumway.Compiler.Wam.CompiledPredicate>();
+        var queryPreds = new List<Shumway.Compiler.Wam.CompiledPredicate>();
+        foreach (var pred in module.Predicates)
+        {
+            if (cacheableFunctors.Contains(pred.FunctorId)
+                && !_dynamicFunctors.Contains(pred.FunctorId))
+                staticPreds.Add(pred);
+            else
+                queryPreds.Add(pred);
+        }
+
+        // The static region links once at a fixed load offset (the prefix
+        // length never varies) and is reused until the static program
+        // changes — ConsultString / a bundle load null _staticLink.
+        var staticLink = _staticLink
+            ?? (_staticLink = new Linker().Link(staticPreds, loadOffset: prefix.Length));
+
+        // The per-query region is appended after the static region. Its
+        // calls into static predicates resolve through the static region's
+        // address map; its switch-table ids continue past the static set's.
+        var queryLink = new Linker().Link(
+            queryPreds,
+            loadOffset: prefix.Length + staticLink.Bytecode.Length,
+            externalSymbols: staticLink.Addresses,
+            switchTableIdBase: staticLink.SwitchTables.Count);
+
+        byte[] program = new byte[
+            prefix.Length + staticLink.Bytecode.Length + queryLink.Bytecode.Length];
+        Array.Copy(prefix, program, prefix.Length);
+        Array.Copy(staticLink.Bytecode, 0, program,
+            prefix.Length, staticLink.Bytecode.Length);
+        Array.Copy(queryLink.Bytecode, 0, program,
+            prefix.Length + staticLink.Bytecode.Length, queryLink.Bytecode.Length);
+
+        // A static predicate may call a dynamic one, whose address is only
+        // known now — it lives in the per-query region. Such sites were
+        // left as undefined-predicate sentinels when the static region was
+        // linked; re-patch the ones the query region now resolves. Only
+        // program is written — the cached staticLink.Bytecode is untouched.
+        foreach (var (offset, fid) in staticLink.UnresolvedSites)
+            if (queryLink.Addresses.TryGetValue(fid, out int dynAddr))
+                BytecodeIO.WriteInt32(program, prefix.Length + offset + 1, dynAddr);
+
+        // Merge the two regions' link metadata; downstream code is
+        // region-agnostic and reads this combined view.
+        var mergedAddresses = new Dictionary<int, int>(staticLink.Addresses);
+        foreach (var (fid, a) in queryLink.Addresses) mergedAddresses[fid] = a;
+        var mergedSwitchTables =
+            new List<Shumway.Core.SwitchTable>(staticLink.SwitchTables);
+        mergedSwitchTables.AddRange(queryLink.SwitchTables);
+        var mergedPredicatesByAddress =
+            new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>(
+                staticLink.PredicatesByAddress);
+        foreach (var (a, p) in queryLink.PredicatesByAddress)
+            mergedPredicatesByAddress[a] = p;
+        var linkResult = new Linker.LinkResult(
+            program, mergedAddresses, mergedSwitchTables, mergedPredicatesByAddress,
+            Array.Empty<(int, int)>());
+
         // The synthetic query stays under its bare functor (it's local to
         // user but ModuleRewrite never mangles __query__ because it's not
         // present in user's local set: it was added after locals were
@@ -1868,7 +1947,9 @@ public sealed class PrologEngine
         int queryFunctorId = FunctorTable.Intern(
             AtomTable.Intern(queryFunctor, permanent: true).Id,
             varNames.Count);
-        BytecodeIO.WriteInt32(prefix, callPos + 1, linkResult.Addresses[queryFunctorId]);
+        // Patch the launcher's call target straight in program — the
+        // prefix sits at program offset 0, so callPos is the same in both.
+        BytecodeIO.WriteInt32(program, callPos + 1, linkResult.Addresses[queryFunctorId]);
 
         // Cache freshly-compiled static predicates (chunk 82). A predicate
         // is cacheable only if its functor headed a clause in the static +
@@ -1903,10 +1984,6 @@ public sealed class PrologEngine
             if (!addressMap.ContainsKey(bareFunctorId))
                 addressMap[bareFunctorId] = address;
         }
-
-        byte[] program = new byte[prefix.Length + linkResult.Bytecode.Length];
-        Array.Copy(prefix, program, prefix.Length);
-        Array.Copy(linkResult.Bytecode, 0, program, prefix.Length, linkResult.Bytecode.Length);
 
         var engine = new Engine
         {

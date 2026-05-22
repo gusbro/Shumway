@@ -192,9 +192,10 @@ Each is its own chunk, landing with the test suite green:
   consumes them in the dynamic-dispatch clause iteration — stamping
   clauses before anything reads the stamps would be unconsumed
   speculative state.
-- **B — Persistent code space.** Compile + link static predicates once
-  into a cached region; a query links only its transient `__query__<Id>`
-  (plus the dynamic snapshot, until chunk C) against that region.
+- **B — Persistent code space.** ✅ *Done.* Static predicates are linked
+  once into a cached region; a query links only its transient region (the
+  dynamic snapshot — until chunk C — plus `__query__` and its auxiliaries)
+  against it.
   - *Done (chunk 115):* the `Linker` external-symbols path — a predicate
     set can be linked against an already-linked region's functor→address
     map, so its `Call`s into that region are patched to real addresses
@@ -206,12 +207,21 @@ Each is its own chunk, landing with the test suite green:
     optional `LiteralPools`; passed pools accumulate (interning dedupes),
     so a literal keeps its id query to query. `null` keeps the original
     fresh-per-module behaviour.
-  - *Remaining:* the `SetupQueryFromTerm` split — partition static vs
-    query+dynamic, cache the static link (built with persistent pools and
-    linked once), link the query part with external symbols, merge the
-    address maps / switch tables / `PredicatesByAddress`. This is the
-    intricate restructure of the embedding layer's hottest path and is
-    best done as one focused unit.
+  - *Done (chunk 117):* the `SetupQueryFromTerm` split. The compiled
+    predicates are partitioned into the static region and the per-query
+    region; the static region links once into `_staticLink` (nulled by
+    `ConsultString` / a bundle load), and each query links its region
+    against it with external symbols, then assembles `prefix | static |
+    query` and merges the two regions' address maps, switch tables and
+    `PredicatesByAddress`.
+  - *Finding the ADR sketch missed:* a **static predicate may call a
+    dynamic one**, whose address is only known per query (it lives in the
+    transient region). The `Linker` now reports such sites
+    (`LinkResult.UnresolvedSites`); the cached static region's bytecode is
+    never mutated, but each query re-patches those sites in the assembled
+    `program` once the dynamic addresses are known. (A fully stable
+    dynamic entry address — chunk C's trampolines — will later let even
+    those sites link once.)
 - **C — Live dynamic dispatch.** `born`/`died` stamps on dynamic clauses
   with logical (deferred) `retract`; entry trampolines; `assertz` append +
   local relink; generation-filtered clause iteration. This is the chunk
