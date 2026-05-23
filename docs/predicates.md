@@ -204,6 +204,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `close(+Stream)` | Closes an open stream. |
 | `current_input(-Stream)` | Unifies Stream with a designator for the current input stream (ISO §8.11.1). |
 | `current_output(-Stream)` | Unifies Stream with a designator for the current output stream (ISO §8.11.2). |
+| `current_stream(?Filename, ?Mode, ?Stream)` | Enumerates open streams (ISO §8.11.8.1). |
 | `flush_output` | Flushes the current output stream (ISO §8.11.7). |
 | `flush_output(+Stream)` | Flushes the given stream (ISO §8.11.7). |
 | `format(+Format, +Arguments)` | Writes formatted output from a control string and an argument list. |
@@ -213,10 +214,14 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `nl` | Writes a newline to the current output stream. |
 | `nl(+Stream)` | Writes a newline to the given stream. |
 | `open(+File, +Mode, -Stream)` | Opens a file as a stream handle. |
+| `open(+File, +Mode, -Stream, +Options)` | Opens a file with options (alias, type, eof_action) — ISO §8.11.5. |
 | `peek_char(+Stream, -Char)` | Peeks the next character of a stream without consuming it. |
 | `print(+Term)` | Writes a term using print conventions. |
 | `read_term(+Stream, -Term)` | Reads one term from a read-mode stream. |
 | `read_term_from_stream(+Stream, -Term)` | Reads one term from a read-mode stream. |
+| `set_input(+Stream)` | Sets the current input stream (ISO §8.11.3). |
+| `set_output(+Stream)` | Sets the current output stream (ISO §8.11.4). |
+| `stream_property(?Stream, ?Property)` | Enumerates (Stream, Property) pairs for every open stream (ISO §8.11.8.2). |
 | `tab(+N)` | Writes N spaces to the current output stream. |
 | `with_output_to(+Sink, :Goal)` | Runs a goal, capturing its output into an atom, string or code list. |
 | `write(+Term)` | Writes a term to the current output stream. |

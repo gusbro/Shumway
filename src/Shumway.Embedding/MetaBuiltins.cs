@@ -135,11 +135,112 @@ public static class MetaBuiltins
             Term, "atom_to_term(+Atom, -Term, -Bindings)", "Parses an atom into a term plus its variable bindings.");
         BuiltinsRegistry.Register("read_term_from_stream", 2, ReadTermFromStream,
             Io, "read_term_from_stream(+Stream, -Term)", "Reads one term from a read-mode stream.");
+        BuiltinsRegistry.Register("current_stream",  3, CurrentStream,
+            Io, "current_stream(?Filename, ?Mode, ?Stream)",
+            "Enumerates open streams (ISO §8.11.8.1).");
+        BuiltinsRegistry.Register("stream_property", 2, StreamProperty,
+            Io, "stream_property(?Stream, ?Property)",
+            "Enumerates (Stream, Property) pairs for every open stream (ISO §8.11.8.2).");
         // ISO read_term/2 — accepts a stream handle in arg 1 and unifies
         // the parsed term with arg 2. Chunk 59: delegate to the existing
         // stream-aware reader so the builtin set covers both names.
         BuiltinsRegistry.Register("read_term", 2, ReadTermFromStream,
             Io, "read_term(+Stream, -Term)", "Reads one term from a read-mode stream.");
+    }
+
+    /// <summary><c>current_stream(?Filename, ?Mode, ?Stream)</c> —
+    /// ISO §8.11.8.1. Enumerates every registered stream on
+    /// backtracking. Filename and Mode arguments unify against each
+    /// handle's metadata; the stream arg is bound to a Foreign cell
+    /// wrapping the underlying <see cref="Shumway.Core.StreamHandle"/>.
+    /// (Chunk 140b.)</summary>
+    public static bool CurrentStream(Engine engine)
+    {
+        var registry = engine.Streams
+            ?? throw new InvalidOperationException("Engine has no stream registry.");
+        var handles = registry.All().ToArray();
+        int returnPc = engine.P + 9;
+        return CurrentStreamStep(engine, handles, 0, returnPc, isResume: false);
+    }
+
+    private static bool CurrentStreamStep(
+        Engine engine, Shumway.Core.StreamHandle[] handles,
+        int idx, int returnPc, bool isResume)
+    {
+        if (idx >= handles.Length) return false;
+        if (idx + 1 < handles.Length)
+        {
+            int nextIdx = idx + 1;
+            Func<Engine, int, bool> resume = (e, _) =>
+                CurrentStreamStep(e, handles, nextIdx, returnPc, isResume: true);
+            engine.PushBuiltinChoicePoint(resume, arity: 0);
+        }
+
+        var h = handles[idx];
+        string fnText = h.Filename ?? h.Alias ?? "";
+        Cell fnCell = Cell.Atom(AtomTable.Intern(fnText, permanent: false).Id);
+        Cell modeCell = Cell.Atom(AtomTable.Intern(h.Mode, permanent: true).Id);
+        Cell streamCell = engine.MakeForeign(h);
+
+        if (!engine.UnifyRegisterWithCell(0, fnCell)) return false;
+        if (!engine.UnifyRegisterWithCell(1, modeCell)) return false;
+        if (!engine.UnifyRegisterWithCell(2, streamCell)) return false;
+        if (isResume) engine.ResumeAtReturnPc(returnPc);
+        return true;
+    }
+
+    /// <summary><c>stream_property(?Stream, ?Property)</c> — ISO §8.11.8.2.
+    /// Enumerates (Stream, Property) pairs for every registered stream.
+    /// Properties: <c>file_name(F)</c>, <c>mode(M)</c>,
+    /// <c>alias(A)</c>, <c>input</c>, <c>output</c>,
+    /// <c>end_of_stream(at|not)</c>. (Chunk 140b.)</summary>
+    public static bool StreamProperty(Engine engine)
+    {
+        var registry = engine.Streams
+            ?? throw new InvalidOperationException("Engine has no stream registry.");
+        var pairs = new List<(Shumway.Core.StreamHandle Handle, Term Property)>();
+        foreach (var h in registry.All())
+        {
+            if (h.Filename is string fn)
+                pairs.Add((h, new CompoundTerm("file_name", new Term[] { new AtomTerm(fn) })));
+            pairs.Add((h, new CompoundTerm("mode", new Term[] { new AtomTerm(h.Mode) })));
+            if (h.Alias is string al)
+                pairs.Add((h, new CompoundTerm("alias", new Term[] { new AtomTerm(al) })));
+            pairs.Add((h, h.IsReader ? (Term)new AtomTerm("input") : new AtomTerm("output")));
+            if (h.IsReader)
+            {
+                string state = (ReferenceEquals(h, registry.UserInput)
+                                || h.Reader!.Peek() >= 0)
+                    ? "not" : "at";
+                pairs.Add((h, new CompoundTerm("end_of_stream",
+                    new Term[] { new AtomTerm(state) })));
+            }
+        }
+        int returnPc = engine.P + 9;
+        return StreamPropertyStep(engine, pairs.ToArray(), 0, returnPc, isResume: false);
+    }
+
+    private static bool StreamPropertyStep(
+        Engine engine, (Shumway.Core.StreamHandle Handle, Term Property)[] pairs,
+        int idx, int returnPc, bool isResume)
+    {
+        if (idx >= pairs.Length) return false;
+        if (idx + 1 < pairs.Length)
+        {
+            int nextIdx = idx + 1;
+            Func<Engine, int, bool> resume = (e, _) =>
+                StreamPropertyStep(e, pairs, nextIdx, returnPc, isResume: true);
+            engine.PushBuiltinChoicePoint(resume, arity: 0);
+        }
+
+        var (h, prop) = pairs[idx];
+        Cell streamCell = engine.MakeForeign(h);
+        Cell propCell = Materializer.MaterializeAsCell(engine, prop);
+
+        if (!engine.UnifyRegisterWithCell(0, streamCell)) return false;
+        if (!engine.UnifyRegisterWithCell(1, propCell)) return false;
+        if (isResume) engine.ResumeAtReturnPc(returnPc);
+        return true;
     }
 
     /// <summary><c>read_term_from_stream(Stream, Term)</c> — reads
@@ -149,12 +250,14 @@ public static class MetaBuiltins
     /// before any text yields the atom <c>end_of_file</c>.</summary>
     public static bool ReadTermFromStream(Engine engine)
     {
-        Cell handleCell = ResolveLocal(engine, engine.GetRegister(0));
-        if (handleCell.Tag != Tag.Foreign)
-            throw new PrologRuntimeException("type_error", "stream");
-        var reader = engine.AsForeign<System.IO.StreamReader>(handleCell);
-        if (reader is null)
-            throw new PrologRuntimeException("existence_error", "stream");
+        // Chunk 140a refactor: streams are now StreamHandle-wrapped
+        // (via the per-engine StreamRegistry), not bare TextReader.
+        // Resolve through StreamBuiltins so atoms / aliases work too.
+        var h = Shumway.Builtins.StreamBuiltins.ResolveStream(
+            engine, engine.GetRegister(0));
+        if (!h.IsReader)
+            throw new PrologRuntimeException("permission_error", "input,stream");
+        var reader = h.Reader!;
 
         var sb = new System.Text.StringBuilder();
         bool sawAnyChar = false;

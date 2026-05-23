@@ -115,6 +115,9 @@ public static class StandardBuiltins
         // Streams: write + read modes; format/3 stream-aware.
         BuiltinsRegistry.Register("open",      3, StreamBuiltins.Open,
             Io, "open(+File, +Mode, -Stream)", "Opens a file as a stream handle.");
+        BuiltinsRegistry.Register("open",      4, StreamBuiltins.OpenWithOptions,
+            Io, "open(+File, +Mode, -Stream, +Options)",
+            "Opens a file with options (alias, type, eof_action) — ISO §8.11.5.");
         BuiltinsRegistry.Register("close",     1, StreamBuiltins.Close,
             Io, "close(+Stream)", "Closes an open stream.");
         BuiltinsRegistry.Register("write",     2, StreamBuiltins.WriteToStream,
@@ -129,6 +132,10 @@ public static class StandardBuiltins
             Io, "current_input(-Stream)", "Unifies Stream with a designator for the current input stream (ISO §8.11.1).");
         BuiltinsRegistry.Register("current_output", 1, StreamBuiltins.CurrentOutput,
             Io, "current_output(-Stream)", "Unifies Stream with a designator for the current output stream (ISO §8.11.2).");
+        BuiltinsRegistry.Register("set_input",  1, StreamBuiltins.SetInput,
+            Io, "set_input(+Stream)", "Sets the current input stream (ISO §8.11.3).");
+        BuiltinsRegistry.Register("set_output", 1, StreamBuiltins.SetOutput,
+            Io, "set_output(+Stream)", "Sets the current output stream (ISO §8.11.4).");
         BuiltinsRegistry.Register("flush_output",   0, StreamBuiltins.FlushOutput0,
             Io, "flush_output", "Flushes the current output stream (ISO §8.11.7).");
         BuiltinsRegistry.Register("flush_output",   1, StreamBuiltins.FlushOutput1,

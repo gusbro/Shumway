@@ -1074,6 +1074,12 @@ public sealed class Engine
     /// <summary>Arity companion to <see cref="CurrentBuiltinName"/>.</summary>
     public int CurrentBuiltinArity { get; set; }
 
+    /// <summary>Per-engine stream registry (chunk 140). Wired by the
+    /// embedding layer at query setup; <c>StreamBuiltins</c> uses it
+    /// for every <c>open/close/read/write</c> dispatch so handles
+    /// outlive any one query.</summary>
+    public StreamRegistry? Streams { get; set; }
+
     /// <summary>Absolute byte position of the per-query fail-stub
     /// (ADR-015 chunk C step 4) — a tiny <c>call_builtin fail/0</c>
     /// emitted in the prefix. Dynamic predicates' last-clause chain
@@ -2497,6 +2503,20 @@ public sealed class Engine
             Tag.Functor => a.AsFunctorId == b.AsFunctorId,
             Tag.Str => AreStrStructurallyEqual(a.AsHeapIndex, b.AsHeapIndex),
             Tag.Lis => AreLisStructurallyEqual(a.AsHeapIndex, b.AsHeapIndex),
+            // Foreign cells (chunk 140): identity via the underlying
+            // .NET reference. Two foreign cells are == iff their
+            // boxed payloads are reference-equal.
+            Tag.Foreign => ReferenceEquals(
+                _foreignTable[a.AsForeignId], _foreignTable[b.AsForeignId]),
+            // BigInt: value equality.
+            Tag.BigInt => _bigIntTable[a.AsBigIntId].Equals(_bigIntTable[b.AsBigIntId]),
+            // String literal: value equality.
+            Tag.String => string.Equals(
+                _stringTable[a.AsStringId], _stringTable[b.AsStringId]),
+            // PSTR: delegate to the unification-style comparator; for
+            // structural equality two PSTRs match iff their character
+            // sequences and tails do.
+            Tag.Pstr => AreStrStructurallyEqual(a.AsHeapIndex, b.AsHeapIndex),
             _ => throw new NotSupportedException(
                 $"AreStructurallyEqual: tag {a.Tag} is not yet supported."),
         };

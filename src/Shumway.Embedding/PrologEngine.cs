@@ -30,6 +30,14 @@ public sealed class PrologEngine
     };
     private readonly OperatorTable _operators = OperatorTable.Default();
 
+    /// <summary>Per-engine stream registry (chunk 140). Owns every
+    /// open stream, the alias map, and the current-input /
+    /// current-output cursors. Lazily built on first access so an
+    /// engine that never touches streams pays nothing.</summary>
+    private StreamRegistry? _streams;
+    internal StreamRegistry Streams =>
+        _streams ??= new StreamRegistry(Out);
+
     /// <summary>Engine-wide mutable flag state (chunk 58). Builtins
     /// <c>set_prolog_flag/2</c> and <c>current_prolog_flag/2</c> read
     /// and write here. The parser instances created during ConsultString
@@ -2161,6 +2169,10 @@ public sealed class PrologEngine
             Out = Out,
             Host = this,
             Operators = new OperatorTableAdapter(_operators),
+            // Per-engine stream registry (chunk 140) — wired through
+            // so StreamBuiltins reaches handles, the alias map, and
+            // the current-input / current-output cursors.
+            Streams = Streams,
             // The current-query address map lets IL-emitted Execute
             // opcodes (chunk 47) resolve their tail-call target via a
             // stable functor-id lookup instead of an embedded address

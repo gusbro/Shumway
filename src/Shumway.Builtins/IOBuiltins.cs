@@ -122,13 +122,13 @@ public static class IOBuiltins
     /// FOREIGN cell wrapping a <see cref="System.IO.StreamWriter"/>.</summary>
     public static bool Format3(Engine engine)
     {
-        Cell handle = Resolve(engine, engine.GetRegister(0));
-        if (handle.Tag != Tag.Foreign)
-            throw new PrologRuntimeException("type_error", "stream");
-        var writer = engine.AsForeign<System.IO.StreamWriter>(handle);
-        if (writer is null)
-            throw new PrologRuntimeException("existence_error", "stream");
-        return FormatImpl(engine, writer, fmtReg: 1, argsReg: 2, "format/3");
+        // Chunk 140a refactor: streams are StreamHandle-wrapped via
+        // the per-engine StreamRegistry. Resolve through StreamBuiltins
+        // so atoms / aliases work too.
+        var h = StreamBuiltins.ResolveStream(engine, engine.GetRegister(0));
+        if (!h.IsWriter)
+            throw new PrologRuntimeException("permission_error", "output,stream");
+        return FormatImpl(engine, h.Writer!, fmtReg: 1, argsReg: 2, "format/3");
     }
 
     private static bool FormatImpl(Engine engine, System.IO.TextWriter output, int fmtReg, int argsReg, string name)

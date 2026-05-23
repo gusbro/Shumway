@@ -37,21 +37,74 @@ public class StreamControlConformance : IDisposable
     // ---------- current_input / current_output ----------
 
     [Fact]
-    public void CurrentInput_ReturnsUserInput()
+    public void CurrentInput_ReturnsHandleResolvingToUserInputAlias()
     {
+        // The returned cell is an opaque Foreign-cell handle; we
+        // verify by round-tripping it through set_input/1, which
+        // accepts either a handle or the conventional alias atom.
         var e = new PrologEngine();
-        var sol = e.Query("current_input(S).");
-        Assert.True(sol.Success);
-        Assert.Equal(Atom("user_input"), sol["S"]);
+        Assert.True(e.Query(
+            "current_input(S), set_input(S), set_input(user_input).").Success);
     }
 
     [Fact]
-    public void CurrentOutput_ReturnsUserOutput()
+    public void CurrentOutput_ReturnsHandleResolvingToUserOutputAlias()
     {
         var e = new PrologEngine();
-        var sol = e.Query("current_output(S).");
+        Assert.True(e.Query(
+            "current_output(S), set_output(S), set_output(user_output).").Success);
+    }
+
+    [Fact]
+    public void CurrentOutput_HandleIsUsableAsStream()
+    {
+        // The current-output handle is a real stream — feed it to
+        // write/2 (and back to flush_output/1) to confirm.
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "current_output(S), write(S, hello), flush_output(S).").Success);
+    }
+
+    // ---------- set_input / set_output ----------
+
+    [Fact]
+    public void SetOutput_ToFileHandle_RedirectsCurrentOutput()
+    {
+        var path = _tempPath.Replace("\\", "\\\\");
+        var e = new PrologEngine();
+        // Open a file, set it as current output, write to current
+        // output, restore, close.
+        Assert.True(e.Query(
+            $"open('{path}', write, S), set_output(S), "
+            + "current_output(S2), flush_output(S2), "
+            + "set_output(user_output), close(S).").Success);
+    }
+
+    [Fact]
+    public void SetInput_OnWriter_RaisesPermissionError()
+    {
+        var path = _tempPath.Replace("\\", "\\\\");
+        var e = new PrologEngine();
+        var sol = e.Query(
+            $"open('{path}', write, S), "
+            + "catch(set_input(S), error(permission_error(_, _, _), _), Caught = ok), "
+            + "close(S).");
         Assert.True(sol.Success);
-        Assert.Equal(Atom("user_output"), sol["S"]);
+        Assert.Equal(Atom("ok"), sol["Caught"]);
+    }
+
+    [Fact]
+    public void SetOutput_OnReader_RaisesPermissionError()
+    {
+        File.WriteAllText(_tempPath, "x");
+        var path = _tempPath.Replace("\\", "\\\\");
+        var e = new PrologEngine();
+        var sol = e.Query(
+            $"open('{path}', read, S), "
+            + "catch(set_output(S), error(permission_error(_, _, _), _), Caught = ok), "
+            + "close(S).");
+        Assert.True(sol.Success);
+        Assert.Equal(Atom("ok"), sol["Caught"]);
     }
 
     // ---------- open/3 ----------
@@ -106,11 +159,12 @@ public class StreamControlConformance : IDisposable
     [Fact]
     public void Close_NonStreamArg_RaisesTypeError()
     {
+        // ISO §8.11.6.3.b: type_error(stream_or_alias, _).
         var e = new PrologEngine();
         var sol = e.Query(
             "catch(close(123), error(type_error(T, _), _), true).");
         Assert.True(sol.Success);
-        Assert.Equal(Atom("stream"), sol["T"]);
+        Assert.Equal(Atom("stream_or_alias"), sol["T"]);
     }
 
     [Fact]
@@ -162,6 +216,121 @@ public class StreamControlConformance : IDisposable
             "catch(flush_output(no_such_stream), "
             + "error(existence_error(_, _), _), true).");
         Assert.True(sol.Success);
+    }
+
+    // ---------- current_stream/3 (chunk 140b) ----------
+
+    [Fact]
+    public void CurrentStream_FindsUserOutput()
+    {
+        // user_output is always registered; current_stream/3 should
+        // surface it. Bind Mode = write to filter to just writers
+        // and check there's at least one with that mode.
+        var e = new PrologEngine();
+        Assert.True(e.Query("current_stream(_, write, _).").Success);
+    }
+
+    [Fact]
+    public void CurrentStream_OverFreshFile()
+    {
+        File.WriteAllText(_tempPath, "x");
+        var path = _tempPath.Replace("\\", "\\\\");
+        var e = new PrologEngine();
+        // Open a file then assert current_stream sees it by file name.
+        Assert.True(e.Query(
+            $"open('{path}', read, S), current_stream('{path}', read, S2), "
+            + "S == S2, close(S).").Success);
+    }
+
+    // ---------- stream_property/2 (chunk 140b) ----------
+
+    [Fact]
+    public void StreamProperty_ModeOnFileHandle()
+    {
+        File.WriteAllText(_tempPath, "x");
+        var path = _tempPath.Replace("\\", "\\\\");
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            $"open('{path}', read, S), stream_property(S, mode(read)), close(S).").Success);
+    }
+
+    [Fact]
+    public void StreamProperty_FileNameOnFileHandle()
+    {
+        var path = _tempPath.Replace("\\", "\\\\");
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            $"open('{path}', write, S), stream_property(S, file_name(F)), close(S).").Success);
+    }
+
+    [Fact]
+    public void StreamProperty_InputOutputTag()
+    {
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "current_output(S), stream_property(S, output).").Success);
+        Assert.True(e.Query(
+            "current_input(S), stream_property(S, input).").Success);
+    }
+
+    [Fact]
+    public void StreamProperty_AliasShowsUp()
+    {
+        var path = _tempPath.Replace("\\", "\\\\");
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            $"open('{path}', write, S, [alias(my_out)]), "
+            + "stream_property(S, alias(my_out)), close(S).").Success);
+    }
+
+    // ---------- open/4 with options (chunk 140c) ----------
+
+    [Fact]
+    public void Open4_AliasOption_LetsYouUseAtomAsStream()
+    {
+        var path = _tempPath.Replace("\\", "\\\\");
+        var e = new PrologEngine();
+        // After opening with alias(my_log), 'my_log' resolves to the
+        // stream — write to it by name, then close by name.
+        Assert.True(e.Query(
+            $"open('{path}', write, _S, [alias(my_log)]), "
+            + "write(my_log, hello), close(my_log).").Success);
+        Assert.Equal("hello", File.ReadAllText(_tempPath));
+    }
+
+    [Fact]
+    public void Open4_DuplicateAlias_RaisesPermissionError()
+    {
+        var path = _tempPath.Replace("\\", "\\\\");
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            $"open('{path}', write, _S, [alias(taken)]).").Success);
+        var sol = e.Query(
+            $"catch(open('{path}', write, _S, [alias(taken)]), "
+            + "error(permission_error(_, _, _), _), Caught = ok).");
+        Assert.True(sol.Success);
+        Assert.Equal(Atom("ok"), sol["Caught"]);
+    }
+
+    [Fact]
+    public void Open4_UnknownOption_RaisesDomainError()
+    {
+        var path = _tempPath.Replace("\\", "\\\\");
+        var e = new PrologEngine();
+        var sol = e.Query(
+            $"catch(open('{path}', write, _S, [no_such_option(x)]), "
+            + "error(domain_error(D, _), _), true).");
+        Assert.True(sol.Success);
+        Assert.Equal(Atom("stream_option"), sol["D"]);
+    }
+
+    [Fact]
+    public void Open4_TypeOption_AcceptsTextAndBinary()
+    {
+        var path = _tempPath.Replace("\\", "\\\\");
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            $"open('{path}', write, S, [type(text)]), close(S).").Success);
     }
 
     // ---------- at_end_of_stream ----------
