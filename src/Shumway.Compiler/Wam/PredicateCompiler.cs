@@ -60,7 +60,8 @@ public sealed class PredicateCompiler
         LiteralPool<double> floatLiterals,
         LiteralPool<System.Numerics.BigInteger> bigIntLiterals,
         bool enableIndexing = true,
-        bool isDynamic = false)
+        bool isDynamic = false,
+        int failStubAddr = 0)
     {
         ArgumentNullException.ThrowIfNull(clauses);
         if (clauses.Count == 0)
@@ -95,10 +96,14 @@ public sealed class PredicateCompiler
             if (isDynamic)
             {
                 // ADR-015 chunk C: prepend enter_dynamic + check_visible
-                // (always-visible sentinel values for now — step 3 emits
-                // the opcodes; step 4 wires real born/died).
+                // (always-visible sentinel values for now). When a
+                // failStubAddr is given (step 4), also push a CP via
+                // try_me_else <fail-stub> so a future assertz can patch
+                // the operand to point at the new clause (in-place
+                // 4-byte patch — same-size as a retry_me_else).
                 var em = new BytecodeEmitter();
                 em.EmitEnterDynamic();
+                if (failStubAddr > 0) em.EmitTryMeElse(failStubAddr, arity);
                 em.EmitCheckVisible(born: 0L, died: long.MaxValue);
                 int clauseStart = em.Position;
                 em.AppendBytes(compiledClauses[0].Bytecode);
@@ -165,7 +170,7 @@ public sealed class PredicateCompiler
             ? CompileIndexed(compiledClauses, perArgInfo, indexableArgs, functorId, arity,
                              clauses[0].Position, clausePositions)
             : CompileTryMeElseChain(compiledClauses, functorId, arity,
-                                    clauses[0].Position, clausePositions, isDynamic);
+                                    clauses[0].Position, clausePositions, isDynamic, failStubAddr);
     }
 
     /// <summary>Size of one <see cref="Opcode.Meta"/> + <see cref="MetaSubOpcode.DbgInfo"/>
@@ -180,7 +185,8 @@ public sealed class PredicateCompiler
         IReadOnlyList<CompiledClause> compiledClauses, int functorId, int arity,
         Shumway.Compiler.Lexer.SourcePosition position,
         IReadOnlyList<Shumway.Compiler.Lexer.SourcePosition> clausePositions,
-        bool isDynamic = false)
+        bool isDynamic = false,
+        int failStubAddr = 0)
     {
         // Per-clause layout: dispatch instruction (try/retry/trust),
         // then Meta(DbgInfo, clauseIndex), then (for dynamic predicates)
@@ -197,11 +203,18 @@ public sealed class PredicateCompiler
         int enterDynamicSize = isDynamic ? 1 : 0;
         int checkVisibleSize = isDynamic ? CheckVisibleSize : 0;
 
+        // ADR-015 chunk C step 4: a dynamic chain's last clause ends with
+        // retry_me_else <fail-stub> instead of trust_me, so a future
+        // assertz can patch the operand to point at the new clause (same
+        // size — 4-byte in-place patch). Without a fail-stub address
+        // (paso-3 callers), keep trust_me.
+        bool dynamicChain = isDynamic && failStubAddr > 0;
+
         int[] clauseBodyOffsets = new int[n];
         int pos = enterDynamicSize;
         for (int i = 0; i < n; i++)
         {
-            int dispatchSize = i == 0 ? 9 : i == n - 1 ? 1 : 5;
+            int dispatchSize = DispatchSizeFor(i, n, dynamicChain);
             pos += dispatchSize;
             clauseBodyOffsets[i] = pos;
             pos += MetaDbgInfoSize;
@@ -217,18 +230,27 @@ public sealed class PredicateCompiler
         {
             if (i == 0)
             {
-                int nextDispatch = clauseBodyOffsets[1] - DispatchSizeFor(1, n);
+                int nextDispatch = clauseBodyOffsets[1] - DispatchSizeFor(1, n, dynamicChain);
                 int opPos = emitter.Position;
                 emitter.EmitTryMeElse(nextDispatch, arity);
                 dispatchSites.Add(opPos + 1);
             }
             else if (i == n - 1)
             {
-                emitter.EmitTrustMe();
+                if (dynamicChain)
+                {
+                    // Absolute fail-stub address — NOT in dispatchSites so
+                    // the linker does not shift it.
+                    emitter.EmitRetryMeElse(failStubAddr);
+                }
+                else
+                {
+                    emitter.EmitTrustMe();
+                }
             }
             else
             {
-                int nextDispatch = clauseBodyOffsets[i + 1] - DispatchSizeFor(i + 1, n);
+                int nextDispatch = clauseBodyOffsets[i + 1] - DispatchSizeFor(i + 1, n, dynamicChain);
                 int opPos = emitter.Position;
                 emitter.EmitRetryMeElse(nextDispatch);
                 dispatchSites.Add(opPos + 1);
@@ -249,12 +271,12 @@ public sealed class PredicateCompiler
             clausePositions);
     }
 
-    private static int DispatchSizeFor(int clauseIndex, int totalClauses) =>
+    private static int DispatchSizeFor(int clauseIndex, int totalClauses, bool dynamicChain = false) =>
         clauseIndex == 0
-            ? 9
-            : clauseIndex == totalClauses - 1
-                ? 1
-                : 5;
+            ? 9                                          // try_me_else: opcode + addr + arity
+            : clauseIndex == totalClauses - 1 && !dynamicChain
+                ? 1                                      // trust_me
+                : 5;                                     // retry_me_else: opcode + addr
 
     // ============================================================================
     // Indexing (ADR-007 first-arg + chunk 67 multi-arg fallback)

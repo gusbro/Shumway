@@ -1893,9 +1893,15 @@ public sealed class PrologEngine
                 merged[fid] = pred;
             skipCompileCache = merged;
         }
+        // Pre-compute the fail-stub address — it sits at the end of the
+        // launcher prefix, at offset Call(9) + Halt(1) = 10. We need it
+        // available to the compiler so dynamic predicates emit their
+        // last-clause chain instruction with the absolute target.
+        int failStubAddr =
+            OpcodeTable.Get(Opcode.Call).Size + OpcodeTable.Get(Opcode.Halt).Size;
         var module = new ModuleCompiler().Compile(
             allRewritten, skipCompileCache, unindexedFunctors, _literalPools,
-            dynamicFunctors: _dynamicFunctors);
+            dynamicFunctors: _dynamicFunctors, failStubAddr: failStubAddr);
 
         // Populate the dynamic cache with any newly-compiled dynamic
         // predicate whose bytecode is safe to reuse next query (no
@@ -1926,11 +1932,19 @@ public sealed class PrologEngine
         launcher.EmitHalt();
         // ADR-015 chunk C step 4: a fail-stub at a known offset in the
         // prefix. Dynamic predicates' last-clause chain instructions point
-        // here as their "no more clauses" target, and the trampoline of an
-        // empty dynamic predicate jumps here. The stub just calls
-        // fail/0 — the builtin returns false, the interpreter backtracks
-        // to whatever choice point survives (typically the caller's).
-        int failStubAddr = launcher.Position;
+        // here via `retry_me_else <fail-stub>` (instead of trust_me) so a
+        // future assertz can patch the operand in place. retry_me_else
+        // does not remove the CP, so the stub itself runs trust_me first
+        // to pop the dynamic predicate's chain CP — otherwise backtracking
+        // would loop right back to this fail-stub forever. Then
+        // call_builtin fail/0 returns false and the interpreter resumes
+        // backtracking at whatever caller-side CP survives.
+        // The compiler was already told this address (Compile call above);
+        // assert the launcher's position agrees.
+        if (launcher.Position != failStubAddr)
+            throw new InvalidOperationException(
+                $"launcher position {launcher.Position} != pre-computed fail-stub addr {failStubAddr}");
+        launcher.EmitTrustMe();
         int failFunctorId = FunctorTable.Intern(
             AtomTable.Intern("fail", permanent: true).Id, 0);
         if (!Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(
@@ -2270,7 +2284,8 @@ public sealed class PrologEngine
             rewritten, cache: null,
             unindexedFunctors: new HashSet<int> { fid },
             pools: _literalPools,
-            dynamicFunctors: new HashSet<int> { fid });
+            dynamicFunctors: new HashSet<int> { fid },
+            failStubAddr: engine.DynamicFailStubAddr);
         int loadOffset = engine.ProgramLength;
         var link = new Linker().Link(module, loadOffset, externalSymbols: addressMap);
         engine.AppendCode(link.Bytecode);

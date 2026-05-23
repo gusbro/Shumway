@@ -55,14 +55,22 @@ public sealed class ModuleCompiler
         IEnumerable<Clause> clauses,
         IReadOnlyDictionary<int, CompiledPredicate>? cache,
         IReadOnlySet<int>? unindexedFunctors)
-        => Compile(clauses, cache, unindexedFunctors, pools: null, dynamicFunctors: null);
+        => Compile(clauses, cache, unindexedFunctors, pools: null, dynamicFunctors: null, failStubAddr: 0);
 
     public CompiledModule Compile(
         IEnumerable<Clause> clauses,
         IReadOnlyDictionary<int, CompiledPredicate>? cache,
         IReadOnlySet<int>? unindexedFunctors,
         LiteralPools? pools)
-        => Compile(clauses, cache, unindexedFunctors, pools, dynamicFunctors: null);
+        => Compile(clauses, cache, unindexedFunctors, pools, dynamicFunctors: null, failStubAddr: 0);
+
+    public CompiledModule Compile(
+        IEnumerable<Clause> clauses,
+        IReadOnlyDictionary<int, CompiledPredicate>? cache,
+        IReadOnlySet<int>? unindexedFunctors,
+        LiteralPools? pools,
+        IReadOnlySet<int>? dynamicFunctors)
+        => Compile(clauses, cache, unindexedFunctors, pools, dynamicFunctors, failStubAddr: 0);
 
     /// <summary><paramref name="pools"/> (ADR-015 chunk B) lets the caller
     /// supply persistent literal pools instead of the fresh per-call set.
@@ -81,7 +89,8 @@ public sealed class ModuleCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? cache,
         IReadOnlySet<int>? unindexedFunctors,
         LiteralPools? pools,
-        IReadOnlySet<int>? dynamicFunctors)
+        IReadOnlySet<int>? dynamicFunctors,
+        int failStubAddr)
     {
         ArgumentNullException.ThrowIfNull(clauses);
 
@@ -130,7 +139,7 @@ public sealed class ModuleCompiler
             bool isDynamic = dynamicFunctors is not null && dynamicFunctors.Contains(fid);
             predicates.Add(predicateCompiler.Compile(
                 groups[fid], stringLiterals, floatLiterals, bigIntLiterals,
-                enableIndexing, isDynamic));
+                enableIndexing, isDynamic, failStubAddr));
         }
 
         return new CompiledModule(
