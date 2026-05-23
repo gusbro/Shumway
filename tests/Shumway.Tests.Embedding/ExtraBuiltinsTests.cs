@@ -186,9 +186,14 @@ public class ExtraBuiltinsTests
     [Fact]
     public void Succ_NegativeX_Throws()
     {
+        // Phase-9 chunk 131b: succ(-1, _) now raises a catchable
+        // domain_error(not_less_than_zero, _) rather than the
+        // uncatchable InvalidOperationException earlier phases used.
         var engine = new PrologEngine();
-        Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<Shumway.Core.PrologRuntimeException>(
             () => engine.Query("succ(-1, _)."));
+        Assert.Equal("domain_error", ex.Kind);
+        Assert.Equal("not_less_than_zero", ex.Detail);
     }
 
     // ---------- numbervars/3 ----------

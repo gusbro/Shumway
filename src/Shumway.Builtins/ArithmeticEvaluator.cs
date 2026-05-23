@@ -32,7 +32,9 @@ public static class ArithmeticEvaluator
             Tag.Str => EvaluateCompound(engine, cell),
             Tag.Ref => throw new PrologRuntimeException("instantiation_error"),
             Tag.Atom => EvaluateAtomConstant(cell),
-            _ => throw new PrologRuntimeException("type_error", $"evaluable:{cell.Tag}"),
+            // Anything else in arithmetic position is non-evaluable.
+            // ISO §7.1.2: type_error(evaluable, _).
+            _ => throw new PrologRuntimeException("type_error", "evaluable"),
         };
     }
 
@@ -45,13 +47,20 @@ public static class ArithmeticEvaluator
 
     private static Number EvaluateAtomConstant(Cell atomCell)
     {
-        // Some atoms (pi, e, max_tagged_integer, etc.) are arithmetic
-        // constants in ISO. None are supported yet — adding them is a
-        // tiny incremental change.
+        // ISO §7.1.2 / §7.8.7: an atom in arithmetic position that isn't
+        // a recognised arithmetic constant raises type_error(evaluable,
+        // Name/0). Shumway currently recognises no atom constants
+        // (pi, e, max_tagged_integer, … all still to come), so every
+        // bound atom hits this path.
+        //
+        // The translated form is `type_error(evaluable, _)` — a catcher
+        // matching on the kind atom alone succeeds; the full ISO term
+        // with the proper Name/Arity indicator in the value slot is a
+        // later refinement, since PrologRuntimeException currently
+        // carries only a string Detail.
         var atom = AtomTable.GetById(atomCell.AsAtomId);
-        string name = atom?.Name ?? "?";
-        throw new InvalidOperationException(
-            $"Atom '{name}' is not a recognised arithmetic constant.");
+        _ = atom?.Name;     // kept for the eventual indicator-aware throw.
+        throw new PrologRuntimeException("type_error", "evaluable");
     }
 
     private static Number EvaluateCompound(Engine engine, Cell strCell)
@@ -59,6 +68,8 @@ public static class ArithmeticEvaluator
         int functorIdx = strCell.AsHeapIndex;
         int functorId = engine.GetHeap(functorIdx).AsFunctorId;
         var (atomId, arity) = FunctorTable.Lookup(functorId);
+        // A functor without a name in the AtomTable is an engine invariant
+        // violation, not a user error — InvalidOperationException stays.
         string name = AtomTable.GetById(atomId)?.Name
                       ?? throw new InvalidOperationException(
                              $"Functor {functorId} has no name.");
@@ -69,8 +80,9 @@ public static class ArithmeticEvaluator
             2 => EvaluateBinary(engine, name,
                                 engine.GetHeap(functorIdx + 1),
                                 engine.GetHeap(functorIdx + 2)),
-            _ => throw new InvalidOperationException(
-                $"No arithmetic function '{name}/{arity}'."),
+            // Any other arity in arithmetic position is a non-evaluable
+            // compound: ISO type_error(evaluable, Name/Arity).
+            _ => throw new PrologRuntimeException("type_error", "evaluable"),
         };
     }
 
@@ -101,8 +113,8 @@ public static class ArithmeticEvaluator
             "float_integer_part" => new Number(Math.Truncate(a.AsDouble())),
             "float_fractional_part" => new Number(a.AsDouble() - Math.Truncate(a.AsDouble())),
             "integer" => a.IsFloat ? new Number((long)Math.Truncate(a.AsDouble())) : a,
-            _ => throw new InvalidOperationException(
-                $"No arithmetic function '{name}/1'."),
+            // Unknown unary arithmetic function — ISO type_error(evaluable, Name/1).
+            _ => throw new PrologRuntimeException("type_error", "evaluable"),
         };
     }
 
@@ -129,8 +141,8 @@ public static class ArithmeticEvaluator
             ">>" => ShiftRight(a, b),
             "gcd" => Gcd(a, b),
             "atan2" => new Number(Math.Atan2(a.AsDouble(), b.AsDouble())),
-            _ => throw new InvalidOperationException(
-                $"No arithmetic function '{name}/2'."),
+            // Unknown binary arithmetic function — ISO type_error(evaluable, Name/2).
+            _ => throw new PrologRuntimeException("type_error", "evaluable"),
         };
     }
 

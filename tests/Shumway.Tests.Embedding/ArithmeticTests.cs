@@ -183,8 +183,15 @@ public class ArithmeticTests
     [Fact]
     public void Is_AtomRightSide_Throws()
     {
+        // Phase-9 chunk 131b: a non-evaluable atom on the right side of
+        // is/2 now raises a catchable ISO type_error(evaluable, _) rather
+        // than the uncatchable InvalidOperationException earlier phases
+        // surfaced.
         var engine = new PrologEngine();
-        Assert.Throws<InvalidOperationException>(() => engine.Query("X is foo."));
+        var ex = Assert.Throws<Shumway.Core.PrologRuntimeException>(
+            () => engine.Query("X is foo."));
+        Assert.Equal("type_error", ex.Kind);
+        Assert.Equal("evaluable", ex.Detail);
     }
 
     [Fact]

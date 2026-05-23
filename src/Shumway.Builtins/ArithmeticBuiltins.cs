@@ -89,8 +89,12 @@ public static class ArithmeticBuiltins
     /// <summary><c>succ(X, Y)</c> — successor of a non-negative integer.
     /// Either <c>X</c> or <c>Y</c> must be ground. With <c>X</c> ground
     /// (non-negative) the result is <c>Y = X + 1</c>; with <c>Y</c> ground
-    /// (positive) the result is <c>X = Y - 1</c>. Negative inputs raise
-    /// <c>InvalidOperationException</c>.</summary>
+    /// (positive) the result is <c>X = Y - 1</c>.
+    ///
+    /// <para>ISO errors: a negative input raises
+    /// <c>domain_error(not_less_than_zero, X)</c>; both args unbound
+    /// raises <c>instantiation_error</c>; a non-integer raises
+    /// <c>type_error(integer, _)</c>.</para></summary>
     public static bool Succ(Engine engine)
     {
         Cell xc = Resolve(engine, engine.GetRegister(0));
@@ -100,18 +104,22 @@ public static class ArithmeticBuiltins
         {
             long xv = xc.AsInt;
             if (xv < 0)
-                throw new InvalidOperationException(
-                    $"succ/2: first argument must be non-negative, got {xv}.");
+                throw new PrologRuntimeException("domain_error", "not_less_than_zero");
             return engine.UnifyRegisterWithCell(1, Cell.Int(xv + 1));
         }
         if (yc.Tag == Tag.Int)
         {
             long yv = yc.AsInt;
-            if (yv <= 0) return false;   // succ(_, 0) has no solution
+            if (yv < 0)
+                throw new PrologRuntimeException("domain_error", "not_less_than_zero");
+            if (yv == 0) return false;   // succ(_, 0) has no solution
             return engine.UnifyRegisterWithCell(0, Cell.Int(yv - 1));
         }
-        throw new InvalidOperationException(
-            "succ/2: at least one of X, Y must be sufficiently instantiated.");
+        // Neither is an integer — instantiation_error if both var,
+        // type_error(integer) when at least one is bound to a non-int.
+        if (xc.Tag == Tag.Ref && yc.Tag == Tag.Ref)
+            throw new PrologRuntimeException("instantiation_error");
+        throw new PrologRuntimeException("type_error", "integer");
     }
 
     /// <summary><c>plus(X, Y, Z)</c> — integer addition relation with
