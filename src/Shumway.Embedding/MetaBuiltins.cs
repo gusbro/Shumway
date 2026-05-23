@@ -1315,7 +1315,15 @@ public static class MetaBuiltins
         var clause = Shumway.Compiler.Ast.Clause.From(clauseTerm);
         if (prepend) host.Asserta(clause);
         else host.Assertz(clause);
-        MarkDynamicModified(engine, ExtractHeadFunctorIdFromClause(clause));
+        int fid = ExtractHeadFunctorIdFromClause(clause);
+        // ADR-015 chunk C step 4: incremental append for assertz. The
+        // chunk-C redirect still fires below (a no-op overwrite via
+        // recompile if the call path triggers it), but the incremental
+        // path is the canonical one going forward — sub-2e removes the
+        // redirect entirely.
+        if (!prepend)
+            host.AppendDynamicClauseIncremental(engine, fid, clause);
+        MarkDynamicModified(engine, fid);
         return true;
     }
 

@@ -89,6 +89,17 @@ public sealed class PrologEngine
     private sealed class DynChainState
     {
         public readonly List<DynChainEntry> Entries = new();
+        /// <summary>Absolute byte position of the operand at the bytecode
+        /// tail of this predicate's chain — the <c>&lt;next&gt;</c> of
+        /// either the latest-appended clause's <c>retry_me_else</c>, or
+        /// (for never-asserted dynamic predicates) the empty-stub clause's
+        /// <c>try_me_else</c>. <c>assertz</c> writes the new clause's
+        /// chunk address here to link it onto the chain, then updates
+        /// this to point at the new clause's own <c>&lt;next&gt;</c>
+        /// operand. -1 when the predicate's last instruction is
+        /// <c>trust_me</c> (paso-3 emission without a fail-stub) — those
+        /// predicates fall back to the chunk-C recompile path.</summary>
+        public int TailNextAddr = -1;
     }
     private readonly Dictionary<int, DynChainState> _dynChains = new();
 
@@ -2185,6 +2196,88 @@ public sealed class PrologEngine
         return (program, varNames, varHeapIndices, engine, interp);
     }
 
+    /// <summary>ADR-015 chunk C step 4: incrementally compile and append a
+    /// newly asserted clause's bytecode, then patch the chain's tail
+    /// <c>&lt;next&gt;</c> operand to link it in. Avoids a full predicate
+    /// recompile — the per-assertz cost stays O(clause size) rather than
+    /// O(predicate size). Falls back silently (no-op) when the predicate's
+    /// chain isn't in the new structure (paso-3 trust_me tail or indexed
+    /// dispatch); in those cases the chunk-C redirect handles the update.
+    /// </summary>
+    internal void AppendDynamicClauseIncremental(
+        Engine engine, int functorId, Clause newClause)
+    {
+        if (!_dynChains.TryGetValue(functorId, out var chain)) return;
+        if (chain.TailNextAddr < 0) return;
+        if (engine.CurrentProgram is null) return;
+        if (engine.DynamicFailStubAddr <= 0) return;
+
+        // Apply the same transforms the setup path runs — dynamic clauses
+        // share a flat module rewrite context.
+        var single = new[] { newClause };
+        var transformed = PhraseTransform.Apply(
+            MetaTransform.Apply(DcgTransform.Apply(single)));
+        transformed = Shumway.Compiler.Modes.ModeSpecializationTransform.Apply(
+            transformed, Modes);
+        var dynCtx = new ModuleRewrite.Context(
+            DefaultModuleName, new HashSet<int>(), _dynamicFunctors);
+        var rewritten = transformed.Select(c => ModuleRewrite.Rewrite(c, dynCtx))
+            .ToList();
+        if (rewritten.Count == 0) return;
+        var compiledClause = new ClauseCompiler().Compile(
+            rewritten[0],
+            _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts);
+
+        // Build the chunk:
+        //   retry_me_else <fail-stub>   (5 bytes — chain op, <next>=fail-stub)
+        //   check_visible <born> <died> (17 bytes)
+        //   <body bytes>
+        var emitter = new BytecodeEmitter();
+        emitter.EmitRetryMeElse(engine.DynamicFailStubAddr);
+        const int NextOperandLocal = 1;        // position of <next> operand
+        emitter.EmitCheckVisible(born: _dbGeneration, died: long.MaxValue);
+        const int DiedOperandLocal = 5 + 9;    // retry_me_else (5) + opcode (1) + born (8)
+        int bodyStartLocal = emitter.Position;
+        emitter.AppendBytes(compiledClause.Bytecode);
+        byte[] chunk = emitter.ToBytes();
+
+        // Append.
+        int chunkAddr = engine.AppendCode(chunk);
+        var program = engine.CurrentProgram;
+
+        // Patch call sites inside the body to absolute targets.
+        var addrMap = engine.CurrentFunctorAddresses;
+        foreach (var site in compiledClause.CallSites)
+        {
+            int operandPos = chunkAddr + bodyStartLocal + site.OpcodeOffset + 1;
+            int target = (addrMap is not null
+                          && addrMap.TryGetValue(site.CalleeFunctorId, out int addr))
+                ? addr
+                : Shumway.Core.CallTarget.ForUndefined(site.CalleeFunctorId);
+            Shumway.Core.BytecodeIO.WriteInt32(program, operandPos, target);
+        }
+
+        // Link the new clause into the chain: previous tail's <next> now
+        // points at our chunk's chain instruction.
+        Shumway.Core.BytecodeIO.WriteInt32(program, chain.TailNextAddr, chunkAddr);
+
+        // Update chain state.
+        chain.Entries.Add(new DynChainEntry(
+            newClause,
+            died: chunkAddr + DiedOperandLocal,
+            next: chunkAddr + NextOperandLocal));
+        chain.TailNextAddr = chunkAddr + NextOperandLocal;
+    }
+
+    /// <summary>Test hook: returns the chain's current tail-next address
+    /// (where the next assertz would patch), or <c>null</c> when no chain
+    /// state exists.</summary>
+    internal int? PeekTailNextAddr(int functorId)
+    {
+        if (!_dynChains.TryGetValue(functorId, out var chain)) return null;
+        return chain.TailNextAddr;
+    }
+
     /// <summary>ADR-015 chunk C: recompiles a dynamic predicate from its
     /// current clauses and appends the bytecode to the running program,
     /// returning the new entry address. Invoked lazily — on the first call
@@ -2257,8 +2350,12 @@ public sealed class PrologEngine
         int fid, byte[] program, int predAddr, int predByteLength)
     {
         _dynChains.Remove(fid);
-        if (!_dynamicClauses.TryGetValue(fid, out var clauses)) return;
-        if (clauses.Count == 0) return;
+        // Empty dynamic predicates still need chain state for incremental
+        // assertz — the empty-stub clause's try_me_else <fail-stub> is the
+        // first patch target. So default to an empty clause list rather
+        // than skipping when _dynamicClauses has no entry.
+        var clauses = _dynamicClauses.TryGetValue(fid, out var cs)
+            ? cs : (IReadOnlyList<Clause>)Array.Empty<Clause>();
 
         var chain = new DynChainState();
         int pc = predAddr;
@@ -2266,29 +2363,30 @@ public sealed class PrologEngine
         int clauseIndex = 0;
         // Each clause's chain instruction (try_me_else / retry_me_else)
         // precedes its check_visible. Remember the operand position so we
-        // pair the right one with the right clause; reset on each
-        // check_visible so a stray static-tail trust_me doesn't bleed
-        // into the next clause.
+        // pair the right one with the right clause. Also track the
+        // bytecode-tail's chain operand — that's where assertz patches to
+        // link a freshly compiled clause onto the chain (whether the
+        // current tail is an empty-stub's try_me_else or the last live
+        // clause's retry_me_else, the patch site is the same shape).
         int pendingNextOperand = -1;
-        while (pc < end && clauseIndex < clauses.Count)
+        int tailNextOperand = -1;
+        while (pc < end)
         {
             var info = Shumway.Core.OpcodeTable.Get(program[pc]);
             if (info.Op == Shumway.Core.Opcode.TryMeElse
                 || info.Op == Shumway.Core.Opcode.RetryMeElse)
             {
-                // Layout: opcode (1) | address (4) | (try_me_else: arity 4).
                 pendingNextOperand = pc + 1;
+                tailNextOperand = pc + 1;
             }
             else if (info.Op == Shumway.Core.Opcode.TrustMe)
             {
-                // No <next> operand — the chain terminates here. A clause
-                // headed by trust_me cannot be the link target of a future
-                // assertz; chunk-C redirect remains its modification path.
                 pendingNextOperand = -1;
+                tailNextOperand = -1;   // not patchable
             }
-            else if (info.Op == Shumway.Core.Opcode.CheckVisible)
+            else if (info.Op == Shumway.Core.Opcode.CheckVisible
+                     && clauseIndex < clauses.Count)
             {
-                // Layout: opcode (1) | born (8) | died (8) — died at pc+9.
                 chain.Entries.Add(new DynChainEntry(
                     clauses[clauseIndex],
                     died: pc + 9,
@@ -2298,7 +2396,12 @@ public sealed class PrologEngine
             }
             pc += info.Size;
         }
-        if (chain.Entries.Count > 0)
+        chain.TailNextAddr = tailNextOperand;
+        // Always record chain state when a tail-next exists, even when
+        // _dynamicClauses is empty (declared-but-never-asserted dynamic
+        // predicates have the empty-stub clause as the patch target for
+        // the first incremental assertz).
+        if (chain.Entries.Count > 0 || tailNextOperand >= 0)
             _dynChains[fid] = chain;
     }
 
