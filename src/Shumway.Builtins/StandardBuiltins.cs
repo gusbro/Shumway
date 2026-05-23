@@ -33,6 +33,10 @@ public static class StandardBuiltins
             Cmp, "==(@Term1, @Term2)", "Succeeds if the two terms are structurally identical.");
         BuiltinsRegistry.Register("\\==",2, UnifyBuiltins.StructurallyNotEqual,
             Cmp, "\\==(@Term1, @Term2)", "Succeeds if the two terms are not structurally identical.");
+        BuiltinsRegistry.Register("unify_with_occurs_check", 2,
+            UnifyBuiltins.UnifyWithOccursCheck,
+            Cmp, "unify_with_occurs_check(?Term1, ?Term2)",
+            "Like =/2 but fails rather than building a cyclic term (ISO §8.2.2).");
 
         // Arithmetic.
         const string Arith = "Arithmetic";

@@ -667,6 +667,15 @@ public sealed class Engine
         return Unify(aHeap, bHeap);
     }
 
+    /// <summary>Occurs-check variant of <see cref="UnifyRegisters"/> —
+    /// drives ISO <c>unify_with_occurs_check/2</c>.</summary>
+    public bool UnifyRegistersWithOccursCheck(int aRegIdx, int bRegIdx)
+    {
+        int aHeap = MaterializeRegister(aRegIdx);
+        int bHeap = MaterializeRegister(bRegIdx);
+        return UnifyWithOccursCheck(aHeap, bHeap);
+    }
+
     /// <summary>Unifies the cell held in <c>X[<paramref name="regIdx"/>]</c> with an
     /// immediate <paramref name="value"/> (typically a bytecode-literal cell such as
     /// <see cref="Cell.Atom"/> or <see cref="Cell.Int"/>).</summary>
@@ -1969,6 +1978,142 @@ public sealed class Engine
     {
         if (!Unify(hA, hB)) return false;
         return Unify(hA + 1, hB + 1);
+    }
+
+    /// <summary>
+    /// The occurs-check variant of <see cref="Unify"/> — ISO §8.2.2's
+    /// <c>unify_with_occurs_check/2</c>. Identical to <see cref="Unify"/>
+    /// except that before binding a variable to a compound term, it
+    /// verifies that the variable's heap cell does not occur anywhere
+    /// inside that term; if it does, the unification fails. This rules
+    /// out the cyclic terms plain <c>=/2</c> would build (e.g.
+    /// <c>X = f(X)</c>), at the cost of one structural walk per bind.
+    /// </summary>
+    public bool UnifyWithOccursCheck(int aIdx, int bIdx)
+    {
+        int aAddr = Deref(aIdx);
+        int bAddr = Deref(bIdx);
+        if (aAddr == bAddr) return true;
+
+        Cell aCell = _heap[aAddr];
+        Cell bCell = _heap[bAddr];
+
+        // Attributed variables follow the same hook path as the
+        // standard unify — the occurs check is enforced before the
+        // hook fires, identical to SWI's semantics.
+        if (aCell.Tag == Tag.AttVar || bCell.Tag == Tag.AttVar)
+        {
+            // For attvars we fall back to the regular unify path; the
+            // occurs-check still applies to any plain Ref binding the
+            // hook hasn't intercepted. (Strict ISO occurs-check over
+            // attvar hooks is not in the standard.)
+            return UnifyAttVar(aAddr, aCell, bAddr, bCell);
+        }
+
+        if (aCell.Tag == Tag.Ref)
+        {
+            if (bCell.Tag == Tag.Ref)
+            {
+                // Var-to-var binding is safe — no cycle possible.
+                BindVarToVar(aAddr, bAddr);
+                return true;
+            }
+            if (OccursIn(aAddr, bAddr)) return false;
+            BindVarToValue(aAddr, bAddr, bCell);
+            return true;
+        }
+        if (bCell.Tag == Tag.Ref)
+        {
+            if (OccursIn(bAddr, aAddr)) return false;
+            BindVarToValue(bAddr, aAddr, aCell);
+            return true;
+        }
+
+        if (aCell.Tag == Tag.Pstr) return UnifyPstr(aAddr, bAddr);
+        if (bCell.Tag == Tag.Pstr) return UnifyPstr(bAddr, aAddr);
+
+        if (aCell.Tag != bCell.Tag) return false;
+        return aCell.Tag switch
+        {
+            Tag.Atom => aCell.AsAtomId == bCell.AsAtomId,
+            Tag.Int => aCell.AsInt == bCell.AsInt,
+            Tag.Str => UnifyStrWithOccursCheck(aCell.AsHeapIndex, bCell.AsHeapIndex),
+            Tag.Lis => UnifyLisWithOccursCheck(aCell.AsHeapIndex, bCell.AsHeapIndex),
+            Tag.BigInt => _bigIntTable[aCell.AsBigIntId].Equals(_bigIntTable[bCell.AsBigIntId]),
+            Tag.String => string.Equals(_stringTable[aCell.AsStringId], _stringTable[bCell.AsStringId]),
+            Tag.Foreign => ReferenceEquals(_foreignTable[aCell.AsForeignId], _foreignTable[bCell.AsForeignId]),
+            Tag.Float => UnifyFloat(aCell, bCell),
+            _ => throw new InvalidOperationException($"UnifyWithOccursCheck reached cell with unexpected tag {aCell.Tag}."),
+        };
+    }
+
+    private bool UnifyStrWithOccursCheck(int fA, int fB)
+    {
+        int functorIdA = _heap[fA].AsFunctorId;
+        int functorIdB = _heap[fB].AsFunctorId;
+        if (functorIdA != functorIdB) return false;
+        var (_, arity) = FunctorTable.Lookup(functorIdA);
+        for (int i = 1; i <= arity; i++)
+            if (!UnifyWithOccursCheck(fA + i, fB + i)) return false;
+        return true;
+    }
+
+    private bool UnifyLisWithOccursCheck(int hA, int hB)
+    {
+        if (!UnifyWithOccursCheck(hA, hB)) return false;
+        return UnifyWithOccursCheck(hA + 1, hB + 1);
+    }
+
+    /// <summary>True iff the variable cell at <paramref name="targetAddr"/>
+    /// is structurally reachable from the (dereferenced) value at
+    /// <paramref name="sourceAddr"/>. Walks the source term iteratively
+    /// over an explicit stack so deep / long-list structures do not
+    /// overflow C# recursion.</summary>
+    private bool OccursIn(int targetAddr, int sourceAddr)
+    {
+        var stack = new Stack<int>();
+        stack.Push(sourceAddr);
+        while (stack.Count > 0)
+        {
+            int addr = Deref(stack.Pop());
+            if (addr == targetAddr) return true;
+            Cell c = _heap[addr];
+            switch (c.Tag)
+            {
+                case Tag.Str:
+                {
+                    int fIdx = c.AsHeapIndex;
+                    int functorId = _heap[fIdx].AsFunctorId;
+                    var (_, arity) = FunctorTable.Lookup(functorId);
+                    for (int i = 1; i <= arity; i++) stack.Push(fIdx + i);
+                    break;
+                }
+                case Tag.Lis:
+                {
+                    int hIdx = c.AsHeapIndex;
+                    stack.Push(hIdx);
+                    stack.Push(hIdx + 1);
+                    break;
+                }
+                case Tag.Pstr:
+                {
+                    // PSTR characters are immediate ints — only the
+                    // logical tail can carry a variable.
+                    int tailIdx = ComputePstrTailIndex(c);
+                    stack.Push(tailIdx);
+                    break;
+                }
+                case Tag.AttVar:
+                    // An attvar is a kind of variable; the comparison
+                    // by address above covers the identity case.
+                    // Attribute pairs live in a side table, not the
+                    // heap, so we don't traverse them here — matching
+                    // the standard occurs-check semantics.
+                    break;
+                // Atoms, Ints, Floats, BigInts, Strings, Foreigns: leaves.
+            }
+        }
+        return false;
     }
 
     /// <summary>

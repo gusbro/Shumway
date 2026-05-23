@@ -14,6 +14,14 @@ public static class UnifyBuiltins
     public static bool Unify(Engine engine) =>
         engine.UnifyRegisters(0, 1);
 
+    /// <summary><c>unify_with_occurs_check(X, Y)</c> — ISO §8.2.2. Like
+    /// <c>=/2</c> but every variable-to-compound binding is preceded
+    /// by an occurs-check; binding a variable into a term where it
+    /// already occurs (which plain <c>=/2</c> would resolve into a
+    /// cyclic term) fails.</summary>
+    public static bool UnifyWithOccursCheck(Engine engine) =>
+        engine.UnifyRegistersWithOccursCheck(0, 1);
+
     /// <summary><c>\=(X, Y)</c> — succeeds iff X and Y CANNOT be unified.
     /// Performs a trial unification, then unwinds any bindings the trial made
     /// before reporting the result. The heap-top is restored so any

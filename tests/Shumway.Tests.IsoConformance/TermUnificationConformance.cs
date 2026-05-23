@@ -6,26 +6,18 @@ namespace Shumway.Tests.IsoConformance;
 /// <summary>
 /// ISO 13211-1, §8.2 Term unification.
 ///
-/// Covers <c>=/2</c> (§8.2.1) and <c>\=/2</c> (§8.2.3) including the
-/// examples spelled out in the standard. The unification builtins
-/// have no ISO errors — every input pattern is allowed; the result
-/// is success / failure.
+/// Covers <c>=/2</c> (§8.2.1), <c>unify_with_occurs_check/2</c>
+/// (§8.2.2) and <c>\=/2</c> (§8.2.3) including the examples spelled
+/// out in the standard. The unification builtins have no ISO errors
+/// — every input pattern is allowed; the result is success / failure.
 ///
-/// <para><b>Recorded conformance gaps</b> (out of scope for chunk
-/// 132's "widen conformance" pass, queued for follow-up):</para>
-/// <list type="bullet">
-/// <item><c>unify_with_occurs_check/2</c> (§8.2.2) is not yet
-/// implemented — a call raises <c>existence_error(procedure,
-/// unify_with_occurs_check/2)</c>. Adding it needs an occurs-check
-/// variant of <see cref="Shumway.Core.Engine.Unify"/>, which is its
-/// own piece of engine work.</item>
-/// <item>Plain <c>=/2</c> with a self-referential RHS (<c>X = f(X)</c>)
-/// succeeds and builds a cyclic term — ISO permits this — but the
-/// Embedding-layer materialiser walks the binding to surface it back
-/// to C#, which overflows the stack for any cyclic structure. A
-/// catch-cycle materialiser is the same kind of fix Phase 8 chunk 111
-/// applied to long lists.</item>
-/// </list>
+/// <para><b>One recorded gap</b>: plain <c>=/2</c> with a
+/// self-referential RHS (<c>X = f(X)</c>) succeeds and builds a
+/// cyclic term — ISO permits this — but the Embedding-layer
+/// materialiser walks the binding to surface it back to C#, which
+/// overflows the stack for any cyclic structure. A catch-cycle
+/// materialiser is the same kind of fix Phase 8 chunk 111 applied
+/// to long lists; queued separately.</para>
 /// </summary>
 public class TermUnificationConformance
 {
@@ -132,7 +124,66 @@ public class TermUnificationConformance
         Assert.Equal(Int(1), sol["Y"]);
     }
 
-    // §8.2.2 unify_with_occurs_check/2 — see recorded gap above.
+    // ---------- §8.2.2 unify_with_occurs_check/2 ----------
+
+    [Fact]
+    public void UnifyWithOccursCheck_PlainBindings_StillWork()
+    {
+        var engine = new PrologEngine();
+        var sol = engine.Query("unify_with_occurs_check(X, hello).");
+        Assert.True(sol.Success);
+        Assert.Equal(Atom("hello"), sol["X"]);
+    }
+
+    [Fact]
+    public void UnifyWithOccursCheck_SelfReferential_Fails()
+    {
+        // §8.2.2.4 — unify_with_occurs_check(X, f(X)) fails because
+        // X occurs inside the right-hand side. (Plain =/2 would build
+        // a cyclic term.)
+        var engine = new PrologEngine();
+        Assert.False(
+            engine.Query("unify_with_occurs_check(X, f(X)).").Success);
+    }
+
+    [Fact]
+    public void UnifyWithOccursCheck_DeepSelfReferential_Fails()
+    {
+        var engine = new PrologEngine();
+        Assert.False(
+            engine.Query("unify_with_occurs_check(X, f(g(X))).").Success);
+    }
+
+    [Fact]
+    public void UnifyWithOccursCheck_CompoundsWithoutCycle_Succeeds()
+    {
+        var engine = new PrologEngine();
+        var sol = engine.Query(
+            "unify_with_occurs_check(foo(X, Y), foo(1, 2)).");
+        Assert.True(sol.Success);
+        Assert.Equal(Int(1), sol["X"]);
+        Assert.Equal(Int(2), sol["Y"]);
+    }
+
+    [Fact]
+    public void UnifyWithOccursCheck_VarToVar_Succeeds()
+    {
+        // X = Y with both unbound is safe — no cycle possible.
+        var engine = new PrologEngine();
+        var sol = engine.Query("unify_with_occurs_check(X, Y), X = hi.");
+        Assert.True(sol.Success);
+        Assert.Equal(Atom("hi"), sol["X"]);
+        Assert.Equal(Atom("hi"), sol["Y"]);
+    }
+
+    [Fact]
+    public void UnifyWithOccursCheck_VarInListSpine_Fails()
+    {
+        // §8.2.2.4 — variable appearing inside a list spine.
+        var engine = new PrologEngine();
+        Assert.False(
+            engine.Query("unify_with_occurs_check(X, [1, 2, X]).").Success);
+    }
 
     // ---------- §8.2.3 (\=)/2 ----------
 

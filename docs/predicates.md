@@ -15,6 +15,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `==(@Term1, @Term2)` | Succeeds if the two terms are structurally identical. |
 | `\=(?Term1, ?Term2)` | Succeeds if the two terms do not unify. |
 | `\==(@Term1, @Term2)` | Succeeds if the two terms are not structurally identical. |
+| `unify_with_occurs_check(?Term1, ?Term2)` | Like =/2 but fails rather than building a cyclic term (ISO §8.2.2). |
 
 ## Type checking
 
