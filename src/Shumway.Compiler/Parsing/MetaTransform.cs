@@ -95,7 +95,7 @@ public static class MetaTransform
             return SynthesizeNegationHelper(ct.Args[0], ref counter, helpers);
         }
 
-        // findall(Template, Goal, List) with a callable (non-variable)
+        // findall(Template, Goal, List) with a syntactically-callable
         // Goal — rewrite to an in-engine collect loop (chunk 83):
         //   ( '$findall_push', Goal, '$findall_record'(Template), fail
         //   ; '$findall_collect'(List) )
@@ -103,12 +103,15 @@ public static class MetaTransform
         // real choice points and runs in the live engine — no sub-engine,
         // and side effects (assertz) persist. The fail drives the
         // backtracking that enumerates every solution; the disjunction
-        // then routes to '$findall_collect'. A bare-variable Goal is left
-        // alone — it falls through to the runtime findall/3 builtin.
+        // then routes to '$findall_collect'. A Goal that isn't
+        // syntactically callable (a var, an integer, a string, …) is
+        // left alone — it falls through to the runtime findall/3
+        // builtin, which raises the appropriate ISO
+        // instantiation_error / type_error(callable, _) (chunk 135).
         if (goal is CompoundTerm fa
             && fa.Functor == "findall"
             && fa.Args.Length == 3
-            && fa.Args[1] is not VarTerm)
+            && (fa.Args[1] is AtomTerm || fa.Args[1] is CompoundTerm))
         {
             Term collectLoop = new CompoundTerm(",", new[]
             {
@@ -138,7 +141,7 @@ public static class MetaTransform
         if (goal is CompoundTerm bs
             && (bs.Functor == "bagof" || bs.Functor == "setof")
             && bs.Args.Length == 3
-            && bs.Args[1] is not VarTerm)
+            && (bs.Args[1] is AtomTerm || bs.Args[1] is CompoundTerm))
         {
             Term rewritten = RewriteBagof(
                 bs.Functor, bs.Args[0], bs.Args[1], bs.Args[2], ref counter);

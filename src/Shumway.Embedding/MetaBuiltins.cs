@@ -1981,6 +1981,13 @@ public static class MetaBuiltins
 
         Term template = MaterializeRegister(engine, 0);
         Term goal = MaterializeRegister(engine, 1);
+        // Chunk 135: ISO §8.10.1.3 / §8.10.2.3 / §8.10.3.3 — Goal must
+        // be callable. A var (after materialisation) is instantiation_error;
+        // anything else non-callable is type_error(callable, _).
+        if (goal is VarTerm)
+            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+        if (goal is not AtomTerm && goal is not CompoundTerm)
+            throw new Shumway.Core.PrologRuntimeException("type_error", "callable");
         if (stripExistentials) goal = StripExistentials(goal);
 
         var sub = host.CreateSubEngine();
