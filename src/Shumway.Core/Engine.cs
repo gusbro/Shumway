@@ -1050,6 +1050,21 @@ public sealed class Engine
     /// the ISO logical update view. Zero outside dynamic dispatch.</summary>
     public long CurrentViewGen { get; set; }
 
+    /// <summary>Name of the builtin currently executing, set by the
+    /// <c>CallBuiltin</c> dispatch right before invoking the impl. Read
+    /// by <c>IsoError</c> when constructing an <c>error/2</c> term so the
+    /// Context slot reports the offending builtin as <c>Name/Arity</c>
+    /// rather than a fresh anonymous variable (the impl-defined identity
+    /// ISO §7.12.2 calls for). Never reset on impl return — the next
+    /// builtin dispatch overwrites it, and on an exception unwind the
+    /// last-set value is exactly the one we want. <c>null</c> outside
+    /// any builtin (during interpreter-emitted opcodes, IL-compiled
+    /// bodies, or the embedding-layer query plumbing).</summary>
+    public string? CurrentBuiltinName { get; set; }
+
+    /// <summary>Arity companion to <see cref="CurrentBuiltinName"/>.</summary>
+    public int CurrentBuiltinArity { get; set; }
+
     /// <summary>Absolute byte position of the per-query fail-stub
     /// (ADR-015 chunk C step 4) — a tiny <c>call_builtin fail/0</c>
     /// emitted in the prefix. Dynamic predicates' last-clause chain

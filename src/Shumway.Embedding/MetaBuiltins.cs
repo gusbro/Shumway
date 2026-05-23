@@ -961,20 +961,52 @@ public static class MetaBuiltins
     /// <summary>Promotes a Core-level <see cref="PrologRuntimeException"/>
     /// into the canonical ISO <c>error(Kind, _)</c> Prolog term that
     /// user-written catchers expect.</summary>
+    /// <summary>Builds the ISO Context indicator <c>Name/Arity</c> from
+    /// the exception's stamped builtin identity (chunk 130), or returns
+    /// <c>null</c> when no builtin stamped it — meaning the throw arose
+    /// outside builtin dispatch (e.g. from the bytecode interpreter's
+    /// undefined-procedure resolver) and the Context should fall back
+    /// to a fresh anonymous variable.</summary>
+    private static Term? StampedContext(PrologRuntimeException re) =>
+        re.BuiltinName is string name
+            ? new CompoundTerm("/",
+                new Term[] { new AtomTerm(name), new IntTerm(re.BuiltinArity) })
+            : null;
+
+    /// <summary>Constructs <c>error(Inner, Context)</c> with the
+    /// stamped Context if one is available, falling back to a fresh
+    /// anonymous variable when the exception predates any builtin
+    /// dispatch.</summary>
+    private static Term WrapWithStampedContext(Term inner, PrologRuntimeException re) =>
+        new CompoundTerm("error",
+            new Term[] { inner, StampedContext(re) ?? new VarTerm("_") });
+
     internal static Term TranslateRuntimeError(PrologRuntimeException re) => re.Kind switch
     {
-        "evaluation_error" => IsoError.EvaluationError(re.Detail),
-        "instantiation_error" => IsoError.InstantiationError(),
-        "type_error" => IsoError.TypeError(re.Detail, new VarTerm("_")),
-        "existence_error" => IsoError.ExistenceError(
-            "procedure", new AtomTerm(re.Detail)),
-        "domain_error" => IsoError.DomainError(re.Detail, new VarTerm("_")),
-        "representation_error" => IsoError.RepresentationError(re.Detail),
-        "syntax_error" => IsoError.SyntaxError(re.Detail),
-        "resource_error" => IsoError.ResourceError(re.Detail),
-        "system_error" => string.IsNullOrEmpty(re.Detail)
-            ? IsoError.SystemError()
-            : IsoError.SystemError(re.Detail),
+        "evaluation_error" => WrapWithStampedContext(
+            new CompoundTerm("evaluation_error", new Term[] { new AtomTerm(re.Detail) }), re),
+        "instantiation_error" => WrapWithStampedContext(
+            new AtomTerm("instantiation_error"), re),
+        "type_error" => WrapWithStampedContext(
+            new CompoundTerm("type_error",
+                new Term[] { new AtomTerm(re.Detail), new VarTerm("_") }), re),
+        "existence_error" => WrapWithStampedContext(
+            new CompoundTerm("existence_error",
+                new Term[] { new AtomTerm("procedure"), new AtomTerm(re.Detail) }), re),
+        "domain_error" => WrapWithStampedContext(
+            new CompoundTerm("domain_error",
+                new Term[] { new AtomTerm(re.Detail), new VarTerm("_") }), re),
+        "representation_error" => WrapWithStampedContext(
+            new CompoundTerm("representation_error", new Term[] { new AtomTerm(re.Detail) }), re),
+        "syntax_error" => WrapWithStampedContext(
+            new CompoundTerm("syntax_error", new Term[] { new AtomTerm(re.Detail) }), re),
+        "resource_error" => WrapWithStampedContext(
+            new CompoundTerm("resource_error", new Term[] { new AtomTerm(re.Detail) }), re),
+        "system_error" => WrapWithStampedContext(
+            string.IsNullOrEmpty(re.Detail)
+                ? (Term)new AtomTerm("system_error")
+                : new CompoundTerm("system_error", new Term[] { new AtomTerm(re.Detail) }),
+            re),
         _ => new CompoundTerm("error",
             new Term[] { new AtomTerm(re.Kind), new AtomTerm(re.Detail) }),
     };
@@ -1052,6 +1084,10 @@ public static class MetaBuiltins
             // Promote the Core-level structured error into the ISO
             // error(Kind, _) term, then funnel into the same recovery
             // path the user's throw/1 would have hit.
+            // Chunk 130: the throwing builtin's Name/Arity is on the
+            // exception itself (stamped by the interpreter dispatch as
+            // the throw unwound past the impl), so the translation
+            // doesn't need an engine reference here.
             toCatch = new ShumwayPrologException(TranslateRuntimeError(re));
         }
 

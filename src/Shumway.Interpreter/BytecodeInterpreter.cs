@@ -1071,7 +1071,30 @@ public sealed class BytecodeInterpreter
                             return InterpreterResult.Failed;
                         break;
                     }
-                    if (!entry.Impl(_engine))
+                    // Chunk 130: thread the offending builtin's identity
+                    // so a thrown error term reports the right culprit.
+                    //   * engine.CurrentBuiltinName for direct
+                    //     ShumwayPrologException(IsoError.X(..., engine))
+                    //     throws from inside the impl;
+                    //   * StampBuiltin on a PrologRuntimeException as it
+                    //     unwinds out of the impl, so the catch handler
+                    //     way up the stack (possibly in a different
+                    //     PrologEngine after a meta-call) still sees the
+                    //     Name/Arity. Idempotent — outer dispatch can't
+                    //     overwrite the innermost throw's identity.
+                    _engine.CurrentBuiltinName = entry.Name;
+                    _engine.CurrentBuiltinArity = entry.Arity;
+                    bool implOk;
+                    try
+                    {
+                        implOk = entry.Impl(_engine);
+                    }
+                    catch (PrologRuntimeException re)
+                    {
+                        re.StampBuiltin(entry.Name, entry.Arity);
+                        throw;
+                    }
+                    if (!implOk)
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
@@ -1442,7 +1465,14 @@ public sealed class BytecodeInterpreter
             _engine.SetRegister(i, _engine.GetHeap(argBase + i));
 
         if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out int builtinId))
-            return Shumway.Builtins.BuiltinsRegistry.GetById(builtinId).Impl(_engine);
+        {
+            var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+            _engine.CurrentBuiltinName = entry.Name;        // chunk 130
+            _engine.CurrentBuiltinArity = entry.Arity;
+            try { return entry.Impl(_engine); }
+            catch (PrologRuntimeException re)
+            { re.StampBuiltin(entry.Name, entry.Arity); throw; }
+        }
 
         var addrs = _engine.CurrentFunctorAddresses;
         if (addrs is not null && addrs.TryGetValue(functorId, out int addr))
@@ -1562,7 +1592,13 @@ public sealed class BytecodeInterpreter
             // capture B again rather than passing the outer `barrier`.
             if (builtin.Name == "call")
                 return DispatchCall(code, builtin.Arity, _engine.B);
-            if (!builtin.Impl(_engine))
+            _engine.CurrentBuiltinName = builtin.Name;      // chunk 130
+            _engine.CurrentBuiltinArity = builtin.Arity;
+            bool ok;
+            try { ok = builtin.Impl(_engine); }
+            catch (PrologRuntimeException re)
+            { re.StampBuiltin(builtin.Name, builtin.Arity); throw; }
+            if (!ok)
                 return TryBacktrack();
             _engine.AdvancePc(9);
             return true;

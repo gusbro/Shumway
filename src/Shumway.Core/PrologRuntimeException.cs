@@ -21,11 +21,39 @@ public sealed class PrologRuntimeException : Exception
     public string Kind { get; }
     public string Detail { get; }
 
+    /// <summary>Name of the builtin whose Impl raised this exception.
+    /// Stamped by the interpreter's <c>CallBuiltin</c> dispatch as the
+    /// exception unwinds out of the Impl (chunk 130); <c>null</c> if the
+    /// exception arose outside builtin dispatch (e.g. from the bytecode
+    /// interpreter's own resolver) or has not yet reached a dispatch
+    /// site. The translation in <c>MetaBuiltins.TranslateRuntimeError</c>
+    /// fills the ISO Context slot with <c>BuiltinName/BuiltinArity</c>
+    /// when both are set.</summary>
+    public string? BuiltinName { get; private set; }
+
+    /// <summary>Arity companion to <see cref="BuiltinName"/>.</summary>
+    public int BuiltinArity { get; private set; }
+
     public PrologRuntimeException(string kind, string detail = "")
         : base(string.IsNullOrEmpty(detail) ? kind : $"{kind}: {detail}")
     {
         Kind = kind;
         Detail = detail;
+    }
+
+    /// <summary>Stamps the offending builtin's <c>Name/Arity</c> onto the
+    /// exception, if not already set. Called by the interpreter dispatch
+    /// as the exception unwinds out of a builtin Impl so the ISO error
+    /// term's Context slot can carry the proper indicator. Idempotent —
+    /// a re-stamp from an outer dispatch (e.g. a meta-call) is ignored
+    /// so the innermost builtin's identity wins.</summary>
+    public void StampBuiltin(string name, int arity)
+    {
+        if (BuiltinName is null)
+        {
+            BuiltinName = name;
+            BuiltinArity = arity;
+        }
     }
 
     /// <summary>Builds the <c>existence_error</c> for a call to an
