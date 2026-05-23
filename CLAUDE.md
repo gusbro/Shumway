@@ -433,6 +433,27 @@ pass rather than patched ad hoc.
   below any mid-query assertz/retract, so it sees the database as of
   when its goal began. ADR-015 is complete.
 
+**Phase 9 — ISO conformance & error system** (in progress).
+
+Brings Shumway's error reporting in line with what other ISO Prologs
+emit, and widens `Shumway.Tests.IsoConformance` from a representative
+sampler to one-file-per-§8-subclause coverage.
+
+- **Stage A — error-system completion.** Fill the four missing
+  `IsoError` kinds (`representation_error`, `syntax_error`,
+  `resource_error`, `system_error`); thread the offending builtin's
+  `Name/Arity` into the `error/2` Context slot in place of today's
+  anonymous variable (per the deferred note in `IsoError.cs`); audit
+  every existing builtin to throw the right error in the ISO-mandated
+  precedence (instantiation_error before type_error before domain_error
+  before existence_error before permission_error).
+- **Stage B — conformance widening.** One chunk per ISO §8 chapter
+  (§8.2 unification, §8.3 type tests, §8.4 term comparison, §8.5 term
+  decomposition, §8.6 arithmetic eval, §8.7 arithmetic comparison,
+  §8.8 control, §8.9 atomic processing, §8.10 implementation,
+  §8.11 stream I/O, …), covering the chapter's examples and the
+  error cases it specifies.
+
 ---
 
 ## Communication and Iteration

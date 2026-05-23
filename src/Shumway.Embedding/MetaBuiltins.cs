@@ -969,6 +969,12 @@ public static class MetaBuiltins
         "existence_error" => IsoError.ExistenceError(
             "procedure", new AtomTerm(re.Detail)),
         "domain_error" => IsoError.DomainError(re.Detail, new VarTerm("_")),
+        "representation_error" => IsoError.RepresentationError(re.Detail),
+        "syntax_error" => IsoError.SyntaxError(re.Detail),
+        "resource_error" => IsoError.ResourceError(re.Detail),
+        "system_error" => string.IsNullOrEmpty(re.Detail)
+            ? IsoError.SystemError()
+            : IsoError.SystemError(re.Detail),
         _ => new CompoundTerm("error",
             new Term[] { new AtomTerm(re.Kind), new AtomTerm(re.Detail) }),
     };

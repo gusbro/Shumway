@@ -52,6 +52,50 @@ public static class IsoError
             "permission_error",
             new Term[] { new AtomTerm(operation), new AtomTerm(objectType), obj }));
 
+    /// <summary><c>error(representation_error(Flag), _)</c> — typically
+    /// <c>representation_error(character_code)</c>,
+    /// <c>representation_error(max_arity)</c>, or one of the other ISO
+    /// implementation-defined flags from §7.12.2.f.</summary>
+    public static Term RepresentationError(string flag) =>
+        Wrap(new CompoundTerm(
+            "representation_error",
+            new Term[] { new AtomTerm(flag) }));
+
+    /// <summary><c>error(syntax_error(Detail), _)</c> — raised by the
+    /// reader and by <c>read_term/2,3</c>, <c>atom_to_term/3</c>,
+    /// <c>number_codes/2</c> on a malformed input. <c>Detail</c> is an
+    /// implementation-defined atom or compound describing the problem
+    /// (e.g. <c>illegal_number</c>, <c>operator_expected</c>).</summary>
+    public static Term SyntaxError(string detail) =>
+        Wrap(new CompoundTerm(
+            "syntax_error",
+            new Term[] { new AtomTerm(detail) }));
+
+    /// <summary><c>error(resource_error(Resource), _)</c> — raised when
+    /// an implementation-defined resource is exhausted (heap, stack,
+    /// trail). <c>Resource</c> is an implementation-defined atom.</summary>
+    public static Term ResourceError(string resource) =>
+        Wrap(new CompoundTerm(
+            "resource_error",
+            new Term[] { new AtomTerm(resource) }));
+
+    /// <summary><c>error(system_error, _)</c> — the catch-all for I/O
+    /// and host-OS failures that don't map to a more specific ISO kind.
+    /// Per §7.12.2.j, the standard error term has no payload; callers
+    /// who want to attach a detail message can use
+    /// <see cref="SystemError(string)"/>, which emits
+    /// <c>system_error(Detail)</c>.</summary>
+    public static Term SystemError() =>
+        Wrap(new AtomTerm("system_error"));
+
+    /// <summary><c>error(system_error(Detail), _)</c> — the non-standard
+    /// detail variant; useful for surfacing a .NET exception's
+    /// <c>Message</c> through <c>catch/3</c> without losing it.</summary>
+    public static Term SystemError(string detail) =>
+        Wrap(new CompoundTerm(
+            "system_error",
+            new Term[] { new AtomTerm(detail) }));
+
     private static Term Wrap(Term kind) =>
         new CompoundTerm("error", new Term[] { kind, new VarTerm("_") });
 }
