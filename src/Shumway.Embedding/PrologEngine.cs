@@ -65,8 +65,26 @@ public sealed class PrologEngine
     private sealed class DynChainEntry
     {
         public readonly Clause Clause;
+        /// <summary>Absolute byte position of this clause's
+        /// <c>check_visible</c> died slot (8 bytes). <c>retract</c>
+        /// patches it in place to mark the clause logically gone.</summary>
         public int DiedOperandAddr;
-        public DynChainEntry(Clause c, int d) { Clause = c; DiedOperandAddr = d; }
+        /// <summary>Absolute byte position of this clause's chain
+        /// instruction's <c>&lt;next&gt;</c> address operand (4 bytes) —
+        /// where its <c>try_me_else</c> or <c>retry_me_else</c> says to
+        /// jump on backtrack. The last clause's points at the fail-stub;
+        /// <c>assertz</c> will patch the previous-last's slot in place to
+        /// link a freshly compiled clause into the chain. -1 when the
+        /// clause has no chain instruction in front of it (paso-3 single-
+        /// clause emission without a fail-stub address — those predicates
+        /// fall back to the chunk-C recompile path).</summary>
+        public int NextOperandAddr;
+        public DynChainEntry(Clause c, int died, int next)
+        {
+            Clause = c;
+            DiedOperandAddr = died;
+            NextOperandAddr = next;
+        }
     }
     private sealed class DynChainState
     {
@@ -83,6 +101,18 @@ public sealed class PrologEngine
         if (!_dynChains.TryGetValue(functorId, out var chain)) return null;
         if (clauseIndex < 0 || clauseIndex >= chain.Entries.Count) return null;
         return chain.Entries[clauseIndex].DiedOperandAddr;
+    }
+
+    /// <summary>Test hook: returns the absolute byte offset of clause
+    /// <paramref name="clauseIndex"/>'s chain-instruction <c>&lt;next&gt;</c>
+    /// operand in the running program, or <c>null</c> when no chain state
+    /// exists. -1 when the clause was emitted without a chain instruction
+    /// in front of it.</summary>
+    internal int? PeekNextAddr(int functorId, int clauseIndex)
+    {
+        if (!_dynChains.TryGetValue(functorId, out var chain)) return null;
+        if (clauseIndex < 0 || clauseIndex >= chain.Entries.Count) return null;
+        return chain.Entries[clauseIndex].NextOperandAddr;
     }
 
     private long _dbGeneration;
@@ -2234,13 +2264,36 @@ public sealed class PrologEngine
         int pc = predAddr;
         int end = predAddr + predByteLength;
         int clauseIndex = 0;
+        // Each clause's chain instruction (try_me_else / retry_me_else)
+        // precedes its check_visible. Remember the operand position so we
+        // pair the right one with the right clause; reset on each
+        // check_visible so a stray static-tail trust_me doesn't bleed
+        // into the next clause.
+        int pendingNextOperand = -1;
         while (pc < end && clauseIndex < clauses.Count)
         {
             var info = Shumway.Core.OpcodeTable.Get(program[pc]);
-            if (info.Op == Shumway.Core.Opcode.CheckVisible)
+            if (info.Op == Shumway.Core.Opcode.TryMeElse
+                || info.Op == Shumway.Core.Opcode.RetryMeElse)
+            {
+                // Layout: opcode (1) | address (4) | (try_me_else: arity 4).
+                pendingNextOperand = pc + 1;
+            }
+            else if (info.Op == Shumway.Core.Opcode.TrustMe)
+            {
+                // No <next> operand — the chain terminates here. A clause
+                // headed by trust_me cannot be the link target of a future
+                // assertz; chunk-C redirect remains its modification path.
+                pendingNextOperand = -1;
+            }
+            else if (info.Op == Shumway.Core.Opcode.CheckVisible)
             {
                 // Layout: opcode (1) | born (8) | died (8) — died at pc+9.
-                chain.Entries.Add(new DynChainEntry(clauses[clauseIndex], pc + 9));
+                chain.Entries.Add(new DynChainEntry(
+                    clauses[clauseIndex],
+                    died: pc + 9,
+                    next: pendingNextOperand));
+                pendingNextOperand = -1;
                 clauseIndex++;
             }
             pc += info.Size;
