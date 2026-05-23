@@ -406,8 +406,17 @@ public sealed class Engine
     // ----- Choice-point frame layout (ADR-005) -----
     //
     // Layout: [arity | A1 .. Aarity | CE | CP | B | BP | BindingTrailTop |
-    //          ExtraTrailTop | HeapTop | Hb]
-    // Total size = 9 + arity cells.
+    //          ExtraTrailTop | HeapTop | Hb | ViewGen]
+    // Total size = 10 + arity cells.
+    //
+    // ViewGen (ADR-015 chunk C, bytecode-level dispatch): the
+    // dynamic-database generation the calling query had captured when it
+    // entered this predicate — its "logical update view" timestamp. Pushed
+    // by try_me_else along with the rest of the engine state; restored on
+    // retry_me_else so a CheckVisible instruction in any of the
+    // backtrackable clauses reads the same view-gen the call started with.
+    // The field is uniform across CPs (zero for static predicates); the
+    // tiny per-CP cost buys a single uniform save/restore path.
 
     public const int CpArityOffset = 0;
     public const int CpArg1Offset = 1;
@@ -420,9 +429,10 @@ public sealed class Engine
     public static int CpExtraTrailOffset(int arity) => 1 + arity + 5;
     public static int CpHeapTopOffset(int arity) => 1 + arity + 6;
     public static int CpHbOffset(int arity) => 1 + arity + 7;
+    public static int CpViewGenOffset(int arity) => 1 + arity + 8;
 
     /// <summary>Size in cells of a choice-point frame with <paramref name="arity"/> saved args.</summary>
-    public static int CpSize(int arity) => 9 + arity;
+    public static int CpSize(int arity) => 10 + arity;
 
     /// <summary>
     /// Pushes a choice point onto the stack, snapshotting the first <paramref name="arity"/>
@@ -454,6 +464,7 @@ public sealed class Engine
         _stack[newB + CpExtraTrailOffset(arity)] = new Cell(_extraTrailTop);
         _stack[newB + CpHeapTopOffset(arity)] = new Cell(_heapTop);
         _stack[newB + CpHbOffset(arity)] = new Cell(_hb);
+        _stack[newB + CpViewGenOffset(arity)] = new Cell(CurrentViewGen);
 
         _stackTop = newB + size;
         _b = newB;
@@ -511,6 +522,7 @@ public sealed class Engine
         UnwindTrails(bindingTarget, extraTarget);
 
         _heapTop = (int)_stack[_b + CpHeapTopOffset(arity)].Data;
+        CurrentViewGen = _stack[_b + CpViewGenOffset(arity)].Data;
         return arity;
     }
 
@@ -1074,6 +1086,22 @@ public sealed class Engine
         _programLength = needed;
         return offset;
     }
+
+    /// <summary>The dynamic-database generation the currently-running
+    /// goal saw when it entered (ADR-015 chunk C, bytecode-level
+    /// dispatch). Sampled by the upcoming <c>EnterDynamic</c> opcode at
+    /// every dynamic-predicate entry, captured into each choice point's
+    /// <c>ViewGen</c> slot by <c>try_me_else</c>, restored on
+    /// <c>retry_me_else</c>. The upcoming <c>CheckVisible</c> instruction
+    /// reads this against a clause's <c>born</c> / <c>died</c> to honour
+    /// the ISO logical update view. Zero outside dynamic dispatch.</summary>
+    public long CurrentViewGen { get; set; }
+
+    /// <summary>Snapshot of <see cref="CurrentViewGen"/> from a given CP
+    /// — exposed so the choice-point save/restore stays inside
+    /// <c>PushChoicePoint</c> / <c>RestoreCommonFromCurrentCp</c>.</summary>
+    public long ViewGenOf(int cpBase, int arity) =>
+        _stack[cpBase + CpViewGenOffset(arity)].Data;
 
     /// <summary>Synchronous subroutine runner that IL <c>Call</c>
     /// emission delegates to (chunk 50). Takes a target bytecode
