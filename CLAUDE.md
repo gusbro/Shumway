@@ -374,7 +374,7 @@ Shumway is designed in phases. Be explicit about what phase a change targets.
   fixpoint deeper than ~1000 rounds (a very long recursive chain) overflows
   the control stack.
 
-**Phase 8 — Engine robustness (backlog)**
+**Phase 8 — Engine robustness** — ✅ **Complete** (tagged `phase-8`; closure summary in [`docs/phase-8-closure.md`](docs/phase-8-closure.md)).
 
 Problems surfaced while building Phases 6–7, recorded here for a dedicated
 pass rather than patched ad hoc.
