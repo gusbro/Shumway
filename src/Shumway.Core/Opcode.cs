@@ -81,6 +81,12 @@ public enum Opcode : byte
     Retry = 0x64,
     Trust = 0x65,
 
+    // ADR-015 chunk C, bytecode-level dispatch — generation-filtered
+    // dynamic predicates (logical update view at the bytecode level, no
+    // builtin indirection).
+    EnterDynamic = 0x66,    // sample DbGeneration -> CurrentViewGen
+    CheckVisible = 0x67,    // <born:8> <died:8> — skip clause if not visible
+
     // Indexing
     SwitchOnTerm = 0x70,
     SwitchOnAtom = 0x71,

@@ -100,11 +100,16 @@ public class OpcodeTableTests
     public void TwoOperandOpcodes_Are9BytesTotal()
     {
         // All opcodes with two int operands should be 1 + 2*4 = 9 bytes.
+        // (LongValue operands are 8 bytes — ADR-015's CheckVisible carries
+        // born/died as two longs, so it's 17 bytes; it doesn't apply.)
         for (int b = 0; b < 256; b++)
         {
             var info = OpcodeTable.Get((byte)b);
-            if (info.NumOperands == 2 && info.Op != Opcode.Meta)
-                Assert.Equal(9, info.Size);
+            if (info.NumOperands != 2 || info.Op == Opcode.Meta) continue;
+            if (info.OperandKinds is { } kinds
+                && Array.Exists(kinds, k => k == OperandKind.LongValue))
+                continue;
+            Assert.Equal(9, info.Size);
         }
     }
 

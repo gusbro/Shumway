@@ -21,4 +21,16 @@ public static class BytecodeIO
 
     public static void WriteInt32(Span<byte> code, int offset, int value)
         => BinaryPrimitives.WriteInt32LittleEndian(code[offset..], value);
+
+    public static long ReadInt64(byte[] code, int offset)
+        => BinaryPrimitives.ReadInt64LittleEndian(code.AsSpan(offset));
+
+    public static long ReadInt64(ReadOnlySpan<byte> code, int offset)
+        => BinaryPrimitives.ReadInt64LittleEndian(code[offset..]);
+
+    public static void WriteInt64(byte[] code, int offset, long value)
+        => BinaryPrimitives.WriteInt64LittleEndian(code.AsSpan(offset), value);
+
+    public static void WriteInt64(Span<byte> code, int offset, long value)
+        => BinaryPrimitives.WriteInt64LittleEndian(code[offset..], value);
 }

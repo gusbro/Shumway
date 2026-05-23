@@ -38,4 +38,9 @@ public enum OperandKind : byte
 
     /// <summary>Builtin id from the global builtin table.</summary>
     BuiltinId,
+
+    /// <summary>Inline 64-bit signed integer (8 bytes). Used by ADR-015's
+    /// <c>CheckVisible</c> opcode to carry a clause's <c>born</c> /
+    /// <c>died</c> generations — patched in place by <c>retract</c>.</summary>
+    LongValue,
 }

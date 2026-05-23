@@ -347,6 +347,36 @@ public sealed class BytecodeInterpreter
                     _engine.AdvancePc(1);
                     break;
 
+                // ADR-015 chunk C — generation-filtered dynamic dispatch.
+                // Sample the dynamic-database generation into CurrentViewGen
+                // so the surrounding try_me_else captures it into the CP and
+                // every clause's CheckVisible reads the call's stable view.
+                case Opcode.EnterDynamic:
+                {
+                    var provider = _engine.DbGenerationProvider;
+                    _engine.CurrentViewGen = provider is null ? 0L : provider();
+                    _engine.AdvancePc(1);
+                    break;
+                }
+
+                // Per-clause visibility check. Reads born/died from the
+                // bytecode (retract patches the died slot in place) and
+                // backtracks if the calling goal's captured view-gen is
+                // outside [born, died) — the ISO logical update view.
+                case Opcode.CheckVisible:
+                {
+                    long born = BytecodeIO.ReadInt64(code, pc + 1);
+                    long died = BytecodeIO.ReadInt64(code, pc + 9);
+                    long g = _engine.CurrentViewGen;
+                    if (born > g || died <= g)
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    _engine.AdvancePc(17);
+                    break;
+                }
+
                 case Opcode.Try:
                 {
                     int target = BytecodeIO.ReadInt32(code, pc + 1);

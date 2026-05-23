@@ -1097,6 +1097,12 @@ public sealed class Engine
     /// the ISO logical update view. Zero outside dynamic dispatch.</summary>
     public long CurrentViewGen { get; set; }
 
+    /// <summary>Reads the host's current dynamic-database generation.
+    /// Wired by the embedding layer at query setup so the
+    /// <c>enter_dynamic</c> opcode can sample it without the interpreter
+    /// having to depend on the embedding layer's types.</summary>
+    public Func<long>? DbGenerationProvider { get; set; }
+
     /// <summary>Snapshot of <see cref="CurrentViewGen"/> from a given CP
     /// — exposed so the choice-point save/restore stays inside
     /// <c>PushChoicePoint</c> / <c>RestoreCommonFromCurrentCp</c>.</summary>

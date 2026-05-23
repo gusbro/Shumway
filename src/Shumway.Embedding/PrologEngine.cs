@@ -2000,6 +2000,11 @@ public sealed class PrologEngine
             // IL Call re-entry helper.
             CurrentStringLiterals = module.StringLiterals,
             CurrentProgram = program,
+            // ADR-015 chunk C — bytecode-level dynamic dispatch reads the
+            // host's generation through this callback at every
+            // enter_dynamic opcode (avoids the interpreter depending on
+            // the embedding layer's types).
+            DbGenerationProvider = () => _dbGeneration,
         };
 
         var interp = new BytecodeInterpreter(

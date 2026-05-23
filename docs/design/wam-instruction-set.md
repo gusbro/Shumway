@@ -528,6 +528,44 @@ Total size: 5 bytes
 
 Used in indexed dispatch. On backtrack, restores state, discards the CP, and jumps to `clause_addr` (the last alternative).
 
+### enter_dynamic (0x66) — ADR-015 chunk C
+
+Operands: none
+Total size: 1 byte
+
+Emitted at the entry of every dynamic predicate. Samples the host's
+`DbGeneration` into `engine.CurrentViewGen`. The surrounding
+`try_me_else` captures that into the choice point so every clause's
+`check_visible` reads the call's stable view-generation throughout the
+chain's enumeration — the ISO logical update view.
+
+```
+engine.CurrentViewGen := host.DbGeneration
+```
+
+### check_visible (0x67) — ADR-015 chunk C
+
+Operands: `long_value born`, `long_value died`
+Total size: 17 bytes
+
+Per-clause visibility filter for dynamic predicates. Fails (triggers
+backtrack) if the calling goal's captured view-generation is outside
+`[born, died)` — i.e., the clause did not yet exist when the goal began
+(`born > G`) or had been retracted before it began (`died ≤ G`).
+`retract` patches `died` in place; everything else stays immutable.
+
+```
+g := engine.CurrentViewGen
+if born > g || died <= g:
+    backtrack
+else:
+    pc += 17
+```
+
+The two operands are 64-bit signed integers — the only opcode in v1
+with `LongValue` operands. The generation counter (`assertz` / `retract`
+bump count) needs more than 32 bits for a long-running engine.
+
 ---
 
 ## Indexing instructions
