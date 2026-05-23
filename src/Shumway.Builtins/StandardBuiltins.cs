@@ -125,6 +125,18 @@ public static class StandardBuiltins
             Io, "get_char(+Stream, -Char)", "Reads and consumes one character from a stream.");
         BuiltinsRegistry.Register("peek_char", 2, StreamBuiltins.PeekChar,
             Io, "peek_char(+Stream, -Char)", "Peeks the next character of a stream without consuming it.");
+        BuiltinsRegistry.Register("current_input",  1, StreamBuiltins.CurrentInput,
+            Io, "current_input(-Stream)", "Unifies Stream with a designator for the current input stream (ISO §8.11.1).");
+        BuiltinsRegistry.Register("current_output", 1, StreamBuiltins.CurrentOutput,
+            Io, "current_output(-Stream)", "Unifies Stream with a designator for the current output stream (ISO §8.11.2).");
+        BuiltinsRegistry.Register("flush_output",   0, StreamBuiltins.FlushOutput0,
+            Io, "flush_output", "Flushes the current output stream (ISO §8.11.7).");
+        BuiltinsRegistry.Register("flush_output",   1, StreamBuiltins.FlushOutput1,
+            Io, "flush_output(+Stream)", "Flushes the given stream (ISO §8.11.7).");
+        BuiltinsRegistry.Register("at_end_of_stream", 0, StreamBuiltins.AtEndOfStream0,
+            Io, "at_end_of_stream", "Succeeds if the current input stream is at end of file (ISO §8.11.9).");
+        BuiltinsRegistry.Register("at_end_of_stream", 1, StreamBuiltins.AtEndOfStream1,
+            Io, "at_end_of_stream(+Stream)", "Succeeds if the given stream is at end of file (ISO §8.11.9).");
         BuiltinsRegistry.Register("format",    3, IOBuiltins.Format3,
             Io, "format(+Stream, +Format, +Arguments)", "Writes formatted output to the given stream.");
 

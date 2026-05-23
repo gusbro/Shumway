@@ -199,7 +199,13 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 
 | Predicate | Description |
 | --- | --- |
+| `at_end_of_stream` | Succeeds if the current input stream is at end of file (ISO §8.11.9). |
+| `at_end_of_stream(+Stream)` | Succeeds if the given stream is at end of file (ISO §8.11.9). |
 | `close(+Stream)` | Closes an open stream. |
+| `current_input(-Stream)` | Unifies Stream with a designator for the current input stream (ISO §8.11.1). |
+| `current_output(-Stream)` | Unifies Stream with a designator for the current output stream (ISO §8.11.2). |
+| `flush_output` | Flushes the current output stream (ISO §8.11.7). |
+| `flush_output(+Stream)` | Flushes the given stream (ISO §8.11.7). |
 | `format(+Format, +Arguments)` | Writes formatted output from a control string and an argument list. |
 | `format(+Stream, +Format, +Arguments)` | Writes formatted output to the given stream. |
 | `format_to_atom(-Atom, +Format, +Args)` | Like format/2 but captures the formatted output into an atom. |

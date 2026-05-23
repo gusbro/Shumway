@@ -104,6 +104,77 @@ public static class StreamBuiltins
         return engine.UnifyRegisterWithCell(1, value);
     }
 
+    /// <summary><c>current_input(Stream)</c> — ISO §8.11.1. Unifies
+    /// <c>Stream</c> with a designator for the current input stream.
+    /// Shumway uses the conventional atom <c>user_input</c> for the
+    /// terminal-default reader.</summary>
+    public static bool CurrentInput(Engine engine) =>
+        engine.UnifyRegisterWithCell(0,
+            Cell.Atom(AtomTable.Intern("user_input", permanent: true).Id));
+
+    /// <summary><c>current_output(Stream)</c> — ISO §8.11.2. Conventional
+    /// atom <c>user_output</c> for the terminal-default writer.</summary>
+    public static bool CurrentOutput(Engine engine) =>
+        engine.UnifyRegisterWithCell(0,
+            Cell.Atom(AtomTable.Intern("user_output", permanent: true).Id));
+
+    /// <summary><c>flush_output/0</c> — ISO §8.11.7. Flushes the
+    /// engine's default output writer.</summary>
+    public static bool FlushOutput0(Engine engine)
+    {
+        engine.Out.Flush();
+        return true;
+    }
+
+    /// <summary><c>flush_output(Stream)</c> — ISO §8.11.7. Flushes the
+    /// given stream's writer; the <c>user_output</c> atom maps to
+    /// <see cref="Engine.Out"/>.</summary>
+    public static bool FlushOutput1(Engine engine)
+    {
+        Cell h = Resolve(engine, engine.GetRegister(0));
+        if (h.Tag == Tag.Atom)
+        {
+            string name = AtomTable.GetById(h.AsAtomId)?.Name ?? "";
+            if (name == "user_output") { engine.Out.Flush(); return true; }
+            throw new PrologRuntimeException("existence_error", "stream");
+        }
+        if (h.Tag != Tag.Foreign)
+            throw new PrologRuntimeException("type_error", "stream");
+        var writer = engine.AsForeign<StreamWriter>(h);
+        if (writer is null)
+            throw new PrologRuntimeException("existence_error", "stream");
+        writer.Flush();
+        return true;
+    }
+
+    /// <summary><c>at_end_of_stream(Stream)</c> — ISO §8.11.9. Succeeds
+    /// when the given reader has no more bytes available. The
+    /// <c>user_input</c> atom maps to a console reader that can't be
+    /// peeked at without blocking, so we conservatively report
+    /// "not at end" there.</summary>
+    public static bool AtEndOfStream1(Engine engine)
+    {
+        Cell h = Resolve(engine, engine.GetRegister(0));
+        if (h.Tag == Tag.Atom)
+        {
+            string name = AtomTable.GetById(h.AsAtomId)?.Name ?? "";
+            if (name == "user_input") return false;
+            throw new PrologRuntimeException("existence_error", "stream");
+        }
+        if (h.Tag != Tag.Foreign)
+            throw new PrologRuntimeException("type_error", "stream");
+        var reader = engine.AsForeign<StreamReader>(h);
+        if (reader is null)
+            throw new PrologRuntimeException("existence_error", "stream");
+        return reader.Peek() < 0;
+    }
+
+    /// <summary><c>at_end_of_stream/0</c> — checks current_input;
+    /// Shumway's <c>user_input</c> default is never reported "at end",
+    /// matching the conservative behaviour of
+    /// <see cref="AtEndOfStream1"/>.</summary>
+    public static bool AtEndOfStream0(Engine engine) => false;
+
     private static StreamWriter RequireWriter(Engine engine, Cell handleCell)
     {
         Cell h = Resolve(engine, handleCell);
