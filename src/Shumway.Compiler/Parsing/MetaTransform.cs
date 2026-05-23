@@ -87,12 +87,36 @@ public static class MetaTransform
             return new CompoundTerm(",", new[] { lhs, rhs }) { Position = goal.Position };
         }
 
-        // \+ G  or  not(G)  — synthesise the helper and emit a call to it.
+        // \+ G  or  not(G)  with a syntactically-callable inner goal —
+        // synthesise the helper and emit a call to it. A non-callable
+        // inner goal (var, integer, …) falls through to a runtime
+        // call/1 which raises the proper ISO error (chunk 136).
         if (goal is CompoundTerm ct
             && ct.Args.Length == 1
-            && (ct.Functor == "\\+" || ct.Functor == "not"))
+            && (ct.Functor == "\\+" || ct.Functor == "not")
+            && (ct.Args[0] is AtomTerm || ct.Args[0] is CompoundTerm))
         {
             return SynthesizeNegationHelper(ct.Args[0], ref counter, helpers);
+        }
+        // \+ G with a var / non-callable G — rewrite to
+        // ( call(G) -> fail ; true ). call/1's runtime dispatch
+        // performs the ISO error checks (var → instantiation_error,
+        // non-callable → type_error(callable, _)). Recurse so the
+        // resulting disjunction goes through its own helper synthesis.
+        if (goal is CompoundTerm ctf
+            && ctf.Args.Length == 1
+            && (ctf.Functor == "\\+" || ctf.Functor == "not"))
+        {
+            Term rewritten = new CompoundTerm(";", new Term[]
+            {
+                new CompoundTerm("->", new Term[]
+                {
+                    new CompoundTerm("call", new Term[] { ctf.Args[0] }),
+                    new AtomTerm("fail"),
+                }),
+                new AtomTerm("true"),
+            }) { Position = goal.Position };
+            return TransformGoal(rewritten, ref counter, helpers);
         }
 
         // findall(Template, Goal, List) with a syntactically-callable

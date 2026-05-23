@@ -1062,6 +1062,11 @@ public static class MetaBuiltins
     public static bool Throw(Engine engine)
     {
         Term error = MaterializeRegister(engine, 0);
+        // Chunk 136: ISO §7.8.10.3.a — an unbound ball is
+        // instantiation_error. (Other shapes are user-defined and
+        // pass through verbatim.)
+        if (error is VarTerm)
+            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
         throw new ShumwayPrologException(error);
     }
 
