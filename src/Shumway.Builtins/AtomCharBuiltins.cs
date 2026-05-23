@@ -15,8 +15,13 @@ namespace Shumway.Builtins;
 /// <item><c>number_chars/2</c>: integer/float ↔ list of single-character
 ///   atoms.</item>
 /// </list>
-/// All five share the same minimal Phase-1 contract: the (+, ?) and (?, +)
-/// modes work as expected; (-, -) raises an instantiation error.
+///
+/// <para>Phase-9 chunk 131a: every contract-violation throw is now a
+/// catchable <see cref="PrologRuntimeException"/> with an ISO-shaped
+/// kind, replacing the uncatchable <see cref="InvalidOperationException"/>
+/// that earlier phases used. Argument checks honour the ISO precedence
+/// from §7.12.2 — instantiation_error before type_error before
+/// representation_error.</para>
 /// </summary>
 public static class AtomCharBuiltins
 {
@@ -25,9 +30,11 @@ public static class AtomCharBuiltins
     public static bool AtomLength(Engine engine)
     {
         Cell atomCell = Resolve(engine, engine.GetRegister(0));
+        // ISO §8.16.1.3: Atom var → instantiation_error; not atom → type_error(atom, Atom).
+        if (atomCell.Tag == Tag.Ref)
+            throw new PrologRuntimeException("instantiation_error");
         if (atomCell.Tag != Tag.Atom)
-            throw new InvalidOperationException(
-                "atom_length/2: first argument must be a bound atom.");
+            throw new PrologRuntimeException("type_error", "atom");
         string name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
         return engine.UnifyRegisterWithCell(1, Cell.Int(name.Length));
     }
@@ -56,8 +63,13 @@ public static class AtomCharBuiltins
             return engine.UnifyRegisterWithCell(0, Cell.Atom(atomId));
         }
 
-        throw new InvalidOperationException(
-            "atom_string/2: at least one of Atom, String must be sufficiently instantiated.");
+        // Neither side is sufficiently instantiated: instantiation_error
+        // (both args var) or type_error(atom|string) depending on which
+        // is at the wrong type. We pick instantiation_error when at least
+        // one is var — the conservative ISO-style report.
+        if (atomCell.Tag == Tag.Ref || strCell.Tag == Tag.Ref)
+            throw new PrologRuntimeException("instantiation_error");
+        throw new PrologRuntimeException("type_error", "atom");
     }
 
     // ---------- atom_chars/2 ----------
@@ -76,13 +88,18 @@ public static class AtomCharBuiltins
 
         if (atomCell.Tag == Tag.Ref)
         {
+            // Read direction: Atom is var, so Chars must be a proper list
+            // of single-character atoms. If it isn't, ReadCharAtomsToString
+            // raises the appropriate type_error / instantiation_error.
+            if (charsCell.Tag == Tag.Ref)
+                throw new PrologRuntimeException("instantiation_error");
             string name = ReadCharAtomsToString(engine, charsCell);
             int atomId = AtomTable.Intern(name, permanent: false).Id;
             return engine.UnifyRegisterWithCell(0, Cell.Atom(atomId));
         }
 
-        throw new InvalidOperationException(
-            $"atom_chars/2: first argument must be atom or var; got tag {atomCell.Tag}.");
+        // Atom is bound but to something other than an atom — ISO §8.16.4.
+        throw new PrologRuntimeException("type_error", "atom");
     }
 
     // ---------- char_code/2 ----------
@@ -95,26 +112,34 @@ public static class AtomCharBuiltins
         if (charCell.Tag == Tag.Atom)
         {
             string name = AtomTable.GetById(charCell.AsAtomId)?.Name ?? "";
+            // ISO §8.16.5: a non-character first arg is type_error(character).
             if (name.Length != 1)
-                throw new InvalidOperationException(
-                    $"char_code/2: first argument must be a single-character atom, "
-                    + $"got '{name}'.");
+                throw new PrologRuntimeException("type_error", "character");
             return engine.UnifyRegisterWithCell(1, Cell.Int(name[0]));
         }
 
         if (codeCell.Tag == Tag.Int)
         {
             long code = codeCell.AsInt;
+            // ISO §8.16.5.3.f: a code outside the implementation-defined
+            // character set is representation_error(character_code).
             if (code < 0 || code > char.MaxValue)
-                throw new InvalidOperationException(
-                    $"char_code/2: integer {code} is out of UTF-16 code-unit range.");
+                throw new PrologRuntimeException("representation_error", "character_code");
             int atomId = AtomTable.Intern(
                 ((char)code).ToString(), permanent: false).Id;
             return engine.UnifyRegisterWithCell(0, Cell.Atom(atomId));
         }
 
-        throw new InvalidOperationException(
-            "char_code/2: at least one of (Char, Code) must be sufficiently instantiated.");
+        // ISO §8.16.5.3.a-b: both var → instantiation_error; otherwise
+        // one is bound but to the wrong type.
+        if (charCell.Tag == Tag.Ref && codeCell.Tag == Tag.Ref)
+            throw new PrologRuntimeException("instantiation_error");
+        // Bound to something other than atom / int: report the offending
+        // argument's expected type. Char takes precedence when both are
+        // bound (a non-atom Char is what ISO checks first).
+        if (charCell.Tag != Tag.Ref)
+            throw new PrologRuntimeException("type_error", "character");
+        throw new PrologRuntimeException("type_error", "integer");
     }
 
     // ---------- number_codes/2 ----------
@@ -159,6 +184,11 @@ public static class AtomCharBuiltins
         // List → numeric direction.
         if (numCell.Tag == Tag.Ref)
         {
+            // ISO §8.16.7 / §8.16.8: the list arg must be sufficiently
+            // instantiated. If it's also a var the call is doubly
+            // ambiguous → instantiation_error.
+            if (strCell.Tag == Tag.Ref)
+                throw new PrologRuntimeException("instantiation_error");
             string s = asCodes
                 ? ReadCodesToString(engine, strCell, builtinName)
                 : ReadCharAtomsToString(engine, strCell);
@@ -174,8 +204,8 @@ public static class AtomCharBuiltins
             throw new PrologRuntimeException("syntax_error", "illegal_number");
         }
 
-        throw new InvalidOperationException(
-            $"{builtinName}: first argument must be a number or an unbound variable.");
+        // First arg bound but not a number: ISO type_error(number, _).
+        throw new PrologRuntimeException("type_error", "number");
     }
 
     // ---------- atom_number/2 ----------
@@ -202,8 +232,14 @@ public static class AtomCharBuiltins
         Cell numCell = Resolve(engine, engine.GetRegister(1));
         string? text = NumberText(engine, numCell);
         if (text is null)
-            throw new InvalidOperationException(
-                "atom_number/2: at least one of (Atom, Number) must be bound.");
+        {
+            // Atom is non-atom (or both var) — sort the error.
+            if (atomCell.Tag == Tag.Ref && numCell.Tag == Tag.Ref)
+                throw new PrologRuntimeException("instantiation_error");
+            if (atomCell.Tag != Tag.Ref && atomCell.Tag != Tag.Atom)
+                throw new PrologRuntimeException("type_error", "atom");
+            throw new PrologRuntimeException("type_error", "number");
+        }
         return engine.UnifyRegisterWithCell(
             0, Cell.Atom(AtomTable.Intern(text, permanent: false).Id));
     }
@@ -232,8 +268,13 @@ public static class AtomCharBuiltins
         Cell numCell = Resolve(engine, engine.GetRegister(0));
         string? text = NumberText(engine, numCell);
         if (text is null)
-            throw new InvalidOperationException(
-                "number_string/2: at least one of (Number, String) must be bound.");
+        {
+            if (numCell.Tag == Tag.Ref && strCell.Tag == Tag.Ref)
+                throw new PrologRuntimeException("instantiation_error");
+            if (strCell.Tag != Tag.Ref && strCell.Tag != Tag.Pstr)
+                throw new PrologRuntimeException("type_error", "string");
+            throw new PrologRuntimeException("type_error", "number");
+        }
         return engine.UnifyRegisterWithCell(1, Cell.Ref(engine.MakePstr(text)));
     }
 
@@ -267,9 +308,11 @@ public static class AtomCharBuiltins
     public static bool SubAtom(Engine engine)
     {
         Cell atomC = Resolve(engine, engine.GetRegister(0));
+        // ISO §8.16.10.3: Atom var → instantiation_error; not atom → type_error.
+        if (atomC.Tag == Tag.Ref)
+            throw new PrologRuntimeException("instantiation_error");
         if (atomC.Tag != Tag.Atom)
-            throw new InvalidOperationException(
-                "sub_atom/5: first argument must be a bound atom.");
+            throw new PrologRuntimeException("type_error", "atom");
         string atomName = AtomTable.GetById(atomC.AsAtomId)?.Name ?? "";
 
         Cell beforeC = Resolve(engine, engine.GetRegister(1));
@@ -304,8 +347,11 @@ public static class AtomCharBuiltins
             return true;
         }
 
-        throw new InvalidOperationException(
-            "sub_atom/5: Phase 1 requires either (Before, Length) ground or SubAtom ground.");
+        // Phase-1 limitation: the unsupported modes still bottom out
+        // here, but the ISO-appropriate diagnostic is instantiation_error
+        // (the missing args ARE the problem). A future chunk widens this
+        // builtin to enumerate every match.
+        throw new PrologRuntimeException("instantiation_error");
     }
 
     // ---------- List-building helpers ----------
@@ -360,15 +406,22 @@ public static class AtomCharBuiltins
         while (cursor.Tag == Tag.Lis)
         {
             Cell head = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex));
+            // ISO §8.16.7 / §8.16.8 type errors: a non-int element is
+            // type_error(character_code); an unbound element is
+            // instantiation_error (precedence rule applies).
+            if (head.Tag == Tag.Ref)
+                throw new PrologRuntimeException("instantiation_error");
             if (head.Tag != Tag.Int)
-                throw new InvalidOperationException(
-                    $"{builtinName}: list element must be an integer code; got tag {head.Tag}.");
+                throw new PrologRuntimeException("type_error", "character_code");
             sb.Append((char)head.AsInt);
             cursor = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex + 1));
         }
+        // A non-nil tail is a partial / non-proper list — ISO reports this
+        // as a type_error(list, _) (the entire arg, not just the tail).
+        if (cursor.Tag == Tag.Ref)
+            throw new PrologRuntimeException("instantiation_error");
         if (cursor.Tag != Tag.Atom || cursor.AsAtomId != AtomTable.EmptyListId)
-            throw new InvalidOperationException(
-                $"{builtinName}: second argument must be a proper list of integers.");
+            throw new PrologRuntimeException("type_error", "list");
         return sb.ToString();
     }
 
@@ -379,19 +432,20 @@ public static class AtomCharBuiltins
         while (cursor.Tag == Tag.Lis)
         {
             Cell head = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex));
+            if (head.Tag == Tag.Ref)
+                throw new PrologRuntimeException("instantiation_error");
             if (head.Tag != Tag.Atom)
-                throw new InvalidOperationException(
-                    "list element must be a single-character atom; got tag " + head.Tag + ".");
+                throw new PrologRuntimeException("type_error", "character");
             string name = AtomTable.GetById(head.AsAtomId)?.Name ?? "";
             if (name.Length != 1)
-                throw new InvalidOperationException(
-                    $"list element must be a single-character atom, got '{name}'.");
+                throw new PrologRuntimeException("type_error", "character");
             sb.Append(name[0]);
             cursor = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex + 1));
         }
+        if (cursor.Tag == Tag.Ref)
+            throw new PrologRuntimeException("instantiation_error");
         if (cursor.Tag != Tag.Atom || cursor.AsAtomId != AtomTable.EmptyListId)
-            throw new InvalidOperationException(
-                "second argument must be a proper list of single-character atoms.");
+            throw new PrologRuntimeException("type_error", "list");
         return sb.ToString();
     }
 

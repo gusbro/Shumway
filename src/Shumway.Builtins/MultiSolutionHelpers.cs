@@ -43,6 +43,9 @@ public static class MultiSolutionHelpers
     public static bool MakeVarList(Engine engine)
     {
         Cell nCell = Resolve(engine, engine.GetRegister(0));
+        // Chunk 131a: ISO precedence — instantiation_error before type_error.
+        if (nCell.Tag == Tag.Ref)
+            throw new PrologRuntimeException("instantiation_error");
         if (nCell.Tag != Tag.Int)
             throw new PrologRuntimeException("type_error", "integer");
         long n = nCell.AsInt;
@@ -60,6 +63,9 @@ public static class MultiSolutionHelpers
     public static bool SubAtomDecompositions(Engine engine)
     {
         Cell atomCell = Resolve(engine, engine.GetRegister(0));
+        // Chunk 131a: ISO precedence — instantiation_error before type_error.
+        if (atomCell.Tag == Tag.Ref)
+            throw new PrologRuntimeException("instantiation_error");
         if (atomCell.Tag != Tag.Atom)
             throw new PrologRuntimeException("type_error", "atom");
         string name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
