@@ -2,19 +2,24 @@
 
 ## Status
 
-Accepted (Phase 8) — design agreed in review, implemented in chunks
-A–C (114–118) with chunk E's program-growth cost addressed (119). The
-same-query dynamic-visibility bug is fixed.
+Accepted (Phase 8) — complete. Implemented in chunks 114–128:
 
-The implementation followed the leaner §4.1 design (recompile-on-modify
-with an address redirect), not the §3/§4 born/died generation-filtered
-sketch — so §3 (generation-filtered clause iteration), §4 (entry
-trampolines, incremental chain relink) and §6 (the `PrologQuery`
-lifecycle) describe a path not taken; §4.1 and the chunk A–C/D notes
-under "Implementation phasing" record what was actually built. Chunk D
-is obviated and dropped; chunk E's catastrophic program-growth cost is
-fixed (chunk 119), leaving incremental clause append as a
-profiling-driven refinement — the ADR is substantially complete.
+- A (114) generation counter, B (115–117) persistent code space,
+- C (118) initial recompile-on-modify dispatch — the headline bug fix,
+- E (119) amortised program growth,
+- C-bytecode-level (120–128) the canonical engine-style dispatch:
+  CP-frame ViewGen + new opcodes `enter_dynamic` / `check_visible` +
+  born/died stamps + trampoline + `Nop` padding + O(clause)
+  asserta/assertz/retract/abolish.
+
+The final landing follows §3 (born/died generation-filtered) and §4
+(entry trampolines, incremental chain) — the design originally
+sketched and then deferred. The §4.1 recompile-on-modify approach
+(chunk 118) shipped first as a stepping stone and is now gone; what
+runs in production is the canonical design. Chunk D (the
+`PrologQuery : IDisposable` lifecycle for generation pins) stays
+dropped — there are no pins to release because retracted clauses are
+filtered by `check_visible`, not deferred for physical GC.
 
 ## Context
 
@@ -279,53 +284,118 @@ Each is its own chunk, landing with the test suite green:
     `program` once the dynamic addresses are known. (A fully stable
     dynamic entry address — chunk C's trampolines — will later let even
     those sites link once.)
-- **C — Live dynamic dispatch.** ✅ *Done (chunk 118)* — the headline bug
-  is fixed: `assertz(d(1)), d(1)` succeeds in one query, as does a
-  `findall/3` over a dynamic predicate. Implemented per §4.1: the program
-  buffer grows (`Engine.AppendCode`); the interpreter re-reads `code` each
-  dispatch-loop iteration; `Engine` holds a setup-address → current-address
-  redirect map (empty for queries that never touch the database, so the
-  common path pays one emptiness check per call). `assertz` / `retract` /
-  `abolish` mark the predicate's entry stale; the first `Call` / `Execute`
-  that hits the stale marker lazily recompiles the predicate (unindexed)
-  from its live clauses, links it at the program's end against the query's
-  symbol map, appends it, and updates the redirect. Old compiled bodies
-  are retained, so an in-progress backtracking call keeps its clause set —
-  the logical update view. The interpreter's literal pools are refreshed
-  (`RefreshLiteralPools`) since a mid-query clause may intern new literals.
-  *Deferred:* `born`/`died` generation stamps for a finer logical update
-  view, entry trampolines and incremental chain relink (a perf refinement
-  over whole-predicate recompile) remain future work — the recompile-on-
-  modify redirect already delivers correct same-query visibility.
+- **C — Live dynamic dispatch.** ✅ *Done* — implemented in two phases.
+  - *First landing (chunk 118)*: a stepping-stone recompile-on-modify
+    redirect map. The program buffer grew via `Engine.AppendCode`, the
+    interpreter re-read `code` each dispatch-loop iteration, and a
+    setup-address → current-address redirect on `Engine` had `assertz`
+    / `retract` / `abolish` mark the predicate stale; the next call
+    triggered a whole-predicate recompile. Fixed the headline bug; was
+    correct but coarse (O(clause-count) per assert, dead bodies in the
+    buffer per re-call). **No longer present** — superseded by the
+    canonical implementation below.
+  - *Final landing (chunks 120–128)*: the canonical engine-style
+    dispatch, matching the §3/§4 sketch.
+    - **Chunk 120** — choice-point frame gets a `ViewGen` slot
+      (ADR-005 updated). `PushChoicePoint` captures
+      `Engine.CurrentViewGen`; `RetryMeElse` / `TrustMe` restore it.
+      Uniform across all CPs (zero for static predicates).
+    - **Chunk 121** — two new opcodes (ADR-006 updated):
+      `enter_dynamic` (1 byte) samples `DbGeneration` into
+      `CurrentViewGen` at every dynamic predicate's entry;
+      `check_visible <born:long> <died:long>` (17 bytes) backtracks if
+      the captured view-gen lies outside `[born, died)`. The two
+      `LongValue` operands are the first 64-bit operands in v1 — the
+      generation counter needs more than 32 bits for a long-running
+      engine. The interpreter reads `DbGeneration` through
+      `Engine.DbGenerationProvider` (a `Func<long>`) so
+      `Shumway.Interpreter` stays independent of the embedding layer.
+    - **Chunk 122** — the compiler emits the new opcodes for dynamic
+      predicates: `enter_dynamic` at the entry and `check_visible`
+      before each clause body. Single-clause and chain layouts both
+      handled; with always-visible sentinel values (`born=0`,
+      `died=MaxValue`), behaviour is unchanged.
+    - **Chunk 123** — per-clause chain state on `PrologEngine`
+      (`_dynChains`). After every query setup the walker pairs each
+      `check_visible` opcode it finds with the corresponding clause in
+      `_dynamicClauses`. `retract` patches the clause's `died` slot in
+      place (`BytecodeIO.WriteInt64`, 8 bytes) — the next
+      `check_visible` filters it out.
+    - **Chunks 124–125** — fail-stub at offset 10 of the prefix
+      (`call_builtin fail/0`, preceded by `trust_me` to pop the chain
+      CP — without that, `retry_me_else <fail-stub>` would retain the
+      CP and loop forever). The compiler emits `retry_me_else
+      <fail-stub>` as the last clause's chain instruction (not
+      `trust_me`) so its operand is patchable in place when assertz
+      appends a new clause.
+    - **Chunk 126** — chain state also tracks each clause's
+      chain-instruction `<next>` operand, the 4-byte address an
+      assertz will patch.
+    - **Chunk 127** — `assertz` is now incremental: compile one
+      clause via `ClauseCompiler`, build a chunk (`retry_me_else
+      <fail-stub>; check_visible <born=gen> <died=∞>; <body>`),
+      append it, patch the previous tail's `<next>` operand in place.
+      Per-assert cost: O(clause size).
+    - **Chunk 128** — `asserta` is incremental too. The trampoline
+      pattern: every dynamic predicate's compiled bytecode begins with
+      `enter_dynamic; execute <chain-head>` (6 bytes). Asserta patches
+      the trampoline's `execute` operand to install a new head; the
+      previous head's `try_me_else` (9 bytes) is demoted in place to
+      `retry_me_else <same-next>` (5 bytes) + 4 `Nop` opcodes — same
+      9-byte footprint, the address operand at bytes 1–4 stays valid
+      (`retry_me_else`'s `<next>` is at the same offset as
+      `try_me_else`'s). A new `Opcode.Nop` (0x56, 1 byte, just
+      `AdvancePc(1)`) makes the demotion uniform. The chunk-118
+      redirect machinery — `_dynamicRedirects`, `MarkDynamicStale`,
+      `ResolveDynamicTarget`, `DynamicRecompiler`,
+      `RecompileDynamicPredicate`, `MarkDynamicModified` and the
+      check in `Call` / `Execute` opcodes — is **all removed**.
+      `Engine.RefreshLiteralPoolsCallback` lets the incremental assert
+      paths update the interpreter's literal pool snapshot when a new
+      clause interns a new literal.
+
+  End state: every dynamic-predicate operation is O(clause size) or
+  better — `assertz` and `asserta` compile one clause and patch a few
+  bytes; `retract` patches 8 bytes; `abolish` patches 8 bytes per live
+  clause. Cut is a normal `cut` opcode (clauses stay compiled).
+  Logical update view holds via born/died — an in-progress call's
+  captured view-gen is below an assertz/retract's gen, so it sees the
+  database as of when its goal began. The trampoline + Nop-padding
+  approach lets both directions of insertion stay in-place patchable
+  with no opcode-size mismatch and no extra CP overhead at runtime.
 - **D — Query lifecycle — obviated, dropped.** D existed to release a
   query's *generation pin* on `Dispose` so deferred physical `retract`
-  could reclaim a clause once no live query could still see it. But chunk
-  C was implemented as recompile-on-modify (§4.1), not the born/died
-  generation-filtered design of §3: it keeps **no generation pins** and
-  defers **no** physical removal. A per-query `Engine` — its program
-  buffer, choice points, heap — is ordinary managed state the GC reclaims
-  when the query's enumeration ends or is abandoned; there is no pin to
-  release, no unmanaged resource, no leak. A `PrologQuery : IDisposable`
-  would therefore be an empty-`Dispose` wrapper, so D is dropped. The
-  logical update view it was partly meant to serve is already delivered
-  by §4.1 (a new call recompiles; an in-progress call keeps its retained
-  body). Should a future change reintroduce deferred physical removal,
-  the lifecycle returns with it.
-- **E — Program-growth cost — addressed (chunk 119).** Measured the
-  pathological pattern (one query asserting-then-calling a dynamic
-  predicate in a loop, forcing a recompile each iteration):
-  `Engine.AppendCode` re-copied the whole growing buffer on every append
-  — O(n³) overall (n=1500: 11.5 s, 12.7 GB allocated). Capacity doubling
-  makes the append amortised O(1); n=1500 fell to 3.9 s / 1.5 GB. The
-  residual is O(n²), now dominated by recompiling the *whole* predicate
-  on each modification rather than buffer copying — its fix is
-  *incremental append* (compile and chain-link only the new clause,
-  §4), genuinely profiling-driven now that the catastrophic case is
-  gone. A moving "compaction" GC was the wrong framing: incremental
-  append *prevents* the superseded bodies rather than collecting them,
-  and relocating live code past in-flight choice points would be far
-  harder. (Across queries there is no leak regardless — the per-query
-  buffer is reclaimed by the GC when the query ends.)
+  could reclaim a clause once no live query could still see it. The
+  canonical implementation (chunks 120–128) keeps **no generation
+  pins** and defers **no** physical removal: a retracted clause has its
+  `died` slot patched in the bytecode and the next `check_visible`
+  filters it out; the clause's bytecode stays in place (the running
+  program is append-only, so an in-progress backtracking call still
+  sees its own snapshot). A per-query `Engine` — program buffer,
+  choice points, heap — is ordinary managed state the GC reclaims when
+  the enumeration ends or is abandoned. There is no pin to release, no
+  unmanaged resource, no leak; a `PrologQuery : IDisposable` would
+  therefore be an empty-`Dispose` wrapper. Should a future change
+  reintroduce deferred physical removal (e.g. a moving code GC), the
+  lifecycle returns with it.
+- **E — Program-growth cost — addressed (chunk 119, refined by 127–128).**
+  Chunk 119 measured the pathological pattern (one query asserting-then-
+  calling a dynamic predicate in a loop, forcing a whole-predicate
+  recompile each iteration): the chunk-118 redirect's `Engine.AppendCode`
+  re-copied the whole growing buffer every append — O(n³) overall
+  (n=1500: 11.5 s, 12.7 GB allocated). Capacity doubling made the
+  append amortised O(1); n=1500 fell to 3.9 s / 1.5 GB. The residual was
+  O(n²), dominated by recompiling the whole predicate on each
+  modification. Chunks 127–128 removed even that: `assertz` and
+  `asserta` now compile only the new clause, append a chunk of size
+  O(clause), and patch the chain in place. The buffer growth per
+  modification is O(clause size) — the canonical minimum, not the
+  pathological one. A moving "compaction" GC was the wrong framing all
+  along: incremental append prevents the superseded bodies rather than
+  collecting them, and relocating live code past in-flight choice
+  points would be far harder. (Across queries there is no leak
+  regardless — the per-query buffer is reclaimed by the GC when the
+  query ends.)
 
 ## Quick reference
 

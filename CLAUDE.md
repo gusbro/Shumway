@@ -400,20 +400,38 @@ pass rather than patched ad hoc.
   self-re-arming choice point so it re-succeeds on every backtrack — the ISO
   constant-stack failure-loop generator.
 - ✅ **Same-query dynamic-predicate visibility (ISO logical update view) —
-  resolved (chunks 114–118, [ADR-015](docs/architecture/adr/015-persistent-code-space.md)).**
+  resolved (chunks 114–128, [ADR-015](docs/architecture/adr/015-persistent-code-space.md)).**
   A direct call to a dynamic predicate (and a `findall/3` over one) now
   sees a change made earlier in the same query — `assertz(d(1)), d(1)`
-  succeeds. ADR-015 chunk A added the generation counter; chunk B made the
-  static program a persistent linked region so a query links only its
-  transient part; chunk C made a dynamic-predicate call live — the program
-  buffer grows, and a predicate modified mid-query is lazily recompiled
-  from its live clauses and the call redirected to it. ADR-015 chunk D
-  (a `PrologQuery : IDisposable` lifecycle) was obviated by the
-  recompile-on-modify design — it keeps no generation pins to release —
-  and dropped; chunk E fixed the program buffer's O(n³) growth under a
-  pathological assert-then-call loop (capacity doubling; chunk 119),
-  leaving incremental clause append as a profiling-driven refinement.
-  ADR-015 is substantially complete.
+  succeeds. The canonical engine-style dispatch:
+    - **A (114)** generation counter on `PrologEngine`.
+    - **B (115–117)** persistent code space — static linked once, queries
+      link only their transient region against it.
+    - **C-bytecode-level (120–128)** dynamic dispatch matching what
+      mature Prolog engines do. CP frame gains a `ViewGen` slot saved /
+      restored alongside the rest of state. Two new opcodes
+      (`enter_dynamic` samples `DbGeneration` into `CurrentViewGen`;
+      `check_visible <born:long> <died:long>` filters per clause). Each
+      dynamic predicate compiles to a 6-byte trampoline
+      (`enter_dynamic; execute <chain-head>`) followed by a
+      `try_me_else` / `retry_me_else` chain with the last clause
+      pointing at a `call_builtin fail/0` fail-stub. `assertz` and
+      `asserta` are both O(clause): compile one clause via
+      `ClauseCompiler`, append a chunk, patch the appropriate operand
+      in place. Asserta demotes the previous head's `try_me_else`
+      (9 bytes) to `retry_me_else <same-next>` + 4 × `Nop` (also
+      9 bytes — same address operand at the same offset). `retract`
+      and `abolish` patch the `died` slot in place.
+    - **D** stays dropped — no generation pins to release.
+    - **E (119)** capacity-doubling `AppendCode`; the incremental
+      assertz/asserta (127–128) made the residual O(n²) growth a
+      non-issue too. Per-modification growth is O(clause size).
+  The chunk-118 stepping-stone (recompile-on-modify redirect) is gone;
+  what runs is the canonical design. Cut works as a normal `cut`
+  opcode because clauses stay compiled. The logical update view holds
+  through born/died: an in-progress call's captured view-gen sits
+  below any mid-query assertz/retract, so it sees the database as of
+  when its goal began. ADR-015 is complete.
 
 ---
 
