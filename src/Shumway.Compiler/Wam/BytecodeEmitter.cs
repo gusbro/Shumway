@@ -72,6 +72,25 @@ public sealed class BytecodeEmitter
 
     public void EmitTrustMe() => _bytes.Add((byte)Opcode.TrustMe);
 
+    /// <summary>ADR-015 chunk C — samples the host's <c>DbGeneration</c>
+    /// into <c>engine.CurrentViewGen</c>. Emitted at the entry of every
+    /// dynamic predicate so the surrounding <c>try_me_else</c> captures
+    /// the call's view-generation into the choice point.</summary>
+    public void EmitEnterDynamic() => _bytes.Add((byte)Opcode.EnterDynamic);
+
+    /// <summary>ADR-015 chunk C — per-clause visibility filter for a
+    /// dynamic predicate. Backtracks if the captured view-gen lies outside
+    /// the half-open range <c>[born, died)</c>. <c>retract</c> patches the
+    /// <c>died</c> slot in place.</summary>
+    public void EmitCheckVisible(long born, long died)
+    {
+        _bytes.Add((byte)Opcode.CheckVisible);
+        var span = new byte[16];
+        BytecodeIO.WriteInt64(span, 0, born);
+        BytecodeIO.WriteInt64(span, 8, died);
+        _bytes.AddRange(span);
+    }
+
     /// <summary>Indexed try: create a CP whose BP is the next opcode and jump
     /// to <paramref name="targetAddress"/>. Used in the body of an indexing
     /// bucket where each instruction points at a specific candidate

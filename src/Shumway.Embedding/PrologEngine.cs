@@ -1846,7 +1846,8 @@ public sealed class PrologEngine
             skipCompileCache = merged;
         }
         var module = new ModuleCompiler().Compile(
-            allRewritten, skipCompileCache, unindexedFunctors, _literalPools);
+            allRewritten, skipCompileCache, unindexedFunctors, _literalPools,
+            dynamicFunctors: _dynamicFunctors);
 
         // Populate the dynamic cache with any newly-compiled dynamic
         // predicate whose bytecode is safe to reuse next query (no
@@ -2112,7 +2113,8 @@ public sealed class PrologEngine
         var module = new ModuleCompiler().Compile(
             rewritten, cache: null,
             unindexedFunctors: new HashSet<int> { fid },
-            pools: _literalPools);
+            pools: _literalPools,
+            dynamicFunctors: new HashSet<int> { fid });
         int loadOffset = engine.ProgramLength;
         var link = new Linker().Link(module, loadOffset, externalSymbols: addressMap);
         engine.AppendCode(link.Bytecode);

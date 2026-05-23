@@ -59,7 +59,8 @@ public sealed class PredicateCompiler
         LiteralPool<string> stringLiterals,
         LiteralPool<double> floatLiterals,
         LiteralPool<System.Numerics.BigInteger> bigIntLiterals,
-        bool enableIndexing = true)
+        bool enableIndexing = true,
+        bool isDynamic = false)
     {
         ArgumentNullException.ThrowIfNull(clauses);
         if (clauses.Count == 0)
@@ -91,6 +92,32 @@ public sealed class PredicateCompiler
         // predicate is by definition inside clause 0.
         if (compiledClauses.Count == 1)
         {
+            if (isDynamic)
+            {
+                // ADR-015 chunk C: prepend enter_dynamic + check_visible
+                // (always-visible sentinel values for now — step 3 emits
+                // the opcodes; step 4 wires real born/died).
+                var em = new BytecodeEmitter();
+                em.EmitEnterDynamic();
+                em.EmitCheckVisible(born: 0L, died: long.MaxValue);
+                int clauseStart = em.Position;
+                em.AppendBytes(compiledClauses[0].Bytecode);
+                var shiftedCallSites = compiledClauses[0].CallSites
+                    .Select(s => new CallSite(
+                        clauseStart + s.OpcodeOffset, s.CalleeFunctorId, s.IsExecute))
+                    .ToArray();
+                return new CompiledPredicate(
+                    em.ToBytes(),
+                    functorId,
+                    arity,
+                    clauseCount: 1,
+                    callSites: shiftedCallSites,
+                    dispatchSites: Array.Empty<int>(),
+                    switchTables: Array.Empty<SwitchTable>(),
+                    switchTableIdSites: Array.Empty<int>(),
+                    sourcePosition: clauses[0].Position,
+                    clauseSourcePositions: clausePositions);
+            }
             return new CompiledPredicate(
                 compiledClauses[0].Bytecode,
                 functorId,
@@ -127,11 +154,18 @@ public sealed class PredicateCompiler
             }
         }
 
+        // ADR-015 chunk C step 3 emits enter_dynamic / check_visible only
+        // along the unindexed chain path; the indexed path (chunk 75 JIT)
+        // does not yet carry visibility guards. With step 3's
+        // always-visible (born=0, died=MaxValue) sentinels this is
+        // behaviour-neutral; later steps that wire real born/died values
+        // will either extend the indexed path or force dynamic predicates
+        // back through the chain.
         return indexableArgs.Count > 0
             ? CompileIndexed(compiledClauses, perArgInfo, indexableArgs, functorId, arity,
                              clauses[0].Position, clausePositions)
             : CompileTryMeElseChain(compiledClauses, functorId, arity,
-                                    clauses[0].Position, clausePositions);
+                                    clauses[0].Position, clausePositions, isDynamic);
     }
 
     /// <summary>Size of one <see cref="Opcode.Meta"/> + <see cref="MetaSubOpcode.DbgInfo"/>
@@ -145,27 +179,38 @@ public sealed class PredicateCompiler
     private static CompiledPredicate CompileTryMeElseChain(
         IReadOnlyList<CompiledClause> compiledClauses, int functorId, int arity,
         Shumway.Compiler.Lexer.SourcePosition position,
-        IReadOnlyList<Shumway.Compiler.Lexer.SourcePosition> clausePositions)
+        IReadOnlyList<Shumway.Compiler.Lexer.SourcePosition> clausePositions,
+        bool isDynamic = false)
     {
         // Per-clause layout: dispatch instruction (try/retry/trust),
-        // then Meta(DbgInfo, clauseIndex), then the clause body. The
+        // then Meta(DbgInfo, clauseIndex), then (for dynamic predicates)
+        // a check_visible visibility filter, then the clause body. The
         // dispatch BPs point at the next clause's dispatch instruction;
         // the Meta opcode sits inside the body region so any PC inside
         // (Meta + clause body) maps back to that clause via a backward
-        // scan from the runtime PC.
+        // scan from the runtime PC. ADR-015 chunk C: dynamic predicates
+        // are prefixed by an enter_dynamic opcode at the entry, and every
+        // clause begins with a check_visible (born=0, died=MaxValue at
+        // this step — always visible; step 4 wires real values).
         int n = compiledClauses.Count;
+        const int CheckVisibleSize = 17;
+        int enterDynamicSize = isDynamic ? 1 : 0;
+        int checkVisibleSize = isDynamic ? CheckVisibleSize : 0;
+
         int[] clauseBodyOffsets = new int[n];
-        int pos = 0;
+        int pos = enterDynamicSize;
         for (int i = 0; i < n; i++)
         {
             int dispatchSize = i == 0 ? 9 : i == n - 1 ? 1 : 5;
             pos += dispatchSize;
             clauseBodyOffsets[i] = pos;
             pos += MetaDbgInfoSize;
+            pos += checkVisibleSize;
             pos += compiledClauses[i].Bytecode.Length;
         }
 
         var emitter = new BytecodeEmitter();
+        if (isDynamic) emitter.EmitEnterDynamic();
         var callSites = new List<CallSite>();
         var dispatchSites = new List<int>();
         for (int i = 0; i < n; i++)
@@ -190,6 +235,7 @@ public sealed class PredicateCompiler
             }
 
             emitter.EmitMetaDbgInfo(i);
+            if (isDynamic) emitter.EmitCheckVisible(born: 0L, died: long.MaxValue);
             int clauseStart = emitter.Position;
             emitter.AppendBytes(compiledClauses[i].Bytecode);
             foreach (var site in compiledClauses[i].CallSites)

@@ -55,18 +55,33 @@ public sealed class ModuleCompiler
         IEnumerable<Clause> clauses,
         IReadOnlyDictionary<int, CompiledPredicate>? cache,
         IReadOnlySet<int>? unindexedFunctors)
-        => Compile(clauses, cache, unindexedFunctors, pools: null);
+        => Compile(clauses, cache, unindexedFunctors, pools: null, dynamicFunctors: null);
 
-    /// <summary><paramref name="pools"/> (ADR-015 chunk B) lets the caller
-    /// supply persistent literal pools instead of the fresh per-call set.
-    /// Passed pools accumulate across compilations, so a literal keeps a
-    /// stable id from one query to the next. When <c>null</c> a fresh set
-    /// is used — the original per-module behaviour.</summary>
     public CompiledModule Compile(
         IEnumerable<Clause> clauses,
         IReadOnlyDictionary<int, CompiledPredicate>? cache,
         IReadOnlySet<int>? unindexedFunctors,
         LiteralPools? pools)
+        => Compile(clauses, cache, unindexedFunctors, pools, dynamicFunctors: null);
+
+    /// <summary><paramref name="pools"/> (ADR-015 chunk B) lets the caller
+    /// supply persistent literal pools instead of the fresh per-call set.
+    /// Passed pools accumulate across compilations, so a literal keeps a
+    /// stable id from one query to the next. When <c>null</c> a fresh set
+    /// is used — the original per-module behaviour.
+    ///
+    /// <para><paramref name="dynamicFunctors"/> (ADR-015 chunk C) marks
+    /// the functors whose clauses should be compiled with the
+    /// generation-filtered dispatch prefix: an <c>enter_dynamic</c> opcode
+    /// at the predicate entry and a <c>check_visible</c> guard before each
+    /// clause body. Step 3 emits them with always-visible sentinel values
+    /// (born=0, died=long.MaxValue) — no observable behaviour change.</para></summary>
+    public CompiledModule Compile(
+        IEnumerable<Clause> clauses,
+        IReadOnlyDictionary<int, CompiledPredicate>? cache,
+        IReadOnlySet<int>? unindexedFunctors,
+        LiteralPools? pools,
+        IReadOnlySet<int>? dynamicFunctors)
     {
         ArgumentNullException.ThrowIfNull(clauses);
 
@@ -112,8 +127,10 @@ public sealed class ModuleCompiler
             }
             bool enableIndexing = unindexedFunctors is null
                 || !unindexedFunctors.Contains(fid);
+            bool isDynamic = dynamicFunctors is not null && dynamicFunctors.Contains(fid);
             predicates.Add(predicateCompiler.Compile(
-                groups[fid], stringLiterals, floatLiterals, bigIntLiterals, enableIndexing));
+                groups[fid], stringLiterals, floatLiterals, bigIntLiterals,
+                enableIndexing, isDynamic));
         }
 
         return new CompiledModule(
