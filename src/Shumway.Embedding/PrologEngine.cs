@@ -336,6 +336,13 @@ public sealed class PrologEngine
             : Array.Empty<Clause>();
     }
 
+    /// <summary>True iff the given functor was declared
+    /// <c>:- dynamic</c>. Exposed to <c>MetaBuiltins.Retract</c> /
+    /// <c>Abolish</c> so they can raise the ISO
+    /// <c>permission_error(modify, static_procedure, _)</c> rather than
+    /// silently failing on a static predicate (chunk 131e).</summary>
+    internal bool IsDynamic(int functorId) => _dynamicFunctors.Contains(functorId);
+
     /// <summary>Removes the clause object identical to <paramref name="clause"/>
     /// from the dynamic store (used after the runtime caller has matched it
     /// via unification on a materialised heap copy). When ADR-015 chunk C
@@ -487,11 +494,20 @@ public sealed class PrologEngine
     {
         if (!_dynamicFunctors.Contains(fid))
         {
-            var (atomId, arity) = FunctorTable.Lookup(fid);
-            string name = AtomTable.GetById(atomId)?.Name ?? "?";
-            throw new InvalidOperationException(
-                $"assertz/retract: predicate {name}/{arity} is not declared dynamic. "
-                + $"Add `:- dynamic {name}/{arity}.` to the source.");
+            // Chunk 131e: ISO §7.12.2.h — modifying a static procedure
+            // is permission_error(modify, static_procedure, Name/Arity).
+            // The Detail string carries the indicator for diagnostic
+            // continuity; the translated form lands in the second slot
+            // of the permission_error compound through the standard
+            // TranslateRuntimeError path (the third "Obj" slot stays as
+            // an anonymous variable for now — a richer Term-valued
+            // exception payload is queued for later in chunk 131).
+            // Detail encodes Operation,ObjectType — TranslateRuntimeError
+            // splits and builds the three-arg permission_error compound
+            // (the third Obj slot stays as an anonymous variable, since
+            // PrologRuntimeException can't carry a Term yet).
+            throw new Shumway.Core.PrologRuntimeException(
+                "permission_error", "modify,static_procedure");
         }
     }
 
@@ -506,8 +522,11 @@ public sealed class PrologEngine
                 AtomTable.Intern(a.Name, permanent: true).Id, 0),
             CompoundTerm c => FunctorTable.Intern(
                 AtomTable.Intern(c.Functor, permanent: true).Id, c.Args.Length),
-            _ => throw new InvalidOperationException(
-                "assertz/retract: clause head must be atom or compound."),
+            // Chunk 131e: ISO assertz/asserta/retract — a clause head
+            // that isn't callable raises type_error(callable, Head);
+            // an unbound head raises instantiation_error.
+            VarTerm => throw new Shumway.Core.PrologRuntimeException("instantiation_error"),
+            _ => throw new Shumway.Core.PrologRuntimeException("type_error", "callable"),
         };
     }
 
@@ -1092,8 +1111,12 @@ public sealed class PrologEngine
         }
         else
         {
-            throw new InvalidOperationException(
-                "catch/3 recovery goal is not callable.");
+            // Chunk 131e: ISO §8.15.3.3 — a non-callable Recovery goal
+            // is type_error(callable, Recovery); an unbound one is
+            // instantiation_error.
+            if (goal.Tag == Tag.Ref)
+                throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+            throw new Shumway.Core.PrologRuntimeException("type_error", "callable");
         }
 
         for (int i = 0; i < arity; i++)

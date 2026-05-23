@@ -752,9 +752,12 @@ public static class MetaBuiltins
         Cell startDeref = startC.Tag == Tag.Ref
             ? engine.GetHeap(engine.Deref(startC.AsHeapIndex))
             : startC;
+        // Chunk 131e: ISO precedence — var second arg →
+        // instantiation_error; bound non-int → type_error(integer, _).
+        if (startDeref.Tag == Tag.Ref)
+            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
         if (startDeref.Tag != Tag.Int)
-            throw new InvalidOperationException(
-                "numbervars/3: second argument (Start) must be a ground integer.");
+            throw new Shumway.Core.PrologRuntimeException("type_error", "integer");
         long start = startDeref.AsInt;
 
         // Copy the input register to a heap slot so we have a stable address
@@ -961,6 +964,25 @@ public static class MetaBuiltins
     /// <summary>Promotes a Core-level <see cref="PrologRuntimeException"/>
     /// into the canonical ISO <c>error(Kind, _)</c> Prolog term that
     /// user-written catchers expect.</summary>
+    /// <summary>Builds the three-argument
+    /// <c>permission_error(Op, ObjType, Obj)</c> from a Detail string
+    /// shaped <c>"Op,ObjType"</c>. The Obj slot is a fresh anonymous
+    /// variable — PrologRuntimeException can't carry a Term payload
+    /// yet, so the offending object is lost in translation; a catcher
+    /// can still pattern-match on Op and ObjType.</summary>
+    private static Term BuildPermissionError(string detail)
+    {
+        string[] parts = detail.Split(',', 2);
+        string op = parts.Length > 0 ? parts[0] : "?";
+        string objType = parts.Length > 1 ? parts[1] : "?";
+        return new CompoundTerm("permission_error", new Term[]
+        {
+            new AtomTerm(op),
+            new AtomTerm(objType),
+            new VarTerm("_"),
+        });
+    }
+
     /// <summary>Builds the ISO Context indicator <c>Name/Arity</c> from
     /// the exception's stamped builtin identity (chunk 130), or returns
     /// <c>null</c> when no builtin stamped it — meaning the throw arose
@@ -1002,6 +1024,11 @@ public static class MetaBuiltins
             new CompoundTerm("syntax_error", new Term[] { new AtomTerm(re.Detail) }), re),
         "resource_error" => WrapWithStampedContext(
             new CompoundTerm("resource_error", new Term[] { new AtomTerm(re.Detail) }), re),
+        // Chunk 131e: ISO permission_error has three args. The Detail
+        // string encodes "Operation,ObjectType" (e.g. "modify,static_procedure");
+        // we split on the comma and put a fresh var in the Obj slot.
+        "permission_error" => WrapWithStampedContext(
+            BuildPermissionError(re.Detail), re),
         "system_error" => WrapWithStampedContext(
             string.IsNullOrEmpty(re.Detail)
                 ? (Term)new AtomTerm("system_error")
@@ -1315,8 +1342,11 @@ public static class MetaBuiltins
             CompoundTerm c => new CompoundTerm(
                 c.Functor,
                 c.Args.Concat(extras).ToArray()),
-            _ => throw new InvalidOperationException(
-                "call/N: goal must be an atom or compound."),
+            // Chunk 131e: ISO call/N — a non-callable goal raises
+            // type_error(callable, Goal); an unbound goal raises
+            // instantiation_error.
+            VarTerm => throw new Shumway.Core.PrologRuntimeException("instantiation_error"),
+            _ => throw new Shumway.Core.PrologRuntimeException("type_error", "callable"),
         };
     }
 
@@ -1377,6 +1407,14 @@ public static class MetaBuiltins
         Term pattern = MaterializeRegister(engine, 0);
         var patternClause = Shumway.Compiler.Ast.Clause.From(pattern);
         int patternFid = ExtractHeadFunctorIdFromClause(patternClause);
+
+        // Chunk 131e: ISO §7.12.2.h — retracting from a static
+        // predicate is permission_error(modify, static_procedure, _),
+        // not a silent failure. The check fires after the head's type
+        // check (above) so type errors win precedence.
+        if (!host.IsDynamic(patternFid))
+            throw new Shumway.Core.PrologRuntimeException(
+                "permission_error", "modify,static_procedure");
 
         var candidates = new List<Clause>(host.DynamicClausesFor(patternFid));
         // The call_builtin opcode is 9 bytes; a resumed step continues at
@@ -1463,8 +1501,11 @@ public static class MetaBuiltins
                 AtomTable.Intern(a.Name, permanent: true).Id, 0),
             CompoundTerm c => FunctorTable.Intern(
                 AtomTable.Intern(c.Functor, permanent: true).Id, c.Args.Length),
-            _ => throw new InvalidOperationException(
-                "retract: clause pattern head must be atom or compound."),
+            // Chunk 131e: ISO §8.9.3 — an unbound head raises
+            // instantiation_error; anything else non-callable raises
+            // type_error(callable, _).
+            VarTerm => throw new Shumway.Core.PrologRuntimeException("instantiation_error"),
+            _ => throw new Shumway.Core.PrologRuntimeException("type_error", "callable"),
         };
     }
 

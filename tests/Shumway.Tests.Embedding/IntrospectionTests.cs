@@ -126,9 +126,11 @@ public class IntrospectionTests
         Assert.True(engine.Query("abolish(counter/1).").Success);
 
         // Predicate is gone: it's no longer in the dynamic registry, and
-        // asserting again must re-declare it dynamic first.
-        Assert.Throws<InvalidOperationException>(
+        // asserting again must re-declare it dynamic first. Phase-9
+        // chunk 131e: raises catchable permission_error now.
+        var ex = Assert.Throws<Shumway.Core.PrologRuntimeException>(
             () => engine.Query("assertz(counter(99))."));
+        Assert.Equal("permission_error", ex.Kind);
     }
 
     [Fact]

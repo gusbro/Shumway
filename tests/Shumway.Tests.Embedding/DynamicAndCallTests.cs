@@ -99,9 +99,13 @@ public class DynamicAndCallTests
     public void Assertz_NonDynamicPredicate_Throws()
     {
         // Without :- dynamic, assertz refuses to add a clause.
+        // Phase-9 chunk 131e: this now raises a catchable ISO
+        // permission_error(modify, static_procedure, _) rather than the
+        // uncatchable InvalidOperationException earlier phases used.
         var engine = new PrologEngine();
-        Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<Shumway.Core.PrologRuntimeException>(
             () => engine.Query("assertz(p(1))."));
+        Assert.Equal("permission_error", ex.Kind);
     }
 
     [Fact]
