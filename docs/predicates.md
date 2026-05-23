@@ -272,3 +272,9 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `#==>(+Constraint1, +Constraint2)` | Constraint1 implies Constraint2. |
 | `#\(+Constraint)` | The constraint does not hold (negation). |
 | `#\/(+Constraint1, +Constraint2)` | At least one constraint holds (disjunction). |
+
+## Reflection
+
+| Predicate | Description |
+| --- | --- |
+| `current_op(?Priority, ?Type, ?Name)` | Enumerates the operator table; backtracks over every operator (ISO §8.17.3). |

@@ -91,6 +91,24 @@ public sealed class OperatorTable
         return false;
     }
 
+    /// <summary>Enumerates every (priority, type, name) currently
+    /// registered. Each (name, fixity) pair produces one entry, so an
+    /// atom that's both prefix and infix (e.g. <c>-</c>) appears
+    /// twice. Used by <c>current_op/3</c> (ISO §8.17.3) to drive its
+    /// backtracking enumeration.</summary>
+    public IEnumerable<(int Precedence, OperatorType Type, string Name)> Enumerate()
+    {
+        foreach (var (name, info) in _byName)
+        {
+            if (info.PrefixPrecedence is int pp)
+                yield return (pp, info.PrefixType, name);
+            if (info.InfixPrecedence is int ip)
+                yield return (ip, info.InfixType, name);
+            if (info.PostfixPrecedence is int ppx)
+                yield return (ppx, info.PostfixType, name);
+        }
+    }
+
     /// <summary>Returns a fresh table seeded with the operators common to ISO and
     /// SWI-style Prolog. Edits to the returned table do not affect future
     /// invocations.</summary>

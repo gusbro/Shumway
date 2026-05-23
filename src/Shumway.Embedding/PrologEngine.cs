@@ -603,6 +603,12 @@ public sealed class PrologEngine
     internal void DefineOperator(string name, int precedence, OperatorType type)
         => _operators.Define(name, precedence, type);
 
+    /// <summary>Snapshot of every registered operator, as
+    /// (Precedence, Type, Name) triples. Used by <c>current_op/3</c>
+    /// (chunk 138) to drive its backtracking enumeration.</summary>
+    internal IEnumerable<(int Precedence, OperatorType Type, string Name)> EnumerateOperators()
+        => _operators.Enumerate();
+
     /// <summary>Loads a Shumway bundle (.shum) from disk and consults every
     /// module inside it. Equivalent to calling <see cref="ConsultString"/>
     /// for each entry in the bundle's manifest, in order. Throws

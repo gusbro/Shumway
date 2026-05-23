@@ -120,6 +120,9 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("read_term_from_atom", 2, ReadTermFromAtom,
             Term, "read_term_from_atom(+Atom, -Term)", "Parses an atom into a term.");
 
+        BuiltinsRegistry.Register("current_op", 3, CurrentOp,
+            "Reflection", "current_op(?Priority, ?Type, ?Name)",
+            "Enumerates the operator table; backtracks over every operator (ISO §8.17.3).");
         BuiltinsRegistry.Register("op", 3, Op,
             Reflect, "op(+Priority, +Type, +Name)", "Declares an operator of the given priority and type.");
         BuiltinsRegistry.Register("set_prolog_flag",     2, SetPrologFlag,
@@ -464,6 +467,65 @@ public static class MetaBuiltins
             return true;
         }
         throw new ShumwayPrologException(IsoError.TypeError("atom_or_list", new VarTerm("_")));
+    }
+
+    /// <summary><c>current_op(?Priority, ?Type, ?Name)</c> — ISO §8.17.3.
+    /// Enumerates every defined operator on backtracking, with any of
+    /// the three args optionally constraining the search. Uses the
+    /// standard PushBuiltinChoicePoint pattern for the multi-solution
+    /// dispatch (chunk 138).</summary>
+    public static bool CurrentOp(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "current_op/3 requires the engine to be hosted by a PrologEngine.");
+
+        // Snapshot the current operator set so backtracking iteration
+        // sees a stable view even if op/3 mutates the table mid-enum.
+        var ops = host.EnumerateOperators().ToArray();
+        int returnPc = engine.P + 9;
+        return CurrentOpStep(engine, ops, 0, returnPc, isResume: false);
+    }
+
+    private static bool CurrentOpStep(
+        Engine engine,
+        (int Precedence, Shumway.Compiler.Parsing.OperatorType Type, string Name)[] ops,
+        int idx, int returnPc, bool isResume)
+    {
+        if (idx >= ops.Length) return false;
+
+        // Push a CP for the next iteration first so a backtrack
+        // returns here. The engine's standard backtrack handler will
+        // unwind any partial bindings from this attempt before firing
+        // the CP, exactly the same pattern AppendSplitAttempt uses.
+        if (idx + 1 < ops.Length)
+        {
+            int nextIdx = idx + 1;
+            Func<Engine, int, bool> resume = (e, _) =>
+                CurrentOpStep(e, ops, nextIdx, returnPc, isResume: true);
+            engine.PushBuiltinChoicePoint(resume, arity: 0);
+        }
+
+        var (prec, type, name) = ops[idx];
+        string typeName = type switch
+        {
+            Shumway.Compiler.Parsing.OperatorType.Fx => "fx",
+            Shumway.Compiler.Parsing.OperatorType.Fy => "fy",
+            Shumway.Compiler.Parsing.OperatorType.Xf => "xf",
+            Shumway.Compiler.Parsing.OperatorType.Yf => "yf",
+            Shumway.Compiler.Parsing.OperatorType.Xfx => "xfx",
+            Shumway.Compiler.Parsing.OperatorType.Xfy => "xfy",
+            Shumway.Compiler.Parsing.OperatorType.Yfx => "yfx",
+            _ => "?",
+        };
+
+        if (!engine.UnifyRegisterWithCell(0, Cell.Int(prec))) return false;
+        if (!engine.UnifyRegisterWithCell(1,
+                Cell.Atom(AtomTable.Intern(typeName, permanent: true).Id))) return false;
+        if (!engine.UnifyRegisterWithCell(2,
+                Cell.Atom(AtomTable.Intern(name, permanent: true).Id))) return false;
+        if (isResume) engine.ResumeAtReturnPc(returnPc);
+        return true;
     }
 
     /// <summary><c>read_term_from_atom(Atom, Term)</c> — parses the text
