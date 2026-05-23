@@ -95,15 +95,24 @@ public sealed class PredicateCompiler
         {
             if (isDynamic)
             {
-                // ADR-015 chunk C: prepend enter_dynamic + check_visible
-                // (always-visible sentinel values for now). When a
-                // failStubAddr is given (step 4), also push a CP via
-                // try_me_else <fail-stub> so a future assertz can patch
-                // the operand to point at the new clause (in-place
-                // 4-byte patch — same-size as a retry_me_else).
+                // ADR-015 chunk C step 4: dynamic predicates run through
+                // a fixed-size trampoline (enter_dynamic; execute
+                // <chain-head>) — asserta patches the Execute operand
+                // in place to install a new chain head. The clause itself
+                // then carries try_me_else <fail-stub> (so its operand is
+                // patchable for assertz too) + check_visible + body.
                 var em = new BytecodeEmitter();
                 em.EmitEnterDynamic();
-                if (failStubAddr > 0) em.EmitTryMeElse(failStubAddr, arity);
+                var dispatch = new List<int>();
+                if (failStubAddr > 0)
+                {
+                    // Trampoline: chain-head sits right after the
+                    // execute (predicate-local 6).
+                    int execOpPos = em.Position;
+                    em.EmitExecute(targetAddress: 6);
+                    dispatch.Add(execOpPos + 1);
+                    em.EmitTryMeElse(failStubAddr, arity);
+                }
                 em.EmitCheckVisible(born: 0L, died: long.MaxValue);
                 int clauseStart = em.Position;
                 em.AppendBytes(compiledClauses[0].Bytecode);
@@ -117,7 +126,7 @@ public sealed class PredicateCompiler
                     arity,
                     clauseCount: 1,
                     callSites: shiftedCallSites,
-                    dispatchSites: Array.Empty<int>(),
+                    dispatchSites: dispatch.ToArray(),
                     switchTables: Array.Empty<SwitchTable>(),
                     switchTableIdSites: Array.Empty<int>(),
                     sourcePosition: clauses[0].Position,
@@ -210,8 +219,15 @@ public sealed class PredicateCompiler
         // (paso-3 callers), keep trust_me.
         bool dynamicChain = isDynamic && failStubAddr > 0;
 
+        // Trampoline (only when dynamicChain): enter_dynamic; execute
+        // <chain-head>. The execute operand is patched by asserta to
+        // install a new chain head; the chain-head itself sits right
+        // after the trampoline.
+        int trampolineExecuteSize = dynamicChain ? 5 : 0;
+        int trampolineSize = enterDynamicSize + trampolineExecuteSize;
+
         int[] clauseBodyOffsets = new int[n];
-        int pos = enterDynamicSize;
+        int pos = trampolineSize;
         for (int i = 0; i < n; i++)
         {
             int dispatchSize = DispatchSizeFor(i, n, dynamicChain);
@@ -223,9 +239,19 @@ public sealed class PredicateCompiler
         }
 
         var emitter = new BytecodeEmitter();
-        if (isDynamic) emitter.EmitEnterDynamic();
         var callSites = new List<CallSite>();
         var dispatchSites = new List<int>();
+        if (isDynamic) emitter.EmitEnterDynamic();
+        if (dynamicChain)
+        {
+            // Trampoline's execute target is the first clause's chain
+            // instruction, sitting right after the trampoline at the
+            // predicate-local offset = trampolineSize. The Linker shifts
+            // the operand by basePos + loadOffset to make it absolute.
+            int execOpPos = emitter.Position;
+            emitter.EmitExecute(targetAddress: trampolineSize);
+            dispatchSites.Add(execOpPos + 1);
+        }
         for (int i = 0; i < n; i++)
         {
             if (i == 0)

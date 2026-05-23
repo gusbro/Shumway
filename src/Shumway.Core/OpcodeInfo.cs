@@ -90,6 +90,7 @@ public static class OpcodeTable
         Set(Opcode.Halt, 1, "halt");
 
         // Choice points
+        Set(Opcode.Nop, 1, "nop");
         Set(Opcode.TryMeElse, 9, "try_me_else", OperandKind.Address, OperandKind.Count);
         Set(Opcode.RetryMeElse, 5, "retry_me_else", OperandKind.Address);
         Set(Opcode.TrustMe, 1, "trust_me");

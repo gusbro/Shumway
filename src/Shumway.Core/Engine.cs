@@ -1009,53 +1009,6 @@ public sealed class Engine
     /// recompiled and appended via <see cref="AppendCode"/>.</summary>
     public byte[]? CurrentProgram { get; set; }
 
-    // --- ADR-015 chunk C: live dynamic-predicate dispatch --------------
-
-    /// <summary>Redirect map from a dynamic predicate's query-setup entry
-    /// address to its current one. Empty for a query that never modifies
-    /// the database, so a call pays only an emptiness check. A
-    /// <see cref="DynamicStale"/> value means the predicate was modified
-    /// and must be recompiled on the next call.</summary>
-    private Dictionary<int, int>? _dynamicRedirects;
-
-    /// <summary>Sentinel: a dynamic predicate marked modified-since-setup,
-    /// awaiting lazy recompilation on its next call.</summary>
-    public const int DynamicStale = int.MinValue;
-
-    /// <summary>True once any dynamic predicate has been marked stale —
-    /// the interpreter only consults the redirect map when this holds.</summary>
-    public bool HasDynamicRedirects => _dynamicRedirects is { Count: > 0 };
-
-    /// <summary>Host-supplied recompiler: given a dynamic predicate's
-    /// query-setup entry address, recompiles its current clauses, appends
-    /// the bytecode (<see cref="AppendCode"/>), and returns the new entry
-    /// address.</summary>
-    public Func<int, int>? DynamicRecompiler { get; set; }
-
-    /// <summary>Marks the dynamic predicate entered at
-    /// <paramref name="setupAddress"/> as modified since query setup.</summary>
-    public void MarkDynamicStale(int setupAddress)
-    {
-        _dynamicRedirects ??= new Dictionary<int, int>();
-        _dynamicRedirects[setupAddress] = DynamicStale;
-    }
-
-    /// <summary>Maps a <c>call</c> / <c>execute</c> target through the
-    /// redirect map. A target with no redirect is returned unchanged; a
-    /// stale one is recompiled (once) and the map updated.</summary>
-    public int ResolveDynamicTarget(int target)
-    {
-        if (_dynamicRedirects is null
-            || !_dynamicRedirects.TryGetValue(target, out int current))
-            return target;
-        if (current == DynamicStale)
-        {
-            current = DynamicRecompiler!(target);
-            _dynamicRedirects[target] = current;
-        }
-        return current;
-    }
-
     private int _programLength = -1;
 
     /// <summary>Logical length of the program (ADR-015 chunk E).
@@ -1111,6 +1064,13 @@ public sealed class Engine
     /// <c>enter_dynamic</c> opcode can sample it without the interpreter
     /// having to depend on the embedding layer's types.</summary>
     public Func<long>? DbGenerationProvider { get; set; }
+
+    /// <summary>ADR-015 chunk C step 4: refreshes the interpreter's
+    /// literal pools after an <c>assertz</c> / <c>asserta</c> may have
+    /// interned a new string / float / bigint literal. Wired at query
+    /// setup; the incremental assert paths invoke it.</summary>
+    public Action<IReadOnlyList<string>, IReadOnlyList<double>,
+        IReadOnlyList<System.Numerics.BigInteger>>? RefreshLiteralPoolsCallback { get; set; }
 
     /// <summary>Snapshot of <see cref="CurrentViewGen"/> from a given CP
     /// — exposed so the choice-point save/restore stays inside

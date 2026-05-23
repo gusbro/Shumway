@@ -72,6 +72,12 @@ public enum Opcode : byte
     Execute = 0x53,
     Proceed = 0x54,
     Halt = 0x55,
+    // ADR-015 chunk C step 4: a 1-byte no-op. Used as padding when
+    // asserta converts the chain's old head from try_me_else (9 bytes)
+    // to retry_me_else (5 bytes) — the trailing 4 arity-operand bytes
+    // are overwritten with 4 nops so the in-place patch keeps the
+    // rest of the clause layout unchanged.
+    Nop = 0x56,
 
     // Choice points
     TryMeElse = 0x60,

@@ -100,6 +100,18 @@ public sealed class PrologEngine
         /// <c>trust_me</c> (paso-3 emission without a fail-stub) — those
         /// predicates fall back to the chunk-C recompile path.</summary>
         public int TailNextAddr = -1;
+        /// <summary>Absolute byte position of the trampoline's
+        /// <c>execute &lt;chain-head&gt;</c> operand — the 4-byte address
+        /// asserta patches to install a new chain head. -1 when there is
+        /// no trampoline.</summary>
+        public int TrampolineExecuteOperandAddr = -1;
+        /// <summary>Absolute byte position of the current chain head's
+        /// chain instruction (a <c>try_me_else</c>). asserta in-place
+        /// rewrites this byte from <c>try_me_else</c> (9 bytes) to
+        /// <c>retry_me_else &lt;same-next&gt;</c> (5 bytes) + 4 nops,
+        /// demoting the old head into a regular middle clause without
+        /// shifting anything.</summary>
+        public int HeadClauseAddr = -1;
     }
     private readonly Dictionary<int, DynChainState> _dynChains = new();
 
@@ -343,13 +355,6 @@ public sealed class PrologEngine
         return true;
     }
 
-    internal bool RemoveDynamicByReference(int functorId, Clause clause)
-    {
-        if (!_dynamicClauses.TryGetValue(functorId, out var list)) return false;
-        bool removed = list.Remove(clause);
-        if (removed) InvalidateDynamicCache(functorId);
-        return removed;
-    }
 
     /// <summary>Removes every asserted clause of the given dynamic functor and
     /// drops the functor from the dynamic registry, so subsequent calls raise
@@ -360,6 +365,25 @@ public sealed class PrologEngine
         _dynamicClauses.Remove(functorId);
         _dynamicFunctors.Remove(functorId);
         InvalidateDynamicCache(functorId);
+    }
+
+    /// <summary>ADR-015 chunk C step 4 — engine-aware overload that also
+    /// patches the <c>died</c> slot of every chain entry in place, so an
+    /// already-compiled dispatch in the running program filters all the
+    /// abolished clauses out via <c>check_visible</c>.</summary>
+    internal void AbolishDynamic(Engine engine, int functorId)
+    {
+        AbolishDynamic(functorId);              // bumps _dbGeneration
+        if (engine.CurrentProgram is null) return;
+        if (!_dynChains.TryGetValue(functorId, out var chain)) return;
+        var program = engine.CurrentProgram;
+        foreach (var entry in chain.Entries)
+        {
+            if (entry.DiedOperandAddr > 0)
+                Shumway.Core.BytecodeIO.WriteInt64(
+                    program, entry.DiedOperandAddr, _dbGeneration);
+        }
+        chain.Entries.Clear();
     }
 
     /// <summary>Static clauses whose head functor matches
@@ -2133,16 +2157,13 @@ public sealed class PrologEngine
             engine, module.StringLiterals, module.FloatLiterals,
             linkResult.SwitchTables, module.BigIntLiterals);
 
-        // ADR-015 chunk C: live dynamic dispatch. Map each dynamic
-        // predicate's query-setup entry address back to its functor, and
-        // wire the recompiler so an assertz / retract / abolish during
-        // this query is picked up on the predicate's next call.
-        var dynReverse = new Dictionary<int, int>();
-        foreach (var (fid, addr) in addressMap)
-            if (_dynamicFunctors.Contains(fid))
-                dynReverse[addr] = fid;
-        engine.DynamicRecompiler = setupAddr =>
-            RecompileDynamicPredicate(dynReverse[setupAddr], engine, interp, addressMap);
+        // ADR-015 chunk C step 4: refresh the interpreter's literal pools
+        // after an incremental assertz/asserta interns a new literal.
+        engine.RefreshLiteralPoolsCallback = (s, f, b) =>
+        {
+            interp.RefreshLiteralPools(s, f, b);
+            engine.CurrentStringLiterals = s;
+        };
 
         // ADR-015 chunk C step 4: per-functor chain state — record where
         // each clause's check_visible died slot lives in the running
@@ -2267,6 +2288,14 @@ public sealed class PrologEngine
             died: chunkAddr + DiedOperandLocal,
             next: chunkAddr + NextOperandLocal));
         chain.TailNextAddr = chunkAddr + NextOperandLocal;
+
+        // The clause may have interned new literals — refresh the
+        // interpreter so check_visible isn't running against a stale
+        // pool snapshot for any subsequent call.
+        engine.RefreshLiteralPoolsCallback?.Invoke(
+            _literalPools.Strings.Snapshot(),
+            _literalPools.Floats.Snapshot(),
+            _literalPools.BigInts.Snapshot());
     }
 
     /// <summary>Test hook: returns the chain's current tail-next address
@@ -2276,6 +2305,114 @@ public sealed class PrologEngine
     {
         if (!_dynChains.TryGetValue(functorId, out var chain)) return null;
         return chain.TailNextAddr;
+    }
+
+    /// <summary>Test hook: returns the chain's current head-clause
+    /// address — what asserta will demote to retry_me_else + nops on the
+    /// next call.</summary>
+    internal int? PeekHeadClauseAddr(int functorId)
+    {
+        if (!_dynChains.TryGetValue(functorId, out var chain)) return null;
+        return chain.HeadClauseAddr;
+    }
+
+    /// <summary>ADR-015 chunk C step 4 — asserta path. Compiles the new
+    /// clause as a chunk headed by <c>try_me_else &lt;old-head&gt;</c>,
+    /// appends it, demotes the previous head's <c>try_me_else</c> in
+    /// place to <c>retry_me_else &lt;same-next&gt;</c> + 4 nops (same
+    /// 9-byte footprint), and patches the trampoline's
+    /// <c>execute &lt;chain-head&gt;</c> to the new chunk. Falls back
+    /// silently when the chain doesn't have a trampoline (paso-3
+    /// emission or indexed dispatch).</summary>
+    internal void PrependDynamicClauseIncremental(
+        Engine engine, int functorId, Clause newClause)
+    {
+        if (!_dynChains.TryGetValue(functorId, out var chain)) return;
+        if (chain.TrampolineExecuteOperandAddr < 0) return;
+        if (engine.CurrentProgram is null) return;
+        if (engine.DynamicFailStubAddr <= 0) return;
+
+        var (_, arity) = FunctorTable.Lookup(functorId);
+
+        // Same transform pipeline as the setup path.
+        var single = new[] { newClause };
+        var transformed = PhraseTransform.Apply(
+            MetaTransform.Apply(DcgTransform.Apply(single)));
+        transformed = Shumway.Compiler.Modes.ModeSpecializationTransform.Apply(
+            transformed, Modes);
+        var dynCtx = new ModuleRewrite.Context(
+            DefaultModuleName, new HashSet<int>(), _dynamicFunctors);
+        var rewritten = transformed.Select(c => ModuleRewrite.Rewrite(c, dynCtx))
+            .ToList();
+        if (rewritten.Count == 0) return;
+        var compiledClause = new ClauseCompiler().Compile(
+            rewritten[0],
+            _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts);
+
+        // Chunk layout:
+        //   try_me_else <chain-head-target>, <arity>   (9 bytes)
+        //   check_visible <born> <died>                (17 bytes)
+        //   <body>
+        int oldHead = chain.HeadClauseAddr;
+        int chainHeadTarget = oldHead >= 0 ? oldHead : engine.DynamicFailStubAddr;
+
+        var emitter = new BytecodeEmitter();
+        emitter.EmitTryMeElse(chainHeadTarget, arity);
+        const int NextOperandLocal = 1;
+        emitter.EmitCheckVisible(born: _dbGeneration, died: long.MaxValue);
+        const int DiedOperandLocal = 9 + 9;            // try_me_else (9) + opcode (1) + born (8)
+        int bodyStartLocal = emitter.Position;
+        emitter.AppendBytes(compiledClause.Bytecode);
+        byte[] chunk = emitter.ToBytes();
+
+        int chunkAddr = engine.AppendCode(chunk);
+        var program = engine.CurrentProgram;
+
+        // Patch the body's call sites.
+        var addrMap = engine.CurrentFunctorAddresses;
+        foreach (var site in compiledClause.CallSites)
+        {
+            int operandPos = chunkAddr + bodyStartLocal + site.OpcodeOffset + 1;
+            int target = (addrMap is not null
+                          && addrMap.TryGetValue(site.CalleeFunctorId, out int addr))
+                ? addr
+                : Shumway.Core.CallTarget.ForUndefined(site.CalleeFunctorId);
+            Shumway.Core.BytecodeIO.WriteInt32(program, operandPos, target);
+        }
+
+        // Demote the previous head's try_me_else (9 bytes) to
+        // retry_me_else <same-next> (5 bytes) + 4 nops. The address
+        // operand at +1..+4 stays — retry_me_else uses it as its <next>.
+        if (oldHead >= 0)
+        {
+            program[oldHead] = (byte)Shumway.Core.Opcode.RetryMeElse;
+            program[oldHead + 5] = (byte)Shumway.Core.Opcode.Nop;
+            program[oldHead + 6] = (byte)Shumway.Core.Opcode.Nop;
+            program[oldHead + 7] = (byte)Shumway.Core.Opcode.Nop;
+            program[oldHead + 8] = (byte)Shumway.Core.Opcode.Nop;
+        }
+
+        // Patch the trampoline's execute operand to the new head.
+        Shumway.Core.BytecodeIO.WriteInt32(
+            program, chain.TrampolineExecuteOperandAddr, chunkAddr);
+
+        // Update chain state. The new clause is now the head; existing
+        // entries shift one to the right, matching _dynamicClauses where
+        // asserta prepended.
+        chain.HeadClauseAddr = chunkAddr;
+        chain.Entries.Insert(0, new DynChainEntry(
+            newClause,
+            died: chunkAddr + DiedOperandLocal,
+            next: chunkAddr + NextOperandLocal));
+        // If this was the first ever clause, the new chunk is also the tail.
+        if (chain.TailNextAddr < 0)
+            chain.TailNextAddr = chunkAddr + NextOperandLocal;
+
+        // Refresh interpreter pools — same reasoning as the assertz path.
+        engine.RefreshLiteralPoolsCallback?.Invoke(
+            _literalPools.Strings.Snapshot(),
+            _literalPools.Floats.Snapshot(),
+            _literalPools.BigInts.Snapshot());
     }
 
     /// <summary>ADR-015 chunk C: recompiles a dynamic predicate from its
@@ -2312,10 +2449,11 @@ public sealed class PrologEngine
 
     /// <summary>Builds the per-functor chain state by walking the linked
     /// program for each dynamic predicate's compiled bytecode and locating
-    /// the <c>check_visible</c> opcode in front of each clause. Called by
+    /// the trampoline + each clause's <c>check_visible</c>. Called by
     /// <see cref="SetupQueryFromTerm"/> once the linked program is in
-    /// place, and again after <see cref="RecompileDynamicPredicate"/> for
-    /// the single functor it rebuilt.</summary>
+    /// place; subsequent mid-query <c>assertz</c> / <c>retract</c> /
+    /// <c>abolish</c> mutate chain state and the live program in place,
+    /// no rebuild needed.</summary>
     private void PopulateDynChains(
         byte[] program,
         IReadOnlyDictionary<int, int> addressMap,
@@ -2361,15 +2499,22 @@ public sealed class PrologEngine
         int pc = predAddr;
         int end = predAddr + predByteLength;
         int clauseIndex = 0;
-        // Each clause's chain instruction (try_me_else / retry_me_else)
-        // precedes its check_visible. Remember the operand position so we
-        // pair the right one with the right clause. Also track the
-        // bytecode-tail's chain operand — that's where assertz patches to
-        // link a freshly compiled clause onto the chain (whether the
-        // current tail is an empty-stub's try_me_else or the last live
-        // clause's retry_me_else, the patch site is the same shape).
         int pendingNextOperand = -1;
         int tailNextOperand = -1;
+
+        // Locate the trampoline (enter_dynamic; execute <chain-head>),
+        // if any. The trampoline structure was emitted by paso-4's
+        // compile path; older paso-3 emission has no Execute after
+        // EnterDynamic.
+        if (pc < end && program[pc] == (byte)Shumway.Core.Opcode.EnterDynamic
+            && pc + 1 < end && program[pc + 1] == (byte)Shumway.Core.Opcode.Execute)
+        {
+            chain.TrampolineExecuteOperandAddr = pc + 2;
+            chain.HeadClauseAddr =
+                Shumway.Core.BytecodeIO.ReadInt32(program, pc + 2);
+            // Advance past the trampoline (EnterDynamic + Execute = 6 bytes).
+            pc += 6;
+        }
         while (pc < end)
         {
             var info = Shumway.Core.OpcodeTable.Get(program[pc]);
@@ -2403,61 +2548,6 @@ public sealed class PrologEngine
         // the first incremental assertz).
         if (chain.Entries.Count > 0 || tailNextOperand >= 0)
             _dynChains[fid] = chain;
-    }
-
-    private int RecompileDynamicPredicate(
-        int fid, Engine engine, BytecodeInterpreter interp,
-        IReadOnlyDictionary<int, int> addressMap)
-    {
-        IEnumerable<Clause> clauses = _dynamicClauses.TryGetValue(fid, out var cs)
-            ? cs : System.Array.Empty<Clause>();
-        var transformed = PhraseTransform.Apply(
-            MetaTransform.Apply(DcgTransform.Apply(clauses)));
-        transformed = Shumway.Compiler.Modes.ModeSpecializationTransform.Apply(
-            transformed, Modes);
-        var dynCtx = new ModuleRewrite.Context(
-            DefaultModuleName, new HashSet<int>(), _dynamicFunctors);
-        var rewritten = new List<Clause>();
-        foreach (var clause in transformed)
-            rewritten.Add(ModuleRewrite.Rewrite(clause, dynCtx));
-
-        // No clauses (all retracted, or only ever declared): a fail-only
-        // stub so the predicate still links and a call to it fails.
-        if (rewritten.Count == 0)
-        {
-            var (atomId, arity) = FunctorTable.Lookup(fid);
-            string name = AtomTable.GetById(atomId)?.Name ?? "?";
-            Term head = arity == 0
-                ? (Term)new AtomTerm(name)
-                : new CompoundTerm(name, Enumerable.Range(0, arity)
-                    .Select(_ => (Term)new VarTerm("_")).ToArray());
-            rewritten.Add(new Clause(ClauseKind.Rule,
-                new CompoundTerm(":-", new[] { head, (Term)new AtomTerm("fail") }),
-                default));
-        }
-
-        var module = new ModuleCompiler().Compile(
-            rewritten, cache: null,
-            unindexedFunctors: new HashSet<int> { fid },
-            pools: _literalPools,
-            dynamicFunctors: new HashSet<int> { fid },
-            failStubAddr: engine.DynamicFailStubAddr);
-        int loadOffset = engine.ProgramLength;
-        var link = new Linker().Link(module, loadOffset, externalSymbols: addressMap);
-        engine.AppendCode(link.Bytecode);
-        // A clause asserted mid-query may have interned new literals; give
-        // the interpreter (and the IL path) the grown pools.
-        var strings = _literalPools.Strings.Snapshot();
-        interp.RefreshLiteralPools(
-            strings, _literalPools.Floats.Snapshot(), _literalPools.BigInts.Snapshot());
-        engine.CurrentStringLiterals = strings;
-
-        // ADR-015 chunk C step 4: rebuild chain state from the freshly
-        // appended bytecode so subsequent retracts can patch died slots in
-        // the live region rather than the now-unreachable old body.
-        PopulateDynChainFor(fid, engine.CurrentProgram!, loadOffset, link.Bytecode.Length);
-
-        return link.Addresses[fid];
     }
 
     /// <summary>Adds a fail-only stub clause for every dynamic functor that

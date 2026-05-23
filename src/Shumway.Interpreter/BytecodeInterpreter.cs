@@ -251,6 +251,14 @@ public sealed class BytecodeInterpreter
                 case Opcode.Halt:
                     return InterpreterResult.Halted;
 
+                case Opcode.Nop:
+                    // ADR-015 chunk C step 4: padding bytes for asserta's
+                    // in-place demotion of try_me_else (9 bytes) to
+                    // retry_me_else (5 bytes); the trailing 4 arity-
+                    // operand bytes become nops.
+                    _engine.AdvancePc(1);
+                    break;
+
                 case Opcode.Proceed:
                 {
                     if (!FlushPendingWakeups(code))
@@ -274,10 +282,6 @@ public sealed class BytecodeInterpreter
                     }
                     int target = BytecodeIO.ReadInt32(code, pc + 1);
                     int numLivePerms = BytecodeIO.ReadInt32(code, pc + 5);
-                    // ADR-015 chunk C: a dynamic predicate modified mid-
-                    // query is redirected (lazily recompiled) here.
-                    if (_engine.HasDynamicRedirects)
-                        target = _engine.ResolveDynamicTarget(target);
                     if (CallTarget.IsUnresolved(target))
                         throw PrologRuntimeException.UndefinedProcedure(
                             CallTarget.FunctorIdOf(target));
@@ -300,8 +304,6 @@ public sealed class BytecodeInterpreter
                         break;
                     }
                     int target = BytecodeIO.ReadInt32(code, pc + 1);
-                    if (_engine.HasDynamicRedirects)
-                        target = _engine.ResolveDynamicTarget(target);
                     if (CallTarget.IsUnresolved(target))
                         throw PrologRuntimeException.UndefinedProcedure(
                             CallTarget.FunctorIdOf(target));

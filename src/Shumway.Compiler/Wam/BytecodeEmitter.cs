@@ -72,6 +72,10 @@ public sealed class BytecodeEmitter
 
     public void EmitTrustMe() => _bytes.Add((byte)Opcode.TrustMe);
 
+    /// <summary>1-byte no-op (ADR-015 chunk C step 4) — padding bytes for
+    /// asserta's in-place rewrite of a clause's chain instruction.</summary>
+    public void EmitNop() => _bytes.Add((byte)Opcode.Nop);
+
     /// <summary>ADR-015 chunk C — samples the host's <c>DbGeneration</c>
     /// into <c>engine.CurrentViewGen</c>. Emitted at the entry of every
     /// dynamic predicate so the surrounding <c>try_me_else</c> captures
