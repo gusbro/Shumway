@@ -1097,6 +1097,15 @@ public sealed class Engine
     /// the ISO logical update view. Zero outside dynamic dispatch.</summary>
     public long CurrentViewGen { get; set; }
 
+    /// <summary>Absolute byte position of the per-query fail-stub
+    /// (ADR-015 chunk C step 4) — a tiny <c>call_builtin fail/0</c>
+    /// emitted in the prefix. Dynamic predicates' last-clause chain
+    /// instructions point here as their "no more clauses" target; an
+    /// empty dynamic predicate's trampoline jumps here directly. Set by
+    /// the embedding layer at query setup; zero outside dynamic
+    /// dispatch.</summary>
+    public int DynamicFailStubAddr { get; set; }
+
     /// <summary>Reads the host's current dynamic-database generation.
     /// Wired by the embedding layer at query setup so the
     /// <c>enter_dynamic</c> opcode can sample it without the interpreter

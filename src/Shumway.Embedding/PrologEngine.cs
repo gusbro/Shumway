@@ -1924,6 +1924,20 @@ public sealed class PrologEngine
         int callPos = launcher.Position;
         launcher.EmitCall(targetAddress: 0, numLivePermanents: 0);
         launcher.EmitHalt();
+        // ADR-015 chunk C step 4: a fail-stub at a known offset in the
+        // prefix. Dynamic predicates' last-clause chain instructions point
+        // here as their "no more clauses" target, and the trampoline of an
+        // empty dynamic predicate jumps here. The stub just calls
+        // fail/0 — the builtin returns false, the interpreter backtracks
+        // to whatever choice point survives (typically the caller's).
+        int failStubAddr = launcher.Position;
+        int failFunctorId = FunctorTable.Intern(
+            AtomTable.Intern("fail", permanent: true).Id, 0);
+        if (!Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(
+            failFunctorId, out int failBuiltinId))
+            throw new InvalidOperationException(
+                "fail/0 builtin must be registered for ADR-015 dynamic dispatch.");
+        launcher.EmitCallBuiltin(failBuiltinId, numLivePermanents: 0);
         byte[] prefix = launcher.ToBytes();
 
         // --- ADR-015 chunk B: persistent code space --------------------
@@ -2054,6 +2068,10 @@ public sealed class PrologEngine
             // enter_dynamic opcode (avoids the interpreter depending on
             // the embedding layer's types).
             DbGenerationProvider = () => _dbGeneration,
+            // ADR-015 chunk C step 4: where the fail-stub lives in the
+            // prefix. Used by the upcoming incremental-assertz path and
+            // by dynamic predicates' last-clause chain instructions.
+            DynamicFailStubAddr = failStubAddr,
         };
 
         var interp = new BytecodeInterpreter(
