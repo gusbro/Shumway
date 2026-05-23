@@ -56,9 +56,12 @@ public static class ListBuiltins
     private static bool NthImpl(Engine engine, bool oneBased)
     {
         Cell n = Resolve(engine, engine.GetRegister(0));
+        // Chunk 131c: ISO precedence — var index → instantiation_error;
+        // bound non-int → type_error(integer, _).
+        if (n.Tag == Tag.Ref)
+            throw new PrologRuntimeException("instantiation_error");
         if (n.Tag != Tag.Int)
-            throw new InvalidOperationException(
-                "nth/3: index must be a ground integer.");
+            throw new PrologRuntimeException("type_error", "integer");
         long target = n.AsInt;
         if (oneBased) target--;
         if (target < 0) return false;
@@ -89,8 +92,9 @@ public static class ListBuiltins
             cur = Resolve(engine, engine.GetHeap(headIdx + 1));
         }
         if (cur.Tag == Tag.Ref)
-            throw new InvalidOperationException(
-                "reverse/2: first argument must be a proper list (got a partial list).");
+            // Chunk 131c: a partial list — the tail is unbound, so we
+            // can't determine the length. ISO instantiation_error.
+            throw new PrologRuntimeException("instantiation_error");
         if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId) return false;
 
         // Build reversed list.

@@ -36,8 +36,8 @@ public static class SortBuiltins
             cursor = Resolve(engine, engine.GetHeap(headIdx + 1));
         }
         if (cursor.Tag == Tag.Ref)
-            throw new InvalidOperationException(
-                "sort/2: first argument must be a proper list (got a partial list).");
+            // Chunk 131c: a partial list — ISO instantiation_error.
+            throw new PrologRuntimeException("instantiation_error");
         if (cursor.Tag != Tag.Atom || cursor.AsAtomId != AtomTable.EmptyListId)
             return false;   // improper / non-list — fail rather than throw
 

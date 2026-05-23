@@ -48,8 +48,12 @@ public static class AtomListBuiltins
             return engine.UnifyRegisterWithHeapAt(0, listHeapIdx);
         }
 
-        throw new InvalidOperationException(
-            "length/2: at least one of List, N must be sufficiently instantiated.");
+        // Chunk 131c: ISO precedence — both unbound or N bound but not
+        // an integer. Both var → instantiation_error; N at the wrong
+        // type → type_error(integer, _).
+        if (listCell.Tag == Tag.Ref && nCell.Tag == Tag.Ref)
+            throw new PrologRuntimeException("instantiation_error");
+        throw new PrologRuntimeException("type_error", "integer");
     }
 
     private static int BuildFreshVarList(Engine engine, int count)
@@ -135,8 +139,9 @@ public static class AtomListBuiltins
             cursor = Resolve(engine, engine.GetHeap(headIdx + 1));
         }
         if (cursor.Tag == Tag.Ref)
-            throw new InvalidOperationException(
-                "append/3: at least one of L1, L3 must be sufficiently instantiated.");
+            // L3 is a partial list while L1 is var — neither side is
+            // sufficiently instantiated to drive the split. Chunk 131c.
+            throw new PrologRuntimeException("instantiation_error");
         if (cursor.Tag != Tag.Atom || cursor.AsAtomId != AtomTable.EmptyListId)
             return false;   // improper L3
 
@@ -217,8 +222,8 @@ public static class AtomListBuiltins
             return engine.UnifyRegisterWithCell(0, Cell.Atom(atomId));
         }
 
-        throw new InvalidOperationException(
-            $"atom_codes/2: first argument must be an atom or an unbound variable; got tag {atomCell.Tag}.");
+        // Chunk 131c: first arg bound to something other than an atom.
+        throw new PrologRuntimeException("type_error", "atom");
     }
 
     private static int BuildIntCodesList(Engine engine, string s)
@@ -246,18 +251,23 @@ public static class AtomListBuiltins
     {
         var sb = new StringBuilder();
         Cell cursor = Resolve(engine, codesCell);
+        // Chunk 131c: an unbound code list at entry is instantiation_error.
+        if (cursor.Tag == Tag.Ref)
+            throw new PrologRuntimeException("instantiation_error");
         while (cursor.Tag == Tag.Lis)
         {
             Cell head = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex));
+            if (head.Tag == Tag.Ref)
+                throw new PrologRuntimeException("instantiation_error");
             if (head.Tag != Tag.Int)
-                throw new InvalidOperationException(
-                    $"atom_codes/2: list element must be an integer code; got tag {head.Tag}.");
+                throw new PrologRuntimeException("type_error", "character_code");
             sb.Append((char)head.AsInt);
             cursor = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex + 1));
         }
+        if (cursor.Tag == Tag.Ref)
+            throw new PrologRuntimeException("instantiation_error");
         if (cursor.Tag != Tag.Atom || cursor.AsAtomId != AtomTable.EmptyListId)
-            throw new InvalidOperationException(
-                "atom_codes/2: Codes must be a proper list of integers.");
+            throw new PrologRuntimeException("type_error", "list");
         return sb.ToString();
     }
 
@@ -286,8 +296,14 @@ public static class AtomListBuiltins
 
         Cell cCell = Resolve(engine, engine.GetRegister(2));
         if (cCell.Tag != Tag.Atom)
-            throw new InvalidOperationException(
-                "atom_concat/3: at least one of A+B or C must be ground.");
+        {
+            // Chunk 131c: nothing is sufficiently instantiated to drive
+            // either direction. instantiation_error when all three are
+            // var; type_error(atom) when one is bound but to a non-atom.
+            if (aCell.Tag == Tag.Ref && bCell.Tag == Tag.Ref && cCell.Tag == Tag.Ref)
+                throw new PrologRuntimeException("instantiation_error");
+            throw new PrologRuntimeException("type_error", "atom");
+        }
 
         string cName = AtomTable.GetById(cCell.AsAtomId)?.Name ?? "";
         int returnPc = engine.P + 9;
