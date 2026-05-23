@@ -1376,7 +1376,7 @@ public static class MetaBuiltins
         int candSlot = engine.AllocateHeap(1);
         engine.SetHeap(candSlot, candidateCell);
         engine.UnifyRegisterWithHeapAt(0, candSlot);   // matched in FindRetractMatch
-        host.RemoveDynamicByReference(patternFid, candidate);
+        host.RemoveDynamicByReference(engine, patternFid, candidate);
         MarkDynamicModified(engine, patternFid);
         engine.SetHb(savedHb);
         if (isResume) engine.ResumeAtReturnPc(returnPc);

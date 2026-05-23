@@ -53,6 +53,38 @@ public sealed class PrologEngine
     /// visible to that query — they take effect on the next compilation.</summary>
     private readonly Dictionary<int, List<Clause>> _dynamicClauses = new();
 
+    /// <summary>ADR-015 chunk C step 4: per-dynamic-functor chain state
+    /// — one entry per clause currently in <see cref="_dynamicClauses"/>,
+    /// in the same order, carrying the absolute byte position of the
+    /// clause's <c>check_visible</c> died-slot in
+    /// <see cref="Engine.CurrentProgram"/>. <c>retract</c> patches the
+    /// 8-byte died slot in place; the next call's
+    /// <c>check_visible</c> sees the new value and skips the clause.
+    /// Populated after every query setup / dynamic-predicate
+    /// recompile.</summary>
+    private sealed class DynChainEntry
+    {
+        public readonly Clause Clause;
+        public int DiedOperandAddr;
+        public DynChainEntry(Clause c, int d) { Clause = c; DiedOperandAddr = d; }
+    }
+    private sealed class DynChainState
+    {
+        public readonly List<DynChainEntry> Entries = new();
+    }
+    private readonly Dictionary<int, DynChainState> _dynChains = new();
+
+    /// <summary>Test hook: returns the absolute byte offset of clause
+    /// <paramref name="clauseIndex"/>'s died slot in the running program,
+    /// or <c>null</c> when no chain state exists. Used by chunk-123 tests
+    /// to verify <c>retract</c> patches the slot.</summary>
+    internal int? PeekDiedAddr(int functorId, int clauseIndex)
+    {
+        if (!_dynChains.TryGetValue(functorId, out var chain)) return null;
+        if (clauseIndex < 0 || clauseIndex >= chain.Entries.Count) return null;
+        return chain.Entries[clauseIndex].DiedOperandAddr;
+    }
+
     private long _dbGeneration;
 
     /// <summary>A monotonic counter bumped by every <c>assertz</c> /
@@ -253,7 +285,23 @@ public sealed class PrologEngine
 
     /// <summary>Removes the clause object identical to <paramref name="clause"/>
     /// from the dynamic store (used after the runtime caller has matched it
-    /// via unification on a materialised heap copy).</summary>
+    /// via unification on a materialised heap copy). When ADR-015 chunk C
+    /// chain state exists for the functor, also patches the matching
+    /// clause's <c>died</c> slot in the running program's bytecode so an
+    /// already-compiled dispatch's <c>check_visible</c> filters it out
+    /// from now on.</summary>
+    internal bool RemoveDynamicByReference(
+        Engine engine, int functorId, Clause clause)
+    {
+        if (!_dynamicClauses.TryGetValue(functorId, out var list)) return false;
+        int idx = list.IndexOf(clause);
+        if (idx < 0) return false;
+        list.RemoveAt(idx);
+        InvalidateDynamicCache(functorId);
+        PatchDiedFromChain(engine, functorId, idx);
+        return true;
+    }
+
     internal bool RemoveDynamicByReference(int functorId, Clause clause)
     {
         if (!_dynamicClauses.TryGetValue(functorId, out var list)) return false;
@@ -2022,6 +2070,14 @@ public sealed class PrologEngine
                 dynReverse[addr] = fid;
         engine.DynamicRecompiler = setupAddr =>
             RecompileDynamicPredicate(dynReverse[setupAddr], engine, interp, addressMap);
+
+        // ADR-015 chunk C step 4: per-functor chain state — record where
+        // each clause's check_visible died slot lives in the running
+        // program. retract patches the slot in place; next call's
+        // check_visible filters the clause out (the bytecode-level
+        // logical-update view path that supersedes chunk C's redirect).
+        PopulateDynChains(program, addressMap, mergedPredicatesByAddress);
+
         // Tier-1 promotion: hook the interpreter up to this engine's
         // IlPromotionStore via an address-keyed adapter. The store itself
         // is functor-keyed and persists across queries; the adapter holds
@@ -2079,6 +2135,88 @@ public sealed class PrologEngine
     /// resolve. Old compiled bodies are left in place, so a call already
     /// backtracking through one keeps its clause set (the logical update
     /// view).</summary>
+    /// <summary>ADR-015 chunk C step 4: patch the bytecode <c>died</c>
+    /// slot of the clause at index <paramref name="clauseIndex"/> in
+    /// <paramref name="functorId"/>'s chain. The next call's
+    /// <c>check_visible</c> reads it and filters the clause out. Sets
+    /// <c>died</c> to the current <see cref="DbGeneration"/> — the
+    /// generation already bumped by the surrounding modification, so a
+    /// query whose captured view-gen is below it still sees the clause.
+    /// After patching the slot, also drops the chain entry — the chain
+    /// stays aligned with <see cref="_dynamicClauses"/>.</summary>
+    private void PatchDiedFromChain(Engine engine, int functorId, int clauseIndex)
+    {
+        if (!_dynChains.TryGetValue(functorId, out var chain)) return;
+        if (clauseIndex < 0 || clauseIndex >= chain.Entries.Count) return;
+        var entry = chain.Entries[clauseIndex];
+        var program = engine.CurrentProgram;
+        if (program is not null && entry.DiedOperandAddr > 0)
+            BytecodeIO.WriteInt64(program, entry.DiedOperandAddr, _dbGeneration);
+        chain.Entries.RemoveAt(clauseIndex);
+    }
+
+    /// <summary>Builds the per-functor chain state by walking the linked
+    /// program for each dynamic predicate's compiled bytecode and locating
+    /// the <c>check_visible</c> opcode in front of each clause. Called by
+    /// <see cref="SetupQueryFromTerm"/> once the linked program is in
+    /// place, and again after <see cref="RecompileDynamicPredicate"/> for
+    /// the single functor it rebuilt.</summary>
+    private void PopulateDynChains(
+        byte[] program,
+        IReadOnlyDictionary<int, int> addressMap,
+        IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> predicatesByAddress)
+    {
+        _dynChains.Clear();
+        var seen = new HashSet<int>();
+        foreach (int fid in _dynamicFunctors)
+            if (seen.Add(fid))
+                PopulateDynChainViaAddressMap(fid, program, addressMap, predicatesByAddress);
+        foreach (int fid in _dynamicClauses.Keys)
+            if (seen.Add(fid))
+                PopulateDynChainViaAddressMap(fid, program, addressMap, predicatesByAddress);
+    }
+
+    private void PopulateDynChainViaAddressMap(
+        int fid, byte[] program,
+        IReadOnlyDictionary<int, int> addressMap,
+        IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> predicatesByAddress)
+    {
+        if (!addressMap.TryGetValue(fid, out int predAddr)) return;
+        if (!predicatesByAddress.TryGetValue(predAddr, out var pred)) return;
+        PopulateDynChainFor(fid, program, predAddr, pred.Bytecode.Length);
+    }
+
+    /// <summary>Walks <paramref name="predByteLength"/> bytes of
+    /// <paramref name="program"/> starting at <paramref name="predAddr"/>,
+    /// pairing each <c>check_visible</c> opcode it finds with the
+    /// corresponding clause from <see cref="_dynamicClauses"/> in order.
+    /// Replaces any prior chain state for the functor.</summary>
+    private void PopulateDynChainFor(
+        int fid, byte[] program, int predAddr, int predByteLength)
+    {
+        _dynChains.Remove(fid);
+        if (!_dynamicClauses.TryGetValue(fid, out var clauses)) return;
+        if (clauses.Count == 0) return;
+
+        var chain = new DynChainState();
+        int pc = predAddr;
+        int end = predAddr + predByteLength;
+        int clauseIndex = 0;
+        while (pc < end && clauseIndex < clauses.Count)
+        {
+            var info = Shumway.Core.OpcodeTable.Get(program[pc]);
+            if (info.Op == Shumway.Core.Opcode.CheckVisible)
+            {
+                // Layout: opcode (1) | born (8) | died (8) — died at pc+9.
+                chain.Entries.Add(new DynChainEntry(clauses[clauseIndex], pc + 9));
+                clauseIndex++;
+            }
+            pc += info.Size;
+        }
+        if (chain.Entries.Count > 0)
+            _dynChains[fid] = chain;
+    }
+
     private int RecompileDynamicPredicate(
         int fid, Engine engine, BytecodeInterpreter interp,
         IReadOnlyDictionary<int, int> addressMap)
@@ -2124,6 +2262,12 @@ public sealed class PrologEngine
         interp.RefreshLiteralPools(
             strings, _literalPools.Floats.Snapshot(), _literalPools.BigInts.Snapshot());
         engine.CurrentStringLiterals = strings;
+
+        // ADR-015 chunk C step 4: rebuild chain state from the freshly
+        // appended bytecode so subsequent retracts can patch died slots in
+        // the live region rather than the now-unreachable old body.
+        PopulateDynChainFor(fid, engine.CurrentProgram!, loadOffset, link.Bytecode.Length);
+
         return link.Addresses[fid];
     }
 
