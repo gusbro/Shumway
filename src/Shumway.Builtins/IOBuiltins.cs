@@ -146,8 +146,10 @@ public static class IOBuiltins
                 continue;
             }
             if (++i >= fmt.Length)
-                throw new InvalidOperationException(
-                    $"{name}: truncated format spec at end of string.");
+                // Chunk 131d: a lone '~' at the end is a malformed format
+                // string. SWI / SICStus surface this as a domain_error
+                // on the format spec.
+                throw new PrologRuntimeException("domain_error", "format_spec");
             char spec = fmt[i];
             switch (spec)
             {
@@ -168,9 +170,12 @@ public static class IOBuiltins
                 {
                     Cell arg = ConsumeArg(args, ref argIdx, name);
                     Cell deref = Resolve(engine, arg);
+                    // Chunk 131d: ~a wants an atom — instantiation_error
+                    // for an unbound arg, type_error(atom) otherwise.
+                    if (deref.Tag == Tag.Ref)
+                        throw new PrologRuntimeException("instantiation_error");
                     if (deref.Tag != Tag.Atom)
-                        throw new InvalidOperationException(
-                            $"{name}: ~a expects an atom, got tag {deref.Tag}.");
+                        throw new PrologRuntimeException("type_error", "atom");
                     output.Write(AtomTable.GetById(deref.AsAtomId)?.Name ?? "");
                     break;
                 }
@@ -178,9 +183,10 @@ public static class IOBuiltins
                 {
                     Cell arg = ConsumeArg(args, ref argIdx, name);
                     Cell deref = Resolve(engine, arg);
+                    if (deref.Tag == Tag.Ref)
+                        throw new PrologRuntimeException("instantiation_error");
                     if (deref.Tag != Tag.Int)
-                        throw new InvalidOperationException(
-                            $"{name}: ~d expects an integer, got tag {deref.Tag}.");
+                        throw new PrologRuntimeException("type_error", "integer");
                     output.Write(deref.AsInt.ToString(System.Globalization.CultureInfo.InvariantCulture));
                     break;
                 }
@@ -192,9 +198,10 @@ public static class IOBuiltins
                     while (cur.Tag == Tag.Lis)
                     {
                         Cell head = Resolve(engine, engine.GetHeap(cur.AsHeapIndex));
+                        if (head.Tag == Tag.Ref)
+                            throw new PrologRuntimeException("instantiation_error");
                         if (head.Tag != Tag.Int)
-                            throw new InvalidOperationException(
-                                $"{name}: ~s expects a code list, got element tag {head.Tag}.");
+                            throw new PrologRuntimeException("type_error", "character_code");
                         sb.Append((char)head.AsInt);
                         cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
                     }
@@ -202,8 +209,9 @@ public static class IOBuiltins
                     break;
                 }
                 default:
-                    throw new InvalidOperationException(
-                        $"{name}: unknown spec '~{spec}'.");
+                    // Chunk 131d: an unknown ~X spec is an ISO
+                    // domain_error on the format string.
+                    throw new PrologRuntimeException("domain_error", "format_spec");
             }
         }
         return true;
@@ -214,8 +222,10 @@ public static class IOBuiltins
     private static Cell ConsumeArg(List<Cell> args, ref int idx, string builtinName)
     {
         if (idx >= args.Count)
-            throw new InvalidOperationException(
-                $"{builtinName}: ran out of arguments (format string asked for more).");
+            // Chunk 131d: format string demanded more args than the
+            // caller supplied — SWI treats this as a domain_error on
+            // the argument count of the format directive.
+            throw new PrologRuntimeException("domain_error", "format_argument_count");
         return args[idx++];
     }
 
@@ -226,8 +236,11 @@ public static class IOBuiltins
             return AtomTable.GetById(d.AsAtomId)?.Name ?? "";
         if (d.Tag == Tag.Pstr)
             return engine.AsPstrString(engine.Deref(c.AsHeapIndex));
-        throw new InvalidOperationException(
-            $"{builtinName}: expected an atom or string as the format spec, got tag {d.Tag}.");
+        // Chunk 131d: a missing format string is instantiation_error;
+        // a wrong-typed one is type_error(atom).
+        if (d.Tag == Tag.Ref)
+            throw new PrologRuntimeException("instantiation_error");
+        throw new PrologRuntimeException("type_error", "atom");
     }
 
     private static List<Cell> ReadProperListAsCells(Engine engine, Cell c, string builtinName)
@@ -239,9 +252,11 @@ public static class IOBuiltins
             result.Add(engine.GetHeap(cur.AsHeapIndex));
             cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
         }
+        if (cur.Tag == Tag.Ref)
+            throw new PrologRuntimeException("instantiation_error");
         if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)
-            throw new InvalidOperationException(
-                $"{builtinName}: argument list must be a proper list (got tag {cur.Tag}).");
+            // Chunk 131d: argument list isn't a proper list — ISO type_error(list, _).
+            throw new PrologRuntimeException("type_error", "list");
         return result;
     }
 
