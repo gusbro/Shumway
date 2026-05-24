@@ -11,13 +11,12 @@ namespace Shumway.Tests.IsoConformance;
 /// out in the standard. The unification builtins have no ISO errors
 /// — every input pattern is allowed; the result is success / failure.
 ///
-/// <para><b>One recorded gap</b>: plain <c>=/2</c> with a
-/// self-referential RHS (<c>X = f(X)</c>) succeeds and builds a
-/// cyclic term — ISO permits this — but the Embedding-layer
-/// materialiser walks the binding to surface it back to C#, which
-/// overflows the stack for any cyclic structure. A catch-cycle
-/// materialiser is the same kind of fix Phase 8 chunk 111 applied
-/// to long lists; queued separately.</para>
+/// <para>Phase-10 chunk 148 closed the cyclic-term materialiser
+/// limitation that lived here as a recorded gap: <c>X = f(X)</c>
+/// now round-trips through .NET observation without overflowing
+/// the stack (the back-edge becomes a synthetic
+/// <c>VarTerm("_C{addr}")</c> cycle marker). See
+/// <c>Equal_OccursCheckOff_BindsToSelfReferentialTerm</c> below.</para>
 /// </summary>
 public class TermUnificationConformance
 {
@@ -109,8 +108,24 @@ public class TermUnificationConformance
         Assert.NotNull(sol["T"]);
     }
 
-    // Equal_OccursCheckOff_BindsToSelfReferentialTerm — cyclic-term
-    // materialiser limitation; see recorded gap above.
+    [Fact]
+    public void Equal_OccursCheckOff_BindsToSelfReferentialTerm()
+    {
+        // §8.2.1.4 c — without occurs-check, X = f(X) succeeds and
+        // X is a cyclic term. Chunk 148 made the materialiser
+        // cycle-safe so we can surface X back to .NET without a
+        // stack overflow; the back-edge appears as a synthetic
+        // VarTerm("_C{addr}") cycle marker.
+        var engine = new PrologEngine();
+        var sol = engine.Query("X = f(X), Y = a.");
+        Assert.True(sol.Success);
+        Assert.Equal(Atom("a"), sol["Y"]);
+        var x = Assert.IsType<CompoundTerm>(sol["X"]);
+        Assert.Equal("f", x.Functor);
+        Assert.Single(x.Args);
+        var marker = Assert.IsType<VarTerm>(x.Args[0]);
+        Assert.StartsWith("_C", marker.Name);
+    }
 
     [Fact]
     public void Equal_BindingPropagatesViaSharedVar()
