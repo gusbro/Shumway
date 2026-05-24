@@ -1070,6 +1070,16 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // ADR-015 generation clock has to advance.
         _dbGeneration++;
         _dynamicPredicateCache.Remove(functorId);
+        // Chunk 154: an indexed (hot) dynamic predicate's live
+        // dispatch can't accept incremental chain extensions (the
+        // chunk-127/128 path only knows the non-indexed try_me_else
+        // chain). Force a persistent rebuild so the next query
+        // re-links the predicate with current clauses through the
+        // indexed CompileIndexed path. Chunk 155 will replace this
+        // rebuild with in-place chain extensions inside the indexed
+        // layout.
+        if (_jitIndexProfile.IsHot(functorId))
+            InvalidatePersistent();
     }
 
     /// <summary>Runs an AST goal through the same machinery as the string
@@ -2188,20 +2198,33 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // so ModuleCompiler rebuilds it. The unindexed set then names
         // every dynamic functor still below the threshold.
         var unindexedFunctors = new HashSet<int>();
+        bool anyHotnessFlip = false;
         foreach (int fid in _dynamicFunctors)
         {
             if (_jitIndexProfile.HotnessChangedSinceCompile(fid))
+            {
                 _dynamicPredicateCache.Remove(fid);
+                anyHotnessFlip = true;
+            }
             if (!_jitIndexProfile.IsHot(fid))
                 unindexedFunctors.Add(fid);
         }
         foreach (int fid in _dynamicClauses.Keys)
         {
             if (_jitIndexProfile.HotnessChangedSinceCompile(fid))
+            {
                 _dynamicPredicateCache.Remove(fid);
+                anyHotnessFlip = true;
+            }
             if (!_jitIndexProfile.IsHot(fid))
                 unindexedFunctors.Add(fid);
         }
+        // Chunk 154: a cold→hot transition needs the persistent buffer
+        // rebuilt so the JIT-promoted indexed compilation actually
+        // takes effect at runtime — without this the cache holds the
+        // indexed form but the live dispatch still runs the chain
+        // emitted at predicate-cold time.
+        if (anyHotnessFlip) InvalidatePersistent();
 
         // Skip-compile cache. Two contributors live here:
         //   - Bundle skip-compile (chunk 55): populated by LoadBundle from

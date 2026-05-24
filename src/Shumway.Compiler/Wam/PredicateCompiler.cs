@@ -168,16 +168,17 @@ public sealed class PredicateCompiler
             }
         }
 
-        // ADR-015 chunk C step 3 emits enter_dynamic / check_visible only
-        // along the unindexed chain path; the indexed path (chunk 75 JIT)
-        // does not yet carry visibility guards. With step 3's
-        // always-visible (born=0, died=MaxValue) sentinels this is
-        // behaviour-neutral; later steps that wire real born/died values
-        // will either extend the indexed path or force dynamic predicates
-        // back through the chain.
+        // Chunk 154: the indexed path now emits enter_dynamic at the
+        // entry and check_visible per clause when isDynamic, so a hot
+        // dynamic predicate's runtime dispatch honours the ISO
+        // logical-update view via the same mechanism the chain path
+        // uses. born/died still use sentinels (0 / MaxValue) — the
+        // chunk-151b persistent-buffer rebuild on every mutation
+        // refreshes them to live values; chunk 155 will make the
+        // chains extensible in-place to avoid the rebuild.
         return indexableArgs.Count > 0
             ? CompileIndexed(compiledClauses, perArgInfo, indexableArgs, functorId, arity,
-                             clauses[0].Position, clausePositions)
+                             clauses[0].Position, clausePositions, isDynamic)
             : CompileTryMeElseChain(compiledClauses, functorId, arity,
                                     clauses[0].Position, clausePositions, isDynamic, failStubAddr);
     }
@@ -391,9 +392,19 @@ public sealed class PredicateCompiler
         int functorId,
         int arity,
         Shumway.Compiler.Lexer.SourcePosition position,
-        IReadOnlyList<Shumway.Compiler.Lexer.SourcePosition> clausePositions)
+        IReadOnlyList<Shumway.Compiler.Lexer.SourcePosition> clausePositions,
+        bool isDynamic = false)
     {
         int n = compiledClauses.Count;
+        // Chunk 154: dynamic indexed predicates wrap their entry in
+        // enter_dynamic (samples DbGeneration into CurrentViewGen) and
+        // gate every clause body with check_visible (filters by born/
+        // died vs the captured view-gen), the same ADR-015 chunk-C
+        // mechanism the non-indexed chain path uses. Static indexed
+        // predicates skip both — they're immutable, no view to check.
+        const int CheckVisibleSize = 17;
+        int enterDynamicSize = isDynamic ? 1 : 0;
+        int checkVisibleSize = isDynamic ? CheckVisibleSize : 0;
 
         // ----- Bucketise -----
 
@@ -446,7 +457,12 @@ public sealed class PredicateCompiler
         static int SwitchSize(int argIdx) => argIdx == 0 ? 17 : 21;
         static int SubDispatchSize(int argIdx) => argIdx == 0 ? 5 : 9;
 
-        int pos = 0;
+        // Chunk 154: start the predicate-local layout after the
+        // enter_dynamic byte when this is a dynamic predicate. Every
+        // switch / chain / body offset shifts up by 1; targets stored
+        // in switch tables and try/retry/trust addresses are
+        // predicate-local so they remain correct under the shift.
+        int pos = enterDynamicSize;
 
         // Top-level: one switch_on_term (arg 0) or switch_on_arg (arg k > 0)
         // per indexable arg, chained head-to-tail. Each switch's var label
@@ -505,6 +521,12 @@ public sealed class PredicateCompiler
             // opcode; the runtime executes the no-op Meta then the body.
             clauseBodyPos[i] = pos;
             pos += MetaDbgInfoSize;
+            // Chunk 154: every dynamic clause carries its own
+            // check_visible immediately after the Meta marker, so any
+            // dispatch path (switch table direct jump, bucket chain,
+            // var-fallthrough chain) runs the visibility filter before
+            // entering the body.
+            pos += checkVisibleSize;
             pos += compiledClauses[i].Bytecode.Length;
         }
         // Resolve any single-clause list-bucket direct-jump addresses.
@@ -561,6 +583,13 @@ public sealed class PredicateCompiler
         var callSites = new List<CallSite>();
         var dispatchSites = new List<int>();
         var switchTableIdSites = new List<int>();
+
+        // Chunk 154: emit enter_dynamic at the very entry of every
+        // dynamic indexed predicate. Captures DbGeneration into
+        // CurrentViewGen so the per-clause check_visible below filters
+        // against a stable view of the database for the duration of
+        // this call.
+        if (isDynamic) emitter.EmitEnterDynamic();
 
         // 3a — top-level switch chain (one per indexable arg).
         for (int li = 0; li < levels.Length; li++)
@@ -657,6 +686,14 @@ public sealed class PredicateCompiler
         for (int i = 0; i < n; i++)
         {
             emitter.EmitMetaDbgInfo(i);
+            // Chunk 154: dynamic clauses run a check_visible
+            // sentinel (born=0, died=MaxValue) — the persistent
+            // buffer is rebuilt on every mutation so live born/died
+            // values come from the rebuild itself. Chunk 155 will
+            // wire real per-clause born/died and extend chains in
+            // place to avoid the rebuild.
+            if (isDynamic)
+                emitter.EmitCheckVisible(born: 0L, died: long.MaxValue);
             int clauseStart = emitter.Position;
             emitter.AppendBytes(compiledClauses[i].Bytecode);
             foreach (var site in compiledClauses[i].CallSites)
