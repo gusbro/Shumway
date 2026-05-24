@@ -357,6 +357,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// silently failing on a static predicate (chunk 131e).</summary>
     internal bool IsDynamic(int functorId) => _dynamicFunctors.Contains(functorId);
 
+    /// <summary>Snapshot of every functor declared <c>:- dynamic</c>.
+    /// Used by <c>garbage_collect_clauses/0</c> to iterate them.
+    /// (Chunk 150.)</summary>
+    internal IEnumerable<int> AllDynamicFunctors() => _dynamicFunctors.ToArray();
+
     /// <summary>Removes the clause object identical to <paramref name="clause"/>
     /// from the dynamic store (used after the runtime caller has matched it
     /// via unification on a materialised heap copy). When ADR-015 chunk C
@@ -405,6 +410,89 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     program, entry.DiedOperandAddr, _dbGeneration);
         }
         chain.Entries.Clear();
+    }
+
+    /// <summary>Chunk 150 — re-threads <paramref name="functorId"/>'s
+    /// chain through only its live entries, bypassing every dead
+    /// (retracted or abolished) entry in the running bytecode. The
+    /// dead entries' bytecode is left in place (orphaned but
+    /// harmless); the win is dispatch speed — future calls walk
+    /// O(live) entries instead of O(ever-asserted).
+    ///
+    /// <para>Safe to call between queries. The chunk-120 design
+    /// captures view-gen at goal entry and saves CP <c>NextOperandAddr</c>
+    /// values into per-CP state, so in-flight goals that already hold a
+    /// CP into a dead entry's <c>retry_me_else</c> address still resume
+    /// there correctly — they hit the dead entry's
+    /// <c>check_visible</c> which filters by their captured view-gen.
+    /// Calling GC mid-query while another goal is iterating the same
+    /// dynamic predicate is the case to avoid; documentation only.</para>
+    /// </summary>
+    internal int GarbageCollectClauses(Engine engine, int functorId)
+    {
+        if (!_dynChains.TryGetValue(functorId, out var chain)) return 0;
+        if (engine.CurrentProgram is null) return 0;
+        if (chain.TrampolineExecuteOperandAddr < 0) return 0;
+        var program = engine.CurrentProgram;
+        int failStub = engine.DynamicFailStubAddr;
+        var (_, arity) = FunctorTable.Lookup(functorId);
+
+        // The pre-GC bytecode chain walks through every entry ever
+        // appended (alive + dead). Reconstruct a chain through only
+        // chain.Entries (the live set), bypassing the rest.
+
+        if (chain.Entries.Count == 0)
+        {
+            // No live entries: trampoline jumps straight to the
+            // fail-stub. The chain itself is left orphaned;
+            // assertz-after-GC re-uses TailNextAddr.
+            Shumway.Core.BytecodeIO.WriteInt32(
+                program, chain.TrampolineExecuteOperandAddr, failStub);
+            chain.HeadClauseAddr = -1;
+            // Tail anchor stays where it was; any future assertz will
+            // re-establish the chain through its patch.
+            return 0;
+        }
+
+        // Each entry's chain-instruction-addr is one byte before its
+        // NextOperandAddr (the chain opcode is 1 byte; the <next>
+        // operand is the next 4 bytes).
+        int firstAddr = chain.Entries[0].NextOperandAddr - 1;
+
+        // Ensure the head is a try_me_else. If chunk 128's asserta
+        // demoted it to retry_me_else+nops, promote back: change the
+        // opcode and rewrite the 4 Nop pad as the arity operand.
+        if (program[firstAddr] == (byte)Shumway.Core.Opcode.RetryMeElse)
+        {
+            program[firstAddr] = (byte)Shumway.Core.Opcode.TryMeElse;
+            Shumway.Core.BytecodeIO.WriteInt32(program, firstAddr + 5, arity);
+        }
+
+        // Point the trampoline at the (possibly new) head.
+        Shumway.Core.BytecodeIO.WriteInt32(
+            program, chain.TrampolineExecuteOperandAddr, firstAddr);
+        chain.HeadClauseAddr = firstAddr;
+
+        // Re-thread each live entry's <next> at the next live entry's
+        // chain-instruction address.
+        for (int i = 0; i < chain.Entries.Count - 1; i++)
+        {
+            int thisNext = chain.Entries[i].NextOperandAddr;
+            int nextAddr = chain.Entries[i + 1].NextOperandAddr - 1;
+            Shumway.Core.BytecodeIO.WriteInt32(program, thisNext, nextAddr);
+        }
+
+        // Tail entry's <next> goes to the fail-stub.
+        int lastNext = chain.Entries[^1].NextOperandAddr;
+        Shumway.Core.BytecodeIO.WriteInt32(program, lastNext, failStub);
+        chain.TailNextAddr = lastNext;
+
+        // The number of dead chain entries we just bypassed is the
+        // diff between AppendDynamicClauseIncremental's count of
+        // ever-asserted entries and chain.Entries.Count — but we don't
+        // track the total. Return 0 as a placeholder; tests measure
+        // via dispatch-speed observations instead.
+        return 0;
     }
 
     /// <summary>Static clauses whose head functor matches

@@ -81,6 +81,13 @@ public static class MetaBuiltins
         // both accept it as a synonym for assertz/1.
         BuiltinsRegistry.Register("assert",  1, Assertz,
             Database, "assert(+Clause)", "Synonym for assertz/1 (historical SWI/GProlog name).");
+        // Chunk 150: chain GC for retracted clauses (ADR-015 follow-up).
+        BuiltinsRegistry.Register("garbage_collect_clauses", 0, GarbageCollectClauses0,
+            Database, "garbage_collect_clauses",
+            "Re-threads every dynamic predicate's chain to skip retracted clauses (ADR-015).");
+        BuiltinsRegistry.Register("garbage_collect_clauses", 1, GarbageCollectClauses1,
+            Database, "garbage_collect_clauses(+Name/Arity)",
+            "Re-threads the named predicate's chain to skip retracted clauses.");
         BuiltinsRegistry.Register("retract", 1, Retract,
             Database, "retract(+Clause)", "Removes the first clause that unifies with the argument.");
 
@@ -1420,6 +1427,44 @@ public static class MetaBuiltins
             return true;
         }
 
+        if (spec is VarTerm)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        throw new ShumwayPrologException(
+            IsoError.TypeError("predicate_indicator", spec));
+    }
+
+    /// <summary><c>garbage_collect_clauses/0</c> — chunk 150. Walks
+    /// every dynamic predicate's chain and re-threads it through only
+    /// the live entries, bypassing the retracted ones still sitting
+    /// in the bytecode. The dispatch cost of subsequent calls then
+    /// drops from O(ever-asserted) back to O(live). The dead-clause
+    /// bytecode is left orphaned; the program buffer doesn't shrink.</summary>
+    public static bool GarbageCollectClauses0(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "garbage_collect_clauses/0 requires a PrologEngine host.");
+        foreach (int fid in host.AllDynamicFunctors())
+            host.GarbageCollectClauses(engine, fid);
+        return true;
+    }
+
+    /// <summary><c>garbage_collect_clauses(+Name/Arity)</c> — chunk 150.
+    /// Same as the 0-arg form but restricted to a single predicate.</summary>
+    public static bool GarbageCollectClauses1(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "garbage_collect_clauses/1 requires a PrologEngine host.");
+        Term spec = MaterializeRegister(engine, 0);
+        if (spec is CompoundTerm c && c.Functor == "/" && c.Args.Length == 2
+            && c.Args[0] is AtomTerm name && c.Args[1] is IntTerm arity)
+        {
+            int fid = FunctorTable.Intern(
+                AtomTable.Intern(name.Name, permanent: true).Id, (int)arity.Value);
+            host.GarbageCollectClauses(engine, fid);
+            return true;
+        }
         if (spec is VarTerm)
             throw new ShumwayPrologException(IsoError.InstantiationError());
         throw new ShumwayPrologException(

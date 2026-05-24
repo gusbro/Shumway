@@ -119,6 +119,8 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `assertz(+Clause)` | Adds a clause to the end of its dynamic predicate. |
 | `clause(+Head, ?Body)` | Enumerates the clauses (Head :- Body) of a predicate. |
 | `current_predicate(?PredicateIndicator)` | Enumerates the defined predicates as Name/Arity indicators. |
+| `garbage_collect_clauses` | Re-threads every dynamic predicate's chain to skip retracted clauses (ADR-015). |
+| `garbage_collect_clauses(+Name/Arity)` | Re-threads the named predicate's chain to skip retracted clauses. |
 | `listing` | Lists the clauses of every user-defined predicate — consulted or asserted, never builtins or library predicates. |
 | `listing(+Spec)` | Lists the clauses of the user-defined predicate named by Spec (Name or Name/Arity). |
 | `retract(+Clause)` | Removes the first clause that unifies with the argument. |
