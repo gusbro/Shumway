@@ -141,10 +141,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         /// of clauses that have been retracted or abolished and so are
         /// candidates for the engine-wide free list. Populated by
         /// <c>retract</c> / <c>abolish</c>; drained by
-        /// <c>garbage_collect_clauses</c> into the per-query
-        /// <see cref="Engine.FreeChunks"/>
-        /// where the next <c>assertz</c> / <c>asserta</c> can reuse the
-        /// bytes instead of extending the program buffer.</summary>
+        /// <c>garbage_collect_clauses</c> into the engine-wide
+        /// free-list (chunk 151b: persistent across queries) where the
+        /// next <c>assertz</c> / <c>asserta</c> can reuse the bytes
+        /// instead of extending the program buffer.</summary>
         public readonly List<(int Addr, int Length)> DeadChunks = new();
     }
     private readonly Dictionary<int, DynChainState> _dynChains = new();
@@ -157,24 +157,40 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// via <c>engine.AppendCode</c>. Sorted only by insertion order;
     /// the linear scan on append is cheap relative to the bytecode
     /// emission itself.</summary>
-    /// <summary>Chunk-150: pulls the first free chunk in
-    /// <paramref name="engine"/>'s per-query <see cref="Engine.FreeChunks"/>
-    /// list whose length is at least <paramref name="needed"/> and
-    /// returns its address; the chunk's tail (beyond
-    /// <paramref name="needed"/> bytes) goes back on the list. Returns
-    /// -1 when no fit is available, meaning the caller should fall
-    /// back to <c>engine.AppendCode</c>.</summary>
-    private static int TryReuseFreeChunk(Engine engine, int needed)
+    /// <summary>Chunk 151b — synchronises <see cref="_persistentProgram"/>
+    /// back from the running engine after a mid-query
+    /// <see cref="Engine.AppendCode"/> may have reallocated and grown
+    /// the buffer. PrologEngine holds its own reference to the buffer
+    /// for the next query's two-buffer view; without this, that
+    /// reference would be left pointing at the pre-grow stale buffer.
+    /// </summary>
+    private void SyncPersistentFromEngine(Engine engine)
     {
-        var free = engine.FreeChunks;
-        for (int i = 0; i < free.Count; i++)
+        if (engine.CurrentProgram is null) return;
+        _persistentProgram = engine.CurrentProgram;
+        _persistentLength = engine.ProgramLength;
+    }
+
+    /// <summary>Chunk 150/151b — pulls the first free chunk whose
+    /// length is at least <paramref name="needed"/> off the engine's
+    /// persistent free-list (<see cref="_freeChunks"/>) and returns its
+    /// address; the chunk's tail (beyond <paramref name="needed"/> bytes)
+    /// goes back on the list. Returns -1 when no fit is available,
+    /// meaning the caller should fall back to <c>engine.AppendCode</c>.
+    /// Since the free-list now lives on <see cref="PrologEngine"/>,
+    /// chunks freed in one query are reusable by the next — but only
+    /// while the persistent buffer is still valid (a consult or abolish
+    /// invalidates both).</summary>
+    private int TryReuseFreeChunk(int needed)
+    {
+        for (int i = 0; i < _freeChunks.Count; i++)
         {
-            var (addr, length) = free[i];
+            var (addr, length) = _freeChunks[i];
             if (length < needed) continue;
-            free.RemoveAt(i);
+            _freeChunks.RemoveAt(i);
             int leftover = length - needed;
             if (leftover > 0)
-                free.Add((addr + needed, leftover));
+                _freeChunks.Add((addr + needed, leftover));
             return addr;
         }
         return -1;
@@ -442,6 +458,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         _dynamicClauses.Remove(functorId);
         _dynamicFunctors.Remove(functorId);
         InvalidateDynamicCache(functorId);
+        // Chunk 151b: dropping a dynamic functor changes the
+        // dynamic-region layout — the next query has to rebuild
+        // the persistent program.
+        InvalidatePersistent();
     }
 
     /// <summary>ADR-015 chunk C step 4 — engine-aware overload that also
@@ -540,7 +560,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         int reclaimed = 0;
         foreach (var (addr, length) in chain.DeadChunks)
         {
-            engine.FreeChunks.Add((addr, length));
+            _freeChunks.Add((addr, length));
             reclaimed += length;
         }
         chain.DeadChunks.Clear();
@@ -812,6 +832,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // A bundle's predicates join the static program — drop the
         // ADR-015 cached static linked region so the next query rebuilds it.
         _staticLink = null;
+        InvalidatePersistent();
 
         // Chunk 71: when an entry carries a persisted-IL .dll blob,
         // load the assembly in-memory and bind each pre-emitted method
@@ -924,6 +945,71 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// whenever the static program changes (<see cref="ConsultString"/> /
     /// bundle load). A query links only its transient region against this.</summary>
     private Shumway.Compiler.Wam.Linker.LinkResult? _staticLink;
+
+    /// <summary>Chunk 151b: the persistent program buffer —
+    /// <c>prefix + static + dynamic</c>. Owned by PrologEngine across
+    /// queries; <c>assertz</c> / <c>asserta</c> extend it in-place
+    /// (capacity-doubled). Each query's
+    /// <see cref="Engine.CurrentProgram"/> is a two-buffer
+    /// <see cref="ProgramView"/> with this as <c>Primary</c> and the
+    /// per-query bytecode as <c>Overflow</c>, with a reserved address
+    /// gap between them so mid-query persistent growth doesn't collide
+    /// with the query region's linked offsets. Null until the first
+    /// query builds it; nulled by <see cref="InvalidatePersistent"/>
+    /// when the dynamic-functor set changes (consult, declaration).</summary>
+    private byte[]? _persistentProgram;
+
+    /// <summary>Logical end of <see cref="_persistentProgram"/>. The
+    /// buffer is over-allocated (capacity-doubled), so a slack tail
+    /// of zero bytes (Invalid opcode) follows the valid region; a stray
+    /// PC into it fails loudly.</summary>
+    private int _persistentLength;
+
+    /// <summary>Cached link result for the dynamic predicates only —
+    /// the address map a per-query link uses to resolve calls into
+    /// the dynamic region without re-linking it.</summary>
+    private Shumway.Compiler.Wam.Linker.LinkResult? _dynamicLink;
+
+
+    /// <summary>Chunk 151b: when a query is in flight, the address at
+    /// which the per-query overlay begins (the
+    /// <see cref="ProgramView"/>'s <c>Split</c>). Persistent growth
+    /// mid-query must stay below this, otherwise the query region's
+    /// linked offsets collide with newly-extended dynamic bytecode.
+    /// The setup code picks this with enough headroom over the
+    /// persistent length for typical mid-query <c>assertz</c>
+    /// growth.</summary>
+    private int _querySplit = -1;
+
+    /// <summary>Chunk 151b: how much address space to reserve between
+    /// the persistent program's end and the per-query region's start.
+    /// Mid-query <c>assertz</c> may extend persistent up to this much
+    /// before the persistent / query address ranges would collide; an
+    /// assert that would overflow this gap forces a rebuild
+    /// (effectively reverting to the chunk-150 within-query free-list
+    /// model for that one assertz). 64 MB is more than any realistic
+    /// per-query dynamic burst needs.</summary>
+    private const int PersistentToQueryGap = 64 * 1024 * 1024;
+
+    /// <summary>Marks the persistent program as stale so the next query
+    /// setup rebuilds it. Called on every consult and on every change
+    /// to the dynamic-functor set.</summary>
+    private void InvalidatePersistent()
+    {
+        _persistentProgram = null;
+        _persistentLength = 0;
+        _dynamicLink = null;
+        // The free-list refers to offsets in the now-invalidated
+        // buffer; clear it so reused chunks in the rebuilt buffer
+        // start from a clean slate.
+        _freeChunks.Clear();
+    }
+
+    /// <summary>Chunk 151b — free-list of dead bytecode chunks reclaimed
+    /// by <c>garbage_collect_clauses</c>. Lives on the engine (not
+    /// per-query) so chunks freed in one query are reusable by the next
+    /// — possible only because the persistent buffer persists.</summary>
+    private readonly List<(int Addr, int Length)> _freeChunks = new();
 
     /// <summary>Canonical encodings of every (subgoal, answer) pair the
     /// tabling driver has recorded (chunk 106). Backs the <c>'$tbl_seen'/1</c>
@@ -1138,7 +1224,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// exception propagating out of their <c>foreach</c>.</summary>
     private static IEnumerable<Solution> RunIteration(
         PrologEngine host,
-        byte[] program,
+        Shumway.Core.ProgramView program,
         List<string> varNames,
         int[] varHeapIndices,
         Engine engine,
@@ -1169,7 +1255,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// catches propagates unchanged. A Core <see cref="PrologRuntimeException"/>
     /// is funnelled through the same path as its ISO <c>error/2</c> term.</summary>
     private InterpreterResult RunCatching(
-        BytecodeInterpreter interp, byte[] program, Engine engine,
+        BytecodeInterpreter interp, Shumway.Core.ProgramView program, Engine engine,
         Func<InterpreterResult> action)
     {
         Func<InterpreterResult> step = action;
@@ -1325,6 +1411,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // and the ADR-015 cached static linked region with it.
         _staticPredicateCache.Clear();
         _staticLink = null;
+        InvalidatePersistent();
         var rawClauses = new ClauseReader(new Lexer(source), _operators, _flags).ReadAll().ToList();
 
         string moduleName = DefaultModuleName;
@@ -1964,7 +2051,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             setup.Engine, setup.Interp);
     }
 
-    private (byte[] Program,
+    private (Shumway.Core.ProgramView Program,
              List<string> VarNames,
              int[] VarHeapIndices,
              Engine Engine,
@@ -1982,7 +2069,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// clause in the user module, compiles + links, primes X[0..n-1] with
     /// fresh heap unbounds, and hands the lot back to the caller's
     /// run/backtrack iterator.</summary>
-    private (byte[] Program,
+    private (Shumway.Core.ProgramView Program,
              List<string> VarNames,
              int[] VarHeapIndices,
              Engine Engine,
@@ -2202,19 +2289,26 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         launcher.EmitCallBuiltin(failBuiltinId, numLivePermanents: 0);
         byte[] prefix = launcher.ToBytes();
 
-        // --- ADR-015 chunk B: persistent code space --------------------
-        // Partition the compiled predicates into the static region —
-        // linked once and cached — and the per-query region (dynamic
-        // predicates plus the __query__ clause and its auxiliaries).
+        // --- ADR-015 chunk B + chunk 151b: persistent code space -------
+        // Partition the compiled predicates into three regions:
+        //   * static  — cacheable + non-dynamic, linked once.
+        //   * dynamic — cacheable + dynamic, linked once into the
+        //     persistent buffer; mutated in place by chunk-120
+        //     assertz / retract / abolish across queries.
+        //   * query   — non-cacheable (the synthetic __query__ clause
+        //     plus catch/disjunction/negation helpers). Linked per
+        //     query at a high-address overlay so persistent can grow
+        //     mid-query without colliding with query addresses.
         var staticPreds = new List<Shumway.Compiler.Wam.CompiledPredicate>();
+        var dynamicPreds = new List<Shumway.Compiler.Wam.CompiledPredicate>();
         var queryPreds = new List<Shumway.Compiler.Wam.CompiledPredicate>();
         foreach (var pred in module.Predicates)
         {
-            if (cacheableFunctors.Contains(pred.FunctorId)
-                && !_dynamicFunctors.Contains(pred.FunctorId))
-                staticPreds.Add(pred);
-            else
-                queryPreds.Add(pred);
+            bool isCacheable = cacheableFunctors.Contains(pred.FunctorId);
+            bool isDynamic = _dynamicFunctors.Contains(pred.FunctorId);
+            if (isCacheable && !isDynamic) staticPreds.Add(pred);
+            else if (isCacheable && isDynamic) dynamicPreds.Add(pred);
+            else queryPreds.Add(pred);
         }
 
         // The static region links once at a fixed load offset (the prefix
@@ -2223,47 +2317,87 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         var staticLink = _staticLink
             ?? (_staticLink = new Linker().Link(staticPreds, loadOffset: prefix.Length));
 
-        // The per-query region is appended after the static region. Its
-        // calls into static predicates resolve through the static region's
-        // address map; its switch-table ids continue past the static set's.
+        // Dynamic region: linked once into the persistent buffer.
+        // Mid-query assertz extends in place; only a change to the
+        // dynamic-functor set (abolish, consult) invalidates this.
+        bool builtPersistentNow = _persistentProgram is null || _dynamicLink is null;
+        if (builtPersistentNow)
+        {
+            int dynamicLoadOffset = prefix.Length + staticLink.Bytecode.Length;
+            _dynamicLink = new Linker().Link(
+                dynamicPreds,
+                loadOffset: dynamicLoadOffset,
+                externalSymbols: staticLink.Addresses,
+                switchTableIdBase: staticLink.SwitchTables.Count);
+            _persistentLength =
+                prefix.Length + staticLink.Bytecode.Length + _dynamicLink.Bytecode.Length;
+            // Over-allocate so capacity-doubling AppendCode appends
+            // cheaply mid-query without forcing immediate realloc.
+            int initialCapacity = Math.Max(_persistentLength * 2, 1024);
+            _persistentProgram = new byte[initialCapacity];
+            Array.Copy(prefix, _persistentProgram, prefix.Length);
+            Array.Copy(staticLink.Bytecode, 0, _persistentProgram,
+                prefix.Length, staticLink.Bytecode.Length);
+            Array.Copy(_dynamicLink.Bytecode, 0, _persistentProgram,
+                dynamicLoadOffset, _dynamicLink.Bytecode.Length);
+            // The static→dynamic unresolved sites get patched in
+            // _persistentProgram with the dynamic region's freshly
+            // assigned addresses.
+            foreach (var (offset, fid) in staticLink.UnresolvedSites)
+                if (_dynamicLink.Addresses.TryGetValue(fid, out int dynAddr))
+                    BytecodeIO.WriteInt32(_persistentProgram, prefix.Length + offset + 1, dynAddr);
+        }
+        // Chunk 151b: pick the per-query overlay's start address with
+        // enough headroom over the persistent length for mid-query
+        // assertz extensions (typically far less than 64 MB).
+        _querySplit = _persistentLength + PersistentToQueryGap;
+
+        // Build the merged external-symbols table for the query
+        // linker — it resolves calls into both the static and
+        // dynamic regions of the persistent buffer.
+        var persistentAddresses =
+            new Dictionary<int, int>(staticLink.Addresses);
+        foreach (var (fid, a) in _dynamicLink!.Addresses) persistentAddresses[fid] = a;
+
+        // The per-query region is appended in a SEPARATE buffer at a
+        // logical address well above the persistent buffer's end.
+        // The ProgramView built below routes addresses in [0, split)
+        // to the persistent buffer and [split, split+queryLen) to the
+        // per-query overlay; persistent growth between now and the
+        // query's end stays in [persistentLength, split) so the
+        // overlay's linked addresses remain stable.
         var queryLink = new Linker().Link(
             queryPreds,
-            loadOffset: prefix.Length + staticLink.Bytecode.Length,
-            externalSymbols: staticLink.Addresses,
-            switchTableIdBase: staticLink.SwitchTables.Count);
+            loadOffset: _querySplit,
+            externalSymbols: persistentAddresses,
+            switchTableIdBase:
+                staticLink.SwitchTables.Count + _dynamicLink.SwitchTables.Count);
 
-        byte[] program = new byte[
-            prefix.Length + staticLink.Bytecode.Length + queryLink.Bytecode.Length];
-        Array.Copy(prefix, program, prefix.Length);
-        Array.Copy(staticLink.Bytecode, 0, program,
-            prefix.Length, staticLink.Bytecode.Length);
-        Array.Copy(queryLink.Bytecode, 0, program,
-            prefix.Length + staticLink.Bytecode.Length, queryLink.Bytecode.Length);
+        byte[] queryBytes = queryLink.Bytecode;
 
-        // A static predicate may call a dynamic one, whose address is only
-        // known now — it lives in the per-query region. Such sites were
-        // left as undefined-predicate sentinels when the static region was
-        // linked; re-patch the ones the query region now resolves. Only
-        // program is written — the cached staticLink.Bytecode is untouched.
-        foreach (var (offset, fid) in staticLink.UnresolvedSites)
-            if (queryLink.Addresses.TryGetValue(fid, out int dynAddr))
-                BytecodeIO.WriteInt32(program, prefix.Length + offset + 1, dynAddr);
-
-        // Merge the two regions' link metadata; downstream code is
+        // Merge the three regions' link metadata; downstream code is
         // region-agnostic and reads this combined view.
-        var mergedAddresses = new Dictionary<int, int>(staticLink.Addresses);
+        var mergedAddresses = new Dictionary<int, int>(persistentAddresses);
         foreach (var (fid, a) in queryLink.Addresses) mergedAddresses[fid] = a;
         var mergedSwitchTables =
             new List<Shumway.Core.SwitchTable>(staticLink.SwitchTables);
+        mergedSwitchTables.AddRange(_dynamicLink.SwitchTables);
         mergedSwitchTables.AddRange(queryLink.SwitchTables);
         var mergedPredicatesByAddress =
             new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>(
                 staticLink.PredicatesByAddress);
+        foreach (var (a, p) in _dynamicLink.PredicatesByAddress)
+            mergedPredicatesByAddress[a] = p;
         foreach (var (a, p) in queryLink.PredicatesByAddress)
             mergedPredicatesByAddress[a] = p;
+        // The "program" in the LinkResult is now a logical concept —
+        // the live bytes live across two physical buffers. Downstream
+        // consumers that don't access linkResult.Bytecode (most of
+        // them) work unchanged; the few that do get the persistent
+        // half — the static and dynamic regions they care about.
         var linkResult = new Linker.LinkResult(
-            program, mergedAddresses, mergedSwitchTables, mergedPredicatesByAddress,
-            Array.Empty<(int, int)>());
+            _persistentProgram!, mergedAddresses, mergedSwitchTables,
+            mergedPredicatesByAddress, Array.Empty<(int, int)>());
 
         // The synthetic query stays under its bare functor (it's local to
         // user but ModuleRewrite never mangles __query__ because it's not
@@ -2272,9 +2406,18 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         int queryFunctorId = FunctorTable.Intern(
             AtomTable.Intern(queryFunctor, permanent: true).Id,
             varNames.Count);
-        // Patch the launcher's call target straight in program — the
-        // prefix sits at program offset 0, so callPos is the same in both.
-        BytecodeIO.WriteInt32(program, callPos + 1, linkResult.Addresses[queryFunctorId]);
+        // Patch the launcher's call target — the prefix sits at
+        // _persistentProgram offset 0, so callPos points there.
+        BytecodeIO.WriteInt32(_persistentProgram, callPos + 1, linkResult.Addresses[queryFunctorId]);
+
+        // `program` is the persistent byte[] (used by all mutation
+        // paths: assertz/retract/abolish chain patching, AppendCode);
+        // `programView` is the two-buffer logical view passed to the
+        // interpreter and IL helpers — they read across the gap into
+        // the per-query overlay transparently.
+        byte[] program = _persistentProgram;
+        var programView = new Shumway.Core.ProgramView(
+            _persistentProgram, queryBytes, _querySplit);
 
         // Cache freshly-compiled static predicates (chunk 82). A predicate
         // is cacheable only if its functor headed a clause in the static +
@@ -2339,6 +2482,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // by dynamic predicates' last-clause chain instructions.
             DynamicFailStubAddr = failStubAddr,
         };
+        // Chunk 151b: the persistent buffer is over-allocated, so the
+        // engine's ProgramLength must reflect the live region (not the
+        // raw byte[] capacity) for AppendCode's offset accounting. The
+        // overlay + split let the dispatch loop refresh the
+        // ProgramView correctly after a mid-query AppendCode.
+        engine.SetInitialProgramLength(_persistentLength);
+        engine.CurrentQueryOverlay = queryBytes;
+        engine.CurrentQuerySplit = _querySplit;
 
         var interp = new BytecodeInterpreter(
             engine, module.StringLiterals, module.FloatLiterals,
@@ -2373,7 +2524,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // program. retract patches the slot in place; next call's
         // check_visible filters the clause out (the bytecode-level
         // logical-update view path that supersedes chunk C's redirect).
-        PopulateDynChains(program, addressMap, mergedPredicatesByAddress);
+        // Chunk 151b: only rebuild chain state from scratch when the
+        // persistent buffer is fresh. While it's being reused across
+        // queries, the incremental assertz / asserta / retract paths
+        // maintain _dynChains directly — a contiguous walk from
+        // predAddr can't see chunks appended elsewhere by AppendCode.
+        if (builtPersistentNow)
+            PopulateDynChains(program, addressMap, mergedPredicatesByAddress);
 
         // Tier-1 promotion: hook the interpreter up to this engine's
         // IlPromotionStore via an address-keyed adapter. The store itself
@@ -2395,7 +2552,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         IlPromotion.ConsiderPgoRecompiles(functorToPredicate, functorToPredicate);
         // IL Call (chunk 50): runs a sub-predicate synchronously by
         // re-entering the bytecode interpreter on the linked program.
-        engine.IlSubroutineRunner = target => interp.RunSubroutine(program, target);
+        engine.IlSubroutineRunner = target => interp.RunSubroutine(programView, target);
         // IL meta-CP backtrack hook (chunk 66): drives one round of
         // backtrack inside the bytecode interpreter so an IL Call
         // site's meta-CP can fetch the next solution from a non-leaf
@@ -2403,7 +2560,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // an alternative that proceeded to a halt (success), false
         // when no further CPs were available.
         engine.BacktrackRunner = () =>
-            interp.Backtrack(program) == Shumway.Interpreter.InterpreterResult.Halted;
+            interp.Backtrack(programView) == Shumway.Interpreter.InterpreterResult.Halted;
         // Remember the per-query address → predicate map so error
         // reporting (chunk 51) can translate the engine's PC and env-
         // chain return addresses into Name/Arity stack frames.
@@ -2417,7 +2574,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             engine.SetRegister(i, Cell.Ref(h));
         }
 
-        return (program, varNames, varHeapIndices, engine, interp);
+        return (programView, varNames, varHeapIndices, engine, interp);
     }
 
     /// <summary>ADR-015 chunk C step 4: incrementally compile and append a
@@ -2467,7 +2624,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
         // Chunk 150: try the free-list (chunks reclaimed by a prior
         // GC) before extending the program buffer.
-        int chunkAddr = TryReuseFreeChunk(engine, chunk.Length);
+        int chunkAddr = TryReuseFreeChunk(chunk.Length);
         if (chunkAddr >= 0)
             Array.Copy(chunk, 0, engine.CurrentProgram!, chunkAddr, chunk.Length);
         else
@@ -2498,6 +2655,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             chunkAddr: chunkAddr,
             chunkLength: chunk.Length));
         chain.TailNextAddr = chunkAddr + NextOperandLocal;
+
+        // Chunk 151b: AppendCode may have reallocated the buffer;
+        // refresh PrologEngine's reference so the next query sees
+        // the live buffer, not the pre-grow stale one.
+        SyncPersistentFromEngine(engine);
 
         // The clause may have interned new literals — refresh the
         // interpreter so check_visible isn't running against a stale
@@ -2576,7 +2738,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         byte[] chunk = emitter.ToBytes();
 
         // Chunk 150: try the free-list before extending the program.
-        int chunkAddr = TryReuseFreeChunk(engine, chunk.Length);
+        int chunkAddr = TryReuseFreeChunk(chunk.Length);
         if (chunkAddr >= 0)
             Array.Copy(chunk, 0, engine.CurrentProgram!, chunkAddr, chunk.Length);
         else
@@ -2624,6 +2786,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // If this was the first ever clause, the new chunk is also the tail.
         if (chain.TailNextAddr < 0)
             chain.TailNextAddr = chunkAddr + NextOperandLocal;
+
+        // Chunk 151b: keep the persistent-buffer reference in sync —
+        // AppendCode may have reallocated.
+        SyncPersistentFromEngine(engine);
 
         // Refresh interpreter pools — same reasoning as the assertz path.
         engine.RefreshLiteralPoolsCallback?.Invoke(

@@ -1057,6 +1057,38 @@ public sealed class Engine
     public int ProgramLength =>
         _programLength >= 0 ? _programLength : (CurrentProgram?.Length ?? 0);
 
+    /// <summary>Chunk 151b — the persistent dynamic-code buffer is
+    /// over-allocated up front (so mid-query assertz extends without
+    /// re-copy), so the engine needs to know its live length explicitly.
+    /// Sets <see cref="ProgramLength"/> on a fresh engine before any
+    /// <see cref="AppendCode"/> call. </summary>
+    public void SetInitialProgramLength(int length) => _programLength = length;
+
+    /// <summary>Chunk 151b — the per-query overlay buffer holding the
+    /// synthetic <c>__query__</c> clause and its auxiliaries. Lives at
+    /// logical addresses ≥ <see cref="CurrentQuerySplit"/>; addresses
+    /// below the split index into <see cref="CurrentProgram"/>. Null
+    /// when there's no overlay (e.g. a sub-engine, IL re-entry path
+    /// driving over the persistent buffer alone).</summary>
+    public byte[]? CurrentQueryOverlay { get; set; }
+
+    /// <summary>The logical address at which <see cref="CurrentQueryOverlay"/>
+    /// starts. Addresses in <c>[0, Split)</c> live in
+    /// <see cref="CurrentProgram"/>; addresses in
+    /// <c>[Split, Split + Overlay.Length)</c> live in the overlay.</summary>
+    public int CurrentQuerySplit { get; set; }
+
+    /// <summary>The two-buffer logical view used by the interpreter
+    /// dispatch loop's hot-path refresh after a mid-query
+    /// <see cref="AppendCode"/>. Reads stay correct across the
+    /// realloc-and-grow path.</summary>
+    public Shumway.Core.ProgramView GetProgramView()
+    {
+        var prog = CurrentProgram ?? Array.Empty<byte>();
+        if (CurrentQueryOverlay is null) return new Shumway.Core.ProgramView(prog);
+        return new Shumway.Core.ProgramView(prog, CurrentQueryOverlay, CurrentQuerySplit);
+    }
+
     /// <summary>Appends a linked bytecode chunk to <see cref="CurrentProgram"/>
     /// and returns its start offset. Existing offsets stay valid — the
     /// content is only ever appended, never moved. Capacity doubling keeps
@@ -1111,13 +1143,12 @@ public sealed class Engine
 
     /// <summary>Chunk-150 free-list of dead-clause bytecode regions
     /// available for reuse by within-query incremental
-    /// <c>assertz</c> / <c>asserta</c>. Lives on the per-query
-    /// <see cref="Engine"/> because the program buffer it refers to
-    /// is per-query — across queries the program is rebuilt and the
-    /// addresses are invalid. <c>garbage_collect_clauses</c> adds
-    /// dead chunks here; the next incremental assert scans for a fit
-    /// (first-fit) and reuses the bytes instead of extending the
-    /// buffer.</summary>
+    /// <c>assertz</c> / <c>asserta</c>. Lives on <see cref="Engine"/>
+    /// purely as legacy ABI — chunk 151b migrated the live free-list
+    /// to <c>PrologEngine</c>'s persistent buffer so chunks freed in
+    /// one query are reusable by the next. Not consulted by any
+    /// current code path; kept as a no-op holder for any external
+    /// caller that still references it.</summary>
     public readonly List<(int Addr, int Length)> FreeChunks = new();
 
     /// <summary>Wired by the embedding layer at query setup —
