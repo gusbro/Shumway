@@ -109,6 +109,14 @@ public static class StandardBuiltins
             Io, "format(+Format, +Arguments)", "Writes formatted output from a control string and an argument list.");
         BuiltinsRegistry.Register("write_canonical", 1, IOBuiltins.WriteCanonical,
             Io, "write_canonical(+Term)", "Writes a term in a quoted, operator-free form that reads back.");
+        BuiltinsRegistry.Register("write_canonical", 2, IOBuiltins.WriteCanonical2,
+            Io, "write_canonical(+Stream, +Term)", "Writes a term in canonical form to a stream (ISO §8.14.6).");
+        BuiltinsRegistry.Register("write_term",      3, IOBuiltins.WriteTerm3,
+            Io, "write_term(+Stream, +Term, +Options)", "Writes a term to a stream honouring options (ISO §8.14.3).");
+        BuiltinsRegistry.Register("writeq",          1, IOBuiltins.Writeq1,
+            Io, "writeq(+Term)", "Writes a term in quoted (parseable) form (ISO §8.14.5).");
+        BuiltinsRegistry.Register("writeq",          2, IOBuiltins.Writeq2,
+            Io, "writeq(+Stream, +Term)", "Writes a term in quoted (parseable) form to a stream (ISO §8.14.5).");
         BuiltinsRegistry.Register("print",           1, IOBuiltins.Print,
             Io, "print(+Term)", "Writes a term using print conventions.");
 

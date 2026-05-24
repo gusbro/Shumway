@@ -17,8 +17,26 @@ public static class IOBuiltins
     /// <c>write_term/2</c> if you need the parseable form.</summary>
     public static bool Write(Engine engine)
     {
-        TermRenderer.Render(engine, engine.GetRegister(0), engine.Out, DefaultOptions(engine));
+        TermRenderer.Render(engine, engine.GetRegister(0), CurrentWriter(engine), DefaultOptions(engine));
         return true;
+    }
+
+    /// <summary>The current output writer. Prefers the chunk-140
+    /// per-engine stream registry's current_output (so
+    /// <c>set_output/1</c> redirects all the write-family builtins);
+    /// falls back to <see cref="Engine.Out"/> for engines without a
+    /// registry. Refuses a binary stream — text I/O on a binary
+    /// stream is permission_error(output, binary_stream, _).</summary>
+    private static System.IO.TextWriter CurrentWriter(Engine engine)
+    {
+        if (engine.Streams is { } reg)
+        {
+            var h = reg.CurrentOutput;
+            if (h.IsBinary)
+                throw new PrologRuntimeException("permission_error", "output,binary_stream");
+            if (h.Writer is not null) return h.Writer;
+        }
+        return engine.Out;
     }
 
     /// <summary><c>nl</c> — writes a single newline character to the
@@ -35,10 +53,44 @@ public static class IOBuiltins
     /// <summary><c>writeln(X)</c> — equivalent to <c>write(X), nl</c>.</summary>
     public static bool Writeln(Engine engine)
     {
-        TermRenderer.Render(engine, engine.GetRegister(0), engine.Out, DefaultOptions(engine));
-        engine.Out.WriteLine();
+        var w = CurrentWriter(engine);
+        TermRenderer.Render(engine, engine.GetRegister(0), w, DefaultOptions(engine));
+        w.WriteLine();
         return true;
     }
+
+    /// <summary><c>writeq(X)</c> — ISO §8.14.5. Writes <c>X</c> in
+    /// quoted form: atoms and strings get quote characters where
+    /// needed so the output reads back. Equivalent to
+    /// <c>write_term(X, [quoted(true), numbervars(true)])</c>.</summary>
+    public static bool Writeq1(Engine engine)
+    {
+        var opts = QuotedOptions(engine);
+        TermRenderer.Render(engine, engine.GetRegister(0), CurrentWriter(engine), opts);
+        return true;
+    }
+
+    /// <summary><c>writeq(+Stream, X)</c> — stream-aware writeq.
+    /// ISO §8.14.5.</summary>
+    public static bool Writeq2(Engine engine)
+    {
+        var h = StreamBuiltins.ResolveStream(engine, engine.GetRegister(0));
+        if (h.IsBinary)
+            throw new PrologRuntimeException("permission_error", "output,binary_stream");
+        if (h.Writer is null)
+            throw new PrologRuntimeException("permission_error", "output,stream");
+        var opts = QuotedOptions(engine);
+        TermRenderer.Render(engine, engine.GetRegister(1), h.Writer, opts);
+        return true;
+    }
+
+    private static TermRenderOptions QuotedOptions(Engine engine) =>
+        new TermRenderOptions
+        {
+            Operators = engine.Operators,
+            Quoted = true,
+            Numbervars = true,
+        };
 
     private static TermRenderOptions DefaultOptions(Engine engine) =>
         new TermRenderOptions { Operators = engine.Operators };
@@ -51,8 +103,29 @@ public static class IOBuiltins
     /// SWI does for unknown options.</summary>
     public static bool WriteTerm(Engine engine)
     {
+        var options = ReadWriteTermOptions(engine, optsReg: 1);
+        TermRenderer.Render(engine, engine.GetRegister(0), CurrentWriter(engine), options);
+        return true;
+    }
+
+    /// <summary><c>write_term(+Stream, +Term, +Options)</c> — ISO
+    /// §8.14.3.</summary>
+    public static bool WriteTerm3(Engine engine)
+    {
+        var h = StreamBuiltins.ResolveStream(engine, engine.GetRegister(0));
+        if (h.IsBinary)
+            throw new PrologRuntimeException("permission_error", "output,binary_stream");
+        if (h.Writer is null)
+            throw new PrologRuntimeException("permission_error", "output,stream");
+        var options = ReadWriteTermOptions(engine, optsReg: 2);
+        TermRenderer.Render(engine, engine.GetRegister(1), h.Writer, options);
+        return true;
+    }
+
+    private static TermRenderOptions ReadWriteTermOptions(Engine engine, int optsReg)
+    {
         var options = new TermRenderOptions { Operators = engine.Operators };
-        Cell optsCell = Resolve(engine, engine.GetRegister(1));
+        Cell optsCell = Resolve(engine, engine.GetRegister(optsReg));
         while (optsCell.Tag == Tag.Lis)
         {
             int headIdx = optsCell.AsHeapIndex;
@@ -60,8 +133,7 @@ public static class IOBuiltins
             ApplyOption(engine, head, options);
             optsCell = Resolve(engine, engine.GetHeap(headIdx + 1));
         }
-        TermRenderer.Render(engine, engine.GetRegister(0), engine.Out, options);
-        return true;
+        return options;
     }
 
     private static void ApplyOption(Engine engine, Cell optCell, TermRenderOptions options)
@@ -93,16 +165,39 @@ public static class IOBuiltins
     /// <c>TermRenderer</c>'s option-aware rewrite.</summary>
     public static bool WriteCanonical(Engine engine)
     {
-        TermRenderer.Render(engine, engine.GetRegister(0), engine.Out, DefaultOptions(engine));
+        TermRenderer.Render(engine, engine.GetRegister(0), CurrentWriter(engine),
+            CanonicalOptions(engine));
         return true;
     }
+
+    /// <summary><c>write_canonical(+Stream, +Term)</c> — ISO §8.14.6.</summary>
+    public static bool WriteCanonical2(Engine engine)
+    {
+        var h = StreamBuiltins.ResolveStream(engine, engine.GetRegister(0));
+        if (h.IsBinary)
+            throw new PrologRuntimeException("permission_error", "output,binary_stream");
+        if (h.Writer is null)
+            throw new PrologRuntimeException("permission_error", "output,stream");
+        TermRenderer.Render(engine, engine.GetRegister(1), h.Writer,
+            CanonicalOptions(engine));
+        return true;
+    }
+
+    private static TermRenderOptions CanonicalOptions(Engine engine) =>
+        new TermRenderOptions
+        {
+            Operators = engine.Operators,
+            Quoted = true,
+            IgnoreOps = true,
+        };
 
     /// <summary><c>print(X)</c> — ISO defines this as a portray/1 hook
     /// fallback to <c>write/1</c>. Phase 1 implements only the
     /// <c>write/1</c> fallback path.</summary>
     public static bool Print(Engine engine)
     {
-        TermRenderer.Render(engine, engine.GetRegister(0), engine.Out, DefaultOptions(engine));
+        TermRenderer.Render(engine, engine.GetRegister(0), CurrentWriter(engine),
+            DefaultOptions(engine));
         return true;
     }
 

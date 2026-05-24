@@ -149,6 +149,10 @@ public static class MetaBuiltins
         // stream-aware reader so the builtin set covers both names.
         BuiltinsRegistry.Register("read_term", 2, ReadTermFromStream,
             Io, "read_term(+Stream, -Term)", "Reads one term from a read-mode stream.");
+        BuiltinsRegistry.Register("read",      1, Read1,
+            Io, "read(-Term)", "Reads one term from current input (ISO §8.14.2).");
+        BuiltinsRegistry.Register("read",      2, Read2,
+            Io, "read(+Stream, -Term)", "Reads one term from a stream (ISO §8.14.2).");
     }
 
     /// <summary><c>current_stream(?Filename, ?Mode, ?Stream)</c> —
@@ -320,17 +324,42 @@ public static class MetaBuiltins
     /// <c>.</c> followed by whitespace or EOF, parses the buffer as a
     /// Prolog term, and unifies the result with <c>Term</c>. Hits EOF
     /// before any text yields the atom <c>end_of_file</c>.</summary>
-    public static bool ReadTermFromStream(Engine engine)
+    public static bool ReadTermFromStream(Engine engine) =>
+        ReadOneTermInto(engine,
+            ResolveTextReader(engine, engine.GetRegister(0)), regOut: 1);
+
+    /// <summary><c>read/1</c> — ISO §8.14.2. Reads one term from the
+    /// current input stream. (Chunk 143.)</summary>
+    public static bool Read1(Engine engine)
     {
-        // Chunk 140a refactor: streams are now StreamHandle-wrapped
-        // (via the per-engine StreamRegistry), not bare TextReader.
-        // Resolve through StreamBuiltins so atoms / aliases work too.
-        var h = Shumway.Builtins.StreamBuiltins.ResolveStream(
-            engine, engine.GetRegister(0));
+        var h = engine.Streams?.CurrentInput
+            ?? throw new InvalidOperationException("Engine has no stream registry.");
+        return ReadOneTermInto(engine, ResolveTextReaderFromHandle(h), regOut: 0);
+    }
+
+    /// <summary><c>read(+Stream, -Term)</c> — ISO §8.14.2.</summary>
+    public static bool Read2(Engine engine) =>
+        ReadOneTermInto(engine,
+            ResolveTextReader(engine, engine.GetRegister(0)), regOut: 1);
+
+    private static System.IO.TextReader ResolveTextReader(Engine engine, Cell streamArg)
+    {
+        var h = Shumway.Builtins.StreamBuiltins.ResolveStream(engine, streamArg);
+        return ResolveTextReaderFromHandle(h);
+    }
+
+    private static System.IO.TextReader ResolveTextReaderFromHandle(Shumway.Core.StreamHandle h)
+    {
         if (!h.IsReader)
             throw new PrologRuntimeException("permission_error", "input,stream");
-        var reader = h.Reader!;
+        if (h.IsBinary)
+            // ISO §8.14.2.3.g — text-term read on a binary stream.
+            throw new PrologRuntimeException("permission_error", "input,binary_stream");
+        return h.Reader!;
+    }
 
+    private static bool ReadOneTermInto(Engine engine, System.IO.TextReader reader, int regOut)
+    {
         var sb = new System.Text.StringBuilder();
         bool sawAnyChar = false;
         while (true)
@@ -341,7 +370,7 @@ public static class MetaBuiltins
                 if (!sawAnyChar)
                 {
                     int eofId = AtomTable.Intern("end_of_file", permanent: true).Id;
-                    return engine.UnifyRegisterWithCell(1, Cell.Atom(eofId));
+                    return engine.UnifyRegisterWithCell(regOut, Cell.Atom(eofId));
                 }
                 break;
             }
@@ -359,7 +388,7 @@ public static class MetaBuiltins
             Shumway.Compiler.Parsing.OperatorTable.Default());
         Term parsed = parser.ReadClauseTerm();
         Cell cell = Materializer.MaterializeAsCell(engine, parsed);
-        return engine.UnifyRegisterWithCell(1, cell);
+        return engine.UnifyRegisterWithCell(regOut, cell);
     }
 
     /// <summary><c>with_output_to(Sink, Goal)</c> — runs <c>Goal</c> with

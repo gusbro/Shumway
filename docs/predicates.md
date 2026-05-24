@@ -233,6 +233,8 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `put_char(+Stream, +Char)` | Writes a single-character atom to the given stream (ISO §8.12.3). |
 | `put_code(+Code)` | Writes the character for Code to the current output stream (ISO §8.12.6). |
 | `put_code(+Stream, +Code)` | Writes the character for Code to a stream (ISO §8.12.6). |
+| `read(-Term)` | Reads one term from current input (ISO §8.14.2). |
+| `read(+Stream, -Term)` | Reads one term from a stream (ISO §8.14.2). |
 | `read_term(+Stream, -Term)` | Reads one term from a read-mode stream. |
 | `read_term_from_stream(+Stream, -Term)` | Reads one term from a read-mode stream. |
 | `set_input(+Stream)` | Sets the current input stream (ISO §8.11.3). |
@@ -244,8 +246,12 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `write(+Term)` | Writes a term to the current output stream. |
 | `write(+Stream, +Term)` | Writes a term to the given stream. |
 | `write_canonical(+Term)` | Writes a term in a quoted, operator-free form that reads back. |
+| `write_canonical(+Stream, +Term)` | Writes a term in canonical form to a stream (ISO §8.14.6). |
 | `write_term(+Term, +Options)` | Writes a term honouring the given list of write options. |
+| `write_term(+Stream, +Term, +Options)` | Writes a term to a stream honouring options (ISO §8.14.3). |
 | `writeln(+Term)` | Writes a term followed by a newline. |
+| `writeq(+Term)` | Writes a term in quoted (parseable) form (ISO §8.14.5). |
+| `writeq(+Stream, +Term)` | Writes a term in quoted (parseable) form to a stream (ISO §8.14.5). |
 
 ## Flags, operators & reflection
 
