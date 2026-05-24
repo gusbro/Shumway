@@ -344,43 +344,58 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         if (failStub <= 0) return false;
 
         // Pull the new clause's head arg-0 — we classify it to decide
-        // the same-key vs new-key path and to skip the var-arg case
-        // (chunk 155d's concern).
+        // the same-key vs new-key vs var-arg path.
         Shumway.Compiler.Ast.Term head = newClause.Kind == Shumway.Compiler.Ast.ClauseKind.Rule
             ? ((Shumway.Compiler.Ast.CompoundTerm)newClause.Term).Args[0]
             : newClause.Term;
         if (head is not Shumway.Compiler.Ast.CompoundTerm headComp || headComp.Args.Length == 0)
             return false;
         var arg0 = headComp.Args[0];
-        if (arg0 is Shumway.Compiler.Ast.VarTerm) return false;  // var-arg → chunk 155d
+        bool isVarArg = arg0 is Shumway.Compiler.Ast.VarTerm;
 
-        // FindBucketChainHead returns the existing bucket head, or
-        // -1 when no bucket exists for this key.
-        int bucketChainHead = FindBucketChainHead(engine, predAddr, newClause);
-        bool isNewKey = bucketChainHead < 0;
-
+        // Plan which chain tails the new clause's body will be
+        // linked into. var-arg-at-0 (chunk 155e) extends every
+        // chain — var fallthrough, list bucket if present, and
+        // every bucket chain reachable through the atom / integer /
+        // structure sub-switch tables. Concrete arg-0 (chunks
+        // 155b / 155c) extends just (var chain + the specific
+        // bucket chain, creating it for new-key).
+        int bucketChainHead = -1;
+        bool isNewKey = false;
         int varChainHead = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 2);
-        int varTailNext = WalkChainToTailNextOperand(prog, varChainHead, failStub);
-        if (varTailNext < 0) return false;
-
-        int bucketTailNext = -1;
-        if (!isNewKey)
-        {
-            bucketTailNext = WalkChainToTailNextOperand(prog, bucketChainHead, failStub);
-            if (bucketTailNext < 0) return false;
-        }
-
-        // For the new-key path, locate the sub-switch matching the
-        // new key's type and verify it exists. Falling back here
-        // keeps the buffer untouched so the caller's rebuild applies
-        // cleanly.
+        var chainTailNexts = new List<int>();
         int newKeyValue = 0;
         int subSwitchTableId = -1;
-        if (isNewKey)
+
+        if (isVarArg)
         {
-            if (!TryLocateSubSwitchForArg(
-                    engine, predAddr, arg0, out newKeyValue, out subSwitchTableId))
+            // Collect every chain's tail-next operand. Includes the
+            // var chain itself so we don't double-extend below.
+            if (!CollectAllChainTailNextOperands(engine, predAddr, chainTailNexts))
                 return false;
+        }
+        else
+        {
+            int varTailNext = WalkChainToTailNextOperand(prog, varChainHead, failStub);
+            if (varTailNext < 0) return false;
+            chainTailNexts.Add(varTailNext);
+            bucketChainHead = FindBucketChainHead(engine, predAddr, newClause);
+            isNewKey = bucketChainHead < 0;
+            if (!isNewKey)
+            {
+                int bucketTailNext = WalkChainToTailNextOperand(prog, bucketChainHead, failStub);
+                if (bucketTailNext < 0) return false;
+                chainTailNexts.Add(bucketTailNext);
+            }
+            else
+            {
+                // Locate the sub-switch matching the new key's type;
+                // bail to rebuild if the type's sub-switch doesn't
+                // exist yet (would be a layout change).
+                if (!TryLocateSubSwitchForArg(
+                        engine, predAddr, arg0, out newKeyValue, out subSwitchTableId))
+                    return false;
+            }
         }
 
         // Compile the new clause (transforms identical to the chain
@@ -430,20 +445,16 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             return engine.AppendCode(em.ToBytes());
         }
 
-        if (!isNewKey)
+        // For the new-key concrete case, the new bucket itself is
+        // built (and added to the sub-switch table) BEFORE we walk
+        // the chain-tail list — the new bucket isn't in
+        // chainTailNexts because it didn't exist when we planned.
+        if (!isVarArg && isNewKey)
         {
-            // Same-key path (chunk 155b): extend bucket chain by
-            // appending one new entry and patching the prior tail.
-            int newBucketEntry = AppendNonHeadEntry(bodyAddr);
-            prog = engine.CurrentProgram!;
-            Shumway.Core.BytecodeIO.WriteInt32(prog, bucketTailNext, newBucketEntry);
-        }
-        else
-        {
-            // New-key path (chunk 155c): build a fresh bucket chain
-            // containing every var-arg-at-0 clause (they match every
-            // concrete key) plus the new clause, append it, then add
-            // (new_key → new_chain_head) to the sub-switch table.
+            // Build a fresh bucket chain containing every var-arg
+            // clause's body (they match every concrete key) plus the
+            // new clause's body, then add (new_key → new_chain_head)
+            // to the sub-switch table.
             var varArgBodies = CollectVarArgBodies(engine, varChainHead, functorId);
             int newBucketHead = BuildAndAppendNewBucketChain(
                 engine, failStub, headArity: headComp.Args.Length,
@@ -453,19 +464,23 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             if (oldTable is null) return false;
             var newTable = oldTable.WithAdditionalEntry(newKeyValue, newBucketHead);
             engine.ReplaceSwitchTable(subSwitchTableId, newTable);
-            // Chunk 155c persistence: also reflect the mutation into
-            // _dynamicLink so the NEXT query's setup (which rebuilds
-            // engine.SwitchTables from staticLink + _dynamicLink +
-            // queryLink) sees the updated table. Without this the
-            // mutation is per-query only and gets lost on the
-            // following SetupQueryFromTerm.
             MirrorSwitchTableIntoDynamicLink(subSwitchTableId, newTable);
         }
 
-        // Always extend the var-fallthrough chain too.
-        int newVarEntry = AppendNonHeadEntry(bodyAddr);
-        prog = engine.CurrentProgram!;
-        Shumway.Core.BytecodeIO.WriteInt32(prog, varTailNext, newVarEntry);
+        // For every chain in the plan, append a new chain entry
+        // pointing at the new body and patch the chain's prior tail.
+        // This covers (depending on path):
+        //   - chunk 155b: bucket + var (2 entries).
+        //   - chunk 155c: var only (the new bucket already includes
+        //     the new clause as its tail).
+        //   - chunk 155e: every chain (var + list + every bucket
+        //     across all sub-switches).
+        foreach (int tailNext in chainTailNexts)
+        {
+            int newEntry = AppendNonHeadEntry(bodyAddr);
+            prog = engine.CurrentProgram!;
+            Shumway.Core.BytecodeIO.WriteInt32(prog, tailNext, newEntry);
+        }
 
         // The new chunks may have grown the persistent buffer (chunk
         // 151b) — keep PrologEngine's cached reference current.
@@ -589,6 +604,64 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         if (head is not Shumway.Compiler.Ast.CompoundTerm hc || hc.Args.Length == 0)
             return false;
         return hc.Args[0] is Shumway.Compiler.Ast.VarTerm;
+    }
+
+    /// <summary>Chunk 155e — enumerates every chain head reachable
+    /// from the chunk-155a indexed predicate's entry (var chain,
+    /// list bucket if present, every value in the atom / integer /
+    /// structure switch tables), walks each to find its tail-next
+    /// operand, and appends those operand positions to
+    /// <paramref name="tailNextOperands"/>. Deduplicates chain heads
+    /// so a chain shared by multiple keys is only extended once.
+    /// Returns <c>false</c> on layout mismatch.</summary>
+    private bool CollectAllChainTailNextOperands(
+        Engine engine, int predAddr, List<int> tailNextOperands)
+    {
+        var prog = engine.CurrentProgram;
+        if (prog is null) return false;
+        int failStub = engine.DynamicFailStubAddr;
+        if (failStub <= 0) return false;
+
+        var chainHeads = new HashSet<int>();
+        int varChainHead = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 2);
+        chainHeads.Add(varChainHead);
+        int listLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 10);
+        if (listLbl > 0 && listLbl != varChainHead) chainHeads.Add(listLbl);
+
+        int constLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 6);
+        int structLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 14);
+        int p = constLbl;
+        while (p > 0 && p != varChainHead && p + 5 <= prog.Length)
+        {
+            var op = (Shumway.Core.Opcode)prog[p];
+            if (op != Shumway.Core.Opcode.SwitchOnAtom
+                && op != Shumway.Core.Opcode.SwitchOnInteger
+                && op != Shumway.Core.Opcode.SwitchOnStructure) break;
+            int tid = Shumway.Core.BytecodeIO.ReadInt32(prog, p + 1);
+            var table = engine.GetSwitchTable(tid);
+            if (table is null) break;
+            foreach (int v in table.Values)
+                if (v != varChainHead) chainHeads.Add(v);
+            p = table.DefaultAddress;
+        }
+        if (structLbl > 0 && structLbl != varChainHead
+            && structLbl + 5 <= prog.Length
+            && prog[structLbl] == (byte)Shumway.Core.Opcode.SwitchOnStructure)
+        {
+            int sTid = Shumway.Core.BytecodeIO.ReadInt32(prog, structLbl + 1);
+            var sTable = engine.GetSwitchTable(sTid);
+            if (sTable is not null)
+                foreach (int v in sTable.Values)
+                    if (v != varChainHead) chainHeads.Add(v);
+        }
+
+        foreach (int head in chainHeads)
+        {
+            int tailNext = WalkChainToTailNextOperand(prog, head, failStub);
+            if (tailNext < 0) return false;  // malformed chain — bail
+            tailNextOperands.Add(tailNext);
+        }
+        return true;
     }
 
     // ====================================================================
