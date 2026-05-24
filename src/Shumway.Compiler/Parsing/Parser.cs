@@ -103,6 +103,15 @@ public sealed class Parser
                     applied = TryApplyInfix(tok.Text, iPrec, iType, maxPrec, ref left, ref builtPrec);
                 if (!applied && _operators.TryGetPostfix(tok.Text, out int pPrec, out OperatorType pType))
                     applied = TryApplyPostfix(tok.Text, pPrec, pType, maxPrec, ref left, ref builtPrec);
+                // Chunk 146: the lexer reads a maximal run of graphic
+                // chars, so '1+-2' tokenises as Int(1), Atom('+-'),
+                // Int(2). If '+-' isn't a registered infix, try
+                // splitting it into a known infix prefix + a known
+                // unary-prefix suffix (e.g. '+' as binary + '-' as
+                // unary -). Matches SWI's reader.
+                if (!applied && tok.Text.Length > 1
+                    && TrySplitInfixUnary(tok, maxPrec, ref left, ref builtPrec))
+                    applied = true;
                 if (applied) continue;
             }
 
@@ -110,6 +119,38 @@ public sealed class Parser
         }
 
         return left;
+    }
+
+    private bool TrySplitInfixUnary(Token tok, int maxPrec, ref Term left, ref int builtPrec)
+    {
+        // Try every prefix length from longest down — longer match
+        // wins so '1+--2' goes '+' / '--' if '--' is a known prefix
+        // op, rather than '+-' / '-'.
+        for (int len = tok.Text.Length - 1; len > 0; len--)
+        {
+            string prefix = tok.Text.Substring(0, len);
+            string suffix = tok.Text.Substring(len);
+            if (!_operators.TryGetInfix(prefix, out int piPrec, out OperatorType piType))
+                continue;
+            if (!_operators.TryGetPrefix(suffix, out _, out _))
+                continue;
+            // Replace the current lookahead with the prefix, then
+            // queue the suffix as the next token so the right-operand
+            // read picks it up as a prefix op.
+            _lookahead[0] = new Token(TokenKind.Atom, tok.Position, prefix);
+            int sufCol = tok.Position.Column + len;
+            _lookahead.Insert(1, new Token(TokenKind.Atom,
+                new SourcePosition(tok.Position.Line, sufCol,
+                    tok.Position.Offset + len), suffix));
+            if (TryApplyInfix(prefix, piPrec, piType, maxPrec, ref left, ref builtPrec))
+                return true;
+            // The infix didn't fit (precedence constraint) — undo the
+            // split so other tokenisers can have a go.
+            _lookahead.RemoveAt(1);
+            _lookahead[0] = tok;
+            return false;
+        }
+        return false;
     }
 
     private bool TryApplyInfix(

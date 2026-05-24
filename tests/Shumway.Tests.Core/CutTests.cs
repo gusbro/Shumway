@@ -58,11 +58,19 @@ public class CutTests
     }
 
     [Fact]
-    public void Cut_BarrierAboveCurrentB_Throws()
+    public void Cut_BarrierAboveCurrentB_IsNoOp()
     {
+        // Phase-10 chunk 146: a stale barrier above current B means
+        // the CP the cut wanted to commit to has been popped already
+        // (typically by a surrounding catch/3 unwinding past the
+        // clause-entry snapshot). ISO semantics: cut commits to the
+        // most recent *active* CP; if it's gone, the cut is a no-op.
+        // Was an ArgumentOutOfRangeException pre-chunk-146.
         var engine = new Engine();
         engine.PushChoicePoint(0, 0);
-        Assert.Throws<ArgumentOutOfRangeException>(() => engine.Cut(engine.B + 100));
+        int bBefore = engine.B;
+        engine.Cut(engine.B + 100);
+        Assert.Equal(bBefore, engine.B);  // unchanged
     }
 
     // ---------- Trail compaction: binding trail ----------

@@ -77,6 +77,10 @@ public static class MetaBuiltins
             Database, "assertz(+Clause)", "Adds a clause to the end of its dynamic predicate.");
         BuiltinsRegistry.Register("asserta", 1, Asserta,
             Database, "asserta(+Clause)", "Adds a clause to the front of its dynamic predicate.");
+        // Chunk 145: 'assert/1' is the historical name; ISO and SWI
+        // both accept it as a synonym for assertz/1.
+        BuiltinsRegistry.Register("assert",  1, Assertz,
+            Database, "assert(+Clause)", "Synonym for assertz/1 (historical SWI/GProlog name).");
         BuiltinsRegistry.Register("retract", 1, Retract,
             Database, "retract(+Clause)", "Removes the first clause that unifies with the argument.");
 
@@ -119,6 +123,46 @@ public static class MetaBuiltins
 
         BuiltinsRegistry.Register("read_term_from_atom", 2, ReadTermFromAtom,
             Term, "read_term_from_atom(+Atom, -Term)", "Parses an atom into a term.");
+        // Chunk 145: SWI/GProlog compat — /3 takes an options list
+        // that we currently accept but ignore (no options affect the
+        // parser yet).
+        BuiltinsRegistry.Register("read_term_from_atom", 3, ReadTermFromAtom3,
+            Term, "read_term_from_atom(+Atom, -Term, +Options)",
+            "Parses an atom into a term; Options accepted for SWI/GProlog compat (currently ignored).");
+
+        // Chunk 145: GProlog name/2 — atom/number ↔ list of codes.
+        BuiltinsRegistry.Register("name", 2, NameBuiltin,
+            Term, "name(?AtomOrNumber, ?Codes)",
+            "Bidirectional conversion between an atom/number and its character-code list.");
+
+        // Chunk 145: SWI global variables.
+        const string Globals = "Global variables";
+        BuiltinsRegistry.Register("nb_setval", 2, Shumway.Builtins.GlobalVarsBuiltins.NbSetval,
+            Globals, "nb_setval(+Key, +Value)",
+            "Non-backtrackable global variable assignment.");
+        BuiltinsRegistry.Register("nb_getval", 2, Shumway.Builtins.GlobalVarsBuiltins.NbGetval,
+            Globals, "nb_getval(+Key, -Value)",
+            "Reads a non-backtrackable global variable; existence_error if unset.");
+        BuiltinsRegistry.Register("nb_current", 2, Shumway.Builtins.GlobalVarsBuiltins.NbCurrent,
+            Globals, "nb_current(?Key, ?Value)",
+            "Enumerates global variables; fails for an unset Key (no throw).");
+        BuiltinsRegistry.Register("b_setval", 2, Shumway.Builtins.GlobalVarsBuiltins.BSetval,
+            Globals, "b_setval(+Key, +Value)",
+            "Backtrackable global variable assignment (Phase-10 stub stores non-backtrackably).");
+        BuiltinsRegistry.Register("b_getval", 2, Shumway.Builtins.GlobalVarsBuiltins.BGetval,
+            Globals, "b_getval(+Key, -Value)",
+            "Reads a backtrackable global variable; existence_error if unset.");
+
+        // Chunk 145: SWI time builtins (minimal — get_time as float
+        // epoch seconds, stamp_date_time as a single date_time
+        // compound with the local-time components).
+        const string Time = "Time";
+        BuiltinsRegistry.Register("get_time", 1, GetTime,
+            Time, "get_time(-Time)",
+            "Current wall-clock time in seconds since the Unix epoch (a float).");
+        BuiltinsRegistry.Register("stamp_date_time", 3, StampDateTime,
+            Time, "stamp_date_time(+Stamp, -DateTime, +TimeZone)",
+            "Converts a Unix-epoch stamp to a date(Y,M,D,H,Mi,S,Off,Tz,DST) term.");
 
         BuiltinsRegistry.Register("current_op", 3, CurrentOp,
             "Reflection", "current_op(?Priority, ?Type, ?Name)",
@@ -751,6 +795,161 @@ public static class MetaBuiltins
         Term parsed = parser.ReadClauseTerm();
         Cell parsedCell = Materializer.MaterializeAsCell(engine, parsed);
         return engine.UnifyRegisterWithCell(1, parsedCell);
+    }
+
+    /// <summary><c>read_term_from_atom(+Atom, -Term, +Options)</c> —
+    /// SWI / GProlog compat. The options list is accepted but
+    /// currently ignored (no read-time options affect the parser
+    /// yet). Chunk 145.</summary>
+    public static bool ReadTermFromAtom3(Engine engine)
+    {
+        Cell atomCell = ResolveLocal(engine, engine.GetRegister(0));
+        if (atomCell.Tag != Tag.Atom)
+            throw new PrologRuntimeException("type_error", "atom");
+        string source = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
+        if (!source.TrimEnd().EndsWith(".", StringComparison.Ordinal))
+            source += ".";
+        var parser = new Shumway.Compiler.Parsing.Parser(
+            new Shumway.Compiler.Lexer.Lexer(source),
+            Shumway.Compiler.Parsing.OperatorTable.Default());
+        Term parsed = parser.ReadClauseTerm();
+        Cell parsedCell = Materializer.MaterializeAsCell(engine, parsed);
+        return engine.UnifyRegisterWithCell(1, parsedCell);
+    }
+
+    /// <summary><c>name(?AtomOrNumber, ?Codes)</c> — old-style GProlog
+    /// bidirectional conversion. With first arg bound, builds the
+    /// list of character codes for its print form. With second arg
+    /// bound, tries to parse the codes as a number first; on
+    /// parse-failure interns as an atom. Chunk 145.</summary>
+    public static bool NameBuiltin(Engine engine)
+    {
+        Cell firstCell = ResolveLocal(engine, engine.GetRegister(0));
+        if (firstCell.Tag == Tag.Atom)
+        {
+            string name = AtomTable.GetById(firstCell.AsAtomId)?.Name ?? "";
+            return UnifyCodesList(engine, regOut: 1, name);
+        }
+        if (firstCell.Tag == Tag.Int)
+        {
+            string s = firstCell.AsInt.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return UnifyCodesList(engine, regOut: 1, s);
+        }
+        if (firstCell.Tag == Tag.Float)
+        {
+            double v = Cell.DecodeFloat(firstCell, engine.GetHeap(firstCell.FloatPairedIndex));
+            string s = v.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+            if (!s.Contains('.') && !s.Contains('e') && !s.Contains('E')) s += ".0";
+            return UnifyCodesList(engine, regOut: 1, s);
+        }
+        if (firstCell.Tag == Tag.Ref)
+        {
+            // Read the codes list and decide: numeric → number, else atom.
+            string s = ReadCodesAsString(engine, engine.GetRegister(1));
+            if (long.TryParse(s, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out long iv))
+                return engine.UnifyRegisterWithCell(0, Cell.Int(iv));
+            if (double.TryParse(s, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out double dv))
+                return engine.UnifyRegisterWithHeapAt(0, engine.MakeFloat(dv));
+            int atomId = AtomTable.Intern(s, permanent: false).Id;
+            return engine.UnifyRegisterWithCell(0, Cell.Atom(atomId));
+        }
+        throw new PrologRuntimeException("type_error", "atomic");
+    }
+
+    private static bool UnifyCodesList(Engine engine, int regOut, string text)
+    {
+        if (text.Length == 0)
+        {
+            return engine.UnifyRegisterWithCell(regOut,
+                Cell.Atom(AtomTable.EmptyListId));
+        }
+        int baseIdx = engine.AllocateHeap(2 * text.Length + 1);
+        for (int i = 0; i < text.Length; i++)
+        {
+            int lisIdx = baseIdx + 2 * i;
+            int headIdx = lisIdx + 1;
+            engine.SetHeap(lisIdx, Cell.Lis(headIdx));
+            engine.SetHeap(headIdx, Cell.Int(text[i]));
+        }
+        engine.SetHeap(baseIdx + 2 * text.Length, Cell.Atom(AtomTable.EmptyListId));
+        return engine.UnifyRegisterWithHeapAt(regOut, baseIdx);
+    }
+
+    private static string ReadCodesAsString(Engine engine, Cell codesCell)
+    {
+        var sb = new System.Text.StringBuilder();
+        Cell cur = ResolveLocal(engine, codesCell);
+        while (cur.Tag == Tag.Lis)
+        {
+            Cell head = ResolveLocal(engine, engine.GetHeap(cur.AsHeapIndex));
+            if (head.Tag != Tag.Int)
+                throw new PrologRuntimeException("type_error", "character_code");
+            sb.Append((char)head.AsInt);
+            cur = ResolveLocal(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+        }
+        if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)
+            throw new PrologRuntimeException("type_error", "list");
+        return sb.ToString();
+    }
+
+    /// <summary><c>get_time(-Time)</c> — current wall-clock time in
+    /// seconds since the Unix epoch, as a float. SWI-compat. Chunk 145.</summary>
+    public static bool GetTime(Engine engine)
+    {
+        double now = (DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc))
+            .TotalSeconds;
+        int idx = engine.MakeFloat(now);
+        return engine.UnifyRegisterWithHeapAt(0, idx);
+    }
+
+    /// <summary><c>stamp_date_time(+Stamp, -DateTime, +TimeZone)</c> —
+    /// converts a Unix-epoch stamp (float seconds) into the SWI
+    /// <c>date(Y, M, D, H, Mi, S, Off, TZ, DST)</c> compound. The
+    /// TimeZone arg is honoured for the atoms <c>'UTC'</c> and
+    /// <c>local</c>; any other atom is treated as the local zone
+    /// (full IANA-name lookup isn't worth the System.TimeZoneInfo
+    /// wiring for the typical caller). Chunk 145.</summary>
+    public static bool StampDateTime(Engine engine)
+    {
+        Cell stampCell = ResolveLocal(engine, engine.GetRegister(0));
+        Cell tzCell = ResolveLocal(engine, engine.GetRegister(2));
+        if (stampCell.Tag == Tag.Ref)
+            throw new PrologRuntimeException("instantiation_error");
+        double stamp = stampCell.Tag switch
+        {
+            Tag.Float => Cell.DecodeFloat(stampCell, engine.GetHeap(stampCell.FloatPairedIndex)),
+            Tag.Int => stampCell.AsInt,
+            _ => throw new PrologRuntimeException("type_error", "number"),
+        };
+        string tzName = tzCell.Tag == Tag.Atom
+            ? (AtomTable.GetById(tzCell.AsAtomId)?.Name ?? "local")
+            : "local";
+
+        DateTime utc = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+            .AddSeconds(stamp);
+        DateTime local = string.Equals(tzName, "UTC", StringComparison.OrdinalIgnoreCase)
+            ? utc
+            : utc.ToLocalTime();
+        TimeSpan offset = string.Equals(tzName, "UTC", StringComparison.OrdinalIgnoreCase)
+            ? TimeSpan.Zero
+            : TimeZoneInfo.Local.GetUtcOffset(utc);
+
+        var dt = new CompoundTerm("date", new Term[]
+        {
+            new IntTerm(local.Year),
+            new IntTerm(local.Month),
+            new IntTerm(local.Day),
+            new IntTerm(local.Hour),
+            new IntTerm(local.Minute),
+            new FloatTerm(local.Second + local.Millisecond / 1000.0),
+            new IntTerm((long)offset.TotalSeconds),
+            new AtomTerm(tzName),
+            new AtomTerm("-"),  // DST flag — '-' = unknown/n-a.
+        });
+        Cell dtCell = Materializer.MaterializeAsCell(engine, dt);
+        return engine.UnifyRegisterWithCell(1, dtCell);
     }
 
     // ============================================================================

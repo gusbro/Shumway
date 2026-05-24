@@ -545,9 +545,14 @@ public sealed class Engine
     {
         if (barrier < -1)
             throw new ArgumentOutOfRangeException(nameof(barrier));
+        // Chunk 146: a stale barrier (above current B) means the
+        // choice point the cut wanted to commit to has already been
+        // popped — typically by a surrounding catch/3 unwinding past
+        // the clause-entry snapshot. ISO semantics: cut commits to
+        // the most recent *active* CP at clause entry; if that CP is
+        // gone, the cut is a no-op. Don't throw.
         if (barrier > _b)
-            throw new ArgumentOutOfRangeException(nameof(barrier),
-                $"Barrier {barrier} is above current B {_b}; cannot cut upward.");
+            return;
         if (_b == barrier)
             return;
 

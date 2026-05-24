@@ -20,9 +20,15 @@ namespace Shumway.Embedding;
 /// named module — re-consulting the same module overwrites the previous
 /// contents, matching ADR-008.</para>
 /// </summary>
-public sealed class PrologEngine
+public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 {
     public const string DefaultModuleName = "user";
+
+    /// <summary>Per-engine global-variable store (chunk 145) backing
+    /// the SWI <c>nb_setval/2</c> / <c>nb_getval/2</c> family.
+    /// Survives across queries on this engine.</summary>
+    public Shumway.Builtins.GlobalVarStore GlobalVars { get; } =
+        new Shumway.Builtins.GlobalVarStore();
 
     private readonly Dictionary<string, ModuleManifest> _modules = new()
     {

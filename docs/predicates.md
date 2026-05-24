@@ -68,8 +68,10 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `copy_term(+Term, -Copy)` | Copies a term with fresh variables. |
 | `copy_term(+Term, -Copy, -Goals)` | Copies a term with fresh variables and collects the residual attribute goals. |
 | `functor(?Term, ?Name, ?Arity)` | Relates a term to its functor name and arity. |
+| `name(?AtomOrNumber, ?Codes)` | Bidirectional conversion between an atom/number and its character-code list. |
 | `numbervars(+Term, +Start, -End)` | Binds the unbound variables of Term to '$VAR'(N) terms with consecutive N from Start. |
 | `read_term_from_atom(+Atom, -Term)` | Parses an atom into a term. |
+| `read_term_from_atom(+Atom, -Term, +Options)` | Parses an atom into a term; Options accepted for SWI/GProlog compat (currently ignored). |
 | `term_to_atom(?Term, ?Atom)` | Converts between a term and its textual atom representation. |
 
 ## Control
@@ -112,6 +114,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `abolish(+PredicateIndicator)` | Removes every clause of the named dynamic predicate. |
 | `abolish_all_tables` | Discards every tabled answer; later queries recompute against the current program. |
 | `abolish_table(+PredicateIndicator)` | Discards the tabled answers of one predicate, given as Name/Arity. |
+| `assert(+Clause)` | Synonym for assertz/1 (historical SWI/GProlog name). |
 | `asserta(+Clause)` | Adds a clause to the front of its dynamic predicate. |
 | `assertz(+Clause)` | Adds a clause to the end of its dynamic predicate. |
 | `clause(+Head, ?Body)` | Enumerates the clauses (Head :- Body) of a predicate. |
@@ -307,8 +310,25 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `#\(+Constraint)` | The constraint does not hold (negation). |
 | `#\/(+Constraint1, +Constraint2)` | At least one constraint holds (disjunction). |
 
+## Global variables
+
+| Predicate | Description |
+| --- | --- |
+| `b_getval(+Key, -Value)` | Reads a backtrackable global variable; existence_error if unset. |
+| `b_setval(+Key, +Value)` | Backtrackable global variable assignment (Phase-10 stub stores non-backtrackably). |
+| `nb_current(?Key, ?Value)` | Enumerates global variables; fails for an unset Key (no throw). |
+| `nb_getval(+Key, -Value)` | Reads a non-backtrackable global variable; existence_error if unset. |
+| `nb_setval(+Key, +Value)` | Non-backtrackable global variable assignment. |
+
 ## Reflection
 
 | Predicate | Description |
 | --- | --- |
 | `current_op(?Priority, ?Type, ?Name)` | Enumerates the operator table; backtracks over every operator (ISO §8.17.3). |
+
+## Time
+
+| Predicate | Description |
+| --- | --- |
+| `get_time(-Time)` | Current wall-clock time in seconds since the Unix epoch (a float). |
+| `stamp_date_time(+Stamp, -DateTime, +TimeZone)` | Converts a Unix-epoch stamp to a date(Y,M,D,H,Mi,S,Off,Tz,DST) term. |
