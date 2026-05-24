@@ -591,6 +591,148 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return hc.Args[0] is Shumway.Compiler.Ast.VarTerm;
     }
 
+    // ====================================================================
+    // Chunk 155d — in-place retract for extensible-indexed dynamic
+    // predicates.
+    // ====================================================================
+
+    /// <summary>Chunk 155d — returns the body address of the
+    /// <paramref name="clauseIndex"/>'th still-alive clause in the
+    /// var-fallthrough chain, where "alive" is defined as
+    /// <c>died == long.MaxValue</c> in the entry's
+    /// <c>check_visible</c>. Previously-retracted entries (died set
+    /// to some generation by a prior chunk-155d retract) are
+    /// skipped, so the index aligns with the post-removal
+    /// <c>_dynamicClauses</c> ordering — except that this lookup
+    /// runs BEFORE the current <c>RemoveAt</c>, so
+    /// <paramref name="clauseIndex"/> is the position in the
+    /// pre-removal list. Returns <c>-1</c> on layout mismatch or
+    /// when the index runs off the chain.</summary>
+    private int FindBodyAddrForClauseIndex(Engine engine, int functorId, int clauseIndex)
+    {
+        if (!IsExtensibleIndexedLayout(engine, functorId)) return -1;
+        var addrMap = engine.CurrentFunctorAddresses;
+        if (addrMap is null || !addrMap.TryGetValue(functorId, out int predAddr)) return -1;
+        var prog = engine.CurrentProgram!;
+        int failStub = engine.DynamicFailStubAddr;
+        int varChainHead = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 2);
+        int cur = varChainHead;
+        bool isHead = true;
+        int aliveIdx = 0;
+        while (true)
+        {
+            if (cur < 0 || cur + 27 > prog.Length) return -1;
+            int chainHeaderSize = isHead ? 9 : 5;
+            // check_visible's died slot lives 9 bytes into the
+            // opcode (after the opcode byte and the 8-byte born).
+            int diedAddr = cur + chainHeaderSize + 9;
+            int execOpPos = cur + chainHeaderSize + 17;
+            if (execOpPos + 5 > prog.Length) return -1;
+            if (prog[execOpPos] != (byte)Shumway.Core.Opcode.Execute) return -1;
+            long died = Shumway.Core.BytecodeIO.ReadInt64(prog, diedAddr);
+            if (died == long.MaxValue)
+            {
+                if (aliveIdx == clauseIndex)
+                    return Shumway.Core.BytecodeIO.ReadInt32(prog, execOpPos + 1);
+                aliveIdx++;
+            }
+            int next = Shumway.Core.BytecodeIO.ReadInt32(prog, cur + 1);
+            if (next == failStub) return -1;
+            cur = next;
+            isHead = false;
+        }
+    }
+
+    /// <summary>Chunk 155d — walks every chain in the chunk-155a
+    /// indexed predicate (each bucket chain reached through a switch
+    /// table value, the list chain head, and the var-fallthrough
+    /// chain), and patches the died slot of every entry whose
+    /// <c>execute</c> targets <paramref name="bodyAddr"/>. The died
+    /// slot is the second 8-byte field of the entry's
+    /// <c>check_visible</c>, located at chain-header-size + 1 + 8
+    /// from the entry's start. Returns <c>true</c> when at least one
+    /// entry was patched (the chain actually held a reference to the
+    /// body); <c>false</c> when the predicate isn't using the chunk-
+    /// 155a layout or no chain referenced the retired body.</summary>
+    private bool TryPatchDiedInAllIndexedChains(Engine engine, int functorId, int bodyAddr)
+    {
+        if (!IsExtensibleIndexedLayout(engine, functorId)) return false;
+        var addrMap = engine.CurrentFunctorAddresses!;
+        var prog = engine.CurrentProgram!;
+        int predAddr = addrMap[functorId];
+        int failStub = engine.DynamicFailStubAddr;
+
+        // Enumerate every chain head: var fallthrough + list bucket
+        // (when present) + every (key → head) entry across the atom /
+        // integer / structure sub-switches' tables.
+        var chainHeads = new List<int>();
+        int varChainHead = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 2);
+        chainHeads.Add(varChainHead);
+        int listLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 10);
+        if (listLbl != varChainHead && listLbl > 0)
+            chainHeads.Add(listLbl);
+
+        int constLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 6);
+        int structLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 14);
+        // Walk the const cascade for atom / integer sub-switches.
+        int p = constLbl;
+        while (p > 0 && p != varChainHead && p + 5 <= prog.Length)
+        {
+            var op = (Shumway.Core.Opcode)prog[p];
+            if (op != Shumway.Core.Opcode.SwitchOnAtom
+                && op != Shumway.Core.Opcode.SwitchOnInteger
+                && op != Shumway.Core.Opcode.SwitchOnStructure) break;
+            int tid = Shumway.Core.BytecodeIO.ReadInt32(prog, p + 1);
+            var table = engine.GetSwitchTable(tid);
+            if (table is null) break;
+            foreach (int v in table.Values) chainHeads.Add(v);
+            p = table.DefaultAddress;
+        }
+        // The struct sub-switch may sit on its own label outside the
+        // const cascade.
+        if (structLbl > 0 && structLbl != varChainHead && structLbl + 5 <= prog.Length
+            && prog[structLbl] == (byte)Shumway.Core.Opcode.SwitchOnStructure)
+        {
+            int sTid = Shumway.Core.BytecodeIO.ReadInt32(prog, structLbl + 1);
+            var sTable = engine.GetSwitchTable(sTid);
+            if (sTable is not null)
+                foreach (int v in sTable.Values) chainHeads.Add(v);
+        }
+
+        // Walk each chain head, patching every entry that targets
+        // bodyAddr.
+        bool anyPatched = false;
+        var visited = new HashSet<int>();
+        foreach (int head in chainHeads)
+        {
+            if (!visited.Add(head)) continue;
+            int cur = head;
+            bool isHead = true;
+            while (cur > 0 && cur + 27 <= prog.Length)
+            {
+                int chainHeaderSize = isHead ? 9 : 5;
+                int execOpPos = cur + chainHeaderSize + 17;
+                if (execOpPos + 5 > prog.Length) break;
+                if (prog[execOpPos] != (byte)Shumway.Core.Opcode.Execute) break;
+                int target = Shumway.Core.BytecodeIO.ReadInt32(prog, execOpPos + 1);
+                if (target == bodyAddr)
+                {
+                    // Patch the died slot: check_visible is at offset
+                    // chainHeaderSize; died is the second 8-byte
+                    // field, i.e. at +1 (opcode) +8 (born) → +9.
+                    int diedAddr = cur + chainHeaderSize + 9;
+                    Shumway.Core.BytecodeIO.WriteInt64(prog, diedAddr, _dbGeneration);
+                    anyPatched = true;
+                }
+                int next = Shumway.Core.BytecodeIO.ReadInt32(prog, cur + 1);
+                if (next == failStub) break;
+                cur = next;
+                isHead = false;
+            }
+        }
+        return anyPatched;
+    }
+
     /// <summary>Chunk 155c — writes <paramref name="newTable"/> into
     /// the dynamic region's slot of the cached <see cref="_dynamicLink"/>
     /// so the next query's <see cref="SetupQueryFromTerm"/> (which
@@ -947,13 +1089,29 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         if (!_dynamicClauses.TryGetValue(functorId, out var list)) return false;
         int idx = list.IndexOf(clause);
         if (idx < 0) return false;
+        // Chunk 155d: for a chunk-155a indexed predicate, capture the
+        // matched clause's body address from the var chain BEFORE
+        // removing the clause from _dynamicClauses (the var-chain
+        // walk reads idx-indexed entries in their pre-removal order).
+        int retiredBodyAddr = -1;
+        if (IsExtensibleIndexedLayout(engine, functorId))
+            retiredBodyAddr = FindBodyAddrForClauseIndex(engine, functorId, idx);
         list.RemoveAt(idx);
         InvalidateDynamicCache(functorId);
         PatchDiedFromChain(engine, functorId, idx);
-        // Chunk 155b: retract on a chunk-155 indexed predicate would
-        // need to patch the died slot of every chain entry that
-        // references the matched clause's body — a multi-chain walk
-        // not yet implemented. Hot indexed predicates rebuild.
+        // Chunk 155d: in-place retract for the chunk-155a layout
+        // walks every chain (all buckets + var fallthrough) and
+        // patches the died slot of every chain entry whose execute
+        // operand targets the retired body. born/died sentinels turn
+        // into real generations so check_visible filters the clause
+        // for queries that begin after this retract while older
+        // in-flight queries (captured a smaller view-gen) still see it
+        // — the ISO logical-update view.
+        if (retiredBodyAddr > 0
+            && TryPatchDiedInAllIndexedChains(engine, functorId, retiredBodyAddr))
+            return true;
+        // Fallback: hot indexed predicate that we couldn't retract in
+        // place → rebuild via persistent invalidation.
         if (_jitIndexProfile.IsHot(functorId)) InvalidatePersistent();
         return true;
     }
