@@ -648,6 +648,30 @@ public sealed class Engine
 
         _bindingTrailTop = bindingWrite;
         _extraTrailTop = extraWrite;
+
+        // Chunk 147: catch frames captured snapshots of the trail
+        // tops at push time. The compaction above just dropped some
+        // entries from above each snapshot — those entries no longer
+        // exist, so the snapshot's position is stale. Clip any
+        // snapshot that points past the new top back down to it; on
+        // throw, UnwindToCatchFrame's UnwindTrails(snap) won't ask
+        // to roll back to a non-existent trail position.
+        for (int i = 0; i < _catchFrames.Count; i++)
+        {
+            CatchFrame f = _catchFrames[i];
+            bool changed = false;
+            if (f.SnapBindingTrailTop > _bindingTrailTop)
+            {
+                f.SnapBindingTrailTop = _bindingTrailTop;
+                changed = true;
+            }
+            if (f.SnapExtraTrailTop > _extraTrailTop)
+            {
+                f.SnapExtraTrailTop = _extraTrailTop;
+                changed = true;
+            }
+            if (changed) _catchFrames[i] = f;
+        }
     }
 
     // ----- Registers -----
