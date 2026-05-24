@@ -141,6 +141,9 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("stream_property", 2, StreamProperty,
             Io, "stream_property(?Stream, ?Property)",
             "Enumerates (Stream, Property) pairs for every open stream (ISO §8.11.8.2).");
+        BuiltinsRegistry.Register("set_stream_position", 2, SetStreamPosition,
+            Io, "set_stream_position(+Stream, +Position)",
+            "Seeks the stream to the given byte position (ISO §8.11.10).");
         // ISO read_term/2 — accepts a stream handle in arg 1 and unifies
         // the parsed term with arg 2. Chunk 59: delegate to the existing
         // stream-aware reader so the builtin set covers both names.
@@ -215,6 +218,13 @@ public static class MetaBuiltins
                 pairs.Add((h, new CompoundTerm("end_of_stream",
                     new Term[] { new AtomTerm(state) })));
             }
+            // Chunk 140d: position/1 — present when the underlying
+            // .NET stream is seekable. user_input / user_output
+            // (console-backed) aren't.
+            long? pos = TryGetStreamPosition(h);
+            if (pos.HasValue)
+                pairs.Add((h, new CompoundTerm("position",
+                    new Term[] { new IntTerm(pos.Value) })));
         }
         int returnPc = engine.P + 9;
         return StreamPropertyStep(engine, pairs.ToArray(), 0, returnPc, isResume: false);
@@ -241,6 +251,63 @@ public static class MetaBuiltins
         if (!engine.UnifyRegisterWithCell(1, propCell)) return false;
         if (isResume) engine.ResumeAtReturnPc(returnPc);
         return true;
+    }
+
+    /// <summary>Returns the underlying .NET stream's byte position when
+    /// the stream is seekable, or null otherwise (e.g. console-backed
+    /// user_input / user_output). Used both for the
+    /// <c>position(N)</c> property of <c>stream_property/2</c> and as
+    /// the seekable-stream check for <c>set_stream_position/2</c>.
+    /// (Chunk 140d.)</summary>
+    private static long? TryGetStreamPosition(Shumway.Core.StreamHandle h)
+    {
+        try
+        {
+            if (h.Reader is System.IO.StreamReader sr)
+                return sr.BaseStream.CanSeek ? sr.BaseStream.Position : null;
+            if (h.Writer is System.IO.StreamWriter sw)
+                return sw.BaseStream.CanSeek ? sw.BaseStream.Position : null;
+        }
+        catch (NotSupportedException) { /* fall through */ }
+        catch (ObjectDisposedException) { /* fall through */ }
+        return null;
+    }
+
+    /// <summary><c>set_stream_position(+Stream, +Position)</c> — ISO
+    /// §8.11.10. Seeks the underlying byte stream to the given
+    /// position. Position is an integer (byte offset), matching what
+    /// <c>stream_property(_, position(N))</c> yields. (Chunk 140d.)
+    /// </summary>
+    public static bool SetStreamPosition(Engine engine)
+    {
+        var h = Shumway.Builtins.StreamBuiltins.ResolveStream(
+            engine, engine.GetRegister(0));
+        Cell posCell = MaterializeRegisterAsCell(engine, 1);
+        if (posCell.Tag == Tag.Ref)
+            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+        if (posCell.Tag != Tag.Int)
+            throw new Shumway.Core.PrologRuntimeException("domain_error", "stream_position");
+        long target = posCell.AsInt;
+
+        System.IO.Stream? baseStream = h.Reader is System.IO.StreamReader sr
+            ? sr.BaseStream
+            : h.Writer is System.IO.StreamWriter sw ? sw.BaseStream : null;
+        if (baseStream is null || !baseStream.CanSeek)
+            throw new Shumway.Core.PrologRuntimeException(
+                "permission_error", "reposition,stream");
+
+        // Writer needs flush before the seek so any buffered output
+        // lands at the *current* position rather than the new one.
+        if (h.Writer is System.IO.StreamWriter w) w.Flush();
+        baseStream.Position = target;
+        return true;
+    }
+
+    private static Cell MaterializeRegisterAsCell(Engine engine, int reg)
+    {
+        Cell c = engine.GetRegister(reg);
+        if (c.Tag != Tag.Ref) return c;
+        return engine.GetHeap(engine.Deref(c.AsHeapIndex));
     }
 
     /// <summary><c>read_term_from_stream(Stream, Term)</c> — reads

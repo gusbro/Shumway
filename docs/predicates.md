@@ -221,6 +221,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `read_term_from_stream(+Stream, -Term)` | Reads one term from a read-mode stream. |
 | `set_input(+Stream)` | Sets the current input stream (ISO §8.11.3). |
 | `set_output(+Stream)` | Sets the current output stream (ISO §8.11.4). |
+| `set_stream_position(+Stream, +Position)` | Seeks the stream to the given byte position (ISO §8.11.10). |
 | `stream_property(?Stream, ?Property)` | Enumerates (Stream, Property) pairs for every open stream (ISO §8.11.8.2). |
 | `tab(+N)` | Writes N spaces to the current output stream. |
 | `with_output_to(+Sink, :Goal)` | Runs a goal, capturing its output into an atom, string or code list. |
