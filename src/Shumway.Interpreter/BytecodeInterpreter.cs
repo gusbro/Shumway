@@ -156,9 +156,9 @@ public sealed class BytecodeInterpreter
     /// dispatch loop terminates. The engine's <c>P</c> is overwritten with the start PC
     /// and then advanced according to each instruction's semantics.
     /// </summary>
-    public InterpreterResult Run(byte[] code, int startPc)
+    public InterpreterResult Run(ProgramView code, int startPc)
     {
-        ArgumentNullException.ThrowIfNull(code);
+        ArgumentNullException.ThrowIfNull(code.Primary);
         if (startPc < 0 || startPc >= code.Length)
             throw new ArgumentOutOfRangeException(nameof(startPc),
                 $"startPc 0x{startPc:X} is outside [0, 0x{code.Length:X}).");
@@ -181,7 +181,7 @@ public sealed class BytecodeInterpreter
     /// matching), so the sub-predicate never pushes choice points — the
     /// sentinel trick is safe (no later backtrack restores the sentinel
     /// as the saved Cp of a still-active CP).</para></summary>
-    public bool RunSubroutine(byte[] code, int target)
+    public bool RunSubroutine(ProgramView code, int target)
     {
         ArgumentNullException.ThrowIfNull(code);
         int savedPc = _engine.P;
@@ -213,7 +213,7 @@ public sealed class BytecodeInterpreter
     /// choice point is alive (the previous run committed to a single solution
     /// via cut, or the predicate had only one clause and it just finished).
     /// </summary>
-    public InterpreterResult Backtrack(byte[] code)
+    public InterpreterResult Backtrack(ProgramView code)
     {
         ArgumentNullException.ThrowIfNull(code);
         if (!TryBacktrack()) return InterpreterResult.Failed;
@@ -221,7 +221,7 @@ public sealed class BytecodeInterpreter
         catch (TopLevelFailure) { return InterpreterResult.Failed; }
     }
 
-    private InterpreterResult Dispatch(byte[] code)
+    private InterpreterResult Dispatch(ProgramView code)
     {
         while (true)
         {
@@ -1333,7 +1333,7 @@ public sealed class BytecodeInterpreter
     /// returned — failed, which the caller turns into a backtrack so the
     /// triggering unification fails. A no-op (returns true) when nothing
     /// is queued, the overwhelmingly common case.</summary>
-    private bool FlushPendingWakeups(byte[] code)
+    private bool FlushPendingWakeups(ProgramView code)
     {
         if (!_engine.HasPendingWakeups) return true;
 
@@ -1366,7 +1366,7 @@ public sealed class BytecodeInterpreter
     /// the hooks returned — all in the live engine. A hook's goal can
     /// unify further attributed variables and queue more wakeups, so the
     /// queue is drained in a loop.</summary>
-    private bool RunWakeups(byte[] code)
+    private bool RunWakeups(ProgramView code)
     {
         while (_engine.HasPendingWakeups)
         {
@@ -1407,7 +1407,7 @@ public sealed class BytecodeInterpreter
     /// <summary>Meta-calls every goal in a hook's returned list, in
     /// order. An unbound or empty list runs nothing; a non-list term is
     /// a malformed hook result and fails.</summary>
-    private bool RunGoalList(byte[] code, Cell listCell)
+    private bool RunGoalList(ProgramView code, Cell listCell)
     {
         Cell cursor = DerefCell(listCell);
         while (cursor.Tag == Tag.Lis)
@@ -1428,7 +1428,7 @@ public sealed class BytecodeInterpreter
     /// builtin runs directly, a user/prelude predicate runs via
     /// <see cref="RunGoalInEngine"/>. An undefined predicate raises an
     /// existence error.</summary>
-    private bool MetaCallInEngine(byte[] code, Cell goal)
+    private bool MetaCallInEngine(ProgramView code, Cell goal)
     {
         goal = DerefCell(goal);
         int functorId;
@@ -1499,7 +1499,7 @@ public sealed class BytecodeInterpreter
     ///
     /// <para>Returns false only on an unrecoverable failure (no choice
     /// point remains).</para></summary>
-    private bool DispatchCall(byte[] code, int callArity, int barrier)
+    private bool DispatchCall(ProgramView code, int callArity, int barrier)
     {
         int pc = _engine.P;
         Cell goal = DerefCell(_engine.GetRegister(0));
@@ -1637,7 +1637,7 @@ public sealed class BytecodeInterpreter
     /// at the entry choice-point level, and on success any choice points
     /// the goal left are cut away (once semantics). Returns true iff the
     /// goal succeeded. The caller saves/restores X registers (chunk 80).</summary>
-    private bool RunGoalInEngine(byte[] code, int target)
+    private bool RunGoalInEngine(ProgramView code, int target)
     {
         int savedPc    = _engine.P;
         int savedCp    = _engine.Cp;
