@@ -21,10 +21,14 @@ public static class IOBuiltins
         return true;
     }
 
-    /// <summary><c>nl</c> — writes a single newline character.</summary>
+    /// <summary><c>nl</c> — writes a single newline character to the
+    /// current output stream. With the per-engine stream registry
+    /// wired (chunk 140), <c>set_output/1</c> changes where this
+    /// writes; without one, falls back to <see cref="Engine.Out"/>.</summary>
     public static bool Nl(Engine engine)
     {
-        engine.Out.WriteLine();
+        var w = engine.Streams?.CurrentOutput.Writer ?? engine.Out;
+        w.WriteLine();
         return true;
     }
 

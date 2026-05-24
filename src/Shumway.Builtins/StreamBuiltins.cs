@@ -291,6 +291,160 @@ public static class StreamBuiltins
         return engine.UnifyRegisterWithCell(1, value);
     }
 
+    // ---------- §8.12 character / code I/O ----------
+
+    /// <summary><c>get_char/1</c> — reads one character from the
+    /// current input stream. ISO §8.12.1.</summary>
+    public static bool GetChar0(Engine engine)
+    {
+        var h = engine.Streams?.CurrentInput
+            ?? throw new InvalidOperationException("Engine has no stream registry.");
+        return ReadCharInto(engine, h, regOut: 0);
+    }
+
+    /// <summary><c>peek_char/1</c> — peeks one character from the
+    /// current input stream. ISO §8.12.2.</summary>
+    public static bool PeekChar0(Engine engine)
+    {
+        var h = engine.Streams?.CurrentInput
+            ?? throw new InvalidOperationException("Engine has no stream registry.");
+        return PeekCharInto(engine, h, regOut: 0);
+    }
+
+    /// <summary><c>put_char/1</c> — writes a single-character atom to
+    /// the current output stream. ISO §8.12.3.</summary>
+    public static bool PutChar1(Engine engine)
+    {
+        var h = engine.Streams?.CurrentOutput
+            ?? throw new InvalidOperationException("Engine has no stream registry.");
+        WriteOneChar(engine, h, regChar: 0);
+        return true;
+    }
+
+    /// <summary><c>put_char(+Stream, +Char)</c> — ISO §8.12.3.</summary>
+    public static bool PutChar2(Engine engine)
+    {
+        var h = ResolveWriter(engine, engine.GetRegister(0));
+        WriteOneChar(engine, h, regChar: 1);
+        return true;
+    }
+
+    /// <summary><c>get_code/1</c> — reads one character code from
+    /// current input. EOF returns -1. ISO §8.12.4.</summary>
+    public static bool GetCode0(Engine engine)
+    {
+        var h = engine.Streams?.CurrentInput
+            ?? throw new InvalidOperationException("Engine has no stream registry.");
+        return ReadCodeInto(engine, h, regOut: 0);
+    }
+
+    /// <summary><c>get_code(+Stream, -Code)</c> — ISO §8.12.4.</summary>
+    public static bool GetCode2(Engine engine)
+    {
+        var h = ResolveReader(engine, engine.GetRegister(0));
+        return ReadCodeInto(engine, h, regOut: 1);
+    }
+
+    /// <summary><c>peek_code/1</c> — ISO §8.12.5.</summary>
+    public static bool PeekCode0(Engine engine)
+    {
+        var h = engine.Streams?.CurrentInput
+            ?? throw new InvalidOperationException("Engine has no stream registry.");
+        return PeekCodeInto(engine, h, regOut: 0);
+    }
+
+    /// <summary><c>peek_code(+Stream, -Code)</c> — ISO §8.12.5.</summary>
+    public static bool PeekCode2(Engine engine)
+    {
+        var h = ResolveReader(engine, engine.GetRegister(0));
+        return PeekCodeInto(engine, h, regOut: 1);
+    }
+
+    /// <summary><c>put_code(+Code)</c> — writes the character with the
+    /// given code to current output. ISO §8.12.6.</summary>
+    public static bool PutCode1(Engine engine)
+    {
+        var h = engine.Streams?.CurrentOutput
+            ?? throw new InvalidOperationException("Engine has no stream registry.");
+        WriteOneCode(engine, h, regCode: 0);
+        return true;
+    }
+
+    /// <summary><c>put_code(+Stream, +Code)</c> — ISO §8.12.6.</summary>
+    public static bool PutCode2(Engine engine)
+    {
+        var h = ResolveWriter(engine, engine.GetRegister(0));
+        WriteOneCode(engine, h, regCode: 1);
+        return true;
+    }
+
+    // ---------- character / code helpers ----------
+
+    private static bool ReadCharInto(Engine engine, StreamHandle h, int regOut)
+    {
+        if (!h.IsReader)
+            throw new PrologRuntimeException("permission_error", "input,stream");
+        int c = h.Reader!.Read();
+        Cell value = c < 0
+            ? Cell.Atom(AtomTable.Intern("end_of_file", permanent: true).Id)
+            : Cell.Atom(AtomTable.Intern(((char)c).ToString(), permanent: false).Id);
+        return engine.UnifyRegisterWithCell(regOut, value);
+    }
+
+    private static bool PeekCharInto(Engine engine, StreamHandle h, int regOut)
+    {
+        if (!h.IsReader)
+            throw new PrologRuntimeException("permission_error", "input,stream");
+        int c = h.Reader!.Peek();
+        Cell value = c < 0
+            ? Cell.Atom(AtomTable.Intern("end_of_file", permanent: true).Id)
+            : Cell.Atom(AtomTable.Intern(((char)c).ToString(), permanent: false).Id);
+        return engine.UnifyRegisterWithCell(regOut, value);
+    }
+
+    private static bool ReadCodeInto(Engine engine, StreamHandle h, int regOut)
+    {
+        if (!h.IsReader)
+            throw new PrologRuntimeException("permission_error", "input,stream");
+        int c = h.Reader!.Read();
+        // ISO §8.12.4: EOF is the integer -1.
+        return engine.UnifyRegisterWithCell(regOut, Cell.Int(c));
+    }
+
+    private static bool PeekCodeInto(Engine engine, StreamHandle h, int regOut)
+    {
+        if (!h.IsReader)
+            throw new PrologRuntimeException("permission_error", "input,stream");
+        int c = h.Reader!.Peek();
+        return engine.UnifyRegisterWithCell(regOut, Cell.Int(c));
+    }
+
+    private static void WriteOneChar(Engine engine, StreamHandle h, int regChar)
+    {
+        Cell c = Resolve(engine, engine.GetRegister(regChar));
+        if (c.Tag == Tag.Ref)
+            throw new PrologRuntimeException("instantiation_error");
+        if (c.Tag != Tag.Atom)
+            throw new PrologRuntimeException("type_error", "character");
+        string name = AtomTable.GetById(c.AsAtomId)?.Name ?? "";
+        if (name.Length != 1)
+            throw new PrologRuntimeException("type_error", "character");
+        h.Writer!.Write(name[0]);
+    }
+
+    private static void WriteOneCode(Engine engine, StreamHandle h, int regCode)
+    {
+        Cell c = Resolve(engine, engine.GetRegister(regCode));
+        if (c.Tag == Tag.Ref)
+            throw new PrologRuntimeException("instantiation_error");
+        if (c.Tag != Tag.Int)
+            throw new PrologRuntimeException("type_error", "integer");
+        long code = c.AsInt;
+        if (code < 0 || code > char.MaxValue)
+            throw new PrologRuntimeException("representation_error", "character_code");
+        h.Writer!.Write((char)code);
+    }
+
     // ---------- current_input / current_output / set_input / set_output ----------
 
     /// <summary><c>current_input(Stream)</c> — ISO §8.11.1. Unifies
