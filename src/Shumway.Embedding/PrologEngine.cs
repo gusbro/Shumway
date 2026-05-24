@@ -208,34 +208,48 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private static int WalkChainToTailNextOperand(
         byte[] prog, int chainHead, int failStubAddr)
     {
-        const int ChainEntrySizeHead = 9 + 17 + 5;     // try_me_else + check_visible + execute
-        const int ChainEntrySizeNonHead = 5 + 17 + 5;  // retry_me_else + check_visible + execute
         int cur = chainHead;
         bool isHead = true;
         while (true)
         {
             if (cur < 0 || cur + 5 > prog.Length) return -1;
             var op = (Shumway.Core.Opcode)prog[cur];
-            int nextOperandPos;
-            int entrySize;
             if (isHead)
             {
                 if (op != Shumway.Core.Opcode.TryMeElse) return -1;
-                nextOperandPos = cur + 1;
-                entrySize = ChainEntrySizeHead;
             }
             else
             {
                 if (op != Shumway.Core.Opcode.RetryMeElse) return -1;
-                nextOperandPos = cur + 1;
-                entrySize = ChainEntrySizeNonHead;
             }
-            int next = Shumway.Core.BytecodeIO.ReadInt32(prog, nextOperandPos);
-            if (next == failStubAddr) return nextOperandPos;
-            // Otherwise next is another chain entry — follow.
+            int next = Shumway.Core.BytecodeIO.ReadInt32(prog, cur + 1);
+            if (next == failStubAddr) return cur + 1;
             cur = next;
             isHead = false;
         }
+    }
+
+    /// <summary>Chunk 155f — returns <c>true</c> when the chain
+    /// entry at <paramref name="entryAddr"/> sits in a 9-byte
+    /// chain-instruction slot (the original try_me_else footprint,
+    /// possibly demoted to retry_me_else + 4 nops by an asserta).
+    /// In that case the entry's check_visible / execute live at the
+    /// head offsets (+9 / +26); for a native non-head 5-byte slot
+    /// they live at +5 / +22. The distinguisher is the byte at
+    /// entry+5: <c>Nop</c> for a demoted-head slot, anything else
+    /// (start of check_visible) for a native non-head.</summary>
+    private static int ChainEntryHeaderSize(byte[] prog, int entryAddr)
+    {
+        // try_me_else (9-byte) head: opcode TryMeElse.
+        if (entryAddr + 1 <= prog.Length
+            && prog[entryAddr] == (byte)Shumway.Core.Opcode.TryMeElse)
+            return 9;
+        // retry_me_else: 5-byte native OR 9-byte demoted-from-head.
+        // Demoted has Nop at offset +5; native has CheckVisible.
+        if (entryAddr + 6 <= prog.Length
+            && prog[entryAddr + 5] == (byte)Shumway.Core.Opcode.Nop)
+            return 9;
+        return 5;
     }
 
     /// <summary>Chunk 155b — given the predicate entry and the new
@@ -571,27 +585,21 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         var prog = engine.CurrentProgram!;
         int failStub = engine.DynamicFailStubAddr;
         int cur = varChainHead;
-        bool isHead = true;
         int idx = 0;
         while (true)
         {
             if (cur < 0 || cur + 27 > prog.Length) break;
-            int chainHeaderSize = isHead ? 9 : 5;
-            int execOpPos = cur + chainHeaderSize + 17;  // skip chain header + check_visible (17)
+            int chainHeaderSize = ChainEntryHeaderSize(prog, cur);
+            int execOpPos = cur + chainHeaderSize + 17;
             if (execOpPos + 5 > prog.Length) break;
             if (prog[execOpPos] != (byte)Shumway.Core.Opcode.Execute) break;
             int bodyAddr = Shumway.Core.BytecodeIO.ReadInt32(prog, execOpPos + 1);
-            // Cross-reference the live clause list. The new clause
-            // has already been added to _dynamicClauses (Assertz
-            // ran before this), so the var chain (one entry behind)
-            // maps idx → clauses[idx] for idx < clauses.Count - 1.
             if (idx < clauses.Count - 1 && IsVarArgAt0(clauses[idx]))
                 result.Add(bodyAddr);
             idx++;
             int next = Shumway.Core.BytecodeIO.ReadInt32(prog, cur + 1);
             if (next == failStub) break;
             cur = next;
-            isHead = false;
         }
         return result;
     }
@@ -665,6 +673,371 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     }
 
     // ====================================================================
+    // Chunk 155f — in-place asserta for extensible-indexed dynamic
+    // predicates.
+    // ====================================================================
+
+    /// <summary>Chunk 155f — prepends a clause to a chunk-155a
+    /// indexed predicate in place. Asserta is harder than assertz
+    /// because the chain head's address changes (the new entry
+    /// becomes the head, the old head gets demoted to a non-head),
+    /// and the old head was referenced from external pointer slots
+    /// — switch_on_term operands, switch_on_atom/integer/structure
+    /// table values, sub-switch default-cascade addresses. Each of
+    /// those slots that pointed at an old head gets redirected to
+    /// the new head; the demoted old head's <c>&lt;next&gt;</c>
+    /// operand is unchanged (still references the second entry in
+    /// the chain or fail_stub).
+    ///
+    /// Returns <c>false</c> when the predicate isn't using the
+    /// chunk-155a layout, the new key has no existing sub-switch
+    /// (would be a layout change), or any chain to demote isn't
+    /// currently a <c>try_me_else</c> head (a chain whose only
+    /// remaining live entry has died — unusual but a possibility
+    /// after a retract).</summary>
+    private bool TryPrependToIndexedDynamic(
+        Engine engine, int functorId, Shumway.Compiler.Ast.Clause newClause)
+    {
+        if (!IsExtensibleIndexedLayout(engine, functorId)) return false;
+        var addrMap = engine.CurrentFunctorAddresses!;
+        var prog = engine.CurrentProgram!;
+        int predAddr = addrMap[functorId];
+        int failStub = engine.DynamicFailStubAddr;
+        if (failStub <= 0) return false;
+
+        Shumway.Compiler.Ast.Term head = newClause.Kind == Shumway.Compiler.Ast.ClauseKind.Rule
+            ? ((Shumway.Compiler.Ast.CompoundTerm)newClause.Term).Args[0]
+            : newClause.Term;
+        if (head is not Shumway.Compiler.Ast.CompoundTerm headComp || headComp.Args.Length == 0)
+            return false;
+        var arg0 = headComp.Args[0];
+        int arity = headComp.Args.Length;
+        bool isVarArg = arg0 is Shumway.Compiler.Ast.VarTerm;
+
+        int varChainHead = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 2);
+
+        // Plan: which chain heads need demotion? var-arg touches
+        // every chain; same-key touches (bucket + var); new-key
+        // touches (var) and creates a brand-new bucket without
+        // demotion.
+        var chainsToDemote = new List<int>();
+        bool isNewKey = false;
+        int newKeyValue = 0;
+        int subSwitchTableId = -1;
+
+        if (isVarArg)
+        {
+            var heads = new HashSet<int>();
+            if (!CollectAllChainHeadsForRedirect(engine, predAddr, heads))
+                return false;
+            chainsToDemote.AddRange(heads);
+        }
+        else
+        {
+            chainsToDemote.Add(varChainHead);
+            int bucketChainHead = FindBucketChainHead(engine, predAddr, newClause);
+            isNewKey = bucketChainHead < 0;
+            if (!isNewKey)
+            {
+                chainsToDemote.Add(bucketChainHead);
+            }
+            else
+            {
+                if (!TryLocateSubSwitchForArg(
+                        engine, predAddr, arg0, out newKeyValue, out subSwitchTableId))
+                    return false;
+            }
+        }
+
+        // Validate every chain head we plan to demote currently has
+        // try_me_else as its first opcode. A chain whose head was
+        // demoted by a prior asserta or whose head was retracted
+        // (died != MaxValue) but never compacted would fail this
+        // check — let the rebuild handle those rarities.
+        foreach (int h in chainsToDemote)
+        {
+            if (h < 0 || h + 9 > prog.Length) return false;
+            if (prog[h] != (byte)Shumway.Core.Opcode.TryMeElse) return false;
+        }
+        // Also dedupe — a chain referenced by multiple keys (e.g.
+        // every bucket reachable from a shared sub-switch default)
+        // would otherwise be demoted twice. CollectAllChainHeadsForRedirect
+        // dedupes, but the same-key path adds bucket + var manually.
+        chainsToDemote = chainsToDemote.Distinct().ToList();
+
+        // Compile the new clause's body.
+        var single = new[] { newClause };
+        var transformed = PhraseTransform.Apply(
+            MetaTransform.Apply(DcgTransform.Apply(single)));
+        transformed = Shumway.Compiler.Modes.ModeSpecializationTransform.Apply(
+            transformed, Modes);
+        var dynCtx = new ModuleRewrite.Context(
+            DefaultModuleName, new HashSet<int>(), _dynamicFunctors);
+        var rewritten = transformed.Select(c => ModuleRewrite.Rewrite(c, dynCtx))
+            .ToList();
+        if (rewritten.Count == 0) return false;
+        var compiledClause = new Shumway.Compiler.Wam.ClauseCompiler().Compile(
+            rewritten[0],
+            _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts);
+
+        var bodyEmitter = new Shumway.Compiler.Wam.BytecodeEmitter();
+        bodyEmitter.EmitMetaDbgInfo(0);
+        int bodyContentLocalStart = bodyEmitter.Position;
+        bodyEmitter.AppendBytes(compiledClause.Bytecode);
+        byte[] bodyChunk = bodyEmitter.ToBytes();
+        int bodyAddr = engine.AppendCode(bodyChunk);
+        prog = engine.CurrentProgram!;
+
+        // Patch call sites in the body to absolute targets.
+        foreach (var site in compiledClause.CallSites)
+        {
+            int operandPos = bodyAddr + bodyContentLocalStart + site.OpcodeOffset + 1;
+            int target = addrMap.TryGetValue(site.CalleeFunctorId, out int addr)
+                ? addr
+                : Shumway.Core.CallTarget.ForUndefined(site.CalleeFunctorId);
+            Shumway.Core.BytecodeIO.WriteInt32(prog, operandPos, target);
+        }
+
+        // For new-key concrete: build a brand-new bucket chain
+        // (NEW BODY FIRST, then var-args), add to switch table.
+        // No demotion needed for the new bucket.
+        if (isNewKey)
+        {
+            var varArgBodies = CollectVarArgBodies(engine, varChainHead, functorId);
+            // Asserta-flavoured layout: new body first, var-args after.
+            int newBucketHead = BuildAndAppendBucketChainAsserta(
+                engine, failStub, arity, bodyAddr, varArgBodies);
+            prog = engine.CurrentProgram!;
+            var oldTable = engine.GetSwitchTable(subSwitchTableId);
+            if (oldTable is null) return false;
+            var newTable = oldTable.WithAdditionalEntry(newKeyValue, newBucketHead);
+            engine.ReplaceSwitchTable(subSwitchTableId, newTable);
+            MirrorSwitchTableIntoDynamicLink(subSwitchTableId, newTable);
+        }
+
+        // Demote each chain to demote, build new head chunk, record
+        // the old → new redirect.
+        var redirectMap = new Dictionary<int, int>();
+        foreach (int oldHead in chainsToDemote)
+        {
+            // Demote try_me_else (9 bytes) to retry_me_else (5
+            // bytes) + 4 nops (4 bytes). The <next> operand at
+            // +1..+4 stays — retry_me_else uses it identically.
+            prog[oldHead] = (byte)Shumway.Core.Opcode.RetryMeElse;
+            prog[oldHead + 5] = (byte)Shumway.Core.Opcode.Nop;
+            prog[oldHead + 6] = (byte)Shumway.Core.Opcode.Nop;
+            prog[oldHead + 7] = (byte)Shumway.Core.Opcode.Nop;
+            prog[oldHead + 8] = (byte)Shumway.Core.Opcode.Nop;
+
+            // New head: try_me_else <oldHead> arity + check_visible
+            // + execute <bodyAddr>.
+            var em = new Shumway.Compiler.Wam.BytecodeEmitter();
+            em.EmitTryMeElse(oldHead, arity);
+            em.EmitCheckVisible(born: _dbGeneration, died: long.MaxValue);
+            em.EmitExecute(bodyAddr);
+            int newHead = engine.AppendCode(em.ToBytes());
+            prog = engine.CurrentProgram!;
+            redirectMap[oldHead] = newHead;
+        }
+
+        // Walk every pointer slot that could reference a chain head
+        // and redirect any that match.
+        RedirectChainHeads(engine, predAddr, redirectMap);
+
+        // Diag: dump atom table post-asserta.
+        {
+            int constLbl_d = Shumway.Core.BytecodeIO.ReadInt32(engine.CurrentProgram!, predAddr + 6);
+            if (constLbl_d > 0 && constLbl_d + 5 <= engine.CurrentProgram!.Length
+                && engine.CurrentProgram![constLbl_d] == (byte)Shumway.Core.Opcode.SwitchOnAtom)
+            {
+                int tid_d = Shumway.Core.BytecodeIO.ReadInt32(engine.CurrentProgram!, constLbl_d + 1);
+                var tbl = engine.GetSwitchTable(tid_d);
+                if (tbl is not null)
+                {
+                    var sb = new System.Text.StringBuilder();
+                    sb.Append($"[155f-diag] post-asserta atomTable id={tid_d}, default={tbl.DefaultAddress}, entries=[");
+                    for (int i = 0; i < tbl.Count; i++)
+                        sb.Append($"{tbl.Keys[i]}→{tbl.Values[i]},");
+                    sb.Append("]");
+                    System.Console.Error.WriteLine(sb.ToString());
+                }
+            }
+        }
+
+        SyncPersistentFromEngine(engine);
+        engine.RefreshLiteralPoolsCallback?.Invoke(
+            _literalPools.Strings.Snapshot(),
+            _literalPools.Floats.Snapshot(),
+            _literalPools.BigInts.Snapshot());
+        return true;
+    }
+
+    /// <summary>Chunk 155f — like
+    /// <see cref="BuildAndAppendNewBucketChain"/> but with the new
+    /// clause's body FIRST (the asserta order) followed by the var-
+    /// arg bodies in source order. Returns the new bucket chain
+    /// head address.</summary>
+    private int BuildAndAppendBucketChainAsserta(
+        Engine engine, int failStub, int headArity,
+        int newBodyAddr, IReadOnlyList<int> varArgBodies)
+    {
+        var bodies = new List<int> { newBodyAddr };
+        bodies.AddRange(varArgBodies);
+        int count = bodies.Count;
+        const int HeadEntrySize = 9 + 17 + 5;
+        const int NonHeadEntrySize = 5 + 17 + 5;
+        int startAddr = engine.ProgramLength;
+        var em = new Shumway.Compiler.Wam.BytecodeEmitter();
+        for (int i = 0; i < count; i++)
+        {
+            int thisSize = i == 0 ? HeadEntrySize : NonHeadEntrySize;
+            int nextAddr = (i == count - 1) ? failStub
+                                            : startAddr + em.Position + thisSize;
+            if (i == 0) em.EmitTryMeElse(nextAddr, headArity);
+            else        em.EmitRetryMeElse(nextAddr);
+            em.EmitCheckVisible(born: _dbGeneration, died: long.MaxValue);
+            em.EmitExecute(bodies[i]);
+        }
+        int chunkAddr = engine.AppendCode(em.ToBytes());
+        System.Diagnostics.Debug.Assert(chunkAddr == startAddr);
+        return chunkAddr;
+    }
+
+    /// <summary>Chunk 155f — collects every chain head reachable
+    /// from the predicate's entry into <paramref name="heads"/>
+    /// (deduplicated). Used by the var-arg asserta path to plan
+    /// demotion across every chain.</summary>
+    private bool CollectAllChainHeadsForRedirect(
+        Engine engine, int predAddr, HashSet<int> heads)
+    {
+        var prog = engine.CurrentProgram;
+        if (prog is null) return false;
+        int varChainHead = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 2);
+        heads.Add(varChainHead);
+        int listLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 10);
+        if (listLbl > 0 && listLbl != varChainHead) heads.Add(listLbl);
+        int constLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 6);
+        int structLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 14);
+        int p = constLbl;
+        while (p > 0 && p != varChainHead && p + 5 <= prog.Length)
+        {
+            var op = (Shumway.Core.Opcode)prog[p];
+            if (op != Shumway.Core.Opcode.SwitchOnAtom
+                && op != Shumway.Core.Opcode.SwitchOnInteger
+                && op != Shumway.Core.Opcode.SwitchOnStructure) break;
+            int tid = Shumway.Core.BytecodeIO.ReadInt32(prog, p + 1);
+            var table = engine.GetSwitchTable(tid);
+            if (table is null) return false;
+            foreach (int v in table.Values)
+                if (v != varChainHead) heads.Add(v);
+            p = table.DefaultAddress;
+        }
+        if (structLbl > 0 && structLbl != varChainHead
+            && structLbl + 5 <= prog.Length
+            && prog[structLbl] == (byte)Shumway.Core.Opcode.SwitchOnStructure)
+        {
+            int sTid = Shumway.Core.BytecodeIO.ReadInt32(prog, structLbl + 1);
+            var sTable = engine.GetSwitchTable(sTid);
+            if (sTable is not null)
+                foreach (int v in sTable.Values)
+                    if (v != varChainHead) heads.Add(v);
+        }
+        return true;
+    }
+
+    /// <summary>Chunk 155f — walks every pointer slot that can
+    /// reference a chain head and replaces any value present in
+    /// <paramref name="redirect"/> with the new address. Touches:
+    /// <c>switch_on_term</c>'s var / list / struct operands at
+    /// <c>predAddr + 2 / 10 / 14</c> (const_lbl is excluded —
+    /// it points at a sub-switch, never a chain head directly);
+    /// every sub-switch table's keys-and-values plus its default
+    /// address. Each modified switch table is replaced with a new
+    /// instance and mirrored into the cached <c>_dynamicLink</c>.</summary>
+    private void RedirectChainHeads(
+        Engine engine, int predAddr, IReadOnlyDictionary<int, int> redirect)
+    {
+        if (redirect.Count == 0) return;
+        var prog = engine.CurrentProgram!;
+        // switch_on_term operands.
+        foreach (int slotOffset in new[] { 2, 10, 14 })
+        {
+            int cur = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + slotOffset);
+            if (redirect.TryGetValue(cur, out int repl))
+                Shumway.Core.BytecodeIO.WriteInt32(prog, predAddr + slotOffset, repl);
+        }
+        // Walk every sub-switch table reachable from constLbl.
+        int constLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 6);
+        int p = constLbl;
+        while (p > 0 && p + 5 <= prog.Length)
+        {
+            var op = (Shumway.Core.Opcode)prog[p];
+            if (op != Shumway.Core.Opcode.SwitchOnAtom
+                && op != Shumway.Core.Opcode.SwitchOnInteger
+                && op != Shumway.Core.Opcode.SwitchOnStructure) break;
+            int tid = Shumway.Core.BytecodeIO.ReadInt32(prog, p + 1);
+            var table = engine.GetSwitchTable(tid);
+            if (table is null) break;
+            var newTable = RedirectSwitchTable(table, redirect);
+            if (newTable is not null)
+            {
+                engine.ReplaceSwitchTable(tid, newTable);
+                MirrorSwitchTableIntoDynamicLink(tid, newTable);
+            }
+            int nextP = table.DefaultAddress;
+            if (nextP == p) break;  // safety: no infinite loop on self-default
+            p = nextP;
+        }
+        // Also walk the struct sub-switch reachable via switch_on_term's
+        // struct operand (it may not be in the const cascade — chunk-
+        // 155a places it on its own label).
+        int structLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 14);
+        if (structLbl > 0 && structLbl + 5 <= prog.Length
+            && prog[structLbl] == (byte)Shumway.Core.Opcode.SwitchOnStructure)
+        {
+            int sTid = Shumway.Core.BytecodeIO.ReadInt32(prog, structLbl + 1);
+            var sTable = engine.GetSwitchTable(sTid);
+            if (sTable is not null)
+            {
+                var newTable = RedirectSwitchTable(sTable, redirect);
+                if (newTable is not null)
+                {
+                    engine.ReplaceSwitchTable(sTid, newTable);
+                    MirrorSwitchTableIntoDynamicLink(sTid, newTable);
+                }
+            }
+        }
+    }
+
+    /// <summary>Chunk 155f — returns a new
+    /// <see cref="Shumway.Core.SwitchTable"/> with every value
+    /// (including the default address) replaced if present in
+    /// <paramref name="redirect"/>. Returns <c>null</c> when no
+    /// entry was redirected — caller skips the replacement.</summary>
+    private static Shumway.Core.SwitchTable? RedirectSwitchTable(
+        Shumway.Core.SwitchTable old, IReadOnlyDictionary<int, int> redirect)
+    {
+        bool changed = false;
+        int[] keys = old.Keys.ToArray();
+        int[] values = old.Values.ToArray();
+        for (int i = 0; i < values.Length; i++)
+        {
+            if (redirect.TryGetValue(values[i], out int repl))
+            {
+                values[i] = repl;
+                changed = true;
+            }
+        }
+        int newDefault = old.DefaultAddress;
+        if (redirect.TryGetValue(newDefault, out int defRepl))
+        {
+            newDefault = defRepl;
+            changed = true;
+        }
+        return changed ? new Shumway.Core.SwitchTable(keys, values, newDefault) : null;
+    }
+
+    // ====================================================================
     // Chunk 155d — in-place retract for extensible-indexed dynamic
     // predicates.
     // ====================================================================
@@ -690,14 +1063,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         int failStub = engine.DynamicFailStubAddr;
         int varChainHead = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 2);
         int cur = varChainHead;
-        bool isHead = true;
         int aliveIdx = 0;
         while (true)
         {
             if (cur < 0 || cur + 27 > prog.Length) return -1;
-            int chainHeaderSize = isHead ? 9 : 5;
-            // check_visible's died slot lives 9 bytes into the
-            // opcode (after the opcode byte and the 8-byte born).
+            int chainHeaderSize = ChainEntryHeaderSize(prog, cur);
             int diedAddr = cur + chainHeaderSize + 9;
             int execOpPos = cur + chainHeaderSize + 17;
             if (execOpPos + 5 > prog.Length) return -1;
@@ -712,7 +1082,6 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             int next = Shumway.Core.BytecodeIO.ReadInt32(prog, cur + 1);
             if (next == failStub) return -1;
             cur = next;
-            isHead = false;
         }
     }
 
@@ -780,19 +1149,15 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         {
             if (!visited.Add(head)) continue;
             int cur = head;
-            bool isHead = true;
             while (cur > 0 && cur + 27 <= prog.Length)
             {
-                int chainHeaderSize = isHead ? 9 : 5;
+                int chainHeaderSize = ChainEntryHeaderSize(prog, cur);
                 int execOpPos = cur + chainHeaderSize + 17;
                 if (execOpPos + 5 > prog.Length) break;
                 if (prog[execOpPos] != (byte)Shumway.Core.Opcode.Execute) break;
                 int target = Shumway.Core.BytecodeIO.ReadInt32(prog, execOpPos + 1);
                 if (target == bodyAddr)
                 {
-                    // Patch the died slot: check_visible is at offset
-                    // chainHeaderSize; died is the second 8-byte
-                    // field, i.e. at +1 (opcode) +8 (born) → +9.
                     int diedAddr = cur + chainHeaderSize + 9;
                     Shumway.Core.BytecodeIO.WriteInt64(prog, diedAddr, _dbGeneration);
                     anyPatched = true;
@@ -800,7 +1165,6 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 int next = Shumway.Core.BytecodeIO.ReadInt32(prog, cur + 1);
                 if (next == failStub) break;
                 cur = next;
-                isHead = false;
             }
         }
         return anyPatched;
@@ -1099,12 +1463,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         EnsureDynamic(fid);
         GetOrCreateDynamicSlot(fid).Insert(0, clause);
         InvalidateDynamicCache(fid);
-        // Chunk 155b: asserta in-place for indexed dynamics isn't
-        // implemented yet (it would need to demote each affected
-        // chain's head — chunk-128 trick — and patch every switch
-        // table entry that points at that head). Hot indexed
-        // predicates fall back to rebuild for now.
-        if (_jitIndexProfile.IsHot(fid)) InvalidatePersistent();
+        // Chunk 155f: persistent invalidation moved into
+        // PrependDynamicClauseIncremental — the in-place path can
+        // handle most indexed-dynamic asserta cases now, and only
+        // genuinely-unhandled ones force a rebuild.
     }
 
     /// <summary>Removes the first clause whose <see cref="Clause"/> is
@@ -1166,20 +1528,23 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // matched clause's body address from the var chain BEFORE
         // removing the clause from _dynamicClauses (the var-chain
         // walk reads idx-indexed entries in their pre-removal order).
+        bool isIndexed = IsExtensibleIndexedLayout(engine, functorId);
         int retiredBodyAddr = -1;
-        if (IsExtensibleIndexedLayout(engine, functorId))
+        if (isIndexed)
             retiredBodyAddr = FindBodyAddrForClauseIndex(engine, functorId, idx);
         list.RemoveAt(idx);
         InvalidateDynamicCache(functorId);
-        PatchDiedFromChain(engine, functorId, idx);
-        // Chunk 155d: in-place retract for the chunk-155a layout
-        // walks every chain (all buckets + var fallthrough) and
-        // patches the died slot of every chain entry whose execute
-        // operand targets the retired body. born/died sentinels turn
-        // into real generations so check_visible filters the clause
-        // for queries that begin after this retract while older
-        // in-flight queries (captured a smaller view-gen) still see it
-        // — the ISO logical-update view.
+        // For the chunk-127 chain layout, PatchDiedFromChain walks
+        // the predicate's single chain and patches entry[idx]'s
+        // died slot. For the chunk-155a indexed layout, the chain
+        // state populated by PopulateDynChainFor lists every chain
+        // entry from every bucket + the var chain in CONTIGUOUS
+        // bytecode order (PopulateDynChainFor does a linear walk),
+        // so entry[idx] maps to an unrelated bucket's died slot
+        // — skip the chunk-127 path here and let chunk-155d handle
+        // the multi-chain patching below.
+        if (!isIndexed)
+            PatchDiedFromChain(engine, functorId, idx);
         if (retiredBodyAddr > 0
             && TryPatchDiedInAllIndexedChains(engine, functorId, retiredBodyAddr))
             return true;
@@ -3492,9 +3857,20 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     internal void PrependDynamicClauseIncremental(
         Engine engine, int functorId, Clause newClause)
     {
-        if (!_dynChains.TryGetValue(functorId, out var chain)) return;
-        if (chain.TrampolineExecuteOperandAddr < 0) return;
-        if (engine.CurrentProgram is null) return;
+        // Chunk 155f: try in-place asserta for chunk-155a layout.
+        if (TryPrependToIndexedDynamic(engine, functorId, newClause))
+            return;
+        // Fall back to chunk-128 chain prepend for chain layout, or
+        // rebuild for indexed layouts we can't extend in place.
+        bool chainUsable =
+            _dynChains.TryGetValue(functorId, out var chain)
+            && chain.TrampolineExecuteOperandAddr >= 0
+            && engine.CurrentProgram is not null;
+        if (!chainUsable)
+        {
+            if (_jitIndexProfile.IsHot(functorId)) InvalidatePersistent();
+            return;
+        }
         if (engine.DynamicFailStubAddr <= 0) return;
 
         var (_, arity) = FunctorTable.Lookup(functorId);
