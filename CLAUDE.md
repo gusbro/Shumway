@@ -477,6 +477,41 @@ files). 24 new ISO-named builtins implemented along the way.
   ambiguity are recorded inline next to the tests that surface them;
   queued for Phase 10+.
 
+**Phase 10 — Engine robustness leftovers** (in progress).
+
+The deferred items from Phases 8 and 9. User-facing fixes first
+(catchers that need the offending term, cyclic-term safe walking,
+parser `\+` ambiguity), then internals (clause GC, indexing under
+visibility guards, extended LCO sweep, `char_conversion`).
+
+- **Stage A — user-facing**.
+  - 144 — `PrologRuntimeException` carries a `Term?` value so
+    `type_error(integer, X)` etc. can include the offending X in the
+    error term's value slot rather than the current fresh anonymous
+    var.
+  - 145 — cyclic-term safe materialiser. Phase-8 chunk 111 made list
+    materialisation iterative; chunk 145 extends the catch-cycle
+    treatment to general compounds so `X = f(X)` etc. can be observed
+    from C# without a stack overflow.
+  - 146 — parser `\+ (a, b)` ambiguity. The reader treats it as a
+    binary `\+(a, b)`; the ISO-correct read is unary
+    `\+ ((a, b))`. Adjust the precedence rule for prefix operators
+    followed by a `(`.
+- **Stage B — internals**.
+  - 147 — extended LCO sweep. Audit other "recurses per element"
+    sites in the engine (term copy, deep unification, etc.) similar
+    to chunk 111.
+  - 148 — clause GC for retracted clauses. ADR-015's append-only
+    chunks leave dead chain entries after `retract`; a long-lived
+    engine that retracts millions of clauses would want compaction.
+  - 149 — indexing under visibility guards. First-argument indexing
+    on dynamic predicates currently bypasses the chunk-120-128
+    `check_visible` guards (correct via sentinel `born=0,
+    died=MaxValue` but doesn't honour mid-query mutations through
+    the indexed path).
+  - 150 — `char_conversion/2`, `current_char_conversion/2`. The
+    last unimplemented ISO §8.14 pair.
+
 ---
 
 ## Communication and Iteration

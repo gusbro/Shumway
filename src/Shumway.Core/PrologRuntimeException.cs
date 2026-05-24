@@ -34,11 +34,38 @@ public sealed class PrologRuntimeException : Exception
     /// <summary>Arity companion to <see cref="BuiltinName"/>.</summary>
     public int BuiltinArity { get; private set; }
 
+    /// <summary>The offending value an <c>error/2</c> term should
+    /// report — the X in <c>type_error(integer, X)</c>, the Y in
+    /// <c>domain_error(not_less_than_zero, Y)</c>. Chunk 144 lets the
+    /// throwing site capture this so the catcher's value-slot variable
+    /// binds to the actual culprit rather than a fresh anonymous var.
+    /// Stored as an opaque <c>object</c> because Core can't reference
+    /// the AST <see cref="Term"/> type; the embedding layer's
+    /// <c>TranslateRuntimeError</c> casts it back when building the
+    /// error term.</summary>
+    public object? Value { get; private set; }
+
     public PrologRuntimeException(string kind, string detail = "")
         : base(string.IsNullOrEmpty(detail) ? kind : $"{kind}: {detail}")
     {
         Kind = kind;
         Detail = detail;
+    }
+
+    /// <summary>Constructor that snapshots the offending <paramref name="cell"/>
+    /// into <see cref="Value"/> by going through the
+    /// <see cref="Engine.MaterializeCellToTerm"/> callback (set by the
+    /// embedding layer). Materialisation is eager so the value
+    /// survives sub-engine teardown — the per-query <see cref="Engine"/>
+    /// instance is typically gone by the time a parent's
+    /// <c>catch/3</c> handler runs. Pass <c>null</c> for engine to
+    /// keep the value slot anonymous; this is the path Builtins-side
+    /// throws use when an Engine reference isn't handy.</summary>
+    public PrologRuntimeException(string kind, string detail, Engine? engine, Cell cell)
+        : this(kind, detail)
+    {
+        if (engine?.MaterializeCellToTerm is { } materialize)
+            Value = materialize(cell);
     }
 
     /// <summary>Stamps the offending builtin's <c>Name/Arity</c> onto the

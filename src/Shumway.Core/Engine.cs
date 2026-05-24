@@ -1080,6 +1080,17 @@ public sealed class Engine
     /// outlive any one query.</summary>
     public StreamRegistry? Streams { get; set; }
 
+    /// <summary>Wired by the embedding layer at query setup —
+    /// materialises a <see cref="Cell"/> into the AST <c>Term</c>
+    /// type (held as an opaque <c>object</c> here because Core can't
+    /// reference the AST namespace). Used by
+    /// <see cref="PrologRuntimeException"/>'s value-carrying
+    /// constructor (chunk 144) so a throwing builtin can snapshot
+    /// the offending term into the error's value slot; eager
+    /// materialisation lets the value survive sub-engine teardown.
+    /// </summary>
+    public Func<Cell, object?>? MaterializeCellToTerm { get; set; }
+
     /// <summary>Absolute byte position of the per-query fail-stub
     /// (ADR-015 chunk C step 4) — a tiny <c>call_builtin fail/0</c>
     /// emitted in the prefix. Dynamic predicates' last-clause chain

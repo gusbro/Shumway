@@ -1236,16 +1236,16 @@ public static class MetaBuiltins
     /// variable — PrologRuntimeException can't carry a Term payload
     /// yet, so the offending object is lost in translation; a catcher
     /// can still pattern-match on Op and ObjType.</summary>
-    private static Term BuildPermissionError(string detail)
+    private static Term BuildPermissionError(PrologRuntimeException re)
     {
-        string[] parts = detail.Split(',', 2);
+        string[] parts = re.Detail.Split(',', 2);
         string op = parts.Length > 0 ? parts[0] : "?";
         string objType = parts.Length > 1 ? parts[1] : "?";
         return new CompoundTerm("permission_error", new Term[]
         {
             new AtomTerm(op),
             new AtomTerm(objType),
-            new VarTerm("_"),
+            ValueTermOrVar(re),
         });
     }
 
@@ -1275,15 +1275,18 @@ public static class MetaBuiltins
             new CompoundTerm("evaluation_error", new Term[] { new AtomTerm(re.Detail) }), re),
         "instantiation_error" => WrapWithStampedContext(
             new AtomTerm("instantiation_error"), re),
+        // Chunk 144: type_error / domain_error now report the
+        // offending value in the second slot when the throw site
+        // captured it.
         "type_error" => WrapWithStampedContext(
             new CompoundTerm("type_error",
-                new Term[] { new AtomTerm(re.Detail), new VarTerm("_") }), re),
+                new Term[] { new AtomTerm(re.Detail), ValueTermOrVar(re) }), re),
         "existence_error" => WrapWithStampedContext(
             new CompoundTerm("existence_error",
                 new Term[] { new AtomTerm("procedure"), new AtomTerm(re.Detail) }), re),
         "domain_error" => WrapWithStampedContext(
             new CompoundTerm("domain_error",
-                new Term[] { new AtomTerm(re.Detail), new VarTerm("_") }), re),
+                new Term[] { new AtomTerm(re.Detail), ValueTermOrVar(re) }), re),
         "representation_error" => WrapWithStampedContext(
             new CompoundTerm("representation_error", new Term[] { new AtomTerm(re.Detail) }), re),
         "syntax_error" => WrapWithStampedContext(
@@ -1292,9 +1295,10 @@ public static class MetaBuiltins
             new CompoundTerm("resource_error", new Term[] { new AtomTerm(re.Detail) }), re),
         // Chunk 131e: ISO permission_error has three args. The Detail
         // string encodes "Operation,ObjectType" (e.g. "modify,static_procedure");
-        // we split on the comma and put a fresh var in the Obj slot.
+        // we split on the comma and put a fresh var in the Obj slot
+        // (chunk 144 carries the offending object too when present).
         "permission_error" => WrapWithStampedContext(
-            BuildPermissionError(re.Detail), re),
+            BuildPermissionError(re), re),
         "system_error" => WrapWithStampedContext(
             string.IsNullOrEmpty(re.Detail)
                 ? (Term)new AtomTerm("system_error")
@@ -1303,6 +1307,13 @@ public static class MetaBuiltins
         _ => new CompoundTerm("error",
             new Term[] { new AtomTerm(re.Kind), new AtomTerm(re.Detail) }),
     };
+
+    /// <summary>Returns the captured offending term (from
+    /// <see cref="PrologRuntimeException.Value"/>) when the throw site
+    /// snapshotted one, or a fresh anonymous var otherwise. (Chunk 144.)
+    /// </summary>
+    private static Term ValueTermOrVar(PrologRuntimeException re) =>
+        re.Value as Term ?? new VarTerm("_");
 
     private static int ExtractCallableFunctorId(Term head, string builtinName)
     {

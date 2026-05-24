@@ -31,10 +31,11 @@ public static class ArithmeticEvaluator
             Tag.Float => new Number(Cell.DecodeFloat(cell, engine.GetHeap(cell.FloatPairedIndex))),
             Tag.Str => EvaluateCompound(engine, cell),
             Tag.Ref => throw new PrologRuntimeException("instantiation_error"),
-            Tag.Atom => EvaluateAtomConstant(cell),
+            Tag.Atom => EvaluateAtomConstant(engine, cell),
             // Anything else in arithmetic position is non-evaluable.
-            // ISO §7.1.2: type_error(evaluable, _).
-            _ => throw new PrologRuntimeException("type_error", "evaluable"),
+            // ISO §7.1.2: type_error(evaluable, _). Chunk 144 carries
+            // the offending cell so the value slot binds to it.
+            _ => throw new PrologRuntimeException("type_error", "evaluable", engine, cell),
         };
     }
 
@@ -45,7 +46,7 @@ public static class ArithmeticEvaluator
         return engine.GetHeap(addr);
     }
 
-    private static Number EvaluateAtomConstant(Cell atomCell)
+    private static Number EvaluateAtomConstant(Engine engine, Cell atomCell)
     {
         // ISO §7.1.2 / §7.8.7: an atom in arithmetic position that isn't
         // a recognised arithmetic constant raises type_error(evaluable,
@@ -53,14 +54,10 @@ public static class ArithmeticEvaluator
         // (pi, e, max_tagged_integer, … all still to come), so every
         // bound atom hits this path.
         //
-        // The translated form is `type_error(evaluable, _)` — a catcher
-        // matching on the kind atom alone succeeds; the full ISO term
-        // with the proper Name/Arity indicator in the value slot is a
-        // later refinement, since PrologRuntimeException currently
-        // carries only a string Detail.
-        var atom = AtomTable.GetById(atomCell.AsAtomId);
-        _ = atom?.Name;     // kept for the eventual indicator-aware throw.
-        throw new PrologRuntimeException("type_error", "evaluable");
+        // Chunk 144 carries the offending atom cell as the
+        // exception's Value, so a catcher matching
+        // `error(type_error(evaluable, V), _)` binds V to the atom.
+        throw new PrologRuntimeException("type_error", "evaluable", engine, atomCell);
     }
 
     private static Number EvaluateCompound(Engine engine, Cell strCell)

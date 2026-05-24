@@ -2206,6 +2206,22 @@ public sealed class PrologEngine
             engine.CurrentStringLiterals = s;
         };
 
+        // Chunk 144: lets a PrologRuntimeException thrown from a
+        // builtin Impl carry the offending term in its error/2 value
+        // slot, instead of the Phase-9 fresh anonymous variable.
+        // Eager materialisation here means the term survives sub-engine
+        // teardown — the per-query Engine is gone by the time the
+        // parent's catch/3 handler translates the runtime exception.
+        engine.MaterializeCellToTerm = cell =>
+        {
+            // Snapshot to a heap slot so the standard "read by heap
+            // index" TermReader path applies (avoids a cell-direct
+            // reader variant).
+            int slot = engine.AllocateHeap(1);
+            engine.SetHeap(slot, cell);
+            return TermReader.Materialize(engine, slot);
+        };
+
         // ADR-015 chunk C step 4: per-functor chain state — record where
         // each clause's check_visible died slot lives in the running
         // program. retract patches the slot in place; next call's
