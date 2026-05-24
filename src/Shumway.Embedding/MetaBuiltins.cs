@@ -174,6 +174,13 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("current_op", 3, CurrentOp,
             "Reflection", "current_op(?Priority, ?Type, ?Name)",
             "Enumerates the operator table; backtracks over every operator (ISO §8.17.3).");
+        BuiltinsRegistry.Register("char_conversion", 2, CharConversion,
+            Reflect, "char_conversion(+InChar, +OutChar)",
+            "Registers a one-character-to-one-character mapping the lexer applies "
+            + "to the start of each unquoted token (ISO §8.14.9). InChar == OutChar removes the entry.");
+        BuiltinsRegistry.Register("current_char_conversion", 2, CurrentCharConversion,
+            Reflect, "current_char_conversion(?InChar, ?OutChar)",
+            "Enumerates the active char-conversion table (ISO §8.14.10).");
         BuiltinsRegistry.Register("op", 3, Op,
             Reflect, "op(+Priority, +Type, +Name)", "Declares an operator of the given priority and type.");
         BuiltinsRegistry.Register("set_prolog_flag",     2, SetPrologFlag,
@@ -779,6 +786,77 @@ public static class MetaBuiltins
                 Cell.Atom(AtomTable.Intern(typeName, permanent: true).Id))) return false;
         if (!engine.UnifyRegisterWithCell(2,
                 Cell.Atom(AtomTable.Intern(name, permanent: true).Id))) return false;
+        if (isResume) engine.ResumeAtReturnPc(returnPc);
+        return true;
+    }
+
+    /// <summary><c>char_conversion(+InChar, +OutChar)</c> — ISO §8.14.9.
+    /// Updates the engine's char-conversion table on
+    /// <see cref="PrologFlags.CharConversion"/> with a one-character
+    /// mapping. An identity mapping (<c>InChar == OutChar</c>) removes
+    /// the entry. Both arguments must be one-character atoms (chunk
+    /// 152).</summary>
+    public static bool CharConversion(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "char_conversion/2 requires the engine to be hosted by a PrologEngine.");
+        Cell inCell = ResolveLocal(engine, engine.GetRegister(0));
+        Cell outCell = ResolveLocal(engine, engine.GetRegister(1));
+        if (inCell.Tag == Tag.Ref)
+            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+        if (outCell.Tag == Tag.Ref)
+            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+        if (inCell.Tag != Tag.Atom)
+            throw new Shumway.Core.PrologRuntimeException("type_error", "character");
+        if (outCell.Tag != Tag.Atom)
+            throw new Shumway.Core.PrologRuntimeException("type_error", "character");
+        string inName = AtomTable.GetById(inCell.AsAtomId)?.Name ?? "";
+        string outName = AtomTable.GetById(outCell.AsAtomId)?.Name ?? "";
+        if (inName.Length != 1)
+            throw new Shumway.Core.PrologRuntimeException("type_error", "character");
+        if (outName.Length != 1)
+            throw new Shumway.Core.PrologRuntimeException("type_error", "character");
+        char ic = inName[0], oc = outName[0];
+        if (ic == oc) host.Flags.CharConversion.Remove(ic);
+        else host.Flags.CharConversion[ic] = oc;
+        return true;
+    }
+
+    /// <summary><c>current_char_conversion(?InChar, ?OutChar)</c> —
+    /// ISO §8.14.10. Enumerates the active char-conversion table on
+    /// backtracking. The Phase-9 PushBuiltinChoicePoint pattern drives
+    /// the multi-solution dispatch (chunk 152).</summary>
+    public static bool CurrentCharConversion(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "current_char_conversion/2 requires the engine to be hosted by a PrologEngine.");
+        // Snapshot so backtracking sees a stable view.
+        var entries = host.Flags.CharConversion
+            .Select(kv => (In: kv.Key, Out: kv.Value))
+            .ToArray();
+        int returnPc = engine.P + 9;
+        return CurrentCharConversionStep(engine, entries, 0, returnPc, isResume: false);
+    }
+
+    private static bool CurrentCharConversionStep(
+        Engine engine, (char In, char Out)[] entries,
+        int idx, int returnPc, bool isResume)
+    {
+        if (idx >= entries.Length) return false;
+        if (idx + 1 < entries.Length)
+        {
+            int nextIdx = idx + 1;
+            Func<Engine, int, bool> resume = (e, _) =>
+                CurrentCharConversionStep(e, entries, nextIdx, returnPc, isResume: true);
+            engine.PushBuiltinChoicePoint(resume, arity: 0);
+        }
+        var (ic, oc) = entries[idx];
+        int inAtomId = AtomTable.Intern(ic.ToString(), permanent: true).Id;
+        int outAtomId = AtomTable.Intern(oc.ToString(), permanent: true).Id;
+        if (!engine.UnifyRegisterWithCell(0, Cell.Atom(inAtomId))) return false;
+        if (!engine.UnifyRegisterWithCell(1, Cell.Atom(outAtomId))) return false;
         if (isResume) engine.ResumeAtReturnPc(returnPc);
         return true;
     }

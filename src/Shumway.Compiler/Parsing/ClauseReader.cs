@@ -74,6 +74,31 @@ public sealed class ClauseReader
         else if (body is CompoundTerm { Functor: "set_prolog_flag", Args: var spfArgs }
                  && spfArgs.Length == 2)
             ApplySetPrologFlagDirective(spfArgs, clause.Position);
+        else if (body is CompoundTerm { Functor: "char_conversion", Args: var ccArgs }
+                 && ccArgs.Length == 2)
+            ApplyCharConversionDirective(ccArgs, clause.Position);
+    }
+
+    /// <summary>Chunk 152 — ISO §6.4.2 / §8.14.9. The directive
+    /// <c>:- char_conversion(In, Out)</c> registers an in-character
+    /// to out-character mapping that the lexer applies to the start
+    /// of the next token. An identity mapping (<c>In == Out</c>)
+    /// removes the entry per ISO. <c>In</c> and <c>Out</c> must be
+    /// one-character atoms.</summary>
+    private void ApplyCharConversionDirective(Term[] args, SourcePosition pos)
+    {
+        if (args[0] is not AtomTerm inAtom || inAtom.Name.Length != 1)
+            throw new ParseException(
+                "char_conversion/2 directive: first argument must be a one-character atom.", pos);
+        if (args[1] is not AtomTerm outAtom || outAtom.Name.Length != 1)
+            throw new ParseException(
+                "char_conversion/2 directive: second argument must be a one-character atom.", pos);
+        char inCh = inAtom.Name[0];
+        char outCh = outAtom.Name[0];
+        if (inCh == outCh)
+            _flags.CharConversion.Remove(inCh);
+        else
+            _flags.CharConversion[inCh] = outCh;
     }
 
     private void ApplySetPrologFlagDirective(Term[] args, SourcePosition pos)

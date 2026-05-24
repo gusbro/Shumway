@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 
@@ -41,11 +42,39 @@ public sealed class Lexer
     private int _offset;
     private int _line = 1;
     private int _column = 1;
+    // Chunk 152 — ISO §6.4.2 character conversion. Non-null + non-empty
+    // means a `:- char_conversion(In, Out)` directive (or runtime
+    // builtin) has populated the map; the lexer maps the start-of-token
+    // character (and identifier continuations) through it before
+    // tokenizing. Quoted contexts bypass the conversion.
+    private readonly IReadOnlyDictionary<char, char>? _charConversion;
 
     public Lexer(string source)
     {
         ArgumentNullException.ThrowIfNull(source);
         _source = source;
+    }
+
+    /// <summary>Chunk 152 — constructs a lexer that honours the given
+    /// character-conversion table (typically the one on
+    /// <c>PrologFlags.CharConversion</c>). Pass <c>null</c> or an
+    /// empty map to disable conversion.</summary>
+    public Lexer(string source, IReadOnlyDictionary<char, char>? charConversion)
+        : this(source)
+    {
+        if (charConversion is not null && charConversion.Count > 0)
+            _charConversion = charConversion;
+    }
+
+    /// <summary>Chunk 152 — maps <paramref name="c"/> through the
+    /// char-conversion table when one is active and contains an
+    /// entry; otherwise returns <paramref name="c"/> unchanged. Hot
+    /// path: the common case is a null table, branch-predicted away.
+    /// </summary>
+    private char Convert(char c)
+    {
+        if (_charConversion is null) return c;
+        return _charConversion.TryGetValue(c, out char r) ? r : c;
     }
 
     /// <summary>Reads and returns the next token, advancing the lexer. After EOF has
@@ -65,14 +94,18 @@ public sealed class Lexer
         if (_offset >= _source.Length)
             return new Token(TokenKind.Eof, CurrentPosition(), "");
 
-        char c = _source[_offset];
+        // Chunk 152: convert the start-of-token character before
+        // dispatch. Quoted contexts (' " 0') retain the raw char and
+        // skip the conversion explicitly.
+        char raw = _source[_offset];
+        char c = (raw == '\'' || raw == '"') ? raw : Convert(raw);
         SourcePosition pos = CurrentPosition();
 
         if (char.IsDigit(c)) return ParseNumber(pos);
         if (c == '_' || (c >= 'A' && c <= 'Z')) return ParseVariable(pos);
         if (c >= 'a' && c <= 'z') return ParseUnquotedAtom(pos);
-        if (c == '\'') return ParseQuotedAtom(pos);
-        if (c == '"') return ParseString(pos);
+        if (raw == '\'') return ParseQuotedAtom(pos);
+        if (raw == '"') return ParseString(pos);
 
         switch (c)
         {
@@ -198,7 +231,7 @@ public sealed class Lexer
             if (char.IsLetterOrDigit(c) || c == '_') Advance();
             else break;
         }
-        return new Token(TokenKind.Atom, pos, _source[start.._offset]);
+        return new Token(TokenKind.Atom, pos, BuildText(start, _offset));
     }
 
     private Token ParseVariable(SourcePosition pos)
@@ -210,14 +243,26 @@ public sealed class Lexer
             if (char.IsLetterOrDigit(c) || c == '_') Advance();
             else break;
         }
-        return new Token(TokenKind.Variable, pos, _source[start.._offset]);
+        return new Token(TokenKind.Variable, pos, BuildText(start, _offset));
     }
 
     private Token ParseSymbolAtom(SourcePosition pos)
     {
         int start = _offset;
         while (_offset < _source.Length && IsSymbolChar(_source[_offset])) Advance();
-        return new Token(TokenKind.Atom, pos, _source[start.._offset]);
+        return new Token(TokenKind.Atom, pos, BuildText(start, _offset));
+    }
+
+    /// <summary>Chunk 152 — extracts the substring of <c>_source</c>
+    /// between <paramref name="start"/> and <paramref name="end"/>,
+    /// applying char conversion when active. Fast-paths the slice
+    /// when no conversion is active.</summary>
+    private string BuildText(int start, int end)
+    {
+        if (_charConversion is null) return _source[start..end];
+        var sb = new StringBuilder(end - start);
+        for (int i = start; i < end; i++) sb.Append(Convert(_source[i]));
+        return sb.ToString();
     }
 
     // ---------- Number parser ----------

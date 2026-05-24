@@ -1412,7 +1412,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         _staticPredicateCache.Clear();
         _staticLink = null;
         InvalidatePersistent();
-        var rawClauses = new ClauseReader(new Lexer(source), _operators, _flags).ReadAll().ToList();
+        var rawClauses = new ClauseReader(
+            new Lexer(source, _flags.CharConversionEnabled ? _flags.CharConversion : null),
+            _operators, _flags).ReadAll().ToList();
 
         string moduleName = DefaultModuleName;
         bool moduleDirectiveSeen = false;
@@ -2057,7 +2059,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
              Engine Engine,
              BytecodeInterpreter Interp) SetupQuery(string queryText)
     {
-        var queryParser = new Parser(new Lexer(queryText), _operators, _flags);
+        var queryParser = new Parser(
+            new Lexer(queryText, _flags.CharConversionEnabled ? _flags.CharConversion : null),
+            _operators, _flags);
         Term queryTerm = queryParser.ReadClauseTerm();
         return SetupQueryFromTerm(queryTerm);
     }

@@ -262,6 +262,8 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 
 | Predicate | Description |
 | --- | --- |
+| `char_conversion(+InChar, +OutChar)` | Registers a one-character-to-one-character mapping the lexer applies to the start of each unquoted token (ISO §8.14.9). InChar == OutChar removes the entry. |
+| `current_char_conversion(?InChar, ?OutChar)` | Enumerates the active char-conversion table (ISO §8.14.10). |
 | `current_prolog_flag(?Flag, ?Value)` | Reads the value of a Prolog flag. |
 | `op(+Priority, +Type, +Name)` | Declares an operator of the given priority and type. |
 | `set_prolog_flag(+Flag, +Value)` | Sets a Prolog flag. |
