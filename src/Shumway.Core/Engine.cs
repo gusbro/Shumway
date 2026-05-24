@@ -1089,6 +1089,23 @@ public sealed class Engine
         return new Shumway.Core.ProgramView(prog, CurrentQueryOverlay, CurrentQuerySplit);
     }
 
+    /// <summary>Chunk 155b — per-query switch tables, wired by the
+    /// embedding layer at query setup. Read-only at runtime today;
+    /// chunk-155b's new-key assertz path will need a mutable
+    /// variant to add bucket keys in place.</summary>
+    public System.Collections.Generic.IReadOnlyList<Shumway.Core.SwitchTable>? SwitchTables { get; set; }
+
+    /// <summary>Helper: returns the switch table at the given index
+    /// or <c>null</c> when out of range / not wired. Used by
+    /// PrologEngine's chunk-155b in-place assertz path to look up
+    /// the bucket chain head for a new clause's key.</summary>
+    public Shumway.Core.SwitchTable? GetSwitchTable(int id)
+    {
+        var tables = SwitchTables;
+        if (tables is null || id < 0 || id >= tables.Count) return null;
+        return tables[id];
+    }
+
     /// <summary>Appends a linked bytecode chunk to <see cref="CurrentProgram"/>
     /// and returns its start offset. Existing offsets stay valid — the
     /// content is only ever appended, never moved. Capacity doubling keeps
