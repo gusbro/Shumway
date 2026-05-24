@@ -477,40 +477,42 @@ files). 24 new ISO-named builtins implemented along the way.
   ambiguity are recorded inline next to the tests that surface them;
   queued for Phase 10+.
 
-**Phase 10 — Engine robustness leftovers** (in progress).
+**Phase 10 — Engine robustness leftovers** — ✅ **Complete** (tagged `phase-10`; closure summary in [`docs/phase-10-closure.md`](docs/phase-10-closure.md)).
 
-The deferred items from Phases 8 and 9. User-facing fixes first
-(catchers that need the offending term, cyclic-term safe walking,
-parser `\+` ambiguity), then internals (clause GC, indexing under
-visibility guards, extended LCO sweep, `char_conversion`).
+User-facing fixes first (chunks 144–149: richer error payload,
+cyclic-term safe walking, cut-vs-catch trail snapshots, parser
+adjacency rule), then internals — clause GC (150), persistent
+dynamic code space (151a–b), character conversion (152), and the
+chunk-155 series that delivers true in-place `assertz` / `asserta`
+/ `retract` for JIT-promoted hot dynamic predicates with extensible
+indexed dispatch:
 
-- **Stage A — user-facing**.
-  - 144 — `PrologRuntimeException` carries a `Term?` value so
-    `type_error(integer, X)` etc. can include the offending X in the
-    error term's value slot rather than the current fresh anonymous
-    var.
-  - 145 — cyclic-term safe materialiser. Phase-8 chunk 111 made list
-    materialisation iterative; chunk 145 extends the catch-cycle
-    treatment to general compounds so `X = f(X)` etc. can be observed
-    from C# without a stack overflow.
-  - 146 — parser `\+ (a, b)` ambiguity. The reader treats it as a
-    binary `\+(a, b)`; the ISO-correct read is unary
-    `\+ ((a, b))`. Adjust the precedence rule for prefix operators
-    followed by a `(`.
-- **Stage B — internals**.
-  - 147 — extended LCO sweep. Audit other "recurses per element"
-    sites in the engine (term copy, deep unification, etc.) similar
-    to chunk 111.
-  - 148 — clause GC for retracted clauses. ADR-015's append-only
-    chunks leave dead chain entries after `retract`; a long-lived
-    engine that retracts millions of clauses would want compaction.
-  - 149 — indexing under visibility guards. First-argument indexing
-    on dynamic predicates currently bypasses the chunk-120-128
-    `check_visible` guards (correct via sentinel `born=0,
-    died=MaxValue` but doesn't honour mid-query mutations through
-    the indexed path).
-  - 150 — `char_conversion/2`, `current_char_conversion/2`. The
-    last unimplemented ISO §8.14 pair.
+- ✓ **155a** — `CompileIndexedDynamic` compilation layout: bucket
+  chains use `try_me_else` / `retry_me_else` with patchable
+  `<next>` operands; bodies live once and are reached via
+  `execute`. The structural prerequisite for in-place extensibility.
+- ✓ **155b** — in-place same-key `assertz`: walk bucket + var
+  chains, append new chunks, patch tails.
+- ✓ **155c** — in-place new-bucket-key `assertz`: create a fresh
+  bucket chain (with merged var-arg clauses), extend the sub-switch
+  table, mirror into `_dynamicLink` for cross-query persistence.
+  `Engine.SwitchTables` became a mutable list.
+- ✓ **155d** — in-place `retract`: walk every chain, patch died
+  slot of every chain entry whose `execute` targets the retired
+  body. Counts only alive entries when mapping clause index to
+  body address.
+- ✓ **155e** — in-place var-arg-at-0 `assertz`: extend every chain
+  (var + list + every bucket reachable via sub-switches).
+- ✓ **155f** — in-place `asserta`: demote each chain's head in
+  place (`try_me_else` 9 bytes → `retry_me_else` + 4 nops, same
+  footprint), append new head, redirect every pointer slot
+  (switch_on_term operands, sub-switch table values, defaults)
+  from old to new. `ChainEntryHeaderSize` helper distinguishes a
+  9-byte demoted-head slot from a native 5-byte non-head.
+- ✓ **155g** — multi-arg dynamic indexed predicates pin
+  correctness via the chunk-154 rebuild-on-mutate fallback.
+- → True in-place multi-arg extensible-indexed dispatch deferred
+  to Phase 11.
 
 ---
 
