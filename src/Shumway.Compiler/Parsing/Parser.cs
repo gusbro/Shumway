@@ -227,8 +227,18 @@ public sealed class Parser
             // standalone atom is treated as a prefix op only when followed by a
             // token that can itself start a term, AND that token is not the
             // open-paren that would turn the atom into a compound term.
+            //
+            // Chunk 149: ISO §6.4.7 — a '(' immediately after the atom (no
+            // intervening whitespace) is the function-call '(', binding the
+            // atom as the compound head. A '(' with whitespace before it is
+            // a grouping paren and the atom acts as a prefix op. So
+            // '\+(a, b)' is '\+'/2 (function-call shape — but '\+'/2 isn't
+            // defined, so this would fail later), while '\+ (a, b)' is
+            // '\+'/1 applied to the conjunction (a, b). This matches SWI's
+            // reader.
             Token next = PeekTokenAt(1);
-            bool followedByCompoundParen = next.Kind == TokenKind.LParen;
+            bool followedByCompoundParen =
+                next.Kind == TokenKind.LParen && IsAdjacent(tok, next);
             bool nextCanStart = CanStartTerm(next);
 
             if (nextCanStart && !followedByCompoundParen)
@@ -269,9 +279,14 @@ public sealed class Parser
                 return BuildStringLiteral(tok.Text, pos);
 
             case TokenKind.Atom:
-                // foo(arg1, arg2, ...) — only when '(' immediately follows, no operator
-                // form is parsed (we consume the atom as the head of a compound).
-                if (PeekToken().Kind == TokenKind.LParen)
+                // foo(arg1, arg2, ...) — only when '(' immediately follows
+                // (no whitespace between, per ISO §6.4.7), no operator form
+                // is parsed (we consume the atom as the head of a compound).
+                // 'foo (a, b)' with a space is the atom 'foo' followed by a
+                // grouping paren — handled by the caller's operator-position
+                // loop. Chunk 149.
+                if (PeekToken().Kind == TokenKind.LParen
+                    && IsAdjacent(tok, PeekToken()))
                 {
                     NextToken();   // consume '('
                     var args = ReadCommaSeparatedArgs(closing: TokenKind.RParen);
@@ -406,6 +421,18 @@ public sealed class Parser
     }
 
     // ---------- Token helpers ----------
+
+    /// <summary>True iff <paramref name="next"/> immediately follows
+    /// <paramref name="prev"/> in the source — no whitespace, no
+    /// comment, no line break between them. Used by the chunk-149
+    /// function-call-vs-prefix-op disambiguation: <c>foo(a)</c> is
+    /// a compound, <c>foo (a)</c> is an atom followed by a
+    /// parenthesised term. Reads the lexer's leading-whitespace
+    /// flag on the next token directly so quoted atoms (whose
+    /// <c>Text</c> is the decoded form, not the source span) still
+    /// work.</summary>
+    private static bool IsAdjacent(Token prev, Token next) =>
+        !next.HasLeadingWhitespace;
 
     private Token NextToken()
     {

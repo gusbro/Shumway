@@ -34,6 +34,13 @@ public readonly record struct Token(
     /// fit in a long and was therefore captured in <see cref="BigValue"/>.</summary>
     public bool HasBigValue { get; init; }
 
+    /// <summary>True iff at least one whitespace character or comment
+    /// preceded this token in the source. The parser uses this for
+    /// the ISO §6.4.7 function-call disambiguation (chunk 149):
+    /// <c>foo(x)</c> is a compound, <c>foo (x)</c> is the atom
+    /// <c>foo</c> followed by a parenthesised term.</summary>
+    public bool HasLeadingWhitespace { get; init; }
+
     public override string ToString() => Kind switch
     {
         TokenKind.Integer when HasBigValue => $"{Kind}({BigValue}) @ {Position}",

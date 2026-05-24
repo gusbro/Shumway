@@ -151,16 +151,16 @@ public class LogicAndControlConformance
     public void Cut_DoesNotEscapeNotProvable()
     {
         // ISO §7.8.5: a cut inside \+ G has scope only over G, not
-        // the surrounding context. Use a helper predicate to dodge
-        // the parser's \+(a, b) ambiguity for an inline comma.
+        // the surrounding context. With chunk 149 the parser's
+        // adjacency rule lets us write the conjunction inline —
+        // '\+ (member(_, [1]), !)' is now read as unary \+ applied
+        // to the parenthesised conjunction, not as binary '\+'/2.
         var e = new PrologEngine();
-        e.ConsultString("inner :- !.");
-        // \+ inner consumes a cut inside its scope; the second
-        // disjunct's X=b is still reached on backtracking.
         var sols = e.QueryAll(
-            "(\\+ inner ; X = b).").ToList();
-        // \+ inner fails (inner succeeds), so first disjunct dies;
-        // second disjunct gives X=b.
+            "(\\+ (member(_, [1]), !) ; X = b).").ToList();
+        // \+ (member(_, [1]), !) fails (the inner conjunction
+        // succeeds — there is a member of [1]), so the first
+        // disjunct dies; the second yields X=b.
         Assert.Single(sols);
         Assert.Equal(Atom("b"), sols[0]["X"]);
     }

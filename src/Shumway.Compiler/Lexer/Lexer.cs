@@ -53,7 +53,15 @@ public sealed class Lexer
     /// for parser lookahead.</summary>
     public Token NextToken()
     {
+        int beforeWs = _offset;
         SkipWhitespaceAndComments();
+        bool hadWs = _offset > beforeWs;
+        Token tok = NextTokenInner();
+        return hadWs ? tok with { HasLeadingWhitespace = true } : tok;
+    }
+
+    private Token NextTokenInner()
+    {
         if (_offset >= _source.Length)
             return new Token(TokenKind.Eof, CurrentPosition(), "");
 
