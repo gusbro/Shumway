@@ -93,11 +93,21 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         /// clause emission without a fail-stub address — those predicates
         /// fall back to the chunk-C recompile path).</summary>
         public int NextOperandAddr;
-        public DynChainEntry(Clause c, int died, int next)
+        /// <summary>The absolute start of this clause's bytecode chunk
+        /// in the program buffer (the chain-instruction address) and
+        /// the chunk's total length. Tracked so the chunk-150 chain
+        /// GC can reclaim the bytes of dead clauses into a per-engine
+        /// free-list for reuse by subsequent <c>assertz</c> /
+        /// <c>asserta</c>.</summary>
+        public int ChunkAddr;
+        public int ChunkLength;
+        public DynChainEntry(Clause c, int died, int next, int chunkAddr, int chunkLength)
         {
             Clause = c;
             DiedOperandAddr = died;
             NextOperandAddr = next;
+            ChunkAddr = chunkAddr;
+            ChunkLength = chunkLength;
         }
     }
     private sealed class DynChainState
@@ -126,8 +136,49 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         /// demoting the old head into a regular middle clause without
         /// shifting anything.</summary>
         public int HeadClauseAddr = -1;
+
+        /// <summary>Chunk-150 free-list staging: the bytecode regions
+        /// of clauses that have been retracted or abolished and so are
+        /// candidates for the engine-wide free list. Populated by
+        /// <c>retract</c> / <c>abolish</c>; drained by
+        /// <c>garbage_collect_clauses</c> into the per-query
+        /// <see cref="Engine.FreeChunks"/>
+        /// where the next <c>assertz</c> / <c>asserta</c> can reuse the
+        /// bytes instead of extending the program buffer.</summary>
+        public readonly List<(int Addr, int Length)> DeadChunks = new();
     }
     private readonly Dictionary<int, DynChainState> _dynChains = new();
+
+    /// <summary>Chunk-150 free-list of dead-clause bytecode regions.
+    /// <c>garbage_collect_clauses</c> moves a predicate's
+    /// <see cref="DynChainState.DeadChunks"/> here; the next
+    /// <c>assertz</c> / <c>asserta</c> scans for a fit (first-fit)
+    /// and reuses the bytes instead of extending the program buffer
+    /// via <c>engine.AppendCode</c>. Sorted only by insertion order;
+    /// the linear scan on append is cheap relative to the bytecode
+    /// emission itself.</summary>
+    /// <summary>Chunk-150: pulls the first free chunk in
+    /// <paramref name="engine"/>'s per-query <see cref="Engine.FreeChunks"/>
+    /// list whose length is at least <paramref name="needed"/> and
+    /// returns its address; the chunk's tail (beyond
+    /// <paramref name="needed"/> bytes) goes back on the list. Returns
+    /// -1 when no fit is available, meaning the caller should fall
+    /// back to <c>engine.AppendCode</c>.</summary>
+    private static int TryReuseFreeChunk(Engine engine, int needed)
+    {
+        var free = engine.FreeChunks;
+        for (int i = 0; i < free.Count; i++)
+        {
+            var (addr, length) = free[i];
+            if (length < needed) continue;
+            free.RemoveAt(i);
+            int leftover = length - needed;
+            if (leftover > 0)
+                free.Add((addr + needed, leftover));
+            return addr;
+        }
+        return -1;
+    }
 
     /// <summary>Test hook: returns the absolute byte offset of clause
     /// <paramref name="clauseIndex"/>'s died slot in the running program,
@@ -408,6 +459,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             if (entry.DiedOperandAddr > 0)
                 Shumway.Core.BytecodeIO.WriteInt64(
                     program, entry.DiedOperandAddr, _dbGeneration);
+            // Chunk 150: stage incremental chunks for GC reclamation.
+            if (entry.ChunkAddr >= 0)
+                chain.DeadChunks.Add((entry.ChunkAddr, entry.ChunkLength));
         }
         chain.Entries.Clear();
     }
@@ -432,67 +486,65 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     {
         if (!_dynChains.TryGetValue(functorId, out var chain)) return 0;
         if (engine.CurrentProgram is null) return 0;
-        if (chain.TrampolineExecuteOperandAddr < 0) return 0;
+        if (chain.HeadClauseAddr < 0) return 0;
         var program = engine.CurrentProgram;
         int failStub = engine.DynamicFailStubAddr;
-        var (_, arity) = FunctorTable.Lookup(functorId);
 
-        // The pre-GC bytecode chain walks through every entry ever
-        // appended (alive + dead). Reconstruct a chain through only
-        // chain.Entries (the live set), bypassing the rest.
+        // The trampoline always points at chain.HeadClauseAddr, which
+        // is a try_me_else of stable 9-byte footprint — either the
+        // empty stub emitted at consult-time, or an asserta'd clause
+        // emitted by chunk 128 with native try_me_else. The GC never
+        // touches the trampoline or the head opcode (the alternative
+        // would be promoting a non-head retry_me_else to try_me_else,
+        // which is safe only when the entry has the chunk-128
+        // 4-Nop-pad — a native 5-byte retry_me_else from assertz has
+        // its check_visible at bytes 5-8 and can't be widened in
+        // place). Instead, GC re-threads the <next> chain starting
+        // from the head: dead entries are skipped by patching the
+        // previous live entry's (or the head's) <next> to point at
+        // the next live entry's chain-instruction address.
+        //
+        // If the head itself is dead (retracted from the asserta'd
+        // chunk-128 head, or the empty stub that's always "dead"
+        // with check_visible(0, 0)), dispatch walks it once, the
+        // check_visible filters it, and the GC-patched <next> jumps
+        // straight to the first live entry. One extra walk per call;
+        // negligible compared to the O(n) walk over n dead entries
+        // the GC eliminates.
 
-        if (chain.Entries.Count == 0)
+        int prevNext = chain.HeadClauseAddr + 1;   // head's <next> operand
+        foreach (var entry in chain.Entries)
         {
-            // No live entries: trampoline jumps straight to the
-            // fail-stub. The chain itself is left orphaned;
-            // assertz-after-GC re-uses TailNextAddr.
-            Shumway.Core.BytecodeIO.WriteInt32(
-                program, chain.TrampolineExecuteOperandAddr, failStub);
-            chain.HeadClauseAddr = -1;
-            // Tail anchor stays where it was; any future assertz will
-            // re-establish the chain through its patch.
-            return 0;
+            int entryClauseAddr = entry.NextOperandAddr - 1;
+            if (entryClauseAddr == chain.HeadClauseAddr)
+            {
+                // The head itself is this live entry — its <next>
+                // is already the right anchor for the next jump;
+                // don't patch it to point at itself.
+                prevNext = entry.NextOperandAddr;
+                continue;
+            }
+            Shumway.Core.BytecodeIO.WriteInt32(program, prevNext, entryClauseAddr);
+            prevNext = entry.NextOperandAddr;
         }
+        // Tail's <next> goes to the fail-stub.
+        Shumway.Core.BytecodeIO.WriteInt32(program, prevNext, failStub);
+        chain.TailNextAddr = prevNext;
 
-        // Each entry's chain-instruction-addr is one byte before its
-        // NextOperandAddr (the chain opcode is 1 byte; the <next>
-        // operand is the next 4 bytes).
-        int firstAddr = chain.Entries[0].NextOperandAddr - 1;
-
-        // Ensure the head is a try_me_else. If chunk 128's asserta
-        // demoted it to retry_me_else+nops, promote back: change the
-        // opcode and rewrite the 4 Nop pad as the arity operand.
-        if (program[firstAddr] == (byte)Shumway.Core.Opcode.RetryMeElse)
+        // Drain the dead-chunk staging into the engine-wide free
+        // list so subsequent incremental assertz / asserta can
+        // reuse the bytes (a long-lived engine that retracts and
+        // re-asserts thousands of clauses then has bounded memory
+        // growth instead of monotonic). Returns the total bytes
+        // reclaimed for diagnostics.
+        int reclaimed = 0;
+        foreach (var (addr, length) in chain.DeadChunks)
         {
-            program[firstAddr] = (byte)Shumway.Core.Opcode.TryMeElse;
-            Shumway.Core.BytecodeIO.WriteInt32(program, firstAddr + 5, arity);
+            engine.FreeChunks.Add((addr, length));
+            reclaimed += length;
         }
-
-        // Point the trampoline at the (possibly new) head.
-        Shumway.Core.BytecodeIO.WriteInt32(
-            program, chain.TrampolineExecuteOperandAddr, firstAddr);
-        chain.HeadClauseAddr = firstAddr;
-
-        // Re-thread each live entry's <next> at the next live entry's
-        // chain-instruction address.
-        for (int i = 0; i < chain.Entries.Count - 1; i++)
-        {
-            int thisNext = chain.Entries[i].NextOperandAddr;
-            int nextAddr = chain.Entries[i + 1].NextOperandAddr - 1;
-            Shumway.Core.BytecodeIO.WriteInt32(program, thisNext, nextAddr);
-        }
-
-        // Tail entry's <next> goes to the fail-stub.
-        int lastNext = chain.Entries[^1].NextOperandAddr;
-        Shumway.Core.BytecodeIO.WriteInt32(program, lastNext, failStub);
-        chain.TailNextAddr = lastNext;
-
-        // The number of dead chain entries we just bypassed is the
-        // diff between AppendDynamicClauseIncremental's count of
-        // ever-asserted entries and chain.Entries.Count — but we don't
-        // track the total. Return 0 as a placeholder; tests measure
-        // via dispatch-speed observations instead.
-        return 0;
+        chain.DeadChunks.Clear();
+        return reclaimed;
     }
 
     /// <summary>Static clauses whose head functor matches
@@ -2413,8 +2465,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         emitter.AppendBytes(compiledClause.Bytecode);
         byte[] chunk = emitter.ToBytes();
 
-        // Append.
-        int chunkAddr = engine.AppendCode(chunk);
+        // Chunk 150: try the free-list (chunks reclaimed by a prior
+        // GC) before extending the program buffer.
+        int chunkAddr = TryReuseFreeChunk(engine, chunk.Length);
+        if (chunkAddr >= 0)
+            Array.Copy(chunk, 0, engine.CurrentProgram!, chunkAddr, chunk.Length);
+        else
+            chunkAddr = engine.AppendCode(chunk);
         var program = engine.CurrentProgram;
 
         // Patch call sites inside the body to absolute targets.
@@ -2437,7 +2494,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         chain.Entries.Add(new DynChainEntry(
             newClause,
             died: chunkAddr + DiedOperandLocal,
-            next: chunkAddr + NextOperandLocal));
+            next: chunkAddr + NextOperandLocal,
+            chunkAddr: chunkAddr,
+            chunkLength: chunk.Length));
         chain.TailNextAddr = chunkAddr + NextOperandLocal;
 
         // The clause may have interned new literals — refresh the
@@ -2516,7 +2575,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         emitter.AppendBytes(compiledClause.Bytecode);
         byte[] chunk = emitter.ToBytes();
 
-        int chunkAddr = engine.AppendCode(chunk);
+        // Chunk 150: try the free-list before extending the program.
+        int chunkAddr = TryReuseFreeChunk(engine, chunk.Length);
+        if (chunkAddr >= 0)
+            Array.Copy(chunk, 0, engine.CurrentProgram!, chunkAddr, chunk.Length);
+        else
+            chunkAddr = engine.AppendCode(chunk);
         var program = engine.CurrentProgram;
 
         // Patch the body's call sites.
@@ -2554,7 +2618,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         chain.Entries.Insert(0, new DynChainEntry(
             newClause,
             died: chunkAddr + DiedOperandLocal,
-            next: chunkAddr + NextOperandLocal));
+            next: chunkAddr + NextOperandLocal,
+            chunkAddr: chunkAddr,
+            chunkLength: chunk.Length));
         // If this was the first ever clause, the new chunk is also the tail.
         if (chain.TailNextAddr < 0)
             chain.TailNextAddr = chunkAddr + NextOperandLocal;
@@ -2595,6 +2661,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         var program = engine.CurrentProgram;
         if (program is not null && entry.DiedOperandAddr > 0)
             BytecodeIO.WriteInt64(program, entry.DiedOperandAddr, _dbGeneration);
+        // Chunk 150: stage the chunk for free-list reuse on GC, but
+        // only when it was an incrementally-allocated chunk (consult-
+        // time blocks have ChunkAddr=-1 and can't be freed without
+        // disturbing the rest of the predicate's contiguous bytecode).
+        if (entry.ChunkAddr >= 0)
+            chain.DeadChunks.Add((entry.ChunkAddr, entry.ChunkLength));
         chain.Entries.RemoveAt(clauseIndex);
     }
 
@@ -2652,6 +2724,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         int clauseIndex = 0;
         int pendingNextOperand = -1;
         int tailNextOperand = -1;
+        // Chunk 150: track each chunk's start address as we walk so
+        // entries record ChunkAddr / ChunkLength for the free-list
+        // reuse on GC. The chunk starts at the chain instruction and
+        // ends at the next chain instruction (or the end of the
+        // predicate's bytecode). Lengths are filled in retroactively
+        // when the next chunk's start is seen.
+        int currentChunkStart = -1;
 
         // Locate the trampoline (enter_dynamic; execute <chain-head>),
         // if any. The trampoline structure was emitted by paso-4's
@@ -2672,6 +2751,16 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             if (info.Op == Shumway.Core.Opcode.TryMeElse
                 || info.Op == Shumway.Core.Opcode.RetryMeElse)
             {
+                // Chunk 150: a new chain instruction marks a chunk
+                // boundary. Close out the previous chunk's length on
+                // the most-recent entry (if any).
+                if (currentChunkStart >= 0 && chain.Entries.Count > 0)
+                {
+                    var last = chain.Entries[^1];
+                    if (last.ChunkAddr == currentChunkStart)
+                        last.ChunkLength = pc - currentChunkStart;
+                }
+                currentChunkStart = pc;
                 pendingNextOperand = pc + 1;
                 tailNextOperand = pc + 1;
             }
@@ -2686,11 +2775,20 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 chain.Entries.Add(new DynChainEntry(
                     clauses[clauseIndex],
                     died: pc + 9,
-                    next: pendingNextOperand));
+                    next: pendingNextOperand,
+                    chunkAddr: currentChunkStart,
+                    chunkLength: 0));   // patched on next chunk start / end
                 pendingNextOperand = -1;
                 clauseIndex++;
             }
             pc += info.Size;
+        }
+        // Close out the final chunk's length.
+        if (currentChunkStart >= 0 && chain.Entries.Count > 0)
+        {
+            var last = chain.Entries[^1];
+            if (last.ChunkAddr == currentChunkStart && last.ChunkLength == 0)
+                last.ChunkLength = end - currentChunkStart;
         }
         chain.TailNextAddr = tailNextOperand;
         // Always record chain state when a tail-next exists, even when

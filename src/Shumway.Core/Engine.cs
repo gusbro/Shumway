@@ -1109,6 +1109,17 @@ public sealed class Engine
     /// outlive any one query.</summary>
     public StreamRegistry? Streams { get; set; }
 
+    /// <summary>Chunk-150 free-list of dead-clause bytecode regions
+    /// available for reuse by within-query incremental
+    /// <c>assertz</c> / <c>asserta</c>. Lives on the per-query
+    /// <see cref="Engine"/> because the program buffer it refers to
+    /// is per-query — across queries the program is rebuilt and the
+    /// addresses are invalid. <c>garbage_collect_clauses</c> adds
+    /// dead chunks here; the next incremental assert scans for a fit
+    /// (first-fit) and reuses the bytes instead of extending the
+    /// buffer.</summary>
+    public readonly List<(int Addr, int Length)> FreeChunks = new();
+
     /// <summary>Wired by the embedding layer at query setup —
     /// materialises a <see cref="Cell"/> into the AST <c>Term</c>
     /// type (held as an opaque <c>object</c> here because Core can't
