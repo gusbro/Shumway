@@ -433,26 +433,49 @@ pass rather than patched ad hoc.
   below any mid-query assertz/retract, so it sees the database as of
   when its goal began. ADR-015 is complete.
 
-**Phase 9 — ISO conformance & error system** (in progress).
+**Phase 9 — ISO conformance & error system** — ✅ **Complete** (tagged `phase-9`; closure summary in [`docs/phase-9-closure.md`](docs/phase-9-closure.md)).
 
-Brings Shumway's error reporting in line with what other ISO Prologs
-emit, and widens `Shumway.Tests.IsoConformance` from a representative
-sampler to one-file-per-§8-subclause coverage.
+Brought Shumway's error reporting in line with what other ISO Prologs
+emit, and widened `Shumway.Tests.IsoConformance` from a 61-test
+sampler (5 files) to a 268-test one-file-per-§8-chapter suite (16
+files). 24 new ISO-named builtins implemented along the way.
 
-- **Stage A — error-system completion.** Fill the four missing
-  `IsoError` kinds (`representation_error`, `syntax_error`,
-  `resource_error`, `system_error`); thread the offending builtin's
-  `Name/Arity` into the `error/2` Context slot in place of today's
-  anonymous variable (per the deferred note in `IsoError.cs`); audit
-  every existing builtin to throw the right error in the ISO-mandated
-  precedence (instantiation_error before type_error before domain_error
-  before existence_error before permission_error).
-- **Stage B — conformance widening.** One chunk per ISO §8 chapter
-  (§8.2 unification, §8.3 type tests, §8.4 term comparison, §8.5 term
-  decomposition, §8.6 arithmetic eval, §8.7 arithmetic comparison,
-  §8.8 control, §8.9 atomic processing, §8.10 implementation,
-  §8.11 stream I/O, …), covering the chapter's examples and the
-  error cases it specifies.
+- ✓ **Stage A — error-system completion** (chunks 129–131e). The four
+  missing `IsoError` kinds (`representation_error`, `syntax_error`,
+  `resource_error`, `system_error/0,1`); the offending builtin's
+  `Name/Arity` stamped onto `PrologRuntimeException` at every
+  `CallBuiltin` dispatch site so the `error/2` Context slot survives
+  sub-engine teardown; ~60 `InvalidOperationException` sites across
+  7 source files converted to catchable `PrologRuntimeException` with
+  ISO precedence honoured (`instantiation_error` before `type_error`
+  before `domain_error` before `existence_error` before
+  `permission_error`).
+- ✓ **Stage B — conformance widening** (chunks 132–143). One chunk
+  per ISO §8 chapter. Every chapter has its own conformance file. The
+  discipline that emerged: when a conformance test surfaces a missing
+  predicate, *implement it* rather than just record the gap. Real
+  predicates added: `unify_with_occurs_check/2` (§8.2.2),
+  `current_op/3` (§8.17.3), all of §8.11 stream control
+  (`current_input/1`, `current_output/1`, `set_input/1`,
+  `set_output/1`, `open/4`, `flush_output/0,1`, `at_end_of_stream/0,1`,
+  `current_stream/3`, `stream_property/2`, `set_stream_position/2`),
+  all of §8.12 character I/O (`get_char/1`, `peek_char/1`,
+  `put_char/1,2`, `get_code/1,2`, `peek_code/1,2`, `put_code/1,2`),
+  all of §8.13 byte I/O (`get_byte/1,2`, `peek_byte/1,2`,
+  `put_byte/1,2`) including binary streams, the missing §8.14 term
+  I/O (`read/1,2`, `writeq/1,2`, `write_canonical/2`,
+  `write_term/3`).
+- ✓ **Stream subsystem** (chunk 140 a/b/c/d). New `StreamHandle` and
+  `StreamRegistry` types in `Shumway.Core` give every engine a real
+  per-instance registry: handles carry mode / filename / alias /
+  binary-vs-text kind, the registry owns the alias map and the
+  current-input / current-output cursors. `==/2` extended to handle
+  Foreign, BigInt, String and PSTR cells (was throwing
+  `NotSupportedException`).
+- → `char_conversion/2` / `current_char_conversion/2` (§8.14.9-10),
+  the cyclic-term materialiser overflow, and the parser's `\+ (a, b)`
+  ambiguity are recorded inline next to the tests that surface them;
+  queued for Phase 10+.
 
 ---
 
