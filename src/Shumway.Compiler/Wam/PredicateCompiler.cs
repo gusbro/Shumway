@@ -168,14 +168,24 @@ public sealed class PredicateCompiler
             }
         }
 
-        // Chunk 154: the indexed path now emits enter_dynamic at the
+        // Chunk 154: the indexed path emits enter_dynamic at the
         // entry and check_visible per clause when isDynamic, so a hot
         // dynamic predicate's runtime dispatch honours the ISO
         // logical-update view via the same mechanism the chain path
-        // uses. born/died still use sentinels (0 / MaxValue) — the
-        // chunk-151b persistent-buffer rebuild on every mutation
-        // refreshes them to live values; chunk 155 will make the
-        // chains extensible in-place to avoid the rebuild.
+        // uses.
+        //
+        // Chunk 155: for the first-arg-only case (the typical
+        // indexed predicate), route dynamic predicates to
+        // CompileIndexedDynamic which lays out extensible chains
+        // (try_me_else with patchable <next> operands, shared bodies
+        // via execute). assertz can then extend each affected chain
+        // in place without rebuilding the predicate. Multi-arg
+        // dynamic indexing keeps the chunk-154 layout (rebuild on
+        // mutate) — a follow-on can extend the extensible model.
+        if (isDynamic && indexableArgs.Count == 1 && indexableArgs[0] == 0)
+            return CompileIndexedDynamic(
+                compiledClauses, perArgInfo[0], functorId, arity,
+                clauses[0].Position, clausePositions, failStubAddr);
         return indexableArgs.Count > 0
             ? CompileIndexed(compiledClauses, perArgInfo, indexableArgs, functorId, arity,
                              clauses[0].Position, clausePositions, isDynamic)
@@ -753,5 +763,272 @@ public sealed class PredicateCompiler
             map[key] = list;
         }
         return list;
+    }
+
+    // ============================================================================
+    // Chunk 155 — Extensible indexed dispatch for dynamic predicates
+    // ============================================================================
+
+    /// <summary>Chunk 155 — first-argument indexed compilation for
+    /// dynamic predicates with chains that can be extended in place
+    /// by <c>assertz</c> / <c>asserta</c> without re-linking the
+    /// predicate. Differences from <see cref="CompileIndexed"/>:
+    /// <list type="bullet">
+    /// <item>Bucket chains use <c>try_me_else</c> / <c>retry_me_else</c>
+    ///   (chain-walking via patchable <c>&lt;next&gt;</c> operands) instead
+    ///   of the contiguous <c>try</c> / <c>retry</c> / <c>trust</c>
+    ///   triplet — the chunk-127/128 incremental-assertz path can extend
+    ///   any chain's tail by appending a new chunk at the end of the
+    ///   buffer and patching the previous tail's operand.</item>
+    /// <item>Each chain entry is <c>try_me_else &lt;next&gt; arity</c> /
+    ///   <c>retry_me_else &lt;next&gt;</c> + <c>check_visible &lt;born&gt; &lt;died&gt;</c>
+    ///   + <c>execute &lt;body_addr&gt;</c>; bodies live once and are
+    ///   reached via execute so a clause that's in multiple chains
+    ///   (its specific bucket + the var-fallthrough chain) shares
+    ///   one body.</item>
+    /// <item><c>enter_dynamic</c> at the predicate entry samples
+    ///   <c>DbGeneration</c> into <c>CurrentViewGen</c> so each entry's
+    ///   <c>check_visible</c> filters against a stable view.</item>
+    /// </list>
+    /// </summary>
+    private static CompiledPredicate CompileIndexedDynamic(
+        IReadOnlyList<CompiledClause> compiledClauses,
+        ArgInfo[] arg0Info,
+        int functorId,
+        int arity,
+        Shumway.Compiler.Lexer.SourcePosition position,
+        IReadOnlyList<Shumway.Compiler.Lexer.SourcePosition> clausePositions,
+        int failStubAddr)
+    {
+        int n = compiledClauses.Count;
+
+        // ----- Bucket clauses by arg 0 -----
+        var atomBuckets = new SortedDictionary<int, List<int>>();
+        var intBuckets = new SortedDictionary<int, List<int>>();
+        var structBuckets = new SortedDictionary<int, List<int>>();
+        var listClauses = new List<int>();
+        var varClauses = new List<int>();
+        for (int i = 0; i < n; i++)
+        {
+            var info = arg0Info[i];
+            switch (info.Kind)
+            {
+                case ArgKind.Var:
+                case ArgKind.Other:  varClauses.Add(i); break;
+                case ArgKind.Atom:   GetOrAdd(atomBuckets, info.Key).Add(i); break;
+                case ArgKind.Int:    GetOrAdd(intBuckets, info.Key).Add(i); break;
+                case ArgKind.Struct: GetOrAdd(structBuckets, info.Key).Add(i); break;
+                case ArgKind.List:   listClauses.Add(i); break;
+            }
+        }
+
+        // Merge varClauses into each bucket so a query with a concrete
+        // value still sees the var-arg clauses that match it.
+        List<int> Merge(List<int> bucketClauses)
+        {
+            var seen = new HashSet<int>(bucketClauses);
+            foreach (int v in varClauses) seen.Add(v);
+            var merged = seen.ToList();
+            merged.Sort();
+            return merged;
+        }
+        var atomMerged = atomBuckets.ToDictionary(kv => kv.Key, kv => Merge(kv.Value));
+        var intMerged = intBuckets.ToDictionary(kv => kv.Key, kv => Merge(kv.Value));
+        var structMerged = structBuckets.ToDictionary(kv => kv.Key, kv => Merge(kv.Value));
+        // The list bucket: list-arg clauses ∪ var-arg clauses.
+        var listMerged = (listClauses.Count > 0 || varClauses.Count > 0)
+            ? Merge(listClauses) : new List<int>();
+        // Var fallthrough chain enumerates every clause in source order.
+        var varChain = Enumerable.Range(0, n).ToList();
+
+        bool hasAtoms = atomMerged.Count > 0;
+        bool hasInts = intMerged.Count > 0;
+        bool hasStructs = structMerged.Count > 0;
+        bool hasList = listMerged.Count > 0;
+
+        // ----- Layout pass -----
+        const int EnterDynamicSize = 1;
+        const int SwitchOnTermSize = 17;
+        const int SubDispatchSize = 5;          // switch_on_atom/integer/structure
+        const int ChainHeadSize = 9 + 17 + 5;   // try_me_else (9) + check_visible (17) + execute (5)
+        const int ChainNonHeadSize = 5 + 17 + 5;// retry_me_else (5) + check_visible (17) + execute (5)
+        int ChainSize(int count) =>
+            count == 0 ? 0 : ChainHeadSize + (count - 1) * ChainNonHeadSize;
+
+        int pos = 0;
+        int enterDynamicPos = pos; pos += EnterDynamicSize;
+        int switchOnTermPos = pos; pos += SwitchOnTermSize;
+        int switchOnAtomPos = -1, switchOnIntPos = -1, switchOnStructPos = -1;
+        if (hasAtoms)   { switchOnAtomPos = pos;   pos += SubDispatchSize; }
+        if (hasInts)    { switchOnIntPos = pos;    pos += SubDispatchSize; }
+        if (hasStructs) { switchOnStructPos = pos; pos += SubDispatchSize; }
+
+        // Per-bucket chain head addresses (predicate-local).
+        var atomChainHeads = new Dictionary<int, int>();
+        foreach (var (key, clauses) in atomMerged)
+        {
+            atomChainHeads[key] = pos;
+            pos += ChainSize(clauses.Count);
+        }
+        var intChainHeads = new Dictionary<int, int>();
+        foreach (var (key, clauses) in intMerged)
+        {
+            intChainHeads[key] = pos;
+            pos += ChainSize(clauses.Count);
+        }
+        var structChainHeads = new Dictionary<int, int>();
+        foreach (var (key, clauses) in structMerged)
+        {
+            structChainHeads[key] = pos;
+            pos += ChainSize(clauses.Count);
+        }
+        int listChainHead = -1;
+        if (hasList) { listChainHead = pos; pos += ChainSize(listMerged.Count); }
+
+        int varChainHead = pos;
+        pos += ChainSize(varChain.Count);
+
+        // Clause bodies: meta(DbgInfo, i) + body bytes. Live once,
+        // referenced from chain entries via execute.
+        int[] bodyAddr = new int[n];
+        for (int i = 0; i < n; i++)
+        {
+            bodyAddr[i] = pos;
+            pos += MetaDbgInfoSize;
+            pos += compiledClauses[i].Bytecode.Length;
+        }
+
+        // ----- Switch-table targets -----
+        // var arg → var chain. const arg → cascade atom→int→struct→var.
+        // list arg → list chain (if any) else var. struct arg → struct
+        // sub-switch (if any) else var.
+        int varLbl = varChainHead;
+        int listLbl = hasList ? listChainHead : varLbl;
+        int structLbl = hasStructs ? switchOnStructPos : varLbl;
+        int constLbl = hasAtoms ? switchOnAtomPos
+                     : hasInts  ? switchOnIntPos
+                     : hasStructs ? switchOnStructPos
+                     : varLbl;
+
+        var switchTables = new List<SwitchTable>();
+        int atomTableId = -1, intTableId = -1, structTableId = -1;
+        if (hasAtoms)
+        {
+            atomTableId = switchTables.Count;
+            int dft = hasInts ? switchOnIntPos
+                    : hasStructs ? switchOnStructPos
+                    : varLbl;
+            switchTables.Add(new SwitchTable(
+                atomChainHeads.Keys.ToArray(),
+                atomChainHeads.Values.ToArray(),
+                dft));
+        }
+        if (hasInts)
+        {
+            intTableId = switchTables.Count;
+            int dft = hasStructs ? switchOnStructPos : varLbl;
+            switchTables.Add(new SwitchTable(
+                intChainHeads.Keys.ToArray(),
+                intChainHeads.Values.ToArray(),
+                dft));
+        }
+        if (hasStructs)
+        {
+            structTableId = switchTables.Count;
+            switchTables.Add(new SwitchTable(
+                structChainHeads.Keys.ToArray(),
+                structChainHeads.Values.ToArray(),
+                varLbl));
+        }
+
+        // ----- Emit pass -----
+        var emitter = new BytecodeEmitter();
+        var callSites = new List<CallSite>();
+        var dispatchSites = new List<int>();
+        var switchTableIdSites = new List<int>();
+
+        emitter.EmitEnterDynamic();
+
+        int sotStart = emitter.Position;
+        emitter.EmitSwitchOnTerm(varLbl, constLbl, listLbl, structLbl);
+        dispatchSites.Add(sotStart + 1);
+        dispatchSites.Add(sotStart + 5);
+        dispatchSites.Add(sotStart + 9);
+        dispatchSites.Add(sotStart + 13);
+
+        if (hasAtoms)
+        {
+            int site = emitter.Position + 1;
+            switchTableIdSites.Add(site);
+            emitter.EmitSwitchOnAtom(atomTableId);
+        }
+        if (hasInts)
+        {
+            int site = emitter.Position + 1;
+            switchTableIdSites.Add(site);
+            emitter.EmitSwitchOnInteger(intTableId);
+        }
+        if (hasStructs)
+        {
+            int site = emitter.Position + 1;
+            switchTableIdSites.Add(site);
+            emitter.EmitSwitchOnStructure(structTableId);
+        }
+
+        // Helper: emit one chain. <next> on intermediate entries is
+        // the next-entry address (predicate-local, relocated by linker);
+        // <next> on the last entry is the absolute fail_stub (NOT a
+        // dispatch site — already absolute, not predicate-local).
+        void EmitChain(IReadOnlyList<int> clauseIndices)
+        {
+            for (int i = 0; i < clauseIndices.Count; i++)
+            {
+                int idx = clauseIndices[i];
+                int entryStart = emitter.Position;
+                bool isLast = i == clauseIndices.Count - 1;
+                int thisEntrySize = i == 0 ? ChainHeadSize : ChainNonHeadSize;
+                int nextAddr = isLast ? failStubAddr : (entryStart + thisEntrySize);
+                if (i == 0)
+                {
+                    emitter.EmitTryMeElse(nextAddr, arity);
+                    if (!isLast) dispatchSites.Add(entryStart + 1);
+                }
+                else
+                {
+                    emitter.EmitRetryMeElse(nextAddr);
+                    if (!isLast) dispatchSites.Add(entryStart + 1);
+                }
+                emitter.EmitCheckVisible(born: 0L, died: long.MaxValue);
+                int execOpPos = emitter.Position;
+                emitter.EmitExecute(bodyAddr[idx]);
+                dispatchSites.Add(execOpPos + 1);
+            }
+        }
+
+        foreach (var (_, clauses) in atomMerged)   EmitChain(clauses);
+        foreach (var (_, clauses) in intMerged)    EmitChain(clauses);
+        foreach (var (_, clauses) in structMerged) EmitChain(clauses);
+        if (hasList) EmitChain(listMerged);
+        EmitChain(varChain);
+
+        // Bodies. Each ends with the clause's compiled body (which
+        // contains its own proceed / execute). The execute from each
+        // chain entry transfers control here, the body's terminator
+        // returns / tail-calls back to the original caller of the
+        // predicate.
+        for (int i = 0; i < n; i++)
+        {
+            emitter.EmitMetaDbgInfo(i);
+            int clauseStart = emitter.Position;
+            emitter.AppendBytes(compiledClauses[i].Bytecode);
+            foreach (var site in compiledClauses[i].CallSites)
+                callSites.Add(new CallSite(
+                    clauseStart + site.OpcodeOffset, site.CalleeFunctorId, site.IsExecute));
+        }
+
+        return new CompiledPredicate(
+            emitter.ToBytes(), functorId, arity, n,
+            callSites, dispatchSites, switchTables, switchTableIdSites, position,
+            clausePositions);
     }
 }
