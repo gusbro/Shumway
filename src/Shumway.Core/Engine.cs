@@ -1090,20 +1090,33 @@ public sealed class Engine
     }
 
     /// <summary>Chunk 155b — per-query switch tables, wired by the
-    /// embedding layer at query setup. Read-only at runtime today;
-    /// chunk-155b's new-key assertz path will need a mutable
-    /// variant to add bucket keys in place.</summary>
-    public System.Collections.Generic.IReadOnlyList<Shumway.Core.SwitchTable>? SwitchTables { get; set; }
+    /// embedding layer at query setup as a mutable list so the
+    /// chunk-155c new-key assertz path can add bucket keys in place
+    /// by swapping the entry at a given table id.</summary>
+    public System.Collections.Generic.List<Shumway.Core.SwitchTable>? SwitchTables { get; set; }
 
     /// <summary>Helper: returns the switch table at the given index
     /// or <c>null</c> when out of range / not wired. Used by
-    /// PrologEngine's chunk-155b in-place assertz path to look up
+    /// PrologEngine's chunk-155b/c in-place assertz path to look up
     /// the bucket chain head for a new clause's key.</summary>
     public Shumway.Core.SwitchTable? GetSwitchTable(int id)
     {
         var tables = SwitchTables;
         if (tables is null || id < 0 || id >= tables.Count) return null;
         return tables[id];
+    }
+
+    /// <summary>Chunk 155c — replaces the switch table at
+    /// <paramref name="id"/>, used by the new-key assertz path to
+    /// extend a switch table with an additional <c>(key →
+    /// bucket-chain-head)</c> entry. The interpreter reads through
+    /// the list reference each dispatch, so the replacement takes
+    /// effect immediately.</summary>
+    public void ReplaceSwitchTable(int id, Shumway.Core.SwitchTable table)
+    {
+        var tables = SwitchTables;
+        if (tables is null || id < 0 || id >= tables.Count) return;
+        tables[id] = table;
     }
 
     /// <summary>Appends a linked bytecode chunk to <see cref="CurrentProgram"/>

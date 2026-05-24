@@ -67,4 +67,22 @@ public sealed class SwitchTable
         for (int i = 0; i < _values.Length; i++) newValues[i] = _values[i] + offset;
         return new SwitchTable(_keys, newValues, DefaultAddress + offset);
     }
+
+    /// <summary>Chunk 155c — returns a new <see cref="SwitchTable"/>
+    /// with an extra (key → value) entry appended. Used by the
+    /// new-bucket-key assertz path on extensible-indexed dynamic
+    /// predicates: an assertz of a clause whose arg-0 introduces a
+    /// previously-unknown key adds that key to the predicate's atom
+    /// / integer / structure switch table by replacing the table at
+    /// its id with this larger one.</summary>
+    public SwitchTable WithAdditionalEntry(int key, int value)
+    {
+        var newKeys = new int[_keys.Length + 1];
+        var newValues = new int[_values.Length + 1];
+        Array.Copy(_keys, newKeys, _keys.Length);
+        Array.Copy(_values, newValues, _values.Length);
+        newKeys[_keys.Length] = key;
+        newValues[_values.Length] = value;
+        return new SwitchTable(newKeys, newValues, DefaultAddress);
+    }
 }

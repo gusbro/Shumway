@@ -317,16 +317,22 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
     }
 
-    /// <summary>Chunk 155b — in-place extension of an extensible-
+    /// <summary>Chunk 155b/c — in-place extension of an extensible-
     /// indexed dynamic predicate's chains for an <c>assertz</c>.
-    /// Compiles the new clause body, appends it to the buffer, and
-    /// extends the var-fallthrough chain plus the bucket chain for
-    /// the new clause's arg-0 key by appending a fresh chain entry
-    /// and patching the prior tail's <c>&lt;next&gt;</c>. Returns
-    /// <c>false</c> if the predicate isn't using the chunk-155a
-    /// layout, or if the new clause needs a layout change the MVP
-    /// doesn't support (a brand-new bucket key, a var-arg-at-0
-    /// clause, or a list/struct bucket that didn't exist).</summary>
+    /// Compiles the new clause body, appends it to the buffer, then
+    /// either (155b) extends the bucket chain for the new clause's
+    /// arg-0 key when that key has an existing bucket, or (155c)
+    /// creates a brand-new bucket chain at the end of the buffer
+    /// and adds the new (key → chain-head) entry to the appropriate
+    /// sub-switch table when the key is new. The var-fallthrough
+    /// chain is always extended.
+    ///
+    /// Returns <c>false</c> if the predicate isn't using the chunk-
+    /// 155a layout, the new clause is var-arg-at-0 (would need to
+    /// extend every bucket — a chunk-155d concern), or the new key
+    /// needs a sub-switch that doesn't exist yet (e.g. first int
+    /// assertz to an atom-only predicate). In any of those cases
+    /// the caller falls back to rebuild.</summary>
     private bool TryAppendToIndexedDynamic(
         Engine engine, int functorId, Shumway.Compiler.Ast.Clause newClause)
     {
@@ -337,19 +343,45 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         int failStub = engine.DynamicFailStubAddr;
         if (failStub <= 0) return false;
 
-        // Locate the bucket chain head for the new clause's arg-0 key.
-        // -1 means "no existing bucket / var-arg / cascade missed" —
-        // in any of those cases chunk-155b falls back to rebuild so
-        // the new switch-table layout takes effect.
-        int bucketChainHead = FindBucketChainHead(engine, predAddr, newClause);
-        if (bucketChainHead < 0) return false;
+        // Pull the new clause's head arg-0 — we classify it to decide
+        // the same-key vs new-key path and to skip the var-arg case
+        // (chunk 155d's concern).
+        Shumway.Compiler.Ast.Term head = newClause.Kind == Shumway.Compiler.Ast.ClauseKind.Rule
+            ? ((Shumway.Compiler.Ast.CompoundTerm)newClause.Term).Args[0]
+            : newClause.Term;
+        if (head is not Shumway.Compiler.Ast.CompoundTerm headComp || headComp.Args.Length == 0)
+            return false;
+        var arg0 = headComp.Args[0];
+        if (arg0 is Shumway.Compiler.Ast.VarTerm) return false;  // var-arg → chunk 155d
 
-        // Walk the bucket chain and the var-fallthrough chain to
-        // find their tail-next operands.
+        // FindBucketChainHead returns the existing bucket head, or
+        // -1 when no bucket exists for this key.
+        int bucketChainHead = FindBucketChainHead(engine, predAddr, newClause);
+        bool isNewKey = bucketChainHead < 0;
+
         int varChainHead = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 2);
-        int bucketTailNext = WalkChainToTailNextOperand(prog, bucketChainHead, failStub);
         int varTailNext = WalkChainToTailNextOperand(prog, varChainHead, failStub);
-        if (bucketTailNext < 0 || varTailNext < 0) return false;
+        if (varTailNext < 0) return false;
+
+        int bucketTailNext = -1;
+        if (!isNewKey)
+        {
+            bucketTailNext = WalkChainToTailNextOperand(prog, bucketChainHead, failStub);
+            if (bucketTailNext < 0) return false;
+        }
+
+        // For the new-key path, locate the sub-switch matching the
+        // new key's type and verify it exists. Falling back here
+        // keeps the buffer untouched so the caller's rebuild applies
+        // cleanly.
+        int newKeyValue = 0;
+        int subSwitchTableId = -1;
+        if (isNewKey)
+        {
+            if (!TryLocateSubSwitchForArg(
+                    engine, predAddr, arg0, out newKeyValue, out subSwitchTableId))
+                return false;
+        }
 
         // Compile the new clause (transforms identical to the chain
         // path).
@@ -367,17 +399,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             rewritten[0],
             _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts);
 
-        // Build the body chunk: meta(dbg, 0) + body bytes. Index 0
-        // here is fine — the Meta opcode is debug metadata only and
-        // a clause asserted at runtime has no original
-        // ClauseSourcePositions slot to index.
+        // Body chunk: meta(dbg, 0) + body bytes. Clause-source-position
+        // index is irrelevant for runtime-asserted clauses.
         var bodyEmitter = new Shumway.Compiler.Wam.BytecodeEmitter();
         bodyEmitter.EmitMetaDbgInfo(0);
         int bodyContentLocalStart = bodyEmitter.Position;
         bodyEmitter.AppendBytes(compiledClause.Bytecode);
         byte[] bodyChunk = bodyEmitter.ToBytes();
         int bodyAddr = engine.AppendCode(bodyChunk);
-        // After AppendCode, prog may have been reallocated.
         prog = engine.CurrentProgram!;
 
         // Patch call sites inside the body to absolute targets.
@@ -390,23 +419,51 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             Shumway.Core.BytecodeIO.WriteInt32(prog, operandPos, target);
         }
 
-        // Build & append one new chain entry per affected chain.
-        // Each entry: retry_me_else <fail_stub>; check_visible
-        // <_dbGeneration, MaxValue>; execute <bodyAddr>.
-        int AppendChainEntry()
+        // Helper: append a non-head chain entry (retry_me_else
+        // <fail_stub>; check_visible; execute <targetBody>).
+        int AppendNonHeadEntry(int targetBody)
         {
             var em = new Shumway.Compiler.Wam.BytecodeEmitter();
             em.EmitRetryMeElse(failStub);
             em.EmitCheckVisible(born: _dbGeneration, died: long.MaxValue);
-            em.EmitExecute(bodyAddr);
-            byte[] entry = em.ToBytes();
-            return engine.AppendCode(entry);
+            em.EmitExecute(targetBody);
+            return engine.AppendCode(em.ToBytes());
         }
-        int newBucketEntry = AppendChainEntry();
-        prog = engine.CurrentProgram!;
-        Shumway.Core.BytecodeIO.WriteInt32(prog, bucketTailNext, newBucketEntry);
 
-        int newVarEntry = AppendChainEntry();
+        if (!isNewKey)
+        {
+            // Same-key path (chunk 155b): extend bucket chain by
+            // appending one new entry and patching the prior tail.
+            int newBucketEntry = AppendNonHeadEntry(bodyAddr);
+            prog = engine.CurrentProgram!;
+            Shumway.Core.BytecodeIO.WriteInt32(prog, bucketTailNext, newBucketEntry);
+        }
+        else
+        {
+            // New-key path (chunk 155c): build a fresh bucket chain
+            // containing every var-arg-at-0 clause (they match every
+            // concrete key) plus the new clause, append it, then add
+            // (new_key → new_chain_head) to the sub-switch table.
+            var varArgBodies = CollectVarArgBodies(engine, varChainHead, functorId);
+            int newBucketHead = BuildAndAppendNewBucketChain(
+                engine, failStub, headArity: headComp.Args.Length,
+                varArgBodies, bodyAddr);
+            prog = engine.CurrentProgram!;
+            var oldTable = engine.GetSwitchTable(subSwitchTableId);
+            if (oldTable is null) return false;
+            var newTable = oldTable.WithAdditionalEntry(newKeyValue, newBucketHead);
+            engine.ReplaceSwitchTable(subSwitchTableId, newTable);
+            // Chunk 155c persistence: also reflect the mutation into
+            // _dynamicLink so the NEXT query's setup (which rebuilds
+            // engine.SwitchTables from staticLink + _dynamicLink +
+            // queryLink) sees the updated table. Without this the
+            // mutation is per-query only and gets lost on the
+            // following SetupQueryFromTerm.
+            MirrorSwitchTableIntoDynamicLink(subSwitchTableId, newTable);
+        }
+
+        // Always extend the var-fallthrough chain too.
+        int newVarEntry = AppendNonHeadEntry(bodyAddr);
         prog = engine.CurrentProgram!;
         Shumway.Core.BytecodeIO.WriteInt32(prog, varTailNext, newVarEntry);
 
@@ -422,6 +479,195 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             _literalPools.BigInts.Snapshot());
         return true;
     }
+
+    /// <summary>Chunk 155c — locates the sub-switch
+    /// (<c>switch_on_atom</c> / <c>switch_on_integer</c> /
+    /// <c>switch_on_structure</c>) that handles the new clause's
+    /// arg-0 type and returns its table id and the key value for the
+    /// new arg. Returns <c>false</c> if the predicate doesn't yet
+    /// have a sub-switch of that type — adding one would be a layout
+    /// change beyond chunk 155c's scope.</summary>
+    private static bool TryLocateSubSwitchForArg(
+        Engine engine, int predAddr, Shumway.Compiler.Ast.Term arg0,
+        out int keyValue, out int tableId)
+    {
+        keyValue = 0; tableId = -1;
+        var prog = engine.CurrentProgram!;
+        int constLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 6);
+        int varLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 2);
+
+        Shumway.Core.Opcode wantedOp;
+        switch (arg0)
+        {
+            case Shumway.Compiler.Ast.AtomTerm a:
+                wantedOp = Shumway.Core.Opcode.SwitchOnAtom;
+                keyValue = Shumway.Core.AtomTable.Intern(a.Name, permanent: true).Id;
+                break;
+            case Shumway.Compiler.Ast.IntTerm n
+                when n.Value >= int.MinValue && n.Value <= int.MaxValue:
+                wantedOp = Shumway.Core.Opcode.SwitchOnInteger;
+                keyValue = (int)n.Value;
+                break;
+            case Shumway.Compiler.Ast.CompoundTerm c when c.Functor != "." || c.Args.Length != 2:
+                wantedOp = Shumway.Core.Opcode.SwitchOnStructure;
+                keyValue = Shumway.Core.FunctorTable.Intern(
+                    Shumway.Core.AtomTable.Intern(c.Functor, permanent: true).Id, c.Args.Length);
+                break;
+            default:
+                return false;  // list (handled by listLbl, not a sub-switch) or unsupported
+        }
+
+        // Walk the cascade from constLbl looking for the wanted
+        // sub-switch opcode.
+        int p = constLbl;
+        while (p > 0 && p + 5 <= prog.Length && p != varLbl)
+        {
+            var op = (Shumway.Core.Opcode)prog[p];
+            if (op != Shumway.Core.Opcode.SwitchOnAtom
+                && op != Shumway.Core.Opcode.SwitchOnInteger
+                && op != Shumway.Core.Opcode.SwitchOnStructure)
+                return false;
+            if (op == wantedOp)
+            {
+                tableId = Shumway.Core.BytecodeIO.ReadInt32(prog, p + 1);
+                return true;
+            }
+            // Cascade to next sub-switch via the table's default.
+            int tid = Shumway.Core.BytecodeIO.ReadInt32(prog, p + 1);
+            var table = engine.GetSwitchTable(tid);
+            if (table is null) return false;
+            p = table.DefaultAddress;
+        }
+        return false;
+    }
+
+    /// <summary>Chunk 155c — walks the var-fallthrough chain and
+    /// returns the body addresses of clauses whose arg-0 is var
+    /// (so they'd be merged into every concrete bucket chain). The
+    /// var chain enumerates clauses in source order, so its Nth
+    /// entry's <c>execute &lt;body&gt;</c> target is the body of
+    /// <c>_dynamicClauses[functorId][N]</c>; the dynamic-store
+    /// clause carries the original arg-0 classification.</summary>
+    private List<int> CollectVarArgBodies(Engine engine, int varChainHead, int functorId)
+    {
+        var result = new List<int>();
+        if (!_dynamicClauses.TryGetValue(functorId, out var clauses))
+            return result;
+        var prog = engine.CurrentProgram!;
+        int failStub = engine.DynamicFailStubAddr;
+        int cur = varChainHead;
+        bool isHead = true;
+        int idx = 0;
+        while (true)
+        {
+            if (cur < 0 || cur + 27 > prog.Length) break;
+            int chainHeaderSize = isHead ? 9 : 5;
+            int execOpPos = cur + chainHeaderSize + 17;  // skip chain header + check_visible (17)
+            if (execOpPos + 5 > prog.Length) break;
+            if (prog[execOpPos] != (byte)Shumway.Core.Opcode.Execute) break;
+            int bodyAddr = Shumway.Core.BytecodeIO.ReadInt32(prog, execOpPos + 1);
+            // Cross-reference the live clause list. The new clause
+            // has already been added to _dynamicClauses (Assertz
+            // ran before this), so the var chain (one entry behind)
+            // maps idx → clauses[idx] for idx < clauses.Count - 1.
+            if (idx < clauses.Count - 1 && IsVarArgAt0(clauses[idx]))
+                result.Add(bodyAddr);
+            idx++;
+            int next = Shumway.Core.BytecodeIO.ReadInt32(prog, cur + 1);
+            if (next == failStub) break;
+            cur = next;
+            isHead = false;
+        }
+        return result;
+    }
+
+    private static bool IsVarArgAt0(Shumway.Compiler.Ast.Clause c)
+    {
+        Shumway.Compiler.Ast.Term head = c.Kind == Shumway.Compiler.Ast.ClauseKind.Rule
+            ? ((Shumway.Compiler.Ast.CompoundTerm)c.Term).Args[0]
+            : c.Term;
+        if (head is not Shumway.Compiler.Ast.CompoundTerm hc || hc.Args.Length == 0)
+            return false;
+        return hc.Args[0] is Shumway.Compiler.Ast.VarTerm;
+    }
+
+    /// <summary>Chunk 155c — writes <paramref name="newTable"/> into
+    /// the dynamic region's slot of the cached <see cref="_dynamicLink"/>
+    /// so the next query's <see cref="SetupQueryFromTerm"/> (which
+    /// rebuilds the merged engine.SwitchTables list from
+    /// staticLink + _dynamicLink + queryLink) carries the chunk-155c
+    /// mutation forward. The merged-table id at runtime is
+    /// <c>staticLink.SwitchTables.Count + dynamicLocalId</c>; we
+    /// undo the offset to find the right slot in _dynamicLink.
+    /// </summary>
+    private void MirrorSwitchTableIntoDynamicLink(int mergedTableId, Shumway.Core.SwitchTable newTable)
+    {
+        if (_dynamicLink is null) return;
+        int staticCount = _staticLink?.SwitchTables.Count ?? 0;
+        int dynLocalId = mergedTableId - staticCount;
+        if (dynLocalId < 0 || dynLocalId >= _dynamicLink.SwitchTables.Count) return;
+        if (_dynamicLink.SwitchTables is List<Shumway.Core.SwitchTable> dynList)
+            dynList[dynLocalId] = newTable;
+        // If the link's IReadOnlyList isn't actually a List (some
+        // alternative implementation), the mutation can't be made
+        // persistent — chunk 155c degrades gracefully: the current
+        // query holds the update via engine.SwitchTables, the next
+        // query will rebuild from the unmutated link and miss it.
+        // That just regresses to the chunk-154 rebuild fallback for
+        // the affected predicate, which is correct, only slower.
+    }
+
+    /// <summary>Chunk 155c — emits a fresh bucket chain containing
+    /// every var-arg clause's body (in source order) followed by
+    /// the new clause's body, appends it to the buffer, and returns
+    /// the chain head address. The chain head uses
+    /// <c>try_me_else</c> (9 bytes); subsequent entries use
+    /// <c>retry_me_else</c> (5 bytes); the last entry's
+    /// <c>&lt;next&gt;</c> is the fail stub.</summary>
+    private int BuildAndAppendNewBucketChain(
+        Engine engine, int failStub, int headArity,
+        IReadOnlyList<int> varArgBodies, int newBodyAddr)
+    {
+        // Chain bodies in source order: var-arg first, then new.
+        var bodies = new List<int>(varArgBodies);
+        bodies.Add(newBodyAddr);
+        int count = bodies.Count;
+
+        // Plan the chunk: layout & size up front so we can compute
+        // each entry's address (each entry's <next> points at the
+        // following entry's absolute address).
+        const int HeadEntrySize = 9 + 17 + 5;
+        const int NonHeadEntrySize = 5 + 17 + 5;
+
+        // We don't know the chain's start address yet — depends on
+        // engine.ProgramLength. Probe AppendCode by appending a
+        // single empty buffer; instead, just compute offsets relative
+        // to ProgramLength now and then emit in one go.
+        int startAddr = engine.ProgramLength;
+        // Build the entire chain in one BytecodeEmitter so the
+        // offsets are right by construction, then AppendCode the
+        // result. Each entry's <next> is the absolute address of
+        // the next entry, or fail_stub for the last.
+        var em = new Shumway.Compiler.Wam.BytecodeEmitter();
+        for (int i = 0; i < count; i++)
+        {
+            int thisSize = i == 0 ? HeadEntrySize : NonHeadEntrySize;
+            int nextAddr = (i == count - 1) ? failStub
+                                            : startAddr + em.Position + thisSize;
+            if (i == 0) em.EmitTryMeElse(nextAddr, headArity);
+            else        em.EmitRetryMeElse(nextAddr);
+            em.EmitCheckVisible(born: _dbGeneration, died: long.MaxValue);
+            em.EmitExecute(bodies[i]);
+        }
+        int chunkAddr = engine.AppendCode(em.ToBytes());
+        // chunkAddr should equal startAddr (we computed offsets to
+        // match). Verify in debug builds.
+        System.Diagnostics.Debug.Assert(chunkAddr == startAddr,
+            $"chunk 155c: new bucket chain address mismatch (expected {startAddr}, got {chunkAddr}).");
+        return chunkAddr;
+    }
+
+    /// <summary>Chunk 150/151b — pulls the first free chunk whose
 
     /// <summary>Chunk 150/151b — pulls the first free chunk whose
     /// length is at least <paramref name="needed"/> off the engine's
@@ -2775,14 +3021,18 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         engine.SetInitialProgramLength(_persistentLength);
         engine.CurrentQueryOverlay = queryBytes;
         engine.CurrentQuerySplit = _querySplit;
-        // Chunk 155b: expose the linked switch tables on the engine
-        // so the in-place assertz path can look up bucket chain
-        // heads by atom / int / structure key.
-        engine.SwitchTables = linkResult.SwitchTables;
+        // Chunk 155b/c: expose the linked switch tables on the engine
+        // as a MUTABLE list. The same list reference is handed to the
+        // interpreter; the new-key assertz path swaps entries in place
+        // and the interpreter sees the update on the next dispatch
+        // because it reads through the list reference each time.
+        var mutableSwitchTables =
+            new List<Shumway.Core.SwitchTable>(linkResult.SwitchTables);
+        engine.SwitchTables = mutableSwitchTables;
 
         var interp = new BytecodeInterpreter(
             engine, module.StringLiterals, module.FloatLiterals,
-            linkResult.SwitchTables, module.BigIntLiterals);
+            mutableSwitchTables, module.BigIntLiterals);
 
         // ADR-015 chunk C step 4: refresh the interpreter's literal pools
         // after an incremental assertz/asserta interns a new literal.
@@ -2888,20 +3138,22 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // Fall back to the chain layout (chunk-127) or, for cases
         // chunk-155b can't yet handle (new key, var-arg, multi-arg
         // indexed), to the persistent-buffer rebuild.
-        if (!_dynChains.TryGetValue(functorId, out var chain))
+        // Fall back: chunk-127 chain extension applies only when
+        // chain state is populated (i.e. the predicate was compiled
+        // as a try_me_else chain). Otherwise the layout is some
+        // form of indexed dispatch that chunk-155b/c didn't handle
+        // — for a hot predicate, request a persistent rebuild so the
+        // next query sees the new clause through a fresh compile.
+        bool chainUsable =
+            _dynChains.TryGetValue(functorId, out var chain)
+            && chain.TailNextAddr >= 0
+            && engine.CurrentProgram is not null
+            && engine.DynamicFailStubAddr > 0;
+        if (!chainUsable)
         {
-            // No chain state and TryAppendToIndexedDynamic returned
-            // false → the layout isn't one chunk-155b extends. For a
-            // hot indexed predicate this means chunk-154 layout
-            // (multi-arg) or chunk-155 with new-key / var-arg —
-            // either way, rebuild on the next query so the new
-            // clause appears in the live dispatch.
             if (_jitIndexProfile.IsHot(functorId)) InvalidatePersistent();
             return;
         }
-        if (chain.TailNextAddr < 0) return;
-        if (engine.CurrentProgram is null) return;
-        if (engine.DynamicFailStubAddr <= 0) return;
 
         // Apply the same transforms the setup path runs — dynamic clauses
         // share a flat module rewrite context.
