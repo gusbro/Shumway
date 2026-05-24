@@ -263,6 +263,10 @@ public static class MetaBuiltins
     {
         try
         {
+            // Binary stream first — its raw .NET Stream is the
+            // authoritative position source.
+            if (h.BinaryStream is System.IO.Stream bs)
+                return bs.CanSeek ? bs.Position : null;
             if (h.Reader is System.IO.StreamReader sr)
                 return sr.BaseStream.CanSeek ? sr.BaseStream.Position : null;
             if (h.Writer is System.IO.StreamWriter sw)
@@ -289,9 +293,10 @@ public static class MetaBuiltins
             throw new Shumway.Core.PrologRuntimeException("domain_error", "stream_position");
         long target = posCell.AsInt;
 
-        System.IO.Stream? baseStream = h.Reader is System.IO.StreamReader sr
-            ? sr.BaseStream
-            : h.Writer is System.IO.StreamWriter sw ? sw.BaseStream : null;
+        System.IO.Stream? baseStream = h.BinaryStream
+            ?? (h.Reader is System.IO.StreamReader sr
+                ? sr.BaseStream
+                : h.Writer is System.IO.StreamWriter sw ? sw.BaseStream : null);
         if (baseStream is null || !baseStream.CanSeek)
             throw new Shumway.Core.PrologRuntimeException(
                 "permission_error", "reposition,stream");

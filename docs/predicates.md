@@ -210,6 +210,8 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `format(+Format, +Arguments)` | Writes formatted output from a control string and an argument list. |
 | `format(+Stream, +Format, +Arguments)` | Writes formatted output to the given stream. |
 | `format_to_atom(-Atom, +Format, +Args)` | Like format/2 but captures the formatted output into an atom. |
+| `get_byte(-Byte)` | Reads one byte from the current input binary stream (ISO §8.13.1). |
+| `get_byte(+Stream, -Byte)` | Reads one byte from a binary stream (ISO §8.13.1). |
 | `get_char(-Char)` | Reads one character from the current input stream (ISO §8.12.1). |
 | `get_char(+Stream, -Char)` | Reads and consumes one character from a stream. |
 | `get_code(-Code)` | Reads one character code from the current input stream (ISO §8.12.4). |
@@ -218,11 +220,15 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `nl(+Stream)` | Writes a newline to the given stream. |
 | `open(+File, +Mode, -Stream)` | Opens a file as a stream handle. |
 | `open(+File, +Mode, -Stream, +Options)` | Opens a file with options (alias, type, eof_action) — ISO §8.11.5. |
+| `peek_byte(-Byte)` | Peeks one byte from the current input binary stream (ISO §8.13.2). |
+| `peek_byte(+Stream, -Byte)` | Peeks one byte from a binary stream (ISO §8.13.2). |
 | `peek_char(-Char)` | Peeks one character from the current input stream (ISO §8.12.2). |
 | `peek_char(+Stream, -Char)` | Peeks the next character of a stream without consuming it. |
 | `peek_code(-Code)` | Peeks one character code from current input (ISO §8.12.5). |
 | `peek_code(+Stream, -Code)` | Peeks one character code from a stream (ISO §8.12.5). |
 | `print(+Term)` | Writes a term using print conventions. |
+| `put_byte(+Byte)` | Writes one byte to the current output binary stream (ISO §8.13.3). |
+| `put_byte(+Stream, +Byte)` | Writes one byte to a binary stream (ISO §8.13.3). |
 | `put_char(+Char)` | Writes a single-character atom to the current output stream (ISO §8.12.3). |
 | `put_char(+Stream, +Char)` | Writes a single-character atom to the given stream (ISO §8.12.3). |
 | `put_code(+Code)` | Writes the character for Code to the current output stream (ISO §8.12.6). |

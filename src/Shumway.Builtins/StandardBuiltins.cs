@@ -148,6 +148,18 @@ public static class StandardBuiltins
             Io, "put_code(+Code)", "Writes the character for Code to the current output stream (ISO §8.12.6).");
         BuiltinsRegistry.Register("put_code",  2, StreamBuiltins.PutCode2,
             Io, "put_code(+Stream, +Code)", "Writes the character for Code to a stream (ISO §8.12.6).");
+        BuiltinsRegistry.Register("get_byte",  1, StreamBuiltins.GetByte0,
+            Io, "get_byte(-Byte)", "Reads one byte from the current input binary stream (ISO §8.13.1).");
+        BuiltinsRegistry.Register("get_byte",  2, StreamBuiltins.GetByte2,
+            Io, "get_byte(+Stream, -Byte)", "Reads one byte from a binary stream (ISO §8.13.1).");
+        BuiltinsRegistry.Register("peek_byte", 1, StreamBuiltins.PeekByte0,
+            Io, "peek_byte(-Byte)", "Peeks one byte from the current input binary stream (ISO §8.13.2).");
+        BuiltinsRegistry.Register("peek_byte", 2, StreamBuiltins.PeekByte2,
+            Io, "peek_byte(+Stream, -Byte)", "Peeks one byte from a binary stream (ISO §8.13.2).");
+        BuiltinsRegistry.Register("put_byte",  1, StreamBuiltins.PutByte1,
+            Io, "put_byte(+Byte)", "Writes one byte to the current output binary stream (ISO §8.13.3).");
+        BuiltinsRegistry.Register("put_byte",  2, StreamBuiltins.PutByte2,
+            Io, "put_byte(+Stream, +Byte)", "Writes one byte to a binary stream (ISO §8.13.3).");
         BuiltinsRegistry.Register("current_input",  1, StreamBuiltins.CurrentInput,
             Io, "current_input(-Stream)", "Unifies Stream with a designator for the current input stream (ISO §8.11.1).");
         BuiltinsRegistry.Register("current_output", 1, StreamBuiltins.CurrentOutput,

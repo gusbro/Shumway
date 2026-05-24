@@ -21,12 +21,24 @@ public sealed class StreamHandle
     public int Id { get; }
 
     /// <summary>The underlying reader, or null when this is a writer
-    /// handle.</summary>
+    /// or binary handle.</summary>
     public TextReader? Reader { get; }
 
     /// <summary>The underlying writer, or null when this is a reader
-    /// handle.</summary>
+    /// or binary handle.</summary>
     public TextWriter? Writer { get; }
+
+    /// <summary>The underlying raw byte stream, or null when this
+    /// is a text handle. Set for streams opened with the
+    /// <c>type(binary)</c> option; ISO §8.13's byte I/O builtins
+    /// read and write through this.</summary>
+    public Stream? BinaryStream { get; }
+
+    /// <summary>True for a stream opened with <c>type(binary)</c>.
+    /// Byte builtins (<c>get_byte</c>, <c>put_byte</c>, …) require
+    /// this; char builtins on a binary stream raise
+    /// <c>permission_error(input, text_stream, _)</c>.</summary>
+    public bool IsBinary => BinaryStream is not null;
 
     /// <summary>The mode this stream was opened in — <c>read</c>,
     /// <c>write</c>, or <c>append</c>.</summary>
@@ -46,8 +58,10 @@ public sealed class StreamHandle
     /// report <c>existence_error</c> rather than crashing.</summary>
     public bool Closed { get; internal set; }
 
-    public bool IsReader => Reader is not null;
-    public bool IsWriter => Writer is not null;
+    public bool IsReader => Reader is not null
+        || (BinaryStream is not null && Mode == "read");
+    public bool IsWriter => Writer is not null
+        || (BinaryStream is not null && (Mode == "write" || Mode == "append"));
 
     public StreamHandle(int id, TextReader reader, string mode, string? filename = null, string? alias = null)
     {
@@ -62,6 +76,19 @@ public sealed class StreamHandle
     {
         Id = id;
         Writer = writer;
+        Mode = mode;
+        Filename = filename;
+        Alias = alias;
+    }
+
+    /// <summary>Binary-stream constructor. <paramref name="binaryStream"/>
+    /// is read from for <c>read</c> mode, written to for <c>write</c>
+    /// / <c>append</c>. The text-side <see cref="Reader"/> /
+    /// <see cref="Writer"/> stay null.</summary>
+    public StreamHandle(int id, Stream binaryStream, string mode, string? filename = null, string? alias = null)
+    {
+        Id = id;
+        BinaryStream = binaryStream;
         Mode = mode;
         Filename = filename;
         Alias = alias;

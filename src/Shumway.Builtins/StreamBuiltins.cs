@@ -141,6 +141,7 @@ public static class StreamBuiltins
         // Parse the options list. Each option is a 1-arg compound;
         // anything else is a stream_option domain error.
         string? alias = null;
+        bool binary = false;
         Cell cur = optsCell;
         while (cur.Tag == Tag.Lis)
         {
@@ -168,13 +169,13 @@ public static class StreamBuiltins
                     alias = AtomTable.GetById(argCell.AsAtomId)?.Name ?? "";
                     break;
                 case "type":
-                    // text/binary: accept both but Shumway only does text.
                     if (argCell.Tag == Tag.Ref)
                         throw new PrologRuntimeException("instantiation_error");
                     if (argCell.Tag != Tag.Atom)
                         throw new PrologRuntimeException("domain_error", "stream_option");
                     string typeName = AtomTable.GetById(argCell.AsAtomId)?.Name ?? "";
-                    if (typeName != "text" && typeName != "binary")
+                    if (typeName == "binary") binary = true;
+                    else if (typeName != "text")
                         throw new PrologRuntimeException("domain_error", "stream_option");
                     break;
                 case "eof_action":
@@ -208,14 +209,33 @@ public static class StreamBuiltins
         StreamHandle handle;
         try
         {
-            handle = mode switch
+            if (binary)
             {
-                "write"  => new StreamHandle(id, new StreamWriter(path, append: false), "write", path, alias),
-                "append" => new StreamHandle(id, new StreamWriter(path, append: true), "append", path, alias),
-                "read"   => new StreamHandle(id, new StreamReader(path), "read", path, alias),
-                _ => throw new PrologRuntimeException("domain_error",
-                    "stream_mode (Phase 1 supports write / append / read)"),
-            };
+                // Chunk 142: binary streams open the file as a raw
+                // FileStream; ISO §8.13's byte I/O builtins read /
+                // write through StreamHandle.BinaryStream.
+                FileMode fm = mode switch
+                {
+                    "write"  => FileMode.Create,
+                    "append" => FileMode.Append,
+                    "read"   => FileMode.Open,
+                    _ => throw new PrologRuntimeException("domain_error", "stream_mode"),
+                };
+                FileAccess fa = mode == "read" ? FileAccess.Read : FileAccess.Write;
+                handle = new StreamHandle(id, new FileStream(path, fm, fa),
+                    mode, path, alias);
+            }
+            else
+            {
+                handle = mode switch
+                {
+                    "write"  => new StreamHandle(id, new StreamWriter(path, append: false), "write", path, alias),
+                    "append" => new StreamHandle(id, new StreamWriter(path, append: true), "append", path, alias),
+                    "read"   => new StreamHandle(id, new StreamReader(path), "read", path, alias),
+                    _ => throw new PrologRuntimeException("domain_error",
+                        "stream_mode (Phase 1 supports write / append / read)"),
+                };
+            }
         }
         catch (FileNotFoundException)
         {
@@ -240,6 +260,11 @@ public static class StreamBuiltins
         var h = ResolveStream(engine, engine.GetRegister(0));
         if (h.Reader is not null) h.Reader.Dispose();
         if (h.Writer is not null) { h.Writer.Flush(); h.Writer.Dispose(); }
+        if (h.BinaryStream is not null)
+        {
+            try { h.BinaryStream.Flush(); } catch { }
+            h.BinaryStream.Dispose();
+        }
         engine.Streams!.Remove(h);
         return true;
     }
@@ -252,6 +277,10 @@ public static class StreamBuiltins
     public static bool WriteToStream(Engine engine)
     {
         var h = ResolveWriter(engine, engine.GetRegister(0));
+        if (h.IsBinary)
+            // Chunk 142: text write on a binary stream is
+            // permission_error(output, binary_stream, _) (ISO §8.14.2.3.g).
+            throw new PrologRuntimeException("permission_error", "output,binary_stream");
         TermRenderer.Render(engine, engine.GetRegister(1), h.Writer!,
             new TermRenderOptions { Operators = engine.Operators });
         return true;
@@ -261,6 +290,8 @@ public static class StreamBuiltins
     public static bool NlOnStream(Engine engine)
     {
         var h = ResolveWriter(engine, engine.GetRegister(0));
+        if (h.IsBinary)
+            throw new PrologRuntimeException("permission_error", "output,binary_stream");
         h.Writer!.WriteLine();
         return true;
     }
@@ -272,11 +303,7 @@ public static class StreamBuiltins
     public static bool GetChar(Engine engine)
     {
         var h = ResolveReader(engine, engine.GetRegister(0));
-        int c = h.Reader!.Read();
-        Cell value = c < 0
-            ? Cell.Atom(AtomTable.Intern("end_of_file", permanent: true).Id)
-            : Cell.Atom(AtomTable.Intern(((char)c).ToString(), permanent: false).Id);
-        return engine.UnifyRegisterWithCell(1, value);
+        return ReadCharInto(engine, h, regOut: 1);
     }
 
     /// <summary><c>peek_char(Stream, Char)</c> — returns the next char
@@ -284,11 +311,7 @@ public static class StreamBuiltins
     public static bool PeekChar(Engine engine)
     {
         var h = ResolveReader(engine, engine.GetRegister(0));
-        int c = h.Reader!.Peek();
-        Cell value = c < 0
-            ? Cell.Atom(AtomTable.Intern("end_of_file", permanent: true).Id)
-            : Cell.Atom(AtomTable.Intern(((char)c).ToString(), permanent: false).Id);
-        return engine.UnifyRegisterWithCell(1, value);
+        return PeekCharInto(engine, h, regOut: 1);
     }
 
     // ---------- §8.12 character / code I/O ----------
@@ -378,12 +401,115 @@ public static class StreamBuiltins
         return true;
     }
 
+    // ---------- §8.13 byte I/O ----------
+
+    /// <summary><c>get_byte/1</c> — reads one byte from current
+    /// input. EOF returns -1. ISO §8.13.1.</summary>
+    public static bool GetByte0(Engine engine)
+    {
+        var h = engine.Streams?.CurrentInput
+            ?? throw new InvalidOperationException("Engine has no stream registry.");
+        return ReadByteInto(engine, h, regOut: 0);
+    }
+
+    /// <summary><c>get_byte(+Stream, -Byte)</c> — ISO §8.13.1.</summary>
+    public static bool GetByte2(Engine engine)
+    {
+        var h = ResolveStream(engine, engine.GetRegister(0));
+        return ReadByteInto(engine, h, regOut: 1);
+    }
+
+    /// <summary><c>peek_byte/1</c> — ISO §8.13.2.</summary>
+    public static bool PeekByte0(Engine engine)
+    {
+        var h = engine.Streams?.CurrentInput
+            ?? throw new InvalidOperationException("Engine has no stream registry.");
+        return PeekByteInto(engine, h, regOut: 0);
+    }
+
+    /// <summary><c>peek_byte(+Stream, -Byte)</c> — ISO §8.13.2.</summary>
+    public static bool PeekByte2(Engine engine)
+    {
+        var h = ResolveStream(engine, engine.GetRegister(0));
+        return PeekByteInto(engine, h, regOut: 1);
+    }
+
+    /// <summary><c>put_byte/1</c> — writes one byte to current
+    /// output. ISO §8.13.3.</summary>
+    public static bool PutByte1(Engine engine)
+    {
+        var h = engine.Streams?.CurrentOutput
+            ?? throw new InvalidOperationException("Engine has no stream registry.");
+        WriteOneByte(engine, h, regByte: 0);
+        return true;
+    }
+
+    /// <summary><c>put_byte(+Stream, +Byte)</c> — ISO §8.13.3.</summary>
+    public static bool PutByte2(Engine engine)
+    {
+        var h = ResolveStream(engine, engine.GetRegister(0));
+        WriteOneByte(engine, h, regByte: 1);
+        return true;
+    }
+
+    // ---------- byte helpers ----------
+
+    private static bool ReadByteInto(Engine engine, StreamHandle h, int regOut)
+    {
+        if (!h.IsReader)
+            throw new PrologRuntimeException("permission_error", "input,stream");
+        if (!h.IsBinary)
+            // ISO §8.13.1.3.g: byte I/O on a text stream is
+            // permission_error(input, text_stream, _).
+            throw new PrologRuntimeException("permission_error", "input,text_stream");
+        int b = h.BinaryStream!.ReadByte();
+        return engine.UnifyRegisterWithCell(regOut, Cell.Int(b));
+    }
+
+    private static bool PeekByteInto(Engine engine, StreamHandle h, int regOut)
+    {
+        if (!h.IsReader)
+            throw new PrologRuntimeException("permission_error", "input,stream");
+        if (!h.IsBinary)
+            throw new PrologRuntimeException("permission_error", "input,text_stream");
+        var bs = h.BinaryStream!;
+        if (!bs.CanSeek)
+            throw new PrologRuntimeException("permission_error", "reposition,stream");
+        long pos = bs.Position;
+        int b = bs.ReadByte();
+        bs.Position = pos;
+        return engine.UnifyRegisterWithCell(regOut, Cell.Int(b));
+    }
+
+    private static void WriteOneByte(Engine engine, StreamHandle h, int regByte)
+    {
+        if (!h.IsWriter)
+            throw new PrologRuntimeException("permission_error", "output,stream");
+        if (!h.IsBinary)
+            // ISO §8.13.3.3.g: byte I/O on a text stream is
+            // permission_error(output, text_stream, _).
+            throw new PrologRuntimeException("permission_error", "output,text_stream");
+        Cell c = Resolve(engine, engine.GetRegister(regByte));
+        if (c.Tag == Tag.Ref)
+            throw new PrologRuntimeException("instantiation_error");
+        if (c.Tag != Tag.Int)
+            throw new PrologRuntimeException("type_error", "byte");
+        long v = c.AsInt;
+        if (v < 0 || v > 255)
+            throw new PrologRuntimeException("type_error", "byte");
+        h.BinaryStream!.WriteByte((byte)v);
+    }
+
     // ---------- character / code helpers ----------
 
     private static bool ReadCharInto(Engine engine, StreamHandle h, int regOut)
     {
         if (!h.IsReader)
             throw new PrologRuntimeException("permission_error", "input,stream");
+        if (h.IsBinary)
+            // ISO §8.12.1.3.g: char I/O on a binary stream is
+            // permission_error(input, binary_stream, _).
+            throw new PrologRuntimeException("permission_error", "input,binary_stream");
         int c = h.Reader!.Read();
         Cell value = c < 0
             ? Cell.Atom(AtomTable.Intern("end_of_file", permanent: true).Id)
@@ -395,6 +521,8 @@ public static class StreamBuiltins
     {
         if (!h.IsReader)
             throw new PrologRuntimeException("permission_error", "input,stream");
+        if (h.IsBinary)
+            throw new PrologRuntimeException("permission_error", "input,binary_stream");
         int c = h.Reader!.Peek();
         Cell value = c < 0
             ? Cell.Atom(AtomTable.Intern("end_of_file", permanent: true).Id)
@@ -406,6 +534,8 @@ public static class StreamBuiltins
     {
         if (!h.IsReader)
             throw new PrologRuntimeException("permission_error", "input,stream");
+        if (h.IsBinary)
+            throw new PrologRuntimeException("permission_error", "input,binary_stream");
         int c = h.Reader!.Read();
         // ISO §8.12.4: EOF is the integer -1.
         return engine.UnifyRegisterWithCell(regOut, Cell.Int(c));
@@ -415,12 +545,16 @@ public static class StreamBuiltins
     {
         if (!h.IsReader)
             throw new PrologRuntimeException("permission_error", "input,stream");
+        if (h.IsBinary)
+            throw new PrologRuntimeException("permission_error", "input,binary_stream");
         int c = h.Reader!.Peek();
         return engine.UnifyRegisterWithCell(regOut, Cell.Int(c));
     }
 
     private static void WriteOneChar(Engine engine, StreamHandle h, int regChar)
     {
+        if (h.IsBinary)
+            throw new PrologRuntimeException("permission_error", "output,binary_stream");
         Cell c = Resolve(engine, engine.GetRegister(regChar));
         if (c.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
@@ -434,6 +568,8 @@ public static class StreamBuiltins
 
     private static void WriteOneCode(Engine engine, StreamHandle h, int regCode)
     {
+        if (h.IsBinary)
+            throw new PrologRuntimeException("permission_error", "output,binary_stream");
         Cell c = Resolve(engine, engine.GetRegister(regCode));
         if (c.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
