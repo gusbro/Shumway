@@ -8,6 +8,7 @@
     <Project Path="src/Shumway.Core/Shumway.Core.csproj" />
     <Project Path="src/Shumway.Embedding/Shumway.Embedding.csproj" />
     <Project Path="src/Shumway.Interpreter/Shumway.Interpreter.csproj" />
+    <Project Path="src/Shumway.Link/Shumway.Link.csproj" />
     <Project Path="src/Shumway.Repl/Shumway.Repl.csproj" />
   </Folder>
   <Folder Name="/tests/">
