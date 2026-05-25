@@ -7,27 +7,17 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// Chunk 155g: multi-arg dynamic indexed predicates. Chunks 155a–f
-/// extend the in-place mutation paths only for the single-arg
-/// indexed layout — multi-arg dynamic predicates (where the
-/// compiler infers <c>indexableArgs.Count &gt; 1</c>) keep the
-/// chunk-154 layout (contiguous <c>try</c> / <c>retry</c> /
-/// <c>trust</c> + shared bodies + <c>switch_on_arg</c> for the
-/// second and later levels) and fall through to the rebuild-on-
-/// mutate fallback.
-///
-/// <para>This is a deliberate scope cut: the chunk-154 path is
-/// correct (rebuild produces the right dispatch from current
-/// <c>_dynamicClauses</c>), just slower for write-heavy multi-arg-
-/// dynamic workloads. True in-place extensibility for multi-arg
-/// indexed dispatch is recorded as Phase 11 work — it requires
-/// multi-level switch traversal in every chain-modification helper
-/// and a layout that nests extensible chains under each
-/// <c>switch_on_arg</c> level. The tests here pin correctness of
-/// the rebuild-fallback path so the chunk-155g contract — multi-
-/// arg dynamics work, they just rebuild instead of extending in
-/// place — survives any further refactor of the surrounding code.
-/// </para>
+/// Chunk 155g / 156: multi-arg dynamic indexed predicates.
+/// Originally (chunk 155g) multi-arg dynamic predicates kept the
+/// chunk-154 contiguous <c>try</c> / <c>retry</c> / <c>trust</c>
+/// layout and fell through to rebuild-on-mutate. Phase 11 chunk
+/// 156 lifts that fallback: every chunk-155-style mutation path
+/// (assertz / asserta / retract / var-arg / new-key) now walks
+/// multi-level dispatch via a recursive chain-head enumerator,
+/// and the compiled layout uses extensible <c>try_me_else</c> /
+/// <c>retry_me_else</c> chains at every level of indexing.
+/// The tests originally pinned the chunk-154 layout; they're now
+/// updated to verify the chunk-156 layout.
 /// </summary>
 public class Chunk155gTests
 {
@@ -50,7 +40,7 @@ public class Chunk155gTests
     }
 
     [Fact]
-    public void MultiArgDynamic_KeepsChunk154Layout_NotExtensible()
+    public void MultiArgDynamic_UsesChunk156ExtensibleLayout()
     {
         var e = new PrologEngine();
         e.JitIndexing.Threshold = 1;
@@ -61,20 +51,23 @@ public class Chunk155gTests
         e.Query("shape(circle, area).");   // promote
         e.Query("shape(circle, area).");   // recompile indexed
         Assert.True(e.DynamicPredicateCache.TryGetValue(Fid("shape", 2), out var cached));
-        // Chunk-154 layout: contiguous try / retry / trust opcodes,
-        // not chunk-155a's try_me_else chain. Both SwitchOnTerm
-        // (arg 0) and SwitchOnArg (arg 1) appear — the chunk-67
-        // multi-arg indexing pattern.
+        // Chunk-156 layout: extensible try_me_else chains at every
+        // level, multi-arg dispatch via switch_on_term (arg 0) +
+        // switch_on_arg (arg 1).
         Assert.True(HasOpcode(cached!.Bytecode, Opcode.SwitchOnTerm),
             "arg 0 indexed via switch_on_term");
         Assert.True(HasOpcode(cached.Bytecode, Opcode.SwitchOnArg),
             "arg 1 indexed via switch_on_arg");
-        Assert.True(HasOpcode(cached.Bytecode, Opcode.Try),
-            "chunk-154 layout uses Try (not TryMeElse)");
+        Assert.True(HasOpcode(cached.Bytecode, Opcode.TryMeElse),
+            "chunk-156 layout uses TryMeElse (not Try)");
+        Assert.True(HasOpcode(cached.Bytecode, Opcode.Execute),
+            "shared bodies are reached via execute");
+        Assert.False(HasOpcode(cached.Bytecode, Opcode.Try),
+            "chunk-156 removes the contiguous Try opcode");
     }
 
     [Fact]
-    public void MultiArgDynamic_AssertzCorrect_ViaRebuild()
+    public void MultiArgDynamic_AssertzCorrect_InPlace()
     {
         var e = new PrologEngine();
         e.JitIndexing.Threshold = 1;
@@ -99,7 +92,7 @@ public class Chunk155gTests
     }
 
     [Fact]
-    public void MultiArgDynamic_RetractCorrect_ViaRebuild()
+    public void MultiArgDynamic_RetractCorrect_InPlace()
     {
         var e = new PrologEngine();
         e.JitIndexing.Threshold = 1;
@@ -121,7 +114,7 @@ public class Chunk155gTests
     }
 
     [Fact]
-    public void MultiArgDynamic_AssertaCorrect_ViaRebuild()
+    public void MultiArgDynamic_AssertaCorrect_InPlace()
     {
         var e = new PrologEngine();
         e.JitIndexing.Threshold = 1;

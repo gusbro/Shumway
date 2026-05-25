@@ -184,6 +184,31 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// chunk-155a chains begin with <c>try_me_else</c> (patchable
     /// <c>&lt;next&gt;</c> operand) whereas chunk-154's contiguous
     /// indexed layout begins with <c>try</c>.</summary>
+    /// <summary>Chunk 156 — walks through the multi-level cascade
+    /// from the predicate's <c>switch_on_term</c> var label,
+    /// descending through any number of <c>switch_on_arg</c> level
+    /// switches, until it reaches the final chain head (the chain
+    /// that enumerates EVERY clause regardless of indexable args).
+    /// Returns -1 if the layout doesn't match.</summary>
+    private int FindFinalVarChainHead(Engine engine, int predAddr)
+    {
+        var prog = engine.CurrentProgram;
+        if (prog is null || predAddr + 18 > prog.Length) return -1;
+        int p = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 2);
+        while (p > 0 && p + 1 <= prog.Length)
+        {
+            var op = (Shumway.Core.Opcode)prog[p];
+            if (op == Shumway.Core.Opcode.TryMeElse) return p;
+            if (op == Shumway.Core.Opcode.RetryMeElse
+                && p + 6 <= prog.Length
+                && prog[p + 5] == (byte)Shumway.Core.Opcode.Nop) return p;
+            if (op != Shumway.Core.Opcode.SwitchOnArg) return -1;
+            if (p + 9 > prog.Length) return -1;
+            p = Shumway.Core.BytecodeIO.ReadInt32(prog, p + 5);
+        }
+        return -1;
+    }
+
     private bool IsExtensibleIndexedLayout(Engine engine, int functorId)
     {
         var addrMap = engine.CurrentFunctorAddresses;
@@ -193,9 +218,27 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         if (prog is null || predAddr + 18 > prog.Length) return false;
         if (prog[predAddr] != (byte)Shumway.Core.Opcode.EnterDynamic) return false;
         if (prog[predAddr + 1] != (byte)Shumway.Core.Opcode.SwitchOnTerm) return false;
+        // Chunk 156: for single-arg the var label points at a
+        // try_me_else chain head; for multi-arg it points at the
+        // next level's switch_on_arg (or, after layers of cascade,
+        // eventually at a chain head). Walk through switch_on_arg
+        // nodes until we reach a try_me_else chain head; that's
+        // the signature of every chunk-155/156 indexed layout.
         int varLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 2);
-        if (varLbl <= 0 || varLbl >= prog.Length) return false;
-        return prog[varLbl] == (byte)Shumway.Core.Opcode.TryMeElse;
+        while (varLbl > 0 && varLbl + 1 <= prog.Length)
+        {
+            var op = (Shumway.Core.Opcode)prog[varLbl];
+            if (op == Shumway.Core.Opcode.TryMeElse) return true;
+            if (op == Shumway.Core.Opcode.RetryMeElse
+                && varLbl + 6 <= prog.Length
+                && prog[varLbl + 5] == (byte)Shumway.Core.Opcode.Nop) return true;
+            if (op != Shumway.Core.Opcode.SwitchOnArg) return false;
+            // switch_on_arg's var label is at +5 (skip the opcode
+            // byte and the 4-byte arg_idx).
+            if (varLbl + 9 > prog.Length) return false;
+            varLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, varLbl + 5);
+        }
+        return false;
     }
 
     /// <summary>Chunk 155b — walks the chain starting at
@@ -277,15 +320,22 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             return -1;
         var arg0 = headComp.Args[0];
 
-        // Walk the const-label cascade (switch_on_atom → switch_on_integer
-        // → switch_on_structure) or the list/struct dispatch to find
-        // the bucket chain head for this key.
+        // Walk the const-label cascade for level 0 only. The cascade
+        // is atom → integer → structure within one level; on multi-
+        // arg (chunk 156) the cascade's last default points at the
+        // NEXT LEVEL's switch_on_arg, which marks the level boundary
+        // and stops the walk — arg-0's bucket is in level 0 only,
+        // higher-level buckets are routed through different chain
+        // extensions.
         int CascadeLookup(int startAddr, int key, Shumway.Core.Opcode wantedOpcode)
         {
             int p = startAddr;
             while (p > 0 && p + 5 <= prog.Length)
             {
                 var op = (Shumway.Core.Opcode)prog[p];
+                // SwitchOnArg marks the boundary between level 0 and
+                // the next indexable level — stop here.
+                if (op == Shumway.Core.Opcode.SwitchOnArg) return -1;
                 if (op != Shumway.Core.Opcode.SwitchOnAtom
                     && op != Shumway.Core.Opcode.SwitchOnInteger
                     && op != Shumway.Core.Opcode.SwitchOnStructure) return -1;
@@ -297,10 +347,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     int target = table.Lookup(key);
                     return target == table.DefaultAddress ? -1 : target;
                 }
-                // Wrong sub-switch type for this key: follow the
-                // default which cascades to the next sub-switch.
                 p = table.DefaultAddress;
-                if (p == varLbl) return -1;  // cascade ended in var → no bucket
+                if (p == varLbl) return -1;
             }
             return -1;
         }
@@ -376,7 +424,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // bucket chain, creating it for new-key).
         int bucketChainHead = -1;
         bool isNewKey = false;
-        int varChainHead = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 2);
+        // Chunk 156: for multi-arg layouts, the var slot at
+        // predAddr+2 points at the next level's switch_on_arg, not
+        // at the final var chain. Walk through the level cascade to
+        // reach the actual chain head.
+        int varChainHead = FindFinalVarChainHead(engine, predAddr);
+        if (varChainHead < 0) return false;
         var chainTailNexts = new List<int>();
         int newKeyValue = 0;
         int subSwitchTableId = -1;
@@ -547,11 +600,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
 
         // Walk the cascade from constLbl looking for the wanted
-        // sub-switch opcode.
+        // sub-switch opcode. Stop at SwitchOnArg — chunk-156 multi-
+        // arg layouts put a level boundary there, and the new key's
+        // sub-switch must live within level 0.
         int p = constLbl;
         while (p > 0 && p + 5 <= prog.Length && p != varLbl)
         {
             var op = (Shumway.Core.Opcode)prog[p];
+            if (op == Shumway.Core.Opcode.SwitchOnArg) return false;
             if (op != Shumway.Core.Opcode.SwitchOnAtom
                 && op != Shumway.Core.Opcode.SwitchOnInteger
                 && op != Shumway.Core.Opcode.SwitchOnStructure)
@@ -561,7 +617,6 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 tableId = Shumway.Core.BytecodeIO.ReadInt32(prog, p + 1);
                 return true;
             }
-            // Cascade to next sub-switch via the table's default.
             int tid = Shumway.Core.BytecodeIO.ReadInt32(prog, p + 1);
             var table = engine.GetSwitchTable(tid);
             if (table is null) return false;
@@ -614,14 +669,92 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return hc.Args[0] is Shumway.Compiler.Ast.VarTerm;
     }
 
-    /// <summary>Chunk 155e — enumerates every chain head reachable
-    /// from the chunk-155a indexed predicate's entry (var chain,
-    /// list bucket if present, every value in the atom / integer /
-    /// structure switch tables), walks each to find its tail-next
-    /// operand, and appends those operand positions to
-    /// <paramref name="tailNextOperands"/>. Deduplicates chain heads
-    /// so a chain shared by multiple keys is only extended once.
-    /// Returns <c>false</c> on layout mismatch.</summary>
+    /// <summary>Chunk 156 — recursively enumerates every chain head
+    /// reachable from a switch address. Walks both single- and
+    /// multi-level layouts: switch_on_term and switch_on_arg cascade
+    /// through 4 child labels; switch_on_atom / _integer /
+    /// _structure (and their _arg variants) recurse through every
+    /// table value plus the default. Chain heads — try_me_else, or
+    /// a demoted retry_me_else + Nop at +5 — are added to
+    /// <paramref name="heads"/>. Recursion stops at fail-stub
+    /// addresses or unrecognised opcodes.</summary>
+    private void EnumerateChainHeadsRecursive(
+        Engine engine, int addr, HashSet<int> heads, HashSet<int> visited)
+    {
+        if (addr <= 0) return;
+        var prog = engine.CurrentProgram;
+        if (prog is null || addr + 1 > prog.Length) return;
+        if (!visited.Add(addr)) return;
+        var op = (Shumway.Core.Opcode)prog[addr];
+        switch (op)
+        {
+            case Shumway.Core.Opcode.SwitchOnTerm:
+            {
+                int varLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, addr + 1);
+                int constLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, addr + 5);
+                int listLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, addr + 9);
+                int structLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, addr + 13);
+                EnumerateChainHeadsRecursive(engine, varLbl, heads, visited);
+                EnumerateChainHeadsRecursive(engine, constLbl, heads, visited);
+                EnumerateChainHeadsRecursive(engine, listLbl, heads, visited);
+                EnumerateChainHeadsRecursive(engine, structLbl, heads, visited);
+                break;
+            }
+            case Shumway.Core.Opcode.SwitchOnArg:
+            {
+                int varLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, addr + 5);
+                int constLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, addr + 9);
+                int listLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, addr + 13);
+                int structLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, addr + 17);
+                EnumerateChainHeadsRecursive(engine, varLbl, heads, visited);
+                EnumerateChainHeadsRecursive(engine, constLbl, heads, visited);
+                EnumerateChainHeadsRecursive(engine, listLbl, heads, visited);
+                EnumerateChainHeadsRecursive(engine, structLbl, heads, visited);
+                break;
+            }
+            case Shumway.Core.Opcode.SwitchOnAtom:
+            case Shumway.Core.Opcode.SwitchOnInteger:
+            case Shumway.Core.Opcode.SwitchOnStructure:
+            {
+                int tid = Shumway.Core.BytecodeIO.ReadInt32(prog, addr + 1);
+                var table = engine.GetSwitchTable(tid);
+                if (table is null) break;
+                foreach (int v in table.Values)
+                    EnumerateChainHeadsRecursive(engine, v, heads, visited);
+                EnumerateChainHeadsRecursive(engine, table.DefaultAddress, heads, visited);
+                break;
+            }
+            case Shumway.Core.Opcode.SwitchOnAtomArg:
+            case Shumway.Core.Opcode.SwitchOnIntegerArg:
+            case Shumway.Core.Opcode.SwitchOnStructureArg:
+            {
+                // arg_idx at +1, table_id at +5.
+                int tid = Shumway.Core.BytecodeIO.ReadInt32(prog, addr + 5);
+                var table = engine.GetSwitchTable(tid);
+                if (table is null) break;
+                foreach (int v in table.Values)
+                    EnumerateChainHeadsRecursive(engine, v, heads, visited);
+                EnumerateChainHeadsRecursive(engine, table.DefaultAddress, heads, visited);
+                break;
+            }
+            case Shumway.Core.Opcode.TryMeElse:
+                heads.Add(addr);
+                break;
+            case Shumway.Core.Opcode.RetryMeElse:
+                // Demoted chain head (after asserta) — has Nop at +5.
+                if (addr + 6 <= prog.Length
+                    && prog[addr + 5] == (byte)Shumway.Core.Opcode.Nop)
+                    heads.Add(addr);
+                break;
+            // fail_stub or anything else: stop.
+        }
+    }
+
+    /// <summary>Chunk 155e/156 — collects every chain's tail-next
+    /// operand, used by the var-arg-at-0 / multi-arg extension paths
+    /// that need to append a new entry to every chain. Builds on
+    /// <see cref="EnumerateChainHeadsRecursive"/> so multi-level
+    /// layouts (chunk-156) are fully covered.</summary>
     private bool CollectAllChainTailNextOperands(
         Engine engine, int predAddr, List<int> tailNextOperands)
     {
@@ -629,44 +762,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         if (prog is null) return false;
         int failStub = engine.DynamicFailStubAddr;
         if (failStub <= 0) return false;
-
-        var chainHeads = new HashSet<int>();
-        int varChainHead = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 2);
-        chainHeads.Add(varChainHead);
-        int listLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 10);
-        if (listLbl > 0 && listLbl != varChainHead) chainHeads.Add(listLbl);
-
-        int constLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 6);
-        int structLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 14);
-        int p = constLbl;
-        while (p > 0 && p != varChainHead && p + 5 <= prog.Length)
-        {
-            var op = (Shumway.Core.Opcode)prog[p];
-            if (op != Shumway.Core.Opcode.SwitchOnAtom
-                && op != Shumway.Core.Opcode.SwitchOnInteger
-                && op != Shumway.Core.Opcode.SwitchOnStructure) break;
-            int tid = Shumway.Core.BytecodeIO.ReadInt32(prog, p + 1);
-            var table = engine.GetSwitchTable(tid);
-            if (table is null) break;
-            foreach (int v in table.Values)
-                if (v != varChainHead) chainHeads.Add(v);
-            p = table.DefaultAddress;
-        }
-        if (structLbl > 0 && structLbl != varChainHead
-            && structLbl + 5 <= prog.Length
-            && prog[structLbl] == (byte)Shumway.Core.Opcode.SwitchOnStructure)
-        {
-            int sTid = Shumway.Core.BytecodeIO.ReadInt32(prog, structLbl + 1);
-            var sTable = engine.GetSwitchTable(sTid);
-            if (sTable is not null)
-                foreach (int v in sTable.Values)
-                    if (v != varChainHead) chainHeads.Add(v);
-        }
-
-        foreach (int head in chainHeads)
+        var heads = new HashSet<int>();
+        var visited = new HashSet<int>();
+        // predAddr+1 is the top-level switch_on_term / switch_on_arg.
+        EnumerateChainHeadsRecursive(engine, predAddr + 1, heads, visited);
+        foreach (int head in heads)
         {
             int tailNext = WalkChainToTailNextOperand(prog, head, failStub);
-            if (tailNext < 0) return false;  // malformed chain — bail
+            if (tailNext < 0) return false;
             tailNextOperands.Add(tailNext);
         }
         return true;
@@ -714,7 +817,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         int arity = headComp.Args.Length;
         bool isVarArg = arg0 is Shumway.Compiler.Ast.VarTerm;
 
-        int varChainHead = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 2);
+        // Chunk 156: for multi-arg, the var slot at predAddr+2
+        // cascades through switch_on_arg before reaching a chain
+        // head. Walk the cascade to find the final var chain.
+        int varChainHead = FindFinalVarChainHead(engine, predAddr);
+        if (varChainHead < 0) return false;
 
         // Plan: which chain heads need demotion? var-arg touches
         // every chain; same-key touches (bucket + var); new-key
@@ -903,45 +1010,16 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return chunkAddr;
     }
 
-    /// <summary>Chunk 155f — collects every chain head reachable
-    /// from the predicate's entry into <paramref name="heads"/>
-    /// (deduplicated). Used by the var-arg asserta path to plan
-    /// demotion across every chain.</summary>
+    /// <summary>Chunk 155f/156 — collects every chain head reachable
+    /// from the predicate's entry into <paramref name="heads"/>,
+    /// across every level of multi-arg switch dispatch (chunk-156).
+    /// Delegates to <see cref="EnumerateChainHeadsRecursive"/>.</summary>
     private bool CollectAllChainHeadsForRedirect(
         Engine engine, int predAddr, HashSet<int> heads)
     {
-        var prog = engine.CurrentProgram;
-        if (prog is null) return false;
-        int varChainHead = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 2);
-        heads.Add(varChainHead);
-        int listLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 10);
-        if (listLbl > 0 && listLbl != varChainHead) heads.Add(listLbl);
-        int constLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 6);
-        int structLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 14);
-        int p = constLbl;
-        while (p > 0 && p != varChainHead && p + 5 <= prog.Length)
-        {
-            var op = (Shumway.Core.Opcode)prog[p];
-            if (op != Shumway.Core.Opcode.SwitchOnAtom
-                && op != Shumway.Core.Opcode.SwitchOnInteger
-                && op != Shumway.Core.Opcode.SwitchOnStructure) break;
-            int tid = Shumway.Core.BytecodeIO.ReadInt32(prog, p + 1);
-            var table = engine.GetSwitchTable(tid);
-            if (table is null) return false;
-            foreach (int v in table.Values)
-                if (v != varChainHead) heads.Add(v);
-            p = table.DefaultAddress;
-        }
-        if (structLbl > 0 && structLbl != varChainHead
-            && structLbl + 5 <= prog.Length
-            && prog[structLbl] == (byte)Shumway.Core.Opcode.SwitchOnStructure)
-        {
-            int sTid = Shumway.Core.BytecodeIO.ReadInt32(prog, structLbl + 1);
-            var sTable = engine.GetSwitchTable(sTid);
-            if (sTable is not null)
-                foreach (int v in sTable.Values)
-                    if (v != varChainHead) heads.Add(v);
-        }
+        if (engine.CurrentProgram is null) return false;
+        var visited = new HashSet<int>();
+        EnumerateChainHeadsRecursive(engine, predAddr + 1, heads, visited);
         return true;
     }
 
@@ -958,54 +1036,93 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         Engine engine, int predAddr, IReadOnlyDictionary<int, int> redirect)
     {
         if (redirect.Count == 0) return;
+        // Chunk 156: walk the predicate's dispatch graph recursively,
+        // patching every switch operand and switch-table value/default
+        // that matches an entry in redirect.
+        var visitedSwitches = new HashSet<int>();
+        RedirectChainHeadsRecursive(engine, predAddr + 1, redirect, visitedSwitches);
+    }
+
+    private void RedirectChainHeadsRecursive(
+        Engine engine, int addr, IReadOnlyDictionary<int, int> redirect,
+        HashSet<int> visited)
+    {
+        if (addr <= 0) return;
         var prog = engine.CurrentProgram!;
-        // switch_on_term operands.
-        foreach (int slotOffset in new[] { 2, 10, 14 })
+        if (addr + 1 > prog.Length) return;
+        if (!visited.Add(addr)) return;
+        var op = (Shumway.Core.Opcode)prog[addr];
+
+        void PatchOperand(int operandPos)
         {
-            int cur = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + slotOffset);
+            int cur = Shumway.Core.BytecodeIO.ReadInt32(prog, operandPos);
             if (redirect.TryGetValue(cur, out int repl))
-                Shumway.Core.BytecodeIO.WriteInt32(prog, predAddr + slotOffset, repl);
+                Shumway.Core.BytecodeIO.WriteInt32(prog, operandPos, repl);
         }
-        // Walk every sub-switch table reachable from constLbl.
-        int constLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 6);
-        int p = constLbl;
-        while (p > 0 && p + 5 <= prog.Length)
+
+        switch (op)
         {
-            var op = (Shumway.Core.Opcode)prog[p];
-            if (op != Shumway.Core.Opcode.SwitchOnAtom
-                && op != Shumway.Core.Opcode.SwitchOnInteger
-                && op != Shumway.Core.Opcode.SwitchOnStructure) break;
-            int tid = Shumway.Core.BytecodeIO.ReadInt32(prog, p + 1);
-            var table = engine.GetSwitchTable(tid);
-            if (table is null) break;
-            var newTable = RedirectSwitchTable(table, redirect);
-            if (newTable is not null)
+            case Shumway.Core.Opcode.SwitchOnTerm:
+                // 4 address operands at +1, +5, +9, +13.
+                for (int j = 0; j < 4; j++) PatchOperand(addr + 1 + 4 * j);
+                // Recurse into each label.
+                for (int j = 0; j < 4; j++)
+                {
+                    int lbl = Shumway.Core.BytecodeIO.ReadInt32(prog, addr + 1 + 4 * j);
+                    RedirectChainHeadsRecursive(engine, lbl, redirect, visited);
+                }
+                break;
+            case Shumway.Core.Opcode.SwitchOnArg:
+                // arg_idx at +1; 4 address operands at +5, +9, +13, +17.
+                for (int j = 0; j < 4; j++) PatchOperand(addr + 5 + 4 * j);
+                for (int j = 0; j < 4; j++)
+                {
+                    int lbl = Shumway.Core.BytecodeIO.ReadInt32(prog, addr + 5 + 4 * j);
+                    RedirectChainHeadsRecursive(engine, lbl, redirect, visited);
+                }
+                break;
+            case Shumway.Core.Opcode.SwitchOnAtom:
+            case Shumway.Core.Opcode.SwitchOnInteger:
+            case Shumway.Core.Opcode.SwitchOnStructure:
             {
-                engine.ReplaceSwitchTable(tid, newTable);
-                MirrorSwitchTableIntoDynamicLink(tid, newTable);
-            }
-            int nextP = table.DefaultAddress;
-            if (nextP == p) break;  // safety: no infinite loop on self-default
-            p = nextP;
-        }
-        // Also walk the struct sub-switch reachable via switch_on_term's
-        // struct operand (it may not be in the const cascade — chunk-
-        // 155a places it on its own label).
-        int structLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 14);
-        if (structLbl > 0 && structLbl + 5 <= prog.Length
-            && prog[structLbl] == (byte)Shumway.Core.Opcode.SwitchOnStructure)
-        {
-            int sTid = Shumway.Core.BytecodeIO.ReadInt32(prog, structLbl + 1);
-            var sTable = engine.GetSwitchTable(sTid);
-            if (sTable is not null)
-            {
-                var newTable = RedirectSwitchTable(sTable, redirect);
+                int tid = Shumway.Core.BytecodeIO.ReadInt32(prog, addr + 1);
+                var table = engine.GetSwitchTable(tid);
+                if (table is null) break;
+                var newTable = RedirectSwitchTable(table, redirect);
+                var live = newTable ?? table;
                 if (newTable is not null)
                 {
-                    engine.ReplaceSwitchTable(sTid, newTable);
-                    MirrorSwitchTableIntoDynamicLink(sTid, newTable);
+                    engine.ReplaceSwitchTable(tid, newTable);
+                    MirrorSwitchTableIntoDynamicLink(tid, newTable);
                 }
+                foreach (int v in live.Values)
+                    RedirectChainHeadsRecursive(engine, v, redirect, visited);
+                RedirectChainHeadsRecursive(engine, live.DefaultAddress, redirect, visited);
+                break;
             }
+            case Shumway.Core.Opcode.SwitchOnAtomArg:
+            case Shumway.Core.Opcode.SwitchOnIntegerArg:
+            case Shumway.Core.Opcode.SwitchOnStructureArg:
+            {
+                int tid = Shumway.Core.BytecodeIO.ReadInt32(prog, addr + 5);
+                var table = engine.GetSwitchTable(tid);
+                if (table is null) break;
+                var newTable = RedirectSwitchTable(table, redirect);
+                var live = newTable ?? table;
+                if (newTable is not null)
+                {
+                    engine.ReplaceSwitchTable(tid, newTable);
+                    MirrorSwitchTableIntoDynamicLink(tid, newTable);
+                }
+                foreach (int v in live.Values)
+                    RedirectChainHeadsRecursive(engine, v, redirect, visited);
+                RedirectChainHeadsRecursive(engine, live.DefaultAddress, redirect, visited);
+                break;
+            }
+            // Other opcodes (chain heads, fail_stub, anything else):
+            // stop. Chain heads aren't switch nodes — they don't have
+            // outgoing pointers that need redirecting beyond their
+            // <next>, which is internal to the chain.
         }
     }
 
@@ -1061,7 +1178,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         if (addrMap is null || !addrMap.TryGetValue(functorId, out int predAddr)) return -1;
         var prog = engine.CurrentProgram!;
         int failStub = engine.DynamicFailStubAddr;
-        int varChainHead = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 2);
+        int varChainHead = FindFinalVarChainHead(engine, predAddr);
+        if (varChainHead < 0) return -1;
         int cur = varChainHead;
         int aliveIdx = 0;
         while (true)
@@ -1104,50 +1222,16 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         int predAddr = addrMap[functorId];
         int failStub = engine.DynamicFailStubAddr;
 
-        // Enumerate every chain head: var fallthrough + list bucket
-        // (when present) + every (key → head) entry across the atom /
-        // integer / structure sub-switches' tables.
-        var chainHeads = new List<int>();
-        int varChainHead = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 2);
-        chainHeads.Add(varChainHead);
-        int listLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 10);
-        if (listLbl != varChainHead && listLbl > 0)
-            chainHeads.Add(listLbl);
-
-        int constLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 6);
-        int structLbl = Shumway.Core.BytecodeIO.ReadInt32(prog, predAddr + 14);
-        // Walk the const cascade for atom / integer sub-switches.
-        int p = constLbl;
-        while (p > 0 && p != varChainHead && p + 5 <= prog.Length)
-        {
-            var op = (Shumway.Core.Opcode)prog[p];
-            if (op != Shumway.Core.Opcode.SwitchOnAtom
-                && op != Shumway.Core.Opcode.SwitchOnInteger
-                && op != Shumway.Core.Opcode.SwitchOnStructure) break;
-            int tid = Shumway.Core.BytecodeIO.ReadInt32(prog, p + 1);
-            var table = engine.GetSwitchTable(tid);
-            if (table is null) break;
-            foreach (int v in table.Values) chainHeads.Add(v);
-            p = table.DefaultAddress;
-        }
-        // The struct sub-switch may sit on its own label outside the
-        // const cascade.
-        if (structLbl > 0 && structLbl != varChainHead && structLbl + 5 <= prog.Length
-            && prog[structLbl] == (byte)Shumway.Core.Opcode.SwitchOnStructure)
-        {
-            int sTid = Shumway.Core.BytecodeIO.ReadInt32(prog, structLbl + 1);
-            var sTable = engine.GetSwitchTable(sTid);
-            if (sTable is not null)
-                foreach (int v in sTable.Values) chainHeads.Add(v);
-        }
-
-        // Walk each chain head, patching every entry that targets
-        // bodyAddr.
-        bool anyPatched = false;
+        // Chunk 156: enumerate every chain head reachable from the
+        // top-level switch, including multi-level cascades through
+        // switch_on_arg.
+        var heads = new HashSet<int>();
         var visited = new HashSet<int>();
-        foreach (int head in chainHeads)
+        EnumerateChainHeadsRecursive(engine, predAddr + 1, heads, visited);
+
+        bool anyPatched = false;
+        foreach (int head in heads)
         {
-            if (!visited.Add(head)) continue;
             int cur = head;
             while (cur > 0 && cur + 27 <= prog.Length)
             {
