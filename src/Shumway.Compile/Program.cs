@@ -84,6 +84,24 @@ internal static class Program
                     $"  module={obj.ModuleName}, "
                     + $"defined={obj.Defined.Count}, "
                     + $"calls={obj.CallGraph.Count}.");
+                var publics = obj.Defined
+                    .Where(d => d.Visibility == PredicateVisibility.Public)
+                    .Select(d => d.Indicator.ToString())
+                    .ToList();
+                var dynamics = obj.Defined
+                    .Where(d => d.Visibility == PredicateVisibility.Dynamic)
+                    .Select(d => d.Indicator.ToString())
+                    .ToList();
+                if (publics.Count > 0)
+                {
+                    Console.Error.WriteLine($"  public ({publics.Count}):");
+                    foreach (var p in publics) Console.Error.WriteLine($"    {p}");
+                }
+                if (dynamics.Count > 0)
+                {
+                    Console.Error.WriteLine($"  dynamic ({dynamics.Count}):");
+                    foreach (var d in dynamics) Console.Error.WriteLine($"    {d}");
+                }
             }
             return ExitOk;
         }
