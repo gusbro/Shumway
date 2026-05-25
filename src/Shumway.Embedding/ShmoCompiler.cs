@@ -164,9 +164,21 @@ public static class ShmoCompiler
                 dynamicSet.Add(spec);
             return;
         }
-        // ensure_linked/1 is parsed by chunk 162. Other directives
-        // (op/3, set_prolog_flag, etc.) are ignored by the shmo writer
-        // — they don't affect link-time semantics.
+        // :- ensure_linked(Indicator) — GNU-Prolog-style hint that the
+        // named predicate is reachable even though the static call
+        // graph doesn't show it (typically because it's the target of a
+        // runtime meta-call). The linker (chunk 163) treats every
+        // ensure_linked indicator as an additional reachability root,
+        // so the predicate's defining module survives dead-code
+        // elimination and its own callees get walked.
+        if (body is CompoundTerm el && el.Functor == "ensure_linked" && el.Args.Length == 1)
+        {
+            foreach (var spec in ReadFunctorSpecs(el.Args[0], "ensure_linked"))
+                ensureLinked.Add(spec);
+            return;
+        }
+        // Other directives (op/3, set_prolog_flag, etc.) are ignored
+        // by the shmo writer — they don't affect link-time semantics.
     }
 
     private static IEnumerable<PredicateRef> ReadFunctorSpecs(Term arg, string directive)
