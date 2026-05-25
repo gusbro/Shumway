@@ -654,10 +654,21 @@ public static class MetaBuiltins
     }
 
     /// <summary><c>current_prolog_flag(Flag, Value)</c> — reads a flag's
-    /// current value (chunk 58). With Flag bound, unifies Value with
-    /// the stored value; with Flag unbound, Phase 1 just fails (full
-    /// enumeration of every flag isn't worth the runtime CP plumbing
-    /// for the small set of flags v1 actually supports).</summary>
+    /// current value. Recognised flags:
+    /// <list type="bullet">
+    /// <item><c>double_quotes</c> — parser-visible (set via
+    /// <c>set_prolog_flag</c>).</item>
+    /// <item><c>argv</c> — command-line argument list (list of atoms),
+    /// populated by the host.</item>
+    /// <item><c>dialect</c> — <c>shumway</c>.</item>
+    /// <item><c>bounded</c> — <c>false</c> (Shumway has BigInt).</item>
+    /// <item><c>integer_rounding_function</c> — <c>toward_zero</c>.</item>
+    /// <item><c>unknown</c>, <c>occurs_check</c> — informational
+    /// flag state (engine doesn't yet vary behaviour on them).</item>
+    /// <item><c>max_arity</c> — large integer constant.</item>
+    /// </list>
+    /// With Flag unbound this builtin fails — full enumeration via
+    /// backtracking is a future chunk.</summary>
     public static bool CurrentPrologFlag(Engine engine)
     {
         if (engine.Host is not PrologEngine host)
@@ -668,19 +679,69 @@ public static class MetaBuiltins
         if (flagCell.Tag != Tag.Atom) return false;
         string flagName = AtomTable.GetById(flagCell.AsAtomId)?.Name ?? "";
 
-        if (flagName == "double_quotes")
+        switch (flagName)
         {
-            string valueName = host.Flags.DoubleQuotes switch
+            case "double_quotes":
+                return UnifyAtom(engine, 1, host.Flags.DoubleQuotes switch
+                {
+                    Shumway.Compiler.Parsing.DoubleQuotesMode.Codes  => "codes",
+                    Shumway.Compiler.Parsing.DoubleQuotesMode.Chars  => "chars",
+                    Shumway.Compiler.Parsing.DoubleQuotesMode.Atom   => "atom",
+                    _ => "string",
+                });
+
+            case "argv":
             {
-                Shumway.Compiler.Parsing.DoubleQuotesMode.Codes  => "codes",
-                Shumway.Compiler.Parsing.DoubleQuotesMode.Chars  => "chars",
-                Shumway.Compiler.Parsing.DoubleQuotesMode.Atom   => "atom",
-                _ => "string",
-            };
-            int aid = AtomTable.Intern(valueName, permanent: true).Id;
-            return engine.UnifyRegisterWithCell(1, Cell.Atom(aid));
+                // Build a Prolog list-of-atoms via the standard
+                // term materialiser, then unify with register 1.
+                Term listTerm = BuildAtomList(host.Flags.Argv);
+                Cell listCell = Materializer.MaterializeAsCell(engine, listTerm);
+                return engine.UnifyRegisterWithCell(1, listCell);
+            }
+
+            case "dialect":
+                return UnifyAtom(engine, 1, "shumway");
+
+            case "bounded":
+                return UnifyAtom(engine, 1, "false");
+
+            case "integer_rounding_function":
+                return UnifyAtom(engine, 1, "toward_zero");
+
+            case "unknown":
+                return UnifyAtom(engine, 1, host.Flags.Unknown);
+
+            case "occurs_check":
+                return UnifyAtom(engine, 1, host.Flags.OccursCheck);
+
+            case "max_arity":
+                // ISO requires this be either an integer or
+                // unbounded. Shumway's WAM register layout limits
+                // arity to fit in a uint16; pick a comfortably large
+                // value here.
+                return engine.UnifyRegisterWithCell(1, Cell.Int(255));
+
+            default:
+                return false;
         }
-        return false;
+    }
+
+    /// <summary>Constructs the AST Term for a Prolog list whose
+    /// elements are atoms drawn from <paramref name="items"/>.
+    /// Right-leaning <c>.</c>/2 cons-cell shape, terminated by
+    /// <c>[]</c>.</summary>
+    private static Term BuildAtomList(IReadOnlyList<string> items)
+    {
+        Term acc = new AtomTerm("[]");
+        for (int i = items.Count - 1; i >= 0; i--)
+            acc = new CompoundTerm(".", new Term[] { new AtomTerm(items[i]), acc });
+        return acc;
+    }
+
+    private static bool UnifyAtom(Engine engine, int register, string name)
+    {
+        int aid = AtomTable.Intern(name, permanent: true).Id;
+        return engine.UnifyRegisterWithCell(register, Cell.Atom(aid));
     }
 
     /// <summary><c>op(Precedence, Type, Name)</c> — runtime operator

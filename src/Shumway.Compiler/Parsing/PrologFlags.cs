@@ -52,4 +52,26 @@ public sealed class PrologFlags
     /// An identity mapping (In == Out) removes the entry per ISO
     /// §8.14.9.</summary>
     public Dictionary<char, char> CharConversion { get; } = new();
+
+    /// <summary>Command-line argument list, surfaced as the
+    /// <c>argv</c> Prolog flag. The host (REPL or embedding caller)
+    /// is responsible for populating this; the engine itself doesn't
+    /// touch it. Defaults to an empty list. Each entry is materialised
+    /// as a Prolog atom — matching SWI / SICStus / GNU.</summary>
+    public IReadOnlyList<string> Argv { get; set; } = Array.Empty<string>();
+
+    /// <summary>ISO <c>unknown</c> flag. Controls the engine's
+    /// reaction to a call to an undefined predicate: <c>error</c>
+    /// (raise <c>existence_error/2</c>, the default), <c>fail</c>
+    /// (silently fail), or <c>warning</c> (emit a warning then
+    /// fail). The engine itself currently always errors; the value
+    /// surfaced here is informational until the engine wires it
+    /// through dispatch.</summary>
+    public string Unknown { get; set; } = "error";
+
+    /// <summary>ISO <c>occurs_check</c> flag. <c>false</c> (the
+    /// default and what Shumway implements) means unification skips
+    /// the occurs check; <c>true</c> would enable it, <c>error</c>
+    /// would unify-with-error. Informational for now.</summary>
+    public string OccursCheck { get; set; } = "false";
 }

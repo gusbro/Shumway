@@ -21,8 +21,17 @@ internal static class Program
         Console.WriteLine(
             "Shumway Prolog top-level.  End a query with '.'  —  'halt.' or Ctrl-D exits.");
 
+        // Split args at "--": everything before is a file to consult,
+        // everything after is exposed to the program as the argv
+        // Prolog flag (current_prolog_flag(argv, Argv)). Matches
+        // SWI / GNU / SICStus convention.
+        int sep = Array.IndexOf(args, "--");
+        string[] consultFiles = sep < 0 ? args : args[..sep];
+        string[] programArgs = sep < 0 ? Array.Empty<string>() : args[(sep + 1)..];
+
         var engine = new PrologEngine();
-        foreach (string path in args)
+        engine.Flags.Argv = programArgs;
+        foreach (string path in consultFiles)
             ConsultFile(engine, path);
 
         while (true)
