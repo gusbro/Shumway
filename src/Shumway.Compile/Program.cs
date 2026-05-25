@@ -3,21 +3,36 @@ using Shumway.Embedding;
 namespace Shumway.Compile;
 
 /// <summary>
-/// <c>shumway-compile</c> CLI. Takes one Prolog source file and emits
-/// a per-module compiled-object <c>.shmo</c> artifact (chunk 160). The
-/// linker (<c>shumway-link</c>, chunk 164) combines one or more
-/// <c>.shmo</c>s into a deployable <c>.shum</c> bundle.
+/// <c>shumway-compile</c> CLI. Takes one or more Prolog source files
+/// and emits a per-module compiled-object <c>.shmo</c> artifact for
+/// each (chunk 160). The linker (<c>shumway-link</c>, chunk 164)
+/// combines one or more <c>.shmo</c>s into a deployable <c>.shum</c>
+/// bundle.
 ///
 /// <para>Usage:</para>
 /// <code>
-///   shumway-compile [-o output.shmo] [-v] input.pl
+///   shumway-compile [options] input1.pl [input2.pl ...]
 /// </code>
 ///
-/// <para>When <c>-o</c> is omitted, the output path is derived from
-/// the input by replacing the extension with <c>.shmo</c>.</para>
+/// <para>Per-file behaviour:</para>
+/// <list type="bullet">
+/// <item>One input + <c>-o file.shmo</c> → that file.</item>
+/// <item>One input, no <c>-o</c> → derived from the input
+/// (<c>lib.pl</c> → <c>lib.shmo</c>).</item>
+/// <item>Many inputs + <c>-o dir</c> → each output lands in <c>dir</c>
+/// as <c>basename.shmo</c>.</item>
+/// <item>Many inputs, no <c>-o</c> → each output sits next to its
+/// source.</item>
+/// </list>
+///
+/// <para>By default the compiler prints <c>compiling X → Y</c> per
+/// file to stderr. <c>--verbose</c> adds the public / dynamic
+/// predicate list per file (chunk 170).</para>
 ///
 /// <para>Exit codes: 0 on success, 1 on compile error, 3 on usage
-/// error.</para>
+/// error. With multiple inputs, a failure on one file still attempts
+/// the others — every error is reported, the exit code reflects the
+/// worst outcome.</para>
 /// </summary>
 internal static class Program
 {
@@ -30,17 +45,42 @@ internal static class Program
         var opts = ParseArgs(args);
         if (opts is null) return ExitUsageError;
 
-        try
+        bool multi = opts.InputPaths.Count > 1;
+        if (multi && !string.IsNullOrEmpty(opts.OutputPath))
         {
-            var obj = ShmoCompiler.CompileFile(opts.InputPath);
-            ShmoWriter.WriteToFile(obj, opts.OutputPath);
-            if (opts.Verbose)
+            // -o is interpreted as a directory under multi-input.
+            try { Directory.CreateDirectory(opts.OutputPath); }
+            catch (IOException ex)
             {
                 Console.Error.WriteLine(
-                    $"shumway-compile: wrote {opts.OutputPath} "
-                    + $"(module={obj.ModuleName}, "
+                    $"shumway-compile: cannot create output directory '{opts.OutputPath}': {ex.Message}");
+                return ExitUsageError;
+            }
+        }
+
+        int exit = ExitOk;
+        foreach (var input in opts.InputPaths)
+        {
+            string output = ResolveOutputPath(input, opts.OutputPath, multi);
+            int per = CompileOne(input, output, opts.Verbose);
+            if (per != ExitOk) exit = per;
+        }
+        return exit;
+    }
+
+    private static int CompileOne(string input, string output, bool verbose)
+    {
+        Console.Error.WriteLine($"shumway-compile: compiling {input} -> {output}");
+        try
+        {
+            var obj = ShmoCompiler.CompileFile(input);
+            ShmoWriter.WriteToFile(obj, output);
+            if (verbose)
+            {
+                Console.Error.WriteLine(
+                    $"  module={obj.ModuleName}, "
                     + $"defined={obj.Defined.Count}, "
-                    + $"calls={obj.CallGraph.Count}).");
+                    + $"calls={obj.CallGraph.Count}.");
             }
             return ExitOk;
         }
@@ -53,9 +93,26 @@ internal static class Program
         }
     }
 
+    private static string ResolveOutputPath(string input, string output, bool multi)
+    {
+        if (multi)
+        {
+            // Multi-input mode: -o is a directory (created above), or
+            // empty → each output sits next to its source.
+            string basename = Path.GetFileNameWithoutExtension(input) + ".shmo";
+            return string.IsNullOrEmpty(output)
+                ? Path.ChangeExtension(input, ".shmo")
+                : Path.Combine(output, basename);
+        }
+        // Single-input mode: -o is a full path, or empty → derived.
+        return string.IsNullOrEmpty(output)
+            ? Path.ChangeExtension(input, ".shmo")
+            : output;
+    }
+
     private sealed class Options
     {
-        public string InputPath { get; set; } = "";
+        public List<string> InputPaths { get; } = new();
         public string OutputPath { get; set; } = "";
         public bool Verbose { get; set; }
     }
@@ -96,26 +153,15 @@ internal static class Program
                         Console.Error.WriteLine($"shumway-compile: unknown option '{arg}'.");
                         return null;
                     }
-                    if (opts.InputPath.Length > 0)
-                    {
-                        Console.Error.WriteLine(
-                            "shumway-compile: only one input file is supported per invocation "
-                            + $"(extra: '{arg}').");
-                        return null;
-                    }
-                    opts.InputPath = arg;
+                    opts.InputPaths.Add(arg);
                     break;
             }
         }
 
-        if (string.IsNullOrEmpty(opts.InputPath))
+        if (opts.InputPaths.Count == 0)
         {
-            Console.Error.WriteLine("shumway-compile: an input source file is required.");
+            Console.Error.WriteLine("shumway-compile: at least one input source file is required.");
             return null;
-        }
-        if (string.IsNullOrEmpty(opts.OutputPath))
-        {
-            opts.OutputPath = Path.ChangeExtension(opts.InputPath, ".shmo");
         }
         return opts;
     }
@@ -126,10 +172,12 @@ internal static class Program
     private static void PrintUsage()
     {
         Console.Error.WriteLine(
-            "Usage: shumway-compile [options] <source.pl>\n"
+            "Usage: shumway-compile [options] <source.pl> [<source2.pl> ...]\n"
             + "\n"
             + "Options:\n"
-            + "  -o, --output <path>  Output .shmo path. Default: input with .shmo suffix.\n"
+            + "  -o, --output <path>  Output .shmo path (single input) or output\n"
+            + "                       directory (multiple inputs). Default: alongside each\n"
+            + "                       input with the extension replaced.\n"
             + "  -v, --verbose        Verbose progress output to stderr.\n"
             + "  -h, --help           Show this message.");
     }
