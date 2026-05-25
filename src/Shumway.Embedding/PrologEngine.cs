@@ -3422,13 +3422,31 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 allRewritten.Add(ModuleRewrite.Rewrite(clause, ctx));
         }
 
-        // Dynamic clauses asserted at runtime. They share a flat global
-        // namespace (no module prefix), so the rewrite happens with an empty
-        // local set and the engine's dynamic functor set in scope.
+        // Dynamic clauses asserted at runtime (or declared
+        // `:- dynamic foo/N.` in source, then routed into
+        // _dynamicClauses at consult). The dynamic predicate itself
+        // sits in the flat global namespace (no module prefix on its
+        // head), but a CALL inside the dynamic clause's body to a
+        // user-module-local predicate (e.g. `helper/0` from
+        // `main :- helper.` when `main` is dynamic and `helper` is a
+        // plain user-module clause) needs the same mangling the rest
+        // of the user module is getting — otherwise the call site
+        // stays bare while the target was mangled to `user$helper/0`
+        // and dispatch fails with existence_error.
+        //
+        // Pass the user-module locals into the rewrite so body calls
+        // resolve through them. The user module is the right default:
+        // source-declared dynamic clauses from modules without a
+        // `:- module/1` directive land in user, and runtime-asserted
+        // clauses have no inherent module so user is the conventional
+        // home. Multi-module hosts with per-module dynamic-clause
+        // namespacing are a more invasive change parked for later.
         if (_dynamicClauses.Count > 0)
         {
             var dynCtx = new ModuleRewrite.Context(
-                DefaultModuleName, new HashSet<int>(), _dynamicFunctors);
+                DefaultModuleName,
+                userLocalsCache ?? new HashSet<int>(),
+                _dynamicFunctors);
             foreach (var (_, clauses) in _dynamicClauses)
             {
                 if (clauses.Count == 0) continue;

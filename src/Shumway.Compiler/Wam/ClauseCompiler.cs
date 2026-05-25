@@ -796,6 +796,15 @@ public sealed class ClauseCompiler
                 fName = c.Functor;
                 gArgs = c.Args;
                 break;
+            case VarTerm v:
+                // ISO §7.8.3: a variable in goal position is the
+                // meta-call call/1 of that variable. Most Prolog
+                // sources (Blint.pl's `ifthen(X,Y) :- X -> !, Y.`,
+                // SWI's library, etc.) rely on this. Rewrite to
+                // call(X) so the standard meta-call dispatch fires.
+                fName = "call";
+                gArgs = new Term[] { v };
+                break;
             default:
                 throw new NotSupportedException(
                     $"Goal type {goal.GetType().Name} is not yet supported in clause bodies.");
