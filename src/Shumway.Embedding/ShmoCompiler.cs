@@ -37,19 +37,22 @@ public static class ShmoCompiler
     /// The module name defaults to the file's bare name (without
     /// extension) when no <c>:- module(Name).</c> directive is
     /// present.</summary>
-    public static ShmoObject CompileFile(string path)
+    public static ShmoObject CompileFile(string path,
+        ShmoBuildMode buildMode = ShmoBuildMode.Release)
     {
         ArgumentNullException.ThrowIfNull(path);
         string source = File.ReadAllText(path);
         string fallback = Path.GetFileNameWithoutExtension(path);
-        return CompileSource(source, fallback);
+        return CompileSource(source, fallback, buildMode);
     }
 
     /// <summary>Compiles <paramref name="source"/> in memory.
     /// <paramref name="moduleNameFallback"/> is used when the source
     /// has no <c>:- module/1</c> directive; pass the empty string for
     /// "<c>user</c>" — Shumway's default.</summary>
-    public static ShmoObject CompileSource(string source, string moduleNameFallback = "user")
+    public static ShmoObject CompileSource(string source,
+        string moduleNameFallback = "user",
+        ShmoBuildMode buildMode = ShmoBuildMode.Release)
     {
         ArgumentNullException.ThrowIfNull(source);
         Shumway.Builtins.StandardBuiltins.EnsureRegistered();
@@ -134,7 +137,8 @@ public static class ShmoCompiler
             defined: defined,
             ensureLinked: ensureLinked,
             callGraph: callGraphRO,
-            qualifiedRefs: qualifiedRefs);
+            qualifiedRefs: qualifiedRefs,
+            buildMode: buildMode);
     }
 
     // ------------------------------------------------------------------------

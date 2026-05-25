@@ -29,6 +29,7 @@ public static class ShmoWriter
         WriteLengthPrefixedUtf8(bw, obj.Source);
         bw.Write((uint)obj.Bytecode.Length);
         bw.Write(obj.Bytecode);
+        bw.Write((byte)obj.BuildMode);   // V2+
 
         bw.Write((uint)obj.Defined.Count);
         foreach (var d in obj.Defined)

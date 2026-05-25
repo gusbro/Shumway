@@ -28,10 +28,10 @@ public static class ShmoReader
                 ".shmo: magic bytes don't match 'SHMO' — not a Shumway object file.");
 
         uint version = br.ReadUInt32();
-        if (version != ShmoFormat.CurrentVersion)
+        if (version < ShmoFormat.MinSupportedVersion || version > ShmoFormat.CurrentVersion)
             throw new InvalidDataException(
                 $".shmo: format version {version} is not supported by this linker "
-                + $"(supports up to {ShmoFormat.CurrentVersion}).");
+                + $"(supports {ShmoFormat.MinSupportedVersion}..{ShmoFormat.CurrentVersion}).");
 
         string moduleName = ReadLengthPrefixedUtf8(br);
         string source = ReadLengthPrefixedUtf8(br);
@@ -41,6 +41,18 @@ public static class ShmoReader
             throw new InvalidDataException(
                 $".shmo: truncated bytecode section (expected "
                 + $"{bytecodeLength} bytes, got {bytecode.Length}).");
+
+        // V2+ adds the build-mode byte after the bytecode payload.
+        // V1 objects default to Release (the byte didn't exist).
+        ShmoBuildMode buildMode = ShmoBuildMode.Release;
+        if (version >= 2)
+        {
+            byte mode = br.ReadByte();
+            if (mode > (byte)ShmoBuildMode.Debug)
+                throw new InvalidDataException(
+                    $".shmo: unknown build-mode code {mode}.");
+            buildMode = (ShmoBuildMode)mode;
+        }
 
         uint definedCount = br.ReadUInt32();
         var defined = new ShmoDefinedPredicate[definedCount];
@@ -93,7 +105,7 @@ public static class ShmoReader
         }
 
         return new ShmoObject(moduleName, source, bytecode,
-            defined, ensureLinked, callGraph, qrefs);
+            defined, ensureLinked, callGraph, qrefs, buildMode);
     }
 
     private static string ReadLengthPrefixedUtf8(BinaryReader br)

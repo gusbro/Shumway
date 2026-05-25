@@ -62,18 +62,21 @@ internal static class Program
         foreach (var input in opts.InputPaths)
         {
             string output = ResolveOutputPath(input, opts.OutputPath, multi);
-            int per = CompileOne(input, output, opts.Verbose);
+            int per = CompileOne(input, output, opts.Verbose, opts.BuildMode);
             if (per != ExitOk) exit = per;
         }
         return exit;
     }
 
-    private static int CompileOne(string input, string output, bool verbose)
+    private static int CompileOne(string input, string output, bool verbose,
+        ShmoBuildMode buildMode)
     {
-        Console.Error.WriteLine($"shumway-compile: compiling {input} -> {output}");
+        Console.Error.WriteLine(
+            $"shumway-compile: compiling {input} -> {output} "
+            + $"[{buildMode.ToString().ToLowerInvariant()}]");
         try
         {
-            var obj = ShmoCompiler.CompileFile(input);
+            var obj = ShmoCompiler.CompileFile(input, buildMode);
             ShmoWriter.WriteToFile(obj, output);
             if (verbose)
             {
@@ -115,6 +118,7 @@ internal static class Program
         public List<string> InputPaths { get; } = new();
         public string OutputPath { get; set; } = "";
         public bool Verbose { get; set; }
+        public ShmoBuildMode BuildMode { get; set; } = ShmoBuildMode.Release;
     }
 
     private static Options? ParseArgs(string[] args)
@@ -145,6 +149,16 @@ internal static class Program
                 case "--verbose":
                 case "-v":
                     opts.Verbose = true;
+                    break;
+
+                case "--debug":
+                case "-d":
+                    opts.BuildMode = ShmoBuildMode.Debug;
+                    break;
+
+                case "--release":
+                case "-r":
+                    opts.BuildMode = ShmoBuildMode.Release;
                     break;
 
                 default:
@@ -178,6 +192,10 @@ internal static class Program
             + "  -o, --output <path>  Output .shmo path (single input) or output\n"
             + "                       directory (multiple inputs). Default: alongside each\n"
             + "                       input with the extension replaced.\n"
+            + "  -r, --release        Build in release mode (default).\n"
+            + "  -d, --debug          Build in debug mode (records the mode in the .shmo;\n"
+            + "                       linker surfaces it in --map output and may keep it\n"
+            + "                       source-bearing when --strip is in effect).\n"
             + "  -v, --verbose        Verbose progress output to stderr.\n"
             + "  -h, --help           Show this message.");
     }

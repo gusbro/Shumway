@@ -90,6 +90,12 @@ public sealed class ShmoObject
     public IReadOnlyDictionary<PredicateRef, IReadOnlyList<PredicateRef>> CallGraph { get; }
     public IReadOnlyList<QualifiedPredicateRef> QualifiedRefs { get; }
 
+    /// <summary>The compilation mode the <c>.shmo</c> was built in
+    /// (<c>--debug</c> vs <c>--release</c>). Defaults to
+    /// <see cref="ShmoBuildMode.Release"/> for compatibility with V1
+    /// objects that didn't carry the flag.</summary>
+    public ShmoBuildMode BuildMode { get; }
+
     public ShmoObject(
         string moduleName,
         string source,
@@ -97,7 +103,8 @@ public sealed class ShmoObject
         IReadOnlyList<ShmoDefinedPredicate> defined,
         IReadOnlyList<PredicateRef> ensureLinked,
         IReadOnlyDictionary<PredicateRef, IReadOnlyList<PredicateRef>> callGraph,
-        IReadOnlyList<QualifiedPredicateRef> qualifiedRefs)
+        IReadOnlyList<QualifiedPredicateRef> qualifiedRefs,
+        ShmoBuildMode buildMode = ShmoBuildMode.Release)
     {
         ModuleName = moduleName;
         Source = source;
@@ -106,5 +113,6 @@ public sealed class ShmoObject
         EnsureLinked = ensureLinked;
         CallGraph = callGraph;
         QualifiedRefs = qualifiedRefs;
+        BuildMode = buildMode;
     }
 }

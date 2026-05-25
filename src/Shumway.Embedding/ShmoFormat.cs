@@ -14,15 +14,16 @@ namespace Shumway.Embedding;
 ///
 /// <para>The on-disk format is little-endian throughout.</para>
 ///
-/// <para>Layout (V1):</para>
+/// <para>Layout (V2):</para>
 /// <code>
 ///   [0..3]    Magic 'S','H','M','O'
-///   [4..7]    Format version (uint32, = 1)
-///   [8..]     V1 payload:
+///   [4..7]    Format version (uint32, = 2)
+///   [8..]     V2 payload:
 ///                 moduleName       : len-prefixed UTF-8
 ///                 source           : len-prefixed UTF-8 (may be empty)
 ///                 bytecodeLength   : uint32
 ///                 bytecodeBytes    : bytes (CompiledModuleCodec output)
+///                 buildMode        : byte (0=release, 1=debug)        [V2+]
 ///                 definedCount     : uint32
 ///                   for each defined predicate:
 ///                     name         : len-prefixed UTF-8
@@ -47,12 +48,30 @@ namespace Shumway.Embedding;
 ///                     arity        : uint32
 /// </code>
 ///
-/// <para>The version stays at <c>1</c> until the separate-compilation
-/// flow stabilises; any later breaking change to the body bumps it and
-/// the linker rejects older artifacts with a descriptive error.</para>
+/// <para>V1 (legacy): identical to V2 minus the <c>buildMode</c> byte.
+/// The reader accepts both; V1 objects default to <c>Release</c>.</para>
 /// </summary>
 public static class ShmoFormat
 {
     public static readonly byte[] Magic = new byte[] { (byte)'S', (byte)'H', (byte)'M', (byte)'O' };
-    public const int CurrentVersion = 1;
+
+    /// <summary>The version this build of the writer produces.</summary>
+    public const int CurrentVersion = 2;
+
+    /// <summary>The minimum version the reader will accept. V1 objects
+    /// are still readable but their build mode defaults to
+    /// <see cref="ShmoBuildMode.Release"/>.</summary>
+    public const int MinSupportedVersion = 1;
+}
+
+/// <summary>Compilation mode the <c>.shmo</c> was built in.
+/// Currently a metadata-only flag: the linker surfaces it in the
+/// chunk-173 map file and the chunk-172 <c>--strip</c> option may
+/// use it to decide which entries are safe to strip. Future
+/// extensions (per-instruction line info, source-position metadata,
+/// etc.) ride on this flag.</summary>
+public enum ShmoBuildMode : byte
+{
+    Release = 0,
+    Debug = 1,
 }

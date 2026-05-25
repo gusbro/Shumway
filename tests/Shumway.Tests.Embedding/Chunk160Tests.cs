@@ -62,13 +62,12 @@ public class Chunk160Tests
     }
 
     [Fact]
-    public void Version_IsOne()
+    public void Version_IsCurrentVersion()
     {
         var obj = MakeMinimal();
         byte[] bytes = ShmoWriter.ToBytes(obj);
         uint version = BitConverter.ToUInt32(bytes, 4);
-        Assert.Equal(1u, version);
-        Assert.Equal(1, ShmoFormat.CurrentVersion);
+        Assert.Equal((uint)ShmoFormat.CurrentVersion, version);
     }
 
     [Fact]
@@ -153,7 +152,7 @@ public class Chunk160Tests
         bytes[7] = 0x00;
         var ex = Assert.Throws<InvalidDataException>(() => ShmoReader.FromBytes(bytes));
         Assert.Contains("999", ex.Message);
-        Assert.Contains("supports up to 1", ex.Message);
+        Assert.Contains("supports", ex.Message);
     }
 
     [Fact]
@@ -172,14 +171,15 @@ public class Chunk160Tests
             callGraph: new Dictionary<PredicateRef, IReadOnlyList<PredicateRef>>(),
             qualifiedRefs: Array.Empty<QualifiedPredicateRef>());
         byte[] bytes = ShmoWriter.ToBytes(obj);
-        // Find and corrupt the visibility byte. Layout:
+        // Find and corrupt the visibility byte. V2 layout:
         //  4 magic + 4 version
         //  + 4 moduleNameLen + 1 ('m')
         //  + 4 sourceLen
         //  + 4 bytecodeLen
+        //  + 1 buildMode                                 ← V2 addition
         //  + 4 definedCount + 4 nameLen + 1 ('p') + 4 arity + 1 visibility
-        // visibility byte is at offset 4+4 + 4+1 + 4 + 4 + 4 + 4+1 + 4 = 34.
-        bytes[34] = 99;
+        // visibility byte is at offset 4+4 + 4+1 + 4 + 4 + 1 + 4 + 4+1 + 4 = 35.
+        bytes[35] = 99;
         var ex = Assert.Throws<InvalidDataException>(() => ShmoReader.FromBytes(bytes));
         Assert.Contains("visibility", ex.Message);
     }
