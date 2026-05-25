@@ -88,6 +88,13 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("garbage_collect_clauses", 1, GarbageCollectClauses1,
             Database, "garbage_collect_clauses(+Name/Arity)",
             "Re-threads the named predicate's chain to skip retracted clauses.");
+        BuiltinsRegistry.Register("compact_dynamic_buffer", 0, CompactDynamicBuffer,
+            Database, "compact_dynamic_buffer",
+            "Phase-11 chunk 157: invalidates the persistent dynamic-code buffer so "
+            + "the next query rebuilds it from current _dynamicClauses. Reclaims memory "
+            + "consumed by appended-but-now-unreachable chain entries from many "
+            + "in-place assertz / asserta / retract cycles, at the cost of one "
+            + "re-link of the dynamic region on the next query.");
         BuiltinsRegistry.Register("retract", 1, Retract,
             Database, "retract(+Clause)", "Removes the first clause that unifies with the argument.");
 
@@ -1547,6 +1554,26 @@ public static class MetaBuiltins
             throw new ShumwayPrologException(IsoError.InstantiationError());
         throw new ShumwayPrologException(
             IsoError.TypeError("predicate_indicator", spec));
+    }
+
+    /// <summary><c>compact_dynamic_buffer/0</c> — Phase-11 chunk 157.
+    /// Invalidates the persistent dynamic-code buffer so the next
+    /// query rebuilds it from current <c>_dynamicClauses</c>.
+    /// Reclaims memory consumed by chain entries and clause bodies
+    /// appended by in-place assertz / asserta / retract that are no
+    /// longer reachable from any current clause. The rebuild cost
+    /// is one re-link of the dynamic region on the next query;
+    /// chunks 155b-f then start fresh at append-only growth, so
+    /// callers should invoke compaction periodically (e.g. after a
+    /// large batch of mutations) rather than per-mutation.
+    /// </summary>
+    public static bool CompactDynamicBuffer(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "compact_dynamic_buffer/0 requires a PrologEngine host.");
+        host.CompactDynamicCodeBuffer();
+        return true;
     }
 
     /// <summary>Promotes a Core-level <see cref="PrologRuntimeException"/>

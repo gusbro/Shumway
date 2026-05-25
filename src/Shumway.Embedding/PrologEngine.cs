@@ -2201,6 +2201,20 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// — possible only because the persistent buffer persists.</summary>
     private readonly List<(int Addr, int Length)> _freeChunks = new();
 
+    /// <summary>Phase 11 chunk 157 — user-facing entry point for
+    /// persistent-buffer compaction. Invalidates the cached dynamic-
+    /// region link so the next query setup rebuilds it from current
+    /// <c>_dynamicClauses</c>. After a long run of in-place
+    /// mutations (chunks 155b-f), the buffer accumulates clause
+    /// bodies and chain entries that aren't reachable from any
+    /// current clause; compaction reclaims them by starting the
+    /// next dynamic region's layout from scratch. Reachable
+    /// addresses captured by in-flight choice points stay valid
+    /// only until the next query setup runs, so callers should
+    /// invoke compaction between top-level queries — not inside a
+    /// running query.</summary>
+    internal void CompactDynamicCodeBuffer() => InvalidatePersistent();
+
     /// <summary>Canonical encodings of every (subgoal, answer) pair the
     /// tabling driver has recorded (chunk 106). Backs the <c>'$tbl_seen'/1</c>
     /// builtin — an O(1) duplicate-answer test for the semi-naive fixpoint.
