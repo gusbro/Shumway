@@ -54,12 +54,46 @@ public static class ShmoCompiler
         string moduleNameFallback = "user",
         ShmoBuildMode buildMode = ShmoBuildMode.Release)
     {
+        var result = TryCompileSource(source, moduleNameFallback, buildMode,
+            maxErrors: 100);
+        if (result.Errors.Count > 0)
+        {
+            var first = result.Errors[0];
+            throw new InvalidOperationException(
+                $"{first.Line}:{first.Column}: {first.Message}");
+        }
+        return result.Object!;
+    }
+
+    /// <summary>Compiles <paramref name="source"/> with C-style error
+    /// recovery: a <see cref="Shumway.Compiler.Parsing.ParseException"/>
+    /// on one clause is captured as an error and the parser resyncs to
+    /// the next clause-terminator dot before trying the next one.
+    /// Malformed directives (<c>:- public foo.</c>, etc.) are likewise
+    /// captured. The result carries every error AND — only when zero
+    /// errors fired — the resulting <see cref="ShmoObject"/>. Stops
+    /// after <paramref name="maxErrors"/> errors (default 100).</summary>
+    public static ShmoCompileResult TryCompileSource(string source,
+        string moduleNameFallback = "user",
+        ShmoBuildMode buildMode = ShmoBuildMode.Release,
+        int maxErrors = 100)
+    {
         ArgumentNullException.ThrowIfNull(source);
         Shumway.Builtins.StandardBuiltins.EnsureRegistered();
 
-        var allClauses = new ClauseReader(new Lexer(source), OperatorTable.Default())
-            .ReadAll()
-            .ToList();
+        var errors = new List<ShmoCompileError>();
+        var allClauses = new List<Clause>();
+        foreach (var entry in new ClauseReader(new Lexer(source), OperatorTable.Default())
+                 .ReadAllCollectingErrors(maxErrors))
+        {
+            if (entry.IsError)
+                errors.Add(new ShmoCompileError(entry.ErrorMessage!,
+                    entry.ErrorPosition.Line, entry.ErrorPosition.Column));
+            else if (entry.Clause is not null)
+                allClauses.Add(entry.Clause);
+        }
+        if (errors.Count >= maxErrors)
+            return new ShmoCompileResult(null, errors);
         var expanded = DcgTransform.Apply(allClauses);
 
         string moduleName = moduleNameFallback;
@@ -75,12 +109,25 @@ public static class ShmoCompiler
                 && clause.Term is CompoundTerm d
                 && d.Functor == ":-" && d.Args.Length == 1)
             {
-                ProcessDirective(d.Args[0], ref moduleName,
-                    publicSet, dynamicSet, ensureLinked);
+                // Catch malformed directives so the compiler doesn't
+                // bail on the first one — same C-style recovery as
+                // ParseException above.
+                try
+                {
+                    ProcessDirective(d.Args[0], ref moduleName,
+                        publicSet, dynamicSet, ensureLinked);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    errors.Add(new ShmoCompileError(ex.Message,
+                        clause.Position.Line, clause.Position.Column));
+                }
                 continue;
             }
             clauses.Add(clause);
         }
+        if (errors.Count > 0)
+            return new ShmoCompileResult(null, errors);
 
         var definedOrder = new List<PredicateRef>();
         var definedSet = new HashSet<PredicateRef>();
@@ -130,7 +177,7 @@ public static class ShmoCompiler
         foreach (var (k, v) in callGraph)
             callGraphRO[k] = v.ToArray();
 
-        return new ShmoObject(
+        var obj = new ShmoObject(
             moduleName: moduleName,
             source: source,
             bytecode: bytecode,
@@ -139,6 +186,20 @@ public static class ShmoCompiler
             callGraph: callGraphRO,
             qualifiedRefs: qualifiedRefs,
             buildMode: buildMode);
+        return new ShmoCompileResult(obj, errors);
+    }
+
+    /// <summary>Like <see cref="TryCompileSource"/> but reads the
+    /// source from <paramref name="path"/> and uses the file's bare
+    /// name (sans extension) as the module-name fallback.</summary>
+    public static ShmoCompileResult TryCompileFile(string path,
+        ShmoBuildMode buildMode = ShmoBuildMode.Release,
+        int maxErrors = 100)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        string source = File.ReadAllText(path);
+        string fallback = Path.GetFileNameWithoutExtension(path);
+        return TryCompileSource(source, fallback, buildMode, maxErrors);
     }
 
     // ------------------------------------------------------------------------

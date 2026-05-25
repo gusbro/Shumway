@@ -63,6 +63,64 @@ public sealed class ClauseReader
         }
     }
 
+    /// <summary>Like <see cref="ReadAll"/> but with C-style error
+    /// recovery: a <see cref="ParseException"/> on one clause is
+    /// captured as a <see cref="ClauseOrError.Error"/> entry and the
+    /// reader resyncs to the next clause-terminator dot before trying
+    /// the next clause. Stops yielding once
+    /// <paramref name="maxErrors"/> errors have accumulated (default
+    /// 100) — preventing a hopelessly malformed file from drowning
+    /// the diagnostics stream.</summary>
+    public IEnumerable<ClauseOrError> ReadAllCollectingErrors(int maxErrors = 100)
+    {
+        int errors = 0;
+        while (!_parser.IsAtEnd())
+        {
+            Clause? parsed = null;
+            ClauseOrError? errorEntry = null;
+            try
+            {
+                Term term = _parser.ReadClauseTerm();
+                parsed = Clause.From(term);
+                if (parsed.Kind == ClauseKind.Directive)
+                {
+                    try { ProcessDirective(parsed); }
+                    catch (ParseException dirEx)
+                    {
+                        // A directive that parsed structurally but
+                        // failed in ApplyOpDirective / etc. counts as
+                        // an error but the directive clause itself
+                        // is discarded.
+                        errorEntry = ClauseOrError.Error(dirEx.Message, dirEx.Position);
+                        parsed = null;
+                    }
+                }
+            }
+            catch (ParseException ex)
+            {
+                errorEntry = ClauseOrError.Error(ex.Message, ex.Position);
+                _parser.SkipToClauseTerminator();
+            }
+
+            if (errorEntry is not null)
+            {
+                yield return errorEntry;
+                errors++;
+                if (errors >= maxErrors)
+                {
+                    yield return ClauseOrError.Error(
+                        $"Too many parse errors ({errors}); stopping.",
+                        default);
+                    yield break;
+                }
+                continue;
+            }
+
+            if (parsed is not null)
+                yield return ClauseOrError.Ok(parsed);
+        }
+    }
+
     private void ProcessDirective(Clause clause)
     {
         // The clause's term is :-/1; the actual directive body is its only arg.

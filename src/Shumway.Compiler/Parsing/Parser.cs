@@ -72,6 +72,21 @@ public sealed class Parser
     /// parse another clause past the end of file.</summary>
     public bool IsAtEnd() => PeekToken().Kind == TokenKind.Eof;
 
+    /// <summary>Consumes tokens until the next clause-terminator
+    /// <c>.</c> (or end of input). Used by <see cref="ClauseReader"/>
+    /// to resync after a <see cref="ParseException"/> so the next
+    /// clause can still be parsed — error-recovery in C-compiler
+    /// style. The terminator dot itself is consumed; the next call
+    /// to <see cref="ReadClauseTerm"/> starts on a clean clause.</summary>
+    public void SkipToClauseTerminator()
+    {
+        while (true)
+        {
+            Token tok = NextToken();
+            if (tok.Kind == TokenKind.Dot || tok.Kind == TokenKind.Eof) return;
+        }
+    }
+
     // ---------- Core recursive reader ----------
 
     private Term ReadTermInternal(int maxPrec, out int builtPrec)

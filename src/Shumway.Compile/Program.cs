@@ -76,7 +76,16 @@ internal static class Program
             + $"[{buildMode.ToString().ToLowerInvariant()}]");
         try
         {
-            var obj = ShmoCompiler.CompileFile(input, buildMode);
+            var result = ShmoCompiler.TryCompileFile(input, buildMode, maxErrors: 100);
+            if (!result.Success)
+            {
+                foreach (var err in result.Errors)
+                    Console.Error.WriteLine($"{input}:{err.Line}:{err.Column}: error: {err.Message}");
+                Console.Error.WriteLine(
+                    $"shumway-compile: {result.Errors.Count} error(s) in {input}.");
+                return ExitCompileError;
+            }
+            var obj = result.Object!;
             ShmoWriter.WriteToFile(obj, output);
             if (verbose)
             {
