@@ -538,6 +538,49 @@ Two chunks closing Phase 10's deferred items:
   query; subsequent queries start fresh at append-only growth.
   Recommended use is periodic, between top-level queries.
 
+**Phase 14 — Compiler / linker UX polish + `--exe`** — ✅ **Complete** (tagged `phase-14`; closure summary in [`docs/phase-14-closure.md`](docs/phase-14-closure.md)).
+
+Polish around the Phase 13 separate-compilation workflow plus a
+real `--exe` path. Eight chunks:
+
+- ✓ **168** — `shumway-compile` multi-file input + per-file
+  "compiling X -> Y" progress; `-o` becomes the output
+  directory under multi-input.
+- ✓ **169** — `--debug` / `--release` flags (default release).
+  Mode is persisted via a new build-mode byte in the .shmo V2
+  format. V1 still readable.
+- ✓ **170** — `--verbose` lists every `:- public` and
+  `:- dynamic` indicator per compiled file.
+- ✓ **171** — Parser error recovery. C-compiler-style
+  `ShmoCompiler.TryCompileSource` accumulates parse +
+  directive errors (up to 100), resyncing to the next clause
+  terminator between attempts. CLI prints
+  `file:line:col: error: msg` for each.
+- ✓ **172** — `shumway-link --strip` removes embedded source
+  from each bundle entry. Bytecode preserved. Known limitation:
+  the engine's LoadBundle still re-consults source so stripped
+  bundles fail to dispatch; a loadable-strip is queued for a
+  future chunk and the linker emits a `stripped_bundle`
+  warning when active.
+- ✓ **173** — `shumway-link --map <path>` writes a C-toolchain
+  -style audit file: per-module sizes, public/dynamic
+  predicate lists, reached / dropped modules, totals.
+- ✓ **174** — `shumway-link --exe <path>` produces a single-
+  file native executable for the current platform. Embeds the
+  bundle as a manifest resource; runs the `--goal` at startup;
+  exits 0/1/2. Implementation shells out to `dotnet publish`
+  with `PublishSingleFile=true`. `--self-contained` switches
+  from framework-dependent (~5-10 MB) to fully standalone
+  (~70 MB). `--goal` accepts both `main` and `main.`; the head
+  pred becomes an implicit entry-point.
+- ✓ **175** — Closure summary + tag.
+
+Bonus parser fixes during the phase (surfaced compiling
+Blint.pl): the `prefix_op/N` predicate-indicator ambiguity
+disambiguates to the indicator when followed by `/ <integer>`;
+`:- dynamic a/0, b/1, c/2.` (GNU comma-separated form) is now
+accepted alongside the single-indicator and list forms.
+
 **Phase 13 — Separate compilation + linker + user docs** — ✅ **Complete** (tagged `phase-13`; closure summary in [`docs/phase-13-closure.md`](docs/phase-13-closure.md)).
 
 Introduces the `.pl → .shmo → .shum` separate-compilation

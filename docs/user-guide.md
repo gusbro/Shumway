@@ -214,20 +214,39 @@ This is the `.pl → .shmo → .shum` pipeline.
 ### Step 1 — `shumway-compile` (per-module compilation)
 
 ```bash
-shumway-compile [-o output.shmo] [-v] input.pl
+shumway-compile [options] input1.pl [input2.pl ...]
 ```
 
-- One `.pl` per invocation, one `.shmo` out.
-- Output path defaults to the input with the extension replaced
-  (`lib.pl` → `lib.shmo`).
+- Accepts one *or more* source files in a single invocation.
+- For each input, prints `compiling X -> Y` to stderr and emits a
+  `.shmo` artifact.
+- Output path: with one input, `-o file.shmo` names the file (default
+  is `input.pl → input.shmo`). With multiple inputs, `-o <dir>` is
+  treated as an output directory; without `-o`, each output lands
+  next to its source.
 - A `.shmo` carries the WAM bytecode plus the link-time metadata the
   linker needs: defined predicates with visibility, the per-predicate
   call graph, the `:- ensure_linked` set, and any module-qualified
   references.
 - File header: magic bytes `SHMO` + a `uint32` version field
-  (currently `1`). The linker refuses unsupported versions.
+  (currently `2`). V1 artifacts are still readable; the linker rejects
+  unsupported future versions.
 
-Exit codes: `0` ok, `1` compile error, `3` usage error.
+Flags:
+
+| Flag | Effect |
+|---|---|
+| `-o, --output <path>` | Single-input output file, or multi-input output directory. |
+| `-r, --release` | Release build (default). Smaller `.shmo`, no per-instruction debug info. |
+| `-d, --debug` | Debug build. The build mode is recorded in the `.shmo` and surfaces in `shumway-link --map` output. |
+| `-v, --verbose` | After each file, list every `:- public` and `:- dynamic` indicator the module exports. |
+| `-h, --help` | Usage summary. |
+
+**Error handling**: the compiler is C-style — on a parse or directive
+error, it resyncs to the next clause-terminator dot and keeps going,
+so you see every error in one pass (up to a 100-error cap). All
+diagnostics are printed in the standard `file:line:col: error: msg`
+shape. Exit codes: `0` ok, `1` compile error, `3` usage error.
 
 ### Step 2 — `shumway-link` (linker)
 
@@ -235,22 +254,28 @@ Exit codes: `0` ok, `1` compile error, `3` usage error.
 shumway-link -o app.shum \
   --entry main/0,init/1 \
   --entry shutdown/0 \
-  [--allow-undefined] [-v] \
+  [--allow-undefined] [--strip] [--map app.map] [-v] \
   lib.shmo util.shmo app.shmo
 ```
 
 - One or more `.shmo`s as positional arguments.
-- `--entry pred/N` declares the starting predicates for the
-  reachability walk. Repeatable; each flag accepts a comma-separated
-  list. At least one entry is required (otherwise no module would be
-  reachable).
-- `--allow-undefined` downgrades the *missing predicate* error to a
-  warning and still produces the bundle. The engine then raises
-  `existence_error/2` if the missing predicate is actually called.
-  Useful when some predicates only become available at runtime
-  (`assertz` of code built at startup).
-- `--verbose` streams the diagnostic stream to stderr as the linker
-  runs.
+- **Reachability root** is either `--entry pred/N` (repeatable;
+  comma-separated within a flag) or `--goal Term` (see
+  [Producing a runnable executable](#step-3a--producing-a-runnable-executable)).
+  At least one is required.
+
+| Flag | Effect |
+|---|---|
+| `-o, --output <path>` | Output `.shum` path (required). |
+| `--entry pred/N[,…]` | Entry-point predicates. Repeatable; comma-separated within a flag. |
+| `--goal Term` | Adds the goal's head as an implicit entry point. Required when `--exe` is set. |
+| `--allow-undefined` | Downgrade missing-predicate errors to warnings; still produce the bundle. The engine raises `existence_error/2` at call time if the missing predicate is actually invoked. |
+| `-s, --strip` | Remove the embedded Prolog source from every bundle entry. Bytecode preserved. Useful for size analysis / IP-protection. **Known limitation**: stripped bundles currently fail to dispatch their predicates (the engine still re-consults source on load); a `stripped_bundle` warning is emitted. |
+| `-m, --map <path>` | Write a C-toolchain-style audit file describing what landed in the bundle: per-module sizes, exported / dynamic predicate lists, dropped modules, totals. |
+| `-e, --exe <path>` | Emit a single-file native executable. See [step 3a](#step-3a--producing-a-runnable-executable). |
+| `-g, --goal Term` | The goal the `--exe` runs at startup. Trailing `.` optional. |
+| `--self-contained` | Used with `--exe`: bake the .NET runtime into the binary (~70 MB exe, runs on machines without .NET). Default is framework-dependent (~5-10 MB exe, requires .NET 10 runtime on the target). |
+| `-v, --verbose` | Stream diagnostics to stderr as the linker runs. |
 
 The linker performs three checks:
 
@@ -285,6 +310,45 @@ foreach (var s in engine.QueryAll("main(Result).")) {
 `LoadBundle` consults every module in the bundle. Pre-compiled
 bytecode embedded in the bundle warms the runtime so the first query
 hits indexed dispatch immediately.
+
+### Step 3a — Producing a runnable executable
+
+For deployment as a standalone binary (no host application needed),
+use `--exe`:
+
+```bash
+shumway-link -o app.shum \
+  --exe ./myapp \
+  --goal "main" \
+  lib.shmo app.shmo
+```
+
+This produces `./myapp` (or `./myapp.exe` on Windows) — a single-file
+native executable for the current platform. On launch it loads the
+embedded bundle, runs the goal, and exits with:
+
+- `0` — goal succeeded
+- `1` — goal failed
+- `2` — uncaught Prolog exception or unexpected host error
+
+The `--goal` accepts both `main` and `main.` (the trailing
+clause-terminator dot is optional). The argument is parsed and
+validated syntactically at link time, so typos surface immediately.
+The goal's head predicate is also added as an implicit reachability
+root, so `--goal` alone is enough — `--entry` is optional in the
+`--exe` flow.
+
+**Deployment modes:**
+
+- **Default (framework-dependent)**: ~5-10 MB single file. Requires
+  .NET 10 runtime to be installed on the target machine.
+- **`--self-contained`**: ~70 MB single file. The .NET runtime is
+  baked in; the binary runs on machines with nothing installed.
+
+The build host must have the .NET 10 SDK (which it does, since
+`shumway-link` is itself a .NET tool). Cross-targeting other
+platforms isn't supported yet — the produced binary matches the
+current platform.
 
 ### In-process (no CLI)
 
