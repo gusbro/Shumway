@@ -514,6 +514,30 @@ indexed dispatch:
 - → True in-place multi-arg extensible-indexed dispatch deferred
   to Phase 11.
 
+**Phase 11 — Multi-arg in-place indexing + persistent compaction** — ✅ **Complete** (tagged `phase-11`; closure summary in [`docs/phase-11-closure.md`](docs/phase-11-closure.md)).
+
+Two chunks closing Phase 10's deferred items:
+
+- ✓ **156** — multi-arg in-place extensible-indexed dispatch.
+  `CompileIndexedDynamic` generalised to take `perArgInfo` +
+  `indexableArgs` and emit nested switch dispatch
+  (`switch_on_term` for arg 0, `switch_on_arg` for arg 1+) with
+  extensible chains at every level. The runtime chain-modification
+  helpers (assertz / asserta / retract / var-arg / new-key) walk
+  multi-level structure via a single recursive enumerator
+  `EnumerateChainHeadsRecursive`. `IsExtensibleIndexedLayout`
+  follows the `switch_on_arg` cascade to recognise multi-arg
+  layouts; `FindFinalVarChainHead` resolves through the cascade
+  to the actual final chain head.
+
+- ✓ **157** — `compact_dynamic_buffer/0` builtin. Routes through
+  the existing `InvalidatePersistent` (chunk 151b) to reclaim
+  memory consumed by in-place chain entries and clause bodies
+  that became unreachable after a long run of mutations.
+  Trade-off: one re-link of the dynamic region on the next
+  query; subsequent queries start fresh at append-only growth.
+  Recommended use is periodic, between top-level queries.
+
 ---
 
 ## Communication and Iteration
