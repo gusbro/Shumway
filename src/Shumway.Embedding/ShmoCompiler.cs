@@ -183,29 +183,47 @@ public static class ShmoCompiler
 
     private static IEnumerable<PredicateRef> ReadFunctorSpecs(Term arg, string directive)
     {
-        if (TryReadFunctorSpec(arg, out var single))
-        {
-            yield return single;
-            yield break;
-        }
-        // List of Name/Arity.
-        Term cursor = arg;
         var collected = new List<PredicateRef>();
+        if (TryReadSpecForms(arg, collected)) return collected;
+        throw new InvalidOperationException(
+            $"Malformed :- {directive} directive (expected Name/Arity, a list of them, "
+            + "or a comma-separated sequence).");
+    }
+
+    /// <summary>Accepts a single <c>Name/Arity</c>, a Prolog list of
+    /// them, or a comma-conjunction (<c>a/0, b/1, c/2</c>) — GNU
+    /// Prolog's grouped <c>:- dynamic</c> / <c>:- public</c> form.
+    /// Returns <c>false</c> if any leaf doesn't parse as a functor
+    /// spec.</summary>
+    private static bool TryReadSpecForms(Term term, List<PredicateRef> output)
+    {
+        if (TryReadFunctorSpec(term, out var single))
+        {
+            output.Add(single);
+            return true;
+        }
+        // Comma-conjunction: walk both sides.
+        if (term is CompoundTerm conj && conj.Functor == "," && conj.Args.Length == 2)
+        {
+            return TryReadSpecForms(conj.Args[0], output)
+                && TryReadSpecForms(conj.Args[1], output);
+        }
+        // Prolog list: walk cons cells.
+        Term cursor = term;
+        int start = output.Count;
         while (cursor is CompoundTerm cons && cons.Functor == "." && cons.Args.Length == 2)
         {
             if (!TryReadFunctorSpec(cons.Args[0], out var spec))
-                throw new InvalidOperationException(
-                    $"Malformed :- {directive} directive (expected Name/Arity or a list of them).");
-            collected.Add(spec);
+            {
+                output.RemoveRange(start, output.Count - start);
+                return false;
+            }
+            output.Add(spec);
             cursor = cons.Args[1];
         }
-        if (cursor is AtomTerm { Name: "[]" })
-        {
-            foreach (var s in collected) yield return s;
-            yield break;
-        }
-        throw new InvalidOperationException(
-            $"Malformed :- {directive} directive (expected Name/Arity or a list of them).");
+        if (cursor is AtomTerm { Name: "[]" }) return true;
+        output.RemoveRange(start, output.Count - start);
+        return false;
     }
 
     private static bool TryReadFunctorSpec(Term term, out PredicateRef spec)

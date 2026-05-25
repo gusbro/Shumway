@@ -241,7 +241,28 @@ public sealed class Parser
                 next.Kind == TokenKind.LParen && IsAdjacent(tok, next);
             bool nextCanStart = CanStartTerm(next);
 
-            if (nextCanStart && !followedByCompoundParen)
+            // ISO disambiguation for `op/N` (predicate-indicator
+            // notation). An atom like `not` that is both a prefix
+            // operator (fy 900) AND a valid plain atom collides with
+            // `not/1` inside a list / argument position: the prefix-
+            // form parse would commit to `not('/')` and strand the
+            // arity integer behind it.
+            //
+            // Narrow rule: when `tok` is a prefix operator AND the
+            // very next tokens form `/ <integer>`, the user clearly
+            // means the indicator `tok/<integer>` and we should let
+            // the outer infix loop apply `/` to `tok` as its left
+            // operand. This catches `[not/1, catch/3]` etc. without
+            // disturbing real prefix uses like `not member(X, L)` or
+            // `:- public '#='/2` (where the next token is a quoted
+            // atom, not the bare `/`). Matches SWI / GNU behaviour
+            // for the common case.
+            bool nextIsPredicateIndicatorSlash =
+                next.Kind == TokenKind.Atom && next.Text == "/"
+                && PeekTokenAt(2).Kind == TokenKind.Integer;
+
+            if (nextCanStart && !followedByCompoundParen
+                && !nextIsPredicateIndicatorSlash)
             {
                 NextToken();
                 int rightMax = opType == OperatorType.Fy ? opPrec : opPrec - 1;
