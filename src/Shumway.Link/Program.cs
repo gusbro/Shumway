@@ -53,6 +53,20 @@ internal static class Program
             }
         }
 
+        // --goal Z validates syntactically AND becomes an implicit
+        // entry point (the goal's head pred drives reachability).
+        if (!string.IsNullOrEmpty(opts.Goal))
+        {
+            if (!ExecutableEmitter.TryValidateGoal(opts.Goal, out _, out var headPred,
+                    out string? goalErr))
+            {
+                Console.Error.WriteLine($"shumway-link: --goal: {goalErr}");
+                return ExitUsageError;
+            }
+            if (!opts.EntryPoints.Contains(headPred))
+                opts.EntryPoints.Add(headPred);
+        }
+
         var config = new LinkConfig
         {
             Objects = objects,
@@ -131,6 +145,28 @@ internal static class Program
                 + $"preds={result.ReachedPredicates.Count}, "
                 + $"bytes={result.Bytes!.Length}).");
         }
+
+        if (!string.IsNullOrEmpty(opts.ExePath))
+        {
+            var mode = opts.SelfContained
+                ? ExecutableDeploymentMode.SelfContained
+                : ExecutableDeploymentMode.FrameworkDependent;
+            var exeResult = ExecutableEmitter.Emit(
+                bundleBytes: result.Bytes!,
+                goal: opts.Goal,
+                outputPath: opts.ExePath,
+                mode: mode,
+                verboseOut: opts.Verbose ? Console.Error : null);
+            foreach (var d in exeResult.Diagnostics)
+            {
+                var stream = d.Severity == LinkSeverity.Error
+                    ? Console.Error : Console.Out;
+                stream.WriteLine($"shumway-link: {d.Severity.ToString().ToLowerInvariant()}: {d.Message}");
+            }
+            if (!exeResult.Success) return ExitLinkError;
+            if (!opts.Verbose)
+                Console.Error.WriteLine($"shumway-link: wrote {exeResult.OutputPath}.");
+        }
         return ExitOk;
     }
 
@@ -147,6 +183,9 @@ internal static class Program
         public bool AllowUndefined { get; set; }
         public bool StripSource { get; set; }
         public string MapPath { get; set; } = "";
+        public string ExePath { get; set; } = "";
+        public string Goal { get; set; } = "";
+        public bool SelfContained { get; set; }
     }
 
     private static Options? ParseArgs(string[] args)
@@ -194,6 +233,22 @@ internal static class Program
                     opts.MapPath = args[i];
                     break;
 
+                case "--exe":
+                case "-e":
+                    if (++i >= args.Length) { ReportMissing(arg); return null; }
+                    opts.ExePath = args[i];
+                    break;
+
+                case "--goal":
+                case "-g":
+                    if (++i >= args.Length) { ReportMissing(arg); return null; }
+                    opts.Goal = args[i];
+                    break;
+
+                case "--self-contained":
+                    opts.SelfContained = true;
+                    break;
+
                 case "--verbose":
                 case "-v":
                     opts.Verbose = true;
@@ -220,11 +275,24 @@ internal static class Program
             Console.Error.WriteLine("shumway-link: at least one .shmo input is required.");
             return null;
         }
-        if (opts.EntryPoints.Count == 0)
+        if (opts.EntryPoints.Count == 0 && string.IsNullOrEmpty(opts.Goal))
         {
             Console.Error.WriteLine(
-                "shumway-link: at least one --entry pred/N is required "
+                "shumway-link: at least one --entry pred/N or --goal Term is required "
                 + "(otherwise no module would be reachable).");
+            return null;
+        }
+        if (!string.IsNullOrEmpty(opts.ExePath) && string.IsNullOrEmpty(opts.Goal))
+        {
+            Console.Error.WriteLine(
+                "shumway-link: --exe requires --goal Term (the entry call the "
+                + "generated executable runs at startup).");
+            return null;
+        }
+        if (opts.SelfContained && string.IsNullOrEmpty(opts.ExePath))
+        {
+            Console.Error.WriteLine(
+                "shumway-link: --self-contained only makes sense with --exe.");
             return null;
         }
         return opts;
@@ -253,7 +321,7 @@ internal static class Program
     private static void PrintUsage()
     {
         Console.Error.WriteLine(
-            "Usage: shumway-link -o <output.shum> --entry pred/N[,pred2/N...] [options] <a.shmo b.shmo ...>\n"
+            "Usage: shumway-link -o <output.shum> {--entry pred/N | --goal Term} [options] <a.shmo b.shmo ...>\n"
             + "\n"
             + "Options:\n"
             + "  -o, --output <path>      Output bundle path (required).\n"
@@ -274,6 +342,23 @@ internal static class Program
             + "                           landed in the bundle: per-module sizes, public\n"
             + "                           / dynamic predicate lists, reached / dropped\n"
             + "                           modules, totals. Linker-style audit output.\n"
+            + "  -e, --exe <path>         Emit a single-file native executable for the\n"
+            + "                           current platform. The exe loads the bundle and\n"
+            + "                           runs --goal at startup, then exits 0 (success)\n"
+            + "                           / 1 (failure) / 2 (uncaught Prolog exception).\n"
+            + "                           Requires the .NET 10 SDK on this machine. The\n"
+            + "                           target machine needs .NET 10 runtime by default\n"
+            + "                           (--self-contained avoids that).\n"
+            + "  -g, --goal <term>        The Prolog goal the --exe runs at startup. The\n"
+            + "                           trailing '.' is optional ('main' and 'main.'\n"
+            + "                           are both fine). Validated syntactically at link\n"
+            + "                           time. Also added as an implicit reachability\n"
+            + "                           root for the linker.\n"
+            + "      --self-contained     With --exe, bake the .NET runtime into the\n"
+            + "                           executable. Produces a ~70 MB binary that needs\n"
+            + "                           nothing installed on the target machine.\n"
+            + "                           Default is framework-dependent (~5-10 MB exe,\n"
+            + "                           requires .NET runtime on target).\n"
             + "  -v, --verbose            Verbose progress + diagnostics to stderr.\n"
             + "  -h, --help               Show this message.");
     }
