@@ -538,6 +538,30 @@ Two chunks closing Phase 10's deferred items:
   query; subsequent queries start fresh at append-only growth.
   Recommended use is periodic, between top-level queries.
 
+**Phase 12 — Auto-compaction + Tier-1 IL revisit** — ✅ **Complete** (tagged `phase-12`; closure summary in [`docs/phase-12-closure.md`](docs/phase-12-closure.md)).
+
+Two chunks closing out the auto-compaction and IL-promotion
+questions from Phase 11's deferred list:
+
+- ✓ **158** — auto-compaction watermark + `compact_dynamic_buffer/1`.
+  `PrologEngine._persistentMutationsSinceCompact` counter bumped
+  by every dynamic-store mutation through
+  `InvalidateDynamicCache`. `SetupQueryFromTerm` auto-invalidates
+  the persistent buffer once the counter crosses
+  `PrologEngine.CompactWatermark` (default 1000); the rebuild in
+  the same setup picks up the trim. `compact_dynamic_buffer/1`
+  is the per-predicate API surface — currently delegates to the
+  full rebuild as a forward-compatibility hint.
+
+- ✓ **159** — explicit Tier-1 IL exclusion for dynamic predicates.
+  `IlPromotionStore.IsExcludedByLayout` marks predicates whose
+  bytecode opens with `enter_dynamic` as unpromotable on the
+  first invocation. Formalises the architectural invariant —
+  chunks-155+/156 mutation-driven dispatch must stay on Tier 0
+  because a cached IL delegate wouldn't observe mid-life
+  `retract` / `assertz` — and avoids redundant `TryDescribe*`
+  attempts that were already rejecting the shape.
+
 ---
 
 ## Communication and Iteration
