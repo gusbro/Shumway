@@ -60,6 +60,12 @@ public sealed class BytecodeInterpreter
         FunctorTable.Intern(AtomTable.Intern("->", permanent: true).Id, 2);
     private static readonly int NegFunctorId =
         FunctorTable.Intern(AtomTable.Intern("\\+", permanent: true).Id, 1);
+    // `not/1` is the historical SWI / GNU / SICStus synonym for \+/1.
+    // Most programs use one or the other interchangeably; the dispatch
+    // routes both to the same prelude helper so they really are
+    // synonymous at the call/1 level.
+    private static readonly int NotFunctorId =
+        FunctorTable.Intern(AtomTable.Intern("not", permanent: true).Id, 1);
     // conj/disj/arrow take a third argument — the cut barrier K — so a
     // `!` inside a runtime compound goal commits to the enclosing call
     // (chunk 88). $call_neg is opaque to cut and stays arity 1.
@@ -1568,7 +1574,7 @@ public sealed class BytecodeInterpreter
             _engine.SetRegister(2, Cell.Int(barrier));
             functorId = CallArrowFunctorId;
         }
-        else if (functorId == NegFunctorId)
+        else if (functorId == NegFunctorId || functorId == NotFunctorId)
         {
             functorId = CallNegFunctorId;
         }

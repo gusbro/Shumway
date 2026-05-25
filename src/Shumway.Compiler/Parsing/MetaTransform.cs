@@ -87,6 +87,24 @@ public static class MetaTransform
             return new CompoundTerm(",", new[] { lhs, rhs }) { Position = goal.Position };
         }
 
+        // Standalone if-then `(A -> B)` without an else branch. ISO
+        // §7.8.7 defines it as equivalent to `(A -> B ; fail)`, so
+        // rewrite it that way and recurse — the disjunction case
+        // below synthesises the helper. Without this rewrite the
+        // compiler treats `->/2` as a plain procedure and emits a
+        // call to it, which raises existence_error/2 at runtime
+        // (the engine doesn't ship `->`/2 as a builtin).
+        if (goal is CompoundTerm itoOnly && itoOnly.Functor == "->"
+            && itoOnly.Args.Length == 2)
+        {
+            Term withFallback = new CompoundTerm(";", new[]
+            {
+                (Term)itoOnly,
+                new AtomTerm("fail"),
+            }) { Position = goal.Position };
+            return TransformGoal(withFallback, ref counter, helpers);
+        }
+
         // \+ G  or  not(G)  with a syntactically-callable inner goal —
         // synthesise the helper and emit a call to it. A non-callable
         // inner goal (var, integer, …) falls through to a runtime
@@ -234,21 +252,21 @@ public static class MetaTransform
         CollectNamedVars(left, freeVars, seen);
         CollectNamedVars(right, freeVars, seen);
 
-        // Recurse into both branches first so nested control structures
-        // (further disjunctions, negations, etc.) get their own helpers.
-        Term recursedLeft = TransformGoal(left, ref counter, helpers);
-        Term recursedRight = TransformGoal(right, ref counter, helpers);
-
         Term BuildHelperHead() => freeVars.Count == 0
             ? (Term)new AtomTerm(helperName)
             : new CompoundTerm(helperName, freeVars.Select(n => (Term)new VarTerm(n)).ToArray());
 
         // If-then-else: (A -> B ; C) translates to two clauses with a
-        // commit cut between A and B in the first clause.
+        // commit cut between A and B in the first clause. The cond
+        // and then come from `left.Args[0]` / `left.Args[1]` —
+        // recursing through TransformGoal on `left` itself would
+        // bounce off the standalone `(A -> B)` rewrite above and
+        // ping-pong infinitely.
         if (left is CompoundTerm ite && ite.Functor == "->" && ite.Args.Length == 2)
         {
             Term cond = TransformGoal(ite.Args[0], ref counter, helpers);
             Term then = TransformGoal(ite.Args[1], ref counter, helpers);
+            Term recursedRightIte = TransformGoal(right, ref counter, helpers);
             // Clause 1: '$disj_N'(...) :- A, !, B.
             Term clause1Body = new CompoundTerm(",", new[]
             {
@@ -262,12 +280,14 @@ public static class MetaTransform
             // Clause 2: '$disj_N'(...) :- C.
             helpers.Add(new Clause(
                 ClauseKind.Rule,
-                new CompoundTerm(":-", new[] { BuildHelperHead(), recursedRight }),
+                new CompoundTerm(":-", new[] { BuildHelperHead(), recursedRightIte }),
                 right.Position));
             return BuildHelperHead();
         }
 
         // Plain disjunction.
+        Term recursedLeft = TransformGoal(left, ref counter, helpers);
+        Term recursedRight = TransformGoal(right, ref counter, helpers);
         // Clause 1: '$disj_N'(...) :- A.
         helpers.Add(new Clause(
             ClauseKind.Rule,
