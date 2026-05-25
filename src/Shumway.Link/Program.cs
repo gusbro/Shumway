@@ -106,6 +106,22 @@ internal static class Program
             return ExitLinkError;
         }
 
+        if (!string.IsNullOrEmpty(opts.MapPath))
+        {
+            try
+            {
+                ShmoBundleMap.WriteToFile(objects, opts.EntryPoints, result, opts.MapPath);
+                if (opts.Verbose)
+                    Console.Error.WriteLine($"shumway-link: wrote map {opts.MapPath}.");
+            }
+            catch (IOException ex)
+            {
+                Console.Error.WriteLine(
+                    $"shumway-link: error writing map '{opts.MapPath}': {ex.Message}");
+                return ExitLinkError;
+            }
+        }
+
         if (opts.Verbose)
         {
             Console.Error.WriteLine(
@@ -130,6 +146,7 @@ internal static class Program
         public bool Verbose { get; set; }
         public bool AllowUndefined { get; set; }
         public bool StripSource { get; set; }
+        public string MapPath { get; set; } = "";
     }
 
     private static Options? ParseArgs(string[] args)
@@ -169,6 +186,12 @@ internal static class Program
                 case "--strip":
                 case "-s":
                     opts.StripSource = true;
+                    break;
+
+                case "--map":
+                case "-m":
+                    if (++i >= args.Length) { ReportMissing(arg); return null; }
+                    opts.MapPath = args[i];
                     break;
 
                 case "--verbose":
@@ -247,6 +270,10 @@ internal static class Program
             + "                           re-consults source so stripped bundles cannot\n"
             + "                           currently dispatch their predicates — a warning\n"
             + "                           is emitted.\n"
+            + "  -m, --map <path>         Write a human-readable map file describing what\n"
+            + "                           landed in the bundle: per-module sizes, public\n"
+            + "                           / dynamic predicate lists, reached / dropped\n"
+            + "                           modules, totals. Linker-style audit output.\n"
             + "  -v, --verbose            Verbose progress + diagnostics to stderr.\n"
             + "  -h, --help               Show this message.");
     }
