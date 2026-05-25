@@ -538,6 +538,58 @@ Two chunks closing Phase 10's deferred items:
   query; subsequent queries start fresh at append-only growth.
   Recommended use is periodic, between top-level queries.
 
+**Phase 13 — Separate compilation + linker + user docs** — ✅ **Complete** (tagged `phase-13`; closure summary in [`docs/phase-13-closure.md`](docs/phase-13-closure.md)).
+
+Introduces the `.pl → .shmo → .shum` separate-compilation
+workflow and the user-facing documentation that ties the whole
+tool family together. Eight chunks:
+
+- ✓ **160** — `.shmo` V1 file format. Magic `SHMO` + `uint32`
+  version + module name + source + WAM bytecode + defined-set
+  with `PredicateVisibility` (Local / Public / Dynamic) +
+  `ensure_linked` set + per-predicate call graph + qualified
+  refs. `ShmoFormat` / `ShmoObject` / `ShmoReader` / `ShmoWriter`.
+- ✓ **161** — `shumway-compile` CLI (`.pl → .shmo`). New
+  `Shumway.Compile` project. `ShmoCompiler` reads
+  `:- module/1` / `:- public/1` / `:- dynamic/1`, applies
+  `DcgTransform`, walks each clause body extracting call edges
+  (descending through `,`/`;`/`->`/`*->`/`\+`/`not`/`call/1`,
+  emitting `Module:Goal` as `QualifiedPredicateRef`, skipping
+  cuts).
+- ✓ **162** — `:- ensure_linked/1` directive. GNU-Prolog-style
+  reachability hint for predicates invoked only via runtime
+  meta-call. Recorded into `ShmoObject.EnsureLinked`; the linker
+  treats every indicator as an additional root. Added
+  `ensure_linked` as an `fx 1150` prefix operator alongside
+  `dynamic`/`public`.
+- ✓ **163** — `ShmoLinker`. Takes a set of `ShmoObject`s plus
+  entry points. Builds the global namespace (with
+  `duplicate_public` collision detection), compiles the prelude
+  on the fly and snapshots `BuiltinsRegistry` + `MetaBuiltins` as
+  the always-available filter, walks reachability from
+  entry-points + `ensure_linked` + qualified refs resolving each
+  edge in order (module-local / global public / global dynamic /
+  builtin / prelude), emits `missing_predicate` diagnostics
+  (error, or warning under `AllowUndefined`), drops unreachable
+  modules with an `unreachable_module` warning, and serialises a
+  `Bundle`.
+- ✓ **164** — `shumway-link` CLI. New `Shumway.Link` project.
+  `--entry pred/N` is repeatable AND accepts a comma-separated
+  list per flag; both combine. `--allow-undefined` downgrades
+  missing-predicate errors to warnings.
+- ✓ **165** — Linker async + source/file conveniences mirroring
+  the chunk-72 Bundler shape: `LinkAsync(LinkConfig,
+  CancellationToken)`, `LinkFromFiles(paths, entries, ...)`,
+  `LinkFromSources(...)`.
+- ✓ **166** — `docs/user-guide.md`. Comprehensive walkthrough:
+  what ships in each project, building from source, running the
+  REPL, embedding the engine (PrologEngine / Solution / Term /
+  CLP opt-in / LoadBundle), the full separate-compilation flow
+  with diagrams, module directives reference, a worked
+  grandparent example including a deliberate failure case, and
+  a pointer to `native-aot.md`.
+- ✓ **167** — Closure summary + tag.
+
 **Phase 12 — Auto-compaction + Tier-1 IL revisit** — ✅ **Complete** (tagged `phase-12`; closure summary in [`docs/phase-12-closure.md`](docs/phase-12-closure.md)).
 
 Two chunks closing out the auto-compaction and IL-promotion
