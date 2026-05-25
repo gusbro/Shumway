@@ -383,6 +383,74 @@ public static class ShmoLinker
             missingPredicates: missing.ToList());
     }
 
+    /// <summary>Async wrapper. Offloads the synchronous
+    /// <see cref="Link(LinkConfig)"/> onto the thread pool so a
+    /// caller on a UI / hosting thread doesn't block. The link itself
+    /// is CPU-bound; the wrapper is a courtesy, not a fundamentally
+    /// async pipeline. Cancellation is honoured *before* the link
+    /// starts (the inner pass runs to completion once dispatched).</summary>
+    public static Task<LinkResult> LinkAsync(LinkConfig config,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        if (cancellationToken.IsCancellationRequested)
+            return Task.FromCanceled<LinkResult>(cancellationToken);
+        return Task.Run(() => Link(config), cancellationToken);
+    }
+
+    /// <summary>Convenience: reads each <paramref name="shmoPaths"/>
+    /// from disk through <see cref="ShmoReader.ReadFromFile(string)"/>
+    /// and runs the link. Useful for .NET callers that already have
+    /// a directory of compiled objects from the
+    /// <c>shumway-compile</c> CLI.</summary>
+    public static LinkResult LinkFromFiles(
+        IReadOnlyList<string> shmoPaths,
+        IReadOnlyList<PredicateRef> entryPoints,
+        bool allowUndefined = false,
+        TextWriter? verboseOut = null)
+    {
+        ArgumentNullException.ThrowIfNull(shmoPaths);
+        ArgumentNullException.ThrowIfNull(entryPoints);
+        var objects = new List<ShmoObject>(shmoPaths.Count);
+        foreach (var p in shmoPaths)
+            objects.Add(ShmoReader.ReadFromFile(p));
+        return Link(new LinkConfig
+        {
+            Objects = objects,
+            EntryPoints = entryPoints,
+            AllowUndefined = allowUndefined,
+            VerboseOut = verboseOut,
+        });
+    }
+
+    /// <summary>Convenience: compiles each
+    /// <paramref name="sources"/> in memory via
+    /// <see cref="ShmoCompiler.CompileSource"/>, then runs the link.
+    /// Tuple shape is <c>(moduleNameFallback, source)</c>: the actual
+    /// module name still comes from a <c>:- module/1</c> directive if
+    /// present, falling back to the supplied name otherwise. Useful
+    /// for in-process callers that want to bundle a program without
+    /// touching the filesystem.</summary>
+    public static LinkResult LinkFromSources(
+        IReadOnlyList<(string ModuleNameFallback, string Source)> sources,
+        IReadOnlyList<PredicateRef> entryPoints,
+        bool allowUndefined = false,
+        TextWriter? verboseOut = null)
+    {
+        ArgumentNullException.ThrowIfNull(sources);
+        ArgumentNullException.ThrowIfNull(entryPoints);
+        var objects = new List<ShmoObject>(sources.Count);
+        foreach (var (name, src) in sources)
+            objects.Add(ShmoCompiler.CompileSource(src, name));
+        return Link(new LinkConfig
+        {
+            Objects = objects,
+            EntryPoints = entryPoints,
+            AllowUndefined = allowUndefined,
+            VerboseOut = verboseOut,
+        });
+    }
+
     private static string? ResolveDefiningModule(PredicateRef p,
         Dictionary<PredicateRef, string> globalPublic,
         Dictionary<PredicateRef, List<string>> globalDynamic)
