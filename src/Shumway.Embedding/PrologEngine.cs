@@ -2213,7 +2213,34 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// only until the next query setup runs, so callers should
     /// invoke compaction between top-level queries — not inside a
     /// running query.</summary>
-    internal void CompactDynamicCodeBuffer() => InvalidatePersistent();
+    internal void CompactDynamicCodeBuffer()
+    {
+        InvalidatePersistent();
+        _persistentMutationsSinceCompact = 0;
+    }
+
+    /// <summary>Phase 12 chunk 158 — mutation counter that drives
+    /// the auto-compaction watermark. Bumped on every dynamic-store
+    /// mutation (assertz / asserta / retract / abolish); reset by
+    /// <see cref="CompactDynamicCodeBuffer"/> and by the auto-
+    /// compaction trigger in <c>SetupQueryFromTerm</c>.</summary>
+    private long _persistentMutationsSinceCompact;
+
+    /// <summary>Phase 12 chunk 158 — how many dynamic-store mutations
+    /// the engine accumulates before automatically compacting the
+    /// persistent buffer at the next query's setup. Default 1000;
+    /// host code can raise it (large batch workloads where rebuild
+    /// cost dominates) or lower it (memory-tight environments
+    /// preferring smaller buffers) or set to <c>long.MaxValue</c>
+    /// to disable auto-compaction entirely. Compaction itself stays
+    /// callable via <c>compact_dynamic_buffer/0,1</c>.</summary>
+    public long CompactWatermark { get; set; } = 1000;
+
+    /// <summary>Phase 12 chunk 158 — diagnostic read of the mutation
+    /// counter (mainly for tests that need to verify auto-compaction
+    /// fires at the right moment).</summary>
+    public long PersistentMutationsSinceCompact =>
+        _persistentMutationsSinceCompact;
 
     /// <summary>Canonical encodings of every (subgoal, answer) pair the
     /// tabling driver has recorded (chunk 106). Backs the <c>'$tbl_seen'/1</c>
@@ -2271,12 +2298,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     {
         // Every dynamic-store mutation funnels through here (assertz,
         // asserta, retract, abolish), so this is the one place the
-        // ADR-015 generation clock has to advance. Chunk 155b moves
-        // the persistent-buffer invalidation out to the individual
-        // callers: assertz tries in-place chunk-155 extension first
-        // and only invalidates if it can't; asserta / retract /
-        // abolish still invalidate on a hot predicate.
+        // ADR-015 generation clock has to advance and the chunk-158
+        // auto-compaction mutation counter ticks.
         _dbGeneration++;
+        _persistentMutationsSinceCompact++;
         _dynamicPredicateCache.Remove(functorId);
     }
 
@@ -3287,6 +3312,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
              Engine Engine,
              BytecodeInterpreter Interp) SetupQueryFromTerm(Term queryTerm)
     {
+        // Phase 12 chunk 158: auto-compaction. When the accumulated
+        // mutation count crosses the watermark, invalidate the
+        // persistent buffer here at query setup (the safe point —
+        // no in-flight choice points hold addresses into it). The
+        // rebuild that follows below picks up the trim automatically.
+        if (_persistentMutationsSinceCompact >= CompactWatermark)
+            CompactDynamicCodeBuffer();
+
         var varNames = new List<string>();
         var seen = new HashSet<string>();
         CollectVariables(queryTerm, varNames, seen);

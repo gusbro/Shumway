@@ -95,6 +95,14 @@ public static class MetaBuiltins
             + "consumed by appended-but-now-unreachable chain entries from many "
             + "in-place assertz / asserta / retract cycles, at the cost of one "
             + "re-link of the dynamic region on the next query.");
+        BuiltinsRegistry.Register("compact_dynamic_buffer", 1, CompactDynamicBuffer1,
+            Database, "compact_dynamic_buffer(+Name/Arity)",
+            "Phase-12 chunk 158: per-predicate hint variant. Validates Name/Arity "
+            + "names a dynamic predicate, then triggers the same full rebuild as the "
+            + "0-arg form. The single buffer holds every dynamic predicate's bytecode "
+            + "interleaved, so independent per-predicate reclamation isn't currently "
+            + "feasible without partial-relink support — the API surface is per-predicate "
+            + "for forward compatibility.");
         BuiltinsRegistry.Register("retract", 1, Retract,
             Database, "retract(+Clause)", "Removes the first clause that unifies with the argument.");
 
@@ -1572,6 +1580,37 @@ public static class MetaBuiltins
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
                 "compact_dynamic_buffer/0 requires a PrologEngine host.");
+        host.CompactDynamicCodeBuffer();
+        return true;
+    }
+
+    /// <summary><c>compact_dynamic_buffer(+Name/Arity)</c> — Phase-12
+    /// chunk 158 per-predicate variant. Validates the predicate
+    /// indicator, errors on bad inputs (instantiation /
+    /// type_error / domain_error / permission_error for non-
+    /// dynamic), then falls through to the same full rebuild as
+    /// the 0-arg form. The persistent buffer holds every dynamic
+    /// predicate's bytecode interleaved, so independent per-
+    /// predicate compaction isn't feasible without partial-relink
+    /// support — the API surface is per-predicate as a forward-
+    /// compatibility hint.</summary>
+    public static bool CompactDynamicBuffer1(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "compact_dynamic_buffer/1 requires a PrologEngine host.");
+        Term spec = MaterializeRegister(engine, 0);
+        if (spec is VarTerm)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        if (spec is not CompoundTerm c || c.Functor != "/" || c.Args.Length != 2
+            || c.Args[0] is not AtomTerm nameAtom || c.Args[1] is not IntTerm arityInt)
+            throw new ShumwayPrologException(
+                IsoError.TypeError("predicate_indicator", spec));
+        int fid = FunctorTable.Intern(
+            AtomTable.Intern(nameAtom.Name, permanent: true).Id, (int)arityInt.Value);
+        if (!host.IsDynamic(fid))
+            throw new Shumway.Core.PrologRuntimeException(
+                "permission_error", "modify,static_procedure");
         host.CompactDynamicCodeBuffer();
         return true;
     }
