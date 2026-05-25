@@ -2864,15 +2864,31 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
     private static int HeadFunctorIdOf(Clause clause)
     {
-        Term head = clause.Kind == ClauseKind.Rule
-            ? ((CompoundTerm)clause.Term).Args[0]
-            : clause.Term;
+        // Rule and DcgRule both encode (head, body) under args[0] /
+        // args[1] of their wrapping compound. For DcgRule the
+        // contiguity comparison must use the *expanded* arity
+        // (Arity + 2 for the diff-list pair) to match what
+        // DcgTransform.Apply will produce later in the pipeline —
+        // otherwise a file mixing DCG rules and regular clauses of
+        // the same name/arity ends up flagged.
+        Term head;
+        int arityOffset = 0;
+        if ((clause.Kind == ClauseKind.Rule || clause.Kind == ClauseKind.DcgRule)
+            && clause.Term is CompoundTerm wrap && wrap.Args.Length == 2)
+        {
+            head = wrap.Args[0];
+            if (clause.Kind == ClauseKind.DcgRule) arityOffset = 2;
+        }
+        else
+        {
+            head = clause.Term;
+        }
         return head switch
         {
             AtomTerm a => FunctorTable.Intern(
-                AtomTable.Intern(a.Name, permanent: true).Id, 0),
+                AtomTable.Intern(a.Name, permanent: true).Id, arityOffset),
             CompoundTerm c => FunctorTable.Intern(
-                AtomTable.Intern(c.Functor, permanent: true).Id, c.Args.Length),
+                AtomTable.Intern(c.Functor, permanent: true).Id, c.Args.Length + arityOffset),
             _ => throw new InvalidOperationException(
                 $"Clause head must be an atom or compound, got {head.GetType().Name}."),
         };
@@ -2896,8 +2912,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
         if (TryReadFunctorSpecList(arg, specs))
             return true;
+        if (TryReadFunctorSpecConjunction(arg, specs))
+            return true;
         throw new InvalidOperationException(
-            $"Malformed :- {directiveName} directive (expected Name/Arity or a list of them).");
+            $"Malformed :- {directiveName} directive (expected Name/Arity, a list of them, "
+            + "or a comma-separated sequence).");
     }
 
     /// <summary>Rewrites the clauses of every <c>:- table</c>d predicate
@@ -3216,8 +3235,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
         if (TryReadFunctorSpecList(arg, specs))
             return true;
+        // GNU-style grouped form: :- dynamic a/0, b/1, c/2.
+        if (TryReadFunctorSpecConjunction(arg, specs))
+            return true;
         throw new InvalidOperationException(
-            "Malformed :- dynamic directive (expected Name/Arity or a list of them).");
+            "Malformed :- dynamic directive (expected Name/Arity, a list of them, "
+            + "or a comma-separated sequence).");
     }
 
     private static bool TryReadPublicDirective(
@@ -3227,7 +3250,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         if (body is not CompoundTerm c || c.Functor != "public" || c.Args.Length != 1)
             return false;
 
-        // A single Name/Arity term or a list of them.
+        // A single Name/Arity term, a list of them, or a comma-
+        // separated sequence (the GNU grouped form).
         Term arg = c.Args[0];
         if (TryReadFunctorSpec(arg, out var single))
         {
@@ -3236,8 +3260,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
         if (TryReadFunctorSpecList(arg, publics))
             return true;
+        if (TryReadFunctorSpecConjunction(arg, publics))
+            return true;
         throw new InvalidOperationException(
-            "Malformed :- public directive (expected Name/Arity or a list of them).");
+            "Malformed :- public directive (expected Name/Arity, a list of them, "
+            + "or a comma-separated sequence).");
     }
 
     private static bool TryReadFunctorSpec(Term term, out (string Name, int Arity) spec)
@@ -3262,6 +3289,31 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             cursor = cons.Args[1];
         }
         return cursor is AtomTerm { Name: "[]" };
+    }
+
+    /// <summary>Walks a comma-conjunction tree of <c>Name/Arity</c>
+    /// specs. GNU Prolog accepts <c>:- dynamic a/0, b/1, c/2.</c> as
+    /// a grouped declaration; this is the corresponding parse —
+    /// the body is a right-leaning <c>,/2</c> tree whose leaves are
+    /// each <c>Name/Arity</c>. Returns <c>false</c> if any leaf
+    /// isn't a well-formed indicator.</summary>
+    private static bool TryReadFunctorSpecConjunction(Term term, List<(string, int)> output)
+    {
+        if (TryReadFunctorSpec(term, out var single))
+        {
+            output.Add(single);
+            return true;
+        }
+        if (term is CompoundTerm conj && conj.Functor == "," && conj.Args.Length == 2)
+        {
+            int savedCount = output.Count;
+            if (TryReadFunctorSpecConjunction(conj.Args[0], output)
+                && TryReadFunctorSpecConjunction(conj.Args[1], output))
+                return true;
+            output.RemoveRange(savedCount, output.Count - savedCount);
+            return false;
+        }
+        return false;
     }
 
     /// <summary>Parses and runs a query, returning the first solution if one
