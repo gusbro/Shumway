@@ -82,7 +82,8 @@ public sealed class IlPromotionStore
         if (Threshold <= 0 || !DynamicCodeSupported) return null;
         if (_delegates.ContainsKey(functorId)) return _delegates[functorId];
         if (_unpromotable.Contains(functorId)) return null;
-        if (IsExcludedFromPromotion(functorId))
+        if (IsExcludedFromPromotion(functorId)
+            || IsExcludedByLayout(predicate))
         {
             _unpromotable.Add(functorId);
             return null;
@@ -164,6 +165,27 @@ public sealed class IlPromotionStore
         return name == "__query__";
     }
 
+    /// <summary>Phase 12 chunk 159 — dynamic predicates compiled
+    /// under chunks 155+/156 prefix their bytecode with
+    /// <c>enter_dynamic</c> (0x66) and rely on per-clause
+    /// <c>check_visible</c> + in-place chain mutations (assertz /
+    /// asserta / retract / abolish) for the ISO logical-update
+    /// view. The IL compiler's <see cref="IlPredicateCompiler.CanCompile"/>
+    /// shapes (single-clause / indexed-atom / try_me_else chain)
+    /// don't model that prefix or the runtime mutation hooks, and
+    /// a cached IL delegate wouldn't observe a mid-life
+    /// <c>retract</c> patching a clause's died slot — almost
+    /// certainly a wrong answer. Exclude every predicate whose
+    /// bytecode opens with <c>enter_dynamic</c>: that's the chunk
+    /// 155+/156 signature for "this predicate's dispatch is
+    /// mutation-driven and must run on Tier 0." Static predicates
+    /// (which never carry the prefix) stay IL-eligible.</summary>
+    private static bool IsExcludedByLayout(CompiledPredicate predicate)
+    {
+        if (predicate.Bytecode.Length == 0) return false;
+        return predicate.Bytecode[0] == (byte)Shumway.Core.Opcode.EnterDynamic;
+    }
+
     /// <summary>Eagerly promotes <paramref name="predicate"/> without
     /// going through the counter, returning the resulting delegate on
     /// success. Useful for warm-up paths (e.g. AOT bundles) that want
@@ -174,7 +196,8 @@ public sealed class IlPromotionStore
         if (!DynamicCodeSupported) return null;
         if (_delegates.TryGetValue(functorId, out var existing)) return existing;
         if (_unpromotable.Contains(functorId)) return null;
-        if (IsExcludedFromPromotion(functorId))
+        if (IsExcludedFromPromotion(functorId)
+            || IsExcludedByLayout(predicate))
         {
             _unpromotable.Add(functorId);
             return null;
@@ -197,6 +220,7 @@ public sealed class IlPromotionStore
     /// <summary>True when <paramref name="functorId"/> has been bound to
     /// an IL delegate. Diagnostic surface for tests.</summary>
     public bool IsPromoted(int functorId) => _delegates.ContainsKey(functorId);
+
 
     /// <summary>Binds a pre-built <see cref="PredicateDelegate"/>
     /// (typically created from a persisted-IL <c>MethodInfo</c> by
