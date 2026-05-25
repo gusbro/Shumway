@@ -45,6 +45,25 @@ public sealed class LinkConfig
     /// fails fast on any missing reference.</summary>
     public bool AllowUndefined { get; init; }
 
+    /// <summary>Phase 14 chunk 172: when <c>true</c>, the linker
+    /// replaces each <see cref="BundleEntry.Source"/> with the empty
+    /// string before serialising. The compiled bytecode in each
+    /// entry is preserved. Defaults to <c>false</c> — source
+    /// survives the link, as before.
+    ///
+    /// <para><b>Current limitation</b>: the engine's
+    /// <c>LoadBundle</c> path consults each entry's source to
+    /// register its clauses; the embedded bytecode is currently
+    /// only a Tier-1 IL warm-up cache, not a substitute. A
+    /// source-stripped bundle therefore loads cleanly but its
+    /// predicates do not dispatch (<c>existence_error/2</c> at
+    /// call time). The flag is provided for size analysis, IP-
+    /// protection archives and the chunk-174 <c>--exe</c> path
+    /// where the host knows the bundle's contents. A "loadable
+    /// strip" — direct dispatch from bytecode without re-consult —
+    /// is queued for a future chunk.</para></summary>
+    public bool StripSource { get; init; }
+
     /// <summary>When non-null, the linker writes info diagnostics
     /// describing its progress (modules visited, predicates reached,
     /// etc.) to this writer. Useful for CLI <c>--verbose</c> mode.</summary>
@@ -356,9 +375,17 @@ public static class ShmoLinker
                 if (!reachedModules.Contains(obj.ModuleName)) continue;
                 entries.Add(new BundleEntry(
                     moduleName: obj.ModuleName,
-                    source: obj.Source,
+                    source: config.StripSource ? "" : obj.Source,
                     compiledBytecode: obj.Bytecode.Length > 0 ? obj.Bytecode : null,
                     compiledIl: null));
+            }
+            if (config.StripSource)
+            {
+                Emit(LinkSeverity.Warning, "stripped_bundle",
+                    "Source stripped from " + entries.Count + " module(s). "
+                    + "The current engine.LoadBundle path still re-consults source — "
+                    + "stripped bundles load but cannot dispatch their predicates "
+                    + "until the source-less load path lands.", null);
             }
             bundle = new Bundle(entries);
             // Skip the bundle writer's own validate-by-consult pass: the
@@ -407,7 +434,8 @@ public static class ShmoLinker
         IReadOnlyList<string> shmoPaths,
         IReadOnlyList<PredicateRef> entryPoints,
         bool allowUndefined = false,
-        TextWriter? verboseOut = null)
+        TextWriter? verboseOut = null,
+        bool stripSource = false)
     {
         ArgumentNullException.ThrowIfNull(shmoPaths);
         ArgumentNullException.ThrowIfNull(entryPoints);
@@ -420,6 +448,7 @@ public static class ShmoLinker
             EntryPoints = entryPoints,
             AllowUndefined = allowUndefined,
             VerboseOut = verboseOut,
+            StripSource = stripSource,
         });
     }
 
@@ -435,7 +464,8 @@ public static class ShmoLinker
         IReadOnlyList<(string ModuleNameFallback, string Source)> sources,
         IReadOnlyList<PredicateRef> entryPoints,
         bool allowUndefined = false,
-        TextWriter? verboseOut = null)
+        TextWriter? verboseOut = null,
+        bool stripSource = false)
     {
         ArgumentNullException.ThrowIfNull(sources);
         ArgumentNullException.ThrowIfNull(entryPoints);
@@ -448,6 +478,7 @@ public static class ShmoLinker
             EntryPoints = entryPoints,
             AllowUndefined = allowUndefined,
             VerboseOut = verboseOut,
+            StripSource = stripSource,
         });
     }
 

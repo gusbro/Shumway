@@ -59,6 +59,7 @@ internal static class Program
             EntryPoints = opts.EntryPoints,
             AllowUndefined = opts.AllowUndefined,
             VerboseOut = opts.Verbose ? Console.Error : null,
+            StripSource = opts.StripSource,
         };
 
         LinkResult result;
@@ -128,6 +129,7 @@ internal static class Program
         public string OutputPath { get; set; } = "";
         public bool Verbose { get; set; }
         public bool AllowUndefined { get; set; }
+        public bool StripSource { get; set; }
     }
 
     private static Options? ParseArgs(string[] args)
@@ -162,6 +164,11 @@ internal static class Program
 
                 case "--allow-undefined":
                     opts.AllowUndefined = true;
+                    break;
+
+                case "--strip":
+                case "-s":
+                    opts.StripSource = true;
                     break;
 
                 case "--verbose":
@@ -234,6 +241,12 @@ internal static class Program
             + "                           and produce the bundle anyway. The engine will\n"
             + "                           raise existence_error/2 if a missing predicate\n"
             + "                           is actually invoked.\n"
+            + "  -s, --strip              Strip the embedded Prolog source from each\n"
+            + "                           bundle entry. Useful for size analysis or IP-\n"
+            + "                           protection archives. Current engine.LoadBundle\n"
+            + "                           re-consults source so stripped bundles cannot\n"
+            + "                           currently dispatch their predicates — a warning\n"
+            + "                           is emitted.\n"
             + "  -v, --verbose            Verbose progress + diagnostics to stderr.\n"
             + "  -h, --help               Show this message.");
     }
