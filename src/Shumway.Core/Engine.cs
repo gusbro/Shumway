@@ -752,6 +752,36 @@ public sealed class Engine
     /// <see cref="Cell.Atom"/> or <see cref="Cell.Int"/>).</summary>
     public bool UnifyRegisterWithCell(int regIdx, Cell value)
     {
+        // Chunk 170: fast paths for the two common shapes — the
+        // register is unbound, or the register already holds the
+        // exact same value. Both occur on every char_code /
+        // peek_char dispatch (the output register is fresh; the
+        // input register is bound and we compare). Either path
+        // avoids the heap slot allocation + general Unify call.
+        Cell rc = _registers[regIdx];
+        if (rc.Tag == Tag.Ref)
+        {
+            int home = rc.AsHeapIndex;
+            int deref = Deref(home);
+            Cell d = _heap[deref];
+            if (d.Tag == Tag.Ref && d.AsHeapIndex == deref)
+            {
+                // Truly unbound — bind it to the immediate value,
+                // trailing the binding if it sits below HB. Same
+                // young-to-old discipline the full Unify path uses.
+                _heap[deref] = value;
+                if (deref < _hb) TrailBinding(deref);
+                return true;
+            }
+            // Bound register: same-value early-out. Saves the alloc
+            // for the (very common) recheck pattern in char_code /
+            // tokenizer guards.
+            if (d.Tag == value.Tag && d.Data == value.Data) return true;
+        }
+        else if (rc.Tag == value.Tag && rc.Data == value.Data)
+        {
+            return true;
+        }
         int regHeap = MaterializeRegister(regIdx);
         int valueHeap = AllocateHeap(1);
         _heap[valueHeap] = value;

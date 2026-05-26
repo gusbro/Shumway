@@ -232,12 +232,18 @@ public sealed class BytecodeInterpreter
         // Chunk 169: cache the ProgramView across dispatch iterations.
         // Refresh only when the engine's program generation has
         // changed (AppendCode reallocation, per-query rewire of
-        // overlay/split). The per-iteration GetProgramView() call
-        // was measurable on Blint.pl's hot loop — two property
-        // reads + a branch + struct construction every single
-        // bytecode.
+        // overlay/split).
+        //
+        // Chunk 170: peel off a direct byte[] reference when the view
+        // is single-buffer (the steady state — Overflow only appears
+        // mid-query during chunk-151b's persistent + per-query
+        // split, and even then the per-query overlay is small). The
+        // per-iteration `code[pc]` indexer otherwise compiles to a
+        // branch on Split per dispatch tick.
         int cachedGen = -1;
         bool engineDriven = _engine.CurrentProgram is not null;
+        byte[] codeArr = code.IsSingleBuffer ? code.Primary : System.Array.Empty<byte>();
+        int codeLen = code.Length;
         while (true)
         {
             if (engineDriven)
@@ -246,6 +252,8 @@ public sealed class BytecodeInterpreter
                 if (gen != cachedGen)
                 {
                     code = _engine.GetProgramView();
+                    codeArr = code.IsSingleBuffer ? code.Primary : System.Array.Empty<byte>();
+                    codeLen = code.Length;
                     cachedGen = gen;
                 }
             }
@@ -258,11 +266,17 @@ public sealed class BytecodeInterpreter
             // Pc=Cp=sentinel; the next dispatch iteration sees it and
             // halts cleanly here instead of indexing into code[].
             if (pc < 0) return InterpreterResult.Halted;
-            if (pc >= code.Length)
+            if (pc >= codeLen)
                 throw new InvalidOperationException(
-                    $"Program counter 0x{pc:X} is outside code range [0, 0x{code.Length:X}).");
+                    $"Program counter 0x{pc:X} is outside code range [0, 0x{codeLen:X}).");
 
-            byte opByte = code[pc];
+            // Chunk 170: when the view is split (Overflow != null) we
+            // fall back to the indexer for both the opcode byte and
+            // every operand read inside the case bodies (those still
+            // go through BytecodeIO's ProgramView overloads, which
+            // handle the split internally). The fast path skips the
+            // per-tick Split branch entirely.
+            byte opByte = code.Overflow is null ? codeArr[pc] : code[pc];
             switch ((Opcode)opByte)
             {
                 case Opcode.ReservedInvalid:
@@ -311,7 +325,7 @@ public sealed class BytecodeInterpreter
                     // pushes (CP, allocate) sit just above the live region of
                     // the parent frame.
                     _engine.TrimEnv(numLivePerms);
-                    _engine.SetCp(pc + OpcodeTable.Get(Opcode.Call).Size);
+                    _engine.SetCp(pc + 9);  // Call is 9 bytes (opcode + addr + count)
                     _engine.SetB0(_engine.B);   // capture _b at procedure entry for neck_cut
                     DispatchToTier1OrBytecode(target);
                     break;
@@ -337,13 +351,13 @@ public sealed class BytecodeInterpreter
                 {
                     int n = BytecodeIO.ReadInt32(code, pc + 1);
                     _engine.Allocate(n);
-                    _engine.AdvancePc(OpcodeTable.Get(Opcode.Allocate).Size);
+                    _engine.AdvancePc(5);   // allocate is 5 bytes
                     break;
                 }
 
                 case Opcode.Deallocate:
                     _engine.Deallocate();
-                    _engine.AdvancePc(OpcodeTable.Get(Opcode.Deallocate).Size);
+                    _engine.AdvancePc(1);   // deallocate is 1 byte
                     break;
 
                 // ---------- Choice point opcodes ----------

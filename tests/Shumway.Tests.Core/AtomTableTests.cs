@@ -35,7 +35,7 @@ public class AtomTableTests
     [Fact]
     public void FreshTable_HasFivePreRegisteredPermanents()
     {
-        Assert.Equal(5, AtomTable.PermanentCount);
+        Assert.Equal(AtomTable.PreRegisteredPermanentCount, AtomTable.PermanentCount);
         Assert.Equal(0, AtomTable.TransientCount);
         Assert.Equal(0, AtomTable.TransientWeakCount);
     }
@@ -72,7 +72,7 @@ public class AtomTableTests
     {
         var atom = AtomTable.Intern("perma", permanent: true);
         Assert.True(atom.IsPermanent);
-        Assert.Equal(6, AtomTable.PermanentCount);   // 5 pre-registered + 1
+        Assert.Equal(AtomTable.PreRegisteredPermanentCount + 1, AtomTable.PermanentCount);   // 5 pre-registered + 1
         Assert.Equal(0, AtomTable.TransientCount);
     }
 
@@ -87,7 +87,7 @@ public class AtomTableTests
         Assert.Same(transient, promoted);
         Assert.True(promoted.IsPermanent);
         Assert.Equal(0, AtomTable.TransientCount);
-        Assert.Equal(6, AtomTable.PermanentCount);
+        Assert.Equal(AtomTable.PreRegisteredPermanentCount + 1, AtomTable.PermanentCount);
         Assert.Equal(transient.Id, promoted.Id);  // id is preserved
     }
 
@@ -126,7 +126,7 @@ public class AtomTableTests
     {
         // Empty reachable set: every permanent must still be there.
         AtomTable.Sweep(new HashSet<int>());
-        Assert.Equal(5, AtomTable.PermanentCount);
+        Assert.Equal(AtomTable.PreRegisteredPermanentCount, AtomTable.PermanentCount);
         Assert.NotNull(AtomTable.GetById(AtomTable.EmptyListId));
         Assert.NotNull(AtomTable.GetById(AtomTable.TrueId));
     }
@@ -187,7 +187,7 @@ public class AtomTableTests
     {
         var atom = AtomTable.Intern("perma_promoted", permanent: true);
         AtomTable.Sweep(new HashSet<int>());
-        Assert.Equal(6, AtomTable.PermanentCount);
+        Assert.Equal(AtomTable.PreRegisteredPermanentCount + 1, AtomTable.PermanentCount);
         Assert.True(atom.IsPermanent);
         Assert.Same(atom, AtomTable.GetById(atom.Id));
     }

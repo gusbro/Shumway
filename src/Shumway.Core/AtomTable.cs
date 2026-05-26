@@ -68,6 +68,14 @@ public static class AtomTable
     public const int SingleCharAtomCacheLimit = 128;
     private static readonly int[] _singleCharAtomIds = new int[SingleCharAtomCacheLimit];
 
+    /// <summary>Number of permanent atoms a freshly-reset table holds:
+    /// the five pre-registered specials (<c>[]</c>, <c>{}</c>, <c>.</c>,
+    /// <c>true</c>, <c>false</c>) plus the chunk-166 single-char ASCII
+    /// cache (codes 0..127). <c>.</c> is in both sets so it counts
+    /// once. Tests use this as the baseline when asserting on
+    /// <see cref="PermanentCount"/> after an intern.</summary>
+    public const int PreRegisteredPermanentCount = 5 + SingleCharAtomCacheLimit - 1;
+
     static AtomTable()
     {
         AddPreRegisteredLocked(EmptyListId, "[]");
@@ -80,22 +88,7 @@ public static class AtomTable
         // and remember their ids in a flat int array for lock-free
         // lookup. "[]" / "." are already permanent from above; their
         // codes get patched in below so the cache stays consistent.
-        for (int i = 0; i < SingleCharAtomCacheLimit; i++)
-        {
-            string s = ((char)i).ToString();
-            if (_byName.TryGetValue(s, out var existingWeak)
-                && existingWeak.TryGetTarget(out var existing))
-            {
-                _singleCharAtomIds[i] = existing.Id;
-                if (!existing.IsPermanent) PromoteToPermanentLocked(existing);
-                continue;
-            }
-            int id = _nextId++;
-            var atom = new Atom(id, s, isPermanent: true);
-            _byName[s] = new WeakReference<Atom>(atom);
-            _permanentById[id] = atom;
-            _singleCharAtomIds[i] = id;
-        }
+        RebuildSingleCharCacheLocked();
     }
 
     /// <summary>Returns the pre-interned permanent atom id for the
@@ -316,6 +309,31 @@ public static class AtomTable
             AddPreRegisteredLocked(ConsFunctorId, ".");
             AddPreRegisteredLocked(TrueId, "true");
             AddPreRegisteredLocked(FalseId, "false");
+            // Chunk 166: rebuild the single-char-atom cache too —
+            // ResetForTesting just wiped the underlying atoms, so the
+            // pre-populated ids in _singleCharAtomIds are stale.
+            RebuildSingleCharCacheLocked();
+        }
+    }
+
+    private static void RebuildSingleCharCacheLocked()
+    {
+        for (int i = 0; i < SingleCharAtomCacheLimit; i++)
+        {
+            string s = ((char)i).ToString();
+            if (_byName.TryGetValue(s, out var existingWeak)
+                && existingWeak.TryGetTarget(out var existing))
+            {
+                _singleCharAtomIds[i] = existing.Id;
+                if (!existing.IsPermanent) PromoteToPermanentLocked(existing);
+                continue;
+            }
+            int id = _nextId++;
+            var atom = new Atom(id, s, isPermanent: true);
+            _byName[s] = new WeakReference<Atom>(atom);
+            _permanentById[id] = atom;
+            StorePermanentInArrayLocked(id, atom);
+            _singleCharAtomIds[i] = id;
         }
     }
 }
