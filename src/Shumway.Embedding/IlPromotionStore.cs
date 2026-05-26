@@ -44,6 +44,55 @@ public sealed class IlPromotionStore
     /// reflection in its type initialiser is not reached.</summary>
     private IlPredicateCompiler Compiler => _compilerInstance ??= new IlPredicateCompiler();
 
+    /// <summary>Stack size for the worker thread that drives every
+    /// Sigil-emitted IL compile. Defensive belt — the size
+    /// threshold (<see cref="MaxIlPromotionBytecodeBytes"/>) keeps
+    /// us out of the deep-recursion regime where Sigil's
+    /// <c>ReturnTracer</c> overflows. The expanded stack catches
+    /// anything that slips past anyway, since
+    /// <see cref="StackOverflowException"/> is uncatchable and
+    /// otherwise tears the process down.</summary>
+    private const int IlCompileStackBytes = 16 * 1024 * 1024;
+
+    /// <summary>Predicates whose compiled bytecode exceeds this size
+    /// are kept on Tier 0 (the bytecode interpreter) and never
+    /// IL-promoted. The interpreter handles arbitrary predicate
+    /// sizes in linear time; Sigil's <c>ReturnTracer</c>, the IL-
+    /// emission validator we use, recurses through label-reachability
+    /// in a way that is super-linear (close to exponential on
+    /// many-clause predicates with a lot of branching) — for
+    /// Blint.pl's 200-clause <c>parse_args/2</c> the compile takes
+    /// minutes and on the default 1 MB stack actively overflows.
+    ///
+    /// <para><b>Roll forward</b>: the long-term plan is to replace
+    /// Sigil with an IL emitter whose validation is linear in
+    /// bytecode size — at which point this threshold can be lifted
+    /// (or removed entirely). Tracked as a Phase 15+ candidate.
+    /// Until then, the threshold lets us promote the bulk of small
+    /// hot predicates without paying the pathological-case cost on
+    /// large ones.</para></summary>
+    public int MaxIlPromotionBytecodeBytes { get; set; } = 2048;
+
+    /// <summary>Runs <paramref name="work"/> on a worker thread with
+    /// an enlarged stack so Sigil's recursive validation has room.
+    /// Propagates any exception back to the caller.</summary>
+    private static T RunOnLargeStack<T>(Func<T> work)
+    {
+        T? result = default;
+        Exception? error = null;
+        var t = new System.Threading.Thread(() =>
+        {
+            try { result = work(); }
+            catch (Exception ex) { error = ex; }
+        }, IlCompileStackBytes);
+        t.IsBackground = true;
+        t.Start();
+        t.Join();
+        if (error is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
+        return result!;
+    }
+
     // Chunk 76 — PGO. A promoted predicate whose shape supports
     // profile-guided optimisation gets a profile key here; once enough
     // samples accumulate the engine recompiles it (phase 2) and the
@@ -83,7 +132,8 @@ public sealed class IlPromotionStore
         if (_delegates.ContainsKey(functorId)) return _delegates[functorId];
         if (_unpromotable.Contains(functorId)) return null;
         if (IsExcludedFromPromotion(functorId)
-            || IsExcludedByLayout(predicate))
+            || IsExcludedByLayout(predicate)
+            || IsExcludedBySize(predicate))
         {
             _unpromotable.Add(functorId);
             return null;
@@ -104,7 +154,12 @@ public sealed class IlPromotionStore
         // Chunk 76 — phase-1 PGO compile. For a PGO-eligible shape this
         // is the instrumented form (profile key ≥ 0); otherwise it's a
         // plain compile (profile key -1) and no phase 2 will fire.
-        var result = Compiler.CompileInstrumented(predicate, calleeMap);
+        // Sigil's recursive ReturnTracer can overflow the default 1 MB
+        // stack on large predicates (200+ clauses, e.g. Blint.pl's
+        // parse_args/2). Run on an expanded-stack worker thread —
+        // StackOverflowException is uncatchable, so prevention is the
+        // only option.
+        var result = RunOnLargeStack(() => Compiler.CompileInstrumented(predicate, calleeMap));
         _delegates[functorId] = result.Delegate;
         if (result.ProfileKey >= 0)
             _pgoProfileKeys[functorId] = result.ProfileKey;
@@ -135,7 +190,8 @@ public sealed class IlPromotionStore
             }
             if (!predicateLookup.TryGetValue(functorId, out var predicate))
                 continue;   // predicate not in this query's program — retry later
-            var optimized = Compiler.CompileOptimized(predicate, profileKey, calleeMap);
+            var optimized = RunOnLargeStack(
+                () => Compiler.CompileOptimized(predicate, profileKey, calleeMap));
             _delegates[functorId] = optimized;
             _pgoProfileKeys.Remove(functorId);
             _pgoOptimized.Add(functorId);
@@ -186,6 +242,13 @@ public sealed class IlPromotionStore
         return predicate.Bytecode[0] == (byte)Shumway.Core.Opcode.EnterDynamic;
     }
 
+    /// <summary>True when <paramref name="predicate"/> is larger
+    /// than <see cref="MaxIlPromotionBytecodeBytes"/> and is
+    /// therefore parked on Tier 0 forever. See the property's
+    /// docs for the why.</summary>
+    private bool IsExcludedBySize(CompiledPredicate predicate)
+        => predicate.Bytecode.Length > MaxIlPromotionBytecodeBytes;
+
     /// <summary>Eagerly promotes <paramref name="predicate"/> without
     /// going through the counter, returning the resulting delegate on
     /// success. Useful for warm-up paths (e.g. AOT bundles) that want
@@ -197,7 +260,8 @@ public sealed class IlPromotionStore
         if (_delegates.TryGetValue(functorId, out var existing)) return existing;
         if (_unpromotable.Contains(functorId)) return null;
         if (IsExcludedFromPromotion(functorId)
-            || IsExcludedByLayout(predicate))
+            || IsExcludedByLayout(predicate)
+            || IsExcludedBySize(predicate))
         {
             _unpromotable.Add(functorId);
             return null;
@@ -207,7 +271,7 @@ public sealed class IlPromotionStore
             _unpromotable.Add(functorId);
             return null;
         }
-        var del = Compiler.Compile(predicate, calleeMap);
+        var del = RunOnLargeStack(() => Compiler.Compile(predicate, calleeMap));
         _delegates[functorId] = del;
         return del;
     }
