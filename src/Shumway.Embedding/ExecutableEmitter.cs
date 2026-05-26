@@ -249,6 +249,8 @@ internal static class Program
                 engine.IlPromotion.Threshold = promoteN;
             if (System.Environment.GetEnvironmentVariable(""SHUMWAY_IL_DEBUG"") == ""1"")
                 Shumway.Compiler.Il.IlPredicateCompiler.DebugMode = true;
+            if (System.Environment.GetEnvironmentVariable(""SHUMWAY_CP_TRACE"") == ""1"")
+                Shumway.Core.Engine.TraceCpStack = true;
             // Surface the executable's CLI args to the Prolog program
             // as the `argv` Prolog flag. Match SWI / GNU / SICStus
             // semantics: argv[0] is the program path / name, args

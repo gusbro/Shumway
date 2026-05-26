@@ -206,6 +206,8 @@ public sealed class IlPredicateCompiler
     // non-leaf callee.
     private static readonly MethodInfo IlRunBacktrackHelperMethod =
         typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.RunBacktrack))!;
+    private static readonly MethodInfo IlRunBacktrackWithFloorMethod =
+        typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.RunBacktrackWithFloor))!;
     private static readonly MethodInfo IlReadPreCallBHelperMethod =
         typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.ReadPreCallB))!;
     private static readonly MethodInfo EngineAllocateHeapUnboundMethod =
@@ -706,8 +708,11 @@ public sealed class IlPredicateCompiler
             emit.LoadArgument(0);
             emit.Call(IlReadPreCallBHelperMethod);
             emit.StoreLocal(preCallBLocal);
+            // Chunk 174: pin floor at preCallB so the resumed backtrack
+            // can't cascade past the IL caller's frame.
             emit.LoadArgument(0);
-            emit.Call(IlRunBacktrackHelperMethod);
+            emit.LoadLocal(preCallBLocal);
+            emit.Call(IlRunBacktrackWithFloorMethod);
             emit.BranchIfFalse(failLabel);
             // Three-way branch on (engine.B vs preCallB):
             //   B  >  preCallB → callee CPs still alive: re-push meta-CP

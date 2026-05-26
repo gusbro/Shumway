@@ -355,6 +355,8 @@ public sealed class Engine
         int frameSize = EnvSize(numPermanents);
         EnsureStackCapacity(frameSize);
 
+        if (TraceCpStack)
+            System.Console.Error.WriteLine($"[cp-stack] alloc(n={numPermanents}) _b={_b} _e={_e} _stackTop={_stackTop} -> newE={_stackTop}");
         int newE = _stackTop;
         _stack[newE + EnvCeOffset] = new Cell(_e);
         _stack[newE + EnvCpOffset] = new Cell(_cp);
@@ -449,6 +451,8 @@ public sealed class Engine
         int size = CpSize(arity);
         EnsureStackCapacity(size);
 
+        if (TraceCpStack)
+            System.Console.Error.WriteLine($"[cp-stack] push  _b={_b} _e={_e} _stackTop={_stackTop} bp=0x{nextClauseAddr:X} arity={arity} -> newB={_stackTop}");
         int newB = _stackTop;
         _stack[newB + CpArityOffset] = new Cell(arity);
         for (int i = 0; i < arity; i++)
@@ -1357,6 +1361,16 @@ public sealed class Engine
     /// <see cref="IlSubroutineRunner"/>.</summary>
     public Func<bool>? BacktrackRunner { get; set; }
 
+    /// <summary>Chunk 174: meta-CP resume floor setter. Replaces the
+    /// engine's current backtrack floor with the supplied value and
+    /// returns the prior floor; used by
+    /// <see cref="Shumway.Compiler.Il.IlRuntimeHelpers.RunBacktrackWithFloor"/>
+    /// to pin the floor at the IL caller's <c>preCallB</c> for the
+    /// duration of a resume-driven backtrack. Wired by
+    /// <c>PrologEngine</c> at query setup against the bytecode
+    /// interpreter's <c>_backtrackFloor</c>.</summary>
+    public Func<int, int>? SetBacktrackFloor { get; set; }
+
     /// <summary>Walks the environment-frame chain starting at the
     /// current frame, yielding each frame's saved return address
     /// (<c>CP</c>) — the bytecode location the caller will resume at
@@ -1492,6 +1506,13 @@ public sealed class Engine
     /// be re-invoked. The caller (usually the interpreter's
     /// <c>TryBacktrack</c>) is responsible for actually calling the
     /// delegate.</summary>
+    /// <summary>Diagnostic flag — when on, PushChoicePoint and the
+    /// IL CP pop log <c>_b</c> / <c>_e</c> / <c>_stackTop</c> for
+    /// every event. Used by the chunk 173 debug session to track
+    /// whether a meta-CP's saved <c>_e</c> still names a valid
+    /// frame at pop time.</summary>
+    public static bool TraceCpStack { get; set; }
+
     public (Func<Engine, int, bool> Del, int Cursor) PopIlChoicePointAndRestore()
     {
         if (_b < 0)
@@ -1501,12 +1522,16 @@ public sealed class Engine
                 "PopIlChoicePointAndRestore: the topmost choice point isn't an IL CP.");
 
         Diagnostics.PopRestoreTrace.PrePop(this, _b);
+        if (TraceCpStack)
+            System.Console.Error.WriteLine($"[cp-stack] pop-il _b={_b} _e_before_restore={_e} _stackTop_before={_stackTop} saved_e={_stack[_b + CpCeOffset((int)_stack[_b + CpArityOffset].Data)].Data}");
         int arity = RestoreCommonFromCurrentCp();
         Diagnostics.PopRestoreTrace.PostRestore(this, arity);
         _hb = (int)_stack[_b + CpHbOffset(arity)].Data;
         int oldB = _b;
         _b = (int)_stack[_b + CpBOffset(arity)].Data;
         _stackTop = oldB;
+        if (TraceCpStack)
+            System.Console.Error.WriteLine($"[cp-stack] pop-il-done _b={_b} _e={_e} _stackTop={_stackTop}");
         _ilCpInfo.Remove(oldB);
         return (info.Del, info.Cursor);
     }
@@ -1878,6 +1903,12 @@ public sealed class Engine
     // ----- Engine register accessors (read-only for now; set by the interpreter later) -----
 
     public int E => _e;
+    /// <summary>Chunk 174 — restore _e after RunSubroutine. The
+    /// sub-tree's backtracking can land _e at some ancestor's
+    /// frame (not the caller's) even though the backtrack floor
+    /// pins _b — restore explicitly so IL-side reads against the
+    /// caller's Y slots work.</summary>
+    internal void SetE(int e) => _e = e;
     public int B => _b;
     public int B0 => _b0;
     public int P => _p;

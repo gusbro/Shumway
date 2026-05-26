@@ -3932,6 +3932,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // when no further CPs were available.
         engine.BacktrackRunner = () =>
             interp.Backtrack(programView) == Shumway.Interpreter.InterpreterResult.Halted;
+        // Chunk 174: floor setter exposed for the IL meta-CP resume
+        // path. The resume body needs to pin the backtrack floor at
+        // the IL caller's preCallB so the resumed backtrack can't
+        // cascade past the caller's frame and corrupt _e for the
+        // post-resume Y-slot reads. The setter returns the prior
+        // floor so the resume can restore it on completion.
+        engine.SetBacktrackFloor = newFloor => interp.SetBacktrackFloor(newFloor);
         // Remember the per-query address → predicate map so error
         // reporting (chunk 51) can translate the engine's PC and env-
         // chain return addresses into Name/Arity stack frames.

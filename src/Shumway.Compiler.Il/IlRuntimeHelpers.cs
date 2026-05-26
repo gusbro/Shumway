@@ -93,6 +93,38 @@ public static class IlRuntimeHelpers
         return runner();
     }
 
+    /// <summary>Chunk 174: meta-CP resume variant of
+    /// <see cref="RunBacktrack"/> that pins the engine's
+    /// backtrack floor at the IL caller's <c>preCallB</c> for the
+    /// duration of the backtrack. Without the pin, the resumed
+    /// backtrack could cascade past the IL caller's frame —
+    /// popping a CP whose saved <c>_e</c> points at the
+    /// grand-caller's frame and corrupting the post-resume
+    /// Y-slot reads. Surfaced linting Blint.pl with Tier-1
+    /// promotion: parse_postfix_op/6's resumed call to
+    /// parse_op/5 left <c>_e</c> two frames up the chain and the
+    /// subsequent <c>put_value_y 1, 1</c> loaded an unbound REF
+    /// from the wrong frame, which fed <c>&lt;/2</c> with an
+    /// unbound arg.</summary>
+    public static bool RunBacktrackWithFloor(Engine engine, int floor)
+    {
+        var setter = engine.SetBacktrackFloor
+            ?? throw new InvalidOperationException(
+                "IL meta-CP: engine.SetBacktrackFloor is null.");
+        int saved = setter(floor);
+        try
+        {
+            var runner = engine.BacktrackRunner
+                ?? throw new InvalidOperationException(
+                    "IL meta-CP: engine.BacktrackRunner is null.");
+            return runner();
+        }
+        finally
+        {
+            setter(saved);
+        }
+    }
+
     /// <summary>Meta-CP support (chunk 66): reads back the preCallB
     /// value the meta-CP saved into X[0]. Pushed as
     /// <c>Cell.Int(preCallB)</c> with arity=1 so it survives the CP

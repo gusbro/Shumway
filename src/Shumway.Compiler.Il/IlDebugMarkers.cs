@@ -100,7 +100,9 @@ public static class IlDebugMarkers
         var sb = new System.Text.StringBuilder();
         sb.Append("[il-debug] ").Append(LabelFor(ownerFid))
           .Append(" pc=0x").Append(pc.ToString("X4"))
-          .Append(" precall->").Append(LabelFor(siteFunctorId));
+          .Append(" precall->").Append(LabelFor(siteFunctorId))
+          .Append(" E=").Append(engine.E)
+          .Append(" B=").Append(engine.B);
         for (int i = 0; i < arity && i < 8; i++)
         {
             var c = engine.GetRegister(i);
@@ -115,7 +117,9 @@ public static class IlDebugMarkers
         var sb = new System.Text.StringBuilder();
         sb.Append("[il-debug] ").Append(LabelFor(ownerFid))
           .Append(" pc=0x").Append(pc.ToString("X4"))
-          .Append(" postcall<-").Append(LabelFor(siteFunctorId));
+          .Append(" postcall<-").Append(LabelFor(siteFunctorId))
+          .Append(" E=").Append(engine.E)
+          .Append(" B=").Append(engine.B);
         for (int i = 0; i < arity && i < 8; i++)
         {
             var c = engine.GetRegister(i);
