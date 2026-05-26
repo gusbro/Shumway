@@ -51,6 +51,14 @@ public sealed class IlPredicateCompiler
     /// or a closure capture, both heavier than a single static
     /// read at IL-emit time. The flag is read once when each
     /// opcode is being emitted, not per IL-invocation.</para></summary>
+    // Every `if (DebugMode) { ... }` body that emits markers lives under
+    // `#if DEBUG` so Release builds strip the calls entirely — the
+    // generated IL has no DbgCheck_* call sites at all. The property
+    // itself stays writable in both configurations: a Release executable
+    // emitted via ExecutableEmitter still compiles when its embedded
+    // bootstrap sets `DebugMode = true` from `SHUMWAY_IL_DEBUG=1`; the
+    // write just has no observable effect because no Release code path
+    // reads it.
     public static bool DebugMode { get; set; }
 
     /// <summary>When <c>true</c>, every Sigil <c>Emit&lt;T&gt;</c> we
@@ -137,8 +145,10 @@ public sealed class IlPredicateCompiler
             null, new[] { typeof(int) }, null)!;
     private static readonly MethodInfo EngineBGetter =
         typeof(Engine).GetProperty(nameof(Engine.B))!.GetGetMethod()!;
+#if DEBUG
     private static readonly MethodInfo EngineEGetter =
         typeof(Engine).GetProperty(nameof(Engine.E))!.GetGetMethod()!;
+#endif
     private static readonly MethodInfo EngineIlTailCallPendingSetter =
         typeof(Engine).GetProperty(nameof(Engine.IlTailCallPending))!.GetSetMethod()!;
     private static readonly MethodInfo EngineCurrentFunctorAddressesGetter =
@@ -177,7 +187,9 @@ public sealed class IlPredicateCompiler
         typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.GetPstr))!;
     private static readonly MethodInfo IlPutPstrHelperMethod =
         typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.PutPstr))!;
-    // Chunk 173 debug-mode marker methods.
+#if DEBUG
+    // Chunk 173 debug-mode marker methods. Reflection lookups stripped
+    // from Release — no static init cost, no field, no IL site.
     private static readonly MethodInfo DbgCheckPutValueYMethod =
         typeof(IlDebugMarkers).GetMethod(nameof(IlDebugMarkers.Check_PutValueY))!;
     private static readonly MethodInfo DbgCheckPutValueXMethod =
@@ -198,6 +210,7 @@ public sealed class IlPredicateCompiler
         typeof(IlDebugMarkers).GetMethod(nameof(IlDebugMarkers.Check_Allocate))!;
     private static readonly MethodInfo DbgCheckDeallocateMethod =
         typeof(IlDebugMarkers).GetMethod(nameof(IlDebugMarkers.Check_Deallocate))!;
+#endif
 
     private static readonly MethodInfo IlCallHelperRunMethod =
         typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.Call))!;
@@ -416,11 +429,13 @@ public sealed class IlPredicateCompiler
     /// debug markers know how many X registers to dump. The
     /// FunctorTable.Lookup result is the canonical
     /// <c>(atomId, arity)</c> pair the linker keyed off.</summary>
+#if DEBUG
     private static int ResolveCalleeArity(int siteFunctorId)
     {
         var (_, arity) = Shumway.Core.FunctorTable.Lookup(siteFunctorId);
         return arity;
     }
+#endif
 
     private static int FindCallSiteFunctorId(
         IReadOnlyList<CallSite> sites, int opcodeOffset)
@@ -555,7 +570,9 @@ public sealed class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
     {
         var failLabel = emit.DefineLabel("fail");
+#if DEBUG
         _emitOwnerFid = predicate.FunctorId;
+#endif
         EmitClauseBody(emit, predicate.Bytecode, 0, predicate.Bytecode.Length,
             failLabel, predicate.CallSites,
             callSiteIndexCounter: null, resumeLabels: null,
@@ -682,7 +699,9 @@ public sealed class IlPredicateCompiler
             postCallLabels[i] = emit.DefineLabel($"post_call_{i + 1}");
         }
 
+#if DEBUG
         _emitOwnerFid = predicate.FunctorId;
+#endif
         // Cursor dispatch: 0 → start; N → resume_N.
         for (int i = 0; i < callSiteCount; i++)
         {
@@ -817,7 +836,9 @@ public sealed class IlPredicateCompiler
     /// debug markers can identify which predicate's IL each marker
     /// belongs to. Set by the public Compile/CompileInstrumented
     /// entry points and the persisted-assembly path.</summary>
+#if DEBUG
     private static int _emitOwnerFid;
+#endif
 
     private static void EmitClauseBody(
         Sigil.Emit<PredicateDelegate> emit, byte[] code, int start, int end,
@@ -901,6 +922,7 @@ public sealed class IlPredicateCompiler
                 emit.LoadConstant(arg);
                 emit.Call(EngineGetRegisterMethod);
                 emit.Call(EngineSetRegisterMethod);
+#if DEBUG
                 if (DebugMode)
                 {
                     emit.LoadArgument(0);
@@ -910,6 +932,7 @@ public sealed class IlPredicateCompiler
                     emit.LoadConstant(pc);
                     emit.Call(DbgCheckGetVariableXMethod);
                 }
+#endif
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -924,6 +947,7 @@ public sealed class IlPredicateCompiler
                 emit.LoadConstant(arg);
                 emit.Call(EngineGetRegisterMethod);
                 emit.Call(EngineSetYMethod);
+#if DEBUG
                 if (DebugMode)
                 {
                     emit.LoadArgument(0);
@@ -933,6 +957,7 @@ public sealed class IlPredicateCompiler
                     emit.LoadConstant(pc);
                     emit.Call(DbgCheckGetVariableYMethod);
                 }
+#endif
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -997,6 +1022,7 @@ public sealed class IlPredicateCompiler
                 emit.LoadConstant(src);
                 emit.Call(EngineGetRegisterMethod);
                 emit.Call(EngineSetRegisterMethod);
+#if DEBUG
                 if (DebugMode)
                 {
                     emit.LoadArgument(0);
@@ -1006,6 +1032,7 @@ public sealed class IlPredicateCompiler
                     emit.LoadConstant(pc);
                     emit.Call(DbgCheckPutValueXMethod);
                 }
+#endif
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1020,6 +1047,7 @@ public sealed class IlPredicateCompiler
                 emit.LoadConstant(slot);
                 emit.Call(EngineGetYMethod);
                 emit.Call(EngineSetRegisterMethod);
+#if DEBUG
                 if (DebugMode)
                 {
                     emit.LoadArgument(0);
@@ -1029,6 +1057,7 @@ public sealed class IlPredicateCompiler
                     emit.LoadConstant(pc);
                     emit.Call(DbgCheckPutValueYMethod);
                 }
+#endif
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1054,6 +1083,7 @@ public sealed class IlPredicateCompiler
                 emit.LoadConstant(arg);
                 emit.LoadLocal(refLocal);
                 emit.Call(EngineSetRegisterMethod);
+#if DEBUG
                 if (DebugMode)
                 {
                     emit.LoadArgument(0);
@@ -1063,6 +1093,7 @@ public sealed class IlPredicateCompiler
                     emit.LoadConstant(pc);
                     emit.Call(DbgCheckPutVariableXMethod);
                 }
+#endif
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1084,6 +1115,7 @@ public sealed class IlPredicateCompiler
                 emit.LoadConstant(arg);
                 emit.LoadLocal(refLocal);
                 emit.Call(EngineSetRegisterMethod);
+#if DEBUG
                 if (DebugMode)
                 {
                     emit.LoadArgument(0);
@@ -1093,12 +1125,14 @@ public sealed class IlPredicateCompiler
                     emit.LoadConstant(pc);
                     emit.Call(DbgCheckPutVariableYMethod);
                 }
+#endif
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
             if (op == Opcode.Allocate)
             {
                 int n = BytecodeIO.ReadInt32(code, pc + 1);
+#if DEBUG
                 if (DebugMode)
                 {
                     var preELocal = emit.DeclareLocal<int>($"preE_alloc_pc{pc}");
@@ -1116,6 +1150,7 @@ public sealed class IlPredicateCompiler
                     emit.Call(DbgCheckAllocateMethod);
                 }
                 else
+#endif
                 {
                     emit.LoadArgument(0);
                     emit.LoadConstant(n);
@@ -1126,6 +1161,7 @@ public sealed class IlPredicateCompiler
             }
             if (op == Opcode.Deallocate)
             {
+#if DEBUG
                 if (DebugMode)
                 {
                     var preELocal = emit.DeclareLocal<int>($"preE_dealloc_pc{pc}");
@@ -1141,6 +1177,7 @@ public sealed class IlPredicateCompiler
                     emit.Call(DbgCheckDeallocateMethod);
                 }
                 else
+#endif
                 {
                     emit.LoadArgument(0);
                     emit.Call(EngineDeallocateMethod);
@@ -1375,6 +1412,7 @@ public sealed class IlPredicateCompiler
                 emit.Call(EngineSetB0Method);
 
                 // bool ok = IlCallHelper.Run(engine, siteFunctorId);
+#if DEBUG
                 if (DebugMode)
                 {
                     int calleeArity = ResolveCalleeArity(siteFunctorId);
@@ -1385,6 +1423,7 @@ public sealed class IlPredicateCompiler
                     emit.LoadConstant(pc);
                     emit.Call(DbgCheckPreCallMethod);
                 }
+#endif
                 emit.LoadArgument(0);
                 emit.LoadConstant(siteFunctorId);
                 emit.Call(IlCallHelperRunMethod);
@@ -1427,6 +1466,7 @@ public sealed class IlPredicateCompiler
                 // a backtrack-driven resume skipped the trace, which
                 // caused the chunk 172 investigation to miss the
                 // actual post-call register state.
+#if DEBUG
                 if (DebugMode)
                 {
                     int calleeArity = ResolveCalleeArity(siteFunctorId);
@@ -1437,6 +1477,7 @@ public sealed class IlPredicateCompiler
                     emit.LoadConstant(pc);
                     emit.Call(DbgCheckPostCallMethod);
                 }
+#endif
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1479,6 +1520,7 @@ public sealed class IlPredicateCompiler
                     pc += OpcodeTable.Get(op).Size;
                     continue;
                 }
+#if DEBUG
                 if (DebugMode)
                 {
                     int calleeArity = ResolveCalleeArity(siteFunctorId);
@@ -1489,6 +1531,7 @@ public sealed class IlPredicateCompiler
                     emit.LoadConstant(pc);
                     emit.Call(DbgCheckPreCallMethod);
                 }
+#endif
                 // int target = IlExecuteHelper.Resolve(engine, siteFunctorId);
                 // engine.SetB0(engine.B); engine.SetPc(target);
                 // engine.IlTailCallPending = true; return true;
@@ -1701,7 +1744,9 @@ public sealed class IlPredicateCompiler
         var clauses = info.Clauses;
         var failLabel = emit.DefineLabel("fail");
 
+#if DEBUG
         _emitOwnerFid = predicate.FunctorId;
+#endif
         for (int i = 0; i < clauses.Count; i++)
         {
             var nextLabel = emit.DefineLabel($"after_clause_{i}");
@@ -1881,7 +1926,9 @@ public sealed class IlPredicateCompiler
 
         var failLabel = emit.DefineLabel("fail");
         var varDispatchLabel = emit.DefineLabel("var_dispatch");
+#if DEBUG
         _emitOwnerFid = predicate.FunctorId;
+#endif
         var groundDispatchLabel = emit.DefineLabel("ground_dispatch");
 
         // cursor != 0 → re-entry, jump straight to var-dispatch switch.
