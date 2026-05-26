@@ -18,6 +18,13 @@ namespace Shumway.Compiler.Wam;
 /// </summary>
 public sealed class ModuleCompiler
 {
+    /// <summary>Chunk 177: propagated to
+    /// <see cref="PredicateCompiler.EmitDebugInfo"/>. <c>false</c> drops
+    /// the per-clause Meta/DbgInfo markers from the emitted bytecode —
+    /// Release mode in <c>shumway-compile</c> sets this so a stripped
+    /// .shmo's bytecode carries no debug bytes at all.</summary>
+    public bool EmitDebugInfo { get; set; } = true;
+
     public CompiledModule Compile(IEnumerable<Clause> clauses)
         => Compile(clauses, cache: null);
 
@@ -124,7 +131,7 @@ public sealed class ModuleCompiler
         var bigIntLiterals = pools.BigInts;
 
         var predicates = new List<CompiledPredicate>(order.Count);
-        var predicateCompiler = new PredicateCompiler();
+        var predicateCompiler = new PredicateCompiler { EmitDebugInfo = EmitDebugInfo };
         foreach (int fid in order)
         {
             if (cache is not null

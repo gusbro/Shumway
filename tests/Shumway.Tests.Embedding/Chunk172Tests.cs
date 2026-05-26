@@ -53,7 +53,11 @@ public class Chunk172Tests
     [Fact]
     public void NoStrip_PreservesSource()
     {
-        var obj = ShmoCompiler.CompileSource(":- module(m).\n:- public p/0.\np.\n", "m");
+        // Compile in Debug so the source survives the compile step
+        // (chunk 177: Release already strips at compile time).
+        // The linker's StripSource flag is what we're testing here.
+        var obj = ShmoCompiler.CompileSource(":- module(m).\n:- public p/0.\np.\n",
+            "m", ShmoBuildMode.Debug);
         var result = ShmoLinker.Link(new LinkConfig
         {
             Objects = new[] { obj },
@@ -68,9 +72,11 @@ public class Chunk172Tests
     public void Strip_ShrinksBundleBytes()
     {
         // Big-ish source: confirm the strip actually saves bytes.
+        // Debug build so the source survives the compile (chunk 177
+        // would strip it under Release).
         var src = ":- module(big).\n:- public f/1.\n"
             + string.Concat(Enumerable.Range(0, 200).Select(i => $"f({i}) :- f({i + 1}).\n"));
-        var obj = ShmoCompiler.CompileSource(src, "big");
+        var obj = ShmoCompiler.CompileSource(src, "big", ShmoBuildMode.Debug);
         var withSource = ShmoLinker.Link(new LinkConfig
         {
             Objects = new[] { obj },

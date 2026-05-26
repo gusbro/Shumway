@@ -39,6 +39,16 @@ namespace Shumway.Compiler.Wam;
 /// </summary>
 public sealed class PredicateCompiler
 {
+    /// <summary>Chunk 177: when <c>false</c>, the compiler omits the
+    /// <see cref="Opcode.Meta"/>+<see cref="MetaSubOpcode.DbgInfo"/>
+    /// per-clause source-position markers from the emitted bytecode.
+    /// Release mode in <c>shumway-compile</c> sets this so a stripped
+    /// .shmo carries no debug bytes — both the source-string field
+    /// AND the in-bytecode debug markers are gone for IP-protection
+    /// builds. Default <c>true</c> keeps backward compatibility with
+    /// every existing caller (PrologEngine consult, tests).</summary>
+    public bool EmitDebugInfo { get; set; } = true;
+
     public CompiledPredicate Compile(IReadOnlyList<Clause> clauses)
         => Compile(clauses,
             new LiteralPool<string>(),
@@ -182,16 +192,20 @@ public sealed class PredicateCompiler
         if (isDynamic && indexableArgs.Count > 0)
             return CompileIndexedDynamic(
                 compiledClauses, perArgInfo, indexableArgs, functorId, arity,
-                clauses[0].Position, clausePositions, failStubAddr);
+                clauses[0].Position, clausePositions, failStubAddr, EmitDebugInfo);
         return indexableArgs.Count > 0
             ? CompileIndexed(compiledClauses, perArgInfo, indexableArgs, functorId, arity,
-                             clauses[0].Position, clausePositions, isDynamic)
+                             clauses[0].Position, clausePositions, isDynamic, EmitDebugInfo)
             : CompileTryMeElseChain(compiledClauses, functorId, arity,
-                                    clauses[0].Position, clausePositions, isDynamic, failStubAddr);
+                                    clauses[0].Position, clausePositions, isDynamic, failStubAddr,
+                                    EmitDebugInfo);
     }
 
     /// <summary>Size of one <see cref="Opcode.Meta"/> + <see cref="MetaSubOpcode.DbgInfo"/>
-    /// instruction: 1 opcode byte + 1 sub-byte + 4-byte entry id payload.</summary>
+    /// instruction: 1 opcode byte + 1 sub-byte + 4-byte entry id payload.
+    /// Chunk 177: gated on <see cref="EmitDebugInfo"/> — Release builds
+    /// account for the absent bytes here too (otherwise the per-clause
+    /// dispatch addresses wouldn't match the emitted bytecode).</summary>
     private const int MetaDbgInfoSize = 6;
 
     // ============================================================================
@@ -203,8 +217,10 @@ public sealed class PredicateCompiler
         Shumway.Compiler.Lexer.SourcePosition position,
         IReadOnlyList<Shumway.Compiler.Lexer.SourcePosition> clausePositions,
         bool isDynamic = false,
-        int failStubAddr = 0)
+        int failStubAddr = 0,
+        bool emitDebugInfo = true)
     {
+        int metaDbgInfoSize = emitDebugInfo ? MetaDbgInfoSize : 0;
         // Per-clause layout: dispatch instruction (try/retry/trust),
         // then Meta(DbgInfo, clauseIndex), then (for dynamic predicates)
         // a check_visible visibility filter, then the clause body. The
@@ -241,7 +257,7 @@ public sealed class PredicateCompiler
             int dispatchSize = DispatchSizeFor(i, n, dynamicChain);
             pos += dispatchSize;
             clauseBodyOffsets[i] = pos;
-            pos += MetaDbgInfoSize;
+            pos += metaDbgInfoSize;
             pos += checkVisibleSize;
             pos += compiledClauses[i].Bytecode.Length;
         }
@@ -290,7 +306,7 @@ public sealed class PredicateCompiler
                 dispatchSites.Add(opPos + 1);
             }
 
-            emitter.EmitMetaDbgInfo(i);
+            if (emitDebugInfo) emitter.EmitMetaDbgInfo(i);
             if (isDynamic) emitter.EmitCheckVisible(born: 0L, died: long.MaxValue);
             int clauseStart = emitter.Position;
             emitter.AppendBytes(compiledClauses[i].Bytecode);
@@ -400,8 +416,10 @@ public sealed class PredicateCompiler
         int arity,
         Shumway.Compiler.Lexer.SourcePosition position,
         IReadOnlyList<Shumway.Compiler.Lexer.SourcePosition> clausePositions,
-        bool isDynamic = false)
+        bool isDynamic = false,
+        bool emitDebugInfo = true)
     {
+        int metaDbgInfoSize = emitDebugInfo ? MetaDbgInfoSize : 0;
         int n = compiledClauses.Count;
         // Chunk 154: dynamic indexed predicates wrap their entry in
         // enter_dynamic (samples DbGeneration into CurrentViewGen) and
@@ -527,7 +545,7 @@ public sealed class PredicateCompiler
             // tables and try/retry/trust addresses point at the Meta
             // opcode; the runtime executes the no-op Meta then the body.
             clauseBodyPos[i] = pos;
-            pos += MetaDbgInfoSize;
+            pos += metaDbgInfoSize;
             // Chunk 154: every dynamic clause carries its own
             // check_visible immediately after the Meta marker, so any
             // dispatch path (switch table direct jump, bucket chain,
@@ -692,7 +710,7 @@ public sealed class PredicateCompiler
         // 3d — clause bodies.
         for (int i = 0; i < n; i++)
         {
-            emitter.EmitMetaDbgInfo(i);
+            if (emitDebugInfo) emitter.EmitMetaDbgInfo(i);
             // Chunk 154: dynamic clauses run a check_visible
             // sentinel (born=0, died=MaxValue) — the persistent
             // buffer is rebuilt on every mutation so live born/died
@@ -796,8 +814,10 @@ public sealed class PredicateCompiler
         int arity,
         Shumway.Compiler.Lexer.SourcePosition position,
         IReadOnlyList<Shumway.Compiler.Lexer.SourcePosition> clausePositions,
-        int failStubAddr)
+        int failStubAddr,
+        bool emitDebugInfo = true)
     {
+        int metaDbgInfoSize = emitDebugInfo ? MetaDbgInfoSize : 0;
         int n = compiledClauses.Count;
         int numLevels = indexableArgs.Count;
 
@@ -927,7 +947,7 @@ public sealed class PredicateCompiler
         for (int i = 0; i < n; i++)
         {
             bodyAddr[i] = pos;
-            pos += MetaDbgInfoSize;
+            pos += metaDbgInfoSize;
             pos += compiledClauses[i].Bytecode.Length;
         }
 
@@ -1089,7 +1109,7 @@ public sealed class PredicateCompiler
         // Bodies.
         for (int i = 0; i < n; i++)
         {
-            emitter.EmitMetaDbgInfo(i);
+            if (emitDebugInfo) emitter.EmitMetaDbgInfo(i);
             int clauseStart = emitter.Position;
             emitter.AppendBytes(compiledClauses[i].Bytecode);
             foreach (var site in compiledClauses[i].CallSites)

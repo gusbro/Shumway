@@ -237,8 +237,27 @@ public static class ShmoCompiler
         foreach (var clause in clauses)
             rewritten.Add(ModuleRewrite.Rewrite(clause, rewriteCtx));
 
-        var module = new ModuleCompiler().Compile(rewritten);
+        // Chunk 177: Release drops the per-clause Meta/DbgInfo markers
+        // from the emitted bytecode. Combined with the Source-string
+        // strip below, a Release .shmo carries no debug information at
+        // all — that's what `-r` promises and IP-protection workflows
+        // rely on. Debug keeps the markers so stack-trace mapping
+        // continues to work in dev builds.
+        var moduleCompiler = new ModuleCompiler
+        {
+            EmitDebugInfo = buildMode != ShmoBuildMode.Release,
+        };
+        var module = moduleCompiler.Compile(rewritten);
         byte[] bytecode = CompiledModuleCodec.Encode(module);
+
+        // Chunk 177: Release also drops the Source string from the
+        // .shmo. Combined with the bytecode-side DbgInfo strip above,
+        // the Release artifact contains no recoverable Prolog source —
+        // and chunk 178's source-less LoadBundle path means the engine
+        // can still dispatch it. Debug keeps Source so the linker's
+        // map output, the IL warmup's source-position helpers, and
+        // standard "consult from source" tooling stay intact.
+        string persistedSource = buildMode == ShmoBuildMode.Release ? "" : source;
 
         var callGraphRO = new Dictionary<PredicateRef, IReadOnlyList<PredicateRef>>();
         foreach (var (k, v) in callGraph)
@@ -246,7 +265,7 @@ public static class ShmoCompiler
 
         var obj = new ShmoObject(
             moduleName: moduleName,
-            source: source,
+            source: persistedSource,
             bytecode: bytecode,
             defined: defined,
             ensureLinked: ensureLinked,
