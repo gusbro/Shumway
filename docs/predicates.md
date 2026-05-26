@@ -141,6 +141,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `foldl(:Goal, ?List1, ?List2, +V0, -V)` | Folds Goal over two lists, threading an accumulator from V0 to V. |
 | `include(:Goal, +List, -Included)` | Included holds the elements of List for which Goal succeeds. |
 | `intersection(+Set1, +Set2, -Intersection)` | Intersection holds the elements of Set1 that also occur in Set2. |
+| `keysort(+Pairs, -Sorted)` | Stable-sort a list of K-V pairs by K in the standard order of terms. Each element must be a -/2 compound; relative order of equal-key pairs is preserved. ISO §8.4.4. |
 | `last(?List, ?Last)` | Relates a list to its last element. |
 | `length(?List, ?Length)` | Relates a list to its length; enumerates lists of growing length when both arguments are unbound. |
 | `list_to_set(+List, -Set)` | Removes duplicates from a list, keeping the first occurrence of each. |
@@ -211,6 +212,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `at_end_of_stream` | Succeeds if the current input stream is at end of file (ISO §8.11.9). |
 | `at_end_of_stream(+Stream)` | Succeeds if the given stream is at end of file (ISO §8.11.9). |
 | `close(+Stream)` | Closes an open stream. |
+| `close(+Stream, +Options)` | Closes an open stream. Options list (force(Bool), timeout) is parsed shallowly: force(true) suppresses close-time exceptions. |
 | `current_input(-Stream)` | Unifies Stream with a designator for the current input stream (ISO §8.11.1). |
 | `current_output(-Stream)` | Unifies Stream with a designator for the current output stream (ISO §8.11.2). |
 | `current_stream(?Filename, ?Mode, ?Stream)` | Enumerates open streams (ISO §8.11.8.1). |

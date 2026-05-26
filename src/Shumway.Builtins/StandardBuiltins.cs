@@ -128,6 +128,10 @@ public static class StandardBuiltins
             "Opens a file with options (alias, type, eof_action) — ISO §8.11.5.");
         BuiltinsRegistry.Register("close",     1, StreamBuiltins.Close,
             Io, "close(+Stream)", "Closes an open stream.");
+        BuiltinsRegistry.Register("close",     2, StreamBuiltins.Close2,
+            Io, "close(+Stream, +Options)",
+            "Closes an open stream. Options list (force(Bool), timeout) is parsed "
+            + "shallowly: force(true) suppresses close-time exceptions.");
         BuiltinsRegistry.Register("write",     2, StreamBuiltins.WriteToStream,
             Io, "write(+Stream, +Term)", "Writes a term to the given stream.");
         BuiltinsRegistry.Register("nl",        1, StreamBuiltins.NlOnStream,
@@ -257,6 +261,11 @@ public static class StandardBuiltins
             Lists, "sort(+List, -Sorted)", "Sorts a list into standard order, removing duplicates.");
         BuiltinsRegistry.Register("msort", 2, SortBuiltins.Msort,
             Lists, "msort(+List, -Sorted)", "Sorts a list into standard order, keeping duplicates.");
+        BuiltinsRegistry.Register("keysort", 2, SortBuiltins.Keysort,
+            Lists, "keysort(+Pairs, -Sorted)",
+            "Stable-sort a list of K-V pairs by K in the standard order of terms. "
+            + "Each element must be a -/2 compound; relative order of equal-key "
+            + "pairs is preserved. ISO §8.4.4.");
 
         // Control.
         const string Control = "Control";

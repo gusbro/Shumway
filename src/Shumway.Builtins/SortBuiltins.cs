@@ -20,6 +20,63 @@ public static class SortBuiltins
     /// every element.</summary>
     public static bool Msort(Engine engine) => SortImpl(engine, dedup: false);
 
+    /// <summary><c>keysort(+Pairs, -Sorted)</c> — stable-sort a
+    /// list of <c>Key-Value</c> pairs by <c>Key</c> in the standard
+    /// order of terms. Relative order is preserved for equal keys
+    /// (stability matters: many real-world programs that group
+    /// by key — Blint.pl's <c>blint_file_body/3</c> is the
+    /// surfacing example — rely on it). Each element must be a
+    /// compound <c>'-'/2</c>; a non-pair element raises
+    /// <c>type_error(pair, Element)</c>. ISO §8.4.4.</summary>
+    public static bool Keysort(Engine engine)
+    {
+        var pairs = new List<(Cell Pair, Cell Key, int Index)>();
+        Cell cursor = Resolve(engine, engine.GetRegister(0));
+        int index = 0;
+        while (cursor.Tag == Tag.Lis)
+        {
+            int headIdx = cursor.AsHeapIndex;
+            Cell pair = Resolve(engine, engine.GetHeap(headIdx));
+            Cell key = ExtractPairKey(engine, pair);
+            pairs.Add((pair, key, index++));
+            cursor = Resolve(engine, engine.GetHeap(headIdx + 1));
+        }
+        if (cursor.Tag == Tag.Ref)
+            throw new PrologRuntimeException("instantiation_error");
+        if (cursor.Tag != Tag.Atom || cursor.AsAtomId != AtomTable.EmptyListId)
+            return false;
+
+        // Sort by key, breaking ties by original index → stable.
+        pairs.Sort((a, b) =>
+        {
+            int c = StandardOrderComparator.Compare(engine, a.Key, b.Key);
+            return c != 0 ? c : a.Index - b.Index;
+        });
+
+        var sortedCells = new List<Cell>(pairs.Count);
+        foreach (var p in pairs) sortedCells.Add(p.Pair);
+        int listIdx = BuildList(engine, sortedCells);
+        return engine.UnifyRegisterWithHeapAt(1, listIdx);
+    }
+
+    /// <summary>Extracts the <c>K</c> from a <c>K-V</c> pair cell.
+    /// A non-pair raises <c>type_error(pair, Element)</c> per ISO
+    /// §8.4.4.</summary>
+    private static Cell ExtractPairKey(Engine engine, Cell pair)
+    {
+        if (pair.Tag != Tag.Str)
+            throw new PrologRuntimeException("type_error", "pair");
+        int functorIdx = pair.AsHeapIndex;
+        Cell functorCell = engine.GetHeap(functorIdx);
+        if (functorCell.Tag != Tag.Functor)
+            throw new PrologRuntimeException("type_error", "pair");
+        var (atomId, arity) = FunctorTable.Lookup(functorCell.AsFunctorId);
+        string name = AtomTable.GetById(atomId)?.Name ?? "";
+        if (name != "-" || arity != 2)
+            throw new PrologRuntimeException("type_error", "pair");
+        return Resolve(engine, engine.GetHeap(functorIdx + 1));
+    }
+
     private static bool SortImpl(Engine engine, bool dedup)
     {
         // Walk the input list collecting one cell per element. We keep the

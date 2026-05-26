@@ -269,6 +269,61 @@ public static class StreamBuiltins
         return true;
     }
 
+    /// <summary><c>close(+Stream, +Options)</c> — ISO §8.11.6. The
+    /// options list (<c>force(Bool)</c>, <c>timeout(Seconds)</c>)
+    /// is parsed shallowly: <c>force(true)</c> swallows close
+    /// exceptions. Other options are accepted but ignored.
+    /// Without an options list, <c>close/1</c> is the entry point.</summary>
+    public static bool Close2(Engine engine)
+    {
+        var h = ResolveStream(engine, engine.GetRegister(0));
+        bool force = ContainsForceTrue(engine, engine.GetRegister(1));
+        try
+        {
+            if (h.Reader is not null) h.Reader.Dispose();
+            if (h.Writer is not null) { h.Writer.Flush(); h.Writer.Dispose(); }
+            if (h.BinaryStream is not null)
+            {
+                try { h.BinaryStream.Flush(); } catch { if (!force) throw; }
+                h.BinaryStream.Dispose();
+            }
+        }
+        catch when (force) { /* force(true) swallows close errors */ }
+        engine.Streams!.Remove(h);
+        return true;
+    }
+
+    private static bool ContainsForceTrue(Engine engine, Cell listCell)
+    {
+        Cell cursor = DerefLocal(engine, listCell);
+        int trueAtomId = AtomTable.Intern("true", permanent: true).Id;
+        int forceFunctorId = FunctorTable.Intern(
+            AtomTable.Intern("force", permanent: true).Id, 1);
+        while (cursor.Tag == Tag.Lis)
+        {
+            int headIdx = cursor.AsHeapIndex;
+            Cell head = DerefLocal(engine, engine.GetHeap(headIdx));
+            if (head.Tag == Tag.Str)
+            {
+                int fIdx = head.AsHeapIndex;
+                Cell fCell = engine.GetHeap(fIdx);
+                if (fCell.Tag == Tag.Functor && fCell.AsFunctorId == forceFunctorId)
+                {
+                    Cell arg = DerefLocal(engine, engine.GetHeap(fIdx + 1));
+                    if (arg.Tag == Tag.Atom && arg.AsAtomId == trueAtomId) return true;
+                }
+            }
+            cursor = DerefLocal(engine, engine.GetHeap(headIdx + 1));
+        }
+        return false;
+    }
+
+    private static Cell DerefLocal(Engine engine, Cell c)
+    {
+        if (c.Tag != Tag.Ref) return c;
+        return engine.GetHeap(engine.Deref(c.AsHeapIndex));
+    }
+
     // ---------- write/2, nl/1, get_char/2, peek_char/2 ----------
 
     /// <summary><c>write(Stream, Term)</c> — renders Term to the
