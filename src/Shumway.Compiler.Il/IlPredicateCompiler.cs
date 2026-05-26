@@ -31,6 +31,35 @@ namespace Shumway.Compiler.Il;
 /// </summary>
 public sealed class IlPredicateCompiler
 {
+    /// <summary>When <c>true</c>, every Sigil <c>Emit&lt;T&gt;</c> we
+    /// allocate runs with verification enabled — Sigil's continuous
+    /// stack-state tracking that catches malformed IL at emit time
+    /// rather than at JIT time. Verification is O(N²) in the bytecode
+    /// size (chunk 171 measurements on a 13 KB predicate: ~13 s with
+    /// verification on, ~250 ms with verification off), so for any
+    /// large hot predicate we want it off — Sigil's
+    /// <c>doVerify=false</c> mode emits the same IL but skips the
+    /// per-instruction <c>RollingVerifier.Transition</c> /
+    /// <c>VerifiableTracker.CollapseAndVerify</c> work, and the JIT
+    /// catches any genuine corruption when the delegate is invoked.
+    /// Tests / debug paths leave this on. Default <c>false</c> so
+    /// auto-promotion (the hot path) pays the linear cost only.</summary>
+    public bool DoVerify { get; set; } = false;
+
+    /// <summary>Sigil's <c>Seal</c> runs three optional passes —
+    /// <c>ElideCasts</c>, <c>PatchBranches</c>, and an always-on
+    /// <c>InjectTailCall</c> — and <c>PatchBranches</c> in
+    /// particular is O(N²) because every short-form patch calls
+    /// <c>InsertInstruction</c> which O(N)-scans the branches /
+    /// marks / returns tables to shift their indices. On the
+    /// chunk-171 1280-clause benchmark <c>PatchBranches</c> +
+    /// <c>InsertInstruction</c> was 35% of total compile time.
+    /// Default to <see cref="OptimizationOptions.None"/> so we
+    /// only emit the IL we asked for — the JIT can do its own
+    /// short-branch patching at the same cost we'd avoid.</summary>
+    public Sigil.OptimizationOptions Optimizations { get; set; }
+        = Sigil.OptimizationOptions.None;
+
     private static readonly MethodInfo CellAtomMethod =
         typeof(Cell).GetMethod(nameof(Cell.Atom), new[] { typeof(int) })!;
     private static readonly MethodInfo CellIntMethod =
@@ -445,9 +474,10 @@ public sealed class IlPredicateCompiler
         {
             // No meta-CP needed: pure head match + tail call (or no body).
             var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
-                $"ShumwayIl_{predicate.FunctorId}_{predicate.Arity}");
+                $"ShumwayIl_{predicate.FunctorId}_{predicate.Arity}",
+                doVerify: DoVerify);
             EmitSingleClauseLeafBody(emit, predicate, calleeMap);
-            return emit.CreateDelegate();
+            return emit.CreateDelegate(Optimizations);
         }
         lock (IndexedDelegateHolder.RegistrationLock)
             return CompileSingleClauseWithMetaCpUnlocked(predicate, callSiteCount, calleeMap);
@@ -509,7 +539,8 @@ public sealed class IlPredicateCompiler
             typeBuilder,
             methodName,
             System.Reflection.MethodAttributes.Public | System.Reflection.MethodAttributes.Static,
-            System.Reflection.CallingConventions.Standard);
+            System.Reflection.CallingConventions.Standard,
+            doVerify: DoVerify);
 
         SelfDelegateEmitter? emitSelf = delegatesField is null
             ? null
@@ -551,7 +582,7 @@ public sealed class IlPredicateCompiler
                 + "is outside the IL subset.");
         }
 
-        return emit.CreateMethod();
+        return emit.CreateMethod(Optimizations);
     }
 
     private PredicateDelegate CompileSingleClauseWithMetaCpUnlocked(
@@ -561,9 +592,10 @@ public sealed class IlPredicateCompiler
         int holderKey = _nextHolderKey;
         var emitSelf = SelfFromHolder(holderKey);
         var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
-            $"ShumwayIl_metacp_{predicate.FunctorId}_{predicate.Arity}");
+            $"ShumwayIl_metacp_{predicate.FunctorId}_{predicate.Arity}",
+            doVerify: DoVerify);
         EmitSingleClauseMetaCpBody(emit, predicate, callSiteCount, calleeMap, emitSelf);
-        var del = emit.CreateDelegate();
+        var del = emit.CreateDelegate(Optimizations);
         IndexedDelegateHolder.Register(holderKey, del);
         _nextHolderKey = holderKey + 1;
         return del;
@@ -1447,10 +1479,11 @@ public sealed class IlPredicateCompiler
         var emitSelf = SelfFromHolder(holderKey);
 
         var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
-            $"ShumwayIl_tryelse_{predicate.FunctorId}");
+            $"ShumwayIl_tryelse_{predicate.FunctorId}",
+            doVerify: DoVerify);
         EmitTryMeElseChainBody(emit, predicate, info, calleeMap, emitSelf);
 
-        var del = emit.CreateDelegate();
+        var del = emit.CreateDelegate(Optimizations);
         IndexedDelegateHolder.Register(holderKey, del);
         _nextHolderKey = holderKey + 1;
         return del;
@@ -1609,10 +1642,11 @@ public sealed class IlPredicateCompiler
         var emitSelf = SelfFromHolder(holderKey);
 
         var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
-            $"ShumwayIl_indexed_{predicate.FunctorId}");
+            $"ShumwayIl_indexed_{predicate.FunctorId}",
+            doVerify: DoVerify);
         EmitIndexedAtomBody(emit, predicate, info, emitSelf, profileKey, groundOrder);
 
-        var del = emit.CreateDelegate();
+        var del = emit.CreateDelegate(Optimizations);
         IndexedDelegateHolder.Register(holderKey, del);
         _nextHolderKey = holderKey + 1;
         return del;

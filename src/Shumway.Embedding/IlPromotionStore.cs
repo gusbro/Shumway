@@ -56,22 +56,28 @@ public sealed class IlPromotionStore
 
     /// <summary>Predicates whose compiled bytecode exceeds this size
     /// are kept on Tier 0 (the bytecode interpreter) and never
-    /// IL-promoted. The interpreter handles arbitrary predicate
-    /// sizes in linear time; Sigil's <c>ReturnTracer</c>, the IL-
-    /// emission validator we use, recurses through label-reachability
-    /// in a way that is super-linear (close to exponential on
-    /// many-clause predicates with a lot of branching) — for
-    /// Blint.pl's 200-clause <c>parse_args/2</c> the compile takes
-    /// minutes and on the default 1 MB stack actively overflows.
+    /// IL-promoted.
     ///
-    /// <para><b>Roll forward</b>: the long-term plan is to replace
-    /// Sigil with an IL emitter whose validation is linear in
-    /// bytecode size — at which point this threshold can be lifted
-    /// (or removed entirely). Tracked as a Phase 15+ candidate.
-    /// Until then, the threshold lets us promote the bulk of small
-    /// hot predicates without paying the pathological-case cost on
-    /// large ones.</para></summary>
-    public int MaxIlPromotionBytecodeBytes { get; set; } = 2048;
+    /// <para>Sigil's emit-time validation (the
+    /// <c>RollingVerifier.Transition</c> + <c>VerifiableTracker.
+    /// CollapseAndVerify</c> per-instruction state-tracking pass)
+    /// is O(N²) in the bytecode size, and its <c>Seal</c> phase
+    /// adds an always-on <c>InjectTailCall</c> step whose
+    /// <c>InsertInstruction</c> does an O(N) scan of every
+    /// branch / mark / return table to re-index — also O(N²)
+    /// across the full predicate. Chunk 171 quantified both:
+    /// on a 13 KB / 640-atom-fact predicate the original Sigil
+    /// path took ~13 s; with <c>doVerify=false</c> and
+    /// <c>OptimizationOptions.None</c> the same compile runs
+    /// in ~0.9 s (≈14× faster). A 27 KB / 1280-atom-fact
+    /// predicate now compiles in ~5 s.</para>
+    ///
+    /// <para>So the threshold is raised — IL promotion now
+    /// covers the bulk of Blint.pl's hot predicates without
+    /// pathological compile times. A future linear-validation
+    /// emitter (or vendoring Sigil with patched
+    /// <c>InsertInstruction</c>) would let this be removed.</para></summary>
+    public int MaxIlPromotionBytecodeBytes { get; set; } = 16384;
 
     /// <summary>Runs <paramref name="work"/> on a worker thread with
     /// an enlarged stack so Sigil's recursive validation has room.
