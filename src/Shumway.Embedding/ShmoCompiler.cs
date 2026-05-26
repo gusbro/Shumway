@@ -118,6 +118,7 @@ public static class ShmoCompiler
             MetaTransform.Apply(DcgTransform.Apply(allClauses)));
 
         string moduleName = moduleNameFallback;
+        bool moduleDirectiveSeen = false;
         var publicSet = new HashSet<PredicateRef>();
         var dynamicSet = new HashSet<PredicateRef>();
         var ensureLinked = new List<PredicateRef>();
@@ -135,8 +136,9 @@ public static class ShmoCompiler
                 // ParseException above.
                 try
                 {
-                    ProcessDirective(d.Args[0], ref moduleName,
-                        publicSet, dynamicSet, ensureLinked);
+                    if (ProcessDirective(d.Args[0], ref moduleName,
+                            publicSet, dynamicSet, ensureLinked))
+                        moduleDirectiveSeen = true;
                 }
                 catch (InvalidOperationException ex)
                 {
@@ -191,7 +193,51 @@ public static class ShmoCompiler
             defined.Add(new ShmoDefinedPredicate(p, vis));
         }
 
-        var module = new ModuleCompiler().Compile(clauses);
+        // Chunk 176: apply ModuleRewrite so the .shmo's bytecode is
+        // runtime-ready — every local-functor head and call site
+        // carries the same `module$name` mangling SetupQueryFromTerm
+        // would apply at consult time. Without this the bytecode
+        // references bare ids that don't match what the engine wires
+        // for dispatch, and the LoadBundle precompiled-cache
+        // substitution has to stay disabled (PrologEngine.cs:2003-
+        // 2017). With it, the .shmo bytecode is byte-identical to
+        // what ConsultString produces and the source-less LoadBundle
+        // path can plug the predicates directly into the static link
+        // region without re-consulting source.
+        var publicFids = new HashSet<int>();
+        foreach (var p in publicSet)
+            publicFids.Add(Shumway.Core.FunctorTable.Intern(
+                Shumway.Core.AtomTable.Intern(p.Name, permanent: true).Id, p.Arity));
+        var dynamicFids = new HashSet<int>();
+        foreach (var d in dynamicSet)
+            dynamicFids.Add(Shumway.Core.FunctorTable.Intern(
+                Shumway.Core.AtomTable.Intern(d.Name, permanent: true).Id, d.Arity));
+        var localFids = new HashSet<int>();
+        foreach (var p in definedOrder)
+        {
+            int fid = Shumway.Core.FunctorTable.Intern(
+                Shumway.Core.AtomTable.Intern(p.Name, permanent: true).Id, p.Arity);
+            if (!publicFids.Contains(fid)) localFids.Add(fid);
+        }
+        // The mangling context must use the same module name the engine
+        // would use at consult time — without a `:- module(name).`
+        // directive the engine defaults to PrologEngine.DefaultModuleName
+        // ("user"), and the .shmo bytecode has to agree, otherwise its
+        // mangled local-functor ids ("foo$bar") disagree with the
+        // engine's ("user$bar") and the warmed IL delegates call into
+        // names the engine has never registered. The fallback parameter
+        // is still used for ShmoObject.ModuleName (the diagnostic label
+        // surfaced by the linker), it just doesn't drive the mangling
+        // unless the source itself declared a module.
+        string rewriteModuleName = moduleDirectiveSeen
+            ? moduleName
+            : PrologEngine.DefaultModuleName;
+        var rewriteCtx = new ModuleRewrite.Context(rewriteModuleName, localFids, dynamicFids);
+        var rewritten = new List<Clause>(clauses.Count);
+        foreach (var clause in clauses)
+            rewritten.Add(ModuleRewrite.Rewrite(clause, rewriteCtx));
+
+        var module = new ModuleCompiler().Compile(rewritten);
         byte[] bytecode = CompiledModuleCodec.Encode(module);
 
         var callGraphRO = new Dictionary<PredicateRef, IReadOnlyList<PredicateRef>>();
@@ -227,7 +273,12 @@ public static class ShmoCompiler
     // Directive handling
     // ------------------------------------------------------------------------
 
-    private static void ProcessDirective(Term body, ref string moduleName,
+    /// <summary>Returns true iff the directive was a <c>:- module/1</c>
+    /// — the caller uses this to decide whether the source declared its
+    /// own module name (and therefore drives the rewrite context) or
+    /// whether it should fall back to the engine's default module name
+    /// for mangling consistency.</summary>
+    private static bool ProcessDirective(Term body, ref string moduleName,
         HashSet<PredicateRef> publicSet,
         HashSet<PredicateRef> dynamicSet,
         List<PredicateRef> ensureLinked)
@@ -236,19 +287,19 @@ public static class ShmoCompiler
             && m.Args[0] is AtomTerm a)
         {
             moduleName = a.Name;
-            return;
+            return true;
         }
         if (body is CompoundTerm pub && pub.Functor == "public" && pub.Args.Length == 1)
         {
             foreach (var spec in ReadFunctorSpecs(pub.Args[0], "public"))
                 publicSet.Add(spec);
-            return;
+            return false;
         }
         if (body is CompoundTerm dyn && dyn.Functor == "dynamic" && dyn.Args.Length == 1)
         {
             foreach (var spec in ReadFunctorSpecs(dyn.Args[0], "dynamic"))
                 dynamicSet.Add(spec);
-            return;
+            return false;
         }
         // :- ensure_linked(Indicator) — GNU-Prolog-style hint that the
         // named predicate is reachable even though the static call
@@ -261,10 +312,11 @@ public static class ShmoCompiler
         {
             foreach (var spec in ReadFunctorSpecs(el.Args[0], "ensure_linked"))
                 ensureLinked.Add(spec);
-            return;
+            return false;
         }
         // Other directives (op/3, set_prolog_flag, etc.) are ignored
         // by the shmo writer — they don't affect link-time semantics.
+        return false;
     }
 
     private static IEnumerable<PredicateRef> ReadFunctorSpecs(Term arg, string directive)
