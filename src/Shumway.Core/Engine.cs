@@ -1220,6 +1220,17 @@ public sealed class Engine
     /// </summary>
     public Func<Cell, object?>? MaterializeCellToTerm { get; set; }
 
+    /// <summary>Embedding-supplied resolver from an absolute bytecode
+    /// address to a human-readable <c>"name/arity@offset"</c> string,
+    /// used by the opt-in <c>SHUMWAY_CP_TRACE</c> dump
+    /// (<c>ChoicePointTrace.DumpAtSite</c>) to label each live
+    /// choice-point's saved BP. Returns <c>null</c> when the address
+    /// falls outside any known predicate range. Wired by
+    /// <c>PrologEngine</c> at query setup against the same
+    /// <c>_currentPredicatesByAddress</c> the stack-trace resolver
+    /// uses.</summary>
+    public Func<int, string?>? ResolveAddressToLabel { get; set; }
+
     /// <summary>Absolute byte position of the per-query fail-stub
     /// (ADR-015 chunk C step 4) — a tiny <c>call_builtin fail/0</c>
     /// emitted in the prefix. Dynamic predicates' last-clause chain
@@ -1275,6 +1286,31 @@ public sealed class Engine
     /// translates these to predicate names via the per-query address
     /// map to assemble a stack trace at error reporting time
     /// (chunk 51).</summary>
+    /// <summary>Walks the active choice-point chain from the current
+    /// CP toward the root. Each yielded triple is
+    /// <c>(stackB, savedBp, arity)</c> where <c>savedBp</c> is the
+    /// next-clause address recorded at CP push time
+    /// (<see cref="IlChoicePointSentinelBp"/> for IL-side CPs and
+    /// builtin CPs that route through the IL pop path). Used by the
+    /// opt-in <c>SHUMWAY_CP_TRACE</c> diagnostic to dump the live
+    /// CP stack at suspicious error sites (chunk 162).</summary>
+    public IEnumerable<(int StackB, int SavedBp, int Arity)> EnumerateChoicePoints()
+    {
+        int b = _b;
+        // The CP chain is anchored at _b == -1 (no CPs left). Each frame
+        // stores the previous B at CpBOffset(arity). Walk until we hit
+        // the sentinel.
+        while (b >= 0)
+        {
+            int arity = (int)_stack[b + CpArityOffset].Data;
+            int bp = (int)_stack[b + CpBpOffset(arity)].Data;
+            int prevB = (int)_stack[b + CpBOffset(arity)].Data;
+            yield return (b, bp, arity);
+            if (prevB == b) yield break;
+            b = prevB;
+        }
+    }
+
     public IEnumerable<int> EnumerateCallReturnAddresses()
     {
         // The first frame to surface is the IMMEDIATE return target —

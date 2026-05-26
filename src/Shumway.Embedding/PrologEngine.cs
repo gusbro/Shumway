@@ -3862,6 +3862,30 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             return TermReader.Materialize(engine, slot);
         };
 
+        // Chunk 162: opt-in SHUMWAY_CP_TRACE dump. The diagnostic prints
+        // "name/arity@offset" for each live CP's saved BP using the
+        // same address->predicate map the stack-trace resolver uses,
+        // so we can spot a CP that should have been cut but is still
+        // alive at the moment a builtin is re-entered with an
+        // unbound arg.
+        {
+            var resolverMap = mergedPredicatesByAddress;
+            int[] sortedAddrs = resolverMap.Keys.OrderBy(a => a).ToArray();
+            engine.ResolveAddressToLabel = addr =>
+            {
+                if (sortedAddrs.Length == 0) return null;
+                int idx = Array.BinarySearch(sortedAddrs, addr);
+                if (idx < 0) idx = ~idx - 1;
+                if (idx < 0) return null;
+                int entryAddr = sortedAddrs[idx];
+                if (!resolverMap.TryGetValue(entryAddr, out var pred))
+                    return null;
+                var (atomId, arity) = FunctorTable.Lookup(pred.FunctorId);
+                string name = AtomTable.GetById(atomId)?.Name ?? "?";
+                return $"{name}/{arity}@+{addr - entryAddr}";
+            };
+        }
+
         // ADR-015 chunk C step 4: per-functor chain state — record where
         // each clause's check_visible died slot lives in the running
         // program. retract patches the slot in place; next call's

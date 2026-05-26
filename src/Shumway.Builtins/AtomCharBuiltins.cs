@@ -446,9 +446,17 @@ public static class AtomCharBuiltins
             cursor = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex + 1));
         }
         if (cursor.Tag == Tag.Ref)
+        {
+            Shumway.Core.Diagnostics.ChoicePointTrace.DumpAtSite(
+                engine, "ReadCharAtomsToString instantiation_error");
             throw new PrologRuntimeException("instantiation_error");
+        }
         if (cursor.Tag != Tag.Atom || cursor.AsAtomId != AtomTable.EmptyListId)
+        {
+            Shumway.Core.Diagnostics.ChoicePointTrace.DumpAtSite(
+                engine, "ReadCharAtomsToString type_error(list)");
             throw new PrologRuntimeException("type_error", "list");
+        }
         return sb.ToString();
     }
 

@@ -303,7 +303,13 @@ public static class AtomListBuiltins
             // is bound to a non-atom, raise type_error(atom, C).
             if (cCell.Tag == Tag.Ref
                 && (aCell.Tag == Tag.Ref || bCell.Tag == Tag.Ref))
+            {
+                Shumway.Core.Diagnostics.ChoicePointTrace.DumpAtSite(
+                    engine, "atom_concat/3 instantiation_error");
                 throw new PrologRuntimeException("instantiation_error");
+            }
+            Shumway.Core.Diagnostics.ChoicePointTrace.DumpAtSite(
+                engine, "atom_concat/3 type_error(atom)");
             throw new PrologRuntimeException("type_error", "atom");
         }
 

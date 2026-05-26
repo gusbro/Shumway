@@ -29,5 +29,8 @@
   <PropertyGroup Condition="'$(ShumwayUnifyTrace)' == 'true'">
     <DefineConstants>$(DefineConstants);SHUMWAY_UNIFY_TRACE</DefineConstants>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(ShumwayCpTrace)' == 'true'">
+    <DefineConstants>$(DefineConstants);SHUMWAY_CP_TRACE</DefineConstants>
+  </PropertyGroup>
 
 </Project>
