@@ -297,10 +297,12 @@ public static class AtomListBuiltins
         Cell cCell = Resolve(engine, engine.GetRegister(2));
         if (cCell.Tag != Tag.Atom)
         {
-            // Chunk 131c: nothing is sufficiently instantiated to drive
-            // either direction. instantiation_error when all three are
-            // var; type_error(atom) when one is bound but to a non-atom.
-            if (aCell.Tag == Tag.Ref && bCell.Tag == Tag.Ref && cCell.Tag == Tag.Ref)
+            // ISO §8.16.2: if C is var, neither direction can drive
+            // synthesis unless BOTH A and B are atoms. If C is var and
+            // either A or B is var, raise instantiation_error. If C
+            // is bound to a non-atom, raise type_error(atom, C).
+            if (cCell.Tag == Tag.Ref
+                && (aCell.Tag == Tag.Ref || bCell.Tag == Tag.Ref))
                 throw new PrologRuntimeException("instantiation_error");
             throw new PrologRuntimeException("type_error", "atom");
         }
