@@ -226,6 +226,24 @@ public static class MetaBuiltins
             Io, "read(-Term)", "Reads one term from current input (ISO §8.14.2).");
         BuiltinsRegistry.Register("read",      2, Read2,
             Io, "read(+Stream, -Term)", "Reads one term from a stream (ISO §8.14.2).");
+        BuiltinsRegistry.Register("absolute_file_name", 2, AbsoluteFileName2,
+            Io, "absolute_file_name(+FileSpec, -Absolute)",
+            "Resolves a file specification to an absolute path. The basic 2-arg form: "
+            + "takes an atom (a path, possibly relative) and unifies the second arg with "
+            + "the absolute form. The 3-arg SWI form with options (extensions, file_type, "
+            + "access, file_search_path) is not yet supported.");
+        BuiltinsRegistry.Register("working_directory", 2, WorkingDirectory2,
+            Io, "working_directory(-Old, +New)",
+            "Unifies Old with the current working directory; if New differs, changes "
+            + "the cwd to it. Use working_directory(D, D) to read without changing.");
+        BuiltinsRegistry.Register("file_name_extension", 3, FileNameExtension3,
+            Io, "file_name_extension(?Base, ?Ext, ?Full)",
+            "Relates a file name to its base and extension. With Full bound, splits at "
+            + "the last '.'; with Base and Ext bound, composes Base + '.' + Ext (or "
+            + "just Base when Ext is empty). SWI / SICStus compatible.");
+        BuiltinsRegistry.Register("is_digit", 1, IsDigit1,
+            Term, "is_digit(+Char)",
+            "True when Char is a one-character atom representing an ASCII digit.");
     }
 
     /// <summary><c>current_stream(?Filename, ?Mode, ?Stream)</c> —
@@ -742,6 +760,175 @@ public static class MetaBuiltins
     {
         int aid = AtomTable.Intern(name, permanent: true).Id;
         return engine.UnifyRegisterWithCell(register, Cell.Atom(aid));
+    }
+
+    /// <summary><c>absolute_file_name(+FileSpec, -Absolute)</c> —
+    /// resolves a file path to an absolute one. The basic 2-arg
+    /// form: <c>FileSpec</c> must be a bound atom or PSTR; the
+    /// result is the absolute path as an atom. Internally just
+    /// <see cref="Path.GetFullPath(string)"/>, so the resolution
+    /// is relative to the current working directory of the host
+    /// process.
+    ///
+    /// <para>Not supported: SWI's 3-arg form with options
+    /// (<c>extensions</c>, <c>file_type</c>, <c>access</c>,
+    /// <c>file_search_path</c>) — those need the
+    /// <c>file_search_path/2</c> registry and a small option
+    /// parser. Add when a program actually needs them.</para></summary>
+    public static bool AbsoluteFileName2(Engine engine)
+    {
+        if (!TryGetStringArg(engine, 0, out string spec))
+            return false;
+        try
+        {
+            string absolute = Path.GetFullPath(spec);
+            int aid = AtomTable.Intern(absolute, permanent: true).Id;
+            return engine.UnifyRegisterWithCell(1, Cell.Atom(aid));
+        }
+        catch (ArgumentException)
+        {
+            throw new ShumwayPrologException(
+                IsoError.DomainError("source_sink", new AtomTerm(spec)));
+        }
+        catch (PathTooLongException)
+        {
+            throw new ShumwayPrologException(
+                IsoError.RepresentationError("max_path_length"));
+        }
+    }
+
+    /// <summary><c>file_name_extension(?Base, ?Ext, ?Full)</c> —
+    /// SWI / SICStus shape. Two productive modes:
+    /// <list type="bullet">
+    /// <item><c>Full</c> bound → split at the last '.', unify
+    /// <c>Base</c> with everything before and <c>Ext</c> with
+    /// everything after. A file with no '.' produces
+    /// <c>Ext = ''</c> and <c>Base = Full</c>.</item>
+    /// <item><c>Base</c> and <c>Ext</c> bound → compose as
+    /// <c>Base + '.' + Ext</c>, or just <c>Base</c> when <c>Ext</c>
+    /// is the empty atom.</item>
+    /// </list>
+    /// Other combinations raise <c>instantiation_error</c>.</summary>
+    public static bool FileNameExtension3(Engine engine)
+    {
+        Cell baseCell = ResolveLocal(engine, engine.GetRegister(0));
+        Cell extCell = ResolveLocal(engine, engine.GetRegister(1));
+        Cell fullCell = ResolveLocal(engine, engine.GetRegister(2));
+
+        // Decompose mode: Full is bound, compute Base + Ext.
+        if (fullCell.Tag == Tag.Atom)
+        {
+            string full = AtomTable.GetById(fullCell.AsAtomId)?.Name ?? "";
+            int dot = full.LastIndexOf('.');
+            string @base, ext;
+            if (dot < 0)
+            {
+                @base = full;
+                ext = "";
+            }
+            else
+            {
+                @base = full[..dot];
+                ext = full[(dot + 1)..];
+            }
+            return UnifyAtom(engine, 0, @base) && UnifyAtom(engine, 1, ext);
+        }
+
+        // Compose mode: Base and Ext bound, build Full.
+        if (baseCell.Tag == Tag.Atom && extCell.Tag == Tag.Atom)
+        {
+            string @base = AtomTable.GetById(baseCell.AsAtomId)?.Name ?? "";
+            string ext = AtomTable.GetById(extCell.AsAtomId)?.Name ?? "";
+            string full = ext.Length == 0 ? @base : @base + "." + ext;
+            return UnifyAtom(engine, 2, full);
+        }
+
+        // At least one side underspecified.
+        throw new ShumwayPrologException(IsoError.InstantiationError());
+    }
+
+    /// <summary><c>is_digit(+Char)</c> — true when <c>Char</c> is a
+    /// one-character atom whose code is an ASCII digit. SICStus and
+    /// older SWI versions ship it; Blint.pl uses it inside
+    /// number-parsing helpers.</summary>
+    public static bool IsDigit1(Engine engine)
+    {
+        Cell cell = ResolveLocal(engine, engine.GetRegister(0));
+        if (cell.Tag == Tag.Ref || cell.Tag == Tag.AttVar)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        if (cell.Tag != Tag.Atom) return false;
+        string name = AtomTable.GetById(cell.AsAtomId)?.Name ?? "";
+        return name.Length == 1 && name[0] >= '0' && name[0] <= '9';
+    }
+
+    /// <summary><c>working_directory(?Old, +New)</c> — SWI form.
+    /// Unifies <c>Old</c> with the current working directory (as
+    /// an atom); when <c>New</c> is bound and different, changes
+    /// the host process's CWD to it. The idiomatic read-only call
+    /// is <c>working_directory(D, D)</c>.</summary>
+    public static bool WorkingDirectory2(Engine engine)
+    {
+        string oldCwd = Directory.GetCurrentDirectory();
+        // Ensure a trailing separator so it matches SWI's convention.
+        if (!oldCwd.EndsWith(Path.DirectorySeparatorChar)
+            && !oldCwd.EndsWith(Path.AltDirectorySeparatorChar))
+            oldCwd += Path.DirectorySeparatorChar;
+        int oldAid = AtomTable.Intern(oldCwd, permanent: true).Id;
+        if (!engine.UnifyRegisterWithCell(0, Cell.Atom(oldAid)))
+            return false;
+
+        if (!TryGetStringArg(engine, 1, out string newCwd))
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        if (newCwd != oldCwd && newCwd != oldCwd.TrimEnd(Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar))
+        {
+            try { Directory.SetCurrentDirectory(newCwd); }
+            catch (DirectoryNotFoundException)
+            {
+                throw new ShumwayPrologException(
+                    IsoError.ExistenceError("source_sink", new AtomTerm(newCwd)));
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException
+                                    || ex is IOException)
+            {
+                throw new ShumwayPrologException(
+                    IsoError.PermissionError("open", "source_sink", new AtomTerm(newCwd)));
+            }
+        }
+        return true;
+    }
+
+    /// <summary>Reads register <paramref name="register"/> as a
+    /// string: a bound atom (its name) or a PSTR (its content).
+    /// Unbound → instantiation error; other types → type_error.</summary>
+    private static bool TryGetStringArg(Engine engine, int register, out string value)
+    {
+        value = "";
+        Cell cell = ResolveLocal(engine, engine.GetRegister(register));
+        if (cell.Tag == Tag.Ref || cell.Tag == Tag.AttVar)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        if (cell.Tag == Tag.Atom)
+        {
+            value = AtomTable.GetById(cell.AsAtomId)?.Name ?? "";
+            return true;
+        }
+        // PSTR: materialise the register through MaterializeRegister
+        // (which derefs and reads the heap header). Atoms are already
+        // special-cased above; this path handles PSTR and any
+        // foreign-object-as-string the reader knows about.
+        Term materialised = MaterializeRegister(engine, register);
+        if (materialised is StringTerm s)
+        {
+            value = s.Content;
+            return true;
+        }
+        if (materialised is AtomTerm a)
+        {
+            value = a.Name;
+            return true;
+        }
+        throw new ShumwayPrologException(
+            IsoError.TypeError("atom", new VarTerm("_")));
     }
 
     /// <summary><c>op(Precedence, Type, Name)</c> — runtime operator

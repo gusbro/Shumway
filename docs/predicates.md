@@ -68,6 +68,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `copy_term(+Term, -Copy)` | Copies a term with fresh variables. |
 | `copy_term(+Term, -Copy, -Goals)` | Copies a term with fresh variables and collects the residual attribute goals. |
 | `functor(?Term, ?Name, ?Arity)` | Relates a term to its functor name and arity. |
+| `is_digit(+Char)` | True when Char is a one-character atom representing an ASCII digit. |
 | `name(?AtomOrNumber, ?Codes)` | Bidirectional conversion between an atom/number and its character-code list. |
 | `numbervars(+Term, +Start, -End)` | Binds the unbound variables of Term to '$VAR'(N) terms with consecutive N from Start. |
 | `read_term_from_atom(+Atom, -Term)` | Parses an atom into a term. |
@@ -206,12 +207,14 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 
 | Predicate | Description |
 | --- | --- |
+| `absolute_file_name(+FileSpec, -Absolute)` | Resolves a file specification to an absolute path. The basic 2-arg form: takes an atom (a path, possibly relative) and unifies the second arg with the absolute form. The 3-arg SWI form with options (extensions, file_type, access, file_search_path) is not yet supported. |
 | `at_end_of_stream` | Succeeds if the current input stream is at end of file (ISO §8.11.9). |
 | `at_end_of_stream(+Stream)` | Succeeds if the given stream is at end of file (ISO §8.11.9). |
 | `close(+Stream)` | Closes an open stream. |
 | `current_input(-Stream)` | Unifies Stream with a designator for the current input stream (ISO §8.11.1). |
 | `current_output(-Stream)` | Unifies Stream with a designator for the current output stream (ISO §8.11.2). |
 | `current_stream(?Filename, ?Mode, ?Stream)` | Enumerates open streams (ISO §8.11.8.1). |
+| `file_name_extension(?Base, ?Ext, ?Full)` | Relates a file name to its base and extension. With Full bound, splits at the last '.'; with Base and Ext bound, composes Base + '.' + Ext (or just Base when Ext is empty). SWI / SICStus compatible. |
 | `flush_output` | Flushes the current output stream (ISO §8.11.7). |
 | `flush_output(+Stream)` | Flushes the given stream (ISO §8.11.7). |
 | `format(+Format, +Arguments)` | Writes formatted output from a control string and an argument list. |
@@ -250,6 +253,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `stream_property(?Stream, ?Property)` | Enumerates (Stream, Property) pairs for every open stream (ISO §8.11.8.2). |
 | `tab(+N)` | Writes N spaces to the current output stream. |
 | `with_output_to(+Sink, :Goal)` | Runs a goal, capturing its output into an atom, string or code list. |
+| `working_directory(-Old, +New)` | Unifies Old with the current working directory; if New differs, changes the cwd to it. Use working_directory(D, D) to read without changing. |
 | `write(+Term)` | Writes a term to the current output stream. |
 | `write(+Stream, +Term)` | Writes a term to the given stream. |
 | `write_canonical(+Term)` | Writes a term in a quoted, operator-free form that reads back. |
