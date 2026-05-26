@@ -37,8 +37,11 @@ public class Chunk172Tests
     }
 
     [Fact]
-    public void Strip_EmitsWarningDiagnostic()
+    public void Strip_NoStrippedBundleWarning_AfterChunk179()
     {
+        // Chunk 179: the "stripped_bundle" warning is gone — chunk 178
+        // made the source-less LoadBundle path real, so stripping is
+        // no longer a runtime liability that needs flagging.
         var obj = ShmoCompiler.CompileSource(":- module(m).\n:- public p/0.\np.\n", "m");
         var result = ShmoLinker.Link(new LinkConfig
         {
@@ -46,8 +49,8 @@ public class Chunk172Tests
             EntryPoints = new[] { new PredicateRef("p", 0) },
             StripSource = true,
         });
-        Assert.Contains(result.Diagnostics,
-            d => d.Code == "stripped_bundle" && d.Severity == LinkSeverity.Warning);
+        Assert.DoesNotContain(result.Diagnostics,
+            d => d.Code == "stripped_bundle");
     }
 
     [Fact]

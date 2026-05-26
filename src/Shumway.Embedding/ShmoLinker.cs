@@ -373,21 +373,42 @@ public static class ShmoLinker
             foreach (var obj in config.Objects)
             {
                 if (!reachedModules.Contains(obj.ModuleName)) continue;
+                // Chunk 179: when StripSource is requested, also strip
+                // the per-clause source positions AND the in-bytecode
+                // Meta/DbgInfo opcodes. If obj.Source is still present
+                // (Debug compile), recompile under Release through
+                // ShmoCompiler — that's the canonical strip path and
+                // covers both pieces. If obj.Source is already empty
+                // (Release compile), the bytecode is already stripped
+                // and we pass it through. Net result: a --strip'd
+                // .shum has the same artifact shape regardless of
+                // whether its sources were compiled in Debug or
+                // Release upstream.
+                string entrySource;
+                byte[]? entryBytecode;
+                if (config.StripSource && !string.IsNullOrEmpty(obj.Source))
+                {
+                    var restripped = ShmoCompiler.CompileSource(
+                        obj.Source, obj.ModuleName, ShmoBuildMode.Release);
+                    entrySource = "";
+                    entryBytecode = restripped.Bytecode.Length > 0
+                        ? restripped.Bytecode : null;
+                }
+                else
+                {
+                    entrySource = config.StripSource ? "" : obj.Source;
+                    entryBytecode = obj.Bytecode.Length > 0 ? obj.Bytecode : null;
+                }
                 entries.Add(new BundleEntry(
                     moduleName: obj.ModuleName,
-                    source: config.StripSource ? "" : obj.Source,
-                    compiledBytecode: obj.Bytecode.Length > 0 ? obj.Bytecode : null,
+                    source: entrySource,
+                    compiledBytecode: entryBytecode,
                     compiledIl: null,
                     defined: obj.Defined));
             }
-            if (config.StripSource)
-            {
-                Emit(LinkSeverity.Warning, "stripped_bundle",
-                    "Source stripped from " + entries.Count + " module(s). "
-                    + "The current engine.LoadBundle path still re-consults source — "
-                    + "stripped bundles load but cannot dispatch their predicates "
-                    + "until the source-less load path lands.", null);
-            }
+            // Chunk 179: the chunk-172 "stripped_bundle" warning is gone —
+            // stripped bundles now dispatch correctly via chunk 178's
+            // source-less LoadBundle path.
             bundle = new Bundle(entries);
             // Skip the bundle writer's own validate-by-consult pass: the
             // linker has already done the heavy lifting (call-graph
