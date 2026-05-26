@@ -1805,6 +1805,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// enumeration; the builtin namespace comes from
     /// <see cref="Shumway.Builtins.BuiltinsRegistry.AllRegisteredFunctorIds"/>
     /// separately so the two snapshots can be merged with deduping.</summary>
+
     internal IEnumerable<int> AllStaticAndDynamicFunctors()
     {
         var seen = new HashSet<int>();
@@ -1999,25 +2000,31 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         foreach (var entry in bundle.Entries)
             ConsultString(entry.Source);
 
-        // Phase-1 runtime use of the compiled blob: decode each entry's
-        // CompiledModule and try to install Tier-1 IL delegates for every
-        // predicate the IL compiler can handle. Predicates outside the
-        // subset stay on Tier 0; the existing counter still works for
-        // anything new the loaded blob hasn't covered. The decoded
-        // module is also stashed on PrecompiledModules + indexed by
-        // functor id on PrecompiledClauseCache so the query setup
-        // path can re-use the precompiled bytecode instead of running
-        // ModuleCompiler over the consulted source a second time.
+        // Phase-1 runtime use of the compiled blob: decode each
+        // entry's CompiledModule and stash the predicates on
+        // PrecompiledModules for diagnostics. The
+        // PrecompiledClauseCache substitution path is intentionally
+        // SKIPPED because the .shmo bytecode is compiled by
+        // ShmoCompiler with a subset of the transforms ConsultString
+        // applies in query setup (DCG + Meta + Phrase, but no
+        // module-rewrite of local functors). Substituting that
+        // bytecode for the freshly-compiled-from-AST version yields
+        // dispatch mismatches — a Blint-shaped predicate body with
+        // a standalone `(A -> B)` cached pre-meta-transform would
+        // raise existence_error/2 on `->/2`. Aligning the
+        // ShmoCompiler pipeline exactly with ConsultString
+        // (including ModuleRewrite) is the long-term fix; until
+        // then the consult-from-source path is the source of truth.
+        // IL warm-up runs because it's filtered by IsExcludedBySize
+        // — predicates whose IL delegate would actually be wired in
+        // dispatch are small / pure / safe.
         foreach (var entry in bundle.Entries)
         {
             if (entry.CompiledBytecode is null) continue;
             var module = CompiledModuleCodec.Decode(entry.CompiledBytecode);
             _precompiledModules[entry.ModuleName] = module;
             foreach (var pred in module.Predicates)
-            {
                 IlPromotion.Warm(pred.FunctorId, pred);
-                _precompiledClauseCache[pred.FunctorId] = pred;
-            }
         }
         // A bundle's predicates join the static program — drop the
         // ADR-015 cached static linked region so the next query rebuilds it.

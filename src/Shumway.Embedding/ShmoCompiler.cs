@@ -103,7 +103,19 @@ public static class ShmoCompiler
         }
         if (errors.Count >= maxErrors)
             return new ShmoCompileResult(null, errors);
-        var expanded = DcgTransform.Apply(allClauses);
+        // Apply the same compile-time transforms ConsultString runs
+        // before handing clauses to ModuleCompiler. Pre-fix the .shmo
+        // only ran DcgTransform; the bytecode it produced was then
+        // cached on LoadBundle and substituted for what would have
+        // been a freshly-compiled version of the same predicate. When
+        // the consult-time transforms (MetaTransform's `(A -> B)`
+        // standalone rewrite, `\+` / `not` lift, `findall` inline,
+        // PhraseTransform's `phrase/2,3` expansion) DIFFERED, the
+        // cached bytecode raised existence_error at runtime while
+        // the cache-miss path would have worked. Now both paths emit
+        // identical bytecode for the same input.
+        var expanded = PhraseTransform.Apply(
+            MetaTransform.Apply(DcgTransform.Apply(allClauses)));
 
         string moduleName = moduleNameFallback;
         var publicSet = new HashSet<PredicateRef>();

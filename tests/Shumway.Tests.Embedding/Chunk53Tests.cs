@@ -93,24 +93,13 @@ public class Chunk53Tests
     // PrecompiledClauseCache
     // ============================================================================
 
-    [Fact]
-    public void PrecompiledClauseCache_PopulatedFromBundleBlob()
-    {
-        var bundle = new Bundle(new[]
-        {
-            new BundleEntry("greetings",
-                ":- public greet/1.\ngreet(hello). greet(world)."),
-        });
-        byte[] bytes = BundleWriter.ToBytes(bundle, includeCompiledBytecode: true);
-
-        var engine = new PrologEngine();
-        engine.LoadBundle(BundleReader.FromBytes(bytes));
-
-        int fid = FunctorTable.Intern(AtomTable.Intern("greet", permanent: true).Id, 1);
-        Assert.True(engine.PrecompiledClauseCache.ContainsKey(fid));
-        var cached = engine.PrecompiledClauseCache[fid];
-        Assert.Equal(2, cached.ClauseCount);
-    }
+    [Fact(Skip = "Phase 14: LoadBundle no longer populates PrecompiledClauseCache "
+        + "from bundle bytecode. The substitute-into-ModuleCompiler path proved "
+        + "unsafe when ShmoCompiler's transform pipeline didn't fully align with "
+        + "ConsultString's (Blint.pl's `(A -> B)` standalone case was the surfacing "
+        + "example). Re-enable once ShmoCompiler runs the full ConsultString-equivalent "
+        + "pipeline including ModuleRewrite + ModeSpecialization.")]
+    public void PrecompiledClauseCache_PopulatedFromBundleBlob() { }
 
     [Fact]
     public void PrecompiledClauseCache_EmptyWithoutBlob()

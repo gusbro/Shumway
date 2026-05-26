@@ -241,11 +241,24 @@ internal static class Program
         {{
             var engine = new PrologEngine();
             // Surface the executable's CLI args to the Prolog program
-            // as the `argv` Prolog flag — matches SWI / GNU / SICStus
-            // semantics for stand-alone compiled programs.
-            engine.Flags.Argv = args;
+            // as the `argv` Prolog flag. Match SWI / GNU / SICStus
+            // semantics: argv[0] is the program path / name, args
+            // proper start at argv[1]. (.NET's Main(args) drops the
+            // program name; we reconstruct it via
+            // GetCommandLineArgs which keeps it.) Programs that
+            // strip argv[0] before reading their own args — the
+            // SWI / SICStus idiom — work as-is.
+            engine.Flags.Argv = System.Environment.GetCommandLineArgs();
             engine.LoadBundle(LoadEmbeddedBundle());
             var sol = engine.Query(@""{escaped}"");
+            // halt/1 inside the goal is captured by the engine into
+            // LastHaltExitCode; honour it as the process exit code,
+            // matching SWI / SICStus stand-alone semantics. Without
+            // this a Blint-like program that ends with halt(0) would
+            // come back as a failed solution and the wrapper would
+            // exit 1 even though the program succeeded.
+            if (engine.LastHaltExitCode is int haltCode)
+                return haltCode;
             return sol.Success ? 0 : 1;
         }}
         catch (Shumway.Core.PrologRuntimeException ex)

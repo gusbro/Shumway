@@ -118,68 +118,19 @@ public class Chunk55Tests
     // Bundle codec round-trips ClauseSourcePositions (v2)
     // ============================================================================
 
-    [Fact]
-    public void BundleCodec_V2_RoundTripsClausePositions()
-    {
-        var bundle = new Bundle(new[]
-        {
-            new BundleEntry("multi",
-                ":- public step/1.\n" +
-                "step(one).\n" +     // line 2
-                "step(two).\n" +     // line 3
-                "step(three).\n"),   // line 4
-        });
-        byte[] bytes = BundleWriter.ToBytes(bundle, includeCompiledBytecode: true);
-
-        var engine = new PrologEngine();
-        engine.LoadBundle(BundleReader.FromBytes(bytes));
-
-        int fid = FunctorTable.Intern(
-            AtomTable.Intern("step", permanent: true).Id, 1);
-        Assert.True(engine.PrecompiledClauseCache.ContainsKey(fid));
-        var cached = engine.PrecompiledClauseCache[fid];
-        Assert.Equal(3, cached.ClauseSourcePositions.Count);
-        Assert.Equal(2, cached.ClauseSourcePositions[0].Line);
-        Assert.Equal(3, cached.ClauseSourcePositions[1].Line);
-        Assert.Equal(4, cached.ClauseSourcePositions[2].Line);
-    }
+    [Fact(Skip = "Phase 14: LoadBundle no longer populates PrecompiledClauseCache. "
+        + "See Chunk53Tests.PrecompiledClauseCache_PopulatedFromBundleBlob for "
+        + "the rationale and the planned re-enable.")]
+    public void BundleCodec_V2_RoundTripsClausePositions() { }
 
     // ============================================================================
     // Bundle blob skip-compile (chunk 55, PART 1)
     // ============================================================================
 
-    [Fact]
-    public void SkipCompile_ReusesCachedPredicateInstance_AfterLoadBundle()
-    {
-        // Build a bundle whose compiled blob contains greet/1. After
-        // LoadBundle the cache has greet/1; the first query setup should
-        // re-use the cached CompiledPredicate verbatim — by reference —
-        // instead of running PredicateCompiler over the source again.
-        var bundle = new Bundle(new[]
-        {
-            new BundleEntry("g",
-                ":- public greet/1.\ngreet(hello). greet(world)."),
-        });
-        byte[] bytes = BundleWriter.ToBytes(bundle, includeCompiledBytecode: true);
-
-        var engine = new PrologEngine();
-        engine.LoadBundle(BundleReader.FromBytes(bytes));
-
-        int fid = FunctorTable.Intern(
-            AtomTable.Intern("greet", permanent: true).Id, 1);
-        CompiledPredicate cachedPred = engine.PrecompiledClauseCache[fid];
-
-        // Drive a query so SetupQueryFromTerm runs ModuleCompiler. We
-        // inspect the engine's linked predicates-by-address afterward to
-        // confirm the same object is being used.
-        Assert.True(engine.Query("greet(hello).").Success);
-
-        var current = engine.CurrentPredicatesByAddressForTest;
-        Assert.NotNull(current);
-        var reused = current!.Values.FirstOrDefault(p => p.FunctorId == fid);
-        Assert.NotNull(reused);
-        Assert.Same(cachedPred, reused);
-    }
+    [Fact(Skip = "Phase 14: LoadBundle no longer populates PrecompiledClauseCache. "
+        + "See Chunk53Tests.PrecompiledClauseCache_PopulatedFromBundleBlob for "
+        + "the rationale and the planned re-enable.")]
+    public void SkipCompile_ReusesCachedPredicateInstance_AfterLoadBundle() { }
 
     [Fact]
     public void SkipCompile_BundlePredicate_StillAnswersQueriesCorrectly()

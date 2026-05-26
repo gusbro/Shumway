@@ -666,6 +666,22 @@ public static class MetaBuiltins
             };
             return true;
         }
+        if (flagName == "unknown")
+        {
+            if (valueName != "error" && valueName != "fail" && valueName != "warning")
+                throw new ShumwayPrologException(
+                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+            host.Flags.Unknown = valueName;
+            return true;
+        }
+        if (flagName == "occurs_check")
+        {
+            if (valueName != "false" && valueName != "true" && valueName != "error")
+                throw new ShumwayPrologException(
+                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+            host.Flags.OccursCheck = valueName;
+            return true;
+        }
 
         throw new ShumwayPrologException(
             IsoError.DomainError("prolog_flag", new AtomTerm(flagName)));
