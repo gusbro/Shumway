@@ -114,7 +114,8 @@ public static class AtomCharBuiltins
             string name = AtomTable.GetById(charCell.AsAtomId)?.Name ?? "";
             // ISO §8.16.5: a non-character first arg is type_error(character).
             if (name.Length != 1)
-                throw new PrologRuntimeException("type_error", "character");
+                throw new PrologRuntimeException(
+                    "type_error", "character", engine, charCell);
             return engine.UnifyRegisterWithCell(1, Cell.Int(name[0]));
         }
 
@@ -135,11 +136,13 @@ public static class AtomCharBuiltins
         if (charCell.Tag == Tag.Ref && codeCell.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
         // Bound to something other than atom / int: report the offending
-        // argument's expected type. Char takes precedence when both are
-        // bound (a non-atom Char is what ISO checks first).
+        // argument's expected type AND value. Char takes precedence when
+        // both are bound (a non-atom Char is what ISO checks first).
         if (charCell.Tag != Tag.Ref)
-            throw new PrologRuntimeException("type_error", "character");
-        throw new PrologRuntimeException("type_error", "integer");
+            throw new PrologRuntimeException(
+                "type_error", "character", engine, charCell);
+        throw new PrologRuntimeException(
+            "type_error", "integer", engine, codeCell);
     }
 
     // ---------- number_codes/2 ----------
