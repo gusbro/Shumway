@@ -240,6 +240,10 @@ internal static class Program
         try
         {{
             var engine = new PrologEngine();
+            // Surface the executable's CLI args to the Prolog program
+            // as the `argv` Prolog flag — matches SWI / GNU / SICStus
+            // semantics for stand-alone compiled programs.
+            engine.Flags.Argv = args;
             engine.LoadBundle(LoadEmbeddedBundle());
             var sol = engine.Query(@""{escaped}"");
             return sol.Success ? 0 : 1;

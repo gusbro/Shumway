@@ -80,6 +80,15 @@ public static class ShmoCompiler
     {
         ArgumentNullException.ThrowIfNull(source);
         Shumway.Builtins.StandardBuiltins.EnsureRegistered();
+        // The engine-resident meta-builtins (catch/3, assertz/1,
+        // call/N, findall/3, etc.) are normally registered by the
+        // PrologEngine constructor. The ShmoCompiler doesn't spin
+        // one up, so register them here too — otherwise the WAM
+        // compiler doesn't see them as builtins and emits Execute
+        // instead of CallBuiltin for those goals. A later runtime
+        // (or IL-promoted) dispatch then tries to find them as
+        // user predicates and raises existence_error/2.
+        MetaBuiltins.EnsureRegistered();
 
         var errors = new List<ShmoCompileError>();
         var allClauses = new List<Clause>();
