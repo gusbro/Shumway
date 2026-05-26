@@ -25,15 +25,27 @@ namespace Shumway.Embedding;
 ///                 compiledBytes   : encoded CompiledModuleCodec output
 ///                 compiledIlLength: uint32   (0 = no compiled IL .dll)
 ///                 compiledIlBytes : PersistedAssemblyBuilder output
+///                 V2+: definedCount: uint32
+///                       definedEntries: { name:string, arity:uint32, vis:byte }*
 /// </code>
 ///
-/// <para>The version stays at 1 throughout Phase 2: there is no released
-/// runtime to maintain compatibility with, and bumping the version on
-/// every additive field churn would force downstream tooling to track
-/// changes that don't actually matter to anyone yet.</para>
+/// <para>Versions:</para>
+/// <list type="bullet">
+/// <item><b>V1</b>: original layout, no per-predicate visibility metadata.
+/// The engine's LoadBundle has to re-consult the embedded source.</item>
+/// <item><b>V2 (chunk 178)</b>: each entry additionally carries a
+/// <c>Defined</c> list mirroring <see cref="ShmoObject.Defined"/> —
+/// every predicate the module defines with its
+/// <see cref="PredicateVisibility"/>. Enables the source-less
+/// LoadBundle path: when an entry's <c>Source</c> has been stripped
+/// (chunk 172 <c>--strip</c> or chunk 177 Release <c>shumway-compile</c>),
+/// the engine populates its <c>ModuleManifest</c> straight from
+/// <c>Defined</c> and plugs the precompiled bytecode into the static
+/// link region without re-consulting source.</item>
+/// </list>
 /// </summary>
 public static class BundleFormat
 {
     public static readonly byte[] Magic = new byte[] { (byte)'S', (byte)'H', (byte)'U', (byte)'M' };
-    public const int CurrentVersion = 1;
+    public const int CurrentVersion = 2;
 }

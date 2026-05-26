@@ -38,14 +38,29 @@ public sealed class BundleEntry
     public byte[]? CompiledBytecode { get; }
     public byte[]? CompiledIl { get; }
 
+    /// <summary>Chunk 178: per-predicate visibility list. Carries
+    /// over the <see cref="ShmoObject.Defined"/> from each contributing
+    /// .shmo. Used by <see cref="PrologEngine.LoadBundle(Bundle)"/>
+    /// when the source is stripped: the engine has no source to
+    /// re-consult, so it consults <em>this</em> list to know which
+    /// predicates are public, which are dynamic, and which are local
+    /// (mangled) — then plugs the entry's pre-compiled bytecode
+    /// straight into the static link region. Empty list is fine for
+    /// hand-built bundles or older formats that didn't persist it;
+    /// the source-less load path is gated on this list being non-
+    /// empty.</summary>
+    public IReadOnlyList<ShmoDefinedPredicate> Defined { get; }
+
     public BundleEntry(
         string moduleName, string source,
         byte[]? compiledBytecode = null,
-        byte[]? compiledIl = null)
+        byte[]? compiledIl = null,
+        IReadOnlyList<ShmoDefinedPredicate>? defined = null)
     {
         ModuleName = moduleName;
         Source = source;
         CompiledBytecode = compiledBytecode;
         CompiledIl = compiledIl;
+        Defined = defined ?? Array.Empty<ShmoDefinedPredicate>();
     }
 }

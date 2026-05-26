@@ -27,10 +27,10 @@ public static class BundleReader
                 "Bundle: magic bytes don't match 'SHUM' — not a Shumway bundle.");
 
         uint version = br.ReadUInt32();
-        if (version != BundleFormat.CurrentVersion)
+        if (version != 1 && version != 2)
             throw new InvalidDataException(
                 $"Bundle: format version {version} is not supported by this runtime "
-                + $"(expected {BundleFormat.CurrentVersion}).");
+                + $"(expected 1 or 2).");
 
         uint moduleCount = br.ReadUInt32();
         var entries = new BundleEntry[moduleCount];
@@ -58,7 +58,23 @@ public static class BundleReader
                         $"Bundle: truncated compiled-IL section (expected "
                         + $"{compiledIlLength} bytes, got {compiledIl.Length}).");
             }
-            entries[i] = new BundleEntry(name, source, compiled, compiledIl);
+            // V2+: per-predicate visibility metadata. Empty list for V1.
+            List<ShmoDefinedPredicate>? defined = null;
+            if (version >= 2)
+            {
+                uint definedCount = br.ReadUInt32();
+                defined = new List<ShmoDefinedPredicate>((int)definedCount);
+                for (uint j = 0; j < definedCount; j++)
+                {
+                    string predName = ReadLengthPrefixedUtf8(br);
+                    uint arity = br.ReadUInt32();
+                    byte vis = br.ReadByte();
+                    defined.Add(new ShmoDefinedPredicate(
+                        new PredicateRef(predName, (int)arity),
+                        (PredicateVisibility)vis));
+                }
+            }
+            entries[i] = new BundleEntry(name, source, compiled, compiledIl, defined);
         }
         return new Bundle(entries);
     }

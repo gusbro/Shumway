@@ -1998,29 +1998,41 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     {
         ArgumentNullException.ThrowIfNull(bundle);
         foreach (var entry in bundle.Entries)
+        {
+            // Chunk 178: source-less load. When the bundle was built
+            // with --strip (or compiled in Release with chunk 177's
+            // source omission), Source is empty and we cannot
+            // ConsultString. The entry's CompiledBytecode + Defined
+            // metadata carry everything we need — the bytecode is
+            // already runtime-ready (mangled per chunk 176) and the
+            // Defined list tells us which functors are public /
+            // dynamic / local. Set up a ModuleManifest from the
+            // metadata and queue the precompiled predicates for the
+            // static-link region; SetupQueryFromTerm will plug them
+            // in next time it rebuilds the link.
+            if (string.IsNullOrEmpty(entry.Source)
+                && entry.CompiledBytecode is not null
+                && entry.Defined.Count > 0)
+            {
+                LoadEntryFromBytecode(entry);
+                continue;
+            }
             ConsultString(entry.Source);
+        }
 
-        // Phase-1 runtime use of the compiled blob: decode each
-        // entry's CompiledModule and stash the predicates on
-        // PrecompiledModules for diagnostics. The
-        // PrecompiledClauseCache substitution path is intentionally
-        // SKIPPED because the .shmo bytecode is compiled by
-        // ShmoCompiler with a subset of the transforms ConsultString
-        // applies in query setup (DCG + Meta + Phrase, but no
-        // module-rewrite of local functors). Substituting that
-        // bytecode for the freshly-compiled-from-AST version yields
-        // dispatch mismatches — a Blint-shaped predicate body with
-        // a standalone `(A -> B)` cached pre-meta-transform would
-        // raise existence_error/2 on `->/2`. Aligning the
-        // ShmoCompiler pipeline exactly with ConsultString
-        // (including ModuleRewrite) is the long-term fix; until
-        // then the consult-from-source path is the source of truth.
-        // IL warm-up runs because it's filtered by IsExcludedBySize
-        // — predicates whose IL delegate would actually be wired in
-        // dispatch are small / pure / safe.
+        // Decode each entry's CompiledModule and stash the predicates
+        // for diagnostics. The source-bearing entries also feed
+        // IL warmup from here (their PrecompiledClauseCache
+        // substitution remains active — chunk 176 made the .shmo
+        // bytecode byte-identical to what SetupQueryFromTerm would
+        // produce, so the warmed IL delegates' call sites now
+        // resolve correctly).
         foreach (var entry in bundle.Entries)
         {
             if (entry.CompiledBytecode is null) continue;
+            // Source-less entries already decoded above.
+            if (_precompiledModules.ContainsKey(entry.ModuleName)
+                && string.IsNullOrEmpty(entry.Source)) continue;
             var module = CompiledModuleCodec.Decode(entry.CompiledBytecode);
             _precompiledModules[entry.ModuleName] = module;
             foreach (var pred in module.Predicates)
@@ -2092,6 +2104,73 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
     }
 
+    /// <summary>Chunk 178: registers a source-less bundle entry's
+    /// predicates with the engine without going through
+    /// <see cref="ConsultString"/>. Populates the per-module
+    /// <see cref="ModuleManifest"/> from the entry's
+    /// <see cref="BundleEntry.Defined"/> list (publics → public set,
+    /// dynamics → dynamic set + engine-wide <c>_dynamicFunctors</c>),
+    /// then decodes the entry's <see cref="BundleEntry.CompiledBytecode"/>
+    /// and registers each predicate in
+    /// <see cref="_precompiledStaticPredicates"/>. The next
+    /// <see cref="SetupQueryFromTerm"/> appends those predicates to
+    /// the static-link region so call sites resolve identically to
+    /// the source-bearing path. The bytecode is byte-identical to
+    /// what <see cref="SetupQueryFromTerm"/> would have produced
+    /// (chunk 176's ModuleRewrite parity).</summary>
+    private void LoadEntryFromBytecode(BundleEntry entry)
+    {
+        if (entry.CompiledBytecode is null)
+            throw new InvalidOperationException(
+                $"LoadEntryFromBytecode: entry '{entry.ModuleName}' has no compiled bytecode.");
+
+        // Resolve the manifest under the entry's module name. The
+        // contract here mirrors ConsultString's "explicit module"
+        // path (PrologEngine.cs:2792) — `:- module(name).` would have
+        // landed us in the same place. A subsequent source-bearing
+        // load of the same module name is allowed to extend it
+        // (consistent with the "rolling user module" pattern), but
+        // each predicate id is at most once in the precompiled set.
+        if (!_modules.TryGetValue(entry.ModuleName, out var manifest))
+        {
+            manifest = new ModuleManifest(entry.ModuleName);
+            _modules[entry.ModuleName] = manifest;
+        }
+
+        foreach (var d in entry.Defined)
+        {
+            int fid = Shumway.Core.FunctorTable.Intern(
+                Shumway.Core.AtomTable.Intern(d.Indicator.Name, permanent: true).Id,
+                d.Indicator.Arity);
+            if (d.Visibility == PredicateVisibility.Public)
+                manifest.PublicFunctors.Add(fid);
+            else if (d.Visibility == PredicateVisibility.Dynamic)
+            {
+                manifest.DynamicFunctors.Add(fid);
+                _dynamicFunctors.Add(fid);
+                if (!_dynamicClauses.ContainsKey(fid))
+                    _dynamicClauses[fid] = new List<Clause>();
+            }
+        }
+
+        var module = CompiledModuleCodec.Decode(entry.CompiledBytecode);
+        _precompiledModules[entry.ModuleName] = module;
+        foreach (var pred in module.Predicates)
+        {
+            _precompiledStaticPredicates[pred.FunctorId] = pred;
+            // Warm IL while we're here — the bytecode is the same
+            // shape SetupQueryFromTerm would have produced.
+            IlPromotion.Warm(pred.FunctorId, pred);
+        }
+
+        // The static program just changed shape — drop the cached
+        // static link region so the next query rebuild picks up the
+        // new predicates.
+        _staticLink = null;
+        _staticPredicateCache.Clear();
+        InvalidatePersistent();
+    }
+
     /// <summary>Per-engine cache of precompiled predicates from any
     /// bundle blob loaded with <see cref="LoadBundle(Bundle)"/>
     /// (chunk 53). The query-setup path consults this cache before
@@ -2103,6 +2182,19 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     public IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> PrecompiledClauseCache
         => _precompiledClauseCache;
     private readonly Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> _precompiledClauseCache = new();
+
+    /// <summary>Chunk 178: pre-compiled predicates from source-less
+    /// bundle entries. Their bytecode is already mangled + runtime-
+    /// ready (ShmoCompiler in chunk 176 applies the same transforms
+    /// SetupQueryFromTerm would), so they bypass the AST → ModuleCompiler
+    /// pipeline entirely and slot straight into the static-link region.
+    /// Populated by <see cref="LoadEntryFromBytecode"/> on
+    /// <see cref="LoadBundle(Bundle)"/>; consumed by
+    /// <see cref="SetupQueryFromTerm"/> when it (re)builds the static
+    /// link. Keyed by FunctorId so a later source-bearing consult of
+    /// the same predicate replaces the precompiled entry cleanly.</summary>
+    private readonly Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>
+        _precompiledStaticPredicates = new();
 
     /// <summary>Per-engine cache of compiled dynamic predicates (chunk 68).
     /// The query-setup path consults this cache alongside
@@ -3637,6 +3729,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         var staticPreds = new List<Shumway.Compiler.Wam.CompiledPredicate>();
         var dynamicPreds = new List<Shumway.Compiler.Wam.CompiledPredicate>();
         var queryPreds = new List<Shumway.Compiler.Wam.CompiledPredicate>();
+        var addedFids = new HashSet<int>();
         foreach (var pred in module.Predicates)
         {
             bool isCacheable = cacheableFunctors.Contains(pred.FunctorId);
@@ -3644,6 +3737,24 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             if (isCacheable && !isDynamic) staticPreds.Add(pred);
             else if (isCacheable && isDynamic) dynamicPreds.Add(pred);
             else queryPreds.Add(pred);
+            addedFids.Add(pred.FunctorId);
+        }
+        // Chunk 178: source-less bundle predicates are already
+        // compiled (LoadEntryFromBytecode populated
+        // _precompiledStaticPredicates). Append them to the static
+        // region — they bypassed the AST → ModuleCompiler pipeline
+        // entirely, and their bytecode is byte-identical to what
+        // we'd have produced from source. Any predicate id that
+        // also appeared in module.Predicates above (e.g. a later
+        // source-bearing consult of the same functor) wins by
+        // staying in module.Predicates and we skip the precompiled
+        // copy so we don't add the same id twice to the linker.
+        foreach (var (fid, pred) in _precompiledStaticPredicates)
+        {
+            if (!addedFids.Add(fid)) continue;
+            bool isDynamic = _dynamicFunctors.Contains(fid);
+            if (!isDynamic) staticPreds.Add(pred);
+            else dynamicPreds.Add(pred);
         }
 
         // The static region links once at a fixed load offset (the prefix

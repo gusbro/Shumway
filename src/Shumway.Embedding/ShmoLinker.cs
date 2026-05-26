@@ -377,7 +377,8 @@ public static class ShmoLinker
                     moduleName: obj.ModuleName,
                     source: config.StripSource ? "" : obj.Source,
                     compiledBytecode: obj.Bytecode.Length > 0 ? obj.Bytecode : null,
-                    compiledIl: null));
+                    compiledIl: null,
+                    defined: obj.Defined));
             }
             if (config.StripSource)
             {
@@ -513,6 +514,16 @@ public static class ShmoLinker
             byte[] compiledIl = e.CompiledIl ?? Array.Empty<byte>();
             bw.Write((uint)compiledIl.Length);
             bw.Write(compiledIl);
+            // V2+: per-predicate visibility metadata. The source-less
+            // LoadBundle path (chunk 178) reads this list to populate
+            // a ModuleManifest without re-consulting source.
+            bw.Write((uint)e.Defined.Count);
+            foreach (var d in e.Defined)
+            {
+                WriteString(bw, d.Indicator.Name);
+                bw.Write((uint)d.Indicator.Arity);
+                bw.Write((byte)d.Visibility);
+            }
         }
         bw.Flush();
         return ms.ToArray();

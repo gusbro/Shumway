@@ -55,7 +55,8 @@ public static class BundleWriter
                     effective[i].ModuleName,
                     effective[i].Source,
                     compiledBytecode,
-                    compiledIl);
+                    compiledIl,
+                    effective[i].Defined);
             }
         }
 
@@ -74,6 +75,16 @@ public static class BundleWriter
             byte[] compiledIl = entry.CompiledIl ?? Array.Empty<byte>();
             bw.Write((uint)compiledIl.Length);
             bw.Write(compiledIl);
+            // V2+: per-predicate visibility metadata. Empty list is fine —
+            // the source-less load path only fires when this is non-empty
+            // AND Source is stripped.
+            bw.Write((uint)entry.Defined.Count);
+            foreach (var d in entry.Defined)
+            {
+                WriteLengthPrefixedUtf8(bw, d.Indicator.Name);
+                bw.Write((uint)d.Indicator.Arity);
+                bw.Write((byte)d.Visibility);
+            }
         }
         bw.Flush();
         return ms.ToArray();
