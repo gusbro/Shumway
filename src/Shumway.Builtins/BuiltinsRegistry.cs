@@ -19,8 +19,23 @@ namespace Shumway.Builtins;
 public static class BuiltinsRegistry
 {
     private static readonly object _lock = new();
-    private static readonly Dictionary<int, BuiltinEntry> _byId = new();
-    private static readonly Dictionary<int, int> _byFunctorId = new();   // functor id → builtin id
+    // Chunk 165: GetById sits on the call_builtin hot path — measured ~46%
+    // of total Shumway time on Blint.pl just acquiring the registry lock
+    // and probing the dictionary. Replace with a lock-free array indexed
+    // by id: dispatch reads `_entries[id]` with no lock at all. The array
+    // is grown copy-on-write under `_lock` so concurrent reads see either
+    // the old reference or the new one — never a torn modification. IDs
+    // are contiguous (Register hands them out via `_nextId++`) so direct
+    // indexing always lands on a populated slot.
+    private static volatile BuiltinEntry?[] _entries = System.Array.Empty<BuiltinEntry?>();
+    // functor id -> builtin id. Same lock-free read pattern as
+    // _entries: writes happen under `_lock`, but readers
+    // (TryGetByFunctor on the call_builtin dispatch path) read a
+    // volatile reference whose contents are never mutated in place —
+    // each modification snapshots, mutates the copy, and atomically
+    // swaps the field. ConcurrentDictionary would do the same with
+    // more overhead.
+    private static volatile Dictionary<int, int> _byFunctorId = new();
     private static int _nextId;
 
     /// <summary>Registers a builtin under the given name and arity, returning
@@ -48,9 +63,27 @@ public static class BuiltinsRegistry
             if (_byFunctorId.TryGetValue(functorId, out int existing))
                 return existing;
             int id = _nextId++;
-            _byFunctorId[functorId] = id;
-            _byId[id] = new BuiltinEntry(
+            // Snapshot-then-swap so concurrent readers (the dispatcher
+            // hot path) never observe a partial write.
+            var newMap = new Dictionary<int, int>(_byFunctorId);
+            newMap[functorId] = id;
+            _byFunctorId = newMap;
+            // Grow the array if needed (chunk 165). Copy-on-write so any
+            // concurrent reader either keeps using the old reference or
+            // picks up the new one on its next dereference — neither sees
+            // a half-written slot.
+            BuiltinEntry?[] arr = _entries;
+            if (id >= arr.Length)
+            {
+                int newSize = arr.Length == 0 ? 32 : arr.Length * 2;
+                while (newSize <= id) newSize *= 2;
+                var newArr = new BuiltinEntry?[newSize];
+                System.Array.Copy(arr, newArr, arr.Length);
+                arr = newArr;
+            }
+            arr[id] = new BuiltinEntry(
                 id, name, arity, impl, category, template, summary);
+            _entries = arr;
             return id;
         }
     }
@@ -59,10 +92,11 @@ public static class BuiltinsRegistry
     /// false if no builtin is registered under that functor.</summary>
     public static bool TryGetByFunctor(int functorId, out int builtinId)
     {
-        lock (_lock)
-        {
-            return _byFunctorId.TryGetValue(functorId, out builtinId);
-        }
+        // Chunk 165: lock-free read against the snapshot-published
+        // dictionary. Writes go through Register's lock + copy-on-
+        // write swap, so concurrent readers see either the old map or
+        // the new map — never a torn modification.
+        return _byFunctorId.TryGetValue(functorId, out builtinId);
     }
 
     /// <summary>Snapshot of every functor id currently bound to a builtin.
@@ -70,10 +104,7 @@ public static class BuiltinsRegistry
     /// builtin namespace alongside user-defined predicates.</summary>
     public static IReadOnlyCollection<int> AllRegisteredFunctorIds()
     {
-        lock (_lock)
-        {
-            return _byFunctorId.Keys.ToArray();
-        }
+        return _byFunctorId.Keys.ToArray();
     }
 
     /// <summary>Snapshot of every registered builtin entry. Used by the
@@ -82,21 +113,23 @@ public static class BuiltinsRegistry
     {
         lock (_lock)
         {
-            return _byId.Values.ToArray();
+            BuiltinEntry?[] arr = _entries;
+            var result = new List<BuiltinEntry>(arr.Length);
+            for (int i = 0; i < arr.Length; i++)
+                if (arr[i] is { } e) result.Add(e);
+            return result;
         }
     }
 
     /// <summary>Returns the entry for the given builtin id. The interpreter
     /// uses this on every <c>call_builtin</c> dispatch — the lookup happens
-    /// once per call, no allocation.</summary>
+    /// once per call, no allocation and (chunk 165) no lock.</summary>
     public static BuiltinEntry GetById(int builtinId)
     {
-        lock (_lock)
-        {
-            if (!_byId.TryGetValue(builtinId, out var entry))
-                throw new InvalidOperationException(
-                    $"No builtin registered with id {builtinId}.");
-            return entry;
-        }
+        BuiltinEntry?[] arr = _entries;
+        if ((uint)builtinId >= (uint)arr.Length || arr[builtinId] is not { } entry)
+            throw new InvalidOperationException(
+                $"No builtin registered with id {builtinId}.");
+        return entry;
     }
 }

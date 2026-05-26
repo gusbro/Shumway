@@ -41,12 +41,32 @@ public static class AtomTable
     private static readonly object _lock = new();
     private static int _nextId = FirstUserId;
 
+    // Chunk 167: fast-path for the most common GetById case. Permanent
+    // atoms (string literals, public predicate names, the single-char
+    // cache, etc.) get dense ids and far outnumber lookups on transient
+    // / weak ids. A flat array indexed by id, grown copy-on-write, lets
+    // the dispatcher / TermReader skip the lock + dictionary probe on
+    // the common case. Misses (uncached id, transient, or weak) fall
+    // through to the locked path.
+    private static volatile Atom?[] _permanentByIdArray = System.Array.Empty<Atom?>();
+
     private readonly struct TransientWeakEntry
     {
         public readonly WeakReference<Atom> Weak;
         public readonly string Name;
         public TransientWeakEntry(WeakReference<Atom> weak, string name) { Weak = weak; Name = name; }
     }
+
+    // Chunk 166: cache of single-character atom ids for codes 0..127.
+    // The character-I/O builtins (peek_char/get_char/put_char) intern a
+    // fresh 1-character string on every call, and `char_code/2` does the
+    // same when going code -> char. Lookups on the hot path cost a lock
+    // + dictionary probe + a 1-char string allocation each time. Pre-
+    // interning the ASCII range as permanent atoms lets those callers
+    // bypass the lock entirely on the common case (Blint.pl reads ASCII
+    // source).
+    public const int SingleCharAtomCacheLimit = 128;
+    private static readonly int[] _singleCharAtomIds = new int[SingleCharAtomCacheLimit];
 
     static AtomTable()
     {
@@ -55,6 +75,39 @@ public static class AtomTable
         AddPreRegisteredLocked(ConsFunctorId, ".");
         AddPreRegisteredLocked(TrueId, "true");
         AddPreRegisteredLocked(FalseId, "false");
+
+        // Pre-intern single-character atoms 0..127 as permanent atoms
+        // and remember their ids in a flat int array for lock-free
+        // lookup. "[]" / "." are already permanent from above; their
+        // codes get patched in below so the cache stays consistent.
+        for (int i = 0; i < SingleCharAtomCacheLimit; i++)
+        {
+            string s = ((char)i).ToString();
+            if (_byName.TryGetValue(s, out var existingWeak)
+                && existingWeak.TryGetTarget(out var existing))
+            {
+                _singleCharAtomIds[i] = existing.Id;
+                if (!existing.IsPermanent) PromoteToPermanentLocked(existing);
+                continue;
+            }
+            int id = _nextId++;
+            var atom = new Atom(id, s, isPermanent: true);
+            _byName[s] = new WeakReference<Atom>(atom);
+            _permanentById[id] = atom;
+            _singleCharAtomIds[i] = id;
+        }
+    }
+
+    /// <summary>Returns the pre-interned permanent atom id for the
+    /// single-character atom whose only code is <paramref name="code"/>,
+    /// or <c>-1</c> if <paramref name="code"/> is outside the cached
+    /// range. The cache is populated at class-load time so this is a
+    /// pure array index — no lock, no allocation. Used by character-
+    /// I/O builtins (chunk 166).</summary>
+    public static int GetSingleCharAtomId(int code)
+    {
+        if ((uint)code >= (uint)SingleCharAtomCacheLimit) return -1;
+        return _singleCharAtomIds[code];
     }
 
     private static void AddPreRegisteredLocked(int id, string name)
@@ -62,6 +115,22 @@ public static class AtomTable
         var atom = new Atom(id, name, isPermanent: true);
         _byName[name] = new WeakReference<Atom>(atom);
         _permanentById[id] = atom;
+        StorePermanentInArrayLocked(id, atom);
+    }
+
+    private static void StorePermanentInArrayLocked(int id, Atom atom)
+    {
+        Atom?[] arr = _permanentByIdArray;
+        if (id >= arr.Length)
+        {
+            int newSize = arr.Length == 0 ? 256 : arr.Length * 2;
+            while (newSize <= id) newSize *= 2;
+            var newArr = new Atom?[newSize];
+            System.Array.Copy(arr, newArr, arr.Length);
+            arr = newArr;
+        }
+        arr[id] = atom;
+        _permanentByIdArray = arr;
     }
 
     /// <summary>
@@ -84,7 +153,10 @@ public static class AtomTable
             var atom = new Atom(id, name, isPermanent: permanent);
             _byName[name] = new WeakReference<Atom>(atom);
             if (permanent)
+            {
                 _permanentById[id] = atom;
+                StorePermanentInArrayLocked(id, atom);
+            }
             else
                 _transientById[id] = atom;
             return atom;
@@ -94,6 +166,18 @@ public static class AtomTable
     /// <summary>Returns the atom with <paramref name="id"/>, or <c>null</c> if no live atom carries that id.</summary>
     public static Atom? GetById(int id)
     {
+        // Chunk 167: lock-free fast-path for permanent atoms via a
+        // dense array. The dispatcher's hot path (every atom name
+        // resolution during term materialisation, every atom_concat /
+        // char_code result, etc.) lands here, and permanents
+        // dominate the working set — they're keyed off id directly
+        // with no lock + dictionary probe needed.
+        Atom?[] permArr = _permanentByIdArray;
+        if ((uint)id < (uint)permArr.Length)
+        {
+            var p = permArr[id];
+            if (p is not null) return p;
+        }
         lock (_lock)
         {
             if (_permanentById.TryGetValue(id, out var atom))
@@ -220,6 +304,12 @@ public static class AtomTable
             _transientById.Clear();
             _transientWeak.Clear();
             _foreignWeakRefs.Clear();
+            // Chunk 167: clear the array fast-path too. Otherwise a
+            // post-reset Intern that lands on a stale slot (because
+            // _nextId restarts at FirstUserId but the array still
+            // holds prior atoms at those ids) would return the
+            // stale atom from GetById's fast path.
+            _permanentByIdArray = System.Array.Empty<Atom?>();
             _nextId = FirstUserId;
             AddPreRegisteredLocked(EmptyListId, "[]");
             AddPreRegisteredLocked(EmptyBracesId, "{}");

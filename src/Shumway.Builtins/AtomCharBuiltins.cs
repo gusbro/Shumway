@@ -126,8 +126,13 @@ public static class AtomCharBuiltins
             // character set is representation_error(character_code).
             if (code < 0 || code > char.MaxValue)
                 throw new PrologRuntimeException("representation_error", "character_code");
-            int atomId = AtomTable.Intern(
-                ((char)code).ToString(), permanent: false).Id;
+            // Chunk 166: ASCII codes hit the cached permanent atom ids
+            // — no lock, no allocation. Higher BMP code points fall
+            // back to Intern.
+            int cached = AtomTable.GetSingleCharAtomId((int)code);
+            int atomId = cached >= 0
+                ? cached
+                : AtomTable.Intern(((char)code).ToString(), permanent: false).Id;
             return engine.UnifyRegisterWithCell(0, Cell.Atom(atomId));
         }
 

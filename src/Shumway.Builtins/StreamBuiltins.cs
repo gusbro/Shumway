@@ -566,10 +566,13 @@ public static class StreamBuiltins
             // permission_error(input, binary_stream, _).
             throw new PrologRuntimeException("permission_error", "input,binary_stream");
         int c = h.Reader!.Read();
-        Cell value = c < 0
-            ? Cell.Atom(AtomTable.Intern("end_of_file", permanent: true).Id)
-            : Cell.Atom(AtomTable.Intern(((char)c).ToString(), permanent: false).Id);
-        return engine.UnifyRegisterWithCell(regOut, value);
+        // Chunk 166: same single-char-atom cache as PeekCharInto.
+        int atomId = c < 0
+            ? _eofAtomId
+            : AtomTable.GetSingleCharAtomId(c);
+        if (atomId < 0)
+            atomId = AtomTable.Intern(((char)c).ToString(), permanent: false).Id;
+        return engine.UnifyRegisterWithCell(regOut, Cell.Atom(atomId));
     }
 
     private static bool PeekCharInto(Engine engine, StreamHandle h, int regOut)
@@ -579,11 +582,21 @@ public static class StreamBuiltins
         if (h.IsBinary)
             throw new PrologRuntimeException("permission_error", "input,binary_stream");
         int c = h.Reader!.Peek();
-        Cell value = c < 0
-            ? Cell.Atom(AtomTable.Intern("end_of_file", permanent: true).Id)
-            : Cell.Atom(AtomTable.Intern(((char)c).ToString(), permanent: false).Id);
-        return engine.UnifyRegisterWithCell(regOut, value);
+        // Chunk 166: hot path. The cached single-char atom id is a pure
+        // array index — saves the lock + dictionary probe + 1-char
+        // string allocation that AtomTable.Intern would have done. EOF
+        // is a 10-char atom that doesn't fit the cache; intern it the
+        // first time and re-use via the permanent cache.
+        int atomId = c < 0
+            ? _eofAtomId
+            : AtomTable.GetSingleCharAtomId(c);
+        if (atomId < 0)
+            atomId = AtomTable.Intern(((char)c).ToString(), permanent: false).Id;
+        return engine.UnifyRegisterWithCell(regOut, Cell.Atom(atomId));
     }
+
+    private static readonly int _eofAtomId =
+        AtomTable.Intern("end_of_file", permanent: true).Id;
 
     private static bool ReadCodeInto(Engine engine, StreamHandle h, int regOut)
     {
