@@ -48,6 +48,8 @@ internal static class Program
             {
                 // A parse failure, an uncaught throw/1, or a runtime error.
                 Console.WriteLine($"% {ex.GetType().Name}: {ex.Message}");
+                if (Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_TRACE") == "1")
+                    Console.WriteLine(ex.StackTrace);
             }
 
             // halt/0,1 is caught inside the engine's solution iterator; it

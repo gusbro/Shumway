@@ -444,9 +444,7 @@ public sealed class Engine
     {
         if (arity < 0)
             throw new ArgumentOutOfRangeException(nameof(arity));
-        if (arity > _registers.Length)
-            throw new ArgumentOutOfRangeException(nameof(arity),
-                $"Arity {arity} exceeds register capacity {_registers.Length}.");
+        if (arity > _registers.Length) EnsureRegisterCapacity(arity);
 
         int size = CpSize(arity);
         EnsureStackCapacity(size);
@@ -677,7 +675,27 @@ public sealed class Engine
     // ----- Registers -----
 
     public Cell GetRegister(int idx) => _registers[idx];
-    public void SetRegister(int idx, Cell value) => _registers[idx] = value;
+    public void SetRegister(int idx, Cell value)
+    {
+        if (idx >= _registers.Length) EnsureRegisterCapacity(idx + 1);
+        _registers[idx] = value;
+    }
+
+    /// <summary>Ensures the X-register bank can hold at least
+    /// <paramref name="required"/> registers, doubling the backing
+    /// array if needed. The initial register count
+    /// (<see cref="EngineConfig.InitialRegisterCount"/>) covers the
+    /// vast majority of predicates; this growth path catches the tail
+    /// where a single complex clause has more live temporaries than
+    /// the initial bank holds. Existing register values are preserved.</summary>
+    private void EnsureRegisterCapacity(int required)
+    {
+        int newSize = _registers.Length;
+        while (newSize < required) newSize *= 2;
+        var grown = new Cell[newSize];
+        Array.Copy(_registers, grown, _registers.Length);
+        _registers = grown;
+    }
 
     // ----- Unify against registers / permanents -----
     //

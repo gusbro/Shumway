@@ -90,10 +90,15 @@ public class ChoicePointTests
     }
 
     [Fact]
-    public void Push_ArityExceedsRegisters_Throws()
+    public void Push_ArityExceedsRegisters_GrowsRegisterBank()
     {
+        // Behaviour change: the register bank now auto-grows when
+        // an arity beyond the initial capacity comes in (the old
+        // throw cost real-world programs like Blint.pl). The push
+        // succeeds and the bank doubles past the requested arity.
         var engine = new Engine(new EngineConfig { InitialRegisterCount = 2 });
-        Assert.Throws<ArgumentOutOfRangeException>(() => engine.PushChoicePoint(3, 0));
+        engine.PushChoicePoint(3, 0);
+        Assert.True(engine.RegisterCount >= 3);
     }
 
     [Fact]
