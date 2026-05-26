@@ -240,6 +240,15 @@ internal static class Program
         try
         {{
             var engine = new PrologEngine();
+            // Chunk 173: opt-in Tier-1 IL with per-opcode debug markers.
+            // Set SHUMWAY_IL_PROMOTE=N (N>=1) to enable promotion,
+            // optionally SHUMWAY_IL_DEBUG=1 to inject post-opcode
+            // WAM-semantics assertions in the IL.
+            string? promoteStr = System.Environment.GetEnvironmentVariable(""SHUMWAY_IL_PROMOTE"");
+            if (int.TryParse(promoteStr, out int promoteN) && promoteN > 0)
+                engine.IlPromotion.Threshold = promoteN;
+            if (System.Environment.GetEnvironmentVariable(""SHUMWAY_IL_DEBUG"") == ""1"")
+                Shumway.Compiler.Il.IlPredicateCompiler.DebugMode = true;
             // Surface the executable's CLI args to the Prolog program
             // as the `argv` Prolog flag. Match SWI / GNU / SICStus
             // semantics: argv[0] is the program path / name, args

@@ -4,6 +4,27 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
+/// CHUNK 173 UPDATE: with the new SHUMWAY_IL_DEBUG mode (per-
+/// opcode WAM-semantics assertions injected into the IL), the
+/// bug now isolates cleanly. Run as
+/// <c>SHUMWAY_IL_PROMOTE=32 SHUMWAY_IL_DEBUG=1 ./blint &lt;file&gt;</c>
+/// and the stderr trace shows:
+///   1. <c>parse_postfix_op/6</c> pc=0x3C does
+///      <c>put_value_y slot=1 arg=2</c> with Y[1]=Ref(N1) for some
+///      heap home N1 (caller's OpPrec REF).
+///   2. parse_op/5 is called and successfully binds the cell at
+///      that REF (its postcall trace shows X[2]=Ref(N1:Int)).
+///   3. parse_postfix_op/6 pc=0x95 does
+///      <c>put_value_y slot=1 arg=1</c> but Y[1]=Ref(N2) — a
+///      DIFFERENT heap home from N1, and unbound.
+/// The same Y slot in the same predicate's body now contains a
+/// different Cell value across the call boundary, with no
+/// SetY between. Almost certainly a meta-CP push/pop cycle in
+/// the IL (chunk 66) restored _e but did NOT preserve the Y[1]
+/// stack slot at that frame address — either because something
+/// overwrote it via a stale _stackTop, or because the meta-CP
+/// resume re-entered with a different frame at the same _e.
+///
 /// Documented investigation of the Tier-1 IL correctness bug
 /// that surfaces when promotion is enabled against Blint.pl.
 /// Both tests in this class currently PASS — neither reproduces
