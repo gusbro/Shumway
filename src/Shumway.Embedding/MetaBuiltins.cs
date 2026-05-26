@@ -2338,9 +2338,15 @@ public static class MetaBuiltins
             throw new InvalidOperationException(
                 "retract: PrologEngine host required.");
 
-        Term pattern = MaterializeRegister(engine, 0);
-        var patternClause = Shumway.Compiler.Ast.Clause.From(pattern);
-        int patternFid = ExtractHeadFunctorIdFromClause(patternClause);
+        // Chunk 168: read the pattern's head functor id straight from
+        // the heap, without materialising the whole pattern as a
+        // Term AST first. ExtractHeadFunctorIdFromClause walked the
+        // freshly-built AST and re-interned the head's name —
+        // measured ~7% of total Blint.pl time, all of which was
+        // wasted: the heap representation already has the functor id
+        // sitting one slot inside the STR.
+        int patternHeap = engine.MaterializeRegisterForTrace(0);
+        int patternFid = ReadPatternHeadFunctorId(engine, patternHeap);
 
         // Chunk 131e: ISO §7.12.2.h — retracting from a static
         // predicate is permission_error(modify, static_procedure, _),
@@ -2351,11 +2357,11 @@ public static class MetaBuiltins
                 "permission_error", "modify,static_procedure");
 
         var candidates = new List<Clause>(host.DynamicClausesFor(patternFid));
-        RetractTrace.Begin(pattern, patternFid, candidates.Count);
+        RetractTrace.Begin(null!, patternFid, candidates.Count);
         // The call_builtin opcode is 9 bytes; a resumed step continues at
         // the instruction after it.
         int returnPc = engine.P + 9;
-        // Capture the pattern's heap home up-front (the result of
+        // patternHeap is the pattern's heap home (the result of
         // MaterializeRegister on register 0). Pre-fix this was re-read
         // from register 0 inside every RetractStep, but the CP save
         // for register 0 turned out to be unreliable — under heavy
@@ -2368,10 +2374,58 @@ public static class MetaBuiltins
         // heap address that's BELOW the CP's saved heap top — so
         // it survives the backtrack truncation. Capturing it once
         // here side-steps the register-clobber.
-        int patternHeap = engine.MaterializeRegisterForTrace(0);
         return RetractStep(engine, host, patternFid, candidates, 0, returnPc,
             isResume: false, patternHeap);
     }
+
+    /// <summary>Reads the pattern's head functor id straight from the
+    /// heap (chunk 168). Mirrors the ISO callability check in
+    /// <see cref="ExtractHeadFunctorIdFromClause"/> but avoids the
+    /// Term AST allocation — for retract's hot path the heap shape
+    /// is sufficient.</summary>
+    private static int ReadPatternHeadFunctorId(Engine engine, int patternHeap)
+    {
+        int idx = engine.Deref(patternHeap);
+        Cell c = engine.GetHeap(idx);
+        // retract((Head :- Body)) — descend into the Head slot.
+        if (c.Tag == Tag.Str)
+        {
+            int sa = c.AsHeapIndex;
+            Cell f = engine.GetHeap(sa);
+            if (f.Tag == Tag.Functor)
+            {
+                int fid = f.AsFunctorId;
+                var (atomId, arity) = FunctorTable.Lookup(fid);
+                if (arity == 2 && atomId == _ruleFunctorAtomId)
+                {
+                    // Head is at sa + 1
+                    int headIdx = engine.Deref(sa + 1);
+                    Cell hc = engine.GetHeap(headIdx);
+                    return ReadFunctorIdFromCell(engine, hc);
+                }
+                return fid;
+            }
+        }
+        return ReadFunctorIdFromCell(engine, c);
+    }
+
+    private static int ReadFunctorIdFromCell(Engine engine, Cell c)
+    {
+        if (c.Tag == Tag.Atom)
+            return FunctorTable.Intern(c.AsAtomId, 0);
+        if (c.Tag == Tag.Str)
+        {
+            int sa = c.AsHeapIndex;
+            Cell f = engine.GetHeap(sa);
+            if (f.Tag == Tag.Functor) return f.AsFunctorId;
+        }
+        if (c.Tag == Tag.Ref || c.Tag == Tag.AttVar)
+            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+        throw new Shumway.Core.PrologRuntimeException("type_error", "callable");
+    }
+
+    private static readonly int _ruleFunctorAtomId =
+        AtomTable.Intern(":-", permanent: true).Id;
 
     /// <summary>Removes the next clause (from <paramref name="startIndex"/>
     /// onward) that unifies with the retract pattern. When later candidates
