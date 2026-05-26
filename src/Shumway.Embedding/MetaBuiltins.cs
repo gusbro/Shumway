@@ -2351,11 +2351,26 @@ public static class MetaBuiltins
                 "permission_error", "modify,static_procedure");
 
         var candidates = new List<Clause>(host.DynamicClausesFor(patternFid));
+        RetractTrace.Begin(pattern, patternFid, candidates.Count);
         // The call_builtin opcode is 9 bytes; a resumed step continues at
         // the instruction after it.
         int returnPc = engine.P + 9;
+        // Capture the pattern's heap home up-front (the result of
+        // MaterializeRegister on register 0). Pre-fix this was re-read
+        // from register 0 inside every RetractStep, but the CP save
+        // for register 0 turned out to be unreliable — under heavy
+        // dynamic-mutation load (Blint.pl's `retract(next_char_i(X))`
+        // loop linting Blint.pl is the surfacing example) the saved
+        // arg slot in the CP frame gets clobbered between push and
+        // pop, so the resume reads a stale REF and binds the
+        // pattern's var to the entire candidate STR instead of its
+        // arg. The pattern itself, on the other hand, lives at a
+        // heap address that's BELOW the CP's saved heap top — so
+        // it survives the backtrack truncation. Capturing it once
+        // here side-steps the register-clobber.
+        int patternHeap = engine.MaterializeRegisterForTrace(0);
         return RetractStep(engine, host, patternFid, candidates, 0, returnPc,
-            isResume: false);
+            isResume: false, patternHeap);
     }
 
     /// <summary>Removes the next clause (from <paramref name="startIndex"/>
@@ -2365,20 +2380,33 @@ public static class MetaBuiltins
     /// clause on backtracking.</summary>
     private static bool RetractStep(Engine engine, PrologEngine host,
         int patternFid, List<Clause> candidates, int startIndex, int returnPc,
-        bool isResume)
+        bool isResume, int patternHeap)
     {
-        int matchIndex = FindRetractMatch(engine, candidates, startIndex);
-        if (matchIndex < 0) return false;
+        RetractTrace.StepEntry(engine, isResume, startIndex);
+        int matchIndex = FindRetractMatch(engine, candidates, startIndex, patternHeap);
+        if (matchIndex < 0)
+        {
+            RetractTrace.NoMatch(candidates.Count);
+            return false;
+        }
+        RetractTrace.MatchFound(matchIndex, candidates[matchIndex]);
 
         // Push the choice point before the real unification below, so a
         // backtrack's trail unwind peels off exactly this solution's
-        // bindings before the resume retracts the next match.
+        // bindings before the resume retracts the next match. patternHeap
+        // is closed over the resume so it's not re-read from register 0
+        // on backtrack — see the comment in Retract for why register 0
+        // can't be trusted post-resume.
         if (matchIndex + 1 < candidates.Count)
         {
             int next = matchIndex + 1;
+            int capturedPatternHeap = patternHeap;
             Func<Engine, int, bool> resume = (e, _) => RetractStep(
-                e, host, patternFid, candidates, next, returnPc, isResume: true);
+                e, host, patternFid, candidates, next, returnPc,
+                isResume: true, capturedPatternHeap);
+            RetractTrace.PrePush(engine);
             engine.PushBuiltinChoicePoint(resume, arity: 0);
+            RetractTrace.PostPush(engine);
         }
 
         Clause candidate = candidates[matchIndex];
@@ -2387,7 +2415,11 @@ public static class MetaBuiltins
         Cell candidateCell = Materializer.MaterializeAsCell(engine, candidate.Term);
         int candSlot = engine.AllocateHeap(1);
         engine.SetHeap(candSlot, candidateCell);
-        engine.UnifyRegisterWithHeapAt(0, candSlot);   // matched in FindRetractMatch
+
+        RetractTrace.HeapStateBeforeUnify(engine, patternHeap, candSlot, savedHb);
+        bool unifyResult = engine.Unify(patternHeap, candSlot);
+        RetractTrace.HeapStateAfterUnify(engine, patternHeap, candSlot, unifyResult);
+
         host.RemoveDynamicByReference(engine, patternFid, candidate);
         engine.SetHb(savedHb);
         if (isResume) engine.ResumeAtReturnPc(returnPc);
@@ -2400,7 +2432,7 @@ public static class MetaBuiltins
     /// caller re-does it for the chosen candidate after its choice point
     /// is in place.</summary>
     private static int FindRetractMatch(
-        Engine engine, List<Clause> candidates, int startIndex)
+        Engine engine, List<Clause> candidates, int startIndex, int patternHeap)
     {
         for (int i = startIndex; i < candidates.Count; i++)
         {
@@ -2414,7 +2446,7 @@ public static class MetaBuiltins
                 Materializer.MaterializeAsCell(engine, candidates[i].Term);
             int candSlot = engine.AllocateHeap(1);
             engine.SetHeap(candSlot, candidateCell);
-            bool matches = engine.UnifyRegisterWithHeapAt(0, candSlot);
+            bool matches = engine.Unify(patternHeap, candSlot);
 
             engine.UnwindTrails(savedBindingTrail, savedExtraTrail);
             engine.SetHeapTop(savedHeapTop);

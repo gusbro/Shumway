@@ -1012,6 +1012,16 @@ public sealed class Engine
         return slot;
     }
 
+    /// <summary>Public wrapper around <see cref="MaterializeRegister"/>
+    /// for diagnostic instrumentation (e.g. <c>RetractTrace</c>) that
+    /// needs to inspect the same heap address the unify path would
+    /// produce. Allocates a fresh heap cell for non-REF/AttVar
+    /// register values exactly like the private overload —
+    /// idempotent if called twice in a row only when the register
+    /// already names a heap home.</summary>
+    public int MaterializeRegisterForTrace(int regIdx)
+        => MaterializeRegister(regIdx);
+
     private int MaterializePermanent(int permSlot)
     {
         int stackIdx = _e + EnvY1Offset + permSlot;
@@ -1376,7 +1386,9 @@ public sealed class Engine
             throw new InvalidOperationException(
                 "PopIlChoicePointAndRestore: the topmost choice point isn't an IL CP.");
 
+        Diagnostics.PopRestoreTrace.PrePop(this, _b);
         int arity = RestoreCommonFromCurrentCp();
+        Diagnostics.PopRestoreTrace.PostRestore(this, arity);
         _hb = (int)_stack[_b + CpHbOffset(arity)].Data;
         int oldB = _b;
         _b = (int)_stack[_b + CpBOffset(arity)].Data;

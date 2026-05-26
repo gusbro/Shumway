@@ -9,4 +9,25 @@
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
   </PropertyGroup>
 
+  <!--
+    Opt-in diagnostic instrumentation. Each property defines a compile
+    constant that gates a family of [System.Diagnostics.Conditional]-
+    attributed dump methods scattered through the engine. Production
+    builds (no property set) strip every call site at compile time —
+    zero runtime cost.
+
+    Activate from the command line, e.g.:
+      dotnet build -p:ShumwayRetractTrace=true
+      dotnet build -p:ShumwayUnifyTrace=true
+
+    Or via env var (cmd/PowerShell):
+      set ShumwayRetractTrace=true & dotnet build
+  -->
+  <PropertyGroup Condition="'$(ShumwayRetractTrace)' == 'true'">
+    <DefineConstants>$(DefineConstants);SHUMWAY_RETRACT_TRACE</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(ShumwayUnifyTrace)' == 'true'">
+    <DefineConstants>$(DefineConstants);SHUMWAY_UNIFY_TRACE</DefineConstants>
+  </PropertyGroup>
+
 </Project>
