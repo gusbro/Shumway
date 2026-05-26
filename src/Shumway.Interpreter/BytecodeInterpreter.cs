@@ -229,19 +229,26 @@ public sealed class BytecodeInterpreter
 
     private InterpreterResult Dispatch(ProgramView code)
     {
+        // Chunk 169: cache the ProgramView across dispatch iterations.
+        // Refresh only when the engine's program generation has
+        // changed (AppendCode reallocation, per-query rewire of
+        // overlay/split). The per-iteration GetProgramView() call
+        // was measurable on Blint.pl's hot loop — two property
+        // reads + a branch + struct construction every single
+        // bytecode.
+        int cachedGen = -1;
+        bool engineDriven = _engine.CurrentProgram is not null;
         while (true)
         {
-            // ADR-015 chunk C: a dynamic-predicate recompile appends to
-            // the program, replacing the array — pick the current one up.
-            // Chunk 151b: refresh through the two-buffer view so a
-            // mid-query AppendCode reallocation (persistent half)
-            // doesn't strand reads on the stale primary, and the
-            // per-query overlay stays visible at addresses ≥ split.
-            // Tests that drive Run directly without wiring
-            // CurrentProgram (Shumway.Tests.Interpreter) keep the
-            // caller-supplied view by leaving `code` as-is.
-            if (_engine.CurrentProgram is not null)
-                code = _engine.GetProgramView();
+            if (engineDriven)
+            {
+                int gen = _engine.ProgramGeneration;
+                if (gen != cachedGen)
+                {
+                    code = _engine.GetProgramView();
+                    cachedGen = gen;
+                }
+            }
             int pc = _engine.P;
             // Negative PC indicates "returned past the top" — the same
             // semantics as proceed's Cp<0 early-return. Used by

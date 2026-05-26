@@ -1186,11 +1186,35 @@ public sealed class Engine
             var grown = new byte[Math.Max(needed, program.Length * 2)];
             Array.Copy(program, grown, offset);
             CurrentProgram = program = grown;
+            // Chunk 169: bumping the generation tells the interpreter's
+            // dispatch loop to refresh its cached ProgramView. Plain
+            // (in-place) byte writes don't change the array reference,
+            // so they don't need a bump; only a reallocation does.
+            _programGeneration++;
         }
         Array.Copy(chunk, 0, program, offset, chunk.Length);
         _programLength = needed;
         return offset;
     }
+
+    /// <summary>Monotonic counter bumped whenever the bytecode
+    /// program's underlying array reference changes (a reallocation
+    /// inside <see cref="AppendCode"/>, an embedding-layer rewire of
+    /// <see cref="CurrentProgram"/> / <see cref="CurrentQueryOverlay"/>
+    /// / <see cref="CurrentQuerySplit"/>). The bytecode interpreter
+    /// caches its <see cref="ProgramView"/> across dispatch iterations
+    /// and only refreshes when this generation has changed — the
+    /// per-iteration <c>GetProgramView()</c> call was measurable on
+    /// Blint.pl's hot loop (chunk 169).</summary>
+    public int ProgramGeneration => _programGeneration;
+    private int _programGeneration;
+
+    /// <summary>Bump after the embedding layer rewires program /
+    /// overlay / split fields directly (e.g., chunk 151b's per-
+    /// query reset of <see cref="CurrentQueryOverlay"/>). The
+    /// interpreter then picks up the new view on its next dispatch
+    /// iteration.</summary>
+    public void BumpProgramGeneration() => _programGeneration++;
 
     /// <summary>The dynamic-database generation the currently-running
     /// goal saw when it entered (ADR-015 chunk C, bytecode-level

@@ -3825,6 +3825,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         engine.SetInitialProgramLength(_persistentLength);
         engine.CurrentQueryOverlay = queryBytes;
         engine.CurrentQuerySplit = _querySplit;
+        // Chunk 169: the dispatch loop caches its ProgramView and
+        // refreshes only when this generation flips, so the per-
+        // query rewire above has to advertise itself.
+        engine.BumpProgramGeneration();
         // Chunk 155b/c: expose the linked switch tables on the engine
         // as a MUTABLE list. The same list reference is handed to the
         // interpreter; the new-key assertz path swaps entries in place
