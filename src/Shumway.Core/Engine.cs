@@ -554,6 +554,30 @@ public sealed class Engine
         if (_b == barrier)
             return;
 
+        // Chunk 164: drop _ilCpInfo entries for IL CPs that the cut
+        // is committing past, BEFORE _b moves. Each entry's key is
+        // its frame's stack-B position; any key > barrier belongs to
+        // an IL CP at or above the soon-to-be-discarded region. If
+        // we leave them in place, a later failure can still pop
+        // through that stack slot if it gets re-used by a future
+        // push at the same address, and the stale resume delegate
+        // re-fires — for `retract/1` that means enumerating more
+        // matches than the cut committed to (the Blint.pl trigger:
+        // s_get_char's `retract(next_char_i(X)), !` cuts the
+        // retract-enumeration CP, but a sibling failure later
+        // popped through it and ran retract a second time, leaving
+        // the unget buffer in an inconsistent state).
+        if (_ilCpInfo.Count > 0)
+        {
+            List<int>? stale = null;
+            foreach (int key in _ilCpInfo.Keys)
+                if (key > barrier)
+                    (stale ??= new List<int>()).Add(key);
+            if (stale is not null)
+                foreach (int key in stale)
+                    _ilCpInfo.Remove(key);
+        }
+
         _b = barrier;
 
         int parentBindingTop, parentExtraTop, parentHeapTop;

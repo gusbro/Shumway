@@ -35,7 +35,7 @@ namespace Shumway.Tests.Embedding;
 /// </summary>
 public class RetractCutCommitRegression
 {
-    [Fact(Skip = "Engine bug under investigation — see class doc-comment")]
+    [Fact]
     public void Retract_WithCut_AndSiblingFailure_DoesNotEnumerateOnBacktrack()
     {
         var e = new PrologEngine();
@@ -63,7 +63,7 @@ sibling_that_fails :- Y = 1, Y = 2.
         Assert.DoesNotContain("[c]", l);  // [c] would prove the over-retract bug.
     }
 
-    [Fact(Skip = "Engine bug under investigation — see class doc-comment")]
+    [Fact]
     public void Findall_Call_ReturnsList_NotCompound()
     {
         // Companion to the above: in the same scenario, findall over
@@ -89,7 +89,20 @@ sibling_that_fails :- Y = 1, Y = 2.
 ");
         var sol = e.Query("test(Keys).");
         Assert.True(sol.Success);
-        // Whatever the retract semantics, findall MUST return a list.
-        Assert.StartsWith("[", sol["Keys"]!.ToString());
+        // Whatever the retract semantics, findall MUST return a proper
+        // list — a chain of `./2` cells ending in `[]`. Pre-fix it
+        // returned the single atom `q(b)` (the head of the second-
+        // retracted clause leaked through the resume).
+        Shumway.Compiler.Ast.Term cursor = sol["Keys"]!;
+        int count = 0;
+        while (cursor is Shumway.Compiler.Ast.CompoundTerm c
+               && c.Functor == "." && c.Args.Length == 2)
+        {
+            count++;
+            cursor = c.Args[1];
+        }
+        Assert.IsType<Shumway.Compiler.Ast.AtomTerm>(cursor);
+        Assert.Equal("[]", ((Shumway.Compiler.Ast.AtomTerm)cursor).Name);
+        Assert.Equal(2, count);
     }
 }
