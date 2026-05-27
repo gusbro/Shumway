@@ -116,6 +116,12 @@ public class IntrospectionTests
     public void Abolish_RemovesAllDynamicClauses()
     {
         var engine = new PrologEngine();
+        // Phase 19+ — implicit_dynamic=false so this test exercises
+        // the strict path (abolish makes the predicate fully
+        // undeclared; the next assertz raises permission_error).
+        // Under the default lenient path the next assertz would
+        // simply re-promote the predicate.
+        engine.Query("set_prolog_flag(implicit_dynamic, false).");
         engine.ConsultString(":- dynamic counter/1.\n");
         engine.Query("assertz(counter(1)).");
         engine.Query("assertz(counter(2)).");

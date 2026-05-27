@@ -98,11 +98,15 @@ public class DynamicAndCallTests
     [Fact]
     public void Assertz_NonDynamicPredicate_Throws()
     {
-        // Without :- dynamic, assertz refuses to add a clause.
-        // Phase-9 chunk 131e: this now raises a catchable ISO
-        // permission_error(modify, static_procedure, _) rather than the
-        // uncatchable InvalidOperationException earlier phases used.
+        // Phase 19+ — the default Shumway behaviour is now
+        // implicit_dynamic=true (matches SWI/SICStus/GNU): an
+        // undeclared predicate gets auto-promoted on its first
+        // assertz. To exercise the ISO-strict path that raises
+        // permission_error this test opts back in explicitly.
+        // Phase-9 chunk 131e: still a catchable ISO
+        // permission_error(modify, static_procedure, _).
         var engine = new PrologEngine();
+        engine.Query("set_prolog_flag(implicit_dynamic, false).");
         var ex = Assert.Throws<Shumway.Core.PrologRuntimeException>(
             () => engine.Query("assertz(p(1))."));
         Assert.Equal("permission_error", ex.Kind);

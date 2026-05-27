@@ -682,6 +682,14 @@ public static class MetaBuiltins
             host.Flags.OccursCheck = valueName;
             return true;
         }
+        if (flagName == "implicit_dynamic")
+        {
+            if (valueName != "true" && valueName != "false")
+                throw new ShumwayPrologException(
+                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+            host.Flags.ImplicitDynamic = valueName == "true";
+            return true;
+        }
 
         throw new ShumwayPrologException(
             IsoError.DomainError("prolog_flag", new AtomTerm(flagName)));
@@ -747,6 +755,9 @@ public static class MetaBuiltins
 
             case "occurs_check":
                 return UnifyAtom(engine, 1, host.Flags.OccursCheck);
+
+            case "implicit_dynamic":
+                return UnifyAtom(engine, 1, host.Flags.ImplicitDynamic ? "true" : "false");
 
             case "max_arity":
                 // ISO requires this be either an integer or

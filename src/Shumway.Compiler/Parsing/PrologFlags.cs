@@ -74,4 +74,26 @@ public sealed class PrologFlags
     /// the occurs check; <c>true</c> would enable it, <c>error</c>
     /// would unify-with-error. Informational for now.</summary>
     public string OccursCheck { get; set; } = "false";
+
+    /// <summary>Shumway-specific flag <c>implicit_dynamic</c>. When
+    /// <c>true</c> (the default), <c>assertz/1</c> and <c>asserta/1</c>
+    /// on a predicate that has no clauses and no <c>:- dynamic</c>
+    /// declaration auto-promote it to a dynamic predicate, matching
+    /// SWI-Prolog / SICStus / GNU Prolog behaviour (none of those
+    /// engines require <c>:- dynamic foo/N.</c> upfront — the first
+    /// assert on an undefined predicate creates it as dynamic).
+    /// When <c>false</c>, Shumway preserves the stricter ISO
+    /// interpretation: an undeclared predicate raises
+    /// <c>permission_error(modify, static_procedure, _)</c>.
+    ///
+    /// <para>Auto-promotion never fires when the predicate already
+    /// has static clauses (consulted from source) or is a registered
+    /// builtin — both raise <c>permission_error</c> regardless of the
+    /// flag's value, matching every Prolog system's behaviour.</para>
+    ///
+    /// <para>The flag is settable via
+    /// <c>set_prolog_flag(implicit_dynamic, true|false)</c>; the
+    /// default (<c>true</c>) is chosen to maximise compatibility with
+    /// programs written for other Prolog implementations.</para></summary>
+    public bool ImplicitDynamic { get; set; } = true;
 }

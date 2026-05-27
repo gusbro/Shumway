@@ -60,7 +60,7 @@ These are hard constraints. If a change requires breaking one of them, **stop an
 - **Each Prolog source file is one module.**
 - **Predicates are local by default.** `:- public foo/N` exports them to a flat global namespace.
 - **Static predicates are immutable.** Once compiled, they cannot be modified. `assertz`/`retract` on a static predicate is an error.
-- **Dynamic predicates are declared explicitly** with `:- dynamic foo/N`. They can be modified at runtime.
+- **Dynamic predicates may be declared explicitly** with `:- dynamic foo/N`, or — when the `implicit_dynamic` prolog_flag is `true` (the default since Phase 19+) — auto-promoted on first `assertz`/`asserta` of an undefined predicate. Matches SWI / SICStus / GNU default behaviour. Setting `:- set_prolog_flag(implicit_dynamic, false).` reverts to ISO-strict mode where assertz on an undeclared predicate raises `permission_error(modify, static_procedure, _)`. Auto-promotion never applies to predicates with existing static clauses or to registered builtins.
 - **Public predicates are globally unique.** Two modules cannot both declare `foo/N` as public.
 
 ### Bytecode

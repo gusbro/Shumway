@@ -1857,23 +1857,164 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
     private void EnsureDynamic(int fid)
     {
-        if (!_dynamicFunctors.Contains(fid))
+        if (_dynamicFunctors.Contains(fid)) return;
+
+        // Phase 19+ — implicit_dynamic flag (default true) auto-
+        // promotes an undefined predicate on its first assertz/asserta.
+        // Matches SWI-Prolog / SICStus / GNU Prolog: in all three, the
+        // first assert on a predicate without static clauses creates
+        // it as dynamic with no permission_error.
+        //
+        // Auto-promotion is gated on "the predicate has nowhere else
+        // to live" — a registered builtin or a predicate with static
+        // clauses still raises permission_error regardless of the
+        // flag, matching ISO §7.12.2.h.
+        if (_flags.ImplicitDynamic
+            && !Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _)
+            && !HasStaticClauses(fid))
         {
-            // Chunk 131e: ISO §7.12.2.h — modifying a static procedure
-            // is permission_error(modify, static_procedure, Name/Arity).
-            // The Detail string carries the indicator for diagnostic
-            // continuity; the translated form lands in the second slot
-            // of the permission_error compound through the standard
-            // TranslateRuntimeError path (the third "Obj" slot stays as
-            // an anonymous variable for now — a richer Term-valued
-            // exception payload is queued for later in chunk 131).
-            // Detail encodes Operation,ObjectType — TranslateRuntimeError
-            // splits and builds the three-arg permission_error compound
-            // (the third Obj slot stays as an anonymous variable, since
-            // PrologRuntimeException can't carry a Term yet).
-            throw new Shumway.Core.PrologRuntimeException(
-                "permission_error", "modify,static_procedure");
+            _dynamicFunctors.Add(fid);
+            if (!_dynamicClauses.ContainsKey(fid))
+                _dynamicClauses[fid] = new List<Clause>();
+            return;
         }
+
+        // Chunk 131e: ISO §7.12.2.h — modifying a static procedure
+        // is permission_error(modify, static_procedure, Name/Arity).
+        // The Detail string carries the indicator for diagnostic
+        // continuity; the translated form lands in the second slot
+        // of the permission_error compound through the standard
+        // TranslateRuntimeError path (the third "Obj" slot stays as
+        // an anonymous variable for now — a richer Term-valued
+        // exception payload is queued for later in chunk 131).
+        // Detail encodes Operation,ObjectType — TranslateRuntimeError
+        // splits and builds the three-arg permission_error compound
+        // (the third Obj slot stays as an anonymous variable, since
+        // PrologRuntimeException can't carry a Term yet).
+        throw new Shumway.Core.PrologRuntimeException(
+            "permission_error", "modify,static_procedure");
+    }
+
+    /// <summary>Applies a <c>:- set_prolog_flag(Flag, Value)</c>
+    /// directive at consult time so subsequent clauses in the same
+    /// consult see the new value. The parser already pre-processes
+    /// the parser-visible flags (e.g. <c>double_quotes</c>); this
+    /// handles the rest of the recognised set. Unknown flags are
+    /// silently ignored at consult time — the runtime builtin
+    /// surfaces the diagnostic.</summary>
+    private void ApplyConsultSetPrologFlag(string flagName, string valueName)
+    {
+        switch (flagName)
+        {
+            case "implicit_dynamic":
+                if (valueName == "true") _flags.ImplicitDynamic = true;
+                else if (valueName == "false") _flags.ImplicitDynamic = false;
+                break;
+            case "unknown":
+                if (valueName == "error" || valueName == "fail" || valueName == "warning")
+                    _flags.Unknown = valueName;
+                break;
+            case "occurs_check":
+                if (valueName == "false" || valueName == "true" || valueName == "error")
+                    _flags.OccursCheck = valueName;
+                break;
+            // double_quotes is handled by ClauseReader's directive
+            // pre-pass (it has to take effect during lexing of the
+            // subsequent tokens, before consult-time directive
+            // processing even sees it).
+        }
+    }
+
+    /// <summary>Phase 19+ — walks every clause's body looking for
+    /// <c>assertz(Head)</c>, <c>asserta(Head)</c>, or <c>assert(Head)</c>
+    /// with a literal-callable Head (an atom or a compound), and
+    /// auto-declares the corresponding functor as dynamic when it has
+    /// no static clauses and isn't already a registered builtin. This
+    /// runs at consult time so the next query setup links the
+    /// predicate with a real dynamic trampoline; a first-time assertz
+    /// at runtime then has somewhere to put the new clause and
+    /// subsequent calls dispatch to it.</summary>
+    private void CollectImplicitDynamics(IEnumerable<Clause> clauses, HashSet<int> publicsInSameConsult)
+    {
+        var seen = new HashSet<int>();
+        foreach (var c in clauses)
+        {
+            Term body = c.Kind == ClauseKind.Rule
+                ? ((CompoundTerm)c.Term).Args[1]
+                : null!;
+            if (body is null) continue;
+            ScanForAssertHeads(body, seen);
+        }
+        foreach (int fid in seen)
+        {
+            if (_dynamicFunctors.Contains(fid)) continue;
+            if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _)) continue;
+            if (HasStaticClauses(fid)) continue;
+            // Also skip if the same consult is about to define this
+            // functor as a public (static) predicate — caught by
+            // looking at publics + the about-to-be-added clauses.
+            if (publicsInSameConsult.Contains(fid)) continue;
+            if (ClausesDefineFunctor(clauses, fid)) continue;
+            _dynamicFunctors.Add(fid);
+            if (!_dynamicClauses.ContainsKey(fid))
+                _dynamicClauses[fid] = new List<Clause>();
+        }
+    }
+
+    private static void ScanForAssertHeads(Term goal, HashSet<int> sink)
+    {
+        if (goal is CompoundTerm c)
+        {
+            if ((c.Functor == "assertz" || c.Functor == "asserta" || c.Functor == "assert")
+                && c.Args.Length == 1)
+            {
+                Term arg = c.Args[0];
+                // The clause form (Head :- Body) — peel to Head.
+                if (arg is CompoundTerm cl && cl.Functor == ":-" && cl.Args.Length == 2)
+                    arg = cl.Args[0];
+                if (arg is AtomTerm a)
+                    sink.Add(FunctorTable.Intern(
+                        AtomTable.Intern(a.Name, permanent: true).Id, 0));
+                else if (arg is CompoundTerm cc)
+                    sink.Add(FunctorTable.Intern(
+                        AtomTable.Intern(cc.Functor, permanent: true).Id, cc.Args.Length));
+                return;
+            }
+            // Recurse into control constructs and any compound — a
+            // nested `( ... ; assertz(p) ; ... )` should still register p.
+            foreach (var sub in c.Args) ScanForAssertHeads(sub, sink);
+        }
+    }
+
+    private static bool ClausesDefineFunctor(IEnumerable<Clause> clauses, int fid)
+    {
+        foreach (var c in clauses)
+        {
+            if (TryExtractHead(c, out string n, out int a))
+            {
+                int cfid = FunctorTable.Intern(
+                    AtomTable.Intern(n, permanent: true).Id, a);
+                if (cfid == fid) return true;
+            }
+        }
+        return false;
+    }
+
+    private bool HasStaticClauses(int fid)
+    {
+        foreach (var manifest in _modules.Values)
+        {
+            foreach (var c in manifest.Clauses)
+            {
+                if (TryExtractHead(c, out string n, out int a))
+                {
+                    int cfid = FunctorTable.Intern(
+                        AtomTable.Intern(n, permanent: true).Id, a);
+                    if (cfid == fid) return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static int ExtractHeadFunctorId(Clause clause)
@@ -2948,6 +3089,21 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     tabledFunctors.Add(FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a));
             }
+            else if (body is CompoundTerm spf
+                     && spf.Functor == "set_prolog_flag"
+                     && spf.Args.Length == 2
+                     && spf.Args[0] is AtomTerm spfFlag
+                     && spf.Args[1] is AtomTerm spfValue)
+            {
+                // Phase 19+ — flags that the parser doesn't already
+                // pre-process (double_quotes is the only one) get
+                // applied at consult time. Mirrors the runtime
+                // set_prolog_flag/2 builtin so the directive form
+                // takes effect before subsequent clauses are
+                // processed (e.g. implicit_dynamic toggles the
+                // CollectImplicitDynamics pre-scan).
+                ApplyConsultSetPrologFlag(spfFlag.Name, spfValue.Name);
+            }
             else if (Shumway.Compiler.Modes.ModeDirectiveParser.TryParse(
                 body, out var modeDecl, out string? modeError))
             {
@@ -3006,6 +3162,24 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // routing so it only sees the static clauses.
         if (tabledFunctors is not null && tabledFunctors.Count > 0)
             clauses = TransformTabledPredicates(clauses, tabledFunctors, publics);
+
+        // Phase 19+ — implicit_dynamic pre-scan. When the flag is on
+        // (the default), walk every clause body for a literal
+        // `assertz(Head)` / `asserta(Head)` / `assert(Head)` call and
+        // auto-add Head's functor to _dynamicFunctors if it has no
+        // static clauses and no other declaration. This mirrors the
+        // SWI / SICStus / GNU behaviour where assertz on an undefined
+        // predicate creates it as dynamic — but at *consult* time, not
+        // at the first runtime assertz, so the linker sees the
+        // predicate as dynamic and emits a real trampoline. The
+        // runtime EnsureDynamic still gates the case where the
+        // assertz target is computed at runtime (the head is a
+        // variable bound after consult); for those, the dispatcher
+        // would still raise undefined_procedure on the matching
+        // call, but the assertz itself no longer raises permission
+        // _error.
+        if (_flags.ImplicitDynamic)
+            CollectImplicitDynamics(clauses, publics);
 
         if (moduleDirectiveSeen)
         {
