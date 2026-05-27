@@ -779,7 +779,8 @@ public sealed class IlPredicateCompiler
         Sigil.Label[]? resumeLabels = null,
         SelfDelegateEmitter? emitSelfDelegate = null,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null,
-        bool suppressProceedReturn = false)
+        bool suppressProceedReturn = false,
+        int cursorBase = 1)
     {
         int pc = start;
         while (pc < end)
@@ -1351,6 +1352,13 @@ public sealed class IlPredicateCompiler
                         + "resumeLabels for forward-resume cursor allocation.");
 
                 int siteIdx = callSiteIndexCounter();
+                // Phase 16: the cursor encoded in the resume marker is
+                // cursorBase-relative — single-clause-meta-CP uses
+                // cursorBase=1 (cursors 1..M), TryMeElseChain uses
+                // cursorBase=N (cursors N..N+M-1, leaving 0..N-1 for
+                // clause entries). The label array index stays 0-based
+                // either way.
+                int resumeCursor = cursorBase + siteIdx - 1;
 
                 // engine.SetB0(engine.B);  — cut barrier for the callee
                 emit.LoadArgument(0);
@@ -1371,9 +1379,9 @@ public sealed class IlPredicateCompiler
                 }
 #endif
 
-                // engine.SetCp(EncodeResumeMarker(ownerFid, siteIdx));
+                // engine.SetCp(EncodeResumeMarker(ownerFid, resumeCursor));
                 emit.LoadArgument(0);
-                emit.LoadConstant(Shumway.Core.Engine.EncodeResumeMarker(_emitOwnerFid, siteIdx));
+                emit.LoadConstant(Shumway.Core.Engine.EncodeResumeMarker(_emitOwnerFid, resumeCursor));
                 emit.Call(EngineSetCpMethod);
 
                 // engine.SetPc(IlExecuteHelper.Resolve(engine, siteFunctorId));
@@ -1597,12 +1605,15 @@ public sealed class IlPredicateCompiler
         if (op == Opcode.Execute) return true;
         if (op == Opcode.Call)
         {
-            // Same leaf-callee restriction as the single-clause path.
+            // Phase 16 threading makes non-leaf callees work the same
+            // way they do for the single-clause-meta-CP path — the IL
+            // emit sets Cp = resume marker and tail-calls; backtracking
+            // through the callee's CPs naturally re-enters us at the
+            // marker. No need to require IsLeafPredicate any more.
             if (calleeMap is null) return false;
             int siteFid = FindCallSiteFunctorId(predicate.CallSites, pc);
             if (siteFid < 0) return false;
-            if (!calleeMap.TryGetValue(siteFid, out var callee)) return false;
-            return IsLeafPredicate(callee);
+            return calleeMap.ContainsKey(siteFid);
         }
         return IsSupportedOpcode(op);
     }
@@ -1675,7 +1686,35 @@ public sealed class IlPredicateCompiler
         var clauses = info.Clauses;
         var failLabel = emit.DefineLabel("fail");
 
+        // Phase 16 chunk 188: multi-clause TryMeElseChain threads
+        // non-leaf Call sites just like the chunk-182 single-clause
+        // path. The cursor space is partitioned:
+        //   cursor 0..N-1   → clause entries
+        //   cursor N..N+M-1 → forward-resume points for the M
+        //                     non-tail Call sites across all clauses
+        // EmitClauseBody receives cursorBase=N so each Call site's
+        // resume marker encodes a unique global cursor and the
+        // matching label is in resumeLabels[siteIdx-1].
+        int N = clauses.Count;
+        int totalCallSites = CountNonTailCallOpcodes(predicate.Bytecode);
+        var resumeLabels = new Sigil.Label[totalCallSites];
+        for (int j = 0; j < totalCallSites; j++)
+            resumeLabels[j] = emit.DefineLabel($"call_resume_{j + 1}");
+
         _emitOwnerFid = predicate.FunctorId;
+
+        // Top-level Call-site cursor dispatch — runs before the
+        // clause-entry chain so an incoming cursor=N+j short-circuits
+        // straight to its resume point inside whichever clause the
+        // Call site lives in.
+        for (int j = 0; j < totalCallSites; j++)
+        {
+            emit.LoadArgument(1);
+            emit.LoadConstant(N + j);
+            emit.BranchIfEqual(resumeLabels[j]);
+        }
+
+        int siteCounter = 0;
         for (int i = 0; i < clauses.Count; i++)
         {
             var nextLabel = emit.DefineLabel($"after_clause_{i}");
@@ -1694,17 +1733,22 @@ public sealed class IlPredicateCompiler
                 emit.Call(EnginePushIlCpMethod);
             }
 
-            // Emit the clause body. EmitClauseBody walks the slice and
-            // returns true on Proceed / sets IlTailCallPending on Execute.
+            // Emit the clause body. The shared siteCounter assigns a
+            // unique 1-based ordinal per non-tail Call site; the
+            // resume cursor in the emitted IL is cursorBase + ordinal
+            // - 1 = N + (ordinal - 1).
             EmitClauseBody(emit, predicate.Bytecode, clauses[i].Start, clauses[i].End,
                 failLabel, predicate.CallSites,
+                callSiteIndexCounter: () => ++siteCounter,
+                resumeLabels: resumeLabels,
                 emitSelfDelegate: emitSelf,
-                calleeMap: calleeMap);
+                calleeMap: calleeMap,
+                cursorBase: N);
 
             emit.MarkLabel(nextLabel);
         }
 
-        // cursor out of [0..N-1] → fail.
+        // cursor out of [0..N-1] (and not a Call-site resume above) → fail.
         emit.Branch(failLabel);
         emit.MarkLabel(failLabel);
         emit.LoadConstant(false);
