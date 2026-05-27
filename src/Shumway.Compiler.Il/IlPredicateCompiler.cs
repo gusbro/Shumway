@@ -253,7 +253,8 @@ public sealed class IlPredicateCompiler
         ArgumentNullException.ThrowIfNull(predicate);
         if (predicate.ClauseCount == 1) return CanCompileSingleClause(predicate, calleeMap);
         if (TryDescribeIndexedAtomPredicate(predicate, out _)) return true;
-        return TryDescribeTryMeElseChain(predicate, calleeMap, out _);
+        if (TryDescribeTryMeElseChain(predicate, calleeMap, out _)) return true;
+        return TryDescribeSwitchedChain(predicate, calleeMap, out _);
     }
 
     /// <summary>Emits a <see cref="PredicateDelegate"/> for the predicate.
@@ -275,6 +276,8 @@ public sealed class IlPredicateCompiler
             return CompileIndexedAtomPredicate(predicate, info!);
         if (TryDescribeTryMeElseChain(predicate, calleeMap, out var chain))
             return CompileTryMeElseChain(predicate, chain!, calleeMap);
+        if (TryDescribeSwitchedChain(predicate, calleeMap, out var switched))
+            return CompileSwitchedChain(predicate, switched!, calleeMap);
         throw new NotSupportedException(
             $"Multi-clause predicate (fid={predicate.FunctorId}, clauses={predicate.ClauseCount}) "
             + "is outside the IL subset.");
@@ -1635,6 +1638,123 @@ public sealed class IlPredicateCompiler
             return clauseStart - 9;
         return clauseStart;
     }
+
+    /// <summary>Chunk 189: recognises the chunk-67 first/multi-arg
+    /// indexed shape — bytecode opens with <c>switch_on_term</c>
+    /// (level 0) and may chain into one or more <c>switch_on_arg</c>
+    /// (levels 1+) before a final <c>try / retry* / trust</c> chain
+    /// over every clause in source order. The shape is what the WAM
+    /// compiler emits for any static multi-clause predicate whose
+    /// first (or first-few) arguments can be discriminated against
+    /// concrete atoms / ints / structures.
+    ///
+    /// <para>The IL emit (<see cref="CompileSwitchedChain"/>) does
+    /// NOT reproduce the switch dispatch — it just walks the
+    /// extracted clause bodies linearly, exactly like
+    /// <see cref="CompileTryMeElseChain"/>. The switch tables in the
+    /// bytecode are an optimisation that pre-filters by tag/key; the
+    /// linear scan is correct because each clause body's own
+    /// head-matching opcodes filter the same way (just without the
+    /// pre-dispatch). The IL gives up the O(1) switch dispatch but
+    /// gains everything else IL gives (native code for the body
+    /// opcodes, no per-opcode interpreter overhead).</para></summary>
+    private static bool TryDescribeSwitchedChain(
+        CompiledPredicate predicate,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
+        out TryMeElseChainInfo? info)
+    {
+        info = null;
+        byte[] code = predicate.Bytecode;
+        if (code.Length == 0) return false;
+        if ((Opcode)code[0] != Opcode.SwitchOnTerm) return false;
+
+        // Skip past the switch_on_term + switch_on_arg cascade.
+        int pc = 0;
+        while (pc < code.Length)
+        {
+            var op = (Opcode)code[pc];
+            if (op == Opcode.SwitchOnTerm) { pc += 17; continue; }
+            if (op == Opcode.SwitchOnArg) { pc += 21; continue; }
+            break;
+        }
+        if (pc >= code.Length) return false;
+        if ((Opcode)code[pc] != Opcode.Try) return false;
+
+        // Walk the final chain: try (9) + retry* (5 each) + trust (5).
+        // The address operands point at clause body Meta opcodes in
+        // source order — the WAM lays out clauseBodyPos in source
+        // order and the chain emit indexes into it the same way.
+        var addresses = new List<int>(predicate.ClauseCount);
+        addresses.Add(BytecodeIO.ReadInt32(code, pc + 1));
+        pc += 9;
+        bool sawTrust = false;
+        while (pc < code.Length)
+        {
+            var op = (Opcode)code[pc];
+            if (op == Opcode.Retry)
+            {
+                addresses.Add(BytecodeIO.ReadInt32(code, pc + 1));
+                pc += 5;
+                continue;
+            }
+            if (op == Opcode.Trust)
+            {
+                addresses.Add(BytecodeIO.ReadInt32(code, pc + 1));
+                pc += 5;
+                sawTrust = true;
+                break;
+            }
+            // Anything else after the chain (sub-dispatches, bucket
+            // chains) — we're done walking the chain, just verify
+            // we already collected N entries.
+            break;
+        }
+        if (!sawTrust) return false;
+        if (addresses.Count != predicate.ClauseCount) return false;
+
+        // Sort addresses to get source order (chain emit is already
+        // in source order, but defending against future changes).
+        var sorted = addresses.ToList();
+        sorted.Sort();
+        var ranges = new List<(int, int)>(sorted.Count);
+        for (int i = 0; i < sorted.Count; i++)
+        {
+            int start = sorted[i];
+            int end = i + 1 < sorted.Count ? sorted[i + 1] : code.Length;
+            ranges.Add((start, end));
+        }
+
+        // Verify each clause body's opcodes are in the IL subset.
+        // The bodies open with a Meta dbg-info marker (chunk 55) which
+        // EmitClauseBody handles as a no-op.
+        foreach (var (s, e) in ranges)
+        {
+            int q = s;
+            while (q < e)
+            {
+                var op = (Opcode)code[q];
+                var opInfo = OpcodeTable.Get((byte)op);
+                if (!opInfo.IsDefined || opInfo.Size == 0) return false;
+                if (!IsClauseBodyOpcode(op, predicate, q, calleeMap)) return false;
+                q += opInfo.Size;
+            }
+        }
+
+        info = new TryMeElseChainInfo { Clauses = ranges };
+        return true;
+    }
+
+    /// <summary>Chunk 189: emits IL for a switched-chain predicate by
+    /// reusing the chunk-188 <see cref="CompileTryMeElseChain"/>
+    /// path. The two recognisers produce the same
+    /// <see cref="TryMeElseChainInfo"/> shape (per-clause body
+    /// ranges); the emit doesn't need to know which dispatch path
+    /// the WAM emitted — it always walks clauses linearly with IL
+    /// CPs at boundaries.</summary>
+    private PredicateDelegate CompileSwitchedChain(
+        CompiledPredicate predicate, TryMeElseChainInfo info,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
+        => CompileTryMeElseChain(predicate, info, calleeMap);
 
     /// <summary>Emits the IL for a non-indexed multi-clause predicate
     /// (try_me_else chain). cursor 0 runs clause 1 with an IL CP push
