@@ -64,6 +64,28 @@ public sealed class LinkConfig
     /// is queued for a future chunk.</para></summary>
     public bool StripSource { get; init; }
 
+    /// <summary>Chunk 192: when <c>true</c>, the linker compiles
+    /// every IL-eligible predicate to .NET IL via
+    /// <see cref="Shumway.Compiler.Il.PersistedIlBuilder"/> and
+    /// embeds the resulting assembly bytes in each bundle entry's
+    /// <see cref="BundleEntry.CompiledIl"/> slot. At load time the
+    /// engine binds the persisted IL directly as
+    /// <c>PredicateDelegate</c>s, so no Sigil-emit work happens at
+    /// runtime — the IL compile cost is paid once, ahead of time,
+    /// and amortised over every query that hits a promoted
+    /// predicate.
+    ///
+    /// <para>Requires each <see cref="ShmoObject"/> to carry its
+    /// source (since PersistedIlBuilder routes through
+    /// <c>ConsultString</c> + a warm-up query to materialise the
+    /// CompiledPredicates). Combining
+    /// <see cref="IncludeCompiledIl"/> with
+    /// <see cref="StripSource"/> means "compile the IL from source,
+    /// then strip the source from the persisted bundle" — the
+    /// resulting .shum carries IL bytes but no recoverable Prolog
+    /// source.</para></summary>
+    public bool IncludeCompiledIl { get; init; }
+
     /// <summary>When non-null, the linker writes info diagnostics
     /// describing its progress (modules visited, predicates reached,
     /// etc.) to this writer. Useful for CLI <c>--verbose</c> mode.</summary>
@@ -410,14 +432,34 @@ public static class ShmoLinker
             // stripped bundles now dispatch correctly via chunk 178's
             // source-less LoadBundle path.
             bundle = new Bundle(entries);
-            // Skip the bundle writer's own validate-by-consult pass: the
-            // linker has already done the heavy lifting (call-graph
-            // checks, missing-predicate reporting), and a sub-engine
-            // ConsultString on a multi-module link can fail for reasons
-            // (operator ordering, prelude assumptions) that the linker
-            // shouldn't second-guess. The bundle's bytes serialise
-            // directly.
-            bytes = SerialiseBundle(bundle);
+            // Chunk 192: --with-compiled-il routes the bundle through
+            // BundleWriter.ToBytes, which (under includeCompiledIl=true)
+            // runs PersistedIlBuilder per entry to materialise IL for
+            // every eligible predicate. The resulting bytes carry the
+            // IL .dll alongside the bytecode blob. Default path is the
+            // linker's direct SerialiseBundle (no IL emit at link time).
+            // BundleWriter still validates via a sub-engine ConsultString;
+            // the linker has already done the heavy lifting so a failure
+            // here is a real bug, not an operator-ordering quirk.
+            if (config.IncludeCompiledIl)
+            {
+                bytes = BundleWriter.ToBytes(bundle,
+                    includeCompiledBytecode: true,
+                    includeCompiledIl: true);
+                // Re-read the bytes so the in-memory Bundle reflects
+                // the persisted-IL slots the writer populated.
+                bundle = BundleReader.FromBytes(bytes);
+            }
+            else
+            {
+                // Skip the bundle writer's own validate-by-consult pass:
+                // the linker has already done the heavy lifting (call-
+                // graph checks, missing-predicate reporting), and a
+                // sub-engine ConsultString on a multi-module link can
+                // fail for reasons (operator ordering, prelude
+                // assumptions) that the linker shouldn't second-guess.
+                bytes = SerialiseBundle(bundle);
+            }
         }
 
         var reachedList = reached.Select(r => r.Item2).Distinct().ToList();

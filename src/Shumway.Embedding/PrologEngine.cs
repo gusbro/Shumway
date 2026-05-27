@@ -2027,32 +2027,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // bytecode byte-identical to what SetupQueryFromTerm would
         // produce, so the warmed IL delegates' call sites now
         // resolve correctly).
-        foreach (var entry in bundle.Entries)
-        {
-            if (entry.CompiledBytecode is null) continue;
-            // Source-less entries already decoded above.
-            if (_precompiledModules.ContainsKey(entry.ModuleName)
-                && string.IsNullOrEmpty(entry.Source)) continue;
-            var module = CompiledModuleCodec.Decode(entry.CompiledBytecode);
-            _precompiledModules[entry.ModuleName] = module;
-            foreach (var pred in module.Predicates)
-                IlPromotion.Warm(pred.FunctorId, pred);
-        }
-        // A bundle's predicates join the static program — drop the
-        // ADR-015 cached static linked region so the next query rebuilds it.
-        _staticLink = null;
-        InvalidatePersistent();
-
-        // Chunk 71: when an entry carries a persisted-IL .dll blob,
-        // load the assembly in-memory and bind each pre-emitted method
-        // as a PredicateDelegate. This skips the Sigil emit step that
-        // IlPromotion.Warm would otherwise run and surfaces the
-        // already-JIT-able IL directly to the engine.
-        //
-        // Self-referential IL CPs (multi-clause / meta-CP shapes)
-        // dispatch through a static PredicateDelegate[] field on the
-        // emitted type; we populate it here before any predicate runs
-        // so the first IL CP push finds its target.
+        // Chunk 192: load persisted IL FIRST (before the Sigil warm
+        // path below) so RegisterBoundDelegate's first-wins
+        // semantics actually let the pre-compiled IL take effect.
+        // Pre-chunk-192 the order was reversed and IlPromotion.Warm
+        // had already invoked Sigil for every promotable predicate
+        // by the time the persisted bind ran — the persisted IL was
+        // technically loaded but never used.
         foreach (var entry in bundle.Entries)
         {
             // A persisted-IL blob is JIT-able IL — loading and running it
@@ -2067,10 +2048,6 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
             // Method-name layout from PersistedIlBuilder:
             //   P_{slot}_{functorId}_{sanitisedName}
-            // The slot lookup goes into the static delegates array,
-            // the functorId binds the engine's IL promotion entry.
-            // Reflection ordering isn't guaranteed; sort by slot so
-            // the array population is deterministic.
             var bound = new List<(int Slot, int FunctorId,
                 Shumway.Compiler.Il.PredicateDelegate Delegate)>();
             foreach (var method in type.GetMethods(
@@ -2089,19 +2066,44 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             }
 
             // Populate the static delegates array (chunk 71 multi-clause
-            // self-reference). The array is sized to fit max(slot)+1
-            // and each entry lands at its parsed slot.
-            var delegatesField = type.GetField(
+            // self-reference).
+            var dF = type.GetField(
                 Shumway.Compiler.Il.PersistedIlBuilder.DelegatesFieldName,
                 System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-            if (delegatesField is not null && bound.Count > 0)
+            if (dF is not null && bound.Count > 0)
             {
                 int size = bound.Max(b => b.Slot) + 1;
                 var arr = new Shumway.Compiler.Il.PredicateDelegate[size];
                 foreach (var (slot, _, del) in bound) arr[slot] = del;
-                delegatesField.SetValue(null, arr);
+                dF.SetValue(null, arr);
             }
         }
+
+        foreach (var entry in bundle.Entries)
+        {
+            if (entry.CompiledBytecode is null) continue;
+            // Source-less entries already decoded above.
+            if (_precompiledModules.ContainsKey(entry.ModuleName)
+                && string.IsNullOrEmpty(entry.Source)) continue;
+            var module = CompiledModuleCodec.Decode(entry.CompiledBytecode);
+            _precompiledModules[entry.ModuleName] = module;
+            // Warm IL eagerly only when the host has opted in via the
+            // IlPromotion threshold (>0). Warming under the default
+            // threshold=0 setting would silently force Sigil over every
+            // eligible predicate at LoadBundle time — a) wastes work
+            // when the user wanted Tier-0, b) hits chunk-189/190 IL
+            // emit corner cases that the runtime promotion path avoids
+            // because RecordInvocation never reaches them under
+            // threshold=0.
+            if (IlPromotion.Threshold > 0)
+                foreach (var pred in module.Predicates)
+                    IlPromotion.Warm(pred.FunctorId, pred);
+        }
+        // A bundle's predicates join the static program — drop the
+        // ADR-015 cached static linked region so the next query rebuilds it.
+        _staticLink = null;
+        InvalidatePersistent();
+
     }
 
     /// <summary>Chunk 178: registers a source-less bundle entry's

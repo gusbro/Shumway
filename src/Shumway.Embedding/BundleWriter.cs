@@ -108,11 +108,18 @@ public static class BundleWriter
         var engine = new Shumway.Embedding.PrologEngine();
         engine.ConsultString(entry.Source);
         engine.Query("true.");
+        // Pull every IL-eligible predicate the warm-up populated.
+        // Static (chunk 82) covers immutable user clauses; dynamic
+        // (chunk 68) covers `:- dynamic`-declared ones. The
+        // PrecompiledClauseCache (chunk 53) is bundle-load only —
+        // useless here because we're the *builder* not a loader.
         var predicates = new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>();
-        foreach (var (fid, pred) in engine.PrecompiledClauseCache)
+        foreach (var (fid, pred) in engine.StaticPredicateCache)
             predicates[fid] = pred;
-        // Cache wasn't populated by query? Fall through to an empty
-        // assembly (the load path simply finds no methods to bind).
+        foreach (var (fid, pred) in engine.DynamicPredicateCache)
+            predicates[fid] = pred;
+        // Caches still empty? Fall through to an empty assembly
+        // (the load path simply finds no methods to bind).
         var (dllBytes, _) = Shumway.Compiler.Il.PersistedIlBuilder.Build(
             "ShumwayCompiledIl_" + SanitiseModuleName(entry.ModuleName),
             predicates);

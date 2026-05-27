@@ -74,6 +74,7 @@ internal static class Program
             AllowUndefined = opts.AllowUndefined,
             VerboseOut = opts.Verbose ? Console.Error : null,
             StripSource = opts.StripSource,
+            IncludeCompiledIl = opts.IncludeCompiledIl,
         };
 
         LinkResult result;
@@ -182,6 +183,7 @@ internal static class Program
         public bool Verbose { get; set; }
         public bool AllowUndefined { get; set; }
         public bool StripSource { get; set; }
+        public bool IncludeCompiledIl { get; set; }
         public string MapPath { get; set; } = "";
         public string ExePath { get; set; } = "";
         public string Goal { get; set; } = "";
@@ -225,6 +227,10 @@ internal static class Program
                 case "--strip":
                 case "-s":
                     opts.StripSource = true;
+                    break;
+
+                case "--with-compiled-il":
+                    opts.IncludeCompiledIl = true;
                     break;
 
                 case "--map":

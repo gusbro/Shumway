@@ -2861,12 +2861,16 @@ public sealed class Engine
         && AreStructurallyEqual(_heap[aHeadIdx + 1], _heap[bHeadIdx + 1]);
 
     /// <summary>Sets <c>CP</c> directly. The interpreter uses this from the <c>call</c>
-    /// instruction; tests use it to seed the engine state before running a fragment.</summary>
-    internal void SetCp(int cp) => _cp = cp;
+    /// instruction; tests use it to seed the engine state before running a fragment.
+    /// Chunk 192: public so chunk-71 persisted-IL assemblies (loaded into the
+    /// process without InternalsVisibleTo) can call it from emitted IL.</summary>
+    public void SetCp(int cp) => _cp = cp;
 
     /// <summary>Sets <c>PC</c> directly. Used by the interpreter for jumps
-    /// (<c>execute</c>, <c>proceed</c>) and by Run for the initial entry point.</summary>
-    internal void SetPc(int pc) => _p = pc;
+    /// (<c>execute</c>, <c>proceed</c>) and by Run for the initial entry point.
+    /// Chunk 192: public so chunk-71 persisted-IL assemblies (loaded into the
+    /// process without InternalsVisibleTo) can call it from emitted IL.</summary>
+    public void SetPc(int pc) => _p = pc;
 
     /// <summary>Advances <c>PC</c> by <paramref name="delta"/> bytes. Used by the
     /// interpreter to step past straight-line instructions.</summary>
@@ -2874,8 +2878,10 @@ public sealed class Engine
 
     /// <summary>Sets <c>B0</c> directly. The interpreter writes <c>_b</c> into this
     /// before any <c>call</c> or <c>execute</c> so the callee's <c>neck_cut</c> sees
-    /// the right barrier.</summary>
-    internal void SetB0(int b0) => _b0 = b0;
+    /// the right barrier. Chunk 192: public so chunk-71 persisted-IL assemblies
+    /// (loaded into the process without InternalsVisibleTo) can call it from
+    /// emitted IL.</summary>
+    public void SetB0(int b0) => _b0 = b0;
 
     /// <summary>Sets the write/read mode flag directly. The interpreter writes this
     /// from get_structure/put_structure/get_list/put_list. Exposed for tests that

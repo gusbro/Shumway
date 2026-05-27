@@ -641,12 +641,12 @@ public sealed class IlPredicateCompiler
                 EmitSingleClauseMetaCpBody(emit, predicate, callSiteCount, calleeMap, emitSelf);
             }
         }
-        else if (TryDescribeIndexedAtomPredicate(predicate, out var atomInfo))
+        else if (TryDescribeIndexedAtomPredicate(predicate, calleeMap, out var atomInfo))
         {
             if (emitSelf is null)
                 throw new InvalidOperationException(
                     "Indexed-atom predicate needs a delegates field for self-reference.");
-            EmitIndexedAtomBody(emit, predicate, atomInfo!, emitSelf);
+            EmitIndexedAtomBody(emit, predicate, atomInfo!, emitSelf, calleeMap: calleeMap);
         }
         else if (TryDescribeTryMeElseChain(predicate, calleeMap, out var chainInfo))
         {
@@ -654,6 +654,16 @@ public sealed class IlPredicateCompiler
                 throw new InvalidOperationException(
                     "Try-me-else chain predicate needs a delegates field for self-reference.");
             EmitTryMeElseChainBody(emit, predicate, chainInfo!, calleeMap, emitSelf);
+        }
+        else if (TryDescribeSwitchedChain(predicate, calleeMap, out var switchedInfo))
+        {
+            // Chunk 189: switch_on_term-headed predicates emit through
+            // the same try_me_else body emitter — only the recogniser
+            // differs.
+            if (emitSelf is null)
+                throw new InvalidOperationException(
+                    "Switched-chain predicate needs a delegates field for self-reference.");
+            EmitTryMeElseChainBody(emit, predicate, switchedInfo!, calleeMap, emitSelf);
         }
         else
         {

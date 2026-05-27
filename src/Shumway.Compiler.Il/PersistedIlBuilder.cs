@@ -95,11 +95,32 @@ public static class PersistedIlBuilder
             // guaranteed by the runtime, so slot and functorId both
             // live in the name where they can be parsed unambiguously.
             string methodName = SanitiseMethodName($"P_{slot}_{functorId}_{functorName}");
-            ic.EmitPersistedMethod(
-                typeBuilder, methodName, pred,
-                delegatesField: delegatesField,
-                slot: slot,
-                calleeMap: probeCalleeMap);
+            try
+            {
+                ic.EmitPersistedMethod(
+                    typeBuilder, methodName, pred,
+                    delegatesField: delegatesField,
+                    slot: slot,
+                    calleeMap: probeCalleeMap);
+            }
+            catch (Exception ex)
+                when (ex is NotSupportedException
+                      || ex.GetType().Namespace?.StartsWith("Sigil") == true)
+            {
+                // CanPersist accepted this predicate (CanCompile was happy)
+                // but the emit blew up. Most often this is Sigil's verifier
+                // flagging dead-code or stack-mismatch issues in a generated
+                // sequence the predicate compiler hasn't been hardened
+                // against yet (chunk-190 corner cases are a known source).
+                // The runtime IL promotion store would have caught the same
+                // failure and skipped the predicate; do the same here so a
+                // single bad predicate doesn't abort the entire .shum
+                // build.
+                System.Console.Error.WriteLine(
+                    $"shumway-persisted-il: skipped {functorName} "
+                    + $"(fid={functorId}): {ex.GetType().Name}: {ex.Message}");
+                continue;
+            }
             entries.Add(new Entry
             {
                 FunctorId = functorId,

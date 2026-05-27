@@ -86,8 +86,20 @@ internal static class Program
     {
         try
         {
-            engine.ConsultString(File.ReadAllText(path));
-            Console.WriteLine($"% consulted {path}");
+            // .shum bundle (binary) → LoadBundle; everything else →
+            // ConsultString on the file's text. Useful for measuring
+            // persisted-IL load + run times without going through
+            // Sigil at runtime.
+            if (path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase))
+            {
+                engine.LoadBundle(path);
+                Console.WriteLine($"% loaded bundle {path}");
+            }
+            else
+            {
+                engine.ConsultString(File.ReadAllText(path));
+                Console.WriteLine($"% consulted {path}");
+            }
         }
         catch (Exception ex)
         {
