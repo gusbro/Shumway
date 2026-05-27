@@ -257,5 +257,6 @@ public class Chunk41Tests
         }
         public Func<Engine, bool>? OnDispatch(int targetAddress) =>
             engine => _del(engine, 0);
+        public Func<Engine, int, bool>? ResolveByFunctorId(int functorId) => null;
     }
 }

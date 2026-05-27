@@ -20,4 +20,13 @@ public interface ITier1Dispatcher
     /// invocation counter hasn't reached the promotion threshold). The
     /// implementation may compile lazily on this call.</summary>
     Func<Engine, bool>? OnDispatch(int targetAddress);
+
+    /// <summary>Phase 16 threaded dispatch: returns the IL delegate
+    /// already bound to the given functor id, or <c>null</c> if none
+    /// is. The bytecode interpreter consults this when it lands on a
+    /// resume-marker Pc (set by an IL non-tail Call site as the
+    /// caller's continuation address) to re-enter the calling
+    /// delegate at the forward-resume cursor without creating a
+    /// recursive C# stack frame.</summary>
+    Func<Engine, int, bool>? ResolveByFunctorId(int functorId);
 }

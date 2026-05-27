@@ -41,6 +41,18 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
             _calleeMap[pred.FunctorId] = pred;
     }
 
+    public Func<Engine, int, bool>? ResolveByFunctorId(int functorId)
+    {
+        // Phase 16 — threaded resume. Returns the already-bound IL
+        // delegate (or null if the predicate isn't promoted yet, which
+        // can't happen for a marker we ourselves emitted, but we
+        // defend against the null anyway).
+        var del = _store.TryGet(functorId);
+        if (del is null) return null;
+        // Adapt PredicateDelegate to Func<Engine,int,bool>.
+        return (engine, cursor) => del(engine, cursor);
+    }
+
     public Func<Engine, bool>? OnDispatch(int targetAddress)
     {
         // Fast path: address has no associated predicate (it's a launcher

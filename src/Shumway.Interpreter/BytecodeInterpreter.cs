@@ -311,6 +311,46 @@ public sealed class BytecodeInterpreter
             // Pc=Cp=sentinel; the next dispatch iteration sees it and
             // halts cleanly here instead of indexing into code[].
             if (pc < 0) return InterpreterResult.Halted;
+
+            // Phase 16 — threaded Tier-1: a resume-marker PC means an
+            // IL non-tail Call site set Cp to this address before
+            // dispatching the callee; the callee Proceeded, setting
+            // Pc=Cp=marker. Decode the marker, look up the IL
+            // delegate, and re-invoke it at the forward-resume
+            // cursor. The marker check sits BEFORE the codeLen bounds
+            // check because the marker's int value is intentionally
+            // out of the bytecode range.
+            if (Engine.IsResumeMarker(pc))
+            {
+                var (functorId, cursor) = Engine.DecodeResumeMarker(pc);
+                var del = Tier1Dispatcher?.ResolveByFunctorId(functorId);
+                if (del is null)
+                    throw new InvalidOperationException(
+                        $"Resume marker at PC 0x{pc:X} decodes to functor "
+                        + $"id {functorId} / cursor {cursor} but no IL "
+                        + "delegate is bound. (A Tier-1 promotion must "
+                        + "have unwired itself mid-query, which is a bug.)");
+                if (!del(_engine, cursor))
+                {
+                    if (!TryBacktrack()) return InterpreterResult.Failed;
+                    continue;
+                }
+                // Delegate returned true — it either set IlTailCallPending
+                // + Pc for another tail call (loop continues; the new Pc
+                // may itself be a marker or a normal bytecode address),
+                // or finished its work and left Pc=Cp pointing at the
+                // caller's continuation.
+                if (_engine.IlTailCallPending)
+                {
+                    _engine.IlTailCallPending = false;
+                }
+                else
+                {
+                    _engine.SetPc(_engine.Cp);
+                }
+                continue;
+            }
+
             if (pc >= codeLen)
                 throw new InvalidOperationException(
                     $"Program counter 0x{pc:X} is outside code range [0, 0x{codeLen:X}).");

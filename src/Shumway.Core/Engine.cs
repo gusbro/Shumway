@@ -1443,6 +1443,44 @@ public sealed class Engine
     public const int IlChoicePointSentinelBp = -1;
     private readonly Dictionary<int, IlChoicePointEntry> _ilCpInfo = new();
 
+    // Phase 16 — threaded Tier-1 dispatch. An IL non-tail Call site sets
+    // engine.Cp to a *resume marker* address instead of recursing into
+    // RunSubroutine. When the callee Proceeds (Pc = Cp), the bytecode
+    // interpreter's main loop sees the marker, decodes it back to
+    // (functorId, cursor), looks up the IL delegate via the active
+    // Tier1Dispatcher, and invokes it at the right cursor. The marker
+    // encoding lives entirely in the int address — no side table — so
+    // saving / restoring Cp around frames just works.
+    //
+    // Encoding:
+    //   marker = ResumeMarkerBase + functorId * ResumeMarkerCursorStride + cursor
+    //
+    // ResumeMarkerBase is set high enough that no plausible bytecode
+    // address collides (the per-query overlay lives at
+    // PersistentToQueryGap which is ~64 MB — markers start at 1 GB).
+    // ResumeMarkerCursorStride caps a single predicate at 4096 forward-
+    // resume cursors, which is *vastly* more than the number of Call
+    // sites a real predicate has (Blint's parse_args is the busiest at
+    // ~60).
+    public const int ResumeMarkerBase = 0x4000_0000;
+    public const int ResumeMarkerCursorStride = 4096;
+
+    public static bool IsResumeMarker(int address) => address >= ResumeMarkerBase;
+
+    public static int EncodeResumeMarker(int functorId, int cursor)
+    {
+        if (cursor < 0 || cursor >= ResumeMarkerCursorStride)
+            throw new ArgumentOutOfRangeException(nameof(cursor),
+                $"cursor must be in [0, {ResumeMarkerCursorStride}); got {cursor}.");
+        return ResumeMarkerBase + functorId * ResumeMarkerCursorStride + cursor;
+    }
+
+    public static (int FunctorId, int Cursor) DecodeResumeMarker(int address)
+    {
+        int slot = address - ResumeMarkerBase;
+        return (slot / ResumeMarkerCursorStride, slot % ResumeMarkerCursorStride);
+    }
+
     private struct IlChoicePointEntry
     {
         public Func<Engine, int, bool> Del;
