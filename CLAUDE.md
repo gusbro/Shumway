@@ -657,6 +657,18 @@ questions from Phase 11's deferred list:
   `retract` / `assertz` — and avoids redundant `TryDescribe*`
   attempts that were already rejecting the shape.
 
+**Phase 17 — Cross-process persisted Tier-1 IL** — ✅ **Complete** (tagged `phase-17`; closure summary in [`docs/phase-17-closure.md`](docs/phase-17-closure.md)).
+
+Persisted Tier-1 IL bundles produced by `shumway-link --with-compiled-il` now run **correctly in a fresh process**. Pre-Phase 17 the IL baked each functor/atom id as an inline `ldc.i4` constant; the build process accumulated `AtomTable` / `FunctorTable` interns the run process doesn't, so those integers pointed at the wrong functors at runtime (symptom on Blint: ~10× faster than Tier-0 but wrong answer). Phase 17 makes persisted IL **name-relative**: emit writes sentinel constants and a side-channel patch table; `LoadBundle` rewrites each sentinel's four bytes to the runtime id before `Assembly.Load`. Per-dispatch overhead is zero — the JIT sees normal inline immediates.
+
+- ✓ **193** — `IlPatchSite` / `IlPersistedEntry` types + codecs.
+- ✓ **194** — `IlPredicateCompiler` persist-mode emit helpers (`EmitAtomId` / `EmitFunctorId` / `EmitResumeMarker`).
+- ✓ **195** — `PersistedIlBuilder.LocatePatchSites` post-Save PE scan.
+- ✓ **196** — Bundle V3 format with per-entry patch + entries tables.
+- ✓ **197** — `PrologEngine.LoadBundle.ApplyIlPatches` + runtime-fid delegate registration.
+- ✓ **198** — Test harness (`PePatchPrototype`, `PePatchEndToEnd`).
+- ✓ **199** — Closure + tag.
+
 **Phase 16 — Tier-1 IL threading** — ✅ **Complete** (tagged `phase-16`; closure summary in [`docs/phase-16-closure.md`](docs/phase-16-closure.md)).
 
 The chunk-50 Tier-1 IL Call site used to recurse into the bytecode
