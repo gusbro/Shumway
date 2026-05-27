@@ -60,6 +60,16 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
         var existing = _store.TryGet(functorId);
         if (existing is not null) return Wrap(existing);
 
+        // Fast path for already-rejected predicates. Without this,
+        // every call to a dynamic / oversized / layout-excluded
+        // predicate (the majority of dispatches in a real program)
+        // pays the full RecordInvocation entry sequence (3-5 dict
+        // ops) on top of the bytecode dispatch — a 7× slowdown over
+        // Tier-0 on Blint. The store's _unpromotable set is the
+        // exact answer to "is this functor a wasted RecordInvocation
+        // call?" so check it directly and bail.
+        if (_store.IsUnpromotable(functorId)) return null;
+
         // Otherwise let the store decide whether the counter has crossed
         // the threshold and a compile should fire now. Hand the
         // callee map through so IL Call eligibility can be evaluated.

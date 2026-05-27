@@ -31,6 +31,12 @@ internal static class Program
 
         var engine = new PrologEngine();
         engine.Flags.Argv = programArgs;
+        // SHUMWAY_IL_PROMOTE=N sets the Tier-1 promotion threshold.
+        // Without it, Tier-0 (interpreter) handles every dispatch.
+        // With N, predicates that hit N invocations get IL-compiled.
+        string? promoteEnv = Environment.GetEnvironmentVariable("SHUMWAY_IL_PROMOTE");
+        if (int.TryParse(promoteEnv, out int promoteN) && promoteN > 0)
+            engine.IlPromotion.Threshold = promoteN;
         foreach (string path in consultFiles)
             ConsultFile(engine, path);
 
@@ -55,11 +61,25 @@ internal static class Program
             // halt/0,1 is caught inside the engine's solution iterator; it
             // surfaces as LastHaltExitCode rather than a .NET exception.
             if (engine.LastHaltExitCode is int exitCode)
+            {
+                MaybeDumpIlStats(engine);
                 return exitCode;
+            }
         }
 
         Console.WriteLine();
+        MaybeDumpIlStats(engine);
         return 0;
+    }
+
+    private static void MaybeDumpIlStats(PrologEngine engine)
+    {
+        if (Environment.GetEnvironmentVariable("SHUMWAY_IL_STATS") != "1") return;
+        Console.Error.WriteLine(
+            $"[il-stats] promoted={engine.IlPromotion.PromotedCount} "
+            + $"unpromotable={engine.IlPromotion.UnpromotableCount} "
+            + $"tracked={engine.IlPromotion.TrackedCount} "
+            + $"threshold={engine.IlPromotion.Threshold}");
     }
 
     private static void ConsultFile(PrologEngine engine, string path)

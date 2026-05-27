@@ -5,12 +5,20 @@
     <AssemblyName>shumway</AssemblyName>
     <RootNamespace>Shumway.Repl</RootNamespace>
 
-    <!-- Native AOT. The REPL is the AOT-publish target: `dotnet publish`
-         produces a self-contained native `shumway` executable. The engine
-         runs Tier-0 (the bytecode interpreter) only — Tier-1 IL promotion
-         is runtime code generation and is cleanly skipped under AOT (see
-         IlPromotionStore / PrologEngine). -->
-    <PublishAot>true</PublishAot>
+    <!-- Native AOT. The REPL is the AOT-publish target: `dotnet publish
+         -p:PublishAot=true` produces a self-contained native `shumway`
+         executable. The engine runs Tier-0 (the bytecode interpreter)
+         only — Tier-1 IL promotion is runtime code generation and is
+         cleanly skipped under AOT (see IlPromotionStore /
+         PrologEngine).
+
+         Gated on the publish phase: when PublishAot is set unconditionally
+         the build phase also flips `RuntimeFeature.IsDynamicCodeSupported`
+         to false, which silently disables Tier-1 even on a JIT-hosted
+         `dotnet build` + `dotnet shumway.dll` run. We want the JIT-
+         hosted REPL to enjoy Tier-1 when SHUMWAY_IL_PROMOTE is set.
+         Pass `-p:PublishAot=true` to `dotnet publish` for an AOT-native
+         build; omit it everywhere else. -->
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
 

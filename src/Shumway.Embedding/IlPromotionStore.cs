@@ -287,6 +287,15 @@ public sealed class IlPromotionStore
     public int CountFor(int functorId)
         => _counters.TryGetValue(functorId, out int c) ? c : 0;
 
+    /// <summary>Diagnostic counts. <c>PromotedCount</c> = predicates
+    /// successfully compiled to IL; <c>UnpromotableCount</c> = predicates
+    /// rejected (excluded by layout, size, or compiler bail-out);
+    /// <c>TrackedCount</c> = predicates that hit
+    /// <see cref="RecordInvocation"/> at least once.</summary>
+    public int PromotedCount => _delegates.Count;
+    public int UnpromotableCount => _unpromotable.Count;
+    public int TrackedCount => _counters.Count;
+
     /// <summary>True when <paramref name="functorId"/> has been bound to
     /// an IL delegate. Diagnostic surface for tests.</summary>
     public bool IsPromoted(int functorId) => _delegates.ContainsKey(functorId);
