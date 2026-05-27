@@ -225,6 +225,54 @@ public static class MetaTransform
             return RewriteCatch(ca.Args[0], ca.Args[1], ca.Args[2], ref counter, helpers);
         }
 
+        // Phase 19 chunk 205 — static call/N rewrite. `call(Goal, X1, ..., Xn)`
+        // where Goal is an atom or a non-control-construct compound rewrites
+        // to a direct goal with the extra args appended. The compiler then
+        // emits a Call / Execute to the resolved functor instead of
+        // `CallBuiltin call/N`, dropping the dispatcher overhead AND making
+        // the predicate Tier-1 IL eligible (the chunk-201 call/$call gate
+        // skips it).
+        //
+        // Skipped when:
+        //   - Goal is a variable — genuine runtime meta-call, needs the
+        //     dispatcher.
+        //   - Goal is a control construct (`,`/`;`/`->`/`*->`/`\+`/`not`/
+        //     `!`/`catch`/`throw`) — the bytecode interpreter's chunk-88
+        //     cut-barrier threading routes these through `$call_*` helpers
+        //     with a distinct semantics for `!` (commits to the call's
+        //     barrier, not the enclosing predicate's). The rewrite would
+        //     change that.
+        //   - Goal is itself `call/N` — re-enter the transform recursively
+        //     after one unwrap, so `call(call(foo, A), B)` flattens cleanly.
+        if (goal is CompoundTerm ct2
+            && ct2.Functor == "call"
+            && ct2.Args.Length >= 1
+            && ct2.Args[0] is Term first
+            && first is not VarTerm
+            && IsStaticallyExtendable(first))
+        {
+            int extra = ct2.Args.Length - 1;
+            if (first is AtomTerm a0)
+            {
+                Term direct = extra == 0
+                    ? (Term)a0
+                    : new CompoundTerm(a0.Name, ct2.Args.AsSpan(1).ToArray())
+                        { Position = goal.Position };
+                return TransformGoal(direct, ref counter, helpers);
+            }
+            if (first is CompoundTerm c0)
+            {
+                Term[] combined = new Term[c0.Args.Length + extra];
+                System.Array.Copy(c0.Args, 0, combined, 0, c0.Args.Length);
+                for (int i = 0; i < extra; i++)
+                    combined[c0.Args.Length + i] = ct2.Args[1 + i];
+                Term direct = extra == 0
+                    ? (Term)c0
+                    : new CompoundTerm(c0.Functor, combined) { Position = goal.Position };
+                return TransformGoal(direct, ref counter, helpers);
+            }
+        }
+
         // Disjunction (A ; B) and if-then-else (A -> B ; C) — both compile
         // to a two-clause helper that the standard try_me_else / trust_me
         // dispatch then handles.
@@ -234,6 +282,41 @@ public static class MetaTransform
         }
 
         return goal;
+    }
+
+    /// <summary>True iff <paramref name="goal"/> is an atom / compound that
+    /// the chunk-205 static call/N rewrite is allowed to extend. Excludes
+    /// the control constructs whose <c>$call_*</c> routing in the bytecode
+    /// interpreter (chunk 88) gives a distinct cut-barrier semantics from
+    /// the bare equivalent — rewriting <c>call(!)</c> to <c>!</c> would
+    /// silently change the cut scope. The exclude set is the same one
+    /// <c>DispatchCall</c> intercepts after functor lookup.</summary>
+    private static bool IsStaticallyExtendable(Term t)
+    {
+        string name;
+        int arity;
+        if (t is AtomTerm a) { name = a.Name; arity = 0; }
+        else if (t is CompoundTerm c) { name = c.Functor; arity = c.Args.Length; }
+        else return false;
+        return (name, arity) switch
+        {
+            (",", 2) => false,
+            (";", 2) => false,
+            ("->", 2) => false,
+            ("*->", 2) => false,
+            ("\\+", 1) => false,
+            ("not", 1) => false,
+            ("!", 0) => false,
+            ("catch", 3) => false,
+            ("throw", 1) => false,
+            ("call", _) => false,  // recursive call(call(...)) — let the
+                                    // builtin runtime path handle it; one
+                                    // unwrap per layer would still emit
+                                    // CallBuiltin call/N anyway since the
+                                    // first arg stays a `call/N` compound
+                                    // until it's recursed past.
+            _ => true,
+        };
     }
 
     /// <summary>Rewrites <c>(A ; B)</c> and <c>(A -&gt; B ; C)</c> into a
