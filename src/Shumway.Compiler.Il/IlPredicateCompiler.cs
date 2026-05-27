@@ -1734,6 +1734,21 @@ public sealed class IlPredicateCompiler
             if (siteFid < 0) return false;
             return calleeMap.ContainsKey(siteFid);
         }
+        if (op == Opcode.CallBuiltin)
+        {
+            // Phase 18: same gate CanCompileSingleClause applies — call/N
+            // and '$call'/2 need the bytecode interpreter's runtime goal
+            // dispatch (chunks 86, 88). The IL builtin-invoke path would
+            // call the Impl directly, and '$call'/2's Impl throws "must
+            // be dispatched by the interpreter, not invoked directly"
+            // because Tier-0 catches it earlier with cut-barrier
+            // threading. Reject any clause body that holds one of
+            // these CallBuiltin sites so the predicate stays Tier-0.
+            int builtinId = BytecodeIO.ReadInt32(predicate.Bytecode, pc + 1);
+            string builtinName = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId).Name;
+            if (builtinName == "call" || builtinName == "$call") return false;
+            return true;
+        }
         return IsSupportedOpcode(op);
     }
 
@@ -2037,6 +2052,17 @@ public sealed class IlPredicateCompiler
         if ((Opcode)code[varLbl] != Opcode.Try) return false;
 
         var table = predicate.SwitchTables[tableId];
+        // Phase 18: the table only carries atom-headed clauses. A
+        // predicate with mixed list-pattern + atom-headed clauses
+        // (e.g. main/1 = `main([F|_]) :- ... ; main([]) :- ...`) ends
+        // up with the list-pattern clause UN-INDEXED — it's reachable
+        // only through the var-dispatch try/retry/trust chain, not
+        // through switch_on_atom. The IndexedAtom emit only emits the
+        // atom-direct dispatch, so a query with a non-empty list
+        // would fall through to fail. Reject this shape so the
+        // SwitchedChain recogniser takes over — it walks the
+        // var-dispatch chain which covers every clause.
+        if (table.Count != predicate.ClauseCount) return false;
         // The switch table is sorted by atom id (the WAM compiler uses a
         // SortedDictionary) but the var-dispatch path must enumerate
         // clauses in *source* order — that's what every other Prolog
