@@ -23,6 +23,15 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
     private readonly IReadOnlyDictionary<int, CompiledPredicate> _predicatesByAddress;
     private readonly Dictionary<int, CompiledPredicate> _calleeMap;
     private readonly JitIndexProfile _jitProfile;
+    // Phase 16 chunk 182 — cache the Func<Engine,int,bool> adapter per
+    // functor id. The bytecode interpreter's resume-marker dispatch
+    // fires *per Call return* (millions of times in a real program);
+    // wrapping the PredicateDelegate in a fresh closure on each
+    // lookup is GC pressure proportional to call frequency. The
+    // cached wrapper lives as long as the dispatcher does — which
+    // is one query setup, the same lifetime as the IlPromotion store
+    // entries it points into.
+    private readonly Dictionary<int, Func<Engine, int, bool>> _resumeCache = new();
 
     public Tier1DispatcherAdapter(
         IlPromotionStore store,
@@ -44,13 +53,18 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
     public Func<Engine, int, bool>? ResolveByFunctorId(int functorId)
     {
         // Phase 16 — threaded resume. Returns the already-bound IL
-        // delegate (or null if the predicate isn't promoted yet, which
-        // can't happen for a marker we ourselves emitted, but we
-        // defend against the null anyway).
+        // delegate (or null if the predicate isn't promoted yet,
+        // which shouldn't happen for a marker we ourselves emitted
+        // but we defend anyway). The wrapper is cached so resume-
+        // marker dispatch doesn't allocate a fresh closure on every
+        // Call return.
+        if (_resumeCache.TryGetValue(functorId, out var cached))
+            return cached;
         var del = _store.TryGet(functorId);
         if (del is null) return null;
-        // Adapt PredicateDelegate to Func<Engine,int,bool>.
-        return (engine, cursor) => del(engine, cursor);
+        Func<Engine, int, bool> wrapper = (engine, cursor) => del(engine, cursor);
+        _resumeCache[functorId] = wrapper;
+        return wrapper;
     }
 
     public Func<Engine, bool>? OnDispatch(int targetAddress)

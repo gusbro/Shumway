@@ -143,6 +143,14 @@ public sealed class IlPredicateCompiler
             nameof(Engine.SetB0),
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
             null, new[] { typeof(int) }, null)!;
+    // Phase 16 chunk 182 — threaded IL non-tail Call. Setting Cp to a
+    // resume marker before transferring to the callee is how the IL
+    // caller registers its forward continuation.
+    private static readonly MethodInfo EngineSetCpMethod =
+        typeof(Engine).GetMethod(
+            nameof(Engine.SetCp),
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            null, new[] { typeof(int) }, null)!;
     private static readonly MethodInfo EngineBGetter =
         typeof(Engine).GetProperty(nameof(Engine.B))!.GetGetMethod()!;
 #if DEBUG
@@ -570,9 +578,7 @@ public sealed class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
     {
         var failLabel = emit.DefineLabel("fail");
-#if DEBUG
         _emitOwnerFid = predicate.FunctorId;
-#endif
         EmitClauseBody(emit, predicate.Bytecode, 0, predicate.Bytecode.Length,
             failLabel, predicate.CallSites,
             callSiteIndexCounter: null, resumeLabels: null,
@@ -691,17 +697,18 @@ public sealed class IlPredicateCompiler
     {
         var failLabel = emit.DefineLabel("fail");
         var startLabel = emit.DefineLabel("start");
+        // Phase 16: a single label per forward-resume cursor. The
+        // cursor switch branches here directly; the same label is
+        // marked at the post-Call body point. The chunk-66 backtrack-
+        // drive bodies are gone — backtracking through the callee's
+        // CPs is handled naturally by the engine's CP cascade, with
+        // each callee-clause's saved Cp pointing back at our resume
+        // marker.
         var resumeLabels = new Sigil.Label[callSiteCount];
-        var postCallLabels = new Sigil.Label[callSiteCount];
         for (int i = 0; i < callSiteCount; i++)
-        {
             resumeLabels[i] = emit.DefineLabel($"resume_{i + 1}");
-            postCallLabels[i] = emit.DefineLabel($"post_call_{i + 1}");
-        }
 
-#if DEBUG
         _emitOwnerFid = predicate.FunctorId;
-#endif
         // Cursor dispatch: 0 → start; N → resume_N.
         for (int i = 0; i < callSiteCount; i++)
         {
@@ -711,81 +718,12 @@ public sealed class IlPredicateCompiler
         }
         emit.Branch(startLabel);
 
-        // Resume bodies: read preCallB from X[0] (saved by the popped
-        // meta-CP's arity=1 slot), drive a backtrack on the callee.
-        // If the backtrack cascaded past our own Call site (engine.B
-        // ended up at or below preCallB), the new solution was
-        // produced by an outer CP — set IlTailCallPending so the
-        // interpreter resumes at whatever Pc the cascade ended at,
-        // and return true to propagate. Otherwise our callee still
-        // has CPs to retry; re-push a fresh meta-CP, rejoin the body
-        // at post_call_N.
-        for (int i = 0; i < callSiteCount; i++)
-        {
-            emit.MarkLabel(resumeLabels[i]);
-            var preCallBLocal = emit.DeclareLocal<int>($"preCallB_resume_{i + 1}");
-            emit.LoadArgument(0);
-            emit.Call(IlReadPreCallBHelperMethod);
-            emit.StoreLocal(preCallBLocal);
-            // Chunk 174: pin floor at preCallB so the resumed backtrack
-            // can't cascade past the IL caller's frame.
-            emit.LoadArgument(0);
-            emit.LoadLocal(preCallBLocal);
-            emit.Call(IlRunBacktrackWithFloorMethod);
-            emit.BranchIfFalse(failLabel);
-            // Three-way branch on (engine.B vs preCallB):
-            //   B  >  preCallB → callee CPs still alive: re-push meta-CP
-            //                    and rejoin body at post_call_N.
-            //   B  == preCallB → callee just consumed its last CP via
-            //                    trust_me: solution is valid, but no
-            //                    meta-CP re-push (no more alternatives).
-            //                    Rejoin body at post_call_N anyway.
-            //   B  <  preCallB → cascade: an outer CP fired below our
-            //                    Call site. Set IlTailCallPending and
-            //                    propagate up.
-            var cascadeLabel = emit.DefineLabel($"resume_{i + 1}_cascade");
-            var noRePushLabel = emit.DefineLabel($"resume_{i + 1}_no_repush");
-            emit.LoadArgument(0);
-            emit.Call(EngineBGetter);
-            emit.LoadLocal(preCallBLocal);
-            emit.BranchIfLess(cascadeLabel);
-            emit.LoadArgument(0);
-            emit.Call(EngineBGetter);
-            emit.LoadLocal(preCallBLocal);
-            emit.BranchIfEqual(noRePushLabel);
-            // B > preCallB: callee CPs survive; re-push meta-CP.
-            emit.LoadArgument(0);
-            emit.LoadConstant(0);
-            emit.LoadLocal(preCallBLocal);
-            emit.Convert<long>();
-            emit.Call(CellIntMethod);
-            emit.Call(EngineSetRegisterMethod);
-            emit.LoadArgument(0);
-            emitSelf(emit);
-            emit.LoadConstant(i + 1);
-            emit.LoadConstant(1);
-            emit.Call(EnginePushIlCpMethod);
-            emit.Branch(postCallLabels[i]);
-            // B == preCallB: rejoin body without re-pushing meta-CP.
-            emit.MarkLabel(noRePushLabel);
-            emit.Branch(postCallLabels[i]);
-            // B < preCallB: cascade. An outer CP produced the solution.
-            // Signal tail-call so the interpreter keeps Pc where the
-            // cascade halted (sentinel-Cp halt or otherwise).
-            emit.MarkLabel(cascadeLabel);
-            emit.LoadArgument(0);
-            emit.LoadConstant(true);
-            emit.Call(EngineIlTailCallPendingSetter);
-            emit.LoadConstant(true);
-            emit.Return();
-        }
-
         emit.MarkLabel(startLabel);
         int idxCounter = 0;
         EmitClauseBody(emit, predicate.Bytecode, 0, predicate.Bytecode.Length,
             failLabel, predicate.CallSites,
             callSiteIndexCounter: () => ++idxCounter,
-            resumeLabels: postCallLabels,
+            resumeLabels: resumeLabels,
             emitSelfDelegate: emitSelf,
             calleeMap: calleeMap);
 
@@ -835,10 +773,10 @@ public sealed class IlPredicateCompiler
     /// <summary>Owner fid threaded through the body emit so chunk-173
     /// debug markers can identify which predicate's IL each marker
     /// belongs to. Set by the public Compile/CompileInstrumented
-    /// entry points and the persisted-assembly path.</summary>
-#if DEBUG
+    /// entry points and the persisted-assembly path.
+    /// Phase 16 chunk 182: also used by threaded non-tail Call sites
+    /// to encode the resume marker (functorId, cursor).</summary>
     private static int _emitOwnerFid;
-#endif
 
     private static void EmitClauseBody(
         Sigil.Emit<PredicateDelegate> emit, byte[] code, int start, int end,
@@ -1388,30 +1326,44 @@ public sealed class IlPredicateCompiler
                         calleeMap: calleeMap, suppressProceedReturn: true);
                     if (callSiteIndexCounter is not null && resumeLabels is not null)
                     {
-                        int siteIdx = callSiteIndexCounter();
-                        // Leaves leave no CPs behind so the meta-CP guard would
-                        // have skipped the push anyway. Mark the resume label
-                        // so any outer cascade logic still has a join point,
-                        // but emit no CP-push machinery.
-                        emit.MarkLabel(resumeLabels[siteIdx - 1]);
+                        int leafSiteIdx = callSiteIndexCounter();
+                        // Leaves leave no CPs behind, so under Phase 16
+                        // threading they don't set a resume marker; the
+                        // cursor=leafSiteIdx entry is never invoked.
+                        // Mark the resume label anyway so the cursor
+                        // switch's branch has a target (dead code but
+                        // keeps the IL well-formed).
+                        emit.MarkLabel(resumeLabels[leafSiteIdx - 1]);
                     }
                     pc += OpcodeTable.Get(op).Size;
                     continue;
                 }
 
-                // preCallB = engine.B;
-                var preCallBLocal = emit.DeclareLocal<int>($"preCallB_{pc}");
-                emit.LoadArgument(0);
-                emit.Call(EngineBGetter);
-                emit.StoreLocal(preCallBLocal);
+                // Phase 16 chunk 182 — threaded non-tail Call. Instead
+                // of recursing into RunSubroutine via IlCallHelper.Run,
+                // we tail-call to the callee (same machinery `Execute`
+                // uses) and set Cp to a resume marker that the bytecode
+                // interpreter will recognise when the callee Proceeds.
+                // The marker encodes (this delegate's functor id,
+                // siteIdx), so the dispatcher knows to re-invoke us at
+                // the forward-resume cursor. No recursive C# stack
+                // frame; backtracking through the callee's CPs
+                // naturally lands at the caller's marker again. The
+                // chunk-66 meta-CP push is gone — backtracking
+                // semantics fall out of the natural CP cascade.
+                if (callSiteIndexCounter is null || resumeLabels is null)
+                    throw new InvalidOperationException(
+                        "Threaded non-tail Call requires callSiteIndexCounter + "
+                        + "resumeLabels for forward-resume cursor allocation.");
 
-                // engine.SetB0(engine.B);
+                int siteIdx = callSiteIndexCounter();
+
+                // engine.SetB0(engine.B);  — cut barrier for the callee
                 emit.LoadArgument(0);
                 emit.LoadArgument(0);
                 emit.Call(EngineBGetter);
                 emit.Call(EngineSetB0Method);
 
-                // bool ok = IlCallHelper.Run(engine, siteFunctorId);
 #if DEBUG
                 if (DebugMode)
                 {
@@ -1424,48 +1376,33 @@ public sealed class IlPredicateCompiler
                     emit.Call(DbgCheckPreCallMethod);
                 }
 #endif
+
+                // engine.SetCp(EncodeResumeMarker(ownerFid, siteIdx));
+                emit.LoadArgument(0);
+                emit.LoadConstant(Shumway.Core.Engine.EncodeResumeMarker(_emitOwnerFid, siteIdx));
+                emit.Call(EngineSetCpMethod);
+
+                // engine.SetPc(IlExecuteHelper.Resolve(engine, siteFunctorId));
+                emit.LoadArgument(0);
                 emit.LoadArgument(0);
                 emit.LoadConstant(siteFunctorId);
-                emit.Call(IlCallHelperRunMethod);
-                emit.BranchIfFalse(failLabel);
+                emit.Call(IlExecuteHelperResolveMethod);
+                emit.Call(EngineSetPcMethod);
 
-                if (callSiteIndexCounter is not null && resumeLabels is not null)
-                {
-                    int siteIdx = callSiteIndexCounter();
-                    var skipPushLabel = emit.DefineLabel($"skip_metacp_{siteIdx}");
-                    // if (engine.B <= preCallB) goto skip; (no leftover CPs)
-                    // Signed comparison: preCallB can be -1 when no CPs
-                    // existed pre-call, and unsigned would treat that as
-                    // a huge value and always branch.
-                    emit.LoadArgument(0);
-                    emit.Call(EngineBGetter);
-                    emit.LoadLocal(preCallBLocal);
-                    emit.BranchIfLessOrEqual(skipPushLabel);
+                // engine.IlTailCallPending = true; return true.
+                emit.LoadArgument(0);
+                emit.LoadConstant(true);
+                emit.Call(EngineIlTailCallPendingSetter);
+                emit.LoadConstant(true);
+                emit.Return();
 
-                    // engine.SetRegister(0, Cell.Int(preCallB));
-                    emit.LoadArgument(0);
-                    emit.LoadConstant(0);
-                    emit.LoadLocal(preCallBLocal);
-                    emit.Convert<long>();
-                    emit.Call(CellIntMethod);
-                    emit.Call(EngineSetRegisterMethod);
+                // Resume label — reached via the cursor switch when the
+                // callee proceeds and the dispatcher decodes our
+                // marker. Cursor numbering: forward-resume cursors
+                // come AFTER any clause-entry cursors the outer body
+                // emitter reserved.
+                emit.MarkLabel(resumeLabels[siteIdx - 1]);
 
-                    // engine.PushIlChoicePoint(self, cursor=siteIdx, arity=1)
-                    emit.LoadArgument(0);
-                    emitSelfDelegate!(emit);
-                    emit.LoadConstant(siteIdx);
-                    emit.LoadConstant(1);
-                    emit.Call(EnginePushIlCpMethod);
-
-                    emit.MarkLabel(skipPushLabel);
-                    emit.MarkLabel(resumeLabels[siteIdx - 1]);
-                }
-                // Chunk 173: postCall marker AFTER the resume label so it
-                // fires on both the direct (forward) path and the meta-CP
-                // resume path. Putting it before the resume label meant
-                // a backtrack-driven resume skipped the trace, which
-                // caused the chunk 172 investigation to miss the
-                // actual post-call register state.
 #if DEBUG
                 if (DebugMode)
                 {
@@ -1744,9 +1681,7 @@ public sealed class IlPredicateCompiler
         var clauses = info.Clauses;
         var failLabel = emit.DefineLabel("fail");
 
-#if DEBUG
         _emitOwnerFid = predicate.FunctorId;
-#endif
         for (int i = 0; i < clauses.Count; i++)
         {
             var nextLabel = emit.DefineLabel($"after_clause_{i}");
@@ -1926,9 +1861,7 @@ public sealed class IlPredicateCompiler
 
         var failLabel = emit.DefineLabel("fail");
         var varDispatchLabel = emit.DefineLabel("var_dispatch");
-#if DEBUG
         _emitOwnerFid = predicate.FunctorId;
-#endif
         var groundDispatchLabel = emit.DefineLabel("ground_dispatch");
 
         // cursor != 0 → re-entry, jump straight to var-dispatch switch.
