@@ -657,46 +657,54 @@ questions from Phase 11's deferred list:
   `retract` / `assertz` — and avoids redundant `TryDescribe*`
   attempts that were already rejecting the shape.
 
-**Phase 16 — Tier-1 IL threading** — 🚧 in progress.
+**Phase 16 — Tier-1 IL threading** — ✅ **Complete** (tagged `phase-16`; closure summary in [`docs/phase-16-closure.md`](docs/phase-16-closure.md)).
 
-Rationale: the chunk-50 Tier-1 IL Call site recurses into the
-bytecode interpreter via `IlSubroutineRunner` → `RunSubroutine` →
-`Dispatch`. Every non-tail Prolog call creates a fresh C# stack
-frame. Chunk 174 noted that backtracking inside that recursive
-frame could cascade past the IL caller's CPs and corrupt _e —
-fixed with a backtrack-floor pin in `RunSubroutine` plus a
-`RunBacktrackWithFloor` wrapper in IL meta-CP resume. The pin is
-correct semantically but imposes a ~7× slowdown on Blint (50s vs
-6.7s Tier-0), because the bounded backtrack forces the IL caller
-to redo work the Tier-0 cascade was eliding implicitly.
+The chunk-50 Tier-1 IL Call site used to recurse into the bytecode
+interpreter via `IlSubroutineRunner` → `RunSubroutine` →
+`Dispatch`, creating a fresh C# stack frame per non-tail Prolog
+call. Chunk 174 fixed a resulting Y-slot corruption bug
+(backtracking inside the recursive frame could cascade past the
+IL caller's CPs) with a floor pin, semantically correct but
+exposing a ~7× slowdown on Blint and still leaving the C# stack
+unbounded on deep chains.
 
-The fix is threaded dispatch: every IL Call becomes a tail-call
-plus a cursor-encoded resume marker (the same `IlTailCallPending`
-machinery `Execute` already uses, extended with a return path).
-The IL delegate sets `Cp = resumeMarker`, `Pc = callee`, marks
-tail-call pending, and *returns* to the outer Dispatch loop. When
-the callee Proceeds, `Pc = Cp = resumeMarker`; the dispatcher
-recognises the marker and re-invokes the IL delegate with the
-matching cursor to run the post-Call continuation. No recursive C#
-stack frame, no floor pin, no `RunSubroutine`.
+Phase 16 redesigns Tier-1 dispatch as threaded continuation: the
+IL caller sets `Cp = resumeMarker`, `Pc = callee`,
+`IlTailCallPending = true`, and *returns* to the outer Dispatch
+loop. When the callee Proceeds, `Pc = Cp = marker`; the bytecode
+interpreter decodes the marker (chunk 181's encoding scheme) and
+re-invokes the IL delegate at the matching forward-resume
+cursor. The C# stack stays O(1) regardless of Prolog call depth.
+Backtracking is the natural CP cascade — the callee's
+`try_me_else` CPs carry the caller's marker as their saved Cp.
 
-Chunks (planned):
+- ✓ **181** — Resume-marker encoding on Engine (high-range int
+  with `EncodeResumeMarker(functorId, cursor)`); dispatcher
+  recognition at the top of `BytecodeInterpreter.Dispatch`;
+  `ITier1Dispatcher.ResolveByFunctorId` extension.
 
-- **181** — Resume-marker registry on the engine. Address
-  allocation, dispatcher recognition, IL CP integration.
-- **182** — IL emit for non-tail Call switched to threaded
-  pattern (set Cp = marker, Pc = callee, IlTailCallPending = true,
-  return). Cursor switch at the delegate's top for entry vs
-  resume.
-- **183** — Delete `RunSubroutine`'s chunk-174 floor pin,
-  `RunBacktrackWithFloor`, the `SetBacktrackFloor` engine callback,
-  and `IlRuntimeHelpers.Call` (or downscope to a leaf-only fast
-  path). Tier-0 cascade backtracking works transparently across
-  IL/bytecode again.
-- **184** — Tests: deep-call-chain stays in O(1) C# stack;
-  backtracking across IL ↔ bytecode boundary correct; Blint runs
-  at Tier-0 parity or better with promote=32.
-- **185** — Phase 16 closure.
+- ✓ **182** — IL non-tail Call emit switched to threaded
+  pattern. The chunk-66 meta-CP push is gone — backtracking
+  semantics fall out of the natural CP cascade. Cursor switch
+  at the delegate's top collapses to a direct branch to the
+  post-Call body. 3 architectural tests in `Chunk182Tests`:
+  deep call chain (5000 levels stays in O(1) C# stack),
+  backtracking across IL/bytecode boundary, mixed Tier-1
+  promote=32 correctness.
+
+- ✓ **183** — Delete `RunSubroutine` (chunk-50) + the chunk-174
+  floor pin + `RunBacktrackWithFloor` (chunk-174) +
+  `IlSubroutineRunner` / `BacktrackRunner` / `SetBacktrackFloor`
+  / `SetE` engine callbacks (chunks 50/66/174). Net delete:
+  223 lines.
+
+- ✓ **184/185** — Tests + closure (merged).
+
+Architectural goal met: deep call chains no longer blow C#'s
+stack. The remaining ~8× Blint slowdown under `promote=32` is
+*not* the floor pin — it's elsewhere (likely the per-Call
+`OnDispatch` dictionary lookup or the linear cursor-switch in
+the IL delegate's top). Follow-ups in `docs/phase-16-closure.md`.
 
 ---
 
