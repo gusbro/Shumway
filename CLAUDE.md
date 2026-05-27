@@ -657,6 +657,14 @@ questions from Phase 11's deferred list:
   `retract` / `assertz` — and avoids redundant `TryDescribe*`
   attempts that were already rejecting the shape.
 
+**Phase 19 — IL meta-call dispatcher** — ✅ **Complete** (tagged `phase-19`; closure summary in [`docs/phase-19-closure.md`](docs/phase-19-closure.md)).
+
+Closes the last gap in Tier-1 IL coverage — `call/N` and `'$call'/2` are now IL-emittable, removing the chunk-201 gate. `IlMetaCallHelper.Dispatch` mirrors the bytecode interpreter's `DispatchCall` (chunks 86, 88): derefs the runtime goal, routes control constructs to `$call_*` helpers, intercepts `!`/`true`/`fail` inline, recurses for `call(call(...))`. The emit threads the dispatch through chunk-182 with a last-call optimisation — when the CallBuiltin is followed by Proceed, Cp is left alone so the called goal's proceed jumps straight back to the outer caller (the original cut at Cp = resume_marker trapped in an infinite loop).
+
+Plus the `\$call/2` barrier reader (`IlMetaCallHelper.ReadIntRegister`), 10 dedicated Phase19MetaCallTests, and the `MetaTransform` static `call/N` rewrite (chunk 205) that turned compile-time-known `call(foo(X))` into a direct `foo(X)`. Together they drop Blint's call-gate exclusion count from 11 to 0.
+
+Blint Tier-1 IL: 7.9s vs Tier-0 9.2s (3-run median).
+
 **Phase 18 — Bundle ergonomics + IL correctness + Tier-1 perf** — ✅ **Complete** (tagged `phase-18`; closure summary in [`docs/phase-18-closure.md`](docs/phase-18-closure.md)).
 
 Four issues that Phase 17 surfaced (or the user flagged) while running Blint end-to-end via `shumway-link --with-compiled-il`:
