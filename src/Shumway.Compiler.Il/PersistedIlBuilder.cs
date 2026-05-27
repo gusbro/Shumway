@@ -191,6 +191,33 @@ public static class PersistedIlBuilder
                 System.Console.Error.WriteLine(
                     $"shumway-persisted-il: skipped {functorName} "
                     + $"(fid={functorId}): {ex.GetType().Name}: {ex.Message}");
+                var skipDumpPath = System.Environment.GetEnvironmentVariable("SHUMWAY_PERSIST_SKIP_DUMP");
+                if (!string.IsNullOrEmpty(skipDumpPath))
+                {
+                    using var w = System.IO.File.AppendText(skipDumpPath);
+                    w.WriteLine($"=== {functorName} (fid={functorId}) ===");
+                    w.WriteLine(ex.ToString());
+                    if (ex.GetType().GetProperty("DebugInstructions") is { } pi
+                        && pi.GetValue(ex) is string instructions)
+                        w.WriteLine("---- IL so far ----\n" + instructions);
+                    w.WriteLine("---- Bytecode ----");
+                    int q = 0;
+                    while (q < pred.Bytecode.Length)
+                    {
+                        byte op = pred.Bytecode[q];
+                        var info = Shumway.Core.OpcodeTable.Get(op);
+                        w.Write($"  {q:D4}: {(Shumway.Core.Opcode)op,-22}");
+                        if (info.Size > 1)
+                        {
+                            for (int j = 1; j + 4 <= info.Size; j += 4)
+                                w.Write($" {Shumway.Core.BytecodeIO.ReadInt32(pred.Bytecode, q + j)}");
+                        }
+                        w.WriteLine();
+                        if (info.Size == 0) break;
+                        q += info.Size;
+                    }
+                    w.WriteLine();
+                }
                 if (patches.Count > patchesBeforeThisPred)
                     patches.RemoveRange(patchesBeforeThisPred,
                         patches.Count - patchesBeforeThisPred);

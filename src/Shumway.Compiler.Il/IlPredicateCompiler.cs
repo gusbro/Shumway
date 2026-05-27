@@ -1746,7 +1746,18 @@ public sealed class IlPredicateCompiler
             // these CallBuiltin sites so the predicate stays Tier-0.
             int builtinId = BytecodeIO.ReadInt32(predicate.Bytecode, pc + 1);
             string builtinName = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId).Name;
-            if (builtinName == "call" || builtinName == "$call") return false;
+            if (builtinName == "call" || builtinName == "$call")
+            {
+                var diagPath = System.Environment.GetEnvironmentVariable("SHUMWAY_LOG_CALL_GATE");
+                if (!string.IsNullOrEmpty(diagPath))
+                {
+                    var (atomId, ar) = FunctorTable.Lookup(predicate.FunctorId);
+                    string name = AtomTable.GetById(atomId)?.Name ?? "?";
+                    System.IO.File.AppendAllText(diagPath,
+                        $"{name}/{ar} (fid={predicate.FunctorId}) calls {builtinName} at pc={pc}\n");
+                }
+                return false;
+            }
             return true;
         }
         return IsSupportedOpcode(op);
