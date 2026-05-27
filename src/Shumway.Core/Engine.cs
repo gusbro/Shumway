@@ -841,6 +841,7 @@ public sealed class Engine
     /// </summary>
     public void PutStructure(int functorId, int regIdx)
     {
+        if (regIdx >= _registers.Length) EnsureRegisterCapacity(regIdx + 1);
         int h = AllocateHeap(2);
         _heap[h] = Cell.Str(h + 1);
         _heap[h + 1] = Cell.Functor(functorId);
@@ -932,6 +933,16 @@ public sealed class Engine
     /// copy the cell at <c>UnifyPointer</c> into X[slot].</summary>
     public void UnifyVariableX(int slot)
     {
+        // The IL emit calls this directly; unlike the bytecode
+        // interpreter's UnifyVariableX opcode handler (which routes
+        // through SetRegister) we don't get the auto-grow for free.
+        // Grow the register bank if a structure-unification slot
+        // exceeds the current size. Surfaced under
+        // SHUMWAY_IL_PROMOTE=1 linting Blint.pl: a multi-clause
+        // IL'd predicate's bytecode contained
+        // `unify_variable_x slot=256` while the engine's default
+        // register bank was 256 — IndexOutOfRangeException.
+        if (slot >= _registers.Length) EnsureRegisterCapacity(slot + 1);
         int ptr = _unifyPointer;
         if (_writeMode)
         {
@@ -1013,6 +1024,7 @@ public sealed class Engine
     /// </summary>
     public void PutList(int regIdx)
     {
+        if (regIdx >= _registers.Length) EnsureRegisterCapacity(regIdx + 1);
         int h = AllocateHeap(1);
         _heap[h] = Cell.Lis(h + 1);
         _registers[regIdx] = Cell.Ref(h);
