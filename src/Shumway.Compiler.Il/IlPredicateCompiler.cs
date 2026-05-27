@@ -252,7 +252,7 @@ public sealed class IlPredicateCompiler
     {
         ArgumentNullException.ThrowIfNull(predicate);
         if (predicate.ClauseCount == 1) return CanCompileSingleClause(predicate, calleeMap);
-        if (TryDescribeIndexedAtomPredicate(predicate, out _)) return true;
+        if (TryDescribeIndexedAtomPredicate(predicate, calleeMap, out _)) return true;
         if (TryDescribeTryMeElseChain(predicate, calleeMap, out _)) return true;
         return TryDescribeSwitchedChain(predicate, calleeMap, out _);
     }
@@ -272,8 +272,8 @@ public sealed class IlPredicateCompiler
                     $"Single-clause predicate (fid={predicate.FunctorId}) is outside the IL subset.");
             return CompileSingleClause(predicate, calleeMap);
         }
-        if (TryDescribeIndexedAtomPredicate(predicate, out var info))
-            return CompileIndexedAtomPredicate(predicate, info!);
+        if (TryDescribeIndexedAtomPredicate(predicate, calleeMap, out var info))
+            return CompileIndexedAtomPredicate(predicate, info!, calleeMap);
         if (TryDescribeTryMeElseChain(predicate, calleeMap, out var chain))
             return CompileTryMeElseChain(predicate, chain!, calleeMap);
         if (TryDescribeSwitchedChain(predicate, calleeMap, out var switched))
@@ -733,10 +733,13 @@ public sealed class IlPredicateCompiler
     /// bytecode (Opcode.Call only — Opcode.Execute is the tail-call
     /// form and doesn't need a meta-CP).</summary>
     private static int CountNonTailCallOpcodes(byte[] bytecode)
+        => CountNonTailCallOpcodes(bytecode, 0, bytecode.Length);
+
+    private static int CountNonTailCallOpcodes(byte[] bytecode, int start, int end)
     {
         int count = 0;
-        int pc = 0;
-        while (pc < bytecode.Length)
+        int pc = start;
+        while (pc < end)
         {
             byte b = bytecode[pc];
             if (b == (byte)Opcode.Call) count++;
@@ -1521,9 +1524,18 @@ public sealed class IlPredicateCompiler
     /// bytecode: each clause's first-arg atom id and the byte offset of
     /// its body in the bytecode. Used both as a "yes I can compile this"
     /// signal and as the dispatch table the IL emission consumes.</summary>
+    private sealed record IndexedAtomClause(int AtomId, int BodyStart, int BodyEnd, bool IsTrivial);
+
     private sealed class IndexedAtomInfo
     {
-        public required IReadOnlyList<(int AtomId, int BodyOffset)> Clauses { get; init; }
+        public required IReadOnlyList<IndexedAtomClause> Clauses { get; init; }
+        /// <summary>True iff every clause's body is the trivial
+        /// <c>get_atom + proceed</c> shape (chunk 52). Trivial bodies
+        /// don't need an actual body emit — the switch_on_atom
+        /// dispatch already matched the atom, so on a ground-key hit
+        /// we just return true. Non-trivial bodies (chunk 190) emit
+        /// the body via <see cref="EmitClauseBody"/>.</summary>
+        public required bool AllTrivial { get; init; }
     }
 
     /// <summary>Per-clause layout extracted from a try_me_else chain
@@ -1887,6 +1899,12 @@ public sealed class IlPredicateCompiler
     /// <c>get_atom &lt;id&gt; A0; proceed</c> form.</summary>
     private static bool TryDescribeIndexedAtomPredicate(
         CompiledPredicate predicate, out IndexedAtomInfo? info)
+        => TryDescribeIndexedAtomPredicate(predicate, calleeMap: null, out info);
+
+    private static bool TryDescribeIndexedAtomPredicate(
+        CompiledPredicate predicate,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
+        out IndexedAtomInfo? info)
     {
         info = null;
         if (predicate.Arity != 1) return false;
@@ -1921,7 +1939,7 @@ public sealed class IlPredicateCompiler
         // engine does. We recover source order by sorting on the body
         // offset, since the per-predicate bytecode lays clauses out in
         // source order.
-        var clauses = new List<(int AtomId, int BodyOffset)>(table.Count);
+        var raw = new List<(int AtomId, int BodyOffset)>(table.Count);
         for (int i = 0; i < table.Count; i++)
         {
             int bodyOffset = table.Values[i];
@@ -1931,23 +1949,50 @@ public sealed class IlPredicateCompiler
             // pure metadata that lives before the actual head-matching ops.
             if (bodyOffset >= 0 && bodyOffset + 6 <= code.Length
                 && (Opcode)code[bodyOffset] == Opcode.Meta)
-            {
                 bodyOffset += 6;
-            }
-            if (bodyOffset < 0 || bodyOffset + 10 > code.Length) return false;
+            if (bodyOffset < 0 || bodyOffset >= code.Length) return false;
             if ((Opcode)code[bodyOffset] != Opcode.GetAtom) return false;
-            // get_atom <id>, <reg> ; proceed
             int reg = BytecodeIO.ReadInt32(code, bodyOffset + 5);
             if (reg != 0) return false;
-            if (bodyOffset + 9 >= code.Length) return false;
-            if ((Opcode)code[bodyOffset + 9] != Opcode.Proceed) return false;
             int atomId = BytecodeIO.ReadInt32(code, bodyOffset + 1);
-            clauses.Add((atomId, bodyOffset));
+            raw.Add((atomId, bodyOffset));
         }
-        // Empty switch tables are degenerate.
-        if (clauses.Count == 0) return false;
-        clauses.Sort((a, b) => a.BodyOffset.CompareTo(b.BodyOffset));
-        info = new IndexedAtomInfo { Clauses = clauses };
+        if (raw.Count == 0) return false;
+        // Sort by body offset → source order. Body i runs from its own
+        // offset to the next clause's offset (or to end of bytecode for
+        // the last one).
+        raw.Sort((a, b) => a.BodyOffset.CompareTo(b.BodyOffset));
+        var clauses = new List<IndexedAtomClause>(raw.Count);
+        bool allTrivial = true;
+        for (int i = 0; i < raw.Count; i++)
+        {
+            int start = raw[i].BodyOffset;
+            int end = i + 1 < raw.Count ? raw[i + 1].BodyOffset : code.Length;
+            // Trivial-body shape (chunk 52): get_atom (9 bytes) + proceed
+            // (1 byte). Anything else qualifies as "non-trivial" and
+            // chunk-190 emits the body via EmitClauseBody.
+            bool trivial =
+                end == start + 10
+                && (Opcode)code[start + 9] == Opcode.Proceed;
+            if (!trivial)
+            {
+                // Validate the full body is in the IL subset (same check
+                // TryMeElseChain uses). If not, give up — fall back to
+                // SwitchedChain (or another shape).
+                int q = start;
+                while (q < end)
+                {
+                    var op = (Opcode)code[q];
+                    var opInfo = OpcodeTable.Get((byte)op);
+                    if (!opInfo.IsDefined || opInfo.Size == 0) return false;
+                    if (!IsClauseBodyOpcode(op, predicate, q, calleeMap)) return false;
+                    q += opInfo.Size;
+                }
+                allTrivial = false;
+            }
+            clauses.Add(new IndexedAtomClause(raw[i].AtomId, start, end, trivial));
+        }
+        info = new IndexedAtomInfo { Clauses = clauses, AllTrivial = allTrivial };
         return true;
     }
 
@@ -1956,7 +2001,8 @@ public sealed class IlPredicateCompiler
     /// atom-id dispatch) and the unbound-A1 path (enumerate via the IL
     /// choice-point machinery from ADR-014).</summary>
     private PredicateDelegate CompileIndexedAtomPredicate(
-        CompiledPredicate predicate, IndexedAtomInfo info)
+        CompiledPredicate predicate, IndexedAtomInfo info,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
         // Take the holder lock for the entire emit-and-register sequence so
         // two concurrent Compile calls don't both observe the same
@@ -1965,13 +2011,14 @@ public sealed class IlPredicateCompiler
         // contended when two engines promote at the same wall-clock moment.
         lock (IndexedDelegateHolder.RegistrationLock)
         {
-            return CompileIndexedAtomPredicateUnlocked(predicate, info);
+            return CompileIndexedAtomPredicateUnlocked(predicate, info, calleeMap: calleeMap);
         }
     }
 
     private PredicateDelegate CompileIndexedAtomPredicateUnlocked(
         CompiledPredicate predicate, IndexedAtomInfo info,
-        int profileKey = -1, int[]? groundOrder = null)
+        int profileKey = -1, int[]? groundOrder = null,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
         int holderKey = _nextHolderKey;
         var emitSelf = SelfFromHolder(holderKey);
@@ -1979,7 +2026,7 @@ public sealed class IlPredicateCompiler
         var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
             $"ShumwayIl_indexed_{predicate.FunctorId}",
             doVerify: DoVerify || DebugMode);
-        EmitIndexedAtomBody(emit, predicate, info, emitSelf, profileKey, groundOrder);
+        EmitIndexedAtomBody(emit, predicate, info, emitSelf, profileKey, groundOrder, calleeMap);
 
         var del = emit.CreateDelegate(Optimizations);
         IndexedDelegateHolder.Register(holderKey, del);
@@ -2010,70 +2057,106 @@ public sealed class IlPredicateCompiler
         IndexedAtomInfo info,
         SelfDelegateEmitter emitSelf,
         int profileKey = -1,
-        int[]? groundOrder = null)
+        int[]? groundOrder = null,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
         var clauses = info.Clauses;
-        // Build the dispatch arrays *outside* IL so the emitted method
-        // doesn't have to allocate them per call.
         int[] atomIds = clauses.Select(c => c.AtomId).ToArray();
+        int n = clauses.Count;
 
         var failLabel = emit.DefineLabel("fail");
-        var varDispatchLabel = emit.DefineLabel("var_dispatch");
         _emitOwnerFid = predicate.FunctorId;
-        var groundDispatchLabel = emit.DefineLabel("ground_dispatch");
 
-        // cursor != 0 → re-entry, jump straight to var-dispatch switch.
+        // Per-clause body labels. For trivial clauses (chunk 52) the
+        // body is `get_atom + proceed`; for non-trivial (chunk 190)
+        // it's whatever IL-supported opcodes the body holds. Both run
+        // via EmitClauseBody.
+        var bodyLabels = new Sigil.Label[n];
+        for (int i = 0; i < n; i++)
+            bodyLabels[i] = emit.DefineLabel($"body_{i}");
+
+        // varEnter[i]: pushes CP for cursor=i+1 (unless last) and
+        // jumps to bodyLabel[i]. Used by the var-dispatch path —
+        // cursor i tries clause i, leaving an IL CP for clause i+1
+        // on backtrack.
+        var varEnterLabels = new Sigil.Label[n];
+        for (int i = 0; i < n; i++)
+            varEnterLabels[i] = emit.DefineLabel($"var_enter_{i}");
+
+        // Chunk-182 Call-site cursors for non-tail Calls inside any
+        // clause body. The cursor space is partitioned:
+        //   cursor 0          → tag dispatch (ground/var)
+        //   cursor 1..n-1     → varEnter[cursor] (next clause on backtrack)
+        //   cursor n..n+M-1   → resume after the j-th non-tail Call site
+        int totalCallSites = 0;
+        foreach (var c in clauses)
+            totalCallSites += CountNonTailCallOpcodes(
+                predicate.Bytecode, c.BodyStart, c.BodyEnd);
+        var callResumeLabels = new Sigil.Label[totalCallSites];
+        for (int j = 0; j < totalCallSites; j++)
+            callResumeLabels[j] = emit.DefineLabel($"call_resume_{j + 1}");
+
+        // Top-level cursor switch.
+        // Call-site resume cursors first (chunk 182 forward-resume).
+        for (int j = 0; j < totalCallSites; j++)
+        {
+            emit.LoadArgument(1);
+            emit.LoadConstant(n + j);
+            emit.BranchIfEqual(callResumeLabels[j]);
+        }
+        // Clause-entry cursors 1..n-1 → varEnter[cursor].
+        for (int i = 1; i < n; i++)
+        {
+            emit.LoadArgument(1);
+            emit.LoadConstant(i);
+            emit.BranchIfEqual(varEnterLabels[i]);
+        }
+        // cursor == 0 falls through to tag dispatch; anything else
+        // unreachable → fail.
+        var cursorZero = emit.DefineLabel("cursor_zero");
         emit.LoadArgument(1);
         emit.LoadConstant(0);
-        var notCursorZero = emit.DefineLabel("not_cursor_zero");
-        emit.UnsignedBranchIfNotEqual(notCursorZero);
+        emit.BranchIfEqual(cursorZero);
+        emit.Branch(failLabel);
+        emit.MarkLabel(cursorZero);
 
-        // cursor == 0: deref A1 (read X[0], chase REF if needed) and
-        // dispatch on its tag.
+        // cursor == 0: deref A1, dispatch on tag.
         EmitDerefA0(emit);
-        // Now top of stack is a Cell. Save it in a local since we'll
-        // need .Tag and .AsAtomId.
         var a1Local = emit.DeclareLocal<Cell>("a1");
         emit.StoreLocal(a1Local);
 
-        // tag = a1.Tag
         emit.LoadLocalAddress(a1Local);
         emit.Call(CellTagGetter);
-        // tag on stack as byte
         var tagLocal = emit.DeclareLocal<byte>("tag");
         emit.StoreLocal(tagLocal);
 
-        // if (tag == Tag.Ref) goto var_dispatch
+        var groundDispatchLabel = emit.DefineLabel("ground_dispatch");
+
+        // if (tag == Tag.Ref) goto varEnter[0]
         emit.LoadLocal(tagLocal);
         emit.LoadConstant((int)Tag.Ref);
-        emit.BranchIfEqual(varDispatchLabel);
+        emit.BranchIfEqual(varEnterLabels[0]);
         // if (tag == Tag.Atom) goto ground_dispatch
         emit.LoadLocal(tagLocal);
         emit.LoadConstant((int)Tag.Atom);
         emit.BranchIfEqual(groundDispatchLabel);
-        // Any other tag → fail (no clause can match a list/struct/etc).
+        // Any other tag → fail.
         emit.Branch(failLabel);
 
-        // ground_dispatch: compare a1.AsAtomId against each clause's
-        // atom id, returning true on a hit. The chain is a linear
-        // sequence of cmp + branch-if-equal; for the small predicate
-        // counts we typically deal with (5-20 clauses) it beats a hash
-        // lookup in cache-friendliness.
+        // Ground dispatch: cmp atomId against each clause's atomId,
+        // jump to that clause's body on match.
         emit.MarkLabel(groundDispatchLabel);
         emit.LoadLocalAddress(a1Local);
         emit.Call(CellAsAtomIdGetter);
         var atomIdLocal = emit.DeclareLocal<int>("atomId");
         emit.StoreLocal(atomIdLocal);
 
-        // The cmp chain is emitted in groundOrder when given (phase-2
-        // PGO puts the hottest atom first); identity order otherwise.
-        int n = atomIds.Length;
         int[] order = groundOrder ?? Enumerable.Range(0, n).ToArray();
 
         if (profileKey >= 0)
         {
-            // Instrumented (phase-1): a per-clause success label that
-            // records the hit before returning true.
+            // Chunk 76 PGO: per-clause success label that bumps the
+            // hit counter, then jumps to the body.
             var successLabels = new Sigil.Label[n];
             for (int ci = 0; ci < n; ci++)
                 successLabels[ci] = emit.DefineLabel($"ground_success_{ci}");
@@ -2090,49 +2173,27 @@ public sealed class IlPredicateCompiler
                 emit.LoadConstant(profileKey);
                 emit.LoadConstant(ci);
                 emit.Call(IlProfileCountersBump);
-                emit.LoadConstant(true);
-                emit.Return();
+                emit.Branch(bodyLabels[ci]);
             }
         }
         else
         {
-            // Uninstrumented (no PGO, or phase-2 optimised): shared
-            // success label. The switch_on_atom dispatch already
-            // unified A1 with the matching atom, so just return true.
-            var groundSuccess = emit.DefineLabel("ground_success");
             foreach (int ci in order)
             {
                 emit.LoadLocal(atomIdLocal);
                 emit.LoadConstant(atomIds[ci]);
-                emit.BranchIfEqual(groundSuccess);
+                emit.BranchIfEqual(bodyLabels[ci]);
             }
             emit.Branch(failLabel);
-            emit.MarkLabel(groundSuccess);
-            emit.LoadConstant(true);
-            emit.Return();
         }
 
-        // var_dispatch and cursor>0 share the same dispatch logic: pick
-        // the clause to try based on the cursor. cursor==0 enters here
-        // when A1 is unbound; cursor>0 enters here after a backtrack.
-        emit.MarkLabel(varDispatchLabel);
-        emit.MarkLabel(notCursorZero);
-
-        // The dispatch is a sequence of: "is cursor == N? if yes, push
-        // CP for cursor=N+1 (unless last) and unify A0 with atom N".
-        for (int i = 0; i < atomIds.Length; i++)
+        // varEnter[i]: push CP for cursor=i+1 (unless last) and jump
+        // to bodyLabel[i]. The body's own get_atom opcode does the
+        // actual A0/atom unification.
+        for (int i = 0; i < n; i++)
         {
-            var nextLabel = emit.DefineLabel($"after_clause_{i}");
-            emit.LoadArgument(1);
-            emit.LoadConstant(i);
-            emit.UnsignedBranchIfNotEqual(nextLabel);
-
-            // If there's a later clause, push an IL CP for it before
-            // attempting unification. The "this delegate" reference
-            // routes through emitSelf — IndexedDelegateHolder for the
-            // DynamicMethod path, a static array slot for the
-            // persisted path (chunk 71).
-            if (i < atomIds.Length - 1)
+            emit.MarkLabel(varEnterLabels[i]);
+            if (i < n - 1)
             {
                 emit.LoadArgument(0);                  // engine
                 emitSelf(emit);                        // → PredicateDelegate
@@ -2140,20 +2201,25 @@ public sealed class IlPredicateCompiler
                 emit.LoadConstant(1);                  // arity
                 emit.Call(EnginePushIlCpMethod);
             }
-            // engine.UnifyRegisterWithCell(0, Cell.Atom(atomIds[i]))
-            emit.LoadArgument(0);
-            emit.LoadConstant(0);                      // reg 0
-            emit.LoadConstant(atomIds[i]);
-            emit.Call(CellAtomMethod);
-            emit.Call(EngineUnifyMethod);
-            // Return whatever unify returned.
-            emit.Return();
-
-            emit.MarkLabel(nextLabel);
+            emit.Branch(bodyLabels[i]);
         }
 
-        // cursor not in [0..N-1] → fail.
-        emit.Branch(failLabel);
+        // Per-clause body emit. Each body's non-tail Calls use the
+        // shared siteCounter (cursorBase = n places Call-site cursors
+        // above the clause-entry range).
+        int siteCounter = 0;
+        for (int i = 0; i < n; i++)
+        {
+            emit.MarkLabel(bodyLabels[i]);
+            EmitClauseBody(emit, predicate.Bytecode,
+                clauses[i].BodyStart, clauses[i].BodyEnd,
+                failLabel, predicate.CallSites,
+                callSiteIndexCounter: () => ++siteCounter,
+                resumeLabels: callResumeLabels,
+                emitSelfDelegate: emitSelf,
+                calleeMap: calleeMap,
+                cursorBase: n);
+        }
 
         emit.MarkLabel(failLabel);
         emit.LoadConstant(false);
