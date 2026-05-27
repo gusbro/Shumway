@@ -657,6 +657,47 @@ questions from Phase 11's deferred list:
   `retract` / `assertz` — and avoids redundant `TryDescribe*`
   attempts that were already rejecting the shape.
 
+**Phase 16 — Tier-1 IL threading** — 🚧 in progress.
+
+Rationale: the chunk-50 Tier-1 IL Call site recurses into the
+bytecode interpreter via `IlSubroutineRunner` → `RunSubroutine` →
+`Dispatch`. Every non-tail Prolog call creates a fresh C# stack
+frame. Chunk 174 noted that backtracking inside that recursive
+frame could cascade past the IL caller's CPs and corrupt _e —
+fixed with a backtrack-floor pin in `RunSubroutine` plus a
+`RunBacktrackWithFloor` wrapper in IL meta-CP resume. The pin is
+correct semantically but imposes a ~7× slowdown on Blint (50s vs
+6.7s Tier-0), because the bounded backtrack forces the IL caller
+to redo work the Tier-0 cascade was eliding implicitly.
+
+The fix is threaded dispatch: every IL Call becomes a tail-call
+plus a cursor-encoded resume marker (the same `IlTailCallPending`
+machinery `Execute` already uses, extended with a return path).
+The IL delegate sets `Cp = resumeMarker`, `Pc = callee`, marks
+tail-call pending, and *returns* to the outer Dispatch loop. When
+the callee Proceeds, `Pc = Cp = resumeMarker`; the dispatcher
+recognises the marker and re-invokes the IL delegate with the
+matching cursor to run the post-Call continuation. No recursive C#
+stack frame, no floor pin, no `RunSubroutine`.
+
+Chunks (planned):
+
+- **181** — Resume-marker registry on the engine. Address
+  allocation, dispatcher recognition, IL CP integration.
+- **182** — IL emit for non-tail Call switched to threaded
+  pattern (set Cp = marker, Pc = callee, IlTailCallPending = true,
+  return). Cursor switch at the delegate's top for entry vs
+  resume.
+- **183** — Delete `RunSubroutine`'s chunk-174 floor pin,
+  `RunBacktrackWithFloor`, the `SetBacktrackFloor` engine callback,
+  and `IlRuntimeHelpers.Call` (or downscope to a leaf-only fast
+  path). Tier-0 cascade backtracking works transparently across
+  IL/bytecode again.
+- **184** — Tests: deep-call-chain stays in O(1) C# stack;
+  backtracking across IL ↔ bytecode boundary correct; Blint runs
+  at Tier-0 parity or better with promote=32.
+- **185** — Phase 16 closure.
+
 ---
 
 ## Communication and Iteration
