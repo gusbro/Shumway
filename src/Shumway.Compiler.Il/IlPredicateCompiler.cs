@@ -163,6 +163,11 @@ public sealed class IlPredicateCompiler
         typeof(Engine).GetProperty(nameof(Engine.CurrentFunctorAddresses))!.GetGetMethod()!;
     private static readonly MethodInfo IlExecuteHelperResolveMethod =
         typeof(IlExecuteHelper).GetMethod(nameof(IlExecuteHelper.Resolve))!;
+    // Phase 19 — meta-call dispatch helper.
+    private static readonly MethodInfo IlMetaCallHelperDispatchMethod =
+        typeof(IlMetaCallHelper).GetMethod(nameof(IlMetaCallHelper.Dispatch))!;
+    private static readonly MethodInfo IlMetaCallHelperReadIntRegisterMethod =
+        typeof(IlMetaCallHelper).GetMethod(nameof(IlMetaCallHelper.ReadIntRegister))!;
     // ---------- get_structure / put_structure (chunk 48) ----------
     private static readonly MethodInfo EngineGetStructureMethod =
         typeof(Engine).GetMethod(nameof(Engine.GetStructure), new[] { typeof(int), typeof(int) })!;
@@ -402,14 +407,10 @@ public sealed class IlPredicateCompiler
             }
             if (op == Opcode.CallBuiltin)
             {
-                // call/1..7 and '$call'/2 need the interpreter's runtime
-                // goal dispatch (chunks 86, 88); the IL builtin-invoke
-                // path would bypass it and fall back to the once-semantics
-                // builtin. Keep such a clause in Tier 0.
-                int builtinId = BytecodeIO.ReadInt32(code, pc + 1);
-                string builtinName = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId).Name;
-                if (builtinName == "call" || builtinName == "$call")
-                    return false;
+                // Phase 19: call/1..7 and '$call'/2 are now IL-eligible via
+                // IlMetaCallHelper.Dispatch. The CallBuiltin emit at
+                // EmitClauseBody treats them as threaded non-tail calls
+                // (chunk-182 forward-resume + cursor switch).
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -753,6 +754,15 @@ public sealed class IlPredicateCompiler
         {
             byte b = bytecode[pc];
             if (b == (byte)Opcode.Call) count++;
+            // Phase 19: CallBuiltin call/N and CallBuiltin '$call'/2 are
+            // also non-tail Calls — they thread through
+            // IlMetaCallHelper.Dispatch and need a resume-cursor slot.
+            else if (b == (byte)Opcode.CallBuiltin)
+            {
+                int builtinId = BytecodeIO.ReadInt32(bytecode, pc + 1);
+                string n = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId).Name;
+                if (n == "call" || n == "$call") count++;
+            }
             var info = OpcodeTable.Get(b);
             if (!info.IsDefined || info.Size == 0) break;
             pc += info.Size;
@@ -1237,9 +1247,127 @@ public sealed class IlPredicateCompiler
             }
             if (op == Opcode.CallBuiltin)
             {
+                int builtinId = BytecodeIO.ReadInt32(code, pc + 1);
+                string builtinName =
+                    Shumway.Builtins.BuiltinsRegistry.GetById(builtinId).Name;
+                int builtinArity =
+                    Shumway.Builtins.BuiltinsRegistry.GetById(builtinId).Arity;
+
+                if (builtinName == "call" || builtinName == "$call")
+                {
+                    // Phase 19 — meta-call dispatch. Three outcomes from
+                    // IlMetaCallHelper.Dispatch:
+                    //   target >= 0      → user predicate / control
+                    //                      helper. Thread the dispatch
+                    //                      exactly like a chunk-182 non-
+                    //                      tail Call.
+                    //   target == -2     → synchronous success (the goal
+                    //                      was `!`, `true`, or a builtin
+                    //                      that returned true). Fall
+                    //                      through to the next opcode.
+                    //   target == -1     → synchronous failure (the goal
+                    //                      was `fail` or a builtin that
+                    //                      returned false). Go to fail.
+                    //
+                    // Last-call optimisation: when the CallBuiltin is
+                    // immediately followed by Proceed (or Deallocate +
+                    // Proceed), the Tier-0 dispatcher leaves Cp alone so
+                    // the called goal's proceed jumps straight back to
+                    // the outer caller. The IL emit has to mirror this —
+                    // setting Cp to a resume marker for the current IL
+                    // would trap in an infinite loop (the bytecode
+                    // interpreter would re-enter the IL at the resume
+                    // cursor, immediately Proceed again, see Pc = Cp =
+                    // same marker, and decode it again).
+                    int nextOp = pc + OpcodeTable.Get(op).Size;
+                    bool tailCall = nextOp < code.Length
+                        && (Opcode)code[nextOp] == Opcode.Proceed
+                        && !suppressProceedReturn;
+                    if (!tailCall && nextOp + 1 <= code.Length
+                        && (Opcode)code[nextOp] == Opcode.Deallocate)
+                    {
+                        // Deallocate restores the env frame's saved Cp;
+                        // the meta-call still threads but Cp's restore
+                        // is handled by the Deallocate emit downstream.
+                        // No special handling here — the non-tail path
+                        // is correct.
+                    }
+                    if (callSiteIndexCounter is null || resumeLabels is null)
+                        throw new InvalidOperationException(
+                            "IL meta-call requires callSiteIndexCounter + "
+                            + "resumeLabels for forward-resume cursor allocation.");
+                    int siteIdx = callSiteIndexCounter();
+                    int resumeCursor = cursorBase + siteIdx - 1;
+
+                    var target = emit.DeclareLocal<int>($"metaCallTarget_pc{pc}");
+
+                    // Compute the call arity and cut barrier per builtin.
+                    //   call/N : arity = N, barrier = engine.B
+                    //   $call/2: arity = 1, barrier = X[1].AsInt
+                    emit.LoadArgument(0);                    // engine
+                    if (builtinName == "$call")
+                    {
+                        emit.LoadConstant(1);                // arity 1
+                        // barrier = ReadIntRegister(engine, 1) — derefs the
+                        // X[1] cell once and extracts the int payload.
+                        emit.LoadArgument(0);
+                        emit.LoadConstant(1);
+                        emit.Call(IlMetaCallHelperReadIntRegisterMethod);
+                    }
+                    else
+                    {
+                        emit.LoadConstant(builtinArity);
+                        emit.LoadArgument(0);
+                        emit.Call(EngineBGetter);
+                    }
+                    emit.Call(IlMetaCallHelperDispatchMethod);
+                    emit.StoreLocal(target);
+
+                    // target == -1 → fail
+                    emit.LoadLocal(target);
+                    emit.LoadConstant(IlMetaCallHelper.SyncFail);
+                    emit.BranchIfEqual(failLabel);
+
+                    // target == -2 → fall through (sync success)
+                    var threadedLabel = emit.DefineLabel($"metaCallThread_pc{pc}");
+                    emit.LoadLocal(target);
+                    emit.LoadConstant(IlMetaCallHelper.SyncSuccess);
+                    emit.UnsignedBranchIfNotEqual(threadedLabel);
+                    // sync success — skip the threading and go to resume.
+                    emit.Branch(resumeLabels[siteIdx - 1]);
+
+                    emit.MarkLabel(threadedLabel);
+                    // Threaded dispatch.
+                    // Non-tail: SetCp(resume marker) so the bytecode
+                    // interpreter re-enters this IL at resumeCursor
+                    // after the callee proceeds.
+                    // Tail: skip SetCp entirely. Cp stays as the outer
+                    // caller's, and the callee's proceed jumps straight
+                    // there — same last-call optimisation Tier-0 has
+                    // for CallBuiltin followed by Proceed.
+                    if (!tailCall)
+                    {
+                        emit.LoadArgument(0);
+                        EmitResumeMarker(emit, _emitOwnerFid, resumeCursor);
+                        emit.Call(EngineSetCpMethod);
+                    }
+                    emit.LoadArgument(0);
+                    emit.LoadLocal(target);
+                    emit.Call(EngineSetPcMethod);
+                    emit.LoadArgument(0);
+                    emit.LoadConstant(true);
+                    emit.Call(EngineIlTailCallPendingSetter);
+                    emit.LoadConstant(true);
+                    emit.Return();
+
+                    emit.MarkLabel(resumeLabels[siteIdx - 1]);
+                    pc += OpcodeTable.Get(op).Size;
+                    continue;
+                }
+
+                // Regular builtin (non-meta) — invoke entry.Impl directly.
                 // entry = BuiltinsRegistry.GetById(id)
                 // if (!entry.Impl(engine)) goto fail
-                int builtinId = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadConstant(builtinId);
                 emit.Call(BuiltinsRegistryGetByIdMethod);
                 emit.Call(BuiltinEntryImplGetter);
@@ -1736,28 +1864,8 @@ public sealed class IlPredicateCompiler
         }
         if (op == Opcode.CallBuiltin)
         {
-            // Phase 18: same gate CanCompileSingleClause applies — call/N
-            // and '$call'/2 need the bytecode interpreter's runtime goal
-            // dispatch (chunks 86, 88). The IL builtin-invoke path would
-            // call the Impl directly, and '$call'/2's Impl throws "must
-            // be dispatched by the interpreter, not invoked directly"
-            // because Tier-0 catches it earlier with cut-barrier
-            // threading. Reject any clause body that holds one of
-            // these CallBuiltin sites so the predicate stays Tier-0.
-            int builtinId = BytecodeIO.ReadInt32(predicate.Bytecode, pc + 1);
-            string builtinName = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId).Name;
-            if (builtinName == "call" || builtinName == "$call")
-            {
-                var diagPath = System.Environment.GetEnvironmentVariable("SHUMWAY_LOG_CALL_GATE");
-                if (!string.IsNullOrEmpty(diagPath))
-                {
-                    var (atomId, ar) = FunctorTable.Lookup(predicate.FunctorId);
-                    string name = AtomTable.GetById(atomId)?.Name ?? "?";
-                    System.IO.File.AppendAllText(diagPath,
-                        $"{name}/{ar} (fid={predicate.FunctorId}) calls {builtinName} at pc={pc}\n");
-                }
-                return false;
-            }
+            // Phase 19: call/N and '$call'/2 are IL-eligible via
+            // IlMetaCallHelper.Dispatch — no longer rejected.
             return true;
         }
         return IsSupportedOpcode(op);
@@ -2451,6 +2559,201 @@ public sealed class IlPredicateCompiler
             if (!map.TryGetValue(functorId, out int address))
                 throw PrologRuntimeException.UndefinedProcedure(functorId);
             return address;
+        }
+    }
+
+    /// <summary>Phase 19 — runtime helper that the IL emit calls from
+    /// <c>CallBuiltin call/N</c> and <c>CallBuiltin '$call'/2</c> sites.
+    /// Mirrors the bytecode interpreter's <c>DispatchCall</c> (chunks 86,
+    /// 88) but returns a sentinel value so the IL caller can branch on
+    /// the three outcomes: synchronous success (the goal was a control
+    /// construct that resolved inline — cut, true, or a builtin that
+    /// returned true), synchronous failure (fail or a builtin that
+    /// returned false), or "dispatch this target via the chunk-182
+    /// threaded path" (an ordinary user predicate / a builtin replaced by
+    /// a $call_* helper).
+    ///
+    /// <para>The IL caller sets up <c>Cp = resume_marker</c> only when
+    /// the return is &gt;= 0 (an actual target address). For sync
+    /// success the caller falls through to its next opcode; for sync
+    /// fail the caller jumps to its fail label.</para>
+    /// </summary>
+    public static class IlMetaCallHelper
+    {
+        public const int SyncFail = -1;
+        public const int SyncSuccess = -2;
+
+        // Cached control-construct ids — the bytecode interpreter
+        // re-interns these as private statics; we do the same so the
+        // IL emit doesn't pay an Intern per dispatch.
+        private static readonly int ConjFid =
+            FunctorTable.Intern(AtomTable.Intern(",", permanent: true).Id, 2);
+        private static readonly int DisjFid =
+            FunctorTable.Intern(AtomTable.Intern(";", permanent: true).Id, 2);
+        private static readonly int ArrowFid =
+            FunctorTable.Intern(AtomTable.Intern("->", permanent: true).Id, 2);
+        private static readonly int NegFid =
+            FunctorTable.Intern(AtomTable.Intern("\\+", permanent: true).Id, 1);
+        private static readonly int NotFid =
+            FunctorTable.Intern(AtomTable.Intern("not", permanent: true).Id, 1);
+        private static readonly int CutFid =
+            FunctorTable.Intern(AtomTable.Intern("!", permanent: true).Id, 0);
+        private static readonly int TrueFid =
+            FunctorTable.Intern(AtomTable.Intern("true", permanent: true).Id, 0);
+        private static readonly int FailFid =
+            FunctorTable.Intern(AtomTable.Intern("fail", permanent: true).Id, 0);
+        private static readonly int CallConjFid =
+            FunctorTable.Intern(AtomTable.Intern("$call_conj", permanent: true).Id, 3);
+        private static readonly int CallDisjFid =
+            FunctorTable.Intern(AtomTable.Intern("$call_disj", permanent: true).Id, 3);
+        private static readonly int CallArrowFid =
+            FunctorTable.Intern(AtomTable.Intern("$call_arrow", permanent: true).Id, 3);
+        private static readonly int CallNegFid =
+            FunctorTable.Intern(AtomTable.Intern("$call_neg", permanent: true).Id, 1);
+
+        /// <summary>Dispatches <c>call/N</c> with <paramref name="callArity"/>
+        /// extra-arg count and the supplied cut barrier. Returns the
+        /// callee's address (&gt;= 0), or <see cref="SyncSuccess"/>
+        /// (the goal was <c>!</c>, <c>true</c>, or a builtin that
+        /// returned true), or <see cref="SyncFail"/> (the goal was
+        /// <c>fail</c>, or a builtin that returned false).
+        ///
+        /// <para>Side effects when returning a non-negative address:
+        /// the X registers hold the dispatched goal's arguments
+        /// (goal args + appended call/N extra args), and
+        /// <c>engine.B0</c> is set to <paramref name="cutBarrier"/> so
+        /// a neck_cut at the callee entry commits to the call's
+        /// barrier rather than the IL caller's.</para>
+        /// </summary>
+        public static int Dispatch(Engine engine, int callArity, int cutBarrier)
+        {
+            Cell goal = DerefCell(engine, engine.GetRegister(0));
+
+            // Save call/N's extra args before SetRegister reshuffles them.
+            Cell[] extra = callArity > 1 ? new Cell[callArity - 1] : System.Array.Empty<Cell>();
+            for (int i = 0; i < callArity - 1; i++)
+                extra[i] = engine.GetRegister(i + 1);
+
+            int atomId;
+            int goalArity;
+            int argBase;
+            switch (goal.Tag)
+            {
+                case Tag.Atom:
+                    atomId = goal.AsAtomId;
+                    goalArity = 0;
+                    argBase = -1;
+                    break;
+                case Tag.Str:
+                    int functorIdx = goal.AsHeapIndex;
+                    (atomId, goalArity) =
+                        FunctorTable.Lookup(engine.GetHeap(functorIdx).AsFunctorId);
+                    argBase = functorIdx + 1;
+                    break;
+                case Tag.Ref:
+                case Tag.AttVar:
+                    throw new PrologRuntimeException("instantiation_error");
+                default:
+                    throw new PrologRuntimeException("type_error", "callable");
+            }
+
+            int totalArity = goalArity + (callArity - 1);
+            for (int i = 0; i < goalArity; i++)
+                engine.SetRegister(i, engine.GetHeap(argBase + i));
+            for (int i = 0; i < callArity - 1; i++)
+                engine.SetRegister(goalArity + i, extra[i]);
+
+            int functorId = FunctorTable.Intern(atomId, totalArity);
+            // Chunk-88 control-construct routing — `!` inside the
+            // runtime goal commits to the call's barrier via the
+            // $call_* helpers' arity-3 form (X[2] carries the barrier).
+            if (functorId == ConjFid)
+            {
+                engine.SetRegister(2, Cell.Int(cutBarrier));
+                functorId = CallConjFid;
+            }
+            else if (functorId == DisjFid)
+            {
+                engine.SetRegister(2, Cell.Int(cutBarrier));
+                functorId = CallDisjFid;
+            }
+            else if (functorId == ArrowFid)
+            {
+                engine.SetRegister(2, Cell.Int(cutBarrier));
+                functorId = CallArrowFid;
+            }
+            else if (functorId == NegFid || functorId == NotFid)
+            {
+                functorId = CallNegFid;
+            }
+
+            // Cut as the runtime goal: commits to the call's barrier.
+            // The interpreter's DispatchCall AdvancePc's after Cut;
+            // for IL we just report sync success so the caller falls
+            // through to its next opcode.
+            if (functorId == CutFid)
+            {
+                engine.Cut(cutBarrier);
+                return SyncSuccess;
+            }
+            if (functorId == TrueFid) return SyncSuccess;
+            if (functorId == FailFid) return SyncFail;
+
+            // Builtin-as-goal. The recursion case (call(call(...))) is
+            // handled by re-entering Dispatch with the recovered arity
+            // — the inner call's X[0] already holds its own inner goal.
+            if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out int builtinId))
+            {
+                var builtin = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+                if (builtin.Name == "call")
+                {
+                    // call(call(...)) — inner call's arity is the
+                    // builtin's arity, barrier resets to engine.B
+                    // (a fresh call boundary).
+                    return Dispatch(engine, builtin.Arity, engine.B);
+                }
+                if (builtin.Name == "$call")
+                {
+                    int innerBarrier = (int)DerefCell(engine, engine.GetRegister(1)).AsInt;
+                    return Dispatch(engine, 1, innerBarrier);
+                }
+                engine.CurrentBuiltinName = builtin.Name;
+                engine.CurrentBuiltinArity = builtin.Arity;
+                try
+                {
+                    return builtin.Impl(engine) ? SyncSuccess : SyncFail;
+                }
+                catch (PrologRuntimeException re)
+                {
+                    re.StampBuiltin(builtin.Name, builtin.Arity);
+                    throw;
+                }
+            }
+
+            // User predicate. Set the cut barrier the call's `!` will
+            // commit to, then return the dispatch address — the IL
+            // caller threads Cp = resume_marker, Pc = target,
+            // IlTailCallPending = true.
+            engine.SetB0(cutBarrier);
+            if (engine.CurrentFunctorAddresses is null
+                || !engine.CurrentFunctorAddresses.TryGetValue(functorId, out int address))
+                throw PrologRuntimeException.UndefinedProcedure(functorId);
+            return address;
+        }
+
+        private static Cell DerefCell(Engine engine, Cell c) =>
+            c.Tag == Tag.Ref ? engine.GetHeap(engine.Deref(c.AsHeapIndex)) : c;
+
+        /// <summary>Reads <c>engine.GetRegister(reg)</c>, dereferences
+        /// once if it's a <c>Tag.Ref</c>, and returns the embedded int
+        /// payload. Used by the IL emit to fetch <c>$call/2</c>'s
+        /// cut-barrier argument (X[1]) without the IL needing to
+        /// inline the deref logic.</summary>
+        public static int ReadIntRegister(Engine engine, int reg)
+        {
+            Cell c = engine.GetRegister(reg);
+            if (c.Tag == Tag.Ref) c = engine.GetHeap(engine.Deref(c.AsHeapIndex));
+            return (int)c.AsInt;
         }
     }
 
