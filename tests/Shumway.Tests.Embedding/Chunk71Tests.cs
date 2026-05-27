@@ -39,7 +39,7 @@ public class Chunk71Tests
         {
             { pred.FunctorId, pred }
         };
-        var (dllBytes, entries) = PersistedIlBuilder.Build("Chunk71Asm_foo", predicates);
+        var (dllBytes, entries, _) = PersistedIlBuilder.Build("Chunk71Asm_foo", predicates);
         Assert.True(dllBytes.Length > 0);
         Assert.Single(entries);
 

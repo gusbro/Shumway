@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Reflection.Emit;
+using System.Reflection.Metadata;
 using Shumway.Compiler.Wam;
 using Shumway.Core;
 
@@ -51,9 +52,16 @@ public static class PersistedIlBuilder
 
     /// <summary>Builds an in-memory .dll holding IL for every
     /// predicate in <paramref name="predicates"/> that the runtime IL
-    /// compiler can handle. Returns the .dll bytes plus the per-method
-    /// metadata callers need at load time.</summary>
-    public static (byte[] DllBytes, IReadOnlyList<Entry> Entries) Build(
+    /// compiler can handle. Returns the .dll bytes, the per-method
+    /// metadata callers need at load time, and the
+    /// <see cref="IlPatchSite"/> table the LoadBundle path uses to
+    /// rewrite each baked build-time atom/functor id constant into the
+    /// equivalent runtime-process id (Phase 17 — functor/atom ids drift
+    /// across processes since they're ordinal in the global AtomTable
+    /// /FunctorTable, and the LINK process accumulates interns that
+    /// the RUN process doesn't).</summary>
+    public static (byte[] DllBytes, IReadOnlyList<Entry> Entries,
+        IReadOnlyList<IlPatchSite> Patches) Build(
         string assemblyName,
         IReadOnlyDictionary<int, CompiledPredicate> predicates)
     {
@@ -85,16 +93,80 @@ public static class PersistedIlBuilder
             typeof(PredicateDelegate[]),
             FieldAttributes.Public | FieldAttributes.Static);
 
+        // Diagnostic env-var for bisecting persisted-IL correctness
+        // issues on real-world programs: SHUMWAY_PERSIST_RANGE="lo,hi"
+        // restricts the persisted set to predicates whose ordinal in
+        // the eligible list (sorted by functorId) is in [lo, hi).
+        // Predicates outside the range are still EmitPersistedMethod-
+        // skipped at link time, so they fall back to runtime
+        // bytecode/IL at LoadBundle. Bisect by halving the range
+        // until the smallest range that still produces a wrong
+        // answer names the divergent predicate(s).
+        int rangeLo = 0;
+        int rangeHi = int.MaxValue;
+        var rangeStr = System.Environment.GetEnvironmentVariable("SHUMWAY_PERSIST_RANGE");
+        if (!string.IsNullOrEmpty(rangeStr))
+        {
+            var parts = rangeStr.Split(',');
+            if (parts.Length == 2
+                && int.TryParse(parts[0], out int rLo)
+                && int.TryParse(parts[1], out int rHi))
+            {
+                rangeLo = rLo;
+                rangeHi = rHi;
+            }
+        }
+        // Stable ordering for bisection: sort eligible by functorId.
+        eligible.Sort((a, b) => a.FunctorId.CompareTo(b.FunctorId));
+
+        // Phase 17: switch the predicate compiler into persist mode so
+        // every atom-id / functor-id / resume-marker constant emit
+        // routes through a sentinel + records the IlPatchSite. After
+        // psab.Save() below we scan the resulting PE for each
+        // sentinel to fill in AbsoluteByteOffset.
+        var patches = ic.BeginPersistEmit();
         var entries = new List<Entry>();
         int slot = 0;
+        int ordinal = 0;
+        bool dumpOrdinals = System.Environment.GetEnvironmentVariable(
+            "SHUMWAY_PERSIST_DUMP_ORDINALS") == "1";
+        // SHUMWAY_PERSIST_DUMP_FIDS="name1,name2,..." prints the build-time
+        // functor id of every listed Name/Arity (e.g. "retractall/1,$disj_1/1").
+        // Pair with the same env-var on the run side (PrologEngine.LoadBundle)
+        // to diagnose cross-process id drift.
+        var dumpFidsEnv = System.Environment.GetEnvironmentVariable("SHUMWAY_PERSIST_DUMP_FIDS");
+        if (!string.IsNullOrEmpty(dumpFidsEnv))
+        {
+            foreach (var ind in dumpFidsEnv.Split(','))
+            {
+                var slash = ind.IndexOf('/');
+                if (slash < 0) continue;
+                if (!int.TryParse(ind.AsSpan(slash + 1), out int ar)) continue;
+                string nm = ind.Substring(0, slash);
+                int aid = AtomTable.Intern(nm).Id;
+                int fid = FunctorTable.Intern(aid, ar);
+                System.Console.Error.WriteLine($"[build-fid] {nm}/{ar} atom={aid} functor={fid}");
+            }
+        }
         foreach (var (functorId, pred) in eligible)
         {
+            int thisOrdinal = ordinal++;
+            if (dumpOrdinals)
+                System.Console.Error.WriteLine(
+                    $"[persist] ord={thisOrdinal} fid={functorId} {ResolveFunctorName(functorId)} clauses={pred.ClauseCount}");
+            if (thisOrdinal < rangeLo || thisOrdinal >= rangeHi)
+                continue;
             string functorName = ResolveFunctorName(functorId);
             // Method name layout: P_{slot}_{functorId}_{sanitisedName}.
             // The load path's reflection enumeration order isn't
             // guaranteed by the runtime, so slot and functorId both
             // live in the name where they can be parsed unambiguously.
             string methodName = SanitiseMethodName($"P_{slot}_{functorId}_{functorName}");
+            // Phase 17: snapshot patch-list size before this predicate's
+            // emit so we can roll back partially-recorded patches on a
+            // mid-emit failure (otherwise the post-Save scan would look
+            // for sentinels that never landed in any method body).
+            int patchesBeforeThisPred = patches.Count;
             try
             {
                 ic.EmitPersistedMethod(
@@ -119,6 +191,9 @@ public static class PersistedIlBuilder
                 System.Console.Error.WriteLine(
                     $"shumway-persisted-il: skipped {functorName} "
                     + $"(fid={functorId}): {ex.GetType().Name}: {ex.Message}");
+                if (patches.Count > patchesBeforeThisPred)
+                    patches.RemoveRange(patchesBeforeThisPred,
+                        patches.Count - patchesBeforeThisPred);
                 continue;
             }
             entries.Add(new Entry
@@ -132,10 +207,122 @@ public static class PersistedIlBuilder
         }
 
         typeBuilder.CreateType();
+        ic.EndPersistEmit();
 
         using var stream = new MemoryStream();
         psab.Save(stream);
-        return (stream.ToArray(), entries);
+        byte[] bytes = stream.ToArray();
+
+        // Phase 17 — locate each sentinel in the saved PE and record
+        // its absolute byte offset. Each sentinel is unique and is
+        // emitted exactly once (via the 5-byte long form of ldc.i4),
+        // so a single forward scan over the PE bytes finds them all.
+        // We restrict the scan to method-body byte ranges so a stray
+        // metadata int that happens to match a sentinel doesn't get
+        // mistaken for a patch site.
+        LocatePatchSites(bytes, patches);
+
+        return (bytes, entries, patches);
+    }
+
+    /// <summary>Scans <paramref name="peBytes"/> within every method
+    /// body's IL stream looking for each <see cref="IlPatchSite.Sentinel"/>;
+    /// fills <see cref="IlPatchSite.AbsoluteByteOffset"/> with the byte
+    /// position of the int operand (i.e. one byte past the
+    /// <c>ldc.i4</c> opcode). Verifies every sentinel was found exactly
+    /// once — duplicates indicate a metadata collision and the build
+    /// fails loudly rather than silently emitting a bundle that will
+    /// patch the wrong four bytes at LoadBundle time.</summary>
+    private static void LocatePatchSites(byte[] peBytes, List<IlPatchSite> patches)
+    {
+        if (patches.Count == 0) return;
+        var bySentinel = new Dictionary<int, IlPatchSite>(patches.Count);
+        foreach (var s in patches)
+        {
+            if (!bySentinel.TryAdd(s.Sentinel, s))
+                throw new InvalidOperationException(
+                    $"Duplicate persisted-IL patch sentinel 0x{s.Sentinel:X8}.");
+        }
+
+        using var ms = new MemoryStream(peBytes, writable: false);
+        using var peReader = new System.Reflection.PortableExecutable.PEReader(ms);
+        var mdReader = peReader.GetMetadataReader();
+
+        foreach (var methodHandle in mdReader.MethodDefinitions)
+        {
+            var methodDef = mdReader.GetMethodDefinition(methodHandle);
+            int rva = methodDef.RelativeVirtualAddress;
+            if (rva == 0) continue; // abstract / external / no body
+            int fileOffset = RvaToFileOffset(peReader.PEHeaders, rva);
+            byte headerFirst = peBytes[fileOffset];
+            int ilLength;
+            int headerSize;
+            switch (headerFirst & 0x03)
+            {
+                case 0x02: // tiny
+                    headerSize = 1;
+                    ilLength = headerFirst >> 2;
+                    break;
+                case 0x03: // fat
+                    headerSize = 12;
+                    // CodeSize @ offset 4 (uint32 LE).
+                    ilLength = peBytes[fileOffset + 4]
+                        | (peBytes[fileOffset + 5] << 8)
+                        | (peBytes[fileOffset + 6] << 16)
+                        | (peBytes[fileOffset + 7] << 24);
+                    break;
+                default:
+                    continue;
+            }
+            int ilStart = fileOffset + headerSize;
+            int ilEnd = ilStart + ilLength;
+            // 4-byte sliding window — every position whose preceding
+            // byte is the <c>ldc.i4</c> opcode (0x20) is a candidate
+            // patch site. Restricting the scan to ldc.i4 operands
+            // avoids matching sentinel-value-shaped bytes that
+            // happen to appear inside operands of other opcodes (e.g.
+            // an inline switch table or a metadata token offset that
+            // coincidentally lands in our sentinel range).
+            for (int p = ilStart + 1; p + 4 <= ilEnd; p++)
+            {
+                if (peBytes[p - 1] != 0x20) continue;
+                int v = peBytes[p]
+                    | (peBytes[p + 1] << 8)
+                    | (peBytes[p + 2] << 16)
+                    | (peBytes[p + 3] << 24);
+                if (bySentinel.TryGetValue(v, out var site))
+                {
+                    if (site.AbsoluteByteOffset != 0)
+                        throw new InvalidOperationException(
+                            $"Persisted-IL sentinel 0x{v:X8} found more than once "
+                            + $"(first at 0x{site.AbsoluteByteOffset:X8}, again at 0x{p:X8}). "
+                            + $"Bump IlPatchSiteCodec.SentinelBase.");
+                    site.AbsoluteByteOffset = p;
+                }
+            }
+        }
+
+        foreach (var s in patches)
+        {
+            if (s.AbsoluteByteOffset == 0)
+                throw new InvalidOperationException(
+                    $"Persisted-IL sentinel 0x{s.Sentinel:X8} for "
+                    + $"{s.Kind} {s.Name}/{s.Arity} was not located "
+                    + $"in any method body — Sigil may have compacted the "
+                    + $"ldc.i4 or emitted no IL for this site.");
+        }
+    }
+
+    private static int RvaToFileOffset(
+        System.Reflection.PortableExecutable.PEHeaders headers, int rva)
+    {
+        foreach (var section in headers.SectionHeaders)
+        {
+            if (rva >= section.VirtualAddress
+                && rva < section.VirtualAddress + section.VirtualSize)
+                return section.PointerToRawData + (rva - section.VirtualAddress);
+        }
+        throw new InvalidOperationException($"RVA 0x{rva:X8} is not in any section.");
     }
 
     /// <summary>Returns true iff <paramref name="pred"/> falls inside

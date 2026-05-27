@@ -788,6 +788,100 @@ public sealed class IlPredicateCompiler
     /// to encode the resume marker (functorId, cursor).</summary>
     private static int _emitOwnerFid;
 
+    /// <summary>Phase 17 — when non-null, the emit pipeline is building
+    /// a persisted-bundle .dll. Every functor/atom/resume-marker constant
+    /// is replaced with a unique sentinel int (drawn from
+    /// <see cref="IlPatchSiteCodec.SentinelBase"/>); the corresponding
+    /// <see cref="IlPatchSite"/> is appended here so the post-Save PE
+    /// scan can locate the sentinel's byte offset and the LoadBundle
+    /// path can overwrite it with the runtime-process id. When null,
+    /// the runtime <c>DynamicMethod</c> path emits real ids directly
+    /// — atom/functor ids are stable in-process so no remap is
+    /// needed.</summary>
+    [System.ThreadStaticAttribute] private static List<IlPatchSite>? _persistPatches;
+    [System.ThreadStaticAttribute] private static int _persistNextSentinel;
+
+    /// <summary>Begin a persisted-emit batch. Subsequent
+    /// <see cref="EmitPersistedMethod"/> calls (until
+    /// <see cref="EndPersistEmit"/>) accumulate patch sites into the
+    /// returned list.</summary>
+    public List<IlPatchSite> BeginPersistEmit()
+    {
+        var list = new List<IlPatchSite>();
+        _persistPatches = list;
+        _persistNextSentinel = IlPatchSiteCodec.SentinelBase;
+        return list;
+    }
+
+    /// <summary>End the persisted-emit batch. Subsequent emits revert
+    /// to direct-id mode (the runtime <c>DynamicMethod</c> path).</summary>
+    public void EndPersistEmit()
+    {
+        _persistPatches = null;
+    }
+
+    private static void EmitAtomId(Sigil.Emit<PredicateDelegate> emit, int atomId)
+    {
+        if (_persistPatches is null) { emit.LoadConstant(atomId); return; }
+        string? name = Shumway.Core.AtomTable.GetById(atomId)?.Name;
+        if (name is null)
+            throw new InvalidOperationException(
+                $"Persisted IL emit: atom id {atomId} has no name in the build-process AtomTable.");
+        int sentinel = _persistNextSentinel++;
+        _persistPatches.Add(new IlPatchSite
+        {
+            Sentinel = sentinel,
+            Kind = IlPatchKind.Atom,
+            Name = name,
+            Arity = 0,
+        });
+        emit.LoadConstant(sentinel);
+    }
+
+    private static void EmitFunctorId(Sigil.Emit<PredicateDelegate> emit, int functorId)
+    {
+        if (_persistPatches is null) { emit.LoadConstant(functorId); return; }
+        var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(functorId);
+        string? name = Shumway.Core.AtomTable.GetById(atomId)?.Name;
+        if (name is null)
+            throw new InvalidOperationException(
+                $"Persisted IL emit: functor id {functorId} has no name in the build-process AtomTable.");
+        int sentinel = _persistNextSentinel++;
+        _persistPatches.Add(new IlPatchSite
+        {
+            Sentinel = sentinel,
+            Kind = IlPatchKind.Functor,
+            Name = name,
+            Arity = arity,
+        });
+        emit.LoadConstant(sentinel);
+    }
+
+    private static void EmitResumeMarker(
+        Sigil.Emit<PredicateDelegate> emit, int functorId, int cursor)
+    {
+        if (_persistPatches is null)
+        {
+            emit.LoadConstant(Shumway.Core.Engine.EncodeResumeMarker(functorId, cursor));
+            return;
+        }
+        var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(functorId);
+        string? name = Shumway.Core.AtomTable.GetById(atomId)?.Name;
+        if (name is null)
+            throw new InvalidOperationException(
+                $"Persisted IL emit: resume marker functor id {functorId} has no name.");
+        int sentinel = _persistNextSentinel++;
+        _persistPatches.Add(new IlPatchSite
+        {
+            Sentinel = sentinel,
+            Kind = IlPatchKind.ResumeMarker,
+            Name = name,
+            Arity = arity,
+            Cursor = cursor,
+        });
+        emit.LoadConstant(sentinel);
+    }
+
     private static void EmitClauseBody(
         Sigil.Emit<PredicateDelegate> emit, byte[] code, int start, int end,
         Sigil.Label failLabel, IReadOnlyList<CallSite> callSites,
@@ -816,7 +910,7 @@ public sealed class IlPredicateCompiler
                 int regIdx = BytecodeIO.ReadInt32(code, pc + 5);
                 emit.LoadArgument(0);
                 emit.LoadConstant(regIdx);
-                emit.LoadConstant(atomId);
+                EmitAtomId(emit, atomId);
                 emit.Call(CellAtomMethod);
                 emit.Call(EngineUnifyMethod);
                 emit.BranchIfFalse(failLabel);
@@ -931,7 +1025,7 @@ public sealed class IlPredicateCompiler
                 int arg = BytecodeIO.ReadInt32(code, pc + 5);
                 emit.LoadArgument(0);
                 emit.LoadConstant(arg);
-                emit.LoadConstant(atomId);
+                EmitAtomId(emit, atomId);
                 emit.Call(CellAtomMethod);
                 emit.Call(EngineSetRegisterMethod);
                 pc += OpcodeTable.Get(op).Size;
@@ -1160,7 +1254,7 @@ public sealed class IlPredicateCompiler
                 int functorId = BytecodeIO.ReadInt32(code, pc + 1);
                 int arg = BytecodeIO.ReadInt32(code, pc + 5);
                 emit.LoadArgument(0);
-                emit.LoadConstant(functorId);
+                EmitFunctorId(emit, functorId);
                 emit.LoadConstant(arg);
                 emit.Call(EngineGetStructureMethod);
                 emit.BranchIfFalse(failLabel);
@@ -1172,7 +1266,7 @@ public sealed class IlPredicateCompiler
                 int functorId = BytecodeIO.ReadInt32(code, pc + 1);
                 int arg = BytecodeIO.ReadInt32(code, pc + 5);
                 emit.LoadArgument(0);
-                emit.LoadConstant(functorId);
+                EmitFunctorId(emit, functorId);
                 emit.LoadConstant(arg);
                 emit.Call(EnginePutStructureMethod);
                 pc += OpcodeTable.Get(op).Size;
@@ -1182,7 +1276,7 @@ public sealed class IlPredicateCompiler
             {
                 int atomId = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
-                emit.LoadConstant(atomId);
+                EmitAtomId(emit, atomId);
                 emit.Call(CellAtomMethod);
                 emit.Call(EngineUnifyArgCellMethod);
                 emit.BranchIfFalse(failLabel);
@@ -1397,13 +1491,13 @@ public sealed class IlPredicateCompiler
 
                 // engine.SetCp(EncodeResumeMarker(ownerFid, resumeCursor));
                 emit.LoadArgument(0);
-                emit.LoadConstant(Shumway.Core.Engine.EncodeResumeMarker(_emitOwnerFid, resumeCursor));
+                EmitResumeMarker(emit, _emitOwnerFid, resumeCursor);
                 emit.Call(EngineSetCpMethod);
 
                 // engine.SetPc(IlExecuteHelper.Resolve(engine, siteFunctorId));
                 emit.LoadArgument(0);
                 emit.LoadArgument(0);
-                emit.LoadConstant(siteFunctorId);
+                EmitFunctorId(emit, siteFunctorId);
                 emit.Call(IlExecuteHelperResolveMethod);
                 emit.Call(EngineSetPcMethod);
 
@@ -1496,7 +1590,7 @@ public sealed class IlPredicateCompiler
                 emit.Call(EngineSetB0Method);
                 emit.LoadArgument(0);
                 emit.LoadArgument(0);
-                emit.LoadConstant(siteFunctorId);
+                EmitFunctorId(emit, siteFunctorId);
                 emit.Call(IlExecuteHelperResolveMethod);
                 emit.Call(EngineSetPcMethod);
                 emit.LoadArgument(0);
@@ -2173,7 +2267,7 @@ public sealed class IlPredicateCompiler
             foreach (int ci in order)
             {
                 emit.LoadLocal(atomIdLocal);
-                emit.LoadConstant(atomIds[ci]);
+                EmitAtomId(emit, atomIds[ci]);
                 emit.BranchIfEqual(successLabels[ci]);
             }
             emit.Branch(failLabel);
@@ -2191,7 +2285,7 @@ public sealed class IlPredicateCompiler
             foreach (int ci in order)
             {
                 emit.LoadLocal(atomIdLocal);
-                emit.LoadConstant(atomIds[ci]);
+                EmitAtomId(emit, atomIds[ci]);
                 emit.BranchIfEqual(bodyLabels[ci]);
             }
             emit.Branch(failLabel);
