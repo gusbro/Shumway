@@ -251,15 +251,33 @@ public static class ShmoLinker
         builtinPredicates.Add(new PredicateRef("false", 0));
 
         // ----- 5. Resolve roots -----
+        // Phase 18: relax the ":- public required" rule for entry points.
+        // Other Prolog engines treat the runtime goal's predicate
+        // references as if the user had typed them at the top level —
+        // any defined predicate, local or public, is reachable. The
+        // resolution algorithm:
+        //   1. Match against globalPublic / globalDynamic first
+        //      (cross-module-visible).
+        //   2. Else scan all modules for a LOCAL definition.
+        //      0 matches → entry_not_found.
+        //      1 match  → use it (entry-point local promotion).
+        //      2+ matches → ambiguous_entry; lists the colliding
+        //      modules so the user can qualify the entry or mark
+        //      the intended definition :- public.
         var roots = new List<(string Module, PredicateRef Pred, string Origin)>();
         foreach (var ep in config.EntryPoints)
         {
-            string? mod = ResolveDefiningModule(ep, globalPublic, globalDynamic);
+            string? mod = ResolveEntryPointModule(ep, globalPublic, globalDynamic,
+                moduleDefined, out string? ambiguityMessage);
+            if (ambiguityMessage is not null)
+            {
+                Emit(LinkSeverity.Error, "ambiguous_entry", ambiguityMessage, null);
+                continue;
+            }
             if (mod is null)
             {
                 Emit(LinkSeverity.Error, "entry_not_found",
-                    $"Entry point {ep} is not defined as :- public or :- dynamic "
-                    + "in any linked .shmo.", null);
+                    $"Entry point {ep} is not defined in any linked .shmo.", null);
                 continue;
             }
             roots.Add((mod, ep, $"entry {ep}"));
@@ -389,6 +407,44 @@ public static class ShmoLinker
         byte[]? bytes = null;
         if (success || config.AllowUndefined)
         {
+            // Phase 18: gather per-module entry-point promotions. When
+            // an --entry pred/N was satisfied by a LOCAL definition in
+            // module M (no `:- public pred/N` in the source), prepend
+            // `:- public pred/N.` to that module's bundled source so
+            // the LoadBundle path's ConsultString sees it as public —
+            // otherwise the engine's query-time mangling would target
+            // M$pred/N while the bare-name query types pred/N and the
+            // dispatcher misses. Also null out the precompiled
+            // bytecode for those modules: the .shmo bytecode was
+            // compiled with pred/N as local (mangled), so it would
+            // disagree with the now-public consult result. LoadBundle
+            // re-consults the augmented source; one-time cost at load
+            // in exchange for correctness without an alias mechanism
+            // in the engine.
+            var promotionsByModule = new Dictionary<string, List<PredicateRef>>();
+            foreach (var ep in config.EntryPoints)
+            {
+                // Public/dynamic entries don't need promotion.
+                if (globalPublic.ContainsKey(ep)) continue;
+                if (globalDynamic.ContainsKey(ep)) continue;
+                // Find the module the resolver actually picked (which
+                // was the unique local-defining module — ambiguity
+                // would have errored above).
+                foreach (var (modName, defs) in moduleDefined)
+                {
+                    if (defs.ContainsKey(ep))
+                    {
+                        if (!promotionsByModule.TryGetValue(modName, out var list))
+                        {
+                            list = new List<PredicateRef>();
+                            promotionsByModule[modName] = list;
+                        }
+                        list.Add(ep);
+                        break;
+                    }
+                }
+            }
+
             // Stable order: the linker preserves the order objects came
             // in, but drops the unreachable ones.
             var entries = new List<BundleEntry>();
@@ -421,6 +477,35 @@ public static class ShmoLinker
                     entrySource = config.StripSource ? "" : obj.Source;
                     entryBytecode = obj.Bytecode.Length > 0 ? obj.Bytecode : null;
                 }
+
+                // Phase 18: apply entry-point promotions for this module.
+                // Recompile via ShmoCompiler (which runs DCG / Meta /
+                // PhraseTransform) so the new bytecode matches the
+                // augmented source. The BundleWriter's own
+                // CompileEntryToBytes path uses bare ModuleCompiler and
+                // would NotSupportedException on any DCG rule.
+                if (promotionsByModule.TryGetValue(obj.ModuleName, out var promoted)
+                    && !string.IsNullOrEmpty(entrySource))
+                {
+                    var sb = new System.Text.StringBuilder();
+                    foreach (var pr in promoted)
+                        sb.Append(":- public ").Append(pr.Name).Append('/')
+                          .Append(pr.Arity).Append(".\n");
+                    sb.Append(entrySource);
+                    string augmented = sb.ToString();
+                    // Recompile augmented source so the bundled bytecode
+                    // matches what LoadBundle's ConsultString would
+                    // produce on it. Without this the precompiled-cache
+                    // substitution at SetupQueryFromTerm would slot in
+                    // bytecode that still has the entry mangled.
+                    var recompiled = ShmoCompiler.CompileSource(
+                        augmented, obj.ModuleName,
+                        config.StripSource ? ShmoBuildMode.Release : ShmoBuildMode.Debug);
+                    entrySource = config.StripSource ? "" : augmented;
+                    entryBytecode = recompiled.Bytecode.Length > 0
+                        ? recompiled.Bytecode : null;
+                }
+
                 entries.Add(new BundleEntry(
                     moduleName: obj.ModuleName,
                     source: entrySource,
@@ -553,6 +638,44 @@ public static class ShmoLinker
         if (globalPublic.TryGetValue(p, out var mod)) return mod;
         if (globalDynamic.TryGetValue(p, out var dynList) && dynList.Count > 0)
             return dynList[0];
+        return null;
+    }
+
+    /// <summary>Phase 18 — entry-point resolution that doesn't require
+    /// <c>:- public</c>. Falls back to scanning every module's local
+    /// definitions when no public / dynamic match exists. Returns
+    /// <c>null</c> + <paramref name="ambiguityMessage"/> = null for
+    /// not-found, <c>null</c> + non-null message for the 2+ local
+    /// matches case, or the resolved module name on success.</summary>
+    private static string? ResolveEntryPointModule(PredicateRef p,
+        Dictionary<PredicateRef, string> globalPublic,
+        Dictionary<PredicateRef, List<string>> globalDynamic,
+        Dictionary<string, Dictionary<PredicateRef, PredicateVisibility>> moduleDefined,
+        out string? ambiguityMessage)
+    {
+        ambiguityMessage = null;
+        if (globalPublic.TryGetValue(p, out var mod)) return mod;
+        if (globalDynamic.TryGetValue(p, out var dynList) && dynList.Count > 0)
+            return dynList[0];
+
+        // No public/dynamic match — scan locals.
+        List<string>? matches = null;
+        foreach (var (modName, defs) in moduleDefined)
+        {
+            if (defs.ContainsKey(p))
+            {
+                matches ??= new List<string>();
+                matches.Add(modName);
+            }
+        }
+        if (matches is null || matches.Count == 0) return null;
+        if (matches.Count == 1) return matches[0];
+        matches.Sort(System.StringComparer.Ordinal);
+        ambiguityMessage =
+            $"Entry point {p} is defined as :- local in multiple modules ("
+            + string.Join(", ", matches.Select(m => $"'{m}'"))
+            + "). Mark exactly one definition :- public, or qualify the "
+            + "entry as Module:Pred to disambiguate.";
         return null;
     }
 
