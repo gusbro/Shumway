@@ -33,6 +33,15 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
     // entries it points into.
     private readonly Dictionary<int, Func<Engine, int, bool>> _resumeCache = new();
 
+    // Phase 18 chunk 202 — same problem on the dispatch side. The
+    // bytecode interpreter's DispatchToTier1OrBytecode calls
+    // OnDispatch(targetAddress) for every Call / Execute, and
+    // OnDispatch was allocating a fresh `engine => del(engine, 0)`
+    // closure per hit. For Blint's ~hundreds of thousands of IL
+    // dispatches that's hundreds of thousands of GC allocations.
+    // Cache by address so the same closure is reused.
+    private readonly Dictionary<int, Func<Engine, bool>> _dispatchCache = new();
+
     public Tier1DispatcherAdapter(
         IlPromotionStore store,
         IReadOnlyDictionary<int, CompiledPredicate> predicatesByAddress,
@@ -69,22 +78,40 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
 
     public Func<Engine, bool>? OnDispatch(int targetAddress)
     {
+        // Phase 18 chunk 202 hot path: a previously-resolved cache
+        // entry skips every lookup below. The cache is keyed by
+        // bytecode address (the dispatcher's incoming key) so the
+        // bytecode interpreter's Call / Execute fast-loops at a
+        // single dictionary probe + delegate invoke, no per-tick
+        // allocation.
+        if (_dispatchCache.TryGetValue(targetAddress, out var cached)) return cached;
+
         // Fast path: address has no associated predicate (it's a launcher
         // stub or an unindexed clause body). Nothing to promote.
         if (!_predicatesByAddress.TryGetValue(targetAddress, out var pred))
+        {
+            _dispatchCache[targetAddress] = null!;
             return null;
+        }
 
         int functorId = pred.FunctorId;
 
-        // Chunk 75 — JIT indexing profile. Every Call/Execute dispatch
-        // bumps the predicate's runtime call count; once a dynamic
-        // predicate crosses the threshold the next query setup
-        // recompiles it with indexing enabled.
-        _jitProfile.RecordCall(functorId);
-
-        // Already promoted? Return the cached delegate immediately.
+        // Already promoted? Wrap once, cache, return.
         var existing = _store.TryGet(functorId);
-        if (existing is not null) return Wrap(existing);
+        if (existing is not null)
+        {
+            var wrapped = Wrap(existing);
+            _dispatchCache[targetAddress] = wrapped;
+            return wrapped;
+        }
+
+        // Chunk 75 — JIT indexing profile. The dynamic-predicate
+        // recompile threshold cares ONLY about not-yet-promoted
+        // predicates (a promoted predicate already runs as IL — the
+        // indexing decision is moot). Bumping the counter on every
+        // call to a hot promoted predicate added a dictionary
+        // lookup + write to the per-call cost for no benefit.
+        _jitProfile.RecordCall(functorId);
 
         // Fast path for already-rejected predicates. Without this,
         // every call to a dynamic / oversized / layout-excluded
@@ -94,13 +121,23 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
         // Tier-0 on Blint. The store's _unpromotable set is the
         // exact answer to "is this functor a wasted RecordInvocation
         // call?" so check it directly and bail.
-        if (_store.IsUnpromotable(functorId)) return null;
+        if (_store.IsUnpromotable(functorId))
+        {
+            _dispatchCache[targetAddress] = null!;
+            return null;
+        }
 
         // Otherwise let the store decide whether the counter has crossed
         // the threshold and a compile should fire now. Hand the
         // callee map through so IL Call eligibility can be evaluated.
+        // We DON'T cache the null result here — the next call may
+        // cross the threshold and promote. Once promoted, the
+        // existing-branch above caches.
         var fresh = _store.RecordInvocation(functorId, pred, _calleeMap);
-        return fresh is null ? null : Wrap(fresh);
+        if (fresh is null) return null;
+        var wrappedFresh = Wrap(fresh);
+        _dispatchCache[targetAddress] = wrappedFresh;
+        return wrappedFresh;
     }
 
     private static Func<Engine, bool> Wrap(Shumway.Compiler.Il.PredicateDelegate del)
