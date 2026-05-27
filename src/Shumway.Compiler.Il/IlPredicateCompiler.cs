@@ -220,17 +220,11 @@ public sealed class IlPredicateCompiler
         typeof(IlDebugMarkers).GetMethod(nameof(IlDebugMarkers.Check_Deallocate))!;
 #endif
 
-    private static readonly MethodInfo IlCallHelperRunMethod =
-        typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.Call))!;
-    // Meta-CP support (chunk 66): drive a backtrack from an IL
-    // delegate's resume path to fetch the next solution from a
-    // non-leaf callee.
-    private static readonly MethodInfo IlRunBacktrackHelperMethod =
-        typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.RunBacktrack))!;
-    private static readonly MethodInfo IlRunBacktrackWithFloorMethod =
-        typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.RunBacktrackWithFloor))!;
-    private static readonly MethodInfo IlReadPreCallBHelperMethod =
-        typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.ReadPreCallB))!;
+    // Phase 16 chunk 183: chunk-50 IL Call helper, chunk-66 meta-CP
+    // backtrack-driver and PreCallB reader, and chunk-174 floor-pinning
+    // variant are all gone — IL non-tail Call is now threaded
+    // (resume-marker dispatch in chunk 182), and the natural CP cascade
+    // handles backtracking across IL/bytecode boundaries without help.
     private static readonly MethodInfo EngineAllocateHeapUnboundMethod =
         typeof(Engine).GetMethod(nameof(Engine.AllocateHeapUnbound), Type.EmptyTypes)!;
     private static readonly MethodInfo CellRefMethod =

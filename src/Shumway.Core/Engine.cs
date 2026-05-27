@@ -1341,35 +1341,12 @@ public sealed class Engine
     public long ViewGenOf(int cpBase, int arity) =>
         _stack[cpBase + CpViewGenOffset(arity)].Data;
 
-    /// <summary>Synchronous subroutine runner that IL <c>Call</c>
-    /// emission delegates to (chunk 50). Takes a target bytecode
-    /// address, runs the sub-predicate to completion, returns
-    /// <c>true</c> on success / <c>false</c> on failure. The embedding
-    /// layer wires this to <see cref="BytecodeInterpreter"/>'s
-    /// re-entrant dispatch at query-setup time.</summary>
-    public Func<int, bool>? IlSubroutineRunner { get; set; }
-
-    /// <summary>Backtrack runner for IL Call sites whose callee is
-    /// non-leaf (chunk 66). The meta-CP that IL emits at non-tail
-    /// Call sites calls into this on resume to pop the topmost CP
-    /// (typically a callee try_me_else CP the sub-call left on the
-    /// stack) and run its alternative clause. Returns <c>true</c>
-    /// when an alternative yielded another solution, <c>false</c>
-    /// when no more CPs are available. The embedding layer wires
-    /// this to <see cref="BytecodeInterpreter.Backtrack"/> at
-    /// query-setup time, same pattern as
-    /// <see cref="IlSubroutineRunner"/>.</summary>
-    public Func<bool>? BacktrackRunner { get; set; }
-
-    /// <summary>Chunk 174: meta-CP resume floor setter. Replaces the
-    /// engine's current backtrack floor with the supplied value and
-    /// returns the prior floor; used by
-    /// <see cref="Shumway.Compiler.Il.IlRuntimeHelpers.RunBacktrackWithFloor"/>
-    /// to pin the floor at the IL caller's <c>preCallB</c> for the
-    /// duration of a resume-driven backtrack. Wired by
-    /// <c>PrologEngine</c> at query setup against the bytecode
-    /// interpreter's <c>_backtrackFloor</c>.</summary>
-    public Func<int, int>? SetBacktrackFloor { get; set; }
+    // Phase 16 chunk 183: chunk-50 IlSubroutineRunner, chunk-66
+    // BacktrackRunner and chunk-174 SetBacktrackFloor callbacks were
+    // deleted when IL non-tail Call dispatch switched to threaded
+    // continuation. The threaded design uses resume markers
+    // (chunk 181) and the natural CP cascade — no recursive
+    // sub-engine, no separate backtrack driver, no floor pin.
 
     /// <summary>Walks the environment-frame chain starting at the
     /// current frame, yielding each frame's saved return address
@@ -1941,12 +1918,6 @@ public sealed class Engine
     // ----- Engine register accessors (read-only for now; set by the interpreter later) -----
 
     public int E => _e;
-    /// <summary>Chunk 174 — restore _e after RunSubroutine. The
-    /// sub-tree's backtracking can land _e at some ancestor's
-    /// frame (not the caller's) even though the backtrack floor
-    /// pins _b — restore explicitly so IL-side reads against the
-    /// caller's Y slots work.</summary>
-    internal void SetE(int e) => _e = e;
     public int B => _b;
     public int B0 => _b0;
     public int P => _p;

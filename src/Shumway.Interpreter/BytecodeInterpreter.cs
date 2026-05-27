@@ -37,18 +37,6 @@ public sealed class BytecodeInterpreter
     /// backtracking stays contained at its entry level (chunk 80).</summary>
     private int _backtrackFloor = -1;
 
-    /// <summary>Chunk 174: external floor setter used by the IL
-    /// meta-CP resume path. Returns the prior floor so the caller
-    /// can restore it. Backtrack inside the resume body must
-    /// honour the IL caller's preCallB so a resumed backtrack
-    /// can't cascade past the caller's frame.</summary>
-    public int SetBacktrackFloor(int newFloor)
-    {
-        int prev = _backtrackFloor;
-        _backtrackFloor = newFloor;
-        return prev;
-    }
-
     // Functor ids the chunk-80 attributed-variable wakeup driver needs,
     // interned once: the verify_attributes/4 user hook (its presence in
     // the linked program is what enables wakeups at all) and the few
@@ -186,71 +174,19 @@ public sealed class BytecodeInterpreter
         catch (TopLevelFailure) { return InterpreterResult.Failed; }
     }
 
-    /// <summary>Synchronous sub-predicate dispatch (chunk 50): saves
-    /// the current Pc / Cp, sets Cp to the sub-routine sentinel
-    /// (any negative value), points Pc at <paramref name="target"/>,
-    /// and runs Dispatch until the sub-predicate's <c>proceed</c> sets
-    /// Pc=Cp=sentinel which trips <c>Proceed</c>'s "returned past the
-    /// top" early exit. Returns <c>true</c> on the sub-predicate's
-    /// success / <c>false</c> on failure.
-    ///
-    /// <para>The IL <c>Call</c> emission's CanCompile only accepts
-    /// callees that are leaf predicates (single-clause body-less head
-    /// matching), so the sub-predicate never pushes choice points — the
-    /// sentinel trick is safe (no later backtrack restores the sentinel
-    /// as the saved Cp of a still-active CP).</para></summary>
-    public bool RunSubroutine(ProgramView code, int target)
-    {
-        ArgumentNullException.ThrowIfNull(code);
-        int savedPc = _engine.P;
-        int savedCp = _engine.Cp;
-        int savedB = _engine.B;
-        int savedB0 = _engine.B0;
-        int savedE = _engine.E;
-        int savedFloor = _backtrackFloor;
+    // Phase 16 chunk 183: chunk-50 RunSubroutine + chunk-174 floor-pin
+    // additions are gone. The IL non-tail Call site is now threaded
+    // (set Cp = resume marker, set Pc = callee, IlTailCallPending = true,
+    // return) so no recursive sub-Dispatch invocation is needed. The
+    // SubroutineSentinelCp constant survives because RunGoalInEngine
+    // (chunk 80's in-engine sub-goal driver for findall/3 etc.) still
+    // uses the same Pc-negative trick to exit its dispatch loop.
 
-        // Chunk 174: pin the backtrack floor at the entry CP level so an
-        // internal fail inside the dispatched sub-tree can't cascade
-        // past the caller's CPs. Without this, a deep nested backtrack
-        // could pop a CP whose saved E points at the GRAND-caller's
-        // frame — _e ends up at the grand-caller's frame address and
-        // every Y-slot read after the call returns reads from the
-        // wrong frame. Surfaced linting Blint.pl with Tier-1
-        // promotion: parse_postfix_op/6's non-tail Call to parse_op/5
-        // would return with _e pointing two frames up the chain and
-        // pc=0x95's put_value_y 1, 1 then loaded an unbound Ref from
-        // the wrong frame, which validate_postfix_op/3 then dropped
-        // into `</2` as an unbound arg. RunGoalInEngine has had this
-        // exact discipline since chunk 80; RunSubroutine just lacked
-        // it. (The chunk 173 debug-mode markers pinned the divergence
-        // to the precall E=1419 / postcall E=1352 jump across this
-        // call boundary.)
-        _backtrackFloor = savedB;
-
-        _engine.SetB0(savedB);
-        _engine.SetCp(SubroutineSentinelCp);
-        _engine.SetPc(target);
-        InterpreterResult result;
-        try { result = Dispatch(code); }
-        catch (TopLevelFailure) { result = InterpreterResult.Failed; }
-        _backtrackFloor = savedFloor;
-        _engine.SetPc(savedPc);
-        _engine.SetCp(savedCp);
-        _engine.SetB0(savedB0);
-        // Chunk 174 — restore _e too. The sub-tree's execution
-        // can pop CPs whose saved CE is some ancestor's frame
-        // (not necessarily the caller's), even within the
-        // floor — the floor pins _b but not _e. The IL caller
-        // is going to do GetY against its own frame, so _e must
-        // come back as it was at the call site.
-        _engine.SetE(savedE);
-        return result == InterpreterResult.Halted;
-    }
-
-    /// <summary>Cp sentinel used by <see cref="RunSubroutine"/>. Any
-    /// negative value works because <c>Proceed</c> already returns
-    /// <see cref="InterpreterResult.Halted"/> when Cp &lt; 0; we pick
-    /// a distinctive value to make stack-traces friendlier.</summary>
+    /// <summary>Cp sentinel used by in-engine sub-goal dispatch
+    /// (<see cref="RunGoalInEngine"/>). Any negative value works because
+    /// <c>Proceed</c> already returns <see cref="InterpreterResult.Halted"/>
+    /// when Cp &lt; 0; we pick a distinctive value to make stack-traces
+    /// friendlier.</summary>
     public const int SubroutineSentinelCp = -2;
 
     /// <summary>

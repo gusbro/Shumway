@@ -4032,24 +4032,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         foreach (var (_, pred) in linkResult.PredicatesByAddress)
             functorToPredicate[pred.FunctorId] = pred;
         IlPromotion.ConsiderPgoRecompiles(functorToPredicate, functorToPredicate);
-        // IL Call (chunk 50): runs a sub-predicate synchronously by
-        // re-entering the bytecode interpreter on the linked program.
-        engine.IlSubroutineRunner = target => interp.RunSubroutine(programView, target);
-        // IL meta-CP backtrack hook (chunk 66): drives one round of
-        // backtrack inside the bytecode interpreter so an IL Call
-        // site's meta-CP can fetch the next solution from a non-leaf
-        // callee on resume. Returns true when the backtrack landed on
-        // an alternative that proceeded to a halt (success), false
-        // when no further CPs were available.
-        engine.BacktrackRunner = () =>
-            interp.Backtrack(programView) == Shumway.Interpreter.InterpreterResult.Halted;
-        // Chunk 174: floor setter exposed for the IL meta-CP resume
-        // path. The resume body needs to pin the backtrack floor at
-        // the IL caller's preCallB so the resumed backtrack can't
-        // cascade past the caller's frame and corrupt _e for the
-        // post-resume Y-slot reads. The setter returns the prior
-        // floor so the resume can restore it on completion.
-        engine.SetBacktrackFloor = newFloor => interp.SetBacktrackFloor(newFloor);
+        // Phase 16 chunk 183: IlSubroutineRunner / BacktrackRunner /
+        // SetBacktrackFloor wirings deleted. The chunk-50 IL Call /
+        // chunk-66 meta-CP backtrack-driver / chunk-174 floor pin
+        // were all replaced by threaded resume-marker dispatch
+        // (chunks 181 + 182).
         // Remember the per-query address → predicate map so error
         // reporting (chunk 51) can translate the engine's PC and env-
         // chain return addresses into Name/Arity stack frames.
