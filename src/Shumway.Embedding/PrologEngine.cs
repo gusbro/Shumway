@@ -2042,24 +2042,67 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             if (entry.CompiledIl is null || entry.CompiledIl.Length == 0
                 || !System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported)
                 continue;
-            var asm = System.Reflection.Assembly.Load(entry.CompiledIl);
+
+            // Phase 17 — overwrite each baked build-time atom/functor
+            // id sentinel with the runtime-process id BEFORE handing
+            // the bytes to Assembly.Load. Once the assembly is loaded
+            // its IL is read-only mapped, so the patch must happen on
+            // the byte buffer (a copy is fine — Assembly.Load takes
+            // ownership of its own copy).
+            byte[] ilBytes = entry.CompiledIl;
+            if (entry.CompiledIlPatches is not null && entry.CompiledIlPatches.Length > 0)
+            {
+                // Copy so we don't mutate the caller's BundleEntry — the
+                // Bundle is meant to be reusable.
+                ilBytes = (byte[])entry.CompiledIl.Clone();
+                ApplyIlPatches(ilBytes, entry.CompiledIlPatches);
+            }
+            var asm = System.Reflection.Assembly.Load(ilBytes);
             var type = asm.GetType(Shumway.Compiler.Il.PersistedIlBuilder.TypeName);
             if (type is null) continue;
 
             // Method-name layout from PersistedIlBuilder:
             //   P_{slot}_{functorId}_{sanitisedName}
+            // Phase 17 — when CompiledIlEntries is present (V3+
+            // bundles), use the per-method (name, arity) table to
+            // intern the name in THIS process and register the delegate
+            // under the runtime functor id. Falls back to parsing the
+            // build-time functor id from the method name only for
+            // pre-V3 bundles (which never run cross-process correctly
+            // anyway).
+            Dictionary<string, (string Name, int Arity, int Slot)>? methodInfo = null;
+            if (entry.CompiledIlEntries is not null && entry.CompiledIlEntries.Length > 0)
+            {
+                methodInfo = new Dictionary<string, (string, int, int)>();
+                foreach (var pe in Shumway.Compiler.Il.IlPersistedEntryCodec.Decode(
+                    entry.CompiledIlEntries))
+                {
+                    methodInfo[pe.MethodName] = (pe.Name, pe.Arity, pe.Slot);
+                }
+            }
             var bound = new List<(int Slot, int FunctorId,
                 Shumway.Compiler.Il.PredicateDelegate Delegate)>();
             foreach (var method in type.GetMethods(
                 System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static))
             {
                 if (!method.Name.StartsWith("P_")) continue;
-                int u1 = method.Name.IndexOf('_');
-                int u2 = method.Name.IndexOf('_', u1 + 1);
-                int u3 = method.Name.IndexOf('_', u2 + 1);
-                if (u1 < 0 || u2 < 0 || u3 < 0) continue;
-                if (!int.TryParse(method.Name.AsSpan(u1 + 1, u2 - u1 - 1), out int slot)) continue;
-                if (!int.TryParse(method.Name.AsSpan(u2 + 1, u3 - u2 - 1), out int functorId)) continue;
+                int slot;
+                int functorId;
+                if (methodInfo is not null && methodInfo.TryGetValue(method.Name, out var info))
+                {
+                    int aid = Shumway.Core.AtomTable.Intern(info.Name).Id;
+                    functorId = Shumway.Core.FunctorTable.Intern(aid, info.Arity);
+                    slot = info.Slot;
+                }
+                else
+                {
+                    int u1 = method.Name.IndexOf('_');
+                    int u2 = method.Name.IndexOf('_', u1 + 1);
+                    int u3 = method.Name.IndexOf('_', u2 + 1);
+                    if (u1 < 0 || u2 < 0 || u3 < 0) continue;
+                    if (!int.TryParse(method.Name.AsSpan(u1 + 1, u2 - u1 - 1), out slot)) continue;
+                    if (!int.TryParse(method.Name.AsSpan(u2 + 1, u3 - u2 - 1), out functorId)) continue;
+                }
                 var del = method.CreateDelegate<Shumway.Compiler.Il.PredicateDelegate>();
                 bound.Add((slot, functorId, del));
                 IlPromotion.RegisterBoundDelegate(functorId, del);
@@ -2104,6 +2147,87 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         _staticLink = null;
         InvalidatePersistent();
 
+        // Cross-process functor-id drift diagnostic (see PersistedIlBuilder).
+        var dumpFidsEnv = System.Environment.GetEnvironmentVariable("SHUMWAY_PERSIST_DUMP_FIDS");
+        if (!string.IsNullOrEmpty(dumpFidsEnv))
+        {
+            foreach (var ind in dumpFidsEnv.Split(','))
+            {
+                var slash = ind.IndexOf('/');
+                if (slash < 0) continue;
+                if (!int.TryParse(ind.AsSpan(slash + 1), out int ar)) continue;
+                string nm = ind.Substring(0, slash);
+                int aid = Shumway.Core.AtomTable.Intern(nm).Id;
+                int fid = Shumway.Core.FunctorTable.Intern(aid, ar);
+                System.Console.Error.WriteLine($"[load-fid] {nm}/{ar} atom={aid} functor={fid}");
+            }
+        }
+    }
+
+    /// <summary>Phase 17 — overwrites every build-time atom-id / functor-id
+    /// / resume-marker constant in <paramref name="ilBytes"/> with the
+    /// runtime-process equivalent, in-place. The patch sites carry the
+    /// build-process <c>(name, arity)</c> pair plus a recorded absolute
+    /// byte offset; for each, we intern the name in the current process,
+    /// compute the runtime id (or recompute the resume marker via
+    /// <see cref="Shumway.Core.Engine.EncodeResumeMarker"/>), and write
+    /// the four little-endian bytes back into <paramref name="ilBytes"/>
+    /// at that offset. Runs BEFORE <c>Assembly.Load</c> so the JIT sees
+    /// runtime values as inline IL constants — zero per-dispatch
+    /// overhead.</summary>
+    private static void ApplyIlPatches(byte[] ilBytes, byte[] patchTable)
+    {
+        var sites = Shumway.Compiler.Il.IlPatchSiteCodec.Decode(patchTable);
+        foreach (var s in sites)
+        {
+            int runtimeValue;
+            switch (s.Kind)
+            {
+                case Shumway.Compiler.Il.IlPatchKind.Atom:
+                    runtimeValue = Shumway.Core.AtomTable.Intern(s.Name).Id;
+                    break;
+                case Shumway.Compiler.Il.IlPatchKind.Functor:
+                {
+                    int aid = Shumway.Core.AtomTable.Intern(s.Name).Id;
+                    runtimeValue = Shumway.Core.FunctorTable.Intern(aid, s.Arity);
+                    break;
+                }
+                case Shumway.Compiler.Il.IlPatchKind.ResumeMarker:
+                {
+                    int aid = Shumway.Core.AtomTable.Intern(s.Name).Id;
+                    int fid = Shumway.Core.FunctorTable.Intern(aid, s.Arity);
+                    runtimeValue = Shumway.Core.Engine.EncodeResumeMarker(fid, s.Cursor);
+                    break;
+                }
+                default:
+                    throw new InvalidDataException(
+                        $"Unknown IL patch kind {(int)s.Kind}.");
+            }
+
+            int off = s.AbsoluteByteOffset;
+            if (off < 0 || off + 4 > ilBytes.Length)
+                throw new InvalidDataException(
+                    $"IL patch site at offset 0x{off:X8} is out of range "
+                    + $"(IL buffer is {ilBytes.Length} bytes).");
+            // Defensive sanity: the four bytes currently at the offset
+            // must equal the recorded sentinel. If they don't, the
+            // patch table is desynchronised from the .dll — fail loudly
+            // rather than silently writing into the wrong instruction.
+            int current = ilBytes[off]
+                | (ilBytes[off + 1] << 8)
+                | (ilBytes[off + 2] << 16)
+                | (ilBytes[off + 3] << 24);
+            if (current != s.Sentinel)
+                throw new InvalidDataException(
+                    $"IL patch site for {s.Kind} {s.Name}/{s.Arity} at "
+                    + $"offset 0x{off:X8} holds 0x{current:X8}, expected "
+                    + $"sentinel 0x{s.Sentinel:X8} — patch table out of "
+                    + $"sync with the embedded .dll.");
+            ilBytes[off] = (byte)(runtimeValue & 0xFF);
+            ilBytes[off + 1] = (byte)((runtimeValue >> 8) & 0xFF);
+            ilBytes[off + 2] = (byte)((runtimeValue >> 16) & 0xFF);
+            ilBytes[off + 3] = (byte)((runtimeValue >> 24) & 0xFF);
+        }
     }
 
     /// <summary>Chunk 178: registers a source-less bundle entry's
