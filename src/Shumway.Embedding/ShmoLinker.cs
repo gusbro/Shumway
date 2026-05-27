@@ -587,6 +587,16 @@ public static class ShmoLinker
                 bw.Write((uint)d.Indicator.Arity);
                 bw.Write((byte)d.Visibility);
             }
+            // V3+ (Phase 17): per-entry IL patch + entries tables.
+            // This direct linker path skips the BundleWriter.ToBytes
+            // sub-engine validation pass, so it never emits IL — both
+            // tables are empty here.
+            byte[] patches = e.CompiledIlPatches ?? Array.Empty<byte>();
+            bw.Write((uint)patches.Length);
+            bw.Write(patches);
+            byte[] ilEntries = e.CompiledIlEntries ?? Array.Empty<byte>();
+            bw.Write((uint)ilEntries.Length);
+            bw.Write(ilEntries);
         }
         bw.Flush();
         return ms.ToArray();

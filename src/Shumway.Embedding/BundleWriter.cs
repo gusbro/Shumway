@@ -47,16 +47,26 @@ public static class BundleWriter
             {
                 byte[]? compiledBytecode = effective[i].CompiledBytecode;
                 byte[]? compiledIl = effective[i].CompiledIl;
+                byte[]? compiledIlPatches = effective[i].CompiledIlPatches;
                 if (includeCompiledBytecode && compiledBytecode is null)
                     compiledBytecode = CompileEntryToBytes(effective[i].Source);
+                byte[]? compiledIlEntries = effective[i].CompiledIlEntries;
                 if (includeCompiledIl && compiledIl is null)
+                {
+                    _lastPatchTableBytes = null;
+                    _lastEntriesTableBytes = null;
                     compiledIl = CompileEntryToIl(effective[i]);
+                    compiledIlPatches = _lastPatchTableBytes;
+                    compiledIlEntries = _lastEntriesTableBytes;
+                }
                 effective[i] = new BundleEntry(
                     effective[i].ModuleName,
                     effective[i].Source,
                     compiledBytecode,
                     compiledIl,
-                    effective[i].Defined);
+                    effective[i].Defined,
+                    compiledIlPatches,
+                    compiledIlEntries);
             }
         }
 
@@ -85,6 +95,14 @@ public static class BundleWriter
                 bw.Write((uint)d.Indicator.Arity);
                 bw.Write((byte)d.Visibility);
             }
+            // V3+ (Phase 17): IL patch table + per-method entries table.
+            // Both always emitted (even empty) so layout stays positional.
+            byte[] patches = entry.CompiledIlPatches ?? Array.Empty<byte>();
+            bw.Write((uint)patches.Length);
+            bw.Write(patches);
+            byte[] ilEntries = entry.CompiledIlEntries ?? Array.Empty<byte>();
+            bw.Write((uint)ilEntries.Length);
+            bw.Write(ilEntries);
         }
         bw.Flush();
         return ms.ToArray();
@@ -120,11 +138,46 @@ public static class BundleWriter
             predicates[fid] = pred;
         // Caches still empty? Fall through to an empty assembly
         // (the load path simply finds no methods to bind).
-        var (dllBytes, _) = Shumway.Compiler.Il.PersistedIlBuilder.Build(
+        var (dllBytes, persistedEntries, patches) = Shumway.Compiler.Il.PersistedIlBuilder.Build(
             "ShumwayCompiledIl_" + SanitiseModuleName(entry.ModuleName),
             predicates);
+        // Phase 17 stash: the patch table the LoadBundle path needs to
+        // overwrite each build-time atom/functor id sentinel with the
+        // runtime-process equivalent. Plus the per-method (name, arity)
+        // table so LoadBundle can register each delegate under the
+        // RUNTIME functor id (interning the name in the current
+        // process), rather than the build-time id baked into the method
+        // name. Carried alongside the .dll bytes in side channels —
+        // see <see cref="BundleEntry.CompiledIlPatches"/> and
+        // <see cref="BundleEntry.CompiledIlEntries"/>.
+        _lastPatchTableBytes = Shumway.Compiler.Il.IlPatchSiteCodec.Encode(patches);
+        var persistedEntryList = new List<Shumway.Compiler.Il.IlPersistedEntry>(persistedEntries.Count);
+        foreach (var pe in persistedEntries)
+        {
+            persistedEntryList.Add(new Shumway.Compiler.Il.IlPersistedEntry
+            {
+                Slot = pe.DelegateSlot,
+                Name = pe.FunctorName.Contains('/')
+                    ? pe.FunctorName.Substring(0, pe.FunctorName.IndexOf('/'))
+                    : pe.FunctorName,
+                Arity = pe.Arity,
+                MethodName = pe.MethodName,
+            });
+        }
+        _lastEntriesTableBytes = Shumway.Compiler.Il.IlPersistedEntryCodec.Encode(persistedEntryList);
         return dllBytes;
     }
+
+    /// <summary>Side-channel staging slot used by
+    /// <see cref="CompileEntryToIl"/> to hand the patch table to the
+    /// outer ToBytes loop without changing the method signature mid-
+    /// refactor. The loop reads this immediately after each
+    /// CompileEntryToIl call; no concurrency.</summary>
+    [System.ThreadStaticAttribute]
+    private static byte[]? _lastPatchTableBytes;
+
+    [System.ThreadStaticAttribute]
+    private static byte[]? _lastEntriesTableBytes;
 
     private static string SanitiseModuleName(string raw)
     {

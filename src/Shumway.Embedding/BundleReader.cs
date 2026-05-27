@@ -27,10 +27,10 @@ public static class BundleReader
                 "Bundle: magic bytes don't match 'SHUM' — not a Shumway bundle.");
 
         uint version = br.ReadUInt32();
-        if (version != 1 && version != 2)
+        if (version < 1 || version > BundleFormat.CurrentVersion)
             throw new InvalidDataException(
                 $"Bundle: format version {version} is not supported by this runtime "
-                + $"(expected 1 or 2).");
+                + $"(expected 1..{BundleFormat.CurrentVersion}).");
 
         uint moduleCount = br.ReadUInt32();
         var entries = new BundleEntry[moduleCount];
@@ -74,7 +74,32 @@ public static class BundleReader
                         (PredicateVisibility)vis));
                 }
             }
-            entries[i] = new BundleEntry(name, source, compiled, compiledIl, defined);
+            // V3+ (Phase 17): IL patch table + per-method entries table.
+            byte[]? compiledIlPatches = null;
+            byte[]? compiledIlEntries = null;
+            if (version >= 3)
+            {
+                uint patchLength = br.ReadUInt32();
+                if (patchLength > 0)
+                {
+                    compiledIlPatches = br.ReadBytes((int)patchLength);
+                    if (compiledIlPatches.Length != patchLength)
+                        throw new InvalidDataException(
+                            $"Bundle: truncated IL patch table (expected "
+                            + $"{patchLength} bytes, got {compiledIlPatches.Length}).");
+                }
+                uint entriesLength = br.ReadUInt32();
+                if (entriesLength > 0)
+                {
+                    compiledIlEntries = br.ReadBytes((int)entriesLength);
+                    if (compiledIlEntries.Length != entriesLength)
+                        throw new InvalidDataException(
+                            $"Bundle: truncated IL entries table (expected "
+                            + $"{entriesLength} bytes, got {compiledIlEntries.Length}).");
+                }
+            }
+            entries[i] = new BundleEntry(name, source, compiled, compiledIl, defined,
+                compiledIlPatches, compiledIlEntries);
         }
         return new Bundle(entries);
     }

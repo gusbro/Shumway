@@ -38,6 +38,28 @@ public sealed class BundleEntry
     public byte[]? CompiledBytecode { get; }
     public byte[]? CompiledIl { get; }
 
+    /// <summary>Phase 17 — patch table for <see cref="CompiledIl"/>.
+    /// Encoded via <see cref="IlPatchSiteCodec.Encode"/>. The persisted
+    /// .dll bakes every atom-id / functor-id / resume-marker constant
+    /// as a unique sentinel int (drawn from a reserved range); the
+    /// patch table records each sentinel's absolute byte offset within
+    /// <see cref="CompiledIl"/> along with the build-time name+arity.
+    /// <see cref="PrologEngine.LoadBundle"/> reads the table, interns
+    /// each name in the current process to get the runtime id, and
+    /// overwrites the four bytes at the recorded offset before
+    /// <c>Assembly.Load</c>. Empty for bundles built before Phase 17
+    /// or without IL.</summary>
+    public byte[]? CompiledIlPatches { get; }
+
+    /// <summary>Phase 17 — per-method (slot, name, arity, method-name)
+    /// table for the persisted IL. <see cref="PrologEngine.LoadBundle"/>
+    /// uses this to register each delegate under the
+    /// <em>runtime</em>-process functor id (intern name+arity in the
+    /// current process), rather than the build-time id encoded in the
+    /// method name (which doesn't match cross-process). Encoded via
+    /// <see cref="IlPersistedEntryCodec.Encode"/>.</summary>
+    public byte[]? CompiledIlEntries { get; }
+
     /// <summary>Chunk 178: per-predicate visibility list. Carries
     /// over the <see cref="ShmoObject.Defined"/> from each contributing
     /// .shmo. Used by <see cref="PrologEngine.LoadBundle(Bundle)"/>
@@ -55,12 +77,16 @@ public sealed class BundleEntry
         string moduleName, string source,
         byte[]? compiledBytecode = null,
         byte[]? compiledIl = null,
-        IReadOnlyList<ShmoDefinedPredicate>? defined = null)
+        IReadOnlyList<ShmoDefinedPredicate>? defined = null,
+        byte[]? compiledIlPatches = null,
+        byte[]? compiledIlEntries = null)
     {
         ModuleName = moduleName;
         Source = source;
         CompiledBytecode = compiledBytecode;
         CompiledIl = compiledIl;
+        CompiledIlPatches = compiledIlPatches;
+        CompiledIlEntries = compiledIlEntries;
         Defined = defined ?? Array.Empty<ShmoDefinedPredicate>();
     }
 }

@@ -47,5 +47,11 @@ namespace Shumway.Embedding;
 public static class BundleFormat
 {
     public static readonly byte[] Magic = new byte[] { (byte)'S', (byte)'H', (byte)'U', (byte)'M' };
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 3;
+    // V3 (Phase 17) — each entry additionally carries an IL patch table
+    // (uint32 length + bytes) immediately after the compiledIl blob.
+    // Used by the LoadBundle path to overwrite build-time atom/functor
+    // id sentinels in the persisted IL with runtime-process values
+    // before Assembly.Load. Bundles built without IL carry a 0-length
+    // patch table.
 }
