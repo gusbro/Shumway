@@ -657,6 +657,17 @@ questions from Phase 11's deferred list:
   `retract` / `assertz` — and avoids redundant `TryDescribe*`
   attempts that were already rejecting the shape.
 
+**Phase 18 — Bundle ergonomics + IL correctness + Tier-1 perf** — ✅ **Complete** (tagged `phase-18`; closure summary in [`docs/phase-18-closure.md`](docs/phase-18-closure.md)).
+
+Four issues that Phase 17 surfaced (or the user flagged) while running Blint end-to-end via `shumway-link --with-compiled-il`:
+
+- ✓ **200** — Linker accepts local entry-point predicates. No more `:- public pred/N.` requirement on the source. Transparent promotion via `:- public` source-augment + ShmoCompiler recompile; explicit ambiguity error when multiple modules define the same local.
+- ✓ **201** — Two IL emit bugs surfaced by Phase 17 (now that persisted IL actually executes cross-process). `TryDescribeIndexedAtomPredicate` rejected predicates with mixed list-pattern + atom-headed clauses; `IsClauseBodyOpcode` gated `call/N` and `'$call'/2` CallBuiltin sites that need the bytecode interpreter's runtime goal dispatch.
+- ✓ **202** — Tier-1 dispatch fast path. `OnDispatch` was allocating a fresh wrapper closure per hit (hundreds of thousands of GC allocations on Blint); cached by address. Skipped `RecordCall` on already-promoted predicates.
+- ✓ **203** — Closure + tag.
+
+Blint via persisted IL bundle now runs in 8.4s vs Tier-0 bundle 9.1s — IL is the fastest configuration and produces the correct answer end-to-end.
+
 **Phase 17 — Cross-process persisted Tier-1 IL** — ✅ **Complete** (tagged `phase-17`; closure summary in [`docs/phase-17-closure.md`](docs/phase-17-closure.md)).
 
 Persisted Tier-1 IL bundles produced by `shumway-link --with-compiled-il` now run **correctly in a fresh process**. Pre-Phase 17 the IL baked each functor/atom id as an inline `ldc.i4` constant; the build process accumulated `AtomTable` / `FunctorTable` interns the run process doesn't, so those integers pointed at the wrong functors at runtime (symptom on Blint: ~10× faster than Tier-0 but wrong answer). Phase 17 makes persisted IL **name-relative**: emit writes sentinel constants and a side-channel patch table; `LoadBundle` rewrites each sentinel's four bytes to the runtime id before `Assembly.Load`. Per-dispatch overhead is zero — the JIT sees normal inline immediates.
