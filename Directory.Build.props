@@ -33,4 +33,16 @@
     <DefineConstants>$(DefineConstants);SHUMWAY_CP_TRACE</DefineConstants>
   </PropertyGroup>
 
+  <!--
+    Phase 20 performance profiling. Enables the [Conditional]-attributed
+    hooks in Profiler (opcode histogram, per-predicate / per-builtin
+    counts + inclusive time, backtrack / unify / choice-point counters).
+    Off by default — every call site is stripped at compile time, so a
+    normal build pays nothing. Turn on with:
+      dotnet build -p:ShumwayProfile=true
+  -->
+  <PropertyGroup Condition="'$(ShumwayProfile)' == 'true'">
+    <DefineConstants>$(DefineConstants);SHUMWAY_PROFILE</DefineConstants>
+  </PropertyGroup>
+
 </Project>

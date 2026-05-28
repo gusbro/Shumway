@@ -50,6 +50,7 @@ internal static class Program
             if (query is null) break;            // end of input
             if (query.Length == 0) continue;     // blank entry
 
+            Shumway.Core.Profiler.Reset();
             try
             {
                 RunQuery(engine, query);
@@ -61,19 +62,33 @@ internal static class Program
                 if (Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_TRACE") == "1")
                     Console.WriteLine(ex.StackTrace);
             }
+            Shumway.Core.Profiler.StopRun();
 
             // halt/0,1 is caught inside the engine's solution iterator; it
             // surfaces as LastHaltExitCode rather than a .NET exception.
             if (engine.LastHaltExitCode is int exitCode)
             {
                 MaybeDumpIlStats(engine);
+                MaybeDumpProfile(engine);
                 return exitCode;
             }
+
+            MaybeDumpProfile(engine);
         }
 
         Console.WriteLine();
         MaybeDumpIlStats(engine);
         return 0;
+    }
+
+    /// <summary>Phase 20: prints the execution profile to stderr after a
+    /// query, in a profiling build. A normal build's
+    /// <see cref="Shumway.Core.Profiler.Enabled"/> is a compile-time
+    /// <c>false</c>, so this is a no-op (and the report is never built).</summary>
+    private static void MaybeDumpProfile(PrologEngine engine)
+    {
+        if (!Shumway.Core.Profiler.Enabled) return;
+        Console.Error.WriteLine(engine.ProfileReport());
     }
 
     private static void MaybeDumpIlStats(PrologEngine engine)

@@ -298,6 +298,7 @@ public sealed class BytecodeInterpreter
             // handle the split internally). The fast path skips the
             // per-tick Split branch entirely.
             byte opByte = code.Overflow is null ? codeArr[pc] : code[pc];
+            Shumway.Core.Profiler.Opcode(opByte);
             switch ((Opcode)opByte)
             {
                 case Opcode.ReservedInvalid:
@@ -339,6 +340,7 @@ public sealed class BytecodeInterpreter
                     int target = BytecodeIO.ReadInt32(code, pc + 1);
                     int numLivePerms = BytecodeIO.ReadInt32(code, pc + 5);
                     target = ResolveTargetMaybeAutoPromoted(target);
+                    Shumway.Core.Profiler.Call(target);
                     // Env trimming (chunk 57): shrink the current frame to
                     // num_live_perms Y slots before dispatching, so the callee's
                     // pushes (CP, allocate) sit just above the live region of
@@ -359,6 +361,7 @@ public sealed class BytecodeInterpreter
                     }
                     int target = BytecodeIO.ReadInt32(code, pc + 1);
                     target = ResolveTargetMaybeAutoPromoted(target);
+                    Shumway.Core.Profiler.Call(target);
                     _engine.SetB0(_engine.B);   // tail call still enters a new procedure
                     DispatchToTier1OrBytecode(target);
                     break;
@@ -1137,6 +1140,7 @@ public sealed class BytecodeInterpreter
                     _engine.CurrentBuiltinName = entry.Name;
                     _engine.CurrentBuiltinArity = entry.Arity;
                     bool implOk;
+                    Shumway.Core.Profiler.BuiltinEnter(builtinId);
                     try
                     {
                         implOk = entry.Impl(_engine);
@@ -1145,6 +1149,10 @@ public sealed class BytecodeInterpreter
                     {
                         re.StampBuiltin(entry.Name, entry.Arity);
                         throw;
+                    }
+                    finally
+                    {
+                        Shumway.Core.Profiler.BuiltinExit(builtinId);
                     }
                     if (!implOk)
                     {
@@ -1759,6 +1767,7 @@ public sealed class BytecodeInterpreter
 
     private bool TryBacktrack()
     {
+        Shumway.Core.Profiler.Backtrack();
         // Wakeups belong to the computation being abandoned — drop any
         // that a failed clause queued but never ran (chunk 78).
         _engine.ClearPendingWakeups();

@@ -1433,6 +1433,39 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         => _precompiledModules;
     private readonly Dictionary<string, Shumway.Compiler.Wam.CompiledModule> _precompiledModules = new();
 
+    // Phase 20: most-recent query's functor→address map, for the
+    // profiler's address→name resolution. Null until the first query
+    // under a profiling build.
+    private IReadOnlyDictionary<int, int>? _profileFunctorAddresses;
+
+    /// <summary>Phase 20 — renders the current <see cref="Shumway.Core.Profiler"/>
+    /// report, resolving recorded callee addresses to <c>Name/Arity</c>
+    /// via the most recent query's link and builtin ids via the
+    /// registry. Returns the empty string in a non-profile build.</summary>
+    public string ProfileReport(int top = 25)
+    {
+        if (!Shumway.Core.Profiler.Enabled) return string.Empty;
+
+        // Invert functor→address once for the address→name lookup.
+        var addrToName = new Dictionary<int, string>();
+        if (_profileFunctorAddresses is not null)
+            foreach (var (fid, addr) in _profileFunctorAddresses)
+            {
+                var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(fid);
+                string name = Shumway.Core.AtomTable.GetById(atomId)?.Name ?? $"fid{fid}";
+                addrToName[addr] = $"{name}/{arity}";
+            }
+
+        return Shumway.Core.Profiler.Report(
+            addressName: a => addrToName.TryGetValue(a, out var n) ? n : null,
+            builtinName: id =>
+            {
+                var e = Shumway.Builtins.BuiltinsRegistry.GetById(id);
+                return $"{e.Name}/{e.Arity}";
+            },
+            top: top);
+    }
+
     /// <summary>Chunk 209 — per-module set of BARE (un-mangled) local
     /// functor ids contributed by a bundle loaded via
     /// <see cref="LoadEntryFromBytecode"/>. A bundle's predicates are
@@ -4336,6 +4369,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // region-agnostic and reads this combined view.
         var mergedAddresses = new Dictionary<int, int>(persistentAddresses);
         foreach (var (fid, a) in queryLink.Addresses) mergedAddresses[fid] = a;
+        // Phase 20: keep the functor→address map of the most recent
+        // query so the profiler can resolve a recorded callee address
+        // back to a Name/Arity. Only assembled when profiling is
+        // compiled in — otherwise it's a cheap reference assignment we
+        // skip entirely.
+        if (Shumway.Core.Profiler.Enabled)
+            _profileFunctorAddresses = mergedAddresses;
         var mergedSwitchTables =
             new List<Shumway.Core.SwitchTable>(staticLink.SwitchTables);
         mergedSwitchTables.AddRange(_dynamicLink.SwitchTables);

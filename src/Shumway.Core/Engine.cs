@@ -455,6 +455,7 @@ public sealed class Engine
             throw new ArgumentOutOfRangeException(nameof(arity));
         if (arity > _registers.Length) EnsureRegisterCapacity(arity);
 
+        Profiler.ChoicePoint();
         int size = CpSize(arity);
         EnsureStackCapacity(size);
 
@@ -2226,6 +2227,7 @@ public sealed class Engine
     /// </summary>
     public bool Unify(int aIdx, int bIdx)
     {
+        Profiler.Unify();
         int aAddr = Deref(aIdx);
         int bAddr = Deref(bIdx);
         if (aAddr == bAddr) return true;
