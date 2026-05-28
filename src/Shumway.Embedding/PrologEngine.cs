@@ -1895,6 +1895,149 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             "permission_error", "modify,static_procedure");
     }
 
+    /// <summary>Phase 19+ — emits a fresh empty-dynamic trampoline for
+    /// <paramref name="fid"/> directly into the engine's live program
+    /// buffer mid-query and registers it in
+    /// <see cref="Engine.CurrentFunctorAddresses"/>. Called by the
+    /// asserta/assertz incremental paths when the
+    /// <c>implicit_dynamic</c> flag auto-promoted the predicate AFTER
+    /// <see cref="SetupQueryFromTerm"/> ran (so the trampoline that
+    /// SetupQueryFromTerm normally builds for every declared dynamic
+    /// was never built for this one).
+    ///
+    /// <para>Replicates the single-clause-dynamic shape
+    /// <see cref="Shumway.Compiler.Wam.PredicateCompiler"/> emits for
+    /// the <c>head(_) :- fail.</c> stubs <c>EmitEmptyDynamicStubs</c>
+    /// injects at query setup: <c>enter_dynamic; execute &lt;chain-
+    /// head=6&gt;; try_me_else &lt;fail-stub-addr&gt; arity;
+    /// check_visible 0 MAX; CallBuiltin fail/0; Proceed</c>. After
+    /// appending the bytecode to <see cref="Engine.CurrentProgram"/>
+    /// via <see cref="Engine.AppendCode"/>, the helper:</para>
+    /// <list type="bullet">
+    /// <item>Patches the body's <c>CallBuiltin</c> call sites (the
+    ///   fail stub uses a fixed builtin id, so there's nothing to
+    ///   resolve — kept for symmetry with the chunk-127 append
+    ///   path).</item>
+    /// <item>Adds <paramref name="fid"/> to the engine's address map
+    ///   (the underlying dictionary, cast through the
+    ///   <see cref="IReadOnlyDictionary{TKey,TValue}"/> facade).</item>
+    /// <item>Calls <see cref="PopulateDynChainFor"/> so
+    ///   <see cref="_dynChains"/> picks up the trampoline's
+    ///   <c>TailNextAddr</c> / <c>HeadClauseAddr</c> /
+    ///   <c>TrampolineExecuteOperandAddr</c>, making subsequent
+    ///   chunk-127 / chunk-128 in-place assertz / asserta
+    ///   extensions work just like declared-dynamic
+    ///   predicates.</item>
+    /// </list></summary>
+    private void MaterializeDynamicTrampoline(Engine engine, int fid)
+    {
+        var (atomId, arity) = FunctorTable.Lookup(fid);
+        string name = AtomTable.GetById(atomId)?.Name
+            ?? throw new InvalidOperationException(
+                $"Cannot auto-promote: atom for fid {fid} has no name.");
+
+        // Synthesise `head(_, _, ..., _) :- fail.` — the same shape
+        // EmitEmptyDynamicStubs produces at query setup.
+        Term head = arity == 0
+            ? (Term)new AtomTerm(name)
+            : new CompoundTerm(name,
+                Enumerable.Range(0, arity).Select(_ => (Term)new VarTerm("_")).ToArray());
+        Term stubTerm = new CompoundTerm(":-", new[] { head, (Term)new AtomTerm("fail") });
+        var stubClause = new Clause(ClauseKind.Rule, stubTerm,
+            Shumway.Compiler.Lexer.SourcePosition.Start);
+
+        // Compile-pipeline parity with the setup path: same transforms
+        // (DCG / Meta / Phrase / mode-spec), same ModuleRewrite, same
+        // PredicateCompiler with isDynamic=true so the result IS a
+        // trampoline.
+        var transformed = PhraseTransform.Apply(
+            MetaTransform.Apply(DcgTransform.Apply(new[] { stubClause })));
+        transformed = Shumway.Compiler.Modes.ModeSpecializationTransform.Apply(
+            transformed, Modes);
+        var dynCtx = new ModuleRewrite.Context(
+            DefaultModuleName, new HashSet<int>(), _dynamicFunctors);
+        var rewritten = transformed.Select(c => ModuleRewrite.Rewrite(c, dynCtx)).ToList();
+
+        var predicate = new Shumway.Compiler.Wam.PredicateCompiler().Compile(
+            rewritten,
+            _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts,
+            enableIndexing: false,
+            isDynamic: true,
+            failStubAddr: engine.DynamicFailStubAddr);
+
+        int trampolineAddr = engine.AppendCode(predicate.Bytecode);
+
+        // PredicateCompiler emits the trampoline's execute opcode with
+        // a PREDICATE-LOCAL target (6); the module-compile path patches
+        // that operand to an absolute address during link. The mid-
+        // query materialise bypasses ModuleCompiler so we do the same
+        // relocation here — every DispatchSite address operand needs
+        // its predicate-local value shifted by trampolineAddr.
+        foreach (int siteRel in predicate.DispatchSites)
+        {
+            int operandAbsPos = trampolineAddr + siteRel;
+            int predLocalTarget = Shumway.Core.BytecodeIO.ReadInt32(
+                engine.CurrentProgram!, operandAbsPos);
+            Shumway.Core.BytecodeIO.WriteInt32(
+                engine.CurrentProgram!, operandAbsPos,
+                trampolineAddr + predLocalTarget);
+        }
+
+        // Patch any call-site operands the predicate emitted (the fail
+        // body has none, but the path mirrors the chunk-127 append for
+        // symmetry / future-proofing against richer auto-promote stubs).
+        var addrMap = engine.CurrentFunctorAddresses;
+        foreach (var site in predicate.CallSites)
+        {
+            int operandPos = trampolineAddr + site.OpcodeOffset + 1;
+            int target = addrMap is not null
+                         && addrMap.TryGetValue(site.CalleeFunctorId, out int siteAddr)
+                ? siteAddr
+                : Shumway.Core.CallTarget.ForUndefined(site.CalleeFunctorId);
+            Shumway.Core.BytecodeIO.WriteInt32(engine.CurrentProgram!, operandPos, target);
+        }
+
+        // Register the trampoline in the address map. The map was
+        // created as a Dictionary<int,int> at SetupQueryFromTerm and
+        // assigned to the engine as IReadOnlyDictionary — cast back to
+        // mutate. If the host ever switches to an immutable
+        // implementation this path needs revisiting.
+        if (addrMap is not Dictionary<int, int> mutableMap)
+            throw new InvalidOperationException(
+                "implicit_dynamic mid-query trampoline materialise: "
+                + "CurrentFunctorAddresses is not a mutable Dictionary — "
+                + "no auto-promote path available.");
+        mutableMap[fid] = trampolineAddr;
+
+        // Populate _dynChains[fid] manually. We can't use
+        // PopulateDynChainFor here because it would associate the
+        // stub-clause's check_visible with whichever user clause is
+        // already in _dynamicClauses (host.Assertz appends to
+        // _dynamicClauses before calling AppendDynamicClauseIncremental,
+        // so by the time MaterializeDynamicTrampoline runs the list
+        // already holds the asserted clause). The mismatch would
+        // make retract patch the stub's died slot instead of the
+        // real clause's, leaving the latter visible.
+        //
+        // Manual layout: only the trampoline-level offsets matter for
+        // chunk-127's incremental append — the chunk emits the real
+        // clause's own retry_me_else + check_visible + body and adds
+        // a fresh DynChainEntry to chain.Entries pointing at the
+        // emitted chunk. So _dynChains[fid].Entries stays empty here.
+        var chain = new DynChainState
+        {
+            TrampolineExecuteOperandAddr = trampolineAddr + 2,
+            HeadClauseAddr = trampolineAddr + 6,
+            TailNextAddr = trampolineAddr + 7,
+        };
+        _dynChains[fid] = chain;
+
+        // Sync the host's persistent program reference — engine.AppendCode
+        // may have reallocated the buffer; without this, the next query's
+        // two-buffer view would point at the pre-grow stale array.
+        SyncPersistentFromEngine(engine);
+    }
+
     /// <summary>Applies a <c>:- set_prolog_flag(Flag, Value)</c>
     /// directive at consult time so subsequent clauses in the same
     /// consult see the new value. The parser already pre-processes
@@ -3784,6 +3927,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         Term clauseTerm = new CompoundTerm(":-", new[] { head, queryTerm });
         var syntheticClause = new Clause(ClauseKind.Rule, clauseTerm, queryTerm.Position);
 
+        // Phase 19+ — apply the implicit_dynamic pre-scan to the
+        // query body itself. This catches the REPL pattern
+        // `?- assertz(pepe), call(pepe).` where assertz and call
+        // appear in the same query: without this scan the linker
+        // wouldn't see pepe as dynamic before laying out the
+        // call site, and the call would fail with
+        // undefined_procedure. Same logic as ConsultString's
+        // call to CollectImplicitDynamics.
+        if (_flags.ImplicitDynamic)
+            CollectImplicitDynamics(new[] { syntheticClause }, new HashSet<int>());
+
         // Validate public uniqueness across modules. The check raises before
         // any compilation so the error message points squarely at the user's
         // module declarations rather than at the bytecode that wouldn't link.
@@ -4381,6 +4535,22 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // form of indexed dispatch that chunk-155b/c didn't handle
         // — for a hot predicate, request a persistent rebuild so the
         // next query sees the new clause through a fresh compile.
+        // Phase 19+ — mid-query trampoline materialisation. If the
+        // predicate was auto-promoted mid-query via EnsureDynamic
+        // (implicit_dynamic=true with a runtime-bound assertz head),
+        // _dynamicFunctors holds it but no chain state was ever
+        // built — the trampoline lives in bytecode emitted by
+        // SetupQueryFromTerm, and that ran before the auto-promote.
+        // Build a fresh trampoline now so the chunk-127 extension
+        // below has something to extend.
+        if (!_dynChains.ContainsKey(functorId)
+            && _dynamicFunctors.Contains(functorId)
+            && engine.CurrentProgram is not null
+            && engine.DynamicFailStubAddr > 0)
+        {
+            MaterializeDynamicTrampoline(engine, functorId);
+        }
+
         bool chainUsable =
             _dynChains.TryGetValue(functorId, out var chain)
             && chain.TailNextAddr >= 0
@@ -4501,6 +4671,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // Chunk 155f: try in-place asserta for chunk-155a layout.
         if (TryPrependToIndexedDynamic(engine, functorId, newClause))
             return;
+        // Phase 19+ — mirror the assertz path: when the predicate was
+        // auto-promoted mid-query (no trampoline ever built), build
+        // one now so the chain prepend below has a chain to prepend
+        // to.
+        if (!_dynChains.ContainsKey(functorId)
+            && _dynamicFunctors.Contains(functorId)
+            && engine.CurrentProgram is not null
+            && engine.DynamicFailStubAddr > 0)
+        {
+            MaterializeDynamicTrampoline(engine, functorId);
+        }
         // Fall back to chunk-128 chain prepend for chain layout, or
         // rebuild for indexed layouts we can't extend in place.
         bool chainUsable =

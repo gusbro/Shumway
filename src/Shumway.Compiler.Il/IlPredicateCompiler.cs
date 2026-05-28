@@ -2558,6 +2558,15 @@ public sealed class IlPredicateCompiler
                     + "The embedding layer must populate it at query setup.");
             if (!map.TryGetValue(functorId, out int address))
                 throw PrologRuntimeException.UndefinedProcedure(functorId);
+            // Phase 19+ — the address may be a CallTarget.ForUndefined
+            // sentinel left by the linker (the IL caller's static
+            // rewrite baked a direct Call/Execute against an
+            // unresolved functor) AND the implicit_dynamic auto-
+            // promote may since have materialised a trampoline.
+            // Re-look-up the live entry; if it's still unresolved,
+            // raise existence_error.
+            if (Shumway.Core.CallTarget.IsUnresolved(address))
+                throw PrologRuntimeException.UndefinedProcedure(functorId);
             return address;
         }
     }

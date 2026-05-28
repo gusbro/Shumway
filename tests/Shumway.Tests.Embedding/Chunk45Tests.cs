@@ -45,6 +45,9 @@ public class Chunk45Tests
         var loaded = BundleReader.FromBytes(bytes);
 
         var engine = new PrologEngine();
+        // Phase 18 chunk 202: LoadBundle only pre-warms when the host has
+        // opted into Tier 1 by raising Threshold above 0.
+        engine.IlPromotion.Threshold = 1;
         engine.LoadBundle(loaded);
 
         int fid = FunctorId("color", 1);
@@ -114,6 +117,9 @@ public class Chunk45Tests
         });
         byte[] bytes = BundleWriter.ToBytes(bundle, includeCompiledBytecode: true);
         var engine = new PrologEngine();
+        // Phase 18 chunk 202: LoadBundle only pre-warms when the host has
+        // opted into Tier 1 by raising Threshold above 0.
+        engine.IlPromotion.Threshold = 1;
         engine.LoadBundle(BundleReader.FromBytes(bytes));
 
         // bar/0 IS promotable (single-clause fact, no body).
@@ -140,6 +146,9 @@ public class Chunk45Tests
         {
             BundleWriter.WriteToFile(bundle, path, includeCompiledBytecode: true);
             var engine = new PrologEngine();
+            // Phase 18 chunk 202: LoadBundle only pre-warms when the host
+            // has opted into Tier 1 by raising Threshold above 0.
+            engine.IlPromotion.Threshold = 1;
             engine.LoadBundle(path);
             Assert.True(engine.IlPromotion.IsPromoted(FunctorId("greet", 1)));
             Assert.True(engine.Query("greet(world).").Success);

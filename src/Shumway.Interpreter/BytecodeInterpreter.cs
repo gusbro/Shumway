@@ -338,9 +338,7 @@ public sealed class BytecodeInterpreter
                     }
                     int target = BytecodeIO.ReadInt32(code, pc + 1);
                     int numLivePerms = BytecodeIO.ReadInt32(code, pc + 5);
-                    if (CallTarget.IsUnresolved(target))
-                        throw PrologRuntimeException.UndefinedProcedure(
-                            CallTarget.FunctorIdOf(target));
+                    target = ResolveTargetMaybeAutoPromoted(target);
                     // Env trimming (chunk 57): shrink the current frame to
                     // num_live_perms Y slots before dispatching, so the callee's
                     // pushes (CP, allocate) sit just above the live region of
@@ -360,9 +358,7 @@ public sealed class BytecodeInterpreter
                         break;
                     }
                     int target = BytecodeIO.ReadInt32(code, pc + 1);
-                    if (CallTarget.IsUnresolved(target))
-                        throw PrologRuntimeException.UndefinedProcedure(
-                            CallTarget.FunctorIdOf(target));
+                    target = ResolveTargetMaybeAutoPromoted(target);
                     _engine.SetB0(_engine.B);   // tail call still enters a new procedure
                     DispatchToTier1OrBytecode(target);
                     break;
@@ -1684,6 +1680,41 @@ public sealed class BytecodeInterpreter
     /// names (or to an unbound REF / ATTVAR).</summary>
     private Cell DerefCell(Cell c) =>
         c.Tag == Tag.Ref ? _engine.GetHeap(_engine.Deref(c.AsHeapIndex)) : c;
+
+    /// <summary>Phase 19+ — when a Call/Execute target is an
+    /// unresolved-procedure sentinel baked into the bytecode at link
+    /// time, check whether the predicate has been auto-promoted
+    /// mid-query (the <c>implicit_dynamic</c> flag's runtime path
+    /// materialised a trampoline after the call site was already
+    /// linked). If the current address map now holds a real address
+    /// for the functor, use it. Otherwise raise the standard
+    /// <c>existence_error(procedure, Name/Arity)</c>.</summary>
+    private int ResolveTargetMaybeAutoPromoted(int target)
+    {
+        if (!CallTarget.IsUnresolved(target)) return target;
+        int fid = CallTarget.FunctorIdOf(target);
+        var map = _engine.CurrentFunctorAddresses;
+        if (map is not null
+            && map.TryGetValue(fid, out int latest)
+            && !CallTarget.IsUnresolved(latest))
+        {
+            // Restrict resolution to predicates whose layout starts
+            // with `enter_dynamic` — i.e. a dynamic trampoline emitted
+            // by the auto-promotion path. A non-dynamic predicate
+            // present in CurrentFunctorAddresses under the same fid
+            // (e.g. a module-local predicate that the link layer
+            // deliberately did NOT expose to this call site) must
+            // still raise the standard existence_error rather than
+            // breaking module visibility.
+            var prog = _engine.CurrentProgram;
+            if (prog is not null
+                && latest >= 0
+                && latest < prog.Length
+                && (Opcode)prog[latest] == Opcode.EnterDynamic)
+                return latest;
+        }
+        throw PrologRuntimeException.UndefinedProcedure(fid);
+    }
 
     /// <summary>Runs the predicate at <paramref name="target"/> as a goal
     /// in the <em>current</em> engine — same heap, trail, stack and
