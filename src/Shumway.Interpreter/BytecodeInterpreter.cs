@@ -395,7 +395,21 @@ public sealed class BytecodeInterpreter
                 {
                     int nextClause = BytecodeIO.ReadInt32(code, pc + 1);
                     _engine.RetryMeElse(nextClause);
-                    _engine.AdvancePc(5);
+                    // A demoted chain head (asserta's in-place
+                    // try_me_else -> retry_me_else demotion) is a 5-byte
+                    // retry_me_else followed by 4 Nop bytes padding it
+                    // back to the original 9-byte footprint. Skip the
+                    // padding in this one step rather than dispatching
+                    // four separate Nop instructions: profiling Blint
+                    // showed those pad-Nops were ~47% of ALL executed
+                    // opcodes (93M of 199M). A native (assertz) retry's
+                    // pc+5 is a check_visible / body opcode, never Nop,
+                    // so the single-byte peek distinguishes the two.
+                    int padPc = pc + 5;
+                    bool demoted = padPc < codeLen
+                        && (code.Overflow is null ? codeArr[padPc] : code[padPc])
+                           == (byte)Opcode.Nop;
+                    _engine.AdvancePc(demoted ? 9 : 5);
                     break;
                 }
 

@@ -66,7 +66,9 @@ public static class Profiler
         _callsByAddress.Clear();
         _builtinCounts.Clear();
         _builtinTicks.Clear();
+        _builtinBytes.Clear();
         _builtinStack.Clear();
+        _builtinAllocStack.Clear();
         _totalOpcodes = 0;
         _totalCalls = 0;
         _backtracks = 0;
@@ -98,12 +100,19 @@ public static class Profiler
 
     /// <summary>Marks the start of a builtin invocation. Pushes a timer
     /// so nested builtins (via <c>call/N</c>) nest correctly.</summary>
+    private static readonly Dictionary<int, long> _builtinBytes = new();
+    private static readonly Stack<long> _builtinAllocStack = new();
+
     [Conditional("SHUMWAY_PROFILE")]
     public static void BuiltinEnter(int builtinId)
-        => _builtinStack.Push((builtinId, Stopwatch.GetTimestamp()));
+    {
+        _builtinStack.Push((builtinId, Stopwatch.GetTimestamp()));
+        _builtinAllocStack.Push(GC.GetAllocatedBytesForCurrentThread());
+    }
 
     /// <summary>Marks the end of the most recently entered builtin and
-    /// adds its inclusive elapsed time to that builtin's total.</summary>
+    /// adds its inclusive elapsed time + allocated bytes to that
+    /// builtin's totals.</summary>
     [Conditional("SHUMWAY_PROFILE")]
     public static void BuiltinExit(int builtinId)
     {
@@ -114,6 +123,10 @@ public static class Profiler
         _builtinTicks[id] = t + elapsed;
         _builtinCounts.TryGetValue(id, out long c);
         _builtinCounts[id] = c + 1;
+        long allocStart = _builtinAllocStack.Pop();
+        long bytes = GC.GetAllocatedBytesForCurrentThread() - allocStart;
+        _builtinBytes.TryGetValue(id, out long b);
+        _builtinBytes[id] = b + bytes;
     }
 
     [Conditional("SHUMWAY_PROFILE")]
@@ -180,6 +193,15 @@ public static class Profiler
             _builtinCounts.TryGetValue(id, out long c);
             string name = builtinName?.Invoke(id) ?? $"#{id}";
             sb.AppendLine($"  {ticks * msPerTick,9:N1} ms  {c,10:N0} calls  {name}");
+        }
+
+        sb.AppendLine();
+        sb.AppendLine($"-- top {top} builtins by allocated bytes --");
+        foreach (var (id, bytes) in TopN(_builtinBytes, top))
+        {
+            _builtinCounts.TryGetValue(id, out long c);
+            string name = builtinName?.Invoke(id) ?? $"#{id}";
+            sb.AppendLine($"  {bytes / (1024.0 * 1024),9:N1} MB  {c,10:N0} calls  {name}");
         }
 
         if (_notes.Count > 0)
