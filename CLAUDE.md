@@ -557,11 +557,11 @@ real `--exe` path. Eight chunks:
   terminator between attempts. CLI prints
   `file:line:col: error: msg` for each.
 - ✓ **172** — `shumway-link --strip` removes embedded source
-  from each bundle entry. Bytecode preserved. (The chunk-208
-  follow-up made source-bearing bundles take the same fast
-  path — `LoadBundle` no longer reconsults source when
-  `CompiledBytecode + Defined` is present. Chunk-172's
-  `stripped_bundle` warning is gone since chunks 178/179.)
+  from each bundle entry. Bytecode preserved. Known limitation:
+  the engine's LoadBundle still re-consults source so stripped
+  bundles fail to dispatch; a loadable-strip is queued for a
+  future chunk and the linker emits a `stripped_bundle`
+  warning when active.
 - ✓ **173** — `shumway-link --map <path>` writes a C-toolchain
   -style audit file: per-module sizes, public/dynamic
   predicate lists, reached / dropped modules, totals.

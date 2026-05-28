@@ -111,17 +111,14 @@ internal static class Program
             return ExitLinkError;
         }
 
-        if (!string.IsNullOrEmpty(opts.OutputPath))
+        try
         {
-            try
-            {
-                File.WriteAllBytes(opts.OutputPath, result.Bytes!);
-            }
-            catch (IOException ex)
-            {
-                Console.Error.WriteLine($"shumway-link: error writing '{opts.OutputPath}': {ex.Message}");
-                return ExitLinkError;
-            }
+            File.WriteAllBytes(opts.OutputPath, result.Bytes!);
+        }
+        catch (IOException ex)
+        {
+            Console.Error.WriteLine($"shumway-link: error writing '{opts.OutputPath}': {ex.Message}");
+            return ExitLinkError;
         }
 
         if (!string.IsNullOrEmpty(opts.MapPath))
@@ -140,7 +137,7 @@ internal static class Program
             }
         }
 
-        if (opts.Verbose && !string.IsNullOrEmpty(opts.OutputPath))
+        if (opts.Verbose)
         {
             Console.Error.WriteLine(
                 $"shumway-link: wrote {opts.OutputPath} "
@@ -274,10 +271,9 @@ internal static class Program
             }
         }
 
-        if (string.IsNullOrEmpty(opts.OutputPath) && string.IsNullOrEmpty(opts.ExePath))
+        if (string.IsNullOrEmpty(opts.OutputPath))
         {
-            Console.Error.WriteLine(
-                "shumway-link: --output (or --exe) is required.");
+            Console.Error.WriteLine("shumway-link: --output is required.");
             return null;
         }
         if (opts.InputPaths.Count == 0)
@@ -331,10 +327,10 @@ internal static class Program
     private static void PrintUsage()
     {
         Console.Error.WriteLine(
-            "Usage: shumway-link {-o <output.shum> | --exe <output.exe>} {--entry pred/N | --goal Term} [options] <a.shmo b.shmo ...>\n"
+            "Usage: shumway-link -o <output.shum> {--entry pred/N | --goal Term} [options] <a.shmo b.shmo ...>\n"
             + "\n"
             + "Options:\n"
-            + "  -o, --output <path>      Output bundle path. Required unless --exe is given.\n"
+            + "  -o, --output <path>      Output bundle path (required).\n"
             + "      --entry list         One or more entry-point predicates. Comma-\n"
             + "                           separated within a flag; flag is repeatable.\n"
             + "                           At least one entry point is required.\n"
@@ -343,12 +339,11 @@ internal static class Program
             + "                           raise existence_error/2 if a missing predicate\n"
             + "                           is actually invoked.\n"
             + "  -s, --strip              Strip the embedded Prolog source from each\n"
-            + "                           bundle entry. The bundle still dispatches\n"
-            + "                           correctly — the engine loads predicates from\n"
-            + "                           the precompiled bytecode (chunks 178/179).\n"
-            + "                           Useful for size analysis or IP-protection\n"
-            + "                           archives. listing/0 output and parser stack\n"
-            + "                           traces lose their textual source.\n"
+            + "                           bundle entry. Useful for size analysis or IP-\n"
+            + "                           protection archives. Current engine.LoadBundle\n"
+            + "                           re-consults source so stripped bundles cannot\n"
+            + "                           currently dispatch their predicates — a warning\n"
+            + "                           is emitted.\n"
             + "  -m, --map <path>         Write a human-readable map file describing what\n"
             + "                           landed in the bundle: per-module sizes, public\n"
             + "                           / dynamic predicate lists, reached / dropped\n"

@@ -2283,20 +2283,19 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         ArgumentNullException.ThrowIfNull(bundle);
         foreach (var entry in bundle.Entries)
         {
-            // Whenever the entry carries CompiledBytecode + Defined
-            // metadata, take the fast path — register the predicates
-            // directly from the precompiled artifact via
-            // LoadEntryFromBytecode and skip ConsultString. Chunk 176
-            // guarantees the .shmo bytecode is byte-identical to what
-            // SetupQueryFromTerm would have produced from source, so
-            // reparsing the embedded source (when --strip was off)
-            // would just rebuild the same predicates and throw away
-            // the bytecode the bundle paid to ship.
-            //
-            // Original chunk-178 gate (`Source` empty) restricted this
-            // to --strip bundles; widening to "bytecode present" makes
-            // load time independent of --strip.
-            if (entry.CompiledBytecode is not null
+            // Chunk 178: source-less load. When the bundle was built
+            // with --strip (or compiled in Release with chunk 177's
+            // source omission), Source is empty and we cannot
+            // ConsultString. The entry's CompiledBytecode + Defined
+            // metadata carry everything we need — the bytecode is
+            // already runtime-ready (mangled per chunk 176) and the
+            // Defined list tells us which functors are public /
+            // dynamic / local. Set up a ModuleManifest from the
+            // metadata and queue the precompiled predicates for the
+            // static-link region; SetupQueryFromTerm will plug them
+            // in next time it rebuilds the link.
+            if (string.IsNullOrEmpty(entry.Source)
+                && entry.CompiledBytecode is not null
                 && entry.Defined.Count > 0)
             {
                 LoadEntryFromBytecode(entry);
