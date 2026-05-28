@@ -98,8 +98,34 @@ public static class BundleReader
                             + $"{entriesLength} bytes, got {compiledIlEntries.Length}).");
                 }
             }
+            // V4+ (chunk 209): dynamic seeds trailer.
+            List<ShmoDynamicSeed>? dynamicSeeds = null;
+            if (version >= 4)
+            {
+                uint seedCount = br.ReadUInt32();
+                dynamicSeeds = new List<ShmoDynamicSeed>((int)seedCount);
+                for (uint j = 0; j < seedCount; j++)
+                {
+                    string seedName = ReadLengthPrefixedUtf8(br);
+                    int seedArity = (int)br.ReadUInt32();
+                    uint clauseCount = br.ReadUInt32();
+                    var encoded = new byte[clauseCount][];
+                    for (uint k = 0; k < clauseCount; k++)
+                    {
+                        uint byteCount = br.ReadUInt32();
+                        byte[] bytes = br.ReadBytes((int)byteCount);
+                        if (bytes.Length != byteCount)
+                            throw new InvalidDataException(
+                                $"Bundle: truncated dynamic-seed clause for "
+                                + $"{seedName}/{seedArity} (expected {byteCount}, got {bytes.Length}).");
+                        encoded[k] = bytes;
+                    }
+                    dynamicSeeds.Add(new ShmoDynamicSeed(
+                        new PredicateRef(seedName, seedArity), encoded));
+                }
+            }
             entries[i] = new BundleEntry(name, source, compiled, compiledIl, defined,
-                compiledIlPatches, compiledIlEntries);
+                compiledIlPatches, compiledIlEntries, dynamicSeeds);
         }
         return new Bundle(entries);
     }

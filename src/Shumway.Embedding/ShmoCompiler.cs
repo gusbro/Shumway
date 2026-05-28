@@ -103,37 +103,36 @@ public static class ShmoCompiler
         }
         if (errors.Count >= maxErrors)
             return new ShmoCompileResult(null, errors);
-        // Apply the same compile-time transforms ConsultString runs
-        // before handing clauses to ModuleCompiler. Pre-fix the .shmo
-        // only ran DcgTransform; the bytecode it produced was then
-        // cached on LoadBundle and substituted for what would have
-        // been a freshly-compiled version of the same predicate. When
-        // the consult-time transforms (MetaTransform's `(A -> B)`
-        // standalone rewrite, `\+` / `not` lift, `findall` inline,
-        // PhraseTransform's `phrase/2,3` expansion) DIFFERED, the
-        // cached bytecode raised existence_error at runtime while
-        // the cache-miss path would have worked. Now both paths emit
-        // identical bytecode for the same input.
-        var expanded = PhraseTransform.Apply(
-            MetaTransform.Apply(DcgTransform.Apply(allClauses)));
-
+        // First pass: walk RAW (untransformed) clauses to read
+        // directives (so we know which predicates are dynamic) and
+        // collect the raw bodies. We need the raw bodies for two
+        // reasons:
+        //
+        //   1. Chunk 209: a `:- dynamic foo/N.` clause must be
+        //      serialised RAW to DynamicSeeds, because the engine's
+        //      SetupQueryFromTerm runs DcgTransform / MetaTransform /
+        //      PhraseTransform on _dynamicClauses AGAIN — mirroring
+        //      what ConsultString does at line 4022. Pre-transforming
+        //      here would double-apply.
+        //
+        //   2. Local-pred call-graph edges from inside catch / findall /
+        //      etc. need to be visible — CollectCalls descends into
+        //      meta-builtin goal args (chunk 209) so the raw body still
+        //      enumerates everything reachable.
         string moduleName = moduleNameFallback;
         bool moduleDirectiveSeen = false;
         var publicSet = new HashSet<PredicateRef>();
         var dynamicSet = new HashSet<PredicateRef>();
         var ensureLinked = new List<PredicateRef>();
         var qualifiedRefs = new List<QualifiedPredicateRef>();
-        var clauses = new List<Clause>();
+        var rawClauses = new List<Clause>();
 
-        foreach (var clause in expanded)
+        foreach (var clause in allClauses)
         {
             if (clause.Kind == ClauseKind.Directive
                 && clause.Term is CompoundTerm d
                 && d.Functor == ":-" && d.Args.Length == 1)
             {
-                // Catch malformed directives so the compiler doesn't
-                // bail on the first one — same C-style recovery as
-                // ParseException above.
                 try
                 {
                     if (ProcessDirective(d.Args[0], ref moduleName,
@@ -147,19 +146,59 @@ public static class ShmoCompiler
                 }
                 continue;
             }
-            clauses.Add(clause);
+            rawClauses.Add(clause);
         }
         if (errors.Count > 0)
             return new ShmoCompileResult(null, errors);
 
+        // Partition raw clauses: dynamic-head ones become DynamicSeeds
+        // (RAW), the rest go through the same DcgTransform +
+        // MetaTransform + PhraseTransform pipeline ConsultString uses.
+        // Helper clauses MetaTransform adds (catch's first arg becomes
+        // a separate `$catchgoal_N/M` clause, etc.) end up in the
+        // static set — they're synthetic, never dynamic.
+        var dynamicSeedAccum = new Dictionary<PredicateRef, List<byte[]>>();
+        var staticInput = new List<Clause>(rawClauses.Count);
+        foreach (var clause in rawClauses)
+        {
+            PredicateRef? head = TryExtractHead(clause);
+            if (head is not null && dynamicSet.Contains(head.Value))
+            {
+                if (!dynamicSeedAccum.TryGetValue(head.Value, out var seedList))
+                {
+                    seedList = new List<byte[]>();
+                    dynamicSeedAccum[head.Value] = seedList;
+                }
+                seedList.Add(TermCodec.EncodeClause(clause));
+            }
+            else
+            {
+                staticInput.Add(clause);
+            }
+        }
+
+        // Now apply the static-pipeline transforms. These may add
+        // synthetic helper clauses (MetaTransform extracts catch's
+        // protected goal, ; / -> branches, etc. into helper preds).
+        var clauses = PhraseTransform.Apply(
+            MetaTransform.Apply(DcgTransform.Apply(staticInput)));
+
         var definedOrder = new List<PredicateRef>();
         var definedSet = new HashSet<PredicateRef>();
         var callGraph = new Dictionary<PredicateRef, HashSet<PredicateRef>>();
+        var staticClauses = new List<Clause>(clauses.Count);
 
+        // Static clauses' call graph: walk transformed bodies (so
+        // MetaTransform-emitted helper-call references show up in
+        // the graph).
         foreach (var clause in clauses)
         {
             PredicateRef? head = TryExtractHead(clause);
-            if (head is null) continue;
+            if (head is null)
+            {
+                staticClauses.Add(clause);
+                continue;
+            }
             if (definedSet.Add(head.Value))
                 definedOrder.Add(head.Value);
             if (!callGraph.TryGetValue(head.Value, out var edges))
@@ -169,6 +208,33 @@ public static class ShmoCompiler
             }
             Term body = ExtractBody(clause);
             CollectCalls(body, edges, qualifiedRefs);
+            staticClauses.Add(clause);
+        }
+
+        // Dynamic clauses' call graph: walk RAW bodies, since that's
+        // what the linker needs to know about. The engine's runtime
+        // MetaTransform will produce the same helper-call edges then,
+        // but the linker can't see across that boundary yet so we
+        // walk the user-visible callees only. CollectCalls already
+        // descends into catch / findall / etc. (chunk 209), so this
+        // surfaces blint_version, blint_exit, etc. from a body like
+        // `main :- catch((blint_version(V), ...), E, ...).`.
+        foreach (var (head, encodedList) in dynamicSeedAccum)
+        {
+            if (definedSet.Add(head))
+                definedOrder.Add(head);
+            if (!callGraph.TryGetValue(head, out var edges))
+            {
+                edges = new HashSet<PredicateRef>();
+                callGraph[head] = edges;
+            }
+        }
+        foreach (var rawClause in rawClauses)
+        {
+            PredicateRef? head = TryExtractHead(rawClause);
+            if (head is null || !dynamicSet.Contains(head.Value)) continue;
+            Term body = ExtractBody(rawClause);
+            CollectCalls(body, callGraph[head.Value], qualifiedRefs);
         }
 
         // A :- dynamic declaration with no clauses still counts as
@@ -233,8 +299,8 @@ public static class ShmoCompiler
             ? moduleName
             : PrologEngine.DefaultModuleName;
         var rewriteCtx = new ModuleRewrite.Context(rewriteModuleName, localFids, dynamicFids);
-        var rewritten = new List<Clause>(clauses.Count);
-        foreach (var clause in clauses)
+        var rewritten = new List<Clause>(staticClauses.Count);
+        foreach (var clause in staticClauses)
             rewritten.Add(ModuleRewrite.Rewrite(clause, rewriteCtx));
 
         // Chunk 177: Release drops the per-clause Meta/DbgInfo markers
@@ -263,15 +329,34 @@ public static class ShmoCompiler
         foreach (var (k, v) in callGraph)
             callGraphRO[k] = v.ToArray();
 
+        var dynamicSeeds = new List<ShmoDynamicSeed>(dynamicSeedAccum.Count);
+        foreach (var (ind, encodedList) in dynamicSeedAccum)
+            dynamicSeeds.Add(new ShmoDynamicSeed(ind, encodedList));
+
+        // Chunk 209: without a `:- module(name).` directive the source
+        // lands in the engine's DefaultModuleName ("user"). ShmoObject's
+        // ModuleName has to match that, otherwise LoadEntryFromBytecode
+        // would register the predicates under the file-fallback name
+        // and SetupQueryFromTerm's userLocalsCache (computed from the
+        // `user` module) would miss them — leaving the dynamic-clause
+        // ModuleRewrite (which always runs against the user-module
+        // locals at line 4017-4021) unable to mangle this module's
+        // calls. The fallback file name is still used as the linker's
+        // diagnostic identity below.
+        string runtimeModuleName = moduleDirectiveSeen
+            ? moduleName
+            : PrologEngine.DefaultModuleName;
+
         var obj = new ShmoObject(
-            moduleName: moduleName,
+            moduleName: runtimeModuleName,
             source: persistedSource,
             bytecode: bytecode,
             defined: defined,
             ensureLinked: ensureLinked,
             callGraph: callGraphRO,
             qualifiedRefs: qualifiedRefs,
-            buildMode: buildMode);
+            buildMode: buildMode,
+            dynamicSeeds: dynamicSeeds);
         return new ShmoCompileResult(obj, errors);
     }
 
@@ -464,6 +549,49 @@ public static class ShmoCompiler
                 // call/1 with a statically known goal: descend.
                 if (c.Functor == "call" && c.Args.Length == 1)
                 {
+                    CollectCalls(c.Args[0], edges, qualifiedRefs);
+                    return;
+                }
+                // Meta-builtins that take a Goal argument and run it.
+                // Without descending into the goal, the call graph
+                // misses every predicate that appears only inside
+                // catch / findall / bagof / setof / forall / once /
+                // ignore / not — and the linker drops them, so the
+                // bundle can't dispatch them at runtime. The outer
+                // builtin itself stays as a regular edge (it's a
+                // registered builtin so the linker resolves it).
+                if (c.Functor == "catch" && c.Args.Length == 3)
+                {
+                    edges.Add(new PredicateRef("catch", 3));
+                    CollectCalls(c.Args[0], edges, qualifiedRefs);
+                    CollectCalls(c.Args[2], edges, qualifiedRefs);
+                    return;
+                }
+                if ((c.Functor == "findall" && c.Args.Length == 3)
+                    || (c.Functor == "bagof" && c.Args.Length == 3)
+                    || (c.Functor == "setof" && c.Args.Length == 3))
+                {
+                    edges.Add(new PredicateRef(c.Functor, 3));
+                    CollectCalls(c.Args[1], edges, qualifiedRefs);
+                    return;
+                }
+                if (c.Functor == "findall" && c.Args.Length == 4)
+                {
+                    edges.Add(new PredicateRef("findall", 4));
+                    CollectCalls(c.Args[1], edges, qualifiedRefs);
+                    return;
+                }
+                if (c.Functor == "forall" && c.Args.Length == 2)
+                {
+                    edges.Add(new PredicateRef("forall", 2));
+                    CollectCalls(c.Args[0], edges, qualifiedRefs);
+                    CollectCalls(c.Args[1], edges, qualifiedRefs);
+                    return;
+                }
+                if ((c.Functor == "once" || c.Functor == "ignore")
+                    && c.Args.Length == 1)
+                {
+                    edges.Add(new PredicateRef(c.Functor, 1));
                     CollectCalls(c.Args[0], edges, qualifiedRefs);
                     return;
                 }

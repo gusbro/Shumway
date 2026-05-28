@@ -1433,6 +1433,18 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         => _precompiledModules;
     private readonly Dictionary<string, Shumway.Compiler.Wam.CompiledModule> _precompiledModules = new();
 
+    /// <summary>Chunk 209 — per-module set of BARE (un-mangled) local
+    /// functor ids contributed by a bundle loaded via
+    /// <see cref="LoadEntryFromBytecode"/>. A bundle's predicates are
+    /// already compiled (and mangled <c>module$name</c>), so
+    /// <c>ComputeLocalFunctors</c> — which walks <c>manifest.Clauses</c>
+    /// — can't rediscover them at query setup (manifest.Clauses is
+    /// empty for a bundled module). SetupQueryFromTerm folds these bare
+    /// fids into the module's locals so a dynamic clause's body call to
+    /// a bundled local predicate gets the same mangling the bundle's
+    /// own bytecode used.</summary>
+    private readonly Dictionary<string, HashSet<int>> _precompiledModuleLocals = new();
+
     /// <summary>Snapshot of the most recent query's call stack as a
     /// list of <c>Name/Arity</c> predicate indicators (chunk 51).
     /// Captured automatically when a runtime error escapes; available
@@ -2561,6 +2573,35 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 if (!_dynamicClauses.ContainsKey(fid))
                     _dynamicClauses[fid] = new List<Clause>();
             }
+            else // Local — record the bare fid so query setup can fold
+                 // it into the module's locals (chunk 209).
+            {
+                if (!_precompiledModuleLocals.TryGetValue(entry.ModuleName, out var localSet))
+                {
+                    localSet = new HashSet<int>();
+                    _precompiledModuleLocals[entry.ModuleName] = localSet;
+                }
+                localSet.Add(fid);
+            }
+        }
+
+        // Chunk 209: seed _dynamicClauses with the source-declared
+        // clauses of every `:- dynamic foo/N.` predicate. Mirrors what
+        // ConsultString does (PrologEngine.cs:3318-3341) — without
+        // this, dispatch / clause/2 / retract would see an empty
+        // dynamic store and the predicate would behave as if it had
+        // no clauses. TermCodec rehydrates the AST so
+        // SetupQueryFromTerm's downstream PredicateCompiler builds
+        // the dynamic trampoline with check_visible entries pointing
+        // at born=current-gen / died=MAX initial clauses.
+        foreach (var seed in entry.DynamicSeeds)
+        {
+            int fid = Shumway.Core.FunctorTable.Intern(
+                Shumway.Core.AtomTable.Intern(seed.Indicator.Name, permanent: true).Id,
+                seed.Indicator.Arity);
+            var slot = GetOrCreateDynamicSlot(fid);
+            foreach (var encoded in seed.EncodedClauses)
+                slot.Add(TermCodec.DecodeClause(encoded));
         }
 
         var module = CompiledModuleCodec.Decode(entry.CompiledBytecode);
@@ -3968,6 +4009,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 transformed, modeTable);
 
             var locals = ComputeLocalFunctors(transformed, manifest.PublicFunctors);
+            // Chunk 209: fold in the bare local fids contributed by a
+            // bundled (precompiled) version of this module — those
+            // predicates aren't in manifest.Clauses, so the line above
+            // can't see them.
+            if (_precompiledModuleLocals.TryGetValue(name, out var bundleLocals))
+                locals.UnionWith(bundleLocals);
             if (name == DefaultModuleName) userLocalsCache = locals;
 
             var ctx = new ModuleRewrite.Context(name, locals, _dynamicFunctors);

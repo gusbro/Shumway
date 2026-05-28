@@ -104,8 +104,35 @@ public static class ShmoReader
             qrefs[i] = new QualifiedPredicateRef(module, name, arity);
         }
 
+        // V3+ adds dynamicSeeds trailer.
+        ShmoDynamicSeed[] dynamicSeeds = Array.Empty<ShmoDynamicSeed>();
+        if (version >= 3)
+        {
+            uint seedCount = br.ReadUInt32();
+            dynamicSeeds = new ShmoDynamicSeed[seedCount];
+            for (uint i = 0; i < seedCount; i++)
+            {
+                string name = ReadLengthPrefixedUtf8(br);
+                int arity = (int)br.ReadUInt32();
+                uint clauseCount = br.ReadUInt32();
+                var encoded = new byte[clauseCount][];
+                for (uint j = 0; j < clauseCount; j++)
+                {
+                    uint byteCount = br.ReadUInt32();
+                    byte[] bytes = br.ReadBytes((int)byteCount);
+                    if (bytes.Length != byteCount)
+                        throw new InvalidDataException(
+                            $".shmo: truncated dynamic-seed clause for "
+                            + $"{name}/{arity} (expected {byteCount}, got {bytes.Length}).");
+                    encoded[j] = bytes;
+                }
+                dynamicSeeds[i] = new ShmoDynamicSeed(
+                    new PredicateRef(name, arity), encoded);
+            }
+        }
+
         return new ShmoObject(moduleName, source, bytecode,
-            defined, ensureLinked, callGraph, qrefs, buildMode);
+            defined, ensureLinked, callGraph, qrefs, buildMode, dynamicSeeds);
     }
 
     private static string ReadLengthPrefixedUtf8(BinaryReader br)

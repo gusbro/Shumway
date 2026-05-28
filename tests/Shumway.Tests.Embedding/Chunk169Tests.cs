@@ -46,9 +46,11 @@ public class Chunk169Tests
     }
 
     [Fact]
-    public void ShmoFormat_CurrentVersion_IsTwo()
+    public void ShmoFormat_CurrentVersion_IsThree()
     {
-        Assert.Equal(2, ShmoFormat.CurrentVersion);
+        // V3 (chunk 209) adds the dynamic-seeds trailer. V1/V2 still
+        // readable (MinSupportedVersion stays 1).
+        Assert.Equal(3, ShmoFormat.CurrentVersion);
         Assert.Equal(1, ShmoFormat.MinSupportedVersion);
     }
 

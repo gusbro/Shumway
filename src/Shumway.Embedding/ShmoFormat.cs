@@ -48,15 +48,32 @@ namespace Shumway.Embedding;
 ///                     arity        : uint32
 /// </code>
 ///
+/// <para>V3 (chunk 209): adds a <c>dynamicSeeds</c> trailer carrying the
+/// source clauses of <c>:- dynamic foo/N.</c> predicates as
+/// <see cref="TermCodec"/>-encoded blobs. The engine needs these to mutate
+/// the predicates at runtime; the static bytecode can't hold them. Layout
+/// after <c>qualifiedRefs</c>:</para>
+/// <code>
+///                 dynamicSeedsCount : uint32
+///                   for each:
+///                     name          : len-prefixed UTF-8
+///                     arity         : uint32
+///                     clauseCount   : uint32
+///                     for each clause:
+///                       byteCount   : uint32
+///                       bytes       : TermCodec-encoded clause term
+/// </code>
+///
 /// <para>V1 (legacy): identical to V2 minus the <c>buildMode</c> byte.
-/// The reader accepts both; V1 objects default to <c>Release</c>.</para>
+/// The reader accepts V1/V2/V3; older versions default to empty
+/// <c>DynamicSeeds</c>.</para>
 /// </summary>
 public static class ShmoFormat
 {
     public static readonly byte[] Magic = new byte[] { (byte)'S', (byte)'H', (byte)'M', (byte)'O' };
 
     /// <summary>The version this build of the writer produces.</summary>
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 3;
 
     /// <summary>The minimum version the reader will accept. V1 objects
     /// are still readable but their build mode defaults to

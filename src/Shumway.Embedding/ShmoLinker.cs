@@ -51,17 +51,15 @@ public sealed class LinkConfig
     /// entry is preserved. Defaults to <c>false</c> — source
     /// survives the link, as before.
     ///
-    /// <para><b>Current limitation</b>: the engine's
-    /// <c>LoadBundle</c> path consults each entry's source to
-    /// register its clauses; the embedded bytecode is currently
-    /// only a Tier-1 IL warm-up cache, not a substitute. A
-    /// source-stripped bundle therefore loads cleanly but its
-    /// predicates do not dispatch (<c>existence_error/2</c> at
-    /// call time). The flag is provided for size analysis, IP-
-    /// protection archives and the chunk-174 <c>--exe</c> path
-    /// where the host knows the bundle's contents. A "loadable
-    /// strip" — direct dispatch from bytecode without re-consult —
-    /// is queued for a future chunk.</para></summary>
+    /// <para>Stripped bundles dispatch correctly: chunks 178/179 added
+    /// the source-less <c>LoadEntryFromBytecode</c> path (the engine
+    /// registers predicates straight from the precompiled bytecode +
+    /// <see cref="ShmoObject.Defined"/> metadata), and chunk 209 added
+    /// the <see cref="ShmoObject.DynamicSeeds"/> trailer so
+    /// <c>:- dynamic foo/N.</c> predicates with source clauses keep
+    /// their clauses too. Useful for size analysis and IP-protection
+    /// archives; <c>listing/0</c> output and parser stack traces lose
+    /// their textual source.</para></summary>
     public bool StripSource { get; init; }
 
     /// <summary>Chunk 192: when <c>true</c>, the linker compiles
@@ -511,7 +509,8 @@ public static class ShmoLinker
                     source: entrySource,
                     compiledBytecode: entryBytecode,
                     compiledIl: null,
-                    defined: obj.Defined));
+                    defined: obj.Defined,
+                    dynamicSeeds: obj.DynamicSeeds));
             }
             // Chunk 179: the chunk-172 "stripped_bundle" warning is gone —
             // stripped bundles now dispatch correctly via chunk 178's
@@ -720,6 +719,19 @@ public static class ShmoLinker
             byte[] ilEntries = e.CompiledIlEntries ?? Array.Empty<byte>();
             bw.Write((uint)ilEntries.Length);
             bw.Write(ilEntries);
+            // V4+ (chunk 209): dynamic seeds trailer.
+            bw.Write((uint)e.DynamicSeeds.Count);
+            foreach (var seed in e.DynamicSeeds)
+            {
+                WriteString(bw, seed.Indicator.Name);
+                bw.Write((uint)seed.Indicator.Arity);
+                bw.Write((uint)seed.EncodedClauses.Count);
+                foreach (var enc in seed.EncodedClauses)
+                {
+                    bw.Write((uint)enc.Length);
+                    bw.Write(enc);
+                }
+            }
         }
         bw.Flush();
         return ms.ToArray();

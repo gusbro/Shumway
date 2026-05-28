@@ -66,7 +66,8 @@ public static class BundleWriter
                     compiledIl,
                     effective[i].Defined,
                     compiledIlPatches,
-                    compiledIlEntries);
+                    compiledIlEntries,
+                    effective[i].DynamicSeeds);
             }
         }
 
@@ -103,6 +104,19 @@ public static class BundleWriter
             byte[] ilEntries = entry.CompiledIlEntries ?? Array.Empty<byte>();
             bw.Write((uint)ilEntries.Length);
             bw.Write(ilEntries);
+            // V4+ (chunk 209): dynamic seeds trailer.
+            bw.Write((uint)entry.DynamicSeeds.Count);
+            foreach (var seed in entry.DynamicSeeds)
+            {
+                WriteLengthPrefixedUtf8(bw, seed.Indicator.Name);
+                bw.Write((uint)seed.Indicator.Arity);
+                bw.Write((uint)seed.EncodedClauses.Count);
+                foreach (var enc in seed.EncodedClauses)
+                {
+                    bw.Write((uint)enc.Length);
+                    bw.Write(enc);
+                }
+            }
         }
         bw.Flush();
         return ms.ToArray();

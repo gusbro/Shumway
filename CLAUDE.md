@@ -557,11 +557,12 @@ real `--exe` path. Eight chunks:
   terminator between attempts. CLI prints
   `file:line:col: error: msg` for each.
 - ✓ **172** — `shumway-link --strip` removes embedded source
-  from each bundle entry. Bytecode preserved. Known limitation:
-  the engine's LoadBundle still re-consults source so stripped
-  bundles fail to dispatch; a loadable-strip is queued for a
-  future chunk and the linker emits a `stripped_bundle`
-  warning when active.
+  from each bundle entry. Bytecode preserved. (Chunk-172's
+  `stripped_bundle` warning is gone since chunks 178/179
+  delivered the source-less `LoadEntryFromBytecode` path.
+  Release `.shmo` is always source-stripped, so every linked
+  bundle takes that path. Chunk 209 made it actually correct
+  for real programs — see the chunk-209 note under Phase 19+.)
 - ✓ **173** — `shumway-link --map <path>` writes a C-toolchain
   -style audit file: per-module sizes, public/dynamic
   predicate lists, reached / dropped modules, totals.
@@ -664,6 +665,13 @@ Closes the last gap in Tier-1 IL coverage — `call/N` and `'$call'/2` are now I
 Plus the `\$call/2` barrier reader (`IlMetaCallHelper.ReadIntRegister`), 10 dedicated Phase19MetaCallTests, and the `MetaTransform` static `call/N` rewrite (chunk 205) that turned compile-time-known `call(foo(X))` into a direct `foo(X)`. Together they drop Blint's call-gate exclusion count from 11 to 0.
 
 Blint Tier-1 IL: 7.9s vs Tier-0 9.2s (3-run median).
+
+**Phase 19+ — implicit_dynamic, runtime-bound assertz, dynamic-clause bundles** — incremental follow-ups after `phase-19`:
+
+- ✓ **206** — `implicit_dynamic` prolog_flag (default `true`). `assertz`/`asserta`/`assert` on an undefined predicate auto-promotes it to dynamic (SWI / SICStus / GNU behaviour); `set_prolog_flag(implicit_dynamic, false)` restores ISO-strict `permission_error`. Consult-time pre-scan (`CollectImplicitDynamics`) pre-declares literal-head assertz targets so the linker emits a real trampoline.
+- ✓ **207** — runtime-bound `assertz(X)` / `call(pepe(Y))` in the same query. `MaterializeDynamicTrampoline` emits a chunk-127 trampoline mid-query for a freshly auto-promoted functor; `ResolveTargetMaybeAutoPromoted` resolves an `IsUnresolved` Call sentinel through `CurrentFunctorAddresses` — but only to an `enter_dynamic` trampoline, so module-local predicates stay invisible from outside their module.
+- ✓ **208** — bundle/linker UX: `--exe` no longer requires `-o`; help text and the stale chunk-172 `--strip` caveat corrected. (The LoadBundle fast-path *widening* part of 208 was reverted — it surfaced the chunk-209 bug below.)
+- ✓ **209** — **`:- dynamic foo/N.` predicates with source clauses now dispatch from a bundle.** Root cause: ShmoCompiler compiled a dynamic predicate's clauses as *static* bytecode, but `LoadEntryFromBytecode` registered the functor dynamic + empty `_dynamicClauses`, so dispatch hit an empty trampoline (Blint's `:- dynamic main/0.` returned `false`). Fix has four parts: (1) new `TermCodec` serialises clause terms to a compact binary form; (2) ShmoCompiler peels dynamic-head clauses out of the static bytecode into a `.shmo`/`.shum` **DynamicSeeds** trailer (`.shmo` V3, `.shum` V4) — `LoadEntryFromBytecode` rehydrates them into `_dynamicClauses` exactly as ConsultString does; (3) `CollectCalls` now descends into `catch`/`findall`/`bagof`/`setof`/`forall`/`once`/`ignore` goal args so callees inside a protected goal stay reachable; (4) ShmoObject's `ModuleName` is `DefaultModuleName` ("user") when the source has no `:- module/1` directive (was the file name) — and bundle-local fids feed `userLocalsCache` — so the dynamic-clause `ModuleRewrite` mangles body calls consistently with the static bytecode. Blint now runs end-to-end from both a `.shum` bundle and a `--strip --exe` native executable.
 
 **Phase 18 — Bundle ergonomics + IL correctness + Tier-1 perf** — ✅ **Complete** (tagged `phase-18`; closure summary in [`docs/phase-18-closure.md`](docs/phase-18-closure.md)).
 

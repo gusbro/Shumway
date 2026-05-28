@@ -73,13 +73,24 @@ public sealed class BundleEntry
     /// empty.</summary>
     public IReadOnlyList<ShmoDefinedPredicate> Defined { get; }
 
+    /// <summary>Chunk 209 — clauses for <c>:- dynamic foo/N.</c>
+    /// predicates carried as <see cref="TermCodec"/>-encoded blobs.
+    /// See <see cref="ShmoObject.DynamicSeeds"/> for rationale.
+    /// <see cref="PrologEngine.LoadBundle(Bundle)"/> deserialises each
+    /// blob and seeds the engine's <c>_dynamicClauses[fid]</c> so
+    /// assertz / retract / clause/2 see the source-declared
+    /// initial clauses exactly as they would under
+    /// <see cref="PrologEngine.ConsultString(string)"/>.</summary>
+    public IReadOnlyList<ShmoDynamicSeed> DynamicSeeds { get; }
+
     public BundleEntry(
         string moduleName, string source,
         byte[]? compiledBytecode = null,
         byte[]? compiledIl = null,
         IReadOnlyList<ShmoDefinedPredicate>? defined = null,
         byte[]? compiledIlPatches = null,
-        byte[]? compiledIlEntries = null)
+        byte[]? compiledIlEntries = null,
+        IReadOnlyList<ShmoDynamicSeed>? dynamicSeeds = null)
     {
         ModuleName = moduleName;
         Source = source;
@@ -88,5 +99,6 @@ public sealed class BundleEntry
         CompiledIlPatches = compiledIlPatches;
         CompiledIlEntries = compiledIlEntries;
         Defined = defined ?? Array.Empty<ShmoDefinedPredicate>();
+        DynamicSeeds = dynamicSeeds ?? Array.Empty<ShmoDynamicSeed>();
     }
 }

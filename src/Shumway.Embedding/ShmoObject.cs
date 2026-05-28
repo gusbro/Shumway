@@ -96,6 +96,19 @@ public sealed class ShmoObject
     /// objects that didn't carry the flag.</summary>
     public ShmoBuildMode BuildMode { get; }
 
+    /// <summary>Chunk 209 — clauses for <c>:- dynamic foo/N.</c>
+    /// predicates carried as <see cref="TermCodec"/>-encoded terms
+    /// rather than baked into <see cref="Bytecode"/>. The bytecode
+    /// can't hold them because the engine has to mutate them at
+    /// runtime (assertz / retract / clause/2). At load,
+    /// <see cref="PrologEngine.LoadBundle(Bundle)"/> deserialises
+    /// each entry and seeds the engine's
+    /// <c>_dynamicClauses[fid]</c> store — mirroring exactly what
+    /// <see cref="PrologEngine.ConsultString(string)"/> does when
+    /// it routes a source-declared dynamic clause to the runtime
+    /// store. Empty for V1/V2 objects.</summary>
+    public IReadOnlyList<ShmoDynamicSeed> DynamicSeeds { get; }
+
     public ShmoObject(
         string moduleName,
         string source,
@@ -104,7 +117,8 @@ public sealed class ShmoObject
         IReadOnlyList<PredicateRef> ensureLinked,
         IReadOnlyDictionary<PredicateRef, IReadOnlyList<PredicateRef>> callGraph,
         IReadOnlyList<QualifiedPredicateRef> qualifiedRefs,
-        ShmoBuildMode buildMode = ShmoBuildMode.Release)
+        ShmoBuildMode buildMode = ShmoBuildMode.Release,
+        IReadOnlyList<ShmoDynamicSeed>? dynamicSeeds = null)
     {
         ModuleName = moduleName;
         Source = source;
@@ -114,5 +128,21 @@ public sealed class ShmoObject
         CallGraph = callGraph;
         QualifiedRefs = qualifiedRefs;
         BuildMode = buildMode;
+        DynamicSeeds = dynamicSeeds ?? System.Array.Empty<ShmoDynamicSeed>();
+    }
+}
+
+/// <summary>One <c>:- dynamic foo/N.</c> predicate's source-declared
+/// clauses, carried across the compile/load boundary as
+/// <see cref="TermCodec"/>-encoded byte blobs. See
+/// <see cref="ShmoObject.DynamicSeeds"/>.</summary>
+public sealed class ShmoDynamicSeed
+{
+    public PredicateRef Indicator { get; }
+    public IReadOnlyList<byte[]> EncodedClauses { get; }
+    public ShmoDynamicSeed(PredicateRef indicator, IReadOnlyList<byte[]> encodedClauses)
+    {
+        Indicator = indicator;
+        EncodedClauses = encodedClauses;
     }
 }

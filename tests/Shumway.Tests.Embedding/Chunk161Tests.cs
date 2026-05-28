@@ -22,10 +22,17 @@ public class Chunk161Tests
     }
 
     [Fact]
-    public void NoModuleDirective_UsesFallback()
+    public void NoModuleDirective_UsesDefaultUserModule()
     {
+        // Chunk 209: without a `:- module(name).` directive the source
+        // lands in the engine's DefaultModuleName ("user") at consult
+        // time, so the .shmo's ModuleName must match — otherwise
+        // LoadEntryFromBytecode registers the predicates under the file
+        // name and the dynamic-clause ModuleRewrite (which always runs
+        // against the user module) can't mangle this module's local
+        // calls. The file-name fallback is no longer the module identity.
         var obj = ShmoCompiler.CompileSource("p(1).\n", moduleNameFallback: "myfile");
-        Assert.Equal("myfile", obj.ModuleName);
+        Assert.Equal(PrologEngine.DefaultModuleName, obj.ModuleName);
     }
 
     [Fact]
@@ -213,7 +220,7 @@ public class Chunk161Tests
     }
 
     [Fact]
-    public void CompileFile_DefaultsModuleNameToFileName()
+    public void CompileFile_NoModuleDirective_UsesDefaultUserModule()
     {
         string inputPath = Path.Combine(Path.GetTempPath(),
             $"mymodule-{Guid.NewGuid():N}.pl");
@@ -221,10 +228,12 @@ public class Chunk161Tests
         {
             File.WriteAllText(inputPath, "p(1).\n");
             var obj = ShmoCompiler.CompileFile(inputPath);
-            // No :- module/1 directive: fallback = filename minus extension.
-            Assert.Equal(
-                Path.GetFileNameWithoutExtension(inputPath),
-                obj.ModuleName);
+            // Chunk 209: no :- module/1 directive → the source belongs
+            // to the engine's default "user" module at consult time, so
+            // the .shmo records that, not the file name. (The file name
+            // is still used as the linker's diagnostic label for
+            // explicit-module sources.)
+            Assert.Equal(PrologEngine.DefaultModuleName, obj.ModuleName);
         }
         finally
         {

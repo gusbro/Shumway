@@ -67,6 +67,20 @@ public static class ShmoWriter
             bw.Write((uint)q.Arity);
         }
 
+        // V3+ dynamic seeds trailer.
+        bw.Write((uint)obj.DynamicSeeds.Count);
+        foreach (var seed in obj.DynamicSeeds)
+        {
+            WriteLengthPrefixedUtf8(bw, seed.Indicator.Name);
+            bw.Write((uint)seed.Indicator.Arity);
+            bw.Write((uint)seed.EncodedClauses.Count);
+            foreach (var encoded in seed.EncodedClauses)
+            {
+                bw.Write((uint)encoded.Length);
+                bw.Write(encoded);
+            }
+        }
+
         bw.Flush();
         return ms.ToArray();
     }
