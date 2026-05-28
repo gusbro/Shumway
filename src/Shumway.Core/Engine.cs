@@ -432,9 +432,16 @@ public sealed class Engine
     public static int CpHeapTopOffset(int arity) => 1 + arity + 6;
     public static int CpHbOffset(int arity) => 1 + arity + 7;
     public static int CpViewGenOffset(int arity) => 1 + arity + 8;
+    /// <summary>The cut barrier (<c>_b0</c>) in effect when this choice
+    /// point was pushed. Saved/restored so a clause's deep cut
+    /// (<c>get_level</c> + <c>cut</c>) reads the predicate-entry barrier
+    /// even after an earlier clause's nested <c>Call</c> clobbered the
+    /// global <c>_b0</c> register and a backtrack re-entered a later
+    /// clause.</summary>
+    public static int CpB0Offset(int arity) => 1 + arity + 9;
 
     /// <summary>Size in cells of a choice-point frame with <paramref name="arity"/> saved args.</summary>
-    public static int CpSize(int arity) => 10 + arity;
+    public static int CpSize(int arity) => 11 + arity;
 
     /// <summary>
     /// Pushes a choice point onto the stack, snapshotting the first <paramref name="arity"/>
@@ -467,6 +474,7 @@ public sealed class Engine
         _stack[newB + CpHeapTopOffset(arity)] = new Cell(_heapTop);
         _stack[newB + CpHbOffset(arity)] = new Cell(_hb);
         _stack[newB + CpViewGenOffset(arity)] = new Cell(CurrentViewGen);
+        _stack[newB + CpB0Offset(arity)] = new Cell(_b0);
 
         _stackTop = newB + size;
         _b = newB;
@@ -525,6 +533,11 @@ public sealed class Engine
 
         _heapTop = (int)_stack[_b + CpHeapTopOffset(arity)].Data;
         CurrentViewGen = _stack[_b + CpViewGenOffset(arity)].Data;
+        // Restore the cut barrier in effect when this CP was pushed
+        // (i.e. the enclosing predicate's entry barrier). Without this a
+        // deep cut in a later clause, reached by backtracking, would
+        // read a _b0 left clobbered by an earlier clause's nested Call.
+        _b0 = (int)_stack[_b + CpB0Offset(arity)].Data;
         return arity;
     }
 

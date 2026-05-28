@@ -12,9 +12,11 @@ public class ChoicePointTests
     {
         Assert.Equal(0, Engine.CpArityOffset);
         Assert.Equal(1, Engine.CpArg1Offset);
-        // ADR-015 chunk C added the ViewGen slot — CP size grew from 9 to 10.
-        Assert.Equal(10, Engine.CpSize(0));
-        Assert.Equal(10 + 5, Engine.CpSize(5));
+        // ADR-015 chunk C added the ViewGen slot — CP size grew from 9
+        // to 10. The cut-barrier (B0) slot grew it to 11 (the deep-cut
+        // backtracking fix).
+        Assert.Equal(11, Engine.CpSize(0));
+        Assert.Equal(11 + 5, Engine.CpSize(5));
 
         // For arity N: offsets after the args (1 + N) advance by 1 each.
         Assert.Equal(1 + 2, Engine.CpCeOffset(2));
@@ -26,6 +28,7 @@ public class ChoicePointTests
         Assert.Equal(1 + 2 + 6, Engine.CpHeapTopOffset(2));
         Assert.Equal(1 + 2 + 7, Engine.CpHbOffset(2));
         Assert.Equal(1 + 2 + 8, Engine.CpViewGenOffset(2));
+        Assert.Equal(1 + 2 + 9, Engine.CpB0Offset(2));
     }
 
     // ---------- Push ----------
