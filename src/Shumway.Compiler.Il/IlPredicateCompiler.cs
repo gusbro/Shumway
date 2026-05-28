@@ -2521,7 +2521,15 @@ public sealed class IlPredicateCompiler
     /// thread-safety concern beyond the lock around the dictionary.</summary>
     internal static class IndexedDelegateHolder
     {
-        private static readonly Dictionary<int, PredicateDelegate> _byKey = new();
+        // ConcurrentDictionary so Get — called from IL-emitted dispatch
+        // code on every multi-clause Tier-1 call — reads lock-free.
+        // Profiling Blint showed the previous `lock (_lock)` here
+        // dominating wall time (~40%, blocked on the global lock) once
+        // any predicate was promoted. The stored value is the already-
+        // wrapped Func, so Get no longer allocates a fresh delegate per
+        // call either (the old `new Func<...>(del)` was per-dispatch GC
+        // pressure on the hottest path).
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, Func<Engine, int, bool>> _byKey = new();
         private static readonly object _lock = new();
 
         /// <summary>The lock the IL emission takes around the
@@ -2530,16 +2538,9 @@ public sealed class IlPredicateCompiler
         public static object RegistrationLock => _lock;
 
         public static void Register(int key, PredicateDelegate del)
-        {
-            lock (_lock) _byKey[key] = del;
-        }
+            => _byKey[key] = new Func<Engine, int, bool>(del);
 
-        public static Func<Engine, int, bool> Get(int key)
-        {
-            PredicateDelegate del;
-            lock (_lock) del = _byKey[key];
-            return new Func<Engine, int, bool>(del);
-        }
+        public static Func<Engine, int, bool> Get(int key) => _byKey[key];
     }
 
     /// <summary>Resolves a callee functor id to its current-query

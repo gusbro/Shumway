@@ -44,6 +44,23 @@ internal static class Program
         foreach (string path in consultFiles)
             ConsultFile(engine, path);
 
+        // SHUMWAY_GOAL=<term>. — run one goal at startup, then exit.
+        // Lets a CPU profiler (dotnet-trace) drive a fixed workload via
+        // `-- shumway.exe bundle.shum` without needing to forward stdin
+        // (which dotnet-trace's `--` launcher does not do). Also handy
+        // for scripted benchmarking.
+        string? startupGoal = Environment.GetEnvironmentVariable("SHUMWAY_GOAL");
+        if (!string.IsNullOrWhiteSpace(startupGoal))
+        {
+            Shumway.Core.Profiler.Reset();
+            try { RunQuery(engine, startupGoal.Trim()); }
+            catch (Exception ex) { Console.WriteLine($"% {ex.GetType().Name}: {ex.Message}"); }
+            Shumway.Core.Profiler.StopRun();
+            MaybeDumpIlStats(engine);
+            MaybeDumpProfile(engine);
+            return engine.LastHaltExitCode ?? 0;
+        }
+
         while (true)
         {
             string? query = ReadQuery();

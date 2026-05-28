@@ -2639,12 +2639,21 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
         var module = CompiledModuleCodec.Decode(entry.CompiledBytecode);
         _precompiledModules[entry.ModuleName] = module;
+        // Warm IL only when the host opted into Tier 1 (Threshold > 0),
+        // mirroring the source-bearing LoadBundle path. IlPromotion.Warm
+        // ignores the threshold and compiles eagerly, so calling it
+        // unconditionally (the chunk-209 mistake) forced every stripped-
+        // bundle predicate onto Tier-1 even in a default Tier-0 run —
+        // and Tier-1 dispatch pays a per-call locked delegate lookup
+        // (IndexedDelegateHolder), which profiling showed dominating a
+        // Blint run (~40% of wall time blocked on that lock). At
+        // Threshold == 0 the bundle now runs as pure bytecode.
+        bool warmIl = IlPromotion.Threshold > 0;
         foreach (var pred in module.Predicates)
         {
             _precompiledStaticPredicates[pred.FunctorId] = pred;
-            // Warm IL while we're here — the bytecode is the same
-            // shape SetupQueryFromTerm would have produced.
-            IlPromotion.Warm(pred.FunctorId, pred);
+            if (warmIl)
+                IlPromotion.Warm(pred.FunctorId, pred);
         }
 
         // The static program just changed shape — drop the cached

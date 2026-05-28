@@ -74,6 +74,7 @@ public static class Profiler
         _choicePoints = 0;
         _runStartTimestamp = Stopwatch.GetTimestamp();
         _runElapsedTicks = 0;
+        _notes.Clear();
     }
 
     /// <summary>Records one dispatched WAM instruction.</summary>
@@ -124,6 +125,18 @@ public static class Profiler
     [Conditional("SHUMWAY_PROFILE")]
     public static void ChoicePoint() => _choicePoints++;
 
+    private static readonly Dictionary<string, long> _notes = new();
+
+    /// <summary>Bumps a named counter — ad-hoc instrumentation for
+    /// pinning down a hot path (e.g. how many times a global lock is
+    /// taken). Shown in the report under "-- notes --".</summary>
+    [Conditional("SHUMWAY_PROFILE")]
+    public static void Note(string label)
+    {
+        _notes.TryGetValue(label, out long c);
+        _notes[label] = c + 1;
+    }
+
     /// <summary>Stamps the elapsed wall-clock time for the run. Call
     /// once when the run finishes, before <see cref="Report"/>.</summary>
     [Conditional("SHUMWAY_PROFILE")]
@@ -167,6 +180,14 @@ public static class Profiler
             _builtinCounts.TryGetValue(id, out long c);
             string name = builtinName?.Invoke(id) ?? $"#{id}";
             sb.AppendLine($"  {ticks * msPerTick,9:N1} ms  {c,10:N0} calls  {name}");
+        }
+
+        if (_notes.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("-- notes --");
+            foreach (var (label, count) in TopN(_notes, 50))
+                sb.AppendLine($"  {count,14:N0}  {label}");
         }
 
         sb.AppendLine();
