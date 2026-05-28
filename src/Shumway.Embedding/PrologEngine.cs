@@ -1673,7 +1673,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // — skip the chunk-127 path here and let chunk-155d handle
         // the multi-chain patching below.
         if (!isIndexed)
+        {
             PatchDiedFromChain(engine, functorId, idx);
+            // Phase 20: reclaim accumulated dead clauses from the chain
+            // when it's safe (no in-progress enumeration of this
+            // predicate). An assert+retract loop (e.g. next_char_i) would
+            // otherwise grow the chain with retracted-but-still-linked
+            // clauses that every dispatch must skip via check_visible —
+            // profiling Blint showed 99.3% of dynamic dispatch walking
+            // dead clauses.
+            TryReclaimDeadDynamicChain(engine, functorId);
+        }
         if (retiredBodyAddr > 0
             && TryPatchDiedInAllIndexedChains(engine, functorId, retiredBodyAddr))
             return true;
@@ -1683,6 +1693,60 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return true;
     }
 
+
+    /// <summary>Minimum number of dead (retracted-but-still-linked)
+    /// clauses in a chunk-127 dynamic chain before reclamation kicks in.
+    /// Reclaiming has a fixed cost (recompile the live clauses), so we
+    /// wait until the dead clauses clearly dominate the per-call scan.</summary>
+    private const int ReclaimDeadThreshold = 32;
+
+    /// <summary>Phase 20 — physically drops retracted-but-still-linked
+    /// clauses from a dynamic predicate's chunk-127 chain by rebuilding
+    /// it from the live clauses, but ONLY when no in-progress enumeration
+    /// could still need them (ISO logical update view). A clause
+    /// retracted while a call is enumerating the predicate must stay
+    /// visible to that call; such a call has a choice point whose resume
+    /// address (SavedBp) points at a chunk in this chain. So reclamation
+    /// is safe exactly when no active choice point resumes into the
+    /// chain. A fresh call re-samples the current generation at
+    /// enter_dynamic and never sees the dropped clauses.</summary>
+    private void TryReclaimDeadDynamicChain(Engine engine, int functorId)
+    {
+        if (engine.CurrentProgram is null) return;
+        if (!_dynChains.TryGetValue(functorId, out var chain)) return;
+        // Only the plain chunk-127 trampoline+chain layout. Indexed
+        // dynamic predicates (chunk 155/156) use the rebuild-on-mutate
+        // fallback and aren't handled here.
+        if (chain.HeadClauseAddr < 0 || chain.TrampolineExecuteOperandAddr < 0) return;
+        int dead = chain.DeadChunks.Count;
+        if (dead < ReclaimDeadThreshold || dead < chain.Entries.Count) return;
+        // A source-block clause (ChunkAddr < 0) isn't individually
+        // relocatable — skip reclamation if the chain holds any.
+        foreach (var e in chain.Entries)
+            if (e.ChunkAddr < 0) return;
+
+        // Safety: collect every chunk start address in this chain (live
+        // entries + dead chunks + the head). A choice point enumerating
+        // the predicate has SavedBp at one of these. If any active CP
+        // does, an enumeration is in progress — keep the dead clauses.
+        var chainAddrs = new HashSet<int>();
+        foreach (var e in chain.Entries) chainAddrs.Add(e.ChunkAddr);
+        foreach (var (a, _) in chain.DeadChunks) chainAddrs.Add(a);
+        chainAddrs.Add(chain.HeadClauseAddr);
+        foreach (var (_, savedBp, _) in engine.EnumerateChoicePoints())
+            if (chainAddrs.Contains(savedBp)) return;
+
+        // Safe and worthwhile — re-thread the chain through its live
+        // entries in place (chunk 150). This keeps the trampoline at its
+        // address, so every caller's already-baked Call operand stays
+        // valid (rebuilding the trampoline at a new address would orphan
+        // them); it only patches the in-chunk <next> links to bypass the
+        // dead entries, and drains the dead chunks to the free list for
+        // reuse by later assertz/asserta. The chunk-150 "avoid mid-query
+        // while another goal iterates this predicate" caveat is exactly
+        // the safety condition checked above.
+        GarbageCollectClauses(engine, functorId, reclaimChunks: false);
+    }
 
     /// <summary>Removes every asserted clause of the given dynamic functor and
     /// drops the functor from the dynamic registry, so subsequent calls raise
@@ -1737,7 +1801,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// Calling GC mid-query while another goal is iterating the same
     /// dynamic predicate is the case to avoid; documentation only.</para>
     /// </summary>
-    internal int GarbageCollectClauses(Engine engine, int functorId)
+    internal int GarbageCollectClauses(Engine engine, int functorId, bool reclaimChunks = true)
     {
         if (!_dynChains.TryGetValue(functorId, out var chain)) return 0;
         if (engine.CurrentProgram is null) return 0;
@@ -1792,11 +1856,26 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // re-asserts thousands of clauses then has bounded memory
         // growth instead of monotonic). Returns the total bytes
         // reclaimed for diagnostics.
+        // Mid-query reclamation (reclaimChunks=false): leave the dead
+        // chunks' bytecode in place rather than recycling it. A choice
+        // point still in flight (e.g. retract's own re-satisfiable CP,
+        // or a failure-driven loop's outer CP) may resume into a dead
+        // chunk; chunk-120's check_visible then filters it by captured
+        // view-gen — but only if the bytecode is intact. Recycling an
+        // address an in-flight CP still references would let a later
+        // assertz overwrite a live retry_me_else (observed as
+        // "RetryMeElse without an active choice point"). The bypassed
+        // bytes are reclaimed by the chunk-158 persistent compaction
+        // between queries instead. We still clear DeadChunks so the
+        // reclaim threshold resets.
         int reclaimed = 0;
-        foreach (var (addr, length) in chain.DeadChunks)
+        if (reclaimChunks)
         {
-            _freeChunks.Add((addr, length));
-            reclaimed += length;
+            foreach (var (addr, length) in chain.DeadChunks)
+            {
+                _freeChunks.Add((addr, length));
+                reclaimed += length;
+            }
         }
         chain.DeadChunks.Clear();
         return reclaimed;
