@@ -51,6 +51,42 @@ public class Chunk28Tests
         Assert.Equal("point", ct.Functor);
     }
 
+    [Fact]
+    public void TermToAtom_OperatorTerm_RendersInOperatorForm()
+    {
+        // term_to_atom must render in operator notation (SWI-compatible),
+        // not canonical `/(hola, 2)`. Symbolic operators print tight
+        // (no surrounding spaces) and unquoted.
+        var engine = new PrologEngine();
+        Assert.Equal(Atom("hola/2"),
+            engine.Query("term_to_atom(hola/2, A).")["A"]);
+        Assert.Equal(Atom("1+2*3"),
+            engine.Query("term_to_atom(1+2*3, A).")["A"]);
+    }
+
+    [Fact]
+    public void TermToAtom_OperatorTerm_RoundTrips()
+    {
+        // The operator-form atom parses back to the same term.
+        var engine = new PrologEngine();
+        Assert.True(engine.Query(
+            "term_to_atom(T, 'hola/2'), T == hola/2.").Success);
+        Assert.True(engine.Query(
+            "term_to_atom(a-b+c, A), term_to_atom(T, A), T == a-b+c.").Success);
+    }
+
+    [Fact]
+    public void Write_SymbolicOperator_RendersTight()
+    {
+        // write/1 renders symbolic infix operators space-free, matching
+        // SWI / GNU / SICStus (`hola/2`, not `hola / 2`).
+        var engine = new PrologEngine();
+        var sw = new System.IO.StringWriter();
+        engine.Out = sw;
+        engine.Query("write(hola/2).");
+        Assert.Equal("hola/2", sw.ToString());
+    }
+
     // ---------- atom_string/2 ----------
 
     [Fact]

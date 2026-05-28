@@ -32,7 +32,7 @@ public class Chunk36Tests
         // a + b * c — * binds tighter than + so no parens needed.
         var engine = WithCaptureOut(out var sw);
         engine.Query("write(a + b * c).");
-        Assert.Equal("a + b * c", sw.ToString());
+        Assert.Equal("a+b*c", sw.ToString());
     }
 
     [Fact]
@@ -41,7 +41,7 @@ public class Chunk36Tests
         // (a + b) * c — + has higher prec than * so parens needed on the left.
         var engine = WithCaptureOut(out var sw);
         engine.Query("write((a + b) * c).");
-        Assert.Equal("(a + b) * c", sw.ToString());
+        Assert.Equal("(a+b)*c", sw.ToString());
     }
 
     [Fact]
@@ -51,7 +51,7 @@ public class Chunk36Tests
         // (xfx is non-associative). a = b — single layer, no parens.
         var engine = WithCaptureOut(out var sw);
         engine.Query("write(a = b).");
-        Assert.Equal("a = b", sw.ToString());
+        Assert.Equal("a=b", sw.ToString());
     }
 
     [Fact]
@@ -61,7 +61,7 @@ public class Chunk36Tests
         // parenthesised (commas separate args at priority 999).
         var engine = WithCaptureOut(out var sw);
         engine.Query("write(foo(a + b, c)).");
-        Assert.Equal("foo(a + b, c)", sw.ToString());
+        Assert.Equal("foo(a+b, c)", sw.ToString());
     }
 
     // ---------- read_term_from_stream/2 ----------

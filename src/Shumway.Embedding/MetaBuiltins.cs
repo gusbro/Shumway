@@ -1558,9 +1558,20 @@ public static class MetaBuiltins
             return engine.UnifyRegisterWithCell(0, newCell);
         }
 
-        // Term → Atom direction: render and intern.
+        // Term → Atom direction: render and intern. Match SWI's
+        // term_to_atom/2 — render with operator notation (so `hola/2`
+        // comes out as `hola/2`, not `/(hola, 2)`) and quoting (so the
+        // atom round-trips back through the parser in the reverse
+        // direction).
         using var sw = new System.IO.StringWriter();
-        Shumway.Builtins.TermRenderer.Render(engine, engine.GetRegister(0), sw);
+        Shumway.Builtins.TermRenderer.Render(engine, engine.GetRegister(0), sw,
+            new Shumway.Builtins.TermRenderOptions
+            {
+                Operators = engine.Operators,
+                Quoted = true,
+                // TightSymbolicOperators defaults true — symbolic ops
+                // render space-free, matching other Prologs.
+            });
         string rendered = sw.ToString();
         int newAtomId = AtomTable.Intern(rendered, permanent: false).Id;
         return engine.UnifyRegisterWithCell(1, Cell.Atom(newAtomId));

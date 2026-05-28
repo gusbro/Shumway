@@ -26,11 +26,12 @@ public class Chunk34Tests
     [Fact]
     public void WriteTerm_PlusCompound_RendersInOperatorForm()
     {
-        // write_term emits `a + b` (operator form) by default now that
-        // Engine.Operators is wired.
+        // write_term emits operator form. Symbolic infix operators
+        // render tight (no surrounding spaces), matching SWI / GNU /
+        // SICStus — chunk 209+ made that the default.
         var engine = WithCaptureOut(out var sw);
         engine.Query("write_term(a + b, []).");
-        Assert.Equal("a + b", sw.ToString());
+        Assert.Equal("a+b", sw.ToString());
     }
 
     [Fact]

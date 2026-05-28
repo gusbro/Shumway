@@ -95,7 +95,7 @@ public class StreamTests
                 $"open('{path}', write, S), write(S, a + b), close(S).");
 
             string content = File.ReadAllText(path);
-            Assert.Equal("a + b", content);
+            Assert.Equal("a+b", content);
         }
         finally
         {

@@ -34,4 +34,15 @@ public sealed class TermRenderOptions
     /// <c>null</c> or <see cref="IgnoreOps"/> is true, the renderer
     /// always emits canonical form.</summary>
     public IOperatorLookup? Operators { get; set; }
+
+    /// <summary>When <c>true</c> (the default), infix/postfix operators
+    /// built entirely from ISO graphic characters (<c>/</c>, <c>+</c>,
+    /// <c>=..</c>, …) render with no surrounding spaces — <c>hola/2</c>,
+    /// <c>1+2*3</c> — matching the SWI / GNU / SICStus convention.
+    /// Alphabetic operators (<c>is</c>, <c>mod</c>) always keep their
+    /// spaces so the tokens stay separable, and prefix operators keep a
+    /// trailing space to avoid fusing with a numeric / symbolic argument
+    /// (<c>- 1</c> vs the literal <c>-1</c>). Set to <c>false</c> for the
+    /// historic fully-spaced style.</summary>
+    public bool TightSymbolicOperators { get; set; } = true;
 }

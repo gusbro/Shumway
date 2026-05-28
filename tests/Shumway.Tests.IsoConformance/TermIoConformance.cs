@@ -153,12 +153,14 @@ public class TermIoConformance : IDisposable
     [Fact]
     public void Write_UsesOperatorForm_ByDefault()
     {
-        // For contrast: write/2 keeps operator syntax.
+        // For contrast: write/2 keeps operator syntax. Symbolic infix
+        // operators render tight (no surrounding spaces), matching
+        // SWI / GNU / SICStus.
         var path = _tempPath.Replace("\\", "\\\\");
         var e = new PrologEngine();
         Assert.True(e.Query(
             $"open('{path}', write, S), write(S, 1 + 2), close(S).").Success);
-        Assert.Equal("1 + 2", File.ReadAllText(_tempPath));
+        Assert.Equal("1+2", File.ReadAllText(_tempPath));
     }
 
     // ---------- write_term/3 ----------

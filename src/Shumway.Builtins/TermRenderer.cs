@@ -135,10 +135,11 @@ public static class TermRenderer
                     OperatorShape.Xfx or OperatorShape.Yfx => infixPrec - 1,
                     _ => infixPrec - 1,
                 };
+                bool tight = options.TightSymbolicOperators && IsSymbolicName(name);
                 Render(engine, engine.GetHeap(functorIdx + 1), output, options, leftMax);
-                output.Write(' ');
+                if (!tight) output.Write(' ');
                 WriteAtomName(name, output, options);
-                output.Write(' ');
+                if (!tight) output.Write(' ');
                 Render(engine, engine.GetHeap(functorIdx + 2), output, options, rightMax);
                 if (needsParens) output.Write(')');
                 return;
@@ -148,6 +149,11 @@ public static class TermRenderer
                 bool needsParens = prefixPrec > maxPriority;
                 if (needsParens) output.Write('(');
                 WriteAtomName(name, output, options);
+                // Even in tight mode a prefix symbolic operator needs a
+                // space before a numeric / symbolic argument, else
+                // `- 1` would fuse into the negative literal `-1` and
+                // `- (-a)` would mis-lex. Keep it simple: prefix ops
+                // always get one trailing space.
                 output.Write(' ');
                 int argMax = prefixShape == OperatorShape.Fy ? prefixPrec : prefixPrec - 1;
                 Render(engine, engine.GetHeap(functorIdx + 1), output, options, argMax);
@@ -160,7 +166,8 @@ public static class TermRenderer
                 if (needsParens) output.Write('(');
                 int argMax = postShape == OperatorShape.Yf ? postPrec : postPrec - 1;
                 Render(engine, engine.GetHeap(functorIdx + 1), output, options, argMax);
-                output.Write(' ');
+                bool tightPost = options.TightSymbolicOperators && IsSymbolicName(name);
+                if (!tightPost) output.Write(' ');
                 WriteAtomName(name, output, options);
                 if (needsParens) output.Write(')');
                 return;
@@ -233,18 +240,53 @@ public static class TermRenderer
 
     /// <summary>A name needs no quoting if it's a non-empty sequence of
     /// alphanumeric / underscore characters starting with a lowercase
-    /// letter, OR is one of the bracket atoms <c>[]</c> / <c>{}</c>.</summary>
+    /// letter, a solo punctuation atom (<c>[]</c> / <c>{}</c> / <c>,</c>
+    /// / <c>!</c> / <c>;</c>), OR an all-symbolic atom — a non-empty run
+    /// of the ISO "graphic" characters (<c>+ - * / \ ^ &lt; &gt; = ~ :
+    /// . ? @ # &amp; $</c>). The last case is what lets symbolic
+    /// operators like <c>/</c> and <c>+</c> print unquoted under
+    /// <c>quoted(true)</c> — quoting them (<c>'/'</c>) is wrong and
+    /// breaks SWI-compatible round-tripping (term_to_atom/2).</summary>
     private static bool NeedsNoQuoting(string name)
     {
         if (name.Length == 0) return false;
-        if (name == "[]" || name == "{}" || name == ",") return true;
+        if (name == "[]" || name == "{}" || name == "," || name == "!"
+            || name == ";") return true;
         char first = name[0];
-        if (!(char.IsLower(first) || first == '_')) return false;
-        for (int i = 1; i < name.Length; i++)
+        if (char.IsLower(first))
         {
-            char c = name[i];
-            if (!(char.IsLetterOrDigit(c) || c == '_')) return false;
+            for (int i = 1; i < name.Length; i++)
+            {
+                char c = name[i];
+                if (!(char.IsLetterOrDigit(c) || c == '_')) return false;
+            }
+            return true;
         }
+        // All-symbolic atom: every character is an ISO graphic char.
+        if (IsSymbolChar(first))
+        {
+            for (int i = 1; i < name.Length; i++)
+                if (!IsSymbolChar(name[i])) return false;
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>ISO §6.4.2 "graphic char" set — the characters a
+    /// symbolic (un-quoted) atom like <c>/</c>, <c>=..</c> or
+    /// <c>:-</c> is built from.</summary>
+    private static bool IsSymbolChar(char c)
+        => "+-*/\\^<>=~:.?@#&$".IndexOf(c) >= 0;
+
+    /// <summary>True when every character of <paramref name="name"/> is
+    /// an ISO graphic char — a symbolic operator like <c>/</c> or
+    /// <c>=..</c> as opposed to an alphabetic one like <c>is</c> /
+    /// <c>mod</c>. Used to decide tight (space-free) operator spacing.</summary>
+    private static bool IsSymbolicName(string name)
+    {
+        if (name.Length == 0) return false;
+        foreach (char c in name)
+            if (!IsSymbolChar(c)) return false;
         return true;
     }
 
