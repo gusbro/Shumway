@@ -18,8 +18,12 @@ internal static class Program
 {
     private static int Main(string[] args)
     {
+        // EOF on the console is Ctrl+Z (then Enter) on Windows and
+        // Ctrl+D on Unix/macOS — Console.ReadLine() returns null for
+        // both, but the key combo differs, so name the right one.
+        string eofKey = OperatingSystem.IsWindows() ? "Ctrl-Z" : "Ctrl-D";
         Console.WriteLine(
-            "Shumway Prolog top-level.  End a query with '.'  —  'halt.' or Ctrl-D exits.");
+            $"Shumway Prolog top-level.  End a query with '.'  —  'halt.' or {eofKey} exits.");
 
         // Split args at "--": everything before is a file to consult,
         // everything after is exposed to the program as the argv
