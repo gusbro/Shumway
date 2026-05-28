@@ -146,6 +146,15 @@ internal static class Program
         {
             Solution solution = solutions.Current;
             Console.Write(solution.Bindings.Count == 0 ? "true" : solution.ToString());
+            // The engine reports when no choice point remains: this is
+            // the last solution, so finish with '.' and no ';' prompt —
+            // matching SWI / GNU / SICStus. member(A,[x,y]) stops at
+            // `A = y.`, and `A = x, !` finishes at once.
+            if (solution.IsLast)
+            {
+                Console.WriteLine(".");
+                return;
+            }
             if (!WantsAnotherSolution())
             {
                 Console.WriteLine(".");

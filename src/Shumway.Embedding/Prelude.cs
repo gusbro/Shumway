@@ -94,8 +94,18 @@ internal static class Prelude
         :- public well_founded/2.
 
         %! member(?Elem, ?List) | Lists | Succeeds when Elem is a member of List; enumerates members on backtracking.
-        member(X, [X|_]).
-        member(X, [_|T]) :- member(X, T).
+        % First-argument-indexed "look-ahead" form (the GNU Prolog
+        % library shape). '$member3' dispatches on its first argument —
+        % the list tail — so when the tail is [] only the var-headed
+        % first clause is in the index bucket and no choice point is
+        % left. That makes the LAST element of a fixed list deterministic
+        % (no residual CP), so the top-level finishes without a spurious
+        % ';' prompt, exactly like gprolog. The naive
+        % member(X,[X|_]) / member(X,[_|T]) form leaves a CP on every
+        % element because both clauses' list argument is just [_|_].
+        member(X, [Y|T]) :- '$member3'(T, X, Y).
+        '$member3'(_, X, X).
+        '$member3'([Y|T], X, _) :- '$member3'(T, X, Y).
 
         % Control constructs reached through a runtime call/1 goal (chunk
         % 86). A control construct written directly in a clause body never

@@ -394,6 +394,16 @@ public sealed class PredicateCompiler
         // Positions resolved in pass 1.
         public int SwitchPos;          // start of switch_on_term / switch_on_arg
         public int VarLblPos;          // var-fallthrough target (next level or final chain)
+        // Chain over ONLY the var-headed clauses at this position — the
+        // correct target for a const/list/struct call value that has no
+        // specific bucket. (The full chain in VarLblPos is only right
+        // for an unbound call arg, which can match every clause.) Using
+        // this instead of VarLblPos for empty categories keeps e.g.
+        // member's final element deterministic: `[]` routes to the
+        // const label, whose only candidate is the var-headed base
+        // clause, so no choice point is left. Only populated for the
+        // single-indexable-arg case.
+        public int VarOnlyChainPos;
         public int ConstLblPos;        // start of switch_on_atom (or _arg)
         public int ListLblPos;
         public int StructLblPos;
@@ -503,6 +513,21 @@ public sealed class PredicateCompiler
         int finalChainPos = pos;
         pos += ChainSize(n);
 
+        // Var-only chain (single-indexable-arg case): try/retry/trust
+        // over just the var-headed clauses. The correct fallthrough for
+        // a const/list/struct call value with no specific bucket. -1 =
+        // "patch to the single var clause's body later"; only allocated
+        // when there are 2+ var clauses. When there are no var clauses
+        // it falls back to the full chain (heads fail there anyway).
+        bool singleLevel = levels.Length == 1;
+        if (singleLevel)
+        {
+            int vc = levels[0].VarIdxs.Count;
+            if (vc == 0)      levels[0].VarOnlyChainPos = finalChainPos;
+            else if (vc == 1) levels[0].VarOnlyChainPos = -2;   // patched below (distinct from list-bucket -1)
+            else              { levels[0].VarOnlyChainPos = pos; pos += ChainSize(vc); }
+        }
+
         // Wire var labels: each level's var-fallthrough points to the next
         // level's switch, or to the final chain when it's the last level.
         for (int li = 0; li < levels.Length; li++)
@@ -514,19 +539,23 @@ public sealed class PredicateCompiler
         for (int li = 0; li < levels.Length; li++)
         {
             var lvl = levels[li];
+            // Empty-category fallthrough: the var-only chain in the
+            // single-arg case, else the full var chain (multi-arg keeps
+            // the next-level dispatch semantics on VarLblPos).
+            int emptyFallthrough = singleLevel ? lvl.VarOnlyChainPos : lvl.VarLblPos;
             int sub = SubDispatchSize(lvl.ArgIdx);
             if (lvl.HasAtoms)    { lvl.SwitchOnAtomPos = pos;      pos += sub; }
             if (lvl.HasInts)     { lvl.SwitchOnIntegerPos = pos;   pos += sub; }
             lvl.ConstLblPos = lvl.HasAtoms ? lvl.SwitchOnAtomPos
                             : lvl.HasInts  ? lvl.SwitchOnIntegerPos
-                                           : lvl.VarLblPos;
+                                           : emptyFallthrough;
 
-            if (lvl.ListBucket.Count == 0)      lvl.ListLblPos = lvl.VarLblPos;
+            if (lvl.ListBucket.Count == 0)      lvl.ListLblPos = emptyFallthrough;
             else if (lvl.ListBucket.Count == 1) lvl.ListLblPos = -1;  // patched after clause body offsets are known
             else                                { lvl.ListLblPos = pos; pos += ChainSize(lvl.ListBucket.Count); }
 
             if (lvl.HasStructs) { lvl.SwitchOnStructurePos = pos;  pos += sub; }
-            lvl.StructLblPos = lvl.HasStructs ? lvl.SwitchOnStructurePos : lvl.VarLblPos;
+            lvl.StructLblPos = lvl.HasStructs ? lvl.SwitchOnStructurePos : emptyFallthrough;
 
             foreach (var (key, group) in lvl.AtomBuckets)
                 if (group.Count >= 2) { lvl.AtomGroupPos[key] = pos; pos += ChainSize(group.Count); }
@@ -559,6 +588,18 @@ public sealed class PredicateCompiler
             if (levels[li].ListBucket.Count == 1)
                 levels[li].ListLblPos = clauseBodyPos[levels[li].ListBucket[0]];
 
+        // Resolve the single-var-clause var-only sentinel (-2): the
+        // chain is just that clause's body. Empty-category labels that
+        // adopted the sentinel get the same target.
+        if (singleLevel && levels[0].VarOnlyChainPos == -2)
+        {
+            int target = clauseBodyPos[levels[0].VarIdxs[0]];
+            levels[0].VarOnlyChainPos = target;
+            if (levels[0].ConstLblPos == -2)  levels[0].ConstLblPos = target;
+            if (levels[0].ListLblPos == -2)   levels[0].ListLblPos = target;
+            if (levels[0].StructLblPos == -2) levels[0].StructLblPos = target;
+        }
+
         // ----- Pass 2: build switch tables (predicate-local addresses) -----
 
         SwitchTable BuildTable(
@@ -584,21 +625,24 @@ public sealed class PredicateCompiler
         for (int li = 0; li < levels.Length; li++)
         {
             var lvl = levels[li];
+            // An unmatched const/int/struct value matches only the
+            // var-headed clauses (single-arg case) — not the full chain.
+            int miss = singleLevel ? lvl.VarOnlyChainPos : lvl.VarLblPos;
             if (lvl.HasAtoms)
             {
-                int defaultAddr = lvl.HasInts ? lvl.SwitchOnIntegerPos : lvl.VarLblPos;
+                int defaultAddr = lvl.HasInts ? lvl.SwitchOnIntegerPos : miss;
                 lvl.AtomTableId = switchTables.Count;
                 switchTables.Add(BuildTable(lvl.AtomBuckets, lvl.AtomGroupPos, defaultAddr));
             }
             if (lvl.HasInts)
             {
                 lvl.IntTableId = switchTables.Count;
-                switchTables.Add(BuildTable(lvl.IntBuckets, lvl.IntGroupPos, lvl.VarLblPos));
+                switchTables.Add(BuildTable(lvl.IntBuckets, lvl.IntGroupPos, miss));
             }
             if (lvl.HasStructs)
             {
                 lvl.StructTableId = switchTables.Count;
-                switchTables.Add(BuildTable(lvl.StructBuckets, lvl.StructGroupPos, lvl.VarLblPos));
+                switchTables.Add(BuildTable(lvl.StructBuckets, lvl.StructGroupPos, miss));
             }
         }
 
@@ -643,6 +687,12 @@ public sealed class PredicateCompiler
 
         // 3b — final chain (full try/retry/trust over all clauses).
         EmitChain(emitter, Enumerable.Range(0, n).ToList(), clauseBodyPos, arity, dispatchSites);
+
+        // 3b' — var-only chain (single-arg case, 2+ var-headed clauses).
+        // Emitted right after the final chain so its layout position
+        // (allocated immediately after finalChainPos in pass 1) matches.
+        if (singleLevel && levels[0].VarIdxs.Count >= 2)
+            EmitChain(emitter, levels[0].VarIdxs, clauseBodyPos, arity, dispatchSites);
 
         // 3c — per-level sub-dispatches.
         for (int li = 0; li < levels.Length; li++)

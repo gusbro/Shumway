@@ -21,10 +21,22 @@ public sealed class Solution
     public bool Success { get; }
     public IReadOnlyDictionary<string, Term> Bindings { get; }
 
-    internal Solution(bool success, IReadOnlyDictionary<string, Term> bindings)
+    /// <summary>True when the engine has no choice point left for this
+    /// query at the moment this solution was produced — i.e. it is
+    /// known to be the last solution. An interactive top-level uses
+    /// this to stop without the <c>;</c> prompt (and without a trailing
+    /// <c>false</c>), matching SWI / GNU / SICStus: <c>member(A,[x,y])</c>
+    /// prints <c>A = x ;</c> then <c>A = y.</c> with no further prompt,
+    /// and <c>A = x, !</c> finishes immediately. <c>false</c> for a
+    /// failed query.</summary>
+    public bool IsLast { get; }
+
+    internal Solution(bool success, IReadOnlyDictionary<string, Term> bindings,
+        bool isLast = false)
     {
         Success = success;
         Bindings = bindings;
+        IsLast = isLast;
     }
 
     /// <summary>Returns the binding for the named variable, or <c>null</c> if the

@@ -3015,6 +3015,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     {
         InterpreterResult result;
         bool halted = false;
+        // Choice-point level before the query runs. After a solution, if
+        // the engine's B has fallen back to (or below) this, no
+        // query-local choice point remains — the solution is the last
+        // one. Lets the top-level skip the `;` prompt + trailing
+        // `false` for a deterministic goal, matching other Prologs.
+        int baseB = engine.B;
         try { result = host.RunCatching(interp, program, engine, () => interp.Run(program, 0)); }
         catch (PrologHaltException hex) { halted = true; host.LastHaltExitCode = hex.ExitCode; result = InterpreterResult.Failed; }
         catch (ShumwayPrologException) { { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; throw; } }
@@ -3022,7 +3028,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
         while (!halted && result == InterpreterResult.Halted)
         {
-            yield return BuildSolution(varNames, varHeapIndices, engine);
+            bool isLast = engine.B <= baseB;
+            yield return BuildSolution(varNames, varHeapIndices, engine, isLast);
+            // A known-last solution: don't backtrack — there's nothing
+            // to find and re-running would just confirm failure.
+            if (isLast) break;
             try { result = host.RunCatching(interp, program, engine, () => interp.Backtrack(program)); }
             catch (PrologHaltException hex) { halted = true; host.LastHaltExitCode = hex.ExitCode; break; }
             catch (ShumwayPrologException) { { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; throw; } }
@@ -5100,12 +5110,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     }
 
     private static Solution BuildSolution(
-        List<string> varNames, int[] varHeapIndices, Engine engine)
+        List<string> varNames, int[] varHeapIndices, Engine engine,
+        bool isLast = false)
     {
         var bindings = new Dictionary<string, Term>(varNames.Count);
         for (int i = 0; i < varNames.Count; i++)
             bindings[varNames[i]] = TermReader.Materialize(engine, varHeapIndices[i]);
-        return new Solution(success: true, bindings: bindings);
+        return new Solution(success: true, bindings: bindings, isLast: isLast);
     }
 
     private static void CollectVariables(Term term, List<string> order, HashSet<string> seen)
