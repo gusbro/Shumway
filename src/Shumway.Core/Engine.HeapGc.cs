@@ -224,6 +224,20 @@ public sealed partial class Engine
                 if (IsRef(c) && (uint)c.AsHeapIndex < (uint)oldTop && !marked[c.AsHeapIndex])
                     System.Console.Error.WriteLine($"  DANGLING reg[{i}] {c.Tag}->{c.AsHeapIndex} (DEAD)");
             }
+            // CP chain: report each frame's base/arity and flag insane ones.
+            int cb = _b;
+            int guard = 0;
+            while (cb >= 0 && guard++ < 200)
+            {
+                int ar = (int)_stack[cb + CpArityOffset].Data;
+                bool bad = ar < 0 || ar > 256 || cb + CpSize(ar) > _stackTop;
+                int savedCp = bad ? -1 : (int)_stack[cb + CpCpOffset(ar)].Data;
+                System.Console.Error.WriteLine($"  CP b={cb} arity={ar} savedCp={savedCp}{(bad ? " INSANE" : "")}");
+                if (bad) break;
+                int pv = (int)_stack[cb + CpBOffset(ar)].Data;
+                if (pv == cb) break;
+                cb = pv;
+            }
         }
 
         // ---- Phase 3: rewrite payloads in place (still at old positions). ----
