@@ -2474,6 +2474,14 @@ public static class MetaBuiltins
         int patternFid, List<Clause> candidates, int startIndex, int returnPc,
         bool isResume, int patternHeap)
     {
+        // ADR-016: on a resumed step, re-read the pattern from register 0.
+        // The choice point below is pushed with arity 1, so the WAM CP
+        // machinery saved register 0 (the pattern's REF) and the heap GC
+        // relocates it like any saved argument; the restore repopulates
+        // register 0 before this delegate runs. Closing a raw heap index
+        // over the resume (the old approach) would dangle after a
+        // mid-enumeration collection moved the pattern cell.
+        if (isResume) patternHeap = engine.MaterializeRegisterForTrace(0);
         RetractTrace.StepEntry(engine, isResume, startIndex);
         int matchIndex = FindRetractMatch(engine, candidates, startIndex, patternHeap);
         if (matchIndex < 0)
@@ -2492,12 +2500,14 @@ public static class MetaBuiltins
         if (matchIndex + 1 < candidates.Count)
         {
             int next = matchIndex + 1;
-            int capturedPatternHeap = patternHeap;
+            // patternHeap is re-read from register 0 on resume (see above),
+            // so the resume need not close over it. Push with arity 1 so
+            // the CP saves register 0 — the GC then relocates it.
             Func<Engine, int, bool> resume = (e, _) => RetractStep(
                 e, host, patternFid, candidates, next, returnPc,
-                isResume: true, capturedPatternHeap);
+                isResume: true, patternHeap: -1);
             RetractTrace.PrePush(engine);
-            engine.PushBuiltinChoicePoint(resume, arity: 0);
+            engine.PushBuiltinChoicePoint(resume, arity: 1);
             RetractTrace.PostPush(engine);
         }
 
