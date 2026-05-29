@@ -43,15 +43,29 @@ internal sealed class IlIndexedDispatchInfo
     /// needed by the runtime resolver.</summary>
     public required IReadOnlyList<SwitchTable> SwitchTables { get; init; }
 
-    /// <summary>The predicate bytecode (the resolver walks the dispatch
-    /// opcodes here).</summary>
+    /// <summary>The predicate bytecode the resolver walks. May be the
+    /// predicate's own bytecode (build-time path, addresses start at 0) or
+    /// the engine's linked program (lazy-built at LoadBundle, predicate
+    /// region starts at <see cref="EntryAddress"/>).</summary>
     public required byte[] Bytecode { get; init; }
+
+    /// <summary>Byte offset within <see cref="Bytecode"/> where this
+    /// predicate's dispatch cascade starts. Zero for the build-time path
+    /// (predicate-relative bytecode); the linked-code address for the
+    /// runtime path.</summary>
+    public required int EntryAddress { get; init; }
 }
 
 internal readonly record struct ChainNode(int ClauseIndex, int NextCursor);
 
-/// <summary>Recogniser + runtime resolver for <see cref="IlIndexedDispatchInfo"/>.</summary>
-internal static class IlIndexedDispatch
+/// <summary>Recogniser + runtime resolver for <see cref="IlIndexedDispatchInfo"/>.
+/// Must be <c>public</c> so the persisted IL (loaded via
+/// <c>Assembly.Load</c> in a fresh process) can call
+/// <see cref="ResolveEntryByFunctorId"/> — internal would trip
+/// <see cref="System.MethodAccessException"/>. The implementation-detail
+/// model types (<see cref="IlIndexedDispatchInfo"/>, <see cref="ChainNode"/>)
+/// stay internal; the IL only references the entry point.</summary>
+public static class IlIndexedDispatch
 {
     // Switch opcode sizes (from OpcodeInfo).
     private const int SwitchOnTermSize = 17;
@@ -72,39 +86,54 @@ internal static class IlIndexedDispatch
     /// shape (bytecode opens with switch_on_term or switch_on_arg, has the
     /// full try/retry/trust chain machinery, and every clause body fits the
     /// IL subset). Returns false (and a null model) otherwise.</summary>
-    public static bool TryDescribe(
+    internal static bool TryDescribe(
         Shumway.Compiler.Wam.CompiledPredicate predicate,
         System.Func<Opcode, int, bool> isBodyOpcodeEmittable,
         out IlIndexedDispatchInfo? info)
+        => TryDescribeBytes(predicate.Bytecode, 0, predicate.Bytecode.Length,
+            predicate.ClauseCount, predicate.SwitchTables,
+            isBodyOpcodeEmittable, out info);
+
+    /// <summary>Address-range variant — works over <paramref name="code"/>
+    /// in <c>[start, end)</c> with absolute addresses (matching the
+    /// engine's linked code). Used at <c>LoadBundle</c> time to rebuild
+    /// the model from the engine's linked program without needing a
+    /// <c>CompiledPredicate</c>: pass <paramref name="expectedClauseCount"/>
+    /// = -1 to skip the clause-count cross-check and
+    /// <paramref name="isBodyOpcodeEmittable"/> = null to skip the
+    /// IL-subset body check (the build-time emit already validated it).</summary>
+    internal static bool TryDescribeBytes(
+        byte[] code, int start, int end,
+        int expectedClauseCount,
+        IReadOnlyList<SwitchTable> switchTables,
+        System.Func<Opcode, int, bool>? isBodyOpcodeEmittable,
+        out IlIndexedDispatchInfo? info)
     {
         info = null;
-        byte[] code = predicate.Bytecode;
-        if (code.Length == 0) return false;
-        var first = (Opcode)code[0];
+        if (code.Length == 0 || start >= end) return false;
+        var first = (Opcode)code[start];
         if (first != Opcode.SwitchOnTerm && first != Opcode.SwitchOnArg) return false;
 
-        // ---- 1. Collect every try/retry/trust chain. ----
+        // ---- 1. Collect every try/retry/trust chain in [start, end). ----
         // Chains are contiguous runs: try (retry)* trust. Each node carries
         // the clause-body address it dispatches to.
         var chainNodeAddrs = new List<int>();          // addresses of all try/retry/trust nodes
         var nodeBodyAddr = new Dictionary<int, int>();  // node addr -> body addr
         var nodeNextAddr = new Dictionary<int, int>();  // node addr -> next node addr (-1 if tail)
-        var chainHeadAddrs = new HashSet<int>();        // addresses that start a chain (a `try`)
 
-        int pc = 0;
-        while (pc < code.Length)
+        int pc = start;
+        while (pc < end)
         {
             var op = (Opcode)code[pc];
             int size = OpcodeSize(code, pc);
             if (size <= 0) return false;
             if (op == Opcode.Try)
             {
-                chainHeadAddrs.Add(pc);
                 int body = BytecodeIO.ReadInt32(code, pc + 1);
                 chainNodeAddrs.Add(pc);
                 nodeBodyAddr[pc] = body;
-                var next = (Opcode)code[pc + size];
-                nodeNextAddr[pc] = (pc + size < code.Length && (next == Opcode.Retry || next == Opcode.Trust))
+                var next = pc + size < end ? (Opcode)code[pc + size] : (Opcode)0;
+                nodeNextAddr[pc] = (pc + size < end && (next == Opcode.Retry || next == Opcode.Trust))
                     ? pc + size : -1;
             }
             else if (op == Opcode.Retry)
@@ -112,8 +141,8 @@ internal static class IlIndexedDispatch
                 int body = BytecodeIO.ReadInt32(code, pc + 1);
                 chainNodeAddrs.Add(pc);
                 nodeBodyAddr[pc] = body;
-                var next = (Opcode)code[pc + size];
-                nodeNextAddr[pc] = (pc + size < code.Length && (next == Opcode.Retry || next == Opcode.Trust))
+                var next = pc + size < end ? (Opcode)code[pc + size] : (Opcode)0;
+                nodeNextAddr[pc] = (pc + size < end && (next == Opcode.Retry || next == Opcode.Trust))
                     ? pc + size : -1;
             }
             else if (op == Opcode.Trust)
@@ -129,35 +158,41 @@ internal static class IlIndexedDispatch
 
         // ---- 2. Identify clause bodies (source order). ----
         // Every distinct body address a chain node points at is a clause
-        // body. There must be exactly ClauseCount of them; sorted ascending
-        // gives source order (the WAM lays bodies out in source order).
+        // body. Sorted ascending gives source order (the WAM lays bodies
+        // out in source order). When called with a known clause count
+        // (build-time CompiledPredicate path), cross-check; at load time
+        // (-1) trust the parse.
         var bodyAddrs = new SortedSet<int>(nodeBodyAddr.Values);
-        if (bodyAddrs.Count != predicate.ClauseCount) return false;
+        if (expectedClauseCount >= 0 && bodyAddrs.Count != expectedClauseCount) return false;
         var bodyAddrToClause = new Dictionary<int, int>();
         int ci = 0;
         var clauseStarts = new List<int>(bodyAddrs.Count);
         foreach (int a in bodyAddrs) { bodyAddrToClause[a] = ci++; clauseStarts.Add(a); }
 
-        // Clause ranges: [start_i, start_{i+1}) and the last to code.Length.
+        // Clause ranges: [start_i, start_{i+1}) and the last to end.
         var clauses = new List<(int, int)>(clauseStarts.Count);
         for (int i = 0; i < clauseStarts.Count; i++)
         {
             int s = clauseStarts[i];
-            int e = i + 1 < clauseStarts.Count ? clauseStarts[i + 1] : code.Length;
+            int e = i + 1 < clauseStarts.Count ? clauseStarts[i + 1] : end;
             clauses.Add((s, e));
         }
 
-        // ---- 3. Validate every clause body fits the IL subset. ----
-        foreach (var (s, e) in clauses)
+        // ---- 3. (Optional) validate every clause body fits the IL subset. ----
+        // Skipped at load time (the build-time emit already validated it).
+        if (isBodyOpcodeEmittable is not null)
         {
-            int q = s;
-            while (q < e)
+            foreach (var (s, e) in clauses)
             {
-                var op = (Opcode)code[q];
-                int size = OpcodeSize(code, q);
-                if (size <= 0) return false;
-                if (!isBodyOpcodeEmittable(op, q)) return false;
-                q += size;
+                int q = s;
+                while (q < e)
+                {
+                    var op = (Opcode)code[q];
+                    int size = OpcodeSize(code, q);
+                    if (size <= 0) return false;
+                    if (!isBodyOpcodeEmittable(op, q)) return false;
+                    q += size;
+                }
             }
         }
 
@@ -186,7 +221,7 @@ internal static class IlIndexedDispatch
         // target that is a clause body (a deterministic, no-choice-point
         // entry) gets a fresh single-node cursor with no successor.
         var addrToEntryCursor = new Dictionary<int, int>(addrToCursor);
-        foreach (int target in CollectDispatchTargets(code, predicate.SwitchTables))
+        foreach (int target in CollectDispatchTargets(code, start, end, switchTables))
         {
             if (addrToEntryCursor.ContainsKey(target)) continue;
             if (bodyAddrToClause.TryGetValue(target, out int clause))
@@ -202,7 +237,7 @@ internal static class IlIndexedDispatch
         // Cursor budget: cursor 0 = resolve, 1..K = nodes, K+1.. = call-site
         // resumes. The resume-marker encoding caps a predicate at
         // Engine.ResumeMarkerCursorStride cursors.
-        int callSites = CountCalls(code);
+        int callSites = CountCalls(code, start, end);
         if (nodes.Count + 1 + callSites >= Engine.ResumeMarkerCursorStride) return false;
 
         info = new IlIndexedDispatchInfo
@@ -210,16 +245,17 @@ internal static class IlIndexedDispatch
             Clauses = clauses,
             Nodes = nodes,
             AddrToEntryCursor = addrToEntryCursor,
-            SwitchTables = predicate.SwitchTables,
+            EntryAddress = start,
+            SwitchTables = switchTables,
             Bytecode = code,
         };
         return true;
     }
 
-    private static int CountCalls(byte[] code)
+    private static int CountCalls(byte[] code, int start, int end)
     {
-        int n = 0, pc = 0;
-        while (pc < code.Length)
+        int n = 0, pc = start;
+        while (pc < end)
         {
             if ((Opcode)code[pc] == Opcode.Call) n++;
             int size = OpcodeSize(code, pc);
@@ -230,33 +266,83 @@ internal static class IlIndexedDispatch
     }
 
     // ------------------------------------------------------------------
-    // Runtime model holder — the emitted IL bakes an integer key and calls
-    // ResolveEntryByKey to compute the entry cursor for the current call.
+    // Per-engine model cache — keyed by functor id. The emitted IL bakes
+    // the functor id and calls ResolveEntryByFunctorId; the cache lazily
+    // builds the model from the engine's linked code + switch tables on
+    // first call. Used by BOTH the runtime promotion path and the
+    // persisted-bundle path — the latter is the whole point (a persisted
+    // .dll loaded in a fresh process has no build-time model holder, but
+    // the functor id is name-relative via chunk-197 patching and the
+    // engine's linked code is available at first call).
     // ------------------------------------------------------------------
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, IlIndexedDispatchInfo> _models = new();
-    private static int _nextModelKey;
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<
+        Engine, System.Collections.Concurrent.ConcurrentDictionary<int, IlIndexedDispatchInfo>>
+        _perEngineCache = new();
 
-    public static int RegisterModel(IlIndexedDispatchInfo info)
+    private static System.Collections.Concurrent.ConcurrentDictionary<int, IlIndexedDispatchInfo>
+        CacheFor(Engine engine) => _perEngineCache.GetValue(engine,
+            static _ => new System.Collections.Concurrent.ConcurrentDictionary<int, IlIndexedDispatchInfo>());
+
+    /// <summary>Called from emitted IL: resolves the entry cursor for the
+    /// predicate identified by <paramref name="functorId"/>, building the
+    /// dispatch model lazily on first call from the engine's linked code
+    /// and switch tables (the build-time emit already validated that the
+    /// shape parses cleanly, so this is a structural re-parse rather than
+    /// a check).</summary>
+    public static int ResolveEntryByFunctorId(Engine engine, int functorId)
     {
-        int key = System.Threading.Interlocked.Increment(ref _nextModelKey);
-        _models[key] = info;
-        return key;
+        var cache = CacheFor(engine);
+        if (!cache.TryGetValue(functorId, out var info))
+        {
+            info = BuildModelFromEngine(engine, functorId)
+                ?? throw new InvalidOperationException(
+                    $"Indexed-dispatch model build failed for functor id {functorId}.");
+            cache.TryAdd(functorId, info);
+            info = cache[functorId];
+        }
+        return ResolveEntryCursor(engine, info);
     }
 
-    /// <summary>Called from emitted IL: resolves the entry cursor (chain
-    /// node index) for the model registered under <paramref name="key"/>,
-    /// given the engine's current argument registers.</summary>
-    public static int ResolveEntryByKey(Engine engine, int key)
-        => ResolveEntryCursor(engine, _models[key]);
+    /// <summary>Eager registration used by the runtime promotion path:
+    /// the IL compile already has the <see cref="IlIndexedDispatchInfo"/>
+    /// in hand, so we avoid the first-call re-parse by populating the
+    /// engine's cache up front.</summary>
+    internal static void RegisterModelForEngine(Engine engine, int functorId, IlIndexedDispatchInfo info)
+        => CacheFor(engine).TryAdd(functorId, info);
 
-    /// <summary>Every bytecode address a dispatch opcode can transfer
-    /// control to: the four type labels of switch_on_term/arg, plus each
-    /// typed table's entries and default.</summary>
-    private static IEnumerable<int> CollectDispatchTargets(
-        byte[] code, IReadOnlyList<SwitchTable> tables)
+    private static IlIndexedDispatchInfo? BuildModelFromEngine(Engine engine, int functorId)
     {
-        int pc = 0;
-        while (pc < code.Length)
+        var addrMap = engine.CurrentFunctorAddresses
+            ?? throw new InvalidOperationException(
+                "Indexed-dispatch: engine has no CurrentFunctorAddresses.");
+        if (!addrMap.TryGetValue(functorId, out int start))
+            throw new InvalidOperationException(
+                $"Indexed-dispatch: functor id {functorId} not in CurrentFunctorAddresses.");
+        byte[] code = engine.CurrentProgram
+            ?? throw new InvalidOperationException(
+                "Indexed-dispatch: engine has no CurrentProgram.");
+        // End of this predicate's region = the next predicate's start
+        // (predicates are laid out contiguously in linked code), or the
+        // end of the program for the last one.
+        int end = code.Length;
+        foreach (int addr in addrMap.Values)
+            if (addr > start && addr < end) end = addr;
+
+        var tables = engine.SwitchTables ?? (IReadOnlyList<SwitchTable>)Array.Empty<SwitchTable>();
+        TryDescribeBytes(code, start, end, expectedClauseCount: -1, tables,
+            isBodyOpcodeEmittable: null, out var info);
+        return info;
+    }
+
+    /// <summary>Every bytecode address a dispatch opcode in
+    /// <c>[start, end)</c> can transfer control to: the four type labels
+    /// of switch_on_term/arg, plus each typed table's entries and
+    /// default.</summary>
+    private static IEnumerable<int> CollectDispatchTargets(
+        byte[] code, int start, int end, IReadOnlyList<SwitchTable> tables)
+    {
+        int pc = start;
+        while (pc < end)
         {
             var op = (Opcode)code[pc];
             int size = OpcodeSize(code, pc);
@@ -322,11 +408,11 @@ internal static class IlIndexedDispatch
     /// reproducing the interpreter's switch semantics exactly, and returns
     /// the cursor of the chain node (or deterministic clause) the call
     /// enters. Pure read-only over the engine's argument registers / heap.</summary>
-    public static int ResolveEntryCursor(Engine engine, IlIndexedDispatchInfo info)
+    internal static int ResolveEntryCursor(Engine engine, IlIndexedDispatchInfo info)
     {
         byte[] code = info.Bytecode;
         var tables = info.SwitchTables;
-        int pc = 0;
+        int pc = info.EntryAddress;
         while (true)
         {
             var op = (Opcode)code[pc];

@@ -362,12 +362,13 @@ public static class PersistedIlBuilder
         CompiledPredicate pred,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
-        // Chunk 216 indexed dispatch is excluded from persisted bundles: its
-        // IL calls a runtime model holder keyed by an in-process id that a
-        // freshly-loaded bundle process wouldn't have populated. Such
-        // predicates fall back to their bytecode in the bundle (still
-        // correct, just Tier-0). Runtime promotion uses the fast path.
-        return new IlPredicateCompiler().CanCompileCore(pred, calleeMap, allowIndexedDispatch: false);
+        // Chunk 217 — indexed dispatch is now persistable. Its IL bakes the
+        // predicate's functor id via the chunk-197 patching mechanism (so a
+        // fresh process resolves the runtime-process id at LoadBundle), and
+        // the dispatch model is rebuilt lazily on first call from the
+        // engine's linked code + switch tables. No build-time runtime state
+        // crosses the process boundary.
+        return new IlPredicateCompiler().CanCompile(pred, calleeMap);
     }
 
     private static string ResolveFunctorName(int functorId)

@@ -144,9 +144,13 @@ public sealed class IlPredicateCompiler
     private static readonly MethodInfo EngineCutToLevelMethod =
         typeof(Engine).GetMethod(nameof(Engine.CutToLevel), new[] { typeof(int) })!;
     // Chunk 216 — indexed-dispatch entry resolver (mirrors the WAM switch
-    // cascade, returns the entry chain-node cursor).
-    private static readonly MethodInfo IlIndexedDispatchResolveMethod =
-        typeof(IlIndexedDispatch).GetMethod(nameof(IlIndexedDispatch.ResolveEntryByKey))!;
+    // cascade, returns the entry chain-node cursor). Keyed by functor id
+    // so the same IL works under runtime promotion AND a persisted bundle
+    // loaded in a fresh process — the functor id is name-relative via
+    // chunk-197 EmitFunctorId, and the resolver builds the dispatch model
+    // lazily from the engine's linked code on first call.
+    private static readonly MethodInfo IlIndexedDispatchResolveByFidMethod =
+        typeof(IlIndexedDispatch).GetMethod(nameof(IlIndexedDispatch.ResolveEntryByFunctorId))!;
     private static readonly MethodInfo EngineSetPcMethod =
         typeof(Engine).GetMethod(
             nameof(Engine.SetPc),
@@ -743,6 +747,18 @@ public sealed class IlPredicateCompiler
                         "Single-clause meta-CP predicate needs a delegates field for self-reference.");
                 EmitSingleClauseMetaCpBody(emit, predicate, callSiteCount, calleeMap, emitSelf);
             }
+        }
+        else if (TryDescribeIndexed(predicate, calleeMap, out var indexedInfo))
+        {
+            // Chunk 217 — full indexed dispatch (O(1) + buckets) in persisted
+            // IL. The emit bakes the functor id via the chunk-197 patching
+            // mechanism so a fresh process resolves the runtime id at
+            // LoadBundle; the dispatch model is rebuilt lazily on first call
+            // from the engine's linked code.
+            if (emitSelf is null)
+                throw new InvalidOperationException(
+                    "Indexed-dispatch predicate needs a delegates field for self-reference.");
+            EmitIndexedDispatchBody(emit, predicate, indexedInfo!, calleeMap, emitSelf);
         }
         else if (TryDescribeIndexedAtomPredicate(predicate, calleeMap, out var atomInfo))
         {
@@ -2143,10 +2159,9 @@ public sealed class IlPredicateCompiler
         {
             int holderKey = _nextHolderKey;
             var emitSelf = SelfFromHolder(holderKey);
-            int modelKey = IlIndexedDispatch.RegisterModel(info);
             var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
                 $"ShumwayIl_idx_{predicate.FunctorId}", doVerify: DoVerify || DebugMode);
-            EmitIndexedDispatchBody(emit, predicate, info, modelKey, calleeMap, emitSelf);
+            EmitIndexedDispatchBody(emit, predicate, info, calleeMap, emitSelf);
             var del = emit.CreateDelegate(Optimizations);
             IndexedDelegateHolder.Register(holderKey, del);
             _nextHolderKey = holderKey + 1;
@@ -2158,7 +2173,6 @@ public sealed class IlPredicateCompiler
         Sigil.Emit<PredicateDelegate> emit,
         CompiledPredicate predicate,
         IlIndexedDispatchInfo info,
-        int modelKey,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
         SelfDelegateEmitter emitSelf)
     {
@@ -2196,11 +2210,14 @@ public sealed class IlPredicateCompiler
             emit.BranchIfEqual(nodeLabels[n]);
         }
         // cursor 0 — the initial call: resolve the entry node via the WAM
-        // switch cascade, then branch to it.
+        // switch cascade, then branch to it. The functor id is emitted
+        // through EmitFunctorId (chunk 197) so a persisted-bundle .dll
+        // gets its functor id patched at LoadBundle to the runtime-process
+        // value; for runtime promotion it's a direct ldc.i4.
         var entry = emit.DeclareLocal<int>("idx_entry");
         emit.LoadArgument(0);
-        emit.LoadConstant(modelKey);
-        emit.Call(IlIndexedDispatchResolveMethod);
+        EmitFunctorId(emit, predicate.FunctorId);
+        emit.Call(IlIndexedDispatchResolveByFidMethod);
         emit.StoreLocal(entry);
         for (int n = 0; n < K; n++)
         {
