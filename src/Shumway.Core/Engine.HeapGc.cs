@@ -25,6 +25,7 @@ public sealed partial class Engine
     // (the saved return address), recovering the compiler's
     // num_live_perms — see ComputeFrameLiveCounts / EnvFrameLiveCount.
     private readonly System.Collections.Generic.Dictionary<int, int> _gcFrameLive = new();
+    private long[]? _gcStackSnap;   // diagnostic: pre-phase stack snapshot
 
     /// <summary>ADR-016 (correct env liveness): for every reachable
     /// environment frame, records the exact number of live Y slots,
@@ -293,6 +294,13 @@ public sealed partial class Engine
         // Bisection dump: SHUMWAY_GC_DUMP=N dumps collection N's heap +
         // forwarding so a corrupting relocation can be eyeballed.
         bool dump = _gcDumpAt == 0 || (_gcDumpAt > 0 && _gcSafePointCount == _gcDumpAt);
+        // Whole-stack before/after diff: snapshot every stack slot now, and
+        // after all phases report any that changed but is NOT a legitimate
+        // GC write target (a live frame Y-slot, a CP arg, or a CP HeapTop/
+        // Hb boundary). Such a change is an unmodelled corrupting write.
+        long[]? stackSnap = dump ? new long[_stackTop] : null;
+        if (stackSnap is not null)
+            for (int i = 0; i < _stackTop; i++) stackSnap[i] = _stack[i].Data;
         if (dump)
         {
             System.Console.Error.WriteLine($"[gc] sp={_gcSafePointCount} oldTop={oldTop} live={live} stackTop={_stackTop} _e={_e} _b={_b}");
@@ -339,6 +347,7 @@ public sealed partial class Engine
                 cb = pv;
             }
         }
+        _gcStackSnap = stackSnap;
 
         // ---- Phase 3: rewrite payloads in place (still at old positions). ----
         for (int i = 0; i < oldTop; i++)
@@ -397,6 +406,34 @@ public sealed partial class Engine
                     System.Console.Error.WriteLine($"  HEAP-BAD [{i}] {c.Tag}->{idx} (newTop {live})");
                 if (c.Tag is Tag.Float && (uint)c.FloatPairedIndex >= (uint)live)
                     System.Console.Error.WriteLine($"  HEAP-BAD [{i}] Float paired->{c.FloatPairedIndex}");
+            }
+            // Whole-stack diff: any changed slot NOT a legitimate write
+            // target (frame Y / CP arg / CP boundary) is an unmodelled GC
+            // write — the corruption.
+            if (_gcStackSnap is { } snap)
+            {
+                bool InFrameY(int slot)
+                {
+                    foreach (var (fb, cnt) in _gcFrameLive)
+                        if (slot >= fb + EnvY1Offset && slot < fb + EnvY1Offset + cnt) return true;
+                    return false;
+                }
+                bool InCpWrite(int slot)
+                {
+                    int b2 = _b, g2 = 0;
+                    while (b2 >= 0 && b2 < _stackTop && g2++ < 100000)
+                    {
+                        int ar = (int)_stack[b2 + CpArityOffset].Data;
+                        if (ar < 0 || ar > 4096 || b2 + CpSize(ar) > _stackTop) break;
+                        if (slot >= b2 + CpArg1Offset && slot < b2 + CpArg1Offset + ar) return true;
+                        if (slot == b2 + CpHeapTopOffset(ar) || slot == b2 + CpHbOffset(ar)) return true;
+                        int pv = (int)_stack[b2 + CpBOffset(ar)].Data; if (pv == b2) break; b2 = pv;
+                    }
+                    return false;
+                }
+                for (int i = 0; i < snap.Length; i++)
+                    if (_stack[i].Data != snap[i] && !InFrameY(i) && !InCpWrite(i))
+                        System.Console.Error.WriteLine($"  UNMODELLED-WRITE stack[{i}] {snap[i]} -> {_stack[i].Data}");
             }
         }
 
