@@ -123,7 +123,8 @@ public class CutOpcodeTests
         var code = BuildCode(Opcode.GetLevel, 0, Opcode.Halt);
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
-        Assert.Equal(-1L, engine.GetY(0).Data);  // _b0 was -1, saved into Y[0]
+        // get_level stores the barrier as a RawInt control word (ADR-016).
+        Assert.Equal(-1, (int)engine.GetY(0).Data);  // _b0 was -1, saved into Y[0]
     }
 
     [Fact]
@@ -133,7 +134,7 @@ public class CutOpcodeTests
         engine.PushChoicePoint(0, 0);            // outer CP
         int outerB = engine.B;
         engine.Allocate(1);
-        engine.SetY(0, new Cell(outerB));        // pretend get_level captured outerB
+        engine.SetY(0, Cell.RawInt(outerB));     // pretend get_level captured outerB
         engine.PushChoicePoint(0, 0);            // inner CP
 
         var code = BuildCode(Opcode.Cut, 0, Opcode.Halt);
@@ -156,7 +157,7 @@ public class CutOpcodeTests
 
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(BuildCode(Opcode.GetLevel, 0, Opcode.Halt), 0));
-        Assert.Equal((long)outerB, engine.GetY(0).Data);
+        Assert.Equal(outerB, (int)engine.GetY(0).Data);
 
         // Push an inner CP — simulating a sub-goal's try_me_else.
         engine.PushChoicePoint(0, 0);

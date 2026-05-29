@@ -2,10 +2,12 @@
 
 ## Status
 
-Proposed (Phase 20). Not yet implemented — this ADR records the design
-to be built. Adding a heap GC is a "major decision" under CLAUDE.md
-(comparable to the atom-GC strategy in ADR-003), so it is settled here
-before any code lands.
+Accepted and implemented (Phase 20, chunks 210–213). Adding a heap GC
+is a "major decision" under CLAUDE.md (comparable to the atom-GC
+strategy in ADR-003), so the design was settled here before code landed;
+see "Status of implementation" below for the as-built notes, including
+the chunk-213 correction (conservative scan + `Tag.RawInt` control
+words) and the measured Blint heap drop.
 
 ## Context
 
@@ -79,24 +81,51 @@ of the choice-point stack** — open CPs no longer pin garbage, only
 
 The collector marks from every place a live heap index can be held:
 
-1. **X (argument/temporary) registers** — the live set at the safe
-   point. (At a Call/Execute boundary the live-X set is known from the
-   call's arity; a conservative scan of the whole register bank is also
-   sound since every slot is a tagged `Cell`.)
-2. **Y-slots in every environment frame** — walk the `E` chain via
-   `EnvCeOffset` (ADR-005), scanning each frame's permanent variables.
-3. **Every choice point's saved argument registers and saved state** —
-   walk the full CP chain via `CpBOffset`. This is the crux of the win:
-   because we mark from *all* CPs (not just the youngest), a cell stays
-   live iff some CP could still reach it, but unreachable cells under an
-   open CP are collected.
-4. **Both trails** (ADR-004). The binding trail holds heap indices; the
+1. **X (argument/temporary) registers** — a conservative scan of the
+   whole register bank. Sound because every slot is a tagged `Cell`: a
+   stale slot can only over-retain a still-addressable cell, never
+   corrupt.
+2. **The entire control stack `[0, _stackTop)`** — scanned
+   *conservatively*, slot by slot, rather than by precisely walking the
+   `E`/`B` chains and each frame's live-permanent count. This is both
+   safe and complete: a genuine heap reference (a frame Y-slot, a CP
+   saved argument) is a tagged reference cell and gets marked no matter
+   which frame owns it, while every **control word** (CE, CP, B, BP,
+   arity, trail tops, HeapTop, Hb, ViewGen, B0, perm-count, and the
+   captured cut barrier from `get_level`) is stored as a
+   `Tag.RawInt` cell (see below) so the marker treats it as a leaf and
+   never follows or relocates it. This replaces the original precise
+   frame-liveness walk, which **under-counted roots** in the tabling
+   fixpoint's reused stack (see the chunk-213 resolution) — a missing
+   root silently corrupts the heap, so completeness is non-negotiable
+   and the conservative scan buys it cheaply.
+3. **Both trails** (ADR-004). The binding trail holds heap indices; the
    extra trail's struct entries carry heap indices and a `CatchFrame`
    snapshots a heap top. All are roots *and* must be relocated.
-5. **Attributed-variable tables** and any per-engine auxiliary tables
+4. **Attributed-variable tables** and any per-engine auxiliary tables
    that hold heap indices.
-6. The **current goal / in-flight structure** being built at the safe
-   point.
+5. The **current goal / in-flight structure** being built at the safe
+   point (held in registers, covered by 1).
+
+#### `Tag.RawInt` — distinctly-tagged control words
+
+The conservative stack scan only works if a control word can never be
+mistaken for a heap reference. Before this design, control words were
+written as `new Cell(value)`, which for a small positive value yields
+`Tag.Ref` (tag `0x0`) — *indistinguishable* from a genuine heap
+self-pointer. A conservative scan would relocate such a word as if it
+were a heap index, corrupting (e.g.) a saved choice-point address or a
+cut barrier. `Tag.RawInt` (`0xD`, ADR-002 reserved-tag space) tags every
+control word distinctly: the marker and relocator treat it as a leaf.
+The stored value occupies the 60-bit payload; integer slots round-trip
+through a plain `(int)Data` cast (the tag lives above bit 31, so the
+cast is unaffected, including the `-1` sentinel), and the one 60-bit
+slot (ViewGen) reads via `Cell.Payload`. There is **zero hot-path cost**
+— writing a `RawInt` is the same single store as writing any cell. The
+two heap-top *boundaries* a CP saves (`HeapTop`/`Hb`) are RawInt-tagged
+too, and are relocated specially by a CP-chain walk that maps them
+through the forwarding table (they are heap-top counts, not cell
+references).
 
 Managed-object side tables (BigInteger, string, foreign refs — ADR-002
 keeps these out of cells, addressed by integer id) are *not* scanned as
@@ -226,17 +255,47 @@ placed at those dispatch points and is correct for both tiers.
   explicit-GC tests.
 - **Chunk 212** — IL audit (above) + watermark wiring at the dispatch
   safe points + `SHUMWAY_GC_STRESS` fuzz mode. The stress fuzz (collect
-  at every safe point) passes plain execution but surfaced a **missing
+  at every safe point) passed plain execution but surfaced a **missing
   root in the tabling / meta-call machinery**: a ground query against a
-  tabled predicate corrupts a goal into a `-/2` answer-table pair
-  (`existence_error: -/2`). CLP reification, `bagof`/`setof` with `^`,
-  and `listing` fail the same way. **Auto-collection is therefore
-  disabled by default** (`EngineConfig.GcThreshold = 0`) until that root
-  is found and added; `garbage_collect/0` and the watermark
-  infrastructure remain in place, and `SHUMWAY_GC_STRESS=1` is the
-  reproducer. Relocation is defensive (an out-of-range index in a root
-  is left untouched rather than crashing), which avoids the crash but
-  not the data loss — the root must still be found.
+  tabled predicate corrupted a goal into a `-/2` answer-table pair
+  (`existence_error: -/2`); CLP reification, `bagof`/`setof` with `^`,
+  and `listing` failed the same way. Auto-collection was held off
+  (`GcThreshold = 0`) while the root was hunted.
+
+- **Chunk 213 — root found and fixed; auto-collection re-enabled.** The
+  "missing root" was not missing data — it was the *precise* frame-
+  liveness root scan **under-counting** in the tabling fixpoint's reused
+  stack, compounded by **control words stored as `Tag.Ref`**. The
+  `get_level` WAM instruction captured the cut barrier (`B0`, a
+  choice-point stack index) into a Y-slot as a plain `new Cell(B0)` —
+  which is `Tag.Ref` for a small index, indistinguishable from a heap
+  self-pointer. Any GC that scanned that slot relocated the barrier as
+  if it were a heap reference; the next `!` then cut to a garbage
+  barrier (`IndexOutOfRange` in `CompactTrails`). The fix (chosen for
+  correctness over a heuristic, per the project's "must be right for any
+  program" bar):
+    1. **`Tag.RawInt` (0xD)** — every environment / choice-point control
+       word *and* the `get_level` cut barrier is now a distinctly-tagged
+       control cell that the marker/relocator treat as a leaf. Zero
+       hot-path cost (same single store).
+    2. **Conservative full-stack scan** replaces the precise frame-
+       liveness walk in `MarkRoots` / `RelocateRoots`: scan every slot
+       in `[0, _stackTop)`. RawInt control words are skipped; every
+       genuine reference cell is marked/relocated regardless of which
+       frame owns it. Complete by construction — no under-count
+       possible. `MarkReferents` bounds-guards every payload and only
+       follows a `Str` whose target is really a `Functor`, so a stale
+       ref in a dead slot over-retains at worst, never crashes.
+  Validated: the tabling closure repro and `bagof`/`findall`/`listing`
+  run correctly under `SHUMWAY_GC_STRESS=1`; the full test suite is
+  green with auto-GC enabled by default. **`EngineConfig.GcThreshold`
+  now defaults to `1<<18`** (256 K cells). `SHUMWAY_GC_THRESHOLD=N`
+  overrides it at runtime (`0` disables) for measurement.
+
+  **Measured (Blint linting its own 78 KB source, same build):**
+  GC off → heap grows to 8,388,608 cells (**64 MB**); GC on → bounded at
+  1,048,576 cells (**8 MB**), same lint output. ~8× high-water drop, and
+  the 2 M/4 M/8 M doubling-realloc churn is eliminated.
 
 ## Implementation sketch (for the follow-up chunks)
 

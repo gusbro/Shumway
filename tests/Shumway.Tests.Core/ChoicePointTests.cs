@@ -52,13 +52,14 @@ public class ChoicePointTests
         Assert.Equal(stackTopBefore + Engine.CpSize(2), engine.StackTop);
         Assert.Equal(engine.HeapTop, engine.Hb);     // bumped to current heap top
 
-        Assert.Equal(2L, engine.GetStack(b + Engine.CpArityOffset).Data);
+        // Control slots are RawInt-tagged (ADR-016); read with (int)Data.
+        Assert.Equal(2, (int)engine.GetStack(b + Engine.CpArityOffset).Data);
         Assert.Equal(Cell.Atom(10), engine.GetStack(b + Engine.CpArg1Offset));
         Assert.Equal(Cell.Atom(20), engine.GetStack(b + Engine.CpArg1Offset + 1));
-        Assert.Equal((long)eAfterAllocate, engine.GetStack(b + Engine.CpCeOffset(2)).Data);
-        Assert.Equal(0x77L, engine.GetStack(b + Engine.CpCpOffset(2)).Data);
-        Assert.Equal(-1L, engine.GetStack(b + Engine.CpBOffset(2)).Data);
-        Assert.Equal(0x1234L, engine.GetStack(b + Engine.CpBpOffset(2)).Data);
+        Assert.Equal(eAfterAllocate, (int)engine.GetStack(b + Engine.CpCeOffset(2)).Data);
+        Assert.Equal(0x77, (int)engine.GetStack(b + Engine.CpCpOffset(2)).Data);
+        Assert.Equal(-1, (int)engine.GetStack(b + Engine.CpBOffset(2)).Data);
+        Assert.Equal(0x1234, (int)engine.GetStack(b + Engine.CpBpOffset(2)).Data);
     }
 
     [Fact]
@@ -80,7 +81,7 @@ public class ChoicePointTests
         int outer = engine.B;
         engine.PushChoicePoint(0, 0x200);
         int inner = engine.B;
-        Assert.Equal((long)outer, engine.GetStack(inner + Engine.CpBOffset(0)).Data);
+        Assert.Equal(outer, (int)engine.GetStack(inner + Engine.CpBOffset(0)).Data);
     }
 
     [Theory]
@@ -196,10 +197,10 @@ public class ChoicePointTests
         var engine = new Engine();
         engine.PushChoicePoint(0, 0x1000);
         int b = engine.B;
-        Assert.Equal(0x1000L, engine.GetStack(b + Engine.CpBpOffset(0)).Data);
+        Assert.Equal(0x1000, (int)engine.GetStack(b + Engine.CpBpOffset(0)).Data);
 
         engine.RetryMeElse(0x2000);
-        Assert.Equal(0x2000L, engine.GetStack(b + Engine.CpBpOffset(0)).Data);
+        Assert.Equal(0x2000, (int)engine.GetStack(b + Engine.CpBpOffset(0)).Data);
     }
 
     [Fact]

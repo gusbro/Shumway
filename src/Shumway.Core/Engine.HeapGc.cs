@@ -20,125 +20,6 @@ public sealed partial class Engine
     private int[]? _gcForward;
     private int[]? _gcWork;
 
-    // Per-collection map: environment-frame base -> number of live Y
-    // slots to scan. Computed precisely from each frame's continuation
-    // (the saved return address), recovering the compiler's
-    // num_live_perms — see ComputeFrameLiveCounts / EnvFrameLiveCount.
-    private readonly System.Collections.Generic.Dictionary<int, int> _gcFrameLive = new();
-    private long[]? _gcStackSnap;   // diagnostic: pre-phase stack snapshot
-    private bool _gcDryRun;         // diagnostic: mark but don't relocate
-    private bool _gcPoison;         // diagnostic: poison freed region
-
-    /// <summary>ADR-016 (correct env liveness): for every reachable
-    /// environment frame, records the exact number of live Y slots,
-    /// recovered from the frame's continuation point. A frame reachable
-    /// both from the current continuation and from a choice point's
-    /// backtrack continuation is recorded with the MAX of the two counts,
-    /// so the scan covers what either resume path will read. This is
-    /// precise — the count is the compiler's <c>num_live_perms</c>, a
-    /// prefix ending exactly where any choice point was pushed — so the
-    /// Y-scan never overlaps a CP's or another frame's control words.</summary>
-    private void ComputeFrameLiveCounts()
-    {
-        _gcFrameLive.Clear();
-
-        void Chain(int e, int retAddr)
-        {
-            while (e >= 0 && e + EnvY1Offset <= _stackTop)
-            {
-                int cnt = EnvFrameLiveCount(retAddr, e);
-                int maxSlots = _stackTop - e - EnvY1Offset;
-                if (cnt > maxSlots) cnt = maxSlots;
-                if (cnt < 0) cnt = 0;
-                if (_gcFrameLive.TryGetValue(e, out int prev))
-                {
-                    if (cnt > prev) _gcFrameLive[e] = cnt;
-                    return;   // downstream chain already recorded
-                }
-                _gcFrameLive[e] = cnt;
-                retAddr = (int)_stack[e + EnvCpOffset].Data;   // parent's resume point
-                e = (int)_stack[e + EnvCeOffset].Data;
-            }
-        }
-
-        Chain(_e, _cp);
-        int b = _b;
-        while (b >= 0 && b < _stackTop)
-        {
-            int arity = (int)_stack[b + CpArityOffset].Data;
-            if (arity < 0 || arity > 4096 || b + CpSize(arity) > _stackTop) break;
-            Chain((int)_stack[b + CpCeOffset(arity)].Data, (int)_stack[b + CpCpOffset(arity)].Data);
-            int prevB = (int)_stack[b + CpBOffset(arity)].Data;
-            if (prevB == b) break;
-            b = prevB;
-        }
-        for (int i = 0; i < _catchFrames.Count; i++)
-        {
-            CatchFrame cf = _catchFrames[i];
-            Chain(cf.SnapE, -1);                 // sentinel -> stored-count fallback
-            Chain(cf.RecoveryE, cf.RecoveryCp);
-        }
-    }
-
-    /// <summary>The number of live Y slots in the frame whose continuation
-    /// is <paramref name="retAddr"/>. When the return address sits right
-    /// after a 9-byte <c>Call</c> / <c>CallBuiltin</c> (the only ops that
-    /// save a continuation), its <c>num_live_perms</c> operand is the
-    /// compiler's exact live count. Otherwise (a sentinel continuation —
-    /// the outermost query frame) fall back to the stored count.</summary>
-    // Diagnostic: find stack slots holding a heap-ref to a MARKED cell
-    // that the GC scan doesn't cover and that aren't control-word slots of
-    // any active CP/frame — i.e. missing roots.
-    private void ReportUncoveredLiveRefs(bool[] marked, int oldTop)
-    {
-        // Build the set of stack offsets the GC legitimately covers (frame
-        // live Y-slots) or that are control words to ignore.
-        var covered = new System.Collections.Generic.HashSet<int>();
-        var control = new System.Collections.Generic.HashSet<int>();
-        foreach (var (fb, cnt) in _gcFrameLive)
-        {
-            control.Add(fb + EnvCeOffset); control.Add(fb + EnvCpOffset); control.Add(fb + EnvNOffset);
-            for (int i = 0; i < cnt; i++) covered.Add(fb + EnvY1Offset + i);
-        }
-        int b = _b, g = 0;
-        while (b >= 0 && b < _stackTop && g++ < 100000)
-        {
-            int ar = (int)_stack[b + CpArityOffset].Data;
-            if (ar < 0 || ar > 4096 || b + CpSize(ar) > _stackTop) break;
-            for (int i = 0; i < ar; i++) covered.Add(b + CpArg1Offset + i);
-            control.Add(b + CpArityOffset); control.Add(b + CpCeOffset(ar)); control.Add(b + CpCpOffset(ar));
-            control.Add(b + CpBOffset(ar)); control.Add(b + CpBpOffset(ar)); control.Add(b + CpBindingTrailOffset(ar));
-            control.Add(b + CpExtraTrailOffset(ar)); control.Add(b + CpHeapTopOffset(ar)); control.Add(b + CpHbOffset(ar));
-            control.Add(b + CpViewGenOffset(ar)); control.Add(b + CpB0Offset(ar));
-            int pv = (int)_stack[b + CpBOffset(ar)].Data; if (pv == b) break; b = pv;
-        }
-        for (int i = 0; i < _stackTop; i++)
-        {
-            Cell c = _stack[i];
-            if (c.Tag is not (Tag.Ref or Tag.Str or Tag.Lis or Tag.AttVar)) continue;
-            int t = c.AsHeapIndex;
-            if ((uint)t >= (uint)oldTop || !marked[t]) continue;   // only refs to live cells
-            if (covered.Contains(i) || control.Contains(i)) continue;
-            System.Console.Error.WriteLine($"  UNCOVERED-LIVE-REF stack[{i}] {c.Tag}->{t}");
-        }
-    }
-
-    private int EnvFrameLiveCount(int retAddr, int e)
-    {
-        byte[]? prog = CurrentProgram;
-        if (prog is not null && retAddr >= 9 && retAddr <= ProgramLength)
-        {
-            byte op = prog[retAddr - 9];
-            if (op == (byte)Opcode.Call || op == (byte)Opcode.CallBuiltin)
-            {
-                int nlp = BytecodeIO.ReadInt32(prog, retAddr - 4);
-                if (nlp >= 0) return nlp;
-            }
-        }
-        int stored = (int)_stack[e + EnvNOffset].Data;
-        return stored < 0 ? 0 : stored;
-    }
-
     // Adaptive auto-collection threshold (cells). Starts at the config
     // value; after each collection it is raised to twice the surviving
     // live size so a genuinely large live set does not re-trigger every
@@ -181,7 +62,6 @@ public sealed partial class Engine
     // down by binary search over N. -1 disables.
     private int _gcOnlyAt = -1;
     private int _gcUpTo = -1;
-    private int _gcDumpAt = -1;
     private int _gcSafePointCount;
 
     /// <summary>Total safe points seen — diagnostic for GC bisection.</summary>
@@ -261,6 +141,16 @@ public sealed partial class Engine
         // Enqueue the cells a value cell references (without marking the
         // value cell itself — used both for heap cells during the trace
         // and for root cells that live off-heap in registers / Y slots).
+        // The whole stack is scanned conservatively (see MarkRoots), so a
+        // value cell can be a genuine live reference OR a stale leftover in
+        // a dead slot. Every payload is bounds-guarded, and a Str is only
+        // followed when its target really is a Functor cell — a stale Str
+        // pointing at a non-functor (or out of range) is left as a leaf
+        // rather than chasing garbage into FunctorTable. Control words are
+        // never seen here: they are Tag.RawInt, which falls through to the
+        // leaf default. The worst a stale-but-plausible ref can do is
+        // over-retain (keep a still-addressable cell alive) — never crash
+        // and never corrupt.
         void MarkReferents(Cell c)
         {
             switch (c.Tag)
@@ -272,15 +162,20 @@ public sealed partial class Engine
                 case Tag.Str:
                 {
                     int f = c.AsHeapIndex;
+                    if ((uint)f >= (uint)oldTop || _heap[f].Tag != Tag.Functor) break;
                     MarkCell(f);
                     var (_, arity) = FunctorTable.Lookup(_heap[f].AsFunctorId);
-                    for (int i = 1; i <= arity; i++) MarkCell(f + i);
+                    for (int i = 1; i <= arity && f + i < oldTop; i++) MarkCell(f + i);
                     break;
                 }
                 case Tag.Lis:
-                    MarkCell(c.AsHeapIndex);
-                    MarkCell(c.AsHeapIndex + 1);
+                {
+                    int h = c.AsHeapIndex;
+                    if ((uint)(h + 1) >= (uint)oldTop) break;
+                    MarkCell(h);
+                    MarkCell(h + 1);
                     break;
+                }
                 case Tag.Float:
                     MarkCell(c.FloatPairedIndex);
                     break;
@@ -290,22 +185,15 @@ public sealed partial class Engine
                     int bufCount = (c.AsPstrOffset + c.AsPstrLength
                                     + Cell.PstrCodeUnitsPerBuffer - 1)
                                    / Cell.PstrCodeUnitsPerBuffer;
+                    if ((uint)(bufStart + bufCount) >= (uint)oldTop) break;
                     for (int i = 0; i < bufCount; i++) MarkCell(bufStart + i);
                     MarkCell(bufStart + bufCount);   // logical tail cell
                     break;
                 }
-                // Atom, Int, Functor, BigInt, String, Foreign, PstrBuffer: leaves.
+                // Atom, Int, Functor, BigInt, String, Foreign, PstrBuffer,
+                // RawInt (control words): leaves.
             }
         }
-
-        // A frame's stored Y-count can be stale-large: after a trim or a
-        // backtrack reused the stack, a choice point or a nested frame may
-        // sit inside the range the count implies. Scanning that far would
-        // treat a CP's / frame's control words as Y cells and relocate
-        // them (corrupting saved Cp / prevB). Collect every live stack
-        // item base so each frame's Y-scan can be clamped to the next one
-        // above it.
-        ComputeFrameLiveCounts();
 
         MarkRoots(MarkReferents, MarkCell, oldTop);
         OnGcMark?.Invoke(MarkCell, MarkReferents);
@@ -313,13 +201,6 @@ public sealed partial class Engine
         // Trace to fixpoint.
         while (workTop > 0)
             MarkReferents(_heap[work[--workTop]]);
-
-        // Coverage check (diagnostic): a stack slot holding a heap-ref to
-        // a MARKED (live) cell that the GC's scan does NOT cover, and that
-        // is not a known control-word offset, is a missing root — its ref
-        // won't be relocated and will dangle once its cell moves.
-        if (_gcDumpAt == 0 || (_gcDumpAt > 0 && _gcSafePointCount == _gcDumpAt))
-            ReportUncoveredLiveRefs(marked, oldTop);
 
         // ---- Phase 2: forwarding addresses (order-preserving slide). ----
         // forward[i] = number of marked cells in [0, i). New address of a
@@ -337,70 +218,6 @@ public sealed partial class Engine
 
         if (live == oldTop) return 0;   // nothing to reclaim
 
-        // Diagnostic dry-run: mark + forward computed, but skip the actual
-        // move/relocate so the heap and roots are left untouched. If a
-        // workload still misbehaves with dry-run stress, the fault is not
-        // in relocation.
-        if (_gcDryRun) return 0;
-
-        // Bisection dump: SHUMWAY_GC_DUMP=N dumps collection N's heap +
-        // forwarding so a corrupting relocation can be eyeballed.
-        bool dump = _gcDumpAt == 0 || (_gcDumpAt > 0 && _gcSafePointCount == _gcDumpAt);
-        // Whole-stack before/after diff: snapshot every stack slot now, and
-        // after all phases report any that changed but is NOT a legitimate
-        // GC write target (a live frame Y-slot, a CP arg, or a CP HeapTop/
-        // Hb boundary). Such a change is an unmodelled corrupting write.
-        long[]? stackSnap = dump ? new long[_stackTop] : null;
-        if (stackSnap is not null)
-            for (int i = 0; i < _stackTop; i++) stackSnap[i] = _stack[i].Data;
-        if (dump)
-        {
-            System.Console.Error.WriteLine($"[gc] sp={_gcSafePointCount} oldTop={oldTop} live={live} stackTop={_stackTop} _e={_e} _b={_b}");
-            // A dangling ref (heap-ref to a DEAD cell) inside a scanned
-            // region — a frame's precise live Y-range or a CP's saved args
-            // — is a real missing root. Others are dead-stack noise.
-            static bool IsRef(Cell c) => c.Tag is Tag.Ref or Tag.Str or Tag.Lis or Tag.AttVar;
-            bool InCpArgs(int slot)
-            {
-                int b2 = _b, g2 = 0;
-                while (b2 >= 0 && b2 < _stackTop && g2++ < 100000)
-                {
-                    int ar = (int)_stack[b2 + CpArityOffset].Data;
-                    if (ar < 0 || ar > 4096 || b2 + CpSize(ar) > _stackTop) break;
-                    if (slot >= b2 + CpArg1Offset && slot < b2 + CpArg1Offset + ar) return true;
-                    int pv = (int)_stack[b2 + CpBOffset(ar)].Data; if (pv == b2) break; b2 = pv;
-                }
-                return false;
-            }
-            bool InFrame(int slot)
-            {
-                foreach (var (fb, cnt) in _gcFrameLive)
-                    if (slot >= fb + EnvY1Offset && slot < fb + EnvY1Offset + cnt) return true;
-                return false;
-            }
-            for (int i = 0; i < _stackTop; i++)
-            {
-                Cell c = _stack[i];
-                if (IsRef(c) && (uint)c.AsHeapIndex < (uint)oldTop && !marked[c.AsHeapIndex]
-                    && (InFrame(i) || InCpArgs(i)))
-                    System.Console.Error.WriteLine($"  MISSING-ROOT stack[{i}]->{c.AsHeapIndex} (DEAD)");
-            }
-            // CP-chain completeness: does the _b walk terminate cleanly
-            // (prevB == self or -1) or break on an insane arity (=> a
-            // corrupted prevB, so we miss CPs/frames below)?
-            int cb = _b, cg = 0;
-            while (cb >= 0 && cb < _stackTop && cg++ < 100000)
-            {
-                int ar = (int)_stack[cb + CpArityOffset].Data;
-                if (ar < 0 || ar > 4096 || cb + CpSize(ar) > _stackTop)
-                { System.Console.Error.WriteLine($"  CP-CHAIN-BREAK at b={cb} arity={ar}"); break; }
-                int pv = (int)_stack[cb + CpBOffset(ar)].Data;
-                if (pv == cb || pv < 0) break;       // clean terminator
-                cb = pv;
-            }
-        }
-        _gcStackSnap = stackSnap;
-
         // ---- Phase 3: rewrite payloads in place (still at old positions). ----
         for (int i = 0; i < oldTop; i++)
             if (marked[i])
@@ -413,145 +230,13 @@ public sealed partial class Engine
                 _heap[forward[i]] = _heap[i];
 
         // ---- Phase 5: relocate every external holder of a heap index. ----
-        // Bisection (step b): snapshot every frame's saved-Cp and every
-        // CP's saved-Cp before the stack relocation, so we can flag any
-        // that the relocation changes — a saved Cp is a code address the
-        // GC must never touch, so a change pinpoints the corrupting write.
-        System.Collections.Generic.List<(int Addr, long Val, string Kind)>? cpSnap = null;
-        if (dump)
-        {
-            cpSnap = new System.Collections.Generic.List<(int, long, string)>();
-            SnapshotSavedCps(cpSnap);
-        }
         RelocateRoots(forward, oldTop);
         OnGcRelocate?.Invoke(idx => RelocIndex(idx, forward), c => RelocateCell(c, forward));
-        if (cpSnap is not null)
-            foreach (var (addr, val, kind) in cpSnap)
-                if (_stack[addr].Data != val)
-                    System.Console.Error.WriteLine(
-                        $"  CP-CORRUPT {kind} stack[{addr}] {val} -> {_stack[addr].Data}");
 
         _heapTop = live;
         _hb = RelocBoundary(_hb, forward);
 
-        // Diagnostic: poison the freed region so that dereferencing a
-        // stale ref (a missing root pointing past the new top) crashes at
-        // the READ site, whose stack trace names the holder — instead of
-        // surfacing far away as reserved_invalid.
-        if (_gcPoison)
-            for (int i = live; i < oldTop; i++)
-                _heap[i] = Cell.Ref(1_000_000_000);
-
-        if (dump)
-        {
-            // Post-compaction: any stack slot still holding a heap-ref
-            // that points at or beyond the new heap top was NOT relocated
-            // (an unscanned holder). If the engine later reads it, that's
-            // the missing root.
-            string Classify(int slot)
-            {
-                // In a known frame? distinguish within-count vs beyond-count.
-                foreach (var (fb, cnt) in _gcFrameLive)
-                {
-                    int storedN = (int)_stack[fb + EnvNOffset].Data;
-                    if (slot >= fb + EnvY1Offset && slot < fb + EnvY1Offset + storedN)
-                        return slot < fb + EnvY1Offset + cnt
-                            ? $"FRAME e={fb} WITHIN-COUNT(scanned={cnt})"
-                            : $"FRAME e={fb} BEYOND-COUNT(scanned={cnt},storedN={storedN})";
-                }
-                // In an active CP frame region?
-                int b2 = _b, g2 = 0;
-                while (b2 >= 0 && b2 < _stackTop && g2++ < 100000)
-                {
-                    int ar = (int)_stack[b2 + CpArityOffset].Data;
-                    if (ar < 0 || ar > 4096 || b2 + CpSize(ar) > _stackTop) break;
-                    if (slot >= b2 && slot < b2 + CpSize(ar)) return $"CP b={b2} (off {slot - b2})";
-                    int pv = (int)_stack[b2 + CpBOffset(ar)].Data; if (pv == b2) break; b2 = pv;
-                }
-                return "ORPHAN";
-            }
-            for (int i = 0; i < _stackTop; i++)
-            {
-                Cell c = _stack[i];
-                if ((c.Tag is Tag.Ref or Tag.Str or Tag.Lis or Tag.AttVar)
-                    && c.AsHeapIndex >= live && c.AsHeapIndex < oldTop)
-                    System.Console.Error.WriteLine($"  STALE-AFTER stack[{i}]->{c.AsHeapIndex} {Classify(i)}");
-            }
-            // Heap integrity: every surviving cell's heap-ref must point
-            // inside the new live region. A dangling intra-heap pointer is
-            // a phase-3/4 relocation bug.
-            for (int i = 0; i < live; i++)
-            {
-                Cell c = _heap[i];
-                int idx = c.AsHeapIndex;
-                if ((c.Tag is Tag.Ref or Tag.Str or Tag.Lis or Tag.AttVar) && (uint)idx >= (uint)live)
-                    System.Console.Error.WriteLine($"  HEAP-BAD [{i}] {c.Tag}->{idx} (newTop {live})");
-                if (c.Tag is Tag.Float && (uint)c.FloatPairedIndex >= (uint)live)
-                    System.Console.Error.WriteLine($"  HEAP-BAD [{i}] Float paired->{c.FloatPairedIndex}");
-            }
-            // Whole-stack diff: any changed slot NOT a legitimate write
-            // target (frame Y / CP arg / CP boundary) is an unmodelled GC
-            // write — the corruption.
-            if (_gcStackSnap is { } snap)
-            {
-                bool InFrameY(int slot)
-                {
-                    foreach (var (fb, cnt) in _gcFrameLive)
-                        if (slot >= fb + EnvY1Offset && slot < fb + EnvY1Offset + cnt) return true;
-                    return false;
-                }
-                bool InCpWrite(int slot)
-                {
-                    int b2 = _b, g2 = 0;
-                    while (b2 >= 0 && b2 < _stackTop && g2++ < 100000)
-                    {
-                        int ar = (int)_stack[b2 + CpArityOffset].Data;
-                        if (ar < 0 || ar > 4096 || b2 + CpSize(ar) > _stackTop) break;
-                        if (slot >= b2 + CpArg1Offset && slot < b2 + CpArg1Offset + ar) return true;
-                        if (slot == b2 + CpHeapTopOffset(ar) || slot == b2 + CpHbOffset(ar)) return true;
-                        int pv = (int)_stack[b2 + CpBOffset(ar)].Data; if (pv == b2) break; b2 = pv;
-                    }
-                    return false;
-                }
-                for (int i = 0; i < snap.Length; i++)
-                    if (_stack[i].Data != snap[i] && !InFrameY(i) && !InCpWrite(i))
-                        System.Console.Error.WriteLine($"  UNMODELLED-WRITE stack[{i}] {snap[i]} -> {_stack[i].Data}");
-            }
-        }
-
         return oldTop - live;
-    }
-
-    // Bisection (step b): record the address + value of every saved-Cp
-    // slot (a frame's EnvCpOffset, a choice point's CpCpOffset). These are
-    // code addresses the collector must never write, so any post-relocate
-    // change is the corrupting write.
-    private void SnapshotSavedCps(System.Collections.Generic.List<(int, long, string)> snap)
-    {
-        var seen = new System.Collections.Generic.HashSet<int>();
-        void Frames(int e)
-        {
-            while (e >= 0 && e + EnvY1Offset <= _stackTop && seen.Add(e))
-            {
-                snap.Add((e + EnvCpOffset, _stack[e + EnvCpOffset].Data, $"frameCp e={e}"));
-                e = (int)_stack[e + EnvCeOffset].Data;
-            }
-        }
-        Frames(_e);
-        int b = _b;
-        while (b >= 0 && b < _stackTop)
-        {
-            int ar = (int)_stack[b + CpArityOffset].Data;
-            if (ar < 0 || ar > 4096 || b + CpSize(ar) > _stackTop) break;
-            snap.Add((b + CpArityOffset, _stack[b + CpArityOffset].Data, $"cpArity b={b}"));
-            snap.Add((b + CpCpOffset(ar), _stack[b + CpCpOffset(ar)].Data, $"cpCp b={b}"));
-            snap.Add((b + CpBOffset(ar), _stack[b + CpBOffset(ar)].Data, $"cpPrevB b={b}"));
-            snap.Add((b + CpCeOffset(ar), _stack[b + CpCeOffset(ar)].Data, $"cpCE b={b}"));
-            Frames((int)_stack[b + CpCeOffset(ar)].Data);
-            int pv = (int)_stack[b + CpBOffset(ar)].Data;
-            if (pv == b) break;
-            b = pv;
-        }
     }
 
     /// <summary>Returns <paramref name="c"/> with its heap-index payload
@@ -600,40 +285,31 @@ public sealed partial class Engine
     private static int RelocBoundary(int p, int[] forward)
         => (uint)p < (uint)forward.Length ? forward[p] : p;
 
-    /// <summary>Marks the cells reachable from every root: X registers
-    /// (conservative — every slot is a valid Cell), the live permanents
-    /// of every environment frame, every choice point's saved arguments,
-    /// both trails, and the catch-frame heap slots.</summary>
+    /// <summary>Marks the cells reachable from every root. The X register
+    /// bank and the entire control stack are scanned <i>conservatively</i>:
+    /// every slot in [0, _stackTop) is fed to <see cref="MarkReferents"/>.
+    /// This is both safe and complete because control words (CE, CP, B, BP,
+    /// arity, trail tops, HeapTop, Hb, ViewGen, B0, perm-count) are stored
+    /// as <see cref="Tag.RawInt"/> cells — never <see cref="Tag.Ref"/> — so
+    /// MarkReferents treats them as leaves, while every genuine heap
+    /// reference (in a register, a frame Y-slot, or a CP saved argument) is
+    /// a real tagged cell that gets marked regardless of which frame owns
+    /// it. A stale reference in a dead slot can only over-retain a still-
+    /// valid cell, never corrupt — and never crashes, thanks to the
+    /// bounds + Str-functor guards in MarkReferents. This avoids the
+    /// fragile precise frame-liveness walk, which under-counted roots in
+    /// the tabling fixpoint's reused stack. Trails and catch frames carry
+    /// bare heap indices, so they are marked explicitly.</summary>
     private void MarkRoots(System.Action<Cell> markReferents, System.Action<int> markCell, int oldTop)
     {
-        // X registers — conservative: scan the whole bank. A stale slot
-        // can only over-retain (keep a still-valid cell alive), never
-        // corrupt, because every register holds a tagged Cell.
+        // X registers — conservative: scan the whole bank.
         for (int i = 0; i < _registers.Length; i++)
             markReferents(_registers[i]);
 
-        // Environment frames: scan each frame's precise live Y-slot count
-        // (ComputeFrameLiveCounts, called before MarkRoots).
-        foreach (var (frameBase, liveCount) in _gcFrameLive)
-            for (int i = 0; i < liveCount; i++)
-                markReferents(_stack[frameBase + EnvY1Offset + i]);
-
-        // Choice points: walk the _b chain. Saved argument slots are
-        // roots; the saved HeapTop / Hb are boundaries (relocated later,
-        // not roots). Env frames are handled above.
-        int b = _b;
-        while (b >= 0 && b < _stackTop)
-        {
-            int arity = (int)_stack[b + CpArityOffset].Data;
-            // A base whose arity isn't a sane frame size is not a real CP
-            // — the chain walked off into a frame / reclaimed slot. Stop.
-            if (arity < 0 || arity > 4096 || b + CpSize(arity) > _stackTop) break;
-            for (int i = 0; i < arity; i++)
-                markReferents(_stack[b + CpArg1Offset + i]);
-            int prevB = (int)_stack[b + CpBOffset(arity)].Data;
-            if (prevB == b) break;
-            b = prevB;
-        }
+        // Entire control stack — conservative. Control words are RawInt
+        // (leaves); every real ref is marked no matter which frame it is in.
+        for (int i = 0; i < _stackTop; i++)
+            markReferents(_stack[i]);
 
         // Binding trail: each entry is the heap address of a bound
         // variable that a backtrack will reset, so the cell must stay
@@ -667,32 +343,40 @@ public sealed partial class Engine
         }
     }
 
+    /// <summary>Rewrites every external holder of a heap index through the
+    /// forwarding map. The register bank and the whole control stack are
+    /// relocated conservatively (matching <see cref="MarkRoots"/>):
+    /// <see cref="RelocateCell"/> rewrites genuine reference cells and
+    /// returns control words (<see cref="Tag.RawInt"/>) and other leaves
+    /// unchanged. The one exception is each choice point's saved HeapTop /
+    /// Hb, which are RawInt-tagged heap-top <i>boundaries</i> (not cell
+    /// references) that must be mapped through <see cref="RelocBoundary"/>;
+    /// the CP chain is walked separately to fix exactly those two slots per
+    /// frame. Trails and catch frames hold bare indices, relocated
+    /// explicitly.</summary>
     private void RelocateRoots(int[] forward, int oldTop)
     {
         for (int i = 0; i < _registers.Length; i++)
             _registers[i] = RelocateCell(_registers[i], forward);
 
-        // Environment frames: precise live Y-slot counts (computed at the
-        // start of the collection, before any relocation).
-        foreach (var (frameBase, liveCount) in _gcFrameLive)
-            for (int i = 0; i < liveCount; i++)
-            {
-                int slot = frameBase + EnvY1Offset + i;
-                _stack[slot] = RelocateCell(_stack[slot], forward);
-            }
+        // Whole control stack — conservative. RawInt control words pass
+        // through RelocateCell's leaf default untouched; every real
+        // reference cell (frame Y / CP arg) is relocated in place.
+        for (int i = 0; i < _stackTop; i++)
+            _stack[i] = RelocateCell(_stack[i], forward);
 
+        // CP chain: the only stack slots needing boundary (not cell)
+        // relocation are each frame's saved HeapTop / Hb. Re-write them as
+        // RawInt so they retain the control-word tag.
         int b = _b;
         while (b >= 0 && b < _stackTop)
         {
             int arity = (int)_stack[b + CpArityOffset].Data;
             if (arity < 0 || arity > 4096 || b + CpSize(arity) > _stackTop) break;
-            for (int i = 0; i < arity; i++)
-                _stack[b + CpArg1Offset + i] = RelocateCell(_stack[b + CpArg1Offset + i], forward);
-            // Saved HeapTop / Hb are boundaries.
             int htOff = b + CpHeapTopOffset(arity);
-            _stack[htOff] = new Cell(RelocBoundary((int)_stack[htOff].Data, forward));
+            _stack[htOff] = Cell.RawInt(RelocBoundary((int)_stack[htOff].Data, forward));
             int hbOff = b + CpHbOffset(arity);
-            _stack[hbOff] = new Cell(RelocBoundary((int)_stack[hbOff].Data, forward));
+            _stack[hbOff] = Cell.RawInt(RelocBoundary((int)_stack[hbOff].Data, forward));
             int prevB = (int)_stack[b + CpBOffset(arity)].Data;
             if (prevB == b) break;
             b = prevB;

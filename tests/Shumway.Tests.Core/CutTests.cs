@@ -245,7 +245,9 @@ public class CutTests
 
         engine.GetLevel(0);
 
-        Assert.Equal(-1L, engine.GetY(0).Data);
+        // The captured barrier is a RawInt control word (ADR-016).
+        Assert.Equal(Tag.RawInt, engine.GetY(0).Tag);
+        Assert.Equal(-1, (int)engine.GetY(0).Data);
     }
 
     [Fact]

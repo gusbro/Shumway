@@ -127,6 +127,12 @@ public sealed partial class Engine
         _bindingTrail = new int[config.InitialBindingTrailSize];
         _extraTrail = new ExtraTrailEntry[config.InitialExtraTrailSize];
         _gcThreshold = config.GcThreshold;
+        // Diagnostic override of the auto-collection watermark (ADR-016):
+        // SHUMWAY_GC_THRESHOLD=0 disables auto-GC, =N sets the cell
+        // watermark. Lets a measurement compare GC-on vs GC-off in one
+        // build without recompiling.
+        if (int.TryParse(System.Environment.GetEnvironmentVariable("SHUMWAY_GC_THRESHOLD"), out int gcThr))
+            _gcThreshold = gcThr;
         // Opt-in fuzz mode: collect at every safe point so the test suite
         // exercises GC relocation against every query shape (ADR-016).
         _gcStressMode = System.Environment.GetEnvironmentVariable("SHUMWAY_GC_STRESS") == "1";
@@ -134,10 +140,6 @@ public sealed partial class Engine
             _gcOnlyAt = gcAt;
         if (int.TryParse(System.Environment.GetEnvironmentVariable("SHUMWAY_GC_UPTO"), out int gcUpTo))
             _gcUpTo = gcUpTo;
-        if (int.TryParse(System.Environment.GetEnvironmentVariable("SHUMWAY_GC_DUMP"), out int gcDump))
-            _gcDumpAt = gcDump;
-        _gcDryRun = System.Environment.GetEnvironmentVariable("SHUMWAY_GC_DRYRUN") == "1";
-        _gcPoison = System.Environment.GetEnvironmentVariable("SHUMWAY_GC_POISON") == "1";
     }
 
     private static void Validate(EngineConfig c)
@@ -267,7 +269,7 @@ public sealed partial class Engine
         // to numLivePerms in that case would let the collector reclaim
         // heap a later backtrack still needs.
         if (!clamped)
-            _stack[_e + EnvNOffset] = new Cell(numLivePerms);
+            _stack[_e + EnvNOffset] = Cell.RawInt(numLivePerms);
     }
 
     // ----- catch/3 frame stack -----
@@ -390,11 +392,12 @@ public sealed partial class Engine
         if (TraceCpStack)
             System.Console.Error.WriteLine($"[cp-stack] alloc(n={numPermanents}) _b={_b} _e={_e} _stackTop={_stackTop} -> newE={_stackTop}");
         int newE = _stackTop;
-        _stack[newE + EnvCeOffset] = new Cell(_e);
-        _stack[newE + EnvCpOffset] = new Cell(_cp);
-        // ADR-016: record the permanent count so the heap GC can scan
-        // this frame's Y slots as roots. TrimEnv lowers it per-call.
-        _stack[newE + EnvNOffset] = new Cell(numPermanents);
+        // CE / CP / N are control words: tag them RawInt (ADR-016) so the
+        // heap GC never mistakes one for a heap Ref. N is the per-frame
+        // live-permanent count the GC reads (via (int)Data) to scan Y-slots.
+        _stack[newE + EnvCeOffset] = Cell.RawInt(_e);
+        _stack[newE + EnvCpOffset] = Cell.RawInt(_cp);
+        _stack[newE + EnvNOffset] = Cell.RawInt(numPermanents);
         // Y slots are initialised as REFs to fresh heap-unbound variables. Earlier drafts
         // used a stack-self-pointing REF as an "uninitialised marker", but that complicates
         // unify (the REF target would be a stack address rather than a heap index). Going
@@ -497,20 +500,23 @@ public sealed partial class Engine
         if (TraceCpStack)
             System.Console.Error.WriteLine($"[cp-stack] push  _b={_b} _e={_e} _stackTop={_stackTop} bp=0x{nextClauseAddr:X} arity={arity} -> newB={_stackTop}");
         int newB = _stackTop;
-        _stack[newB + CpArityOffset] = new Cell(arity);
+        // Control words are tagged RawInt (ADR-016) so the heap GC never
+        // mistakes a small control value for a heap Ref; only the saved
+        // A-register args below are genuine cells the collector relocates.
+        _stack[newB + CpArityOffset] = Cell.RawInt(arity);
         for (int i = 0; i < arity; i++)
             _stack[newB + CpArg1Offset + i] = _registers[i];
 
-        _stack[newB + CpCeOffset(arity)] = new Cell(_e);
-        _stack[newB + CpCpOffset(arity)] = new Cell(_cp);
-        _stack[newB + CpBOffset(arity)] = new Cell(_b);
-        _stack[newB + CpBpOffset(arity)] = new Cell(nextClauseAddr);
-        _stack[newB + CpBindingTrailOffset(arity)] = new Cell(_bindingTrailTop);
-        _stack[newB + CpExtraTrailOffset(arity)] = new Cell(_extraTrailTop);
-        _stack[newB + CpHeapTopOffset(arity)] = new Cell(_heapTop);
-        _stack[newB + CpHbOffset(arity)] = new Cell(_hb);
-        _stack[newB + CpViewGenOffset(arity)] = new Cell(CurrentViewGen);
-        _stack[newB + CpB0Offset(arity)] = new Cell(_b0);
+        _stack[newB + CpCeOffset(arity)] = Cell.RawInt(_e);
+        _stack[newB + CpCpOffset(arity)] = Cell.RawInt(_cp);
+        _stack[newB + CpBOffset(arity)] = Cell.RawInt(_b);
+        _stack[newB + CpBpOffset(arity)] = Cell.RawInt(nextClauseAddr);
+        _stack[newB + CpBindingTrailOffset(arity)] = Cell.RawInt(_bindingTrailTop);
+        _stack[newB + CpExtraTrailOffset(arity)] = Cell.RawInt(_extraTrailTop);
+        _stack[newB + CpHeapTopOffset(arity)] = Cell.RawInt(_heapTop);
+        _stack[newB + CpHbOffset(arity)] = Cell.RawInt(_hb);
+        _stack[newB + CpViewGenOffset(arity)] = Cell.RawInt(CurrentViewGen);
+        _stack[newB + CpB0Offset(arity)] = Cell.RawInt(_b0);
 
         _stackTop = newB + size;
         _b = newB;
@@ -530,7 +536,7 @@ public sealed partial class Engine
             throw new InvalidOperationException("RetryMeElse called without an active choice point.");
         int arity = RestoreCommonFromCurrentCp();
         _hb = _heapTop;
-        _stack[_b + CpBpOffset(arity)] = new Cell(nextClauseAddr);
+        _stack[_b + CpBpOffset(arity)] = Cell.RawInt(nextClauseAddr);
     }
 
     /// <summary>
@@ -568,7 +574,8 @@ public sealed partial class Engine
         UnwindTrails(bindingTarget, extraTarget);
 
         _heapTop = (int)_stack[_b + CpHeapTopOffset(arity)].Data;
-        CurrentViewGen = _stack[_b + CpViewGenOffset(arity)].Data;
+        // ViewGen is a 60-bit value; read via Payload to strip the RawInt tag.
+        CurrentViewGen = _stack[_b + CpViewGenOffset(arity)].Payload;
         // Restore the cut barrier in effect when this CP was pushed
         // (i.e. the enclosing predicate's entry barrier). Without this a
         // deep cut in a later clause, reached by backtracking, would
@@ -661,7 +668,12 @@ public sealed partial class Engine
     /// gives the compiler exactly the barrier ISO Prolog's <c>!</c> commits to:
     /// every choice point above the predicate's entry point, including the
     /// predicate's own <c>try_me_else</c> CP and any CPs pushed by sub-goals.</para></summary>
-    public void GetLevel(int slot) => SetY(slot, new Cell(_b0));
+    // The captured cut barrier is a choice-point stack index, not a heap
+    // reference — store it as a RawInt control word so the heap GC
+    // (ADR-016, conservative stack scan) never mistakes it for a Ref and
+    // relocates it. The Cut opcode reads it back with a tag-agnostic
+    // (int)Data cast.
+    public void GetLevel(int slot) => SetY(slot, Cell.RawInt(_b0));
 
     /// <summary>
     /// Cut back to <see cref="B0"/> — the value of <c>B</c> recorded at the most recent
@@ -1400,7 +1412,7 @@ public sealed partial class Engine
     /// — exposed so the choice-point save/restore stays inside
     /// <c>PushChoicePoint</c> / <c>RestoreCommonFromCurrentCp</c>.</summary>
     public long ViewGenOf(int cpBase, int arity) =>
-        _stack[cpBase + CpViewGenOffset(arity)].Data;
+        _stack[cpBase + CpViewGenOffset(arity)].Payload;   // strip RawInt tag
 
     // Phase 16 chunk 183: chunk-50 IlSubroutineRunner, chunk-66
     // BacktrackRunner and chunk-174 SetBacktrackFloor callbacks were

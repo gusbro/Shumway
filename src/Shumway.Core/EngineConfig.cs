@@ -31,11 +31,12 @@ public sealed class EngineConfig
     /// disables automatic collection (explicit <c>garbage_collect/0</c>
     /// still works).
     ///
-    /// <para>Default is currently <c>0</c> (off). The collector and the
-    /// safe-point wiring are correct for plain execution, but the
-    /// SHUMWAY_GC_STRESS fuzz surfaced a missing root in the tabling /
-    /// meta-call machinery (a goal aliased to a <c>-/2</c> answer-table
-    /// pair). Auto-collection stays off until that root is found; the
-    /// stress harness is the reproducer.</para></summary>
-    public int GcThreshold { get; init; }   // 0 = disabled (see remarks)
+    /// <para>Default <c>1&lt;&lt;18</c> (256 K cells ≈ 2 MB). Auto-collection
+    /// was held off through chunk 212 while the SHUMWAY_GC_STRESS fuzz
+    /// surfaced a missing root in the tabling / meta-call machinery; chunk
+    /// 213 traced it to control words (notably the <c>get_level</c> cut
+    /// barrier) stored as <c>Tag.Ref</c> and relocated by the conservative
+    /// stack scan, fixed it with <c>Tag.RawInt</c>-tagged control words,
+    /// and re-enabled auto-collection.</para></summary>
+    public int GcThreshold { get; init; } = 1 << 18;
 }

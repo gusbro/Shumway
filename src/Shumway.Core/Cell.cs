@@ -96,6 +96,15 @@ public readonly struct Cell : IEquatable<Cell>
     public static Cell AttVar(int homeHeapIdx)
         => new(((long)Tag.AttVar << TagShift) | (uint)homeHeapIdx);
 
+    /// <summary>A raw machine word (an environment / choice-point control
+    /// slot — see <see cref="Tag.RawInt"/>). The value occupies the 60-bit
+    /// payload; integer slots round-trip through a plain <c>(int)Data</c>
+    /// cast (including negatives such as the -1 sentinel), and 60-bit
+    /// slots through <see cref="Payload"/>. The distinct tag keeps the
+    /// heap GC from relocating a control value as a <see cref="Ref"/>.</summary>
+    public static Cell RawInt(long value)
+        => new(((long)Tag.RawInt << TagShift) | (value & PayloadMask));
+
     // ---------- Float (spans two cells) ----------
 
     /// <summary>

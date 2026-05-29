@@ -32,9 +32,10 @@ public class EnvFrameTests
 
         Assert.Equal(0, engine.E);                 // newE = previous stackTop = 0
         Assert.Equal(5, engine.StackTop);          // 3 control (CE,CP,N) + 2 Y slots
-        Assert.Equal(-1L, engine.GetStack(0).Data); // CE = previous _e
-        Assert.Equal(100L, engine.GetStack(1).Data); // CP = previous _cp
-        Assert.Equal(2L, engine.GetStack(2).Data);  // N = permanent count (ADR-016)
+        // Control slots are RawInt-tagged (ADR-016); read with (int)Data.
+        Assert.Equal(-1, (int)engine.GetStack(0).Data); // CE = previous _e
+        Assert.Equal(100, (int)engine.GetStack(1).Data); // CP = previous _cp
+        Assert.Equal(2, (int)engine.GetStack(2).Data);  // N = permanent count (ADR-016)
 
         // Y slots are REFs to fresh heap unbounds.
         AssertUnboundHeapRef(engine, engine.GetStack(3));
@@ -76,12 +77,12 @@ public class EnvFrameTests
         Assert.Equal(9, engine.StackTop);
 
         // Second frame's CE points at the first frame; CP is the most-recent _cp.
-        Assert.Equal((long)firstFrame, engine.GetStack(secondFrame + Engine.EnvCeOffset).Data);
-        Assert.Equal(8L, engine.GetStack(secondFrame + Engine.EnvCpOffset).Data);
+        Assert.Equal(firstFrame, (int)engine.GetStack(secondFrame + Engine.EnvCeOffset).Data);
+        Assert.Equal(8, (int)engine.GetStack(secondFrame + Engine.EnvCpOffset).Data);
 
         // First frame's contents are unchanged by the second Allocate.
-        Assert.Equal(-1L, engine.GetStack(firstFrame + Engine.EnvCeOffset).Data);
-        Assert.Equal(7L, engine.GetStack(firstFrame + Engine.EnvCpOffset).Data);
+        Assert.Equal(-1, (int)engine.GetStack(firstFrame + Engine.EnvCeOffset).Data);
+        Assert.Equal(7, (int)engine.GetStack(firstFrame + Engine.EnvCpOffset).Data);
     }
 
     [Fact]
@@ -116,7 +117,7 @@ public class EnvFrameTests
         engine.Allocate(2);                         // forces growth
 
         // First frame's saved CP should still be readable.
-        Assert.Equal(99L, engine.GetStack(0 + Engine.EnvCpOffset).Data);
+        Assert.Equal(99, (int)engine.GetStack(0 + Engine.EnvCpOffset).Data);
     }
 
     [Fact]
