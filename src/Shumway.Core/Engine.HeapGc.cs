@@ -27,6 +27,7 @@ public sealed partial class Engine
     private readonly System.Collections.Generic.Dictionary<int, int> _gcFrameLive = new();
     private long[]? _gcStackSnap;   // diagnostic: pre-phase stack snapshot
     private bool _gcDryRun;         // diagnostic: mark but don't relocate
+    private bool _gcPoison;         // diagnostic: poison freed region
 
     /// <summary>ADR-016 (correct env liveness): for every reachable
     /// environment frame, records the exact number of live Y slots,
@@ -432,6 +433,14 @@ public sealed partial class Engine
 
         _heapTop = live;
         _hb = RelocBoundary(_hb, forward);
+
+        // Diagnostic: poison the freed region so that dereferencing a
+        // stale ref (a missing root pointing past the new top) crashes at
+        // the READ site, whose stack trace names the holder — instead of
+        // surfacing far away as reserved_invalid.
+        if (_gcPoison)
+            for (int i = live; i < oldTop; i++)
+                _heap[i] = Cell.Ref(1_000_000_000);
 
         if (dump)
         {
