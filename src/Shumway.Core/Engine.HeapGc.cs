@@ -27,6 +27,23 @@ public sealed partial class Engine
     private int _gcThreshold;
     private bool _gcStressMode;
 
+    /// <summary>Mark-phase hook for roots the engine itself cannot see —
+    /// heap references held by higher layers (the embedding's
+    /// query-variable index table, the global-variable store, …). The
+    /// engine invokes it with two primitives: <c>markCell(int)</c> keeps
+    /// the cell at a heap index alive; <c>markReferents(Cell)</c> marks
+    /// what a value cell points at. Implementations must enumerate every
+    /// heap index / cell they hold so it is neither collected nor left
+    /// dangling after compaction.</summary>
+    public System.Action<System.Action<int>, System.Action<Cell>>? OnGcMark { get; set; }
+
+    /// <summary>Relocate-phase counterpart of <see cref="OnGcMark"/>,
+    /// invoked after compaction with <c>relocIndex(int)</c> (old heap
+    /// index → new) and <c>relocCell(Cell)</c> (rewrites a value cell's
+    /// heap-index payload). Implementations must write the relocated
+    /// indices / cells back into their own storage.</summary>
+    public System.Action<System.Func<int, int>, System.Func<Cell, Cell>>? OnGcRelocate { get; set; }
+
     /// <summary>When true, <see cref="MaybeCollectHeap"/> collects at
     /// every safe point — the ADR-016 fuzz mode used to validate
     /// relocation against every query shape in the test suite.</summary>
@@ -139,6 +156,7 @@ public sealed partial class Engine
         }
 
         MarkRoots(MarkReferents, MarkCell, oldTop);
+        OnGcMark?.Invoke(MarkCell, MarkReferents);
 
         // Trace to fixpoint.
         while (workTop > 0)
@@ -173,6 +191,7 @@ public sealed partial class Engine
 
         // ---- Phase 5: relocate every external holder of a heap index. ----
         RelocateRoots(forward, oldTop);
+        OnGcRelocate?.Invoke(idx => RelocIndex(idx, forward), c => RelocateCell(c, forward));
 
         _heapTop = live;
         _hb = forward[_hb];

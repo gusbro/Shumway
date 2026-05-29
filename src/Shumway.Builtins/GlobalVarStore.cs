@@ -39,4 +39,15 @@ public sealed class GlobalVarStore
 
     public IEnumerable<(string Name, Cell Value)> All() =>
         _byName.Select(p => (p.Key, p.Value));
+
+    /// <summary>ADR-016 — rewrites every stored cell through the heap
+    /// collector's relocation map. A no-op for value-bearing cells
+    /// (Int/Atom/Float/BigInt/Foreign carry no heap index); cells that
+    /// reference the heap (Str/Lis/Pstr) get their payload remapped so
+    /// they survive a mid-query compaction.</summary>
+    public void RelocateCells(System.Func<Cell, Cell> reloc)
+    {
+        foreach (var name in _byName.Keys.ToList())
+            _byName[name] = reloc(_byName[name]);
+    }
 }

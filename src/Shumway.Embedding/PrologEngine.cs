@@ -4689,6 +4689,26 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             engine.SetRegister(i, Cell.Ref(h));
         }
 
+        // ADR-016: register the heap roots the engine cannot see. The
+        // query-variable cells are read out of the heap by BuildSolution
+        // after the query, so a collection during the query must keep
+        // them alive (mark) and rewrite their recorded indices
+        // (relocate) — otherwise the extracted bindings are scrambled.
+        // The global-variable store's compound values are roots for the
+        // same reason within a query.
+        var globals = GlobalVars;
+        engine.OnGcMark = (markCell, markReferents) =>
+        {
+            for (int i = 0; i < varHeapIndices.Length; i++) markCell(varHeapIndices[i]);
+            foreach (var (_, cell) in globals.All()) markReferents(cell);
+        };
+        engine.OnGcRelocate = (relocIndex, relocCell) =>
+        {
+            for (int i = 0; i < varHeapIndices.Length; i++)
+                varHeapIndices[i] = relocIndex(varHeapIndices[i]);
+            globals.RelocateCells(relocCell);
+        };
+
         return (programView, varNames, varHeapIndices, engine, interp);
     }
 
