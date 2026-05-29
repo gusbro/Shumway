@@ -273,11 +273,42 @@ public sealed partial class Engine
             // target is DEAD is a holder the marker missed — the missing
             // root. Scan conservatively (every slot is a tagged Cell).
             static bool IsRef(Cell c) => c.Tag is Tag.Ref or Tag.Str or Tag.Lis or Tag.AttVar;
+            // Classify a dangling stack slot: is it inside a frame's
+            // scanned Y-range or a CP's saved args (=> a real missing
+            // root: the GC should have kept its target alive), or in an
+            // unscanned/dead region (=> harmless)?
+            string Container(int slot)
+            {
+                int b2 = _b, g2 = 0;
+                while (b2 >= 0 && b2 < _stackTop && g2++ < 100000)
+                {
+                    int ar = (int)_stack[b2 + CpArityOffset].Data;
+                    if (ar < 0 || ar > 4096 || b2 + CpSize(ar) > _stackTop) break;
+                    if (slot >= b2 + CpArg1Offset && slot < b2 + CpArg1Offset + ar) return $"CPARG b={b2}";
+                    int pv = (int)_stack[b2 + CpBOffset(ar)].Data; if (pv == b2) break; b2 = pv;
+                }
+                var sf = new System.Collections.Generic.HashSet<int>();
+                string FrChk(int e)
+                {
+                    while (e >= 0 && e + EnvY1Offset <= _stackTop && sf.Add(e))
+                    {
+                        if (slot >= e + EnvY1Offset && slot < FrameScanEnd(e)) return $"FRAME-Y e={e}";
+                        e = (int)_stack[e + EnvCeOffset].Data;
+                    }
+                    return null!;
+                }
+                string r = FrChk(_e); if (r != null) return r;
+                return "unscanned";
+            }
             for (int i = 0; i < _stackTop; i++)
             {
                 Cell c = _stack[i];
                 if (IsRef(c) && (uint)c.AsHeapIndex < (uint)oldTop && !marked[c.AsHeapIndex])
-                    System.Console.Error.WriteLine($"  DANGLING stack[{i}] {c.Tag}->{c.AsHeapIndex} (DEAD)");
+                {
+                    string cont = Container(i);
+                    if (cont != "unscanned")
+                        System.Console.Error.WriteLine($"  DANGLING stack[{i}]->{c.AsHeapIndex} in {cont} (MISSING ROOT)");
+                }
             }
             for (int i = 0; i < _registers.Length; i++)
             {
@@ -335,13 +366,60 @@ public sealed partial class Engine
                 _heap[forward[i]] = _heap[i];
 
         // ---- Phase 5: relocate every external holder of a heap index. ----
+        // Bisection (step b): snapshot every frame's saved-Cp and every
+        // CP's saved-Cp before the stack relocation, so we can flag any
+        // that the relocation changes — a saved Cp is a code address the
+        // GC must never touch, so a change pinpoints the corrupting write.
+        System.Collections.Generic.List<(int Addr, long Val, string Kind)>? cpSnap = null;
+        if (dump)
+        {
+            cpSnap = new System.Collections.Generic.List<(int, long, string)>();
+            SnapshotSavedCps(cpSnap);
+        }
         RelocateRoots(forward, oldTop);
         OnGcRelocate?.Invoke(idx => RelocIndex(idx, forward), c => RelocateCell(c, forward));
+        if (cpSnap is not null)
+            foreach (var (addr, val, kind) in cpSnap)
+                if (_stack[addr].Data != val)
+                    System.Console.Error.WriteLine(
+                        $"  CP-CORRUPT {kind} stack[{addr}] {val} -> {_stack[addr].Data}");
 
         _heapTop = live;
         _hb = RelocBoundary(_hb, forward);
 
         return oldTop - live;
+    }
+
+    // Bisection (step b): record the address + value of every saved-Cp
+    // slot (a frame's EnvCpOffset, a choice point's CpCpOffset). These are
+    // code addresses the collector must never write, so any post-relocate
+    // change is the corrupting write.
+    private void SnapshotSavedCps(System.Collections.Generic.List<(int, long, string)> snap)
+    {
+        var seen = new System.Collections.Generic.HashSet<int>();
+        void Frames(int e)
+        {
+            while (e >= 0 && e + EnvY1Offset <= _stackTop && seen.Add(e))
+            {
+                snap.Add((e + EnvCpOffset, _stack[e + EnvCpOffset].Data, $"frameCp e={e}"));
+                e = (int)_stack[e + EnvCeOffset].Data;
+            }
+        }
+        Frames(_e);
+        int b = _b;
+        while (b >= 0 && b < _stackTop)
+        {
+            int ar = (int)_stack[b + CpArityOffset].Data;
+            if (ar < 0 || ar > 4096 || b + CpSize(ar) > _stackTop) break;
+            snap.Add((b + CpArityOffset, _stack[b + CpArityOffset].Data, $"cpArity b={b}"));
+            snap.Add((b + CpCpOffset(ar), _stack[b + CpCpOffset(ar)].Data, $"cpCp b={b}"));
+            snap.Add((b + CpBOffset(ar), _stack[b + CpBOffset(ar)].Data, $"cpPrevB b={b}"));
+            snap.Add((b + CpCeOffset(ar), _stack[b + CpCeOffset(ar)].Data, $"cpCE b={b}"));
+            Frames((int)_stack[b + CpCeOffset(ar)].Data);
+            int pv = (int)_stack[b + CpBOffset(ar)].Data;
+            if (pv == b) break;
+            b = pv;
+        }
     }
 
     /// <summary>Returns <paramref name="c"/> with its heap-index payload
@@ -447,12 +525,17 @@ public sealed partial class Engine
             }
         }
 
-        // Catch frames: the catcher and recovery terms are heap roots.
+        // Catch frames: the catcher and recovery terms are heap roots, and
+        // the environment frames the catch would restore to / recover into
+        // (SnapE / RecoveryE) carry live permanents that must survive a
+        // caught throw, so their Y-slots are roots too.
         for (int i = 0; i < _catchFrames.Count; i++)
         {
             CatchFrame cf = _catchFrames[i];
             markCell(cf.CatcherHeapIdx);
             markCell(cf.RecoveryHeapIdx);
+            MarkEnvChain(cf.SnapE, seenFrames, markReferents);
+            MarkEnvChain(cf.RecoveryE, seenFrames, markReferents);
         }
     }
 
@@ -513,9 +596,11 @@ public sealed partial class Engine
             CatchFrame cf = _catchFrames[i];
             cf.CatcherHeapIdx = RelocIndex(cf.CatcherHeapIdx, forward);
             cf.RecoveryHeapIdx = RelocIndex(cf.RecoveryHeapIdx, forward);
-            cf.SnapHeapTop = forward[cf.SnapHeapTop];   // boundary, always <= oldTop
-            cf.SnapHb = forward[cf.SnapHb];
+            cf.SnapHeapTop = RelocBoundary(cf.SnapHeapTop, forward);
+            cf.SnapHb = RelocBoundary(cf.SnapHb, forward);
             _catchFrames[i] = cf;
+            RelocateEnvChain(cf.SnapE, seenFrames, forward);
+            RelocateEnvChain(cf.RecoveryE, seenFrames, forward);
         }
     }
 
