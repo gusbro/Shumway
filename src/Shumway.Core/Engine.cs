@@ -2740,7 +2740,45 @@ public sealed class Engine
     // ----- Capacity management -----
 
     private void EnsureHeapCapacity(int extra)
-        => GrowIfNeeded(ref _heap, _heapTop, extra, _config.MaxHeapSize, "heap");
+    {
+        if (Profiler.Enabled)
+        {
+            int before = _heap.Length;
+            GrowIfNeeded(ref _heap, _heapTop, extra, _config.MaxHeapSize, "heap");
+            if (_heap.Length != before)
+            {
+                var (cps, floor) = DiagnoseCpFloor();
+                System.Console.Error.WriteLine(
+                    $"[heapgrow] cap={_heap.Length:N0} heapTop={_heapTop:N0} "
+                    + $"cps={cps} bottomCpHeapTop={floor:N0} trappedAboveFloor={_heapTop - floor:N0}");
+            }
+            return;
+        }
+        GrowIfNeeded(ref _heap, _heapTop, extra, _config.MaxHeapSize, "heap");
+    }
+
+    /// <summary>Diagnostic — walks the choice-point chain and returns the
+    /// count of live CPs and the saved <c>HeapTop</c> of the oldest
+    /// (bottom-most) one. Backtracking can never reclaim heap below that
+    /// floor without failing the whole query, so a low, stable floor while
+    /// <see cref="HeapTop"/> balloons signals heap garbage pinned by a
+    /// long-lived choice point.</summary>
+    private (int Count, int BottomHeapTop) DiagnoseCpFloor()
+    {
+        int b = _b;
+        int count = 0;
+        int floor = _heapTop;
+        while (b >= 0)
+        {
+            int arity = (int)_stack[b + CpArityOffset].Data;
+            floor = (int)_stack[b + CpHeapTopOffset(arity)].Data;
+            count++;
+            int prevB = (int)_stack[b + CpBOffset(arity)].Data;
+            if (prevB == b) break;
+            b = prevB;
+        }
+        return (count, floor);
+    }
 
     private void EnsureStackCapacity(int extra)
         => GrowIfNeeded(ref _stack, _stackTop, extra, _config.MaxStackSize, "stack");
@@ -2766,6 +2804,7 @@ public sealed class Engine
         }
         if (newSize > int.MaxValue)
             throw new InvalidOperationException($"Engine {name} overflow: would exceed int.MaxValue.");
+        Profiler.Realloc(name, (long)newSize * System.Runtime.CompilerServices.Unsafe.SizeOf<T>());
         Array.Resize(ref buffer, (int)newSize);
     }
 

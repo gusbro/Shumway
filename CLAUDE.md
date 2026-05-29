@@ -776,6 +776,7 @@ When proposing changes:
 | BigInt literal opcodes | ADR-013 |
 | IL choice points (multi-clause ABI) | ADR-014 |
 | Persistent code space & live dynamic dispatch | ADR-015 |
+| Heap garbage collection (proposed) | ADR-016 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | Builtins catalog | docs/design/builtins-catalog.md |

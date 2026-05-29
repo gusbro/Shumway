@@ -53,8 +53,14 @@ internal static class Program
         if (!string.IsNullOrWhiteSpace(startupGoal))
         {
             Shumway.Core.Profiler.Reset();
+            long allocBefore = Shumway.Core.Profiler.Enabled ? GC.GetTotalAllocatedBytes() : 0;
             try { RunQuery(engine, startupGoal.Trim()); }
             catch (Exception ex) { Console.WriteLine($"% {ex.GetType().Name}: {ex.Message}"); }
+            if (Shumway.Core.Profiler.Enabled)
+            {
+                long allocAfter = GC.GetTotalAllocatedBytes();
+                Console.Error.WriteLine($"[mem] total allocated during query: {(allocAfter - allocBefore) / (1024.0 * 1024):N1} MB");
+            }
             Shumway.Core.Profiler.StopRun();
             MaybeDumpIlStats(engine);
             MaybeDumpProfile(engine);

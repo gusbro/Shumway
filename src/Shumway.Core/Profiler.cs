@@ -63,6 +63,7 @@ public static class Profiler
     public static void Reset()
     {
         _opcodeCounts.Clear();
+        _reallocs.Clear();
         _callsByAddress.Clear();
         _builtinCounts.Clear();
         _builtinTicks.Clear();
@@ -127,6 +128,18 @@ public static class Profiler
         long bytes = GC.GetAllocatedBytesForCurrentThread() - allocStart;
         _builtinBytes.TryGetValue(id, out long b);
         _builtinBytes[id] = b + bytes;
+    }
+
+    private static readonly Dictionary<string, (long Bytes, long Count)> _reallocs = new();
+
+    /// <summary>Records one buffer reallocation (heap/stack/trail) of
+    /// <paramref name="bytes"/> bytes — diagnoses how much per-query
+    /// .NET allocation is array doubling vs genuine churn.</summary>
+    [Conditional("SHUMWAY_PROFILE")]
+    public static void Realloc(string buffer, long bytes)
+    {
+        _reallocs.TryGetValue(buffer, out var v);
+        _reallocs[buffer] = (v.Bytes + bytes, v.Count + 1);
     }
 
     [Conditional("SHUMWAY_PROFILE")]
@@ -202,6 +215,14 @@ public static class Profiler
             _builtinCounts.TryGetValue(id, out long c);
             string name = builtinName?.Invoke(id) ?? $"#{id}";
             sb.AppendLine($"  {bytes / (1024.0 * 1024),9:N1} MB  {c,10:N0} calls  {name}");
+        }
+
+        if (_reallocs.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("-- buffer reallocations (cumulative bytes) --");
+            foreach (var (buf, v) in _reallocs)
+                sb.AppendLine($"  {v.Bytes / (1024.0 * 1024),9:N1} MB  {v.Count,5:N0} grows  {buf}");
         }
 
         if (_notes.Count > 0)
