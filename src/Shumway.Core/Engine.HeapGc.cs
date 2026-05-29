@@ -57,10 +57,34 @@ public sealed partial class Engine
     /// engine (registers / Y slots / choice points / trails); Tier-1 IL
     /// keeps the same WAM state in the engine arrays (its CLR locals are
     /// intra-instruction temporaries holding nothing across these points).</summary>
+    // Bisection: when SHUMWAY_GC_AT=N is set, collect at exactly the Nth
+    // safe point (single shot) so a corrupting collection can be pinned
+    // down by binary search over N. -1 disables.
+    private int _gcOnlyAt = -1;
+    private int _gcUpTo = -1;
+    private int _gcDumpAt = -1;
+    private int _gcSafePointCount;
+
+    /// <summary>Total safe points seen — diagnostic for GC bisection.</summary>
+    public int GcSafePointCount => _gcSafePointCount;
+
     public void MaybeCollectHeap()
     {
+        if (_gcOnlyAt >= 0)
+        {
+            _gcSafePointCount++;
+            if (_gcSafePointCount == _gcOnlyAt) CollectHeap();
+            return;
+        }
+        if (_gcUpTo >= 0)
+        {
+            _gcSafePointCount++;
+            if (_gcSafePointCount <= _gcUpTo) CollectHeap();
+            return;
+        }
         if (_gcStressMode)
         {
+            _gcSafePointCount++;
             CollectHeap();
             return;
         }
@@ -178,6 +202,30 @@ public sealed partial class Engine
 
         if (live == oldTop) return 0;   // nothing to reclaim
 
+        // Bisection dump: SHUMWAY_GC_DUMP=N dumps collection N's heap +
+        // forwarding so a corrupting relocation can be eyeballed.
+        bool dump = _gcDumpAt == 0 || (_gcDumpAt > 0 && _gcSafePointCount == _gcDumpAt);
+        if (dump)
+        {
+            System.Console.Error.WriteLine($"[gc] sp={_gcSafePointCount} oldTop={oldTop} live={live} stackTop={_stackTop} _e={_e} _b={_b}");
+            // Detector: any heap-ref in the stack or registers whose
+            // target is DEAD is a holder the marker missed — the missing
+            // root. Scan conservatively (every slot is a tagged Cell).
+            static bool IsRef(Cell c) => c.Tag is Tag.Ref or Tag.Str or Tag.Lis or Tag.AttVar;
+            for (int i = 0; i < _stackTop; i++)
+            {
+                Cell c = _stack[i];
+                if (IsRef(c) && (uint)c.AsHeapIndex < (uint)oldTop && !marked[c.AsHeapIndex])
+                    System.Console.Error.WriteLine($"  DANGLING stack[{i}] {c.Tag}->{c.AsHeapIndex} (DEAD)");
+            }
+            for (int i = 0; i < _registers.Length; i++)
+            {
+                Cell c = _registers[i];
+                if (IsRef(c) && (uint)c.AsHeapIndex < (uint)oldTop && !marked[c.AsHeapIndex])
+                    System.Console.Error.WriteLine($"  DANGLING reg[{i}] {c.Tag}->{c.AsHeapIndex} (DEAD)");
+            }
+        }
+
         // ---- Phase 3: rewrite payloads in place (still at old positions). ----
         for (int i = 0; i < oldTop; i++)
             if (marked[i])
@@ -194,7 +242,7 @@ public sealed partial class Engine
         OnGcRelocate?.Invoke(idx => RelocIndex(idx, forward), c => RelocateCell(c, forward));
 
         _heapTop = live;
-        _hb = forward[_hb];
+        _hb = RelocBoundary(_hb, forward);
 
         return oldTop - live;
     }
@@ -239,6 +287,12 @@ public sealed partial class Engine
     private static int RelocIndex(int idx, int[] forward)
         => (uint)idx < (uint)(forward.Length - 1) ? forward[idx] : idx;
 
+    // Relocate a heap-TOP boundary (valid range [0, oldTop], inclusive —
+    // forward[oldTop] is the new live count). A stale/garbage boundary
+    // outside that range is left untouched rather than crashing.
+    private static int RelocBoundary(int p, int[] forward)
+        => (uint)p < (uint)forward.Length ? forward[p] : p;
+
     /// <summary>Marks the cells reachable from every root: X registers
     /// (conservative — every slot is a valid Cell), the live permanents
     /// of every environment frame, every choice point's saved arguments,
@@ -261,7 +315,7 @@ public sealed partial class Engine
         // roots; the saved HeapTop / Hb are boundaries (relocated later,
         // not roots).
         int b = _b;
-        while (b >= 0)
+        while (b >= 0 && b < _stackTop)
         {
             int arity = (int)_stack[b + CpArityOffset].Data;
             for (int i = 0; i < arity; i++)
@@ -304,11 +358,13 @@ public sealed partial class Engine
     private void MarkEnvChain(int e, System.Collections.Generic.HashSet<int> seen,
         System.Action<Cell> markReferents)
     {
-        while (e >= 0 && seen.Add(e))
+        while (e >= 0 && e + EnvY1Offset <= _stackTop && seen.Add(e))
         {
             int n = (int)_stack[e + EnvNOffset].Data;
-            for (int i = 0; i < n; i++)
-                markReferents(_stack[e + EnvY1Offset + i]);
+            int end = e + EnvY1Offset + n;
+            if (end > _stackTop) end = _stackTop;          // never scan past the live stack
+            for (int slot = e + EnvY1Offset; slot < end; slot++)
+                markReferents(_stack[slot]);
             e = (int)_stack[e + EnvCeOffset].Data;
         }
     }
@@ -322,16 +378,16 @@ public sealed partial class Engine
         RelocateEnvChain(_e, seenFrames, forward);
 
         int b = _b;
-        while (b >= 0)
+        while (b >= 0 && b < _stackTop)
         {
             int arity = (int)_stack[b + CpArityOffset].Data;
             for (int i = 0; i < arity; i++)
                 _stack[b + CpArg1Offset + i] = RelocateCell(_stack[b + CpArg1Offset + i], forward);
             // Saved HeapTop / Hb are boundaries.
             int htOff = b + CpHeapTopOffset(arity);
-            _stack[htOff] = new Cell(forward[(int)_stack[htOff].Data]);
+            _stack[htOff] = new Cell(RelocBoundary((int)_stack[htOff].Data, forward));
             int hbOff = b + CpHbOffset(arity);
-            _stack[hbOff] = new Cell(forward[(int)_stack[hbOff].Data]);
+            _stack[hbOff] = new Cell(RelocBoundary((int)_stack[hbOff].Data, forward));
             RelocateEnvChain((int)_stack[b + CpCeOffset(arity)].Data, seenFrames, forward);
             int prevB = (int)_stack[b + CpBOffset(arity)].Data;
             if (prevB == b) break;
@@ -365,14 +421,13 @@ public sealed partial class Engine
 
     private void RelocateEnvChain(int e, System.Collections.Generic.HashSet<int> seen, int[] forward)
     {
-        while (e >= 0 && seen.Add(e))
+        while (e >= 0 && e + EnvY1Offset <= _stackTop && seen.Add(e))
         {
             int n = (int)_stack[e + EnvNOffset].Data;
-            for (int i = 0; i < n; i++)
-            {
-                int slot = e + EnvY1Offset + i;
+            int end = e + EnvY1Offset + n;
+            if (end > _stackTop) end = _stackTop;
+            for (int slot = e + EnvY1Offset; slot < end; slot++)
                 _stack[slot] = RelocateCell(_stack[slot], forward);
-            }
             e = (int)_stack[e + EnvCeOffset].Data;
         }
     }

@@ -130,6 +130,12 @@ public sealed partial class Engine
         // Opt-in fuzz mode: collect at every safe point so the test suite
         // exercises GC relocation against every query shape (ADR-016).
         _gcStressMode = System.Environment.GetEnvironmentVariable("SHUMWAY_GC_STRESS") == "1";
+        if (int.TryParse(System.Environment.GetEnvironmentVariable("SHUMWAY_GC_AT"), out int gcAt))
+            _gcOnlyAt = gcAt;
+        if (int.TryParse(System.Environment.GetEnvironmentVariable("SHUMWAY_GC_UPTO"), out int gcUpTo))
+            _gcUpTo = gcUpTo;
+        if (int.TryParse(System.Environment.GetEnvironmentVariable("SHUMWAY_GC_DUMP"), out int gcDump))
+            _gcDumpAt = gcDump;
     }
 
     private static void Validate(EngineConfig c)
@@ -242,20 +248,24 @@ public sealed partial class Engine
         // would corrupt the caller's frame.
         if (numLivePerms < 0) return;
         if (_e < 0) return;
-        // ADR-016: lower the recorded permanent count to the compiler's
-        // live-Y count so the heap GC scans only live permanents. The
-        // CP-protection clamp below may keep more physical slots, but
-        // those extra slots are logically dead (the compiler proved only
-        // numLivePerms live), so it is correct for the GC to ignore them.
-        _stack[_e + EnvNOffset] = new Cell(numLivePerms);
         int desired = _e + EnvSize(numLivePerms);
+        bool clamped = false;
         if (_b >= 0)
         {
             int cpArity = (int)_stack[_b + CpArityOffset].Data;
             int cpTop = _b + CpSize(cpArity);
-            if (cpTop > desired) desired = cpTop;
+            if (cpTop > desired) { desired = cpTop; clamped = true; }
         }
         if (_stackTop > desired) _stackTop = desired;
+        // ADR-016: only lower the recorded Y-slot count when the trim
+        // actually reclaimed slots. When the CP-protection clamp prevents
+        // the trim, the frame KEEPS all its slots — and they are live (an
+        // in-progress choice point can still backtrack into them), so the
+        // heap GC must continue to scan them as roots. Lowering the count
+        // to numLivePerms in that case would let the collector reclaim
+        // heap a later backtrack still needs.
+        if (!clamped)
+            _stack[_e + EnvNOffset] = new Cell(numLivePerms);
     }
 
     // ----- catch/3 frame stack -----
