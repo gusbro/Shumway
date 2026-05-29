@@ -26,6 +26,7 @@ public sealed partial class Engine
     // num_live_perms — see ComputeFrameLiveCounts / EnvFrameLiveCount.
     private readonly System.Collections.Generic.Dictionary<int, int> _gcFrameLive = new();
     private long[]? _gcStackSnap;   // diagnostic: pre-phase stack snapshot
+    private bool _gcDryRun;         // diagnostic: mark but don't relocate
 
     /// <summary>ADR-016 (correct env liveness): for every reachable
     /// environment frame, records the exact number of live Y slots,
@@ -291,6 +292,12 @@ public sealed partial class Engine
 
         if (live == oldTop) return 0;   // nothing to reclaim
 
+        // Diagnostic dry-run: mark + forward computed, but skip the actual
+        // move/relocate so the heap and roots are left untouched. If a
+        // workload still misbehaves with dry-run stress, the fault is not
+        // in relocation.
+        if (_gcDryRun) return 0;
+
         // Bisection dump: SHUMWAY_GC_DUMP=N dumps collection N's heap +
         // forwarding so a corrupting relocation can be eyeballed.
         bool dump = _gcDumpAt == 0 || (_gcDumpAt > 0 && _gcSafePointCount == _gcDumpAt);
@@ -388,12 +395,34 @@ public sealed partial class Engine
             // that points at or beyond the new heap top was NOT relocated
             // (an unscanned holder). If the engine later reads it, that's
             // the missing root.
+            string Classify(int slot)
+            {
+                // In a known frame? distinguish within-count vs beyond-count.
+                foreach (var (fb, cnt) in _gcFrameLive)
+                {
+                    int storedN = (int)_stack[fb + EnvNOffset].Data;
+                    if (slot >= fb + EnvY1Offset && slot < fb + EnvY1Offset + storedN)
+                        return slot < fb + EnvY1Offset + cnt
+                            ? $"FRAME e={fb} WITHIN-COUNT(scanned={cnt})"
+                            : $"FRAME e={fb} BEYOND-COUNT(scanned={cnt},storedN={storedN})";
+                }
+                // In an active CP frame region?
+                int b2 = _b, g2 = 0;
+                while (b2 >= 0 && b2 < _stackTop && g2++ < 100000)
+                {
+                    int ar = (int)_stack[b2 + CpArityOffset].Data;
+                    if (ar < 0 || ar > 4096 || b2 + CpSize(ar) > _stackTop) break;
+                    if (slot >= b2 && slot < b2 + CpSize(ar)) return $"CP b={b2} (off {slot - b2})";
+                    int pv = (int)_stack[b2 + CpBOffset(ar)].Data; if (pv == b2) break; b2 = pv;
+                }
+                return "ORPHAN";
+            }
             for (int i = 0; i < _stackTop; i++)
             {
                 Cell c = _stack[i];
                 if ((c.Tag is Tag.Ref or Tag.Str or Tag.Lis or Tag.AttVar)
                     && c.AsHeapIndex >= live && c.AsHeapIndex < oldTop)
-                    System.Console.Error.WriteLine($"  STALE-AFTER stack[{i}] {c.Tag}->{c.AsHeapIndex} (>= newTop {live})");
+                    System.Console.Error.WriteLine($"  STALE-AFTER stack[{i}]->{c.AsHeapIndex} {Classify(i)}");
             }
             // Heap integrity: every surviving cell's heap-ref must point
             // inside the new live region. A dangling intra-heap pointer is

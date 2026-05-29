@@ -136,6 +136,7 @@ public sealed partial class Engine
             _gcUpTo = gcUpTo;
         if (int.TryParse(System.Environment.GetEnvironmentVariable("SHUMWAY_GC_DUMP"), out int gcDump))
             _gcDumpAt = gcDump;
+        _gcDryRun = System.Environment.GetEnvironmentVariable("SHUMWAY_GC_DRYRUN") == "1";
     }
 
     private static void Validate(EngineConfig c)
