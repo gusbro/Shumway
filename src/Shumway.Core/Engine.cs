@@ -683,6 +683,15 @@ public sealed partial class Engine
     /// </summary>
     public void NeckCut() => Cut(_b0);
 
+    /// <summary>Cut to the barrier captured earlier by <see cref="GetLevel"/>
+    /// in <c>Y[slot]</c> — the WAM <c>cut</c> (deep cut) instruction. The
+    /// stored barrier is a <see cref="Tag.RawInt"/> control word; read it
+    /// back tag-agnostically with <c>(int)Data</c> (the cast ignores the
+    /// tag bits above bit 31). Mirrors the bytecode interpreter's
+    /// <c>cut</c> opcode so Tier-1 IL can emit deep cut as a single engine
+    /// call (chunk 215).</summary>
+    public void CutToLevel(int slot) => Cut((int)GetY(slot).Data);
+
     /// <summary>
     /// Single-pass interleaved trail compaction (Warren's algorithm extended to the extra
     /// trail). Both trails are walked in temporal order: for each surviving extra entry,

@@ -29,6 +29,17 @@ public sealed class IlPromotionStore
     private readonly Dictionary<int, int> _counters = new();
     private readonly Dictionary<int, PredicateDelegate> _delegates = new();
     private readonly HashSet<int> _unpromotable = new();
+    // Diagnostic: why each unpromotable predicate was rejected
+    // ("dynamic" / "size" / "cannot-compile" / "query"). Populated
+    // alongside _unpromotable; surfaced by UnpromotableEntries for the
+    // Tier-1 coverage analysis.
+    private readonly Dictionary<int, string> _unpromotableReason = new();
+
+    private void MarkUnpromotable(int functorId, string reason)
+    {
+        _unpromotable.Add(functorId);
+        _unpromotableReason[functorId] = reason;
+    }
 
     // Tier-1 is runtime code generation, so it is unavailable under
     // Native AOT. Under AOT the store stays a pure Tier-0 counter — it
@@ -137,13 +148,9 @@ public sealed class IlPromotionStore
         if (Threshold <= 0 || !DynamicCodeSupported) return null;
         if (_delegates.ContainsKey(functorId)) return _delegates[functorId];
         if (_unpromotable.Contains(functorId)) return null;
-        if (IsExcludedFromPromotion(functorId)
-            || IsExcludedByLayout(predicate)
-            || IsExcludedBySize(predicate))
-        {
-            _unpromotable.Add(functorId);
-            return null;
-        }
+        if (IsExcludedFromPromotion(functorId)) { MarkUnpromotable(functorId, "query"); return null; }
+        if (IsExcludedByLayout(predicate)) { MarkUnpromotable(functorId, "dynamic"); return null; }
+        if (IsExcludedBySize(predicate)) { MarkUnpromotable(functorId, "size"); return null; }
 
         _counters.TryGetValue(functorId, out int count);
         count++;
@@ -153,7 +160,7 @@ public sealed class IlPromotionStore
 
         if (!Compiler.CanCompile(predicate, calleeMap))
         {
-            _unpromotable.Add(functorId);
+            MarkUnpromotable(functorId, "cannot-compile:" + Compiler.DescribeRejection(predicate, calleeMap));
             return null;
         }
 
@@ -319,4 +326,19 @@ public sealed class IlPromotionStore
     /// and rejected by the IL compiler — no further compile attempts
     /// will fire for it.</summary>
     public bool IsUnpromotable(int functorId) => _unpromotable.Contains(functorId);
+
+    /// <summary>Diagnostic: every predicate rejected from IL promotion,
+    /// paired with the reason ("dynamic" / "size" / "cannot-compile" /
+    /// "query"). Used by the Tier-1 coverage analysis to see whether the
+    /// hot predicates are excluded for architectural reasons (dynamic) or
+    /// fixable ones (size limit, compiler subset gaps).</summary>
+    public IEnumerable<(int FunctorId, string Reason)> UnpromotableEntries()
+    {
+        foreach (var kv in _unpromotableReason)
+            yield return (kv.Key, kv.Value);
+    }
+
+    /// <summary>Diagnostic: functor ids that were promoted to an IL
+    /// delegate.</summary>
+    public IEnumerable<int> PromotedFunctorIds() => _delegates.Keys;
 }

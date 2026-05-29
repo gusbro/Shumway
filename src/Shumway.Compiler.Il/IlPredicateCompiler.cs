@@ -133,6 +133,16 @@ public sealed class IlPredicateCompiler
         typeof(Engine).GetMethod(nameof(Engine.Deallocate), Type.EmptyTypes)!;
     private static readonly MethodInfo EngineNeckCutMethod =
         typeof(Engine).GetMethod(nameof(Engine.NeckCut), Type.EmptyTypes)!;
+    // Chunk 215 — deep cut (get_level + cut). GetLevel stashes the
+    // procedure-entry barrier (_b0) into a Y slot; CutToLevel reads it
+    // back and commits. Both are plain engine calls — the CP / _b0
+    // infrastructure is identical to Tier-0 (B0 set at entry by the
+    // caller's Call/Execute, saved per-CP in CpB0Offset, IL clause CPs are
+    // real engine CPs that Cut removes).
+    private static readonly MethodInfo EngineGetLevelMethod =
+        typeof(Engine).GetMethod(nameof(Engine.GetLevel), new[] { typeof(int) })!;
+    private static readonly MethodInfo EngineCutToLevelMethod =
+        typeof(Engine).GetMethod(nameof(Engine.CutToLevel), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineSetPcMethod =
         typeof(Engine).GetMethod(
             nameof(Engine.SetPc),
@@ -261,6 +271,59 @@ public sealed class IlPredicateCompiler
         if (TryDescribeTryMeElseChain(predicate, calleeMap, out _)) return true;
         return TryDescribeSwitchedChain(predicate, calleeMap, out _);
     }
+
+    /// <summary>Diagnostic (Tier-1 coverage analysis): when a predicate is
+    /// not IL-compilable, returns a short reason — the distinct body
+    /// opcodes outside the IL subset (e.g. "get_level,cut" for a deep-cut
+    /// predicate), or "call->unresolved" when a Call's callee is missing
+    /// from the calleeMap, or "shape" when every opcode is supported but
+    /// the bytecode doesn't match one of the recognised clause layouts.
+    /// Returns null when the predicate <i>is</i> compilable.</summary>
+    public string DescribeRejection(CompiledPredicate predicate,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
+    {
+        ArgumentNullException.ThrowIfNull(predicate);
+        if (CanCompile(predicate, calleeMap)) return null!;
+        byte[] code = predicate.Bytecode;
+        var unsupported = new SortedSet<string>(StringComparer.Ordinal);
+        bool callUnresolved = false;
+        int pc = 0;
+        while (pc < code.Length)
+        {
+            var op = (Opcode)code[pc];
+            if (op == Opcode.Call)
+            {
+                int siteFid = FindCallSiteFunctorId(predicate.CallSites, pc);
+                if (calleeMap is null || siteFid < 0 || !calleeMap.ContainsKey(siteFid))
+                    callUnresolved = true;
+            }
+            else if (!IsSupportedOpcode(op) && !IsHeadMatchingOpcode(op)
+                     && !IsStructuralDispatchOpcode(op))
+            {
+                unsupported.Add(op.ToString());
+            }
+            pc += OpcodeTable.Get(op).Size;
+        }
+        if (unsupported.Count > 0) return string.Join(",", unsupported);
+        if (callUnresolved) return "call->unresolved";
+        return "shape";
+    }
+
+    /// <summary>Opcodes that form the clause-dispatch skeleton the shape
+    /// detectors consume (try/retry/trust chains, switch dispatch, the
+    /// dynamic-predicate prefix) plus the terminators handled inline by
+    /// the emit. Not "unsupported body opcodes" — excluded from the
+    /// <see cref="DescribeRejection"/> opcode report so the genuine
+    /// blockers stand out.</summary>
+    private static bool IsStructuralDispatchOpcode(Opcode op) => op switch
+    {
+        Opcode.TryMeElse or Opcode.RetryMeElse or Opcode.TrustMe => true,
+        Opcode.Try or Opcode.Retry or Opcode.Trust => true,
+        Opcode.SwitchOnTerm or Opcode.SwitchOnArg => true,
+        Opcode.Proceed or Opcode.Execute or Opcode.Call or Opcode.CallBuiltin => true,
+        Opcode.EnterDynamic or Opcode.CheckVisible => true,
+        _ => false,
+    };
 
     /// <summary>Emits a <see cref="PredicateDelegate"/> for the predicate.
     /// The caller is responsible for first checking
@@ -521,6 +584,11 @@ public sealed class IlPredicateCompiler
         Opcode.Allocate => true,
         Opcode.Deallocate => true,
         Opcode.NeckCut => true,
+        // Deep cut (chunk 215): get_level captures the entry barrier into
+        // a Y slot, cut commits to it. Emitted as engine.GetLevel /
+        // engine.CutToLevel.
+        Opcode.GetLevel => true,
+        Opcode.Cut => true,
         Opcode.Execute => true,
         // Compound argument structure (chunk 48).
         Opcode.GetStructure => true,
@@ -1242,6 +1310,26 @@ public sealed class IlPredicateCompiler
             {
                 emit.LoadArgument(0);
                 emit.Call(EngineNeckCutMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.GetLevel)
+            {
+                // Y[slot] := RawInt(_b0) — capture the entry cut barrier.
+                int slot = BytecodeIO.ReadInt32(code, pc + 1);
+                emit.LoadArgument(0);
+                emit.LoadConstant(slot);
+                emit.Call(EngineGetLevelMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.Cut)
+            {
+                // Deep cut: commit to the barrier stashed in Y[slot].
+                int slot = BytecodeIO.ReadInt32(code, pc + 1);
+                emit.LoadArgument(0);
+                emit.LoadConstant(slot);
+                emit.Call(EngineCutToLevelMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }

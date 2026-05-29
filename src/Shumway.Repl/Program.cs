@@ -122,6 +122,33 @@ internal static class Program
             + $"unpromotable={engine.IlPromotion.UnpromotableCount} "
             + $"tracked={engine.IlPromotion.TrackedCount} "
             + $"threshold={engine.IlPromotion.Threshold}");
+
+        static string NameOf(int fid)
+        {
+            var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(fid);
+            string n = Shumway.Core.AtomTable.GetById(atomId)?.Name ?? $"#{atomId}";
+            return $"{n}/{arity}";
+        }
+
+        // Unpromotable predicates grouped by reason, so the Tier-1
+        // coverage analysis can see what's architectural (dynamic) vs
+        // fixable (size / compiler-subset gaps).
+        var byReason = new Dictionary<string, List<string>>();
+        foreach (var (fid, reason) in engine.IlPromotion.UnpromotableEntries())
+            (byReason.TryGetValue(reason, out var l) ? l : (byReason[reason] = new List<string>()))
+                .Add(NameOf(fid));
+        foreach (var (reason, names) in byReason)
+        {
+            names.Sort(StringComparer.Ordinal);
+            Console.Error.WriteLine($"[il-unpromotable:{reason}] count={names.Count}");
+            foreach (var n in names) Console.Error.WriteLine($"    {n}");
+        }
+
+        var promoted = new List<string>();
+        foreach (int fid in engine.IlPromotion.PromotedFunctorIds()) promoted.Add(NameOf(fid));
+        promoted.Sort(StringComparer.Ordinal);
+        Console.Error.WriteLine($"[il-promoted] count={promoted.Count}");
+        foreach (var n in promoted) Console.Error.WriteLine($"    {n}");
     }
 
     private static void ConsultFile(PrologEngine engine, string path)

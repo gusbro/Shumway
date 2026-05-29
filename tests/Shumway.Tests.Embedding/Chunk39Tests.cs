@@ -175,21 +175,21 @@ public class Chunk39Tests
     [Fact]
     public void Engine_UnpromotablePredicate_StaysOnTier0Forever()
     {
-        // Chunk 66 made non-leaf callees IL-eligible via the meta-CP
-        // machinery, so the foo→mid→deep shape this test used to
-        // assert stayed on Tier 0 now promotes correctly. Switch to a
-        // shape the IL subset still doesn't cover: a deep cut in the
-        // body. Deep cut emits get_level + Cut, both outside
-        // IsSupportedOpcode. The promotion store sees the predicate
-        // once, marks unpromotable, and never retries.
+        // Chunk 66 made non-leaf callees IL-eligible, and chunk 215 made
+        // deep cut (get_level + Cut) IL-eligible too — both shapes this
+        // test previously relied on now promote. Use a shape that is
+        // *architecturally* excluded and always will be: a dynamic
+        // predicate. Its enter_dynamic dispatch relies on per-clause
+        // check_visible + in-place mutation (assertz/retract); a cached IL
+        // delegate could not observe a mid-life retract (chunk 159), so
+        // IsExcludedByLayout marks it unpromotable on first sighting and
+        // never retries.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
         engine.ConsultString(
+            ":- dynamic foo/1.\n" +
             ":- public foo/1.\n" +
-            ":- public a/0.\n" +
-            "a.\n" +
-            // ! at goal position 1 is a deep cut → get_level + Cut.
-            "foo(X) :- a, !, X = chosen.\n");
+            "foo(a).\n");
         for (int i = 0; i < 5; i++) engine.Query("foo(_).");
         int fid = FunctorId("foo", 1);
         Assert.True(engine.IlPromotion.IsUnpromotable(fid));
