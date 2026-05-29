@@ -85,6 +85,43 @@ public sealed partial class Engine
     /// save a continuation), its <c>num_live_perms</c> operand is the
     /// compiler's exact live count. Otherwise (a sentinel continuation —
     /// the outermost query frame) fall back to the stored count.</summary>
+    // Diagnostic: find stack slots holding a heap-ref to a MARKED cell
+    // that the GC scan doesn't cover and that aren't control-word slots of
+    // any active CP/frame — i.e. missing roots.
+    private void ReportUncoveredLiveRefs(bool[] marked, int oldTop)
+    {
+        // Build the set of stack offsets the GC legitimately covers (frame
+        // live Y-slots) or that are control words to ignore.
+        var covered = new System.Collections.Generic.HashSet<int>();
+        var control = new System.Collections.Generic.HashSet<int>();
+        foreach (var (fb, cnt) in _gcFrameLive)
+        {
+            control.Add(fb + EnvCeOffset); control.Add(fb + EnvCpOffset); control.Add(fb + EnvNOffset);
+            for (int i = 0; i < cnt; i++) covered.Add(fb + EnvY1Offset + i);
+        }
+        int b = _b, g = 0;
+        while (b >= 0 && b < _stackTop && g++ < 100000)
+        {
+            int ar = (int)_stack[b + CpArityOffset].Data;
+            if (ar < 0 || ar > 4096 || b + CpSize(ar) > _stackTop) break;
+            for (int i = 0; i < ar; i++) covered.Add(b + CpArg1Offset + i);
+            control.Add(b + CpArityOffset); control.Add(b + CpCeOffset(ar)); control.Add(b + CpCpOffset(ar));
+            control.Add(b + CpBOffset(ar)); control.Add(b + CpBpOffset(ar)); control.Add(b + CpBindingTrailOffset(ar));
+            control.Add(b + CpExtraTrailOffset(ar)); control.Add(b + CpHeapTopOffset(ar)); control.Add(b + CpHbOffset(ar));
+            control.Add(b + CpViewGenOffset(ar)); control.Add(b + CpB0Offset(ar));
+            int pv = (int)_stack[b + CpBOffset(ar)].Data; if (pv == b) break; b = pv;
+        }
+        for (int i = 0; i < _stackTop; i++)
+        {
+            Cell c = _stack[i];
+            if (c.Tag is not (Tag.Ref or Tag.Str or Tag.Lis or Tag.AttVar)) continue;
+            int t = c.AsHeapIndex;
+            if ((uint)t >= (uint)oldTop || !marked[t]) continue;   // only refs to live cells
+            if (covered.Contains(i) || control.Contains(i)) continue;
+            System.Console.Error.WriteLine($"  UNCOVERED-LIVE-REF stack[{i}] {c.Tag}->{t}");
+        }
+    }
+
     private int EnvFrameLiveCount(int retAddr, int e)
     {
         byte[]? prog = CurrentProgram;
@@ -275,6 +312,13 @@ public sealed partial class Engine
         // Trace to fixpoint.
         while (workTop > 0)
             MarkReferents(_heap[work[--workTop]]);
+
+        // Coverage check (diagnostic): a stack slot holding a heap-ref to
+        // a MARKED (live) cell that the GC's scan does NOT cover, and that
+        // is not a known control-word offset, is a missing root — its ref
+        // won't be relocated and will dangle once its cell moves.
+        if (_gcDumpAt == 0 || (_gcDumpAt > 0 && _gcSafePointCount == _gcDumpAt))
+            ReportUncoveredLiveRefs(marked, oldTop);
 
         // ---- Phase 2: forwarding addresses (order-preserving slide). ----
         // forward[i] = number of marked cells in [0, i). New address of a
