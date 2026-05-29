@@ -143,6 +143,10 @@ public sealed class IlPredicateCompiler
         typeof(Engine).GetMethod(nameof(Engine.GetLevel), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineCutToLevelMethod =
         typeof(Engine).GetMethod(nameof(Engine.CutToLevel), new[] { typeof(int) })!;
+    // Chunk 216 — indexed-dispatch entry resolver (mirrors the WAM switch
+    // cascade, returns the entry chain-node cursor).
+    private static readonly MethodInfo IlIndexedDispatchResolveMethod =
+        typeof(IlIndexedDispatch).GetMethod(nameof(IlIndexedDispatch.ResolveEntryByKey))!;
     private static readonly MethodInfo EngineSetPcMethod =
         typeof(Engine).GetMethod(
             nameof(Engine.SetPc),
@@ -266,11 +270,39 @@ public sealed class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
         ArgumentNullException.ThrowIfNull(predicate);
+        return CanCompileCore(predicate, calleeMap, allowIndexedDispatch: true);
+    }
+
+    /// <summary>Eligibility check with control over the chunk-216 indexed-
+    /// dispatch shape. The runtime promotion path allows it (fast O(1)
+    /// dispatch); the persisted-bundle path
+    /// (<see cref="PersistedIlBuilder.CanPersist"/>) passes
+    /// <paramref name="allowIndexedDispatch"/>=false because its IL bakes a
+    /// runtime model-holder key that a fresh process wouldn't have — those
+    /// predicates fall back to bytecode in the bundle. Both paths still
+    /// accept the older indexed-atom / try-me-else / switched-chain
+    /// shapes.</summary>
+    internal bool CanCompileCore(CompiledPredicate predicate,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, bool allowIndexedDispatch)
+    {
         if (predicate.ClauseCount == 1) return CanCompileSingleClause(predicate, calleeMap);
+        // Chunk 216 — full indexed dispatch (O(1) switch + bucket chains).
+        // Preferred over the linear IndexedAtom / SwitchedChain recognisers
+        // for any switch-led shape; those remain as fallbacks for shapes it
+        // doesn't model.
+        if (allowIndexedDispatch && TryDescribeIndexed(predicate, calleeMap, out _)) return true;
         if (TryDescribeIndexedAtomPredicate(predicate, calleeMap, out _)) return true;
         if (TryDescribeTryMeElseChain(predicate, calleeMap, out _)) return true;
         return TryDescribeSwitchedChain(predicate, calleeMap, out _);
     }
+
+    /// <summary>Wraps <see cref="IlIndexedDispatch.TryDescribe"/> with the
+    /// IL-subset body-opcode check.</summary>
+    private static bool TryDescribeIndexed(CompiledPredicate predicate,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
+        out IlIndexedDispatchInfo? info)
+        => IlIndexedDispatch.TryDescribe(predicate,
+            (op, pc) => IsClauseBodyOpcode(op, predicate, pc, calleeMap), out info);
 
     /// <summary>Diagnostic (Tier-1 coverage analysis): when a predicate is
     /// not IL-compilable, returns a short reason — the distinct body
@@ -340,6 +372,8 @@ public sealed class IlPredicateCompiler
                     $"Single-clause predicate (fid={predicate.FunctorId}) is outside the IL subset.");
             return CompileSingleClause(predicate, calleeMap);
         }
+        if (TryDescribeIndexed(predicate, calleeMap, out var indexed))
+            return CompileIndexedDispatch(predicate, indexed!, calleeMap);
         if (TryDescribeIndexedAtomPredicate(predicate, calleeMap, out var info))
             return CompileIndexedAtomPredicate(predicate, info!, calleeMap);
         if (TryDescribeTryMeElseChain(predicate, calleeMap, out var chain))
@@ -2093,6 +2127,123 @@ public sealed class IlPredicateCompiler
         CompiledPredicate predicate, TryMeElseChainInfo info,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
         => CompileTryMeElseChain(predicate, info, calleeMap);
+
+    /// <summary>Chunk 216 — emits IL for a fully indexed predicate,
+    /// reproducing the WAM switch dispatch (O(1) key lookup) and bucket
+    /// backtracking via the <see cref="IlIndexedDispatchInfo"/> chain-node
+    /// model, rather than the chunk-189 linear walk. Clause bodies are
+    /// emitted once; chain nodes set up the next-node choice point and
+    /// branch to their body; a runtime resolver picks the entry node from
+    /// the indexed argument.</summary>
+    private PredicateDelegate CompileIndexedDispatch(
+        CompiledPredicate predicate, IlIndexedDispatchInfo info,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
+    {
+        lock (IndexedDelegateHolder.RegistrationLock)
+        {
+            int holderKey = _nextHolderKey;
+            var emitSelf = SelfFromHolder(holderKey);
+            int modelKey = IlIndexedDispatch.RegisterModel(info);
+            var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
+                $"ShumwayIl_idx_{predicate.FunctorId}", doVerify: DoVerify || DebugMode);
+            EmitIndexedDispatchBody(emit, predicate, info, modelKey, calleeMap, emitSelf);
+            var del = emit.CreateDelegate(Optimizations);
+            IndexedDelegateHolder.Register(holderKey, del);
+            _nextHolderKey = holderKey + 1;
+            return del;
+        }
+    }
+
+    private static void EmitIndexedDispatchBody(
+        Sigil.Emit<PredicateDelegate> emit,
+        CompiledPredicate predicate,
+        IlIndexedDispatchInfo info,
+        int modelKey,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
+        SelfDelegateEmitter emitSelf)
+    {
+        int K = info.Nodes.Count;
+        int N = info.Clauses.Count;
+        int totalCallSites = CountNonTailCallOpcodes(predicate.Bytecode);
+        // Cursor layout: 0 = initial (resolve); 1..K = chain node
+        // (cursor = nodeIndex + 1); K+1.. = call-site forward resumes.
+        int callBase = K + 1;
+
+        var failLabel = emit.DefineLabel("idx_fail");
+        var nodeLabels = new Sigil.Label[K];
+        for (int n = 0; n < K; n++) nodeLabels[n] = emit.DefineLabel($"idx_node_{n}");
+        var bodyLabels = new Sigil.Label[N];
+        for (int i = 0; i < N; i++) bodyLabels[i] = emit.DefineLabel($"idx_body_{i}");
+        var resumeLabels = new Sigil.Label[totalCallSites];
+        for (int j = 0; j < totalCallSites; j++)
+            resumeLabels[j] = emit.DefineLabel($"idx_call_resume_{j + 1}");
+
+        _emitOwnerFid = predicate.FunctorId;
+
+        // ---- Top: dispatch on the incoming cursor (arg 1). ----
+        // Call-site resumes first (a backtrack into a body's post-Call point).
+        for (int j = 0; j < totalCallSites; j++)
+        {
+            emit.LoadArgument(1);
+            emit.LoadConstant(callBase + j);
+            emit.BranchIfEqual(resumeLabels[j]);
+        }
+        // Chain-node resumes (a backtrack into the next bucket node).
+        for (int n = 0; n < K; n++)
+        {
+            emit.LoadArgument(1);
+            emit.LoadConstant(n + 1);
+            emit.BranchIfEqual(nodeLabels[n]);
+        }
+        // cursor 0 — the initial call: resolve the entry node via the WAM
+        // switch cascade, then branch to it.
+        var entry = emit.DeclareLocal<int>("idx_entry");
+        emit.LoadArgument(0);
+        emit.LoadConstant(modelKey);
+        emit.Call(IlIndexedDispatchResolveMethod);
+        emit.StoreLocal(entry);
+        for (int n = 0; n < K; n++)
+        {
+            emit.LoadLocal(entry);
+            emit.LoadConstant(n);
+            emit.BranchIfEqual(nodeLabels[n]);
+        }
+        emit.Branch(failLabel);   // unreachable: resolver always returns a valid node
+
+        // ---- Chain nodes: push the next-node CP (if any), run the clause body. ----
+        for (int n = 0; n < K; n++)
+        {
+            emit.MarkLabel(nodeLabels[n]);
+            int next = info.Nodes[n].NextCursor;
+            if (next >= 0)
+            {
+                emit.LoadArgument(0);            // engine
+                emitSelf(emit);                  // → PredicateDelegate
+                emit.LoadConstant(next + 1);     // resume cursor of the next node
+                emit.LoadConstant(predicate.Arity);
+                emit.Call(EnginePushIlCpMethod);
+            }
+            emit.Branch(bodyLabels[info.Nodes[n].ClauseIndex]);
+        }
+
+        // ---- Clause bodies, emitted once and shared across nodes. ----
+        int siteCounter = 0;
+        for (int i = 0; i < N; i++)
+        {
+            emit.MarkLabel(bodyLabels[i]);
+            EmitClauseBody(emit, predicate.Bytecode, info.Clauses[i].Start, info.Clauses[i].End,
+                failLabel, predicate.CallSites,
+                callSiteIndexCounter: () => ++siteCounter,
+                resumeLabels: resumeLabels,
+                emitSelfDelegate: emitSelf,
+                calleeMap: calleeMap,
+                cursorBase: callBase);
+        }
+
+        emit.MarkLabel(failLabel);
+        emit.LoadConstant(false);
+        emit.Return();
+    }
 
     /// <summary>Emits the IL for a non-indexed multi-clause predicate
     /// (try_me_else chain). cursor 0 runs clause 1 with an IL CP push
