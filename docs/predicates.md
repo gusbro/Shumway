@@ -89,6 +89,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `call(:Goal, +Extra1, ..., +Extra6)` | Calls a goal extended with six extra arguments. |
 | `catch(:Goal, +Catcher, :Recovery)` | Runs Goal, running Recovery if a thrown exception unifies with Catcher. |
 | `fail` | Always fails. |
+| `garbage_collect` | Mark-compacts the heap, reclaiming cells unreachable from the live machine state (ADR-016). Always succeeds. |
 | `halt` | Halts the engine with exit code 0. |
 | `halt(+Status)` | Halts the engine with the given exit code. |
 | `ignore(:Goal)` | Runs Goal, succeeding whether or not Goal does. |

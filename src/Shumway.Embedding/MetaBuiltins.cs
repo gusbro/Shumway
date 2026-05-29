@@ -105,6 +105,13 @@ public static class MetaBuiltins
             + "for forward compatibility.");
         BuiltinsRegistry.Register("retract", 1, Retract,
             Database, "retract(+Clause)", "Removes the first clause that unifies with the argument.");
+        // ADR-016: reachability-based heap garbage collection. Runs as a
+        // goal (a safe point — all structures complete and rooted in
+        // registers / Y slots / choice points). Always succeeds.
+        BuiltinsRegistry.Register("garbage_collect", 0, GarbageCollect,
+            Control, "garbage_collect",
+            "Mark-compacts the heap, reclaiming cells unreachable from the live "
+            + "machine state (ADR-016). Always succeeds.");
 
         BuiltinsRegistry.Register("throw", 1, Throw,
             Control, "throw(+Exception)", "Throws an exception term, unwinding to the nearest catch/3.");
@@ -2239,6 +2246,15 @@ public static class MetaBuiltins
     /// <summary><c>repeat/0</c> — succeeds, and pushes a choice point that
     /// re-succeeds on every backtrack, re-arming itself each time. The
     /// classic non-terminating generator for failure-driven loops.</summary>
+    /// <summary><c>garbage_collect/0</c> (ADR-016) — mark-compacts the
+    /// heap. A no-op when attributed variables are in use (the collector
+    /// bails) or when there is nothing to reclaim.</summary>
+    public static bool GarbageCollect(Engine engine)
+    {
+        engine.CollectHeap();
+        return true;
+    }
+
     public static bool Repeat(Engine engine)
     {
         // call_builtin is 9 bytes; resume execution at the goal after it.

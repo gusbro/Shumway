@@ -16,7 +16,7 @@ namespace Shumway.Core;
 /// auxiliary-table value tags throw <see cref="NotImplementedException"/> from
 /// <see cref="Unify"/> for now; they land with the subsystems that produce them.
 /// </summary>
-public sealed class Engine
+public sealed partial class Engine
 {
     private readonly EngineConfig _config;
 
