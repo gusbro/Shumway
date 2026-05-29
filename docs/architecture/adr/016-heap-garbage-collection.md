@@ -153,6 +153,22 @@ the collector fixes up, to the new addresses:
   must not cache raw heap indices across a safe point in CLR locals
   without re-reading post-GC — to be audited as part of implementation.
 
+### IL audit result (chunk 212)
+
+Audited and **clear**: the Tier-1 IL compiler keeps all WAM state — X
+registers and Y slots — in the engine arrays via
+`engine.GetRegister`/`SetRegister`/`GetY`/`SetY`. Its CLR locals are
+intra-instruction temporaries that hold no heap index across an
+instruction boundary. Both IL Call and Execute return to the bytecode
+dispatch loop (Phase 16 threaded dispatch); IL tail-call chains loop in
+`DispatchToTier1OrBytecode`; non-tail returns come back through the
+resume-marker path. At every one of those points all live heap
+references are in the engine (registers / Y slots / CPs / trails), and
+values live across a Prolog call are in Y slots by WAM convention — so
+the GC root set is **identical for Tier-0 and Tier-1**, with no
+IL-specific scanning and no extra cost. The watermark check is therefore
+placed at those dispatch points and is correct for both tiers.
+
 ## Consequences
 
 ### Positive
@@ -200,6 +216,27 @@ the collector fixes up, to the new addresses:
    mark-compact preserves order and peak footprint; chosen for that.
 5. **Generational GC.** Deferred — a refinement on top of the basic
    collector once it exists.
+
+## Status of implementation
+
+- **Chunk 210** — env-frame live-permanent count (`EnvNOffset`) so the
+  collector scans Y slots precisely.
+- **Chunk 211** — the mark-compact collector (`Engine.HeapGc.cs`) and
+  `garbage_collect/0`. Validated by mechanism tests and end-to-end
+  explicit-GC tests.
+- **Chunk 212** — IL audit (above) + watermark wiring at the dispatch
+  safe points + `SHUMWAY_GC_STRESS` fuzz mode. The stress fuzz (collect
+  at every safe point) passes plain execution but surfaced a **missing
+  root in the tabling / meta-call machinery**: a ground query against a
+  tabled predicate corrupts a goal into a `-/2` answer-table pair
+  (`existence_error: -/2`). CLP reification, `bagof`/`setof` with `^`,
+  and `listing` fail the same way. **Auto-collection is therefore
+  disabled by default** (`EngineConfig.GcThreshold = 0`) until that root
+  is found and added; `garbage_collect/0` and the watermark
+  infrastructure remain in place, and `SHUMWAY_GC_STRESS=1` is the
+  reproducer. Relocation is defensive (an out-of-range index in a root
+  is left untouched rather than crashing), which avoids the crash but
+  not the data loss — the root must still be found.
 
 ## Implementation sketch (for the follow-up chunks)
 

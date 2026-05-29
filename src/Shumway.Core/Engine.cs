@@ -126,6 +126,10 @@ public sealed partial class Engine
         _registers = new Cell[config.InitialRegisterCount];
         _bindingTrail = new int[config.InitialBindingTrailSize];
         _extraTrail = new ExtraTrailEntry[config.InitialExtraTrailSize];
+        _gcThreshold = config.GcThreshold;
+        // Opt-in fuzz mode: collect at every safe point so the test suite
+        // exercises GC relocation against every query shape (ADR-016).
+        _gcStressMode = System.Environment.GetEnvironmentVariable("SHUMWAY_GC_STRESS") == "1";
     }
 
     private static void Validate(EngineConfig c)

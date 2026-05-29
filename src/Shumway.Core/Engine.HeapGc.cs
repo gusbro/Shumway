@@ -20,6 +20,46 @@ public sealed partial class Engine
     private int[]? _gcForward;
     private int[]? _gcWork;
 
+    // Adaptive auto-collection threshold (cells). Starts at the config
+    // value; after each collection it is raised to twice the surviving
+    // live size so a genuinely large live set does not re-trigger every
+    // goal. 0 disables automatic collection.
+    private int _gcThreshold;
+    private bool _gcStressMode;
+
+    /// <summary>When true, <see cref="MaybeCollectHeap"/> collects at
+    /// every safe point — the ADR-016 fuzz mode used to validate
+    /// relocation against every query shape in the test suite.</summary>
+    public bool GcStressMode { get => _gcStressMode; set => _gcStressMode = value; }
+
+    /// <summary>Called at engine safe points (goal boundaries — see the
+    /// interpreter's dispatch / resume-marker sites) to run a collection
+    /// when heap occupancy has crossed the adaptive watermark. A no-op
+    /// when auto-collection is disabled and stress mode is off. Safe for
+    /// both tiers: at a goal boundary all live heap references are in the
+    /// engine (registers / Y slots / choice points / trails); Tier-1 IL
+    /// keeps the same WAM state in the engine arrays (its CLR locals are
+    /// intra-instruction temporaries holding nothing across these points).</summary>
+    public void MaybeCollectHeap()
+    {
+        if (_gcStressMode)
+        {
+            CollectHeap();
+            return;
+        }
+        if (_gcThreshold <= 0 || _heapTop < _gcThreshold) return;
+        CollectHeap();
+        // Re-arm: collect again only once the heap doubles past what
+        // survived (bounded below by the configured floor). If the
+        // collection freed nothing (e.g. attvars in use, or a genuinely
+        // large live set), this still pushes the threshold up so we do
+        // not retry on the very next goal.
+        long next = (long)_heapTop * 2;
+        int floor = _config.GcThreshold > 0 ? _config.GcThreshold : (1 << 18);
+        _gcThreshold = next > int.MaxValue ? int.MaxValue
+            : (int)System.Math.Max(next, floor);
+    }
+
     /// <summary>Runs a mark-compact collection of the heap. Returns the
     /// number of cells reclaimed (0 if the collector bailed). Safe to
     /// call only at a safe point — between WAM instructions — where the
@@ -145,23 +185,40 @@ public sealed partial class Engine
     /// are returned unchanged.</summary>
     private static Cell RelocateCell(Cell c, int[] forward)
     {
+        // forward has length oldTop+1; a valid heap index is in [0, oldTop).
+        int oldTop = forward.Length - 1;
         switch (c.Tag)
         {
-            case Tag.Ref: return Cell.Ref(forward[c.AsHeapIndex]);
-            case Tag.Str: return Cell.Str(forward[c.AsHeapIndex]);
-            case Tag.Lis: return Cell.Lis(forward[c.AsHeapIndex]);
-            case Tag.AttVar: return Cell.AttVar(forward[c.AsHeapIndex]);
+            case Tag.Ref:
+                return InBounds(c.AsHeapIndex, oldTop) ? Cell.Ref(forward[c.AsHeapIndex]) : c;
+            case Tag.Str:
+                return InBounds(c.AsHeapIndex, oldTop) ? Cell.Str(forward[c.AsHeapIndex]) : c;
+            case Tag.Lis:
+                return InBounds(c.AsHeapIndex, oldTop) ? Cell.Lis(forward[c.AsHeapIndex]) : c;
+            case Tag.AttVar:
+                return InBounds(c.AsHeapIndex, oldTop) ? Cell.AttVar(forward[c.AsHeapIndex]) : c;
             case Tag.Float:
                 // Preserve tag + the 4 high mantissa/exponent bits (payload
                 // bits 56..59); rewrite only the low-32-bit paired index.
-                return new Cell((c.Data & unchecked((long)0xFFFFFFFF00000000L))
-                                | (uint)forward[c.FloatPairedIndex]);
+                return InBounds(c.FloatPairedIndex, oldTop)
+                    ? new Cell((c.Data & unchecked((long)0xFFFFFFFF00000000L))
+                               | (uint)forward[c.FloatPairedIndex])
+                    : c;
             case Tag.Pstr:
-                return Cell.Pstr(c.AsPstrLength, forward[c.AsPstrBufferIndex], c.AsPstrOffset);
+                return InBounds(c.AsPstrBufferIndex, oldTop)
+                    ? Cell.Pstr(c.AsPstrLength, forward[c.AsPstrBufferIndex], c.AsPstrOffset)
+                    : c;
             default:
                 return c;   // atomic / leaf
         }
     }
+
+    private static bool InBounds(int idx, int oldTop) => (uint)idx < (uint)oldTop;
+
+    // Relocate a bare heap-address root, leaving an out-of-range index
+    // (a transient/dead slot, never a live heap cell) untouched.
+    private static int RelocIndex(int idx, int[] forward)
+        => (uint)idx < (uint)(forward.Length - 1) ? forward[idx] : idx;
 
     /// <summary>Marks the cells reachable from every root: X registers
     /// (conservative — every slot is a valid Cell), the live permanents
@@ -263,14 +320,14 @@ public sealed partial class Engine
         }
 
         for (int k = 0; k < _bindingTrailTop; k++)
-            _bindingTrail[k] = forward[_bindingTrail[k]];
+            _bindingTrail[k] = RelocIndex(_bindingTrail[k], forward);
 
         for (int k = 0; k < _extraTrailTop; k++)
         {
             var e = _extraTrail[k];
             if (e.Type == TrailType.ValueChange)
             {
-                e.HeapIdx = forward[e.HeapIdx];
+                e.HeapIdx = RelocIndex(e.HeapIdx, forward);
                 e.OldValue = RelocateCell(e.OldValue, forward);
                 _extraTrail[k] = e;
             }
@@ -279,9 +336,9 @@ public sealed partial class Engine
         for (int i = 0; i < _catchFrames.Count; i++)
         {
             CatchFrame cf = _catchFrames[i];
-            cf.CatcherHeapIdx = forward[cf.CatcherHeapIdx];
-            cf.RecoveryHeapIdx = forward[cf.RecoveryHeapIdx];
-            cf.SnapHeapTop = forward[cf.SnapHeapTop];
+            cf.CatcherHeapIdx = RelocIndex(cf.CatcherHeapIdx, forward);
+            cf.RecoveryHeapIdx = RelocIndex(cf.RecoveryHeapIdx, forward);
+            cf.SnapHeapTop = forward[cf.SnapHeapTop];   // boundary, always <= oldTop
             cf.SnapHb = forward[cf.SnapHb];
             _catchFrames[i] = cf;
         }

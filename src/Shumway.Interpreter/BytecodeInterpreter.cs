@@ -258,6 +258,9 @@ public sealed class BytecodeInterpreter
             // out of the bytecode range.
             if (Engine.IsResumeMarker(pc))
             {
+                // ADR-016 safe point: an IL non-tail callee has Proceeded
+                // back to its caller; caller state lives in the engine.
+                _engine.MaybeCollectHeap();
                 var (functorId, cursor) = Engine.DecodeResumeMarker(pc);
                 var del = Tier1Dispatcher?.ResolveByFunctorId(functorId);
                 if (del is null)
@@ -1367,6 +1370,12 @@ public sealed class BytecodeInterpreter
 
         while (true)
         {
+            // ADR-016 safe point: a goal boundary. All live heap
+            // references are in the engine (registers / Y slots / CPs /
+            // trails) for both tiers, so a watermark-triggered collection
+            // here is sound. Covers Tier-0 dispatch, Tier-1 entry, and
+            // Tier-1 tail-call chains (which loop in this method).
+            _engine.MaybeCollectHeap();
             var ilFn = Tier1Dispatcher?.OnDispatch(target);
             if (ilFn is null)
             {
