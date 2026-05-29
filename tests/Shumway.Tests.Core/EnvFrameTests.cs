@@ -12,9 +12,10 @@ public class EnvFrameTests
     {
         Assert.Equal(0, Engine.EnvCeOffset);
         Assert.Equal(1, Engine.EnvCpOffset);
-        Assert.Equal(2, Engine.EnvY1Offset);
-        Assert.Equal(2, Engine.EnvSize(0));
-        Assert.Equal(2 + 5, Engine.EnvSize(5));
+        Assert.Equal(2, Engine.EnvNOffset);        // ADR-016: live-perm count
+        Assert.Equal(3, Engine.EnvY1Offset);
+        Assert.Equal(3, Engine.EnvSize(0));
+        Assert.Equal(3 + 5, Engine.EnvSize(5));
     }
 
     // ---------- Allocate ----------
@@ -30,13 +31,14 @@ public class EnvFrameTests
         engine.Allocate(2);
 
         Assert.Equal(0, engine.E);                 // newE = previous stackTop = 0
-        Assert.Equal(4, engine.StackTop);          // 2 + 2 Y slots
+        Assert.Equal(5, engine.StackTop);          // 3 control (CE,CP,N) + 2 Y slots
         Assert.Equal(-1L, engine.GetStack(0).Data); // CE = previous _e
         Assert.Equal(100L, engine.GetStack(1).Data); // CP = previous _cp
+        Assert.Equal(2L, engine.GetStack(2).Data);  // N = permanent count (ADR-016)
 
         // Y slots are REFs to fresh heap unbounds.
-        AssertUnboundHeapRef(engine, engine.GetStack(2));
         AssertUnboundHeapRef(engine, engine.GetStack(3));
+        AssertUnboundHeapRef(engine, engine.GetStack(4));
     }
 
     /// <summary>Asserts that the cell is a REF pointing to a heap cell that
@@ -54,7 +56,7 @@ public class EnvFrameTests
         var engine = new Engine();
         engine.Allocate(0);
         Assert.Equal(0, engine.E);
-        Assert.Equal(2, engine.StackTop);
+        Assert.Equal(3, engine.StackTop);          // CE, CP, N
     }
 
     [Fact]
@@ -62,16 +64,16 @@ public class EnvFrameTests
     {
         var engine = new Engine();
         engine.SetCp(7);
-        engine.Allocate(1);                         // frame at idx 0, size 3
+        engine.Allocate(1);                         // frame at idx 0, size 4 (CE,CP,N,Y1)
         int firstFrame = 0;
         Assert.Equal(firstFrame, engine.E);
-        Assert.Equal(3, engine.StackTop);
+        Assert.Equal(4, engine.StackTop);
 
         engine.SetCp(8);
-        engine.Allocate(2);                         // frame at idx 3, size 4
-        int secondFrame = 3;
+        engine.Allocate(2);                         // frame at idx 4, size 5
+        int secondFrame = 4;
         Assert.Equal(secondFrame, engine.E);
-        Assert.Equal(7, engine.StackTop);
+        Assert.Equal(9, engine.StackTop);
 
         // Second frame's CE points at the first frame; CP is the most-recent _cp.
         Assert.Equal((long)firstFrame, engine.GetStack(secondFrame + Engine.EnvCeOffset).Data);
@@ -92,15 +94,15 @@ public class EnvFrameTests
     [Fact]
     public void Allocate_GrowsStackOnOverflow()
     {
-        var engine = new Engine(new EngineConfig { InitialStackSize = 2 });
-        Assert.Equal(2, engine.StackCapacity);
+        var engine = new Engine(new EngineConfig { InitialStackSize = 3 });
+        Assert.Equal(3, engine.StackCapacity);
 
-        engine.Allocate(0);                         // fills the initial budget
-        Assert.Equal(2, engine.StackCapacity);
+        engine.Allocate(0);                         // fills the initial budget (size 3)
+        Assert.Equal(3, engine.StackCapacity);
 
         engine.Allocate(0);                         // forces growth
-        Assert.True(engine.StackCapacity >= 4);
-        Assert.Equal(4, engine.StackTop);
+        Assert.True(engine.StackCapacity >= 6);
+        Assert.Equal(6, engine.StackTop);
     }
 
     [Fact]
@@ -120,8 +122,8 @@ public class EnvFrameTests
     [Fact]
     public void Allocate_MaxStackSizeExceeded_Throws()
     {
-        var engine = new Engine(new EngineConfig { InitialStackSize = 2, MaxStackSize = 2 });
-        engine.Allocate(0);                         // exactly fills the cap
+        var engine = new Engine(new EngineConfig { InitialStackSize = 3, MaxStackSize = 3 });
+        engine.Allocate(0);                         // exactly fills the cap (size 3)
         Assert.Throws<InvalidOperationException>(() => engine.Allocate(0));
     }
 
@@ -152,15 +154,15 @@ public class EnvFrameTests
         engine.SetCp(7);
         engine.Allocate(0);                         // frame 0 saves CP=7
         engine.SetCp(8);
-        engine.Allocate(0);                         // frame 2 saves CP=8
+        engine.Allocate(0);                         // frame 3 saves CP=8 (EnvSize(0)=3)
         engine.SetCp(9);
-        engine.Allocate(0);                         // frame 4 saves CP=9
+        engine.Allocate(0);                         // frame 6 saves CP=9
 
-        engine.Deallocate();                        // pops frame 4 → CP=9, E=2
-        Assert.Equal(2, engine.E);
+        engine.Deallocate();                        // pops frame 6 → CP=9, E=3
+        Assert.Equal(3, engine.E);
         Assert.Equal(9, engine.Cp);
 
-        engine.Deallocate();                        // pops frame 2 → CP=8, E=0
+        engine.Deallocate();                        // pops frame 3 → CP=8, E=0
         Assert.Equal(0, engine.E);
         Assert.Equal(8, engine.Cp);
 

@@ -175,7 +175,7 @@ public class BytecodeInterpreterTests
         Assert.Equal(0x42, engine.Cp);           // CP restored from the frame
         // The dropped frame's slots remain on the stack per the WAM convention; reclamation
         // is the responsibility of subsequent ops (trust_me, etc.).
-        Assert.Equal(4, engine.StackTop);
+        Assert.Equal(5, engine.StackTop);          // EnvSize(2) = 3 control + 2 Y (ADR-016)
     }
 
     [Fact]

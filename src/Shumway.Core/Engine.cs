@@ -193,11 +193,21 @@ public sealed class Engine
     /// <summary>Offset of <c>CP</c> (saved continuation point) within a frame.</summary>
     public const int EnvCpOffset = 1;
 
+    /// <summary>Offset of the live-permanent count within a frame (ADR-016).
+    /// Holds the number of Y slots the heap GC should treat as roots for
+    /// this frame — written by <see cref="Allocate"/> (the full count) and
+    /// lowered by <see cref="TrimEnv"/> to the compiler's live-Y count, so
+    /// a stop-the-world collector can scan exactly the live permanents of
+    /// every frame on the environment chain without decoding bytecode.
+    /// The count is a prefix (Y1..Yn) because the compiler numbers
+    /// longer-lived permanents lower.</summary>
+    public const int EnvNOffset = 2;
+
     /// <summary>Offset of <c>Y1</c> within a frame. <c>Yk</c> is at <c>EnvY1Offset + (k-1)</c>.</summary>
-    public const int EnvY1Offset = 2;
+    public const int EnvY1Offset = 3;
 
     /// <summary>Size in cells of an environment frame with <paramref name="numPermanents"/> Y slots.</summary>
-    public static int EnvSize(int numPermanents) => 2 + numPermanents;
+    public static int EnvSize(int numPermanents) => 3 + numPermanents;
 
     /// <summary>Env trimming (chunks 57 / 61 / 64). Shrinks the
     /// current environment frame to keep only
@@ -228,6 +238,12 @@ public sealed class Engine
         // would corrupt the caller's frame.
         if (numLivePerms < 0) return;
         if (_e < 0) return;
+        // ADR-016: lower the recorded permanent count to the compiler's
+        // live-Y count so the heap GC scans only live permanents. The
+        // CP-protection clamp below may keep more physical slots, but
+        // those extra slots are logically dead (the compiler proved only
+        // numLivePerms live), so it is correct for the GC to ignore them.
+        _stack[_e + EnvNOffset] = new Cell(numLivePerms);
         int desired = _e + EnvSize(numLivePerms);
         if (_b >= 0)
         {
@@ -360,6 +376,9 @@ public sealed class Engine
         int newE = _stackTop;
         _stack[newE + EnvCeOffset] = new Cell(_e);
         _stack[newE + EnvCpOffset] = new Cell(_cp);
+        // ADR-016: record the permanent count so the heap GC can scan
+        // this frame's Y slots as roots. TrimEnv lowers it per-call.
+        _stack[newE + EnvNOffset] = new Cell(numPermanents);
         // Y slots are initialised as REFs to fresh heap-unbound variables. Earlier drafts
         // used a stack-self-pointing REF as an "uninitialised marker", but that complicates
         // unify (the REF target would be a stack address rather than a heap index). Going
