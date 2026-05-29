@@ -50,6 +50,18 @@ public static class AtomTable
     // through to the locked path.
     private static volatile Atom?[] _permanentByIdArray = System.Array.Empty<Atom?>();
 
+    // Lock-free by-NAME fast path for permanent atoms — the Intern
+    // counterpart of _permanentByIdArray (which serves GetById). A
+    // permanent atom's identity is stable and it is never collected, so a
+    // hit here needs no lock. Profiling Blint showed AtomTable.Intern's
+    // global lock at ~16% of wall time, contended against the background
+    // Tier-1 promotion thread; the dominant callers (atom_chars over the
+    // pre-interned single-char ASCII atoms, predicate-name interning in
+    // assert/retract) re-intern atoms that are already permanent, so this
+    // dictionary takes them off the lock entirely. Written only under
+    // _lock at every permanent-creation / promotion site; read lock-free.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Atom> _permanentByName = new();
+
     private readonly struct TransientWeakEntry
     {
         public readonly WeakReference<Atom> Weak;
@@ -124,6 +136,9 @@ public static class AtomTable
         }
         arr[id] = atom;
         _permanentByIdArray = arr;
+        // Mirror into the lock-free by-name fast path (every created-
+        // permanent atom flows through here).
+        _permanentByName[atom.Name] = atom;
     }
 
     /// <summary>
@@ -133,6 +148,12 @@ public static class AtomTable
     public static Atom Intern(string name, bool permanent = false)
     {
         ArgumentNullException.ThrowIfNull(name);
+        // Lock-free fast path: a permanent atom satisfies any intern
+        // request (permanent or not) because its identity is stable and it
+        // is never collected. Covers the hot tokenizer path and most
+        // predicate-name interning without touching _lock.
+        if (_permanentByName.TryGetValue(name, out var perm))
+            return perm;
         lock (_lock)
         {
             if (_byName.TryGetValue(name, out var weakRef) && weakRef.TryGetTarget(out var existing))
@@ -276,6 +297,8 @@ public static class AtomTable
         _permanentById[atom.Id] = atom;
         _transientById.Remove(atom.Id);
         _transientWeak.Remove(atom.Id);
+        // A promoted atom is now eligible for the lock-free by-name path.
+        _permanentByName[atom.Name] = atom;
     }
 
     // ---------- Diagnostics / test helpers ----------
@@ -303,6 +326,9 @@ public static class AtomTable
             // holds prior atoms at those ids) would return the
             // stale atom from GetById's fast path.
             _permanentByIdArray = System.Array.Empty<Atom?>();
+            // Clear the by-name fast path too; the AddPreRegistered /
+            // RebuildSingleCharCache calls below re-populate it.
+            _permanentByName.Clear();
             _nextId = FirstUserId;
             AddPreRegisteredLocked(EmptyListId, "[]");
             AddPreRegisteredLocked(EmptyBracesId, "{}");
