@@ -20,6 +20,58 @@ public sealed partial class Engine
     private int[]? _gcForward;
     private int[]? _gcWork;
 
+    // Sorted live stack-item bases (choice points + environment frames),
+    // recomputed per collection. A frame's Y-scan is clamped to the next
+    // base above it so it never reads into an adjacent CP / frame's
+    // control words (see CollectHeap).
+    private int[] _gcBoundaries = System.Array.Empty<int>();
+
+    /// <summary>Collects the base address of every live choice point and
+    /// environment frame, sorted ascending. Used to bound each frame's
+    /// Y-slot scan to its actual physical extent.</summary>
+    private int[] CollectStackBoundaries()
+    {
+        var bases = new System.Collections.Generic.SortedSet<int>();
+        // Choice points: the _b chain.
+        int b = _b;
+        int guard = 0;
+        while (b >= 0 && b < _stackTop && guard++ < 1_000_000)
+        {
+            bases.Add(b);
+            int arity = (int)_stack[b + CpArityOffset].Data;
+            if (arity < 0 || arity > 4096 || b + CpSize(arity) > _stackTop) break;
+            CollectFrameBases((int)_stack[b + CpCeOffset(arity)].Data, bases);
+            int prevB = (int)_stack[b + CpBOffset(arity)].Data;
+            if (prevB == b) break;
+            b = prevB;
+        }
+        CollectFrameBases(_e, bases);
+        var arr = new int[bases.Count];
+        bases.CopyTo(arr);
+        return arr;
+    }
+
+    private void CollectFrameBases(int e, System.Collections.Generic.SortedSet<int> bases)
+    {
+        while (e >= 0 && e + EnvY1Offset <= _stackTop && bases.Add(e))
+            e = (int)_stack[e + EnvCeOffset].Data;
+    }
+
+    /// <summary>End of frame <paramref name="e"/>'s Y-slot scan: the
+    /// stored count, clamped to the next stack-item base above the frame
+    /// and to the live stack top, so the scan never crosses into an
+    /// adjacent CP / frame.</summary>
+    private int FrameScanEnd(int e)
+    {
+        int n = (int)_stack[e + EnvNOffset].Data;
+        int end = e + EnvY1Offset + n;
+        if (end > _stackTop) end = _stackTop;
+        // First boundary strictly above e bounds the frame.
+        foreach (int boundary in _gcBoundaries)
+            if (boundary > e) { if (boundary < end) end = boundary; break; }
+        return end;
+    }
+
     // Adaptive auto-collection threshold (cells). Starts at the config
     // value; after each collection it is raised to twice the surviving
     // live size so a genuinely large live set does not re-trigger every
@@ -179,6 +231,15 @@ public sealed partial class Engine
             }
         }
 
+        // A frame's stored Y-count can be stale-large: after a trim or a
+        // backtrack reused the stack, a choice point or a nested frame may
+        // sit inside the range the count implies. Scanning that far would
+        // treat a CP's / frame's control words as Y cells and relocate
+        // them (corrupting saved Cp / prevB). Collect every live stack
+        // item base so each frame's Y-scan can be clamped to the next one
+        // above it.
+        _gcBoundaries = CollectStackBoundaries();
+
         MarkRoots(MarkReferents, MarkCell, oldTop);
         OnGcMark?.Invoke(MarkCell, MarkReferents);
 
@@ -225,6 +286,7 @@ public sealed partial class Engine
                     System.Console.Error.WriteLine($"  DANGLING reg[{i}] {c.Tag}->{c.AsHeapIndex} (DEAD)");
             }
             // CP chain: report each frame's base/arity and flag insane ones.
+            var cpBases = new System.Collections.Generic.List<int>();
             int cb = _b;
             int guard = 0;
             while (cb >= 0 && guard++ < 200)
@@ -234,9 +296,30 @@ public sealed partial class Engine
                 int savedCp = bad ? -1 : (int)_stack[cb + CpCpOffset(ar)].Data;
                 System.Console.Error.WriteLine($"  CP b={cb} arity={ar} savedCp={savedCp}{(bad ? " INSANE" : "")}");
                 if (bad) break;
+                cpBases.Add(cb);
                 int pv = (int)_stack[cb + CpBOffset(ar)].Data;
                 if (pv == cb) break;
                 cb = pv;
+            }
+            // Env-frame vs CP overlap detector: does any frame's scanned
+            // Y-range [e+EnvY1Offset, e+EnvY1Offset+N) contain a CP base?
+            var seenF = new System.Collections.Generic.HashSet<int>();
+            void CheckFrames(int e)
+            {
+                while (e >= 0 && e + EnvY1Offset <= _stackTop && seenF.Add(e))
+                {
+                    int lo = e + EnvY1Offset, hi = FrameScanEnd(e);
+                    foreach (int cpb in cpBases)
+                        if (cpb >= lo && cpb < hi)
+                            System.Console.Error.WriteLine($"  OVERLAP frame e={e} scan[{lo},{hi}) contains CP base {cpb}");
+                    e = (int)_stack[e + EnvCeOffset].Data;
+                }
+            }
+            CheckFrames(_e);
+            foreach (int cpb2 in cpBases)
+            {
+                int ar2 = (int)_stack[cpb2 + CpArityOffset].Data;
+                if (ar2 >= 0 && ar2 <= 256) CheckFrames((int)_stack[cpb2 + CpCeOffset(ar2)].Data);
             }
         }
 
@@ -332,6 +415,10 @@ public sealed partial class Engine
         while (b >= 0 && b < _stackTop)
         {
             int arity = (int)_stack[b + CpArityOffset].Data;
+            // A base whose arity isn't a sane frame size is not a real CP
+            // — the chain walked off into a frame / reclaimed slot. Stop
+            // rather than mark/relocate bogus offsets.
+            if (arity < 0 || arity > 4096 || b + CpSize(arity) > _stackTop) break;
             for (int i = 0; i < arity; i++)
                 markReferents(_stack[b + CpArg1Offset + i]);
             MarkEnvChain((int)_stack[b + CpCeOffset(arity)].Data, seenFrames, markReferents);
@@ -374,9 +461,7 @@ public sealed partial class Engine
     {
         while (e >= 0 && e + EnvY1Offset <= _stackTop && seen.Add(e))
         {
-            int n = (int)_stack[e + EnvNOffset].Data;
-            int end = e + EnvY1Offset + n;
-            if (end > _stackTop) end = _stackTop;          // never scan past the live stack
+            int end = FrameScanEnd(e);
             for (int slot = e + EnvY1Offset; slot < end; slot++)
                 markReferents(_stack[slot]);
             e = (int)_stack[e + EnvCeOffset].Data;
@@ -395,6 +480,7 @@ public sealed partial class Engine
         while (b >= 0 && b < _stackTop)
         {
             int arity = (int)_stack[b + CpArityOffset].Data;
+            if (arity < 0 || arity > 4096 || b + CpSize(arity) > _stackTop) break;
             for (int i = 0; i < arity; i++)
                 _stack[b + CpArg1Offset + i] = RelocateCell(_stack[b + CpArg1Offset + i], forward);
             // Saved HeapTop / Hb are boundaries.
@@ -437,9 +523,7 @@ public sealed partial class Engine
     {
         while (e >= 0 && e + EnvY1Offset <= _stackTop && seen.Add(e))
         {
-            int n = (int)_stack[e + EnvNOffset].Data;
-            int end = e + EnvY1Offset + n;
-            if (end > _stackTop) end = _stackTop;
+            int end = FrameScanEnd(e);
             for (int slot = e + EnvY1Offset; slot < end; slot++)
                 _stack[slot] = RelocateCell(_stack[slot], forward);
             e = (int)_stack[e + EnvCeOffset].Data;
