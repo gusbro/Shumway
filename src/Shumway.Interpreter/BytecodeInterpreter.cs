@@ -421,7 +421,16 @@ public sealed class BytecodeInterpreter
                     int nextClause = BytecodeIO.ReadInt32(code, pc + 1);
                     int arity = BytecodeIO.ReadInt32(code, pc + 5);
                     _engine.PushChoicePoint(arity, nextClause);
-                    _engine.AdvancePc(9);
+                    // Chunk 221 peephole fusion: in dynamic chains the
+                    // very next opcode is CheckVisible. Inline its
+                    // dispatch to skip a switch trip + opcode-table
+                    // lookup + profiler bump per chain step. Profiled
+                    // Blint had 23.5M direct dispatch→CheckVisible
+                    // pairs / run.
+                    if (!TryInlineCheckVisible(code, codeArr, codeLen, pc + 9))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                    }
                     break;
                 }
 
@@ -443,14 +452,25 @@ public sealed class BytecodeInterpreter
                     bool demoted = padPc < codeLen
                         && (code.Overflow is null ? codeArr[padPc] : code[padPc])
                            == (byte)Opcode.Nop;
-                    _engine.AdvancePc(demoted ? 9 : 5);
+                    int afterPc = pc + (demoted ? 9 : 5);
+                    // Chunk 221 peephole fusion (see TryMeElse).
+                    if (!TryInlineCheckVisible(code, codeArr, codeLen, afterPc))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                    }
                     break;
                 }
 
                 case Opcode.TrustMe:
+                {
                     _engine.TrustMe();
-                    _engine.AdvancePc(1);
+                    // Chunk 221 peephole fusion (see TryMeElse).
+                    if (!TryInlineCheckVisible(code, codeArr, codeLen, pc + 1))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                    }
                     break;
+                }
 
                 // ADR-015 chunk C — generation-filtered dynamic dispatch.
                 // Sample the dynamic-database generation into CurrentViewGen
@@ -1824,6 +1844,44 @@ public sealed class BytecodeInterpreter
             return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// Chunk 221 peephole fusion. Called by the {Try,Retry,Trust}MeElse
+    /// handlers after they've done their choice-point work and computed
+    /// the cursor of the byte that follows the dispatch opcode.
+    ///
+    /// <para>If that byte is <see cref="Opcode.CheckVisible"/> — the
+    /// shape every dynamic-predicate chain entry has, since the chain
+    /// emit always writes dispatch + check_visible — decode it inline
+    /// and either advance past it (visible) or signal backtrack
+    /// (invisible). Returns false ONLY when the caller must backtrack;
+    /// in every other case (no CheckVisible at <paramref name="afterPc"/>,
+    /// or visible), it updates PC and returns true.</para>
+    ///
+    /// <para>This is purely an interpreter speedup — it does NOT change
+    /// any bytecode layout, emit-site, or opcode encoding. Skipping
+    /// one switch trip + opcode-table lookup + profiler bump per
+    /// chain step adds up on dynamic-predicate-heavy workloads
+    /// (Blint saw 23.5M direct dispatch→CheckVisible pairs / run).</para>
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private bool TryInlineCheckVisible(Shumway.Core.ProgramView code, byte[] codeArr, int codeLen, int afterPc)
+    {
+        if (afterPc + 17 > codeLen
+            || (code.Overflow is null ? codeArr[afterPc] : code[afterPc])
+               != (byte)Opcode.CheckVisible)
+        {
+            _engine.SetPc(afterPc);
+            return true;
+        }
+        long born = BytecodeIO.ReadInt64(code, afterPc + 1);
+        long died = BytecodeIO.ReadInt64(code, afterPc + 9);
+        long g = _engine.CurrentViewGen;
+        if (born > g || died <= g) return false;
+        _engine.SetPc(afterPc + 17);
+        return true;
     }
 
     private bool TryBacktrack()
