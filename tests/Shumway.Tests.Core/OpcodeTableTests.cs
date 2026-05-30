@@ -109,6 +109,10 @@ public class OpcodeTableTests
             if (info.OperandKinds is { } kinds
                 && Array.Exists(kinds, k => k == OperandKind.LongValue))
                 continue;
+            // Chunk 220 fused opcodes carry a trailing Nop pad so the
+            // total width matches the two opcodes they replace; not
+            // 1 + 2*4 = 9.
+            if (info.Op == Opcode.AllocateGetLevel) continue;
             Assert.Equal(9, info.Size);
         }
     }
@@ -131,7 +135,12 @@ public class OpcodeTableTests
         {
             var info = OpcodeTable.Get((byte)b);
             if (info.IsDefined && info.NumOperands == 0 && info.Op != Opcode.Meta)
+            {
+                // Chunk 220 DeallocateProceed carries a 1-byte Nop pad so
+                // it matches the width of the two opcodes it fuses.
+                if (info.Op == Opcode.DeallocateProceed) { Assert.Equal(2, info.Size); continue; }
                 Assert.Equal(1, info.Size);
+            }
         }
     }
 }

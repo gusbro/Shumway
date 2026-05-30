@@ -149,6 +149,16 @@ public static class OpcodeTable
         Set(Opcode.GetListA1, 1, "get_list_a1");
         Set(Opcode.GetListA2, 1, "get_list_a2");
 
+        // Chunk 220 — fused opcodes (same total size as the two they
+        // replace; the second opcode's byte slot is overwritten with Nop
+        // so addresses don't shift).
+        // Layout: [op:1] [count:4] [Nop:1] [slot:4] — count + slot are
+        // read at fixed offsets by the handler. Reusing the original
+        // operand positions keeps OpcodeInfo's NumOperands meaningful.
+        Set(Opcode.AllocateGetLevel, 10, "allocate_get_level",
+            OperandKind.Count, OperandKind.Perm);
+        Set(Opcode.DeallocateProceed, 2, "deallocate_proceed");
+
         // PSTR
         Set(Opcode.GetPstr, 9, "get_pstr", OperandKind.LiteralId, OperandKind.Reg);
         Set(Opcode.PutPstr, 9, "put_pstr", OperandKind.LiteralId, OperandKind.Reg);

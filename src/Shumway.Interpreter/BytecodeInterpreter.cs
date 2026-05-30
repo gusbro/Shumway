@@ -383,6 +383,37 @@ public sealed class BytecodeInterpreter
                     _engine.AdvancePc(1);   // deallocate is 1 byte
                     break;
 
+                // ---------- Chunk 220 — fused opcodes (peephole) ----------
+
+                case Opcode.AllocateGetLevel:
+                {
+                    // 10-byte layout: [op:1] [count:4] [slot:4] [Nop:1]
+                    int n = BytecodeIO.ReadInt32(code, pc + 1);
+                    int slot = BytecodeIO.ReadInt32(code, pc + 5);
+                    _engine.Allocate(n);
+                    _engine.GetLevel(slot);
+                    _engine.AdvancePc(10);
+                    break;
+                }
+
+                case Opcode.DeallocateProceed:
+                {
+                    // 2-byte layout: [op:1] [Nop:1].
+                    // Mirrors Deallocate + Proceed back-to-back: deallocate
+                    // the env frame, then proceed (FlushPendingWakeups +
+                    // SetPc(Cp), with Cp<0 → Halted).
+                    _engine.Deallocate();
+                    if (!FlushPendingWakeups(code))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    int returnPc = _engine.Cp;
+                    if (returnPc < 0) return InterpreterResult.Halted;
+                    _engine.SetPc(returnPc);
+                    break;
+                }
+
                 // ---------- Choice point opcodes ----------
 
                 case Opcode.TryMeElse:

@@ -632,6 +632,12 @@ public sealed class IlPredicateCompiler
         // engine.CutToLevel.
         Opcode.GetLevel => true,
         Opcode.Cut => true,
+        // Chunk 220 — fused opcodes. Emit pair of engine calls; the
+        // single-opcode-walk advances by the fused size, skipping the
+        // padding Nop.
+        Opcode.AllocateGetLevel => true,
+        Opcode.DeallocateProceed => true,
+        Opcode.Nop => true,   // padding inside fused opcodes; emit no-op
         Opcode.Execute => true,
         // Compound argument structure (chunk 48).
         Opcode.GetStructure => true,
@@ -1375,6 +1381,42 @@ public sealed class IlPredicateCompiler
                     emit.Call(EngineDeallocateMethod);
                 }
                 pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            // Chunk 220 — fused opcodes. Emit the equivalent pair of
+            // engine calls; the size includes the padding Nop.
+            if (op == Opcode.AllocateGetLevel)
+            {
+                int n = BytecodeIO.ReadInt32(code, pc + 1);
+                int slot = BytecodeIO.ReadInt32(code, pc + 5);
+                emit.LoadArgument(0);
+                emit.LoadConstant(n);
+                emit.Call(EngineAllocateMethod);
+                emit.LoadArgument(0);
+                emit.LoadConstant(slot);
+                emit.Call(EngineGetLevelMethod);
+                pc += OpcodeTable.Get(op).Size;   // 10
+                continue;
+            }
+            if (op == Opcode.DeallocateProceed)
+            {
+                emit.LoadArgument(0);
+                emit.Call(EngineDeallocateMethod);
+                // Proceed semantics in IL: success return.
+                if (!suppressProceedReturn)
+                {
+                    emit.LoadConstant(true);
+                    emit.Return();
+                }
+                pc += OpcodeTable.Get(op).Size;   // 2
+                continue;
+            }
+            if (op == Opcode.Nop)
+            {
+                // Padding inside a fused opcode (chunk 220); the outer
+                // fused-opcode case has already advanced PC past it, so
+                // a standalone Nop in the walker is just a 1-byte skip.
+                pc += 1;
                 continue;
             }
             if (op == Opcode.NeckCut)

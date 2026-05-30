@@ -131,14 +131,19 @@ public sealed class ClauseCompiler
         // ordinary permanents, the frame's purpose is twofold: preserve the
         // caller's CP across sub-goal calls, and host the cut-barrier slot.
         bool needFrame = goals.Count > 1 || needsDeepCut;
-        if (needFrame)
-            state.Emitter.EmitAllocate(state.PermanentCount);
-
-        // For deep cut: capture _b0 right after the frame is allocated and
-        // before the head match. The captured barrier survives every
-        // sub-goal call thanks to being in a Y slot.
-        if (needsDeepCut)
-            state.Emitter.EmitGetLevel(cutSlot);
+        // Chunk 220 — fuse the common Allocate+GetLevel prologue when both
+        // are emitted; otherwise emit individually.
+        if (needFrame && needsDeepCut)
+        {
+            state.Emitter.EmitAllocateGetLevel(state.PermanentCount, cutSlot);
+        }
+        else
+        {
+            if (needFrame)
+                state.Emitter.EmitAllocate(state.PermanentCount);
+            if (needsDeepCut)
+                state.Emitter.EmitGetLevel(cutSlot);
+        }
 
         // ----- Head -----
         for (int i = 0; i < headArgs.Length; i++)
@@ -189,9 +194,11 @@ public sealed class ClauseCompiler
                     {
                         // `!` as the final goal: no execute/call follows.
                         // Just close the frame (if any) and return to caller.
+                        // Chunk 220 — fuse Deallocate+Proceed when both fire.
                         if (needFrame)
-                            state.Emitter.EmitDeallocate();
-                        state.Emitter.EmitProceed();
+                            state.Emitter.EmitDeallocateProceed();
+                        else
+                            state.Emitter.EmitProceed();
                     }
                 }
                 else
@@ -842,8 +849,9 @@ public sealed class ClauseCompiler
             s.Emitter.EmitCallBuiltin(builtinId, isLast ? -1 : livePermsAfter);
             if (isLast)
             {
-                if (hasFrame) s.Emitter.EmitDeallocate();
-                s.Emitter.EmitProceed();
+                // Chunk 220 — fuse Deallocate+Proceed for the common end-of-body epilogue.
+                if (hasFrame) s.Emitter.EmitDeallocateProceed();
+                else s.Emitter.EmitProceed();
             }
             return;
         }

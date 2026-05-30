@@ -68,34 +68,37 @@ public class CutCompilationTests
     [Fact]
     public void DeepCut_LastGoal_EmitsGetLevelAndCut()
     {
-        // p :- q, !.  → allocate 1; get_level Y[0]; call q; cut Y[0]; deallocate; proceed
+        // p :- q, !.  Chunk 220 fuses the Allocate+GetLevel prologue and
+        // the Deallocate+Proceed epilogue:
+        //   allocate_get_level 1, Y[0] ; Nop ; call q ; cut Y[0] ; deallocate_proceed ; Nop
         var cc = CompileSource("p :- q, !.");
         var d = Disassemble(cc.Bytecode);
 
-        Assert.Equal(Opcode.Allocate, d[0].Opcode);
-        Assert.Equal(1, d[0].Operands[0]);                   // one extra slot for cut barrier
-        Assert.Equal(Opcode.GetLevel, d[1].Opcode);
-        Assert.Equal(0, d[1].Operands[0]);                   // Y[0]
-        Assert.Equal(Opcode.Call, d[2].Opcode);
-        Assert.Equal(Opcode.Cut, d[3].Opcode);
-        Assert.Equal(0, d[3].Operands[0]);                   // Y[0]
-        Assert.Equal(Opcode.Deallocate, d[4].Opcode);
-        Assert.Equal(Opcode.Proceed, d[5].Opcode);
+        // The Disassembler advances by the fused opcode's full width;
+        // the Nop padding lives inside those bytes, not as a separate
+        // instruction entry.
+        Assert.Equal(Opcode.AllocateGetLevel, d[0].Opcode);
+        Assert.Equal(1, d[0].Operands[0]);                   // count = 1 (cut slot)
+        Assert.Equal(0, d[0].Operands[1]);                   // slot = Y[0]
+        Assert.Equal(Opcode.Call, d[1].Opcode);
+        Assert.Equal(Opcode.Cut, d[2].Opcode);
+        Assert.Equal(0, d[2].Operands[0]);                   // Y[0]
+        Assert.Equal(Opcode.DeallocateProceed, d[3].Opcode);
     }
 
     [Fact]
     public void DeepCut_MiddleGoal_EmitsGetLevelCallCutCallExecute()
     {
-        // p :- q, !, r.   → allocate 1; get_level Y[0]; call q; cut Y[0]; deallocate; execute r
+        // p :- q, !, r.   Chunk 220 fuses Allocate+GetLevel prologue but
+        // Deallocate+Execute stays unfused (only Deallocate+Proceed is fused).
         var cc = CompileSource("p :- q, !, r.");
         var d = Disassemble(cc.Bytecode);
 
-        Assert.Equal(Opcode.Allocate, d[0].Opcode);
-        Assert.Equal(Opcode.GetLevel, d[1].Opcode);
-        Assert.Equal(Opcode.Call, d[2].Opcode);
-        Assert.Equal(Opcode.Cut, d[3].Opcode);
-        Assert.Equal(Opcode.Deallocate, d[4].Opcode);
-        Assert.Equal(Opcode.Execute, d[5].Opcode);
+        Assert.Equal(Opcode.AllocateGetLevel, d[0].Opcode);
+        Assert.Equal(Opcode.Call, d[1].Opcode);
+        Assert.Equal(Opcode.Cut, d[2].Opcode);
+        Assert.Equal(Opcode.Deallocate, d[3].Opcode);
+        Assert.Equal(Opcode.Execute, d[4].Opcode);
     }
 
     [Fact]
@@ -107,8 +110,8 @@ public class CutCompilationTests
         Assert.Equal(2, cc.PermanentCount);
 
         var d = Disassemble(cc.Bytecode);
-        Assert.Equal(Opcode.Allocate, d[0].Opcode);
-        Assert.Equal(2, d[0].Operands[0]);
+        Assert.Equal(Opcode.AllocateGetLevel, d[0].Opcode);  // chunk 220 fused prologue
+        Assert.Equal(2, d[0].Operands[0]);                   // count = 2 (X + cut)
     }
 
     [Fact]

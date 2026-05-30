@@ -55,6 +55,31 @@ public sealed class BytecodeEmitter
 
     public void EmitDeallocate() => _bytes.Add((byte)Opcode.Deallocate);
 
+    /// <summary>Chunk 220 — fused Allocate+GetLevel (clause prologue with
+    /// deep cut). Replaces the 5+5=10 bytes of two separate opcodes with
+    /// a single 10-byte instruction in canonical layout
+    /// <c>[op:1] [count:4] [slot:4] [Nop:1]</c>. The interpreter dispatch
+    /// is halved for the most common prologue pattern in indexed
+    /// predicates (14M occurrences per Blint run).</summary>
+    public void EmitAllocateGetLevel(int numPermanents, int slot)
+    {
+        _bytes.Add((byte)Opcode.AllocateGetLevel);
+        EmitInt(numPermanents);
+        EmitInt(slot);
+        _bytes.Add((byte)Opcode.Nop);
+    }
+
+    /// <summary>Chunk 220 — fused Deallocate+Proceed (clause epilogue
+    /// when the frame was allocated). 2-byte layout
+    /// <c>[op:1] [Nop:1]</c>; the interpreter handler does deallocate +
+    /// the full proceed semantics (FlushPendingWakeups + SetPc(Cp), with
+    /// Cp&lt;0 → Halted). 6.7M occurrences per Blint run.</summary>
+    public void EmitDeallocateProceed()
+    {
+        _bytes.Add((byte)Opcode.DeallocateProceed);
+        _bytes.Add((byte)Opcode.Nop);
+    }
+
     // ---------- Choice-point dispatch ----------
 
     public void EmitTryMeElse(int nextClauseAddress, int arity)

@@ -63,6 +63,8 @@ public static class Profiler
     public static void Reset()
     {
         _opcodeCounts.Clear();
+        _pairCounts.Clear();
+        _lastOpcode = 0xFF;
         _reallocs.Clear();
         _callsByAddress.Clear();
         _builtinCounts.Clear();
@@ -80,13 +82,22 @@ public static class Profiler
         _notes.Clear();
     }
 
-    /// <summary>Records one dispatched WAM instruction.</summary>
+    private static byte _lastOpcode = 0xFF;
+    private static readonly Dictionary<int, long> _pairCounts = new();
+
+    /// <summary>Records one dispatched WAM instruction. Also bumps the
+    /// (prev, current) pair counter so fusion candidates can be picked
+    /// from real workload data.</summary>
     [Conditional("SHUMWAY_PROFILE")]
     public static void Opcode(byte op)
     {
         _opcodeCounts.TryGetValue(op, out long c);
         _opcodeCounts[op] = c + 1;
         _totalOpcodes++;
+        int pairKey = (_lastOpcode << 8) | op;
+        _pairCounts.TryGetValue(pairKey, out long pc);
+        _pairCounts[pairKey] = pc + 1;
+        _lastOpcode = op;
     }
 
     /// <summary>Records a user-predicate call to bytecode address
@@ -239,6 +250,17 @@ public static class Profiler
         {
             string name = OpcodeTable.Get(op).Op.ToString();
             sb.AppendLine($"  {count,12:N0}  {name} (0x{op:X2})");
+        }
+
+        sb.AppendLine();
+        sb.AppendLine($"-- top {top} opcode pairs (prev → curr) — fusion candidates --");
+        foreach (var (key, count) in TopN(_pairCounts, top))
+        {
+            byte prev = (byte)(key >> 8);
+            byte curr = (byte)(key & 0xFF);
+            string prevName = prev == 0xFF ? "<start>" : OpcodeTable.Get(prev).Op.ToString();
+            string currName = OpcodeTable.Get(curr).Op.ToString();
+            sb.AppendLine($"  {count,12:N0}  {prevName,-22} → {currName}");
         }
 
         return sb.ToString();

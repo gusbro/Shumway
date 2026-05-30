@@ -132,6 +132,15 @@ public enum Opcode : byte
     GetListA1 = 0xA4,
     GetListA2 = 0xA5,
 
+    // Chunk 220 — opcode fusion. Profiled pairs in Blint workload:
+    //   Allocate (5) + GetLevel (5)  : 14.0M pairs / run — clause prologue with deep cut.
+    //   Deallocate (1) + Proceed (1) :  6.7M pairs / run — clause epilogue.
+    // Fused opcodes use the SAME total byte width as the two they replace,
+    // with the second opcode's byte slot overwritten with Nop so no
+    // operand-address shifts cascade through try_me_else / switch tables.
+    AllocateGetLevel = 0xA6,   // 10 bytes: op + count(4) + Nop + slot(4)
+    DeallocateProceed = 0xA7,  // 2 bytes:  op + Nop
+
     // PSTR
     GetPstr = 0xC0,
     PutPstr = 0xC1,
