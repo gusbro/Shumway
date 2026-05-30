@@ -88,6 +88,11 @@ public static class OpcodeTable
         Set(Opcode.Execute, 5, "execute", OperandKind.Address);
         Set(Opcode.Proceed, 1, "proceed");
         Set(Opcode.Halt, 1, "halt");
+        // Chunk 225 Stage B.1 — Call → CallIl rewrite (in-place at
+        // link time). Same width and operand layout as Call so the
+        // patch is a single opcode-byte swap + 4-byte operand
+        // overwrite (target address → callee functor id).
+        Set(Opcode.CallIl, 9, "call_il", OperandKind.Functor, OperandKind.Count);
 
         // Choice points
         Set(Opcode.Nop, 1, "nop");

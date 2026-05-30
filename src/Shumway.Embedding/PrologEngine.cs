@@ -2583,6 +2583,83 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// at that offset. Runs BEFORE <c>Assembly.Load</c> so the JIT sees
     /// runtime values as inline IL constants — zero per-dispatch
     /// overhead.</summary>
+    /// <summary>Chunk 225 Stage B.1 — populate the interpreter's
+    /// IlByFunctorId table from <see cref="IlPromotion"/>, then rewrite
+    /// every <see cref="Shumway.Core.Opcode.Call"/> site whose callee
+    /// already has a registered IL delegate into the equivalent
+    /// <see cref="Shumway.Core.Opcode.CallIl"/>. The two opcodes share
+    /// width (9 bytes) and operand layout — the only difference is the
+    /// opcode byte and the meaning of the 4-byte target operand
+    /// (address → functor id) — so the rewrite is in-place. Idempotent
+    /// (skips sites whose opcode is no longer <c>Call</c>, e.g. when
+    /// a re-link revisits a previously-rewritten persistent buffer).</summary>
+    private void InstallCallIlRewrites(
+        Shumway.Interpreter.BytecodeInterpreter interp,
+        Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> predicatesByAddress,
+        byte[] queryBytes)
+    {
+        // Snapshot every currently-promoted IL delegate, indexed by
+        // functor id. The PredicateDelegate -> Func<Engine,int,bool>
+        // bridge allocates one wrapper per IL predicate, here at link
+        // time — not per dispatch.
+        int maxFid = -1;
+        foreach (int fid in IlPromotion.PromotedFunctorIds())
+            if (fid > maxFid) maxFid = fid;
+        if (maxFid < 0)
+        {
+            // No IL — clear the table so the linker can't get confused
+            // and the CallIl handler's null check defends.
+            interp.IlByFunctorId = null;
+            return;
+        }
+        var ilTable = new Func<Shumway.Core.Engine, int, bool>?[maxFid + 1];
+        foreach (int fid in IlPromotion.PromotedFunctorIds())
+        {
+            var del = IlPromotion.TryGet(fid);
+            if (del is null) continue;
+            // Method-group conversion: del.Invoke creates a
+            // Func<Engine,int,bool> that calls through to del.
+            ilTable[fid] = del.Invoke;
+        }
+        interp.IlByFunctorId = ilTable;
+
+        // Rewrite every Call whose callee has IL. Walks both the
+        // persistent buffer (addresses < _querySplit) and the per-query
+        // overlay. Execute is left alone for Stage B.1 (B.3 will mirror
+        // the rewrite with ExecuteIl).
+        foreach (var (predAddr, pred) in predicatesByAddress)
+        {
+            foreach (var site in pred.CallSites)
+            {
+                if (site.IsExecute) continue;
+                int calleeFid = site.CalleeFunctorId;
+                if ((uint)calleeFid >= (uint)ilTable.Length
+                    || ilTable[calleeFid] is null) continue;
+
+                int absAddr = predAddr + site.OpcodeOffset;
+                byte[] buf;
+                int bufOffset;
+                if (absAddr < _querySplit)
+                {
+                    buf = _persistentProgram!;
+                    bufOffset = absAddr;
+                }
+                else
+                {
+                    buf = queryBytes;
+                    bufOffset = absAddr - _querySplit;
+                }
+                // Idempotence + safety: only rewrite a real Call. A
+                // previous query may have already rewritten this site
+                // in the persistent buffer.
+                if (bufOffset < 0 || bufOffset + 9 > buf.Length) continue;
+                if (buf[bufOffset] != (byte)Shumway.Core.Opcode.Call) continue;
+                buf[bufOffset] = (byte)Shumway.Core.Opcode.CallIl;
+                Shumway.Core.BytecodeIO.WriteInt32(buf, bufOffset + 1, calleeFid);
+            }
+        }
+    }
+
     private static void ApplyIlPatches(byte[] ilBytes, byte[] patchTable)
     {
         var sites = Shumway.Compiler.Il.IlPatchSiteCodec.Decode(patchTable);
@@ -4591,6 +4668,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         var interp = new BytecodeInterpreter(
             engine, module.StringLiterals, module.FloatLiterals,
             mutableSwitchTables, module.BigIntLiterals);
+
+        // Chunk 225 Stage B.1: wire the direct IL-delegate table (the
+        // CallIl opcode reads this) and rewrite every Call site whose
+        // callee already has IL into a CallIl. The opcode's slow path
+        // (Call → DispatchToTier1OrBytecode → Tier1Dispatcher?.OnDispatch)
+        // is the hottest non-Dispatch frame in the dotnet-trace profile
+        // for a bundle-IL workload; CallIl bypasses it with a direct
+        // delegate invoke. Same byte width and operand layout as Call,
+        // so the patch is one opcode-byte swap + one 4-byte operand
+        // overwrite (target address → callee functor id).
+        InstallCallIlRewrites(interp, mergedPredicatesByAddress, queryBytes);
 
         // ADR-015 chunk C step 4: refresh the interpreter's literal pools
         // after an incremental assertz/asserta interns a new literal.

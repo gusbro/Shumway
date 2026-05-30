@@ -85,6 +85,18 @@ public sealed class BytecodeInterpreter
     /// embedder has wired in a promotion store.</summary>
     public ITier1Dispatcher? Tier1Dispatcher { get; set; }
 
+    /// <summary>Chunk 225 Stage B.1 — direct IL-delegate table indexed
+    /// by functor id. Populated by <see cref="Shumway.Embedding"/> at
+    /// link time after every IL registration. The
+    /// <see cref="Opcode.CallIl"/> handler reads this directly,
+    /// skipping the <see cref="ITier1Dispatcher.OnDispatch"/>
+    /// interface call + cache probe that <see cref="Opcode.Call"/>
+    /// pays per dispatch.
+    ///
+    /// <para>Null when no IL is wired (Tier-0-only mode); the linker
+    /// must not emit <see cref="Opcode.CallIl"/> in that case.</para></summary>
+    public Func<Engine, int, bool>?[]? IlByFunctorId { get; set; }
+
     public BytecodeInterpreter(Engine engine)
         : this(engine, Array.Empty<string>(), Array.Empty<double>(), Array.Empty<SwitchTable>())
     {
@@ -367,6 +379,62 @@ public sealed class BytecodeInterpreter
                     Shumway.Core.Profiler.Call(target);
                     _engine.SetB0(_engine.B);   // tail call still enters a new procedure
                     DispatchToTier1OrBytecode(target);
+                    break;
+                }
+
+                // Chunk 225 Stage B.1 — Call to a bundle-IL-promoted
+                // predicate. Operand is the callee's functor id (not an
+                // address); the IL delegate is looked up in the
+                // interpreter's IlByFunctorId table — direct array
+                // access, no interface call, no dictionary probe. Set
+                // by the embedding layer at link time after every IL
+                // registration; Call sites whose callee has IL are
+                // rewritten to CallIl as a single opcode-byte swap
+                // (Call and CallIl share width and operand offsets).
+                case Opcode.CallIl:
+                {
+                    if (!FlushPendingWakeups(code))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    int functorId = BytecodeIO.ReadInt32(code, pc + 1);
+                    int numLivePerms = BytecodeIO.ReadInt32(code, pc + 5);
+                    Shumway.Core.Profiler.Call(functorId);
+                    _engine.TrimEnv(numLivePerms);
+                    _engine.SetCp(pc + 9);  // CallIl is 9 bytes, same as Call
+                    _engine.SetB0(_engine.B);
+                    // ADR-016 safe point — heap GC needs every goal
+                    // boundary regardless of dispatch tier.
+                    _engine.MaybeCollectHeap();
+                    var table = IlByFunctorId;
+                    var ilFn = table is not null && (uint)functorId < (uint)table.Length
+                        ? table[functorId] : null;
+                    if (ilFn is null)
+                    {
+                        // IL was unregistered after the link-time
+                        // rewrite installed CallIl here. Shouldn't
+                        // normally happen for Stage B.1, but bail to
+                        // existence_error rather than NRE.
+                        throw new InvalidOperationException(
+                            $"CallIl: no IL delegate for functor id {functorId}. "
+                            + "Bytecode rewrite invariant violated.");
+                    }
+                    if (!ilFn(_engine, 0))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    if (_engine.IlTailCallPending)
+                    {
+                        // IL set Pc to its tail-call target; the outer
+                        // dispatch loop picks it up next iteration.
+                        _engine.IlTailCallPending = false;
+                    }
+                    else
+                    {
+                        _engine.SetPc(_engine.Cp);
+                    }
                     break;
                 }
 

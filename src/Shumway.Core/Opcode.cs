@@ -79,6 +79,16 @@ public enum Opcode : byte
     // rest of the clause layout unchanged.
     Nop = 0x56,
 
+    // Chunk 225 Stage B.1 — fast-path Call for predicates with bundle-IL
+    // already registered at link time. Same byte width (9) and operand
+    // layout as Call ([functorId:4][numLivePerms:4]) so PrologEngine's
+    // post-link rewrite is an in-place byte swap of the opcode + a
+    // 4-byte operand patch (address → functor id). Skips the
+    // Tier1Dispatcher?.OnDispatch interface call + dictionary probe
+    // every Call does today; the interpreter looks the delegate up
+    // directly in its IlByFunctorId array.
+    CallIl = 0x57,
+
     // Choice points
     TryMeElse = 0x60,
     RetryMeElse = 0x61,
