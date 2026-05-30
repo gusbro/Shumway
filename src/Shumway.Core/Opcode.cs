@@ -89,6 +89,18 @@ public enum Opcode : byte
     // directly in its IlByFunctorId array.
     CallIl = 0x57,
 
+    // Chunk 226 Stage B.2 — fast-path Call for predicates known to be
+    // permanently bytecode-only (dynamic predicates per chunk 159,
+    // layout-excluded statics, OR any callee when the engine's IL
+    // promotion is disabled — Threshold==0 — so no functor will ever
+    // earn an IL delegate). Same byte width (9) and operand layout as
+    // Call ([target:4][numLivePerms:4]). The linker's post-link
+    // rewrite swaps the opcode byte and leaves the target operand
+    // unchanged. Skips the Tier1Dispatcher?.OnDispatch interface call
+    // + dictionary probe; the interpreter does MaybeCollectHeap +
+    // SetPc(target) directly.
+    CallBytecode = 0x58,
+
     // Choice points
     TryMeElse = 0x60,
     RetryMeElse = 0x61,

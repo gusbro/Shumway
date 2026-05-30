@@ -93,6 +93,12 @@ public static class OpcodeTable
         // patch is a single opcode-byte swap + 4-byte operand
         // overwrite (target address → callee functor id).
         Set(Opcode.CallIl, 9, "call_il", OperandKind.Functor, OperandKind.Count);
+        // Chunk 226 Stage B.2 — Call → CallBytecode rewrite for
+        // bytecode-only targets. Same width / operand layout as Call;
+        // the rewrite is a single opcode-byte swap with the target
+        // operand left alone.
+        Set(Opcode.CallBytecode, 9, "call_bytecode",
+            OperandKind.Address, OperandKind.Count);
 
         // Choice points
         Set(Opcode.Nop, 1, "nop");

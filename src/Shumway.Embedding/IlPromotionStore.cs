@@ -327,6 +327,26 @@ public sealed class IlPromotionStore
     /// will fire for it.</summary>
     public bool IsUnpromotable(int functorId) => _unpromotable.Contains(functorId);
 
+    /// <summary>Chunk 226 Stage B.2 — true when this predicate will
+    /// never have an IL delegate, even without RecordInvocation having
+    /// fired yet. Used by PrologEngine at link time to classify Call
+    /// sites: bytecode-only callees can be rewritten to
+    /// <see cref="Shumway.Core.Opcode.CallBytecode"/> immediately,
+    /// skipping the OnDispatch interface call + dictionary probe per
+    /// dispatch. Mirrors the rejection logic in <see cref="RecordInvocation"/>:
+    /// promotion disabled (<see cref="Threshold"/> == 0), AOT (no
+    /// dynamic code), already-rejected, layout-excluded (chunk 159:
+    /// dynamic predicates), or oversized.</summary>
+    public bool IsPermanentlyBytecodeOnly(int functorId, CompiledPredicate predicate)
+    {
+        if (Threshold <= 0) return true;
+        if (!DynamicCodeSupported) return true;
+        if (_unpromotable.Contains(functorId)) return true;
+        if (IsExcludedByLayout(predicate)) return true;
+        if (IsExcludedBySize(predicate)) return true;
+        return false;
+    }
+
     /// <summary>Diagnostic: every predicate rejected from IL promotion,
     /// paired with the reason ("dynamic" / "size" / "cannot-compile" /
     /// "query"). Used by the Tier-1 coverage analysis to see whether the

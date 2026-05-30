@@ -438,6 +438,34 @@ public sealed class BytecodeInterpreter
                     break;
                 }
 
+                // Chunk 226 Stage B.2 — Call to a predicate the linker
+                // knows will never have an IL delegate (dynamic / layout-
+                // excluded, or any callee under an IL-disabled engine).
+                // Operand is the absolute target address, unchanged from
+                // the original Call — the linker's rewrite is a single
+                // opcode-byte swap. Skips the full
+                // Tier1Dispatcher?.OnDispatch path; just does the goal-
+                // boundary safe point and jumps.
+                case Opcode.CallBytecode:
+                {
+                    if (!FlushPendingWakeups(code))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    int target = BytecodeIO.ReadInt32(code, pc + 1);
+                    int numLivePerms = BytecodeIO.ReadInt32(code, pc + 5);
+                    target = ResolveTargetMaybeAutoPromoted(target);
+                    Shumway.Core.Profiler.Call(target);
+                    _engine.TrimEnv(numLivePerms);
+                    _engine.SetCp(pc + 9);  // CallBytecode is 9 bytes, same as Call
+                    _engine.SetB0(_engine.B);
+                    // ADR-016 safe point.
+                    _engine.MaybeCollectHeap();
+                    _engine.SetPc(target);
+                    break;
+                }
+
                 case Opcode.Allocate:
                 {
                     int n = BytecodeIO.ReadInt32(code, pc + 1);

@@ -2605,36 +2605,49 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         int maxFid = -1;
         foreach (int fid in IlPromotion.PromotedFunctorIds())
             if (fid > maxFid) maxFid = fid;
-        if (maxFid < 0)
+        Func<Shumway.Core.Engine, int, bool>?[]? ilTable = null;
+        if (maxFid >= 0)
         {
-            // No IL — clear the table so the linker can't get confused
-            // and the CallIl handler's null check defends.
-            interp.IlByFunctorId = null;
-            return;
-        }
-        var ilTable = new Func<Shumway.Core.Engine, int, bool>?[maxFid + 1];
-        foreach (int fid in IlPromotion.PromotedFunctorIds())
-        {
-            var del = IlPromotion.TryGet(fid);
-            if (del is null) continue;
-            // Method-group conversion: del.Invoke creates a
-            // Func<Engine,int,bool> that calls through to del.
-            ilTable[fid] = del.Invoke;
+            ilTable = new Func<Shumway.Core.Engine, int, bool>?[maxFid + 1];
+            foreach (int fid in IlPromotion.PromotedFunctorIds())
+            {
+                var del = IlPromotion.TryGet(fid);
+                if (del is null) continue;
+                // Method-group conversion: del.Invoke creates a
+                // Func<Engine,int,bool> that calls through to del.
+                ilTable[fid] = del.Invoke;
+            }
         }
         interp.IlByFunctorId = ilTable;
 
-        // Rewrite every Call whose callee has IL. Walks both the
-        // persistent buffer (addresses < _querySplit) and the per-query
-        // overlay. Execute is left alone for Stage B.1 (B.3 will mirror
-        // the rewrite with ExecuteIl).
+        // Chunk 226 Stage B.2 — build a fid-keyed view of
+        // predicatesByAddress so we can look up the callee's
+        // CompiledPredicate by functor id when classifying Call sites
+        // as bytecode-only. The same predicate may live under
+        // multiple addresses (the chunk-127 enter_dynamic trampoline
+        // is at the entry address but the chain bodies sit at later
+        // addresses); the functor id is unique.
+        var predicateByFid = new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>(
+            predicatesByAddress.Count);
+        foreach (var (_, p) in predicatesByAddress)
+            predicateByFid[p.FunctorId] = p;
+
+        // Rewrite every Call whose callee state is decided at link time.
+        // Three opcodes today (B.3 will add ExecuteIl / ExecuteBytecode):
+        //   - CallIl: callee already has a bundle-IL delegate. Operand
+        //     is rewritten from target address to callee functor id.
+        //   - CallBytecode: callee will never have IL (Threshold==0,
+        //     layout-excluded, oversized, or already rejected). Operand
+        //     is the absolute target address, unchanged.
+        //   - Call: callee may still earn IL via JIT promotion later.
+        // Walks both the persistent buffer (addresses < _querySplit)
+        // and the per-query overlay. Execute is left alone for now.
         foreach (var (predAddr, pred) in predicatesByAddress)
         {
             foreach (var site in pred.CallSites)
             {
                 if (site.IsExecute) continue;
                 int calleeFid = site.CalleeFunctorId;
-                if ((uint)calleeFid >= (uint)ilTable.Length
-                    || ilTable[calleeFid] is null) continue;
 
                 int absAddr = predAddr + site.OpcodeOffset;
                 byte[] buf;
@@ -2654,8 +2667,30 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 // in the persistent buffer.
                 if (bufOffset < 0 || bufOffset + 9 > buf.Length) continue;
                 if (buf[bufOffset] != (byte)Shumway.Core.Opcode.Call) continue;
-                buf[bufOffset] = (byte)Shumway.Core.Opcode.CallIl;
-                Shumway.Core.BytecodeIO.WriteInt32(buf, bufOffset + 1, calleeFid);
+
+                // Prefer CallIl when IL is available.
+                bool hasIl = ilTable is not null
+                    && (uint)calleeFid < (uint)ilTable.Length
+                    && ilTable[calleeFid] is not null;
+                if (hasIl)
+                {
+                    buf[bufOffset] = (byte)Shumway.Core.Opcode.CallIl;
+                    Shumway.Core.BytecodeIO.WriteInt32(buf, bufOffset + 1, calleeFid);
+                    continue;
+                }
+
+                // Otherwise classify as bytecode-only when we can prove
+                // IL will never come. Falls through (leaves Call) when
+                // the callee may still be promotable or is unresolved
+                // (no CompiledPredicate at link time — e.g., an
+                // assertz-auto-promoted functor materialised after the
+                // linker ran).
+                if (predicateByFid.TryGetValue(calleeFid, out var calleePred)
+                    && IlPromotion.IsPermanentlyBytecodeOnly(calleeFid, calleePred))
+                {
+                    buf[bufOffset] = (byte)Shumway.Core.Opcode.CallBytecode;
+                    // Operand stays as the absolute target address.
+                }
             }
         }
     }
