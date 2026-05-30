@@ -132,23 +132,58 @@ public static class BundleWriter
     private static byte[] CompileEntryToIl(BundleEntry entry)
     {
         Shumway.Builtins.StandardBuiltins.EnsureRegistered();
-        // Run through a full PrologEngine.ConsultString + warm-up so the
-        // module rewriter, dynamic-functor routing, prelude, and per-query
+        // Run through a full PrologEngine warm-up so the module
+        // rewriter, dynamic-functor routing, prelude, and per-query
         // synthetic launcher all agree on which functor ids end up
-        // representing each predicate. PersistedIlBuilder then sees the
-        // same CompiledPredicate the runtime path would compile.
+        // representing each predicate. PersistedIlBuilder then sees
+        // the same CompiledPredicate the runtime path would compile.
+        //
+        // Chunk 230 — handle source-less entries too. shumway-compile
+        // defaults to release mode which strips Source from the .shmo
+        // (so the only ground truth is CompiledBytecode), and
+        // shumway-link passes that through unchanged. Pre-chunk-230
+        // CompileEntryToIl unconditionally called ConsultString,
+        // which on an empty source produced an engine with ONLY the
+        // prelude in its caches — so IL was compiled for prelude
+        // helpers but never for any user predicate from the bundle.
+        // For Blint that meant 159 prelude methods in the IL bundle
+        // and zero user methods, leaving every user Call dispatching
+        // through Tier-0 WAM (with the chunk-225/226/227 fast paths
+        // bypassing OnDispatch only for the prelude callers). With
+        // this fix the source-less path routes through
+        // engine.LoadBundle on a single-entry bundle, which populates
+        // PrecompiledStaticPredicates from CompiledBytecode.
         var engine = new Shumway.Embedding.PrologEngine();
-        engine.ConsultString(entry.Source);
+        if (!string.IsNullOrEmpty(entry.Source))
+        {
+            engine.ConsultString(entry.Source);
+        }
+        else if (entry.CompiledBytecode is not null && entry.Defined.Count > 0)
+        {
+            // Construct a single-entry bundle whose CompiledIl is null
+            // so LoadBundle takes the source-less LoadEntryFromBytecode
+            // path (which populates PrecompiledStaticPredicates) and
+            // skips its own IL setup (we're about to do it ourselves
+            // through PersistedIlBuilder.Build).
+            var bareEntry = new BundleEntry(
+                entry.ModuleName, source: "", compiledBytecode: entry.CompiledBytecode,
+                compiledIl: null, defined: entry.Defined,
+                compiledIlPatches: null, compiledIlEntries: null,
+                dynamicSeeds: entry.DynamicSeeds);
+            engine.LoadBundle(new Bundle(new[] { bareEntry }));
+        }
         engine.Query("true.");
         // Pull every IL-eligible predicate the warm-up populated.
-        // Static (chunk 82) covers immutable user clauses; dynamic
-        // (chunk 68) covers `:- dynamic`-declared ones. The
-        // PrecompiledClauseCache (chunk 53) is bundle-load only —
-        // useless here because we're the *builder* not a loader.
+        // Static (chunk 82) covers immutable user clauses from
+        // ConsultString; dynamic (chunk 68) covers `:- dynamic`-
+        // declared ones; precompiled (chunk 178) covers user clauses
+        // loaded from a source-less bundle entry.
         var predicates = new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>();
         foreach (var (fid, pred) in engine.StaticPredicateCache)
             predicates[fid] = pred;
         foreach (var (fid, pred) in engine.DynamicPredicateCache)
+            predicates[fid] = pred;
+        foreach (var (fid, pred) in engine.PrecompiledStaticPredicates)
             predicates[fid] = pred;
         // Caches still empty? Fall through to an empty assembly
         // (the load path simply finds no methods to bind).

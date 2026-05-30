@@ -2909,6 +2909,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private readonly Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>
         _precompiledStaticPredicates = new();
 
+    /// <summary>Chunk 230 — read-only view of
+    /// <see cref="_precompiledStaticPredicates"/>. Lets
+    /// <see cref="BundleWriter.CompileEntryToIl"/> see the predicates
+    /// loaded from a source-less bundle entry (the chunk-178 path),
+    /// not just the ones populated by ConsultString.</summary>
+    public IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>
+        PrecompiledStaticPredicates => _precompiledStaticPredicates;
+
     /// <summary>Per-engine cache of compiled dynamic predicates (chunk 68).
     /// The query-setup path consults this cache alongside
     /// <see cref="_precompiledClauseCache"/> so the ModuleCompiler can
