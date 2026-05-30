@@ -18,6 +18,18 @@ internal static class Program
 {
     private static int Main(string[] args)
     {
+        // SHUMWAY_TIMING=1 prints to stderr a per-phase breakdown of
+        // wall time spent in (1) process startup + bundle/consult load
+        // versus (2) the actual SHUMWAY_GOAL execution. Lets benchmarks
+        // separate fixed startup cost (JIT, AssemblyLoad, bundle parse)
+        // from the workload itself.
+        bool timing =
+            Environment.GetEnvironmentVariable("SHUMWAY_TIMING") == "1";
+        var stopwatch = timing
+            ? System.Diagnostics.Stopwatch.StartNew()
+            : null;
+        long setupMsAtConsultStart = 0;
+        long setupMsAtGoalStart = 0;
         // EOF on the console is Ctrl+Z (then Enter) on Windows and
         // Ctrl+D on Unix/macOS — Console.ReadLine() returns null for
         // both, but the key combo differs, so name the right one.
@@ -41,8 +53,12 @@ internal static class Program
         string? promoteEnv = Environment.GetEnvironmentVariable("SHUMWAY_IL_PROMOTE");
         if (int.TryParse(promoteEnv, out int promoteN) && promoteN > 0)
             engine.IlPromotion.Threshold = promoteN;
+        if (stopwatch is not null)
+            setupMsAtConsultStart = stopwatch.ElapsedMilliseconds;
         foreach (string path in consultFiles)
             ConsultFile(engine, path);
+        if (stopwatch is not null)
+            setupMsAtGoalStart = stopwatch.ElapsedMilliseconds;
 
         // SHUMWAY_GOAL=<term>. — run one goal at startup, then exit.
         // Lets a CPU profiler (dotnet-trace) drive a fixed workload via
@@ -67,6 +83,15 @@ internal static class Program
                 Console.Error.WriteLine($"[mem] total allocated during query: {(allocAfter - allocBefore) / (1024.0 * 1024):N1} MB");
             }
             Shumway.Core.Profiler.StopRun();
+            if (stopwatch is not null)
+            {
+                long total = stopwatch.ElapsedMilliseconds;
+                long preConsult = setupMsAtConsultStart;
+                long consult = setupMsAtGoalStart - setupMsAtConsultStart;
+                long exec = total - setupMsAtGoalStart;
+                Console.Error.WriteLine(
+                    $"[timing] startup={preConsult}ms consult+link={consult}ms exec={exec}ms total={total}ms");
+            }
             MaybeDumpIlStats(engine);
             MaybeDumpProfile(engine);
             return engine.LastHaltExitCode ?? 0;
