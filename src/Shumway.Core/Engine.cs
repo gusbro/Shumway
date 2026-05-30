@@ -614,28 +614,18 @@ public sealed partial class Engine
         if (_b == barrier)
             return;
 
-        // Chunk 164: drop _ilCpInfo entries for IL CPs that the cut
-        // is committing past, BEFORE _b moves. Each entry's key is
-        // its frame's stack-B position; any key > barrier belongs to
-        // an IL CP at or above the soon-to-be-discarded region. If
-        // we leave them in place, a later failure can still pop
-        // through that stack slot if it gets re-used by a future
-        // push at the same address, and the stale resume delegate
-        // re-fires — for `retract/1` that means enumerating more
-        // matches than the cut committed to (the Blint.pl trigger:
-        // s_get_char's `retract(next_char_i(X)), !` cuts the
-        // retract-enumeration CP, but a sibling failure later
-        // popped through it and ran retract a second time, leaving
-        // the unget buffer in an inconsistent state).
-        if (_ilCpInfo.Count > 0)
+        // Chunk 164 / chunk 231: drop IL CP stack entries above the
+        // barrier BEFORE _b moves. Each entry's Key is its frame's
+        // stack-B position; the entries are pushed in monotonic _b
+        // order so any stale ones sit at the top of _ilCpStack —
+        // pop them down to the first <= barrier. Replaces the
+        // chunk-164 foreach-over-dict-Keys loop (which was 5.31%
+        // self-time on Engine.Cut in Blint with user IL active,
+        // plus a List<int> allocation per cut that hit any IL CP).
+        while (_ilCpTop > 0 && _ilCpStack[_ilCpTop - 1].Key > barrier)
         {
-            List<int>? stale = null;
-            foreach (int key in _ilCpInfo.Keys)
-                if (key > barrier)
-                    (stale ??= new List<int>()).Add(key);
-            if (stale is not null)
-                foreach (int key in stale)
-                    _ilCpInfo.Remove(key);
+            _ilCpStack[_ilCpTop - 1].Del = null!;  // release the delegate ref
+            _ilCpTop--;
         }
 
         _b = barrier;
@@ -1500,7 +1490,9 @@ public sealed partial class Engine
     // interpreter's standard PC-based backtrack path doesn't accidentally
     // jump into bytecode 0xFFFFFFFF.
     public const int IlChoicePointSentinelBp = -1;
-    private readonly Dictionary<int, IlChoicePointEntry> _ilCpInfo = new();
+    // Chunk 231 removed the Dictionary form of _ilCpInfo in favour of
+    // the stack-array _ilCpStack/_ilCpTop declared just above (with
+    // the IlChoicePointEntry struct).
 
     // Phase 16 — threaded Tier-1 dispatch. An IL non-tail Call site sets
     // engine.Cp to a *resume marker* address instead of recursing into
@@ -1544,7 +1536,25 @@ public sealed partial class Engine
     {
         public Func<Engine, int, bool> Del;
         public int Cursor;
+        // Chunk 231 — the _b value at PushIlChoicePoint time. Lets
+        // Cut(barrier) compare against the IL CP stack without going
+        // through the Dictionary's KeyCollection (which was the
+        // PopIlChoicePointAndRestore + Engine.Cut hot path: ~5.31%
+        // self-time on Engine.Cut from the foreach over Keys, plus
+        // ~1.55% from FindValue/MoveNext on dict ops in profiling
+        // Blint with bundled user IL).
+        public int Key;
     }
+
+    // Chunk 231 — stack-array replacement for the previous
+    // Dictionary<int, IlChoicePointEntry> _ilCpInfo. IL CPs are
+    // always pushed in monotonic _b order (each CP push grows _b)
+    // and popped (or cut) from the top — same shape as a plain
+    // stack. Direct array index + a parallel _ilCpTop pointer
+    // replaces dict hash/probe per op. Grown copy-on-resize when
+    // _ilCpTop reaches capacity.
+    private IlChoicePointEntry[] _ilCpStack = new IlChoicePointEntry[64];
+    private int _ilCpTop;
 
     /// <summary>Pushes a choice point that, on backtrack, re-enters an IL
     /// delegate at <paramref name="nextCursor"/> instead of jumping to a
@@ -1555,7 +1565,12 @@ public sealed partial class Engine
     {
         ArgumentNullException.ThrowIfNull(del);
         PushChoicePoint(arity, IlChoicePointSentinelBp);
-        _ilCpInfo[_b] = new IlChoicePointEntry { Del = del, Cursor = nextCursor };
+        if (_ilCpTop == _ilCpStack.Length)
+            System.Array.Resize(ref _ilCpStack, _ilCpStack.Length * 2);
+        _ilCpStack[_ilCpTop++] = new IlChoicePointEntry
+        {
+            Del = del, Cursor = nextCursor, Key = _b,
+        };
     }
 
     /// <summary>Wrapper around <see cref="PushIlChoicePoint"/> for
@@ -1595,7 +1610,8 @@ public sealed partial class Engine
     /// <summary>True when the topmost choice point is an IL CP — the
     /// bytecode interpreter consults this on backtrack to choose between
     /// the standard PC-jump path and the IL re-dispatch path.</summary>
-    public bool TopChoicePointIsIl => _b >= 0 && _ilCpInfo.ContainsKey(_b);
+    public bool TopChoicePointIsIl =>
+        _b >= 0 && _ilCpTop > 0 && _ilCpStack[_ilCpTop - 1].Key == _b;
 
     /// <summary>Pops the topmost IL choice point, restoring engine state
     /// (heap top, trails, registers, …) the same way <c>TrustMe</c> would
@@ -1614,9 +1630,10 @@ public sealed partial class Engine
     {
         if (_b < 0)
             throw new InvalidOperationException("PopIlChoicePointAndRestore: no active choice point.");
-        if (!_ilCpInfo.TryGetValue(_b, out var info))
+        if (_ilCpTop == 0 || _ilCpStack[_ilCpTop - 1].Key != _b)
             throw new InvalidOperationException(
                 "PopIlChoicePointAndRestore: the topmost choice point isn't an IL CP.");
+        var info = _ilCpStack[_ilCpTop - 1];
 
         Diagnostics.PopRestoreTrace.PrePop(this, _b);
         if (TraceCpStack)
@@ -1629,7 +1646,10 @@ public sealed partial class Engine
         _stackTop = oldB;
         if (TraceCpStack)
             System.Console.Error.WriteLine($"[cp-stack] pop-il-done _b={_b} _e={_e} _stackTop={_stackTop}");
-        _ilCpInfo.Remove(oldB);
+        // Clear the delegate reference so the array doesn't pin it
+        // for GC after pop.
+        _ilCpStack[_ilCpTop - 1].Del = null!;
+        _ilCpTop--;
         return (info.Del, info.Cursor);
     }
 
