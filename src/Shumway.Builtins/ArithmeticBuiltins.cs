@@ -64,7 +64,7 @@ public static class ArithmeticBuiltins
         }
         if (x.Tag == Tag.Ref)
         {
-            int returnPc = engine.P + 9;
+            int returnPc = engine.BuiltinReturnPc;
             return BetweenStep(engine, current: loVal, hiVal, returnPc, isResume: false);
         }
         return false;

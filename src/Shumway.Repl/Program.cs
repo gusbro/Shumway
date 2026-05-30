@@ -55,7 +55,12 @@ internal static class Program
             Shumway.Core.Profiler.Reset();
             long allocBefore = Shumway.Core.Profiler.Enabled ? GC.GetTotalAllocatedBytes() : 0;
             try { RunQuery(engine, startupGoal.Trim()); }
-            catch (Exception ex) { Console.WriteLine($"% {ex.GetType().Name}: {ex.Message}"); }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"% {ex.GetType().Name}: {ex.Message}");
+                if (Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_TRACE") == "1")
+                    Console.WriteLine(ex.StackTrace);
+            }
             if (Shumway.Core.Profiler.Enabled)
             {
                 long allocAfter = GC.GetTotalAllocatedBytes();

@@ -2986,6 +2986,24 @@ public sealed partial class Engine
     /// interpreter to step past straight-line instructions.</summary>
     internal void AdvancePc(int delta) => _p += delta;
 
+    /// <summary>Chunk 218 — the address a backtrackable builtin's CP
+    /// resume should jump to after a successful retry. Set by the caller
+    /// just before invoking <c>entry.Impl</c>:
+    /// <list type="bullet">
+    /// <item>Tier-0 sets it to the post-<c>call_builtin</c> address
+    ///   (<c>pc + 9</c>) — the next bytecode instruction.</item>
+    /// <item>Tier-1 IL sets it to a resume marker that the dispatcher
+    ///   decodes back to the IL caller (chunk 218).</item>
+    /// </list>
+    /// Builtins that call <see cref="ResumeAtReturnPc"/> from inside a
+    /// CP-resume delegate must capture this value at push time (was
+    /// previously <c>engine.P + 9</c>, which only worked under Tier-0
+    /// because Pc happened to be the <c>call_builtin</c> opcode addr;
+    /// under Tier-1 Pc was stale and the resume landed mid-instruction).
+    /// Public so persisted IL (loaded without InternalsVisibleTo) can
+    /// set it from emitted code.</summary>
+    public int BuiltinReturnPc { get; set; }
+
     /// <summary>Sets <c>B0</c> directly. The interpreter writes <c>_b</c> into this
     /// before any <c>call</c> or <c>execute</c> so the callee's <c>neck_cut</c> sees
     /// the right barrier. Chunk 192: public so chunk-71 persisted-IL assemblies

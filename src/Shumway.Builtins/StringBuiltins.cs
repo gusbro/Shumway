@@ -73,7 +73,7 @@ public static class StringBuiltins
                 "instantiation_error",
                 "string_concat/3 requires either A+B or AB to be ground");
         string ab = ReadStringOrAtom(engine, 2, "string_concat/3");
-        int returnPc = engine.P + 9;
+        int returnPc = engine.BuiltinReturnPc;
         return StringConcatSplitAttempt(engine, ab, splitIdx: 0, returnPc, isResume: false);
     }
 

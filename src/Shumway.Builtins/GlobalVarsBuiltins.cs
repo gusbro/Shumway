@@ -59,7 +59,7 @@ public static class GlobalVarsBuiltins
         }
         // Var name → enumerate. Use the standard CP-driven pattern.
         var entries = Globals(engine).All().ToArray();
-        int returnPc = engine.P + 9;
+        int returnPc = engine.BuiltinReturnPc;
         return NbCurrentStep(engine, entries, 0, returnPc, isResume: false);
     }
 

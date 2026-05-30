@@ -1156,6 +1156,13 @@ public sealed class BytecodeInterpreter
                     //     overwrite the innermost throw's identity.
                     _engine.CurrentBuiltinName = entry.Name;
                     _engine.CurrentBuiltinArity = entry.Arity;
+                    // Chunk 218: the post-call_builtin address — backtrackable
+                    // builtins (between, append, atom_concat, repeat, retract,
+                    // …) capture this on first invocation and pass it to
+                    // ResumeAtReturnPc on each retry success. Was previously
+                    // read as `engine.P + 9` inside each builtin, which broke
+                    // Tier-1 IL where Pc doesn't point at the opcode.
+                    _engine.BuiltinReturnPc = pc + 9;
                     bool implOk;
                     Shumway.Core.Profiler.BuiltinEnter(builtinId);
                     try

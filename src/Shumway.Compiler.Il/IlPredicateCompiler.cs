@@ -151,6 +151,11 @@ public sealed class IlPredicateCompiler
     // lazily from the engine's linked code on first call.
     private static readonly MethodInfo IlIndexedDispatchResolveByFidMethod =
         typeof(IlIndexedDispatch).GetMethod(nameof(IlIndexedDispatch.ResolveEntryByFunctorId))!;
+    // Chunk 218 — setter for engine.BuiltinReturnPc. The IL emit pre-sets
+    // this to a resume marker before invoking a backtrackable builtin, so
+    // the builtin's CP resume re-enters the IL caller correctly.
+    private static readonly MethodInfo EngineBuiltinReturnPcSetter =
+        typeof(Engine).GetProperty(nameof(Engine.BuiltinReturnPc))!.GetSetMethod()!;
     private static readonly MethodInfo EngineSetPcMethod =
         typeof(Engine).GetMethod(
             nameof(Engine.SetPc),
@@ -858,6 +863,19 @@ public sealed class IlPredicateCompiler
         emit.Return();
     }
 
+    /// <summary>Chunk 218 — builtins that push a CP and call
+    /// <c>ResumeAtReturnPc</c> on retry. Their IL <c>call_builtin</c> site
+    /// needs a resume marker so the resume re-enters the IL caller (the
+    /// builtin reads <c>engine.BuiltinReturnPc</c> at first invocation;
+    /// the IL pre-sets it to the marker).</summary>
+    private static bool IsBacktrackableBuiltinName(string name) => name switch
+    {
+        "between" or "append" or "atom_concat" or "string_concat"
+        or "nb_current" or "current_op" or "current_char_conversion"
+        or "current_stream" or "stream_property" or "repeat" or "retract" => true,
+        _ => false,
+    };
+
     /// <summary>Counts non-tail <c>Call</c> opcodes in a clause's
     /// bytecode (Opcode.Call only — Opcode.Execute is the tail-call
     /// form and doesn't need a meta-CP).</summary>
@@ -879,7 +897,10 @@ public sealed class IlPredicateCompiler
             {
                 int builtinId = BytecodeIO.ReadInt32(bytecode, pc + 1);
                 string n = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId).Name;
-                if (n == "call" || n == "$call") count++;
+                // call/$call thread through IlMetaCallHelper.Dispatch
+                // (chunk 182); backtrackable builtins need a resume marker
+                // for their CP's resume (chunk 218).
+                if (n == "call" || n == "$call" || IsBacktrackableBuiltinName(n)) count++;
             }
             var info = OpcodeTable.Get(b);
             if (!info.IsDefined || info.Size == 0) break;
@@ -1506,12 +1527,45 @@ public sealed class IlPredicateCompiler
                 // Regular builtin (non-meta) — invoke entry.Impl directly.
                 // entry = BuiltinsRegistry.GetById(id)
                 // if (!entry.Impl(engine)) goto fail
+                //
+                // Chunk 218: backtrackable builtins (between/3, append/3,
+                // repeat/0, retract/1, …) push a CP whose resume calls
+                // ResumeAtReturnPc(returnPc) — the returnPc is captured at
+                // first invocation as engine.BuiltinReturnPc. The IL emit
+                // here allocates a resume cursor and pre-sets
+                // BuiltinReturnPc to that marker, so on resume the
+                // dispatcher decodes the marker and re-enters this IL at
+                // the post-builtin label. Non-backtrackable builtins skip
+                // the cursor allocation — straight invocation.
+                bool isBacktrackable = IsBacktrackableBuiltinName(builtinName);
+                int builtinResumeIdx = -1;
+                if (isBacktrackable)
+                {
+                    if (callSiteIndexCounter is null || resumeLabels is null)
+                        throw new InvalidOperationException(
+                            "Backtrackable builtin in IL requires callSiteIndexCounter + resumeLabels.");
+                    builtinResumeIdx = callSiteIndexCounter();
+                    int resumeCursor = cursorBase + builtinResumeIdx - 1;
+                    // engine.BuiltinReturnPc = EncodeResumeMarker(ownerFid, resumeCursor);
+                    emit.LoadArgument(0);
+                    EmitResumeMarker(emit, _emitOwnerFid, resumeCursor);
+                    emit.Call(EngineBuiltinReturnPcSetter);
+                }
                 emit.LoadConstant(builtinId);
                 emit.Call(BuiltinsRegistryGetByIdMethod);
                 emit.Call(BuiltinEntryImplGetter);
                 emit.LoadArgument(0);
                 emit.Call(BuiltinImplInvokeMethod);
                 emit.BranchIfFalse(failLabel);
+                if (isBacktrackable)
+                {
+                    // After a successful first invocation, fall through.
+                    // On a CP-resume, the dispatcher decodes the marker and
+                    // re-invokes this IL with cursor=resumeCursor; the top
+                    // dispatch routes it to this label, which continues the
+                    // body at the post-builtin position.
+                    emit.MarkLabel(resumeLabels[builtinResumeIdx - 1]);
+                }
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }

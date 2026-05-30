@@ -264,7 +264,7 @@ public static class MetaBuiltins
         var registry = engine.Streams
             ?? throw new InvalidOperationException("Engine has no stream registry.");
         var handles = registry.All().ToArray();
-        int returnPc = engine.P + 9;
+        int returnPc = engine.BuiltinReturnPc;
         return CurrentStreamStep(engine, handles, 0, returnPc, isResume: false);
     }
 
@@ -328,7 +328,7 @@ public static class MetaBuiltins
                 pairs.Add((h, new CompoundTerm("position",
                     new Term[] { new IntTerm(pos.Value) })));
         }
-        int returnPc = engine.P + 9;
+        int returnPc = engine.BuiltinReturnPc;
         return StreamPropertyStep(engine, pairs.ToArray(), 0, returnPc, isResume: false);
     }
 
@@ -1042,7 +1042,7 @@ public static class MetaBuiltins
         // Snapshot the current operator set so backtracking iteration
         // sees a stable view even if op/3 mutates the table mid-enum.
         var ops = host.EnumerateOperators().ToArray();
-        int returnPc = engine.P + 9;
+        int returnPc = engine.BuiltinReturnPc;
         return CurrentOpStep(engine, ops, 0, returnPc, isResume: false);
     }
 
@@ -1133,7 +1133,7 @@ public static class MetaBuiltins
         var entries = host.Flags.CharConversion
             .Select(kv => (In: kv.Key, Out: kv.Value))
             .ToArray();
-        int returnPc = engine.P + 9;
+        int returnPc = engine.BuiltinReturnPc;
         return CurrentCharConversionStep(engine, entries, 0, returnPc, isResume: false);
     }
 
@@ -2220,7 +2220,7 @@ public static class MetaBuiltins
         // for our CP is the byte immediately after it. We capture this
         // here (before the sub-engine runs) so the closure recursion in
         // AdvanceCallNEnumerator carries the right value.
-        int returnPc = engine.P + 9;
+        int returnPc = engine.BuiltinReturnPc;
 
         var sub = host.CreateSubEngine();
         var iter = sub.QueryAll(callGoal).GetEnumerator();
@@ -2257,8 +2257,7 @@ public static class MetaBuiltins
 
     public static bool Repeat(Engine engine)
     {
-        // call_builtin is 9 bytes; resume execution at the goal after it.
-        ArmRepeat(engine, engine.P + 9);
+        ArmRepeat(engine, engine.BuiltinReturnPc);
         return true;
     }
 
@@ -2396,9 +2395,7 @@ public static class MetaBuiltins
 
         var candidates = new List<Clause>(host.DynamicClausesFor(patternFid));
         RetractTrace.Begin(null!, patternFid, candidates.Count);
-        // The call_builtin opcode is 9 bytes; a resumed step continues at
-        // the instruction after it.
-        int returnPc = engine.P + 9;
+        int returnPc = engine.BuiltinReturnPc;
         // patternHeap is the pattern's heap home (the result of
         // MaterializeRegister on register 0). Pre-fix this was re-read
         // from register 0 inside every RetractStep, but the CP save

@@ -100,7 +100,7 @@ public static class AtomListBuiltins
             cursor = Resolve(engine, engine.GetHeap(headIdx + 1));
         }
         if (cursor.Tag == Tag.Ref)
-            return AppendSplit(engine, engine.P + 9);
+            return AppendSplit(engine, engine.BuiltinReturnPc);
         if (cursor.Tag != Tag.Atom || cursor.AsAtomId != AtomTable.EmptyListId)
             return false;   // improper L1
 
@@ -314,7 +314,7 @@ public static class AtomListBuiltins
         }
 
         string cName = AtomTable.GetById(cCell.AsAtomId)?.Name ?? "";
-        int returnPc = engine.P + 9;
+        int returnPc = engine.BuiltinReturnPc;
         return AtomConcatSplitAttempt(engine, cName, splitIdx: 0, returnPc, isResume: false);
     }
 
