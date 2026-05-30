@@ -260,7 +260,11 @@ public static class StringBuiltins
             int lisIdx = start + 2 * i;
             int headIdx = lisIdx + 1;
             engine.SetHeap(lisIdx, Cell.Lis(headIdx));
-            int atomId = AtomTable.Intern(s[i].ToString(), permanent: false).Id;
+            // Chunk 222: see AtomCharBuiltins.BuildCharAtomList.
+            int code = s[i];
+            int atomId = AtomTable.GetSingleCharAtomId(code);
+            if (atomId < 0)
+                atomId = AtomTable.Intern(s[i].ToString(), permanent: false).Id;
             engine.SetHeap(headIdx, Cell.Atom(atomId));
         }
         engine.SetHeap(start + 2 * s.Length, Cell.Atom(AtomTable.EmptyListId));

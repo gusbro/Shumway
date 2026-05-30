@@ -33,7 +33,17 @@ public static class AtomTable
     public const int FalseId = 4;
     public const int FirstUserId = 16;
 
-    private static readonly Dictionary<string, WeakReference<Atom>> _byName = new();
+    // Chunk 222: ConcurrentDictionary lets Intern probe transients
+    // lock-free on the fast path, mirroring the chunk-214 lock-free
+    // path for permanents. Single-threaded engines saw
+    // Monitor.Enter_Slowpath as the 6th-hottest function in dotnet-
+    // trace because every transient atom creation (atom_chars per-
+    // character loops, get_char streams, atom_concat results, etc.)
+    // took AtomTable._lock. Concurrent reads here are wait-free;
+    // writes still go through _lock so the multi-step bookkeeping
+    // (id allocation, by-id dictionaries, permanent mirror) stays
+    // consistent.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, WeakReference<Atom>> _byName = new();
     private static readonly Dictionary<int, Atom> _permanentById = new();
     private static readonly Dictionary<int, Atom> _transientById = new();
     private static readonly Dictionary<int, TransientWeakEntry> _transientWeak = new();
@@ -69,15 +79,14 @@ public static class AtomTable
         public TransientWeakEntry(WeakReference<Atom> weak, string name) { Weak = weak; Name = name; }
     }
 
-    // Chunk 166: cache of single-character atom ids for codes 0..127.
-    // The character-I/O builtins (peek_char/get_char/put_char) intern a
-    // fresh 1-character string on every call, and `char_code/2` does the
-    // same when going code -> char. Lookups on the hot path cost a lock
-    // + dictionary probe + a 1-char string allocation each time. Pre-
-    // interning the ASCII range as permanent atoms lets those callers
-    // bypass the lock entirely on the common case (Blint.pl reads ASCII
-    // source).
-    public const int SingleCharAtomCacheLimit = 128;
+    // Chunk 166: cache of single-character atom ids. Chunk 222 widened
+    // it from 128 (ASCII) to 256 (Latin-1 — what `char (byte)` covers
+    // and what every other major Prolog (GNU, SWI, SICStus) pre-
+    // interns). The character-I/O builtins (peek_char/get_char/put_char),
+    // `char_code/2`, and the per-character loops in atom_chars / string_chars
+    // all hit this cache, so any code point in 0..255 skips the lock +
+    // dictionary probe + 1-char string allocation that Intern would do.
+    public const int SingleCharAtomCacheLimit = 256;
     private static readonly int[] _singleCharAtomIds = new int[SingleCharAtomCacheLimit];
 
     /// <summary>Number of permanent atoms a freshly-reset table holds:
@@ -154,6 +163,21 @@ public static class AtomTable
         // predicate-name interning without touching _lock.
         if (_permanentByName.TryGetValue(name, out var perm))
             return perm;
+        // Chunk 222: lock-free fast path for transient atoms. The
+        // existing _byName WeakReference is published under _lock but
+        // read here without — ConcurrentDictionary makes that safe.
+        // The WeakReference target may have been GC-collected since
+        // publication; treat that as a miss and fall through. If the
+        // caller asked for permanent: true and the atom we found is
+        // still transient, fall through too so PromoteToPermanentLocked
+        // runs under the lock (rare path — almost every transient
+        // re-intern is a permanent:false request).
+        if (!permanent
+            && _byName.TryGetValue(name, out var liveRef)
+            && liveRef.TryGetTarget(out var alive))
+        {
+            return alive;
+        }
         lock (_lock)
         {
             if (_byName.TryGetValue(name, out var weakRef) && weakRef.TryGetTarget(out var existing))
@@ -262,7 +286,7 @@ public static class AtomTable
             foreach (var kv in toDrop)
             {
                 _transientById.Remove(kv.Key);
-                _byName.Remove(kv.Value.Name);
+                _byName.TryRemove(kv.Value.Name, out _);
             }
 
             // Phase 4: walk TransientWeak. Promote back to Transient if an engine resurrected
@@ -284,7 +308,7 @@ public static class AtomTable
             foreach (var kv in weakToRemove)
             {
                 _transientWeak.Remove(kv.Key);
-                _byName.Remove(kv.Value);
+                _byName.TryRemove(kv.Value, out _);
             }
         }
     }
