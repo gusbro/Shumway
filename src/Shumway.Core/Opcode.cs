@@ -101,6 +101,16 @@ public enum Opcode : byte
     // SetPc(target) directly.
     CallBytecode = 0x58,
 
+    // Chunk 227 Stage B.3 — tail-call counterparts of CallIl /
+    // CallBytecode. Same 5-byte width as Execute ([op:1][operand:4]);
+    // the linker rewrites each Execute site to the right variant the
+    // same way it rewrites Call sites. ExecuteIl's operand is the
+    // callee functor id (looked up in IlByFunctorId);
+    // ExecuteBytecode's operand is the absolute target address
+    // (just SetPc).
+    ExecuteIl = 0x59,
+    ExecuteBytecode = 0x5A,
+
     // Choice points
     TryMeElse = 0x60,
     RetryMeElse = 0x61,

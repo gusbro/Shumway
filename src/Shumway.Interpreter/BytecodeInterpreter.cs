@@ -466,6 +466,63 @@ public sealed class BytecodeInterpreter
                     break;
                 }
 
+                // Chunk 227 Stage B.3 — tail-call to a bundle-IL
+                // predicate. 5-byte opcode (same as Execute); operand
+                // is the callee functor id. Direct delegate invoke from
+                // IlByFunctorId — no OnDispatch.
+                case Opcode.ExecuteIl:
+                {
+                    if (!FlushPendingWakeups(code))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    int functorId = BytecodeIO.ReadInt32(code, pc + 1);
+                    Shumway.Core.Profiler.Call(functorId);
+                    _engine.SetB0(_engine.B);  // tail call still enters a new procedure
+                    _engine.MaybeCollectHeap();
+                    var table = IlByFunctorId;
+                    var ilFn = table is not null && (uint)functorId < (uint)table.Length
+                        ? table[functorId] : null;
+                    if (ilFn is null)
+                        throw new InvalidOperationException(
+                            $"ExecuteIl: no IL delegate for functor id {functorId}. "
+                            + "Bytecode rewrite invariant violated.");
+                    if (!ilFn(_engine, 0))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    if (_engine.IlTailCallPending)
+                    {
+                        _engine.IlTailCallPending = false;
+                    }
+                    else
+                    {
+                        _engine.SetPc(_engine.Cp);
+                    }
+                    break;
+                }
+
+                // Chunk 227 Stage B.3 — tail-call to a bytecode-only
+                // predicate. 5-byte opcode (same as Execute); operand is
+                // the absolute target address. Skips OnDispatch entirely.
+                case Opcode.ExecuteBytecode:
+                {
+                    if (!FlushPendingWakeups(code))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    int target = BytecodeIO.ReadInt32(code, pc + 1);
+                    target = ResolveTargetMaybeAutoPromoted(target);
+                    Shumway.Core.Profiler.Call(target);
+                    _engine.SetB0(_engine.B);
+                    _engine.MaybeCollectHeap();
+                    _engine.SetPc(target);
+                    break;
+                }
+
                 case Opcode.Allocate:
                 {
                     int n = BytecodeIO.ReadInt32(code, pc + 1);

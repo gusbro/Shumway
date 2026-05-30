@@ -99,6 +99,12 @@ public static class OpcodeTable
         // operand left alone.
         Set(Opcode.CallBytecode, 9, "call_bytecode",
             OperandKind.Address, OperandKind.Count);
+        // Chunk 227 Stage B.3 — Execute → ExecuteIl / ExecuteBytecode
+        // rewrites at link time. Same 5-byte width as Execute; rewrite
+        // is an opcode-byte swap (+4-byte operand patch for ExecuteIl
+        // where address becomes functor id).
+        Set(Opcode.ExecuteIl, 5, "execute_il", OperandKind.Functor);
+        Set(Opcode.ExecuteBytecode, 5, "execute_bytecode", OperandKind.Address);
 
         // Choice points
         Set(Opcode.Nop, 1, "nop");

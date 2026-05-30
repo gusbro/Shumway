@@ -2646,7 +2646,6 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         {
             foreach (var site in pred.CallSites)
             {
-                if (site.IsExecute) continue;
                 int calleeFid = site.CalleeFunctorId;
 
                 int absAddr = predAddr + site.OpcodeOffset;
@@ -2662,38 +2661,68 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     buf = queryBytes;
                     bufOffset = absAddr - _querySplit;
                 }
-                // Idempotence + safety: only rewrite a real Call. A
-                // previous query may have already rewritten this site
-                // in the persistent buffer.
-                if (bufOffset < 0 || bufOffset + 9 > buf.Length) continue;
-                if (buf[bufOffset] != (byte)Shumway.Core.Opcode.Call) continue;
+                // Idempotence + safety: only rewrite the original
+                // Call/Execute opcode. A previous query may have already
+                // rewritten this site in the persistent buffer.
+                int width = site.IsExecute ? 5 : 9;
+                if (bufOffset < 0 || bufOffset + width > buf.Length) continue;
+                byte expected = site.IsExecute
+                    ? (byte)Shumway.Core.Opcode.Execute
+                    : (byte)Shumway.Core.Opcode.Call;
+                if (buf[bufOffset] != expected) continue;
 
-                // Prefer CallIl when IL is available.
+                // Prefer the IL variant when IL is available.
                 bool hasIl = ilTable is not null
                     && (uint)calleeFid < (uint)ilTable.Length
                     && ilTable[calleeFid] is not null;
                 if (hasIl)
                 {
-                    buf[bufOffset] = (byte)Shumway.Core.Opcode.CallIl;
+                    buf[bufOffset] = site.IsExecute
+                        ? (byte)Shumway.Core.Opcode.ExecuteIl
+                        : (byte)Shumway.Core.Opcode.CallIl;
+                    // Replace the address operand with the functor id;
+                    // for Call the trailing numLivePerms stays put.
                     Shumway.Core.BytecodeIO.WriteInt32(buf, bufOffset + 1, calleeFid);
                     continue;
                 }
 
                 // Otherwise classify as bytecode-only when we can prove
-                // IL will never come. Falls through (leaves Call) when
-                // the callee may still be promotable or is unresolved
-                // (no CompiledPredicate at link time — e.g., an
-                // assertz-auto-promoted functor materialised after the
-                // linker ran).
+                // IL will never come. Falls through (leaves Call /
+                // Execute as-is) when:
+                //   - the callee is unresolved (no CompiledPredicate at
+                //     link time — e.g., an assertz-auto-promoted
+                //     functor materialised after the linker ran)
+                //   - the callee MAY still be promotable
+                //   - the callee is a dynamic predicate. Dynamic
+                //     dispatch goes through the JitIndexProfile (chunk
+                //     75) counter inside OnDispatch — rewriting to
+                //     CallBytecode would bypass RecordCall, breaking
+                //     the dynamic-predicate re-index threshold. Static
+                //     bytecode-only predicates (oversized, threshold-
+                //     disabled, etc.) have no such tracking concern
+                //     and are safe to rewrite.
                 if (predicateByFid.TryGetValue(calleeFid, out var calleePred)
-                    && IlPromotion.IsPermanentlyBytecodeOnly(calleeFid, calleePred))
+                    && IlPromotion.IsPermanentlyBytecodeOnly(calleeFid, calleePred)
+                    && !IsDynamicPredicate(calleePred))
                 {
-                    buf[bufOffset] = (byte)Shumway.Core.Opcode.CallBytecode;
+                    buf[bufOffset] = site.IsExecute
+                        ? (byte)Shumway.Core.Opcode.ExecuteBytecode
+                        : (byte)Shumway.Core.Opcode.CallBytecode;
                     // Operand stays as the absolute target address.
                 }
             }
         }
     }
+
+    /// <summary>Chunk 226/227 — true when the predicate is a dynamic
+    /// one (its bytecode begins with <see cref="Shumway.Core.Opcode.EnterDynamic"/>
+    /// per chunk 159). Dynamic predicates must keep using the
+    /// <see cref="Shumway.Core.Opcode.Call"/> / <see cref="Shumway.Core.Opcode.Execute"/>
+    /// path so the OnDispatch hook can bump the JitIndexProfile
+    /// counter (chunk 75) that drives re-indexing.</summary>
+    private static bool IsDynamicPredicate(Shumway.Compiler.Wam.CompiledPredicate pred)
+        => pred.Bytecode.Length > 0
+            && pred.Bytecode[0] == (byte)Shumway.Core.Opcode.EnterDynamic;
 
     private static void ApplyIlPatches(byte[] ilBytes, byte[] patchTable)
     {
