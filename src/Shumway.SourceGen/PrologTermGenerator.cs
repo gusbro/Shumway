@@ -76,11 +76,17 @@ public sealed class PrologTermGenerator : IIncrementalGenerator
         // Members in declaration order. Records gain their primary-
         // constructor parameters as auto-properties, which show up
         // here; that's the intended common case.
+        //
+        // Chunk 243: a member marked [PrologTermIgnore] is skipped —
+        // it doesn't contribute to the term's arity and is left at
+        // its default value when decoding.
         var members = type.GetMembers()
             .Where(m =>
                 (m is IPropertySymbol { IsStatic: false, IsIndexer: false, DeclaredAccessibility: Accessibility.Public })
                 || (m is IFieldSymbol { IsStatic: false, IsConst: false, DeclaredAccessibility: Accessibility.Public,
                     AssociatedSymbol: null }))
+            .Where(m => !m.GetAttributes().Any(a =>
+                a.AttributeClass?.ToDisplayString() == "Shumway.Embedding.PrologTermIgnoreAttribute"))
             .Select(m => m switch
             {
                 IPropertySymbol p => new TermMember(p.Name, p.Type.ToDisplayString(), p.IsReadOnly),
