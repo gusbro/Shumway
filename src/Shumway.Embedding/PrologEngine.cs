@@ -3615,6 +3615,117 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         InvalidatePersistent();
     }
 
+    /// <summary>Chunk 237 — registers every method on
+    /// <paramref name="instance"/> that carries a
+    /// <see cref="PrologPredicateAttribute"/>, binding it as a
+    /// foreign Prolog predicate. The method's C# signature must be
+    /// <c>bool Method(Engine engine)</c>; instance methods capture
+    /// <paramref name="instance"/> into the registered delegate, so
+    /// the instance stays alive for as long as any engine has the
+    /// predicate registered.
+    ///
+    /// <para>Throws <see cref="InvalidOperationException"/> when a
+    /// decorated method has the wrong signature, or when the
+    /// resulting <c>Name/Arity</c> collides with a previously
+    /// registered builtin (the existing builtin would silently win
+    /// otherwise — confusing during development).</para></summary>
+    public void RegisterPredicates(object instance)
+    {
+        ArgumentNullException.ThrowIfNull(instance);
+        RegisterPredicatesImpl(instance.GetType(), instance);
+    }
+
+    /// <summary>Static-class overload: discovers and registers every
+    /// <c>static</c> method on <paramref name="type"/> annotated
+    /// with <see cref="PrologPredicateAttribute"/>. Use for classes
+    /// that group stateless predicates (the common case for
+    /// embedding-side helpers).</summary>
+    public void RegisterPredicates(Type type)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        RegisterPredicatesImpl(type, instance: null);
+    }
+
+    /// <summary>Generic convenience: <c>engine.RegisterPredicates&lt;MyClass&gt;()</c>
+    /// for static classes.</summary>
+    public void RegisterPredicates<T>() => RegisterPredicates(typeof(T));
+
+    private void RegisterPredicatesImpl(Type type, object? instance)
+    {
+        const System.Reflection.BindingFlags flags =
+            System.Reflection.BindingFlags.Public
+            | System.Reflection.BindingFlags.NonPublic
+            | System.Reflection.BindingFlags.Static
+            | System.Reflection.BindingFlags.Instance
+            | System.Reflection.BindingFlags.DeclaredOnly;
+
+        // Walk type + bases so inherited [PrologPredicate] methods
+        // are picked up exactly once.
+        var seen = new HashSet<System.Reflection.MethodInfo>();
+        for (Type? t = type; t is not null && t != typeof(object); t = t.BaseType)
+        {
+            foreach (var method in t.GetMethods(flags))
+            {
+                if (!seen.Add(method)) continue;
+                var attr = System.Reflection.CustomAttributeExtensions
+                    .GetCustomAttribute<PrologPredicateAttribute>(method);
+                if (attr is null) continue;
+
+                if (method.IsStatic == false && instance is null)
+                    throw new InvalidOperationException(
+                        $"[PrologPredicate] on instance method '{type.FullName}.{method.Name}' "
+                        + "requires RegisterPredicates(instance); call the (Type) / generic overload "
+                        + "only for static methods.");
+
+                var parameters = method.GetParameters();
+                if (method.ReturnType != typeof(bool)
+                    || parameters.Length != 1
+                    || parameters[0].ParameterType != typeof(Shumway.Core.Engine))
+                {
+                    throw new InvalidOperationException(
+                        $"[PrologPredicate] method '{type.FullName}.{method.Name}' must have signature "
+                        + "'bool Method(Shumway.Core.Engine engine)'.");
+                }
+
+                string name = attr.Name ?? method.Name;
+                int arity = attr.Arity;
+                var del = (Shumway.Builtins.BuiltinImpl)method.CreateDelegate(
+                    typeof(Shumway.Builtins.BuiltinImpl), method.IsStatic ? null : instance);
+
+                // BuiltinsRegistry.Register is idempotent — a second call with
+                // the same functor returns the existing id and silently
+                // discards the new impl. That's the right behaviour when the
+                // same [PrologPredicate] is re-registered (e.g. the same
+                // attribute discovered across two engines in one process, or
+                // a test re-running with shared static state), but wrong when
+                // a *different* implementation tries to use the name —
+                // there's no diagnostic and the second impl just never runs.
+                // Detect the latter case explicitly: an existing entry whose
+                // delegate target+method differ from ours is a real conflict.
+                int functorId = Shumway.Core.FunctorTable.Intern(
+                    Shumway.Core.AtomTable.Intern(name, permanent: true).Id, arity);
+                if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out int existingId))
+                {
+                    var existing = Shumway.Builtins.BuiltinsRegistry.GetById(existingId);
+                    if (!ReferenceEquals(existing.Impl.Method, del.Method)
+                        || !Equals(existing.Impl.Target, del.Target))
+                    {
+                        throw new InvalidOperationException(
+                            $"[PrologPredicate] '{name}/{arity}' from '{type.FullName}.{method.Name}' "
+                            + "collides with an already-registered builtin. Re-registration would be a "
+                            + "no-op and the new implementation would never run — pick a different name/arity.");
+                    }
+                    // Same method+target — silent no-op, exactly what
+                    // BuiltinsRegistry.Register would do anyway.
+                    continue;
+                }
+
+                Shumway.Builtins.BuiltinsRegistry.Register(
+                    name, arity, del, attr.Category, attr.Template, attr.Summary);
+            }
+        }
+    }
+
     public void ConsultString(string source)
     {
         ArgumentNullException.ThrowIfNull(source);
