@@ -3793,19 +3793,58 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                         + "only for static methods.");
 
                 var parameters = method.GetParameters();
-                if (method.ReturnType != typeof(bool)
-                    || parameters.Length != 1
-                    || parameters[0].ParameterType != typeof(Shumway.Core.Engine))
+                bool isCanonical = method.ReturnType == typeof(bool)
+                    && parameters.Length == 1
+                    && parameters[0].ParameterType == typeof(Shumway.Core.Engine);
+
+                System.Reflection.MethodInfo dispatchTarget;
+                if (isCanonical)
                 {
-                    throw new InvalidOperationException(
-                        $"[PrologPredicate] method '{type.FullName}.{method.Name}' must have signature "
-                        + "'bool Method(Shumway.Core.Engine engine)'.");
+                    dispatchTarget = method;
+                }
+                else
+                {
+                    // Chunk 242: typed signature — locate the
+                    // generator-emitted bridge in the same type.
+                    // Name convention: "_{Method}_PrologBridge". The
+                    // bridge has the same staticness as the user
+                    // method (so the same CreateDelegate path below
+                    // works); RegisterPredicates was already
+                    // checking instance / Type-overload mismatches
+                    // upstream, so the bridge inherits that check.
+                    string bridgeName = "_" + method.Name + "_PrologBridge";
+                    var bridge = t.GetMethod(
+                        bridgeName,
+                        flags,
+                        binder: null,
+                        types: new[] { typeof(Shumway.Core.Engine) },
+                        modifiers: null);
+                    if (bridge is null || bridge.ReturnType != typeof(bool))
+                    {
+                        throw new InvalidOperationException(
+                            $"[PrologPredicate] method '{type.FullName}.{method.Name}' has a typed "
+                            + "signature but no matching generator-emitted bridge "
+                            + $"'{bridgeName}(Shumway.Core.Engine)' was found. Ensure the "
+                            + "Shumway.SourceGen analyzer is referenced — "
+                            + "<ProjectReference ... OutputItemType=\"Analyzer\" /> — and the build "
+                            + "succeeded.");
+                    }
+                    if (bridge.IsStatic != method.IsStatic)
+                    {
+                        throw new InvalidOperationException(
+                            $"[PrologPredicate] bridge '{bridgeName}' has different staticness than "
+                            + $"the user method '{method.Name}'. The generator should have matched it — "
+                            + "this likely means a hand-written method named the same as a generator "
+                            + "output. Rename the user method.");
+                    }
+                    dispatchTarget = bridge;
                 }
 
                 string name = attr.Name ?? method.Name;
                 int arity = attr.Arity;
-                var del = (Shumway.Builtins.BuiltinImpl)method.CreateDelegate(
-                    typeof(Shumway.Builtins.BuiltinImpl), method.IsStatic ? null : instance);
+                var del = (Shumway.Builtins.BuiltinImpl)dispatchTarget.CreateDelegate(
+                    typeof(Shumway.Builtins.BuiltinImpl),
+                    dispatchTarget.IsStatic ? null : instance);
 
                 // BuiltinsRegistry.Register is idempotent — a second call with
                 // the same functor returns the existing id and silently

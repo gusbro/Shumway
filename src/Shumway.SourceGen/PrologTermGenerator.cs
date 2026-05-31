@@ -51,7 +51,7 @@ public sealed class PrologTermGenerator : IIncrementalGenerator
 
         context.RegisterSourceOutput(candidates,
             static (spc, model) => spc.AddSource(
-                hintName: $"{model!.NamespaceSlug}_{model.TypeName}.PrologTerm.g.cs",
+                hintName: $"{model!.NamespaceSlug}_{model.ChainSlug}.PrologTerm.g.cs",
                 source: Emit(model)));
     }
 
@@ -106,19 +106,29 @@ public sealed class PrologTermGenerator : IIncrementalGenerator
                     .SequenceEqual(members.Select(m => m.Name),
                         System.StringComparer.OrdinalIgnoreCase));
 
-        string typeKind = type switch
+        // Walk up containing types so a nested [PrologTerm] type
+        // emits its `partial Outer { partial Inner { ... } }`
+        // hierarchy correctly.
+        var typeChain = new System.Collections.Generic.List<TypeRing>();
+        for (INamedTypeSymbol? cur = type; cur is not null; cur = cur.ContainingType)
         {
-            { IsRecord: true, TypeKind: TypeKind.Struct } => "record struct",
-            { IsRecord: true } => "record",
-            { TypeKind: TypeKind.Struct } => "struct",
-            _ => "class",
-        };
+            string ringKind = cur switch
+            {
+                { IsRecord: true, TypeKind: TypeKind.Struct } => "record struct",
+                { IsRecord: true } => "record",
+                { TypeKind: TypeKind.Struct } => "struct",
+                _ => "class",
+            };
+            typeChain.Insert(0, new TypeRing(cur.Name, ringKind));
+        }
+        string chainSlug = string.Join("_", typeChain.Select(r => r.Name));
 
         return new TermModel(
             Namespace: ns,
             NamespaceSlug: string.IsNullOrEmpty(ns) ? "_global" : ns.Replace('.', '_'),
             TypeName: type.Name,
-            TypeKind: typeKind,
+            TypeChain: typeChain,
+            ChainSlug: chainSlug,
             Functor: functor,
             Members: members,
             HasPositionalCtor: hasPositionalCtor);
@@ -136,112 +146,127 @@ public sealed class PrologTermGenerator : IIncrementalGenerator
             sb.AppendLine();
         }
 
-        sb.Append("partial ").Append(model.TypeKind).Append(' ').Append(model.TypeName).AppendLine();
-        sb.AppendLine("{");
+        // Open outer-class partials so a nested type's emit lands
+        // in its real hierarchy. `i` is the per-level indent; the
+        // body emits at `i` (one level past the innermost partial's
+        // opening brace).
+        string i = "";
+        foreach (var ring in model.TypeChain)
+        {
+            sb.Append(i).Append("partial ").Append(ring.Kind).Append(' ')
+              .Append(ring.Name).AppendLine();
+            sb.Append(i).AppendLine("{");
+            i += "    ";
+        }
+
+        EmitBody(sb, model, i);
+
+        for (int k = model.TypeChain.Count - 1; k >= 0; k--)
+        {
+            sb.Append(new string(' ', k * 4)).AppendLine("}");
+        }
+
+        return sb.ToString();
+    }
+
+    private static void EmitBody(StringBuilder sb, TermModel model, string i)
+    {
+        string i1 = i + "    ";
+        string i2 = i + "        ";
+        string i3 = i + "            ";
 
         // -------- ToPrologTerm --------
-        sb.AppendLine("    /// <summary>Chunk 241 generated — encodes this instance as a Prolog");
-        sb.AppendLine("    /// compound term whose functor is the [PrologTerm] attribute value");
-        sb.AppendLine("    /// (default: the C# type name as declared).</summary>");
-        sb.AppendLine("    public global::Shumway.Compiler.Ast.Term ToPrologTerm(global::Shumway.Embedding.PrologEngine engine)");
-        sb.AppendLine("    {");
+        sb.Append(i).AppendLine("/// <summary>Chunk 241 generated — encodes this instance as a Prolog");
+        sb.Append(i).AppendLine("/// compound term whose functor is the [PrologTerm] attribute value");
+        sb.Append(i).AppendLine("/// (default: the C# type name as declared).</summary>");
+        sb.Append(i).AppendLine("public global::Shumway.Compiler.Ast.Term ToPrologTerm(global::Shumway.Embedding.PrologEngine engine)");
+        sb.Append(i).AppendLine("{");
         if (model.Members.Length == 0)
         {
-            // Zero-arity term — emit a bare atom rather than a compound
-            // with no args, matching how Prolog itself collapses functor(_,)/0.
-            sb.Append("        return new global::Shumway.Compiler.Ast.AtomTerm(\"")
+            sb.Append(i1).Append("return new global::Shumway.Compiler.Ast.AtomTerm(\"")
               .Append(EscapeCs(model.Functor)).AppendLine("\");");
         }
         else
         {
-            sb.AppendLine("        var args = new global::Shumway.Compiler.Ast.Term[]");
-            sb.AppendLine("        {");
+            sb.Append(i1).AppendLine("var args = new global::Shumway.Compiler.Ast.Term[]");
+            sb.Append(i1).AppendLine("{");
             foreach (var m in model.Members)
             {
-                sb.Append("            engine.ToTerm<").Append(m.TypeName).Append(">(this.")
+                sb.Append(i2).Append("engine.ToTerm<").Append(m.TypeName).Append(">(this.")
                   .Append(m.Name).AppendLine("),");
             }
-            sb.AppendLine("        };");
-            sb.Append("        return new global::Shumway.Compiler.Ast.CompoundTerm(\"")
+            sb.Append(i1).AppendLine("};");
+            sb.Append(i1).Append("return new global::Shumway.Compiler.Ast.CompoundTerm(\"")
               .Append(EscapeCs(model.Functor)).AppendLine("\", args);");
         }
-        sb.AppendLine("    }");
+        sb.Append(i).AppendLine("}");
         sb.AppendLine();
 
-        // -------- FromPrologTerm --------
-        sb.AppendLine("    /// <summary>Chunk 241 generated — decodes a matching Prolog compound");
-        sb.AppendLine("    /// term back into a fresh instance. Throws InvalidCastException if");
-        sb.AppendLine("    /// the term's functor or arity does not match the [PrologTerm] shape.</summary>");
-        sb.Append("    public static ").Append(model.TypeName).Append(" FromPrologTerm(global::Shumway.Compiler.Ast.Term term)").AppendLine();
-        sb.AppendLine("    {");
-
-        // The engine reference is needed for FromTerm<T> calls; the
-        // generated FromPrologTerm signature accepts only Term, so
-        // it pulls the engine off the Solution's binding context
-        // through PrologEngine.Current (per-thread fallback) — to
-        // avoid that, the runtime convention dispatcher always
-        // routes through the 2-arg overload below when present.
+        // -------- FromPrologTerm(Term) --------
+        sb.Append(i).AppendLine("/// <summary>Chunk 241 generated — decodes a matching Prolog compound");
+        sb.Append(i).AppendLine("/// term back into a fresh instance. The Term-only overload is for");
+        sb.Append(i).AppendLine("/// engine-free nullary types; the 2-arg overload below carries the");
+        sb.Append(i).AppendLine("/// engine for member recursion.</summary>");
+        sb.Append(i).Append("public static ").Append(model.TypeName).AppendLine(" FromPrologTerm(global::Shumway.Compiler.Ast.Term term)");
+        sb.Append(i).AppendLine("{");
         if (model.Members.Length == 0)
         {
-            sb.Append("        if (term is global::Shumway.Compiler.Ast.AtomTerm a && a.Name == \"")
+            sb.Append(i1).Append("if (term is global::Shumway.Compiler.Ast.AtomTerm a && a.Name == \"")
               .Append(EscapeCs(model.Functor)).AppendLine("\")");
-            sb.Append("            return new ").Append(model.TypeName).AppendLine("();");
-            sb.Append("        throw new global::System.InvalidCastException($\"Expected atom '")
+            sb.Append(i2).Append("return new ").Append(model.TypeName).AppendLine("();");
+            sb.Append(i1).Append("throw new global::System.InvalidCastException($\"Expected atom '")
               .Append(EscapeCs(model.Functor)).AppendLine("', got {term}.\");");
         }
         else
         {
-            sb.AppendLine("        throw new global::System.InvalidOperationException(\"FromPrologTerm(Term) requires an engine for argument decoding; call FromPrologTerm(engine, term).\");");
+            sb.Append(i1).AppendLine("throw new global::System.InvalidOperationException(\"FromPrologTerm(Term) requires an engine for argument decoding; call FromPrologTerm(engine, term).\");");
         }
-        sb.AppendLine("    }");
+        sb.Append(i).AppendLine("}");
         sb.AppendLine();
 
-        // -------- FromPrologTerm with engine --------
-        sb.Append("    public static ").Append(model.TypeName).Append(" FromPrologTerm(global::Shumway.Embedding.PrologEngine engine, global::Shumway.Compiler.Ast.Term term)").AppendLine();
-        sb.AppendLine("    {");
+        // -------- FromPrologTerm(PrologEngine, Term) --------
+        sb.Append(i).Append("public static ").Append(model.TypeName).AppendLine(" FromPrologTerm(global::Shumway.Embedding.PrologEngine engine, global::Shumway.Compiler.Ast.Term term)");
+        sb.Append(i).AppendLine("{");
         if (model.Members.Length == 0)
         {
-            sb.Append("        if (term is global::Shumway.Compiler.Ast.AtomTerm a && a.Name == \"")
+            sb.Append(i1).Append("if (term is global::Shumway.Compiler.Ast.AtomTerm a && a.Name == \"")
               .Append(EscapeCs(model.Functor)).AppendLine("\")");
-            sb.Append("            return new ").Append(model.TypeName).AppendLine("();");
-            sb.Append("        throw new global::System.InvalidCastException($\"Expected atom '")
+            sb.Append(i2).Append("return new ").Append(model.TypeName).AppendLine("();");
+            sb.Append(i1).Append("throw new global::System.InvalidCastException($\"Expected atom '")
               .Append(EscapeCs(model.Functor)).AppendLine("', got {term}.\");");
         }
         else
         {
-            sb.Append("        if (term is not global::Shumway.Compiler.Ast.CompoundTerm c || c.Functor != \"")
+            sb.Append(i1).Append("if (term is not global::Shumway.Compiler.Ast.CompoundTerm c || c.Functor != \"")
               .Append(EscapeCs(model.Functor)).Append("\" || c.Args.Length != ")
               .Append(model.Members.Length).AppendLine(")");
-            sb.Append("            throw new global::System.InvalidCastException($\"Expected compound '")
+            sb.Append(i2).Append("throw new global::System.InvalidCastException($\"Expected compound '")
               .Append(EscapeCs(model.Functor)).Append("/").Append(model.Members.Length)
               .AppendLine("', got {term}.\");");
 
             if (model.HasPositionalCtor)
             {
-                sb.Append("        return new ").Append(model.TypeName).AppendLine("(");
-                for (int i = 0; i < model.Members.Length; i++)
+                sb.Append(i1).Append("return new ").Append(model.TypeName).AppendLine("(");
+                for (int k = 0; k < model.Members.Length; k++)
                 {
-                    sb.Append("            engine.FromTerm<").Append(model.Members[i].TypeName)
-                      .Append(">(c.Args[").Append(i).Append("])")
-                      .AppendLine(i == model.Members.Length - 1 ? ");" : ",");
+                    sb.Append(i3).Append("engine.FromTerm<").Append(model.Members[k].TypeName)
+                      .Append(">(c.Args[").Append(k).Append("])")
+                      .AppendLine(k == model.Members.Length - 1 ? ");" : ",");
                 }
             }
             else
             {
-                sb.Append("        var instance = new ").Append(model.TypeName).AppendLine("();");
-                for (int i = 0; i < model.Members.Length; i++)
+                sb.Append(i1).Append("var instance = new ").Append(model.TypeName).AppendLine("();");
+                for (int k = 0; k < model.Members.Length; k++)
                 {
-                    sb.Append("        instance.").Append(model.Members[i].Name)
-                      .Append(" = engine.FromTerm<").Append(model.Members[i].TypeName)
-                      .Append(">(c.Args[").Append(i).AppendLine("]);");
+                    sb.Append(i1).Append("instance.").Append(model.Members[k].Name)
+                      .Append(" = engine.FromTerm<").Append(model.Members[k].TypeName)
+                      .Append(">(c.Args[").Append(k).AppendLine("]);");
                 }
-                sb.AppendLine("        return instance;");
+                sb.Append(i1).AppendLine("return instance;");
             }
         }
-        sb.AppendLine("    }");
-        sb.AppendLine("}");
-
-        return sb.ToString();
+        sb.Append(i).AppendLine("}");
     }
 
     private static string EscapeCs(string s) =>
@@ -251,10 +276,13 @@ public sealed class PrologTermGenerator : IIncrementalGenerator
         string Namespace,
         string NamespaceSlug,
         string TypeName,
-        string TypeKind,
+        System.Collections.Generic.List<TypeRing> TypeChain,
+        string ChainSlug,
         string Functor,
         TermMember[] Members,
         bool HasPositionalCtor);
 
     private readonly record struct TermMember(string Name, string TypeName, bool IsReadOnly);
+
+    private readonly record struct TypeRing(string Name, string Kind);
 }

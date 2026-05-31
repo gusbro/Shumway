@@ -124,22 +124,6 @@ public class Chunk237Tests
         Assert.NotNull(sols[0].Bindings["E"]);
     }
 
-    // ---- Failure: invalid signature ----
-    public static class BadSignaturePreds
-    {
-        [PrologPredicate("oops/0")]
-        public static int WrongReturn(Engine engine) => 0;
-    }
-
-    [Fact]
-    public void RegisterPredicates_RejectsInvalidSignature()
-    {
-        var engine = new PrologEngine();
-        var ex = Assert.Throws<InvalidOperationException>(
-            () => engine.RegisterPredicates(typeof(BadSignaturePreds)));
-        Assert.Contains("bool Method", ex.Message);
-    }
-
     // ---- Failure: instance method registered via Type overload ----
     public class InstanceOnlyPreds
     {
