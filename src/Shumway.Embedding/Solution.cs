@@ -31,18 +31,64 @@ public sealed class Solution
     /// failed query.</summary>
     public bool IsLast { get; }
 
+    /// <summary>Chunk 238 — engine that produced this solution. Used
+    /// by <see cref="Get{T}"/> / <see cref="TryGet{T}"/> to resolve
+    /// the host's registered term converters (the built-in scalar
+    /// converters work without it, but a user converter for a custom
+    /// type needs the engine that registered it). Null only for the
+    /// failed-query sentinel created by <c>Query(string)</c>.</summary>
+    internal PrologEngine? Engine { get; }
+
     internal Solution(bool success, IReadOnlyDictionary<string, Term> bindings,
-        bool isLast = false)
+        bool isLast = false, PrologEngine? engine = null)
     {
         Success = success;
         Bindings = bindings;
         IsLast = isLast;
+        Engine = engine;
     }
 
     /// <summary>Returns the binding for the named variable, or <c>null</c> if the
     /// query failed or the variable wasn't in the query.</summary>
     public Term? this[string variableName] =>
         Bindings.TryGetValue(variableName, out var t) ? t : null;
+
+    /// <summary>Chunk 238 — typed accessor: returns the binding for
+    /// <paramref name="variableName"/> converted to
+    /// <typeparamref name="T"/> via the engine's converters (built-in
+    /// or user-registered through
+    /// <see cref="PrologEngine.RegisterConverter{T}"/>). Throws
+    /// <see cref="KeyNotFoundException"/> if the variable isn't in
+    /// the bindings, or whatever <see cref="PrologEngine.FromTerm{T}"/>
+    /// raises on a type mismatch.</summary>
+    public T Get<T>(string variableName)
+    {
+        ArgumentNullException.ThrowIfNull(variableName);
+        if (!Bindings.TryGetValue(variableName, out var t))
+            throw new KeyNotFoundException(
+                $"Solution has no binding for variable '{variableName}'.");
+        if (Engine is null)
+            throw new InvalidOperationException(
+                "Solution.Get<T> requires a host PrologEngine; this solution was "
+                + "constructed without one (failed-query sentinel).");
+        return Engine.FromTerm<T>(t);
+    }
+
+    /// <summary>Chunk 238 — non-throwing variant of <see cref="Get{T}"/>:
+    /// returns <c>false</c> when the variable isn't bound; surfaces
+    /// type-conversion exceptions as-is (they signal a programmer
+    /// error, not the absence of data).</summary>
+    public bool TryGet<T>(string variableName, out T value)
+    {
+        ArgumentNullException.ThrowIfNull(variableName);
+        if (!Bindings.TryGetValue(variableName, out var t) || Engine is null)
+        {
+            value = default!;
+            return false;
+        }
+        value = Engine.FromTerm<T>(t);
+        return true;
+    }
 
     /// <summary>Renders the solution in a familiar interactive-Prolog form:
     /// <c>"true"</c> / <c>"false"</c> for variableless queries, or

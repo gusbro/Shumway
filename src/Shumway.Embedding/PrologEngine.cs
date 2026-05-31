@@ -3299,7 +3299,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         while (!halted && result == InterpreterResult.Halted)
         {
             bool isLast = engine.B <= baseB;
-            yield return BuildSolution(varNames, varHeapIndices, engine, isLast);
+            yield return BuildSolution(varNames, varHeapIndices, engine, isLast, host);
             // A known-last solution: don't backtrack — there's nothing
             // to find and re-running would just confirm failure.
             if (isLast) break;
@@ -3629,6 +3629,66 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// resulting <c>Name/Arity</c> collides with a previously
     /// registered builtin (the existing builtin would silently win
     /// otherwise — confusing during development).</para></summary>
+    /// <summary>Chunk 238 — per-engine custom term converters
+    /// registered via <see cref="RegisterConverter{T}"/>. Lazily
+    /// allocated; null when the engine only uses the built-in
+    /// scalar mappings.</summary>
+    private Dictionary<Type, (object ToTerm, object FromTerm)>? _userConverters;
+
+    /// <summary>Chunk 238 — register a custom C#-type ↔ Prolog-term
+    /// pair for <typeparamref name="T"/>. Takes precedence over the
+    /// built-in scalar conversions (so a host can override the
+    /// default <c>string</c> → <see cref="StringTerm"/> mapping with,
+    /// say, <see cref="AtomTerm"/> semantics). Replaces any prior
+    /// registration for the same type.</summary>
+    public void RegisterConverter<T>(
+        Func<PrologEngine, T, Term> toTerm, Func<Term, T> fromTerm)
+    {
+        ArgumentNullException.ThrowIfNull(toTerm);
+        ArgumentNullException.ThrowIfNull(fromTerm);
+        _userConverters ??= new();
+        _userConverters[typeof(T)] = (toTerm, fromTerm);
+    }
+
+    /// <summary>Chunk 238 — converts <paramref name="value"/> to a
+    /// Prolog <see cref="Term"/>. Resolution order: a user converter
+    /// for <typeparamref name="T"/> if registered, then the built-in
+    /// scalar mapping (<see cref="TermConverters"/>). Throws
+    /// <see cref="InvalidOperationException"/> when neither covers
+    /// the type — the diagnostic names the type so the host can
+    /// register a converter.</summary>
+    public Term ToTerm<T>(T value)
+    {
+        if (_userConverters is not null
+            && _userConverters.TryGetValue(typeof(T), out var pair))
+        {
+            return ((Func<PrologEngine, T, Term>)pair.ToTerm)(this, value);
+        }
+        if (TermConverters.TryToTerm<T>(value, out Term result))
+            return result;
+        throw new InvalidOperationException(
+            $"No term converter registered for type '{typeof(T).FullName}'. "
+            + "Register one with engine.RegisterConverter<T>(toTerm, fromTerm).");
+    }
+
+    /// <summary>Chunk 238 — inverse of <see cref="ToTerm{T}"/>:
+    /// extracts a <typeparamref name="T"/> from <paramref name="term"/>.
+    /// User converters win over the built-in mappings.</summary>
+    public T FromTerm<T>(Term term)
+    {
+        ArgumentNullException.ThrowIfNull(term);
+        if (_userConverters is not null
+            && _userConverters.TryGetValue(typeof(T), out var pair))
+        {
+            return ((Func<Term, T>)pair.FromTerm)(term);
+        }
+        if (TermConverters.TryFromTerm<T>(term, out T result))
+            return result;
+        throw new InvalidOperationException(
+            $"No term converter registered for type '{typeof(T).FullName}'. "
+            + "Register one with engine.RegisterConverter<T>(toTerm, fromTerm).");
+    }
+
     public void RegisterPredicates(object instance)
     {
         ArgumentNullException.ThrowIfNull(instance);
@@ -4446,7 +4506,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     {
         foreach (var sol in QueryAll(queryText))
             return sol;
-        return new Solution(success: false, bindings: ImmutableDictionary<string, Term>.Empty);
+        return new Solution(success: false, bindings: ImmutableDictionary<string, Term>.Empty,
+            engine: this);
     }
 
     /// <summary>Parses and runs a query, lazily yielding every solution. The
@@ -5679,12 +5740,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
     private static Solution BuildSolution(
         List<string> varNames, int[] varHeapIndices, Engine engine,
-        bool isLast = false)
+        bool isLast = false,
+        PrologEngine? host = null)
     {
         var bindings = new Dictionary<string, Term>(varNames.Count);
         for (int i = 0; i < varNames.Count; i++)
             bindings[varNames[i]] = TermReader.Materialize(engine, varHeapIndices[i]);
-        return new Solution(success: true, bindings: bindings, isLast: isLast);
+        return new Solution(success: true, bindings: bindings, isLast: isLast, engine: host);
     }
 
     private static void CollectVariables(Term term, List<string> order, HashSet<string> seen)
