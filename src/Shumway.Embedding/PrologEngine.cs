@@ -3488,6 +3488,133 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             ConsultString(File.ReadAllText(path));
     }
 
+    /// <summary>Chunk 236 — classical <c>reconsult/1</c> semantics: for
+    /// every <c>Name/Arity</c> the file defines in its target module,
+    /// abolish any pre-existing clauses (static <em>and</em> dynamic),
+    /// then load the file. Predicates the file doesn't mention are left
+    /// untouched — the difference vs <see cref="ConsultFile"/>, which
+    /// appends and would duplicate clauses on every reload.
+    ///
+    /// <para>For <c>.shum</c> bundles: each entry's
+    /// <see cref="BundleEntry.Defined"/> list (when populated by
+    /// <c>shumway-link</c>) names every predicate the bundle owns; we
+    /// abolish those in their respective target modules and then go
+    /// through <see cref="LoadBundle(Bundle)"/>. For entries with no
+    /// <c>Defined</c> list (hand-built bundles), we fall back to
+    /// parsing the entry source.</para>
+    ///
+    /// <para>Static predicates are replaced silently — the immutability
+    /// invariant applies to the compiled-code level, while the clause
+    /// store this method edits is the source-of-truth that the next
+    /// query recompiles from. This matches the SWI / GProlog
+    /// edit-reload workflow.</para></summary>
+    public void ReconsultFile(string path)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        if (path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase))
+        {
+            var bundle = BundleReader.ReadFromFile(path);
+            foreach (var entry in bundle.Entries)
+            {
+                string targetModule = string.IsNullOrEmpty(entry.ModuleName)
+                    ? DefaultModuleName : entry.ModuleName;
+                HashSet<int> defined;
+                if (entry.Defined.Count > 0)
+                {
+                    defined = new HashSet<int>(entry.Defined.Count);
+                    foreach (var d in entry.Defined)
+                        defined.Add(FunctorTable.Intern(
+                            AtomTable.Intern(d.Indicator.Name, permanent: true).Id,
+                            d.Indicator.Arity));
+                }
+                else
+                {
+                    (_, defined) = ScanSourceForDefinedHeads(entry.Source);
+                }
+                foreach (int fid in defined)
+                    AbolishPredicateInModule(targetModule, fid);
+            }
+            LoadBundle(bundle);
+        }
+        else
+        {
+            string source = File.ReadAllText(path);
+            var (moduleName, defined) = ScanSourceForDefinedHeads(source);
+            foreach (int fid in defined)
+                AbolishPredicateInModule(moduleName, fid);
+            ConsultString(source);
+        }
+    }
+
+    /// <summary>Chunk 236 — light reader pass over a source string,
+    /// returning the target module name (the <c>:- module/1</c>
+    /// directive's argument, or <see cref="DefaultModuleName"/> if
+    /// absent) and the set of head functor ids of every non-directive
+    /// clause. Used by <see cref="ReconsultFile"/> to know what to
+    /// abolish before loading. Parses the source twice (the subsequent
+    /// <see cref="ConsultString"/> reads it again) — the cost is
+    /// acceptable for the developer edit-reload path.</summary>
+    private (string ModuleName, HashSet<int> HeadFunctorIds) ScanSourceForDefinedHeads(
+        string source)
+    {
+        var rawClauses = new ClauseReader(
+            new Lexer(source, _flags.CharConversionEnabled ? _flags.CharConversion : null),
+            _operators, _flags).ReadAll().ToList();
+        string moduleName = DefaultModuleName;
+        var heads = new HashSet<int>();
+        foreach (var clause in rawClauses)
+        {
+            if (clause.Kind == ClauseKind.Directive)
+            {
+                if (clause.Term is CompoundTerm dWrap && dWrap.Args.Length == 1
+                    && TryReadModuleDirective(dWrap.Args[0], out string? name))
+                    moduleName = name;
+                continue;
+            }
+            heads.Add(HeadFunctorIdOf(clause));
+        }
+        return (moduleName, heads);
+    }
+
+    /// <summary>Chunk 236 — abolishes the named functor in the given
+    /// module: drops every matching clause from the module manifest
+    /// (and removes the functor from any companion sets:
+    /// PublicFunctors / DiscontiguousFunctors / MultifileFunctors /
+    /// ModeDeclarations), then — if the functor was dynamic at all —
+    /// calls <see cref="AbolishDynamic(int)"/> to clear runtime state.
+    /// Module-scoped, so other modules' clauses for the same functor
+    /// are left alone (matters for multifile predicates).</summary>
+    private void AbolishPredicateInModule(string moduleName, int fid)
+    {
+        if (_modules.TryGetValue(moduleName, out var manifest))
+        {
+            int kept = 0;
+            for (int i = 0; i < manifest.Clauses.Count; i++)
+            {
+                if (HeadFunctorIdOf(manifest.Clauses[i]) != fid)
+                {
+                    if (kept != i) manifest.Clauses[kept] = manifest.Clauses[i];
+                    kept++;
+                }
+            }
+            if (kept < manifest.Clauses.Count)
+                manifest.Clauses.RemoveRange(kept, manifest.Clauses.Count - kept);
+            manifest.PublicFunctors.Remove(fid);
+            manifest.DiscontiguousFunctors.Remove(fid);
+            manifest.MultifileFunctors.Remove(fid);
+            manifest.ModeDeclarations.Remove(fid);
+        }
+
+        if (_dynamicFunctors.Contains(fid) || _dynamicClauses.ContainsKey(fid))
+            AbolishDynamic(fid);
+
+        // Compiled-code caches must be dropped so the next query
+        // recompiles against the trimmed manifest.
+        _staticPredicateCache.Clear();
+        _staticLink = null;
+        InvalidatePersistent();
+    }
+
     public void ConsultString(string source)
     {
         ArgumentNullException.ThrowIfNull(source);

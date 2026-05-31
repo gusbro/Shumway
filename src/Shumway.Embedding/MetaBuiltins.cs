@@ -259,12 +259,16 @@ public static class MetaBuiltins
         // for consult/1; we do the same.
         BuiltinsRegistry.Register("consult", 1, Consult,
             Database, "consult(+File)",
-            "Loads File and adds its clauses to the database. File is an atom path; "
-            + "a .shum extension routes through LoadBundle, everything else is read "
-            + "as Prolog source.");
-        BuiltinsRegistry.Register("reconsult", 1, Consult,
+            "Loads File and adds its clauses to the database, appending to any "
+            + "existing predicates. File is an atom path; a .shum extension routes "
+            + "through LoadBundle, everything else is read as Prolog source.");
+        BuiltinsRegistry.Register("reconsult", 1, Reconsult,
             Database, "reconsult(+File)",
-            "Synonym for consult/1 (SWI-compatible).");
+            "Like consult/1 but first abolishes every predicate whose indicator "
+            + "appears in File (in the target module), so an edit-reload cycle "
+            + "replaces the file's predicates rather than duplicating clauses. "
+            + "Predicates not mentioned in File are left untouched (classical "
+            + "GProlog / SICStus semantics).");
     }
 
     /// <summary><c>current_stream(?Filename, ?Mode, ?Stream)</c> —
@@ -2375,6 +2379,33 @@ public static class MetaBuiltins
                 $"existence_error(source_sink, '{path}')");
 
         host.ConsultFile(path);
+        return true;
+    }
+
+    /// <summary><c>reconsult(+File)</c> — classical edit-reload semantics:
+    /// abolishes every predicate whose indicator is defined in
+    /// <c>File</c> in the target module, then loads <c>File</c>. Argument
+    /// validation and error shapes are identical to
+    /// <see cref="Consult"/>.</summary>
+    public static bool Reconsult(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "reconsult/1 requires the engine to be hosted by a PrologEngine.");
+
+        Cell cell = MaterializeRegisterAsCell(engine, 0);
+        if (cell.Tag == Tag.Ref || cell.Tag == Tag.AttVar)
+            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+        if (cell.Tag != Tag.Atom)
+            throw new Shumway.Core.PrologRuntimeException(
+                "type_error(atom, _)");
+
+        string path = AtomTable.GetById(cell.AsAtomId)?.Name ?? "";
+        if (!System.IO.File.Exists(path))
+            throw new Shumway.Core.PrologRuntimeException(
+                $"existence_error(source_sink, '{path}')");
+
+        host.ReconsultFile(path);
         return true;
     }
 

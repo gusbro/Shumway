@@ -122,13 +122,13 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `clause(+Head, ?Body)` | Enumerates the clauses (Head :- Body) of a predicate. |
 | `compact_dynamic_buffer` | Phase-11 chunk 157: invalidates the persistent dynamic-code buffer so the next query rebuilds it from current _dynamicClauses. Reclaims memory consumed by appended-but-now-unreachable chain entries from many in-place assertz / asserta / retract cycles, at the cost of one re-link of the dynamic region on the next query. |
 | `compact_dynamic_buffer(+Name/Arity)` | Phase-12 chunk 158: per-predicate hint variant. Validates Name/Arity names a dynamic predicate, then triggers the same full rebuild as the 0-arg form. The single buffer holds every dynamic predicate's bytecode interleaved, so independent per-predicate reclamation isn't currently feasible without partial-relink support — the API surface is per-predicate for forward compatibility. |
-| `consult(+File)` | Loads File and adds its clauses to the database. File is an atom path; a .shum extension routes through LoadBundle, everything else is read as Prolog source. |
+| `consult(+File)` | Loads File and adds its clauses to the database, appending to any existing predicates. File is an atom path; a .shum extension routes through LoadBundle, everything else is read as Prolog source. |
 | `current_predicate(?PredicateIndicator)` | Enumerates the defined predicates as Name/Arity indicators. |
 | `garbage_collect_clauses` | Re-threads every dynamic predicate's chain to skip retracted clauses (ADR-015). |
 | `garbage_collect_clauses(+Name/Arity)` | Re-threads the named predicate's chain to skip retracted clauses. |
 | `listing` | Lists the clauses of every user-defined predicate — consulted or asserted, never builtins or library predicates. |
 | `listing(+Spec)` | Lists the clauses of the user-defined predicate named by Spec (Name or Name/Arity). |
-| `reconsult(+File)` | Synonym for consult/1 (SWI-compatible). |
+| `reconsult(+File)` | Like consult/1 but first abolishes every predicate whose indicator appears in File (in the target module), so an edit-reload cycle replaces the file's predicates rather than duplicating clauses. Predicates not mentioned in File are left untouched (classical GProlog / SICStus semantics). |
 | `retract(+Clause)` | Removes the first clause that unifies with the argument. |
 | `retractall(+Head)` | Removes every clause whose head unifies with Head. |
 | `well_founded(+Goal, -Status)` | The well-founded truth value of a tabled Goal — true, false or undefined. |
