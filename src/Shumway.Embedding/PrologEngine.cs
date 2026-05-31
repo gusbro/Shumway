@@ -3666,6 +3666,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
         if (TermConverters.TryToTerm<T>(value, out Term result))
             return result;
+        if (CompositeConverters.TryToTerm<T>(this, value, out result))
+            return result;
         throw new InvalidOperationException(
             $"No term converter registered for type '{typeof(T).FullName}'. "
             + "Register one with engine.RegisterConverter<T>(toTerm, fromTerm).");
@@ -3684,10 +3686,55 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
         if (TermConverters.TryFromTerm<T>(term, out T result))
             return result;
+        if (CompositeConverters.TryFromTerm<T>(this, term, out result))
+            return result;
         throw new InvalidOperationException(
             $"No term converter registered for type '{typeof(T).FullName}'. "
             + "Register one with engine.RegisterConverter<T>(toTerm, fromTerm).");
     }
+
+    /// <summary>Chunk 239 — reflective bridge: invoke
+    /// <see cref="ToTerm{T}"/> when the element type is only known
+    /// at runtime (the path the collection / tuple / nullable /
+    /// dictionary handlers take to recurse into element types).
+    /// The generic method handle is built and cached on first use
+    /// per element type; subsequent calls are a dictionary probe +
+    /// delegate invoke.</summary>
+    internal Term ToTermDynamic(Type type, object? value)
+    {
+        var del = _toTermDynamicCache.GetOrAdd(type, static t =>
+        {
+            var m = typeof(PrologEngine)
+                .GetMethod(nameof(ToTerm))!
+                .MakeGenericMethod(t);
+            // Build a (PrologEngine, object) -> Term delegate that
+            // unboxes to the right T and forwards. Reflection cost
+            // pays once per type.
+            return (engine, v) => (Term)m.Invoke(engine, new[] { v })!;
+        });
+        return del(this, value);
+    }
+
+    /// <summary>Chunk 239 — reflective bridge for the inverse
+    /// direction; same caching strategy as
+    /// <see cref="ToTermDynamic"/>.</summary>
+    internal object? FromTermDynamic(Type type, Term term)
+    {
+        var del = _fromTermDynamicCache.GetOrAdd(type, static t =>
+        {
+            var m = typeof(PrologEngine)
+                .GetMethod(nameof(FromTerm))!
+                .MakeGenericMethod(t);
+            return (engine, tm) => m.Invoke(engine, new object[] { tm });
+        });
+        return del(this, term);
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<
+        Type, Func<PrologEngine, object?, Term>> _toTermDynamicCache = new();
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<
+        Type, Func<PrologEngine, Term, object?>> _fromTermDynamicCache = new();
 
     public void RegisterPredicates(object instance)
     {
