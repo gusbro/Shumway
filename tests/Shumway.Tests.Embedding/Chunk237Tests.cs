@@ -17,7 +17,7 @@ public class Chunk237Tests
         [PrologPredicate(1)]
         public static bool c237_always_true(Engine engine) => true;
 
-        [PrologPredicate("chunk237_answer", 1)]
+        [PrologPredicate("chunk237_answer/1")]
         public static bool Answer(Engine engine)
         {
             return engine.UnifyRegisterWithCell(0, Cell.Int(42));
@@ -42,7 +42,7 @@ public class Chunk237Tests
     // something to exercise.
     public class NonStaticContainer
     {
-        [PrologPredicate("c237_yes_42", 1)]
+        [PrologPredicate("c237_yes_42/1")]
         public static bool Yes42(Engine engine)
             => engine.UnifyRegisterWithCell(0, Cell.Int(42));
     }
@@ -62,14 +62,14 @@ public class Chunk237Tests
     {
         private int _count;
 
-        [PrologPredicate("c237_counter_bump", 0)]
+        [PrologPredicate("c237_counter_bump/0")]
         public bool Bump(Engine engine)
         {
             _count++;
             return true;
         }
 
-        [PrologPredicate("c237_counter_value", 1)]
+        [PrologPredicate("c237_counter_value/1")]
         public bool Value(Engine engine)
         {
             return engine.UnifyRegisterWithCell(0, Cell.Int(_count));
@@ -96,7 +96,7 @@ public class Chunk237Tests
     // propagation works for foreign-registered predicates. ----
     public static class ThrowingPreds
     {
-        [PrologPredicate("c237_explode", 0)]
+        [PrologPredicate("c237_explode/0")]
         public static bool Explode(Engine engine)
         {
             throw new PrologRuntimeException("type_error(my_reason, x)");
@@ -127,7 +127,7 @@ public class Chunk237Tests
     // ---- Failure: invalid signature ----
     public static class BadSignaturePreds
     {
-        [PrologPredicate("oops", 0)]
+        [PrologPredicate("oops/0")]
         public static int WrongReturn(Engine engine) => 0;
     }
 
@@ -143,7 +143,7 @@ public class Chunk237Tests
     // ---- Failure: instance method registered via Type overload ----
     public class InstanceOnlyPreds
     {
-        [PrologPredicate("need_instance", 0)]
+        [PrologPredicate("need_instance/0")]
         public bool NeedInstance(Engine engine) => true;
     }
 
@@ -156,10 +156,42 @@ public class Chunk237Tests
         Assert.Contains("instance method", ex.Message);
     }
 
+    // ---- Indicator string validation: malformed forms must throw ----
+    [Theory]
+    [InlineData("foo")]            // no slash
+    [InlineData("foo/")]           // missing arity
+    [InlineData("/3")]             // missing name
+    [InlineData("foo/bar")]        // non-numeric arity
+    [InlineData("foo/-1")]         // negative arity
+    public void Attribute_RejectsMalformedIndicator(string indicator)
+    {
+        Assert.Throws<ArgumentException>(() => new PrologPredicateAttribute(indicator));
+    }
+
+    [Fact]
+    public void Attribute_AcceptsZeroArity()
+    {
+        var attr = new PrologPredicateAttribute("foo/0");
+        Assert.Equal("foo", attr.Name);
+        Assert.Equal(0, attr.Arity);
+    }
+
+    [Fact]
+    public void Attribute_NameWithSlash_TakesLastSlash()
+    {
+        // Edge case: the name itself could contain '/' (operator-named
+        // predicates like '/'/2). Take the LAST slash as the arity
+        // delimiter so '//2' parses as the predicate named '/' with
+        // arity 2, not '' / arity 2 or '/' / arity 2 ambiguously.
+        var attr = new PrologPredicateAttribute("//2");
+        Assert.Equal("/", attr.Name);
+        Assert.Equal(2, attr.Arity);
+    }
+
     // ---- Failure: collision with existing builtin ----
     public static class CollidingPreds
     {
-        [PrologPredicate("assertz", 1)]
+        [PrologPredicate("assertz/1")]
         public static bool Hijack(Engine engine) => true;
     }
 
