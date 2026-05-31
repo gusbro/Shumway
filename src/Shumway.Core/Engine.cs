@@ -1494,6 +1494,20 @@ public sealed partial class Engine
     // the stack-array _ilCpStack/_ilCpTop declared just above (with
     // the IlChoicePointEntry struct).
 
+    /// <summary>Chunk 233 — per-engine slot for the IL indexed-dispatch
+    /// cache (the typed dictionary lives in Compiler.Il and Core can't
+    /// name its type). Previously a
+    /// <c>ConditionalWeakTable&lt;Engine, ConcurrentDictionary&gt;</c>
+    /// in <c>IlIndexedDispatch._perEngineCache</c> — every IL Call to
+    /// an indexed predicate paid an internal ConditionalWeakTable
+    /// lock + a ConcurrentDictionary bucket lock. Engine is single-
+    /// threaded and the cache lives exactly as long as the engine, so
+    /// a plain instance field is both safe and free of those internal
+    /// locks. Compiler.Il accesses it via an <c>is</c> pattern check
+    /// to the typed Dictionary, which the JIT compiles to a single
+    /// type-token compare (no Dictionary boxing / cast).</summary>
+    public object? IlIndexedDispatchCache;
+
     // Phase 16 — threaded Tier-1 dispatch. An IL non-tail Call site sets
     // engine.Cp to a *resume marker* address instead of recursing into
     // RunSubroutine. When the callee Proceeds (Pc = Cp), the bytecode

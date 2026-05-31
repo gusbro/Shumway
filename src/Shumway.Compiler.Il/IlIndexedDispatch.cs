@@ -275,13 +275,24 @@ public static class IlIndexedDispatch
     // the functor id is name-relative via chunk-197 patching and the
     // engine's linked code is available at first call).
     // ------------------------------------------------------------------
-    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<
-        Engine, System.Collections.Concurrent.ConcurrentDictionary<int, IlIndexedDispatchInfo>>
-        _perEngineCache = new();
-
-    private static System.Collections.Concurrent.ConcurrentDictionary<int, IlIndexedDispatchInfo>
-        CacheFor(Engine engine) => _perEngineCache.GetValue(engine,
-            static _ => new System.Collections.Concurrent.ConcurrentDictionary<int, IlIndexedDispatchInfo>());
+    // Chunk 233 — per-engine cache moved onto the Engine itself
+    // (Engine.IlIndexedDispatchCache is a plain object slot). The
+    // previous shape was a ConditionalWeakTable<Engine, ConcurrentDictionary> —
+    // every IL Call to an indexed predicate paid the ConditionalWeakTable's
+    // internal lock + the ConcurrentDictionary's bucket lock (visible
+    // as Monitor.Enter_Slowpath in dotnet-trace). Engine is single-
+    // threaded so a plain Dictionary suffices; the engine-typed slot
+    // gives the cache engine lifetime without the weak-table.
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private static Dictionary<int, IlIndexedDispatchInfo> CacheFor(Engine engine)
+    {
+        if (engine.IlIndexedDispatchCache is Dictionary<int, IlIndexedDispatchInfo> typed)
+            return typed;
+        var fresh = new Dictionary<int, IlIndexedDispatchInfo>();
+        engine.IlIndexedDispatchCache = fresh;
+        return fresh;
+    }
 
     /// <summary>Called from emitted IL: resolves the entry cursor for the
     /// predicate identified by <paramref name="functorId"/>, building the
@@ -297,8 +308,7 @@ public static class IlIndexedDispatch
             info = BuildModelFromEngine(engine, functorId)
                 ?? throw new InvalidOperationException(
                     $"Indexed-dispatch model build failed for functor id {functorId}.");
-            cache.TryAdd(functorId, info);
-            info = cache[functorId];
+            cache[functorId] = info;
         }
         return ResolveEntryCursor(engine, info);
     }
@@ -308,7 +318,10 @@ public static class IlIndexedDispatch
     /// in hand, so we avoid the first-call re-parse by populating the
     /// engine's cache up front.</summary>
     internal static void RegisterModelForEngine(Engine engine, int functorId, IlIndexedDispatchInfo info)
-        => CacheFor(engine).TryAdd(functorId, info);
+    {
+        var cache = CacheFor(engine);
+        if (!cache.ContainsKey(functorId)) cache[functorId] = info;
+    }
 
     private static IlIndexedDispatchInfo? BuildModelFromEngine(Engine engine, int functorId)
     {
