@@ -251,6 +251,20 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("is_digit", 1, IsDigit1,
             Term, "is_digit(+Char)",
             "True when Char is a one-character atom representing an ASCII digit.");
+
+        // Chunk 235: consult/1 and reconsult/1. Both route through
+        // PrologEngine.ConsultFile: .shum extension goes through
+        // LoadBundle, everything else is read as Prolog source and
+        // handed to ConsultString. SWI treats reconsult/1 as a synonym
+        // for consult/1; we do the same.
+        BuiltinsRegistry.Register("consult", 1, Consult,
+            Database, "consult(+File)",
+            "Loads File and adds its clauses to the database. File is an atom path; "
+            + "a .shum extension routes through LoadBundle, everything else is read "
+            + "as Prolog source.");
+        BuiltinsRegistry.Register("reconsult", 1, Consult,
+            Database, "reconsult(+File)",
+            "Synonym for consult/1 (SWI-compatible).");
     }
 
     /// <summary><c>current_stream(?Filename, ?Mode, ?Stream)</c> —
@@ -2327,6 +2341,41 @@ public static class MetaBuiltins
             && int.TryParse(name.AsSpan(2), out int addr))
             return addr;
         return -1;
+    }
+
+    // ============================================================================
+    // consult / reconsult  (chunk 235)
+    // ============================================================================
+
+    /// <summary><c>consult(+File)</c> — loads a Prolog source or compiled
+    /// Shumway bundle. Routes by extension through
+    /// <see cref="PrologEngine.ConsultFile"/>: <c>.shum</c> goes through
+    /// <see cref="PrologEngine.LoadBundle"/>, everything else is read as
+    /// Prolog source and handed to <see cref="PrologEngine.ConsultString"/>.
+    /// ISO errors: <c>instantiation_error</c> for an unbound file arg,
+    /// <c>type_error(atom, _)</c> for a non-atom, and
+    /// <c>existence_error(source_sink, _)</c> when the path doesn't
+    /// exist.</summary>
+    public static bool Consult(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "consult/1 requires the engine to be hosted by a PrologEngine.");
+
+        Cell cell = MaterializeRegisterAsCell(engine, 0);
+        if (cell.Tag == Tag.Ref || cell.Tag == Tag.AttVar)
+            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+        if (cell.Tag != Tag.Atom)
+            throw new Shumway.Core.PrologRuntimeException(
+                "type_error(atom, _)");
+
+        string path = AtomTable.GetById(cell.AsAtomId)?.Name ?? "";
+        if (!System.IO.File.Exists(path))
+            throw new Shumway.Core.PrologRuntimeException(
+                $"existence_error(source_sink, '{path}')");
+
+        host.ConsultFile(path);
+        return true;
     }
 
     // ============================================================================

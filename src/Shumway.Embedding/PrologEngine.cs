@@ -3466,6 +3466,28 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// up front so any <c>:- op</c> declarations take effect immediately; the
     /// returned clause stream is sorted into module-local storage and a final
     /// compile happens at query time.</para></summary>
+    /// <summary>Chunk 235 — public file-loading entry, the embedding-API
+    /// counterpart of the REPL's local <c>ConsultFile</c> and the
+    /// <c>consult/1</c> / <c>reconsult/1</c> builtins. Routes by
+    /// extension: <c>.shum</c> goes through
+    /// <see cref="LoadBundle(string)"/> (precompiled bytecode + maybe
+    /// IL), everything else is read as text and handed to
+    /// <see cref="ConsultString"/>.
+    ///
+    /// <para>Throws <see cref="System.IO.FileNotFoundException"/> if the
+    /// path doesn't exist (callers — including the <c>consult/1</c>
+    /// builtin — translate to ISO <c>existence_error(source_sink, _)</c>).
+    /// Source-level parse / compile errors propagate as
+    /// <see cref="PrologRuntimeException"/>.</para></summary>
+    public void ConsultFile(string path)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        if (path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase))
+            LoadBundle(path);
+        else
+            ConsultString(File.ReadAllText(path));
+    }
+
     public void ConsultString(string source)
     {
         ArgumentNullException.ThrowIfNull(source);
