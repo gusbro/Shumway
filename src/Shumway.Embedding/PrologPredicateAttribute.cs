@@ -58,6 +58,36 @@ public sealed class PrologPredicateAttribute : Attribute
     /// predicate does. Surfaces in the predicate reference.</summary>
     public string? Summary { get; init; }
 
+    /// <summary>Chunk 244 — when <c>true</c>, the method is a
+    /// non-deterministic generator: on success Prolog can
+    /// backtrack into it for additional solutions, exactly like a
+    /// native predicate built on multi-clause backtracking. The
+    /// method MUST return <c>IEnumerable&lt;T&gt;</c> for some
+    /// <c>T</c>; the source generator emits an iterator-driven
+    /// bridge that pushes a choice point per solution and re-
+    /// invokes the iterator on backtrack.
+    ///
+    /// <example><code>
+    /// [PrologPredicate("c244_range/3", NonDeterministic = true)]
+    /// public static IEnumerable&lt;int&gt; Range(int from, int to)
+    /// {
+    ///     for (int i = from; i &lt;= to; i++) yield return i;
+    /// }
+    /// </code></example>
+    ///
+    /// <para>The iterator is disposed when MoveNext returns false
+    /// (exhaustion) — anything inside a <c>using</c> in the body
+    /// or any <c>IEnumerator.Dispose()</c> override runs at that
+    /// point. <strong>v1 limitation</strong>: when Prolog
+    /// <c>!</c> prunes the choice point without backtracking
+    /// through it, the iterator is not Disposed deterministically;
+    /// it is left for the .NET GC's finalizer to run. For pure-
+    /// computation generators this is invisible; predicates that
+    /// hold non-managed resources (DB cursors, file handles)
+    /// should either avoid being cut or accept that cleanup
+    /// happens at GC time.</para></summary>
+    public bool NonDeterministic { get; init; }
+
     /// <summary>Use the C# method's name as the Prolog atom, with
     /// <paramref name="arity"/> as the predicate arity. Convenient
     /// when the C# method is already named the way Prolog wants the

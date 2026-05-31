@@ -82,9 +82,30 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
         var containing = method.ContainingType;
         if (containing is null) return null;
 
+        // Chunk 244: NonDeterministic = true switches to the
+        // iterator-driven bridge. Detect it first since the
+        // signature-skip rule below would otherwise let an
+        // accidentally-non-det signature pass through.
+        bool nonDeterministic = false;
+        foreach (var attr in ctx.Attributes)
+        {
+            foreach (var named in attr.NamedArguments)
+            {
+                if (named.Key == "NonDeterministic"
+                    && named.Value.Value is bool b && b)
+                {
+                    nonDeterministic = true;
+                }
+            }
+        }
+
         // Skip the raw bool(Engine) form — RegisterPredicates handles
-        // it directly without a bridge.
-        if (method.ReturnType.SpecialType == SpecialType.System_Boolean
+        // it directly without a bridge. Only when not non-det; a
+        // non-det attribute on a bool(Engine) is a misuse the
+        // generator surfaces by still emitting a bridge that will
+        // fail to compile (wrong return type).
+        if (!nonDeterministic
+            && method.ReturnType.SpecialType == SpecialType.System_Boolean
             && method.Parameters.Length == 1
             && method.Parameters[0].Type.ToDisplayString() == EngineFullName)
         {
@@ -108,12 +129,33 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
         }
 
         // Return shape:
-        //   void           -> always succeed, no output register
-        //   bool           -> success value, no output register
-        //   T              -> encode + unify with next register
+        //   void                  -> always succeed, no output register
+        //   bool                  -> success value, no output register
+        //   T                     -> encode + unify with next register
+        //   IEnumerable<T>        -> non-det generator (chunk 244)
         ReturnShape returnShape;
         string? returnTypeName = null;
-        if (method.ReturnsVoid)
+        string? elementTypeName = null;
+        if (nonDeterministic)
+        {
+            // Validate: must return IEnumerable<T>.
+            if (method.ReturnType is INamedTypeSymbol named
+                && named.IsGenericType
+                && named.ConstructedFrom.ToDisplayString() == "System.Collections.Generic.IEnumerable<T>")
+            {
+                elementTypeName = named.TypeArguments[0].ToDisplayString();
+            }
+            else
+            {
+                // Fall through: emit nothing (the diagnostic
+                // surfaces at the RegisterPredicates level when no
+                // bridge is found, pointing the user at the
+                // mismatch).
+                return null;
+            }
+            returnShape = ReturnShape.NonDet;
+        }
+        else if (method.ReturnsVoid)
             returnShape = ReturnShape.Void;
         else if (method.ReturnType.SpecialType == SpecialType.System_Boolean)
             returnShape = ReturnShape.Bool;
@@ -152,7 +194,8 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
             TypedParameters: typedParams,
             EngineParamIndex: engineParamIndex,
             ReturnShape: returnShape,
-            ReturnTypeName: returnTypeName);
+            ReturnTypeName: returnTypeName,
+            ElementTypeName: elementTypeName);
     }
 
     private static string EmitGroup(
@@ -258,12 +301,65 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
                   .Append(b.ReturnTypeName)
                   .AppendLine(">(__result));");
                 break;
+            case ReturnShape.NonDet:
+                // First call: build the iterator from the user method,
+                // then hand off to the advance helper. The advance
+                // helper handles both MoveNext+CP-push (for solutions)
+                // and Dispose+fail (for exhaustion).
+                sb.Append(indent).Append("    var __iter = ").Append(call).AppendLine(".GetEnumerator();");
+                sb.Append(indent).Append("    return ")
+                  .Append(advanceHelperName(b))
+                  .AppendLine("(engine, host, __iter, engine.BuiltinReturnPc);");
+                sb.Append(indent).AppendLine("}");
+                sb.AppendLine();
+                EmitNonDetAdvance(sb, indent, b);
+                return;
         }
 
         sb.Append(indent).AppendLine("}");
     }
 
-    private enum ReturnShape { Void, Bool, Encode }
+    private static string advanceHelperName(BridgeModel b)
+        => "_" + b.MethodName + "_PrologNonDetAdvance";
+
+    /// <summary>Emits the chunk-244 non-det advance helper: one
+    /// MoveNext step, push a CP that re-enters on backtrack, unify
+    /// the current value with the next register. Returns false on
+    /// exhaustion (the engine then continues backtracking past the
+    /// foreign CP) or on a unify failure (same effect; the CP we
+    /// just pushed will re-enter on the engine's backtrack pass).</summary>
+    private static void EmitNonDetAdvance(StringBuilder sb, string indent, BridgeModel b)
+    {
+        sb.Append(indent).Append("private static bool ").Append(advanceHelperName(b))
+          .Append("(global::Shumway.Core.Engine engine, global::Shumway.Embedding.PrologEngine host, ")
+          .Append("global::System.Collections.Generic.IEnumerator<")
+          .Append(b.ElementTypeName).AppendLine("> iter, int returnPc)");
+        sb.Append(indent).AppendLine("{");
+        sb.Append(indent).AppendLine("    if (!iter.MoveNext())");
+        sb.Append(indent).AppendLine("    {");
+        sb.Append(indent).AppendLine("        iter.Dispose();");
+        sb.Append(indent).AppendLine("        return false;");
+        sb.Append(indent).AppendLine("    }");
+        // Push a re-arming CP that, on backtrack, advances the
+        // iterator one more step. The CP captures the iterator and
+        // the resume PC by closure.
+        sb.Append(indent).Append("    engine.PushBuiltinChoicePoint((e, _) =>");
+        sb.AppendLine();
+        sb.Append(indent).AppendLine("    {");
+        sb.Append(indent).Append("        bool __ok = ")
+          .Append(advanceHelperName(b)).AppendLine("(e, host, iter, returnPc);");
+        sb.Append(indent).AppendLine("        if (__ok) e.ResumeAtReturnPc(returnPc);");
+        sb.Append(indent).AppendLine("        return __ok;");
+        sb.Append(indent).AppendLine("    }, arity: 0);");
+        // Unify the current value with the register right after the
+        // typed input args.
+        sb.Append(indent).Append("    return global::Shumway.Embedding.RegisterMarshalling.UnifyRegisterWithTerm(")
+          .Append("engine, ").Append(b.TypedParameters.Count)
+          .Append(", host.ToTerm<").Append(b.ElementTypeName).AppendLine(">(iter.Current));");
+        sb.Append(indent).AppendLine("}");
+    }
+
+    private enum ReturnShape { Void, Bool, Encode, NonDet }
 
     private sealed record BridgeModel(
         string Namespace,
@@ -274,7 +370,8 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
         List<TypedParam> TypedParameters,
         int EngineParamIndex,
         ReturnShape ReturnShape,
-        string? ReturnTypeName);
+        string? ReturnTypeName,
+        string? ElementTypeName);
 
     private readonly record struct TypedParam(string Name, string TypeName, int OriginalIndex);
 
