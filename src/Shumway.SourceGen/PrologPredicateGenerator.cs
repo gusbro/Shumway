@@ -125,8 +125,51 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
                 engineParamIndex = i;
                 continue;
             }
-            typedParams.Add(new TypedParam(p.Name, p.Type.ToDisplayString(), i));
+            // Chunk 246 — mode from RefKind. Plain = + (input),
+            // out = - (output), ref = ? (bidirectional, nullable
+            // signals unbound).
+            ParamMode mode = p.RefKind switch
+            {
+                RefKind.Out => ParamMode.Output,
+                RefKind.Ref => ParamMode.Bidirectional,
+                _ => ParamMode.Input,
+            };
+            // For ?-mode value-type params, the user must wrap in
+            // Nullable<T>. The generator can't synthesise a sentinel
+            // for `int` — null is the only safe "unbound" signal.
+            // Reference-type params already carry null as a natural
+            // unbound signal; the displayed name may or may not
+            // have a NRT `?` suffix, irrelevant at runtime.
+            string typeName = p.Type.ToDisplayString();
+            string paramElementType = typeName;
+            bool isValueTypeNullable = false;
+            if (mode == ParamMode.Bidirectional && p.Type.IsValueType
+                && typeName.EndsWith("?", System.StringComparison.Ordinal))
+            {
+                paramElementType = typeName.Substring(0, typeName.Length - 1);
+                isValueTypeNullable = true;
+            }
+            typedParams.Add(new TypedParam(
+                p.Name, typeName, paramElementType, i, mode, isValueTypeNullable));
         }
+
+        // Chunk 246 — out/ref are incompatible with a non-bool /
+        // non-void return: the return-as-output and an out/ref-as-
+        // output would both want to bind a register, with no clear
+        // contract for which is which. Reject the combo (the
+        // generator emits nothing; RegisterPredicates' missing-
+        // bridge diagnostic surfaces the mismatch).
+        bool hasOutOrRef = typedParams.Any(p => p.Mode != ParamMode.Input);
+        bool returnIsValueOutput =
+            !method.ReturnsVoid
+            && method.ReturnType.SpecialType != SpecialType.System_Boolean
+            && !nonDeterministic;
+        if (hasOutOrRef && returnIsValueOutput)
+            return null;
+        // Out/ref also don't combine with non-det in v1 — the
+        // per-solution out-binding model needs more design.
+        if (hasOutOrRef && nonDeterministic)
+            return null;
 
         // Return shape:
         //   void                  -> always succeed, no output register
@@ -255,24 +298,84 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
         sb.Append(indent).AppendLine("{");
         sb.Append(indent).AppendLine("    var host = (global::Shumway.Embedding.PrologEngine)engine.Host;");
 
+        // Chunk 246 — per-parameter decode based on mode:
+        //   Input (+) : FromTerm<T>(...) — fails with
+        //     instantiation_error if the register is a var.
+        //   Output (-) : just declare the local; the user method
+        //     assigns it via the `out` parameter.
+        //   Bidirectional (?) : read the register, decode if bound
+        //     (FromTerm<T>(...)), else null. The local is
+        //     Nullable<T>; the user can check .HasValue, mutate
+        //     via `ref`. Post-call we unify if .HasValue.
         for (int i = 0; i < b.TypedParameters.Count; i++)
         {
             var p = b.TypedParameters[i];
-            sb.Append(indent).Append("    var __arg")
-              .Append(i)
-              .Append(" = host.FromTerm<")
-              .Append(p.TypeName)
-              .Append(">(global::Shumway.Embedding.RegisterMarshalling.ReadRegisterAsTerm(engine, ")
-              .Append(i)
-              .AppendLine("));");
+            switch (p.Mode)
+            {
+                case ParamMode.Input:
+                    // Chunk 246 — explicit instantiation_error for
+                    // + mode lets the user see an ISO-shaped Prolog
+                    // error rather than the InvalidCastException
+                    // the converter would raise on a VarTerm.
+                    sb.Append(indent).Append("    var __t").Append(i)
+                      .Append(" = global::Shumway.Embedding.RegisterMarshalling.ReadRegisterAsTerm(engine, ")
+                      .Append(i).AppendLine(");");
+                    sb.Append(indent).Append("    if (__t").Append(i)
+                      .AppendLine(" is global::Shumway.Compiler.Ast.VarTerm)");
+                    sb.Append(indent).AppendLine("        throw new global::Shumway.Core.PrologRuntimeException(\"instantiation_error\");");
+                    sb.Append(indent).Append("    var __arg")
+                      .Append(i)
+                      .Append(" = host.FromTerm<")
+                      .Append(p.TypeName)
+                      .Append(">(__t").Append(i).AppendLine(");");
+                    break;
+                case ParamMode.Output:
+                    // The user method writes via `out`; just declare
+                    // a default-initialised local (the C# `out`
+                    // contract requires the callee to assign before
+                    // return, so the initial value is unobservable).
+                    sb.Append(indent).Append("    ").Append(p.TypeName)
+                      .Append(" __arg").Append(i).AppendLine(" = default!;");
+                    break;
+                case ParamMode.Bidirectional:
+                    // Detect bound-vs-unbound at the term level; pass
+                    // a nullable to the user method through `ref`.
+                    // The if/else form (rather than a `?:` ternary)
+                    // is intentional: with a ternary, the type of
+                    // the two branches gets unified at `int` (the
+                    // FromTerm<int> branch) and `default` becomes
+                    // 0, then boxes as Nullable<int>(0) at the
+                    // assignment — making the param look "bound to
+                    // 0" rather than unbound. Splitting forces
+                    // each branch to assign at the nullable type.
+                    sb.Append(indent).Append("    var __t").Append(i)
+                      .Append(" = global::Shumway.Embedding.RegisterMarshalling.ReadRegisterAsTerm(engine, ")
+                      .Append(i).AppendLine(");");
+                    sb.Append(indent).Append("    ").Append(p.TypeName)
+                      .Append(" __arg").Append(i).AppendLine(";");
+                    sb.Append(indent).Append("    if (__t").Append(i)
+                      .AppendLine(" is global::Shumway.Compiler.Ast.VarTerm)");
+                    sb.Append(indent).Append("        __arg").Append(i).AppendLine(" = null;");
+                    sb.Append(indent).AppendLine("    else");
+                    sb.Append(indent).Append("        __arg").Append(i).Append(" = host.FromTerm<")
+                      .Append(p.ElementTypeName).Append(">(__t").Append(i).AppendLine(");");
+                    break;
+            }
         }
 
         var callArgs = new List<string>();
         int typedIdx = 0;
         for (int i = 0; i < b.Parameters.Count; i++)
         {
-            if (i == b.EngineParamIndex) callArgs.Add("engine");
-            else callArgs.Add($"__arg{typedIdx++}");
+            if (i == b.EngineParamIndex) { callArgs.Add("engine"); continue; }
+            string prefix = b.TypedParameters[typedIdx].Mode switch
+            {
+                ParamMode.Output => "out ",
+                ParamMode.Bidirectional => "ref ",
+                _ => "",
+            };
+            callArgs.Add(prefix + "__arg" + typedIdx);
+            typedIdx++;
         }
 
         // Static call qualifies through the *containing-type* name —
@@ -287,10 +390,13 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
         {
             case ReturnShape.Void:
                 sb.Append(indent).Append("    ").Append(call).AppendLine(";");
+                EmitOutRefUnify(sb, indent, b);
                 sb.Append(indent).AppendLine("    return true;");
                 break;
             case ReturnShape.Bool:
-                sb.Append(indent).Append("    return ").Append(call).AppendLine(";");
+                sb.Append(indent).Append("    if (!(").Append(call).AppendLine(")) return false;");
+                EmitOutRefUnify(sb, indent, b);
+                sb.Append(indent).AppendLine("    return true;");
                 break;
             case ReturnShape.Encode:
                 sb.Append(indent).Append("    var __result = ").Append(call).AppendLine(";");
@@ -321,6 +427,49 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
 
     private static string advanceHelperName(BridgeModel b)
         => "_" + b.MethodName + "_PrologNonDetAdvance";
+
+    /// <summary>Chunk 246 — after the user method returns, unify
+    /// every out (-) and ref-with-bound-value (?) parameter back
+    /// into its register. The pre-call decode for ? mode passed a
+    /// Nullable; null means "user wants to leave the register
+    /// alone", a value means "unify it" (which binds an unbound
+    /// register or checks-equality against a bound one — the unify
+    /// failure path is what makes a ?-mode "wrong-value" call
+    /// fail the predicate).</summary>
+    private static void EmitOutRefUnify(StringBuilder sb, string indent, BridgeModel b)
+    {
+        for (int i = 0; i < b.TypedParameters.Count; i++)
+        {
+            var p = b.TypedParameters[i];
+            switch (p.Mode)
+            {
+                case ParamMode.Output:
+                    sb.Append(indent).Append("    if (!global::Shumway.Embedding.RegisterMarshalling.UnifyRegisterWithTerm(")
+                      .Append("engine, ").Append(i)
+                      .Append(", host.ToTerm<").Append(p.TypeName).Append(">(__arg")
+                      .Append(i).AppendLine("))) return false;");
+                    break;
+                case ParamMode.Bidirectional:
+                    // Skip the unify when the user left the slot at
+                    // null (no opinion). When the user set a value
+                    // — including the same value the input carried
+                    // — run the unify; if the register is unbound
+                    // it binds, if bound it checks-equality.
+                    // .Value access for Nullable<T>; the bare local
+                    // for reference types (where null is the
+                    // natural unbound signal).
+                    string valueAccess = p.IsValueTypeNullable
+                        ? $"__arg{i}.Value"
+                        : $"__arg{i}";
+                    sb.Append(indent).Append("    if (__arg").Append(i)
+                      .Append(" is not null && !global::Shumway.Embedding.RegisterMarshalling.UnifyRegisterWithTerm(")
+                      .Append("engine, ").Append(i)
+                      .Append(", host.ToTerm<").Append(p.ElementTypeName).Append(">(")
+                      .Append(valueAccess).AppendLine("))) return false;");
+                    break;
+            }
+        }
+    }
 
     /// <summary>Emits the chunk-244 non-det advance helper: one
     /// MoveNext step, push a CP that re-enters on backtrack, unify
@@ -379,7 +528,15 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
         string? ReturnTypeName,
         string? ElementTypeName);
 
-    private readonly record struct TypedParam(string Name, string TypeName, int OriginalIndex);
+    private enum ParamMode { Input, Output, Bidirectional }
+
+    private readonly record struct TypedParam(
+        string Name,
+        string TypeName,
+        string ElementTypeName,
+        int OriginalIndex,
+        ParamMode Mode,
+        bool IsValueTypeNullable);
 
     private readonly record struct TypeRing(string Name, string Kind, bool IsStatic);
 }
