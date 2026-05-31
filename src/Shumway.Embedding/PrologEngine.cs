@@ -4557,6 +4557,88 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             engine: this);
     }
 
+    /// <summary>Chunk 240 — typed-result query: runs the query and
+    /// projects the binding of <paramref name="variableName"/>
+    /// through <see cref="FromTerm{T}"/> for every solution. The
+    /// natural shape for a query that asks for one specific value
+    /// out of each answer (the typical embedding-side
+    /// "give me all the X such that p(X)" use case).
+    /// <c>foreach (var x in engine.Query&lt;int&gt;("p(X).", "X")) ...</c></summary>
+    public IEnumerable<T> Query<T>(string queryText, string variableName)
+    {
+        ArgumentNullException.ThrowIfNull(queryText);
+        ArgumentNullException.ThrowIfNull(variableName);
+        foreach (var sol in QueryAll(queryText))
+        {
+            if (!sol.Bindings.TryGetValue(variableName, out var t))
+                throw new InvalidOperationException(
+                    $"Query<T> asked for variable '{variableName}' but the query "
+                    + $"does not bind it. Bound variables: "
+                    + (sol.Bindings.Count == 0
+                        ? "(none)"
+                        : string.Join(", ", sol.Bindings.Keys)));
+            yield return FromTerm<T>(t);
+        }
+    }
+
+    /// <summary>Chunk 240 — single-variable overload: when the
+    /// query has exactly one non-anonymous variable, infer the
+    /// name. Useful for the common
+    /// <c>engine.Query&lt;int&gt;("between(1, 5, X).")</c> idiom
+    /// where naming the variable in C# is just noise.
+    ///
+    /// <para>Throws when the query has zero variables (a yes/no
+    /// query — use <see cref="QueryAll(string)"/>) or more than
+    /// one variable (the explicit-name overload disambiguates).</para></summary>
+    public IEnumerable<T> Query<T>(string queryText)
+    {
+        ArgumentNullException.ThrowIfNull(queryText);
+        // Parse once to discover the query's variable set, then defer
+        // to the explicit-name overload. The Term parse here costs an
+        // extra walk, but it's a one-shot setup pass — the iteration
+        // dwarfs it for any non-trivial query.
+        var queryParser = new Parser(
+            new Lexer(queryText, _flags.CharConversionEnabled ? _flags.CharConversion : null),
+            _operators, _flags);
+        Term queryTerm = queryParser.ReadClauseTerm();
+        var vars = new List<string>();
+        var seen = new HashSet<string>();
+        CollectVariables(queryTerm, vars, seen);
+        if (vars.Count == 0)
+            throw new InvalidOperationException(
+                $"engine.Query<{typeof(T).Name}>(\"{queryText}\") has no variables — "
+                + "use QueryAll(string) for boolean queries, or add the variable to "
+                + "extract.");
+        if (vars.Count > 1)
+            throw new InvalidOperationException(
+                $"engine.Query<{typeof(T).Name}>(\"{queryText}\") has multiple variables "
+                + $"({string.Join(", ", vars)}); use the (queryText, variableName) "
+                + "overload to disambiguate.");
+        return Query<T>(queryText, vars[0]);
+    }
+
+    /// <summary>Chunk 240 — runs the query and returns the first
+    /// solution's binding of <paramref name="variableName"/>
+    /// projected through <see cref="FromTerm{T}"/>; <c>default</c>
+    /// (a null reference / zero value) when the query fails. Drops
+    /// the remaining solutions; the engine state is unaffected (the
+    /// underlying iterator handles disposal).</summary>
+    public T? QueryFirst<T>(string queryText, string variableName)
+    {
+        foreach (var v in Query<T>(queryText, variableName))
+            return v;
+        return default;
+    }
+
+    /// <summary>Chunk 240 — single-variable overload of
+    /// <see cref="QueryFirst{T}(string,string)"/>.</summary>
+    public T? QueryFirst<T>(string queryText)
+    {
+        foreach (var v in Query<T>(queryText))
+            return v;
+        return default;
+    }
+
     /// <summary>Parses and runs a query, lazily yielding every solution. The
     /// engine state is preserved between yields so the iterator can drive the
     /// interpreter through backtracking on demand.</summary>
