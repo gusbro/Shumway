@@ -342,15 +342,21 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
         sb.Append(indent).AppendLine("    }");
         // Push a re-arming CP that, on backtrack, advances the
         // iterator one more step. The CP captures the iterator and
-        // the resume PC by closure.
+        // the resume PC by closure. The onPrune callback (chunk
+        // 245) Disposes the iterator if Prolog `!` cuts past this
+        // CP without the engine backtracking through it — the
+        // MoveNext-returns-false path of this helper already
+        // handles the exhaustion case.
+        sb.Append(indent).Append("    var __capturedIter = iter;");
+        sb.AppendLine();
         sb.Append(indent).Append("    engine.PushBuiltinChoicePoint((e, _) =>");
         sb.AppendLine();
         sb.Append(indent).AppendLine("    {");
         sb.Append(indent).Append("        bool __ok = ")
-          .Append(advanceHelperName(b)).AppendLine("(e, host, iter, returnPc);");
+          .Append(advanceHelperName(b)).AppendLine("(e, host, __capturedIter, returnPc);");
         sb.Append(indent).AppendLine("        if (__ok) e.ResumeAtReturnPc(returnPc);");
         sb.Append(indent).AppendLine("        return __ok;");
-        sb.Append(indent).AppendLine("    }, arity: 0);");
+        sb.Append(indent).AppendLine("    }, arity: 0, onPrune: __capturedIter.Dispose);");
         // Unify the current value with the register right after the
         // typed input args.
         sb.Append(indent).Append("    return global::Shumway.Embedding.RegisterMarshalling.UnifyRegisterWithTerm(")

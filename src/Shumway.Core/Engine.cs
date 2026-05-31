@@ -639,7 +639,15 @@ public sealed partial class Engine
         // plus a List<int> allocation per cut that hit any IL CP).
         while (_ilCpTop > 0 && _ilCpStack[_ilCpTop - 1].Key > barrier)
         {
-            _ilCpStack[_ilCpTop - 1].Del = null!;  // release the delegate ref
+            // Chunk 245 — fire the optional cleanup hook before
+            // dropping the entry. Non-det foreign predicates
+            // register iter.Dispose here so a generator's
+            // try / finally / using runs deterministically when
+            // Prolog `!` cuts past the CP.
+            var onPrune = _ilCpStack[_ilCpTop - 1].OnPrune;
+            if (onPrune is not null) onPrune();
+            _ilCpStack[_ilCpTop - 1].Del = null!;     // release delegate
+            _ilCpStack[_ilCpTop - 1].OnPrune = null;  // release callback
             _ilCpTop--;
         }
 
@@ -1573,6 +1581,15 @@ public sealed partial class Engine
         // ~1.55% from FindValue/MoveNext on dict ops in profiling
         // Blint with bundled user IL).
         public int Key;
+        // Chunk 245 — optional cleanup callback invoked when this
+        // CP is discarded without ever being backtracked into (cut
+        // pruning, or — eventually — engine teardown). Non-det
+        // foreign predicates supply iter.Dispose here so a
+        // generator that holds non-managed resources gets
+        // deterministic cleanup when Prolog `!` commits past its
+        // choice point. Null for the (vast majority of) IL CPs
+        // that have no extra-engine state to release.
+        public Action? OnPrune;
     }
 
     // Chunk 231 — stack-array replacement for the previous
@@ -1591,6 +1608,19 @@ public sealed partial class Engine
     /// machinery exactly — the only difference is what happens at retry
     /// time.</summary>
     public void PushIlChoicePoint(Func<Engine, int, bool> del, int nextCursor, int arity)
+        => PushIlChoicePoint(del, nextCursor, arity, onPrune: null);
+
+    /// <summary>Chunk 245 overload — additionally registers an
+    /// <paramref name="onPrune"/> callback invoked exactly once if
+    /// this CP is discarded without ever being backtracked into
+    /// (cut pruning). The callback fires before the entry's
+    /// delegate reference is released; if it throws, the
+    /// exception propagates and the remaining CPs above the
+    /// barrier are <em>not</em> pruned — callers should keep the
+    /// callback small and safe (a single Dispose, no
+    /// arbitrary user code).</summary>
+    public void PushIlChoicePoint(
+        Func<Engine, int, bool> del, int nextCursor, int arity, Action? onPrune)
     {
         ArgumentNullException.ThrowIfNull(del);
         PushChoicePoint(arity, IlChoicePointSentinelBp);
@@ -1598,7 +1628,7 @@ public sealed partial class Engine
             System.Array.Resize(ref _ilCpStack, _ilCpStack.Length * 2);
         _ilCpStack[_ilCpTop++] = new IlChoicePointEntry
         {
-            Del = del, Cursor = nextCursor, Key = _b,
+            Del = del, Cursor = nextCursor, Key = _b, OnPrune = onPrune,
         };
     }
 
@@ -1622,6 +1652,18 @@ public sealed partial class Engine
         Func<Engine, int, bool> del, int arity)
     {
         PushIlChoicePoint(del, nextCursor: 0, arity: arity);
+    }
+
+    /// <summary>Chunk 245 — builtin-CP overload that registers an
+    /// <paramref name="onPrune"/> cleanup callback. Used by the
+    /// non-deterministic [PrologPredicate] bridge to Dispose the
+    /// iterator when Prolog `!` cuts past the CP without the
+    /// engine backtracking through it (in which case
+    /// MoveNext-returns-false already handles Dispose).</summary>
+    public void PushBuiltinChoicePoint(
+        Func<Engine, int, bool> del, int arity, Action? onPrune)
+    {
+        PushIlChoicePoint(del, nextCursor: 0, arity: arity, onPrune: onPrune);
     }
 
     /// <summary>Sets the engine's PC to <paramref name="returnPc"/> and
@@ -1676,8 +1718,13 @@ public sealed partial class Engine
         if (TraceCpStack)
             System.Console.Error.WriteLine($"[cp-stack] pop-il-done _b={_b} _e={_e} _stackTop={_stackTop}");
         // Clear the delegate reference so the array doesn't pin it
-        // for GC after pop.
+        // for GC after pop. The OnPrune (chunk 245) is NOT
+        // invoked here — backtracking *into* the CP means the
+        // delegate runs and handles its own cleanup (the non-det
+        // bridge's MoveNext-returns-false path Disposes the
+        // iterator). OnPrune is only for cut-pruned discards.
         _ilCpStack[_ilCpTop - 1].Del = null!;
+        _ilCpStack[_ilCpTop - 1].OnPrune = null;
         _ilCpTop--;
         return (info.Del, info.Cursor);
     }
