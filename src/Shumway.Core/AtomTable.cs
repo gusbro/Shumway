@@ -48,7 +48,16 @@ public static class AtomTable
     private static readonly Dictionary<int, Atom> _transientById = new();
     private static readonly Dictionary<int, TransientWeakEntry> _transientWeak = new();
     private static readonly List<WeakReference<Atom>> _foreignWeakRefs = new();
-    private static readonly object _lock = new();
+    // Chunk 232 — System.Threading.Lock (new in .NET 9) is markedly
+    // faster than the legacy object-based monitor on uncontended paths.
+    // For Blint, AtomTable.Intern shows up at ~1.8% inclusive in
+    // dotnet-trace with the chunk-222 lock-free fast paths in place;
+    // the ~1.2% in children is mostly Monitor.Enter_Slowpath when
+    // the transient-promotion or new-atom slow path acquires _lock.
+    // System.Threading.Lock skips the syncblock dance and uses a
+    // dedicated state machine with a true fast path that the JIT
+    // can inline.
+    private static readonly System.Threading.Lock _lock = new();
     private static int _nextId = FirstUserId;
 
     // Chunk 167: fast-path for the most common GetById case. Permanent
