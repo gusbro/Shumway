@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace Shumway.Core;
@@ -51,21 +52,35 @@ public readonly struct Cell : IEquatable<Cell>
 
     // ---------- Factories ----------
 
+    // Chunk 234 — AggressiveInlining on the hot Cell factories. The
+    // bodies are 1-2 cycles of bit manipulation, but C# expression-
+    // bodied static methods are not always inlined by the JIT
+    // automatically. Cell.RawInt alone showed 0.73% exclusive on Blint
+    // with user IL (called 10x per PushChoicePoint × millions of
+    // pushes); Cell.Ref / Atom / Lis / Str hit every WAM get/put
+    // instruction. Inlining collapses each call to a couple of x86
+    // instructions in the caller.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Cell Ref(int heapIdx)
         => new(((long)Tag.Ref << TagShift) | (uint)heapIdx);
 
     /// <summary>An unbound variable: a REF cell whose payload points to its own heap index.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Cell UnboundVar(int selfHeapIdx) => Ref(selfHeapIdx);
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Cell Str(int functorHeapIdx)
         => new(((long)Tag.Str << TagShift) | (uint)functorHeapIdx);
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Cell Lis(int headHeapIdx)
         => new(((long)Tag.Lis << TagShift) | (uint)headHeapIdx);
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Cell Functor(int functorId)
         => new(((long)Tag.Functor << TagShift) | (uint)functorId);
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Cell Atom(int atomId)
         => new(((long)Tag.Atom << TagShift) | (uint)atomId);
 
@@ -77,12 +92,15 @@ public readonly struct Cell : IEquatable<Cell>
         return new Cell(((long)Tag.Int << TagShift) | (value & PayloadMask));
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Cell BigInt(int tableId)
         => new(((long)Tag.BigInt << TagShift) | (uint)tableId);
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Cell String(int tableId)
         => new(((long)Tag.String << TagShift) | (uint)tableId);
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Cell Foreign(int tableId)
         => new(((long)Tag.Foreign << TagShift) | (uint)tableId);
 
@@ -93,6 +111,7 @@ public readonly struct Cell : IEquatable<Cell>
     /// home index is also the key into the engine's attribute table,
     /// so a bare ATTVAR cell is fully self-describing (its identity
     /// and its attributes are both reachable from the payload alone).</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Cell AttVar(int homeHeapIdx)
         => new(((long)Tag.AttVar << TagShift) | (uint)homeHeapIdx);
 
@@ -102,6 +121,7 @@ public readonly struct Cell : IEquatable<Cell>
     /// cast (including negatives such as the -1 sentinel), and 60-bit
     /// slots through <see cref="Payload"/>. The distinct tag keeps the
     /// heap GC from relocating a control value as a <see cref="Ref"/>.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Cell RawInt(long value)
         => new(((long)Tag.RawInt << TagShift) | (value & PayloadMask));
 

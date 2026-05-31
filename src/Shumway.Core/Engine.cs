@@ -504,19 +504,28 @@ public sealed partial class Engine
         // mistakes a small control value for a heap Ref; only the saved
         // A-register args below are genuine cells the collector relocates.
         _stack[newB + CpArityOffset] = Cell.RawInt(arity);
+        // Args: a tiny per-element loop. Span.CopyTo's Memmove machinery
+        // is slower than a plain loop for typical arities (0-3).
         for (int i = 0; i < arity; i++)
             _stack[newB + CpArg1Offset + i] = _registers[i];
 
-        _stack[newB + CpCeOffset(arity)] = Cell.RawInt(_e);
-        _stack[newB + CpCpOffset(arity)] = Cell.RawInt(_cp);
-        _stack[newB + CpBOffset(arity)] = Cell.RawInt(_b);
-        _stack[newB + CpBpOffset(arity)] = Cell.RawInt(nextClauseAddr);
-        _stack[newB + CpBindingTrailOffset(arity)] = Cell.RawInt(_bindingTrailTop);
-        _stack[newB + CpExtraTrailOffset(arity)] = Cell.RawInt(_extraTrailTop);
-        _stack[newB + CpHeapTopOffset(arity)] = Cell.RawInt(_heapTop);
-        _stack[newB + CpHbOffset(arity)] = Cell.RawInt(_hb);
-        _stack[newB + CpViewGenOffset(arity)] = Cell.RawInt(CurrentViewGen);
-        _stack[newB + CpB0Offset(arity)] = Cell.RawInt(_b0);
+        // Chunk 234 — hoist a Span<Cell> over the contiguous control
+        // word block so the 10 writes share a single bounds check.
+        // EnsureStackCapacity just guaranteed _stack[newB..newB+size)
+        // is in range; writing back through `_stack[newB + offset] = …`
+        // would re-bounds-check each one.
+        int ctlBase = newB + 1 + arity;
+        Span<Cell> ctl = _stack.AsSpan(ctlBase, 10);
+        ctl[0] = Cell.RawInt(_e);                  // CpCeOffset
+        ctl[1] = Cell.RawInt(_cp);                 // CpCpOffset
+        ctl[2] = Cell.RawInt(_b);                  // CpBOffset
+        ctl[3] = Cell.RawInt(nextClauseAddr);      // CpBpOffset
+        ctl[4] = Cell.RawInt(_bindingTrailTop);    // CpBindingTrailOffset
+        ctl[5] = Cell.RawInt(_extraTrailTop);      // CpExtraTrailOffset
+        ctl[6] = Cell.RawInt(_heapTop);            // CpHeapTopOffset
+        ctl[7] = Cell.RawInt(_hb);                 // CpHbOffset
+        ctl[8] = Cell.RawInt(CurrentViewGen);      // CpViewGenOffset
+        ctl[9] = Cell.RawInt(_b0);                 // CpB0Offset
 
         _stackTop = newB + size;
         _b = newB;
@@ -561,26 +570,32 @@ public sealed partial class Engine
     /// and is the caller's responsibility.</summary>
     private int RestoreCommonFromCurrentCp()
     {
-        int arity = (int)_stack[_b + CpArityOffset].Data;
-
+        int b = _b;
+        int arity = (int)_stack[b + CpArityOffset].Data;
+        // Args back to register bank: tiny loop, no Span.CopyTo (whose
+        // Memmove machinery is slower than the loop for typical arity).
         for (int i = 0; i < arity; i++)
-            _registers[i] = _stack[_b + CpArg1Offset + i];
+            _registers[i] = _stack[b + CpArg1Offset + i];
 
-        _e = (int)_stack[_b + CpCeOffset(arity)].Data;
-        _cp = (int)_stack[_b + CpCpOffset(arity)].Data;
-
-        int bindingTarget = (int)_stack[_b + CpBindingTrailOffset(arity)].Data;
-        int extraTarget = (int)_stack[_b + CpExtraTrailOffset(arity)].Data;
+        // Chunk 234 — single Span over the contiguous control-word
+        // block so the JIT can elide per-field bounds checks. Mirrors
+        // the PushChoicePoint layout.
+        int ctlBase = b + 1 + arity;
+        Span<Cell> ctl = _stack.AsSpan(ctlBase, 10);
+        _e = (int)ctl[0].Data;                     // CpCeOffset
+        _cp = (int)ctl[1].Data;                    // CpCpOffset
+        int bindingTarget = (int)ctl[4].Data;      // CpBindingTrailOffset
+        int extraTarget = (int)ctl[5].Data;        // CpExtraTrailOffset
         UnwindTrails(bindingTarget, extraTarget);
 
-        _heapTop = (int)_stack[_b + CpHeapTopOffset(arity)].Data;
+        _heapTop = (int)ctl[6].Data;               // CpHeapTopOffset
         // ViewGen is a 60-bit value; read via Payload to strip the RawInt tag.
-        CurrentViewGen = _stack[_b + CpViewGenOffset(arity)].Payload;
+        CurrentViewGen = ctl[8].Payload;           // CpViewGenOffset
         // Restore the cut barrier in effect when this CP was pushed
         // (i.e. the enclosing predicate's entry barrier). Without this a
         // deep cut in a later clause, reached by backtracking, would
         // read a _b0 left clobbered by an earlier clause's nested Call.
-        _b0 = (int)_stack[_b + CpB0Offset(arity)].Data;
+        _b0 = (int)ctl[9].Data;                    // CpB0Offset
         return arity;
     }
 
