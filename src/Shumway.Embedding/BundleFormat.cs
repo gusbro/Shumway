@@ -47,7 +47,19 @@ namespace Shumway.Embedding;
 public static class BundleFormat
 {
     public static readonly byte[] Magic = new byte[] { (byte)'S', (byte)'H', (byte)'U', (byte)'M' };
-    public const int CurrentVersion = 4;
+    public const int CurrentVersion = 5;
+    // V5 (chunk 247) — bundle gains a foreign-assemblies trailer
+    // after the per-entry payloads:
+    //     foreignAsmCount: uint32
+    //     each entry: { nameLen:uint32, nameBytes:utf-8 }
+    // Names are filename-only (Path.GetFileName); the runtime
+    // LoadBundle resolves them next to the .shum file (or the
+    // executable's AppContext.BaseDirectory) and registers every
+    // [PrologPredicate]-decorated static method via
+    // RegisterPredicates(type, staticOnly: true).
+    // Pre-V5 readers stop at the end of entries and never see the
+    // trailer; pre-V5 bundles read by a V5 runtime have an empty
+    // ForeignAssemblies list (the writer never emitted one).
     // V3 (Phase 17) — each entry additionally carries an IL patch table
     // (uint32 length + bytes) immediately after the compiledIl blob.
     // Used by the LoadBundle path to overwrite build-time atom/functor

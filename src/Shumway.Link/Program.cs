@@ -75,6 +75,7 @@ internal static class Program
             VerboseOut = opts.Verbose ? Console.Error : null,
             StripSource = opts.StripSource,
             IncludeCompiledIl = opts.IncludeCompiledIl,
+            ForeignAssemblies = opts.ForeignDlls,
         };
 
         LinkResult result;
@@ -160,7 +161,8 @@ internal static class Program
                 goal: opts.Goal,
                 outputPath: opts.ExePath,
                 mode: mode,
-                verboseOut: opts.Verbose ? Console.Error : null);
+                verboseOut: opts.Verbose ? Console.Error : null,
+                foreignDllPaths: opts.ForeignDlls);
             foreach (var d in exeResult.Diagnostics)
             {
                 var stream = d.Severity == LinkSeverity.Error
@@ -191,6 +193,13 @@ internal static class Program
         public string ExePath { get; set; } = "";
         public string Goal { get; set; } = "";
         public bool SelfContained { get; set; }
+        // Chunk 247: foreign-DLL paths (each carrying
+        // [PrologPredicate]-decorated static methods). The linker
+        // reflects each, registers the discovered name/arity
+        // indicators as resolved during reachability, and records
+        // the assembly filenames in the bundle so the runtime
+        // auto-loads them.
+        public List<string> ForeignDlls { get; } = new();
     }
 
     private static Options? ParseArgs(string[] args)
@@ -261,6 +270,17 @@ internal static class Program
                 case "--verbose":
                 case "-v":
                     opts.Verbose = true;
+                    break;
+
+                case "--foreign-dll":
+                    if (++i >= args.Length) { ReportMissing(arg); return null; }
+                    if (!System.IO.File.Exists(args[i]))
+                    {
+                        Console.Error.WriteLine(
+                            $"shumway-link: --foreign-dll '{args[i]}' not found.");
+                        return null;
+                    }
+                    opts.ForeignDlls.Add(System.IO.Path.GetFullPath(args[i]));
                     break;
 
                 default:

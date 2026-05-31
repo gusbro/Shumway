@@ -127,7 +127,16 @@ public static class BundleReader
             entries[i] = new BundleEntry(name, source, compiled, compiledIl, defined,
                 compiledIlPatches, compiledIlEntries, dynamicSeeds);
         }
-        return new Bundle(entries);
+        // V5+ (chunk 247): foreign-assemblies trailer.
+        List<string>? foreignAssemblies = null;
+        if (version >= 5)
+        {
+            uint asmCount = br.ReadUInt32();
+            foreignAssemblies = new List<string>((int)asmCount);
+            for (uint i = 0; i < asmCount; i++)
+                foreignAssemblies.Add(ReadLengthPrefixedUtf8(br));
+        }
+        return new Bundle(entries, foreignAssemblies);
     }
 
     private static string ReadLengthPrefixedUtf8(BinaryReader br)

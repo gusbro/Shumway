@@ -2391,7 +2391,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     {
         ArgumentNullException.ThrowIfNull(path);
         Bundle bundle = BundleReader.ReadFromFile(path);
-        LoadBundle(bundle);
+        // Chunk 247 — pass the bundle's directory so the foreign-
+        // assembly auto-loader can find sibling DLLs (the typical
+        // `myapp.shum` + `MyForeigns.dll` layout).
+        LoadBundleCore(bundle, System.IO.Path.GetDirectoryName(
+            System.IO.Path.GetFullPath(path)));
     }
 
     /// <summary>Loads an in-memory <see cref="Bundle"/> into this engine —
@@ -2402,9 +2406,29 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// <c>Warm</c> path; the precompiled clause list is cached on
     /// <see cref="PrecompiledClauseCache"/> so subsequent query setups
     /// can skip the WAM compile for those clauses (chunk 53).</summary>
-    public void LoadBundle(Bundle bundle)
+    public void LoadBundle(Bundle bundle) => LoadBundleCore(bundle, bundleDir: null);
+
+    private void LoadBundleCore(Bundle bundle, string? bundleDir)
     {
         ArgumentNullException.ThrowIfNull(bundle);
+        // Chunk 247 — auto-register every foreign DLL the linker
+        // recorded into the bundle. Each entry is a filename only;
+        // we look for it adjacent to the bundle file first, then
+        // alongside the executable (AppContext.BaseDirectory), then
+        // fall back to the runtime's normal Assembly.Load resolution.
+        // A missing DLL throws — same loudness as a missing predicate
+        // would surface at first call.
+        foreach (var asmName in bundle.ForeignAssemblies)
+        {
+            string? resolved = ResolveForeignAssemblyPath(asmName, bundleDir);
+            if (resolved is null)
+                throw new FileNotFoundException(
+                    $"Bundle declared a foreign assembly '{asmName}' but no matching file "
+                    + "was found next to the bundle, next to the executable, or via the "
+                    + "default Assembly.Load probe path.",
+                    asmName);
+            RegisterForeignAssembly(resolved);
+        }
         foreach (var entry in bundle.Entries)
         {
             // Chunk 178: source-less load. When the bundle was built
@@ -3758,14 +3782,96 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     public void RegisterPredicates(Type type)
     {
         ArgumentNullException.ThrowIfNull(type);
-        RegisterPredicatesImpl(type, instance: null);
+        RegisterPredicatesImpl(type, instance: null, staticOnly: false);
+    }
+
+    /// <summary>Chunk 247 overload — when
+    /// <paramref name="staticOnly"/> is true, instance methods
+    /// decorated with <c>[PrologPredicate]</c> are silently
+    /// skipped instead of throwing. Used by the auto-loader path
+    /// that walks every type in a foreign-DLL: instance methods
+    /// can't be auto-registered without an instance, but other
+    /// (static) methods in the same DLL should still surface.</summary>
+    public void RegisterPredicates(Type type, bool staticOnly)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        RegisterPredicatesImpl(type, instance: null, staticOnly: staticOnly);
     }
 
     /// <summary>Generic convenience: <c>engine.RegisterPredicates&lt;MyClass&gt;()</c>
     /// for static classes.</summary>
     public void RegisterPredicates<T>() => RegisterPredicates(typeof(T));
 
-    private void RegisterPredicatesImpl(Type type, object? instance)
+    /// <summary>Chunk 247 — loads <paramref name="assemblyPath"/>
+    /// via <see cref="System.Reflection.Assembly.LoadFrom"/> and
+    /// registers every <c>[PrologPredicate]</c>-decorated <c>static</c>
+    /// method across all types in the assembly. Instance methods are
+    /// skipped (they need a constructed instance the loader doesn't
+    /// have). The runtime <see cref="LoadBundle(Bundle)"/> path calls
+    /// this for each <see cref="Bundle.ForeignAssemblies"/> entry the
+    /// linker recorded.</summary>
+    /// <summary>Chunk 247 — probes for a foreign assembly by name
+    /// in the directories the bundle's foreign-DLL convention
+    /// inspects: the bundle's own directory first (typical
+    /// <c>myapp.shum</c> + <c>MyForeigns.dll</c> layout), then the
+    /// executable's base directory (the <c>--exe</c> path that
+    /// copies foreign DLLs next to the produced executable), then
+    /// the runtime's default <c>Assembly.Load</c> probe path as a
+    /// last resort. Returns <c>null</c> if every probe misses; the
+    /// caller surfaces a file-not-found.</summary>
+    private static string? ResolveForeignAssemblyPath(string name, string? bundleDir)
+    {
+        if (bundleDir is not null)
+        {
+            string candidate = System.IO.Path.Combine(bundleDir, name);
+            if (System.IO.File.Exists(candidate)) return candidate;
+        }
+        string baseDir = AppContext.BaseDirectory;
+        string baseCandidate = System.IO.Path.Combine(baseDir, name);
+        if (System.IO.File.Exists(baseCandidate)) return baseCandidate;
+        // Last resort: Assembly.Load on the bare assembly name (no
+        // extension) — the runtime walks its probing paths. Returns
+        // a path-less reference if successful; we hand back the
+        // assembly's location for symmetry with the file paths above.
+        try
+        {
+            string nameNoExt = System.IO.Path.GetFileNameWithoutExtension(name);
+            var asm = System.Reflection.Assembly.Load(nameNoExt);
+            return asm.Location;
+        }
+        catch { return null; }
+    }
+
+    public void RegisterForeignAssembly(string assemblyPath)
+    {
+        ArgumentNullException.ThrowIfNull(assemblyPath);
+        var asm = System.Reflection.Assembly.LoadFrom(assemblyPath);
+        foreach (var type in asm.GetTypes())
+        {
+            // Cheap pre-filter: skip types with no [PrologPredicate]
+            // decoration anywhere. The full RegisterPredicates pass
+            // does this check too, but a `false` quick reject avoids
+            // the BindingFlags walk per type for the typical case.
+            bool hasAttribute = false;
+            foreach (var method in type.GetMethods(
+                System.Reflection.BindingFlags.Public
+                | System.Reflection.BindingFlags.NonPublic
+                | System.Reflection.BindingFlags.Static
+                | System.Reflection.BindingFlags.DeclaredOnly))
+            {
+                if (System.Reflection.CustomAttributeExtensions
+                    .GetCustomAttribute<PrologPredicateAttribute>(method) is not null)
+                {
+                    hasAttribute = true;
+                    break;
+                }
+            }
+            if (!hasAttribute) continue;
+            RegisterPredicates(type, staticOnly: true);
+        }
+    }
+
+    private void RegisterPredicatesImpl(Type type, object? instance, bool staticOnly = false)
     {
         const System.Reflection.BindingFlags flags =
             System.Reflection.BindingFlags.Public
@@ -3787,10 +3893,20 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 if (attr is null) continue;
 
                 if (method.IsStatic == false && instance is null)
+                {
+                    // Chunk 247: the static-only auto-loader path
+                    // (foreign-DLL scanning) silently skips instance
+                    // methods — there's no instance available, and
+                    // failing the whole DLL because one type mixes
+                    // static + instance [PrologPredicate]s would
+                    // be hostile. The explicit RegisterPredicates
+                    // (Type) call still throws.
+                    if (staticOnly) continue;
                     throw new InvalidOperationException(
                         $"[PrologPredicate] on instance method '{type.FullName}.{method.Name}' "
                         + "requires RegisterPredicates(instance); call the (Type) / generic overload "
                         + "only for static methods.");
+                }
 
                 var parameters = method.GetParameters();
                 bool isCanonical = method.ReturnType == typeof(bool)
@@ -3864,6 +3980,16 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     if (!ReferenceEquals(existing.Impl.Method, del.Method)
                         || !Equals(existing.Impl.Target, del.Target))
                     {
+                        // Chunk 247: the static-only auto-loader
+                        // path (foreign-DLL scanning) silently skips
+                        // collisions for the same reason it skips
+                        // instance methods — failing the whole DLL
+                        // load because one type's [PrologPredicate]
+                        // happens to collide with a standard builtin
+                        // would be hostile to the embedder. The
+                        // explicit-Type RegisterPredicates call
+                        // still throws.
+                        if (staticOnly) continue;
                         throw new InvalidOperationException(
                             $"[PrologPredicate] '{name}/{arity}' from '{type.FullName}.{method.Name}' "
                             + "collides with an already-registered builtin. Re-registration would be a "

@@ -88,6 +88,27 @@ public sealed class LinkConfig
     /// describing its progress (modules visited, predicates reached,
     /// etc.) to this writer. Useful for CLI <c>--verbose</c> mode.</summary>
     public TextWriter? VerboseOut { get; init; }
+
+    /// <summary>Chunk 247 — paths to .NET assemblies that contain
+    /// <c>[Shumway.Embedding.PrologPredicate]</c>-decorated static
+    /// methods. At link time the assemblies are reflected; every
+    /// discovered <c>(name, arity)</c> indicator is added to the
+    /// "resolved" set so a Prolog call to a foreign predicate stops
+    /// being flagged as <c>missing_predicate</c>. The resulting
+    /// bundle records each assembly's filename (no path) in
+    /// <see cref="Bundle.ForeignAssemblies"/>; the runtime
+    /// <see cref="PrologEngine.LoadBundle"/> looks for them adjacent
+    /// to the bundle file (or the executable) and auto-registers
+    /// the static methods via
+    /// <see cref="PrologEngine.RegisterForeignAssembly"/>.
+    ///
+    /// <para>Instance-method <c>[PrologPredicate]</c>s are reflected
+    /// here (so the linker doesn't flag a call to them as missing)
+    /// but skipped by the runtime auto-loader — they need an
+    /// instance the loader can't construct. The embedder calls
+    /// <c>engine.RegisterPredicates(instance)</c> explicitly for
+    /// those.</para></summary>
+    public IReadOnlyList<string> ForeignAssemblies { get; init; } = Array.Empty<string>();
 }
 
 /// <summary>Outcome of one <see cref="ShmoLinker.Link"/> call.
@@ -247,6 +268,57 @@ public static class ShmoLinker
         builtinPredicates.Add(new PredicateRef("true", 0));
         builtinPredicates.Add(new PredicateRef("fail", 0));
         builtinPredicates.Add(new PredicateRef("false", 0));
+
+        // ----- 4b. Chunk 247: reflect foreign DLLs, add their
+        //          [PrologPredicate] indicators to the resolved set,
+        //          record their filenames for the bundle trailer. -----
+        var foreignAssemblyNames = new List<string>();
+        foreach (var asmPath in config.ForeignAssemblies)
+        {
+            System.Reflection.Assembly asm;
+            try { asm = System.Reflection.Assembly.LoadFrom(asmPath); }
+            catch (Exception ex)
+            {
+                Emit(LinkSeverity.Error, "foreign_assembly_load_failed",
+                    $"Could not load foreign assembly '{asmPath}': {ex.Message}");
+                continue;
+            }
+            int discovered = 0;
+            foreach (var type in SafeGetTypes(asm))
+            {
+                foreach (var method in type.GetMethods(
+                    System.Reflection.BindingFlags.Public
+                    | System.Reflection.BindingFlags.NonPublic
+                    | System.Reflection.BindingFlags.Static
+                    | System.Reflection.BindingFlags.Instance
+                    | System.Reflection.BindingFlags.DeclaredOnly))
+                {
+                    var attr = System.Reflection.CustomAttributeExtensions
+                        .GetCustomAttribute<PrologPredicateAttribute>(method);
+                    if (attr is null) continue;
+                    string name = attr.Name ?? method.Name;
+                    builtinPredicates.Add(new PredicateRef(name, attr.Arity));
+                    discovered++;
+                }
+            }
+            // Only record the assembly for runtime auto-load if we
+            // actually found at least one [PrologPredicate]. Avoids
+            // padding the trailer (and the runtime probe path) with
+            // irrelevant DLLs the user happened to pass.
+            if (discovered > 0)
+            {
+                foreignAssemblyNames.Add(System.IO.Path.GetFileName(asmPath));
+                Emit(LinkSeverity.Info, "foreign_assembly_loaded",
+                    $"Loaded foreign assembly '{System.IO.Path.GetFileName(asmPath)}' "
+                    + $"with {discovered} [PrologPredicate] method(s).");
+            }
+            else
+            {
+                Emit(LinkSeverity.Warning, "foreign_assembly_empty",
+                    $"Foreign assembly '{asmPath}' carries no [PrologPredicate] "
+                    + "methods; ignored.");
+            }
+        }
 
         // ----- 5. Resolve roots -----
         // Phase 18: relax the ":- public required" rule for entry points.
@@ -515,7 +587,7 @@ public static class ShmoLinker
             // Chunk 179: the chunk-172 "stripped_bundle" warning is gone —
             // stripped bundles now dispatch correctly via chunk 178's
             // source-less LoadBundle path.
-            bundle = new Bundle(entries);
+            bundle = new Bundle(entries, foreignAssemblyNames);
             // Chunk 192: --with-compiled-il routes the bundle through
             // BundleWriter.ToBytes, which (under includeCompiledIl=true)
             // runs PersistedIlBuilder per entry to materialise IL for
@@ -733,6 +805,12 @@ public static class ShmoLinker
                 }
             }
         }
+        // V5+ (chunk 247): foreign-assemblies trailer. Must mirror
+        // BundleWriter.ToBytes's V5 section exactly so a bundle
+        // round-trips through either writer identically.
+        bw.Write((uint)bundle.ForeignAssemblies.Count);
+        foreach (var asmName in bundle.ForeignAssemblies)
+            WriteString(bw, asmName);
         bw.Flush();
         return ms.ToArray();
     }
@@ -742,5 +820,20 @@ public static class ShmoLinker
         byte[] bytes = System.Text.Encoding.UTF8.GetBytes(s);
         bw.Write((uint)bytes.Length);
         bw.Write(bytes);
+    }
+
+    /// <summary>Chunk 247 — GetTypes that tolerates partial loader
+    /// failures. Defensive: a foreign DLL may reference types we
+    /// don't have, so plain Assembly.GetTypes() can throw
+    /// ReflectionTypeLoadException — recover the types that DID
+    /// resolve and keep going. The linker only needs to see
+    /// [PrologPredicate]-decorated methods on resolved types.</summary>
+    private static IEnumerable<Type> SafeGetTypes(System.Reflection.Assembly asm)
+    {
+        try { return asm.GetTypes(); }
+        catch (System.Reflection.ReflectionTypeLoadException ex)
+        {
+            return ex.Types.Where(t => t is not null).Cast<Type>();
+        }
     }
 }

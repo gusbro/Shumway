@@ -10,9 +10,26 @@ public sealed class Bundle
 {
     public IReadOnlyList<BundleEntry> Entries { get; }
 
+    /// <summary>Chunk 247 — names of .NET assemblies (file names,
+    /// no path) shipped alongside the bundle that contain
+    /// <c>[PrologPredicate]</c>-decorated static methods. The
+    /// linker records these so the runtime
+    /// <see cref="PrologEngine.LoadBundle(Bundle)"/> path can
+    /// auto-register the foreign predicates without the embedder
+    /// having to call <c>RegisterPredicates</c> for each type by
+    /// hand. Empty for bundles linked without
+    /// <c>--foreign-dll</c>.</summary>
+    public IReadOnlyList<string> ForeignAssemblies { get; }
+
     public Bundle(IReadOnlyList<BundleEntry> entries)
+        : this(entries, foreignAssemblies: null) { }
+
+    public Bundle(
+        IReadOnlyList<BundleEntry> entries,
+        IReadOnlyList<string>? foreignAssemblies)
     {
         Entries = entries;
+        ForeignAssemblies = foreignAssemblies ?? Array.Empty<string>();
     }
 }
 

@@ -130,7 +130,8 @@ public static class ExecutableEmitter
         string goal,
         string outputPath,
         ExecutableDeploymentMode mode = ExecutableDeploymentMode.FrameworkDependent,
-        TextWriter? verboseOut = null)
+        TextWriter? verboseOut = null,
+        IReadOnlyList<string>? foreignDllPaths = null)
     {
         ArgumentNullException.ThrowIfNull(bundleBytes);
         ArgumentNullException.ThrowIfNull(goal);
@@ -208,6 +209,27 @@ public static class ExecutableEmitter
             File.Copy(producedPath, finalPath, overwrite: true);
             verboseOut?.WriteLine($"shumway-exe: wrote {finalPath} "
                 + $"({new FileInfo(finalPath).Length:N0} bytes).");
+
+            // Chunk 247: copy each --foreign-dll next to the
+            // produced executable. The runtime's LoadBundle path
+            // (called from the generated Program.Main) probes the
+            // executable's AppContext.BaseDirectory for the names
+            // recorded in Bundle.ForeignAssemblies, so a sibling
+            // layout is exactly what it expects.
+            if (foreignDllPaths is not null && foreignDllPaths.Count > 0)
+            {
+                string sideDir = string.IsNullOrEmpty(outputDir)
+                    ? Directory.GetCurrentDirectory() : outputDir;
+                foreach (var src in foreignDllPaths)
+                {
+                    string dst = Path.Combine(sideDir, Path.GetFileName(src));
+                    if (Path.GetFullPath(src) != Path.GetFullPath(dst))
+                    {
+                        File.Copy(src, dst, overwrite: true);
+                        verboseOut?.WriteLine($"shumway-exe: copied foreign dll '{Path.GetFileName(src)}'");
+                    }
+                }
+            }
             return new ExecutableEmitResult(true, finalPath, diagnostics);
         }
         catch (Exception ex)

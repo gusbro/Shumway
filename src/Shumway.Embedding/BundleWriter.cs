@@ -118,6 +118,12 @@ public static class BundleWriter
                 }
             }
         }
+        // V5+ (chunk 247): foreign-assemblies trailer after the
+        // per-entry payloads. Pre-V5 readers stop after the last
+        // entry and never see this section.
+        bw.Write((uint)bundle.ForeignAssemblies.Count);
+        foreach (var name in bundle.ForeignAssemblies)
+            WriteLengthPrefixedUtf8(bw, name);
         bw.Flush();
         return ms.ToArray();
     }
