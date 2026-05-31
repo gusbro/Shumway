@@ -658,6 +658,18 @@ questions from Phase 11's deferred list:
   `retract` / `assertz` — and avoids redundant `TryDescribe*`
   attempts that were already rejecting the shape.
 
+**Phase 21 — C# integration (ADR-010 embedding API surface)** — ✅ **Complete** (tagged `phase-21`; closure summary in [`docs/phase-21-closure.md`](docs/phase-21-closure.md)).
+
+Eleven chunks (235–245) delivering the bulk of ADR-010's embedding API. Three threads:
+
+- **Loading + lifecycle** (chunks 235–236). `PrologEngine.ConsultFile(path)` (extension-routed: `.shum` → `LoadBundle`, else `ConsultString`) plus the matching `consult/1` / `reconsult/1` ISO builtins. Chunk 236 fixed `reconsult/1` to follow classical GProlog / SICStus semantics: abolish the predicates defined in the file before loading, leave others alone (the chunk-235 alias-of-consult was a bug surfaced in review).
+- **Foreign predicates** (chunks 237, 242, 244, 245). `[PrologPredicate("name/arity", NonDeterministic = false)]` attribute + `engine.RegisterPredicates(instance | typeof | <T>())` with conflict detection. Typed signatures (any of `void`, `bool`, `T`, `IEnumerable<T>`-when-non-det) get a generated `_{Method}_PrologBridge(Engine)` that decodes typed inputs via `FromTerm<T>` and encodes the return via `ToTerm<T>`. Non-determinism uses `Engine.PushBuiltinChoicePoint` (chunk-56 IL CP mechanism) — no new CP type. Deterministic `Dispose` on `!` / `->` via a new `IlChoicePointEntry.OnPrune` callback invoked in `Engine.Cut` (chunk 245).
+- **Term conversion** (chunks 238–241, 243). Four-tier dispatcher: user converters → built-in scalars → composites → convention. `engine.ToTerm<T>` / `FromTerm<T>` / `RegisterConverter<T>`, `Solution.Get<T>` / `TryGet<T>`, `engine.Query<T>(text [, varName])` / `QueryFirst<T>`. Built-in scalars (int/long/...BigInteger/string/bool/char), composites (`List<T>`, `T[]`, `Tuple<,>`, `KeyValuePair<,>`, `Nullable<T>`, `Dictionary<K,V>`), and the convention tier discovers source-generated `ToPrologTerm` / `FromPrologTerm` methods via reflection (cached per type). `[PrologTerm]` source generator in new `Shumway.SourceGen` project (netstandard2.0); `[PrologTermIgnore]` opts a field out (chunk 243). Nested types emit their full `partial Outer { partial Inner { ... } }` hierarchy.
+
+End-state lets a typical embedding look like `engine.RegisterPredicates(new Service()); foreach (var p in engine.Query<Person>("query(P).", "P")) ...` with zero manual register / heap manipulation.
+
+Deferred: `EnginePool`, async `IAsyncEnumerable<Solution>` query API (cooperative cancellation via safe points), SWI-style `ForeignContext.IsFirstCall` / `State` for predicates that don't fit the `IEnumerable<T>` generator mold, mode declarations for multi-output foreigns.
+
 **Phase 20 — Heap GC + Tier-1 IL completeness + dispatch perf + user-IL bundle** — ✅ **Complete** (tagged `phase-20`; closure summary in [`docs/phase-20-closure.md`](docs/phase-20-closure.md)).
 
 Largest phase to date by chunk count (210–234, with the ADR-016 GC series interleaving its own 210–217 sub-numbering). Four threads:
