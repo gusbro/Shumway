@@ -3668,9 +3668,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             return result;
         if (CompositeConverters.TryToTerm<T>(this, value, out result))
             return result;
+        // Chunk 241: convention discovery — a generator-emitted (or
+        // hand-written) ToPrologTerm(engine) on T.
+        if (ConventionConverters.TryToTerm<T>(this, value, out result))
+            return result;
         throw new InvalidOperationException(
             $"No term converter registered for type '{typeof(T).FullName}'. "
-            + "Register one with engine.RegisterConverter<T>(toTerm, fromTerm).");
+            + "Register one with engine.RegisterConverter<T>(toTerm, fromTerm), "
+            + "or add [PrologTerm] to a partial type to get generated converters.");
     }
 
     /// <summary>Chunk 238 — inverse of <see cref="ToTerm{T}"/>:
@@ -3688,9 +3693,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             return result;
         if (CompositeConverters.TryFromTerm<T>(this, term, out result))
             return result;
+        if (ConventionConverters.TryFromTerm<T>(this, term, out result))
+            return result;
         throw new InvalidOperationException(
             $"No term converter registered for type '{typeof(T).FullName}'. "
-            + "Register one with engine.RegisterConverter<T>(toTerm, fromTerm).");
+            + "Register one with engine.RegisterConverter<T>(toTerm, fromTerm), "
+            + "or add [PrologTerm] to a partial type to get generated converters.");
     }
 
     /// <summary>Chunk 239 — reflective bridge: invoke

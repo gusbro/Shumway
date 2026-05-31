@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Chunk 241 — Roslyn source generator project.
+
+    Roslyn loads analyzers / generators from a fixed netstandard2.0
+    ALC, so this project MUST target netstandard2.0 (the rest of the
+    solution is net10.0). Generator assemblies don't ship to the
+    consumer's runtime; they only run at the consumer's compile time.
+
+    The PackageReference below pulls in Microsoft.CodeAnalysis.CSharp
+    PrivateAssets="all" so the generator's compile-time dependency
+    isn't propagated to the consumer's project as a normal reference.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <IsRoslynComponent>true</IsRoslynComponent>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp"
+                      Version="4.8.0"
+                      PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

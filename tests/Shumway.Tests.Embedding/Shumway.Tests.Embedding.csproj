@@ -20,6 +20,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Shumway.Embedding\Shumway.Embedding.csproj" />
+    <!-- Chunk 241: source generator. Loaded as an analyzer so it
+         runs at this project's compile time; the generator assembly
+         itself isn't shipped at runtime. -->
+    <ProjectReference Include="..\..\src\Shumway.SourceGen\Shumway.SourceGen.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>
