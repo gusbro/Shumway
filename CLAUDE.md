@@ -658,6 +658,16 @@ questions from Phase 11's deferred list:
   `retract` / `assertz` — and avoids redundant `TryDescribe*`
   attempts that were already rejecting the shape.
 
+**Phase 22 — Foreign-predicate toolchain (mode-aware sigs + --foreign-dll across compile/link/run)** — ✅ **Complete** (tagged `phase-22`; closure summary in [`docs/phase-22-closure.md`](docs/phase-22-closure.md)).
+
+Three chunks (246–248) taking chunk-237/242's `[PrologPredicate]` from "works in-process" to "works through the full shumway-compile / shumway-link / shumway-exe pipeline":
+
+- **Chunk 246 — mode-aware `[PrologPredicate]`**. Standard C# parameter modifiers map to Prolog modes: plain → `+`, `out T` → `-`, `ref T?` → `?`. Generator emits per-mode decode (`FromTerm<T>` with explicit `instantiation_error` for `+`; declare-then-unify-after for `-`; nullable-or-`FromTerm` for `?`). Validation: out/ref are incompatible with non-bool / non-void return and with non-determinism. Subtle generator bug surfaced: a `?:` ternary in the `?` decode typed `default` as `int` (boxing to `Nullable<int>(0)` instead of `null`) — fixed with explicit if/else.
+- **Chunk 247 — `--foreign-dll` linker support + runtime auto-load + bundle V5 trailer**. `shumway-link --foreign-dll <path>` reflects the DLL, registers every `[PrologPredicate]` indicator as resolved during reachability, records the assembly filename in the bundle. `PrologEngine.LoadBundle` auto-registers each, probing adjacent to the .shum then `AppContext.BaseDirectory` then the default `Assembly.Load`. `--exe` copies foreign DLLs next to the produced executable.
+- **Chunk 248 — `Opcode.ExecuteBuiltin` + full linker rewrite**. The compiler doesn't need to know about foreigns at compile time. Linker rewrites both Call→CallBuiltin (chunk 247, in-place 9-byte swap) and Execute→ExecuteBuiltin (chunk 248, in-place 5-byte swap via the new opcode). ExecuteBuiltin is the tail-call counterpart of CallBuiltin: same 5-byte width as Execute/ExecuteIl/ExecuteBytecode; dispatches the builtin then `Pc = Cp` to return. `BuiltinReturnPc = Cp` so backtrackable builtins resume at the caller's continuation rather than looping.
+
+End state: the compiler emits unresolved external references with generic `Call`/`Execute`; the linker decides how to materialise each (native address, foreign builtin id). Standard separation-of-concerns the user flagged on review of chunk 247.
+
 **Phase 21 — C# integration (ADR-010 embedding API surface)** — ✅ **Complete** (tagged `phase-21`; closure summary in [`docs/phase-21-closure.md`](docs/phase-21-closure.md)).
 
 Eleven chunks (235–245) delivering the bulk of ADR-010's embedding API. Three threads:
