@@ -1,7 +1,6 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Shumway.Builtins/Shumway.Builtins.csproj" />
-    <Project Path="src/Shumway.Bundler/Shumway.Bundler.csproj" />
     <Project Path="src/Shumway.Compile/Shumway.Compile.csproj" />
     <Project Path="src/Shumway.Compiler.Il/Shumway.Compiler.Il.csproj" />
     <Project Path="src/Shumway.Compiler/Shumway.Compiler.csproj" />

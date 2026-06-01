@@ -34,8 +34,7 @@ Shumway ships as several .NET projects, each with a clear role:
 | `Shumway.Embedding` | `Shumway.Embedding.dll` | Main library. Reference from your .NET app to embed the engine. |
 | `Shumway.Repl` | `shumway` executable | Interactive top-level (REPL). Consults files, prints solutions, exits on `halt.` |
 | `Shumway.Compile` | `shumway-compile` executable | Compiles one `.pl` to a `.shmo` (per-module compiled object). |
-| `Shumway.Link` | `shumway-link` executable | Links one or more `.shmo`s into a `.shum` bundle with reachability + missing-predicate analysis. |
-| `Shumway.Bundler` | `shumway-bundler` executable | Single-shot bundler: `.pl` files → `.shum` directly. Older surface; the compile-then-link flow is recommended for non-trivial programs. |
+| `Shumway.Link` | `shumway-link` executable | Links one or more `.shmo`s into a `.shum` bundle with reachability + missing-predicate analysis. Also produces standalone executables (`--exe`). |
 
 You typically need only `Shumway.Embedding` plus one or more of the
 CLI tools.
