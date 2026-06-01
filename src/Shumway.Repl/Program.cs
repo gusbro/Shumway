@@ -46,6 +46,10 @@ internal static class Program
         string[] programArgs = sep < 0 ? Array.Empty<string>() : args[(sep + 1)..];
 
         var engine = new PrologEngine();
+        // Chunk 250: stash the engine reference so the line editor's
+        // Tab completer (constructed lazily on first ReadLine) can
+        // query for predicate names.
+        _replEngine = engine;
         engine.Flags.Argv = programArgs;
         // SHUMWAY_IL_PROMOTE=N sets the Tier-1 promotion threshold.
         // Without it, Tier-0 (interpreter) handles every dispatch.
@@ -209,10 +213,88 @@ internal static class Program
     /// <summary>Chunk 249 — shared line editor, lazily created on
     /// first use so the SHUMWAY_GOAL / scripted entry paths that
     /// never read interactive lines don't even touch disk to load
-    /// history.</summary>
+    /// history. Chunk 250 — the engine reference is captured so the
+    /// editor's Tab handler can query for completion candidates.</summary>
     private static LineEditor? _lineEditor;
+    private static PrologEngine? _replEngine;
     private static LineEditor LineEd => _lineEditor ??=
-        new LineEditor(new HistoryStore(HistoryStore.DefaultPath()));
+        new LineEditor(
+            new HistoryStore(HistoryStore.DefaultPath()),
+            completer: BuildCompleter());
+
+    private static Func<string, IReadOnlyList<string>> BuildCompleter() =>
+        prefix => CompletePredicateName(_replEngine, prefix);
+
+    /// <summary>Chunk 250 — returns the sorted, deduplicated set of
+    /// predicate names that start with <paramref name="prefix"/>.
+    /// Sources: every registered builtin (process-wide
+    /// <see cref="Shumway.Builtins.BuiltinsRegistry"/>), every user
+    /// predicate the engine knows about (each module's clauses +
+    /// dynamic functors + precompiled-bundle predicates). Capped to
+    /// keep the UI usable when the user hits Tab on an empty / very
+    /// short prefix.</summary>
+    private static IReadOnlyList<string> CompletePredicateName(
+        PrologEngine? engine, string prefix)
+    {
+        const int Cap = 200;
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var results = new List<string>();
+        void Offer(string name)
+        {
+            if (results.Count >= Cap) return;
+            if (string.IsNullOrEmpty(name)) return;
+            if (!name.StartsWith(prefix, StringComparison.Ordinal)) return;
+            if (seen.Add(name)) results.Add(name);
+        }
+
+        // Builtins.
+        foreach (var b in Shumway.Builtins.BuiltinsRegistry.AllEntries())
+            Offer(b.Name);
+
+        // User predicates per module — module-local + module-public +
+        // dynamic.
+        if (engine is not null)
+        {
+            foreach (var (_, manifest) in engine.Modules)
+            {
+                foreach (var clause in manifest.Clauses)
+                {
+                    string? n = ClauseHeadName(clause);
+                    if (n is not null) Offer(n);
+                }
+                foreach (int fid in manifest.PublicFunctors)
+                    Offer(NameOfFunctor(fid));
+                foreach (int fid in manifest.DynamicFunctors)
+                    Offer(NameOfFunctor(fid));
+            }
+            foreach (var (fid, _) in engine.PrecompiledStaticPredicates)
+                Offer(NameOfFunctor(fid));
+        }
+
+        results.Sort(StringComparer.Ordinal);
+        return results;
+    }
+
+    private static string? ClauseHeadName(Shumway.Compiler.Ast.Clause clause)
+    {
+        Shumway.Compiler.Ast.Term head = clause.Term;
+        if ((clause.Kind == Shumway.Compiler.Ast.ClauseKind.Rule
+             || clause.Kind == Shumway.Compiler.Ast.ClauseKind.DcgRule)
+            && head is Shumway.Compiler.Ast.CompoundTerm wrap && wrap.Args.Length == 2)
+            head = wrap.Args[0];
+        return head switch
+        {
+            Shumway.Compiler.Ast.AtomTerm a => a.Name,
+            Shumway.Compiler.Ast.CompoundTerm c => c.Functor,
+            _ => null,
+        };
+    }
+
+    private static string NameOfFunctor(int fid)
+    {
+        var (atomId, _) = Shumway.Core.FunctorTable.Lookup(fid);
+        return Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "";
+    }
 
     /// <summary>Reads one query from standard input, joining lines until a
     /// line ends with the <c>.</c> clause terminator. Returns the empty

@@ -32,13 +32,16 @@ namespace Shumway.Repl;
 /// redraw. Improving this needs explicit cursor row tracking;
 /// out of scope for v1.</para>
 /// </summary>
-internal sealed class LineEditor
+public sealed class LineEditor
 {
     private readonly HistoryStore _history;
+    private readonly Func<string, IReadOnlyList<string>>? _completer;
 
-    public LineEditor(HistoryStore history)
+    public LineEditor(HistoryStore history,
+        Func<string, IReadOnlyList<string>>? completer = null)
     {
         _history = history;
+        _completer = completer;
     }
 
     /// <summary>Reads one line of input with editing support.
@@ -153,6 +156,50 @@ internal sealed class LineEditor
                     }
                     break;
 
+                case ConsoleKey.Tab:
+                    // Chunk 250 — completion. Identify the
+                    // identifier-word at the cursor, ask the
+                    // completer for matching atoms. Skip when no
+                    // completer is wired or no word is at hand.
+                    if (_completer is not null)
+                    {
+                        int wordStart = FindWordStart(buffer, cursor);
+                        int wordLen = cursor - wordStart;
+                        if (wordLen > 0)
+                        {
+                            string prefix = buffer.ToString(wordStart, wordLen);
+                            var candidates = _completer(prefix);
+                            if (candidates.Count == 1)
+                            {
+                                string completion = candidates[0];
+                                buffer.Remove(wordStart, wordLen);
+                                buffer.Insert(wordStart, completion);
+                                cursor = wordStart + completion.Length;
+                                Redraw(prompt, buffer, cursor);
+                            }
+                            else if (candidates.Count > 1)
+                            {
+                                // Common-prefix completion: extend the
+                                // word as far as every candidate agrees,
+                                // then list the alternatives below.
+                                string common = LongestCommonPrefix(candidates);
+                                if (common.Length > prefix.Length)
+                                {
+                                    buffer.Remove(wordStart, wordLen);
+                                    buffer.Insert(wordStart, common);
+                                    cursor = wordStart + common.Length;
+                                }
+                                Console.WriteLine();
+                                PrintCandidates(candidates);
+                                Console.Write(prompt);
+                                Console.Write(buffer.ToString());
+                                SetCursor(prompt, cursor);
+                            }
+                            // No matches → silent (no annoying bell).
+                        }
+                    }
+                    break;
+
                 default:
                     // Ctrl-D at an empty line → EOF (like
                     // ReadLine returning null).
@@ -229,5 +276,69 @@ internal sealed class LineEditor
         try { Console.CursorLeft = prompt.Length + cursor; }
         catch (System.IO.IOException) { /* not interactive */ }
         catch (ArgumentOutOfRangeException) { /* cursor past edge */ }
+    }
+
+    /// <summary>Chunk 250 — walks back from <paramref name="cursor"/>
+    /// while the character is identifier-class (alnum / underscore),
+    /// returning the start position of the word. Identifier-class
+    /// matches Prolog's atom-token shape; everything else (paren,
+    /// operator, whitespace) is treated as a word boundary so a
+    /// completion against e.g. "asse" doesn't try to also pull in
+    /// the preceding `(`.</summary>
+    public static int FindWordStart(StringBuilder buffer, int cursor)
+    {
+        int i = cursor;
+        while (i > 0 && IsIdentChar(buffer[i - 1])) i--;
+        return i;
+    }
+
+    private static bool IsIdentChar(char c) =>
+        (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+        || (c >= '0' && c <= '9') || c == '_';
+
+    /// <summary>Longest string that's a prefix of every entry in
+    /// <paramref name="candidates"/>. Used to extend the word as
+    /// far as every match agrees before falling back to the "list
+    /// alternatives" UI.</summary>
+    public static string LongestCommonPrefix(IReadOnlyList<string> candidates)
+    {
+        if (candidates.Count == 0) return "";
+        string first = candidates[0];
+        int max = first.Length;
+        for (int k = 1; k < candidates.Count; k++)
+        {
+            string s = candidates[k];
+            int j = 0;
+            while (j < max && j < s.Length && s[j] == first[j]) j++;
+            max = j;
+            if (max == 0) break;
+        }
+        return first.Substring(0, max);
+    }
+
+    /// <summary>Prints the alternatives multi-column to fit the
+    /// terminal width. Falls back to one per line if the width
+    /// is unknown.</summary>
+    private static void PrintCandidates(IReadOnlyList<string> candidates)
+    {
+        int width;
+        try { width = Console.WindowWidth; }
+        catch { width = 80; }
+        if (width < 20) width = 80;
+
+        int maxLen = 0;
+        foreach (var c in candidates)
+            if (c.Length > maxLen) maxLen = c.Length;
+        int colWidth = maxLen + 2;
+        int cols = Math.Max(1, width / colWidth);
+
+        int col = 0;
+        foreach (var c in candidates)
+        {
+            Console.Write(c.PadRight(colWidth));
+            col++;
+            if (col >= cols) { Console.WriteLine(); col = 0; }
+        }
+        if (col != 0) Console.WriteLine();
     }
 }
