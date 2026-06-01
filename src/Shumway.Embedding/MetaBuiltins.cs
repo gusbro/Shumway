@@ -276,6 +276,13 @@ public static class MetaBuiltins
             "Loads File and adds its clauses to the database, appending to any "
             + "existing predicates. File is an atom path; a .shum extension routes "
             + "through LoadBundle, everything else is read as Prolog source.");
+        BuiltinsRegistry.Register("use_module", 1, UseModule,
+            Database, "use_module(+Spec)",
+            "Loads a library or file. Spec is either library(Name) — where Name "
+            + "is one of the built-in libraries (clpfd, clpr) — or an atom path "
+            + "(equivalent to consult/1). use_module(library(clpfd)) enables the "
+            + "CLP(FD) library; use_module(library(clpr)) enables CLP(R). The two "
+            + "libraries cannot coexist in the same engine.");
         BuiltinsRegistry.Register("reconsult", 1, Reconsult,
             Database, "reconsult(+File)",
             "Like consult/1 but first abolishes every predicate whose indicator "
@@ -2526,6 +2533,47 @@ public static class MetaBuiltins
 
         host.ConsultFile(path);
         return true;
+    }
+
+    /// <summary><c>use_module(+Spec)</c> — SWI-style library loader. With
+    /// <c>library(Name)</c> loads a built-in library (currently
+    /// <c>clpfd</c> and <c>clpr</c>). With an atom, behaves like
+    /// <see cref="Consult"/>.</summary>
+    public static bool UseModule(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "use_module/1 requires the engine to be hosted by a PrologEngine.");
+
+        Term arg = MaterializeRegister(engine, 0);
+        if (arg is Shumway.Compiler.Ast.VarTerm)
+            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+
+        if (arg is Shumway.Compiler.Ast.CompoundTerm c
+            && c.Functor == "library" && c.Args.Length == 1
+            && c.Args[0] is Shumway.Compiler.Ast.AtomTerm libAtom)
+        {
+            switch (libAtom.Name)
+            {
+                case "clpfd": host.UseClpfd(); return true;
+                case "clpr":  host.UseClpr();  return true;
+                default:
+                    throw new Shumway.Core.PrologRuntimeException(
+                        $"existence_error(library, {libAtom.Name})");
+            }
+        }
+
+        if (arg is Shumway.Compiler.Ast.AtomTerm pathAtom)
+        {
+            if (!System.IO.File.Exists(pathAtom.Name))
+                throw new Shumway.Core.PrologRuntimeException(
+                    $"existence_error(source_sink, '{pathAtom.Name}')");
+            host.ConsultFile(pathAtom.Name);
+            return true;
+        }
+
+        throw new Shumway.Core.PrologRuntimeException(
+            "type_error(atom_or_library, _)");
     }
 
     /// <summary><c>reconsult(+File)</c> — classical edit-reload semantics:

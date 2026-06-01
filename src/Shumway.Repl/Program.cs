@@ -1,3 +1,4 @@
+using Shumway.Compiler.Ast;
 using Shumway.Core;
 using Shumway.Embedding;
 
@@ -365,14 +366,61 @@ internal static class Program
         }
     }
 
-    /// <summary>Runs a query and prints its solutions one at a time.</summary>
+    // Hidden var names used to smuggle residual constraints out of
+    // the wrapped query — long unique strings unlikely to collide
+    // with anything a user types. Parsed-input vars must start with
+    // an uppercase letter or `_`; these meet that rule.
+    private const string ResidualVarName = "_ReplResiduals_8a7b3c";
+    private const string CopiesVarName = "_ReplCopies_8a7b3c";
+
+    /// <summary>Runs a query and prints its solutions one at a time.
+    /// The query is wrapped with <c>copy_term/3</c> over its named
+    /// variables, which collects residual attribute goals (e.g. CLP(FD)
+    /// domain constraints) so an unground answer like
+    /// <c>?- A #&gt; 5, A #&lt; 10.</c> can print as <c>A in 6..9.</c>
+    /// rather than leaving the user with a bare unbound variable.</summary>
     private static void RunQuery(PrologEngine engine, string query)
     {
-        using var solutions = engine.QueryAll(query).GetEnumerator();
+        // Parse and wrap. If the parse fails, fall through to the
+        // string-form QueryAll so the engine produces the same error
+        // it always did.
+        Term wrapped;
+        IReadOnlyList<string> userVars;
+        try
+        {
+            var (goal, vars) = engine.ParseGoal(query);
+            userVars = vars;
+            if (vars.Count == 0)
+            {
+                wrapped = goal;
+            }
+            else
+            {
+                var varsList = MakeList(vars.Select(n => (Term)new VarTerm(n)).ToArray());
+                Term copyTerm = new CompoundTerm("copy_term", new Term[]
+                {
+                    varsList,
+                    new VarTerm(CopiesVarName),
+                    new VarTerm(ResidualVarName),
+                });
+                wrapped = new CompoundTerm(",", new[] { goal, copyTerm });
+            }
+        }
+        catch
+        {
+            // Parser error — let the engine produce its usual diagnostic.
+            using var fallback = engine.QueryAll(query).GetEnumerator();
+            if (!fallback.MoveNext())
+            {
+                if (engine.LastHaltExitCode is null)
+                    Console.WriteLine("false.");
+            }
+            return;
+        }
+
+        using var solutions = engine.QueryAll(wrapped).GetEnumerator();
         if (!solutions.MoveNext())
         {
-            // No solutions — print false, unless the goal was `halt`
-            // (which Main detects via LastHaltExitCode).
             if (engine.LastHaltExitCode is null)
                 Console.WriteLine("false.");
             return;
@@ -380,17 +428,11 @@ internal static class Program
         while (true)
         {
             Solution solution = solutions.Current;
-            // Chunk 252 — pretty-print the bindings using the
-            // terminal width so long terms break across lines.
             int width;
             try { width = Console.WindowWidth; }
             catch { width = 80; }
             if (width < 20) width = 80;
-            Console.Write(solution.Bindings.Count == 0 ? "true" : solution.ToString(width));
-            // The engine reports when no choice point remains: this is
-            // the last solution, so finish with '.' and no ';' prompt —
-            // matching SWI / GNU / SICStus. member(A,[x,y]) stops at
-            // `A = y.`, and `A = x, !` finishes at once.
+            Console.Write(FormatSolutionWithResiduals(engine, solution, userVars, width));
             if (solution.IsLast)
             {
                 Console.WriteLine(".");
@@ -408,6 +450,131 @@ internal static class Program
                     Console.WriteLine("false.");
                 return;
             }
+        }
+    }
+
+    /// <summary>Builds a Prolog list AST from a sequence of terms.</summary>
+    private static Term MakeList(IList<Term> elements)
+    {
+        Term tail = new AtomTerm("[]");
+        for (int i = elements.Count - 1; i >= 0; i--)
+            tail = new CompoundTerm(".", new[] { elements[i], tail });
+        return tail;
+    }
+
+    /// <summary>Formats a solution: bindings for vars that got values,
+    /// residual goals (substituted to mention the original variable
+    /// names) for vars that are still attvar-constrained.</summary>
+    private static string FormatSolutionWithResiduals(
+        PrologEngine engine, Solution solution, IReadOnlyList<string> userVars, int width)
+    {
+        var ops = engine.Operators;
+        if (userVars.Count == 0)
+            return solution.Bindings.Count == 0 ? "true" : solution.ToString(width);
+
+        // Build copy-name -> original-name map from the _ReplCopies_ binding
+        // (a list `[Copy1, Copy2, ...]` aligned with userVars).
+        var copyToOriginal = new Dictionary<string, string>();
+        Term? copiesTerm = solution[CopiesVarName];
+        int idx = 0;
+        Term cursor = copiesTerm ?? new AtomTerm("[]");
+        while (cursor is CompoundTerm { Functor: ".", Args.Length: 2 } c
+               && idx < userVars.Count)
+        {
+            if (c.Args[0] is VarTerm v)
+                copyToOriginal[v.Name] = userVars[idx];
+            cursor = c.Args[1];
+            idx++;
+        }
+
+        // Collect residual goals and substitute copy-vars back to originals.
+        var residuals = new List<Term>();
+        Term? resTerm = solution[ResidualVarName];
+        Term resCursor = resTerm ?? new AtomTerm("[]");
+        while (resCursor is CompoundTerm { Functor: ".", Args.Length: 2 } rc)
+        {
+            residuals.Add(SubstituteVarNames(rc.Args[0], copyToOriginal));
+            resCursor = rc.Args[1];
+        }
+
+        // For each user var: if it has residuals mentioning it, those
+        // replace the binding line; otherwise show the binding (unless
+        // the binding is an unbound var with no residuals, in which case
+        // skip it — that's what SWI does).
+        var residualsByVar = new Dictionary<string, List<Term>>();
+        var unattachedResiduals = new List<Term>();
+        foreach (Term g in residuals)
+        {
+            string? owner = FindMentionedUserVar(g, userVars);
+            if (owner is null) unattachedResiduals.Add(g);
+            else
+            {
+                if (!residualsByVar.TryGetValue(owner, out var list))
+                    residualsByVar[owner] = list = new List<Term>();
+                list.Add(g);
+            }
+        }
+
+        var lines = new List<string>();
+        foreach (string name in userVars)
+        {
+            Term? val = solution[name];
+            if (val is null) continue;
+            bool isUnbound = val is VarTerm;
+            if (residualsByVar.TryGetValue(name, out var rs))
+                foreach (Term g in rs) lines.Add(AstTermRenderer.Render(g, 1200, ops));
+            else if (!isUnbound)
+                lines.Add($"{name} = {AstTermRenderer.Render(val, 1200, ops)}");
+            // Else: unbound var with no residuals — omit (SWI behaviour).
+        }
+        foreach (Term g in unattachedResiduals)
+            lines.Add(AstTermRenderer.Render(g, 1200, ops));
+
+        if (lines.Count == 0) return "true";
+        return string.Join(",\n", lines);
+    }
+
+    /// <summary>Returns the first userVars name that appears in
+    /// <paramref name="term"/>, or <c>null</c> if none does.</summary>
+    private static string? FindMentionedUserVar(Term term, IReadOnlyList<string> userVars)
+    {
+        switch (term)
+        {
+            case VarTerm v:
+                return userVars.Contains(v.Name) ? v.Name : null;
+            case CompoundTerm c:
+                foreach (Term a in c.Args)
+                {
+                    string? r = FindMentionedUserVar(a, userVars);
+                    if (r is not null) return r;
+                }
+                return null;
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>Returns <paramref name="term"/> with every <see cref="VarTerm"/>
+    /// whose name is a key in <paramref name="renames"/> replaced by a
+    /// <see cref="VarTerm"/> carrying the mapped name. Other terms are
+    /// returned as-is (or rebuilt structurally for compounds).</summary>
+    private static Term SubstituteVarNames(Term term, IReadOnlyDictionary<string, string> renames)
+    {
+        switch (term)
+        {
+            case VarTerm v when renames.TryGetValue(v.Name, out string? newName):
+                return new VarTerm(newName);
+            case CompoundTerm c:
+                var newArgs = new Term[c.Args.Length];
+                bool changed = false;
+                for (int i = 0; i < c.Args.Length; i++)
+                {
+                    newArgs[i] = SubstituteVarNames(c.Args[i], renames);
+                    if (!ReferenceEquals(newArgs[i], c.Args[i])) changed = true;
+                }
+                return changed ? new CompoundTerm(c.Functor, newArgs) : term;
+            default:
+                return term;
         }
     }
 

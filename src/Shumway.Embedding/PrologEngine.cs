@@ -2458,6 +2458,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// Reset to <c>null</c> at the start of each query.</summary>
     public int? LastHaltExitCode { get; private set; }
 
+    /// <summary>The parser operator table used by this engine. Reflects
+    /// every <c>:- op(P, T, N)</c> directive consulted so far, including
+    /// operators introduced by libraries (e.g. CLP(FD)'s <c>in</c>,
+    /// <c>#=</c>). Exposed so renderers can produce reader-friendly
+    /// output (<c>A in 6..9</c> rather than <c>in(A, ..(6, 9))</c>) for
+    /// terms that mention library operators.</summary>
+    public OperatorTable Operators => _operators;
+
     /// <summary>Adds an operator to the engine's parser table. Used by the
     /// runtime <c>op/3</c> builtin so user code can introduce operators
     /// that subsequent queries (and asserted clauses) will recognise.</summary>
@@ -4925,6 +4933,24 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return SetupQueryFromTerm(queryTerm);
     }
 
+    /// <summary>Parses <paramref name="queryText"/> as a goal and returns
+    /// the parsed AST plus the list of distinct named variables in order
+    /// of first occurrence. Lets a top-level synthesise a wrapped goal
+    /// (e.g. appending <c>copy_term/3</c> to extract residual
+    /// constraints) over the same variables before calling
+    /// <see cref="QueryAll(Term)"/>.</summary>
+    public (Term Goal, IReadOnlyList<string> VarNames) ParseGoal(string queryText)
+    {
+        ArgumentNullException.ThrowIfNull(queryText);
+        var queryParser = new Parser(
+            new Lexer(queryText, _flags.CharConversionEnabled ? _flags.CharConversion : null),
+            _operators, _flags);
+        Term queryTerm = queryParser.ReadClauseTerm();
+        var names = new List<string>();
+        CollectVariables(queryTerm, names, new HashSet<string>());
+        return (queryTerm, names);
+    }
+
     /// <summary>Shared workhorse used by both the string-parsing
     /// <see cref="SetupQuery(string)"/> and the Term-level
     /// <see cref="QueryAll(Term)"/>: gathers every module's clauses through
@@ -5283,7 +5309,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // assigned addresses.
             foreach (var (offset, fid) in staticLink.UnresolvedSites)
                 if (_dynamicLink.Addresses.TryGetValue(fid, out int dynAddr))
-                    BytecodeIO.WriteInt32(_persistentProgram, prefix.Length + offset + 1, dynAddr);
+                    BytecodeIO.WriteInt32(_persistentProgram!, prefix.Length + offset + 1, dynAddr);
         }
         // Chunk 151b: pick the per-query overlay's start address with
         // enough headroom over the persistent length for mid-query
@@ -5353,16 +5379,16 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             varNames.Count);
         // Patch the launcher's call target — the prefix sits at
         // _persistentProgram offset 0, so callPos points there.
-        BytecodeIO.WriteInt32(_persistentProgram, callPos + 1, linkResult.Addresses[queryFunctorId]);
+        BytecodeIO.WriteInt32(_persistentProgram!, callPos + 1, linkResult.Addresses[queryFunctorId]);
 
         // `program` is the persistent byte[] (used by all mutation
         // paths: assertz/retract/abolish chain patching, AppendCode);
         // `programView` is the two-buffer logical view passed to the
         // interpreter and IL helpers — they read across the gap into
         // the per-query overlay transparently.
-        byte[] program = _persistentProgram;
+        byte[] program = _persistentProgram!;
         var programView = new Shumway.Core.ProgramView(
-            _persistentProgram, queryBytes, _querySplit);
+            _persistentProgram!, queryBytes, _querySplit);
 
         // Cache freshly-compiled static predicates (chunk 82). A predicate
         // is cacheable only if its functor headed a clause in the static +
@@ -5627,12 +5653,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             MaterializeDynamicTrampoline(engine, functorId);
         }
 
-        bool chainUsable =
-            _dynChains.TryGetValue(functorId, out var chain)
-            && chain.TailNextAddr >= 0
-            && engine.CurrentProgram is not null
-            && engine.DynamicFailStubAddr > 0;
-        if (!chainUsable)
+        if (!_dynChains.TryGetValue(functorId, out var chain)
+            || chain.TailNextAddr < 0
+            || engine.CurrentProgram is null
+            || engine.DynamicFailStubAddr <= 0)
         {
             if (_jitIndexProfile.IsHot(functorId)) InvalidatePersistent();
             return;
@@ -5674,7 +5698,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             Array.Copy(chunk, 0, engine.CurrentProgram!, chunkAddr, chunk.Length);
         else
             chunkAddr = engine.AppendCode(chunk);
-        var program = engine.CurrentProgram;
+        var program = engine.CurrentProgram!;
 
         // Patch call sites inside the body to absolute targets.
         var addrMap = engine.CurrentFunctorAddresses;
@@ -5760,11 +5784,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
         // Fall back to chunk-128 chain prepend for chain layout, or
         // rebuild for indexed layouts we can't extend in place.
-        bool chainUsable =
-            _dynChains.TryGetValue(functorId, out var chain)
-            && chain.TrampolineExecuteOperandAddr >= 0
-            && engine.CurrentProgram is not null;
-        if (!chainUsable)
+        if (!_dynChains.TryGetValue(functorId, out var chain)
+            || chain.TrampolineExecuteOperandAddr < 0
+            || engine.CurrentProgram is null)
         {
             if (_jitIndexProfile.IsHot(functorId)) InvalidatePersistent();
             return;
@@ -5810,7 +5832,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             Array.Copy(chunk, 0, engine.CurrentProgram!, chunkAddr, chunk.Length);
         else
             chunkAddr = engine.AppendCode(chunk);
-        var program = engine.CurrentProgram;
+        var program = engine.CurrentProgram!;
 
         // Patch the body's call sites.
         var addrMap = engine.CurrentFunctorAddresses;

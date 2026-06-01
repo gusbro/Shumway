@@ -23,7 +23,7 @@ namespace Shumway.Embedding;
 /// </summary>
 public static class AstTermRenderer
 {
-    private static readonly OperatorTable Ops = OperatorTable.Default();
+    private static readonly OperatorTable DefaultOps = OperatorTable.Default();
 
     /// <summary>Renders <paramref name="term"/> using the default
     /// operator table (the one the parser uses), at the maximum
@@ -31,13 +31,20 @@ public static class AstTermRenderer
     /// parenthesisation. Equivalent to Prolog's
     /// <c>write_term(Term, [quoted(false)])</c> rendering.</summary>
     public static string Render(Term term)
-        => Render(term, maxPrec: 1200);
+        => Render(term, 1200, DefaultOps);
 
     /// <summary>Renders <paramref name="term"/> bounded by
     /// <paramref name="maxPrec"/>: a compound whose operator priority
     /// exceeds the bound is wrapped in parens so the result re-parses
     /// to the same AST shape.</summary>
     public static string Render(Term term, int maxPrec)
+        => Render(term, maxPrec, DefaultOps);
+
+    /// <summary>Operator-aware overload using a caller-supplied table —
+    /// pass <see cref="PrologEngine.Operators"/> to render terms that
+    /// mention operators introduced at runtime (e.g. CLP(FD)'s
+    /// <c>in</c>, <c>..</c>, <c>#=</c>) in their operator form.</summary>
+    public static string Render(Term term, int maxPrec, OperatorTable ops)
     {
         switch (term)
         {
@@ -48,17 +55,17 @@ public static class AstTermRenderer
             case StringTerm s: return $"\"{s.Content}\"";
             case BigIntTerm b: return b.Value.ToString(CultureInfo.InvariantCulture);
             case CompoundTerm { Functor: ".", Args.Length: 2 } list:
-                return RenderList(list);
+                return RenderList(list, ops);
             case CompoundTerm c:
-                return RenderCompound(c, maxPrec);
+                return RenderCompound(c, maxPrec, ops);
             default:
                 return term.ToString() ?? "?";
         }
     }
 
-    private static string RenderCompound(CompoundTerm c, int maxPrec)
+    private static string RenderCompound(CompoundTerm c, int maxPrec, OperatorTable ops)
     {
-        if (c.Args.Length == 2 && Ops.TryGetInfix(c.Functor, out int iPrec, out var iType))
+        if (c.Args.Length == 2 && ops.TryGetInfix(c.Functor, out int iPrec, out var iType))
         {
             int leftMax = iType == OperatorType.Yfx ? iPrec : iPrec - 1;
             int rightMax = iType == OperatorType.Xfy ? iPrec : iPrec - 1;
@@ -74,20 +81,20 @@ public static class AstTermRenderer
                 _ when IsSymbolic(c.Functor) => c.Functor,
                 _ => $" {c.Functor} ",
             };
-            string body = $"{Render(c.Args[0], leftMax)}{sep}{Render(c.Args[1], rightMax)}";
+            string body = $"{Render(c.Args[0], leftMax, ops)}{sep}{Render(c.Args[1], rightMax, ops)}";
             return iPrec > maxPrec ? $"({body})" : body;
         }
-        if (c.Args.Length == 1 && Ops.TryGetPrefix(c.Functor, out int pPrec, out var pType))
+        if (c.Args.Length == 1 && ops.TryGetPrefix(c.Functor, out int pPrec, out var pType))
         {
             int argMax = pType == OperatorType.Fy ? pPrec : pPrec - 1;
-            string body = $"{c.Functor} {Render(c.Args[0], argMax)}";
+            string body = $"{c.Functor} {Render(c.Args[0], argMax, ops)}";
             return pPrec > maxPrec ? $"({body})" : body;
         }
-        if (c.Args.Length == 1 && Ops.TryGetPostfix(c.Functor, out int sPrec, out var sType))
+        if (c.Args.Length == 1 && ops.TryGetPostfix(c.Functor, out int sPrec, out var sType))
         {
             int argMax = sType == OperatorType.Yf ? sPrec : sPrec - 1;
             string sep = IsSymbolic(c.Functor) ? c.Functor : $" {c.Functor}";
-            string body = $"{Render(c.Args[0], argMax)}{sep}";
+            string body = $"{Render(c.Args[0], argMax, ops)}{sep}";
             return sPrec > maxPrec ? $"({body})" : body;
         }
         // Canonical form. Arguments sit at priority 999 (below the
@@ -96,7 +103,7 @@ public static class AstTermRenderer
         for (int i = 0; i < c.Args.Length; i++)
         {
             if (i > 0) sb.Append(", ");
-            sb.Append(Render(c.Args[i], 999));
+            sb.Append(Render(c.Args[i], 999, ops));
         }
         return sb.Append(')').ToString();
     }
@@ -109,17 +116,17 @@ public static class AstTermRenderer
         return true;
     }
 
-    private static string RenderList(CompoundTerm cons)
+    private static string RenderList(CompoundTerm cons, OperatorTable ops)
     {
         var elements = new List<string>();
         Term cursor = cons;
         while (cursor is CompoundTerm { Functor: ".", Args.Length: 2 } c)
         {
-            elements.Add(Render(c.Args[0], 999));
+            elements.Add(Render(c.Args[0], 999, ops));
             cursor = c.Args[1];
         }
         if (cursor is AtomTerm { Name: "[]" })
             return "[" + string.Join(", ", elements) + "]";
-        return "[" + string.Join(", ", elements) + " | " + Render(cursor, 999) + "]";
+        return "[" + string.Join(", ", elements) + " | " + Render(cursor, 999, ops) + "]";
     }
 }

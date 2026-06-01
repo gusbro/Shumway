@@ -298,8 +298,55 @@ internal static class Clpfd
         % attribute_goals/4 is dynamic (pre-declared by the prelude); a
         % dynamic clause's body is not module-mangled, so it delegates to
         % the public clpfd_attr_goals/3, whose body resolves clpfd locals.
+        %
+        % We emit the domain (`V in L..H`) plus each suspended propagator
+        % translated to its user-facing form (`X #< Y`, `A + B #= C`, ...).
+        % A propagator is stored on every variable it watches, so projecting
+        % the same one through every variable would duplicate it; the
+        % "owner-first-var" rule emits a propagator exactly once — through
+        % whichever of its variable args appears first.
         attribute_goals(clpfd, Attr, V, Goals) :- clpfd_attr_goals(Attr, V, Goals).
-        clpfd_attr_goals(fd(Dom, _), V, [V in Expr]) :- clpfd_dom_expr(Dom, Expr).
+        clpfd_attr_goals(fd(Dom, Props), V, Goals) :-
+            clpfd_dom_expr(Dom, Expr),
+            clpfd_props_owned_by(Props, V, PropGoals),
+            Goals = [V in Expr | PropGoals].
+
+        % Emit those propagators whose first variable argument == V and
+        % whose user-facing form isn't already subsumed by the domain
+        % (clpfd_prop_to_goal/2 fails for those — e.g. `$fd_lt(X, 10)`
+        % only narrows X's domain, which is already projected).
+        clpfd_props_owned_by([], _, []).
+        clpfd_props_owned_by([P|Ps], V, Goals) :-
+            ( clpfd_prop_owner(P, V), clpfd_prop_to_goal(P, G) ->
+                Goals = [G|Rest], clpfd_props_owned_by(Ps, V, Rest)
+            ; clpfd_props_owned_by(Ps, V, Goals)
+            ).
+
+        clpfd_prop_owner(P, V) :-
+            P =.. [_|Args],
+            clpfd_first_var(Args, FV),
+            FV == V.
+
+        clpfd_first_var([A|_], A) :- var(A), !.
+        clpfd_first_var([A|_], V) :- nonvar(A), is_list(A), !, clpfd_first_var(A, V).
+        clpfd_first_var([_|R], V) :- clpfd_first_var(R, V).
+
+        % Translate each internal propagator back to its source-level
+        % form. A binary comparison against a ground integer is fully
+        % captured by the variable's domain projection — we drop the
+        % propagator in that case by demanding both args be vars
+        % (matching SWI's top-level: `?- A #> 5, A #< 10.` prints just
+        % `A in 6..9.`, no `5 #< A, A #< 10` residue).
+        clpfd_prop_to_goal('$fd_lt'(X, Y),    (X #< Y))   :- var(X), var(Y).
+        clpfd_prop_to_goal('$fd_le'(X, Y),    (X #=< Y))  :- var(X), var(Y).
+        clpfd_prop_to_goal('$fd_neq'(X, Y),   (X #\= Y))  :- var(X), var(Y).
+        clpfd_prop_to_goal('$fd_plus'(A,B,C), (A + B #= C)).
+        clpfd_prop_to_goal('$fd_times'(A,B,C),(A * B #= C)).
+        clpfd_prop_to_goal('$fd_min'(A,B,C),  (min(A,B) #= C)).
+        clpfd_prop_to_goal('$fd_max'(A,B,C),  (max(A,B) #= C)).
+        clpfd_prop_to_goal('$fd_abs'(A,C),    (abs(A) #= C)).
+        clpfd_prop_to_goal('$fd_idiv'(A,B,C), (A // B #= C)).
+        clpfd_prop_to_goal('$fd_alldiff'(Vs), all_distinct(Vs)).
 
         % ===== in / ins =====
         %! in(?Var, +Domain) | CLP(FD) — domains | Constrains a variable to a finite domain (e.g. X in 1..9).

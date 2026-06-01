@@ -131,6 +131,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `reconsult(+File)` | Like consult/1 but first abolishes every predicate whose indicator appears in File (in the target module), so an edit-reload cycle replaces the file's predicates rather than duplicating clauses. Predicates not mentioned in File are left untouched (classical GProlog / SICStus semantics). |
 | `retract(+Clause)` | Removes the first clause that unifies with the argument. |
 | `retractall(+Head)` | Removes every clause whose head unifies with Head. |
+| `use_module(+Spec)` | Loads a library or file. Spec is either library(Name) — where Name is one of the built-in libraries (clpfd, clpr) — or an atom path (equivalent to consult/1). use_module(library(clpfd)) enables the CLP(FD) library; use_module(library(clpr)) enables CLP(R). The two libraries cannot coexist in the same engine. |
 | `well_founded(+Goal, -Status)` | The well-founded truth value of a tabled Goal — true, false or undefined. |
 
 ## Lists
