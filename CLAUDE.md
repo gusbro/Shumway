@@ -658,16 +658,21 @@ questions from Phase 11's deferred list:
   `retract` / `assertz` — and avoids redundant `TryDescribe*`
   attempts that were already rejecting the shape.
 
-**Phase 23 — REPL UX polish (line editor, history, completion, error display, pretty-printing)** — ✅ **Complete** (tagged `phase-23`; closure summary in [`docs/phase-23-closure.md`](docs/phase-23-closure.md)).
+**Phase 23 — REPL UX polish, listing, residual constraint display, warnings cleanup** — ✅ **Complete** (tagged `phase-23`; closure summary in [`docs/phase-23-closure.md`](docs/phase-23-closure.md)).
 
-Four chunks (249–252) polishing the interactive REPL. Phase originally scoped as engine robustness focused on a `retract/1` Blint bug recorded in memory; verification showed the bug had been fixed incidentally during chunks 235-248 (memory updated). With the obvious correctness target gone, pivoted to REPL UX where day-to-day pain was real.
+Fourteen chunks (249–262). Originally scoped as engine robustness focused on a `retract/1` Blint bug recorded in memory; verification showed the bug had been fixed incidentally during chunks 235-248 (memory updated). With the obvious correctness target gone, pivoted to REPL UX — and expanded as each landed chunk surfaced something else worth fixing while the surface was still fresh.
 
-- **Chunk 249 — line editor + persistent history**. Custom Console.ReadKey editor with cursor movement, Up/Down history navigation, in-progress draft preservation, Emacs-style Ctrl-A/E/U/K, persistent `~/.shumway_history` (override via `SHUMWAY_HISTORY`). Falls back to plain `ReadLine` when `Console.IsInputRedirected` so cross-process tests stay scriptable.
-- **Chunk 250 — Tab completion**. Completes against the union of every registered builtin and every user predicate (modules' Clauses + PublicFunctors + DynamicFunctors + PrecompiledStaticPredicates). Three behaviours: unique → completes; multiple → longest-common-prefix extension + multi-column listing sized to `Console.WindowWidth`; none → silent. Capped at 200 results.
-- **Chunk 251 — error display + source positions**. `PrintError` distinguishes `ShumwayPrologException` (renders carried term), `PrologRuntimeException` (composes `kind(detail) in builtin/N`), and other .NET exceptions. Both Prolog families surface `engine.LastErrorStackTraceWithPositions` with `file:line:col` per frame. `SHUMWAY_DEBUG_TRACE=1` adds .NET stack. `ErrorRendering.FormatRuntimeError` extracted public for testability.
-- **Chunk 252 — pretty-print bindings**. `Solution.ToString(int width)` overload breaks long compounds / lists across lines with indented arguments. `Solution.ToString()` (no arg) keeps compact single-line for embedding-API consumers. Operator compounds (`a + b`) stay compact even when they don't fit — only compounds and lists break.
+REPL editing (249–253): custom Console.ReadKey line editor with cursor movement, Up/Down history navigation, in-progress draft preservation, Emacs-style Ctrl-A/E/U/K; persistent `~/.shumway_history`; horizontal scroll for queries wider than the terminal. Tab completion against builtins + every user-known predicate, multi-column listing sized to terminal width, capped at 200 results.
 
-32 new tests, 0 failures, no engine invariants modified.
+REPL display (251–252, 262): error rendering distinguishes `ShumwayPrologException` / `PrologRuntimeException` / other; both Prolog families surface `LastErrorStackTraceWithPositions` with `file:line:col`. `Solution.ToString(int width)` pretty-prints bindings, breaking long compounds/lists. Residual constraint display: wraps each query with `copy_term/3`, so `?- A #> 5, A #< 10.` prints `A in 6..9.` instead of leaving a bare unbound. CLP(FD)'s `clpfd_attr_goals/3` projects propagators (`$fd_lt` → `X #< Y`, `$fd_plus` → `A + B #= C`, `$fd_alldiff` → `all_distinct`, etc.) once each via an owner-first-var rule; binary cmps against integer constants are dropped because the resulting domain already captures them.
+
+Listing (254–258): `listing/1` walks AST clauses directly (preserves source variable names), falls back to `PrecompiledStaticPredicates` for source-stripped bundles, demangles `<module>$` prefix for local predicates, and emits diagnostics (`no predicate matches X`, `X/N not defined`). New `portray_clause/1,2` builtin: SWI/SICStus head + indented body; width-aware multi-line layout with `,`-chains always breaking and args aligned past the open paren.
+
+Tooling cleanup (259–261): deleted obsolete `shumway-bundler` (~847 lines, superseded by compile + link). `shumway-link` gained `-x`-style short flags for every `--xxx` option and complete help text. Zero out compilation warnings (was ~196, now 0) — source generator's `[PrologPredicate]` bridge gets `engine.Host!` / `call!.GetEnumerator()`; engine paths fix `_persistentProgram!` / `CurrentProgram!`; test files migrate `(IntTerm)s["X"]` casts to `!`-suffixed form and `Assert.Equal(1, x.Count())` to `Assert.Single`.
+
+New public surfaces (262): `PrologEngine.ParseGoal(string)` returns `(Term, IReadOnlyList<string>)` for top-level wrap construction; `PrologEngine.Operators` exposes the runtime operator table so library-defined operators (CLP(FD)'s `in`, `..`, `#=`, ...) render in operator form; `AstTermRenderer.Render(Term, int, OperatorTable)` overload threads the caller's table; `use_module/1` Prolog-level library loader (`library(clpfd)` / `library(clpr)` plus atom-as-consult/1).
+
+~60 new tests, 0 failures, no engine invariants modified.
 
 **Phase 22 — Foreign-predicate toolchain (mode-aware sigs + --foreign-dll across compile/link/run)** — ✅ **Complete** (tagged `phase-22`; closure summary in [`docs/phase-22-closure.md`](docs/phase-22-closure.md)).
 
