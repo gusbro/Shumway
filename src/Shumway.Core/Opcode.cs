@@ -111,6 +111,19 @@ public enum Opcode : byte
     ExecuteIl = 0x59,
     ExecuteBytecode = 0x5A,
 
+    // Chunk 248 — tail-call counterpart of CallBuiltin. Same 5-byte
+    // width as Execute / ExecuteIl ([op:1][builtinId:4]); the
+    // linker rewrites an Execute site to ExecuteBuiltin when its
+    // resolved callee is a builtin (foreign predicate from
+    // --foreign-dll, or a standard builtin the compiler missed
+    // because it was registered after compile time). The runtime
+    // dispatches the builtin (without TrimEnv — we're returning),
+    // then jumps Pc = Cp to return to the caller. Drops the
+    // numLivePerms field that CallBuiltin carries: a tail call
+    // doesn't trim env (Deallocate has already restored the
+    // parent frame, or there was never one).
+    ExecuteBuiltin = 0x5B,
+
     // Choice points
     TryMeElse = 0x60,
     RetryMeElse = 0x61,

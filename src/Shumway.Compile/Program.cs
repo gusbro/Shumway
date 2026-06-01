@@ -58,27 +58,6 @@ internal static class Program
             }
         }
 
-        // Chunk 247: pre-register every --foreign-dll so ClauseCompiler's
-        // builtin lookup sees the foreign predicates and emits CallBuiltin
-        // instead of Call. One transient engine is enough — registration
-        // is process-wide via BuiltinsRegistry.
-        if (opts.ForeignDlls.Count > 0)
-        {
-            var preloadEngine = new PrologEngine();
-            foreach (var dll in opts.ForeignDlls)
-            {
-                try { preloadEngine.RegisterForeignAssembly(dll); }
-                catch (Exception ex)
-                {
-                    Console.Error.WriteLine(
-                        $"shumway-compile: failed to load --foreign-dll '{dll}': {ex.Message}");
-                    return ExitUsageError;
-                }
-                if (opts.Verbose)
-                    Console.Error.WriteLine($"shumway-compile: loaded foreign-dll {System.IO.Path.GetFileName(dll)}");
-            }
-        }
-
         int exit = ExitOk;
         foreach (var input in opts.InputPaths)
         {
@@ -167,17 +146,6 @@ internal static class Program
         public string OutputPath { get; set; } = "";
         public bool Verbose { get; set; }
         public ShmoBuildMode BuildMode { get; set; } = ShmoBuildMode.Release;
-        // Chunk 247: foreign DLLs to pre-register before compiling
-        // each source. ClauseCompiler consults BuiltinsRegistry at
-        // compile time to decide whether to emit Call (user call,
-        // address patched later) vs CallBuiltin (builtin-id baked
-        // in). For a Prolog source that calls a foreign predicate,
-        // the foreign MUST be in the registry at compile time —
-        // otherwise the bytecode emits Call and the runtime would
-        // fail with existence_error even if the linker resolved the
-        // call. Same flag at shumway-link records the assembly for
-        // runtime auto-load.
-        public List<string> ForeignDlls { get; } = new();
     }
 
     private static Options? ParseArgs(string[] args)
@@ -220,16 +188,6 @@ internal static class Program
                     opts.BuildMode = ShmoBuildMode.Release;
                     break;
 
-                case "--foreign-dll":
-                    if (++i >= args.Length) { ReportMissing(arg); return null; }
-                    if (!System.IO.File.Exists(args[i]))
-                    {
-                        Console.Error.WriteLine(
-                            $"shumway-compile: --foreign-dll '{args[i]}' not found.");
-                        return null;
-                    }
-                    opts.ForeignDlls.Add(System.IO.Path.GetFullPath(args[i]));
-                    break;
 
                 default:
                     if (arg.StartsWith("-"))

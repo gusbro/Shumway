@@ -105,6 +105,14 @@ public static class OpcodeTable
         // where address becomes functor id).
         Set(Opcode.ExecuteIl, 5, "execute_il", OperandKind.Functor);
         Set(Opcode.ExecuteBytecode, 5, "execute_bytecode", OperandKind.Address);
+        // Chunk 248 — ExecuteBuiltin: tail-call to a builtin. Same
+        // 5-byte width as Execute so the linker can do an opcode-byte
+        // swap (plus a 4-byte operand patch from address to
+        // BuiltinId) when a tail Execute resolves to a builtin —
+        // typically a foreign predicate the linker discovered via
+        // --foreign-dll that wasn't in BuiltinsRegistry at compile
+        // time.
+        Set(Opcode.ExecuteBuiltin, 5, "execute_builtin", OperandKind.BuiltinId);
 
         // Choice points
         Set(Opcode.Nop, 1, "nop");

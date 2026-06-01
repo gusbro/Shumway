@@ -96,9 +96,47 @@ public sealed class Linker
         // address. A call to an undefined predicate is not a link error:
         // it is patched with a CallTarget sentinel so the interpreter
         // raises existence_error if (and only if) the call is reached.
+        //
+        // Chunk 248 — if the callee resolves to a builtin (e.g.
+        // a foreign predicate the linker discovered through
+        // --foreign-dll, registered into BuiltinsRegistry before
+        // calling Link), rewrite the Call opcode at `off` to
+        // CallBuiltin in place. Same 9-byte footprint (opcode +
+        // int32 + int32), so the operand-slot positions don't move.
+        // The reverse mapping doesn't apply: the compiler already
+        // emits CallBuiltin directly for any predicate that was a
+        // builtin at compile time, and the runtime never demotes
+        // a CallBuiltin back to Call.
         var unresolvedSites = new List<(int Offset, int FunctorId)>();
         foreach (var (off, fid) in unresolvedCalls)
         {
+            // Builtin? Rewrite the opcode and use the builtin id as the operand.
+            // Same-size in-place swap in both cases:
+            //   Call (9b) → CallBuiltin (9b)
+            //   Execute (5b) → ExecuteBuiltin (5b)
+            if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out int builtinId))
+            {
+                byte existing = program[off];
+                if (existing == (byte)Opcode.Call)
+                {
+                    program[off] = (byte)Opcode.CallBuiltin;
+                    BytecodeIO.WriteInt32(program, off + 1, builtinId);
+                    continue;
+                }
+                if (existing == (byte)Opcode.Execute)
+                {
+                    // Chunk 248 — tail-call rewrite. ExecuteBuiltin
+                    // has the same 5-byte width as Execute, so the
+                    // swap is opcode-byte + operand-patch with no
+                    // following Nops needed. Drops Execute's address
+                    // operand semantics for the builtin id.
+                    program[off] = (byte)Opcode.ExecuteBuiltin;
+                    BytecodeIO.WriteInt32(program, off + 1, builtinId);
+                    continue;
+                }
+                throw new InvalidOperationException(
+                    $"Linker: unexpected opcode 0x{existing:X2} at call site for functor id {fid}.");
+            }
             int target;
             if (addresses.TryGetValue(fid, out int addr))
                 target = addr;

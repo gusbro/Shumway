@@ -523,6 +523,59 @@ public sealed class BytecodeInterpreter
                     break;
                 }
 
+                // Chunk 248 — tail-call to a builtin. 5-byte opcode
+                // (same width as Execute / ExecuteIl / ExecuteBytecode);
+                // operand is the builtin id. The linker emits this in
+                // place of Execute when an Execute site's target is a
+                // builtin — typically a foreign predicate the linker
+                // discovered via --foreign-dll that wasn't in
+                // BuiltinsRegistry at compile time. Behaviour: invoke
+                // the builtin (no TrimEnv — we're returning to caller
+                // and the caller's frame is already current), then
+                // Pc = Cp to return to the caller's continuation.
+                case Opcode.ExecuteBuiltin:
+                {
+                    if (!FlushPendingWakeups(code))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    int builtinId = BytecodeIO.ReadInt32(code, pc + 1);
+                    var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+                    _engine.CurrentBuiltinName = entry.Name;
+                    _engine.CurrentBuiltinArity = entry.Arity;
+                    // Tail-call return: a backtrackable builtin's
+                    // ResumeAtReturnPc must land at the caller's
+                    // continuation (our Cp), not at the instruction
+                    // after this ExecuteBuiltin (which would loop).
+                    _engine.BuiltinReturnPc = _engine.Cp;
+                    bool implOk;
+                    Shumway.Core.Profiler.BuiltinEnter(builtinId);
+                    try { implOk = entry.Impl(_engine); }
+                    catch (PrologRuntimeException re)
+                    {
+                        re.StampBuiltin(entry.Name, entry.Arity);
+                        throw;
+                    }
+                    finally
+                    {
+                        Shumway.Core.Profiler.BuiltinExit(builtinId);
+                    }
+                    if (!implOk)
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    // Return to the caller. A backtrackable builtin
+                    // that set IlTailCallPending + Pc has already
+                    // chosen the resume address; honour it.
+                    if (_engine.IlTailCallPending)
+                        _engine.IlTailCallPending = false;
+                    else
+                        _engine.SetPc(_engine.Cp);
+                    break;
+                }
+
                 case Opcode.Allocate:
                 {
                     int n = BytecodeIO.ReadInt32(code, pc + 1);
