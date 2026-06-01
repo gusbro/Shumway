@@ -228,11 +228,13 @@ internal static class Program
                     break;
 
                 case "--entry":
+                case "-E":
                     if (++i >= args.Length) { ReportMissing(arg); return null; }
                     if (!ParseEntryList(args[i], opts.EntryPoints)) return null;
                     break;
 
                 case "--allow-undefined":
+                case "-u":
                     opts.AllowUndefined = true;
                     break;
 
@@ -242,6 +244,7 @@ internal static class Program
                     break;
 
                 case "--with-compiled-il":
+                case "-i":
                     opts.IncludeCompiledIl = true;
                     break;
 
@@ -264,6 +267,7 @@ internal static class Program
                     break;
 
                 case "--self-contained":
+                case "-c":
                     opts.SelfContained = true;
                     break;
 
@@ -273,6 +277,7 @@ internal static class Program
                     break;
 
                 case "--foreign-dll":
+                case "-f":
                     if (++i >= args.Length) { ReportMissing(arg); return null; }
                     if (!System.IO.File.Exists(args[i]))
                     {
@@ -351,14 +356,14 @@ internal static class Program
     private static void PrintUsage()
     {
         Console.Error.WriteLine(
-            "Usage: shumway-link {-o <output.shum> | --exe <output.exe>} {--entry pred/N | --goal Term} [options] <a.shmo b.shmo ...>\n"
+            "Usage: shumway-link {-o <output.shum> | -e <output.exe>} {-E pred/N | -g Term} [options] <a.shmo b.shmo ...>\n"
             + "\n"
             + "Options:\n"
             + "  -o, --output <path>      Output bundle path. Required unless --exe is given.\n"
-            + "      --entry list         One or more entry-point predicates. Comma-\n"
+            + "  -E, --entry list         One or more entry-point predicates. Comma-\n"
             + "                           separated within a flag; flag is repeatable.\n"
             + "                           At least one entry point is required.\n"
-            + "      --allow-undefined    Downgrade missing-predicate errors to warnings\n"
+            + "  -u, --allow-undefined    Downgrade missing-predicate errors to warnings\n"
             + "                           and produce the bundle anyway. The engine will\n"
             + "                           raise existence_error/2 if a missing predicate\n"
             + "                           is actually invoked.\n"
@@ -369,6 +374,20 @@ internal static class Program
             + "                           Useful for size analysis or IP-protection\n"
             + "                           archives. listing/0 output and parser stack\n"
             + "                           traces lose their textual source.\n"
+            + "  -i, --with-compiled-il   Persist a .NET assembly with Tier-1 IL for\n"
+            + "                           every IL-eligible predicate and embed it in\n"
+            + "                           the bundle. At load time the engine binds the\n"
+            + "                           IL methods directly — no Sigil emit at consult\n"
+            + "                           time. Bigger bundles, faster cold start when\n"
+            + "                           Tier-1 promotion is enabled.\n"
+            + "  -f, --foreign-dll <path> Path to a .NET assembly with [PrologPredicate]\n"
+            + "                           static methods. Their Name/Arity indicators\n"
+            + "                           resolve as foreign references during link;\n"
+            + "                           the bundle records each assembly's filename\n"
+            + "                           so PrologEngine.LoadBundle auto-registers them\n"
+            + "                           at runtime. Repeatable for multiple DLLs.\n"
+            + "                           --exe copies each foreign DLL next to the\n"
+            + "                           produced executable.\n"
             + "  -m, --map <path>         Write a human-readable map file describing what\n"
             + "                           landed in the bundle: per-module sizes, public\n"
             + "                           / dynamic predicate lists, reached / dropped\n"
@@ -385,7 +404,7 @@ internal static class Program
             + "                           are both fine). Validated syntactically at link\n"
             + "                           time. Also added as an implicit reachability\n"
             + "                           root for the linker.\n"
-            + "      --self-contained     With --exe, bake the .NET runtime into the\n"
+            + "  -c, --self-contained     With --exe, bake the .NET runtime into the\n"
             + "                           executable. Produces a ~70 MB binary that needs\n"
             + "                           nothing installed on the target machine.\n"
             + "                           Default is framework-dependent (~5-10 MB exe,\n"
