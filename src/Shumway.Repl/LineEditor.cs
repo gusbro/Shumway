@@ -112,19 +112,22 @@ public sealed class LineEditor
                     break;
 
                 case ConsoleKey.LeftArrow:
-                    if (cursor > 0) { cursor--; SetCursor(prompt, cursor); }
+                    // Chunk 253: always Redraw on cursor moves so
+                    // the horizontal-scroll window slides correctly
+                    // when the cursor crosses the visible boundary.
+                    if (cursor > 0) { cursor--; Redraw(prompt, buffer, cursor); }
                     break;
 
                 case ConsoleKey.RightArrow:
-                    if (cursor < buffer.Length) { cursor++; SetCursor(prompt, cursor); }
+                    if (cursor < buffer.Length) { cursor++; Redraw(prompt, buffer, cursor); }
                     break;
 
                 case ConsoleKey.Home:
-                    cursor = 0; SetCursor(prompt, cursor);
+                    cursor = 0; Redraw(prompt, buffer, cursor);
                     break;
 
                 case ConsoleKey.End:
-                    cursor = buffer.Length; SetCursor(prompt, cursor);
+                    cursor = buffer.Length; Redraw(prompt, buffer, cursor);
                     break;
 
                 case ConsoleKey.UpArrow:
@@ -191,9 +194,11 @@ public sealed class LineEditor
                                 }
                                 Console.WriteLine();
                                 PrintCandidates(candidates);
-                                Console.Write(prompt);
-                                Console.Write(buffer.ToString());
-                                SetCursor(prompt, cursor);
+                                // The candidate list pushed the
+                                // prompt up; Redraw re-emits it +
+                                // the buffer + cursor at the
+                                // fresh row's column 0.
+                                Redraw(prompt, buffer, cursor);
                             }
                             // No matches → silent (no annoying bell).
                         }
@@ -216,10 +221,10 @@ public sealed class LineEditor
                     // Ctrl-A / Ctrl-E — Emacs-style line jumps.
                     if (key.Key == ConsoleKey.A
                         && (key.Modifiers & ConsoleModifiers.Control) != 0)
-                    { cursor = 0; SetCursor(prompt, cursor); break; }
+                    { cursor = 0; Redraw(prompt, buffer, cursor); break; }
                     if (key.Key == ConsoleKey.E
                         && (key.Modifiers & ConsoleModifiers.Control) != 0)
-                    { cursor = buffer.Length; SetCursor(prompt, cursor); break; }
+                    { cursor = buffer.Length; Redraw(prompt, buffer, cursor); break; }
                     // Ctrl-U — kill to start of line (Emacs / readline standard).
                     if (key.Key == ConsoleKey.U
                         && (key.Modifiers & ConsoleModifiers.Control) != 0)
@@ -250,32 +255,91 @@ public sealed class LineEditor
         }
     }
 
-    /// <summary>Repaints the line in place: cursor back to the start
-    /// of the prompt, write prompt + buffer, trailing space to erase
-    /// any character left over from a shrunken line, then snap the
-    /// cursor back to its logical position.</summary>
+    /// <summary>Chunk 253 — repaints the line using a horizontal-
+    /// scroll window over the buffer. The cursor stays on a single
+    /// terminal row regardless of buffer length: when the buffer
+    /// would overflow the row, the visible window slides so the
+    /// cursor remains in view.
+    ///
+    /// <para>Why scroll rather than wrap-and-redraw: the previous
+    /// implementation wrote the whole buffer on every keystroke
+    /// and reset only <see cref="Console.CursorLeft"/> (the x
+    /// coordinate) before the next paint. For a buffer that
+    /// wrapped to a second terminal row, the reset landed on the
+    /// last visible row only — the wrapped-up portion stayed
+    /// painted, and the new render piled on top, leaving stale
+    /// fragments of prior typing across multiple rows.</para>
+    ///
+    /// <para>Trade-off: the user can't see the start of a long
+    /// line while editing the end. Acceptable for an interactive
+    /// REPL where deeply-edited inputs are rare; the alternative
+    /// (multi-row tracking with ANSI clear-to-end-of-screen) is
+    /// heavier and still has terminal-portability issues.</para></summary>
     private static void Redraw(string prompt, StringBuilder buffer, int cursor)
     {
-        // Save the row in case the line wraps — the prompt's column
-        // is always 0 so CursorLeft = 0 only handles the unwrapped
-        // case. We assume unwrapped; long lines display fine, the
-        // cursor just lands wrong on the rewrap.
+        int width = TerminalWidthOrDefault();
+        int visibleCols = Math.Max(1, width - prompt.Length - 1);
+        var (visStart, visEnd) = ComputeVisibleWindow(
+            bufferLength: buffer.Length, cursor: cursor, visibleCols: visibleCols);
+
         try { Console.CursorLeft = 0; }
-        catch (System.IO.IOException) { /* not interactive */ return; }
+        catch (System.IO.IOException) { return; }
         Console.Write(prompt);
-        Console.Write(buffer.ToString());
-        // One trailing space wipes the character that was here
-        // before a Backspace / Delete shrank the buffer. Costs one
-        // visible character of horizontal space, harmless.
-        Console.Write(' ');
-        SetCursor(prompt, cursor);
+        if (visEnd > visStart)
+            Console.Write(buffer.ToString(visStart, visEnd - visStart));
+
+        // Pad with spaces to overwrite any leftover from a longer
+        // previous render. Width-1 keeps the cursor inside the row
+        // so writing the last column doesn't force a wrap.
+        int painted = prompt.Length + (visEnd - visStart);
+        int padding = Math.Max(0, width - 1 - painted);
+        if (padding > 0) Console.Write(new string(' ', padding));
+
+        SetCursor(prompt.Length + (cursor - visStart));
     }
 
-    private static void SetCursor(string prompt, int cursor)
+    private static void SetCursor(int column)
     {
-        try { Console.CursorLeft = prompt.Length + cursor; }
+        try { Console.CursorLeft = column; }
         catch (System.IO.IOException) { /* not interactive */ }
         catch (ArgumentOutOfRangeException) { /* cursor past edge */ }
+    }
+
+    private static int TerminalWidthOrDefault()
+    {
+        try
+        {
+            int w = Console.WindowWidth;
+            return w < 20 ? 80 : w;
+        }
+        catch { return 80; }
+    }
+
+    /// <summary>Chunk 253 — pure helper computing the
+    /// horizontal-scroll window over the buffer. Returns
+    /// <c>[visStart, visEnd)</c> such that <c>cursor</c> is
+    /// inside it and the window fits in
+    /// <paramref name="visibleCols"/> columns.
+    ///
+    /// <para>Rules:</para>
+    /// <list type="bullet">
+    /// <item>Buffer that fits → window covers all of it.</item>
+    /// <item>Buffer longer than the window but cursor near the
+    ///   start → anchor window at 0.</item>
+    /// <item>Otherwise → end window one cell past cursor (so the
+    ///   cursor is the last visible column) and back-fill
+    ///   visibleCols chars to the left.</item>
+    /// </list></summary>
+    public static (int Start, int End) ComputeVisibleWindow(
+        int bufferLength, int cursor, int visibleCols)
+    {
+        if (bufferLength <= visibleCols)
+            return (0, bufferLength);
+        if (cursor < visibleCols)
+            return (0, visibleCols);
+        int end = Math.Min(bufferLength, cursor + 1);
+        int start = Math.Max(0, end - visibleCols);
+        return (start, end);
     }
 
     /// <summary>Chunk 250 — walks back from <paramref name="cursor"/>
