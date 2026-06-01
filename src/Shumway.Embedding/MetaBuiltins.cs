@@ -1851,9 +1851,27 @@ public static class MetaBuiltins
             AtomTable.Intern(name, permanent: true).Id, arity);
 
         var output = engine.Out;
+        int printed = 0;
         foreach (var clause in host.ClausesForListing(fid))
         {
             PrintAstClause(output, clause);
+            printed++;
+        }
+        // Chunk 255: no AST clauses but the predicate may still
+        // exist as a precompiled record loaded from a source-
+        // stripped bundle. Surface a comment so the user sees the
+        // predicate is real — bare `true.` would lie by implying
+        // there's no body to show when there are clauses, just no
+        // source for them.
+        if (printed == 0)
+        {
+            var pre = host.PrecompiledRecordFor(fid);
+            if (pre is not null)
+            {
+                string clauseWord = pre.ClauseCount == 1 ? "clause" : "clauses";
+                output.WriteLine(
+                    $"% {name}/{arity}: {pre.ClauseCount} {clauseWord}, source stripped (no listing available)");
+            }
         }
         return true;
     }

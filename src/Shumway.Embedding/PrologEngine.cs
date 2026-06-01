@@ -1906,6 +1906,22 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// <c>clpfd</c>, and never a builtin) plus every dynamic predicate that
     /// currently holds clauses. Each is flagged dynamic-or-not so listing
     /// can print a <c>:- dynamic</c> header for the dynamic ones.</summary>
+    /// <summary>Chunk 255 — for a source-stripped bundle the engine
+    /// has no AST to print, but it does have the
+    /// <see cref="Shumway.Compiler.Wam.CompiledPredicate"/>
+    /// metadata (arity + clause count) in
+    /// <see cref="_precompiledStaticPredicates"/>. Listing falls
+    /// back to a comment line so the user at least sees the
+    /// predicate exists and how many clauses it has — rather than
+    /// the misleading bare <c>true.</c> they'd get otherwise.
+    /// Returns <c>null</c> when there is no precompiled record
+    /// either (i.e. the predicate genuinely doesn't exist).</summary>
+    internal Shumway.Compiler.Wam.CompiledPredicate? PrecompiledRecordFor(int functorId)
+    {
+        return _precompiledStaticPredicates.TryGetValue(functorId, out var p)
+            ? p : null;
+    }
+
     /// <summary>Chunk 254 — enumerates the AST clauses backing
     /// <paramref name="functorId"/>. Pulls from every user module's
     /// <c>Clauses</c> list (filtering by head functor) for static
@@ -1949,6 +1965,36 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
         foreach (var (fid, clauses) in _dynamicClauses)
             if (clauses.Count > 0 && seen.Add(fid)) yield return (fid, true);
+        // Chunk 255: source-stripped bundles populate
+        // _precompiledStaticPredicates without ever touching
+        // manifest.Clauses. Surface those so listing/0 enumerates
+        // every user predicate, stripped-source or not. The
+        // stripped/in-source-or-not distinction surfaces inside
+        // $listing_pred_source which prints a "source stripped"
+        // comment when there's no AST to render.
+        foreach (var (fid, _) in _precompiledStaticPredicates)
+        {
+            // Skip prelude / clpfd functors — they get filtered
+            // out of normal listing too. We can't tell which
+            // module a precompiled fid came from cheaply, so
+            // approximate by skipping when the functor's name +
+            // arity already appears in either library's
+            // PublicFunctors set.
+            if (IsLibraryFunctor(fid)) continue;
+            if (seen.Add(fid)) yield return (fid, false);
+        }
+    }
+
+    /// <summary>Chunk 255 — true when the functor is part of the
+    /// always-loaded prelude / clpfd library. Listing skips these
+    /// the same way it skips builtins.</summary>
+    private bool IsLibraryFunctor(int fid)
+    {
+        if (_modules.TryGetValue(Prelude.ModuleName, out var pre)
+            && pre.PublicFunctors.Contains(fid)) return true;
+        if (_modules.TryGetValue(Clpfd.ModuleName, out var cl)
+            && cl.PublicFunctors.Contains(fid)) return true;
+        return false;
     }
 
     /// <summary>Snapshot of every static and dynamic functor id across all
