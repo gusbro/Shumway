@@ -241,6 +241,8 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `peek_char(+Stream, -Char)` | Peeks the next character of a stream without consuming it. |
 | `peek_code(-Code)` | Peeks one character code from current input (ISO §8.12.5). |
 | `peek_code(+Stream, -Code)` | Peeks one character code from a stream (ISO §8.12.5). |
+| `portray_clause(+Clause)` | Pretty-prints Clause to the current output as a Prolog clause: head + indented body goals, synthetic variable names renamed to A, B, C, ... |
+| `portray_clause(+Stream, +Clause)` | Like portray_clause/1 but writes to the given stream. |
 | `print(+Term)` | Writes a term using print conventions. |
 | `put_byte(+Byte)` | Writes one byte to the current output binary stream (ISO §8.13.3). |
 | `put_byte(+Stream, +Byte)` | Writes one byte to a binary stream (ISO §8.13.3). |

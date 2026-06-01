@@ -135,6 +135,14 @@ public static class MetaBuiltins
         // unbound var picks up a synthetic _G<addr> name and the
         // user's "X" or "Acc" is lost.
         BuiltinsRegistry.Register("$listing_pred_source", 2, ListingPredSource);
+        // Chunk 257 — SWI / SICStus / GNU-style clause pretty-printer.
+        BuiltinsRegistry.Register("portray_clause", 1, PortrayClause1,
+            Io, "portray_clause(+Clause)",
+            "Pretty-prints Clause to the current output as a Prolog clause: head + indented body goals, "
+            + "synthetic variable names renamed to A, B, C, ...");
+        BuiltinsRegistry.Register("portray_clause", 2, PortrayClause2,
+            Io, "portray_clause(+Stream, +Clause)",
+            "Like portray_clause/1 but writes to the given stream.");
         // Tabling (chunk 106) — a per-engine string set giving the
         // semi-naive driver an O(1) "is this answer new?" test.
         BuiltinsRegistry.Register("$tbl_seen", 1, TableSeen);
@@ -468,6 +476,18 @@ public static class MetaBuiltins
     {
         var h = Shumway.Builtins.StreamBuiltins.ResolveStream(engine, streamArg);
         return ResolveTextReaderFromHandle(h);
+    }
+
+    /// <summary>Chunk 257 — mirror of <see cref="ResolveTextReader"/>
+    /// for write-mode streams. Used by <c>portray_clause/2</c>.</summary>
+    private static System.IO.TextWriter ResolveTextWriter(Engine engine, Cell streamArg)
+    {
+        var h = Shumway.Builtins.StreamBuiltins.ResolveStream(engine, streamArg);
+        if (!h.IsWriter)
+            throw new PrologRuntimeException("permission_error", "output,stream");
+        if (h.IsBinary)
+            throw new PrologRuntimeException("permission_error", "output,binary_stream");
+        return h.Writer!;
     }
 
     private static System.IO.TextReader ResolveTextReaderFromHandle(Shumway.Core.StreamHandle h)
@@ -1901,78 +1921,40 @@ public static class MetaBuiltins
         return true;
     }
 
+    /// <summary>Chunk 257 — delegates to the shared
+    /// <see cref="ClausePortrayer"/>. The Clause's wrapping
+    /// (Fact's bare head vs Rule's <c>:-(H,B)</c> compound) is
+    /// detected by the portrayer from the Term's own shape — no
+    /// need to thread <see cref="Shumway.Compiler.Ast.ClauseKind"/>
+    /// through.</summary>
     private static void PrintAstClause(
         System.IO.TextWriter output, Shumway.Compiler.Ast.Clause clause)
     {
-        // Clause kinds: Fact (Term is the head), Rule
-        // (Term is `:-(Head, Body)`), DcgRule (`-->(Head, Body)`).
-        Term head;
-        Term? body = null;
-        if ((clause.Kind == Shumway.Compiler.Ast.ClauseKind.Rule
-             || clause.Kind == Shumway.Compiler.Ast.ClauseKind.DcgRule)
-            && clause.Term is CompoundTerm wrap && wrap.Args.Length == 2)
-        {
-            head = wrap.Args[0];
-            body = wrap.Args[1];
-        }
-        else
-        {
-            head = clause.Term;
-        }
-
-        // Chunk 256: ModuleRewrite mangled every local-predicate
-        // functor name to `<module>$<name>`. Demangle before
-        // rendering so the listing reads as the user wrote it.
-        head = DemangleTerm(head);
-        if (body is not null) body = DemangleTerm(body);
-
-        if (body is null || (body is AtomTerm at && at.Name == "true"))
-        {
-            // Fact (or rule whose body is the explicit `true` atom).
-            output.WriteLine(AstTermRenderer.Render(head) + ".");
-            return;
-        }
-
-        string arrow = clause.Kind == Shumway.Compiler.Ast.ClauseKind.DcgRule
-            ? " -->" : " :-";
-        output.WriteLine(AstTermRenderer.Render(head) + arrow);
-        PrintAstBody(output, body);
+        ClausePortrayer.Print(output, clause.Term);
     }
 
-    private static void PrintAstBody(System.IO.TextWriter output, Term body)
+    /// <summary>Chunk 257 — <c>portray_clause(+Clause)</c>: prints
+    /// Clause to the engine's current output using the standard
+    /// portray layout (head + indented body goals, synthetic
+    /// variables renumbered to A, B, C, …).</summary>
+    public static bool PortrayClause1(Engine engine)
     {
-        // Walk `,`-chains so each goal gets its own indented line;
-        // any other body shape prints in a single indented line.
-        if (body is CompoundTerm { Functor: ",", Args.Length: 2 } seq)
-        {
-            output.WriteLine("    " + AstTermRenderer.Render(seq.Args[0], 999) + ",");
-            PrintAstBody(output, seq.Args[1]);
-            return;
-        }
-        output.WriteLine("    " + AstTermRenderer.Render(body, 1200) + ".");
+        Term term = MaterializeRegister(engine, 0);
+        ClausePortrayer.Print(engine.Out, term);
+        return true;
     }
 
-    /// <summary>Chunk 256 — recursively rewrites every
-    /// <see cref="CompoundTerm.Functor"/> in a clause AST so the
-    /// listing output shows the user-facing local-predicate names
-    /// (e.g. <c>user$helper</c> → <c>helper</c>) instead of the
-    /// mangled forms ModuleRewrite stored. Atoms, vars, and
-    /// numbers pass through; compounds get their functor
-    /// demangled and their arguments rewritten.</summary>
-    private static Term DemangleTerm(Term term)
+    /// <summary>Chunk 257 — <c>portray_clause(+Stream, +Clause)</c>:
+    /// like <see cref="PortrayClause1"/> but writes to the given
+    /// output stream. The stream must be a Foreign cell bound to
+    /// a write-mode handle (the same shape current_output / open
+    /// produce).</summary>
+    public static bool PortrayClause2(Engine engine)
     {
-        if (term is not CompoundTerm c) return term;
-        var newArgs = new Term[c.Args.Length];
-        bool changed = false;
-        for (int i = 0; i < c.Args.Length; i++)
-        {
-            var newArg = DemangleTerm(c.Args[i]);
-            if (!ReferenceEquals(newArg, c.Args[i])) changed = true;
-            newArgs[i] = newArg;
-        }
-        string newFunctor = PrologEngine.DemangleLocalName(c.Functor);
-        if (!changed && newFunctor == c.Functor) return c;
-        return new CompoundTerm(newFunctor, newArgs);
+        TextWriter writer = ResolveTextWriter(engine, engine.GetRegister(0));
+        Term term = MaterializeRegister(engine, 1);
+        ClausePortrayer.Print(writer, term);
+        return true;
     }
 
     /// <summary><c>abolish(Name/Arity)</c> — removes every asserted clause
