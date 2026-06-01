@@ -68,7 +68,7 @@ public class Chunk155cTests
         // New int key.
         e.Query("assertz(n(99)).");
         Assert.True(e.Query("n(99).").Success);
-        var xs = e.QueryAll("n(X).").Select(s => ((IntTerm)s["X"]).Value).ToList();
+        var xs = e.QueryAll("n(X).").Select(s => ((IntTerm)s["X"]!).Value).ToList();
         Assert.Equal(new long[] { 1, 2, 99 }, xs);
     }
 

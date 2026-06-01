@@ -76,7 +76,7 @@ public class Chunk154Tests
         // Retract — invalidates persistent (predicate is hot), next
         // query rebuilds with the surviving clauses.
         e.Query("retract(d(2)).");
-        var xs = e.QueryAll("d(X).").Select(s => (IntTerm)s["X"]).ToList();
+        var xs = e.QueryAll("d(X).").Select(s => (IntTerm)s["X"]!).ToList();
         Assert.Equal(2, xs.Count);
         Assert.Equal(1, xs[0].Value);
         Assert.Equal(3, xs[1].Value);

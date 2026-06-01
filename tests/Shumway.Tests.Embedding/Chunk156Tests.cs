@@ -78,7 +78,7 @@ public class Chunk156Tests
         // Same-key assertz on multi-arg indexed predicate — chunk-
         // 156 path extends bucket(a) + final var chain in place.
         e.Query("assertz(kv(a, 9)).");
-        var aSols = e.QueryAll("kv(a, X).").Select(s => ((IntTerm)s["X"]).Value).ToList();
+        var aSols = e.QueryAll("kv(a, X).").Select(s => ((IntTerm)s["X"]!).Value).ToList();
         Assert.Equal(new long[] { 1, 9 }, aSols);
         var all = e.QueryAll("kv(_, _).").Count();
         Assert.Equal(3, all);
@@ -180,7 +180,7 @@ public class Chunk156Tests
         e.Query("asserta(kv(a, 9)).");
         e.Query("retract(kv(b, 2)).");
         e.Query("assertz(kv(d, 4)).");
-        var aSols = e.QueryAll("kv(a, X).").Select(s => ((IntTerm)s["X"]).Value).ToList();
+        var aSols = e.QueryAll("kv(a, X).").Select(s => ((IntTerm)s["X"]!).Value).ToList();
         Assert.Equal(new long[] { 9, 1 }, aSols);
         Assert.False(e.Query("kv(b, _).").Success);
         Assert.True(e.Query("kv(c, 3).").Success);

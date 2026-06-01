@@ -214,7 +214,6 @@ public sealed class BytecodeInterpreter
     /// </summary>
     public InterpreterResult Backtrack(ProgramView code)
     {
-        ArgumentNullException.ThrowIfNull(code);
         if (!TryBacktrack()) return InterpreterResult.Failed;
         try { return Dispatch(code); }
         catch (TopLevelFailure) { return InterpreterResult.Failed; }

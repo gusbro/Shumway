@@ -28,7 +28,7 @@ public class Chunk108Tests
             :- table gen/1.
             gen(pair(X, X)).
             """);
-        Assert.Equal(1, engine.QueryAll("gen(R).").Count());
+        Assert.Single(engine.QueryAll("gen(R)."));
         Assert.True(engine.Query("gen(pair(A, A)).").Success);
         Assert.False(engine.Query("gen(pair(a, b)).").Success);
     }
@@ -45,7 +45,7 @@ public class Chunk108Tests
             t(X) :- lhs(X).
             t(X) :- rhs(X).
             """);
-        Assert.Equal(1, engine.QueryAll("t(R).").Count());
+        Assert.Single(engine.QueryAll("t(R)."));
     }
 
     [Fact]
@@ -60,7 +60,7 @@ public class Chunk108Tests
             loop(X) :- seed(X).
             loop(X) :- loop(X).
             """);
-        Assert.Equal(1, engine.QueryAll("loop(R).").Count());
+        Assert.Single(engine.QueryAll("loop(R)."));
     }
 
     [Fact]

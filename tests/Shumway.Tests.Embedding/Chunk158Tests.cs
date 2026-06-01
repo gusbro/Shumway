@@ -51,7 +51,7 @@ public class Chunk158Tests
         Assert.True(e.Query("d(1).").Success);
         Assert.Equal(0, e.PersistentMutationsSinceCompact);
         // Dispatch correctness across the auto-compaction.
-        var xs = e.QueryAll("d(X).").Select(s => ((IntTerm)s["X"]).Value).ToList();
+        var xs = e.QueryAll("d(X).").Select(s => ((IntTerm)s["X"]!).Value).ToList();
         Assert.Equal(new long[] { 1, 2, 3 }, xs);
     }
 
@@ -88,7 +88,7 @@ public class Chunk158Tests
         e.Query("assertz(d(2)).");
         Assert.True(e.Query("compact_dynamic_buffer(d/1).").Success);
         // Dispatch still correct.
-        var xs = e.QueryAll("d(X).").Select(s => ((IntTerm)s["X"]).Value).ToList();
+        var xs = e.QueryAll("d(X).").Select(s => ((IntTerm)s["X"]!).Value).ToList();
         Assert.Equal(new long[] { 1, 2 }, xs);
     }
 

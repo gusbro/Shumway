@@ -82,8 +82,8 @@ public class Chunk155gTests
         e.Query("assertz(shape(triangle, area)).");
         // Concrete-arg dispatch finds the expected count.
         Assert.Equal(2, e.QueryAll("shape(circle, _).").Count());
-        Assert.Equal(1, e.QueryAll("shape(square, _).").Count());
-        Assert.Equal(1, e.QueryAll("shape(triangle, _).").Count());
+        Assert.Single(e.QueryAll("shape(square, _)."));
+        Assert.Single(e.QueryAll("shape(triangle, _)."));
         // Specific (arg0, arg1) lookup.
         Assert.True(e.Query("shape(circle, perimeter).").Success);
         Assert.True(e.Query("shape(triangle, area).").Success);
@@ -147,7 +147,7 @@ public class Chunk155gTests
         e.Query("asserta(kv(a, 9)).");
         e.Query("retract(kv(b, 2)).");
         e.Query("assertz(kv(d, 4)).");
-        var aSols = e.QueryAll("kv(a, X).").Select(s => ((IntTerm)s["X"]).Value).ToList();
+        var aSols = e.QueryAll("kv(a, X).").Select(s => ((IntTerm)s["X"]!).Value).ToList();
         Assert.Equal(new long[] { 9, 1 }, aSols);   // asserta(a,9) then original (a,1)
         Assert.False(e.Query("kv(b, _).").Success);  // retracted
         Assert.True(e.Query("kv(c, 3).").Success);

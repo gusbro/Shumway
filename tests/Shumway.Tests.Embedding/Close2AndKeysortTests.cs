@@ -51,7 +51,7 @@ public class Close2AndKeysortTests
         var l = sol["L"];
         // Walk the list cell-by-cell.
         var items = new List<string>();
-        Term cursor = l;
+        Term cursor = l!;
         while (cursor is CompoundTerm c && c.Functor == "." && c.Args.Length == 2)
         {
             items.Add(c.Args[0].ToString()!);
@@ -87,7 +87,7 @@ public class Close2AndKeysortTests
         var sol = e.Query("keysort([2-x, 1-z, 1-y], L).");
         Assert.True(sol.Success);
         var items = new List<string>();
-        Term cursor = sol["L"];
+        Term cursor = sol["L"]!;
         while (cursor is CompoundTerm c && c.Functor == "." && c.Args.Length == 2)
         {
             items.Add(c.Args[0].ToString()!);

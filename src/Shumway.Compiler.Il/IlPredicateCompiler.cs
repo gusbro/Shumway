@@ -1606,7 +1606,11 @@ public sealed class IlPredicateCompiler
                     // re-invokes this IL with cursor=resumeCursor; the top
                     // dispatch routes it to this label, which continues the
                     // body at the post-builtin position.
-                    emit.MarkLabel(resumeLabels[builtinResumeIdx - 1]);
+                    // resumeLabels was null-checked above where
+                    // builtinResumeIdx was assigned; the compiler
+                    // doesn't track the invariant across the
+                    // `isBacktrackable` branches.
+                    emit.MarkLabel(resumeLabels![builtinResumeIdx - 1]);
                 }
                 pc += OpcodeTable.Get(op).Size;
                 continue;

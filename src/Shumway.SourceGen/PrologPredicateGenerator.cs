@@ -296,7 +296,7 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
           .Append("bool ").Append(bridgeName)
           .AppendLine("(global::Shumway.Core.Engine engine)");
         sb.Append(indent).AppendLine("{");
-        sb.Append(indent).AppendLine("    var host = (global::Shumway.Embedding.PrologEngine)engine.Host;");
+        sb.Append(indent).AppendLine("    var host = (global::Shumway.Embedding.PrologEngine)engine.Host!;");
 
         // Chunk 246 — per-parameter decode based on mode:
         //   Input (+) : FromTerm<T>(...) — fails with
@@ -412,7 +412,7 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
                 // then hand off to the advance helper. The advance
                 // helper handles both MoveNext+CP-push (for solutions)
                 // and Dispose+fail (for exhaustion).
-                sb.Append(indent).Append("    var __iter = ").Append(call).AppendLine(".GetEnumerator();");
+                sb.Append(indent).Append("    var __iter = ").Append(call).AppendLine("!.GetEnumerator();");
                 sb.Append(indent).Append("    return ")
                   .Append(advanceHelperName(b))
                   .AppendLine("(engine, host, __iter, engine.BuiltinReturnPc);");

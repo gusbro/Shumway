@@ -38,7 +38,7 @@ public class Chunk155dTests
         Assert.False(e.Query("d(2).").Success);
         Assert.True(e.Query("d(3).").Success);
         // Var query.
-        var xs = e.QueryAll("d(X).").Select(s => ((IntTerm)s["X"]).Value).ToList();
+        var xs = e.QueryAll("d(X).").Select(s => ((IntTerm)s["X"]!).Value).ToList();
         Assert.Equal(new long[] { 1, 3 }, xs);
     }
 

@@ -65,11 +65,11 @@ public class Chunk107Tests
             reach(X, Y) :- edge(X, Y).
             reach(X, Y) :- reach(X, Z), edge(Z, Y).
             """);
-        Assert.Equal(1, engine.QueryAll("reach(a, X).").Count());   // b
+        Assert.Single(engine.QueryAll("reach(a, X)."));   // b
 
         engine.Query("assertz(edge(b, c)).");
         // The table still holds the pre-change answer set.
-        Assert.Equal(1, engine.QueryAll("reach(a, X).").Count());
+        Assert.Single(engine.QueryAll("reach(a, X)."));
 
         engine.Query("abolish_all_tables.");
         // Recomputed against the updated program.
@@ -86,7 +86,7 @@ public class Chunk107Tests
             reach(X, Y) :- edge(X, Y).
             reach(X, Y) :- reach(X, Z), edge(Z, Y).
             """);
-        Assert.Equal(1, engine.QueryAll("reach(a, X).").Count());
+        Assert.Single(engine.QueryAll("reach(a, X)."));
         engine.Query("assertz(edge(b, c)).");
         engine.Query("abolish_table(reach/2).");
         Assert.Equal(2, engine.QueryAll("reach(a, X).").Count());

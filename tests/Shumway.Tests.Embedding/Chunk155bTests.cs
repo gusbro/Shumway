@@ -80,7 +80,7 @@ public class Chunk155bTests
         e.Query("assertz(n(1)).");
         Assert.Equal(2, e.QueryAll("n(1).").Count());
         Assert.Single(e.QueryAll("n(2).").ToList());
-        var all = e.QueryAll("n(X).").Select(s => ((IntTerm)s["X"]).Value).ToList();
+        var all = e.QueryAll("n(X).").Select(s => ((IntTerm)s["X"]!).Value).ToList();
         Assert.Equal(new long[] { 1, 2, 1 }, all);
     }
 
@@ -138,7 +138,7 @@ public class Chunk155bTests
         e.Query("d(1).");
         e.Query("d(2).");
         e.Query("retract(d(2)).");
-        var xs = e.QueryAll("d(X).").Select(s => ((IntTerm)s["X"]).Value).ToList();
+        var xs = e.QueryAll("d(X).").Select(s => ((IntTerm)s["X"]!).Value).ToList();
         Assert.Equal(new long[] { 1, 3 }, xs);
     }
 

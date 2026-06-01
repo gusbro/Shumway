@@ -60,7 +60,7 @@ public class Chunk157Tests
             e.Query($"retract(d({i * 2})).");  // retract evens 0,2,4...48
         Assert.True(e.Query("compact_dynamic_buffer.").Success);
         // Survivors: odd numbers 1,3,5,...,49 (25 entries).
-        var xs = e.QueryAll("d(X).").Select(s => ((IntTerm)s["X"]).Value).ToList();
+        var xs = e.QueryAll("d(X).").Select(s => ((IntTerm)s["X"]!).Value).ToList();
         Assert.Equal(25, xs.Count);
         Assert.All(xs, v => Assert.True(v % 2 == 1));
         Assert.True(e.Query("d(1).").Success);
@@ -121,7 +121,7 @@ public class Chunk157Tests
         e.Query("retract(shape(square, area)).");
         e.Query("compact_dynamic_buffer.");
         Assert.Equal(2, e.QueryAll("shape(circle, _).").Count());
-        Assert.Equal(1, e.QueryAll("shape(triangle, _).").Count());
+        Assert.Single(e.QueryAll("shape(triangle, _)."));
         Assert.False(e.Query("shape(square, _).").Success);
     }
 }

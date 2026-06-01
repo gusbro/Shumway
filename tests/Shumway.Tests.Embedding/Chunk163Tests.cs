@@ -163,7 +163,7 @@ public class Chunk163Tests
         Assert.Contains("dead", result.UnreachableModules);
         Assert.Contains(result.Diagnostics,
             d => d.Code == "unreachable_module" && d.Severity == LinkSeverity.Warning);
-        Assert.Equal(1, result.Bundle!.Entries.Count);
+        Assert.Single(result.Bundle!.Entries);
         Assert.Equal("used", result.Bundle!.Entries[0].ModuleName);
     }
 

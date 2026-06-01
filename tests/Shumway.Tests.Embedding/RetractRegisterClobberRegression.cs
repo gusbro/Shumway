@@ -70,7 +70,7 @@ take_all(L) :-
         // L should be [1,2,3,4,5] — each element an Int, not a q(N) compound.
         var l = sol["L"];
         int count = 0;
-        Shumway.Compiler.Ast.Term cursor = l;
+        Shumway.Compiler.Ast.Term cursor = l!;
         while (cursor is Shumway.Compiler.Ast.CompoundTerm c
                && c.Functor == "." && c.Args.Length == 2)
         {

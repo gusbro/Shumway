@@ -73,12 +73,12 @@ public class Chunk155aTests
         e.Query("kv(a, _).");
         e.Query("kv(b, _).");
         // Deterministic dispatch (concrete key).
-        var aSols = e.QueryAll("kv(a, X).").Select(s => ((IntTerm)s["X"]).Value).ToList();
+        var aSols = e.QueryAll("kv(a, X).").Select(s => ((IntTerm)s["X"]!).Value).ToList();
         Assert.Equal(new long[] { 1, 9 }, aSols);
-        var bSols = e.QueryAll("kv(b, X).").Select(s => ((IntTerm)s["X"]).Value).ToList();
+        var bSols = e.QueryAll("kv(b, X).").Select(s => ((IntTerm)s["X"]!).Value).ToList();
         Assert.Equal(new long[] { 2, 7 }, bSols);
         // Var dispatch.
-        var all = e.QueryAll("kv(_, X).").Select(s => ((IntTerm)s["X"]).Value).ToList();
+        var all = e.QueryAll("kv(_, X).").Select(s => ((IntTerm)s["X"]!).Value).ToList();
         Assert.Equal(new long[] { 1, 2, 3, 9, 7 }, all);
     }
 
@@ -97,7 +97,7 @@ public class Chunk155aTests
         e.Query("d(1).");
         e.Query("d(2).");
         e.Query("retract(d(2)).");
-        var xs = e.QueryAll("d(X).").Select(s => ((IntTerm)s["X"]).Value).ToList();
+        var xs = e.QueryAll("d(X).").Select(s => ((IntTerm)s["X"]!).Value).ToList();
         Assert.Equal(new long[] { 1, 3 }, xs);
     }
 

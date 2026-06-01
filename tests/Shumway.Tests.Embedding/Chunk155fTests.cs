@@ -86,7 +86,7 @@ public class Chunk155fTests
         // After promotion, asserta-then-assertz.
         e.Query("asserta(d(0)).");
         e.Query("assertz(d(2)).");
-        var xs = e.QueryAll("d(X).").Select(s => ((IntTerm)s["X"]).Value).ToList();
+        var xs = e.QueryAll("d(X).").Select(s => ((IntTerm)s["X"]!).Value).ToList();
         // Var chain order: 0 (asserta'd first), 1 (original), 2 (assertz'd last).
         Assert.Equal(new long[] { 0, 1, 2 }, xs);
     }
@@ -107,7 +107,7 @@ public class Chunk155fTests
         e.Query("d(99).");
         for (int i = 2; i <= 4; i++)
             e.Query($"asserta(d({i})).");
-        var xs = e.QueryAll("d(X).").Select(s => ((IntTerm)s["X"]).Value).ToList();
+        var xs = e.QueryAll("d(X).").Select(s => ((IntTerm)s["X"]!).Value).ToList();
         // asserta order: last asserta'd is first. Then 1 (original)
         // then 99 (original). So [4, 3, 2, 1, 99].
         Assert.Equal(new long[] { 4, 3, 2, 1, 99 }, xs);

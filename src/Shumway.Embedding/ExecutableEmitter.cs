@@ -203,7 +203,7 @@ public static class ExecutableEmitter
                 return new ExecutableEmitResult(false, null, diagnostics);
             }
 
-            string outputDir = Path.GetDirectoryName(finalPath);
+            string? outputDir = Path.GetDirectoryName(finalPath);
             if (!string.IsNullOrEmpty(outputDir))
                 Directory.CreateDirectory(outputDir);
             File.Copy(producedPath, finalPath, overwrite: true);

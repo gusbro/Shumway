@@ -80,7 +80,7 @@ public class Chunk243Tests
         var b = new C243Box { Value = 7, Cached = 999 };
         var t = (CompoundTerm)engine.ToTerm(b);
         Assert.Equal("c243_box", t.Functor);
-        Assert.Equal(1, t.Args.Length);
+        Assert.Single(t.Args);
         Assert.Equal(7L, ((IntTerm)t.Args[0]).Value);
     }
 

@@ -124,7 +124,7 @@ public class Chunk151bTests
         const int n = 200;
         for (int i = 0; i < n; i++)
             e.Query($"assertz(d({i})).");
-        var xs = e.QueryAll("d(X).").Select(s => (IntTerm)s["X"]).ToList();
+        var xs = e.QueryAll("d(X).").Select(s => (IntTerm)s["X"]!).ToList();
         Assert.Equal(n, xs.Count);
         for (int i = 0; i < n; i++)
             Assert.Equal((long)i, xs[i].Value);
