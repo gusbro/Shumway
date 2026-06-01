@@ -1906,6 +1906,21 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// <c>clpfd</c>, and never a builtin) plus every dynamic predicate that
     /// currently holds clauses. Each is flagged dynamic-or-not so listing
     /// can print a <c>:- dynamic</c> header for the dynamic ones.</summary>
+    /// <summary>Chunk 256 — strips the <c>&lt;module&gt;$</c>
+    /// prefix that <see cref="ModuleRewrite"/> adds to local
+    /// predicates so the listing path can present users with the
+    /// name they actually wrote. <c>user$helper</c> →
+    /// <c>helper</c>, <c>foo$bar$baz</c> → <c>bar$baz</c> (only
+    /// the first prefix segment is removed, so a user predicate
+    /// that legitimately contains <c>$</c> survives intact).
+    /// Names without a <c>$</c> pass through unchanged.</summary>
+    public static string DemangleLocalName(string mangled)
+    {
+        int sep = mangled.IndexOf('$');
+        if (sep <= 0) return mangled;
+        return mangled.Substring(sep + 1);
+    }
+
     /// <summary>Chunk 255 — for a source-stripped bundle the engine
     /// has no AST to print, but it does have the
     /// <see cref="Shumway.Compiler.Wam.CompiledPredicate"/>

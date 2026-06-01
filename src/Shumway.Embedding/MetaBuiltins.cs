@@ -1801,7 +1801,13 @@ public static class MetaBuiltins
         foreach (var (fid, isDynamic) in host.ListablePredicates())
         {
             var (atomId, arity) = FunctorTable.Lookup(fid);
-            string name = AtomTable.GetById(atomId)?.Name ?? "?";
+            string mangled = AtomTable.GetById(atomId)?.Name ?? "?";
+            // Chunk 256: present the user-facing name. Local
+            // predicates carry a "user$" (or other module) prefix
+            // from ModuleRewrite; surface the unprefixed name so
+            // `listing(foo)` finds the predicate the user wrote
+            // as `foo(X) :- ...`.
+            string name = PrologEngine.DemangleLocalName(mangled);
             entries.Add(new CompoundTerm("pi", new Term[]
             {
                 new AtomTerm(name),
@@ -1845,32 +1851,51 @@ public static class MetaBuiltins
         Cell arityCell = MaterializeRegisterAsCell(engine, 1);
         if (nameCell.Tag != Tag.Atom || arityCell.Tag != Tag.Int)
             return false;
-        string name = AtomTable.GetById(nameCell.AsAtomId)?.Name ?? "";
+        string displayName = AtomTable.GetById(nameCell.AsAtomId)?.Name ?? "";
         int arity = (int)arityCell.AsInt;
-        int fid = FunctorTable.Intern(
-            AtomTable.Intern(name, permanent: true).Id, arity);
+
+        // Chunk 256: ModuleRewrite mangles local predicates as
+        // <module>$<name>. The user's `listing(helper)` arrives
+        // here with the unmangled name; find every fid whose
+        // demangled name matches (the predicate may be stored
+        // under user$helper, foo$helper, or just helper if it's
+        // public).
+        var matchingFids = new List<int>();
+        foreach (var (fid, _) in host.ListablePredicates())
+        {
+            var (atomId, fidArity) = FunctorTable.Lookup(fid);
+            if (fidArity != arity) continue;
+            string mangled = AtomTable.GetById(atomId)?.Name ?? "";
+            if (mangled == displayName
+                || PrologEngine.DemangleLocalName(mangled) == displayName)
+                matchingFids.Add(fid);
+        }
 
         var output = engine.Out;
         int printed = 0;
-        foreach (var clause in host.ClausesForListing(fid))
+        foreach (int fid in matchingFids)
         {
-            PrintAstClause(output, clause);
-            printed++;
-        }
-        // Chunk 255: no AST clauses but the predicate may still
-        // exist as a precompiled record loaded from a source-
-        // stripped bundle. Surface a comment so the user sees the
-        // predicate is real — bare `true.` would lie by implying
-        // there's no body to show when there are clauses, just no
-        // source for them.
-        if (printed == 0)
-        {
-            var pre = host.PrecompiledRecordFor(fid);
-            if (pre is not null)
+            foreach (var clause in host.ClausesForListing(fid))
             {
-                string clauseWord = pre.ClauseCount == 1 ? "clause" : "clauses";
-                output.WriteLine(
-                    $"% {name}/{arity}: {pre.ClauseCount} {clauseWord}, source stripped (no listing available)");
+                PrintAstClause(output, clause);
+                printed++;
+            }
+            // Chunk 255: no AST clauses but the predicate may still
+            // exist as a precompiled record loaded from a source-
+            // stripped bundle. Surface a comment so the user sees the
+            // predicate is real — bare `true.` would lie by implying
+            // there's no body to show when there are clauses, just
+            // no source for them.
+            if (printed == 0)
+            {
+                var pre = host.PrecompiledRecordFor(fid);
+                if (pre is not null)
+                {
+                    string clauseWord = pre.ClauseCount == 1 ? "clause" : "clauses";
+                    output.WriteLine(
+                        $"% {displayName}/{arity}: {pre.ClauseCount} {clauseWord}, source stripped (no listing available)");
+                    printed++;
+                }
             }
         }
         return true;
@@ -1894,6 +1919,12 @@ public static class MetaBuiltins
         {
             head = clause.Term;
         }
+
+        // Chunk 256: ModuleRewrite mangled every local-predicate
+        // functor name to `<module>$<name>`. Demangle before
+        // rendering so the listing reads as the user wrote it.
+        head = DemangleTerm(head);
+        if (body is not null) body = DemangleTerm(body);
 
         if (body is null || (body is AtomTerm at && at.Name == "true"))
         {
@@ -1919,6 +1950,29 @@ public static class MetaBuiltins
             return;
         }
         output.WriteLine("    " + AstTermRenderer.Render(body, 1200) + ".");
+    }
+
+    /// <summary>Chunk 256 — recursively rewrites every
+    /// <see cref="CompoundTerm.Functor"/> in a clause AST so the
+    /// listing output shows the user-facing local-predicate names
+    /// (e.g. <c>user$helper</c> → <c>helper</c>) instead of the
+    /// mangled forms ModuleRewrite stored. Atoms, vars, and
+    /// numbers pass through; compounds get their functor
+    /// demangled and their arguments rewritten.</summary>
+    private static Term DemangleTerm(Term term)
+    {
+        if (term is not CompoundTerm c) return term;
+        var newArgs = new Term[c.Args.Length];
+        bool changed = false;
+        for (int i = 0; i < c.Args.Length; i++)
+        {
+            var newArg = DemangleTerm(c.Args[i]);
+            if (!ReferenceEquals(newArg, c.Args[i])) changed = true;
+            newArgs[i] = newArg;
+        }
+        string newFunctor = PrologEngine.DemangleLocalName(c.Functor);
+        if (!changed && newFunctor == c.Functor) return c;
+        return new CompoundTerm(newFunctor, newArgs);
     }
 
     /// <summary><c>abolish(Name/Arity)</c> — removes every asserted clause

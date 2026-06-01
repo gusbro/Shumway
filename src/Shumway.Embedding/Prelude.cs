@@ -462,25 +462,39 @@ internal static class Prelude
             '$listing_all'(All).
 
         %! listing(+Spec) | Database | Lists the clauses of the user-defined predicate named by Spec (Name or Name/Arity).
+        % Chunk 256: when no predicate matches, print a comment so
+        % the user sees feedback instead of a silent `true.`
         listing(Name/Arity) :-
             !,
             '$listable_predicates'(All),
-            ( member(pi(Name, Arity, Dyn), All) -> '$listing_pred'(Name, Arity, Dyn)
-            ; true
+            ( member(pi(Name, Arity, Dyn), All) ->
+                '$listing_pred'(Name, Arity, Dyn)
+            ;
+                write('% '), write(Name), write('/'), write(Arity),
+                write(' not defined'), nl
             ).
         listing(Name) :-
             '$listable_predicates'(All),
-            '$listing_named'(All, Name).
+            '$listing_named'(All, Name, false, Found),
+            ( Found == true -> true
+            ;
+                write('% no predicate matches '), write(Name), nl
+            ).
 
         '$listing_all'([]).
         '$listing_all'([pi(Name, Arity, Dyn)|Rest]) :-
             '$listing_pred'(Name, Arity, Dyn),
             '$listing_all'(Rest).
 
-        '$listing_named'([], _).
-        '$listing_named'([pi(Name, Arity, Dyn)|Rest], Want) :-
-            ( Name == Want -> '$listing_pred'(Name, Arity, Dyn) ; true ),
-            '$listing_named'(Rest, Want).
+        '$listing_named'([], _, Found, Found).
+        '$listing_named'([pi(Name, Arity, Dyn)|Rest], Want, FoundIn, FoundOut) :-
+            ( Name == Want ->
+                '$listing_pred'(Name, Arity, Dyn),
+                Found1 = true
+            ;
+                Found1 = FoundIn
+            ),
+            '$listing_named'(Rest, Want, Found1, FoundOut).
 
         % print one predicate: a `:- dynamic` header for a dynamic
         % predicate, then a clause per line, then a blank separator
