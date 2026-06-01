@@ -104,6 +104,123 @@ public sealed class Solution
             $"{kv.Key} = {Render(kv.Value, 1200)}"));
     }
 
+    /// <summary>Chunk 252 — pretty-print variant. Each binding fits
+    /// on its own line; a term whose compact rendering would exceed
+    /// <paramref name="width"/> columns breaks across lines with
+    /// indented arguments. Compact terms render as the default
+    /// <see cref="ToString()"/> would; the multi-line form only
+    /// kicks in when needed.
+    ///
+    /// <para>The REPL passes <c>Console.WindowWidth</c>; embedding
+    /// API consumers that want compact output use the bare
+    /// <see cref="ToString()"/> overload.</para></summary>
+    public string ToString(int width)
+    {
+        if (!Success) return "false";
+        if (Bindings.Count == 0) return "true";
+        // Width budget for each binding: subtract the "X = " prefix
+        // from the available columns.
+        var sb = new System.Text.StringBuilder();
+        bool first = true;
+        foreach (var kv in Bindings)
+        {
+            if (!first) sb.Append(",\n");
+            first = false;
+            sb.Append(kv.Key).Append(" = ");
+            int prefix = kv.Key.Length + 3;
+            PrettyInto(sb, kv.Value, indent: prefix, maxPrec: 1200, width: width);
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>Chunk 252 — pretty-printer. Tries the compact
+    /// <see cref="Render"/> first; if it fits in
+    /// <c>width - indent</c> columns, uses it as-is. Otherwise
+    /// breaks the term across lines with each argument indented
+    /// two spaces past the parent.
+    ///
+    /// <para>Only compounds and lists can break — atoms, numbers,
+    /// strings, and variables emit compact regardless. Operator
+    /// compounds also stay compact (breaking at the operator is
+    /// notation-fragile and rarely what the user wants when a
+    /// single binding overflows).</para></summary>
+    private static void PrettyInto(
+        System.Text.StringBuilder sb, Term term, int indent, int maxPrec, int width)
+    {
+        string compact = Render(term, maxPrec);
+        int budget = width - indent;
+        if (compact.Length <= budget || budget < 16)
+        {
+            // Either it fits, or the indent has eaten so much of
+            // the budget that breaking won't help. Emit compact.
+            sb.Append(compact);
+            return;
+        }
+
+        switch (term)
+        {
+            case CompoundTerm { Functor: ".", Args.Length: 2 } cons:
+                PrettyList(sb, cons, indent, width);
+                break;
+            case CompoundTerm c when !IsOperatorCompound(c):
+                PrettyCompound(sb, c, indent, width);
+                break;
+            default:
+                // Operators / unknown shapes fall back to compact.
+                sb.Append(compact);
+                break;
+        }
+    }
+
+    private static void PrettyList(
+        System.Text.StringBuilder sb, CompoundTerm cons, int indent, int width)
+    {
+        // Gather list elements + tail (which may be a non-nil
+        // partial-list tail).
+        var elements = new List<Term>();
+        Term cursor = cons;
+        while (cursor is CompoundTerm { Functor: ".", Args.Length: 2 } c)
+        {
+            elements.Add(c.Args[0]);
+            cursor = c.Args[1];
+        }
+        string innerPad = new string(' ', indent + 2);
+        string closePad = new string(' ', indent);
+        sb.Append('[').Append('\n').Append(innerPad);
+        for (int i = 0; i < elements.Count; i++)
+        {
+            PrettyInto(sb, elements[i], indent + 2, 999, width);
+            if (i < elements.Count - 1)
+                sb.Append(",\n").Append(innerPad);
+        }
+        if (cursor is not AtomTerm { Name: "[]" })
+        {
+            sb.Append('\n').Append(closePad).Append("| ");
+            PrettyInto(sb, cursor, indent + 2, 999, width);
+        }
+        sb.Append('\n').Append(closePad).Append(']');
+    }
+
+    private static void PrettyCompound(
+        System.Text.StringBuilder sb, CompoundTerm c, int indent, int width)
+    {
+        string innerPad = new string(' ', indent + 2);
+        string closePad = new string(' ', indent);
+        sb.Append(c.Functor).Append('(').Append('\n').Append(innerPad);
+        for (int i = 0; i < c.Args.Length; i++)
+        {
+            PrettyInto(sb, c.Args[i], indent + 2, 999, width);
+            if (i < c.Args.Length - 1)
+                sb.Append(",\n").Append(innerPad);
+        }
+        sb.Append('\n').Append(closePad).Append(')');
+    }
+
+    private static bool IsOperatorCompound(CompoundTerm c) =>
+        (c.Args.Length == 2 && Ops.TryGetInfix(c.Functor, out _, out _))
+        || (c.Args.Length == 1 && Ops.TryGetPrefix(c.Functor, out _, out _))
+        || (c.Args.Length == 1 && Ops.TryGetPostfix(c.Functor, out _, out _));
+
     /// <summary>Operator table used for binding display. The REPL parses
     /// queries with <see cref="OperatorTable.Default"/>, so rendering
     /// bindings with the same table round-trips.</summary>

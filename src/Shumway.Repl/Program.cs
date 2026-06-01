@@ -380,7 +380,13 @@ internal static class Program
         while (true)
         {
             Solution solution = solutions.Current;
-            Console.Write(solution.Bindings.Count == 0 ? "true" : solution.ToString());
+            // Chunk 252 — pretty-print the bindings using the
+            // terminal width so long terms break across lines.
+            int width;
+            try { width = Console.WindowWidth; }
+            catch { width = 80; }
+            if (width < 20) width = 80;
+            Console.Write(solution.Bindings.Count == 0 ? "true" : solution.ToString(width));
             // The engine reports when no choice point remains: this is
             // the last solution, so finish with '.' and no ';' prompt —
             // matching SWI / GNU / SICStus. member(A,[x,y]) stops at
