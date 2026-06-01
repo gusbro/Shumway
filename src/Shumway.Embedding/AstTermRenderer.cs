@@ -62,7 +62,18 @@ public static class AstTermRenderer
         {
             int leftMax = iType == OperatorType.Yfx ? iPrec : iPrec - 1;
             int rightMax = iType == OperatorType.Xfy ? iPrec : iPrec - 1;
-            string sep = IsSymbolic(c.Functor) ? c.Functor : $" {c.Functor} ";
+            // Chunk 258 — comma and semicolon (sequence / disjunction
+            // operators) render with no leading space: `a, b` and
+            // `a ; b`. Symbolic operators (`+`, `/`, `=`) stay tight.
+            // Alphabetic operators (`is`, `mod`) keep spaces both
+            // sides.
+            string sep = c.Functor switch
+            {
+                "," => ", ",
+                ";" => "; ",
+                _ when IsSymbolic(c.Functor) => c.Functor,
+                _ => $" {c.Functor} ",
+            };
             string body = $"{Render(c.Args[0], leftMax)}{sep}{Render(c.Args[1], rightMax)}";
             return iPrec > maxPrec ? $"({body})" : body;
         }

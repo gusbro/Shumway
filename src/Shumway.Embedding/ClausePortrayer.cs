@@ -5,46 +5,45 @@ using Shumway.Compiler.Ast;
 namespace Shumway.Embedding;
 
 /// <summary>
-/// Chunk 257 — shared clause pretty-printer. Drives the
-/// <c>portray_clause/1,2</c> builtins and the listing path
-/// (chunk 254/256). Produces SWI-style output:
+/// Chunk 258 — clause pretty-printer with width-aware multi-line
+/// layout. Drives the <c>portray_clause/1,2</c> builtins and the
+/// listing path. Output matches the SWI / SICStus convention:
 ///
 /// <list type="bullet">
-/// <item>A fact (head only, or rule whose body is <c>true</c>)
-///   prints on one line ending in a period.</item>
-/// <item>A rule prints the head with a trailing <c> :-</c>,
-///   then each conjunction goal on its own indented line,
-///   ending in a period.</item>
-/// <item>A DCG rule (<c>Head --> Body</c>) follows the same
-///   layout with <c> --></c>.</item>
-/// <item>A directive (<c>(:- Goal)</c>, one-arg compound) prints
-///   on one line as <c>:- Goal.</c></item>
+/// <item>Fact (head only, or body == <c>true</c>) — one line,
+///   trailing period.</item>
+/// <item>Rule — head with trailing <c> :-</c>, each body goal on
+///   its own line indented 4 spaces, period at the end of the
+///   last goal.</item>
+/// <item><strong>Any <c>,</c>-conjunction always breaks across
+///   lines</strong>, paren-wrapped when it sits inside an argument:
+///   <c>( g1, g2, ... )</c> with each goal aligned past the
+///   opening <c>(</c>.</item>
+/// <item>Once a compound has any sub-term that needs multi-line
+///   (i.e. contains a <c>,</c>-chain anywhere recursively), its
+///   args are placed each on their own line aligned past the
+///   functor's opening <c>(</c>.</item>
+/// <item>Anything else (atoms, numbers, vars, conjunction-free
+///   compounds) renders inline through <see cref="AstTermRenderer"/>.</item>
 /// </list>
 ///
-/// <para>Two AST transforms run before rendering:</para>
+/// <para>Two AST transforms run before layout:</para>
 /// <list type="bullet">
-/// <item><strong>Demangle</strong> — ModuleRewrite mangled every
-///   local-predicate functor as <c>&lt;module&gt;$&lt;name&gt;</c>.
-///   Strips the prefix so <c>user$helper(X)</c> reads as
-///   <c>helper(X)</c>.</item>
+/// <item><strong>Demangle</strong> — ModuleRewrite-mangled local
+///   predicate names (<c>user$helper</c>) → source-spelled
+///   (<c>helper</c>).</item>
 /// <item><strong>Variable renaming</strong> — synthetic
 ///   <c>_G&lt;addr&gt;</c> names from a heap round-trip get
-///   renumbered <c>A</c>, <c>B</c>, <c>C</c>, … (then
-///   <c>A1</c>, <c>B1</c>, … after <c>Z</c>) sharing-aware:
-///   the same source variable maps to the same letter wherever
-///   it appears. User-given names (anything not starting with
-///   <c>_G</c> or <c>_C</c>) pass through unchanged so a
-///   consulted file's listing still shows <c>X</c>, <c>Y</c>,
-///   <c>Acc</c>, … from the source.</item>
+///   renumbered <c>A</c>, <c>B</c>, <c>C</c>, … sharing-aware.
+///   Parser-given names pass through unchanged.</item>
 /// </list>
 /// </summary>
 public static class ClausePortrayer
 {
-    /// <summary>Prints <paramref name="clauseTerm"/> as a clause
-    /// to <paramref name="output"/>, ending with a newline. The
-    /// term is detected as fact / rule / DCG / directive from its
-    /// shape (no out-of-band <c>ClauseKind</c> needed). Demangle
-    /// + variable renaming applied automatically.</summary>
+    /// <summary>Prints <paramref name="clauseTerm"/> as a clause to
+    /// <paramref name="output"/>, ending with a terminating period
+    /// and newline. The term's shape (fact / rule / DCG /
+    /// directive) is detected from its structure.</summary>
     public static void Print(TextWriter output, Term clauseTerm)
     {
         Term t = DemangleTerm(clauseTerm);
@@ -60,39 +59,135 @@ public static class ClausePortrayer
                 return;
             }
             output.WriteLine(AstTermRenderer.Render(head) + " :-");
-            PrintBody(output, body);
+            PrintBody(output, body, indent: 4);
+            output.WriteLine(".");
             return;
         }
         if (t is CompoundTerm dcg && dcg.Functor == "-->" && dcg.Args.Length == 2)
         {
             output.WriteLine(AstTermRenderer.Render(dcg.Args[0]) + " -->");
-            PrintBody(output, dcg.Args[1]);
+            PrintBody(output, dcg.Args[1], indent: 4);
+            output.WriteLine(".");
             return;
         }
         if (t is CompoundTerm dir && dir.Functor == ":-" && dir.Args.Length == 1)
         {
-            // 1199 keeps the body bounded below `:-`'s 1200 so a
-            // (Goal1 ; Goal2) directive renders without an outer
-            // paren wrap.
             output.WriteLine(":- " + AstTermRenderer.Render(dir.Args[0], 1199) + ".");
             return;
         }
-        // Fact (atom, number, or non-`:-`/`--&gt;` compound).
         output.WriteLine(AstTermRenderer.Render(t) + ".");
     }
 
-    private static void PrintBody(TextWriter output, Term body)
+    /// <summary>Prints the body of a rule. The top-level
+    /// <c>,</c>-chain is always broken, one goal per line at
+    /// <paramref name="indent"/>. Goals that themselves need
+    /// multi-line layout (because they contain nested
+    /// <c>,</c>-chains) recurse into the multi-line writer.</summary>
+    private static void PrintBody(TextWriter w, Term body, int indent)
     {
-        // Walk `,`-chains so each goal lands on its own indented
-        // line; any other body shape prints on one indented line
-        // and terminates the clause.
-        if (body is CompoundTerm seq && seq.Functor == "," && seq.Args.Length == 2)
+        var goals = FlattenConjunction(body);
+        for (int i = 0; i < goals.Count; i++)
         {
-            output.WriteLine("    " + AstTermRenderer.Render(seq.Args[0], 999) + ",");
-            PrintBody(output, seq.Args[1]);
+            w.Write(new string(' ', indent));
+            WriteGoal(w, goals[i], indent);
+            if (i < goals.Count - 1) w.WriteLine(",");
+        }
+    }
+
+    /// <summary>Writes one goal at the current column
+    /// <paramref name="indent"/>. Decides inline vs multi-line:
+    /// goals with a <c>,</c>-chain anywhere inside force
+    /// multi-line; everything else renders inline.</summary>
+    private static void WriteGoal(TextWriter w, Term goal, int indent)
+    {
+        if (!NeedsMultiLine(goal))
+        {
+            w.Write(AstTermRenderer.Render(goal, 999));
             return;
         }
-        output.WriteLine("    " + AstTermRenderer.Render(body, 1200) + ".");
+
+        if (goal is CompoundTerm c && c.Functor == "," && c.Args.Length == 2)
+        {
+            // Paren-wrapped conjunction inside an argument:
+            //   ( g1,
+            //     g2,
+            //     ...
+            //   )
+            // The opening `(` is at column `indent`; goals align at
+            // `indent + 2` (past the `( `); the closing `)` returns
+            // to column `indent`.
+            var goals = FlattenConjunction(goal);
+            w.Write("( ");
+            for (int i = 0; i < goals.Count; i++)
+            {
+                if (i > 0) w.Write(new string(' ', indent + 2));
+                WriteGoal(w, goals[i], indent + 2);
+                if (i < goals.Count - 1) w.WriteLine(",");
+                else w.WriteLine();
+            }
+            w.Write(new string(' ', indent));
+            w.Write(")");
+            return;
+        }
+
+        if (goal is CompoundTerm cc)
+        {
+            // Regular compound foo(arg1, arg2, ...) — break args
+            // each on its own line, aligned past the open paren.
+            w.Write(cc.Functor);
+            w.Write("(");
+            int argIndent = indent + cc.Functor.Length + 1;
+            for (int i = 0; i < cc.Args.Length; i++)
+            {
+                if (i > 0) w.Write(new string(' ', argIndent));
+                WriteGoal(w, cc.Args[i], argIndent);
+                if (i < cc.Args.Length - 1) w.WriteLine(",");
+            }
+            w.Write(")");
+            return;
+        }
+
+        // Fallback (should not reach: NeedsMultiLine only returns
+        // true for compounds containing `,`).
+        w.Write(AstTermRenderer.Render(goal, 999));
+    }
+
+    /// <summary>True when the goal's compact rendering would be
+    /// misleading because it contains a <c>,</c>-chain — a
+    /// "sequence of goals" that conceptually wants line breaks.
+    /// Recursive: <c>foo(bar, (a, b))</c> needs multi-line
+    /// because of the inner <c>(a, b)</c>.</summary>
+    private static bool NeedsMultiLine(Term t)
+    {
+        if (t is not CompoundTerm c) return false;
+        if (c.Functor == "," && c.Args.Length == 2) return true;
+        foreach (var a in c.Args)
+            if (NeedsMultiLine(a)) return true;
+        return false;
+    }
+
+    /// <summary>Walks a right-associated <c>,</c>-chain
+    /// (<c>(a, (b, (c, d)))</c>) into a flat list
+    /// (<c>[a, b, c, d]</c>). Non-conjunction terms return as a
+    /// single-element list.</summary>
+    private static List<Term> FlattenConjunction(Term t)
+    {
+        var goals = new List<Term>();
+        Walk(t);
+        return goals;
+
+        void Walk(Term n)
+        {
+            if (n is CompoundTerm c && c.Functor == "," && c.Args.Length == 2)
+            {
+                Walk(c.Args[0]);
+                Walk(c.Args[1]);
+            }
+            else
+            {
+                goals.Add(n);
+            }
+        }
     }
 
     /// <summary>Recursively rewrites every <see cref="CompoundTerm.Functor"/>
@@ -116,13 +211,10 @@ public static class ClausePortrayer
     }
 
     /// <summary>Walks the AST mapping each synthetic <c>_G&lt;n&gt;</c>
-    /// / <c>_C&lt;n&gt;</c> variable name (the form
-    /// <c>TermReader.Materialize</c> assigns to unbound heap cells)
-    /// to a fresh single-letter name. Sharing-aware: the same
-    /// synthetic name maps to the same letter throughout the
-    /// term, so a clause like <c>foo(_G3) :- bar(_G3)</c> renders
-    /// as <c>foo(A) :- bar(A)</c>. User-given names from a
-    /// consulted source pass through unchanged.</summary>
+    /// / <c>_C&lt;n&gt;</c> variable name to a fresh single-letter
+    /// name (A, B, C, …; then A1, B1, … after Z). Sharing-aware:
+    /// same synthetic name maps to the same letter throughout.
+    /// User-given names pass through unchanged.</summary>
     private static Term RenameSyntheticVars(Term term)
     {
         var map = new Dictionary<string, string>(StringComparer.Ordinal);
