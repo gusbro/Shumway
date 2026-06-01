@@ -658,6 +658,17 @@ questions from Phase 11's deferred list:
   `retract` / `assertz` — and avoids redundant `TryDescribe*`
   attempts that were already rejecting the shape.
 
+**Phase 23 — REPL UX polish (line editor, history, completion, error display, pretty-printing)** — ✅ **Complete** (tagged `phase-23`; closure summary in [`docs/phase-23-closure.md`](docs/phase-23-closure.md)).
+
+Four chunks (249–252) polishing the interactive REPL. Phase originally scoped as engine robustness focused on a `retract/1` Blint bug recorded in memory; verification showed the bug had been fixed incidentally during chunks 235-248 (memory updated). With the obvious correctness target gone, pivoted to REPL UX where day-to-day pain was real.
+
+- **Chunk 249 — line editor + persistent history**. Custom Console.ReadKey editor with cursor movement, Up/Down history navigation, in-progress draft preservation, Emacs-style Ctrl-A/E/U/K, persistent `~/.shumway_history` (override via `SHUMWAY_HISTORY`). Falls back to plain `ReadLine` when `Console.IsInputRedirected` so cross-process tests stay scriptable.
+- **Chunk 250 — Tab completion**. Completes against the union of every registered builtin and every user predicate (modules' Clauses + PublicFunctors + DynamicFunctors + PrecompiledStaticPredicates). Three behaviours: unique → completes; multiple → longest-common-prefix extension + multi-column listing sized to `Console.WindowWidth`; none → silent. Capped at 200 results.
+- **Chunk 251 — error display + source positions**. `PrintError` distinguishes `ShumwayPrologException` (renders carried term), `PrologRuntimeException` (composes `kind(detail) in builtin/N`), and other .NET exceptions. Both Prolog families surface `engine.LastErrorStackTraceWithPositions` with `file:line:col` per frame. `SHUMWAY_DEBUG_TRACE=1` adds .NET stack. `ErrorRendering.FormatRuntimeError` extracted public for testability.
+- **Chunk 252 — pretty-print bindings**. `Solution.ToString(int width)` overload breaks long compounds / lists across lines with indented arguments. `Solution.ToString()` (no arg) keeps compact single-line for embedding-API consumers. Operator compounds (`a + b`) stay compact even when they don't fit — only compounds and lists break.
+
+32 new tests, 0 failures, no engine invariants modified.
+
 **Phase 22 — Foreign-predicate toolchain (mode-aware sigs + --foreign-dll across compile/link/run)** — ✅ **Complete** (tagged `phase-22`; closure summary in [`docs/phase-22-closure.md`](docs/phase-22-closure.md)).
 
 Three chunks (246–248) taking chunk-237/242's `[PrologPredicate]` from "works in-process" to "works through the full shumway-compile / shumway-link / shumway-exe pipeline":
