@@ -1906,6 +1906,33 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// <c>clpfd</c>, and never a builtin) plus every dynamic predicate that
     /// currently holds clauses. Each is flagged dynamic-or-not so listing
     /// can print a <c>:- dynamic</c> header for the dynamic ones.</summary>
+    /// <summary>Chunk 254 — enumerates the AST clauses backing
+    /// <paramref name="functorId"/>. Pulls from every user module's
+    /// <c>Clauses</c> list (filtering by head functor) for static
+    /// predicates, and from <c>_dynamicClauses[fid]</c> for dynamic
+    /// ones. The AST retains the original <see cref="VarTerm.Name"/>
+    /// the parser captured — listing prints them as the user wrote
+    /// them, without a heap round-trip that would replace them with
+    /// synthetic <c>_GN</c> names.</summary>
+    internal IEnumerable<Shumway.Compiler.Ast.Clause> ClausesForListing(int functorId)
+    {
+        foreach (var (name, manifest) in _modules)
+        {
+            if (name == Prelude.ModuleName || name == Clpfd.ModuleName) continue;
+            foreach (var c in manifest.Clauses)
+            {
+                if (TryExtractHead(c, out string n, out int a))
+                {
+                    int fid = FunctorTable.Intern(
+                        AtomTable.Intern(n, permanent: true).Id, a);
+                    if (fid == functorId) yield return c;
+                }
+            }
+        }
+        if (_dynamicClauses.TryGetValue(functorId, out var dyn))
+            foreach (var c in dyn) yield return c;
+    }
+
     internal IEnumerable<(int FunctorId, bool IsDynamic)> ListablePredicates()
     {
         var seen = new HashSet<int>();

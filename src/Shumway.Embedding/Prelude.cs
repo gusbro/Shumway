@@ -483,33 +483,19 @@ internal static class Prelude
             '$listing_named'(Rest, Want).
 
         % print one predicate: a `:- dynamic` header for a dynamic
-        % predicate, then a clause per line, then a blank separator line.
-        % The Name/Arity indicator is written piecewise so it reads
-        % `foo/1`, not the operator-spaced `foo / 1` the term writer gives.
+        % predicate, then a clause per line, then a blank separator
+        % line. Chunk 254 — the actual clause printing routes through
+        % the engine's '$listing_pred_source'/2 which walks the AST
+        % directly so variable names from the source survive
+        % (clause/2 + write/1 lost them through the heap round-trip).
         '$listing_pred'(Name, Arity, Dyn) :-
             ( Dyn == true ->
                 write(':- dynamic '), write(Name), write('/'), write(Arity),
                 write('.'), nl
             ; true
             ),
-            functor(Head, Name, Arity),
-            ( clause(Head, Body),
-              '$portray_clause'(Head, Body),
-              fail
-            ; true
-            ),
+            '$listing_pred_source'(Name, Arity),
             nl.
-
-        % a fact prints on one line; a rule prints its head, then each
-        % goal of the body on its own indented line.
-        '$portray_clause'(Head, true) :- !, write(Head), write('.'), nl.
-        '$portray_clause'(Head, Body) :-
-            write(Head), write(' :-'), nl, '$portray_body'(Body).
-        '$portray_body'((A, B)) :- !,
-            write('    '), write(A), write(','), nl,
-            '$portray_body'(B).
-        '$portray_body'(Goal) :-
-            write('    '), write(Goal), write('.'), nl.
 
         %! format_to_atom(-Atom, +Format, +Args) | Input / output | Like format/2 but captures the formatted output into an atom.
         format_to_atom(Atom, Format, Args) :-

@@ -129,6 +129,12 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("$all_clauses_of",            2, AllClausesOf);
         BuiltinsRegistry.Register("$all_predicate_indicators",  1, AllPredicateIndicators);
         BuiltinsRegistry.Register("$listable_predicates", 1, ListablePredicates);
+        // Chunk 254 — listing path bypasses clause/2 + write/1 to
+        // preserve the original VarTerm names parser captured. The
+        // clause/2 path materialises through the heap, where every
+        // unbound var picks up a synthetic _G<addr> name and the
+        // user's "X" or "Acc" is lost.
+        BuiltinsRegistry.Register("$listing_pred_source", 2, ListingPredSource);
         // Tabling (chunk 106) — a per-engine string set giving the
         // semi-naive driver an O(1) "is this answer new?" test.
         BuiltinsRegistry.Register("$tbl_seen", 1, TableSeen);
@@ -1809,6 +1815,92 @@ public static class MetaBuiltins
             listTerm = new CompoundTerm(".", new[] { entries[i], listTerm });
         Cell listCell = Materializer.MaterializeAsCell(engine, listTerm);
         return engine.UnifyRegisterWithCell(0, listCell);
+    }
+
+    /// <summary>Chunk 254 — <c>$listing_pred_source(+Name, +Arity)</c>.
+    /// Prints every AST clause whose head functor matches
+    /// <c>Name/Arity</c>, using <see cref="AstTermRenderer"/> so the
+    /// original <see cref="Shumway.Compiler.Ast.VarTerm.Name"/> from
+    /// the parser survives — the user sees <c>greet(X, Y) :- Y = hello(X)</c>
+    /// instead of <c>greet(_G23, _G24) :- _G24 = hello(_G23)</c>.
+    ///
+    /// <para>The clauses come from both static-module sources
+    /// (parsed by <c>ConsultString</c>, names preserved) and
+    /// <c>:- dynamic foo/N. foo(a).</c>-seed clauses (also parsed
+    /// from source). Runtime-asserted clauses arrive via the heap
+    /// and carry synthetic <c>_G&lt;addr&gt;</c> names; this builtin
+    /// renders whatever names the AST holds — preserved when source
+    /// is available, synthetic otherwise.</para>
+    ///
+    /// <para>Output layout mirrors the prelude's portray_clause:
+    /// facts on one line, rules with the head and an indented body
+    /// line per goal.</para></summary>
+    public static bool ListingPredSource(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "'$listing_pred_source'/2 requires a PrologEngine host.");
+
+        Cell nameCell = MaterializeRegisterAsCell(engine, 0);
+        Cell arityCell = MaterializeRegisterAsCell(engine, 1);
+        if (nameCell.Tag != Tag.Atom || arityCell.Tag != Tag.Int)
+            return false;
+        string name = AtomTable.GetById(nameCell.AsAtomId)?.Name ?? "";
+        int arity = (int)arityCell.AsInt;
+        int fid = FunctorTable.Intern(
+            AtomTable.Intern(name, permanent: true).Id, arity);
+
+        var output = engine.Out;
+        foreach (var clause in host.ClausesForListing(fid))
+        {
+            PrintAstClause(output, clause);
+        }
+        return true;
+    }
+
+    private static void PrintAstClause(
+        System.IO.TextWriter output, Shumway.Compiler.Ast.Clause clause)
+    {
+        // Clause kinds: Fact (Term is the head), Rule
+        // (Term is `:-(Head, Body)`), DcgRule (`-->(Head, Body)`).
+        Term head;
+        Term? body = null;
+        if ((clause.Kind == Shumway.Compiler.Ast.ClauseKind.Rule
+             || clause.Kind == Shumway.Compiler.Ast.ClauseKind.DcgRule)
+            && clause.Term is CompoundTerm wrap && wrap.Args.Length == 2)
+        {
+            head = wrap.Args[0];
+            body = wrap.Args[1];
+        }
+        else
+        {
+            head = clause.Term;
+        }
+
+        if (body is null || (body is AtomTerm at && at.Name == "true"))
+        {
+            // Fact (or rule whose body is the explicit `true` atom).
+            output.WriteLine(AstTermRenderer.Render(head) + ".");
+            return;
+        }
+
+        string arrow = clause.Kind == Shumway.Compiler.Ast.ClauseKind.DcgRule
+            ? " -->" : " :-";
+        output.WriteLine(AstTermRenderer.Render(head) + arrow);
+        PrintAstBody(output, body);
+    }
+
+    private static void PrintAstBody(System.IO.TextWriter output, Term body)
+    {
+        // Walk `,`-chains so each goal gets its own indented line;
+        // any other body shape prints in a single indented line.
+        if (body is CompoundTerm { Functor: ",", Args.Length: 2 } seq)
+        {
+            output.WriteLine("    " + AstTermRenderer.Render(seq.Args[0], 999) + ",");
+            PrintAstBody(output, seq.Args[1]);
+            return;
+        }
+        output.WriteLine("    " + AstTermRenderer.Render(body, 1200) + ".");
     }
 
     /// <summary><c>abolish(Name/Arity)</c> — removes every asserted clause
