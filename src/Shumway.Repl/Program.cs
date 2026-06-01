@@ -206,6 +206,14 @@ internal static class Program
         }
     }
 
+    /// <summary>Chunk 249 — shared line editor, lazily created on
+    /// first use so the SHUMWAY_GOAL / scripted entry paths that
+    /// never read interactive lines don't even touch disk to load
+    /// history.</summary>
+    private static LineEditor? _lineEditor;
+    private static LineEditor LineEd => _lineEditor ??=
+        new LineEditor(new HistoryStore(HistoryStore.DefaultPath()));
+
     /// <summary>Reads one query from standard input, joining lines until a
     /// line ends with the <c>.</c> clause terminator. Returns the empty
     /// string for a blank entry and <c>null</c> at end of input.</summary>
@@ -214,8 +222,8 @@ internal static class Program
         var buffer = new System.Text.StringBuilder();
         while (true)
         {
-            Console.Write(buffer.Length == 0 ? "?- " : "   ");
-            string? line = Console.ReadLine();
+            string prompt = buffer.Length == 0 ? "?- " : "   ";
+            string? line = LineEd.ReadLine(prompt);
             if (line is null)
                 return buffer.Length == 0 ? null : buffer.ToString().Trim();
             buffer.Append(line).Append('\n');
