@@ -71,6 +71,9 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `is_digit(+Char)` | True when Char is a one-character atom representing an ASCII digit. |
 | `name(?AtomOrNumber, ?Codes)` | Bidirectional conversion between an atom/number and its character-code list. |
 | `numbervars(+Term, +Start, -End)` | Binds the unbound variables of Term to '$VAR'(N) terms with consecutive N from Start. |
+| `random(-X)` | Unifies X with a fresh pseudo-random float in [0.0, 1.0). |
+| `random_between(+Low, +High, -X)` | Unifies X with a fresh pseudo-random integer in [Low, High] (inclusive on both ends, matching SWI semantics). |
+| `randomize(+Seed)` | Reseeds the engine's random generator. Seed is an integer. |
 | `read_term_from_atom(+Atom, -Term)` | Parses an atom into a term. |
 | `read_term_from_atom(+Atom, -Term, +Options)` | Parses an atom into a term; Options accepted for SWI/GProlog compat (currently ignored). |
 | `string_search(+SubAtom, +Atom, ?Location)` | Searches Atom for the substring SubAtom; on success unifies Location with the 0-based starting offset. Backtrackable: produces every occurrence in left-to-right order. |

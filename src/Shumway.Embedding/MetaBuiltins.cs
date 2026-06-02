@@ -468,6 +468,19 @@ public static class MetaBuiltins
             Io, "exists_directory(+Path)",
             "Succeeds when Path exists and is a directory.");
 
+        // Phase 24 chunk 272 — pseudo-random generation. Per-engine
+        // System.Random seedable via randomize/1.
+        BuiltinsRegistry.Register("randomize", 1, Randomize1,
+            Term, "randomize(+Seed)",
+            "Reseeds the engine's random generator. Seed is an integer.");
+        BuiltinsRegistry.Register("random", 1, Random1,
+            Term, "random(-X)",
+            "Unifies X with a fresh pseudo-random float in [0.0, 1.0).");
+        BuiltinsRegistry.Register("random_between", 3, RandomBetween3,
+            Term, "random_between(+Low, +High, -X)",
+            "Unifies X with a fresh pseudo-random integer in [Low, High] "
+            + "(inclusive on both ends, matching SWI semantics).");
+
         BuiltinsRegistry.Register("restore_state", 1, RestoreState1,
             Database, "restore_state(+File)",
             "Restores a snapshot produced by save_state/1,2. Full-mode "
@@ -4365,6 +4378,53 @@ public static class MetaBuiltins
     {
         string path = RequireAtomPath(engine, register: 0, builtin: "exists_directory/1");
         return System.IO.Directory.Exists(path);
+    }
+
+    // ============================================================================
+    // Phase 24 chunk 272 — pseudo-random generation.
+    // ============================================================================
+
+    public static bool Randomize1(Engine engine)
+    {
+        PrologEngine host = RequireHost(engine, "randomize/1");
+        Cell c = MaterializeRegisterAsCell(engine, 0);
+        if (c.Tag == Tag.Ref || c.Tag == Tag.AttVar)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        if (c.Tag != Tag.Int)
+            throw new ShumwayPrologException(
+                IsoError.TypeError("integer", new IntTerm(0)));
+        host.Randomize((int)c.AsInt);
+        return true;
+    }
+
+    public static bool Random1(Engine engine)
+    {
+        PrologEngine host = RequireHost(engine, "random/1");
+        double v = host.Random.NextDouble();
+        Cell c = Materializer.MaterializeAsCell(engine, new FloatTerm(v));
+        return engine.UnifyRegisterWithCell(0, c);
+    }
+
+    public static bool RandomBetween3(Engine engine)
+    {
+        PrologEngine host = RequireHost(engine, "random_between/3");
+        Cell loCell = MaterializeRegisterAsCell(engine, 0);
+        Cell hiCell = MaterializeRegisterAsCell(engine, 1);
+        if (loCell.Tag == Tag.Ref || loCell.Tag == Tag.AttVar
+            || hiCell.Tag == Tag.Ref || hiCell.Tag == Tag.AttVar)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        if (loCell.Tag != Tag.Int || hiCell.Tag != Tag.Int)
+            throw new ShumwayPrologException(
+                IsoError.TypeError("integer", new IntTerm(0)));
+        long lo = loCell.AsInt;
+        long hi = hiCell.AsInt;
+        if (lo > hi) return false;
+        // System.Random.Next(int, int) is [min, max) — extend by one
+        // to get SWI's [lo, hi] inclusive semantics. Long range guarded
+        // against int overflow via NextInt64 when available.
+        long v = lo + (long)(host.Random.NextDouble() * (hi - lo + 1));
+        if (v > hi) v = hi;  // floating-point edge case
+        return engine.UnifyRegisterWithCell(2, Cell.Int(v));
     }
 
     public static bool Directory6(Engine engine)

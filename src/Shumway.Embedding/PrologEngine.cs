@@ -51,6 +51,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private RecordedDatabase? _records;
     public RecordedDatabase Records => _records ??= new RecordedDatabase();
 
+    /// <summary>Phase 24 chunk 272 — per-engine pseudo-random generator
+    /// behind <c>random/1</c>, <c>random_between/3</c> and
+    /// <c>randomize/1</c>. Seedable via Randomize; defaults to a
+    /// time-based seed on first access.</summary>
+    private System.Random? _random;
+    internal System.Random Random => _random ??= new System.Random();
+
+    /// <summary>Replaces the per-engine random generator with one
+    /// seeded by <paramref name="seed"/>. Backs <c>randomize/1</c>.</summary>
+    public void Randomize(int seed) => _random = new System.Random(seed);
+
     /// <summary>Per-engine stream registry (chunk 140). Owns every
     /// open stream, the alias map, and the current-input /
     /// current-output cursors. Lazily built on first access so an
