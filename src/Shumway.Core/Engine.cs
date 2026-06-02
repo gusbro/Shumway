@@ -167,23 +167,33 @@ public sealed partial class Engine
 
     /// <summary>Reserves <paramref name="count"/> uninitialised cells on the heap and returns
     /// the index of the first one.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public int AllocateHeap(int count)
     {
-        if (count <= 0) throw new ArgumentOutOfRangeException(nameof(count));
-        EnsureHeapCapacity(count);
+        if (count <= 0) ThrowBadAlloc();
+        int newTop = _heapTop + count;
+        if (newTop > _heap.Length) EnsureHeapCapacity(count);
         int start = _heapTop;
-        _heapTop += count;
+        _heapTop = newTop;
         return start;
     }
 
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static void ThrowBadAlloc()
+        => throw new ArgumentOutOfRangeException("count");
+
     /// <summary>Allocates a fresh unbound variable on the heap (a self-pointing REF) and
     /// returns its index.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public int AllocateHeapUnbound()
     {
-        EnsureHeapCapacity(1);
         int idx = _heapTop;
+        if (idx + 1 > _heap.Length) EnsureHeapCapacity(1);
         _heap[idx] = Cell.UnboundVar(idx);
-        _heapTop++;
+        _heapTop = idx + 1;
         return idx;
     }
 

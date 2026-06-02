@@ -1,7 +1,7 @@
 # Van Roy benchmark baseline
 
-_Generated 2026-06-02 12:33_  
-_Runs per cell_: **3** (median reported)  
+_Generated 2026-06-02 13:01_  
+_Runs per cell_: **5** (median reported)  
 _Machine_: GUSBRO-NB, .NET 10.0.8, 8 cores, Microsoft Windows NT 10.0.19044.0
 
 ## Engines
@@ -19,31 +19,31 @@ equal across the three engines (whitespace-normalised) before timing.
 
 | Benchmark | Iters | Shumway | GProlog (native) | SWI |
 |---|---:|---:|---:|---:|
-| nreverse | 10000 | 223.51 | 11.53 | 63.36 |
-| qsort | 5000 | 281.74 | 14.34 | 67.00 |
-| queens | 2000 | 1348.22 | 125.72 | 1042.40 |
-| tak | 500 | 58060.85 | 2749.36 | 15010.71 |
-| serialize | 1000 | 112.67 | &lt;noise&gt; | 86.09 |
-| flatten | 10000 | 79.19 | 6.80 | 21.49 |
-| sendmore | 100 | 1179558.82 | 84781.95 | 423320.99 |
-| zebra | 200 | 6977.01 | 2464.87 | 3886.84 |
-| boyer | 2000 | 23.50 | &lt;noise&gt; | 42.92 |
-| crypt | 500 | 12466.95 | 134.92 | 7254.03 |
+| nreverse | 10000 | 123.34 | 13.04 | 27.71 |
+| qsort | 5000 | 202.08 | 21.66 | 63.78 |
+| queens | 2000 | 997.13 | 117.35 | 972.14 |
+| tak | 500 | 60310.59 | 4712.28 | 19634.13 |
+| serialize | 1000 | 270.74 | &lt;noise&gt; | &lt;noise&gt; |
+| flatten | 10000 | 93.97 | 9.79 | 32.26 |
+| sendmore | 100 | 1103508.74 | 84950.53 | 396880.16 |
+| zebra | 200 | 8850.61 | 1439.67 | 4271.93 |
+| boyer | 2000 | 21.16 | 14.61 | &lt;noise&gt; |
+| crypt | 500 | 11569.70 | 576.17 | 5386.20 |
 
 ## Ratios vs Shumway (>1.0 means Shumway is slower)
 
 | Benchmark | Shumway / GProlog | Shumway / SWI |
 |---|---:|---:|
-| nreverse | 19.38× | 3.53× |
-| qsort | 19.65× | 4.21× |
-| queens | 10.72× | 1.29× |
-| tak | 21.12× | 3.87× |
-| serialize | &lt;noise&gt; | 1.31× |
-| flatten | 11.65× | 3.69× |
-| sendmore | 13.91× | 2.79× |
-| zebra | 2.83× | 1.80× |
-| boyer | &lt;noise&gt; | 0.55× |
-| crypt | 92.40× | 1.72× |
+| nreverse | 9.46× | 4.45× |
+| qsort | 9.33× | 3.17× |
+| queens | 8.50× | 1.03× |
+| tak | 12.80× | 3.07× |
+| serialize | &lt;noise&gt; | &lt;noise&gt; |
+| flatten | 9.60× | 2.91× |
+| sendmore | 12.99× | 2.78× |
+| zebra | 6.15× | 2.07× |
+| boyer | 1.45× | &lt;noise&gt; |
+| crypt | 20.08× | 2.15× |
 
 ## Methodology
 
@@ -55,7 +55,7 @@ equal across the three engines (whitespace-normalised) before timing.
   Per-iteration time = `(total - startup) / N`. When `total - startup ≤ 0.5 ms` 
   the work is below the wall-clock noise floor and we print `<noise>` 
   instead of a misleading number.
-- 3 timing runs per cell; median reported. 
+- 5 timing runs per cell; median reported. 
   Re-run with `--runs N` to average more samples.
 - GProlog runs as a native, statically-linked Windows .exe 
   (`/SUBSYSTEM:CONSOLE`) compiled by `gplc` with 256 MB global stack, 

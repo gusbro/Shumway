@@ -84,13 +84,20 @@ public readonly struct Cell : IEquatable<Cell>
     public static Cell Atom(int atomId)
         => new(((long)Tag.Atom << TagShift) | (uint)atomId);
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Cell Int(long value)
     {
         if (value < MinInt60 || value > MaxInt60)
-            throw new ArgumentOutOfRangeException(nameof(value),
-                $"Integer {value} is outside the 60-bit signed inline range [{MinInt60}, {MaxInt60}]. Use BigInt for larger values.");
+            ThrowIntOutOfRange(value);
         return new Cell(((long)Tag.Int << TagShift) | (value & PayloadMask));
     }
+
+    // Out-of-line so the JIT inlines Cell.Int's fast path; the throw
+    // call site is small and stays after the inline.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ThrowIntOutOfRange(long value) =>
+        throw new ArgumentOutOfRangeException(nameof(value),
+            $"Integer {value} is outside the 60-bit signed inline range [{MinInt60}, {MaxInt60}]. Use BigInt for larger values.");
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Cell BigInt(int tableId)
