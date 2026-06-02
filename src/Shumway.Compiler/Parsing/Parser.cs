@@ -344,6 +344,25 @@ public sealed class Parser
             }
 
             case TokenKind.LBracket:
+                // Snip (Arity-Prolog): `[! Goal !]` desugars to `once((Goal))`.
+                // A `,`-chain inside a snip is a goal conjunction — backtracking
+                // is permitted internally; once the snip exits successfully its
+                // internal choice points are pruned, so a later failure skips
+                // back to before the `[!` rather than re-entering the snip.
+                // Trade-off: a list whose first element is the cut atom now
+                // needs to be written `[(!), ...]` instead of `[!, ...]`.
+                if (PeekToken().Kind == TokenKind.Atom && PeekToken().Text == "!")
+                {
+                    NextToken();   // consume the opening '!'
+                    Term snipBody = ReadTermInternal(1200, out _);
+                    Token closeBang = NextToken();
+                    if (closeBang.Kind != TokenKind.Atom || closeBang.Text != "!")
+                        throw new ParseException(
+                            $"Expected '!' to close snip; got {DescribeToken(closeBang)}.",
+                            closeBang.Position);
+                    ExpectKind(TokenKind.RBracket);
+                    return new CompoundTerm("once", new[] { snipBody }) { Position = pos };
+                }
                 return ReadList(pos);
 
             case TokenKind.LBrace:
