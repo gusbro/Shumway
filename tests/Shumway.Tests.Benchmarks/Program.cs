@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Running;
 using Shumway.Embedding;
@@ -51,6 +52,12 @@ public static class VanRoyMultiEngine
     private const string GplcPath     = @"C:\GProlog\bin\gplc.exe";
     private const string SwiplPath    = @"C:\Program Files (x86)\swipl\bin\swipl.exe";
 
+    // hyperfine (MIT/Apache-2.0) drives the cross-engine wall-clock timing:
+    // warmup runs + statistical outlier detection + median/stddev, far more
+    // robust than a hand-rolled Stopwatch loop. Resolved at runtime; when
+    // absent the harness falls back to the in-process Stopwatch median.
+    private static string? _hyperfine;
+
     // Iteration counts. Compiled-native gprolog is fast, so all engines
     // get the same N and we adjust per-bench to keep total runtime in a
     // sane range. Each engine's per_iter is what we actually compare.
@@ -95,12 +102,14 @@ public static class VanRoyMultiEngine
         string? gprolog = Resolve("GPROLOG_PATH", GprologPath);
         string? gplc    = Resolve("GPLC_PATH",    GplcPath);
         string? swipl   = Resolve("SWIPL_PATH",   SwiplPath);
+        _hyperfine = ResolveHyperfine();
 
         Console.WriteLine();
         Console.WriteLine("Engines:");
         Console.WriteLine("  shumway : in-process");
         Console.WriteLine($"  gprolog : {(gprolog ?? "not found")} (gplc={(gplc ?? "not found")})");
         Console.WriteLine($"  swipl   : {(swipl ?? "not found")}");
+        Console.WriteLine($"  timer   : {(_hyperfine is null ? "Stopwatch (hyperfine not found)" : $"hyperfine ({_hyperfine})")}");
         Console.WriteLine();
 
         // Compile each .pl to a native .exe via gplc on first run (or
@@ -154,9 +163,11 @@ public static class VanRoyMultiEngine
             }
         }
 
+        string runnersDir = Path.Combine(resultsDir, "runners");
+
         Console.WriteLine();
-        Console.WriteLine($"{"benchmark",-12} {"engine",-10} {"iters",8} {"startup_ms",12} {"total_ms",12} {"per_iter_us",14}");
-        Console.WriteLine(new string('-', 76));
+        Console.WriteLine($"{"benchmark",-12} {"engine",-10} {"iters",8} {"startup_ms",12} {"total_ms",12} {"tot_sd%",9} {"per_iter_us",14}");
+        Console.WriteLine(new string('-', 86));
         var results = new List<Result>();
         foreach (var (name, iters) in Benchmarks)
         {
@@ -166,30 +177,40 @@ public static class VanRoyMultiEngine
                 Console.Error.WriteLine($"missing: {pl}");
                 continue;
             }
+            string itersArg = iters.ToString(CultureInfo.InvariantCulture);
 
-            // Shumway in-process. Measure startup once (cheap; just
-            // bench(0)), total N times.
-            var sStart = TimeShumway(pl, 0);
-            var sTotals = Enumerable.Range(0, runs).Select(_ => TimeShumway(pl, iters)).ToList();
-            Record(results, name, "shumway", iters, sStart, Median(sTotals));
+            // Shumway in-process — its primary target is embedding in a .NET
+            // application (no AOT), so it's measured the way it's actually
+            // used: a warm in-process PrologEngine.Query. Timing it as a fresh
+            // `dotnet` subprocess (to match the externals under hyperfine)
+            // would inject ~330 ms of JIT-cold runtime startup with ~33%
+            // variance that can't be cleanly subtracted (see Phase-25 notes);
+            // a Native-AOT runner would fix the startup but isn't the target
+            // deployment. The external engines have small, stable native
+            // startup (~60-100 ms), so hyperfine times them well.
+            {
+                double sStart = TimeShumway(pl, 0);
+                var sTotals = Enumerable.Range(0, Math.Max(runs, 1))
+                    .Select(_ => TimeShumway(pl, iters)).ToList();
+                Record(results, name, "shumway", iters, sStart, Median(sTotals), Stddev(sTotals));
+            }
 
             // Compiled GProlog (native exe).
             if (gprologExes.TryGetValue(name, out string? exe))
             {
-                var gStart = TimeProcess(exe, new[] { "0" });
-                var iterArg = new[] { iters.ToString(CultureInfo.InvariantCulture) };
-                var gTotals = Enumerable.Range(0, runs).Select(_ => TimeProcess(exe, iterArg)).ToList();
-                Record(results, name, "gprolog", iters, gStart, Median(gTotals));
+                var (st, tot, sd) = TimeExternal($"{name}-gprolog", exe,
+                    new[] { "0" }, new[] { itersArg }, runs, runnersDir);
+                Record(results, name, "gprolog", iters, st, tot, sd);
             }
 
             // SWI interpreted.
             if (swipl is not null)
             {
-                string[] swiArgs0 = { "-q", "-g", "bench(0), halt", pl };
-                string[] swiArgsN = { "-q", "-g", $"bench({iters}), halt", pl };
-                var wStart = TimeProcess(swipl, swiArgs0);
-                var wTotals = Enumerable.Range(0, runs).Select(_ => TimeProcess(swipl, swiArgsN)).ToList();
-                Record(results, name, "swipl", iters, wStart, Median(wTotals));
+                var (st, tot, sd) = TimeExternal($"{name}-swipl", swipl,
+                    new[] { "-q", "-g", "bench(0), halt", pl },
+                    new[] { "-q", "-g", $"bench({iters}), halt", pl },
+                    runs, runnersDir);
+                Record(results, name, "swipl", iters, st, tot, sd);
             }
         }
 
@@ -352,16 +373,30 @@ public static class VanRoyMultiEngine
         sb.AppendLine();
         sb.AppendLine("## Methodology");
         sb.AppendLine();
-        sb.AppendLine("- Each cell measures wall time of running `bench(N)` against the engine. ");
-        sb.AppendLine("  For Shumway that's a `PrologEngine.Query` call; for GProlog it's a fresh ");
-        sb.AppendLine("  process running the gplc-compiled native `.exe`; for SWI it's a fresh ");
-        sb.AppendLine("  `swipl -g` process.");
-        sb.AppendLine("- `startup_ms` is `bench(0)` (just consult + halt), `total_ms` is `bench(N)`. ");
-        sb.AppendLine("  Per-iteration time = `(total - startup) / N`. When `total - startup ≤ 0.5 ms` ");
-        sb.AppendLine("  the work is below the wall-clock noise floor and we print `<noise>` ");
-        sb.AppendLine("  instead of a misleading number.");
-        sb.AppendLine($"- {runs} timing run{(runs == 1 ? "" : "s")} per cell; median reported. ");
-        sb.AppendLine("  Re-run with `--runs N` to average more samples.");
+        sb.AppendLine("- **Shumway** is timed **in-process** (a warm `PrologEngine.Query`), ");
+        sb.AppendLine("  because its target is embedding in a long-lived .NET application — that ");
+        sb.AppendLine("  is how it is actually used. Running it as a fresh `dotnet` subprocess to ");
+        sb.AppendLine("  match the externals would inject ~330 ms of JIT-cold runtime startup ");
+        sb.AppendLine("  with ~33% variance that the `bench(0)` subtraction can't cleanly remove ");
+        sb.AppendLine("  (Native-AOT would fix it, but AOT is not the target deployment).");
+        sb.AppendLine("- **GProlog** and **SWI** are timed as fresh processes under ");
+        sb.AppendLine("  [hyperfine](https://github.com/sharkdp/hyperfine) (warmup + statistical ");
+        sb.AppendLine("  outlier detection + median/stddev): GProlog the gplc-compiled native ");
+        sb.AppendLine("  `.exe`, SWI as `swipl -g`. Their native startup (~60-100 ms) is small ");
+        sb.AppendLine("  and stable, so the subprocess regime measures them well. When hyperfine ");
+        sb.AppendLine("  is absent the harness falls back to a Stopwatch median over the runs.");
+        sb.AppendLine("- `startup_ms` is `bench(0)` (consult + halt; for externals also process ");
+        sb.AppendLine("  start), `total_ms` is the median of `bench(N)`. Per-iteration time = ");
+        sb.AppendLine("  `(total - startup) / N`. When `total - startup ≤ 0.5 ms` the work is ");
+        sb.AppendLine("  below the wall-clock noise floor and we print `<noise>`.");
+        sb.AppendLine("- For deterministic, noise-free comparison of Shumway-internal changes ");
+        sb.AppendLine("  (immune to Turbo Boost / scheduler / background load), use the `--alloc` ");
+        sb.AppendLine("  mode: it reports WAM cells allocated per iteration, bit-identical across ");
+        sb.AppendLine("  runs. That is the right tool for A/B-ing an optimisation; wall-clock is ");
+        sb.AppendLine("  for cross-engine positioning.");
+        sb.AppendLine($"- hyperfine runs: warmup 1 + max({runs},3) timed runs per external cell; ");
+        sb.AppendLine("  median reported (stddev in the CSV / console `tot_sd%`). Shumway uses ");
+        sb.AppendLine($"  the harness `--runs` value ({runs}) directly. `--runs N` raises both.");
         sb.AppendLine("- GProlog runs as a native, statically-linked Windows .exe ");
         sb.AppendLine("  (`/SUBSYSTEM:CONSOLE`) compiled by `gplc` with 256 MB global stack, ");
         sb.AppendLine("  32 MB local, 32 MB trail. Compilation routes through `cmd /c vcvars64 ");
@@ -375,8 +410,11 @@ public static class VanRoyMultiEngine
         sb.AppendLine("```");
         sb.AppendLine();
         sb.AppendLine("Requirements: GProlog 1.5+ on PATH or at `C:\\GProlog\\bin\\gprolog.exe`, ");
-        sb.AppendLine("SWI-Prolog 9.x at the standard install path, and Visual Studio 2017+ with ");
-        sb.AppendLine("VC++ C++ Build Tools (vcvars64 discovered via vswhere).");
+        sb.AppendLine("SWI-Prolog 9.x at the standard install path, Visual Studio 2017+ with ");
+        sb.AppendLine("VC++ C++ Build Tools (vcvars64 discovered via vswhere), and ");
+        sb.AppendLine("[hyperfine](https://github.com/sharkdp/hyperfine) (`winget install ");
+        sb.AppendLine("sharkdp.hyperfine`; resolved via PATH, `HYPERFINE_PATH`, or the winget ");
+        sb.AppendLine("package dir). Without hyperfine the harness still runs (Stopwatch fallback).");
         File.WriteAllText(path, sb.ToString());
     }
 
@@ -393,12 +431,16 @@ public static class VanRoyMultiEngine
         return (sh.Value / other.Value).ToString("F2", CultureInfo.InvariantCulture) + "×";
     }
 
-    private static void Record(List<Result> results, string name, string engine, int iters, double startup, double total)
+    private static void Record(List<Result> results, string name, string engine,
+        int iters, double startup, double total, double totalStddev = 0)
     {
-        var r = new Result(name, engine, iters, startup, total);
+        var r = new Result(name, engine, iters, startup, total, totalStddev);
         results.Add(r);
+        string sdPct = total > 0 && totalStddev > 0
+            ? (100.0 * totalStddev / total).ToString("F1", CultureInfo.InvariantCulture)
+            : "—";
         Console.WriteLine(
-            $"{name,-12} {engine,-10} {iters,8} {startup,12:F2} {total,12:F2} {FormatPerIter(r),14}");
+            $"{name,-12} {engine,-10} {iters,8} {startup,12:F2} {total,12:F2} {sdPct,9} {FormatPerIter(r),14}");
     }
 
     private static string FormatPerIter(Result r)
@@ -409,9 +451,9 @@ public static class VanRoyMultiEngine
         return (work * 1000.0 / r.Iterations).ToString("F3", CultureInfo.InvariantCulture);
     }
 
-    private static double? PerIterUs(Result r)
+    private static double? PerIterUs(Result? r)
     {
-        if (r.Iterations <= 0) return null;
+        if (r is null || r.Iterations <= 0) return null;
         double work = r.TotalMs - r.StartupMs;
         if (work <= 0.5) return null;
         return work * 1000.0 / r.Iterations;
@@ -449,7 +491,7 @@ public static class VanRoyMultiEngine
     }
 
     private record Result(string Benchmark, string Engine, int Iterations,
-                          double StartupMs, double TotalMs);
+                          double StartupMs, double TotalMs, double TotalStddevMs = 0);
 
     // ---- gplc compilation ----
 
@@ -643,11 +685,13 @@ public static class VanRoyMultiEngine
 
     private static string Truncate(string s, int n) => s.Length <= n ? s : s.Substring(0, n - 3) + "...";
 
+    // Shumway in-process timing: a fresh engine consults the source and runs
+    // bench(N), wall-clocked with a Stopwatch. A "true." query warms the JIT
+    // so the first measured run doesn't pay the initial lift. This mirrors
+    // the real embedding use (warm engine inside a long-lived .NET process)
+    // rather than a cold subprocess.
     private static double TimeShumway(string plPath, int iterations)
     {
-        // Fresh engine each invocation — matches external engines which
-        // pay fresh-process startup. Tiny "true." warmup so the first
-        // run doesn't pay the very first JIT lift.
         var engine = new PrologEngine();
         engine.ConsultString(File.ReadAllText(plPath));
         engine.Query("true.");
@@ -658,6 +702,102 @@ public static class VanRoyMultiEngine
             throw new InvalidOperationException(
                 $"Shumway: bench({iterations}) failed for {Path.GetFileName(plPath)}");
         return sw.Elapsed.TotalMilliseconds;
+    }
+
+    // Times an external command's bench(N) total. Uses hyperfine (warmup +
+    // outlier-robust median + stddev) when available; falls back to a
+    // Stopwatch median over `runs` otherwise. The startup (bench(0)) is
+    // cheap and stable, so it's always measured with a single quick spawn
+    // rather than a full hyperfine run, halving the hyperfine cost.
+    // Returns (startupMs, totalMedianMs, totalStddevMs).
+    private static (double startup, double total, double stddev) TimeExternal(
+        string label, string exePath, string[] args0, string[] argsN,
+        int runs, string runnersDir)
+    {
+        double startup = TimeProcess(exePath, args0);
+        if (_hyperfine is not null)
+        {
+            var n = HyperfineTime(label, exePath, argsN, runs, runnersDir);
+            if (n is not null) return (startup, n.Value.median, n.Value.stddev);
+            Console.Error.WriteLine($"warn: hyperfine failed for {label}; using Stopwatch fallback");
+        }
+        var totals = Enumerable.Range(0, runs).Select(_ => TimeProcess(exePath, argsN)).ToList();
+        return (startup, Median(totals), Stddev(totals));
+    }
+
+    // Runs `<exePath> argsN...` under hyperfine, returns (medianMs, stddevMs).
+    // The command is written to a .bat so hyperfine hands cmd a single token,
+    // sidestepping shell-quoting issues for exe/arg paths that contain spaces.
+    private static (double median, double stddev)? HyperfineTime(
+        string label, string exePath, string[] args, int runs, string runnersDir)
+    {
+        Directory.CreateDirectory(runnersDir);
+        string safe = new string(label.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
+        string bat = Path.Combine(runnersDir, safe + ".bat");
+        var cmd = new StringBuilder();
+        cmd.Append('"').Append(exePath).Append('"');
+        foreach (var a in args)
+        {
+            cmd.Append(' ');
+            if (a.Length == 0 || a.IndexOfAny(new[] { ' ', '\t', '&', '(', ')', ',' }) >= 0)
+                cmd.Append('"').Append(a).Append('"');
+            else
+                cmd.Append(a);
+        }
+        File.WriteAllText(bat, "@echo off\r\n" + cmd + "\r\n");
+        string json = Path.Combine(runnersDir, safe + ".json");
+        try { if (File.Exists(json)) File.Delete(json); } catch { }
+
+        // warmup 1 (a fresh native/JIT process mostly just needs the OS file
+        // cache primed), runs floored at 3 so the median + stddev are
+        // meaningful even at the harness default of --runs 1.
+        var psi = new ProcessStartInfo
+        {
+            FileName = _hyperfine!,
+            CreateNoWindow = true,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        foreach (var a in new[]
+        {
+            "--warmup", "1",
+            "--runs", Math.Max(runs, 3).ToString(CultureInfo.InvariantCulture),
+            "--style", "none",
+            "--export-json", json,
+            bat,
+        })
+            psi.ArgumentList.Add(a);
+        try
+        {
+            using var p = Process.Start(psi);
+            if (p is null) return null;
+            p.StandardOutput.ReadToEnd();
+            string err = p.StandardError.ReadToEnd();
+            if (!p.WaitForExit(600_000)) { try { p.Kill(); } catch { } return null; }
+            if (p.ExitCode != 0 || !File.Exists(json))
+            {
+                if (!string.IsNullOrWhiteSpace(err))
+                    Console.Error.WriteLine($"  hyperfine {label}: {err.Trim()}");
+                return null;
+            }
+            using var doc = JsonDocument.Parse(File.ReadAllText(json));
+            var r0 = doc.RootElement.GetProperty("results")[0];
+            double medianSec = r0.GetProperty("median").GetDouble();
+            double stddevSec = r0.TryGetProperty("stddev", out var sd) && sd.ValueKind == JsonValueKind.Number
+                ? sd.GetDouble() : 0;
+            return (medianSec * 1000.0, stddevSec * 1000.0);
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"  hyperfine {label}: {ex.Message}"); return null; }
+    }
+
+    private static double Stddev(IList<double> xs)
+    {
+        if (xs.Count < 2) return 0;
+        double mean = xs.Average();
+        double sumSq = 0;
+        foreach (var x in xs) sumSq += (x - mean) * (x - mean);
+        return Math.Sqrt(sumSq / (xs.Count - 1));
     }
 
     private static double TimeProcess(string exePath, string[] args)
@@ -701,6 +841,41 @@ public static class VanRoyMultiEngine
         return null;
     }
 
+    // Locate hyperfine: HYPERFINE_PATH env override, then PATH, then the
+    // per-user winget install location (its PATH entry isn't visible to a
+    // shell started before the install).
+    private static string? ResolveHyperfine()
+    {
+        string? env = Environment.GetEnvironmentVariable("HYPERFINE_PATH");
+        if (!string.IsNullOrEmpty(env) && File.Exists(env)) return env;
+
+        string? path = Environment.GetEnvironmentVariable("PATH");
+        if (path is not null)
+            foreach (var dir in path.Split(Path.PathSeparator))
+            {
+                if (string.IsNullOrWhiteSpace(dir)) continue;
+                string cand;
+                try { cand = Path.Combine(dir.Trim(), "hyperfine.exe"); }
+                catch { continue; }
+                if (File.Exists(cand)) return cand;
+            }
+
+        string wingetPkgs = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Microsoft", "WinGet", "Packages");
+        if (Directory.Exists(wingetPkgs))
+        {
+            try
+            {
+                var hit = Directory.EnumerateFiles(wingetPkgs, "hyperfine.exe",
+                    SearchOption.AllDirectories).FirstOrDefault();
+                if (hit is not null) return hit;
+            }
+            catch { /* enumeration race / access — ignore */ }
+        }
+        return null;
+    }
+
     private static string FindRepoRoot()
     {
         string? dir = Path.GetDirectoryName(typeof(VanRoyMultiEngine).Assembly.Location);
@@ -716,14 +891,14 @@ public static class VanRoyMultiEngine
     private static void WriteCsv(string path, IList<Result> results)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("benchmark,engine,iterations,startup_ms,total_ms,per_iter_us");
+        sb.AppendLine("benchmark,engine,iterations,startup_ms,total_ms,total_stddev_ms,per_iter_us");
         foreach (var r in results)
         {
             double? per = PerIterUs(r);
             string perStr = per is null ? "" : per.Value.ToString("F4", CultureInfo.InvariantCulture);
             sb.AppendLine(string.Format(CultureInfo.InvariantCulture,
-                "{0},{1},{2},{3:F3},{4:F3},{5}",
-                r.Benchmark, r.Engine, r.Iterations, r.StartupMs, r.TotalMs, perStr));
+                "{0},{1},{2},{3:F3},{4:F3},{5:F3},{6}",
+                r.Benchmark, r.Engine, r.Iterations, r.StartupMs, r.TotalMs, r.TotalStddevMs, perStr));
         }
         File.WriteAllText(path, sb.ToString());
     }
