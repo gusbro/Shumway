@@ -415,6 +415,26 @@ public static class MetaBuiltins
             Io, "tab(+Stream, +N)",
             "Stream variant of tab/1 — writes N spaces to Stream.");
 
+        // Phase 24 chunk 268 (partial) — Arity-Prolog string<->term
+        // conversion. In Arity, "string" means atom; these are write-
+        // and writeq-style counterparts of term_to_atom/2.
+        BuiltinsRegistry.Register("string_term", 2, StringTerm2,
+            Term, "string_term(?Atom, ?Term)",
+            "Bidirectional: parses Atom as a Prolog term (binding Term), or "
+            + "renders Term using write/1 form (binding Atom). 'string' in "
+            + "Arity-Prolog terminology means atom — the textual representation "
+            + "is interned as an atom, not stored as a Shumway StringTerm.");
+        BuiltinsRegistry.Register("string_termq", 2, StringTermq2,
+            Term, "string_termq(?Atom, ?Term)",
+            "writeq-style variant of string_term/2: atoms / functors are "
+            + "quoted when needed so the rendered atom re-parses to the same "
+            + "term. Equivalent to term_to_atom/2.");
+        BuiltinsRegistry.Register("string_search", 3, StringSearch3,
+            Term, "string_search(+SubAtom, +Atom, ?Location)",
+            "Searches Atom for the substring SubAtom; on success unifies "
+            + "Location with the 0-based starting offset. Backtrackable: "
+            + "produces every occurrence in left-to-right order.");
+
         BuiltinsRegistry.Register("restore_state", 1, RestoreState1,
             Database, "restore_state(+File)",
             "Restores a snapshot produced by save_state/1,2. Full-mode "
@@ -4123,6 +4143,95 @@ public static class MetaBuiltins
             throw new Shumway.Core.PrologRuntimeException("type_error(integer, _)");
         long count = n.AsInt;
         for (long i = 0; i < count; i++) h.Writer!.Write(' ');
+        return true;
+    }
+
+    // ============================================================================
+    // Phase 24 chunk 268 (partial) — Arity-Prolog string<->term + search.
+    // "string" in Arity means atom; these are write-/writeq-style variants of
+    // term_to_atom/2, plus a backtrackable substring search.
+    // ============================================================================
+
+    public static bool StringTerm2(Engine engine) => StringTermImpl(engine, quoted: false);
+    public static bool StringTermq2(Engine engine) => StringTermImpl(engine, quoted: true);
+
+    private static bool StringTermImpl(Engine engine, bool quoted)
+    {
+        Cell atomCell = ResolveLocal(engine, engine.GetRegister(0));
+
+        if (atomCell.Tag == Tag.Atom)
+        {
+            // Atom -> Term: parse the atom name. The parser expects a
+            // clause-terminating dot; append one if the user didn't.
+            string text = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
+            string source = text.TrimEnd().EndsWith(".", StringComparison.Ordinal)
+                ? text : text + ".";
+            var parser = new Shumway.Compiler.Parsing.Parser(
+                new Shumway.Compiler.Lexer.Lexer(source),
+                Shumway.Compiler.Parsing.OperatorTable.Default());
+            Term parsed = parser.ReadClauseTerm();
+            Cell newCell = Materializer.MaterializeAsCell(engine, parsed);
+            return engine.UnifyRegisterWithCell(1, newCell);
+        }
+
+        // Term -> Atom: render with the requested quoting style and
+        // intern the result as a fresh atom.
+        using var sw = new System.IO.StringWriter();
+        Shumway.Builtins.TermRenderer.Render(engine, engine.GetRegister(1), sw,
+            new Shumway.Builtins.TermRenderOptions
+            {
+                Operators = engine.Operators,
+                Quoted = quoted,
+            });
+        string rendered = sw.ToString();
+        int newAtomId = AtomTable.Intern(rendered, permanent: false).Id;
+        return engine.UnifyRegisterWithCell(0, Cell.Atom(newAtomId));
+    }
+
+    public static bool StringSearch3(Engine engine)
+    {
+        Cell subCell = MaterializeRegisterAsCell(engine, 0);
+        Cell haystackCell = MaterializeRegisterAsCell(engine, 1);
+        if (subCell.Tag == Tag.Ref || subCell.Tag == Tag.AttVar
+            || haystackCell.Tag == Tag.Ref || haystackCell.Tag == Tag.AttVar)
+            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+        if (subCell.Tag != Tag.Atom)
+            throw new Shumway.Core.PrologRuntimeException("type_error(atom, _)");
+        if (haystackCell.Tag != Tag.Atom)
+            throw new Shumway.Core.PrologRuntimeException("type_error(atom, _)");
+        string sub = AtomTable.GetById(subCell.AsAtomId)?.Name ?? "";
+        string hay = AtomTable.GetById(haystackCell.AsAtomId)?.Name ?? "";
+        if (sub.Length == 0) return engine.UnifyRegisterWithCell(2, Cell.Int(0));
+
+        // Walk the haystack collecting every match position so we can
+        // backtrack through them via PushBuiltinChoicePoint.
+        var positions = new List<int>();
+        int start = 0;
+        while (start <= hay.Length - sub.Length)
+        {
+            int idx = hay.IndexOf(sub, start, StringComparison.Ordinal);
+            if (idx < 0) break;
+            positions.Add(idx);
+            start = idx + 1;
+        }
+        if (positions.Count == 0) return false;
+        int returnPc = engine.BuiltinReturnPc;
+        return StringSearchStep(engine, positions, index: 0, returnPc, isResume: false);
+    }
+
+    private static bool StringSearchStep(
+        Engine engine, List<int> positions, int index, int returnPc, bool isResume)
+    {
+        if (index >= positions.Count) return false;
+        if (index < positions.Count - 1)
+        {
+            int nextIndex = index + 1;
+            engine.PushBuiltinChoicePoint(
+                (e, _) => StringSearchStep(e, positions, nextIndex, returnPc, isResume: true),
+                arity: 0);
+        }
+        if (!engine.UnifyRegisterWithCell(2, Cell.Int(positions[index]))) return false;
+        if (isResume) engine.ResumeAtReturnPc(returnPc);
         return true;
     }
 }

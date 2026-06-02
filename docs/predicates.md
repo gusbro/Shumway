@@ -73,6 +73,9 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `numbervars(+Term, +Start, -End)` | Binds the unbound variables of Term to '$VAR'(N) terms with consecutive N from Start. |
 | `read_term_from_atom(+Atom, -Term)` | Parses an atom into a term. |
 | `read_term_from_atom(+Atom, -Term, +Options)` | Parses an atom into a term; Options accepted for SWI/GProlog compat (currently ignored). |
+| `string_search(+SubAtom, +Atom, ?Location)` | Searches Atom for the substring SubAtom; on success unifies Location with the 0-based starting offset. Backtrackable: produces every occurrence in left-to-right order. |
+| `string_term(?Atom, ?Term)` | Bidirectional: parses Atom as a Prolog term (binding Term), or renders Term using write/1 form (binding Atom). 'string' in Arity-Prolog terminology means atom — the textual representation is interned as an atom, not stored as a Shumway StringTerm. |
+| `string_termq(?Atom, ?Term)` | writeq-style variant of string_term/2: atoms / functors are quoted when needed so the rendered atom re-parses to the same term. Equivalent to term_to_atom/2. |
 | `term_to_atom(?Term, ?Atom)` | Converts between a term and its textual atom representation. |
 
 ## Control
@@ -92,6 +95,8 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `garbage_collect` | Mark-compacts the heap, reclaiming cells unreachable from the live machine state (ADR-016). Always succeeds. |
 | `halt` | Halts the engine with exit code 0. |
 | `halt(+Status)` | Halts the engine with the given exit code. |
+| `ifthen(:If, :Then)` | Arity-Prolog explicit form of ( If -> Then ; true ). |
+| `ifthenelse(:If, :Then, :Else)` | Arity-Prolog explicit form of ( If -> Then ; Else ). |
 | `ignore(:Goal)` | Runs Goal, succeeding whether or not Goal does. |
 | `once(:Goal)` | Succeeds at most once — commits to the first solution of Goal. |
 | `repeat` | Succeeds, and succeeds again on every backtrack — an unbounded choice point. |
