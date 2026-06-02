@@ -435,6 +435,39 @@ public static class MetaBuiltins
             + "Location with the 0-based starting offset. Backtrackable: "
             + "produces every occurrence in left-to-right order.");
 
+        // Phase 24 chunk 271 — Arity-Prolog file-system operations on
+        // top of System.IO. chdir/1 is a 1-arg alias of
+        // working_directory/2 living in the prelude; everything else
+        // is a C# builtin.
+        BuiltinsRegistry.Register("mkdir", 1, Mkdir1,
+            Io, "mkdir(+Path)",
+            "Creates the directory Path (and any missing parents). "
+            + "Succeeds silently when the directory already exists.");
+        BuiltinsRegistry.Register("rmdir", 1, Rmdir1,
+            Io, "rmdir(+Path)",
+            "Removes the directory Path. Fails when the directory is "
+            + "non-empty; raises existence_error if it doesn't exist.");
+        BuiltinsRegistry.Register("delete", 1, Delete1,
+            Io, "delete(+File)",
+            "Deletes the file File. Raises existence_error if absent, "
+            + "permission_error if locked / read-only.");
+        BuiltinsRegistry.Register("rename", 2, Rename2,
+            Io, "rename(+From, +To)",
+            "Renames / moves a file from From to To. Raises existence_error "
+            + "if From doesn't exist or permission_error if To already exists.");
+        BuiltinsRegistry.Register("directory", 6, Directory6,
+            Io, "directory(+Path, -Name, -Mode, -Time, -Date, -Size)",
+            "Backtracks over the entries in Path, binding Name (atom), "
+            + "Mode (Arity-style bitfield: 1=read-only, 2=hidden, 4=system, "
+            + "16=directory, 32=archive), Time (HH:MM:SS atom), Date "
+            + "(YYYY-MM-DD atom) and Size (bytes; 0 for directories).");
+        BuiltinsRegistry.Register("exists_file", 1, ExistsFile1,
+            Io, "exists_file(+File)",
+            "Succeeds when File exists and is a regular file.");
+        BuiltinsRegistry.Register("exists_directory", 1, ExistsDirectory1,
+            Io, "exists_directory(+Path)",
+            "Succeeds when Path exists and is a directory.");
+
         BuiltinsRegistry.Register("restore_state", 1, RestoreState1,
             Database, "restore_state(+File)",
             "Restores a snapshot produced by save_state/1,2. Full-mode "
@@ -4231,6 +4264,155 @@ public static class MetaBuiltins
                 arity: 0);
         }
         if (!engine.UnifyRegisterWithCell(2, Cell.Int(positions[index]))) return false;
+        if (isResume) engine.ResumeAtReturnPc(returnPc);
+        return true;
+    }
+
+    // ============================================================================
+    // Phase 24 chunk 271 — Arity-Prolog file-system operations.
+    // Thin wrappers over System.IO. ISO error shapes for instantiation /
+    // existence / permission failures so catch/3 can match them.
+    // ============================================================================
+
+    public static bool Mkdir1(Engine engine)
+    {
+        string path = RequireAtomPath(engine, register: 0, builtin: "mkdir/1");
+        try { System.IO.Directory.CreateDirectory(path); }
+        catch (UnauthorizedAccessException)
+        {
+            throw new ShumwayPrologException(
+                IsoError.PermissionError("create", "directory", new AtomTerm(path)));
+        }
+        catch (IOException ex)
+        {
+            throw new ShumwayPrologException(
+                IsoError.SystemError(ex.Message));
+        }
+        return true;
+    }
+
+    public static bool Rmdir1(Engine engine)
+    {
+        string path = RequireAtomPath(engine, register: 0, builtin: "rmdir/1");
+        if (!System.IO.Directory.Exists(path))
+            throw new ShumwayPrologException(
+                IsoError.ExistenceError("directory", new AtomTerm(path)));
+        try { System.IO.Directory.Delete(path, recursive: false); }
+        catch (IOException)
+        {
+            // Non-empty directory or in use.
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            throw new ShumwayPrologException(
+                IsoError.PermissionError("delete", "directory", new AtomTerm(path)));
+        }
+        return true;
+    }
+
+    public static bool Delete1(Engine engine)
+    {
+        string path = RequireAtomPath(engine, register: 0, builtin: "delete/1");
+        if (!System.IO.File.Exists(path))
+            throw new ShumwayPrologException(
+                IsoError.ExistenceError("source_sink", new AtomTerm(path)));
+        try { System.IO.File.Delete(path); }
+        catch (UnauthorizedAccessException)
+        {
+            throw new ShumwayPrologException(
+                IsoError.PermissionError("delete", "source_sink", new AtomTerm(path)));
+        }
+        catch (IOException ex)
+        {
+            throw new ShumwayPrologException(
+                IsoError.SystemError(ex.Message));
+        }
+        return true;
+    }
+
+    public static bool Rename2(Engine engine)
+    {
+        string from = RequireAtomPath(engine, register: 0, builtin: "rename/2");
+        string to = RequireAtomPath(engine, register: 1, builtin: "rename/2");
+        if (!System.IO.File.Exists(from))
+            throw new ShumwayPrologException(
+                IsoError.ExistenceError("source_sink", new AtomTerm(from)));
+        if (System.IO.File.Exists(to))
+            throw new ShumwayPrologException(
+                IsoError.PermissionError("create", "source_sink", new AtomTerm(to)));
+        try { System.IO.File.Move(from, to); }
+        catch (UnauthorizedAccessException)
+        {
+            throw new ShumwayPrologException(
+                IsoError.PermissionError("modify", "source_sink", new AtomTerm(from)));
+        }
+        catch (IOException ex)
+        {
+            throw new ShumwayPrologException(
+                IsoError.SystemError(ex.Message));
+        }
+        return true;
+    }
+
+    public static bool ExistsFile1(Engine engine)
+    {
+        string path = RequireAtomPath(engine, register: 0, builtin: "exists_file/1");
+        return System.IO.File.Exists(path);
+    }
+
+    public static bool ExistsDirectory1(Engine engine)
+    {
+        string path = RequireAtomPath(engine, register: 0, builtin: "exists_directory/1");
+        return System.IO.Directory.Exists(path);
+    }
+
+    public static bool Directory6(Engine engine)
+    {
+        string path = RequireAtomPath(engine, register: 0, builtin: "directory/6");
+        if (!System.IO.Directory.Exists(path))
+            throw new ShumwayPrologException(
+                IsoError.ExistenceError("directory", new AtomTerm(path)));
+        var entries = new System.IO.DirectoryInfo(path)
+            .EnumerateFileSystemInfos()
+            .OrderBy(e => e.Name, StringComparer.Ordinal)
+            .ToList();
+        if (entries.Count == 0) return false;
+        int returnPc = engine.BuiltinReturnPc;
+        return Directory6Step(engine, entries, index: 0, returnPc, isResume: false);
+    }
+
+    private static bool Directory6Step(
+        Engine engine, List<System.IO.FileSystemInfo> entries, int index,
+        int returnPc, bool isResume)
+    {
+        if (index >= entries.Count) return false;
+        if (index < entries.Count - 1)
+        {
+            int nextIndex = index + 1;
+            engine.PushBuiltinChoicePoint(
+                (e, _) => Directory6Step(e, entries, nextIndex, returnPc, isResume: true),
+                arity: 0);
+        }
+        var info = entries[index];
+        // Arity-style mode bits: ReadOnly=1, Hidden=2, System=4,
+        // Directory=16, Archive=32 — .NET FileAttributes uses the
+        // same numeric values so a masked cast works directly.
+        const int ModeMask = 1 | 2 | 4 | 16 | 32;
+        int mode = (int)info.Attributes & ModeMask;
+        var t = info.LastWriteTime;
+        long size = info is System.IO.FileInfo f ? f.Length : 0L;
+        int nameAid = AtomTable.Intern(info.Name, permanent: false).Id;
+        int timeAid = AtomTable.Intern(
+            $"{t.Hour:D2}:{t.Minute:D2}:{t.Second:D2}", permanent: false).Id;
+        int dateAid = AtomTable.Intern(
+            $"{t.Year:D4}-{t.Month:D2}-{t.Day:D2}", permanent: false).Id;
+
+        if (!engine.UnifyRegisterWithCell(1, Cell.Atom(nameAid))) return false;
+        if (!engine.UnifyRegisterWithCell(2, Cell.Int(mode))) return false;
+        if (!engine.UnifyRegisterWithCell(3, Cell.Atom(timeAid))) return false;
+        if (!engine.UnifyRegisterWithCell(4, Cell.Atom(dateAid))) return false;
+        if (!engine.UnifyRegisterWithCell(5, Cell.Int(size))) return false;
         if (isResume) engine.ResumeAtReturnPc(returnPc);
         return true;
     }

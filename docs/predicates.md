@@ -237,11 +237,16 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `absolute_file_name(+FileSpec, -Absolute)` | Resolves a file specification to an absolute path. The basic 2-arg form: takes an atom (a path, possibly relative) and unifies the second arg with the absolute form. The 3-arg SWI form with options (extensions, file_type, access, file_search_path) is not yet supported. |
 | `at_end_of_stream` | Succeeds if the current input stream is at end of file (ISO §8.11.9). |
 | `at_end_of_stream(+Stream)` | Succeeds if the given stream is at end of file (ISO §8.11.9). |
+| `chdir(?Path)` | Arity-Prolog 1-arg form of working_directory/2. With Path unbound, returns the current directory; with Path bound, changes to it. |
 | `close(+Stream)` | Closes an open stream. |
 | `close(+Stream, +Options)` | Closes an open stream. Options list (force(Bool), timeout) is parsed shallowly: force(true) suppresses close-time exceptions. |
 | `current_input(-Stream)` | Unifies Stream with a designator for the current input stream (ISO §8.11.1). |
 | `current_output(-Stream)` | Unifies Stream with a designator for the current output stream (ISO §8.11.2). |
 | `current_stream(?Filename, ?Mode, ?Stream)` | Enumerates open streams (ISO §8.11.8.1). |
+| `delete(+File)` | Deletes the file File. Raises existence_error if absent, permission_error if locked / read-only. |
+| `directory(+Path, -Name, -Mode, -Time, -Date, -Size)` | Backtracks over the entries in Path, binding Name (atom), Mode (Arity-style bitfield: 1=read-only, 2=hidden, 4=system, 16=directory, 32=archive), Time (HH:MM:SS atom), Date (YYYY-MM-DD atom) and Size (bytes; 0 for directories). |
+| `exists_directory(+Path)` | Succeeds when Path exists and is a directory. |
+| `exists_file(+File)` | Succeeds when File exists and is a regular file. |
 | `file_name_extension(?Base, ?Ext, ?Full)` | Relates a file name to its base and extension. With Full bound, splits at the last '.'; with Base and Ext bound, composes Base + '.' + Ext (or just Base when Ext is empty). SWI / SICStus compatible. |
 | `flush_output` | Flushes the current output stream (ISO §8.11.7). |
 | `flush_output(+Stream)` | Flushes the given stream (ISO §8.11.7). |
@@ -258,6 +263,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `get_char(+Stream, -Char)` | Reads and consumes one character from a stream. |
 | `get_code(-Code)` | Reads one character code from the current input stream (ISO §8.12.4). |
 | `get_code(+Stream, -Code)` | Reads one character code from a stream (ISO §8.12.4). |
+| `mkdir(+Path)` | Creates the directory Path (and any missing parents). Succeeds silently when the directory already exists. |
 | `nl` | Writes a newline to the current output stream. |
 | `nl(+Stream)` | Writes a newline to the given stream. |
 | `open(+File, +Mode, -Stream)` | Opens a file as a stream handle. |
@@ -283,6 +289,8 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `read(+Stream, -Term)` | Reads one term from a stream (ISO §8.14.2). |
 | `read_term(+Stream, -Term)` | Reads one term from a read-mode stream. |
 | `read_term_from_stream(+Stream, -Term)` | Reads one term from a read-mode stream. |
+| `rename(+From, +To)` | Renames / moves a file from From to To. Raises existence_error if From doesn't exist or permission_error if To already exists. |
+| `rmdir(+Path)` | Removes the directory Path. Fails when the directory is non-empty; raises existence_error if it doesn't exist. |
 | `see(+File)` | Opens File for reading and makes it the current input stream. An already-open see-stream is closed first. |
 | `seeing(?File)` | Unifies File with the name of the current input stream's file (or `user` when current input is user_input). |
 | `seen` | Closes the current input stream (if not user_input) and reverts current input to user_input. |
