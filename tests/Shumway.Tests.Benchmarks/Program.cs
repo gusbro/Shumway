@@ -64,12 +64,25 @@ public static class VanRoyMultiEngine
 
     public static void Run(string[] args)
     {
+        // Parse `--runs N` (default 1). With N>1 each (engine, bench)
+        // cell is measured N times and the median is reported, which
+        // is what the baseline doc consumes.
+        int runs = 1;
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (args[i] == "--runs" && i + 1 < args.Length
+                && int.TryParse(args[i + 1], out int n) && n > 0)
+                runs = n;
+        }
+
         string repoRoot = FindRepoRoot();
         string vanroyDir = Path.Combine(repoRoot, "benchmarks", "vanroy");
         string resultsDir = Path.Combine(repoRoot, "benchmarks", "results");
         string gprologBinDir = Path.Combine(resultsDir, "bin-gprolog");
         Directory.CreateDirectory(resultsDir);
         Directory.CreateDirectory(gprologBinDir);
+        if (runs > 1)
+            Console.WriteLine($"Runs per cell: {runs} (reporting median)");
 
         // Resolve engines. Each may be absent (skipped); env-var overrides
         // (GPROLOG_PATH, GPLC_PATH, SWIPL_PATH) take precedence.
@@ -148,17 +161,19 @@ public static class VanRoyMultiEngine
                 continue;
             }
 
-            // Shumway in-process.
+            // Shumway in-process. Measure startup once (cheap; just
+            // bench(0)), total N times.
             var sStart = TimeShumway(pl, 0);
-            var sTotal = TimeShumway(pl, iters);
-            Record(results, name, "shumway", iters, sStart, sTotal);
+            var sTotals = Enumerable.Range(0, runs).Select(_ => TimeShumway(pl, iters)).ToList();
+            Record(results, name, "shumway", iters, sStart, Median(sTotals));
 
             // Compiled GProlog (native exe).
             if (gprologExes.TryGetValue(name, out string? exe))
             {
                 var gStart = TimeProcess(exe, new[] { "0" });
-                var gTotal = TimeProcess(exe, new[] { iters.ToString(CultureInfo.InvariantCulture) });
-                Record(results, name, "gprolog", iters, gStart, gTotal);
+                var iterArg = new[] { iters.ToString(CultureInfo.InvariantCulture) };
+                var gTotals = Enumerable.Range(0, runs).Select(_ => TimeProcess(exe, iterArg)).ToList();
+                Record(results, name, "gprolog", iters, gStart, Median(gTotals));
             }
 
             // SWI interpreted.
@@ -167,8 +182,8 @@ public static class VanRoyMultiEngine
                 string[] swiArgs0 = { "-q", "-g", "bench(0), halt", pl };
                 string[] swiArgsN = { "-q", "-g", $"bench({iters}), halt", pl };
                 var wStart = TimeProcess(swipl, swiArgs0);
-                var wTotal = TimeProcess(swipl, swiArgsN);
-                Record(results, name, "swipl", iters, wStart, wTotal);
+                var wTotals = Enumerable.Range(0, runs).Select(_ => TimeProcess(swipl, swiArgsN)).ToList();
+                Record(results, name, "swipl", iters, wStart, Median(wTotals));
             }
         }
 
@@ -181,6 +196,111 @@ public static class VanRoyMultiEngine
 
         Console.WriteLine();
         PrintRatioSummary(results);
+
+        // Baseline markdown report — overwrites any prior version,
+        // commiteable under docs/benchmarks/baseline.md.
+        string baselinePath = Path.Combine(repoRoot, "docs", "benchmarks", "baseline.md");
+        WriteBaselineMarkdown(baselinePath, results, runs);
+        Console.WriteLine($"Baseline: {baselinePath}");
+    }
+
+    private static double Median(IList<double> xs)
+    {
+        if (xs.Count == 0) return 0;
+        var sorted = xs.OrderBy(x => x).ToList();
+        int n = sorted.Count;
+        return n % 2 == 1 ? sorted[n / 2] : (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0;
+    }
+
+    private static void WriteBaselineMarkdown(string path, List<Result> results, int runs)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var sb = new StringBuilder();
+        sb.AppendLine("# Van Roy benchmark baseline");
+        sb.AppendLine();
+        sb.AppendLine($"_Generated {DateTime.Now:yyyy-MM-dd HH:mm}_  ");
+        sb.AppendLine($"_Runs per cell_: **{runs}** (median reported)  ");
+        sb.AppendLine($"_Machine_: {Environment.MachineName}, .NET {Environment.Version}, {Environment.ProcessorCount} cores, {Environment.OSVersion.VersionString}");
+        sb.AppendLine();
+        sb.AppendLine("## Engines");
+        sb.AppendLine();
+        sb.AppendLine("| Engine | Version | Mode |");
+        sb.AppendLine("|---|---|---|");
+        sb.AppendLine("| Shumway | (this build) | Bytecode interpreter + Tier-1 IL (in-process) |");
+        sb.AppendLine("| GNU Prolog | 1.5.0 | Native compiled (`gplc` + MSVC link) |");
+        sb.AppendLine("| SWI-Prolog | 9.2.3 | Interpreted (`swipl -g`) |");
+        sb.AppendLine();
+        sb.AppendLine("Correctness: every benchmark's `report/0` fingerprint was verified ");
+        sb.AppendLine("equal across the three engines (whitespace-normalised) before timing.");
+        sb.AppendLine();
+        sb.AppendLine("## Per-iteration time (µs, lower is better)");
+        sb.AppendLine();
+        sb.AppendLine("| Benchmark | Iters | Shumway | GProlog (native) | SWI |");
+        sb.AppendLine("|---|---:|---:|---:|---:|");
+        foreach (var grp in results.GroupBy(r => r.Benchmark).OrderBy(g =>
+            Array.FindIndex(Benchmarks, x => x.Name == g.Key)))
+        {
+            var sh  = grp.FirstOrDefault(r => r.Engine == "shumway");
+            var gp  = grp.FirstOrDefault(r => r.Engine == "gprolog");
+            var sw  = grp.FirstOrDefault(r => r.Engine == "swipl");
+            int iters = sh?.Iterations ?? 0;
+            sb.AppendLine($"| {grp.Key} | {iters} | {FmtPi(sh)} | {FmtPi(gp)} | {FmtPi(sw)} |");
+        }
+        sb.AppendLine();
+        sb.AppendLine("## Ratios vs Shumway (>1.0 means Shumway is slower)");
+        sb.AppendLine();
+        sb.AppendLine("| Benchmark | Shumway / GProlog | Shumway / SWI |");
+        sb.AppendLine("|---|---:|---:|");
+        foreach (var grp in results.GroupBy(r => r.Benchmark).OrderBy(g =>
+            Array.FindIndex(Benchmarks, x => x.Name == g.Key)))
+        {
+            var sh = PerIterUs(grp.First(r => r.Engine == "shumway"));
+            var gp = grp.FirstOrDefault(r => r.Engine == "gprolog");
+            var sw = grp.FirstOrDefault(r => r.Engine == "swipl");
+            sb.AppendLine($"| {grp.Key} | {FmtRatio(sh, PerIterUs(gp))} | {FmtRatio(sh, PerIterUs(sw))} |");
+        }
+        sb.AppendLine();
+        sb.AppendLine("## Methodology");
+        sb.AppendLine();
+        sb.AppendLine("- Each cell measures wall time of running `bench(N)` against the engine. ");
+        sb.AppendLine("  For Shumway that's a `PrologEngine.Query` call; for GProlog it's a fresh ");
+        sb.AppendLine("  process running the gplc-compiled native `.exe`; for SWI it's a fresh ");
+        sb.AppendLine("  `swipl -g` process.");
+        sb.AppendLine("- `startup_ms` is `bench(0)` (just consult + halt), `total_ms` is `bench(N)`. ");
+        sb.AppendLine("  Per-iteration time = `(total - startup) / N`. When `total - startup ≤ 0.5 ms` ");
+        sb.AppendLine("  the work is below the wall-clock noise floor and we print `<noise>` ");
+        sb.AppendLine("  instead of a misleading number.");
+        sb.AppendLine($"- {runs} timing run{(runs == 1 ? "" : "s")} per cell; median reported. ");
+        sb.AppendLine("  Re-run with `--runs N` to average more samples.");
+        sb.AppendLine("- GProlog runs as a native, statically-linked Windows .exe ");
+        sb.AppendLine("  (`/SUBSYSTEM:CONSOLE`) compiled by `gplc` with 256 MB global stack, ");
+        sb.AppendLine("  32 MB local, 32 MB trail. Compilation routes through `cmd /c vcvars64 ");
+        sb.AppendLine("  >NUL && gplc` to give gplc the MSVC environment its internal `cl` / ");
+        sb.AppendLine("  `link` shells need.");
+        sb.AppendLine();
+        sb.AppendLine("## Reproducibility");
+        sb.AppendLine();
+        sb.AppendLine("```");
+        sb.AppendLine("dotnet run -c Release --project tests/Shumway.Tests.Benchmarks/ -- --vanroy --runs 5");
+        sb.AppendLine("```");
+        sb.AppendLine();
+        sb.AppendLine("Requirements: GProlog 1.5+ on PATH or at `C:\\GProlog\\bin\\gprolog.exe`, ");
+        sb.AppendLine("SWI-Prolog 9.x at the standard install path, and Visual Studio 2017+ with ");
+        sb.AppendLine("VC++ C++ Build Tools (vcvars64 discovered via vswhere).");
+        File.WriteAllText(path, sb.ToString());
+    }
+
+    private static string FmtPi(Result? r)
+    {
+        if (r is null) return "—";
+        var v = PerIterUs(r);
+        return v is null ? "&lt;noise&gt;" : v.Value.ToString("F2", CultureInfo.InvariantCulture);
+    }
+
+    private static string FmtRatio(double? sh, double? other)
+    {
+        if (sh is null || other is null || other.Value == 0) return "&lt;noise&gt;";
+        return (sh.Value / other.Value).ToString("F2", CultureInfo.InvariantCulture) + "×";
     }
 
     private static void Record(List<Result> results, string name, string engine, int iters, double startup, double total)
