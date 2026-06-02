@@ -21,15 +21,29 @@ public sealed class Bundle
     /// <c>--foreign-dll</c>.</summary>
     public IReadOnlyList<string> ForeignAssemblies { get; }
 
+    /// <summary>Save-state chunk 264 — non-null when this bundle was
+    /// produced by <see cref="PrologEngine.SaveState"/> rather than
+    /// the regular shumway-link path. Carries consult history +
+    /// dynamic clauses; <see cref="PrologEngine.RestoreState"/>
+    /// consumes it. Bundles built by shumway-link have this null.</summary>
+    public BundleSnapshot? Snapshot { get; }
+
     public Bundle(IReadOnlyList<BundleEntry> entries)
         : this(entries, foreignAssemblies: null) { }
 
     public Bundle(
         IReadOnlyList<BundleEntry> entries,
         IReadOnlyList<string>? foreignAssemblies)
+        : this(entries, foreignAssemblies, snapshot: null) { }
+
+    public Bundle(
+        IReadOnlyList<BundleEntry> entries,
+        IReadOnlyList<string>? foreignAssemblies,
+        BundleSnapshot? snapshot)
     {
         Entries = entries;
         ForeignAssemblies = foreignAssemblies ?? Array.Empty<string>();
+        Snapshot = snapshot;
     }
 }
 

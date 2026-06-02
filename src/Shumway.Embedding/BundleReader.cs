@@ -136,7 +136,43 @@ public static class BundleReader
             for (uint i = 0; i < asmCount; i++)
                 foreignAssemblies.Add(ReadLengthPrefixedUtf8(br));
         }
-        return new Bundle(entries, foreignAssemblies);
+        // V6+ (chunk 264): optional save-state snapshot trailer.
+        BundleSnapshot? snapshot = null;
+        if (version >= 6 && br.BaseStream.Position < br.BaseStream.Length)
+        {
+            byte snapshotPresent = br.ReadByte();
+            if (snapshotPresent == 1)
+            {
+                bool dynamicOnly = br.ReadByte() != 0;
+                uint consultCount = br.ReadUInt32();
+                var consultHistory = new List<string>((int)consultCount);
+                for (uint i = 0; i < consultCount; i++)
+                    consultHistory.Add(ReadLengthPrefixedUtf8(br));
+                uint dynamicCount = br.ReadUInt32();
+                var dynamicClauses = new List<ShmoDynamicSeed>((int)dynamicCount);
+                for (uint i = 0; i < dynamicCount; i++)
+                {
+                    string seedName = ReadLengthPrefixedUtf8(br);
+                    int seedArity = (int)br.ReadUInt32();
+                    uint clauseCount = br.ReadUInt32();
+                    var encoded = new byte[clauseCount][];
+                    for (uint k = 0; k < clauseCount; k++)
+                    {
+                        uint byteCount = br.ReadUInt32();
+                        byte[] bytes = br.ReadBytes((int)byteCount);
+                        if (bytes.Length != byteCount)
+                            throw new InvalidDataException(
+                                $"Bundle: truncated snapshot dynamic clause for "
+                                + $"{seedName}/{seedArity} (expected {byteCount}, got {bytes.Length}).");
+                        encoded[k] = bytes;
+                    }
+                    dynamicClauses.Add(new ShmoDynamicSeed(
+                        new PredicateRef(seedName, seedArity), encoded));
+                }
+                snapshot = new BundleSnapshot(dynamicOnly, consultHistory, dynamicClauses);
+            }
+        }
+        return new Bundle(entries, foreignAssemblies, snapshot);
     }
 
     private static string ReadLengthPrefixedUtf8(BinaryReader br)

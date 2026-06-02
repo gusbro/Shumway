@@ -36,6 +36,21 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     };
     private readonly OperatorTable _operators = OperatorTable.Default();
 
+    /// <summary>Save-state chunk 264: chronological log of every source
+    /// string passed to <see cref="ConsultString"/>, excluding the
+    /// auto-loaded prelude (which the ctor always loads first).
+    /// <see cref="SaveState"/> writes this list verbatim into a
+    /// snapshot bundle; <see cref="RestoreState"/> resets the engine
+    /// and replays each entry in order to rebuild the same module
+    /// state.</summary>
+    private readonly List<string> _consultHistory = new();
+
+    /// <summary>Phase 24 chunk 266 — Arity-Prolog recorded database.
+    /// Lazily constructed on first access so engines that never use it
+    /// pay nothing.</summary>
+    private RecordedDatabase? _records;
+    public RecordedDatabase Records => _records ??= new RecordedDatabase();
+
     /// <summary>Per-engine stream registry (chunk 140). Owns every
     /// open stream, the alias map, and the current-input /
     /// current-output cursors. Lazily built on first access so an
@@ -1533,7 +1548,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // multi-solution predicates (member/2, clause/2, current_predicate/1)
         // that ride the standard WAM choice-point machinery instead of
         // faking backtracking inside a single-shot builtin.
-        ConsultString(Prelude.Source);
+        ConsultStringInner(Prelude.Source, recordInHistory: false);
     }
 
     /// <summary>Builds a peer <see cref="PrologEngine"/> sharing this engine's
@@ -3576,6 +3591,137 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// loaded into a given engine.</para></summary>
     public void UseClpr() => ConsultString(Clpr.Source);
 
+    /// <summary>Save-state chunk 264 — writes a snapshot of this engine's
+    /// state to <paramref name="path"/> as a V6 .shum bundle.
+    ///
+    /// <para>Full mode (<paramref name="dynamicOnly"/> = false, the
+    /// default) captures every source previously passed to
+    /// <see cref="ConsultString"/> (in order, excluding the auto-
+    /// loaded prelude) plus every currently asserted dynamic clause.
+    /// <see cref="RestoreState"/> on a fresh engine reconstitutes
+    /// equivalent state by replaying the consults and re-asserting
+    /// the dynamic clauses.</para>
+    ///
+    /// <para>Dynamic-only mode (<paramref name="dynamicOnly"/> = true)
+    /// skips the consult history and captures only the dynamic
+    /// clauses — useful for persisting an application's facts
+    /// without re-shipping the code that operates on them. Loaded
+    /// with <see cref="RestoreState"/>, the clauses merge into the
+    /// engine's current state via <c>assertz</c>, without resetting
+    /// anything.</para></summary>
+    public void SaveState(string path, bool dynamicOnly = false)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        BundleWriter.WriteToFile(BuildSnapshotBundle(dynamicOnly), path);
+    }
+
+    /// <summary>Save-state chunk 264 — in-memory variant returning the
+    /// serialized bundle bytes. Used by tests; the file-path overload
+    /// is what user code typically calls.</summary>
+    public byte[] SaveStateToBytes(bool dynamicOnly = false)
+        => BundleWriter.ToBytes(BuildSnapshotBundle(dynamicOnly));
+
+    private Bundle BuildSnapshotBundle(bool dynamicOnly)
+    {
+        var consultHistory = dynamicOnly
+            ? (IReadOnlyList<string>)Array.Empty<string>()
+            : _consultHistory.ToArray();
+        var dynamicSeeds = new List<ShmoDynamicSeed>();
+        foreach (var (fid, clauses) in _dynamicClauses)
+        {
+            if (clauses.Count == 0) continue;
+            var (atomId, arity) = FunctorTable.Lookup(fid);
+            string name = AtomTable.GetById(atomId)?.Name
+                ?? throw new InvalidOperationException(
+                    $"SaveState: functor id {fid} has no atom-table entry.");
+            var encoded = new byte[clauses.Count][];
+            for (int i = 0; i < clauses.Count; i++)
+                encoded[i] = TermCodec.EncodeClause(clauses[i]);
+            dynamicSeeds.Add(new ShmoDynamicSeed(
+                new PredicateRef(name, arity), encoded));
+        }
+        var snapshot = new BundleSnapshot(dynamicOnly, consultHistory, dynamicSeeds);
+        return new Bundle(Array.Empty<BundleEntry>(), foreignAssemblies: null, snapshot);
+    }
+
+    /// <summary>Save-state chunk 264 — restores a snapshot previously
+    /// written by <see cref="SaveState"/>. Full-mode snapshots reset
+    /// this engine's state first (clearing every consulted module,
+    /// dynamic clause, and operator declaration not in the parser
+    /// default) and then replay the saved consults + clauses.
+    /// Dynamic-only snapshots merge their clauses into the current
+    /// state via <c>assertz</c>, leaving consults and operators
+    /// untouched.
+    ///
+    /// <para>Throws <see cref="InvalidDataException"/> if the file
+    /// isn't a Shumway bundle or carries no snapshot trailer (i.e.
+    /// was produced by <c>shumway-link</c> / <c>shumway-compile</c>
+    /// rather than <see cref="SaveState"/>).</para></summary>
+    public void RestoreState(string path)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        RestoreStateFromBundle(BundleReader.ReadFromFile(path));
+    }
+
+    /// <summary>Save-state chunk 264 — in-memory variant of
+    /// <see cref="RestoreState"/>; reads from a bundle byte array.</summary>
+    public void RestoreStateFromBytes(byte[] data)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+        RestoreStateFromBundle(BundleReader.FromBytes(data));
+    }
+
+    private void RestoreStateFromBundle(Bundle bundle)
+    {
+        if (bundle.Snapshot is not { } snap)
+            throw new InvalidDataException(
+                "RestoreState: bundle has no save-state snapshot trailer "
+                + "(was it produced by shumway-link rather than SaveState?).");
+
+        if (!snap.DynamicOnly)
+        {
+            // Full reset: drop every consulted module (keep only the
+            // default 'user' module), every dynamic clause, the chunk-82
+            // static-predicate cache, the cached static link region, the
+            // persistent dynamic buffer, and the consult-history log.
+            // Then re-consult the prelude (the ctor's first step) and
+            // replay the saved history.
+            _modules.Clear();
+            _modules[DefaultModuleName] = new ModuleManifest(DefaultModuleName);
+            _dynamicClauses.Clear();
+            _dynChains.Clear();
+            _staticPredicateCache.Clear();
+            _dynamicPredicateCache.Clear();
+            _precompiledStaticPredicates.Clear();
+            _staticLink = null;
+            InvalidatePersistent();
+            _consultHistory.Clear();
+            ConsultStringInner(Prelude.Source, recordInHistory: false);
+            foreach (var src in snap.ConsultHistory)
+                ConsultString(src);
+        }
+
+        // Re-assert the snapshot's dynamic clauses. In full mode this
+        // restores the post-snapshot state on top of the replayed
+        // consults; in dynamic-only mode it merges into the engine as-is.
+        // We bypass the AppendDynamicClauseIncremental in-place path
+        // (which needs a live Engine) and just bookkeep via Assertz +
+        // invalidate the persistent buffer once at the end. The next
+        // query rebuilds dispatch from scratch and sees every restored
+        // clause through the normal chunk-126 trampoline path.
+        bool anyRestored = false;
+        foreach (var seed in snap.DynamicClauses)
+        {
+            foreach (var encoded in seed.EncodedClauses)
+            {
+                var clause = TermCodec.DecodeClause(encoded);
+                Assertz(clause);
+                anyRestored = true;
+            }
+        }
+        if (anyRestored) InvalidatePersistent();
+    }
+
     /// <summary>Loads Prolog source. The first <c>:- module(name).</c>
     /// directive in the source (if any) chooses the target module — re-consulting
     /// the same module replaces its previous contents. Source with no module
@@ -4105,6 +4251,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     public void ConsultString(string source)
     {
         ArgumentNullException.ThrowIfNull(source);
+        ConsultStringInner(source, recordInHistory: true);
+    }
+
+    private void ConsultStringInner(string source, bool recordInHistory)
+    {
+        // Save-state chunk 264: record every user-visible consult so
+        // SaveState can serialize it. The prelude (auto-loaded by the
+        // ctor) and any other engine-internal source go through this
+        // private path with recordInHistory=false to stay out of the
+        // snapshot.
+        if (recordInHistory) _consultHistory.Add(source);
         // The static program is about to change — drop the chunk-82
         // compiled-static-predicate cache so the next query recompiles,
         // and the ADR-015 cached static linked region with it.
@@ -4723,7 +4880,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         Term body, out List<(string Name, int Arity)> specs)
     {
         specs = new List<(string, int)>();
-        if (body is not CompoundTerm c || c.Functor != "dynamic" || c.Args.Length != 1)
+        // `visible` is the Arity-Prolog spelling of `dynamic` — same
+        // semantics, accepted as an alias so Arity sources compile
+        // unchanged (chunk 265).
+        if (body is not CompoundTerm c
+            || (c.Functor != "dynamic" && c.Functor != "visible")
+            || c.Args.Length != 1)
             return false;
 
         Term arg = c.Args[0];

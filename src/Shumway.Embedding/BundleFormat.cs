@@ -47,7 +47,21 @@ namespace Shumway.Embedding;
 public static class BundleFormat
 {
     public static readonly byte[] Magic = new byte[] { (byte)'S', (byte)'H', (byte)'U', (byte)'M' };
-    public const int CurrentVersion = 5;
+    public const int CurrentVersion = 6;
+    // V6 (chunk 264) — optional save-state snapshot trailer after the
+    // V5 foreign-assemblies trailer:
+    //     snapshotPresent: byte (0 = none, 1 = snapshot follows)
+    //     if 1:
+    //         dynamicOnly: byte
+    //         consultCount: uint32
+    //         each entry: { sourceLen:uint32, sourceBytes:utf-8 }
+    //         dynamicCount: uint32
+    //         each entry: { nameLen:uint32, nameBytes:utf-8,
+    //                       arity:uint32, clauseCount:uint32,
+    //                       each clause: byteCount:uint32 + bytes }
+    // Bundles built by shumway-link / shumway-compile always emit
+    // snapshotPresent=0. PrologEngine.SaveState emits snapshotPresent=1
+    // with 0 module entries.
     // V5 (chunk 247) — bundle gains a foreign-assemblies trailer
     // after the per-entry payloads:
     //     foreignAsmCount: uint32

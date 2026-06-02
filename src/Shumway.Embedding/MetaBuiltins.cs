@@ -283,6 +283,81 @@ public static class MetaBuiltins
             + "(equivalent to consult/1). use_module(library(clpfd)) enables the "
             + "CLP(FD) library; use_module(library(clpr)) enables CLP(R). The two "
             + "libraries cannot coexist in the same engine.");
+        BuiltinsRegistry.Register("save_state", 1, SaveState1,
+            Database, "save_state(+File)",
+            "Writes a snapshot of the engine's user-visible state to File. "
+            + "Captures every consulted source (in order, minus the prelude) "
+            + "plus every currently asserted dynamic clause. The snapshot is "
+            + "a Shumway V6 bundle; restore_state/1 reconstitutes equivalent "
+            + "state on a fresh engine. Arity-Prolog compatible builtin.");
+        BuiltinsRegistry.Register("save_state", 2, SaveState2,
+            Database, "save_state(+File, +Options)",
+            "Like save_state/1 but accepts an options list. Recognised: "
+            + "dynamic_only(true) restricts the snapshot to dynamic clauses "
+            + "(no consult history); restore_state/1 then merges them into "
+            + "the engine's current state via assertz without resetting.");
+        // Phase 24 chunk 266: recorded database (Arity-Prolog).
+        BuiltinsRegistry.Register("recorda", 3, Recorda3,
+            Database, "recorda(+Key, ?Term, -Ref)",
+            "Adds Term at the start of the chain stored under Key in the "
+            + "recorded database, returning a fresh reference. The recorded DB "
+            + "is separate from dynamic predicates: keys are arbitrary terms "
+            + "(not functor/arity).");
+        BuiltinsRegistry.Register("recordz", 3, Recordz3,
+            Database, "recordz(+Key, ?Term, -Ref)",
+            "Like recorda/3 but appends Term at the end of the chain under Key.");
+        BuiltinsRegistry.Register("recorded", 3, Recorded3,
+            Database, "recorded(+Key, ?Term, -Ref)",
+            "Enumerates on backtracking the (Term, Ref) pairs stored under Key.");
+        BuiltinsRegistry.Register("erase", 1, Erase1,
+            Database, "erase(+Ref)",
+            "Removes the recorded entry with reference Ref. Fails on an "
+            + "unknown / already-erased reference.");
+        BuiltinsRegistry.Register("eraseall", 1, EraseAll1,
+            Database, "eraseall(+Key)",
+            "Removes every recorded entry stored under Key.");
+        BuiltinsRegistry.Register("instance", 2, Instance2,
+            Database, "instance(+Ref, -Term)",
+            "Unifies Term with the term recorded under Ref.");
+        BuiltinsRegistry.Register("key_count", 2, KeyCount2,
+            Database, "key_count(+Key, -Count)",
+            "Unifies Count with the number of recorded entries stored under Key.");
+        BuiltinsRegistry.Register("keys", 1, Keys1,
+            Database, "keys(?Key)",
+            "Enumerates on backtracking every key currently in the recorded database. "
+            + "If Key is ground, succeeds iff at least one entry is stored under it.");
+        BuiltinsRegistry.Register("ref", 1, Ref1,
+            Database, "ref(?X)",
+            "Succeeds when X is a live recorded-database reference (an integer "
+            + "previously returned by recorda/3 or recordz/3 and not yet erased).");
+        BuiltinsRegistry.Register("replace", 2, Replace2,
+            Database, "replace(+Ref, +Term)",
+            "Replaces the term in the entry with reference Ref. The chain "
+            + "position and the reference itself are preserved.");
+        BuiltinsRegistry.Register("nref", 2, Nref2,
+            Database, "nref(+Ref, -Next)",
+            "Unifies Next with the reference of the entry immediately after Ref "
+            + "in its key's chain. Fails if Ref is the last entry.");
+        BuiltinsRegistry.Register("pref", 2, Pref2,
+            Database, "pref(+Ref, -Prev)",
+            "Unifies Prev with the reference of the entry immediately before Ref "
+            + "in its key's chain. Fails if Ref is the first entry.");
+        BuiltinsRegistry.Register("record_after", 3, RecordAfter3,
+            Database, "record_after(+Ref, ?Term, -NewRef)",
+            "Inserts Term immediately after the entry with reference Ref in "
+            + "the same key's chain.");
+        BuiltinsRegistry.Register("record_before", 3, RecordBefore3,
+            Database, "record_before(+Ref, ?Term, -NewRef)",
+            "Inserts Term immediately before the entry with reference Ref in "
+            + "the same key's chain.");
+
+        BuiltinsRegistry.Register("restore_state", 1, RestoreState1,
+            Database, "restore_state(+File)",
+            "Restores a snapshot produced by save_state/1,2. Full-mode "
+            + "snapshots reset the engine first and replay the saved "
+            + "consults; dynamic-only snapshots merge their clauses into "
+            + "the engine via assertz. Throws existence_error if File doesn't "
+            + "exist, or type_error if it isn't a save_state snapshot.");
         BuiltinsRegistry.Register("reconsult", 1, Reconsult,
             Database, "reconsult(+File)",
             "Like consult/1 but first abolishes every predicate whose indicator "
@@ -2576,6 +2651,88 @@ public static class MetaBuiltins
             "type_error(atom_or_library, _)");
     }
 
+    /// <summary><c>save_state(+File)</c> — Arity-Prolog compatible
+    /// builtin. Writes a snapshot of the engine's state (consult
+    /// history + dynamic clauses) to <c>File</c>. See
+    /// <see cref="PrologEngine.SaveState"/>.</summary>
+    public static bool SaveState1(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "save_state/1 requires the engine to be hosted by a PrologEngine.");
+        string path = RequireAtomPath(engine, register: 0, builtin: "save_state/1");
+        host.SaveState(path, dynamicOnly: false);
+        return true;
+    }
+
+    /// <summary><c>save_state(+File, +Options)</c> — option-list variant.
+    /// Currently recognises <c>dynamic_only(true)</c>.</summary>
+    public static bool SaveState2(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "save_state/2 requires the engine to be hosted by a PrologEngine.");
+        string path = RequireAtomPath(engine, register: 0, builtin: "save_state/2");
+        Term opts = MaterializeRegister(engine, 1);
+        bool dynamicOnly = ExtractDynamicOnly(opts);
+        host.SaveState(path, dynamicOnly);
+        return true;
+    }
+
+    /// <summary><c>restore_state(+File)</c> — loads a snapshot previously
+    /// written by <c>save_state/1,2</c>. See
+    /// <see cref="PrologEngine.RestoreState"/>.</summary>
+    public static bool RestoreState1(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "restore_state/1 requires the engine to be hosted by a PrologEngine.");
+        string path = RequireAtomPath(engine, register: 0, builtin: "restore_state/1");
+        if (!System.IO.File.Exists(path))
+            throw new Shumway.Core.PrologRuntimeException(
+                $"existence_error(source_sink, '{path}')");
+        try { host.RestoreState(path); }
+        catch (InvalidDataException ex)
+        {
+            throw new Shumway.Core.PrologRuntimeException(
+                $"type_error(save_state_file, '{path}') /* {ex.Message} */");
+        }
+        return true;
+    }
+
+    private static string RequireAtomPath(Engine engine, int register, string builtin)
+    {
+        Cell cell = MaterializeRegisterAsCell(engine, register);
+        if (cell.Tag == Tag.Ref || cell.Tag == Tag.AttVar)
+            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+        if (cell.Tag != Tag.Atom)
+            throw new Shumway.Core.PrologRuntimeException(
+                "type_error(atom, _)");
+        return AtomTable.GetById(cell.AsAtomId)?.Name
+            ?? throw new InvalidOperationException(
+                $"{builtin}: atom id {cell.AsAtomId} has no entry in the atom table.");
+    }
+
+    private static bool ExtractDynamicOnly(Term opts)
+    {
+        // Walk a [...] list literal looking for dynamic_only(true).
+        // An unbound tail or a non-list term raises a domain error.
+        Term cursor = opts;
+        while (cursor is CompoundTerm { Functor: ".", Args.Length: 2 } cons)
+        {
+            if (cons.Args[0] is CompoundTerm { Functor: "dynamic_only", Args.Length: 1 } o
+                && o.Args[0] is AtomTerm a)
+            {
+                if (a.Name == "true") return true;
+                if (a.Name == "false") return false;
+            }
+            cursor = cons.Args[1];
+        }
+        if (cursor is AtomTerm { Name: "[]" }) return false;
+        throw new Shumway.Core.PrologRuntimeException(
+            "type_error(list, _)");
+    }
+
     /// <summary><c>reconsult(+File)</c> — classical edit-reload semantics:
     /// abolishes every predicate whose indicator is defined in
     /// <c>File</c> in the target module, then loads <c>File</c>. Argument
@@ -3483,5 +3640,199 @@ public static class MetaBuiltins
             default:
                 return term;
         }
+    }
+
+    // ============================================================================
+    // Phase 24 chunk 266 — Arity-Prolog recorded database.
+    // See RecordedDatabase.cs for the storage layer.
+    // ============================================================================
+
+    public static bool Recorda3(Engine engine) => RecordImpl(engine, atFront: true);
+    public static bool Recordz3(Engine engine) => RecordImpl(engine, atFront: false);
+
+    private static bool RecordImpl(Engine engine, bool atFront)
+    {
+        PrologEngine host = RequireHost(engine, atFront ? "recorda/3" : "recordz/3");
+        Term key = RequireGroundKey(engine, register: 0, builtin: atFront ? "recorda/3" : "recordz/3");
+        Term term = MaterializeRegister(engine, 1);
+        int @ref = atFront
+            ? host.Records.Recorda(key, term)
+            : host.Records.Recordz(key, term);
+        return engine.UnifyRegisterWithCell(2, Cell.Int(@ref));
+    }
+
+    public static bool Recorded3(Engine engine)
+    {
+        PrologEngine host = RequireHost(engine, "recorded/3");
+        Term key = RequireGroundKey(engine, register: 0, builtin: "recorded/3");
+        var entries = host.Records.Recorded(key).ToList();
+        if (entries.Count == 0) return false;
+        int returnPc = engine.BuiltinReturnPc;
+        return RecordedStep(engine, entries, index: 0, returnPc, isResume: false);
+    }
+
+    private static bool RecordedStep(
+        Engine engine, List<(int Ref, Term Term)> entries, int index, int returnPc, bool isResume)
+    {
+        if (index >= entries.Count) return false;
+        if (index < entries.Count - 1)
+        {
+            int nextIndex = index + 1;
+            engine.PushBuiltinChoicePoint(
+                (e, _) => RecordedStep(e, entries, nextIndex, returnPc, isResume: true),
+                arity: 0);
+        }
+        var (refVal, termVal) = entries[index];
+        Cell termCell = Materializer.MaterializeAsCell(engine, termVal);
+        if (!engine.UnifyRegisterWithCell(1, termCell)) return false;
+        if (!engine.UnifyRegisterWithCell(2, Cell.Int(refVal))) return false;
+        if (isResume) engine.ResumeAtReturnPc(returnPc);
+        return true;
+    }
+
+    public static bool Erase1(Engine engine)
+    {
+        PrologEngine host = RequireHost(engine, "erase/1");
+        int @ref = RequireIntRef(engine, register: 0, builtin: "erase/1");
+        return host.Records.Erase(@ref);
+    }
+
+    public static bool EraseAll1(Engine engine)
+    {
+        PrologEngine host = RequireHost(engine, "eraseall/1");
+        Term key = RequireGroundKey(engine, register: 0, builtin: "eraseall/1");
+        host.Records.EraseAll(key);
+        return true;
+    }
+
+    public static bool Instance2(Engine engine)
+    {
+        PrologEngine host = RequireHost(engine, "instance/2");
+        int @ref = RequireIntRef(engine, register: 0, builtin: "instance/2");
+        Term? stored = host.Records.Instance(@ref);
+        if (stored is null) return false;
+        Cell c = Materializer.MaterializeAsCell(engine, stored);
+        return engine.UnifyRegisterWithCell(1, c);
+    }
+
+    public static bool KeyCount2(Engine engine)
+    {
+        PrologEngine host = RequireHost(engine, "key_count/2");
+        Term key = RequireGroundKey(engine, register: 0, builtin: "key_count/2");
+        int count = host.Records.KeyCount(key);
+        return engine.UnifyRegisterWithCell(1, Cell.Int(count));
+    }
+
+    public static bool Keys1(Engine engine)
+    {
+        PrologEngine host = RequireHost(engine, "keys/1");
+        Cell keyCell = MaterializeRegisterAsCell(engine, 0);
+        if (keyCell.Tag != Tag.Ref && keyCell.Tag != Tag.AttVar)
+        {
+            // Ground (or partially bound): treat as membership test.
+            Term k = MaterializeRegister(engine, 0);
+            return host.Records.KeyCount(k) > 0;
+        }
+        // Unbound: enumerate every key on backtracking.
+        var keys = host.Records.AllKeys().ToList();
+        if (keys.Count == 0) return false;
+        int returnPc = engine.BuiltinReturnPc;
+        return KeysStep(engine, keys, index: 0, returnPc, isResume: false);
+    }
+
+    private static bool KeysStep(
+        Engine engine, List<Term> keys, int index, int returnPc, bool isResume)
+    {
+        if (index >= keys.Count) return false;
+        if (index < keys.Count - 1)
+        {
+            int nextIndex = index + 1;
+            engine.PushBuiltinChoicePoint(
+                (e, _) => KeysStep(e, keys, nextIndex, returnPc, isResume: true),
+                arity: 0);
+        }
+        Cell c = Materializer.MaterializeAsCell(engine, keys[index]);
+        if (!engine.UnifyRegisterWithCell(0, c)) return false;
+        if (isResume) engine.ResumeAtReturnPc(returnPc);
+        return true;
+    }
+
+    public static bool Ref1(Engine engine)
+    {
+        PrologEngine host = RequireHost(engine, "ref/1");
+        Cell cell = MaterializeRegisterAsCell(engine, 0);
+        return cell.Tag == Tag.Int && host.Records.ContainsRef((int)cell.AsInt);
+    }
+
+    public static bool Replace2(Engine engine)
+    {
+        PrologEngine host = RequireHost(engine, "replace/2");
+        int @ref = RequireIntRef(engine, register: 0, builtin: "replace/2");
+        Term newTerm = MaterializeRegister(engine, 1);
+        return host.Records.Replace(@ref, newTerm);
+    }
+
+    public static bool Nref2(Engine engine)
+    {
+        PrologEngine host = RequireHost(engine, "nref/2");
+        int @ref = RequireIntRef(engine, register: 0, builtin: "nref/2");
+        int? next = host.Records.NextRef(@ref);
+        if (next is null) return false;
+        return engine.UnifyRegisterWithCell(1, Cell.Int(next.Value));
+    }
+
+    public static bool Pref2(Engine engine)
+    {
+        PrologEngine host = RequireHost(engine, "pref/2");
+        int @ref = RequireIntRef(engine, register: 0, builtin: "pref/2");
+        int? prev = host.Records.PrevRef(@ref);
+        if (prev is null) return false;
+        return engine.UnifyRegisterWithCell(1, Cell.Int(prev.Value));
+    }
+
+    public static bool RecordAfter3(Engine engine)
+    {
+        PrologEngine host = RequireHost(engine, "record_after/3");
+        int @ref = RequireIntRef(engine, register: 0, builtin: "record_after/3");
+        Term term = MaterializeRegister(engine, 1);
+        int? newRef = host.Records.RecordAfter(@ref, term);
+        if (newRef is null) return false;
+        return engine.UnifyRegisterWithCell(2, Cell.Int(newRef.Value));
+    }
+
+    public static bool RecordBefore3(Engine engine)
+    {
+        PrologEngine host = RequireHost(engine, "record_before/3");
+        int @ref = RequireIntRef(engine, register: 0, builtin: "record_before/3");
+        Term term = MaterializeRegister(engine, 1);
+        int? newRef = host.Records.RecordBefore(@ref, term);
+        if (newRef is null) return false;
+        return engine.UnifyRegisterWithCell(2, Cell.Int(newRef.Value));
+    }
+
+    // ---- shared validation helpers ----
+
+    private static PrologEngine RequireHost(Engine engine, string builtin)
+        => engine.Host as PrologEngine
+            ?? throw new InvalidOperationException(
+                $"{builtin} requires the engine to be hosted by a PrologEngine.");
+
+    private static Term RequireGroundKey(Engine engine, int register, string builtin)
+    {
+        Cell cell = MaterializeRegisterAsCell(engine, register);
+        if (cell.Tag == Tag.Ref || cell.Tag == Tag.AttVar)
+            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+        return MaterializeRegister(engine, register);
+    }
+
+    private static int RequireIntRef(Engine engine, int register, string builtin)
+    {
+        Cell cell = MaterializeRegisterAsCell(engine, register);
+        if (cell.Tag == Tag.Ref || cell.Tag == Tag.AttVar)
+            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+        if (cell.Tag != Tag.Int)
+            throw new Shumway.Core.PrologRuntimeException(
+                $"type_error(db_reference, _) /* {builtin} */");
+        return (int)cell.AsInt;
     }
 }

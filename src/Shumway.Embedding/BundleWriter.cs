@@ -124,6 +124,35 @@ public static class BundleWriter
         bw.Write((uint)bundle.ForeignAssemblies.Count);
         foreach (var name in bundle.ForeignAssemblies)
             WriteLengthPrefixedUtf8(bw, name);
+        // V6+ (chunk 264): optional save-state snapshot trailer. A
+        // regular shumway-link / shumway-compile bundle writes
+        // snapshotPresent=0 (one byte) and stops; PrologEngine.SaveState
+        // writes snapshotPresent=1 and the consult-history + dynamic-
+        // clauses payload that lets RestoreState rebuild the engine.
+        if (bundle.Snapshot is { } snap)
+        {
+            bw.Write((byte)1);
+            bw.Write((byte)(snap.DynamicOnly ? 1 : 0));
+            bw.Write((uint)snap.ConsultHistory.Count);
+            foreach (var src in snap.ConsultHistory)
+                WriteLengthPrefixedUtf8(bw, src);
+            bw.Write((uint)snap.DynamicClauses.Count);
+            foreach (var seed in snap.DynamicClauses)
+            {
+                WriteLengthPrefixedUtf8(bw, seed.Indicator.Name);
+                bw.Write((uint)seed.Indicator.Arity);
+                bw.Write((uint)seed.EncodedClauses.Count);
+                foreach (var enc in seed.EncodedClauses)
+                {
+                    bw.Write((uint)enc.Length);
+                    bw.Write(enc);
+                }
+            }
+        }
+        else
+        {
+            bw.Write((byte)0);
+        }
         bw.Flush();
         return ms.ToArray();
     }

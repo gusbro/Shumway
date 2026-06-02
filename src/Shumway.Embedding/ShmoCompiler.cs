@@ -399,9 +399,12 @@ public static class ShmoCompiler
                 publicSet.Add(spec);
             return false;
         }
-        if (body is CompoundTerm dyn && dyn.Functor == "dynamic" && dyn.Args.Length == 1)
+        // `dynamic` and its Arity-Prolog alias `visible` (chunk 265).
+        if (body is CompoundTerm dyn
+            && (dyn.Functor == "dynamic" || dyn.Functor == "visible")
+            && dyn.Args.Length == 1)
         {
-            foreach (var spec in ReadFunctorSpecs(dyn.Args[0], "dynamic"))
+            foreach (var spec in ReadFunctorSpecs(dyn.Args[0], dyn.Functor))
                 dynamicSet.Add(spec);
             return false;
         }

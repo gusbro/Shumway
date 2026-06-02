@@ -125,6 +125,11 @@ public sealed class OperatorTable
         // Module-level directive heads (common public/dynamic-style declarations)
         t.Define("public", 1150, OperatorType.Fx);
         t.Define("dynamic", 1150, OperatorType.Fx);
+        // Arity-Prolog alias for `dynamic` (chunk 265). Accepted at the
+        // same precedence so `:- visible foo/N.` parses identically to
+        // `:- dynamic foo/N.`; the directive handler treats them as
+        // synonyms.
+        t.Define("visible", 1150, OperatorType.Fx);
         t.Define("discontiguous", 1150, OperatorType.Fx);
         t.Define("multifile", 1150, OperatorType.Fx);
         t.Define("module_transparent", 1150, OperatorType.Fx);

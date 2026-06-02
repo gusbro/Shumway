@@ -124,13 +124,30 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `compact_dynamic_buffer(+Name/Arity)` | Phase-12 chunk 158: per-predicate hint variant. Validates Name/Arity names a dynamic predicate, then triggers the same full rebuild as the 0-arg form. The single buffer holds every dynamic predicate's bytecode interleaved, so independent per-predicate reclamation isn't currently feasible without partial-relink support — the API surface is per-predicate for forward compatibility. |
 | `consult(+File)` | Loads File and adds its clauses to the database, appending to any existing predicates. File is an atom path; a .shum extension routes through LoadBundle, everything else is read as Prolog source. |
 | `current_predicate(?PredicateIndicator)` | Enumerates the defined predicates as Name/Arity indicators. |
+| `erase(+Ref)` | Removes the recorded entry with reference Ref. Fails on an unknown / already-erased reference. |
+| `eraseall(+Key)` | Removes every recorded entry stored under Key. |
 | `garbage_collect_clauses` | Re-threads every dynamic predicate's chain to skip retracted clauses (ADR-015). |
 | `garbage_collect_clauses(+Name/Arity)` | Re-threads the named predicate's chain to skip retracted clauses. |
+| `instance(+Ref, -Term)` | Unifies Term with the term recorded under Ref. |
+| `key_count(+Key, -Count)` | Unifies Count with the number of recorded entries stored under Key. |
+| `keys(?Key)` | Enumerates on backtracking every key currently in the recorded database. If Key is ground, succeeds iff at least one entry is stored under it. |
 | `listing` | Lists the clauses of every user-defined predicate — consulted or asserted, never builtins or library predicates. |
 | `listing(+Spec)` | Lists the clauses of the user-defined predicate named by Spec (Name or Name/Arity). |
+| `nref(+Ref, -Next)` | Unifies Next with the reference of the entry immediately after Ref in its key's chain. Fails if Ref is the last entry. |
+| `pref(+Ref, -Prev)` | Unifies Prev with the reference of the entry immediately before Ref in its key's chain. Fails if Ref is the first entry. |
 | `reconsult(+File)` | Like consult/1 but first abolishes every predicate whose indicator appears in File (in the target module), so an edit-reload cycle replaces the file's predicates rather than duplicating clauses. Predicates not mentioned in File are left untouched (classical GProlog / SICStus semantics). |
+| `record_after(+Ref, ?Term, -NewRef)` | Inserts Term immediately after the entry with reference Ref in the same key's chain. |
+| `record_before(+Ref, ?Term, -NewRef)` | Inserts Term immediately before the entry with reference Ref in the same key's chain. |
+| `recorda(+Key, ?Term, -Ref)` | Adds Term at the start of the chain stored under Key in the recorded database, returning a fresh reference. The recorded DB is separate from dynamic predicates: keys are arbitrary terms (not functor/arity). |
+| `recorded(+Key, ?Term, -Ref)` | Enumerates on backtracking the (Term, Ref) pairs stored under Key. |
+| `recordz(+Key, ?Term, -Ref)` | Like recorda/3 but appends Term at the end of the chain under Key. |
+| `ref(?X)` | Succeeds when X is a live recorded-database reference (an integer previously returned by recorda/3 or recordz/3 and not yet erased). |
+| `replace(+Ref, +Term)` | Replaces the term in the entry with reference Ref. The chain position and the reference itself are preserved. |
+| `restore_state(+File)` | Restores a snapshot produced by save_state/1,2. Full-mode snapshots reset the engine first and replay the saved consults; dynamic-only snapshots merge their clauses into the engine via assertz. Throws existence_error if File doesn't exist, or type_error if it isn't a save_state snapshot. |
 | `retract(+Clause)` | Removes the first clause that unifies with the argument. |
 | `retractall(+Head)` | Removes every clause whose head unifies with Head. |
+| `save_state(+File)` | Writes a snapshot of the engine's user-visible state to File. Captures every consulted source (in order, minus the prelude) plus every currently asserted dynamic clause. The snapshot is a Shumway V6 bundle; restore_state/1 reconstitutes equivalent state on a fresh engine. Arity-Prolog compatible builtin. |
+| `save_state(+File, +Options)` | Like save_state/1 but accepts an options list. Recognised: dynamic_only(true) restricts the snapshot to dynamic clauses (no consult history); restore_state/1 then merges them into the engine's current state via assertz without resetting. |
 | `use_module(+Spec)` | Loads a library or file. Spec is either library(Name) — where Name is one of the built-in libraries (clpfd, clpr) — or an atom path (equivalent to consult/1). use_module(library(clpfd)) enables the CLP(FD) library; use_module(library(clpr)) enables CLP(R). The two libraries cannot coexist in the same engine. |
 | `well_founded(+Goal, -Status)` | The well-founded truth value of a tabled Goal — true, false or undefined. |
 
