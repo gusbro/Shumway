@@ -33,6 +33,12 @@ if (args.Length > 0 && args[0] == "--bench")
     return;
 }
 
+if (Array.IndexOf(args, "--alloc") >= 0)
+{
+    VanRoyMultiEngine.RunAlloc(args);
+    return;
+}
+
 VanRoyMultiEngine.Run(args);
 
 // ============================================================================
@@ -202,6 +208,90 @@ public static class VanRoyMultiEngine
         string baselinePath = Path.Combine(repoRoot, "docs", "benchmarks", "baseline.md");
         WriteBaselineMarkdown(baselinePath, results, runs);
         Console.WriteLine($"Baseline: {baselinePath}");
+    }
+
+    // ------------------------------------------------------------------
+    // Tier-0 deterministic allocation mode (Phase 25).
+    //
+    // Wall-clock benchmarking on a laptop is dominated by external noise
+    // (Turbo Boost, scheduler, background load) — a GProlog native exe was
+    // observed swinging 4× run-to-run. To validate an allocation-affecting
+    // change (e.g. the read-mode atomic-literal fast path in
+    // UnifyHeapWithCell) WITHOUT that noise, this mode measures the engine's
+    // monotonic WAM-cell allocation counter, which is a pure function of the
+    // executed code path + input: identical every run, on any machine, under
+    // any load. Shumway-only (no gplc/swipl subprocess spawning).
+    //
+    //   dotnet run -c Release --project tests/Shumway.Tests.Benchmarks/ -- --alloc
+    //
+    // Columns: cells/iter is the primary metric (fully deterministic);
+    // bytes/iter is managed-heap bytes via GC.GetAllocatedBytesForCurrentThread
+    // (Cell[] resizes + Term materialisation; deterministic for a fixed path).
+    // Each is (work at N − work at 0) / N, mirroring the timing methodology.
+    public static void RunAlloc(string[] args)
+    {
+        string repoRoot = FindRepoRoot();
+        string vanroyDir = Path.Combine(repoRoot, "benchmarks", "vanroy");
+
+        Console.WriteLine("Tier-0 deterministic allocation metrics (Shumway in-process).");
+        Console.WriteLine("cells/iter = monotonic WAM-cell allocations, identical every run.");
+        Console.WriteLine();
+        Console.WriteLine($"{"benchmark",-12} {"iters",8} {"cells/iter",14} {"bytes/iter",14} {"total_cells",16} {"determ",8}");
+        Console.WriteLine(new string('-', 76));
+
+        foreach (var (name, iters) in Benchmarks)
+        {
+            string pl = Path.Combine(vanroyDir, $"{name}.pl");
+            if (!File.Exists(pl)) { Console.Error.WriteLine($"missing: {pl}"); continue; }
+            string src = File.ReadAllText(pl);
+
+            long cells0 = ShumwayCells(src, 0);
+            long cellsN = ShumwayCells(src, iters);
+            // Determinism self-check: a second measurement of the N case
+            // must be bit-identical (the metric's whole selling point).
+            long cellsN2 = ShumwayCells(src, iters);
+            string determ = cellsN == cellsN2 ? "yes" : $"NO({cellsN}/{cellsN2})";
+
+            long bytes0 = ShumwayManagedBytes(src, 0);
+            long bytesN = ShumwayManagedBytes(src, iters);
+
+            double cellsPerIter = iters > 0 ? (cellsN - cells0) / (double)iters : 0;
+            double bytesPerIter = iters > 0 ? (bytesN - bytes0) / (double)iters : 0;
+
+            Console.WriteLine(
+                $"{name,-12} {iters,8} {cellsPerIter,14:F1} {bytesPerIter,14:F1} {cellsN,16:N0} {determ,8}");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("To A/B a change: record this table, apply the change, rebuild, re-run.");
+        Console.WriteLine("A real allocation win shows as a strictly lower cells/iter — no noise band.");
+    }
+
+    // Cells allocated by `bench(n)` alone: the consult + "true." warmup run
+    // in earlier (separate) per-query engines, so the bench query's engine
+    // starts at 0 and LastQueryCellsAllocated is exactly its tally.
+    private static long ShumwayCells(string src, int n)
+    {
+        var engine = new PrologEngine();
+        engine.ConsultString(src);
+        engine.Query("true.");
+        var sol = engine.Query($"bench({n}).");
+        if (!sol.Success)
+            throw new InvalidOperationException($"Shumway: bench({n}) failed");
+        return engine.LastQueryCellsAllocated;
+    }
+
+    private static long ShumwayManagedBytes(string src, int n)
+    {
+        var engine = new PrologEngine();
+        engine.ConsultString(src);
+        engine.Query("true.");
+        long g0 = GC.GetAllocatedBytesForCurrentThread();
+        var sol = engine.Query($"bench({n}).");
+        long g1 = GC.GetAllocatedBytesForCurrentThread();
+        if (!sol.Success)
+            throw new InvalidOperationException($"Shumway: bench({n}) failed");
+        return g1 - g0;
     }
 
     private static double Median(IList<double> xs)

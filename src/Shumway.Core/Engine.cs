@@ -25,6 +25,18 @@ public sealed partial class Engine
     private int _heapTop;
     private int _hb;
 
+    // Monotonic count of cells reserved on the WAM heap over the engine's
+    // lifetime. Backtracking rewinds _heapTop but never this counter — it
+    // is a cumulative "cells ever allocated" tally, not the current high
+    // watermark. Bumped once per allocation primitive (AllocateHeap /
+    // AllocateHeapUnbound). Purpose: a *deterministic* benchmark metric
+    // (independent of wall-clock noise) for changes that add or remove
+    // heap allocations — e.g. the read-mode atomic-literal fast path in
+    // UnifyHeapWithCell, whose whole effect is skipping one cell per
+    // matched literal. Present in every build, so it cancels exactly when
+    // comparing two builds. See the harness --alloc mode.
+    private long _cellsAllocated;
+
     // ----- Stack (storage only in this phase; no frame operations yet) -----
     private Cell[] _stack;
 
@@ -159,6 +171,11 @@ public sealed partial class Engine
     public int HeapCapacity => _heap.Length;
     public int Hb => _hb;
 
+    /// <summary>Monotonic count of WAM heap cells reserved over this engine's
+    /// lifetime (never decremented by backtracking). A deterministic,
+    /// wall-clock-independent metric for allocation-affecting changes.</summary>
+    public long CellsAllocated => _cellsAllocated;
+
     public Cell GetHeap(int idx) => _heap[idx];
 
     /// <summary>Writes a cell directly without trailing. Use for setting up state, not
@@ -176,6 +193,7 @@ public sealed partial class Engine
         if (newTop > _heap.Length) EnsureHeapCapacity(count);
         int start = _heapTop;
         _heapTop = newTop;
+        _cellsAllocated += count;
         return start;
     }
 
@@ -194,6 +212,7 @@ public sealed partial class Engine
         if (idx + 1 > _heap.Length) EnsureHeapCapacity(1);
         _heap[idx] = Cell.UnboundVar(idx);
         _heapTop = idx + 1;
+        _cellsAllocated++;
         return idx;
     }
 
@@ -919,9 +938,40 @@ public sealed partial class Engine
     /// mode (the value is a literal from the bytecode).</summary>
     public bool UnifyHeapWithCell(int heapIdx, Cell value)
     {
+        // Fast path for read-mode unification of a compound argument against a
+        // ground atomic literal (atom / inline int / nil) from a bytecode
+        // constant — the unify_atom / unify_integer / unify_constant opcodes.
+        // Deref the target once and:
+        //   - unbound plain var  → bind directly to the literal (skips the
+        //     throwaway heap slot the general path would allocate and bind);
+        //   - bound atom or int  → Data equality is exact semantic equality
+        //     (atoms compare by id, ints are inline, the tag bits are part of
+        //     Data so a type mismatch also compares unequal).
+        // Everything else — attributed vars (the attr_unify_hook must fire),
+        // BigInt / String / Pstr (table-id ≠ value), Float (two cells), or a
+        // compound — takes the general alloc-then-Unify path unchanged.
+        //
+        // NOTE (Phase 25 --alloc finding): on the Van Roy suite this saves
+        // zero allocations — head-level literal args go through the already-
+        // optimised UnifyRegisterWithCell (chunk 170, get_atom/get_nil/
+        // get_integer), and these benchmarks have no literals nested inside
+        // compound head args (the only shape that reaches here). Kept because
+        // it is correct, harmless, and a real win for programs that DO match
+        // nested literals (e.g. DCG / parser heads like foo([a|T], ...)).
+        int addr = Deref(heapIdx);
+        Cell c = _heap[addr];
+        Tag t = c.Tag;
+        if (t == Tag.Ref)
+        {
+            Bind(addr, value);
+            return true;
+        }
+        if (t == Tag.Atom || t == Tag.Int)
+            return c.Data == value.Data;
+
         int valueSlot = AllocateHeap(1);
         _heap[valueSlot] = value;
-        return Unify(heapIdx, valueSlot);
+        return Unify(addr, valueSlot);
     }
 
     // ----- Compound / list construction (write-mode entry points) -----

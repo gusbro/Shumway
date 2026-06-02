@@ -5779,8 +5779,23 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             globals.RelocateCells(relocCell);
         };
 
+        // Tier-0 deterministic benchmark metric: keep a reference to the
+        // per-query engine so the harness can read its monotonic
+        // CellsAllocated after the query completes (the engine is
+        // otherwise local and discarded). Read-only diagnostic; does not
+        // affect execution.
+        _lastQueryEngine = engine;
         return (programView, varNames, varHeapIndices, engine, interp);
     }
+
+    private Engine? _lastQueryEngine;
+
+    /// <summary>Monotonic count of WAM heap cells reserved by the most
+    /// recent query's engine (0 before any query). A deterministic,
+    /// wall-clock-independent metric for allocation-affecting changes —
+    /// see <see cref="Engine.CellsAllocated"/> and the benchmark
+    /// harness <c>--alloc</c> mode.</summary>
+    public long LastQueryCellsAllocated => _lastQueryEngine?.CellsAllocated ?? 0;
 
     /// <summary>ADR-015 chunk C step 4: incrementally compile and append a
     /// newly asserted clause's bytecode, then patch the chain's tail
