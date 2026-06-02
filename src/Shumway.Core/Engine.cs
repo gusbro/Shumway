@@ -1004,6 +1004,8 @@ public sealed partial class Engine
 
     /// <summary>Mode-aware <c>unify_*</c> for ground value cells
     /// (atom / int / nil / float-via-ref / etc.).</summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public bool UnifyArgCell(Cell value)
     {
         int ptr = _unifyPointer;
@@ -2129,6 +2131,8 @@ public sealed partial class Engine
     /// or a self-pointing REF (unbound variable). Returns the final heap index. Reading
     /// <see cref="GetHeap"/> at the returned index yields the dereferenced cell.
     /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public int Deref(int heapIdx)
     {
         while (true)
