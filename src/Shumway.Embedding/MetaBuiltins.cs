@@ -1712,78 +1712,124 @@ public static class MetaBuiltins
     /// <summary><c>T =.. List</c> — the "univ" operator. Decomposes a
     /// compound into <c>[Functor | Args]</c> (or yields <c>[Atom]</c>
     /// for atomic <c>T</c>), or composes <c>T</c> from such a list.</summary>
+    // Cached atom ids — boyer hits =../2 in a tight loop; avoid the
+    // AtomTable hash lookup per call. Permanent atoms get permanent
+    // ids that never get reused, so caching is safe.
+    private static int _dotAtomIdCache;
+    private static int DotAtomId
+    {
+        get
+        {
+            if (_dotAtomIdCache == 0)
+                _dotAtomIdCache = AtomTable.Intern(".", permanent: true).Id;
+            return _dotAtomIdCache;
+        }
+    }
+
     public static bool Univ(Engine engine)
     {
         Cell t = ResolveLocal(engine, engine.GetRegister(0));
 
-        // Decompose modes.
+        // Decompose modes — build the list directly in the heap with
+        // a single allocation, no intermediate Cell[] buffer.
         if (t.Tag == Tag.Atom || t.Tag == Tag.Int || t.Tag == Tag.Float)
         {
-            int listIdx = BuildListFromCells(engine, new[] { t });
-            return engine.UnifyRegisterWithHeapAt(1, listIdx);
+            // Single-element list: [t] = .(t, []).
+            int idx = engine.AllocateHeap(3);
+            engine.SetHeap(idx,     Cell.Lis(idx + 1));
+            engine.SetHeap(idx + 1, t);
+            engine.SetHeap(idx + 2, Cell.Atom(AtomTable.EmptyListId));
+            return engine.UnifyRegisterWithHeapAt(1, idx);
         }
         if (t.Tag == Tag.Str)
         {
             int functorIdx = t.AsHeapIndex;
             var (atomId, arity) = FunctorTable.Lookup(
                 engine.GetHeap(functorIdx).AsFunctorId);
-            var cells = new Cell[1 + arity];
-            cells[0] = Cell.Atom(atomId);
+            // Fast path: [Functor | Args] built directly. Layout:
+            //   idx+0: Lis(idx+1)        -- first cons
+            //   idx+1: Atom(functor)     -- head: the functor atom
+            //   idx+2: Lis(idx+3)        -- next cons (arg 0)
+            //   idx+3: <arg 0>           -- head: copied from STR
+            //   ...
+            //   idx+2k: Lis(idx+2k+1)    -- cons for arg k-1
+            //   idx+2k+1: <arg k-1>
+            //   idx+2(arity+1): Atom([]) -- terminating nil
+            int total = 2 * (1 + arity) + 1;
+            int idx = engine.AllocateHeap(total);
+            engine.SetHeap(idx,     Cell.Lis(idx + 1));
+            engine.SetHeap(idx + 1, Cell.Atom(atomId));
             for (int i = 0; i < arity; i++)
-                cells[1 + i] = engine.GetHeap(functorIdx + 1 + i);
-            int listIdx = BuildListFromCells(engine, cells);
-            return engine.UnifyRegisterWithHeapAt(1, listIdx);
+            {
+                int cons = idx + 2 + 2 * i;
+                engine.SetHeap(cons,     Cell.Lis(cons + 1));
+                engine.SetHeap(cons + 1, engine.GetHeap(functorIdx + 1 + i));
+            }
+            engine.SetHeap(idx + 2 * (1 + arity), Cell.Atom(AtomTable.EmptyListId));
+            return engine.UnifyRegisterWithHeapAt(1, idx);
         }
         if (t.Tag == Tag.Lis)
         {
-            int dotId = AtomTable.Intern(".", permanent: true).Id;
+            // Lis cell represents a [Head|Tail] cons — its =.. result
+            // is the 3-element list ['.', Head, Tail].
             int headIdx = t.AsHeapIndex;
-            int listIdx = BuildListFromCells(engine, new[]
-            {
-                Cell.Atom(dotId),
-                engine.GetHeap(headIdx),
-                engine.GetHeap(headIdx + 1),
-            });
-            return engine.UnifyRegisterWithHeapAt(1, listIdx);
+            int idx = engine.AllocateHeap(7);
+            engine.SetHeap(idx,     Cell.Lis(idx + 1));
+            engine.SetHeap(idx + 1, Cell.Atom(DotAtomId));
+            engine.SetHeap(idx + 2, Cell.Lis(idx + 3));
+            engine.SetHeap(idx + 3, engine.GetHeap(headIdx));
+            engine.SetHeap(idx + 4, Cell.Lis(idx + 5));
+            engine.SetHeap(idx + 5, engine.GetHeap(headIdx + 1));
+            engine.SetHeap(idx + 6, Cell.Atom(AtomTable.EmptyListId));
+            return engine.UnifyRegisterWithHeapAt(1, idx);
         }
         if (t.Tag == Tag.Ref)
         {
-            // Compose: read the list.
+            // Compose: walk the list twice — once to count, once to
+            // build the STR. The list is on the heap so the walk is a
+            // pointer chase, no allocation.
             Cell listC = ResolveLocal(engine, engine.GetRegister(1));
-            var cells = new List<Cell>();
+            int count = 0;
             Cell cur = listC;
             while (cur.Tag == Tag.Lis)
             {
-                cells.Add(engine.GetHeap(cur.AsHeapIndex));
+                count++;
                 cur = ResolveLocal(engine, engine.GetHeap(cur.AsHeapIndex + 1));
             }
             if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)
                 throw new ShumwayPrologException(
                     IsoError.TypeError("list", new VarTerm("_")));
-            if (cells.Count == 0)
+            if (count == 0)
                 throw new ShumwayPrologException(
                     IsoError.DomainError("non_empty_list", new VarTerm("_")));
 
-            Cell first = ResolveLocal(engine, cells[0]);
-            if (cells.Count == 1)
+            // Fetch the functor cell (the first element).
+            int headIdx = listC.AsHeapIndex;
+            Cell first = ResolveLocal(engine, engine.GetHeap(headIdx));
+            if (count == 1)
             {
-                // Single-element list — T is atomic.
                 if (first.Tag != Tag.Atom && first.Tag != Tag.Int && first.Tag != Tag.Float)
                     throw new ShumwayPrologException(
                         IsoError.TypeError("atomic", new VarTerm("_")));
                 return engine.UnifyRegisterWithCell(0, first);
             }
-            // Multi-element: first must be an atom (the functor name).
             if (first.Tag != Tag.Atom)
                 throw new ShumwayPrologException(
                     IsoError.TypeError("atom", new VarTerm("_")));
-            int arity = cells.Count - 1;
+            int arity = count - 1;
             int functorId = FunctorTable.Intern(first.AsAtomId, arity);
+            // Walk the list a second time to copy args into the STR.
             int strBase = engine.AllocateHeap(2 + arity);
             engine.SetHeap(strBase, Cell.Str(strBase + 1));
             engine.SetHeap(strBase + 1, Cell.Functor(functorId));
+            // Skip the first element (functor name) and copy the rest.
+            cur = ResolveLocal(engine, engine.GetHeap(headIdx + 1));
             for (int i = 0; i < arity; i++)
-                engine.SetHeap(strBase + 2 + i, cells[1 + i]);
+            {
+                int curHead = cur.AsHeapIndex;
+                engine.SetHeap(strBase + 2 + i, engine.GetHeap(curHead));
+                cur = ResolveLocal(engine, engine.GetHeap(curHead + 1));
+            }
             return engine.UnifyRegisterWithCell(0, Cell.Ref(strBase));
         }
         return false;
