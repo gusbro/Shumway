@@ -351,6 +351,70 @@ public static class MetaBuiltins
             "Inserts Term immediately before the entry with reference Ref in "
             + "the same key's chain.");
 
+        // Phase 24 chunk 267 — Edinburgh-style I/O (Arity-Prolog
+        // compatible). Layer over the ISO stream registry: see/tell
+        // open + set-as-current, seen/told close + revert to user
+        // defaults; seeing/telling report the current handle's
+        // filename or `user` for user_input/user_output. get/get0/put
+        // operate on character codes, like get_code/put_code; skip
+        // reads until a target code; tab/2 is the handle-taking form
+        // of the prelude's tab/1.
+        BuiltinsRegistry.Register("see", 1, See1,
+            Io, "see(+File)",
+            "Opens File for reading and makes it the current input stream. "
+            + "An already-open see-stream is closed first.");
+        BuiltinsRegistry.Register("seeing", 1, Seeing1,
+            Io, "seeing(?File)",
+            "Unifies File with the name of the current input stream's "
+            + "file (or `user` when current input is user_input).");
+        BuiltinsRegistry.Register("seen", 0, Seen0,
+            Io, "seen",
+            "Closes the current input stream (if not user_input) and "
+            + "reverts current input to user_input.");
+        BuiltinsRegistry.Register("tell", 1, Tell1,
+            Io, "tell(+File)",
+            "Opens File for writing and makes it the current output stream. "
+            + "An already-open tell-stream is closed first.");
+        BuiltinsRegistry.Register("telling", 1, Telling1,
+            Io, "telling(?File)",
+            "Unifies File with the name of the current output stream's "
+            + "file (or `user` when current output is user_output).");
+        BuiltinsRegistry.Register("told", 0, Told0,
+            Io, "told",
+            "Closes the current output stream (if not user_output) and "
+            + "reverts current output to user_output.");
+        BuiltinsRegistry.Register("get", 1, Get1,
+            Io, "get(?Code)",
+            "Reads the next printable character code from the current input "
+            + "stream (skipping non-printing codes < 32). EOF returns -1.");
+        BuiltinsRegistry.Register("get", 2, Get2,
+            Io, "get(+Stream, ?Code)",
+            "Stream variant of get/1.");
+        BuiltinsRegistry.Register("get0", 1, Get0_1,
+            Io, "get0(?Code)",
+            "Reads the next character code from the current input stream "
+            + "without skipping non-printing codes. EOF returns -1.");
+        BuiltinsRegistry.Register("get0", 2, Get0_2,
+            Io, "get0(+Stream, ?Code)",
+            "Stream variant of get0/1.");
+        BuiltinsRegistry.Register("put", 1, Put1,
+            Io, "put(+Code)",
+            "Writes the character with the given code to the current output "
+            + "stream. Edinburgh-style alias of put_code/1.");
+        BuiltinsRegistry.Register("put", 2, Put2,
+            Io, "put(+Stream, +Code)",
+            "Stream variant of put/1.");
+        BuiltinsRegistry.Register("skip", 1, Skip1,
+            Io, "skip(+Code)",
+            "Reads from the current input stream, discarding characters until "
+            + "the code Code is read.");
+        BuiltinsRegistry.Register("skip", 2, Skip2,
+            Io, "skip(+Stream, +Code)",
+            "Stream variant of skip/1.");
+        BuiltinsRegistry.Register("tab", 2, Tab2,
+            Io, "tab(+Stream, +N)",
+            "Stream variant of tab/1 — writes N spaces to Stream.");
+
         BuiltinsRegistry.Register("restore_state", 1, RestoreState1,
             Database, "restore_state(+File)",
             "Restores a snapshot produced by save_state/1,2. Full-mode "
@@ -3834,5 +3898,231 @@ public static class MetaBuiltins
             throw new Shumway.Core.PrologRuntimeException(
                 $"type_error(db_reference, _) /* {builtin} */");
         return (int)cell.AsInt;
+    }
+
+    // ============================================================================
+    // Phase 24 chunk 267 — Edinburgh-style I/O (Arity-Prolog compatible).
+    // Thin layer over the chunk-140 StreamRegistry: see/tell open a file and
+    // make it the current input/output; seen/told close it and revert to
+    // user_input/user_output. get/get0/put/skip operate on character codes.
+    // ============================================================================
+
+    public static bool See1(Engine engine)
+    {
+        PrologEngine host = RequireHost(engine, "see/1");
+        string path = RequireAtomPath(engine, register: 0, builtin: "see/1");
+        var streams = engine.Streams!;
+        // Close any previously-see'd file before switching.
+        if (!ReferenceEquals(streams.CurrentInput, streams.UserInput))
+            CloseAndForget(streams, streams.CurrentInput);
+        StreamHandle h;
+        try
+        {
+            h = new StreamHandle(
+                streams.NextId(), new StreamReader(path), "read", path);
+        }
+        catch (FileNotFoundException)
+        {
+            throw new Shumway.Core.PrologRuntimeException(
+                $"existence_error(source_sink, '{path}')");
+        }
+        catch (DirectoryNotFoundException)
+        {
+            throw new Shumway.Core.PrologRuntimeException(
+                $"existence_error(source_sink, '{path}')");
+        }
+        streams.Add(h);
+        streams.SetCurrentInput(h);
+        return true;
+    }
+
+    public static bool Seeing1(Engine engine)
+    {
+        var streams = engine.Streams!;
+        Cell nameCell = ReferenceEquals(streams.CurrentInput, streams.UserInput)
+            ? Cell.Atom(AtomTable.Intern("user", permanent: true).Id)
+            : Cell.Atom(AtomTable.Intern(
+                streams.CurrentInput.Filename ?? "user", permanent: true).Id);
+        return engine.UnifyRegisterWithCell(0, nameCell);
+    }
+
+    public static bool Seen0(Engine engine)
+    {
+        var streams = engine.Streams!;
+        if (!ReferenceEquals(streams.CurrentInput, streams.UserInput))
+            CloseAndForget(streams, streams.CurrentInput);
+        streams.SetCurrentInput(streams.UserInput);
+        return true;
+    }
+
+    public static bool Tell1(Engine engine)
+    {
+        PrologEngine host = RequireHost(engine, "tell/1");
+        string path = RequireAtomPath(engine, register: 0, builtin: "tell/1");
+        var streams = engine.Streams!;
+        if (!ReferenceEquals(streams.CurrentOutput, streams.UserOutput))
+            CloseAndForget(streams, streams.CurrentOutput);
+        StreamHandle h;
+        try
+        {
+            h = new StreamHandle(
+                streams.NextId(), new StreamWriter(path, append: false), "write", path);
+        }
+        catch (DirectoryNotFoundException)
+        {
+            throw new Shumway.Core.PrologRuntimeException(
+                $"existence_error(source_sink, '{path}')");
+        }
+        streams.Add(h);
+        streams.SetCurrentOutput(h);
+        return true;
+    }
+
+    public static bool Telling1(Engine engine)
+    {
+        var streams = engine.Streams!;
+        Cell nameCell = ReferenceEquals(streams.CurrentOutput, streams.UserOutput)
+            ? Cell.Atom(AtomTable.Intern("user", permanent: true).Id)
+            : Cell.Atom(AtomTable.Intern(
+                streams.CurrentOutput.Filename ?? "user", permanent: true).Id);
+        return engine.UnifyRegisterWithCell(0, nameCell);
+    }
+
+    public static bool Told0(Engine engine)
+    {
+        var streams = engine.Streams!;
+        if (!ReferenceEquals(streams.CurrentOutput, streams.UserOutput))
+            CloseAndForget(streams, streams.CurrentOutput);
+        streams.SetCurrentOutput(streams.UserOutput);
+        return true;
+    }
+
+    private static void CloseAndForget(StreamRegistry registry, StreamHandle h)
+    {
+        try { h.Reader?.Dispose(); h.Writer?.Flush(); h.Writer?.Dispose(); }
+        catch { /* best-effort close */ }
+        registry.Remove(h);
+    }
+
+    // ---- get / get0 / put / skip — character-code I/O ----
+
+    public static bool Get1(Engine engine) => ReadPrintableCodeImpl(engine, useStreamReg: false);
+    public static bool Get2(Engine engine) => ReadPrintableCodeImpl(engine, useStreamReg: true);
+    public static bool Get0_1(Engine engine) => ReadAnyCodeImpl(engine, useStreamReg: false);
+    public static bool Get0_2(Engine engine) => ReadAnyCodeImpl(engine, useStreamReg: true);
+    public static bool Put1(Engine engine) => WriteCodeImpl(engine, useStreamReg: false);
+    public static bool Put2(Engine engine) => WriteCodeImpl(engine, useStreamReg: true);
+    public static bool Skip1(Engine engine) => SkipImpl(engine, useStreamReg: false);
+    public static bool Skip2(Engine engine) => SkipImpl(engine, useStreamReg: true);
+
+    private static StreamHandle ResolveInputStream(Engine engine, bool fromStreamArg)
+    {
+        if (!fromStreamArg)
+            return engine.Streams!.CurrentInput;
+        Cell streamCell = MaterializeRegisterAsCell(engine, 0);
+        if (streamCell.Tag == Tag.Foreign
+            && engine.AsForeign(streamCell) is StreamHandle h)
+            return h;
+        if (streamCell.Tag == Tag.Atom)
+        {
+            string alias = AtomTable.GetById(streamCell.AsAtomId)?.Name ?? "";
+            var aliased = engine.Streams!.GetByAlias(alias);
+            if (aliased is not null) return aliased;
+        }
+        throw new Shumway.Core.PrologRuntimeException(
+            "type_error(stream, _)");
+    }
+
+    private static StreamHandle ResolveOutputStream(Engine engine, bool fromStreamArg)
+    {
+        if (!fromStreamArg)
+            return engine.Streams!.CurrentOutput;
+        Cell streamCell = MaterializeRegisterAsCell(engine, 0);
+        if (streamCell.Tag == Tag.Foreign
+            && engine.AsForeign(streamCell) is StreamHandle h)
+            return h;
+        if (streamCell.Tag == Tag.Atom)
+        {
+            string alias = AtomTable.GetById(streamCell.AsAtomId)?.Name ?? "";
+            var aliased = engine.Streams!.GetByAlias(alias);
+            if (aliased is not null) return aliased;
+        }
+        throw new Shumway.Core.PrologRuntimeException(
+            "type_error(stream, _)");
+    }
+
+    private static bool ReadPrintableCodeImpl(Engine engine, bool useStreamReg)
+    {
+        var h = ResolveInputStream(engine, useStreamReg);
+        if (!h.IsReader)
+            throw new Shumway.Core.PrologRuntimeException("permission_error(input, stream)");
+        // Skip codes < 32 (ASCII control / whitespace).
+        int code;
+        do { code = h.Reader!.Read(); }
+        while (code >= 0 && code < 32);
+        int regOut = useStreamReg ? 1 : 0;
+        return engine.UnifyRegisterWithCell(regOut, Cell.Int(code));
+    }
+
+    private static bool ReadAnyCodeImpl(Engine engine, bool useStreamReg)
+    {
+        var h = ResolveInputStream(engine, useStreamReg);
+        if (!h.IsReader)
+            throw new Shumway.Core.PrologRuntimeException("permission_error(input, stream)");
+        int code = h.Reader!.Read();
+        int regOut = useStreamReg ? 1 : 0;
+        return engine.UnifyRegisterWithCell(regOut, Cell.Int(code));
+    }
+
+    private static bool WriteCodeImpl(Engine engine, bool useStreamReg)
+    {
+        var h = ResolveOutputStream(engine, useStreamReg);
+        if (!h.IsWriter)
+            throw new Shumway.Core.PrologRuntimeException("permission_error(output, stream)");
+        int regCode = useStreamReg ? 1 : 0;
+        Cell c = MaterializeRegisterAsCell(engine, regCode);
+        if (c.Tag == Tag.Ref || c.Tag == Tag.AttVar)
+            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+        if (c.Tag != Tag.Int)
+            throw new Shumway.Core.PrologRuntimeException("type_error(integer, _)");
+        long code = c.AsInt;
+        if (code < 0 || code > char.MaxValue)
+            throw new Shumway.Core.PrologRuntimeException(
+                "representation_error(character_code)");
+        h.Writer!.Write((char)code);
+        return true;
+    }
+
+    private static bool SkipImpl(Engine engine, bool useStreamReg)
+    {
+        var h = ResolveInputStream(engine, useStreamReg);
+        if (!h.IsReader)
+            throw new Shumway.Core.PrologRuntimeException("permission_error(input, stream)");
+        int regCode = useStreamReg ? 1 : 0;
+        Cell c = MaterializeRegisterAsCell(engine, regCode);
+        if (c.Tag == Tag.Ref || c.Tag == Tag.AttVar)
+            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+        if (c.Tag != Tag.Int)
+            throw new Shumway.Core.PrologRuntimeException("type_error(integer, _)");
+        int target = (int)c.AsInt;
+        int code;
+        do { code = h.Reader!.Read(); }
+        while (code >= 0 && code != target);
+        return true;
+    }
+
+    public static bool Tab2(Engine engine)
+    {
+        var h = ResolveOutputStream(engine, fromStreamArg: true);
+        if (!h.IsWriter)
+            throw new Shumway.Core.PrologRuntimeException("permission_error(output, stream)");
+        Cell n = MaterializeRegisterAsCell(engine, 1);
+        if (n.Tag == Tag.Ref || n.Tag == Tag.AttVar)
+            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+        if (n.Tag != Tag.Int)
+            throw new Shumway.Core.PrologRuntimeException("type_error(integer, _)");
+        long count = n.AsInt;
+        for (long i = 0; i < count; i++) h.Writer!.Write(' ');
+        return true;
     }
 }

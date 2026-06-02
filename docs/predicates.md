@@ -243,6 +243,10 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `format(+Format, +Arguments)` | Writes formatted output from a control string and an argument list. |
 | `format(+Stream, +Format, +Arguments)` | Writes formatted output to the given stream. |
 | `format_to_atom(-Atom, +Format, +Args)` | Like format/2 but captures the formatted output into an atom. |
+| `get(?Code)` | Reads the next printable character code from the current input stream (skipping non-printing codes < 32). EOF returns -1. |
+| `get(+Stream, ?Code)` | Stream variant of get/1. |
+| `get0(?Code)` | Reads the next character code from the current input stream without skipping non-printing codes. EOF returns -1. |
+| `get0(+Stream, ?Code)` | Stream variant of get0/1. |
 | `get_byte(-Byte)` | Reads one byte from the current input binary stream (ISO §8.13.1). |
 | `get_byte(+Stream, -Byte)` | Reads one byte from a binary stream (ISO §8.13.1). |
 | `get_char(-Char)` | Reads one character from the current input stream (ISO §8.12.1). |
@@ -262,6 +266,8 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `portray_clause(+Clause)` | Pretty-prints Clause to the current output as a Prolog clause: head + indented body goals, synthetic variable names renamed to A, B, C, ... |
 | `portray_clause(+Stream, +Clause)` | Like portray_clause/1 but writes to the given stream. |
 | `print(+Term)` | Writes a term using print conventions. |
+| `put(+Code)` | Writes the character with the given code to the current output stream. Edinburgh-style alias of put_code/1. |
+| `put(+Stream, +Code)` | Stream variant of put/1. |
 | `put_byte(+Byte)` | Writes one byte to the current output binary stream (ISO §8.13.3). |
 | `put_byte(+Stream, +Byte)` | Writes one byte to a binary stream (ISO §8.13.3). |
 | `put_char(+Char)` | Writes a single-character atom to the current output stream (ISO §8.12.3). |
@@ -272,11 +278,20 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `read(+Stream, -Term)` | Reads one term from a stream (ISO §8.14.2). |
 | `read_term(+Stream, -Term)` | Reads one term from a read-mode stream. |
 | `read_term_from_stream(+Stream, -Term)` | Reads one term from a read-mode stream. |
+| `see(+File)` | Opens File for reading and makes it the current input stream. An already-open see-stream is closed first. |
+| `seeing(?File)` | Unifies File with the name of the current input stream's file (or `user` when current input is user_input). |
+| `seen` | Closes the current input stream (if not user_input) and reverts current input to user_input. |
 | `set_input(+Stream)` | Sets the current input stream (ISO §8.11.3). |
 | `set_output(+Stream)` | Sets the current output stream (ISO §8.11.4). |
 | `set_stream_position(+Stream, +Position)` | Seeks the stream to the given byte position (ISO §8.11.10). |
+| `skip(+Code)` | Reads from the current input stream, discarding characters until the code Code is read. |
+| `skip(+Stream, +Code)` | Stream variant of skip/1. |
 | `stream_property(?Stream, ?Property)` | Enumerates (Stream, Property) pairs for every open stream (ISO §8.11.8.2). |
 | `tab(+N)` | Writes N spaces to the current output stream. |
+| `tab(+Stream, +N)` | Stream variant of tab/1 — writes N spaces to Stream. |
+| `tell(+File)` | Opens File for writing and makes it the current output stream. An already-open tell-stream is closed first. |
+| `telling(?File)` | Unifies File with the name of the current output stream's file (or `user` when current output is user_output). |
+| `told` | Closes the current output stream (if not user_output) and reverts current output to user_output. |
 | `with_output_to(+Sink, :Goal)` | Runs a goal, capturing its output into an atom, string or code list. |
 | `working_directory(-Old, +New)` | Unifies Old with the current working directory; if New differs, changes the cwd to it. Use working_directory(D, D) to read without changing. |
 | `write(+Term)` | Writes a term to the current output stream. |
