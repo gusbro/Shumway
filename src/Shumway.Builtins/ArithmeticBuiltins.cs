@@ -12,31 +12,136 @@ public static class ArithmeticBuiltins
 {
     /// <summary><c>X is Expr</c> — evaluates <c>Expr</c> and unifies the
     /// result with <c>X</c>. The result is either an Int cell (integer
-    /// result) or a heap-allocated Float (when promotion was needed).</summary>
+    /// result) or a heap-allocated Float (when promotion was needed).
+    ///
+    /// <para>Fast path (chunk 284): a 2-arg compound whose functor is
+    /// +, -, *, // or mod and both args (after deref) are <see cref="Tag.Int"/>
+    /// is evaluated directly in a long without going through the
+    /// <see cref="Number"/> boxing path or the string-keyed dispatch.
+    /// Overflow falls back to the slow evaluator (which promotes to
+    /// BigInt). Targets tight-loop arithmetic in tak / queens / crypt
+    /// where each iteration does e.g. `N1 is N - 1`.</para></summary>
     public static bool Is(Engine engine)
     {
-        Number result = ArithmeticEvaluator.Evaluate(engine, engine.GetRegister(1));
+        Cell rhs = engine.GetRegister(1);
+        if (rhs.Tag == Tag.Ref) rhs = engine.GetHeap(engine.Deref(rhs.AsHeapIndex));
+        if (rhs.Tag == Tag.Str && TryFastIntBinary(engine, rhs, out long fast))
+            return engine.UnifyRegisterWithCell(0, Cell.Int(fast));
+        if (rhs.Tag == Tag.Int)
+            return engine.UnifyRegisterWithCell(0, rhs);   // `X is 7`.
+
+        Number result = ArithmeticEvaluator.Evaluate(engine, rhs);
         Cell cell = result.ToCell(engine);
         return engine.UnifyRegisterWithCell(0, cell);
     }
 
     public static bool ArithEqual(Engine engine) =>
-        Number.Compare(EvaluateA(engine), EvaluateB(engine)) == 0;
+        TryFastIntCompare(engine, out int cmp) ? cmp == 0
+        : Number.Compare(EvaluateA(engine), EvaluateB(engine)) == 0;
 
     public static bool ArithNotEqual(Engine engine) =>
-        Number.Compare(EvaluateA(engine), EvaluateB(engine)) != 0;
+        TryFastIntCompare(engine, out int cmp) ? cmp != 0
+        : Number.Compare(EvaluateA(engine), EvaluateB(engine)) != 0;
 
     public static bool ArithLess(Engine engine) =>
-        Number.Compare(EvaluateA(engine), EvaluateB(engine)) < 0;
+        TryFastIntCompare(engine, out int cmp) ? cmp < 0
+        : Number.Compare(EvaluateA(engine), EvaluateB(engine)) < 0;
 
     public static bool ArithGreater(Engine engine) =>
-        Number.Compare(EvaluateA(engine), EvaluateB(engine)) > 0;
+        TryFastIntCompare(engine, out int cmp) ? cmp > 0
+        : Number.Compare(EvaluateA(engine), EvaluateB(engine)) > 0;
 
     public static bool ArithLessOrEqual(Engine engine) =>
-        Number.Compare(EvaluateA(engine), EvaluateB(engine)) <= 0;
+        TryFastIntCompare(engine, out int cmp) ? cmp <= 0
+        : Number.Compare(EvaluateA(engine), EvaluateB(engine)) <= 0;
 
     public static bool ArithGreaterOrEqual(Engine engine) =>
-        Number.Compare(EvaluateA(engine), EvaluateB(engine)) >= 0;
+        TryFastIntCompare(engine, out int cmp) ? cmp >= 0
+        : Number.Compare(EvaluateA(engine), EvaluateB(engine)) >= 0;
+
+    // Cached functor ids for the common arithmetic ops. FunctorTable
+    // is process-global and ids never recycle, so a per-process lazy
+    // cache is safe.
+    private static int _addFid, _subFid, _mulFid, _intDivFid, _modFid;
+    private static bool _fidsInit;
+    private static void InitFids()
+    {
+        int plusA  = AtomTable.Intern("+",   permanent: true).Id;
+        int minusA = AtomTable.Intern("-",   permanent: true).Id;
+        int starA  = AtomTable.Intern("*",   permanent: true).Id;
+        int idivA  = AtomTable.Intern("//",  permanent: true).Id;
+        int modA   = AtomTable.Intern("mod", permanent: true).Id;
+        _addFid    = FunctorTable.Intern(plusA,  2);
+        _subFid    = FunctorTable.Intern(minusA, 2);
+        _mulFid    = FunctorTable.Intern(starA,  2);
+        _intDivFid = FunctorTable.Intern(idivA,  2);
+        _modFid    = FunctorTable.Intern(modA,   2);
+        _fidsInit  = true;
+    }
+
+    private static bool TryFastIntBinary(Engine engine, Cell strCell, out long result)
+    {
+        result = 0;
+        if (!_fidsInit) InitFids();
+        int functorIdx = strCell.AsHeapIndex;
+        int fid = engine.GetHeap(functorIdx).AsFunctorId;
+        if (fid != _addFid && fid != _subFid && fid != _mulFid
+            && fid != _intDivFid && fid != _modFid)
+            return false;
+        Cell a = engine.GetHeap(functorIdx + 1);
+        if (a.Tag == Tag.Ref) a = engine.GetHeap(engine.Deref(a.AsHeapIndex));
+        if (a.Tag != Tag.Int) return false;
+        Cell b = engine.GetHeap(functorIdx + 2);
+        if (b.Tag == Tag.Ref) b = engine.GetHeap(engine.Deref(b.AsHeapIndex));
+        if (b.Tag != Tag.Int) return false;
+
+        long av = a.AsInt, bv = b.AsInt;
+        try
+        {
+            checked
+            {
+                if (fid == _addFid)    { result = av + bv; return true; }
+                if (fid == _subFid)    { result = av - bv; return true; }
+                if (fid == _mulFid)    { result = av * bv; return true; }
+                if (fid == _intDivFid)
+                {
+                    if (bv == 0) return false;   // let slow path raise
+                    result = av / bv;
+                    return true;
+                }
+                if (fid == _modFid)
+                {
+                    if (bv == 0) return false;
+                    long r = av % bv;
+                    if ((r != 0) && ((r < 0) != (bv < 0))) r += bv;  // ISO mod
+                    result = r;
+                    return true;
+                }
+            }
+        }
+        catch (OverflowException) { return false; }  // fall through to BigInt
+        return false;
+    }
+
+    // Fast int-int comparison: skip Number boxing when both operands
+    // are concrete ints (possibly behind one level of indirection).
+    // Returns true on success with `cmp` ∈ {-1, 0, 1}.
+    private static bool TryFastIntCompare(Engine engine, out int cmp)
+    {
+        cmp = 0;
+        Cell a = engine.GetRegister(0);
+        if (a.Tag == Tag.Ref) a = engine.GetHeap(engine.Deref(a.AsHeapIndex));
+        if (a.Tag == Tag.Str && TryFastIntBinary(engine, a, out long av)) { }
+        else if (a.Tag == Tag.Int) av = a.AsInt;
+        else return false;
+        Cell b = engine.GetRegister(1);
+        if (b.Tag == Tag.Ref) b = engine.GetHeap(engine.Deref(b.AsHeapIndex));
+        if (b.Tag == Tag.Str && TryFastIntBinary(engine, b, out long bv)) { }
+        else if (b.Tag == Tag.Int) bv = b.AsInt;
+        else return false;
+        cmp = av.CompareTo(bv);
+        return true;
+    }
 
     /// <summary><c>between(Low, High, X)</c> — integer range. <c>Low</c>
     /// and <c>High</c> must be ground integers. With <c>X</c> ground the

@@ -1,6 +1,6 @@
 # Van Roy benchmark baseline
 
-_Generated 2026-06-02 12:13_  
+_Generated 2026-06-02 12:33_  
 _Runs per cell_: **3** (median reported)  
 _Machine_: GUSBRO-NB, .NET 10.0.8, 8 cores, Microsoft Windows NT 10.0.19044.0
 
@@ -19,31 +19,31 @@ equal across the three engines (whitespace-normalised) before timing.
 
 | Benchmark | Iters | Shumway | GProlog (native) | SWI |
 |---|---:|---:|---:|---:|
-| nreverse | 10000 | 211.32 | &lt;noise&gt; | 20.92 |
-| qsort | 5000 | 252.02 | 21.45 | 240.13 |
-| queens | 2000 | 2735.57 | 97.50 | 1245.94 |
-| tak | 500 | 74198.08 | 3463.62 | 18010.04 |
-| serialize | 1000 | 127.99 | 10.08 | 31.30 |
-| flatten | 10000 | 124.24 | 9.89 | 23.10 |
-| sendmore | 100 | 1190518.00 | 92934.73 | 396480.43 |
-| zebra | 200 | 7829.17 | 1452.53 | 4511.38 |
-| boyer | 2000 | 19.69 | &lt;noise&gt; | 6.56 |
-| crypt | 500 | 14616.22 | 655.89 | 4960.18 |
+| nreverse | 10000 | 223.51 | 11.53 | 63.36 |
+| qsort | 5000 | 281.74 | 14.34 | 67.00 |
+| queens | 2000 | 1348.22 | 125.72 | 1042.40 |
+| tak | 500 | 58060.85 | 2749.36 | 15010.71 |
+| serialize | 1000 | 112.67 | &lt;noise&gt; | 86.09 |
+| flatten | 10000 | 79.19 | 6.80 | 21.49 |
+| sendmore | 100 | 1179558.82 | 84781.95 | 423320.99 |
+| zebra | 200 | 6977.01 | 2464.87 | 3886.84 |
+| boyer | 2000 | 23.50 | &lt;noise&gt; | 42.92 |
+| crypt | 500 | 12466.95 | 134.92 | 7254.03 |
 
 ## Ratios vs Shumway (>1.0 means Shumway is slower)
 
 | Benchmark | Shumway / GProlog | Shumway / SWI |
 |---|---:|---:|
-| nreverse | &lt;noise&gt; | 10.10× |
-| qsort | 11.75× | 1.05× |
-| queens | 28.06× | 2.20× |
-| tak | 21.42× | 4.12× |
-| serialize | 12.70× | 4.09× |
-| flatten | 12.56× | 5.38× |
-| sendmore | 12.81× | 3.00× |
-| zebra | 5.39× | 1.74× |
-| boyer | &lt;noise&gt; | 3.00× |
-| crypt | 22.28× | 2.95× |
+| nreverse | 19.38× | 3.53× |
+| qsort | 19.65× | 4.21× |
+| queens | 10.72× | 1.29× |
+| tak | 21.12× | 3.87× |
+| serialize | &lt;noise&gt; | 1.31× |
+| flatten | 11.65× | 3.69× |
+| sendmore | 13.91× | 2.79× |
+| zebra | 2.83× | 1.80× |
+| boyer | &lt;noise&gt; | 0.55× |
+| crypt | 92.40× | 1.72× |
 
 ## Methodology
 
