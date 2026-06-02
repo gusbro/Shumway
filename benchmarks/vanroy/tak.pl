@@ -15,3 +15,6 @@ bench :- tak(18, 12, 6, _).
 
 bench(0) :- !.
 bench(N) :- bench, N1 is N - 1, bench(N1).
+
+% Cross-engine correctness check.
+report :- tak(18, 12, 6, R), write(R), nl.

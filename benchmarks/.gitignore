@@ -1,0 +1,6 @@
+# Run-output artifacts — not source-controlled. The benchmark
+# harness writes a fresh CSV per invocation under results/, and
+# compiles each .pl to a per-engine native exe under
+# results/bin-*/. Both are reproducible from sources, so they
+# stay out of the repo.
+results/

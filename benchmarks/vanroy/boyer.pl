@@ -45,3 +45,6 @@ axiom(implies(X, X),     true).
 
 bench(0) :- !.
 bench(N) :- bench, N1 is N - 1, bench(N1).
+
+% Cross-engine correctness check.
+report :- test_formula(F), rewrite(F, R), write(R), nl.

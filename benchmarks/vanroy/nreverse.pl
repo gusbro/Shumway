@@ -17,3 +17,6 @@ bench :- data(L), nrev(L, _).
 
 bench(0) :- !.
 bench(N) :- bench, N1 is N - 1, bench(N1).
+
+% Cross-engine correctness check: prints the reversed list.
+report :- data(L), nrev(L, R), write(R), nl.

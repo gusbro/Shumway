@@ -28,3 +28,6 @@ bench :- crypt(_), !.
 
 bench(0) :- !.
 bench(N) :- bench, N1 is N - 1, bench(N1).
+
+% Cross-engine correctness check.
+report :- crypt(L), write(L), nl.

@@ -42,3 +42,6 @@ bench :- zebra(_, _, _), !.
 
 bench(0) :- !.
 bench(N) :- bench, N1 is N - 1, bench(N1).
+
+% Cross-engine correctness check.
+report :- zebra(_, Z, W), write(zebra-Z), nl, write(water-W), nl.

@@ -29,3 +29,6 @@ bench :- queens(8, _), !.
 
 bench(0) :- !.
 bench(N) :- bench, N1 is N - 1, bench(N1).
+
+% Cross-engine correctness check.
+report :- queens(8, Qs), write(Qs), nl.
