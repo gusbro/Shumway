@@ -11,40 +11,6 @@ namespace Shumway.Tests.Embedding;
 /// </summary>
 public class IfThenStringSearchTests
 {
-    // ----- ifthen / ifthenelse -----
-
-    [Fact]
-    public void Ifthen_When_If_Succeeds_RunsThen()
-    {
-        var e = new PrologEngine();
-        var sol = e.Query("ifthen(true, X = a).");
-        Assert.True(sol.Success);
-        Assert.Equal("a", ((AtomTerm)sol["X"]!).Name);
-    }
-
-    [Fact]
-    public void Ifthen_When_If_Fails_StillSucceeds_NoBinding()
-    {
-        var e = new PrologEngine();
-        Assert.True(e.Query("ifthen(fail, X = a).").Success);
-    }
-
-    [Fact]
-    public void Ifthenelse_When_If_Succeeds_RunsThen_NotElse()
-    {
-        var e = new PrologEngine();
-        var sol = e.Query("ifthenelse(true, X = then, X = else).");
-        Assert.Equal("then", ((AtomTerm)sol["X"]!).Name);
-    }
-
-    [Fact]
-    public void Ifthenelse_When_If_Fails_RunsElse()
-    {
-        var e = new PrologEngine();
-        var sol = e.Query("ifthenelse(fail, X = then, X = else).");
-        Assert.Equal("else", ((AtomTerm)sol["X"]!).Name);
-    }
-
     // ----- string_term / string_termq -----
 
     [Fact]

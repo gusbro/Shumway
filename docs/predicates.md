@@ -99,8 +99,6 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `garbage_collect` | Mark-compacts the heap, reclaiming cells unreachable from the live machine state (ADR-016). Always succeeds. |
 | `halt` | Halts the engine with exit code 0. |
 | `halt(+Status)` | Halts the engine with the given exit code. |
-| `ifthen(:If, :Then)` | Arity-Prolog explicit form of ( If -> Then ; true ). |
-| `ifthenelse(:If, :Then, :Else)` | Arity-Prolog explicit form of ( If -> Then ; Else ). |
 | `ignore(:Goal)` | Runs Goal, succeeding whether or not Goal does. |
 | `once(:Goal)` | Succeeds at most once — commits to the first solution of Goal. |
 | `repeat` | Succeeds, and succeeds again on every backtrack — an unbounded choice point. |

@@ -658,6 +658,23 @@ questions from Phase 11's deferred list:
   `retract` / `assertz` — and avoids redundant `TryDescribe*`
   attempts that were already rejecting the shape.
 
+**Phase 24 — Arity-Prolog compatibility primitives** — ✅ **Complete** (tagged `phase-24`; closure summary in [`docs/phase-24-closure.md`](docs/phase-24-closure.md)).
+
+Ten chunks (263–274 with 269/270 dropped) bringing Arity-Prolog source-compat: snips `[! G !]`, save_state/restore_state, `:- visible` directive alias, recorded database, Edinburgh-style I/O, file_list, file-system ops, pseudo-random, expand_term/2, string_term/string_termq/string_search, and a few smaller pieces. Selection driven by Arity's actual predicate listing (`C:\Arity\doc\ARITY.HLP.txt`), not generic Prolog folklore.
+
+- **Chunk 263 — snips `[! G !]`**. Parser-level desugar to `once((G))`. Internal backtracking is permitted; successful exit prunes the snip's choice points. Cut inside a snip scoped to the snip boundary via `once/1`'s call barrier.
+- **Chunk 264 — `save_state/1,2`, `restore_state/1`**. Snapshots engine state (consult history + dynamic clauses) to a V6 .shum bundle (new snapshot trailer). Full mode resets + replays; dynamic-only mode merges. New `BundleSnapshot` type + public `PrologEngine.SaveState/RestoreState[FromBytes]`.
+- **Chunk 265 — `:- visible foo/N`**. Same semantics as `:- dynamic`. Added to OperatorTable as `fx 1150`; `TryReadDynamicDirective` accepts both functor names; ShmoCompiler mirrors.
+- **Chunk 266 — recorded database**. `RecordedDatabase` class — keys are arbitrary terms, stable monotonic integer refs that are never reused. Full builtin family: `recorda/3`, `recordz/3`, `recorded/3` (backtrackable), `erase/1`, `eraseall/1`, `instance/2`, `key_count/2`, `keys/1`, `ref/1`, `replace/2`, `nref/2`, `pref/2`, `record_after/3`, `record_before/3`.
+- **Chunk 267 — Edinburgh-style I/O**. `see/1`, `seen/0`, `seeing/1`, `tell/1`, `told/0`, `telling/1`, `get/1,2`, `get0/1,2`, `put/1,2`, `skip/1,2`, `tab/2`. Layer over the chunk-140 stream registry.
+- **Chunk 268 — `string_term/2`, `string_termq/2`, `string_search/3`**. write- and writeq-style bidirectional atom↔term conversion (Arity uses "string" to mean atom); backtrackable substring search with overlapping matches. (Broader chunk 268 scoping discarded `ifthen/2`/`ifthenelse/3` from the prelude because Blint and other Arity programs redefine `ifthen/2` as a user predicate — providing one in the prelude collides via `ValidatePublicUniqueness`.)
+- **Chunk 271 — file-system ops**. `mkdir/1`, `rmdir/1`, `delete/1`, `rename/2`, `directory/6` (backtrackable enumeration with Arity-style mode bitfield), `exists_file/1`, `exists_directory/1`, `chdir/1` (1-arg prelude alias of `working_directory/2`).
+- **Chunk 272 — pseudo-random**. `randomize(+Seed)`, `random(-X)` (float [0,1)), `random_between(+L,+H,-X)` (int [L,H] inclusive, SWI semantics). Per-engine `System.Random`. The `is/2` arithmetic-function form `X is random(N)` not included (cross-project hook deferred).
+- **Chunk 273 — `expand_term/2`**. Exposes the same `DcgTransform` consult applies internally. DCG rules expand; other terms pass through.
+- **Chunk 274 — `file_list/1,2`**. Plain-text database dump, re-consultable. `file_list(+File, +Spec)` accepts a `Name/Arity` or a list of them. Emits `:- dynamic` directives for dynamic predicates so re-consult preserves the declaration.
+
+~70 new tests, full suite at phase close ~3066 tests with 0 failures. Bundle format bumped V5→V6 (backward-compatible).
+
 **Phase 23 — REPL UX polish, listing, residual constraint display, warnings cleanup** — ✅ **Complete** (tagged `phase-23`; closure summary in [`docs/phase-23-closure.md`](docs/phase-23-closure.md)).
 
 Fourteen chunks (249–262). Originally scoped as engine robustness focused on a `retract/1` Blint bug recorded in memory; verification showed the bug had been fixed incidentally during chunks 235-248 (memory updated). With the obvious correctness target gone, pivoted to REPL UX — and expanded as each landed chunk surfaced something else worth fixing while the surface was still fresh.

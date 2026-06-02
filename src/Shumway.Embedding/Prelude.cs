@@ -62,8 +62,6 @@ internal static class Prelude
         :- public char_type/2.
         :- public once/1.
         :- public ignore/1.
-        :- public ifthen/2.
-        :- public ifthenelse/3.
         :- public chdir/1.
         :- public tab/1.
         :- public apply/2.
@@ -434,12 +432,6 @@ internal static class Prelude
 
         %! ignore(:Goal) | Control | Runs Goal, succeeding whether or not Goal does.
         ignore(Goal) :- ( call(Goal) -> true ; true ).
-
-        %! ifthen(:If, :Then) | Control | Arity-Prolog explicit form of ( If -> Then ; true ).
-        ifthen(If, Then) :- ( call(If) -> call(Then) ; true ).
-
-        %! ifthenelse(:If, :Then, :Else) | Control | Arity-Prolog explicit form of ( If -> Then ; Else ).
-        ifthenelse(If, Then, Else) :- ( call(If) -> call(Then) ; call(Else) ).
 
         %! chdir(?Path) | Input / output | Arity-Prolog 1-arg form of working_directory/2. With Path unbound, returns the current directory; with Path bound, changes to it.
         chdir(Path) :- var(Path), !, working_directory(Path, Path).
