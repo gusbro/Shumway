@@ -67,6 +67,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `atom_to_term(+Atom, -Term, -Bindings)` | Parses an atom into a term plus its variable bindings. |
 | `copy_term(+Term, -Copy)` | Copies a term with fresh variables. |
 | `copy_term(+Term, -Copy, -Goals)` | Copies a term with fresh variables and collects the residual attribute goals. |
+| `expand_term(+Term, -Expanded)` | If Term has the form Head --> Body, expands it via the DCG transformation Shumway applies internally on consult. Non-DCG terms pass through unchanged. |
 | `functor(?Term, ?Name, ?Arity)` | Relates a term to its functor name and arity. |
 | `is_digit(+Char)` | True when Char is a one-character atom representing an ASCII digit. |
 | `name(?AtomOrNumber, ?Codes)` | Bidirectional conversion between an atom/number and its character-code list. |
@@ -134,6 +135,8 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `current_predicate(?PredicateIndicator)` | Enumerates the defined predicates as Name/Arity indicators. |
 | `erase(+Ref)` | Removes the recorded entry with reference Ref. Fails on an unknown / already-erased reference. |
 | `eraseall(+Key)` | Removes every recorded entry stored under Key. |
+| `file_list(+File)` | Saves the entire user database (all listable predicates) to File as plain Prolog source. |
+| `file_list(+File, +Spec)` | Saves selected predicates to File. Spec is either Name/Arity or a list [Name1/Arity1, Name2/Arity2, ...]. |
 | `garbage_collect_clauses` | Re-threads every dynamic predicate's chain to skip retracted clauses (ADR-015). |
 | `garbage_collect_clauses(+Name/Arity)` | Re-threads the named predicate's chain to skip retracted clauses. |
 | `instance(+Ref, -Term)` | Unifies Term with the term recorded under Ref. |
