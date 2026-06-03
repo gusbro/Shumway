@@ -147,6 +147,12 @@ public sealed class IlPredicateCompiler
     private static readonly MethodInfo ArithIsPermMethod =
         typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
             nameof(Shumway.Builtins.ArithEvalStack.IsPerm), new[] { typeof(Engine), typeof(int) })!;
+    private static readonly MethodInfo ArithSetRegMethod =
+        typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
+            nameof(Shumway.Builtins.ArithEvalStack.SetReg), new[] { typeof(Engine), typeof(int) })!;
+    private static readonly MethodInfo ArithSetPermMethod =
+        typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
+            nameof(Shumway.Builtins.ArithEvalStack.SetPerm), new[] { typeof(Engine), typeof(int) })!;
     private static readonly MethodInfo ArithCmpMethod =
         typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
             nameof(Shumway.Builtins.ArithEvalStack.Cmp), new[] { typeof(int) })!;
@@ -719,7 +725,7 @@ public sealed class IlPredicateCompiler
     private static bool IsSupportedAEval(byte[] code, int pc) => (Opcode)code[pc] switch
     {
         Opcode.AEvalPush => BytecodeIO.ReadInt32(code, pc + 1) is 0 or 3 or 4,
-        Opcode.AEvalIs => BytecodeIO.ReadInt32(code, pc + 1) is 3 or 4,
+        Opcode.AEvalIs => BytecodeIO.ReadInt32(code, pc + 1) is 3 or 4 or 5 or 6,
         Opcode.AEvalBin or Opcode.AEvalUn or Opcode.AEvalCmp => true,
         _ => false,
     };
@@ -2076,8 +2082,23 @@ public sealed class IlPredicateCompiler
                 int target = BytecodeIO.ReadInt32(code, pc + 5);
                 emit.LoadArgument(0);
                 emit.LoadConstant(target);
-                emit.Call(kind == 4 ? ArithIsPermMethod : ArithIsRegMethod);
-                emit.BranchIfFalse(failLabel);
+                switch (kind)
+                {
+                    case 5:   // store into first-occurrence X register (void, no branch)
+                        emit.Call(ArithSetRegMethod);
+                        break;
+                    case 6:   // store into first-occurrence Y slot (void, no branch)
+                        emit.Call(ArithSetPermMethod);
+                        break;
+                    case 4:   // unify with existing Y slot
+                        emit.Call(ArithIsPermMethod);
+                        emit.BranchIfFalse(failLabel);
+                        break;
+                    default:  // unify with existing X register
+                        emit.Call(ArithIsRegMethod);
+                        emit.BranchIfFalse(failLabel);
+                        break;
+                }
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }

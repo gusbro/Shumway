@@ -955,29 +955,62 @@ public sealed class ClauseCompiler
     // ---------- ADR-018 arithmetic instruction set compilation ----------
 
     /// <summary>Compiles <c>Target is Expr</c>: the postfix evaluation of
-    /// <paramref name="expr"/> followed by an <c>a_eval_is</c> that unifies the
-    /// popped result with <paramref name="target"/>. The target is materialised
-    /// into a scratch register (a first-occurrence variable becomes a fresh
-    /// unbound var there — its single result home; everything else is loaded by
-    /// value), which <c>a_eval_is</c> unifies. No expression term is built.</summary>
+    /// <paramref name="expr"/> followed by an <c>a_eval_is</c> that delivers the
+    /// popped result to <paramref name="target"/>. The target reaches its home
+    /// directly (no scratch copy): an existing variable is unified in place
+    /// (kind 3 X-reg / 4 Y-slot); a *first-occurrence* variable is bound by a
+    /// plain register/Y store (kind 5 / 6) — no unbound heap cell, no
+    /// unification — since the result simply becomes its value. Anything else
+    /// (a literal target like <c>5 is 2+3</c>) falls back to a scratch + unify.
+    /// No expression term is built.</summary>
     private void CompileArithIs(CompileState s, Term target, Term expr, bool isLast, bool hasFrame)
     {
         CompileArithExpr(s, expr);
-        int scratch = s.Xs.AllocateAnonymousSlot();
-        CompileBodyArg(s, target, scratch);
-        DrainPendingCompounds(s);
-        s.Emitter.EmitAEvalIs(3, scratch);   // kind 3 = X-register, unify
+        switch (target)
+        {
+            // Existing variable home — unify the result in place.
+            case VarTerm v when v.Name != "_" && s.Ys.TryGetValue(v.Name, out int yIdx)
+                    && s.YsInitialized.Contains(v.Name):
+                s.Emitter.EmitAEvalIs(4, yIdx);
+                break;
+            case VarTerm v when v.Name != "_" && !s.Ys.ContainsKey(v.Name)
+                    && !s.Xs.IsNewName(v.Name):
+                s.Emitter.EmitAEvalIs(3, s.Xs.GetSlot(v.Name));
+                break;
+            // First-occurrence permanent (Y) variable — store the result and
+            // mark it initialised; it never held an unbound var to unify.
+            case VarTerm v when v.Name != "_" && s.Ys.ContainsKey(v.Name):
+                int newY = s.Ys[v.Name];
+                s.YsInitialized.Add(v.Name);
+                s.Emitter.EmitAEvalIs(6, newY);   // kind 6 = set Y-slot
+                break;
+            // First-occurrence temporary (X) variable — store the result into
+            // its fresh register home.
+            case VarTerm v when v.Name != "_" && s.Xs.IsNewName(v.Name):
+                int newX = s.Xs.AllocateFresh(v.Name);
+                s.Emitter.EmitAEvalIs(5, newX);   // kind 5 = set X-register
+                break;
+            // Literal / anonymous / compound target — materialise it and unify.
+            default:
+                int scratch = s.Xs.AllocateAnonymousSlot();
+                CompileBodyArg(s, target, scratch);
+                DrainPendingCompounds(s);
+                s.Emitter.EmitAEvalIs(3, scratch);
+                break;
+        }
         EmitArithEpilogue(s, isLast, hasFrame);
     }
 
     /// <summary>Emits the postfix instructions that leave the value of
     /// <paramref name="expr"/> on the eval stack. Numeric literals push
-    /// directly; a recognised arithmetic compound recurses then applies its op;
-    /// anything else (a variable, an atom, a non-arithmetic compound) is loaded
-    /// into a scratch register and pushed via <c>a_eval_push x-reg</c>, which
-    /// derefs + arithmetically evaluates it at run time — handling a bound
-    /// sub-expression, an unbound var (instantiation_error) and a non-evaluable
-    /// term (type_error) exactly as is/2 does.</summary>
+    /// directly; an existing variable pushes straight from its register / Y-slot
+    /// home; a recognised arithmetic compound recurses then applies its op;
+    /// anything else (a first-occurrence variable, an atom, a non-arithmetic
+    /// compound) is loaded into a scratch register and pushed via
+    /// <c>a_eval_push x-reg</c>, which derefs + arithmetically evaluates it at
+    /// run time — handling a bound sub-expression, an unbound var
+    /// (instantiation_error) and a non-evaluable term (type_error) exactly as
+    /// is/2 does.</summary>
     private void CompileArithExpr(CompileState s, Term expr)
     {
         switch (expr)
@@ -994,6 +1027,18 @@ public sealed class ClauseCompiler
                 return;
             case FloatTerm f:
                 s.Emitter.EmitAEvalPush(2, _floatLiterals.Intern(f.Value));
+                return;
+            // An already-bound variable evaluates from its home directly — no
+            // copy. (An initialised Y-slot or an existing X register; a
+            // first-occurrence variable is unbound and falls through to the
+            // scratch path, which reproduces is/2's instantiation_error.)
+            case VarTerm v when v.Name != "_" && s.Ys.TryGetValue(v.Name, out int yIdx)
+                    && s.YsInitialized.Contains(v.Name):
+                s.Emitter.EmitAEvalPush(4, yIdx);
+                return;
+            case VarTerm v when v.Name != "_" && !s.Ys.ContainsKey(v.Name)
+                    && !s.Xs.IsNewName(v.Name):
+                s.Emitter.EmitAEvalPush(3, s.Xs.GetSlot(v.Name));
                 return;
             case CompoundTerm c when c.Args.Length == 2
                     && Shumway.Builtins.ArithmeticEvaluator.TryBinOp(c.Functor, out var bop):

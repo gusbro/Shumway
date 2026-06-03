@@ -1626,9 +1626,17 @@ public sealed class BytecodeInterpreter
                 {
                     int kind = BytecodeIO.ReadInt32(code, pc + 1);
                     int target = BytecodeIO.ReadInt32(code, pc + 5);
-                    bool ok = kind == 4
-                        ? Shumway.Builtins.ArithEvalStack.IsPerm(_engine, target)
-                        : Shumway.Builtins.ArithEvalStack.IsReg(_engine, target);
+                    // kinds 3/4 unify the result with an existing var (X-reg /
+                    // Y-slot); 5/6 store it into a first-occurrence var's home
+                    // (no unify — always succeeds).
+                    bool ok;
+                    switch (kind)
+                    {
+                        case 5: Shumway.Builtins.ArithEvalStack.SetReg(_engine, target); ok = true; break;
+                        case 6: Shumway.Builtins.ArithEvalStack.SetPerm(_engine, target); ok = true; break;
+                        case 4: ok = Shumway.Builtins.ArithEvalStack.IsPerm(_engine, target); break;
+                        default: ok = Shumway.Builtins.ArithEvalStack.IsReg(_engine, target); break;
+                    }
                     if (!ok) { if (!TryBacktrack()) return InterpreterResult.Failed; break; }
                     _engine.AdvancePc(9);
                     break;
