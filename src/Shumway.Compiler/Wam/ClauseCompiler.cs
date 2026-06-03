@@ -328,6 +328,16 @@ public sealed class ClauseCompiler
         int N = gArgs.Length;
         if (N == 0) return null;
 
+        // ADR-018: an arithmetic first goal (`is`/2 or a comparison) is compiled
+        // to a_int_* / a_eval_* — it reads operands from their register / Y-slot
+        // homes and never puts arguments into the low arg registers, so the
+        // head-var preservation / arg shuffle below is pure overhead (it would
+        // emit a needless put_value_x save of every operand). Skip scheduling;
+        // the arith path ignores the returned order anyway.
+        if ((c.Functor == "is" && N == 2)
+            || (N == 2 && Shumway.Builtins.ArithmeticEvaluator.TryRelOp(c.Functor, out _)))
+            return null;
+
         // Snapshot home → head-var name for X-mapped vars with home < N.
         // Updated as saves rebind vars out of the arg range.
         var homeToVar = new Dictionary<int, string>();
