@@ -96,4 +96,15 @@ public sealed class PrologFlags
     /// default (<c>true</c>) is chosen to maximise compatibility with
     /// programs written for other Prolog implementations.</para></summary>
     public bool ImplicitDynamic { get; set; } = true;
+
+    /// <summary>The <c>compile_mode</c> prolog flag, as a boolean: whether
+    /// consult/assert emit the <c>meta dbg_info</c> source-position markers used
+    /// to resolve clause-level positions for error stack traces. The flag's atom
+    /// values map here as <c>debug</c> → <c>true</c>, <c>release</c> →
+    /// <c>false</c>; the default is <c>release</c> (<c>false</c>), so the Tier-0
+    /// interpreter does not dispatch a per-clause no-op on every clause entry.
+    /// Set <c>compile_mode</c> to <c>debug</c> for clause-precise error
+    /// positions. Mirrors <c>shumway-compile</c>'s
+    /// <c>--debug</c>/<c>--release</c>.</summary>
+    public bool EmitDebugInfo { get; set; } = false;
 }

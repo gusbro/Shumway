@@ -30,6 +30,7 @@ public class Chunk55Tests
         // SECOND clause to be the one that errors. The frame's position
         // should point at the second clause's line, not the first's.
         var engine = new PrologEngine();
+        engine.Flags.EmitDebugInfo = true;   // clause-precise positions need compile_mode=debug
         engine.ConsultString(
             ":- public divider/2.\n" +
             "divider(zero, _) :- true.\n" +     // line 2: matches divider(zero, _).
@@ -48,6 +49,7 @@ public class Chunk55Tests
         // Symmetric check: when the first clause is what errors, the
         // frame still points at clause 1, not clause 2.
         var engine = new PrologEngine();
+        engine.Flags.EmitDebugInfo = true;   // clause-precise positions need compile_mode=debug
         engine.ConsultString(
             ":- public divider/2.\n" +
             "divider(zero, X) :- _ is X / 0.\n" + // line 2

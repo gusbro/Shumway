@@ -972,6 +972,14 @@ public static class MetaBuiltins
             host.Flags.ImplicitDynamic = valueName == "true";
             return true;
         }
+        if (flagName == "compile_mode")
+        {
+            if (valueName != "debug" && valueName != "release")
+                throw new ShumwayPrologException(
+                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+            host.Flags.EmitDebugInfo = valueName == "debug";
+            return true;
+        }
 
         throw new ShumwayPrologException(
             IsoError.DomainError("prolog_flag", new AtomTerm(flagName)));
@@ -1040,6 +1048,9 @@ public static class MetaBuiltins
 
             case "implicit_dynamic":
                 return UnifyAtom(engine, 1, host.Flags.ImplicitDynamic ? "true" : "false");
+
+            case "compile_mode":
+                return UnifyAtom(engine, 1, host.Flags.EmitDebugInfo ? "debug" : "release");
 
             case "max_arity":
                 // ISO requires this be either an integer or

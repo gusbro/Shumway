@@ -507,10 +507,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             rewritten[0],
             _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts);
 
-        // Body chunk: meta(dbg, 0) + body bytes. Clause-source-position
-        // index is irrelevant for runtime-asserted clauses.
+        // Body chunk: [meta(dbg, 0)] + body bytes. Clause-source-position
+        // index is irrelevant for runtime-asserted clauses; the dbg marker is
+        // gated on the compile_mode flag (release omits it — the interpreter
+        // never dispatches a no-op on entry).
         var bodyEmitter = new Shumway.Compiler.Wam.BytecodeEmitter();
-        bodyEmitter.EmitMetaDbgInfo(0);
+        if (_flags.EmitDebugInfo) bodyEmitter.EmitMetaDbgInfo(0);
         int bodyContentLocalStart = bodyEmitter.Position;
         bodyEmitter.AppendBytes(compiledClause.Bytecode);
         byte[] bodyChunk = bodyEmitter.ToBytes();
@@ -914,7 +916,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts);
 
         var bodyEmitter = new Shumway.Compiler.Wam.BytecodeEmitter();
-        bodyEmitter.EmitMetaDbgInfo(0);
+        if (_flags.EmitDebugInfo) bodyEmitter.EmitMetaDbgInfo(0);
         int bodyContentLocalStart = bodyEmitter.Position;
         bodyEmitter.AppendBytes(compiledClause.Bytecode);
         byte[] bodyChunk = bodyEmitter.ToBytes();
@@ -2196,7 +2198,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             DefaultModuleName, new HashSet<int>(), _dynamicFunctors);
         var rewritten = transformed.Select(c => ModuleRewrite.Rewrite(c, dynCtx)).ToList();
 
-        var predicate = new Shumway.Compiler.Wam.PredicateCompiler().Compile(
+        var predicate = new Shumway.Compiler.Wam.PredicateCompiler
+            { EmitDebugInfo = _flags.EmitDebugInfo }.Compile(
             rewritten,
             _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts,
             enableIndexing: false,
@@ -2298,6 +2301,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             case "occurs_check":
                 if (valueName == "false" || valueName == "true" || valueName == "error")
                     _flags.OccursCheck = valueName;
+                break;
+            case "compile_mode":
+                // Takes effect for predicates compiled later in this consult.
+                if (valueName == "debug") _flags.EmitDebugInfo = true;
+                else if (valueName == "release") _flags.EmitDebugInfo = false;
                 break;
             // double_quotes is handled by ClauseReader's directive
             // pre-pass (it has to take effect during lexing of the
@@ -5352,7 +5360,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // last-clause chain instruction with the absolute target.
         int failStubAddr =
             OpcodeTable.Get(Opcode.Call).Size + OpcodeTable.Get(Opcode.Halt).Size;
-        var module = new ModuleCompiler().Compile(
+        var module = new ModuleCompiler { EmitDebugInfo = _flags.EmitDebugInfo }.Compile(
             allRewritten, skipCompileCache, unindexedFunctors, _literalPools,
             dynamicFunctors: _dynamicFunctors, failStubAddr: failStubAddr);
 
