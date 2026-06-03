@@ -187,7 +187,13 @@ public static class ArithmeticBuiltins
             long next = current + 1;
             Func<Engine, int, bool> resume = (e, _) =>
                 BetweenStep(e, next, hi, returnPc, isResume: true);
-            engine.PushBuiltinChoicePoint(resume, arity: 0);
+            // arity: 3 — the CP must save/restore between's three argument
+            // registers (X0..X2). The resume writes the result into X2, but a
+            // following body goal whose builtin call takes >= 3 args clobbers
+            // X2 (and beyond); without restoring it, the resume's
+            // UnifyRegisterWithCell(2, ...) would operate on a corrupt
+            // register and the enumeration breaks after one or two values.
+            engine.PushBuiltinChoicePoint(resume, arity: 3);
         }
         if (!engine.UnifyRegisterWithCell(2, Cell.Int(current))) return false;
         if (isResume) engine.ResumeAtReturnPc(returnPc);

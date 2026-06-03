@@ -98,4 +98,21 @@ public class Chunk118Tests
             "fail ; true.").Success);
         Assert.True(e.Query("ctr(50).").Success);
     }
+
+    [Fact]
+    public void Between_FollowedByThreeArgBuiltin_EnumeratesFully()
+    {
+        // Regression: between/3's choice point must save/restore its three
+        // argument registers (arity 3). A following body goal whose builtin
+        // call takes >= 3 args (here plus/3) clobbers between's result
+        // register X2; if the CP doesn't restore it, the enumeration breaks
+        // after one or two values. Was latent until arithmetic work surfaced
+        // it (the inlined arith builtin is 4-arg). plus/N is unrelated — any
+        // 3-arg builtin between the generator and the fail reproduces it.
+        var e = new PrologEngine();
+        // Five values, 11..15 — not a truncated prefix.
+        Assert.True(e.Query(
+            "findall(X, (between(1, 5, N), plus(N, 10, X)), L), L == [11,12,13,14,15].")
+            .Success);
+    }
 }
