@@ -195,6 +195,11 @@ public static class OpcodeTable
         Set(Opcode.AEvalUn, 5, "a_eval_un", OperandKind.Count);
         Set(Opcode.AEvalIs, 9, "a_eval_is", OperandKind.Count, OperandKind.Reg);
         Set(Opcode.AEvalCmp, 5, "a_eval_cmp", OperandKind.Count);
+        Set(Opcode.AIntBin, 29, "a_int_bin", OperandKind.Count, OperandKind.Count,
+            OperandKind.IntValue, OperandKind.Count, OperandKind.IntValue,
+            OperandKind.Count, OperandKind.Reg);
+        Set(Opcode.AIntCmp, 21, "a_int_cmp", OperandKind.Count, OperandKind.Count,
+            OperandKind.IntValue, OperandKind.Count, OperandKind.IntValue);
 
         // Meta and extension
         // The Meta opcode size is 6 by default for the DbgInfo sub-opcode (1 opcode + 1

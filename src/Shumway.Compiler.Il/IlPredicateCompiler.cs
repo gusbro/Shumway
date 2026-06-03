@@ -153,6 +153,12 @@ public sealed class IlPredicateCompiler
     private static readonly MethodInfo ArithSetPermMethod =
         typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
             nameof(Shumway.Builtins.ArithEvalStack.SetPerm), new[] { typeof(Engine), typeof(int) })!;
+    private static readonly MethodInfo ArithFusedBinMethod =
+        typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
+            nameof(Shumway.Builtins.ArithEvalStack.FusedBin))!;
+    private static readonly MethodInfo ArithFusedCmpMethod =
+        typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
+            nameof(Shumway.Builtins.ArithEvalStack.FusedCmp))!;
     private static readonly MethodInfo ArithCmpMethod =
         typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
             nameof(Shumway.Builtins.ArithEvalStack.Cmp), new[] { typeof(int) })!;
@@ -710,6 +716,9 @@ public sealed class IlPredicateCompiler
         // method, so reaching here means the operand kind is in the subset).
         Opcode.AEvalPush or Opcode.AEvalIs => true,
         Opcode.AEvalBin or Opcode.AEvalUn or Opcode.AEvalCmp => true,
+        // Fused flat ops carry only register / Y / int-literal operands — no
+        // bigint/float-literal gating needed, so always IL-emittable.
+        Opcode.AIntBin or Opcode.AIntCmp => true,
         // Meta dbg_info (chunk 55) — pure compile-time metadata; the
         // emit path skips it without producing any IL.
         Opcode.Meta => true,
@@ -2106,6 +2115,26 @@ public sealed class IlPredicateCompiler
             {
                 emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 1));
                 emit.Call(ArithCmpMethod);
+                emit.BranchIfFalse(failLabel);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.AIntBin)
+            {
+                emit.LoadArgument(0);
+                for (int k = 1; k <= 25; k += 4)   // op, aKind, aVal, bKind, bVal, tKind, tVal
+                    emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + k));
+                emit.Call(ArithFusedBinMethod);
+                emit.BranchIfFalse(failLabel);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.AIntCmp)
+            {
+                emit.LoadArgument(0);
+                for (int k = 1; k <= 17; k += 4)   // rel, aKind, aVal, bKind, bVal
+                    emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + k));
+                emit.Call(ArithFusedCmpMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
                 continue;

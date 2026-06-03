@@ -1651,6 +1651,30 @@ public sealed class BytecodeInterpreter
                     _engine.AdvancePc(5);
                     break;
 
+                case Opcode.AIntBin:
+                {
+                    bool ok = Shumway.Builtins.ArithEvalStack.FusedBin(_engine,
+                        BytecodeIO.ReadInt32(code, pc + 1),
+                        BytecodeIO.ReadInt32(code, pc + 5), BytecodeIO.ReadInt32(code, pc + 9),
+                        BytecodeIO.ReadInt32(code, pc + 13), BytecodeIO.ReadInt32(code, pc + 17),
+                        BytecodeIO.ReadInt32(code, pc + 21), BytecodeIO.ReadInt32(code, pc + 25));
+                    if (!ok) { if (!TryBacktrack()) return InterpreterResult.Failed; break; }
+                    _engine.AdvancePc(29);
+                    break;
+                }
+
+                case Opcode.AIntCmp:
+                    if (!Shumway.Builtins.ArithEvalStack.FusedCmp(_engine,
+                        BytecodeIO.ReadInt32(code, pc + 1),
+                        BytecodeIO.ReadInt32(code, pc + 5), BytecodeIO.ReadInt32(code, pc + 9),
+                        BytecodeIO.ReadInt32(code, pc + 13), BytecodeIO.ReadInt32(code, pc + 17)))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    _engine.AdvancePc(21);
+                    break;
+
                 case Opcode.Meta:
                 {
                     // Runtime no-op. Meta opcodes (currently only DbgInfo)

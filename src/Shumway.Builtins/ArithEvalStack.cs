@@ -201,6 +201,75 @@ public static class ArithEvalStack
         return ArithmeticEvaluator.ApplyRel((ArithmeticEvaluator.RelOp)rel, _n![ai], _n[bi]);
     }
 
+    // ---- fused flat ops (a_int_bin / a_int_cmp) ----
+    // These bypass the eval stack entirely: a single dispatch reads two leaf
+    // operands, applies the op (int fast lane, escalating to Number for
+    // float / bigint / overflow), and delivers the result — collapsing the
+    // push/push/op/is RPN sequence into one call for the common flat case.
+    // Operand kind: 0 int-literal, 3 X-reg, 4 Y-slot. Target kind: 3 unify-reg,
+    // 4 unify-Y, 5 set-reg, 6 set-Y.
+
+    /// <summary><c>T is A op B</c> over two simple leaf operands.</summary>
+    public static bool FusedBin(Engine engine, int op,
+        int aKind, int aVal, int bKind, int bVal, int tKind, int tVal)
+    {
+        Cell result;
+        try
+        {
+            bool aInt = ReadOperand(engine, aKind, aVal, out long ai, out Number an);
+            bool bInt = ReadOperand(engine, bKind, bVal, out long bi, out Number bn);
+            if (aInt && bInt && TryFastBin(op, ai, bi, out long r))
+                result = Cell.Int(r);
+            else
+                result = ArithmeticEvaluator.ApplyBin((ArithmeticEvaluator.BinOp)op,
+                    aInt ? new Number(ai) : an, bInt ? new Number(bi) : bn).ToCell(engine);
+        }
+        catch (PrologRuntimeException re) { re.StampBuiltin("is", 2); throw; }
+        return Deliver(engine, tKind, tVal, result);
+    }
+
+    /// <summary><c>A cmp B</c> over two simple leaf operands.</summary>
+    public static bool FusedCmp(Engine engine, int rel,
+        int aKind, int aVal, int bKind, int bVal)
+    {
+        try
+        {
+            bool aInt = ReadOperand(engine, aKind, aVal, out long ai, out Number an);
+            bool bInt = ReadOperand(engine, bKind, bVal, out long bi, out Number bn);
+            if (aInt && bInt) return FastCmp(rel, ai, bi);
+            return ArithmeticEvaluator.ApplyRel((ArithmeticEvaluator.RelOp)rel,
+                aInt ? new Number(ai) : an, bInt ? new Number(bi) : bn);
+        }
+        catch (PrologRuntimeException re) { re.StampBuiltin("is", 2); throw; }
+    }
+
+    // Reads a leaf operand. Returns true (int lane, iVal valid) for an integer
+    // value; false (boxed, nVal valid) for a float / bigint. An int literal and
+    // an int-valued register/Y take the fast lane; an unbound var raises
+    // instantiation_error from Evaluate, exactly as is/2 does.
+    private static bool ReadOperand(Engine engine, int kind, int val, out long iVal, out Number nVal)
+    {
+        if (kind == 0) { iVal = val; nVal = default; return true; }
+        Cell c = kind == 4 ? engine.GetY(val) : engine.GetRegister(val);
+        if (c.Tag == Tag.Ref) c = engine.GetHeap(engine.Deref(c.AsHeapIndex));
+        if (c.Tag == Tag.Int) { iVal = c.AsInt; nVal = default; return true; }
+        nVal = ArithmeticEvaluator.Evaluate(engine, c);
+        if (nVal.IsInt) { iVal = nVal.IntValue; return true; }
+        iVal = 0;
+        return false;
+    }
+
+    private static bool Deliver(Engine engine, int tKind, int tVal, Cell result)
+    {
+        switch (tKind)
+        {
+            case 5: engine.SetRegister(tVal, result); return true;
+            case 6: engine.SetY(tVal, result); return true;
+            case 4: return engine.UnifyPermanentWithCell(tVal, result);
+            default: return engine.UnifyRegisterWithCell(tVal, result);
+        }
+    }
+
     // Converts an int-lane slot to a boxed Number in place (no-op if already
     // boxed). The long is within 60 bits, so Number(long) yields an Int-kind
     // Number; subsequent Number ops promote to BigInt / float as needed.

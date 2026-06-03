@@ -833,9 +833,19 @@ public sealed class ClauseCompiler
         if (gArgs.Length == 2 &&
             Shumway.Builtins.ArithmeticEvaluator.TryRelOp(fName, out var relOp))
         {
-            CompileArithExpr(s, gArgs[0]);
-            CompileArithExpr(s, gArgs[1]);
-            s.Emitter.EmitAEvalCmp((int)relOp);
+            // Fuse the flat `A cmp B` over simple leaves into one a_int_cmp;
+            // otherwise fall back to the postfix a_eval_* sequence.
+            if (TryResolveLeaf(s, gArgs[0], out int caK, out int caV)
+                && TryResolveLeaf(s, gArgs[1], out int cbK, out int cbV))
+            {
+                s.Emitter.EmitAIntCmp((int)relOp, caK, caV, cbK, cbV);
+            }
+            else
+            {
+                CompileArithExpr(s, gArgs[0]);
+                CompileArithExpr(s, gArgs[1]);
+                s.Emitter.EmitAEvalCmp((int)relOp);
+            }
             EmitArithEpilogue(s, isLast, hasFrame);
             return;
         }
@@ -965,6 +975,21 @@ public sealed class ClauseCompiler
     /// No expression term is built.</summary>
     private void CompileArithIs(CompileState s, Term target, Term expr, bool isLast, bool hasFrame)
     {
+        // Fuse the flat `Target is A op B` over simple leaf operands into a
+        // single a_int_bin (operands resolved before the target, so a
+        // first-occurrence target allocation never shadows an operand). Falls
+        // through to the postfix a_eval_* sequence for nested / non-leaf cases.
+        if (expr is CompoundTerm fc && fc.Args.Length == 2
+            && Shumway.Builtins.ArithmeticEvaluator.TryBinOp(fc.Functor, out var fbop)
+            && TryResolveLeaf(s, fc.Args[0], out int faK, out int faV)
+            && TryResolveLeaf(s, fc.Args[1], out int fbK, out int fbV)
+            && TryResolveTarget(s, target, out int ftK, out int ftV))
+        {
+            s.Emitter.EmitAIntBin((int)fbop, faK, faV, fbK, fbV, ftK, ftV);
+            EmitArithEpilogue(s, isLast, hasFrame);
+            return;
+        }
+
         CompileArithExpr(s, expr);
         switch (target)
         {
@@ -1065,6 +1090,53 @@ public sealed class ClauseCompiler
         if (!isLast) return;
         if (hasFrame) s.Emitter.EmitDeallocateProceed();
         else s.Emitter.EmitProceed();
+    }
+
+    /// <summary>Resolves a simple leaf operand for the fused a_int_* opcodes to
+    /// its <c>(kind, value)</c> encoding: a 32-bit integer literal (kind 0), an
+    /// already-bound X register (kind 3) or an initialised Y-slot (kind 4).
+    /// Returns false for anything that needs the general path — a
+    /// first-occurrence (unbound) variable, a bigint / float literal, an atom,
+    /// or a nested compound.</summary>
+    private static bool TryResolveLeaf(CompileState s, Term term, out int kind, out int val)
+    {
+        switch (term)
+        {
+            case IntTerm n when FitsInt32(n.Value):
+                kind = 0; val = (int)n.Value; return true;
+            case VarTerm v when v.Name != "_" && s.Ys.TryGetValue(v.Name, out int yIdx)
+                    && s.YsInitialized.Contains(v.Name):
+                kind = 4; val = yIdx; return true;
+            case VarTerm v when v.Name != "_" && !s.Ys.ContainsKey(v.Name)
+                    && !s.Xs.IsNewName(v.Name):
+                kind = 3; val = s.Xs.GetSlot(v.Name); return true;
+            default:
+                kind = 0; val = 0; return false;
+        }
+    }
+
+    /// <summary>Resolves a fused a_int_bin target to its <c>(kind, value)</c>:
+    /// unify with an existing X register (3) / Y-slot (4), or store into a
+    /// first-occurrence X register (5) / Y-slot (6) — the latter allocating /
+    /// marking the variable as the result home. Returns false for a literal /
+    /// anonymous / compound target (handled by the general path).</summary>
+    private static bool TryResolveTarget(CompileState s, Term target, out int kind, out int val)
+    {
+        switch (target)
+        {
+            case VarTerm v when v.Name != "_" && s.Ys.TryGetValue(v.Name, out int yIdx)
+                    && s.YsInitialized.Contains(v.Name):
+                kind = 4; val = yIdx; return true;
+            case VarTerm v when v.Name != "_" && !s.Ys.ContainsKey(v.Name)
+                    && !s.Xs.IsNewName(v.Name):
+                kind = 3; val = s.Xs.GetSlot(v.Name); return true;
+            case VarTerm v when v.Name != "_" && s.Ys.ContainsKey(v.Name):
+                val = s.Ys[v.Name]; s.YsInitialized.Add(v.Name); kind = 6; return true;
+            case VarTerm v when v.Name != "_" && s.Xs.IsNewName(v.Name):
+                val = s.Xs.AllocateFresh(v.Name); kind = 5; return true;
+            default:
+                kind = 0; val = 0; return false;
+        }
     }
 
     private void CompileBodyArg(CompileState s, Term arg, int argSlot)

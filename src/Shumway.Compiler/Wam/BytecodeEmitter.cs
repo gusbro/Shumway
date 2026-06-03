@@ -393,6 +393,23 @@ public sealed class BytecodeEmitter
         EmitInt(rel);
     }
 
+    public void EmitAIntBin(int op, int aKind, int aVal, int bKind, int bVal, int tKind, int tVal)
+    {
+        _bytes.Add((byte)Opcode.AIntBin);
+        EmitInt(op);
+        EmitInt(aKind); EmitInt(aVal);
+        EmitInt(bKind); EmitInt(bVal);
+        EmitInt(tKind); EmitInt(tVal);
+    }
+
+    public void EmitAIntCmp(int rel, int aKind, int aVal, int bKind, int bVal)
+    {
+        _bytes.Add((byte)Opcode.AIntCmp);
+        EmitInt(rel);
+        EmitInt(aKind); EmitInt(aVal);
+        EmitInt(bKind); EmitInt(bVal);
+    }
+
     public void EmitPutNil(int argSlot)
     {
         _bytes.Add((byte)Opcode.PutNil);

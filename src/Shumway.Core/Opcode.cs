@@ -209,6 +209,19 @@ public enum Opcode : byte
     AEvalIs = 0xD3,     // 9 bytes
     AEvalCmp = 0xD4,    // 5 bytes
 
+    //   Fused flat-arithmetic ops (ADR-018). Collapse the common single-operator
+    //   `T is A op B` and `A cmp B` over simple leaf operands into one dispatch
+    //   instead of the push/push/op/is RPN sequence. Each operand is encoded
+    //   <kind:4><val:4> with kind ∈ {0 int-literal, 3 X-reg, 4 Y-slot}; the
+    //   handler runs the int fast lane inline and escalates to Number for
+    //   float/bigint/overflow, identically to the a_eval_* path.
+    //   AIntBin <op:4> <aKind:4><aVal:4> <bKind:4><bVal:4> <tKind:4><tVal:4>
+    //           — T is A op B; tKind ∈ {3 unify-reg,4 unify-Y,5 set-reg,6 set-Y}.
+    //   AIntCmp <rel:4> <aKind:4><aVal:4> <bKind:4><bVal:4>
+    //           — A cmp B; fail = backtrack.
+    AIntBin = 0xD5,     // 29 bytes
+    AIntCmp = 0xD6,     // 21 bytes
+
     // Meta and extension
     Meta = 0xFE,
     ReservedExtension = 0xFF,
