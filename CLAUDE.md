@@ -846,6 +846,7 @@ When proposing changes:
 | Persistent code space & live dynamic dispatch | ADR-015 |
 | Heap garbage collection | ADR-016 |
 | Inline compound references (2-cell cons) + cell-based unify | ADR-017 (phases 1 & 2 done) |
+| Arithmetic instruction set (RPN eval stack) | ADR-018 (proposed) |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | Builtins catalog | docs/design/builtins-catalog.md |
