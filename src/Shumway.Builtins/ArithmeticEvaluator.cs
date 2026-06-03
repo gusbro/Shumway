@@ -84,68 +84,189 @@ public static class ArithmeticEvaluator
     }
 
     /// <summary>Evaluates <c>name(arg)</c> for a unary arithmetic function.
-    /// Public so the inlined-arithmetic builtin (<c>$arith1</c>) can reuse the
-    /// full ISO semantics without rebuilding the expression term on the heap.</summary>
+    /// Public so callers that already hold the function name and operand cell
+    /// (e.g. <see cref="Evaluate"/> dispatching a compound) reuse the full ISO
+    /// semantics.</summary>
     public static Number EvaluateUnary(Engine engine, string name, Cell argCell)
     {
         Number a = Evaluate(engine, argCell);
-        return name switch
-        {
-            "-" => Negate(a),
-            "+" => a,
-            "abs" => Abs(a),
-            "sign" => Sign(a),
-            "\\" => BitwiseNot(a),
-            "sqrt" => new Number(Math.Sqrt(a.AsDouble())),
-            "sin" => new Number(Math.Sin(a.AsDouble())),
-            "cos" => new Number(Math.Cos(a.AsDouble())),
-            "tan" => new Number(Math.Tan(a.AsDouble())),
-            "asin" => new Number(Math.Asin(a.AsDouble())),
-            "acos" => new Number(Math.Acos(a.AsDouble())),
-            "atan" => new Number(Math.Atan(a.AsDouble())),
-            "exp" => new Number(Math.Exp(a.AsDouble())),
-            "log" => new Number(Math.Log(a.AsDouble())),
-            "ceiling" => new Number((long)Math.Ceiling(a.AsDouble())),
-            "floor" => new Number((long)Math.Floor(a.AsDouble())),
-            "round" => new Number((long)Math.Round(a.AsDouble(), MidpointRounding.AwayFromZero)),
-            "truncate" => new Number((long)Math.Truncate(a.AsDouble())),
-            "float" => new Number(a.AsDouble()),
-            "float_integer_part" => new Number(Math.Truncate(a.AsDouble())),
-            "float_fractional_part" => new Number(a.AsDouble() - Math.Truncate(a.AsDouble())),
-            "integer" => a.IsFloat ? new Number((long)Math.Truncate(a.AsDouble())) : a,
-            // Unknown unary arithmetic function — ISO type_error(evaluable, Name/1).
-            _ => throw new PrologRuntimeException("type_error", "evaluable"),
-        };
+        if (TryUnOp(name, out UnOp op)) return ApplyUn(op, a);
+        // Unknown unary arithmetic function — ISO type_error(evaluable, Name/1).
+        throw new PrologRuntimeException("type_error", "evaluable");
     }
 
     /// <summary>Evaluates <c>name(a, b)</c> for a binary arithmetic function.
-    /// Public so the inlined-arithmetic builtin (<c>$arith2</c>) can reuse the
-    /// full ISO semantics without rebuilding the expression term on the heap.</summary>
+    /// Public so callers that already hold the function name and operand cells
+    /// (e.g. <see cref="Evaluate"/> dispatching a compound) reuse the full ISO
+    /// semantics.</summary>
     public static Number EvaluateBinary(Engine engine, string name, Cell aCell, Cell bCell)
     {
         Number a = Evaluate(engine, aCell);
         Number b = Evaluate(engine, bCell);
-        return name switch
+        if (TryBinOp(name, out BinOp op)) return ApplyBin(op, a, b);
+        // Unknown binary arithmetic function — ISO type_error(evaluable, Name/2).
+        throw new PrologRuntimeException("type_error", "evaluable");
+    }
+
+    // ---------- ADR-018: arithmetic instruction set op codes ----------
+    //
+    // The a_bin / a_un / a_cmp opcodes (ADR-018) carry a small op code — these
+    // enums. The compiler maps a functor name to one (Try*); the interpreter
+    // applies it over the eval stack (Apply*). There is ONE operation switch
+    // per arity, shared by the name-based Evaluate* (the term-evaluation path,
+    // for a variable bound to an unevaluated expression) and the opcode path.
+
+    public enum BinOp : byte
+    {
+        Add, Sub, Mul, Div, IntDiv, Mod, Rem, Min, Max, Pow,
+        BitAnd, BitOr, Xor, Shl, Shr, Gcd, Atan2,
+    }
+
+    public enum UnOp : byte
+    {
+        Neg, Pos, Abs, Sign, BitNot, Sqrt, Sin, Cos, Tan, Asin, Acos, Atan,
+        Exp, Log, Ceiling, Floor, Round, Truncate, Float, FloatIntPart,
+        FloatFracPart, Integer,
+    }
+
+    public enum RelOp : byte { Eq, Neq, Lt, Gt, Le, Ge }
+
+    /// <summary>Functor name → binary op code; false for a non-arithmetic name.</summary>
+    public static bool TryBinOp(string name, out BinOp op)
+    {
+        switch (name)
         {
-            "+" => Add(a, b),
-            "-" => Subtract(a, b),
-            "*" => Multiply(a, b),
-            "/" => Divide(a, b),
-            "//" => IntegerDivide(a, b),
-            "mod" => Modulo(a, b),
-            "rem" => Remainder(a, b),
-            "min" => Compare(a, b) <= 0 ? a : b,
-            "max" => Compare(a, b) >= 0 ? a : b,
-            "**" or "^" => Power(a, b),
-            "/\\" => BitwiseAnd(a, b),
-            "\\/" => BitwiseOr(a, b),
-            "xor" => BitwiseXor(a, b),
-            "<<" => ShiftLeft(a, b),
-            ">>" => ShiftRight(a, b),
-            "gcd" => Gcd(a, b),
-            "atan2" => new Number(Math.Atan2(a.AsDouble(), b.AsDouble())),
-            // Unknown binary arithmetic function — ISO type_error(evaluable, Name/2).
-            _ => throw new PrologRuntimeException("type_error", "evaluable"),
+            case "+": op = BinOp.Add; return true;
+            case "-": op = BinOp.Sub; return true;
+            case "*": op = BinOp.Mul; return true;
+            case "/": op = BinOp.Div; return true;
+            case "//": op = BinOp.IntDiv; return true;
+            case "mod": op = BinOp.Mod; return true;
+            case "rem": op = BinOp.Rem; return true;
+            case "min": op = BinOp.Min; return true;
+            case "max": op = BinOp.Max; return true;
+            case "**": case "^": op = BinOp.Pow; return true;
+            case "/\\": op = BinOp.BitAnd; return true;
+            case "\\/": op = BinOp.BitOr; return true;
+            case "xor": op = BinOp.Xor; return true;
+            case "<<": op = BinOp.Shl; return true;
+            case ">>": op = BinOp.Shr; return true;
+            case "gcd": op = BinOp.Gcd; return true;
+            case "atan2": op = BinOp.Atan2; return true;
+            default: op = default; return false;
+        }
+    }
+
+    /// <summary>Functor name → unary op code; false for a non-arithmetic name.</summary>
+    public static bool TryUnOp(string name, out UnOp op)
+    {
+        switch (name)
+        {
+            case "-": op = UnOp.Neg; return true;
+            case "+": op = UnOp.Pos; return true;
+            case "abs": op = UnOp.Abs; return true;
+            case "sign": op = UnOp.Sign; return true;
+            case "\\": op = UnOp.BitNot; return true;
+            case "sqrt": op = UnOp.Sqrt; return true;
+            case "sin": op = UnOp.Sin; return true;
+            case "cos": op = UnOp.Cos; return true;
+            case "tan": op = UnOp.Tan; return true;
+            case "asin": op = UnOp.Asin; return true;
+            case "acos": op = UnOp.Acos; return true;
+            case "atan": op = UnOp.Atan; return true;
+            case "exp": op = UnOp.Exp; return true;
+            case "log": op = UnOp.Log; return true;
+            case "ceiling": op = UnOp.Ceiling; return true;
+            case "floor": op = UnOp.Floor; return true;
+            case "round": op = UnOp.Round; return true;
+            case "truncate": op = UnOp.Truncate; return true;
+            case "float": op = UnOp.Float; return true;
+            case "float_integer_part": op = UnOp.FloatIntPart; return true;
+            case "float_fractional_part": op = UnOp.FloatFracPart; return true;
+            case "integer": op = UnOp.Integer; return true;
+            default: op = default; return false;
+        }
+    }
+
+    /// <summary>Comparison functor name → relation op code.</summary>
+    public static bool TryRelOp(string name, out RelOp op)
+    {
+        switch (name)
+        {
+            case "=:=": op = RelOp.Eq; return true;
+            case "=\\=": op = RelOp.Neq; return true;
+            case "<": op = RelOp.Lt; return true;
+            case ">": op = RelOp.Gt; return true;
+            case "=<": op = RelOp.Le; return true;
+            case ">=": op = RelOp.Ge; return true;
+            default: op = default; return false;
+        }
+    }
+
+    /// <summary>Applies a binary op to two already-evaluated numbers.</summary>
+    public static Number ApplyBin(BinOp op, Number a, Number b) => op switch
+    {
+        BinOp.Add => Add(a, b),
+        BinOp.Sub => Subtract(a, b),
+        BinOp.Mul => Multiply(a, b),
+        BinOp.Div => Divide(a, b),
+        BinOp.IntDiv => IntegerDivide(a, b),
+        BinOp.Mod => Modulo(a, b),
+        BinOp.Rem => Remainder(a, b),
+        BinOp.Min => Compare(a, b) <= 0 ? a : b,
+        BinOp.Max => Compare(a, b) >= 0 ? a : b,
+        BinOp.Pow => Power(a, b),
+        BinOp.BitAnd => BitwiseAnd(a, b),
+        BinOp.BitOr => BitwiseOr(a, b),
+        BinOp.Xor => BitwiseXor(a, b),
+        BinOp.Shl => ShiftLeft(a, b),
+        BinOp.Shr => ShiftRight(a, b),
+        BinOp.Gcd => Gcd(a, b),
+        BinOp.Atan2 => new Number(Math.Atan2(a.AsDouble(), b.AsDouble())),
+        _ => throw new PrologRuntimeException("type_error", "evaluable"),
+    };
+
+    /// <summary>Applies a unary op to an already-evaluated number.</summary>
+    public static Number ApplyUn(UnOp op, Number a) => op switch
+    {
+        UnOp.Neg => Negate(a),
+        UnOp.Pos => a,
+        UnOp.Abs => Abs(a),
+        UnOp.Sign => Sign(a),
+        UnOp.BitNot => BitwiseNot(a),
+        UnOp.Sqrt => new Number(Math.Sqrt(a.AsDouble())),
+        UnOp.Sin => new Number(Math.Sin(a.AsDouble())),
+        UnOp.Cos => new Number(Math.Cos(a.AsDouble())),
+        UnOp.Tan => new Number(Math.Tan(a.AsDouble())),
+        UnOp.Asin => new Number(Math.Asin(a.AsDouble())),
+        UnOp.Acos => new Number(Math.Acos(a.AsDouble())),
+        UnOp.Atan => new Number(Math.Atan(a.AsDouble())),
+        UnOp.Exp => new Number(Math.Exp(a.AsDouble())),
+        UnOp.Log => new Number(Math.Log(a.AsDouble())),
+        UnOp.Ceiling => new Number((long)Math.Ceiling(a.AsDouble())),
+        UnOp.Floor => new Number((long)Math.Floor(a.AsDouble())),
+        UnOp.Round => new Number((long)Math.Round(a.AsDouble(), MidpointRounding.AwayFromZero)),
+        UnOp.Truncate => new Number((long)Math.Truncate(a.AsDouble())),
+        UnOp.Float => new Number(a.AsDouble()),
+        UnOp.FloatIntPart => new Number(Math.Truncate(a.AsDouble())),
+        UnOp.FloatFracPart => new Number(a.AsDouble() - Math.Truncate(a.AsDouble())),
+        UnOp.Integer => a.IsFloat ? new Number((long)Math.Truncate(a.AsDouble())) : a,
+        _ => throw new PrologRuntimeException("type_error", "evaluable"),
+    };
+
+    /// <summary>Compares two already-evaluated numbers under a relation.</summary>
+    public static bool ApplyRel(RelOp rel, Number a, Number b)
+    {
+        int c = Compare(a, b);
+        return rel switch
+        {
+            RelOp.Eq => c == 0,
+            RelOp.Neq => c != 0,
+            RelOp.Lt => c < 0,
+            RelOp.Gt => c > 0,
+            RelOp.Le => c <= 0,
+            RelOp.Ge => c >= 0,
+            _ => false,
         };
     }
 

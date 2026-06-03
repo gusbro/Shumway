@@ -1587,6 +1587,62 @@ public sealed class BytecodeInterpreter
                     break;
                 }
 
+                // ---------- ADR-018 arithmetic instruction set ----------
+                // The shared evaluation stack and operator logic live in
+                // Shumway.Builtins.ArithEvalStack so Tier-0 and Tier-1 IL run
+                // exactly the same code. Only the bigint / float literal
+                // operands (kinds 1 / 2) need the interpreter's literal pools,
+                // so they resolve here before pushing.
+                case Opcode.AEvalPush:
+                {
+                    int kind = BytecodeIO.ReadInt32(code, pc + 1);
+                    int operand = BytecodeIO.ReadInt32(code, pc + 5);
+                    switch (kind)
+                    {
+                        case 0: Shumway.Builtins.ArithEvalStack.PushInt(operand); break;
+                        case 1: Shumway.Builtins.ArithEvalStack.Push(
+                            new Shumway.Builtins.Number(ResolveBigIntLiteral(operand))); break;
+                        case 2: Shumway.Builtins.ArithEvalStack.Push(
+                            new Shumway.Builtins.Number(ResolveFloatLiteral(operand))); break;
+                        case 3: Shumway.Builtins.ArithEvalStack.PushReg(_engine, operand); break;
+                        case 4: Shumway.Builtins.ArithEvalStack.PushY(_engine, operand); break;
+                        default: throw new InvalidOperationException($"Bad a_eval_push kind {kind}.");
+                    }
+                    _engine.AdvancePc(9);
+                    break;
+                }
+
+                case Opcode.AEvalBin:
+                    Shumway.Builtins.ArithEvalStack.Bin(BytecodeIO.ReadInt32(code, pc + 1));
+                    _engine.AdvancePc(5);
+                    break;
+
+                case Opcode.AEvalUn:
+                    Shumway.Builtins.ArithEvalStack.Un(BytecodeIO.ReadInt32(code, pc + 1));
+                    _engine.AdvancePc(5);
+                    break;
+
+                case Opcode.AEvalIs:
+                {
+                    int kind = BytecodeIO.ReadInt32(code, pc + 1);
+                    int target = BytecodeIO.ReadInt32(code, pc + 5);
+                    bool ok = kind == 4
+                        ? Shumway.Builtins.ArithEvalStack.IsPerm(_engine, target)
+                        : Shumway.Builtins.ArithEvalStack.IsReg(_engine, target);
+                    if (!ok) { if (!TryBacktrack()) return InterpreterResult.Failed; break; }
+                    _engine.AdvancePc(9);
+                    break;
+                }
+
+                case Opcode.AEvalCmp:
+                    if (!Shumway.Builtins.ArithEvalStack.Cmp(BytecodeIO.ReadInt32(code, pc + 1)))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    _engine.AdvancePc(5);
+                    break;
+
                 case Opcode.Meta:
                 {
                     // Runtime no-op. Meta opcodes (currently only DbgInfo)
@@ -2164,6 +2220,11 @@ public sealed class BytecodeInterpreter
         return _floatLiterals[literalId];
     }
 
+    // ADR-018 — resolves an a_eval_push leaf to a Number. kind ∈ {0 int (operand
+    // is the value), 1 bigint-lit, 2 float-lit, 3 X-reg, 4 Y-slot}. For a
+    // register / Y-slot the cell is deref'd and arithmetically evaluated, so a
+    // variable bound to an unevaluated expression term is handled exactly as
+    // is/2 would (recursively), and an unbound one raises instantiation_error.
     private System.Numerics.BigInteger ResolveBigIntLiteral(int literalId)
     {
         if (literalId < 0 || literalId >= _bigIntLiterals.Count)

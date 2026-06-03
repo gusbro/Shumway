@@ -909,6 +909,16 @@ public sealed partial class Engine
     public bool UnifyRegisterWithHeapAt(int regIdx, int heapIdx)
         => UnifyCells(_registers[regIdx], Cell.Ref(heapIdx));
 
+    /// <summary>Unifies <c>Y[<paramref name="permSlot"/>]</c> with an immediate
+    /// <paramref name="value"/> cell. Used by the ADR-018 <c>a_eval_is</c> opcode
+    /// when the <c>is/2</c> target is a permanent variable.</summary>
+    public bool UnifyPermanentWithCell(int permSlot, Cell value)
+    {
+        if (_e < 0)
+            throw new InvalidOperationException("No environment frame is active.");
+        return UnifyCells(_stack[_e + EnvY1Offset + permSlot], value);
+    }
+
     /// <summary>Unifies <c>Y[<paramref name="permSlot"/>]</c> with the heap cell at
     /// <paramref name="heapIdx"/>. Used by <c>unify_value_y</c> in read mode.</summary>
     public bool UnifyPermanentWithHeapAt(int permSlot, int heapIdx)

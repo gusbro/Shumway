@@ -80,7 +80,7 @@ public class OpcodeTableTests
     [Theory]
     [InlineData(0xB0)]   // unused in 0xA0..0xBF range
     [InlineData(0xC5)]   // unused PSTR range
-    [InlineData(0xD0)]   // future-reserved
+    [InlineData(0xD8)]   // future-reserved (0xD0..0xD4 are the a_eval_* opcodes)
     [InlineData(0xFD)]   // future-reserved
     public void IsDefined_ReturnsFalseForUnassignedBytes(int b)
     {

@@ -123,6 +123,33 @@ public sealed class IlPredicateCompiler
         typeof(Cell).GetProperty(nameof(Cell.AsAtomId))!.GetGetMethod()!;
     private static readonly MethodInfo EngineSetRegisterMethod =
         typeof(Engine).GetMethod(nameof(Engine.SetRegister), new[] { typeof(int), typeof(Cell) })!;
+    // ADR-018 — arithmetic instruction set runtime helpers (Shumway.Builtins.
+    // ArithEvalStack). The Tier-1 emit calls these statics directly, so the
+    // a_eval_* opcodes run the same eval-stack code as the Tier-0 interpreter.
+    private static readonly MethodInfo ArithPushIntMethod =
+        typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
+            nameof(Shumway.Builtins.ArithEvalStack.PushInt), new[] { typeof(long) })!;
+    private static readonly MethodInfo ArithPushRegMethod =
+        typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
+            nameof(Shumway.Builtins.ArithEvalStack.PushReg), new[] { typeof(Engine), typeof(int) })!;
+    private static readonly MethodInfo ArithPushYMethod =
+        typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
+            nameof(Shumway.Builtins.ArithEvalStack.PushY), new[] { typeof(Engine), typeof(int) })!;
+    private static readonly MethodInfo ArithBinMethod =
+        typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
+            nameof(Shumway.Builtins.ArithEvalStack.Bin), new[] { typeof(int) })!;
+    private static readonly MethodInfo ArithUnMethod =
+        typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
+            nameof(Shumway.Builtins.ArithEvalStack.Un), new[] { typeof(int) })!;
+    private static readonly MethodInfo ArithIsRegMethod =
+        typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
+            nameof(Shumway.Builtins.ArithEvalStack.IsReg), new[] { typeof(Engine), typeof(int) })!;
+    private static readonly MethodInfo ArithIsPermMethod =
+        typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
+            nameof(Shumway.Builtins.ArithEvalStack.IsPerm), new[] { typeof(Engine), typeof(int) })!;
+    private static readonly MethodInfo ArithCmpMethod =
+        typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
+            nameof(Shumway.Builtins.ArithEvalStack.Cmp), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineGetYMethod =
         typeof(Engine).GetMethod(nameof(Engine.GetY), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineSetYMethod =
@@ -338,6 +365,13 @@ public sealed class IlPredicateCompiler
                 if (calleeMap is null || siteFid < 0 || !calleeMap.ContainsKey(siteFid))
                     callUnresolved = true;
             }
+            else if (IsAEvalOpcode(op))
+            {
+                // ADR-018 — only a bigint/float-literal operand blocks (report
+                // the kind so the rejection points at the real cause).
+                if (!IsSupportedAEval(code, pc))
+                    unsupported.Add($"{op}(lit)");
+            }
             else if (!IsSupportedOpcode(op) && !IsHeadMatchingOpcode(op)
                      && !IsStructuralDispatchOpcode(op))
             {
@@ -520,6 +554,12 @@ public sealed class IlPredicateCompiler
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
+            if (IsAEvalOpcode(op))
+            {
+                if (!IsSupportedAEval(code, pc)) return false;
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
             if (IsSupportedOpcode(op))
             {
                 pc += OpcodeTable.Get(op).Size;
@@ -657,11 +697,36 @@ public sealed class IlPredicateCompiler
         Opcode.GetPstr => true,
         Opcode.PutPstr => true,
         Opcode.Call => true,
+        // ADR-018 arithmetic instruction set. a_eval_bin / a_eval_un /
+        // a_eval_cmp carry no literal operand and are always emittable; the
+        // operand-sensitive a_eval_push / a_eval_is are gated by
+        // IsSupportedAEval (the callers check it before this opcode-only
+        // method, so reaching here means the operand kind is in the subset).
+        Opcode.AEvalPush or Opcode.AEvalIs => true,
+        Opcode.AEvalBin or Opcode.AEvalUn or Opcode.AEvalCmp => true,
         // Meta dbg_info (chunk 55) — pure compile-time metadata; the
         // emit path skips it without producing any IL.
         Opcode.Meta => true,
         _ => false,
     };
+
+    /// <summary>ADR-018: whether an <c>a_eval_*</c> opcode at <paramref name="pc"/>
+    /// is within the IL subset. Every operator opcode is; the operand-carrying
+    /// <c>a_eval_push</c> rejects a bigint (kind 1) or float (kind 2) literal,
+    /// and <c>a_eval_is</c> only accepts a register (kind 3) or Y-slot (kind 4)
+    /// target — mirroring the IL scalar subset's lack of a float/bigint literal
+    /// path. A predicate that uses one of those falls back to Tier-0.</summary>
+    private static bool IsSupportedAEval(byte[] code, int pc) => (Opcode)code[pc] switch
+    {
+        Opcode.AEvalPush => BytecodeIO.ReadInt32(code, pc + 1) is 0 or 3 or 4,
+        Opcode.AEvalIs => BytecodeIO.ReadInt32(code, pc + 1) is 3 or 4,
+        Opcode.AEvalBin or Opcode.AEvalUn or Opcode.AEvalCmp => true,
+        _ => false,
+    };
+
+    private static bool IsAEvalOpcode(Opcode op) =>
+        op is Opcode.AEvalPush or Opcode.AEvalBin or Opcode.AEvalUn
+           or Opcode.AEvalIs or Opcode.AEvalCmp;
 
     private PredicateDelegate CompileSingleClause(CompiledPredicate predicate,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
@@ -1967,6 +2032,63 @@ public sealed class IlPredicateCompiler
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
+            // ---------- ADR-018 arithmetic instruction set ----------
+            // Each opcode maps to one static call into ArithEvalStack, so
+            // Tier-1 evaluates over the same Number eval stack as Tier-0 with
+            // no heap allocation. Operand kinds 1/2 (bigint/float literals) are
+            // filtered out by IsSupportedAEval before promotion, so only kinds
+            // 0 (int32), 3 (X-reg) and 4 (Y-slot) reach here.
+            if (op == Opcode.AEvalPush)
+            {
+                int kind = BytecodeIO.ReadInt32(code, pc + 1);
+                int operand = BytecodeIO.ReadInt32(code, pc + 5);
+                if (kind == 0)
+                {
+                    emit.LoadConstant((long)operand);
+                    emit.Call(ArithPushIntMethod);
+                }
+                else
+                {
+                    emit.LoadArgument(0);
+                    emit.LoadConstant(operand);
+                    emit.Call(kind == 4 ? ArithPushYMethod : ArithPushRegMethod);
+                }
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.AEvalBin)
+            {
+                emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 1));
+                emit.Call(ArithBinMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.AEvalUn)
+            {
+                emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 1));
+                emit.Call(ArithUnMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.AEvalIs)
+            {
+                int kind = BytecodeIO.ReadInt32(code, pc + 1);
+                int target = BytecodeIO.ReadInt32(code, pc + 5);
+                emit.LoadArgument(0);
+                emit.LoadConstant(target);
+                emit.Call(kind == 4 ? ArithIsPermMethod : ArithIsRegMethod);
+                emit.BranchIfFalse(failLabel);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.AEvalCmp)
+            {
+                emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 1));
+                emit.Call(ArithCmpMethod);
+                emit.BranchIfFalse(failLabel);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
             if (op == Opcode.Proceed)
             {
                 // In inlined-Call mode the caller has more body after the
@@ -2106,6 +2228,8 @@ public sealed class IlPredicateCompiler
             // IlMetaCallHelper.Dispatch — no longer rejected.
             return true;
         }
+        if (IsAEvalOpcode(op))   // ADR-018 — gate operand kind (bigint/float lit)
+            return IsSupportedAEval(predicate.Bytecode, pc);
         return IsSupportedOpcode(op);
     }
 

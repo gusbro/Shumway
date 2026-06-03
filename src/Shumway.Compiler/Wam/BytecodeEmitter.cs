@@ -359,6 +359,40 @@ public sealed class BytecodeEmitter
         EmitInt(argSlot);
     }
 
+    // ADR-018 — arithmetic instruction set. kind/op/rel are widened to 4-byte
+    // ints so the uniform int-operand framework reads them.
+    public void EmitAEvalPush(int kind, int operand)
+    {
+        _bytes.Add((byte)Opcode.AEvalPush);
+        EmitInt(kind);
+        EmitInt(operand);
+    }
+
+    public void EmitAEvalBin(int op)
+    {
+        _bytes.Add((byte)Opcode.AEvalBin);
+        EmitInt(op);
+    }
+
+    public void EmitAEvalUn(int op)
+    {
+        _bytes.Add((byte)Opcode.AEvalUn);
+        EmitInt(op);
+    }
+
+    public void EmitAEvalIs(int kind, int target)
+    {
+        _bytes.Add((byte)Opcode.AEvalIs);
+        EmitInt(kind);
+        EmitInt(target);
+    }
+
+    public void EmitAEvalCmp(int rel)
+    {
+        _bytes.Add((byte)Opcode.AEvalCmp);
+        EmitInt(rel);
+    }
+
     public void EmitPutNil(int argSlot)
     {
         _bytes.Add((byte)Opcode.PutNil);

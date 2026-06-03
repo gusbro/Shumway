@@ -189,6 +189,13 @@ public static class OpcodeTable
         Set(Opcode.PutPstr, 9, "put_pstr", OperandKind.LiteralId, OperandKind.Reg);
         Set(Opcode.UnifyPstrHead, 5, "unify_pstr_head", OperandKind.Reg);
 
+        // ADR-018 — arithmetic instruction set (4-byte operands).
+        Set(Opcode.AEvalPush, 9, "a_eval_push", OperandKind.Count, OperandKind.IntValue);
+        Set(Opcode.AEvalBin, 5, "a_eval_bin", OperandKind.Count);
+        Set(Opcode.AEvalUn, 5, "a_eval_un", OperandKind.Count);
+        Set(Opcode.AEvalIs, 9, "a_eval_is", OperandKind.Count, OperandKind.Reg);
+        Set(Opcode.AEvalCmp, 5, "a_eval_cmp", OperandKind.Count);
+
         // Meta and extension
         // The Meta opcode size is 6 by default for the DbgInfo sub-opcode (1 opcode + 1
         // sub-byte + 4-byte entry id). Disassembler dispatches on the sub-byte to recover

@@ -191,6 +191,24 @@ public enum Opcode : byte
     PutPstr = 0xC1,
     UnifyPstrHead = 0xC2,
 
+    // ADR-018 — arithmetic instruction set. `X is Expr` and the six
+    // comparisons compile to a postfix (RPN) sequence over a per-engine
+    // Number eval stack; no heap term, no synthetic variables. Operands are
+    // 4-byte ints (the small kind/op codes are widened) so the existing
+    // BytecodeIO / disassembler / emitter framework reads them uniformly.
+    //   AEvalPush <kind:4> <operand:4> — push a leaf. kind ∈ {0 int (operand =
+    //       value), 1 bigint-lit, 2 float-lit, 3 X-reg, 4 Y-slot}. For X/Y the
+    //       cell is deref'd and arithmetically evaluated before the push.
+    //   AEvalBin  <op:4>               — pop b, pop a, push (a op b).
+    //   AEvalUn   <op:4>               — pop a, push op(a).
+    //   AEvalIs   <kind:4> <target:4>  — pop result, unify with X/Y[target].
+    //   AEvalCmp  <rel:4>              — pop b, pop a, compare; fail = backtrack.
+    AEvalPush = 0xD0,   // 9 bytes
+    AEvalBin = 0xD1,    // 5 bytes
+    AEvalUn = 0xD2,     // 5 bytes
+    AEvalIs = 0xD3,     // 9 bytes
+    AEvalCmp = 0xD4,    // 5 bytes
+
     // Meta and extension
     Meta = 0xFE,
     ReservedExtension = 0xFF,

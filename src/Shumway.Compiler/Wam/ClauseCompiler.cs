@@ -102,11 +102,10 @@ public sealed class ClauseCompiler
         (string name, Term[] headArgs) = DecomposeHead(headTerm);
         List<Term> goals = bodyTerm is null ? new List<Term>() : FlattenConjunction(bodyTerm);
 
-        // Arithmetic inlining (Phase 25): rewrite `X is Expr` into a flat
-        // sequence of $arith builtin goals so the expression term is never
-        // built on the heap. Operates on this working goal list only — the
-        // stored clause AST (clause/2, listing) is untouched.
-        goals = ArithInline.Expand(goals);
+        // ADR-018: `X is Expr` and the six comparisons compile to the
+        // arithmetic instruction set (a_eval_*) in CompileBodyGoal — no term,
+        // no synthetic variables. (The chunk-295/296 goal-rewriting ArithInline
+        // is superseded.)
 
         // For each named (non-anonymous) variable, record which chunk indices it
         // appears in. Chunk 0 = head + first goal; chunk i >= 1 = goal i.
@@ -823,6 +822,24 @@ public sealed class ClauseCompiler
                     $"Goal type {goal.GetType().Name} is not yet supported in clause bodies.");
         }
 
+        // ADR-018 — arithmetic instruction set. `X is Expr` and the six
+        // comparisons compile to a postfix a_eval_* sequence over the eval
+        // stack: no expression term, no synthetic variables on the heap.
+        if (fName == "is" && gArgs.Length == 2)
+        {
+            CompileArithIs(s, gArgs[0], gArgs[1], isLast, hasFrame);
+            return;
+        }
+        if (gArgs.Length == 2 &&
+            Shumway.Builtins.ArithmeticEvaluator.TryRelOp(fName, out var relOp))
+        {
+            CompileArithExpr(s, gArgs[0]);
+            CompileArithExpr(s, gArgs[1]);
+            s.Emitter.EmitAEvalCmp((int)relOp);
+            EmitArithEpilogue(s, isLast, hasFrame);
+            return;
+        }
+
         // Emit argument-prep for each goal arg. When argOrder is supplied
         // (Warren scheduler picked a topological order to minimise saves),
         // emit in that order; otherwise emit in natural arg order.
@@ -933,6 +950,76 @@ public sealed class ClauseCompiler
                     UpdateMaxLiveYIdxFromTerm(arg, ys, ref maxYIdx);
                 break;
         }
+    }
+
+    // ---------- ADR-018 arithmetic instruction set compilation ----------
+
+    /// <summary>Compiles <c>Target is Expr</c>: the postfix evaluation of
+    /// <paramref name="expr"/> followed by an <c>a_eval_is</c> that unifies the
+    /// popped result with <paramref name="target"/>. The target is materialised
+    /// into a scratch register (a first-occurrence variable becomes a fresh
+    /// unbound var there — its single result home; everything else is loaded by
+    /// value), which <c>a_eval_is</c> unifies. No expression term is built.</summary>
+    private void CompileArithIs(CompileState s, Term target, Term expr, bool isLast, bool hasFrame)
+    {
+        CompileArithExpr(s, expr);
+        int scratch = s.Xs.AllocateAnonymousSlot();
+        CompileBodyArg(s, target, scratch);
+        DrainPendingCompounds(s);
+        s.Emitter.EmitAEvalIs(3, scratch);   // kind 3 = X-register, unify
+        EmitArithEpilogue(s, isLast, hasFrame);
+    }
+
+    /// <summary>Emits the postfix instructions that leave the value of
+    /// <paramref name="expr"/> on the eval stack. Numeric literals push
+    /// directly; a recognised arithmetic compound recurses then applies its op;
+    /// anything else (a variable, an atom, a non-arithmetic compound) is loaded
+    /// into a scratch register and pushed via <c>a_eval_push x-reg</c>, which
+    /// derefs + arithmetically evaluates it at run time — handling a bound
+    /// sub-expression, an unbound var (instantiation_error) and a non-evaluable
+    /// term (type_error) exactly as is/2 does.</summary>
+    private void CompileArithExpr(CompileState s, Term expr)
+    {
+        switch (expr)
+        {
+            case IntTerm n when FitsInt32(n.Value):
+                s.Emitter.EmitAEvalPush(0, (int)n.Value);
+                return;
+            case IntTerm n:
+                s.Emitter.EmitAEvalPush(1,
+                    _bigIntLiterals.Intern(new System.Numerics.BigInteger(n.Value)));
+                return;
+            case BigIntTerm bn:
+                s.Emitter.EmitAEvalPush(1, _bigIntLiterals.Intern(bn.Value));
+                return;
+            case FloatTerm f:
+                s.Emitter.EmitAEvalPush(2, _floatLiterals.Intern(f.Value));
+                return;
+            case CompoundTerm c when c.Args.Length == 2
+                    && Shumway.Builtins.ArithmeticEvaluator.TryBinOp(c.Functor, out var bop):
+                CompileArithExpr(s, c.Args[0]);
+                CompileArithExpr(s, c.Args[1]);
+                s.Emitter.EmitAEvalBin((int)bop);
+                return;
+            case CompoundTerm c when c.Args.Length == 1
+                    && Shumway.Builtins.ArithmeticEvaluator.TryUnOp(c.Functor, out var uop):
+                CompileArithExpr(s, c.Args[0]);
+                s.Emitter.EmitAEvalUn((int)uop);
+                return;
+            default:
+                int scratch = s.Xs.AllocateAnonymousSlot();
+                CompileBodyArg(s, expr, scratch);
+                DrainPendingCompounds(s);
+                s.Emitter.EmitAEvalPush(3, scratch);   // kind 3 = X-register
+                return;
+        }
+    }
+
+    private static void EmitArithEpilogue(CompileState s, bool isLast, bool hasFrame)
+    {
+        if (!isLast) return;
+        if (hasFrame) s.Emitter.EmitDeallocateProceed();
+        else s.Emitter.EmitProceed();
     }
 
     private void CompileBodyArg(CompileState s, Term arg, int argSlot)
