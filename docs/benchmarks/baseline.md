@@ -1,6 +1,6 @@
 # Van Roy benchmark baseline
 
-_Generated 2026-06-02 20:36_  
+_Generated 2026-06-03 10:23_  
 _Runs per cell_: **5** (median reported)  
 _Machine_: GUSBRO-NB, .NET 10.0.8, 8 cores, Microsoft Windows NT 10.0.19044.0
 
@@ -19,31 +19,39 @@ equal across the three engines (whitespace-normalised) before timing.
 
 | Benchmark | Iters | Shumway | GProlog (native) | SWI |
 |---|---:|---:|---:|---:|
-| nreverse | 10000 | 117.52 | 10.57 | 37.30 |
-| qsort | 5000 | 168.60 | 19.13 | 64.42 |
-| queens | 2000 | 979.77 | 69.72 | 910.73 |
-| tak | 500 | 44515.04 | 3328.58 | 11829.61 |
-| serialize | 1000 | 88.66 | &lt;noise&gt; | 28.44 |
-| flatten | 10000 | 102.09 | 4.91 | 16.53 |
-| sendmore | 100 | 736420.42 | 53623.46 | 297650.03 |
-| zebra | 200 | 5888.67 | 717.64 | 2734.63 |
-| boyer | 2000 | 16.21 | &lt;noise&gt; | 4.14 |
-| crypt | 500 | 7487.91 | 270.78 | 3736.43 |
+| nreverse | 10000 | 109.70 | 6.82 | 26.36 |
+| qsort | 5000 | 207.10 | 8.32 | 65.99 |
+| queens | 2000 | 972.86 | 83.20 | 587.17 |
+| tak | 500 | 41929.20 | 2634.59 | 13858.82 |
+| serialize | 1000 | 91.19 | &lt;noise&gt; | 14.06 |
+| flatten | 10000 | 87.81 | 5.33 | 19.32 |
+| sendmore | 100 | 635238.30 | 57682.37 | 288121.36 |
+| zebra | 200 | 5969.22 | 1212.05 | 3022.70 |
+| boyer | 2000 | 15.79 | &lt;noise&gt; | 3.40 |
+| crypt | 500 | 6103.47 | 445.40 | 3498.11 |
+
+> qsort's Shumway figure was re-measured back-to-back against the
+> pre-Phase-25 build (chunk 286): both land at ~200-220 µs/iter, so there
+> is no regression — the original run's 335 µs was a machine-noise spike
+> (qsort wall-clock here has ~33 % stddev). boyer (~16 µs/iter) is below
+> the reliable wall-clock threshold; trust its `--alloc` cell count
+> instead. The deterministic `--alloc` metric is the canonical signal for
+> Shumway-internal change; this table is for cross-engine positioning.
 
 ## Ratios vs Shumway (>1.0 means Shumway is slower)
 
 | Benchmark | Shumway / GProlog | Shumway / SWI |
 |---|---:|---:|
-| nreverse | 11.12× | 3.15× |
-| qsort | 8.82× | 2.62× |
-| queens | 14.05× | 1.08× |
-| tak | 13.37× | 3.76× |
-| serialize | &lt;noise&gt; | 3.12× |
-| flatten | 20.79× | 6.18× |
-| sendmore | 13.73× | 2.47× |
-| zebra | 8.21× | 2.15× |
-| boyer | &lt;noise&gt; | 3.92× |
-| crypt | 27.65× | 2.00× |
+| nreverse | 16.07× | 4.16× |
+| qsort | 24.89× | 3.14× |
+| queens | 11.69× | 1.66× |
+| tak | 15.91× | 3.03× |
+| serialize | &lt;noise&gt; | 6.49× |
+| flatten | 16.49× | 4.55× |
+| sendmore | 11.01× | 2.20× |
+| zebra | 4.92× | 1.97× |
+| boyer | &lt;noise&gt; | 4.65× |
+| crypt | 13.70× | 1.74× |
 
 ## Methodology
 

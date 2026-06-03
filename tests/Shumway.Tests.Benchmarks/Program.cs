@@ -81,12 +81,21 @@ public static class VanRoyMultiEngine
         // cell is measured N times and the median is reported, which
         // is what the baseline doc consumes.
         int runs = 1;
+        HashSet<string>? only = null;
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i] == "--runs" && i + 1 < args.Length
                 && int.TryParse(args[i + 1], out int n) && n > 0)
                 runs = n;
+            // `--only a,b` restricts the run to the named benchmarks (faster
+            // targeted re-measurement); baseline.md is not rewritten then.
+            if (args[i] == "--only" && i + 1 < args.Length)
+                only = new HashSet<string>(args[i + 1].Split(',',
+                    StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
         }
+        var bench = only is null
+            ? Benchmarks
+            : Benchmarks.Where(b => only.Contains(b.Name)).ToArray();
 
         string repoRoot = FindRepoRoot();
         string vanroyDir = Path.Combine(repoRoot, "benchmarks", "vanroy");
@@ -118,7 +127,7 @@ public static class VanRoyMultiEngine
         var gprologExes = new Dictionary<string, string>();
         if (gprolog is not null && gplc is not null)
         {
-            foreach (var (name, _) in Benchmarks)
+            foreach (var (name, _) in bench)
             {
                 string pl = Path.Combine(vanroyDir, $"{name}.pl");
                 string exe = Path.Combine(gprologBinDir, $"{name}.exe");
@@ -137,7 +146,7 @@ public static class VanRoyMultiEngine
         Console.WriteLine();
         Console.WriteLine("Correctness check (report/0 fingerprint per engine):");
         var correctness = new Dictionary<string, Dictionary<string, string>>();
-        foreach (var (name, _) in Benchmarks)
+        foreach (var (name, _) in bench)
         {
             string pl = Path.Combine(vanroyDir, $"{name}.pl");
             if (!File.Exists(pl)) continue;
@@ -169,7 +178,7 @@ public static class VanRoyMultiEngine
         Console.WriteLine($"{"benchmark",-12} {"engine",-10} {"iters",8} {"startup_ms",12} {"total_ms",12} {"tot_sd%",9} {"per_iter_us",14}");
         Console.WriteLine(new string('-', 86));
         var results = new List<Result>();
-        foreach (var (name, iters) in Benchmarks)
+        foreach (var (name, iters) in bench)
         {
             string pl = Path.Combine(vanroyDir, $"{name}.pl");
             if (!File.Exists(pl))
@@ -225,10 +234,14 @@ public static class VanRoyMultiEngine
         PrintRatioSummary(results);
 
         // Baseline markdown report — overwrites any prior version,
-        // commiteable under docs/benchmarks/baseline.md.
-        string baselinePath = Path.Combine(repoRoot, "docs", "benchmarks", "baseline.md");
-        WriteBaselineMarkdown(baselinePath, results, runs);
-        Console.WriteLine($"Baseline: {baselinePath}");
+        // commiteable under docs/benchmarks/baseline.md. Skipped under
+        // --only so a targeted re-measure doesn't clobber the full baseline.
+        if (only is null)
+        {
+            string baselinePath = Path.Combine(repoRoot, "docs", "benchmarks", "baseline.md");
+            WriteBaselineMarkdown(baselinePath, results, runs);
+            Console.WriteLine($"Baseline: {baselinePath}");
+        }
     }
 
     // ------------------------------------------------------------------
