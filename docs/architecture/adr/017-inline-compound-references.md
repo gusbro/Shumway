@@ -22,8 +22,32 @@ sub-case of `GetList` keeps the on-heap header (it binds via
 bails while attvars are live anyway). Measured by `--alloc`: nreverse
 −28.8 %, flatten −18.7 %, qsort −13.8 %, boyer −5.9 % cells/iter;
 arithmetic-only benches (tak, crypt) unchanged. All suites green (Core
-423, Compiler 256, ISO 275, Embedding 2007). Phase 2 (structures) is
-not yet implemented.
+423, Compiler 256, ISO 275, Embedding 2007).
+
+**Phase 2 (structures) — investigated and deferred.** Inlining `Str`
+(`PutStructure` / `GetStructure`) the same way was prototyped and
+measured: it wins big on structure-*building* code (sendmore −25 %,
+crypt −25 %, queens −15 %, serialize −9 %, tak −7.5 % cells/iter) but
+**regresses zebra by +45 %** — and that regression is *not* fixable by
+the obvious means. Root cause: a structure unified as a whole via
+`get_value` needs a heap address, so Shumway's address-based `Unify`
+calls `MaterializeRegister`. With the old `Ref`→on-heap-`Str` shape the
+structure already lived on the heap, so materialisation was free and
+survived backtracking. With an inline `Str` the structure is anchored in
+the register, so each `get_value` re-copies the `Str` header to the heap
+(+1 cell) — and "globalising" the register (rewriting it to a `Ref` after
+the first copy) does **not** help, because backtracking restores the
+register to its saved inline value and the next forward pass re-copies.
+zebra unifies whole `house/5` terms under massive `member/3` backtracking,
+so the per-unification copy dominates. Lists never hit this: they are
+walked element-by-element by `get_list` in *read* mode, which never
+materialises. The proper fix is a **cell-based unification path** that
+unifies a register-held inline compound directly, without first copying
+it to a heap address — a larger change than phase 2 itself. Until that
+exists, inline structures are a net loss for unify-heavy + backtracking
+workloads, so phase 2 stays **deferred**. Phase 1 (lists) stands on its
+own: lists are the project's primary use case (DCGs / grammar / parsing)
+and the list win has no such counter-case.
 
 This ADR does **not** change the cell layout of ADR-002 (still 8 bytes,
 4-bit tag + 60-bit payload, same `Lis` / `Str` tags). It changes only
