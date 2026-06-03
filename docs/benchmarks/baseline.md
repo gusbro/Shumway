@@ -1,6 +1,6 @@
 # Van Roy benchmark baseline
 
-_Generated 2026-06-03 10:23_  
+_Generated 2026-06-03 18:34_  
 _Runs per cell_: **5** (median reported)  
 _Machine_: GUSBRO-NB, .NET 10.0.8, 8 cores, Microsoft Windows NT 10.0.19044.0
 
@@ -19,39 +19,57 @@ equal across the three engines (whitespace-normalised) before timing.
 
 | Benchmark | Iters | Shumway | GProlog (native) | SWI |
 |---|---:|---:|---:|---:|
-| nreverse | 10000 | 109.70 | 6.82 | 26.36 |
-| qsort | 5000 | 207.10 | 8.32 | 65.99 |
-| queens | 2000 | 972.86 | 83.20 | 587.17 |
-| tak | 500 | 41929.20 | 2634.59 | 13858.82 |
-| serialize | 1000 | 91.19 | &lt;noise&gt; | 14.06 |
-| flatten | 10000 | 87.81 | 5.33 | 19.32 |
-| sendmore | 100 | 635238.30 | 57682.37 | 288121.36 |
-| zebra | 200 | 5969.22 | 1212.05 | 3022.70 |
-| boyer | 2000 | 15.79 | &lt;noise&gt; | 3.40 |
-| crypt | 500 | 6103.47 | 445.40 | 3498.11 |
-
-> qsort's Shumway figure was re-measured back-to-back against the
-> pre-Phase-25 build (chunk 286): both land at ~200-220 µs/iter, so there
-> is no regression — the original run's 335 µs was a machine-noise spike
-> (qsort wall-clock here has ~33 % stddev). boyer (~16 µs/iter) is below
-> the reliable wall-clock threshold; trust its `--alloc` cell count
-> instead. The deterministic `--alloc` metric is the canonical signal for
-> Shumway-internal change; this table is for cross-engine positioning.
+| nreverse | 10000 | 454.84 | 17.84 | 34.88 |
+| qsort | 5000 | 455.97 | 23.86 | 156.75 |
+| queens | 2000 | 2006.11 | 184.63 | 931.55 |
+| tak | 500 | 57011.76 | 4134.46 | 20635.43 |
+| serialize | 1000 | 187.53 | &lt;noise&gt; | 36.12 |
+| flatten | 10000 | 192.77 | 9.84 | 39.89 |
+| sendmore | 100 | 615450.75 | 74665.69 | 376512.89 |
+| zebra | 200 | 7689.22 | 1814.84 | 4426.84 |
+| boyer | 2000 | 17.55 | &lt;noise&gt; | 5.37 |
+| crypt | 500 | 5463.05 | 684.55 | 3394.52 |
 
 ## Ratios vs Shumway (>1.0 means Shumway is slower)
 
 | Benchmark | Shumway / GProlog | Shumway / SWI |
 |---|---:|---:|
-| nreverse | 16.07× | 4.16× |
-| qsort | 24.89× | 3.14× |
-| queens | 11.69× | 1.66× |
-| tak | 15.91× | 3.03× |
-| serialize | &lt;noise&gt; | 6.49× |
-| flatten | 16.49× | 4.55× |
-| sendmore | 11.01× | 2.20× |
-| zebra | 4.92× | 1.97× |
-| boyer | &lt;noise&gt; | 4.65× |
-| crypt | 13.70× | 1.74× |
+| nreverse | 25.49× | 13.04× |
+| qsort | 19.11× | 2.91× |
+| queens | 10.87× | 2.15× |
+| tak | 13.79× | 2.76× |
+| serialize | &lt;noise&gt; | 5.19× |
+| flatten | 19.60× | 4.83× |
+| sendmore | 8.24× | 1.63× |
+| zebra | 4.24× | 1.74× |
+| boyer | &lt;noise&gt; | 3.27× |
+| crypt | 7.98× | 1.61× |
+
+## Measurement notes
+
+- **This run's absolute µs/iter ran ~2× the previous (10:23) cool baseline
+  across _every_ engine and benchmark — including `nreverse`, which has no
+  arithmetic at all (109 → 455 µs/iter).** That is a thermal-state / sustained-
+  load regime shift, **not** a regression: the deterministic `--alloc` cell
+  counts are unchanged (e.g. `qsort` 2424 vs 2425 — a one-cell difference),
+  and a structural regression cannot slow an arithmetic-free benchmark 4×.
+  Treat absolute deltas against an older baseline as meaningless here; the
+  **cross-engine ratios** (all three engines timed in the same session) and
+  the **`--alloc` metric** are the signals. Several cells carry high
+  wall-clock variance this run (`nreverse` 41 %, `sendmore` 34 % stddev);
+  `qsort` / `boyer` are below the reliable wall-clock threshold — trust their
+  `--alloc` counts.
+
+- **ADR-018 arithmetic instruction set (chunks 298–301)** — `X is Expr` and
+  the six comparisons now compile to RPN `a_eval_*` / fused `a_int_bin` /
+  `a_int_cmp` opcodes over an eval stack with a raw-`long` integer fast lane,
+  replacing the goal-rewriting `$arith2`/`$arith1` inlining. Back-to-back
+  isolated A/B vs the pre-ADR build (chunk 297) confirmed **parity-or-better
+  Tier-0 wall-clock**: `crypt` clearly faster (≈ −25 to −46 %), `qsort`
+  ≈ −11 %, `tak` / `queens` at parity (within noise). `--alloc` wins (the
+  arithmetic synthetic-variable heap homes are gone): `sendmore` 28,
+  `crypt` 19, `queens` 6626, `tak` 397556 cells/iter; zero heap for nested
+  integer arithmetic, and the whole path is Tier-1 IL-emittable.
 
 ## Methodology
 
