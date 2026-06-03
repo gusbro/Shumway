@@ -63,20 +63,110 @@ public static class ArithmeticBuiltins
     // is process-global and ids never recycle, so a per-process lazy
     // cache is safe.
     private static int _addFid, _subFid, _mulFid, _intDivFid, _modFid;
+    private static int _addAid, _subAid, _mulAid, _intDivAid, _modAid;
     private static bool _fidsInit;
     private static void InitFids()
     {
-        int plusA  = AtomTable.Intern("+",   permanent: true).Id;
-        int minusA = AtomTable.Intern("-",   permanent: true).Id;
-        int starA  = AtomTable.Intern("*",   permanent: true).Id;
-        int idivA  = AtomTable.Intern("//",  permanent: true).Id;
-        int modA   = AtomTable.Intern("mod", permanent: true).Id;
-        _addFid    = FunctorTable.Intern(plusA,  2);
-        _subFid    = FunctorTable.Intern(minusA, 2);
-        _mulFid    = FunctorTable.Intern(starA,  2);
-        _intDivFid = FunctorTable.Intern(idivA,  2);
-        _modFid    = FunctorTable.Intern(modA,   2);
+        _addAid    = AtomTable.Intern("+",   permanent: true).Id;
+        _subAid    = AtomTable.Intern("-",   permanent: true).Id;
+        _mulAid    = AtomTable.Intern("*",   permanent: true).Id;
+        _intDivAid = AtomTable.Intern("//",  permanent: true).Id;
+        _modAid    = AtomTable.Intern("mod", permanent: true).Id;
+        _addFid    = FunctorTable.Intern(_addAid,    2);
+        _subFid    = FunctorTable.Intern(_subAid,    2);
+        _mulFid    = FunctorTable.Intern(_mulAid,    2);
+        _intDivFid = FunctorTable.Intern(_intDivAid, 2);
+        _modFid    = FunctorTable.Intern(_modAid,    2);
         _fidsInit  = true;
+    }
+
+    // ---- Inlined arithmetic (ArithInline rewrites `X is A op B` into a call
+    // to these so the expression term is never built on the heap). The op
+    // rides as an atom in reg 1; operands in regs 2/3 (binary) or 2 (unary)
+    // are register cells, not a heap term.
+
+    /// <summary><c>'$arith2'(Target, Op, A, B)</c> — evaluates <c>Op(A, B)</c>
+    /// and unifies the result with <c>Target</c>. Int fast path for the hot
+    /// ops; everything else reuses <see cref="ArithmeticEvaluator.EvaluateBinary"/>
+    /// (full ISO promotion / error semantics, including a nested expression
+    /// term an operand happens to be bound to).</summary>
+    public static bool Arith2(Engine engine)
+    {
+        if (!_fidsInit) InitFids();
+        int op = engine.GetRegister(1).AsAtomId;
+        Cell a = DerefArg(engine, engine.GetRegister(2));
+        Cell b = DerefArg(engine, engine.GetRegister(3));
+        if (a.Tag == Tag.Int && b.Tag == Tag.Int
+            && TryFastIntOp(op, a.AsInt, b.AsInt, out long r))
+            return engine.UnifyRegisterWithCell(0, Cell.Int(r));
+        try
+        {
+            string name = AtomTable.GetById(op)!.Name;
+            Number res = ArithmeticEvaluator.EvaluateBinary(engine, name, a, b);
+            return engine.UnifyRegisterWithCell(0, res.ToCell(engine));
+        }
+        catch (PrologRuntimeException ex)
+        {
+            // ArithInline split `X is A op B` into this call, but an ISO error
+            // must still report is/2 (not $arith2/4). StampBuiltin is
+            // idempotent, so stamping here wins over the dispatch site's.
+            ex.StampBuiltin("is", 2);
+            throw;
+        }
+    }
+
+    /// <summary><c>'$arith1'(Target, Op, A)</c> — unary counterpart of
+    /// <see cref="Arith2"/>.</summary>
+    public static bool Arith1(Engine engine)
+    {
+        int op = engine.GetRegister(1).AsAtomId;
+        Cell a = DerefArg(engine, engine.GetRegister(2));
+        try
+        {
+            string name = AtomTable.GetById(op)!.Name;
+            Number res = ArithmeticEvaluator.EvaluateUnary(engine, name, a);
+            return engine.UnifyRegisterWithCell(0, res.ToCell(engine));
+        }
+        catch (PrologRuntimeException ex)
+        {
+            ex.StampBuiltin("is", 2);   // see Arith2 — report is/2, not $arith1/3
+            throw;
+        }
+    }
+
+    private static Cell DerefArg(Engine engine, Cell c)
+        => c.Tag == Tag.Ref ? engine.GetHeap(engine.Deref(c.AsHeapIndex)) : c;
+
+    // Checked integer arithmetic for the hot ops on already-deref'd Int
+    // operands; returns false on overflow / out-of-60-bit-range / div-by-zero
+    // / non-fast op, so the caller falls to the BigInt-promoting slow path.
+    private static bool TryFastIntOp(int op, long av, long bv, out long result)
+    {
+        result = 0;
+        try
+        {
+            checked
+            {
+                if (op == _addAid) result = av + bv;
+                else if (op == _subAid) result = av - bv;
+                else if (op == _mulAid) result = av * bv;
+                else if (op == _intDivAid)
+                {
+                    if (bv == 0) return false;
+                    result = av / bv;
+                }
+                else if (op == _modAid)
+                {
+                    if (bv == 0) return false;
+                    long m = av % bv;
+                    if ((m != 0) && ((m < 0) != (bv < 0))) m += bv;  // ISO mod
+                    result = m;
+                }
+                else return false;
+            }
+        }
+        catch (OverflowException) { return false; }
+        return result >= Cell.MinInt60 && result <= Cell.MaxInt60;
     }
 
     private static bool TryFastIntBinary(Engine engine, Cell strCell, out long result)

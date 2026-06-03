@@ -42,6 +42,10 @@ public static class StandardBuiltins
         const string Arith = "Arithmetic";
         BuiltinsRegistry.Register("is",  2, ArithmeticBuiltins.Is,
             Arith, "is(?Result, +Expr)", "Evaluates the arithmetic expression on the right and unifies it with the left.");
+        // Internal: ArithInline rewrites `X is A op B` into these so the
+        // expression term is never built on the heap. Not user-visible.
+        BuiltinsRegistry.Register("$arith2", 4, ArithmeticBuiltins.Arith2);
+        BuiltinsRegistry.Register("$arith1", 3, ArithmeticBuiltins.Arith1);
         BuiltinsRegistry.Register("=:=", 2, ArithmeticBuiltins.ArithEqual,
             Arith, "=:=(+Expr1, +Expr2)", "Succeeds if the two arithmetic expressions are equal.");
         BuiltinsRegistry.Register("=\\=",2, ArithmeticBuiltins.ArithNotEqual,

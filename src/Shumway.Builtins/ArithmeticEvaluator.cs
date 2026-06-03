@@ -83,7 +83,10 @@ public static class ArithmeticEvaluator
         };
     }
 
-    private static Number EvaluateUnary(Engine engine, string name, Cell argCell)
+    /// <summary>Evaluates <c>name(arg)</c> for a unary arithmetic function.
+    /// Public so the inlined-arithmetic builtin (<c>$arith1</c>) can reuse the
+    /// full ISO semantics without rebuilding the expression term on the heap.</summary>
+    public static Number EvaluateUnary(Engine engine, string name, Cell argCell)
     {
         Number a = Evaluate(engine, argCell);
         return name switch
@@ -115,7 +118,10 @@ public static class ArithmeticEvaluator
         };
     }
 
-    private static Number EvaluateBinary(Engine engine, string name, Cell aCell, Cell bCell)
+    /// <summary>Evaluates <c>name(a, b)</c> for a binary arithmetic function.
+    /// Public so the inlined-arithmetic builtin (<c>$arith2</c>) can reuse the
+    /// full ISO semantics without rebuilding the expression term on the heap.</summary>
+    public static Number EvaluateBinary(Engine engine, string name, Cell aCell, Cell bCell)
     {
         Number a = Evaluate(engine, aCell);
         Number b = Evaluate(engine, bCell);

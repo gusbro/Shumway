@@ -102,6 +102,12 @@ public sealed class ClauseCompiler
         (string name, Term[] headArgs) = DecomposeHead(headTerm);
         List<Term> goals = bodyTerm is null ? new List<Term>() : FlattenConjunction(bodyTerm);
 
+        // Arithmetic inlining (Phase 25): rewrite `X is Expr` into a flat
+        // sequence of $arith builtin goals so the expression term is never
+        // built on the heap. Operates on this working goal list only — the
+        // stored clause AST (clause/2, listing) is untouched.
+        goals = ArithInline.Expand(goals);
+
         // For each named (non-anonymous) variable, record which chunk indices it
         // appears in. Chunk 0 = head + first goal; chunk i >= 1 = goal i.
         var permanents = ClassifyPermanents(headArgs, goals);
