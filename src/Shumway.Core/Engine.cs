@@ -848,11 +848,7 @@ public sealed partial class Engine
     /// <summary>Unifies the cells held in <c>X[<paramref name="aRegIdx"/>]</c> and
     /// <c>X[<paramref name="bRegIdx"/>]</c>.</summary>
     public bool UnifyRegisters(int aRegIdx, int bRegIdx)
-    {
-        int aHeap = MaterializeRegister(aRegIdx);
-        int bHeap = MaterializeRegister(bRegIdx);
-        return Unify(aHeap, bHeap);
-    }
+        => UnifyCells(_registers[aRegIdx], _registers[bRegIdx]);
 
     /// <summary>Occurs-check variant of <see cref="UnifyRegisters"/> —
     /// drives ISO <c>unify_with_occurs_check/2</c>.</summary>
@@ -898,10 +894,9 @@ public sealed partial class Engine
         {
             return true;
         }
-        int regHeap = MaterializeRegister(regIdx);
-        int valueHeap = AllocateHeap(1);
-        _heap[valueHeap] = value;
-        return Unify(regHeap, valueHeap);
+        // General case: cell-based, no materialise (ADR-017). value is a
+        // bytecode literal, so it has no heap home of its own.
+        return UnifyCells(rc, value);
     }
 
     /// <summary>Unifies the cell held in <c>Y[<paramref name="permSlot"/>]</c> of the
@@ -910,18 +905,13 @@ public sealed partial class Engine
     {
         if (_e < 0)
             throw new InvalidOperationException("No environment frame is active.");
-        int permHeap = MaterializePermanent(permSlot);
-        int regHeap = MaterializeRegister(regIdx);
-        return Unify(permHeap, regHeap);
+        return UnifyCells(_stack[_e + EnvY1Offset + permSlot], _registers[regIdx]);
     }
 
     /// <summary>Unifies <c>X[<paramref name="regIdx"/>]</c> with the heap cell at
     /// <paramref name="heapIdx"/>. Used by <c>unify_value_x</c> in read mode.</summary>
     public bool UnifyRegisterWithHeapAt(int regIdx, int heapIdx)
-    {
-        int regHeap = MaterializeRegister(regIdx);
-        return Unify(regHeap, heapIdx);
-    }
+        => UnifyCells(_registers[regIdx], Cell.Ref(heapIdx));
 
     /// <summary>Unifies <c>Y[<paramref name="permSlot"/>]</c> with the heap cell at
     /// <paramref name="heapIdx"/>. Used by <c>unify_value_y</c> in read mode.</summary>
@@ -929,8 +919,7 @@ public sealed partial class Engine
     {
         if (_e < 0)
             throw new InvalidOperationException("No environment frame is active.");
-        int permHeap = MaterializePermanent(permSlot);
-        return Unify(permHeap, heapIdx);
+        return UnifyCells(_stack[_e + EnvY1Offset + permSlot], Cell.Ref(heapIdx));
     }
 
     /// <summary>Unifies the heap cell at <paramref name="heapIdx"/> with the immediate
@@ -988,20 +977,24 @@ public sealed partial class Engine
     // ----- Compound / list construction (write-mode entry points) -----
 
     /// <summary>
-    /// Implements <c>put_structure</c>: allocates a STR cell pointing to a FUNCTOR cell
-    /// on the heap, stores a REF to the STR in <c>X[<paramref name="regIdx"/>]</c>, and
-    /// enters write mode with <see cref="UnifyPointer"/> at the position where the first
-    /// argument will be written.
+    /// Implements <c>put_structure</c>: allocates a FUNCTOR cell on the heap and stores an
+    /// inline STR cell pointing at it in <c>X[<paramref name="regIdx"/>]</c> (ADR-017: no
+    /// separate on-heap STR header), then enters write mode with <see cref="UnifyPointer"/>
+    /// at the position where the first argument will be written.
     /// </summary>
     public void PutStructure(int functorId, int regIdx)
     {
         if (regIdx >= _registers.Length) EnsureRegisterCapacity(regIdx + 1);
-        int h = AllocateHeap(2);
-        _heap[h] = Cell.Str(h + 1);
-        _heap[h + 1] = Cell.Functor(functorId);
-        _registers[regIdx] = Cell.Ref(h);
+        // ADR-017 phase 2: the STR tag rides inline in the register, pointing
+        // straight at the FUNCTOR cell; the args follow. A structure is
+        // functor + n args, not STR-header + functor + n args. Whole-structure
+        // unification no longer pays a materialise copy thanks to the
+        // cell-based UnifyCells path.
+        int f = AllocateHeap(1);
+        _heap[f] = Cell.Functor(functorId);
+        _registers[regIdx] = Cell.Str(f);
         _writeMode = true;
-        _unifyPointer = h + 2;
+        _unifyPointer = f + 1;
     }
 
     /// <summary>
@@ -1024,21 +1017,31 @@ public sealed partial class Engine
             finalCell = _heap[finalAddr];
         }
 
-        if (finalCell.Tag == Tag.Ref || finalCell.Tag == Tag.AttVar)
+        if (finalCell.Tag == Tag.AttVar)
         {
-            // Unbound (plain or attributed) — write mode. An attributed
-            // variable binds to the fresh structure via the
-            // AttVar-aware bind so backtracking restores the ATTVAR
-            // cell; chunk 78 will fire its unify hook here.
+            // Attributed var — write mode. Keep the on-heap STR header:
+            // BindAttVarToValue stores a Ref to a heap home for compound
+            // values, and the attr machinery expects it (the heap GC bails
+            // while any attvar is live, so the extra cell is immaterial).
+            // chunk 78 fires its unify hook from the queued wakeup.
             int h = AllocateHeap(2);
             _heap[h] = Cell.Str(h + 1);
             _heap[h + 1] = Cell.Functor(functorId);
-            if (finalCell.Tag == Tag.AttVar)
-                BindAttVarToValue(finalAddr, h, _heap[h]);
-            else
-                Bind(finalAddr, Cell.Ref(h));
+            BindAttVarToValue(finalAddr, h, _heap[h]);
             _writeMode = true;
             _unifyPointer = h + 2;
+            return true;
+        }
+        if (finalCell.Tag == Tag.Ref)
+        {
+            // ADR-017 phase 2: bind the plain var directly to an inline STR
+            // cell pointing at the FUNCTOR cell; the args follow. No separate
+            // on-heap STR header (functor + n args, not STR + functor + n).
+            int f = AllocateHeap(1);
+            _heap[f] = Cell.Functor(functorId);
+            Bind(finalAddr, Cell.Str(f));
+            _writeMode = true;
+            _unifyPointer = f + 1;
             return true;
         }
         if (finalCell.Tag == Tag.Str)
@@ -1263,16 +1266,6 @@ public sealed partial class Engine
     /// already names a heap home.</summary>
     public int MaterializeRegisterForTrace(int regIdx)
         => MaterializeRegister(regIdx);
-
-    private int MaterializePermanent(int permSlot)
-    {
-        int stackIdx = _e + EnvY1Offset + permSlot;
-        Cell c = _stack[stackIdx];
-        if (c.Tag is Tag.Ref or Tag.AttVar) return c.AsHeapIndex;
-        int slot = AllocateHeap(1);
-        _heap[slot] = c;
-        return slot;
-    }
 
     // ----- Current-query functor address map (Tier-1, chunk 47) -----
     //
@@ -2516,6 +2509,103 @@ public sealed partial class Engine
             Tag.Float => UnifyFloat(aCell, bCell),
             _ => throw new InvalidOperationException($"Unify reached cell with unexpected tag {aCell.Tag}."),
         };
+    }
+
+    /// <summary>
+    /// Cell-based unification (ADR-017). Unifies two operand cells taken
+    /// directly from registers / Y-slots / bytecode literals, WITHOUT first
+    /// copying an inline compound (Str/Lis) to a heap address — which is what
+    /// the materialise-then-<see cref="Unify(int,int)"/> entry points used to
+    /// do, re-copying a register-held structure on every <c>get_value</c> and
+    /// quadratically under backtracking (the zebra regression that blocked
+    /// ADR-017 phase 2). The structure's functor/args already live on the
+    /// heap; only its tag rides in the operand cell, so binding a variable to
+    /// it copies just the one tag cell into the variable's existing home
+    /// (zero allocation), and unifying two compounds recurses on their heap
+    /// args via the address-based path. Attributed variables and partial
+    /// strings — which genuinely need both operands at heap addresses — fall
+    /// back to materialise-then-Unify (rare; an inline operand there is
+    /// copied once).
+    /// </summary>
+    private bool UnifyCells(Cell ca, Cell cb)
+    {
+        var (a, aAddr) = ResolveOperand(ca);
+        var (b, bAddr) = ResolveOperand(cb);
+        if (aAddr >= 0 && aAddr == bAddr) return true;
+
+        // AttVar / PSTR need heap addresses for both sides — defer to the
+        // address-based path, materialising an inline operand if necessary.
+        if (a.Tag is Tag.AttVar or Tag.Pstr || b.Tag is Tag.AttVar or Tag.Pstr)
+        {
+            int ha = aAddr >= 0 ? aAddr : MaterializeCell(a);
+            int hb = bAddr >= 0 ? bAddr : MaterializeCell(b);
+            return Unify(ha, hb);
+        }
+
+        if (a.Tag == Tag.Ref)            // a is an unbound variable at aAddr
+        {
+            if (b.Tag == Tag.Ref) BindVarToVar(aAddr, bAddr);
+            else BindVarToCellValue(aAddr, b, bAddr);
+            return true;
+        }
+        if (b.Tag == Tag.Ref)            // b is an unbound variable at bAddr
+        {
+            BindVarToCellValue(bAddr, a, aAddr);
+            return true;
+        }
+
+        // Both bound values.
+        if (a.Tag != b.Tag) return false;
+        return a.Tag switch
+        {
+            Tag.Atom => a.AsAtomId == b.AsAtomId,
+            Tag.Int => a.AsInt == b.AsInt,
+            Tag.Str => UnifyStr(a.AsHeapIndex, b.AsHeapIndex),
+            Tag.Lis => UnifyLis(a.AsHeapIndex, b.AsHeapIndex),
+            Tag.BigInt => _bigIntTable[a.AsBigIntId].Equals(_bigIntTable[b.AsBigIntId]),
+            Tag.String => string.Equals(_stringTable[a.AsStringId], _stringTable[b.AsStringId]),
+            Tag.Foreign => ReferenceEquals(_foreignTable[a.AsForeignId], _foreignTable[b.AsForeignId]),
+            Tag.Float => UnifyFloat(a, b),
+            _ => throw new InvalidOperationException($"UnifyCells reached unexpected tag {a.Tag}."),
+        };
+    }
+
+    /// <summary>Resolves an operand cell to its effective (dereferenced) cell
+    /// and heap home. A REF / ATTVAR is followed to its heap home (returning
+    /// that address); any other cell is an inline value returned as-is with
+    /// address -1 (its Str/Lis referents are reachable via its payload, so it
+    /// needs no home of its own).</summary>
+    private (Cell cell, int addr) ResolveOperand(Cell c)
+    {
+        if (c.Tag is Tag.Ref or Tag.AttVar)
+        {
+            int addr = Deref(c.AsHeapIndex);
+            return (_heap[addr], addr);
+        }
+        return (c, -1);
+    }
+
+    /// <summary>Binds the unbound variable at <paramref name="varAddr"/> to a
+    /// value cell. For a compound (Str/Lis) the variable receives a REF to the
+    /// value's heap home when it has one, or the inline compound cell copied
+    /// directly into its own home when it does not (zero allocation — the
+    /// ADR-017 win); atomic values are copied in place.</summary>
+    private void BindVarToCellValue(int varAddr, Cell value, int valueAddr)
+    {
+        if (value.Tag is Tag.Str or Tag.Lis)
+            Bind(varAddr, valueAddr >= 0 ? Cell.Ref(valueAddr) : value);
+        else
+            Bind(varAddr, value);
+    }
+
+    /// <summary>Copies an inline value cell to a fresh heap slot and returns
+    /// its address. Only used by <see cref="UnifyCells"/>'s AttVar/PSTR
+    /// fallback for the rare case of an inline operand of that kind.</summary>
+    private int MaterializeCell(Cell c)
+    {
+        int slot = AllocateHeap(1);
+        _heap[slot] = c;
+        return slot;
     }
 
     /// <summary>

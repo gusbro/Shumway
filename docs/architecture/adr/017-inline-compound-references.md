@@ -2,8 +2,8 @@
 
 ## Status
 
-**Accepted; phase 1 (lists) implemented** (Phase 25). List (and, by the
-same mechanism, structure) construction is core to a Prolog engine and
+**Accepted; phases 1 (lists) and 2 (structures) implemented** (Phase 25,
+chunks 289–290). List (and structure) construction is core to a Prolog engine and
 currently allocates one more heap cell per compound than the standard
 WAM. Changing the on-heap shape of every list and structure is a "major
 decision" under CLAUDE.md (coherence-critical, comparable to the trail
@@ -24,30 +24,39 @@ bails while attvars are live anyway). Measured by `--alloc`: nreverse
 arithmetic-only benches (tak, crypt) unchanged. All suites green (Core
 423, Compiler 256, ISO 275, Embedding 2007).
 
-**Phase 2 (structures) — investigated and deferred.** Inlining `Str`
-(`PutStructure` / `GetStructure`) the same way was prototyped and
-measured: it wins big on structure-*building* code (sendmore −25 %,
-crypt −25 %, queens −15 %, serialize −9 %, tak −7.5 % cells/iter) but
-**regresses zebra by +45 %** — and that regression is *not* fixable by
-the obvious means. Root cause: a structure unified as a whole via
-`get_value` needs a heap address, so Shumway's address-based `Unify`
-calls `MaterializeRegister`. With the old `Ref`→on-heap-`Str` shape the
-structure already lived on the heap, so materialisation was free and
-survived backtracking. With an inline `Str` the structure is anchored in
-the register, so each `get_value` re-copies the `Str` header to the heap
-(+1 cell) — and "globalising" the register (rewriting it to a `Ref` after
-the first copy) does **not** help, because backtracking restores the
-register to its saved inline value and the next forward pass re-copies.
-zebra unifies whole `house/5` terms under massive `member/3` backtracking,
-so the per-unification copy dominates. Lists never hit this: they are
-walked element-by-element by `get_list` in *read* mode, which never
-materialises. The proper fix is a **cell-based unification path** that
-unifies a register-held inline compound directly, without first copying
-it to a heap address — a larger change than phase 2 itself. Until that
-exists, inline structures are a net loss for unify-heavy + backtracking
-workloads, so phase 2 stays **deferred**. Phase 1 (lists) stands on its
-own: lists are the project's primary use case (DCGs / grammar / parsing)
-and the list win has no such counter-case.
+**Phase 2 (structures) — implemented, on top of a cell-based unify
+path.** A first inline-`Str` prototype regressed zebra by +45 %: a
+whole-structure `get_value` needs a heap address, so the address-based
+`Unify` called `MaterializeRegister`, which with an inline `Str` re-copies
+the header to the heap on every unification — quadratic under
+backtracking (zebra unifies whole `house/5` terms under heavy `member/3`
+backtracking). "Globalising" the register did not help: backtracking
+restores the saved inline value and the next pass re-copies. Lists never
+hit this — they are walked element-by-element by `get_list` in *read*
+mode, which never materialises.
+
+The fix was the prerequisite the deferral note called for: a **cell-based
+unification path** (`UnifyCells`, chunk 290). The structure's functor and
+args already live on the heap; only the `Str`/`Lis` tag rides in the
+operand cell. So the register/Y-slot unify entry points
+(`UnifyRegisters`, `UnifyPermanentWithRegister`,
+`UnifyRegisterWithHeapAt`, `UnifyPermanentWithHeapAt`,
+`UnifyRegisterWithCell`) now unify the operand *cells* directly without
+materialising: binding a variable to an inline compound copies the one
+tag cell into the variable's existing home (zero allocation), and
+unifying two compounds recurses on their heap args via the existing
+address-based path (which already handled inline compounds in heap
+cells). Attributed variables and partial strings — which need both
+operands at heap addresses — fall back to materialise-then-`Unify`.
+
+With `UnifyCells` in place, inlining `Str` (`PutStructure` /
+`GetStructure`) is a **uniform win, zebra included**. Measured by
+`--alloc` vs the phase-1 baseline: sendmore −25 %, crypt −25 %, queens
+−15 %, **zebra −14 % (was +45 %)**, serialize −14 %, tak −8 %, boyer −7 %,
+nreverse / qsort / flatten −3 to −5 % (the cell-based path also trims
+list-unification copies). The attvar sub-case of `GetStructure` /
+`GetList` keeps the on-heap header (`BindAttVarToValue` stores a `Ref`).
+All suites green (Core 423, Compiler 256, ISO 275, Embedding 2007).
 
 This ADR does **not** change the cell layout of ADR-002 (still 8 bytes,
 4-bit tag + 60-bit payload, same `Lis` / `Str` tags). It changes only
