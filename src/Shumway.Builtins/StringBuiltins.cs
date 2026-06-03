@@ -86,7 +86,7 @@ public static class StringBuiltins
             int nextSplit = splitIdx + 1;
             Func<Engine, int, bool> resume = (e, _) =>
                 StringConcatSplitAttempt(e, ab, nextSplit, returnPc, isResume: true);
-            engine.PushBuiltinChoicePoint(resume, arity: 0);
+            engine.PushBuiltinChoicePoint(resume, arity: 3);  // restore string_concat/3 args (a backtrack-clobbered result reg breaks enumeration)
         }
         int aPstr = engine.MakePstr(ab.Substring(0, splitIdx));
         int bPstr = engine.MakePstr(ab.Substring(splitIdx));

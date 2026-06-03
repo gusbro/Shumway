@@ -161,7 +161,10 @@ public static class AtomListBuiltins
             int nextSplit = splitIdx + 1;
             Func<Engine, int, bool> resume = (e, _) =>
                 AppendSplitAttempt(e, elems, nextSplit, returnPc, isResume: true);
-            engine.PushBuiltinChoicePoint(resume, arity: 0);
+            // arity 3: the CP must restore append/3's argument registers, else
+            // a following body goal whose builtin call takes >= (resultReg+1)
+            // args clobbers X0/X1 and the enumeration breaks on backtrack.
+            engine.PushBuiltinChoicePoint(resume, arity: 3);
         }
 
         // L1 = elems[0..splitIdx], L2 = elems[splitIdx..n].
@@ -328,7 +331,7 @@ public static class AtomListBuiltins
             int nextSplit = splitIdx + 1;
             Func<Engine, int, bool> resume = (e, _) =>
                 AtomConcatSplitAttempt(e, cName, nextSplit, returnPc, isResume: true);
-            engine.PushBuiltinChoicePoint(resume, arity: 0);
+            engine.PushBuiltinChoicePoint(resume, arity: 3);  // restore atom_concat/3 args (see AppendSplitAttempt)
         }
 
         string a = cName.Substring(0, splitIdx);

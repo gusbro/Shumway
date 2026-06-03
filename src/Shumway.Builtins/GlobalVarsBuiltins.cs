@@ -73,7 +73,7 @@ public static class GlobalVarsBuiltins
             int nextIdx = idx + 1;
             Func<Engine, int, bool> resume = (e, _) =>
                 NbCurrentStep(e, entries, nextIdx, returnPc, isResume: true);
-            engine.PushBuiltinChoicePoint(resume, arity: 0);
+            engine.PushBuiltinChoicePoint(resume, arity: 2);  // restore nb_current/2 args (a backtrack-clobbered result reg breaks enumeration)
         }
         var (name, value) = entries[idx];
         Cell nameCell = Cell.Atom(AtomTable.Intern(name, permanent: false).Id);
