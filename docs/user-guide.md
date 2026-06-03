@@ -35,9 +35,29 @@ Shumway ships as several .NET projects, each with a clear role:
 | `Shumway.Repl` | `shumway` executable | Interactive top-level (REPL). Consults files, prints solutions, exits on `halt.` |
 | `Shumway.Compile` | `shumway-compile` executable | Compiles one `.pl` to a `.shmo` (per-module compiled object). |
 | `Shumway.Link` | `shumway-link` executable | Links one or more `.shmo`s into a `.shum` bundle with reachability + missing-predicate analysis. Also produces standalone executables (`--exe`). |
+| `Shumway.Disasm` | `shumway-disasm` executable | Diagnostic: prints the WAM bytecode disassembly of each predicate (post-indexing dispatch + clause bodies). For inspecting code generation. |
 
 You typically need only `Shumway.Embedding` plus one or more of the
 CLI tools.
+
+### Inspecting compiled bytecode (`shumway-disasm`)
+
+`shumway-disasm` compiles the static predicates in a source file (with
+first-/multi-argument indexing) and prints the WAM bytecode the Tier-0
+interpreter runs — the `switch_on_term` / `try` / `retry` / `trust`
+dispatch plus each clause body. It is a diagnostic aid for understanding
+or optimising code generation, not part of the build pipeline.
+
+```bash
+shumway-disasm benchmarks/vanroy/nreverse.pl      # every predicate
+shumway-disasm -p conc/3 benchmarks/vanroy/nreverse.pl   # one predicate
+shumway-disasm -e "p(X) :- X > 0."                # inline source
+```
+
+`-p Name/Arity` restricts the output (repeatable / comma-separated);
+`-e <source>` disassembles inline source instead of a file. DCG rules
+are expanded; directives are skipped. The same functionality is
+available in-process via `Shumway.Compiler.Wam.PredicateDisassembler`.
 
 ---
 
