@@ -46,6 +46,16 @@ internal static class ArithInline
         "integer",
     };
 
+    // The six arithmetic-comparison goals. Each evaluates its two operand
+    // *expressions* and compares; hoisting a compound operand into a synthetic
+    // variable (computed by $arith goals) keeps the comparison goal but stops
+    // its operand terms being built on the heap. A leaf or non-arith operand
+    // is left in place, so its evaluation / error context is unchanged.
+    private static readonly HashSet<string> CmpOps = new()
+    {
+        "=:=", "=\\=", "<", ">", "=<", ">=",
+    };
+
     /// <summary>Returns a goal list with every inlinable top-level
     /// <c>X is Expr</c> rewritten. Returns the input list unchanged (same
     /// reference) when nothing is inlinable.</summary>
@@ -61,6 +71,17 @@ internal static class ArithInline
             {
                 result ??= new List<Term>(goals.GetRange(0, i));
                 FlattenInto(isGoal.Args[0], isGoal.Args[1], result, ref counter);
+            }
+            else if (g is CompoundTerm { Args: { Length: 2 } } cmp
+                     && CmpOps.Contains(cmp.Functor)
+                     && (IsInlinable(cmp.Args[0]) || IsInlinable(cmp.Args[1])))
+            {
+                // At least one operand is an inlinable arithmetic compound —
+                // hoist the inlinable operand(s) and keep the comparison goal.
+                result ??= new List<Term>(goals.GetRange(0, i));
+                Term a = OperandOf(cmp.Args[0], result, ref counter);
+                Term b = OperandOf(cmp.Args[1], result, ref counter);
+                result.Add(new CompoundTerm(cmp.Functor, new[] { a, b }));
             }
             else
             {
@@ -108,11 +129,14 @@ internal static class ArithInline
         }
     }
 
-    // A leaf operand passes through; a sub-expression compound is hoisted into
-    // a fresh synthetic variable computed by its own preceding $arith goal.
+    // A leaf (or non-arith compound) operand passes through; an inlinable
+    // sub-expression compound is hoisted into a fresh synthetic variable
+    // computed by its own preceding $arith goal. (In the is/2 path every
+    // compound is already known inlinable; the check matters for the
+    // comparison path, where an operand may be a non-arith term.)
     private static Term OperandOf(Term operand, List<Term> output, ref int counter)
     {
-        if (operand is CompoundTerm)
+        if (operand is CompoundTerm c && IsInlinableNode(c))
         {
             var synth = new VarTerm("$G" + counter++);
             FlattenInto(synth, operand, output, ref counter);
