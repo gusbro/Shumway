@@ -853,11 +853,7 @@ public sealed partial class Engine
     /// <summary>Occurs-check variant of <see cref="UnifyRegisters"/> —
     /// drives ISO <c>unify_with_occurs_check/2</c>.</summary>
     public bool UnifyRegistersWithOccursCheck(int aRegIdx, int bRegIdx)
-    {
-        int aHeap = MaterializeRegister(aRegIdx);
-        int bHeap = MaterializeRegister(bRegIdx);
-        return UnifyWithOccursCheck(aHeap, bHeap);
-    }
+        => UnifyCellsWithOccursCheck(_registers[aRegIdx], _registers[bRegIdx]);
 
     /// <summary>Unifies the cell held in <c>X[<paramref name="regIdx"/>]</c> with an
     /// immediate <paramref name="value"/> (typically a bytecode-literal cell such as
@@ -2640,6 +2636,57 @@ public sealed partial class Engine
     {
         if (!Unify(hA, hB)) return false;
         return Unify(hA + 1, hB + 1);
+    }
+
+    /// <summary>Cell-based occurs-check unification (ADR-017) — the
+    /// occurs-check counterpart of <see cref="UnifyCells"/>. Var-to-var and
+    /// both-bound cases unify the operand cells directly without
+    /// materialising; only binding a variable to an inline compound needs the
+    /// value at a heap address (for <see cref="OccursIn"/>), so it
+    /// materialises that one operand — rare, since occurs-check unification is
+    /// itself rare (<c>unify_with_occurs_check/2</c>).</summary>
+    private bool UnifyCellsWithOccursCheck(Cell ca, Cell cb)
+    {
+        var (a, aAddr) = ResolveOperand(ca);
+        var (b, bAddr) = ResolveOperand(cb);
+        if (aAddr >= 0 && aAddr == bAddr) return true;
+
+        if (a.Tag is Tag.AttVar or Tag.Pstr || b.Tag is Tag.AttVar or Tag.Pstr)
+        {
+            int ha = aAddr >= 0 ? aAddr : MaterializeCell(a);
+            int hb = bAddr >= 0 ? bAddr : MaterializeCell(b);
+            return UnifyWithOccursCheck(ha, hb);
+        }
+
+        if (a.Tag == Tag.Ref)            // a is an unbound variable at aAddr
+        {
+            if (b.Tag == Tag.Ref) { BindVarToVar(aAddr, bAddr); return true; }
+            int hb = bAddr >= 0 ? bAddr : MaterializeCell(b);
+            if (OccursIn(aAddr, hb)) return false;
+            BindVarToValue(aAddr, hb, _heap[hb]);
+            return true;
+        }
+        if (b.Tag == Tag.Ref)            // b is an unbound variable at bAddr
+        {
+            int ha = aAddr >= 0 ? aAddr : MaterializeCell(a);
+            if (OccursIn(bAddr, ha)) return false;
+            BindVarToValue(bAddr, ha, _heap[ha]);
+            return true;
+        }
+
+        if (a.Tag != b.Tag) return false;
+        return a.Tag switch
+        {
+            Tag.Atom => a.AsAtomId == b.AsAtomId,
+            Tag.Int => a.AsInt == b.AsInt,
+            Tag.Str => UnifyStrWithOccursCheck(a.AsHeapIndex, b.AsHeapIndex),
+            Tag.Lis => UnifyLisWithOccursCheck(a.AsHeapIndex, b.AsHeapIndex),
+            Tag.BigInt => _bigIntTable[a.AsBigIntId].Equals(_bigIntTable[b.AsBigIntId]),
+            Tag.String => string.Equals(_stringTable[a.AsStringId], _stringTable[b.AsStringId]),
+            Tag.Foreign => ReferenceEquals(_foreignTable[a.AsForeignId], _foreignTable[b.AsForeignId]),
+            Tag.Float => UnifyFloat(a, b),
+            _ => throw new InvalidOperationException($"UnifyCellsWithOccursCheck reached unexpected tag {a.Tag}."),
+        };
     }
 
     /// <summary>
