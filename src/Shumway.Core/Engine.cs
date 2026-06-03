@@ -958,20 +958,31 @@ public sealed partial class Engine
         // compound head args (the only shape that reaches here). Kept because
         // it is correct, harmless, and a real win for programs that DO match
         // nested literals (e.g. DCG / parser heads like foo([a|T], ...)).
-        int addr = Deref(heapIdx);
-        Cell c = _heap[addr];
-        Tag t = c.Tag;
-        if (t == Tag.Ref)
+        //
+        // The fast path applies ONLY when `value` is a genuine atomic literal
+        // (Atom / inline Int). It must NOT trigger for a `value` that is a
+        // REF — unify_float passes Cell.Ref(pairIdx) here (chunk-287 bug):
+        // a Ref value against an unbound target needs Unify's young-to-old
+        // BindVarToVar discipline, and against a bound value needs the full
+        // recursive unify; binding the target straight to the Ref breaks
+        // backtracking and float matching. Guard on the value's tag.
+        if (value.Tag is Tag.Atom or Tag.Int)
         {
-            Bind(addr, value);
-            return true;
+            int addr = Deref(heapIdx);
+            Cell c = _heap[addr];
+            Tag t = c.Tag;
+            if (t == Tag.Ref)
+            {
+                Bind(addr, value);
+                return true;
+            }
+            if (t == Tag.Atom || t == Tag.Int)
+                return c.Data == value.Data;
         }
-        if (t == Tag.Atom || t == Tag.Int)
-            return c.Data == value.Data;
 
         int valueSlot = AllocateHeap(1);
         _heap[valueSlot] = value;
-        return Unify(addr, valueSlot);
+        return Unify(heapIdx, valueSlot);
     }
 
     // ----- Compound / list construction (write-mode entry points) -----
@@ -1170,11 +1181,15 @@ public sealed partial class Engine
     public void PutList(int regIdx)
     {
         if (regIdx >= _registers.Length) EnsureRegisterCapacity(regIdx + 1);
-        int h = AllocateHeap(1);
-        _heap[h] = Cell.Lis(h + 1);
-        _registers[regIdx] = Cell.Ref(h);
+        // ADR-017: store the LIS tag inline in the register, pointing
+        // directly at the 2-cell [head, tail] pair the following two
+        // unify_* opcodes will write (in write mode they AllocateHeap
+        // sequentially starting at the current top). No separate on-heap
+        // LIS header cell — a cons is 2 cells, not 3.
+        int pair = _heapTop;
+        _registers[regIdx] = Cell.Lis(pair);
         _writeMode = true;
-        _unifyPointer = h + 1;
+        _unifyPointer = pair;
     }
 
     /// <summary>
@@ -1195,16 +1210,28 @@ public sealed partial class Engine
             finalCell = _heap[finalAddr];
         }
 
-        if (finalCell.Tag == Tag.Ref || finalCell.Tag == Tag.AttVar)
+        if (finalCell.Tag == Tag.AttVar)
         {
+            // Attributed var: keep the on-heap LIS header. BindAttVarToValue
+            // stores a Ref to a heap home for compound values, and the attr
+            // machinery expects that home. Rare path (and the heap GC bails
+            // while any attvar is live), so the extra cell is immaterial.
             int h = AllocateHeap(1);
             _heap[h] = Cell.Lis(h + 1);
-            if (finalCell.Tag == Tag.AttVar)
-                BindAttVarToValue(finalAddr, h, _heap[h]);
-            else
-                Bind(finalAddr, Cell.Ref(h));
+            BindAttVarToValue(finalAddr, h, _heap[h]);
             _writeMode = true;
             _unifyPointer = h + 1;
+            return true;
+        }
+        if (finalCell.Tag == Tag.Ref)
+        {
+            // ADR-017: bind the plain var directly to an inline LIS cell
+            // pointing at the [head, tail] pair the following unify_* will
+            // write — no separate header cell (2-cell cons).
+            int pair = _heapTop;
+            Bind(finalAddr, Cell.Lis(pair));
+            _writeMode = true;
+            _unifyPointer = pair;
             return true;
         }
         if (finalCell.Tag == Tag.Lis)

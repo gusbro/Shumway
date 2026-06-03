@@ -845,7 +845,7 @@ When proposing changes:
 | IL choice points (multi-clause ABI) | ADR-014 |
 | Persistent code space & live dynamic dispatch | ADR-015 |
 | Heap garbage collection | ADR-016 |
-| Inline compound references (2-cell cons) | ADR-017 (proposed) |
+| Inline compound references (2-cell cons) | ADR-017 (phase 1: lists done) |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | Builtins catalog | docs/design/builtins-catalog.md |

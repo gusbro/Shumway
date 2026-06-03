@@ -2,12 +2,28 @@
 
 ## Status
 
-**Proposed** (Phase 25). List (and, by the same mechanism, structure)
-construction is core to a Prolog engine and currently allocates one more
-heap cell per compound than the standard WAM. Changing the on-heap shape
-of every list and structure is a "major decision" under CLAUDE.md
-(coherence-critical, comparable to the trail format or the heap-GC
-strategy), so the design is settled here before any code lands.
+**Accepted; phase 1 (lists) implemented** (Phase 25). List (and, by the
+same mechanism, structure) construction is core to a Prolog engine and
+currently allocates one more heap cell per compound than the standard
+WAM. Changing the on-heap shape of every list and structure is a "major
+decision" under CLAUDE.md (coherence-critical, comparable to the trail
+format or the heap-GC strategy), so the design was settled here before
+code landed.
+
+**Status of implementation.** Phase 1 (inline 2-cell lists) landed in
+chunk 289: `PutList` and `GetList`'s plain-variable write branch now
+store an inline `Lis` cell instead of a `Ref` to an on-heap header. The
+heap-GC root scan needed no change — it is fully conservative (every
+register / stack slot is fed to the tag-dispatching `MarkReferents` /
+`RelocateCell`, which already handle `Lis`/`Str`/`Float`/`Pstr`), so
+inline compounds in roots were already relocated correctly. The attvar
+sub-case of `GetList` keeps the on-heap header (it binds via
+`BindAttVarToValue`, which stores a `Ref` to a heap home; the heap GC
+bails while attvars are live anyway). Measured by `--alloc`: nreverse
+−28.8 %, flatten −18.7 %, qsort −13.8 %, boyer −5.9 % cells/iter;
+arithmetic-only benches (tak, crypt) unchanged. All suites green (Core
+423, Compiler 256, ISO 275, Embedding 2007). Phase 2 (structures) is
+not yet implemented.
 
 This ADR does **not** change the cell layout of ADR-002 (still 8 bytes,
 4-bit tag + 60-bit payload, same `Lis` / `Str` tags). It changes only
