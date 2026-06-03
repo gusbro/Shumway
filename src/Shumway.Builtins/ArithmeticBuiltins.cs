@@ -100,27 +100,30 @@ public static class ArithmeticBuiltins
         {
             checked
             {
-                if (fid == _addFid)    { result = av + bv; return true; }
-                if (fid == _subFid)    { result = av - bv; return true; }
-                if (fid == _mulFid)    { result = av * bv; return true; }
-                if (fid == _intDivFid)
+                if (fid == _addFid)    result = av + bv;
+                else if (fid == _subFid) result = av - bv;
+                else if (fid == _mulFid) result = av * bv;
+                else if (fid == _intDivFid)
                 {
                     if (bv == 0) return false;   // let slow path raise
                     result = av / bv;
-                    return true;
                 }
-                if (fid == _modFid)
+                else if (fid == _modFid)
                 {
                     if (bv == 0) return false;
                     long r = av % bv;
                     if ((r != 0) && ((r < 0) != (bv < 0))) r += bv;  // ISO mod
                     result = r;
-                    return true;
                 }
+                else return false;
             }
+            // A long can hold values the 60-bit inline Int cell cannot (e.g.
+            // 1000000000 * 1000000000 = 1e18 fits long but not Int60); if the
+            // result is out of inline range, fall to the BigInt-promoting slow
+            // path rather than letting Cell.Int throw.
+            return result >= Cell.MinInt60 && result <= Cell.MaxInt60;
         }
         catch (OverflowException) { return false; }  // fall through to BigInt
-        return false;
     }
 
     // Fast int-int comparison: skip Number boxing when both operands
