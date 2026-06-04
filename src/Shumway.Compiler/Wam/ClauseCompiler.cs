@@ -131,11 +131,18 @@ public sealed class ClauseCompiler
             permanents,
             extraPermanentSlots: needsDeepCut ? 1 : 0);
 
-        // Frame is required if there are multiple goals, or if a deep cut needs
-        // a permanent Y slot to survive intermediate calls. Even with no
-        // ordinary permanents, the frame's purpose is twofold: preserve the
-        // caller's CP across sub-goal calls, and host the cut-barrier slot.
-        bool needFrame = goals.Count > 1 || needsDeepCut;
+        // Frame is required to (a) host permanent Y slots / the cut-barrier
+        // slot, or (b) preserve the caller's CP across a non-tail CALL. An
+        // inline goal — a cut or arithmetic (`is`/comparisons → a_int_*/a_eval_*)
+        // — does NOT clobber CP, so a body that is inline goals followed by at
+        // most one final (tail) call needs no frame. (Phase 26 B: a neck cut
+        // before the single recursive call no longer forces an empty
+        // `allocate [0]`, matching GProlog.) A real call BEFORE the last goal
+        // does need the frame, since it overwrites CP and we must still return.
+        bool needFrame = permanents.Count > 0 || needsDeepCut;
+        if (!needFrame)
+            for (int i = 0; i < goals.Count - 1; i++)
+                if (!IsInlineBodyGoal(goals[i])) { needFrame = true; break; }
         // Chunk 220 — fuse the common Allocate+GetLevel prologue when both
         // are emitted; otherwise emit individually.
         if (needFrame && needsDeepCut)
@@ -302,7 +309,13 @@ public sealed class ClauseCompiler
         Term[] headArgs, List<Term> goals,
         IReadOnlyCollection<string> permanents, Dictionary<string, int> outPreferred)
     {
-        if (goals.Count == 0 || goals[0] is not CompoundTerm firstGoal) return;
+        // Target the first CALL of chunk 0 — which, with a transparent neck cut
+        // (chunk 309), may sit at index 1. Mirrors the Warren scheduler so a
+        // head var preferenced into its register is the one the scheduler then
+        // leaves in place (Phase 26 A: `p :- !, recur(Args)` extracts Args
+        // straight into the recursive call's argument registers, no put_value).
+        if (goals.Count == 0) return;
+        if (goals[FirstScheduledCallIndex(goals)] is not CompoundTerm firstGoal) return;
 
         // Total body occurrences (any depth) per variable.
         var bodyCount = new Dictionary<string, int>();
@@ -405,6 +418,19 @@ public sealed class ClauseCompiler
     /// first goal of chunk 0. A neck cut (position 0) is chunk-transparent (see
     /// <see cref="ClassifyPermanents"/>), so the call sits at index 1; otherwise
     /// index 0.</summary>
+    /// <summary>A body goal that compiles to inline opcodes which never clobber
+    /// the continuation pointer: the cut (<c>!</c>) and arithmetic (<c>is/2</c>
+    /// and the six comparisons → <c>a_int_*</c> / <c>a_eval_*</c>). Such a goal
+    /// needs no environment frame to survive it.</summary>
+    private static bool IsInlineBodyGoal(Term goal) => goal switch
+    {
+        AtomTerm { Name: "!" } => true,
+        CompoundTerm { Functor: "is", Args.Length: 2 } => true,
+        CompoundTerm { Args.Length: 2 } c
+            when Shumway.Builtins.ArithmeticEvaluator.TryRelOp(c.Functor, out _) => true,
+        _ => false,
+    };
+
     private static int FirstScheduledCallIndex(List<Term> goals)
         => goals.Count > 1 && goals[0] is AtomTerm { Name: "!" } ? 1 : 0;
 

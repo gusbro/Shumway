@@ -50,17 +50,17 @@ public class CutCompilationTests
     }
 
     [Fact]
-    public void NeckCut_FollowedByGoal_EmitsAllocateNeckCutThenExecute()
+    public void NeckCut_FollowedByGoal_NeedsNoFrame()
     {
-        // p :- !, q.   → allocate 0; neck_cut; deallocate; execute q
+        // p :- !, q.   → neck_cut; execute q.  No permanents, no deep cut, and a
+        // single tail call after a transparent neck cut → no environment frame
+        // (Phase 26 B; matches GProlog, which emits no allocate here).
         var cc = CompileSource("p :- !, q.");
         var d = Disassemble(cc.Bytecode);
 
-        Assert.Equal(Opcode.Allocate, d[0].Opcode);
-        Assert.Equal(0, d[0].Operands[0]);
-        Assert.Equal(Opcode.NeckCut, d[1].Opcode);
-        Assert.Equal(Opcode.Deallocate, d[2].Opcode);
-        Assert.Equal(Opcode.Execute, d[3].Opcode);
+        Assert.Equal(Opcode.NeckCut, d[0].Opcode);
+        Assert.Equal(Opcode.Execute, d[1].Opcode);
+        Assert.DoesNotContain(d, i => i.Opcode == Opcode.Allocate);
     }
 
     // ---------- Deep cut (! at position > 0) ----------

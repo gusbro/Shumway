@@ -39,4 +39,17 @@ public class CutTransparencyTests
         // The bodies still produce a real call to q/2.
         Assert.Contains("execute", text);
     }
+
+    [Fact]
+    public void NeckCutRecursion_NoFrame_AndArgsDirectToRegisters()
+    {
+        // p([H|T], [H|R]) :- !, p(T, R).  — the recursive clause matches
+        // GProlog: no environment frame (B), and T/R extracted straight into the
+        // recursive call's argument registers (A), so NO put_value and NO
+        // allocate anywhere in the predicate.
+        string text = Dis("p([], []). p([H|T], [H|R]) :- !, p(T, R).");
+        Assert.Contains("neck_cut", text);
+        Assert.DoesNotContain("put_value", text);   // A: args land in x0/x1 directly
+        Assert.DoesNotContain("allocate", text);    // B: no frame needed
+    }
 }
