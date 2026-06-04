@@ -150,6 +150,11 @@ public sealed class ClauseCompiler
                 state.Emitter.EmitGetLevel(cutSlot);
         }
 
+        // Argument-register preferencing (must run before the head is compiled,
+        // so a head-extracted variable's unify_variable targets its call-arg
+        // register directly).
+        ComputePreferredArgRegisters(headArgs, goals, permanents, state.PreferredReg);
+
         // ----- Head -----
         for (int i = 0; i < headArgs.Length; i++)
             CompileHeadArg(state, headArgs[i], i);
@@ -267,6 +272,78 @@ public sealed class ClauseCompiler
             if (occurs[name].Count >= 2)
                 perms.Add(name);
         return perms;
+    }
+
+    /// <summary>Computes argument-register preferencing: a head-extracted
+    /// temporary variable whose single body use is a first-goal call argument is
+    /// allocated directly into that call's argument register, eliminating the
+    /// redundant <c>unify_variable_x temp</c> + <c>put_value_x temp, argReg</c>
+    /// pair (the put is auto-skipped once the variable already lives in the arg
+    /// register). Safe because, by the time the variable is extracted, the
+    /// destination register is free: it was a non-variable head argument
+    /// (<c>headArgs[R]</c> is not a bare variable) whose <c>get_*</c> has
+    /// consumed it, and the head argument's binding lives on the heap, not in the
+    /// register — so reusing the register is sound in both read and write mode.
+    ///
+    /// <para>Conditions for preferencing variable V to register R: V is not a
+    /// permanent; V occurs exactly once in the whole body, as a depth-1 argument
+    /// at position R of the FIRST goal (so no intervening goal can clobber
+    /// register R before the use); V appears in exactly one head argument, at
+    /// index i ≥ R, and nested (not as the top-level head argument itself); and
+    /// <c>headArgs[R]</c> is a non-variable. At most one variable is preferenced
+    /// to a given register.</para></summary>
+    private static void ComputePreferredArgRegisters(
+        Term[] headArgs, List<Term> goals,
+        IReadOnlyCollection<string> permanents, Dictionary<string, int> outPreferred)
+    {
+        if (goals.Count == 0 || goals[0] is not CompoundTerm firstGoal) return;
+
+        // Total body occurrences (any depth) per variable.
+        var bodyCount = new Dictionary<string, int>();
+        foreach (Term g in goals) CountVarOccurrences(g, bodyCount);
+
+        // The single head-argument index each variable appears in (-1 if it
+        // appears in more than one), plus the set that appears as a bare
+        // top-level head argument (already register-resident).
+        var headArgIndex = new Dictionary<string, int>();
+        var headTopLevel = new HashSet<string>();
+        var seenInThisArg = new HashSet<string>();
+        for (int i = 0; i < headArgs.Length; i++)
+        {
+            if (headArgs[i] is VarTerm tv && tv.Name != "_") headTopLevel.Add(tv.Name);
+            seenInThisArg.Clear();
+            CollectVarNames(headArgs[i], seenInThisArg);
+            foreach (string name in seenInThisArg)
+                headArgIndex[name] = headArgIndex.ContainsKey(name) ? -1 : i;
+        }
+
+        var permSet = permanents as ISet<string> ?? new HashSet<string>(permanents);
+        for (int r = 0; r < firstGoal.Args.Length; r++)
+        {
+            if (firstGoal.Args[r] is not VarTerm v || v.Name == "_") continue;
+            string name = v.Name;
+            if (permSet.Contains(name)) continue;                 // temporaries only
+            if (bodyCount.GetValueOrDefault(name) != 1) continue; // single body use
+            if (headTopLevel.Contains(name)) continue;            // already arg-resident
+            if (!headArgIndex.TryGetValue(name, out int i) || i < 0) continue; // one head arg
+            if (r > i) continue;                                  // register r free at extraction
+            if (headArgs[r] is VarTerm) continue;                 // register r holds no named var
+            if (outPreferred.ContainsValue(r)) continue;          // one variable per register
+            outPreferred[name] = r;
+        }
+    }
+
+    private static void CountVarOccurrences(Term t, Dictionary<string, int> counts)
+    {
+        switch (t)
+        {
+            case VarTerm v when v.Name != "_":
+                counts[v.Name] = counts.GetValueOrDefault(v.Name) + 1;
+                break;
+            case CompoundTerm c:
+                foreach (Term a in c.Args) CountVarOccurrences(a, counts);
+                break;
+        }
     }
 
     /// <summary>Bumps the X-register counter so any further anonymous
@@ -775,7 +852,19 @@ public sealed class ClauseCompiler
                 break;
 
             case VarTerm v when s.Xs.IsNewName(v.Name):
-                int xFresh = s.Xs.AllocateFresh(v.Name);
+                // Argument-register preferencing: extract straight into the
+                // call-arg register this variable flows to, so the later
+                // put_value_x is skipped (it sees the variable already in place).
+                int xFresh;
+                if (s.PreferredReg.TryGetValue(v.Name, out int pref))
+                {
+                    xFresh = pref;
+                    s.Xs.Bind(v.Name, pref);
+                }
+                else
+                {
+                    xFresh = s.Xs.AllocateFresh(v.Name);
+                }
                 s.Emitter.EmitUnifyVariableX(xFresh);
                 break;
 
@@ -1283,6 +1372,15 @@ public sealed class ClauseCompiler
         public VariableMap Xs { get; }
         public Dictionary<string, int> Ys { get; } = new();
         public HashSet<string> YsInitialized { get; } = new();
+
+        /// <summary>Argument-register preferencing: a first-occurrence,
+        /// head-extracted X variable that flows to a single first-goal call
+        /// argument is allocated directly into that call's argument register, so
+        /// the redundant <c>unify_variable_x temp</c> + <c>put_value_x temp,
+        /// argReg</c> collapses to one <c>unify_variable_x argReg</c>. Populated
+        /// before head compilation; consumed when the variable's
+        /// <c>unify_variable</c> is emitted.</summary>
+        public Dictionary<string, int> PreferredReg { get; } = new();
         public int PermanentCount { get; }
         public Queue<(int Slot, CompoundTerm Compound)> Pending { get; } = new();
         public List<CallSite> CallSites { get; } = new();
