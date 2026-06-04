@@ -52,6 +52,21 @@ optimisation pass.
 | `trim_all_spaces/2` cl.3, `parse_args/2` cl.3 | `[H\|T],[H\|T2] :- !, recur` (neck cut then call) | **behind: A + B** (we add `allocate[0]` + 2× `put_value_x`; GProlog: no frame, args direct) |
 | `assert_default_extension/1` | `retractif(...), ifthen(...), !` (term args) | parity on calls; nested-build of `assert_once(default_extension_i(Ext))` and `(Ext \= '')` shows **C** + **D** |
 | `bling_file_header/2` | builds `['Blint: ', Name]`, several `writeln` | parity on calls; the list build is **C** (6 instr + temp vs GProlog 5 inline) + **D** |
+| `tokenize_one_pred/3` cl.1 | structured first arg `token(L,eof)`, output `[token(L,eof)]` | **parity** — the nested `token(...)` is the list HEAD (non-last) so both BFS it; structured first-arg index + shared `L` identical |
+| `parse_pred_errors/3` cl.1 | deep body (`length`, `is`, recur, `concat`, `!`) + nested-list head | head matching **parity** (same instr, BFS order vs GProlog depth-first; shared `Type` via a temp); arithmetic **we WIN** — `Loc is LPred-RLoc` is one inline `a_int_bin` (0 heap) vs GProlog's `put_structure (-)/2` + 2 unify + `call((is)/2)` (4 instr + a 3-cell heap term) |
+
+**Cataloguing converged.** Across the shapes above (facts/asserts, list-recursion
+with a guard, neck-cut recursion, term building, deep body + arithmetic,
+structured-first-arg indexing) **no optimisation gap beyond A–D was found**.
+After A+B+C (+ the D verification) we MATCH GProlog on frame/permanent allocation
+and nested build, and BEAT it on arithmetic (inline `a_int_*`) and prologue
+fusion (`allocate_get_level` / `deallocate_proceed`). Blint uses
+`ifthen`/`ifthenelse` rather than `;`/`->`, so real control-construct codegen is
+out of scope here (covered by Chunk86/88). One non-gap noted for the future: a
+clause that rebuilds a head subterm in its output (`tokenize_one_pred`'s
+`[token(L,eof)]`) could in principle SHARE the input structure rather than
+rebuild it — a common-subexpression optimisation neither engine does; not a
+GProlog gap.
 
 ## Recommended order of attack
 
