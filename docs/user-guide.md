@@ -55,9 +55,12 @@ shumway-disasm -e "p(X) :- X > 0."                # inline source
 ```
 
 `-p Name/Arity` restricts the output (repeatable / comma-separated);
-`-e <source>` disassembles inline source instead of a file. DCG rules
-are expanded; directives are skipped. The same functionality is
-available in-process via `Shumway.Compiler.Wam.PredicateDisassembler`.
+`-e <source>` disassembles inline source instead of a file. By default
+it shows **release** bytecode (what the engine runs under
+`compile_mode=release` — no `meta dbg_info` markers); pass `--debug` to
+include the per-clause source-position markers. DCG rules are expanded;
+directives are skipped. The same functionality is available in-process
+via `Shumway.Compiler.Wam.PredicateDisassembler`.
 
 ---
 

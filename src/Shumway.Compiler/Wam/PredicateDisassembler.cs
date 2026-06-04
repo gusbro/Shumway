@@ -26,7 +26,8 @@ public static class PredicateDisassembler
     /// named <c>Name/Arity</c> indicators.</summary>
     public static IReadOnlyList<Entry> Disassemble(
         string source,
-        IReadOnlyCollection<(string Name, int Arity)>? filter = null)
+        IReadOnlyCollection<(string Name, int Arity)>? filter = null,
+        bool emitDebugInfo = false)
     {
         ArgumentNullException.ThrowIfNull(source);
         var clauses = DcgTransform.Apply(new ClauseReader(source).ReadAll());
@@ -54,7 +55,8 @@ public static class PredicateDisassembler
             string label = $"{name}/{arity}";
             try
             {
-                CompiledPredicate pred = new PredicateCompiler().Compile(groups[(name, arity)]);
+                CompiledPredicate pred = new PredicateCompiler { EmitDebugInfo = emitDebugInfo }
+                    .Compile(groups[(name, arity)]);
                 result.Add(new Entry(name, arity, Format(label, pred.Bytecode), Error: null));
             }
             catch (Exception ex)

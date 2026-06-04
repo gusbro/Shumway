@@ -38,6 +38,7 @@ internal static class Program
         string? source = null;
         string? inputPath = null;
         var filter = new List<(string, int)>();
+        bool emitDebugInfo = false;   // default: release (what the engine runs by default)
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -47,6 +48,12 @@ internal static class Program
                 case "-h" or "--help":
                     PrintHelp();
                     return ExitOk;
+                case "--debug":
+                    emitDebugInfo = true;
+                    break;
+                case "--release":
+                    emitDebugInfo = false;
+                    break;
                 case "-e" or "--eval":
                     if (++i >= args.Length) return Usage("missing source after " + a);
                     source = args[i];
@@ -84,7 +91,7 @@ internal static class Program
         try
         {
             entries = PredicateDisassembler.Disassemble(
-                source, filter.Count > 0 ? filter : null);
+                source, filter.Count > 0 ? filter : null, emitDebugInfo);
         }
         catch (Exception ex)
         {
@@ -149,6 +156,9 @@ internal static class Program
             OPTIONS:
               -e, --eval <source>     disassemble inline source instead of a file
               -p, --pred <Name/Arity> only these predicates (repeatable / comma-separated)
+              --release               omit debug-info markers (default — what the
+                                      engine runs under compile_mode=release)
+              --debug                 include the per-clause meta dbg_info markers
               -h, --help              show this help
 
             Predicates are compiled with first-argument / multi-argument indexing,

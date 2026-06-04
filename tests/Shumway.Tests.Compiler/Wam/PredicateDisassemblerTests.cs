@@ -54,4 +54,16 @@ public class PredicateDisassemblerTests
         var entries = PredicateDisassembler.Disassemble("p(X) :- X > 0.");
         Assert.Contains("a_int_cmp", Assert.Single(entries).Text);
     }
+
+    [Fact]
+    public void Release_OmitsDbgInfo_Debug_IncludesIt()
+    {
+        // compile_mode=release (the default) emits NO meta dbg_info markers at
+        // all — not per-clause, not per-predicate; debug includes one per clause.
+        const string src = "p(a).\np(b).\np([H|T]) :- p(T).";
+        string release = PredicateDisassembler.Disassemble(src).Single().Text;
+        string debug = PredicateDisassembler.Disassemble(src, emitDebugInfo: true).Single().Text;
+        Assert.DoesNotContain("meta", release);
+        Assert.Contains("meta dbg_info", debug);
+    }
 }
