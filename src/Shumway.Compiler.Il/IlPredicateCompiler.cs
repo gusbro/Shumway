@@ -241,6 +241,11 @@ public sealed class IlPredicateCompiler
         typeof(Engine).GetMethod(nameof(Engine.UnifyVariableX), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineUnifyValueXMethod =
         typeof(Engine).GetMethod(nameof(Engine.UnifyValueX), new[] { typeof(int) })!;
+    // ADR-019 inline nested compound build/match.
+    private static readonly MethodInfo EngineUnifyStructureMethod =
+        typeof(Engine).GetMethod(nameof(Engine.UnifyStructure), new[] { typeof(int) })!;
+    private static readonly MethodInfo EngineUnifyListMethod =
+        typeof(Engine).GetMethod(nameof(Engine.UnifyList), Type.EmptyTypes)!;
     private static readonly MethodInfo EngineUnifyVariableYMethod =
         typeof(Engine).GetMethod(nameof(Engine.UnifyVariableY), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineUnifyValueYMethod =
@@ -650,6 +655,8 @@ public sealed class IlPredicateCompiler
         Opcode.UnifyVariableX => true,
         Opcode.UnifyValueX => true,
         Opcode.UnifyVoid => true,
+        Opcode.UnifyStructure => true,   // ADR-019
+        Opcode.UnifyList => true,        // ADR-019
         _ => false,
     };
 
@@ -705,6 +712,9 @@ public sealed class IlPredicateCompiler
         // List head matching (chunk 49).
         Opcode.GetList => true,
         Opcode.PutList => true,
+        // ADR-019 inline nested compound build/match.
+        Opcode.UnifyStructure => true,
+        Opcode.UnifyList => true,
         // PSTR + Call (chunk 50).
         Opcode.GetPstr => true,
         Opcode.PutPstr => true,
@@ -1757,6 +1767,24 @@ public sealed class IlPredicateCompiler
                 emit.LoadConstant(slot);
                 emit.Call(EngineUnifyVariableXMethod);
                 pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.UnifyStructure)   // ADR-019
+            {
+                int functorId = BytecodeIO.ReadInt32(code, pc + 1);
+                emit.LoadArgument(0);
+                EmitFunctorId(emit, functorId);
+                emit.Call(EngineUnifyStructureMethod);
+                emit.BranchIfFalse(failLabel);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.UnifyList)   // ADR-019
+            {
+                emit.LoadArgument(0);
+                emit.Call(EngineUnifyListMethod);
+                emit.BranchIfFalse(failLabel);
+                pc += 1;
                 continue;
             }
             if (op == Opcode.UnifyValueX)

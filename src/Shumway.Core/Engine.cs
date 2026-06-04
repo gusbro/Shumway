@@ -1252,6 +1252,97 @@ public sealed partial class Engine
         return false;
     }
 
+    /// <summary>ADR-019 <c>unify_structure</c>: build (write) or match (read) a
+    /// nested compound at the parent's current argument and descend into its
+    /// args. Write mode allocates the nested FUNCTOR cell, writes an inline STR
+    /// ref to it into the parent's current arg slot, and moves
+    /// <see cref="UnifyPointer"/> to the nested's first arg. Read mode derefs the
+    /// parent's current arg and binds it (var → fresh structure, switch to write)
+    /// or matches it (STR with the same functor, stay read), failing otherwise.
+    /// Emitted only for a nested compound in the LAST argument position, so the
+    /// parent is never resumed — the build stays linear, no write-pointer stack.</summary>
+    public bool UnifyStructure(int functorId)
+    {
+        if (_writeMode)
+        {
+            int slot = AllocateHeap(1);          // parent's current arg slot
+            int f = AllocateHeap(1);             // nested FUNCTOR cell (contiguous)
+            _heap[f] = Cell.Functor(functorId);
+            _heap[slot] = Cell.Str(f);
+            _unifyPointer = f + 1;
+            return true;
+        }
+        int addr = Deref(_unifyPointer);
+        Cell cell = _heap[addr];
+        if (cell.Tag == Tag.AttVar)
+        {
+            int h = AllocateHeap(2);
+            _heap[h] = Cell.Str(h + 1);
+            _heap[h + 1] = Cell.Functor(functorId);
+            BindAttVarToValue(addr, h, _heap[h]);
+            _writeMode = true;
+            _unifyPointer = h + 2;
+            return true;
+        }
+        if (cell.Tag == Tag.Ref)
+        {
+            int f = AllocateHeap(1);
+            _heap[f] = Cell.Functor(functorId);
+            Bind(addr, Cell.Str(f));
+            _writeMode = true;
+            _unifyPointer = f + 1;
+            return true;
+        }
+        if (cell.Tag == Tag.Str)
+        {
+            int functorIdx = cell.AsHeapIndex;
+            if (_heap[functorIdx].AsFunctorId != functorId) return false;
+            _unifyPointer = functorIdx + 1;      // stays read mode
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>ADR-019 <c>unify_list</c>: build (write) or match (read) a nested
+    /// list cell at the parent's current argument, descending to its head. The
+    /// list-tail counterpart of <see cref="UnifyStructure"/>; uses the ADR-017
+    /// inline 2-cell cons (no header). Last-argument position only.</summary>
+    public bool UnifyList()
+    {
+        if (_writeMode)
+        {
+            int slot = AllocateHeap(1);          // parent's current arg slot
+            _heap[slot] = Cell.Lis(_heapTop);    // points at the cons (next 2 cells)
+            _unifyPointer = _heapTop;
+            return true;
+        }
+        int addr = Deref(_unifyPointer);
+        Cell cell = _heap[addr];
+        if (cell.Tag == Tag.AttVar)
+        {
+            int h = AllocateHeap(1);
+            _heap[h] = Cell.Lis(h + 1);
+            BindAttVarToValue(addr, h, _heap[h]);
+            _writeMode = true;
+            _unifyPointer = h + 1;
+            return true;
+        }
+        if (cell.Tag == Tag.Ref)
+        {
+            int pair = _heapTop;
+            Bind(addr, Cell.Lis(pair));
+            _writeMode = true;
+            _unifyPointer = pair;
+            return true;
+        }
+        if (cell.Tag == Tag.Lis)
+        {
+            _unifyPointer = cell.AsHeapIndex;    // stays read mode
+            return true;
+        }
+        return false;
+    }
+
     private int MaterializeRegister(int regIdx)
     {
         Cell c = _registers[regIdx];

@@ -137,16 +137,18 @@ public class CompoundHeadTests
         var cc = CompileSource("p(foo(X, bar(X))).");
         var d = Disassemble(cc.Bytecode);
 
-        // get_structure foo/2, X[0]
-        // unify_variable_x X[N]    ; first X — claim slot N
-        // unify_variable_x X[M]    ; defer bar(X) into slot M
-        // get_structure bar/1, X[M]
-        // unify_value_x X[N]       ; second X — same slot as first
-        // proceed
+        // ADR-019: bar(X) is foo's LAST arg → matched inline with
+        // unify_structure (no temp + second get_structure).
+        //   get_structure foo/2, X[0]
+        //   unify_variable_x X[N]    ; first X — claim slot N
+        //   unify_structure bar/1    ; last arg, inline
+        //   unify_value_x X[N]       ; second X — same slot as first
+        //   proceed
         Assert.Equal(Opcode.UnifyVariableX, d[1].Opcode);
         int xSlot = d[1].Operands[0];
-        Assert.Equal(Opcode.UnifyValueX, d[4].Opcode);
-        Assert.Equal(xSlot, d[4].Operands[0]);
+        Assert.Equal(Opcode.UnifyStructure, d[2].Opcode);
+        Assert.Equal(Opcode.UnifyValueX, d[3].Opcode);
+        Assert.Equal(xSlot, d[3].Operands[0]);
     }
 
     // ---------- Lists ----------
@@ -188,21 +190,17 @@ public class CompoundHeadTests
     [Fact]
     public void List_TwoElements_LayeredAsNestedCons()
     {
-        // p([a, b]). → '.'(a, '.'(b, []))
+        // p([a, b]). → '.'(a, '.'(b, [])).  ADR-019: the nested cons (the list
+        // tail) is matched inline with unify_list — no temp + second get_list.
         var cc = CompileSource("p([a, b]).");
         var d = Disassemble(cc.Bytecode);
 
-        // Layer 1: get_list X[0]; unify_atom 'a'; unify_variable_x X[N]
-        // Layer 2: get_list X[N];  unify_atom 'b'; unify_nil
-        Assert.Equal(Opcode.GetList, d[0].Opcode);
-        Assert.Equal(Opcode.UnifyAtom, d[1].Opcode);
-        Assert.Equal(Opcode.UnifyVariableX, d[2].Opcode);
-        int innerSlot = d[2].Operands[0];
-        Assert.Equal(Opcode.GetList, d[3].Opcode);
-        Assert.Equal(innerSlot, d[3].Operands[0]);
-        Assert.Equal(Opcode.UnifyAtom, d[4].Opcode);
-        Assert.Equal(Opcode.UnifyNil, d[5].Opcode);
-        Assert.Equal(Opcode.Proceed, d[6].Opcode);
+        Assert.Equal(Opcode.GetList, d[0].Opcode);     // [a | _]
+        Assert.Equal(Opcode.UnifyAtom, d[1].Opcode);   // a
+        Assert.Equal(Opcode.UnifyList, d[2].Opcode);   // tail = [b | _], inline
+        Assert.Equal(Opcode.UnifyAtom, d[3].Opcode);   // b
+        Assert.Equal(Opcode.UnifyNil, d[4].Opcode);    // []
+        Assert.Equal(Opcode.Proceed, d[5].Opcode);
     }
 
     // ---------- End-to-end: parse → compile → run ----------

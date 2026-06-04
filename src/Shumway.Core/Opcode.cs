@@ -64,6 +64,9 @@ public enum Opcode : byte
     UnifyVoid = 0x48,
     UnifyFloat = 0x49,
     UnifyBigInt = 0x4A,
+    // ADR-019: inline nested compound build (write mode) / match (read mode).
+    UnifyStructure = 0x4B,   // opcode + 4-byte functor id = 5 bytes
+    UnifyList = 0x4C,        // 1 byte
 
     // Control
     Allocate = 0x50,

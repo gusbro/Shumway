@@ -491,6 +491,15 @@ public sealed class BytecodeEmitter
 
     public void EmitUnifyNil() => _bytes.Add((byte)Opcode.UnifyNil);
 
+    // ADR-019: inline nested compound build/match in the current unify stream.
+    public void EmitUnifyStructure(int functorId)
+    {
+        _bytes.Add((byte)Opcode.UnifyStructure);
+        EmitInt(functorId);
+    }
+
+    public void EmitUnifyList() => _bytes.Add((byte)Opcode.UnifyList);
+
     public void EmitUnifyVariableX(int slot)
     {
         _bytes.Add((byte)Opcode.UnifyVariableX);

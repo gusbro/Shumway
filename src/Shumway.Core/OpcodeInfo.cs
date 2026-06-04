@@ -80,6 +80,9 @@ public static class OpcodeTable
         Set(Opcode.UnifyVoid, 5, "unify_void", OperandKind.Count);
         Set(Opcode.UnifyFloat, 5, "unify_float", OperandKind.LiteralId);
         Set(Opcode.UnifyBigInt, 5, "unify_bigint", OperandKind.LiteralId);
+        // ADR-019: inline nested compound build/match.
+        Set(Opcode.UnifyStructure, 5, "unify_structure", OperandKind.Functor);
+        Set(Opcode.UnifyList, 1, "unify_list");
 
         // Control
         Set(Opcode.Allocate, 5, "allocate", OperandKind.Count);

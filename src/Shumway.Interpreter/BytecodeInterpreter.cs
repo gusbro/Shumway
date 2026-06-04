@@ -1143,6 +1143,29 @@ public sealed class BytecodeInterpreter
                     break;
                 }
 
+                case Opcode.UnifyStructure:
+                {
+                    int functorId = BytecodeIO.ReadInt32(code, pc + 1);
+                    if (!_engine.UnifyStructure(functorId))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    _engine.AdvancePc(5);
+                    break;
+                }
+
+                case Opcode.UnifyList:
+                {
+                    if (!_engine.UnifyList())
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    _engine.AdvancePc(1);
+                    break;
+                }
+
                 case Opcode.UnifyVoid:
                 {
                     int count = BytecodeIO.ReadInt32(code, pc + 1);

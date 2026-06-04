@@ -858,12 +858,55 @@ public sealed class ClauseCompiler
 
             for (int i = 0; i < comp.Args.Length; i++)
             {
+                bool last = i == comp.Args.Length - 1;
                 if (multiCellTemps.TryGetValue(i, out int t))
                     s.Emitter.EmitUnifyValueX(t);
+                // ADR-019: a nested compound in the LAST argument position is
+                // built inline in the same write stream (unify_structure /
+                // unify_list), dropping the temp + deferred get_structure per
+                // nesting level. Last position only → the build stays linear
+                // (no parent arg to resume).
+                else if (last && comp.Args[i] is CompoundTerm lastComp
+                         && CanInlineCompound(lastComp))
+                    CompileUnifyArgInline(s, lastComp);
                 else
                     CompileUnifyArg(s, comp.Args[i]);
             }
         }
+    }
+
+    /// <summary>Builds a nested compound inline in the current unify stream
+    /// (ADR-019). Only valid when <paramref name="c"/> is the last argument of
+    /// its parent. Recurses into its own last-argument compound.</summary>
+    private void CompileUnifyArgInline(CompileState s, CompoundTerm c)
+    {
+        bool isList = c.Functor == "." && c.Args.Length == 2;
+        if (isList)
+            s.Emitter.EmitUnifyList();
+        else
+            s.Emitter.EmitUnifyStructure(InternFunctor(c.Functor, c.Args.Length));
+
+        for (int i = 0; i < c.Args.Length; i++)
+        {
+            if (i == c.Args.Length - 1 && c.Args[i] is CompoundTerm last
+                && CanInlineCompound(last))
+                CompileUnifyArgInline(s, last);
+            else
+                CompileUnifyArg(s, c.Args[i]);
+        }
+    }
+
+    /// <summary>True iff <paramref name="c"/> can be built inline in a write
+    /// stream: none of its direct arguments is a multi-cell literal (float /
+    /// string), which would have to be pre-emitted before the structure header
+    /// and so break the contiguous-allocation invariant mid-stream. Such a
+    /// compound falls back to the BFS (temp + <c>get_structure</c>), which
+    /// pre-emits the literal at a clean point.</summary>
+    private static bool CanInlineCompound(CompoundTerm c)
+    {
+        foreach (Term a in c.Args)
+            if (a is FloatTerm or StringTerm) return false;
+        return true;
     }
 
     /// <summary>Pre-emits <c>put_float</c> / <c>put_pstr</c> for any float or
@@ -1472,12 +1515,17 @@ public sealed class ClauseCompiler
                 else
                     s.Emitter.EmitPutStructure(InternFunctor(c.Functor, c.Args.Length), argSlot);
                 // Sub-args run in write mode; the same CompileUnifyArg dispatcher
-                // handles them. Nested compounds are deferred onto the pending
-                // queue and drained by DrainPendingCompounds.
+                // handles them. A nested compound in the LAST position is built
+                // inline (ADR-019); other nested compounds are deferred onto the
+                // pending queue and drained by DrainPendingCompounds.
                 for (int i = 0; i < c.Args.Length; i++)
                 {
+                    bool last = i == c.Args.Length - 1;
                     if (multiCellTemps.TryGetValue(i, out int t))
                         s.Emitter.EmitUnifyValueX(t);
+                    else if (last && c.Args[i] is CompoundTerm lastComp
+                             && CanInlineCompound(lastComp))
+                        CompileUnifyArgInline(s, lastComp);
                     else
                         CompileUnifyArg(s, c.Args[i]);
                 }
