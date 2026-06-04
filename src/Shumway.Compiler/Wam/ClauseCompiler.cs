@@ -213,7 +213,8 @@ public sealed class ClauseCompiler
                 }
                 else
                 {
-                    int[]? thisOrder = i == 0 ? firstGoalArgOrder : null;
+                    int[]? thisOrder =
+                        i == FirstScheduledCallIndex(goals) ? firstGoalArgOrder : null;
                     CompileBodyGoal(state, goal, isLast, needFrame, liveAfter[i], thisOrder);
                 }
             }
@@ -263,9 +264,14 @@ public sealed class ClauseCompiler
 
         // Head is in chunk 0.
         foreach (Term arg in headArgs) Visit(arg, 0);
-        // Goal i is in chunk i — the first goal joins the head; later goals each
-        // start a new chunk after the previous call.
-        for (int i = 0; i < goals.Count; i++) Visit(goals[i], i);
+        // EXPERIMENT: neck cut (position 0) is transparent — does not end a chunk.
+        int chunk = 0;
+        for (int i = 0; i < goals.Count; i++)
+        {
+            Visit(goals[i], chunk);
+            bool neckCut = i == 0 && goals[i] is AtomTerm { Name: "!" };
+            if (!neckCut) chunk++;
+        }
 
         var perms = new List<string>();
         foreach (string name in order)
@@ -395,10 +401,22 @@ public sealed class ClauseCompiler
     /// chunk 0 (head + first goal); any head-var referenced by a later
     /// goal is permanent and resides in Y, which <c>put_*</c> writes
     /// never touch.</para></summary>
+    /// <summary>Index of the first body CALL the Warren scheduler targets — the
+    /// first goal of chunk 0. A neck cut (position 0) is chunk-transparent (see
+    /// <see cref="ClassifyPermanents"/>), so the call sits at index 1; otherwise
+    /// index 0.</summary>
+    private static int FirstScheduledCallIndex(List<Term> goals)
+        => goals.Count > 1 && goals[0] is AtomTerm { Name: "!" } ? 1 : 0;
+
     private static int[]? WarrenScheduleFirstGoal(CompileState s, List<Term> goals)
     {
         if (goals.Count == 0) return null;
-        Term first = goals[0];
+        // A neck cut (position 0) is chunk-transparent, so the first CALL of
+        // chunk 0 — the goal whose argument shuffle this scheduler fixes — may
+        // sit right after it. Schedule that call so a head-var that lives in an
+        // argument register gets saved before a later arg reuses its home (the
+        // GProlog `get_variable(x4,1)` trick).
+        Term first = goals[FirstScheduledCallIndex(goals)];
         if (first is AtomTerm { Name: "!" }) return null;
         if (first is not CompoundTerm c) return null;
         Term[] gArgs = c.Args;
