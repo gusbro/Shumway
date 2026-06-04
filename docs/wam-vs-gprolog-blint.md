@@ -62,11 +62,21 @@ After A+B+C (+ the D verification) we MATCH GProlog on frame/permanent allocatio
 and nested build, and BEAT it on arithmetic (inline `a_int_*`) and prologue
 fusion (`allocate_get_level` / `deallocate_proceed`). Blint uses
 `ifthen`/`ifthenelse` rather than `;`/`->`, so real control-construct codegen is
-out of scope here (covered by Chunk86/88). One non-gap noted for the future: a
-clause that rebuilds a head subterm in its output (`tokenize_one_pred`'s
-`[token(L,eof)]`) could in principle SHARE the input structure rather than
-rebuild it — a common-subexpression optimisation neither engine does; not a
-GProlog gap.
+out of scope here (covered by Chunk86/88).
+
+**CSE — DONE (chunk 315), beats GProlog.** The one optimisation neither engine
+did: a clause that rebuilds a head subterm in its output
+(`tokenize_one_pred`'s `[token(L,eof)]`) now SHARES the matched input structure
+via `unify_value` instead of rebuilding it — we now emit fewer instructions
+than GProlog on that shape. Scoped to head matching (stable arg registers),
+top-level head-arg compounds, variable-name-precise key. Rare in Blint but
+real where it applies.
+
+**Final aggregate (89 GProlog-compiled predicates, non-index instructions):
+GProlog 3769 vs Shumway 3319 (−12%).** We emit fewer instructions overall and
+are ahead or at parity on every shape; the only 4 predicates where we emit more
+do so by 1–2 instructions (register-allocation noise, not a pattern). The Blint
+WAM-comparison exercise is closed.
 
 ## Recommended order of attack
 
