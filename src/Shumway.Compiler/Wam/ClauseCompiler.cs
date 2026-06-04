@@ -683,6 +683,51 @@ public sealed class ClauseCompiler
     // Head compilation (extends 8a / 8b with permanent-routed variables)
     // ============================================================================
 
+    /// <summary>Phase 26 — tries to compile <c>A = B</c> inline as head-style
+    /// get / unify instead of a call to the <c>=/2</c> builtin. Handles the case
+    /// where one side is a temporary (X-register) variable: a SEEN temp unifies
+    /// the other side against its register (via <see cref="CompileHeadArg"/>); a
+    /// FIRST-OCCURRENCE temp is bound to the other side (built with
+    /// <see cref="CompileBodyArg"/> for a non-var, aliased for a seen var).
+    /// Returns false — fall back to the builtin call — for permanent (Y)
+    /// variables, both-first-occurrence vars, the anonymous variable, and
+    /// both-non-var goals.</summary>
+    private bool TryCompileUnifyInline(CompileState s, Term a, Term b)
+        => TryUnifyVarWithPattern(s, a, b) || TryUnifyVarWithPattern(s, b, a);
+
+    private bool TryUnifyVarWithPattern(CompileState s, Term vTerm, Term p)
+    {
+        if (vTerm is not VarTerm v || v.Name == "_") return false;
+        if (s.Ys.ContainsKey(v.Name)) return false;   // permanent var — fall back
+
+        if (!s.Xs.IsNewName(v.Name))
+        {
+            // Seen temporary: unify the pattern against V's register, exactly as
+            // a head argument is matched.
+            CompileHeadArg(s, p, s.Xs.GetSlot(v.Name));
+            DrainPendingCompounds(s);
+            return true;
+        }
+
+        // First-occurrence temporary: V := P.
+        switch (p)
+        {
+            case VarTerm pv when pv.Name != "_"
+                    && !s.Ys.ContainsKey(pv.Name) && !s.Xs.IsNewName(pv.Name):
+                // V = W where W is a seen temp: V aliases W's register (no opcode).
+                s.Xs.Bind(v.Name, s.Xs.GetSlot(pv.Name));
+                return true;
+            case VarTerm:
+                return false;   // V = W with W first-occurrence / permanent / _ — fall back
+            default:
+                // V = <non-var term>: build the term into V's fresh home.
+                int slot = s.Xs.AllocateFresh(v.Name);
+                CompileBodyArg(s, p, slot);
+                DrainPendingCompounds(s);
+                return true;
+        }
+    }
+
     private void CompileHeadArg(CompileState s, Term arg, int argSlot)
     {
         switch (arg)
@@ -945,6 +990,20 @@ public sealed class ClauseCompiler
                 CompileArithExpr(s, gArgs[1]);
                 s.Emitter.EmitAEvalCmp((int)relOp);
             }
+            EmitArithEpilogue(s, isLast, hasFrame);
+            return;
+        }
+
+        // Phase 26 — inline `=/2` unification. Compile `Var = Term` with the
+        // head-matching machinery (get_* / unify_*) instead of a call to the
+        // =/2 builtin (which builds the term separately and dispatches). Mirrors
+        // GProlog (`X = [A|B]` → get_list + unify). Only the safe temp-X-var
+        // cases are inlined here; permanent (Y) vars and both-non-var goals fall
+        // back to the builtin path below. This is a pure codegen change — it does
+        // not affect the permanent/temporary classification.
+        if (fName == "=" && gArgs.Length == 2
+            && TryCompileUnifyInline(s, gArgs[0], gArgs[1]))
+        {
             EmitArithEpilogue(s, isLast, hasFrame);
             return;
         }
