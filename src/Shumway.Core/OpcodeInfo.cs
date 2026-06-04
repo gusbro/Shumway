@@ -195,11 +195,14 @@ public static class OpcodeTable
         Set(Opcode.AEvalUn, 5, "a_eval_un", OperandKind.Count);
         Set(Opcode.AEvalIs, 9, "a_eval_is", OperandKind.Count, OperandKind.Reg);
         Set(Opcode.AEvalCmp, 5, "a_eval_cmp", OperandKind.Count);
-        Set(Opcode.AIntBin, 29, "a_int_bin", OperandKind.Count, OperandKind.Count,
-            OperandKind.IntValue, OperandKind.Count, OperandKind.IntValue,
-            OperandKind.Count, OperandKind.Reg);
-        Set(Opcode.AIntCmp, 21, "a_int_cmp", OperandKind.Count, OperandKind.Count,
-            OperandKind.IntValue, OperandKind.Count, OperandKind.IntValue);
+        // Compact encoding (Phase 26): a packed kind/op word + the three values.
+        // a_int_bin = 1 + 4*4 = 17; a_int_cmp = 1 + 3*4 = 13. The disassembler
+        // special-cases both (DecodeAIntBin / DecodeAIntCmp) to unpack the word
+        // into readable [op, aKind, aVal, bKind, bVal, tKind, tVal] operands.
+        Set(Opcode.AIntBin, 17, "a_int_bin",
+            OperandKind.Count, OperandKind.IntValue, OperandKind.IntValue, OperandKind.Reg);
+        Set(Opcode.AIntCmp, 13, "a_int_cmp",
+            OperandKind.Count, OperandKind.IntValue, OperandKind.IntValue);
 
         // Meta and extension
         // The Meta opcode size is 6 by default for the DbgInfo sub-opcode (1 opcode + 1

@@ -2121,9 +2121,16 @@ public sealed class IlPredicateCompiler
             }
             if (op == Opcode.AIntBin)
             {
+                // Compact encoding: packed = aKind | bKind<<8 | tKind<<16 | op<<24.
+                int packed = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
-                for (int k = 1; k <= 25; k += 4)   // op, aKind, aVal, bKind, bVal, tKind, tVal
-                    emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + k));
+                emit.LoadConstant((packed >> 24) & 0xFF);               // op
+                emit.LoadConstant(packed & 0xFF);                       // aKind
+                emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 5));  // aVal
+                emit.LoadConstant((packed >> 8) & 0xFF);                // bKind
+                emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 9));  // bVal
+                emit.LoadConstant((packed >> 16) & 0xFF);               // tKind
+                emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 13)); // tVal
                 emit.Call(ArithFusedBinMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;
@@ -2131,9 +2138,14 @@ public sealed class IlPredicateCompiler
             }
             if (op == Opcode.AIntCmp)
             {
+                // Compact encoding: packed = aKind | bKind<<8 | rel<<16.
+                int packed = BytecodeIO.ReadInt32(code, pc + 1);
                 emit.LoadArgument(0);
-                for (int k = 1; k <= 17; k += 4)   // rel, aKind, aVal, bKind, bVal
-                    emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + k));
+                emit.LoadConstant((packed >> 16) & 0xFF);               // rel
+                emit.LoadConstant(packed & 0xFF);                       // aKind
+                emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 5));  // aVal
+                emit.LoadConstant((packed >> 8) & 0xFF);                // bKind
+                emit.LoadConstant(BytecodeIO.ReadInt32(code, pc + 9));  // bVal
                 emit.Call(ArithFusedCmpMethod);
                 emit.BranchIfFalse(failLabel);
                 pc += OpcodeTable.Get(op).Size;

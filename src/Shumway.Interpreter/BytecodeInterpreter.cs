@@ -1653,27 +1653,38 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.AIntBin:
                 {
+                    // Compact encoding: packed = aKind | bKind<<8 | tKind<<16 | op<<24.
+                    int packed = BytecodeIO.ReadInt32(code, pc + 1);
                     bool ok = Shumway.Builtins.ArithEvalStack.FusedBin(_engine,
-                        BytecodeIO.ReadInt32(code, pc + 1),
-                        BytecodeIO.ReadInt32(code, pc + 5), BytecodeIO.ReadInt32(code, pc + 9),
-                        BytecodeIO.ReadInt32(code, pc + 13), BytecodeIO.ReadInt32(code, pc + 17),
-                        BytecodeIO.ReadInt32(code, pc + 21), BytecodeIO.ReadInt32(code, pc + 25));
+                        (packed >> 24) & 0xFF,                  // op
+                        packed & 0xFF,                          // aKind
+                        BytecodeIO.ReadInt32(code, pc + 5),     // aVal
+                        (packed >> 8) & 0xFF,                   // bKind
+                        BytecodeIO.ReadInt32(code, pc + 9),     // bVal
+                        (packed >> 16) & 0xFF,                  // tKind
+                        BytecodeIO.ReadInt32(code, pc + 13));   // tVal
                     if (!ok) { if (!TryBacktrack()) return InterpreterResult.Failed; break; }
-                    _engine.AdvancePc(29);
+                    _engine.AdvancePc(17);
                     break;
                 }
 
                 case Opcode.AIntCmp:
+                {
+                    // Compact encoding: packed = aKind | bKind<<8 | rel<<16.
+                    int packed = BytecodeIO.ReadInt32(code, pc + 1);
                     if (!Shumway.Builtins.ArithEvalStack.FusedCmp(_engine,
-                        BytecodeIO.ReadInt32(code, pc + 1),
-                        BytecodeIO.ReadInt32(code, pc + 5), BytecodeIO.ReadInt32(code, pc + 9),
-                        BytecodeIO.ReadInt32(code, pc + 13), BytecodeIO.ReadInt32(code, pc + 17)))
+                        (packed >> 16) & 0xFF,                  // rel
+                        packed & 0xFF,                          // aKind
+                        BytecodeIO.ReadInt32(code, pc + 5),     // aVal
+                        (packed >> 8) & 0xFF,                   // bKind
+                        BytecodeIO.ReadInt32(code, pc + 9)))    // bVal
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.AdvancePc(21);
+                    _engine.AdvancePc(13);
                     break;
+                }
 
                 case Opcode.Meta:
                 {

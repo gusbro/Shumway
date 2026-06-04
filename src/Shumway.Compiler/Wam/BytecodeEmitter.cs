@@ -393,21 +393,26 @@ public sealed class BytecodeEmitter
         EmitInt(rel);
     }
 
+    // Compact encoding (Phase 26): the three operand kinds (each ≤ 6) and the
+    // op / rel (each ≤ a byte) pack into a single 32-bit word; only the three
+    // values keep their own 4-byte words. a_int_bin: 29 → 17 bytes; a_int_cmp:
+    // 21 → 13. Packed word — a_int_bin: aKind | bKind<<8 | tKind<<16 | op<<24;
+    // a_int_cmp: aKind | bKind<<8 | rel<<16. Decoders mask with >>shift & 0xFF.
     public void EmitAIntBin(int op, int aKind, int aVal, int bKind, int bVal, int tKind, int tVal)
     {
         _bytes.Add((byte)Opcode.AIntBin);
-        EmitInt(op);
-        EmitInt(aKind); EmitInt(aVal);
-        EmitInt(bKind); EmitInt(bVal);
-        EmitInt(tKind); EmitInt(tVal);
+        EmitInt(aKind | (bKind << 8) | (tKind << 16) | (op << 24));
+        EmitInt(aVal);
+        EmitInt(bVal);
+        EmitInt(tVal);
     }
 
     public void EmitAIntCmp(int rel, int aKind, int aVal, int bKind, int bVal)
     {
         _bytes.Add((byte)Opcode.AIntCmp);
-        EmitInt(rel);
-        EmitInt(aKind); EmitInt(aVal);
-        EmitInt(bKind); EmitInt(bVal);
+        EmitInt(aKind | (bKind << 8) | (rel << 16));
+        EmitInt(aVal);
+        EmitInt(bVal);
     }
 
     public void EmitPutNil(int argSlot)

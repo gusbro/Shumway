@@ -53,6 +53,34 @@ public static class Disassembler
                 continue;
             }
 
+            // a_int_bin / a_int_cmp use a packed kind/op word (Phase 26 compact
+            // encoding); unpack it so the operands read [op, aKind, aVal, ...].
+            if (opByte == (byte)Opcode.AIntBin)
+            {
+                int packed = BytecodeIO.ReadInt32(code, p + 1);
+                yield return new DisassembledInstruction(p, Opcode.AIntBin, "a_int_bin",
+                    new[]
+                    {
+                        (packed >> 24) & 0xFF, packed & 0xFF, BytecodeIO.ReadInt32(code, p + 5),
+                        (packed >> 8) & 0xFF, BytecodeIO.ReadInt32(code, p + 9),
+                        (packed >> 16) & 0xFF, BytecodeIO.ReadInt32(code, p + 13),
+                    }, null);
+                p += 17;
+                continue;
+            }
+            if (opByte == (byte)Opcode.AIntCmp)
+            {
+                int packed = BytecodeIO.ReadInt32(code, p + 1);
+                yield return new DisassembledInstruction(p, Opcode.AIntCmp, "a_int_cmp",
+                    new[]
+                    {
+                        (packed >> 16) & 0xFF, packed & 0xFF, BytecodeIO.ReadInt32(code, p + 5),
+                        (packed >> 8) & 0xFF, BytecodeIO.ReadInt32(code, p + 9),
+                    }, null);
+                p += 13;
+                continue;
+            }
+
             var info = OpcodeTable.Get(opByte);
             if (!info.IsDefined)
                 throw new InvalidOperationException(
