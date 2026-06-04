@@ -56,6 +56,22 @@ public class PredicateDisassemblerTests
     }
 
     [Fact]
+    public void IfThenElse_DisassemblesToTheSynthesizedHelper()
+    {
+        // The disassembler runs the SAME transform pipeline as the engine
+        // (ClausePipeline: DCG + MetaTransform + phrase + modes), so a control
+        // construct shows the lowered helper it actually compiles to — not the
+        // raw `;`/`->`. `p :- (C -> T ; E)` becomes `p :- $disj_N` plus a
+        // two-clause `$disj_N` helper.
+        var entries = PredicateDisassembler.Disassemble("p(R) :- ( 1 > 2 -> R = yes ; R = no ).");
+
+        // p/1 tail-calls the helper; a $disj helper predicate is emitted.
+        var p = entries.Single(e => e.Name == "p");
+        Assert.Contains("execute", p.Text);
+        Assert.Contains(entries, e => e.Name.StartsWith("$disj_") && e.Arity == 1);
+    }
+
+    [Fact]
     public void Release_OmitsDbgInfo_Debug_IncludesIt()
     {
         // compile_mode=release (the default) emits NO meta dbg_info markers at

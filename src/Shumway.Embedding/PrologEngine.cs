@@ -494,10 +494,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // Compile the new clause (transforms identical to the chain
         // path).
         var single = new[] { newClause };
-        var transformed = PhraseTransform.Apply(
-            MetaTransform.Apply(DcgTransform.Apply(single)));
-        transformed = Shumway.Compiler.Modes.ModeSpecializationTransform.Apply(
-            transformed, Modes);
+        var transformed = ClausePipeline.Apply(single, Modes);
         var dynCtx = new ModuleRewrite.Context(
             DefaultModuleName, new HashSet<int>(), _dynamicFunctors);
         var rewritten = transformed.Select(c => ModuleRewrite.Rewrite(c, dynCtx))
@@ -902,10 +899,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
         // Compile the new clause's body.
         var single = new[] { newClause };
-        var transformed = PhraseTransform.Apply(
-            MetaTransform.Apply(DcgTransform.Apply(single)));
-        transformed = Shumway.Compiler.Modes.ModeSpecializationTransform.Apply(
-            transformed, Modes);
+        var transformed = ClausePipeline.Apply(single, Modes);
         var dynCtx = new ModuleRewrite.Context(
             DefaultModuleName, new HashSet<int>(), _dynamicFunctors);
         var rewritten = transformed.Select(c => ModuleRewrite.Rewrite(c, dynCtx))
@@ -2190,10 +2184,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // (DCG / Meta / Phrase / mode-spec), same ModuleRewrite, same
         // PredicateCompiler with isDynamic=true so the result IS a
         // trampoline.
-        var transformed = PhraseTransform.Apply(
-            MetaTransform.Apply(DcgTransform.Apply(new[] { stubClause })));
-        transformed = Shumway.Compiler.Modes.ModeSpecializationTransform.Apply(
-            transformed, Modes);
+        var transformed = ClausePipeline.Apply(new[] { stubClause }, Modes);
         var dynCtx = new ModuleRewrite.Context(
             DefaultModuleName, new HashSet<int>(), _dynamicFunctors);
         var rewritten = transformed.Select(c => ModuleRewrite.Rewrite(c, dynCtx)).ToList();
@@ -5200,11 +5191,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
         foreach (var (name, manifest) in _modules)
         {
-            var transformed = DcgTransform.Apply(manifest.Clauses);
-            transformed = MetaTransform.Apply(transformed);
-            transformed = PhraseTransform.Apply(transformed);
-            transformed = Shumway.Compiler.Modes.ModeSpecializationTransform.Apply(
-                transformed, modeTable);
+            var transformed = ClausePipeline.Apply(manifest.Clauses, modeTable);
 
             var locals = ComputeLocalFunctors(transformed, manifest.PublicFunctors);
             // Chunk 209: fold in the bare local fids contributed by a
@@ -5248,10 +5235,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             foreach (var (_, clauses) in _dynamicClauses)
             {
                 if (clauses.Count == 0) continue;
-                var transformed = PhraseTransform.Apply(
-                    MetaTransform.Apply(DcgTransform.Apply(clauses)));
-                transformed = Shumway.Compiler.Modes.ModeSpecializationTransform.Apply(
-                    transformed, modeTable);
+                var transformed = ClausePipeline.Apply(clauses, modeTable);
                 foreach (var clause in transformed)
                     allRewritten.Add(ModuleRewrite.Rewrite(clause, dynCtx));
             }
@@ -5861,10 +5845,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // Apply the same transforms the setup path runs — dynamic clauses
         // share a flat module rewrite context.
         var single = new[] { newClause };
-        var transformed = PhraseTransform.Apply(
-            MetaTransform.Apply(DcgTransform.Apply(single)));
-        transformed = Shumway.Compiler.Modes.ModeSpecializationTransform.Apply(
-            transformed, Modes);
+        var transformed = ClausePipeline.Apply(single, Modes);
         var dynCtx = new ModuleRewrite.Context(
             DefaultModuleName, new HashSet<int>(), _dynamicFunctors);
         var rewritten = transformed.Select(c => ModuleRewrite.Rewrite(c, dynCtx))
@@ -5993,10 +5974,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
         // Same transform pipeline as the setup path.
         var single = new[] { newClause };
-        var transformed = PhraseTransform.Apply(
-            MetaTransform.Apply(DcgTransform.Apply(single)));
-        transformed = Shumway.Compiler.Modes.ModeSpecializationTransform.Apply(
-            transformed, Modes);
+        var transformed = ClausePipeline.Apply(single, Modes);
         var dynCtx = new ModuleRewrite.Context(
             DefaultModuleName, new HashSet<int>(), _dynamicFunctors);
         var rewritten = transformed.Select(c => ModuleRewrite.Rewrite(c, dynCtx))

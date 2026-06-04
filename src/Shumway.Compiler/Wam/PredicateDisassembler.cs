@@ -30,7 +30,12 @@ public static class PredicateDisassembler
         bool emitDebugInfo = false)
     {
         ArgumentNullException.ThrowIfNull(source);
-        var clauses = DcgTransform.Apply(new ClauseReader(source).ReadAll());
+        // Same transform pipeline the engine runs (DCG + meta-call lowering +
+        // phrase + mode specialization), so the disassembly is exactly what the
+        // interpreter executes — including the synthesised if-then-else / `\+`
+        // helper predicates. A mode-free table makes specialization a no-op.
+        var clauses = ClausePipeline.Apply(
+            new ClauseReader(source).ReadAll(), new Modes.ModeTable());
 
         // Group by (head functor, arity), preserving first-seen order.
         var order = new List<(string Name, int Arity)>();
