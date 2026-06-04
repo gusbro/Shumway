@@ -658,6 +658,47 @@ questions from Phase 11's deferred list:
   `retract` / `assertz` — and avoids redundant `TryDescribe*`
   attempts that were already rejecting the shape.
 
+**Phase 26 — WAM codegen quality (Blint vs GProlog)** — ✅ **Complete** (tagged `phase-26`; closure summary in [`docs/phase-26-closure.md`](docs/phase-26-closure.md)).
+
+Drove a predicate-by-predicate comparison of our WAM against GNU Prolog's
+`pl2wam` on Blint (a real ~2570-line program;
+[`docs/wam-vs-gprolog-blint.md`](docs/wam-vs-gprolog-blint.md)). End state: over
+the 89 Blint predicates `pl2wam` compiles, Shumway emits **3319 non-index WAM
+instructions vs GProlog's 3769 (−12%)** — ahead of or at parity on every shape,
+and beating GProlog on arithmetic, clause-prologue fusion and CSE. Nine chunks
+(307–315): inline `=/2` (307); one canonical `ClausePipeline` so the
+disassembler shows exactly what executes (308 — it had been running only
+`DcgTransform`, masking the lowered control-construct helpers and misleading a
+multi-session debugging effort); neck-cut chunk-transparency + the Warren
+scheduler targeting the post-cut call, which is what actually broke the earlier
+chunk-model refinement (309); arithmetic constant folding `A is 1*2` →
+`get_integer 2` (310); compact `a_int_*` encoding 29→17 / 21→13 (311); the four
+Blint gaps A–D — neck-cut frame elision + direct arg extraction (312), `D`
+verified as a non-issue since permanents are heap-allocated (313), inline nested
+compound build/match `unify_structure`/`unify_list` (314, **ADR-019** — Blint
+`get_list`+`get_structure` −51%), and CSE sharing a repeated head-arg compound
+via `unify_value` (315, beats GProlog). The session also refuted the long-held
+premise behind the chunk-model arc: GProlog compiles `is`/`=<` as *calls*, so it
+does NOT keep cross-arithmetic vars in X registers — our conservative model
+already matched it and our inline `a_int_*` beats it (see
+`chunk-model-refinement-failed`).
+
+**Phase 25 — Benchmark harness + ADR-017/018 (representation + arithmetic)** — ✅ **Complete** (tagged `phase-25`; state captured in `docs/wam-vs-gprolog-blint.md` and the Phase 26 closure).
+
+Performance phase preceding the codegen work. Deliverables: the Van Roy
+multi-engine benchmark harness (`--alloc` deterministic cell metric + hyperfine
+cross-engine wall-clock); **ADR-017** inline 2-cell cons / structure
+representation (Lis/Str tag inline in the referring slot, no on-heap header) with
+cell-based unification; **ADR-018** arithmetic instruction set (`a_eval_*` RPN
+over a per-thread eval stack + the fused `a_int_bin`/`a_int_cmp` integer
+fast-lane, zero heap, both tiers) replacing the goal-rewriting `$arith2`; the
+`compile_mode` prolog flag (release omits per-clause `meta dbg_info`);
+argument-register preferencing; and the `shumway-disasm` tool. KEY measurement
+discipline established here and carried forward: trust the deterministic
+`--alloc` metric; never compare wall-clock against a different-session baseline
+(this laptop has ~40% thermal variance — a byte-identical `nreverse` swings that
+much between back-to-back runs).
+
 **Phase 24 — Arity-Prolog compatibility primitives** — ✅ **Complete** (tagged `phase-24`; closure summary in [`docs/phase-24-closure.md`](docs/phase-24-closure.md)).
 
 Ten chunks (263–274 with 269/270 dropped) bringing Arity-Prolog source-compat: snips `[! G !]`, save_state/restore_state, `:- visible` directive alias, recorded database, Edinburgh-style I/O, file_list, file-system ops, pseudo-random, expand_term/2, string_term/string_termq/string_search, and a few smaller pieces. Selection driven by Arity's actual predicate listing (`C:\Arity\doc\ARITY.HLP.txt`), not generic Prolog folklore.
