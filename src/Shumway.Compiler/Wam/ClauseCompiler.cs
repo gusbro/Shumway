@@ -163,9 +163,16 @@ public sealed class ClauseCompiler
         ComputePreferredArgRegisters(headArgs, goals, permanents, state.PreferredReg);
 
         // ----- Head -----
+        // CSE is valid only while matching the head: a sub-term equal to an
+        // already-matched top-level head-argument compound references that
+        // compound's (stable) argument register instead of rebuilding it. Once
+        // the body starts, the argument registers are overwritten by call setup,
+        // so CSE is switched off.
+        state.CseActive = true;
         for (int i = 0; i < headArgs.Length; i++)
             CompileHeadArg(state, headArgs[i], i);
         DrainPendingCompounds(state);
+        state.CseActive = false;
 
         // ----- Pre-body preparation -----
         // First, bump the anonymous-slot counter so any temp register handed
@@ -872,14 +879,62 @@ public sealed class ClauseCompiler
                 else
                     CompileUnifyArg(s, comp.Args[i]);
             }
+
+            // CSE: this top-level head-argument compound now lives, fully
+            // matched, in its (stable) argument register — record it so a later
+            // head sub-term equal to it is referenced instead of rebuilt.
+            if (s.CseActive && slot < s.Arity && StructuralKey(comp) is string key)
+                s.CseMap.TryAdd(key, slot);
+        }
+    }
+
+    /// <summary>A canonical structural key for CSE, distinguishing functor,
+    /// arity, atoms / integers and variable NAMES. Returns null for a term that
+    /// can't be safely shared: one containing an anonymous variable (each <c>_</c>
+    /// is a distinct fresh variable) or a multi-cell literal (float / string).</summary>
+    private static string? StructuralKey(Term t)
+    {
+        switch (t)
+        {
+            case VarTerm { Name: "_" }: return null;
+            case VarTerm v: return "$" + v.Name;
+            case AtomTerm a: return "'" + a.Name;
+            case IntTerm n: return "#" + n.Value;
+            case BigIntTerm b: return "#" + b.Value;
+            case CompoundTerm c:
+                var sb = new System.Text.StringBuilder();
+                sb.Append(c.Functor).Append('/').Append(c.Args.Length).Append('(');
+                foreach (Term a in c.Args)
+                {
+                    if (StructuralKey(a) is not string k) return null;
+                    sb.Append(k).Append(',');
+                }
+                return sb.Append(')').ToString();
+            default: return null;   // float / string — don't CSE
         }
     }
 
     /// <summary>Builds a nested compound inline in the current unify stream
     /// (ADR-019). Only valid when <paramref name="c"/> is the last argument of
     /// its parent. Recurses into its own last-argument compound.</summary>
+    /// <summary>CSE: if <paramref name="c"/> is structurally identical (incl.
+    /// variable names) to a top-level head-argument compound already matched
+    /// into an argument register during head matching, emit a
+    /// <c>unify_value</c> reference to that register and return true — sharing
+    /// the matched structure instead of rebuilding it. Only active while head
+    /// matching is in progress (argument registers stable).</summary>
+    private static bool TryEmitCse(CompileState s, CompoundTerm c)
+    {
+        if (!s.CseActive) return false;
+        if (StructuralKey(c) is not string key) return false;
+        if (!s.CseMap.TryGetValue(key, out int reg)) return false;
+        s.Emitter.EmitUnifyValueX(reg);
+        return true;
+    }
+
     private void CompileUnifyArgInline(CompileState s, CompoundTerm c)
     {
+        if (TryEmitCse(s, c)) return;
         bool isList = c.Functor == "." && c.Args.Length == 2;
         if (isList)
             s.Emitter.EmitUnifyList();
@@ -1005,6 +1060,10 @@ public sealed class ClauseCompiler
                 break;
 
             case CompoundTerm c:
+                // CSE: identical to an already-matched head-arg compound →
+                // reference its register instead of rebuilding (works in both
+                // modes: read unifies, write copies the shared structure).
+                if (TryEmitCse(s, c)) break;
                 int temp = s.Xs.AllocateAnonymousSlot();
                 s.Emitter.EmitUnifyVariableX(temp);
                 s.Pending.Enqueue((temp, c));
@@ -1596,8 +1655,21 @@ public sealed class ClauseCompiler
         public Queue<(int Slot, CompoundTerm Compound)> Pending { get; } = new();
         public List<CallSite> CallSites { get; } = new();
 
+        /// <summary>Clause arity — the argument-register range [0, Arity).</summary>
+        public int Arity { get; }
+
+        /// <summary>ADR-019 / CSE: structural key of a top-level head-argument
+        /// compound → the argument register holding it. Populated while head
+        /// matching is in progress (<see cref="CseActive"/>); a later head
+        /// sub-term equal to one of these is referenced via <c>unify_value</c>
+        /// instead of being rebuilt. Argument registers are stable during head
+        /// matching, so this is only valid then.</summary>
+        public Dictionary<string, int> CseMap { get; } = new();
+        public bool CseActive { get; set; }
+
         public CompileState(int arity, IReadOnlyList<string> permanents, int extraPermanentSlots = 0)
         {
+            Arity = arity;
             Xs = new VariableMap(arity);
             for (int i = 0; i < permanents.Count; i++)
                 Ys[permanents[i]] = i;
