@@ -1140,6 +1140,45 @@ public sealed class ClauseCompiler
 
     // ---------- ADR-018 arithmetic instruction set compilation ----------
 
+    /// <summary>Constant-folds a fully-literal arithmetic expression at compile
+    /// time. Returns the result as a numeric literal term, or false for any
+    /// expression with a non-literal leaf (variable, atom constant such as
+    /// <c>pi</c>, non-arithmetic compound) or one that raises at evaluation (a
+    /// zero divisor, an overflow guard) — those are left to runtime so the
+    /// behaviour / error fires exactly as <c>is/2</c> would.</summary>
+    private static bool TryFoldConstExpr(Term expr, out Term folded)
+    {
+        folded = null!;
+        if (!TryEvalConst(expr, out Shumway.Builtins.Number n)) return false;
+        folded = n.IsFloat ? new FloatTerm(n.FloatValue)
+            : n.IsBig ? new BigIntTerm(n.BigValue)
+            : new IntTerm(n.IntValue);
+        return true;
+    }
+
+    private static bool TryEvalConst(Term expr, out Shumway.Builtins.Number result)
+    {
+        result = default;
+        switch (expr)
+        {
+            case IntTerm i: result = new Shumway.Builtins.Number(i.Value); return true;
+            case BigIntTerm b: result = new Shumway.Builtins.Number(b.Value); return true;
+            case FloatTerm f: result = new Shumway.Builtins.Number(f.Value); return true;
+            case CompoundTerm c when c.Args.Length == 2
+                    && Shumway.Builtins.ArithmeticEvaluator.TryBinOp(c.Functor, out var bop):
+                if (!TryEvalConst(c.Args[0], out var a2) || !TryEvalConst(c.Args[1], out var b2))
+                    return false;
+                try { result = Shumway.Builtins.ArithmeticEvaluator.ApplyBin(bop, a2, b2); return true; }
+                catch (Exception) { return false; }
+            case CompoundTerm c when c.Args.Length == 1
+                    && Shumway.Builtins.ArithmeticEvaluator.TryUnOp(c.Functor, out var uop):
+                if (!TryEvalConst(c.Args[0], out var a1)) return false;
+                try { result = Shumway.Builtins.ArithmeticEvaluator.ApplyUn(uop, a1); return true; }
+                catch (Exception) { return false; }
+            default: return false;
+        }
+    }
+
     /// <summary>Compiles <c>Target is Expr</c>: the postfix evaluation of
     /// <paramref name="expr"/> followed by an <c>a_eval_is</c> that delivers the
     /// popped result to <paramref name="target"/>. The target reaches its home
@@ -1151,6 +1190,27 @@ public sealed class ClauseCompiler
     /// No expression term is built.</summary>
     private void CompileArithIs(CompileState s, Term target, Term expr, bool isLast, bool hasFrame)
     {
+        // Phase 26 constant folding: a fully-literal arithmetic expression is
+        // evaluated at compile time and delivered as a DIRECT unification of the
+        // target with the resulting literal — `X is 1*2` becomes `X = 2` (a
+        // put_integer; no eval stack, no runtime multiply). The fold reuses the
+        // runtime ArithmeticEvaluator, so overflow→bigint, integer division and
+        // float coercion are bit-identical to evaluating at run time. An
+        // expression that would raise (zero divisor, non-evaluable leaf) is NOT
+        // folded — it falls through so the error fires at the right time.
+        if (TryFoldConstExpr(expr, out Term folded))
+        {
+            if (TryCompileUnifyInline(s, target, folded))
+            {
+                EmitArithEpilogue(s, isLast, hasFrame);
+                return;
+            }
+            // Target the inline =/2 can't take (a permanent Y / literal target):
+            // still deliver the folded constant — drops the runtime computation,
+            // just keeps the eval-stack delivery below.
+            expr = folded;
+        }
+
         // Fuse the flat `Target is A op B` over simple leaf operands into a
         // single a_int_bin (operands resolved before the target, so a
         // first-occurrence target allocation never shadows an operand). Falls
