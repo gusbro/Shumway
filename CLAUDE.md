@@ -888,6 +888,8 @@ When proposing changes:
 | Heap garbage collection | ADR-016 |
 | Inline compound references (2-cell cons) + cell-based unify | ADR-017 (phases 1 & 2 done) |
 | Arithmetic instruction set (RPN eval stack) | ADR-018 (proposed) |
+| Inline nested compound build — last-arg | ADR-019 |
+| Inline nested compound build — non-last (reserve-upfront + write-pointer stack) | ADR-020 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | Builtins catalog | docs/design/builtins-catalog.md |
