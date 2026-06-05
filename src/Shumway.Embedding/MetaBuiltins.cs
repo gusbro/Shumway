@@ -2416,7 +2416,7 @@ public static class MetaBuiltins
                 new Term[] { new AtomTerm(re.Detail), ValueTermOrVar(re) }), re),
         "existence_error" => WrapWithStampedContext(
             new CompoundTerm("existence_error",
-                new Term[] { new AtomTerm("procedure"), new AtomTerm(re.Detail) }), re),
+                new Term[] { new AtomTerm("procedure"), ProcedureIndicatorTerm(re.Detail) }), re),
         "domain_error" => WrapWithStampedContext(
             new CompoundTerm("domain_error",
                 new Term[] { new AtomTerm(re.Detail), ValueTermOrVar(re) }), re),
@@ -2447,6 +2447,27 @@ public static class MetaBuiltins
     /// </summary>
     private static Term ValueTermOrVar(PrologRuntimeException re) =>
         re.Value as Term ?? new VarTerm("_");
+
+    /// <summary>Builds the procedure-indicator term for an
+    /// <c>existence_error(procedure, Name/Arity)</c> from the
+    /// <see cref="PrologRuntimeException.Detail"/> string
+    /// <c>"Name/Arity"</c> (as written by
+    /// <see cref="PrologRuntimeException.UndefinedProcedure"/>). ISO requires
+    /// the culprit to be the COMPOUND <c>'/'(Name, Arity)</c>, not an atom whose
+    /// name happens to be <c>"Name/Arity"</c> — otherwise a catcher pattern
+    /// <c>error(existence_error(procedure, foo/3), _)</c> can never unify with
+    /// the ball. Splits on the LAST <c>/</c> (so a quoted name containing a
+    /// slash, e.g. <c>'a/b'/2</c>, still resolves correctly) and falls back to
+    /// the bare atom if the suffix isn't a non-negative integer.</summary>
+    private static Term ProcedureIndicatorTerm(string detail)
+    {
+        int slash = detail.LastIndexOf('/');
+        if (slash > 0 && slash < detail.Length - 1
+            && int.TryParse(detail.AsSpan(slash + 1), out int arity) && arity >= 0)
+            return new CompoundTerm("/",
+                new Term[] { new AtomTerm(detail.Substring(0, slash)), new IntTerm(arity) });
+        return new AtomTerm(detail);
+    }
 
     private static int ExtractCallableFunctorId(Term head, string builtinName)
     {
