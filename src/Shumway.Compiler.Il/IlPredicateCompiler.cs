@@ -364,6 +364,18 @@ public sealed class IlPredicateCompiler
         => IlIndexedDispatch.TryDescribe(predicate,
             (op, pc) => IsClauseBodyOpcode(op, predicate, pc, calleeMap), out info);
 
+    /// <summary>True iff this predicate compiles to the chunk-216/217 full
+    /// indexed-dispatch IL, whose delegate rebuilds its switch model lazily by
+    /// reading the predicate's WAM bytecode at first call
+    /// (<see cref="IlIndexedDispatch"/>). Such a predicate's WAM body must NOT
+    /// be stripped (--strip-wam) — it would crash on first dispatch. Every other
+    /// IL shape (single-clause, indexed-atom, try-me-else / switched chain) bakes
+    /// the whole dispatch into the IL and is safe to strip.</summary>
+    internal static bool UsesWamBackedIndexedDispatch(
+        CompiledPredicate predicate,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+        => TryDescribeIndexed(predicate, calleeMap, out _);
+
     /// <summary>Diagnostic (Tier-1 coverage analysis): when a predicate is
     /// not IL-compilable, returns a short reason — the distinct body
     /// opcodes outside the IL subset (e.g. "get_level,cut" for a deep-cut

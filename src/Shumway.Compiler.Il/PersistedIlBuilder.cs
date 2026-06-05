@@ -48,6 +48,11 @@ public static class PersistedIlBuilder
         public required int Arity { get; init; }
         public required string MethodName { get; init; }
         public required int DelegateSlot { get; init; }
+
+        /// <summary>True iff this predicate's WAM body may be dropped
+        /// (--strip-wam): its IL is self-contained. False for the chunk-216/217
+        /// full indexed-dispatch shape, whose delegate reads the WAM at runtime.</summary>
+        public required bool Strippable { get; init; }
     }
 
     /// <summary>Builds an in-memory .dll holding IL for every
@@ -230,6 +235,10 @@ public static class PersistedIlBuilder
                 Arity = pred.Arity,
                 MethodName = methodName,
                 DelegateSlot = slot++,
+                // A WAM-backed indexed-dispatch predicate keeps its WAM (its IL
+                // reads it lazily); every other shape is self-contained.
+                Strippable = !IlPredicateCompiler.UsesWamBackedIndexedDispatch(
+                    pred, probeCalleeMap),
             });
         }
 

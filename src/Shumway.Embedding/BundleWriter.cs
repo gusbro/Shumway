@@ -261,15 +261,15 @@ public static class BundleWriter
         }
         _lastEntriesTableBytes = Shumway.Compiler.Il.IlPersistedEntryCodec.Encode(persistedEntryList);
 
-        // --strip-wam: record the functor ids that received an IL delegate, so
-        // ToBytes can drop their (now-redundant) WAM bodies from the
-        // CompiledModule. Interning here uses the same process FunctorTable the
-        // CompiledPredicate.FunctorId came from, so the ids line up.
-        var ilFids = new HashSet<int>(persistedEntryList.Count);
-        foreach (var pe in persistedEntryList)
-            ilFids.Add(Shumway.Core.FunctorTable.Intern(
-                Shumway.Core.AtomTable.Intern(pe.Name, permanent: true).Id, pe.Arity));
-        _lastIlFunctorIds = ilFids;
+        // --strip-wam: record the functor ids whose WAM body may be dropped —
+        // those that received a SELF-CONTAINED IL delegate. A WAM-backed
+        // indexed-dispatch predicate (chunk 216/217) reads its WAM lazily on
+        // first call, so it keeps its body.
+        var stripFids = new HashSet<int>(persistedEntries.Count);
+        foreach (var pe in persistedEntries)
+            if (pe.Strippable)
+                stripFids.Add(pe.FunctorId);
+        _lastIlFunctorIds = stripFids;
         return dllBytes;
     }
 
