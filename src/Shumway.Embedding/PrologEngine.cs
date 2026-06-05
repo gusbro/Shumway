@@ -5112,8 +5112,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// <summary>Theme 2 — a cancellable lazy solution stream. Identical to
     /// <see cref="QueryAll(string)"/> but the supplied
     /// <paramref name="cancellationToken"/> aborts a long-running search: the
-    /// interpreter observes the request at its next goal-boundary safe point and
-    /// throws <see cref="OperationCanceledException"/> (NOT a Prolog ball — a
+    /// interpreter observes the request the next time the heap GC watermark is
+    /// crossed (so the common per-goal path pays nothing — a heap-bounded loop
+    /// such as <c>repeat, fail</c> is not cancellable) and throws
+    /// <see cref="OperationCanceledException"/> (NOT a Prolog ball — a
     /// surrounding <c>catch/3</c> never intercepts it). Still synchronous: it
     /// runs on the calling thread. Use <see cref="QueryAsync"/> to run off-thread.</summary>
     public IEnumerable<Solution> QueryAll(string queryText, CancellationToken cancellationToken)
@@ -5142,8 +5144,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// caller's thread is free between solutions, and surfaces results via
     /// <c>await foreach</c>. Cancellation works as in
     /// <see cref="QueryAll(string, CancellationToken)"/> — the engine aborts at
-    /// its next safe point. One query at a time per engine; pair with
-    /// <see cref="EnginePool"/> for concurrency.</summary>
+    /// the next heap GC watermark crossing. One query at a time per engine; pair
+    /// with <see cref="EnginePool"/> for concurrency.</summary>
     public async IAsyncEnumerable<Solution> QueryAsync(
         string queryText,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)

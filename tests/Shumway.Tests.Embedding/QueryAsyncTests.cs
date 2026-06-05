@@ -12,8 +12,12 @@ public class QueryAsyncTests
     private static PrologEngine WithCounter()
     {
         var e = new PrologEngine();
-        // No base case → a long-running FAILING search; each recursive call is a
-        // goal boundary (safe point), so it is promptly cancellable.
+        // No base case → a long-running FAILING search. Cancellation fires when
+        // the heap GC watermark is crossed (not every goal — see
+        // Engine.MaybeCollectHeap), so the loop must ALLOCATE heap: this one does
+        // (a fresh N1 binding per call), so it crosses the watermark within
+        // milliseconds and is promptly cancellable. A heap-bounded loop (e.g.
+        // `repeat, fail`) would NOT be cancellable by design.
         e.ConsultString("count(N) :- N > 0, N1 is N - 1, count(N1).");
         return e;
     }

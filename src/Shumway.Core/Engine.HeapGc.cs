@@ -68,14 +68,18 @@ public sealed partial class Engine
     public int GcSafePointCount => _gcSafePointCount;
 
     // Cooperative cancellation (theme 2): the embedding layer sets this from a
-    // CancellationToken; the interpreter observes it at the next goal-boundary
-    // safe point (where MaybeCollectHeap already runs) and aborts the query by
-    // throwing OperationCanceledException, which propagates to the host (it is
-    // NOT a Prolog ball, so catch/3 never intercepts it). volatile so a request
-    // from another thread is seen promptly.
+    // CancellationToken; the interpreter observes it the next time the heap GC
+    // watermark is crossed inside MaybeCollectHeap (NOT every goal — see the
+    // note there) and aborts the query by throwing OperationCanceledException,
+    // which propagates to the host (it is NOT a Prolog ball, so catch/3 never
+    // intercepts it). Checking only at the already-paid-for watermark keeps the
+    // common per-goal path free; the trade-off is that a heap-bounded loop is
+    // not cancellable. volatile so a request from another thread is seen
+    // promptly.
     private volatile bool _cancelRequested;
 
-    /// <summary>Requests that the running query abort at the next safe point.
+    /// <summary>Requests that the running query abort at the next heap GC
+    /// watermark crossing (a query that allocates no heap is not cancellable).
     /// Thread-safe; the engine that observes it throws
     /// <see cref="OperationCanceledException"/>.</summary>
     public void RequestCancellation() => _cancelRequested = true;
@@ -90,8 +94,6 @@ public sealed partial class Engine
 
     public void MaybeCollectHeap()
     {
-        if (_cancelRequested)
-            throw new OperationCanceledException("Prolog query cancelled at a safe point.");
         if (_gcOnlyAt >= 0)
         {
             _gcSafePointCount++;
@@ -111,6 +113,15 @@ public sealed partial class Engine
             return;
         }
         if (_gcThreshold <= 0 || _heapTop < _gcThreshold) return;
+        // Watermark crossed (~once per GcThreshold of heap allocation) — an
+        // infrequent, already-paid-for point to honour a cancellation request,
+        // so the common below-watermark path adds ZERO cancellation overhead.
+        // Limitation: a query that allocates no heap (e.g. `repeat, fail`, or
+        // any loop bounded in heap) never reaches here and is therefore not
+        // cancellable — the GC-safe-point granularity standard for cooperative
+        // cancellation. (Likewise if GC is disabled, GcThreshold <= 0.)
+        if (_cancelRequested)
+            throw new OperationCanceledException("Prolog query cancelled at a safe point.");
         CollectHeap();
         // Re-arm: collect again only once the heap doubles past what
         // survived (bounded below by the configured floor). If the
