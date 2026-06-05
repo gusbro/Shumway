@@ -92,3 +92,20 @@ ADR may extend reserved mode to head matching if measurement justifies it.
 - **Correctness**: equivalent heap shape to the BFS build; validated against the
   full suite + the Blint WAM diff (the temp + `get_*` pair drops for every
   non-last nested level).
+
+## Future work: head matching (measured, deliberately not done)
+
+Head matching keeps the BFS for non-last nested compounds. Extending reserve-
+upfront to the head would require the frame stack to work in **read** mode and to
+handle the WAM **read/write mode flip per argument** (a head structure matches an
+existing term, but any unbound sub-arg flips to build mode mid-match) — the
+hottest path in the engine and exactly where read/write toggling bugs hide.
+
+Measured ceiling on Blint: of the 337 `get_structure`/`get_list` remaining after
+this ADR, **266 (79%) are top-level head-arg matches** — intrinsic (decoding the
+caller's argument; no inline can remove them) — and only **71 (21%) are nested
+deferrals** (head non-last; the head last-arg case is already inlined read-mode
+by ADR-019, and body inlinable nesting by this ADR). So the head extension's
+upper bound is ~71 instructions vs this ADR's 1048 in the body (~15× smaller) for
+a far harder, riskier change. Not worth it; recorded here should a future
+measurement on a match-heavy program change the calculus.
