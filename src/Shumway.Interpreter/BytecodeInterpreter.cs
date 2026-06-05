@@ -273,7 +273,15 @@ public sealed class BytecodeInterpreter
                 // back to its caller; caller state lives in the engine.
                 _engine.MaybeCollectHeap();
                 var (functorId, cursor) = Engine.DecodeResumeMarker(pc);
-                var del = Tier1Dispatcher?.ResolveByFunctorId(functorId);
+                // Direct index into the link-time IlByFunctorId array — the same
+                // O(1) array access CallIl (bytecode→IL) uses, instead of the
+                // dispatcher's interface call + dictionary + cached wrapper. Fall
+                // back to the dispatcher only for a delegate promoted mid-query
+                // (after the per-query link snapshot was taken — not in the array).
+                var ilTable = IlByFunctorId;
+                var del = ilTable is not null && (uint)functorId < (uint)ilTable.Length
+                    ? ilTable[functorId] : null;
+                del ??= Tier1Dispatcher?.ResolveByFunctorId(functorId);
                 if (del is null)
                 {
                     // cursor 0 = a forward CALL to this functor (an IL caller
