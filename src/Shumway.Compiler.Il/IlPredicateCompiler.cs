@@ -225,6 +225,13 @@ public sealed class IlPredicateCompiler
         typeof(Engine).GetProperty(nameof(Engine.CurrentFunctorAddresses))!.GetGetMethod()!;
     private static readonly MethodInfo IlExecuteHelperResolveMethod =
         typeof(IlExecuteHelper).GetMethod(nameof(IlExecuteHelper.Resolve))!;
+    // Theme-1 / WAM stripping: an IL caller dispatches a callee by FUNCTOR ID
+    // (a resume marker with cursor 0 = entry), not by resolving it to a WAM
+    // address. The dispatcher routes the marker to the callee's IL delegate
+    // directly via IlByFunctorId when it has IL, or falls back to its WAM
+    // address otherwise — so an IL-only callee needs no WAM body/address.
+    private static readonly MethodInfo EngineEncodeResumeMarkerMethod =
+        typeof(Engine).GetMethod(nameof(Engine.EncodeResumeMarker))!;
     // Phase 19 — meta-call dispatch helper.
     private static readonly MethodInfo IlMetaCallHelperDispatchMethod =
         typeof(IlMetaCallHelper).GetMethod(nameof(IlMetaCallHelper.Dispatch))!;
@@ -1968,11 +1975,14 @@ public sealed class IlPredicateCompiler
                 EmitResumeMarker(emit, _emitOwnerFid, resumeCursor);
                 emit.Call(EngineSetCpMethod);
 
-                // engine.SetPc(IlExecuteHelper.Resolve(engine, siteFunctorId));
-                emit.LoadArgument(0);
+                // engine.SetPc(Engine.EncodeResumeMarker(siteFunctorId, 0));
+                // The dispatcher routes the marker to the callee's IL delegate
+                // (by functor id, cursor 0 = entry) or falls back to its WAM
+                // address — no resolution through the callee's WAM address here.
                 emit.LoadArgument(0);
                 EmitFunctorId(emit, siteFunctorId);
-                emit.Call(IlExecuteHelperResolveMethod);
+                emit.LoadConstant(0);
+                emit.Call(EngineEncodeResumeMarkerMethod);
                 emit.Call(EngineSetPcMethod);
 
                 // engine.IlTailCallPending = true; return true.
@@ -2063,9 +2073,9 @@ public sealed class IlPredicateCompiler
                 emit.Call(EngineBGetter);
                 emit.Call(EngineSetB0Method);
                 emit.LoadArgument(0);
-                emit.LoadArgument(0);
                 EmitFunctorId(emit, siteFunctorId);
-                emit.Call(IlExecuteHelperResolveMethod);
+                emit.LoadConstant(0);
+                emit.Call(EngineEncodeResumeMarkerMethod);
                 emit.Call(EngineSetPcMethod);
                 emit.LoadArgument(0);
                 emit.LoadConstant(true);

@@ -275,11 +275,31 @@ public sealed class BytecodeInterpreter
                 var (functorId, cursor) = Engine.DecodeResumeMarker(pc);
                 var del = Tier1Dispatcher?.ResolveByFunctorId(functorId);
                 if (del is null)
+                {
+                    // cursor 0 = a forward CALL to this functor (an IL caller
+                    // dispatches every callee by functor id, not by address).
+                    // No IL delegate → the callee is bytecode-only; fall back to
+                    // its WAM address. This is what lets an IL-only callee have
+                    // no WAM body (WAM stripping). cursor > 0 = a genuine resume,
+                    // where a missing delegate IS a bug.
+                    if (cursor == 0)
+                    {
+                        var addrMap = _engine.CurrentFunctorAddresses;
+                        if (addrMap is not null
+                            && addrMap.TryGetValue(functorId, out int addr)
+                            && !Shumway.Core.CallTarget.IsUnresolved(addr))
+                        {
+                            _engine.SetPc(addr);   // run the callee's bytecode
+                            continue;
+                        }
+                        throw Shumway.Core.PrologRuntimeException.UndefinedProcedure(functorId);
+                    }
                     throw new InvalidOperationException(
                         $"Resume marker at PC 0x{pc:X} decodes to functor "
                         + $"id {functorId} / cursor {cursor} but no IL "
                         + "delegate is bound. (A Tier-1 promotion must "
                         + "have unwired itself mid-query, which is a bug.)");
+                }
                 if (!del(_engine, cursor))
                 {
                     if (!TryBacktrack()) return InterpreterResult.Failed;
