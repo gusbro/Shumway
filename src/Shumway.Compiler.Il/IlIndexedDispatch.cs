@@ -285,42 +285,46 @@ public static class IlIndexedDispatch
     // gives the cache engine lifetime without the weak-table.
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
-    private static Dictionary<int, IlIndexedDispatchInfo> CacheFor(Engine engine)
+    private static Dictionary<int, IndexGraph> CacheFor(Engine engine)
     {
-        if (engine.IlIndexedDispatchCache is Dictionary<int, IlIndexedDispatchInfo> typed)
+        if (engine.IlIndexedDispatchCache is Dictionary<int, IndexGraph> typed)
             return typed;
-        var fresh = new Dictionary<int, IlIndexedDispatchInfo>();
+        var fresh = new Dictionary<int, IndexGraph>();
         engine.IlIndexedDispatchCache = fresh;
         return fresh;
     }
 
     /// <summary>Called from emitted IL: resolves the entry cursor for the
-    /// predicate identified by <paramref name="functorId"/>, building the
-    /// dispatch model lazily on first call from the engine's linked code
-    /// and switch tables (the build-time emit already validated that the
-    /// shape parses cleanly, so this is a structural re-parse rather than
-    /// a check).</summary>
+    /// predicate identified by <paramref name="functorId"/>. The dispatch model
+    /// is a WAM-independent <see cref="IndexGraph"/>: built lazily on first call
+    /// from the engine's linked code (for a predicate whose WAM is present), or
+    /// pre-registered from the bundle (a stripped predicate — see
+    /// <see cref="RegisterModelForEngine"/>). Once cached, the walk reads no
+    /// bytecode.</summary>
     public static int ResolveEntryByFunctorId(Engine engine, int functorId)
     {
         var cache = CacheFor(engine);
-        if (!cache.TryGetValue(functorId, out var info))
+        if (!cache.TryGetValue(functorId, out var graph))
         {
-            info = BuildModelFromEngine(engine, functorId)
+            var info = BuildModelFromEngine(engine, functorId)
                 ?? throw new InvalidOperationException(
                     $"Indexed-dispatch model build failed for functor id {functorId}.");
-            cache[functorId] = info;
+            graph = IlIndexGraph.Build(info)
+                ?? throw new InvalidOperationException(
+                    $"Indexed-dispatch graph build failed for functor id {functorId}.");
+            cache[functorId] = graph;
         }
-        return ResolveEntryCursor(engine, info);
+        return IlIndexGraph.Resolve(engine, graph);
     }
 
-    /// <summary>Eager registration used by the runtime promotion path:
-    /// the IL compile already has the <see cref="IlIndexedDispatchInfo"/>
-    /// in hand, so we avoid the first-call re-parse by populating the
-    /// engine's cache up front.</summary>
-    internal static void RegisterModelForEngine(Engine engine, int functorId, IlIndexedDispatchInfo info)
+    /// <summary>Pre-registers a WAM-independent dispatch graph for a functor —
+    /// used by the LoadBundle path for a predicate whose WAM body was stripped
+    /// (--strip-wam): its switch model lives in the bundle as an
+    /// <see cref="IndexGraph"/>, not in the linked code.</summary>
+    internal static void RegisterModelForEngine(Engine engine, int functorId, IndexGraph graph)
     {
         var cache = CacheFor(engine);
-        if (!cache.ContainsKey(functorId)) cache[functorId] = info;
+        cache[functorId] = graph;
     }
 
     private static IlIndexedDispatchInfo? BuildModelFromEngine(Engine engine, int functorId)
