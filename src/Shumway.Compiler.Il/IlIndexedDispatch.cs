@@ -327,6 +327,13 @@ public static class IlIndexedDispatch
         cache[functorId] = graph;
     }
 
+    /// <summary>Public load-path entry point (the model types stay internal):
+    /// decodes a persisted dispatch graph and registers it for the functor, so a
+    /// stripped predicate dispatches without its WAM body. Keys are interned in
+    /// the current process by the codec.</summary>
+    public static void RegisterPersistedGraph(Engine engine, int functorId, byte[] graphBytes)
+        => RegisterModelForEngine(engine, functorId, IndexGraphCodec.Decode(graphBytes));
+
     private static IlIndexedDispatchInfo? BuildModelFromEngine(Engine engine, int functorId)
     {
         var addrMap = engine.CurrentFunctorAddresses

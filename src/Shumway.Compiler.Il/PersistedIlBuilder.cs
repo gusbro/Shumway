@@ -50,9 +50,16 @@ public static class PersistedIlBuilder
         public required int DelegateSlot { get; init; }
 
         /// <summary>True iff this predicate's WAM body may be dropped
-        /// (--strip-wam): its IL is self-contained. False for the chunk-216/217
-        /// full indexed-dispatch shape, whose delegate reads the WAM at runtime.</summary>
+        /// (--strip-wam): its IL is self-contained, OR it is an indexed
+        /// predicate whose dispatch graph (<see cref="IndexGraph"/>) is persisted
+        /// (so the delegate no longer reads the WAM).</summary>
         public required bool Strippable { get; init; }
+
+        /// <summary>For a chunk-216 indexed predicate, the serialised
+        /// WAM-independent dispatch graph (<see cref="IndexGraphCodec"/>); null
+        /// for self-contained shapes. Registered at LoadBundle so a stripped
+        /// indexed predicate dispatches without its WAM body.</summary>
+        public byte[]? IndexGraph { get; init; }
     }
 
     /// <summary>Builds an in-memory .dll holding IL for every
@@ -228,6 +235,12 @@ public static class PersistedIlBuilder
                         patches.Count - patchesBeforeThisPred);
                 continue;
             }
+            // Persist the dispatch graph for an indexed predicate so its WAM can
+            // be stripped (the delegate reads the registered graph, not the WAM).
+            byte[]? indexGraph = IlPredicateCompiler.BuildPersistableIndexGraph(
+                pred, probeCalleeMap);
+            bool indexed = IlPredicateCompiler.UsesWamBackedIndexedDispatch(
+                pred, probeCalleeMap);
             entries.Add(new Entry
             {
                 FunctorId = functorId,
@@ -235,10 +248,11 @@ public static class PersistedIlBuilder
                 Arity = pred.Arity,
                 MethodName = methodName,
                 DelegateSlot = slot++,
-                // A WAM-backed indexed-dispatch predicate keeps its WAM (its IL
-                // reads it lazily); every other shape is self-contained.
-                Strippable = !IlPredicateCompiler.UsesWamBackedIndexedDispatch(
-                    pred, probeCalleeMap),
+                IndexGraph = indexGraph,
+                // Strippable when self-contained (not indexed) OR indexed with a
+                // persisted graph. An indexed predicate whose graph build failed
+                // keeps its WAM (the delegate would still read it).
+                Strippable = !indexed || indexGraph is not null,
             });
         }
 

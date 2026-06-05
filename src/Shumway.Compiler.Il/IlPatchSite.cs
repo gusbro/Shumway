@@ -79,6 +79,12 @@ public sealed class IlPersistedEntry
     public required string Name { get; init; }
     public required int Arity { get; init; }
     public required string MethodName { get; init; }
+
+    /// <summary>Serialised WAM-independent dispatch graph for an indexed
+    /// predicate (<see cref="IndexGraphCodec"/>); empty/absent for a
+    /// self-contained shape. Registered at LoadBundle so a stripped indexed
+    /// predicate dispatches without a WAM body.</summary>
+    public byte[]? IndexGraph { get; init; }
 }
 
 public static class IlPersistedEntryCodec
@@ -101,6 +107,9 @@ public static class IlPersistedEntryCodec
             byte[] methodBytes = System.Text.Encoding.UTF8.GetBytes(e.MethodName);
             bw.Write((uint)methodBytes.Length);
             bw.Write(methodBytes);
+            byte[] graph = e.IndexGraph ?? System.Array.Empty<byte>();
+            bw.Write((uint)graph.Length);
+            bw.Write(graph);
         }
         bw.Flush();
         return ms.ToArray();
@@ -126,12 +135,15 @@ public static class IlPersistedEntryCodec
             string name = System.Text.Encoding.UTF8.GetString(br.ReadBytes((int)nameLen));
             uint methodLen = br.ReadUInt32();
             string methodName = System.Text.Encoding.UTF8.GetString(br.ReadBytes((int)methodLen));
+            uint graphLen = br.ReadUInt32();
+            byte[]? graph = graphLen == 0 ? null : br.ReadBytes((int)graphLen);
             result.Add(new IlPersistedEntry
             {
                 Slot = slot,
                 Name = name,
                 Arity = arity,
                 MethodName = methodName,
+                IndexGraph = graph,
             });
         }
         return result;

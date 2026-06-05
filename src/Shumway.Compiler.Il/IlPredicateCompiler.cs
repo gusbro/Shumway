@@ -376,6 +376,20 @@ public sealed class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
         => TryDescribeIndexed(predicate, calleeMap, out _);
 
+    /// <summary>Builds and serialises the WAM-independent dispatch graph for a
+    /// chunk-216 indexed predicate, so the bundle can persist it and strip the
+    /// predicate's WAM body (--strip-wam). Returns null when the predicate
+    /// doesn't use that shape (its IL is already self-contained, no graph
+    /// needed).</summary>
+    internal static byte[]? BuildPersistableIndexGraph(
+        CompiledPredicate predicate,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+    {
+        if (!TryDescribeIndexed(predicate, calleeMap, out var info)) return null;
+        var graph = IlIndexGraph.Build(info!);
+        return graph is null ? null : IndexGraphCodec.Encode(graph);
+    }
+
     /// <summary>Diagnostic (Tier-1 coverage analysis): when a predicate is
     /// not IL-compilable, returns a short reason — the distinct body
     /// opcodes outside the IL subset (e.g. "get_level,cut" for a deep-cut

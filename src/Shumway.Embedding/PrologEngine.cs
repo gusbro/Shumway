@@ -2624,6 +2624,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // pre-V3 bundles (which never run cross-process correctly
             // anyway).
             Dictionary<string, (string Name, int Arity, int Slot)>? methodInfo = null;
+            Dictionary<string, byte[]>? graphByMethod = null;
             if (entry.CompiledIlEntries is not null && entry.CompiledIlEntries.Length > 0)
             {
                 methodInfo = new Dictionary<string, (string, int, int)>();
@@ -2631,6 +2632,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     entry.CompiledIlEntries))
                 {
                     methodInfo[pe.MethodName] = (pe.Name, pe.Arity, pe.Slot);
+                    if (pe.IndexGraph is { Length: > 0 } g)
+                        (graphByMethod ??= new Dictionary<string, byte[]>())[pe.MethodName] = g;
                 }
             }
             var bound = new List<(int Slot, int FunctorId,
@@ -2659,6 +2662,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 var del = method.CreateDelegate<Shumway.Compiler.Il.PredicateDelegate>();
                 bound.Add((slot, functorId, del));
                 IlPromotion.RegisterBoundDelegate(functorId, del);
+                // A stripped indexed predicate carries its dispatch graph in the
+                // bundle. Stash it by runtime functor id; each query's fresh
+                // engine gets it registered at setup (the engine is per-query, so
+                // we can't register here). Without a WAM body the delegate would
+                // otherwise have nothing to rebuild the switch model from.
+                if (graphByMethod is not null
+                    && graphByMethod.TryGetValue(method.Name, out var graphBytes))
+                    _persistedIndexGraphs[functorId] = graphBytes;
             }
 
             // Populate the static delegates array (chunk 71 multi-clause
@@ -3053,6 +3064,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// the same predicate replaces the precompiled entry cleanly.</summary>
     private readonly Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>
         _precompiledStaticPredicates = new();
+
+    /// <summary>Persisted WAM-independent dispatch graphs (--strip-wam), keyed by
+    /// runtime functor id. Populated at LoadBundle; registered onto each query's
+    /// fresh engine at setup (the indexed-dispatch cache is per-engine), so a
+    /// stripped indexed predicate resolves its entry clause without a WAM body.</summary>
+    private readonly Dictionary<int, byte[]> _persistedIndexGraphs = new();
 
     /// <summary>Chunk 230 — read-only view of
     /// <see cref="_precompiledStaticPredicates"/>. Lets
@@ -5642,6 +5659,15 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         var interp = new BytecodeInterpreter(
             engine, module.StringLiterals, module.FloatLiterals,
             mutableSwitchTables, module.BigIntLiterals);
+
+        // --strip-wam: register each persisted dispatch graph onto this query's
+        // fresh engine, so a stripped indexed predicate resolves its entry clause
+        // from the graph (its WAM body is gone). The indexed-dispatch cache is
+        // per-engine, so this runs per query.
+        if (_persistedIndexGraphs.Count > 0)
+            foreach (var (fid, graphBytes) in _persistedIndexGraphs)
+                Shumway.Compiler.Il.IlIndexedDispatch.RegisterPersistedGraph(
+                    engine, fid, graphBytes);
 
         // Chunk 225 Stage B.1: wire the direct IL-delegate table (the
         // CallIl opcode reads this) and rewrite every Call site whose

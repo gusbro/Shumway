@@ -257,6 +257,7 @@ public static class BundleWriter
                     : pe.FunctorName,
                 Arity = pe.Arity,
                 MethodName = pe.MethodName,
+                IndexGraph = pe.IndexGraph,
             });
         }
         _lastEntriesTableBytes = Shumway.Compiler.Il.IlPersistedEntryCodec.Encode(persistedEntryList);
