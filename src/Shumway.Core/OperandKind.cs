@@ -43,4 +43,9 @@ public enum OperandKind : byte
     /// <c>CheckVisible</c> opcode to carry a clause's <c>born</c> /
     /// <c>died</c> generations — patched in place by <c>retract</c>.</summary>
     LongValue,
+
+    /// <summary>ADR-020 packed word for <c>put_structure_r</c>: a register
+    /// index in the low 24 bits and an argument count (reserve size) in the
+    /// high byte. Disassembled as <c>X{reg}/{argCount}</c>.</summary>
+    PackedRegCount,
 }

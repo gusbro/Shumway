@@ -434,6 +434,26 @@ public sealed class BytecodeEmitter
         EmitInt(argSlot);
     }
 
+    /// <summary>ADR-020 <c>put_structure_r</c>: reserve-upfront root for a term
+    /// tree with a non-last nested compound. The reserve size (<paramref
+    /// name="argCount"/> = the structure's arity) is baked, packed with the
+    /// register index into one word (reg in the low 24 bits, count in the high
+    /// byte). The runtime never looks the arity up.</summary>
+    public void EmitPutStructureR(int functorId, int argSlot, int argCount)
+    {
+        _bytes.Add((byte)Opcode.PutStructureR);
+        EmitInt(functorId);
+        EmitInt((argSlot & 0xFFFFFF) | (argCount << 24));
+    }
+
+    /// <summary>ADR-020 <c>put_list_r</c>: reserve-upfront cons root (always
+    /// reserves 2 cells).</summary>
+    public void EmitPutListR(int argSlot)
+    {
+        _bytes.Add((byte)Opcode.PutListR);
+        EmitInt(argSlot);
+    }
+
     public void EmitPutFloat(int floatLitId, int argSlot)
     {
         _bytes.Add((byte)Opcode.PutFloat);

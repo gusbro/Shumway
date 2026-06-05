@@ -4,11 +4,13 @@ using Xunit;
 
 namespace Shumway.Tests.Compiler.Wam;
 
-/// <summary>ADR-019 — a nested compound in the LAST argument position is built
-/// (write) / matched (read) inline with <c>unify_structure</c> / <c>unify_list</c>,
-/// continuing the same unify stream instead of deferring to a temporary register
-/// + a separate <c>get_structure</c> / <c>get_list</c> per nesting level
-/// (matching GProlog). A non-last nested compound keeps the BFS.</summary>
+/// <summary>ADR-019 / ADR-020 — a nested compound is built (write) inline with
+/// <c>unify_structure</c> / <c>unify_list</c>, continuing the same unify stream
+/// instead of deferring to a temporary register + a separate <c>get_structure</c>
+/// / <c>get_list</c> per nesting level. ADR-019 covers the LAST argument position
+/// (linear, no resume); ADR-020 extends it to NON-last positions in body building
+/// via the reserve-upfront roots <c>put_structure_r</c> / <c>put_list_r</c> and a
+/// runtime write-pointer frame stack.</summary>
 public class InlineNestedBuildTests
 {
     private static string Dis(string src) =>
@@ -36,11 +38,15 @@ public class InlineNestedBuildTests
     }
 
     [Fact]
-    public void NestedStructure_NonLastArg_KeepsBfs()
+    public void NestedStructure_NonLastArg_BuildsInlineReserved()
     {
-        // foo(bar(x), y): bar(x) is NOT the last arg → the BFS (temp +
-        // get_structure) is kept, since inlining it would need to resume y.
+        // ADR-020: foo(bar(x), y) has bar(x) in NON-last position. It is now
+        // built inline via the reserve-upfront root (put_structure_r) + a nested
+        // unify_structure, with the write-pointer frame stack resuming foo's
+        // second arg after bar completes — no temp, no deferred get_structure.
         string text = Dis("p :- q(foo(bar(x), y)).");
-        Assert.Contains("get_structure", text);   // bar(x) via deferred get_structure
+        Assert.Contains("put_structure_r", text);
+        Assert.Contains("unify_structure", text);  // bar(x) inline
+        Assert.DoesNotContain("get_structure", text);
     }
 }

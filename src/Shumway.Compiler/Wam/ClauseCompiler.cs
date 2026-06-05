@@ -964,6 +964,96 @@ public sealed class ClauseCompiler
         return true;
     }
 
+    // ============================================================================
+    // ADR-020: reserve-upfront build for non-last nested compounds (body args)
+    // ============================================================================
+
+    /// <summary>True if the term tree has a non-last argument that is a compound
+    /// — the case the on-demand BFS pays a temp + deferred <c>get_structure</c>
+    /// for. Only such trees benefit from the reserve-upfront path.</summary>
+    private static bool HasNonLastNestedCompound(Term t)
+    {
+        if (t is not CompoundTerm c) return false;
+        for (int i = 0; i < c.Args.Length; i++)
+        {
+            bool last = i == c.Args.Length - 1;
+            if (!last && c.Args[i] is CompoundTerm) return true;
+            if (c.Args[i] is CompoundTerm inner && HasNonLastNestedCompound(inner))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>True if every nested compound (depth ≥ 1) is inline-buildable.
+    /// Reserved mode builds every nested compound in the write stream, so a
+    /// nested float/string arg (which needs a mid-stream pre-emit that breaks
+    /// contiguity) disqualifies the whole tree — it falls back to the BFS path.
+    /// The root's own float/string args are fine (pre-emitted to temps before
+    /// the root header).</summary>
+    private static bool AllNestedCompoundsInlinable(Term t)
+    {
+        if (t is not CompoundTerm c) return true;
+        foreach (Term a in c.Args)
+            if (a is CompoundTerm inner)
+            {
+                if (!CanInlineCompound(inner)) return false;
+                if (!AllNestedCompoundsInlinable(inner)) return false;
+            }
+        return true;
+    }
+
+    /// <summary>Emits the reserve-upfront root (<c>put_structure_r</c> /
+    /// <c>put_list_r</c>) for a body-arg compound and walks its args, building
+    /// every nested compound inline via <see cref="CompileReservedUnify"/> and
+    /// every scalar via <see cref="CompileUnifyArg"/>. No temp, no deferred
+    /// <c>get_structure</c> — the runtime write-pointer frame stack resumes the
+    /// parent after each nested compound.</summary>
+    private void CompileReservedBuild(CompileState s, CompoundTerm c, int argSlot)
+    {
+        bool isList = c.Functor == "." && c.Args.Length == 2;
+        var multiCellTemps = PreEmitMultiCellLiterals(s, c.Args);
+        if (isList)
+            s.Emitter.EmitPutListR(argSlot);
+        else
+            s.Emitter.EmitPutStructureR(InternFunctor(c.Functor, c.Args.Length), argSlot, c.Args.Length);
+        for (int i = 0; i < c.Args.Length; i++)
+        {
+            if (multiCellTemps.TryGetValue(i, out int t))
+                s.Emitter.EmitUnifyValueX(t);
+            else if (c.Args[i] is CompoundTerm sub)
+                CompileReservedUnify(s, sub);
+            else
+                CompileUnifyArg(s, c.Args[i]);
+        }
+    }
+
+    /// <summary>Builds a nested compound inline inside a reserved build: emits
+    /// <c>unify_structure</c> / <c>unify_list</c> (which push a write-pointer
+    /// frame at runtime) and recurses for nested compounds at ANY position
+    /// (last or not — the frame stack resumes the parent). CSE still shares a
+    /// repeated structure.</summary>
+    private void CompileReservedUnify(CompileState s, CompoundTerm c)
+    {
+        if (TryEmitCse(s, c)) return;
+        bool isList = c.Functor == "." && c.Args.Length == 2;
+        // AllNestedCompoundsInlinable guarantees no float/string sub-arg here, so
+        // this map is empty; kept for symmetry / defence.
+        var multiCellTemps = PreEmitMultiCellLiterals(s, c.Args);
+        if (isList)
+            s.Emitter.EmitUnifyList();
+        else
+            s.Emitter.EmitUnifyStructure(InternFunctor(c.Functor, c.Args.Length));
+        for (int i = 0; i < c.Args.Length; i++)
+        {
+            if (multiCellTemps.TryGetValue(i, out int t))
+                s.Emitter.EmitUnifyValueX(t);
+            else if (c.Args[i] is CompoundTerm sub)
+                CompileReservedUnify(s, sub);
+            else
+                CompileUnifyArg(s, c.Args[i]);
+        }
+    }
+
     /// <summary>Pre-emits <c>put_float</c> / <c>put_pstr</c> for any float or
     /// string literal among the sub-args, allocating an anonymous X slot for
     /// each. Returns a map from sub-arg index to that slot; the caller emits
@@ -1565,6 +1655,18 @@ public sealed class ClauseCompiler
                 break;
 
             case CompoundTerm c:
+                // ADR-020: a body-arg term tree with a non-last nested compound,
+                // every nested compound inline-buildable, is built in reserve-
+                // upfront write mode (put_structure_r / put_list_r + a runtime
+                // write-pointer frame stack) — dropping the temp + deferred
+                // get_structure the BFS pays per non-last nesting level. Trees
+                // with only last-arg nesting (or none) keep the zero-overhead
+                // allocate-on-demand path below unchanged.
+                if (HasNonLastNestedCompound(c) && AllNestedCompoundsInlinable(c))
+                {
+                    CompileReservedBuild(s, c, argSlot);
+                    break;
+                }
                 bool isList = c.Functor == "." && c.Args.Length == 2;
                 // Float / string sub-args go through put_*-to-temp + unify_value_x;
                 // see PreEmitMultiCellLiterals for why they can't live inline.

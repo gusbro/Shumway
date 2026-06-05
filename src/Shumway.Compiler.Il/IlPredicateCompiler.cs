@@ -242,6 +242,11 @@ public sealed class IlPredicateCompiler
         typeof(Engine).GetMethod(nameof(Engine.GetStructure), new[] { typeof(int), typeof(int) })!;
     private static readonly MethodInfo EnginePutStructureMethod =
         typeof(Engine).GetMethod(nameof(Engine.PutStructure), new[] { typeof(int), typeof(int) })!;
+    // ADR-020 reserve-upfront roots.
+    private static readonly MethodInfo EnginePutStructureReservedMethod =
+        typeof(Engine).GetMethod(nameof(Engine.PutStructureReserved), new[] { typeof(int), typeof(int), typeof(int) })!;
+    private static readonly MethodInfo EnginePutListReservedMethod =
+        typeof(Engine).GetMethod(nameof(Engine.PutListReserved), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineUnifyArgCellMethod =
         typeof(Engine).GetMethod(nameof(Engine.UnifyArgCell), new[] { typeof(Cell) })!;
     private static readonly MethodInfo EngineUnifyVariableXMethod =
@@ -748,6 +753,9 @@ public sealed class IlPredicateCompiler
         // ADR-019 inline nested compound build/match.
         Opcode.UnifyStructure => true,
         Opcode.UnifyList => true,
+        // ADR-020 reserve-upfront roots (non-last nested compound build).
+        Opcode.PutStructureR => true,
+        Opcode.PutListR => true,
         // PSTR + Call (chunk 50).
         Opcode.GetPstr => true,
         Opcode.PutPstr => true,
@@ -1758,6 +1766,27 @@ public sealed class IlPredicateCompiler
                 EmitFunctorId(emit, functorId);
                 emit.LoadConstant(arg);
                 emit.Call(EnginePutStructureMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.PutStructureR)   // ADR-020
+            {
+                int functorId = BytecodeIO.ReadInt32(code, pc + 1);
+                int packed = BytecodeIO.ReadInt32(code, pc + 5);
+                emit.LoadArgument(0);
+                EmitFunctorId(emit, functorId);
+                emit.LoadConstant(packed & 0xFFFFFF);
+                emit.LoadConstant(packed >> 24);
+                emit.Call(EnginePutStructureReservedMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.PutListR)   // ADR-020
+            {
+                int arg = BytecodeIO.ReadInt32(code, pc + 1);
+                emit.LoadArgument(0);
+                emit.LoadConstant(arg);
+                emit.Call(EnginePutListReservedMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }

@@ -125,6 +125,23 @@ public sealed partial class Engine
     private bool _writeMode;
     private int _unifyPointer;
 
+    // ADR-020 reserve-upfront write mode. When _reservedWrite is true the cells
+    // at _unifyPointer are pre-allocated (by put_structure_r / put_list_r), so a
+    // scalar unify_* writes in place (no AllocateHeap) and an auto-popping
+    // write-pointer stack restores _unifyPointer to the parent after a nested
+    // compound completes. Set only by the _r roots; cleared by the on-demand /
+    // read entries and when the base frame pops. Ephemeral within one structure
+    // build (no choice point spans it, so it is never trailed).
+    private bool _reservedWrite;
+    // Each frame: the parent-resume unify pointer (high 32) and the remaining
+    // arg count (low 32), packed so the stack is one long[]. Depth = nesting
+    // depth of the term being built; 32 is far beyond any real clause.
+    private int[] _writeResume = new int[64];
+    private int[] _writeRemaining = new int[64];
+    private int _writeSp;
+
+    public bool ReservedWrite => _reservedWrite;
+
     public Engine() : this(new EngineConfig()) { }
 
     public Engine(EngineConfig config)
@@ -1000,7 +1017,70 @@ public sealed partial class Engine
         _heap[f] = Cell.Functor(functorId);
         _registers[regIdx] = Cell.Str(f);
         _writeMode = true;
+        _reservedWrite = false;
         _unifyPointer = f + 1;
+    }
+
+    /// <summary>ADR-020 <c>put_structure_r</c>: reserve <paramref name="argCount"/>
+    /// + 1 contiguous cells (functor + args) upfront and enter reserved write
+    /// mode with a fresh write-pointer stack, so a non-last nested compound arg
+    /// can write its ref into a pre-reserved slot and resume the parent. The
+    /// reserve size is baked by the compiler — no functor-table lookup.</summary>
+    public void PutStructureReserved(int functorId, int regIdx, int argCount)
+    {
+        if (regIdx >= _registers.Length) EnsureRegisterCapacity(regIdx + 1);
+        int f = AllocateHeap(argCount + 1);
+        _heap[f] = Cell.Functor(functorId);
+        _registers[regIdx] = Cell.Str(f);
+        _writeMode = true;
+        _reservedWrite = true;
+        _unifyPointer = f + 1;
+        _writeSp = 0;
+        PushWriteFrame(0, argCount);
+    }
+
+    /// <summary>ADR-020 <c>put_list_r</c>: reserve the 2-cell cons upfront and
+    /// enter reserved write mode (the cons head may be a non-last nested
+    /// compound).</summary>
+    public void PutListReserved(int regIdx)
+    {
+        if (regIdx >= _registers.Length) EnsureRegisterCapacity(regIdx + 1);
+        int pair = AllocateHeap(2);
+        _registers[regIdx] = Cell.Lis(pair);
+        _writeMode = true;
+        _reservedWrite = true;
+        _unifyPointer = pair;
+        _writeSp = 0;
+        PushWriteFrame(0, 2);
+    }
+
+    private void PushWriteFrame(int resume, int remaining)
+    {
+        if (_writeSp >= _writeResume.Length)
+        {
+            System.Array.Resize(ref _writeResume, _writeResume.Length * 2);
+            System.Array.Resize(ref _writeRemaining, _writeRemaining.Length * 2);
+        }
+        _writeResume[_writeSp] = resume;
+        _writeRemaining[_writeSp] = remaining;
+        _writeSp++;
+    }
+
+    /// <summary>ADR-020: one arg of the current (top) reserved frame was just
+    /// written and <see cref="_unifyPointer"/> already advanced. Decrement the
+    /// top frame and cascade-pop every frame that reaches zero, restoring
+    /// <see cref="_unifyPointer"/> to the popped frame's parent-resume slot.
+    /// When the base frame pops the build is complete and reserved mode ends.</summary>
+    private void OnReservedArgWritten()
+    {
+        _writeRemaining[_writeSp - 1]--;
+        while (_writeSp > 0 && _writeRemaining[_writeSp - 1] == 0)
+        {
+            int resume = _writeResume[_writeSp - 1];
+            _writeSp--;
+            if (_writeSp > 0) _unifyPointer = resume;
+            else _reservedWrite = false;
+        }
     }
 
     /// <summary>
@@ -1011,6 +1091,7 @@ public sealed partial class Engine
     /// </summary>
     public bool GetStructure(int functorId, int regIdx)
     {
+        _reservedWrite = false;   // ADR-020: head matching is never reserved
         Cell regCell = _registers[regIdx];
         int finalAddr = -1;
         Cell finalCell = regCell;
@@ -1081,6 +1162,15 @@ public sealed partial class Engine
         int ptr = _unifyPointer;
         if (_writeMode)
         {
+            if (_reservedWrite)
+            {
+                // ADR-020: the cell is pre-reserved — write in place, then
+                // decrement / cascade-pop the write-pointer frame stack.
+                _heap[ptr] = value;
+                _unifyPointer = ptr + 1;
+                OnReservedArgWritten();
+                return true;
+            }
             int idx = AllocateHeap(1);
             _heap[idx] = value;
         }
@@ -1111,6 +1201,15 @@ public sealed partial class Engine
         int ptr = _unifyPointer;
         if (_writeMode)
         {
+            if (_reservedWrite)
+            {
+                // ADR-020: fresh unbound var in the pre-reserved cell at ptr.
+                _heap[ptr] = Cell.UnboundVar(ptr);
+                _registers[slot] = Cell.Ref(ptr);
+                _unifyPointer = ptr + 1;
+                OnReservedArgWritten();
+                return;
+            }
             int idx = AllocateHeap(1);
             _heap[idx] = Cell.UnboundVar(idx);
             _registers[slot] = Cell.Ref(idx);
@@ -1144,6 +1243,14 @@ public sealed partial class Engine
         int ptr = _unifyPointer;
         if (_writeMode)
         {
+            if (_reservedWrite)
+            {
+                _heap[ptr] = Cell.UnboundVar(ptr);
+                SetY(slot, Cell.Ref(ptr));
+                _unifyPointer = ptr + 1;
+                OnReservedArgWritten();
+                return;
+            }
             int idx = AllocateHeap(1);
             _heap[idx] = Cell.UnboundVar(idx);
             SetY(slot, Cell.Ref(idx));
@@ -1173,6 +1280,19 @@ public sealed partial class Engine
     {
         if (_writeMode)
         {
+            if (_reservedWrite)
+            {
+                // ADR-020: the cells are pre-reserved — initialise each as a
+                // fresh unbound var in place and decrement / cascade-pop per arg.
+                for (int i = 0; i < count; i++)
+                {
+                    int p = _unifyPointer;
+                    _heap[p] = Cell.UnboundVar(p);
+                    _unifyPointer = p + 1;
+                    OnReservedArgWritten();
+                }
+                return;
+            }
             for (int i = 0; i < count; i++)
             {
                 int idx = AllocateHeap(1);
@@ -1198,6 +1318,7 @@ public sealed partial class Engine
         int pair = _heapTop;
         _registers[regIdx] = Cell.Lis(pair);
         _writeMode = true;
+        _reservedWrite = false;
         _unifyPointer = pair;
     }
 
@@ -1208,6 +1329,7 @@ public sealed partial class Engine
     /// </summary>
     public bool GetList(int regIdx)
     {
+        _reservedWrite = false;   // ADR-020: head matching is never reserved
         Cell regCell = _registers[regIdx];
         int finalAddr = -1;
         Cell finalCell = regCell;
@@ -1265,6 +1387,24 @@ public sealed partial class Engine
     {
         if (_writeMode)
         {
+            if (_reservedWrite)
+            {
+                // ADR-020: nested compound inside a reserved build. The parent's
+                // slot at _unifyPointer is pre-reserved; write the STR ref there,
+                // reserve the nested (functor + args) at the heap top, push a
+                // frame so the cascade resumes the parent when the nested fills.
+                // arity is looked up here (the minority reserved path), not in the
+                // hot on-demand path below.
+                var (_, arity) = FunctorTable.Lookup(functorId);
+                int nested = AllocateHeap(arity + 1);
+                _heap[nested] = Cell.Functor(functorId);
+                _heap[_unifyPointer] = Cell.Str(nested);
+                int parentResume = _unifyPointer + 1;
+                _writeRemaining[_writeSp - 1]--;   // parent slot filled (no cascade yet)
+                PushWriteFrame(parentResume, arity);
+                _unifyPointer = nested + 1;
+                return true;
+            }
             int slot = AllocateHeap(1);          // parent's current arg slot
             int f = AllocateHeap(1);             // nested FUNCTOR cell (contiguous)
             _heap[f] = Cell.Functor(functorId);
@@ -1311,6 +1451,19 @@ public sealed partial class Engine
     {
         if (_writeMode)
         {
+            if (_reservedWrite)
+            {
+                // ADR-020: nested cons inside a reserved build. Write the LIS ref
+                // into the pre-reserved parent slot, reserve the 2-cell cons at
+                // the heap top, descend to its head.
+                int pair = AllocateHeap(2);
+                _heap[_unifyPointer] = Cell.Lis(pair);
+                int parentResume = _unifyPointer + 1;
+                _writeRemaining[_writeSp - 1]--;
+                PushWriteFrame(parentResume, 2);
+                _unifyPointer = pair;
+                return true;
+            }
             int slot = AllocateHeap(1);          // parent's current arg slot
             _heap[slot] = Cell.Lis(_heapTop);    // points at the cons (next 2 cells)
             _unifyPointer = _heapTop;

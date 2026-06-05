@@ -51,6 +51,14 @@ public enum Opcode : byte
     PutList = 0x29,
     PutFloat = 0x2A,
     PutBigInt = 0x2B,
+    // ADR-020: reserve-upfront write-mode roots for a term tree that contains a
+    // non-last nested compound. The reserve size is baked at compile time (no
+    // runtime FunctorTable lookup). put_structure_r carries <functorId:4>
+    // <packed:4> where packed = regIdx (low 24 bits) | argCount (high byte) —
+    // 9 bytes, same width as put_structure. put_list_r carries <regIdx:4> and
+    // reserves 2 (5 bytes).
+    PutStructureR = 0x2C,
+    PutListR = 0x2D,
 
     // Unify instructions (read/write-mode-sensitive)
     UnifyVariableX = 0x40,

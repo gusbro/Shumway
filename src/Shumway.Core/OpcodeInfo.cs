@@ -65,6 +65,10 @@ public static class OpcodeTable
         Set(Opcode.PutNil, 5, "put_nil", OperandKind.Reg);
         Set(Opcode.PutStructure, 9, "put_structure", OperandKind.Functor, OperandKind.Reg);
         Set(Opcode.PutList, 5, "put_list", OperandKind.Reg);
+        // ADR-020: reserve-upfront roots. put_structure_r packs reg+argCount
+        // into one word after the functor id.
+        Set(Opcode.PutStructureR, 9, "put_structure_r", OperandKind.Functor, OperandKind.PackedRegCount);
+        Set(Opcode.PutListR, 5, "put_list_r", OperandKind.Reg);
         Set(Opcode.PutFloat, 9, "put_float", OperandKind.LiteralId, OperandKind.Reg);
         Set(Opcode.PutBigInt, 9, "put_bigint", OperandKind.LiteralId, OperandKind.Reg);
 

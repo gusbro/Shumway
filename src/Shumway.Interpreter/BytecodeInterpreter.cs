@@ -973,6 +973,23 @@ public sealed class BytecodeInterpreter
                     break;
                 }
 
+                case Opcode.PutStructureR:   // ADR-020 reserve-upfront root
+                {
+                    int functorId = BytecodeIO.ReadInt32(code, pc + 1);
+                    int packed = BytecodeIO.ReadInt32(code, pc + 5);
+                    _engine.PutStructureReserved(functorId, packed & 0xFFFFFF, packed >> 24);
+                    _engine.AdvancePc(9);
+                    break;
+                }
+
+                case Opcode.PutListR:   // ADR-020 reserve-upfront cons root
+                {
+                    int arg = BytecodeIO.ReadInt32(code, pc + 1);
+                    _engine.PutListReserved(arg);
+                    _engine.AdvancePc(5);
+                    break;
+                }
+
                 case Opcode.GetList:
                 {
                     int arg = BytecodeIO.ReadInt32(code, pc + 1);
@@ -1016,6 +1033,12 @@ public sealed class BytecodeInterpreter
                 case Opcode.UnifyVariableX:
                 {
                     int target = BytecodeIO.ReadInt32(code, pc + 1);
+                    if (_engine.ReservedWrite)   // ADR-020
+                    {
+                        _engine.UnifyVariableX(target);
+                        _engine.AdvancePc(5);
+                        break;
+                    }
                     int ptr = _engine.UnifyPointer;
                     if (_engine.WriteMode)
                     {
@@ -1039,6 +1062,12 @@ public sealed class BytecodeInterpreter
                 case Opcode.UnifyVariableY:
                 {
                     int target = BytecodeIO.ReadInt32(code, pc + 1);
+                    if (_engine.ReservedWrite)   // ADR-020
+                    {
+                        _engine.UnifyVariableY(target);
+                        _engine.AdvancePc(5);
+                        break;
+                    }
                     int ptr = _engine.UnifyPointer;
                     if (_engine.WriteMode)
                     {
@@ -1061,6 +1090,12 @@ public sealed class BytecodeInterpreter
                 case Opcode.UnifyValueX:
                 {
                     int src = BytecodeIO.ReadInt32(code, pc + 1);
+                    if (_engine.ReservedWrite)   // ADR-020
+                    {
+                        _engine.UnifyValueX(src);
+                        _engine.AdvancePc(5);
+                        break;
+                    }
                     int ptr = _engine.UnifyPointer;
                     if (_engine.WriteMode)
                     {
@@ -1083,6 +1118,12 @@ public sealed class BytecodeInterpreter
                 case Opcode.UnifyValueY:
                 {
                     int src = BytecodeIO.ReadInt32(code, pc + 1);
+                    if (_engine.ReservedWrite)   // ADR-020
+                    {
+                        _engine.UnifyValueY(src);
+                        _engine.AdvancePc(5);
+                        break;
+                    }
                     int ptr = _engine.UnifyPointer;
                     if (_engine.WriteMode)
                     {
@@ -1106,8 +1147,14 @@ public sealed class BytecodeInterpreter
                 case Opcode.UnifyAtom:
                 {
                     int atomId = BytecodeIO.ReadInt32(code, pc + 1);
-                    int ptr = _engine.UnifyPointer;
                     Cell value = Cell.Atom(atomId);
+                    if (_engine.ReservedWrite)   // ADR-020
+                    {
+                        _engine.UnifyArgCell(value);
+                        _engine.AdvancePc(5);
+                        break;
+                    }
+                    int ptr = _engine.UnifyPointer;
                     if (_engine.WriteMode)
                     {
                         int idx = _engine.AllocateHeap(1);
@@ -1129,8 +1176,14 @@ public sealed class BytecodeInterpreter
                 case Opcode.UnifyInteger:
                 {
                     int intValue = BytecodeIO.ReadInt32(code, pc + 1);
-                    int ptr = _engine.UnifyPointer;
                     Cell value = Cell.Int(intValue);
+                    if (_engine.ReservedWrite)   // ADR-020
+                    {
+                        _engine.UnifyArgCell(value);
+                        _engine.AdvancePc(5);
+                        break;
+                    }
+                    int ptr = _engine.UnifyPointer;
                     if (_engine.WriteMode)
                     {
                         int idx = _engine.AllocateHeap(1);
@@ -1151,8 +1204,14 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.UnifyNil:
                 {
-                    int ptr = _engine.UnifyPointer;
                     Cell value = Cell.Atom(AtomTable.EmptyListId);
+                    if (_engine.ReservedWrite)   // ADR-020
+                    {
+                        _engine.UnifyArgCell(value);
+                        _engine.AdvancePc(1);
+                        break;
+                    }
+                    int ptr = _engine.UnifyPointer;
                     if (_engine.WriteMode)
                     {
                         int idx = _engine.AllocateHeap(1);
@@ -1197,6 +1256,12 @@ public sealed class BytecodeInterpreter
                 case Opcode.UnifyVoid:
                 {
                     int count = BytecodeIO.ReadInt32(code, pc + 1);
+                    if (_engine.ReservedWrite)   // ADR-020
+                    {
+                        _engine.UnifyVoid(count);
+                        _engine.AdvancePc(5);
+                        break;
+                    }
                     int ptr = _engine.UnifyPointer;
                     if (_engine.WriteMode)
                     {
