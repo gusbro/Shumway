@@ -5109,6 +5109,64 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             setup.Engine, setup.Interp);
     }
 
+    /// <summary>Theme 2 — a cancellable lazy solution stream. Identical to
+    /// <see cref="QueryAll(string)"/> but the supplied
+    /// <paramref name="cancellationToken"/> aborts a long-running search: the
+    /// interpreter observes the request at its next goal-boundary safe point and
+    /// throws <see cref="OperationCanceledException"/> (NOT a Prolog ball — a
+    /// surrounding <c>catch/3</c> never intercepts it). Still synchronous: it
+    /// runs on the calling thread. Use <see cref="QueryAsync"/> to run off-thread.</summary>
+    public IEnumerable<Solution> QueryAll(string queryText, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(queryText);
+        LastHaltExitCode = null;
+        var setup = SetupQuery(queryText);
+        return RunIterationCancellable(setup, cancellationToken);
+    }
+
+    private IEnumerable<Solution> RunIterationCancellable(
+        (Shumway.Core.ProgramView Program, List<string> VarNames, int[] VarHeapIndices,
+         Engine Engine, BytecodeInterpreter Interp) setup,
+        CancellationToken cancellationToken)
+    {
+        using var reg = cancellationToken.CanBeCanceled
+            ? cancellationToken.Register(static e => ((Engine)e!).RequestCancellation(), setup.Engine)
+            : default;
+        foreach (var sol in RunIteration(this, setup.Program, setup.VarNames,
+                     setup.VarHeapIndices, setup.Engine, setup.Interp))
+            yield return sol;
+    }
+
+    /// <summary>Theme 2 — an asynchronous, cancellable solution stream. Drives
+    /// the (synchronous, CPU-bound) search on a thread-pool thread so the
+    /// caller's thread is free between solutions, and surfaces results via
+    /// <c>await foreach</c>. Cancellation works as in
+    /// <see cref="QueryAll(string, CancellationToken)"/> — the engine aborts at
+    /// its next safe point. One query at a time per engine; pair with
+    /// <see cref="EnginePool"/> for concurrency.</summary>
+    public async IAsyncEnumerable<Solution> QueryAsync(
+        string queryText,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(queryText);
+        LastHaltExitCode = null;
+        var setup = SetupQuery(queryText);
+        using var reg = cancellationToken.CanBeCanceled
+            ? cancellationToken.Register(static e => ((Engine)e!).RequestCancellation(), setup.Engine)
+            : default;
+        using var iter = RunIteration(this, setup.Program, setup.VarNames,
+            setup.VarHeapIndices, setup.Engine, setup.Interp).GetEnumerator();
+        while (true)
+        {
+            // Each MoveNext runs one Run/Backtrack step off the calling thread.
+            // The engine is thread-agile and the steps are awaited (never
+            // overlapping), so a different pool thread per step is sound.
+            bool has = await Task.Run(() => iter.MoveNext(), cancellationToken).ConfigureAwait(false);
+            if (!has) break;
+            yield return iter.Current;
+        }
+    }
+
     private (Shumway.Core.ProgramView Program,
              List<string> VarNames,
              int[] VarHeapIndices,

@@ -67,8 +67,31 @@ public sealed partial class Engine
     /// <summary>Total safe points seen — diagnostic for GC bisection.</summary>
     public int GcSafePointCount => _gcSafePointCount;
 
+    // Cooperative cancellation (theme 2): the embedding layer sets this from a
+    // CancellationToken; the interpreter observes it at the next goal-boundary
+    // safe point (where MaybeCollectHeap already runs) and aborts the query by
+    // throwing OperationCanceledException, which propagates to the host (it is
+    // NOT a Prolog ball, so catch/3 never intercepts it). volatile so a request
+    // from another thread is seen promptly.
+    private volatile bool _cancelRequested;
+
+    /// <summary>Requests that the running query abort at the next safe point.
+    /// Thread-safe; the engine that observes it throws
+    /// <see cref="OperationCanceledException"/>.</summary>
+    public void RequestCancellation() => _cancelRequested = true;
+
+    /// <summary>Clears a pending cancellation request (e.g. before reusing an
+    /// engine).</summary>
+    public void ClearCancellation() => _cancelRequested = false;
+
+    /// <summary>True once <see cref="RequestCancellation"/> has been called and
+    /// not yet cleared.</summary>
+    public bool IsCancellationRequested => _cancelRequested;
+
     public void MaybeCollectHeap()
     {
+        if (_cancelRequested)
+            throw new OperationCanceledException("Prolog query cancelled at a safe point.");
         if (_gcOnlyAt >= 0)
         {
             _gcSafePointCount++;
