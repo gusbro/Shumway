@@ -658,6 +658,35 @@ questions from Phase 11's deferred list:
   `retract` / `assertz` — and avoids redundant `TryDescribe*`
   attempts that were already rejecting the shape.
 
+**Phase 27 — Tier-1 IL bundle slimming + non-last nested inline + cleanup** — ✅ **Complete** (tagged `phase-27`; closure summary in [`docs/phase-27-closure.md`](docs/phase-27-closure.md)).
+
+A mixed phase, four themes in order 1,3,4,2 (chunks 316–326 plus letter chunks
+B/C). **Theme 1 — `--strip-wam`**: a Tier-1 IL bundle drops its now-redundant WAM
+bodies. IL→IL calls dispatch by functor id via `IlByFunctorId` (316/319);
+indexed dispatch runs on a WAM-independent node graph (`IlIndexGraph`, 320)
+persisted in the bundle (`IndexGraphCodec`, B) so indexed predicates strip too;
+runtime meta-calls to a stripped predicate resolve via a resume-marker alias in
+`CurrentFunctorAddresses` (C). Blint bundle −20%; runs cross-process + as `--exe`.
+(Size note: a stripped IL bundle is smaller than `--with-compiled-il` but larger
+than WAM-only — IL is more verbose than the WAM it replaces.) **Theme 3 —
+ADR-020**: inline non-last nested compound build in body args (reserve-upfront
+`put_structure_r`/`put_list_r` with the arity baked, + a write-pointer frame
+stack); Blint total WAM 15087→14039 (−7%), `get_structure` −68%, `get_list`
+−80%, beating GProlog (which BFSs these). Head matching deliberately kept BFS
+(measured ~71-instruction ceiling vs the read/write-mode-flip risk). **Theme 4**:
+the three deferred ISO/parser items (`char_conversion/2`, cyclic-term overflow,
+parser `\+ (a,b)`) were all already fixed in Phase 10 (chunks 148/149/152);
+chunk 322 verified + added direct coverage. **Bonus 323**: a user question about
+`(\+)/2` surfaced that `existence_error(procedure, PI)` built `PI` as an atom
+`"name/arity"` not the compound `'/'(Name, Arity)` — so a specific catcher never
+unified; fixed (operator-form rendering had hidden it; `functor/3` revealed it).
+**Theme 2 — embedding leftovers**: `EnginePool` (324, bounded thread-agile engine
+reuse) + async/cancellable query API (325/326: `QueryAsync` →
+`IAsyncEnumerable<Solution>`, `QueryAll(string, ct)`, cancellation checked at the
+GC watermark so the per-goal path stays free — heap-bounded loops uncancellable
+by design). The other two Phase-21 items were already done in Phase 22 (modes
+ch246, `IEnumerable<T>` non-det foreigns ch244).
+
 **Phase 26 — WAM codegen quality (Blint vs GProlog)** — ✅ **Complete** (tagged `phase-26`; closure summary in [`docs/phase-26-closure.md`](docs/phase-26-closure.md)).
 
 Drove a predicate-by-predicate comparison of our WAM against GNU Prolog's
