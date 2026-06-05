@@ -75,6 +75,7 @@ internal static class Program
             VerboseOut = opts.Verbose ? Console.Error : null,
             StripSource = opts.StripSource,
             IncludeCompiledIl = opts.IncludeCompiledIl,
+            StripWam = opts.StripWam,
             ForeignAssemblies = opts.ForeignDlls,
         };
 
@@ -189,6 +190,7 @@ internal static class Program
         public bool AllowUndefined { get; set; }
         public bool StripSource { get; set; }
         public bool IncludeCompiledIl { get; set; }
+        public bool StripWam { get; set; }
         public string MapPath { get; set; } = "";
         public string ExePath { get; set; } = "";
         public string Goal { get; set; } = "";
@@ -246,6 +248,11 @@ internal static class Program
                 case "--with-compiled-il":
                 case "-i":
                     opts.IncludeCompiledIl = true;
+                    break;
+
+                case "--strip-wam":
+                    opts.IncludeCompiledIl = true;   // strip-wam implies IL
+                    opts.StripWam = true;
                     break;
 
                 case "--map":
@@ -380,6 +387,12 @@ internal static class Program
             + "                           IL methods directly — no Sigil emit at consult\n"
             + "                           time. Bigger bundles, faster cold start when\n"
             + "                           Tier-1 promotion is enabled.\n"
+            + "      --strip-wam          Implies --with-compiled-il, and drops the\n"
+            + "                           redundant WAM bytecode of every IL-promoted\n"
+            + "                           predicate (it runs from its IL delegate,\n"
+            + "                           reached by functor id). Smaller bundles.\n"
+            + "                           JIT-only: the IL must load, so a --strip-wam\n"
+            + "                           bundle cannot run under Native AOT.\n"
             + "  -f, --foreign-dll <path> Path to a .NET assembly with [PrologPredicate]\n"
             + "                           static methods. Their Name/Arity indicators\n"
             + "                           resolve as foreign references during link;\n"

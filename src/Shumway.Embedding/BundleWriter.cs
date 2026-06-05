@@ -23,19 +23,26 @@ public static class BundleWriter
 {
     public static void WriteToFile(Bundle bundle, string path,
         bool includeCompiledBytecode = false,
-        bool includeCompiledIl = false)
+        bool includeCompiledIl = false,
+        bool stripWam = false)
     {
         ArgumentNullException.ThrowIfNull(bundle);
         ArgumentNullException.ThrowIfNull(path);
-        File.WriteAllBytes(path, ToBytes(bundle, includeCompiledBytecode, includeCompiledIl));
+        File.WriteAllBytes(path,
+            ToBytes(bundle, includeCompiledBytecode, includeCompiledIl, stripWam));
     }
 
     public static byte[] ToBytes(Bundle bundle,
         bool includeCompiledBytecode = false,
-        bool includeCompiledIl = false)
+        bool includeCompiledIl = false,
+        bool stripWam = false)
     {
         ArgumentNullException.ThrowIfNull(bundle);
         ValidateOrThrow(bundle);
+        // --strip-wam only makes sense alongside IL: it drops the WAM bodies of
+        // IL-promoted predicates, which only exist when IL is built.
+        if (stripWam && !includeCompiledIl)
+            throw new ArgumentException("stripWam requires includeCompiledIl.", nameof(stripWam));
 
         // If the caller asked for compiled blobs and an entry doesn't already
         // carry one, synthesise it now from the source — keeping the writer
@@ -55,9 +62,13 @@ public static class BundleWriter
                 {
                     _lastPatchTableBytes = null;
                     _lastEntriesTableBytes = null;
+                    _lastIlFunctorIds = null;
                     compiledIl = CompileEntryToIl(effective[i]);
                     compiledIlPatches = _lastPatchTableBytes;
                     compiledIlEntries = _lastEntriesTableBytes;
+                    // --strip-wam: drop the IL predicates' redundant WAM bodies.
+                    if (stripWam && compiledBytecode is not null && _lastIlFunctorIds is { Count: > 0 })
+                        compiledBytecode = StripIlBodies(compiledBytecode, _lastIlFunctorIds);
                 }
                 effective[i] = new BundleEntry(
                     effective[i].ModuleName,
@@ -249,7 +260,41 @@ public static class BundleWriter
             });
         }
         _lastEntriesTableBytes = Shumway.Compiler.Il.IlPersistedEntryCodec.Encode(persistedEntryList);
+
+        // --strip-wam: record the functor ids that received an IL delegate, so
+        // ToBytes can drop their (now-redundant) WAM bodies from the
+        // CompiledModule. Interning here uses the same process FunctorTable the
+        // CompiledPredicate.FunctorId came from, so the ids line up.
+        var ilFids = new HashSet<int>(persistedEntryList.Count);
+        foreach (var pe in persistedEntryList)
+            ilFids.Add(Shumway.Core.FunctorTable.Intern(
+                Shumway.Core.AtomTable.Intern(pe.Name, permanent: true).Id, pe.Arity));
+        _lastIlFunctorIds = ilFids;
         return dllBytes;
+    }
+
+    [System.ThreadStaticAttribute]
+    private static HashSet<int>? _lastIlFunctorIds;
+
+    /// <summary>Rebuilds the CompiledModule blob with the WAM bodies of every
+    /// IL-promoted predicate removed (--strip-wam). The predicate stays in the
+    /// entry's <c>Defined</c> metadata (so it is registered), and its IL
+    /// delegate carries the body; callers reach it by functor id (CallIl for
+    /// bytecode callers, the chunk-316 marker for IL callers), never through a
+    /// WAM address — so the body is pure dead weight. JIT-only: under Native
+    /// AOT the IL can't load and these predicates would be unrunnable.</summary>
+    private static byte[] StripIlBodies(byte[] compiledModuleBytes, HashSet<int> ilFids)
+    {
+        var module = CompiledModuleCodec.Decode(compiledModuleBytes);
+        var kept = new List<Shumway.Compiler.Wam.CompiledPredicate>(module.Predicates.Count);
+        foreach (var pred in module.Predicates)
+            if (!ilFids.Contains(pred.FunctorId))
+                kept.Add(pred);
+        if (kept.Count == module.Predicates.Count)
+            return compiledModuleBytes;   // nothing stripped
+        var stripped = new Shumway.Compiler.Wam.CompiledModule(
+            kept, module.StringLiterals, module.FloatLiterals, module.BigIntLiterals);
+        return CompiledModuleCodec.Encode(stripped);
     }
 
     /// <summary>Side-channel staging slot used by

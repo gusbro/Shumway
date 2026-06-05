@@ -84,6 +84,13 @@ public sealed class LinkConfig
     /// source.</para></summary>
     public bool IncludeCompiledIl { get; init; }
 
+    /// <summary>When true (with <see cref="IncludeCompiledIl"/>), drops the
+    /// redundant WAM bodies of every IL-promoted predicate from the bundle —
+    /// they run from their IL delegate, reached by functor id, never a WAM
+    /// address. Produces a JIT-only bundle: under Native AOT the IL can't load
+    /// and these predicates would be unrunnable.</summary>
+    public bool StripWam { get; init; }
+
     /// <summary>When non-null, the linker writes info diagnostics
     /// describing its progress (modules visited, predicates reached,
     /// etc.) to this writer. Useful for CLI <c>--verbose</c> mode.</summary>
@@ -601,7 +608,8 @@ public static class ShmoLinker
             {
                 bytes = BundleWriter.ToBytes(bundle,
                     includeCompiledBytecode: true,
-                    includeCompiledIl: true);
+                    includeCompiledIl: true,
+                    stripWam: config.StripWam);
                 // Re-read the bytes so the in-memory Bundle reflects
                 // the persisted-IL slots the writer populated.
                 bundle = BundleReader.FromBytes(bytes);
