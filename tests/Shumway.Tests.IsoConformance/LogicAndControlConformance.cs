@@ -42,16 +42,38 @@ public class LogicAndControlConformance
         // ISO §7.8.5: bindings made inside the negated goal do not
         // survive. bind_and_fail/1 binds its arg then fails; \+ over
         // it succeeds, the binding is unwound, the outer X=2 takes.
-        //
-        // The helper dodges a Prolog parser ambiguity: \+ followed
-        // by a parenthesised conjunction is read as \+(A, B) (binary
-        // function-call) rather than \+ ((A, B)). Wrapping the goal
-        // in a named predicate lifts that ambiguity.
         var e = new PrologEngine();
         e.ConsultString("bind_and_fail(X) :- X = 1, fail.");
         var sol = e.Query("\\+ bind_and_fail(X), X = 2.");
         Assert.True(sol.Success);
         Assert.Equal(Int(2), sol["X"]);
+    }
+
+    [Fact]
+    public void NotProvable_SpacedParenConjunction_ParsesAsOperatorArg()
+    {
+        // ISO §6.3.3 / §6.4.7 function-call disambiguation (chunk 149):
+        // `\+ (G1, G2)` with whitespace before `(` is the prefix operator
+        // `\+` applied to the parenthesised conjunction `(G1, G2)` — NOT
+        // the function-call `\+/2`. So `\+ (fail, true)` negates a goal
+        // that fails and therefore succeeds, while `\+ (true, true)`
+        // negates a goal that succeeds and therefore fails.
+        var e = new PrologEngine();
+        Assert.True(e.Query("\\+ (fail, true).").Success);
+        Assert.False(e.Query("\\+ (true, true).").Success);
+    }
+
+    [Fact]
+    public void NotProvable_AdjacentParen_IsFunctionCallShape()
+    {
+        // The flip side: `\+(fail, true)` with NO whitespace is the
+        // function-call notation `\+/2`, which is undefined → a catchable
+        // existence_error(procedure, _). (The indicator IS `\+/2`, but the
+        // literal `\+/2` can't be written in source — `\+/` is one graphic
+        // token under maximal munch — so the catcher leaves the PI a var.)
+        var e = new PrologEngine();
+        Assert.True(e.Query(
+            "catch(\\+(fail, true), error(existence_error(procedure, _), _), true).").Success);
     }
 
     [Fact]
