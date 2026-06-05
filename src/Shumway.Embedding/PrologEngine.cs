@@ -5606,6 +5606,38 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 addressMap[bareFunctorId] = address;
         }
 
+        // --strip-wam: a predicate whose WAM body was dropped from the bundle
+        // (its IL delegate carries the body) has no entry in linkResult.Addresses,
+        // so it is invisible to every dispatch path that resolves a goal by
+        // functor id through CurrentFunctorAddresses — the runtime meta-call
+        // sites (MetaCallInEngine, DispatchCall, and the IL meta-call helper
+        // IlMetaCallHelper.Dispatch). Map each such IL-only functor to its
+        // resume marker (EncodeResumeMarker(fid, 0)): the marker flows through
+        // SetPc and the main Dispatch loop's IsResumeMarker check routes it to
+        // the IL delegate via IlByFunctorId — exactly the chunk-316 path a
+        // compiled CallIl already uses. Only inject where there is no WAM
+        // address (a non-stripped IL predicate keeps its WAM and meta-calls
+        // through it unchanged). A module-local predicate is registered under
+        // its mangled "module$name" functor, so it also needs a bare-name alias
+        // (mirroring the WAM bare-alias loop above) pointing at the SAME marker
+        // — a runtime meta-call (an if-then-else condition, call/N) names the
+        // predicate by its plain name.
+        foreach (int ilFid in IlPromotion.PromotedFunctorIds())
+        {
+            int marker = Engine.EncodeResumeMarker(ilFid, 0);
+            if (!addressMap.ContainsKey(ilFid))
+                addressMap[ilFid] = marker;
+            var (atomId, arity) = FunctorTable.Lookup(ilFid);
+            string name = AtomTable.GetById(atomId)?.Name ?? "";
+            int dollar = name.IndexOf('$');
+            if (dollar <= 0) continue;
+            if (!_modules.ContainsKey(name.Substring(0, dollar))) continue;
+            int bareFid = FunctorTable.Intern(
+                AtomTable.Intern(name.Substring(dollar + 1), permanent: true).Id, arity);
+            if (!addressMap.ContainsKey(bareFid))
+                addressMap[bareFid] = marker;
+        }
+
         var engine = new Engine
         {
             Out = Out,

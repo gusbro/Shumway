@@ -1780,6 +1780,17 @@ public sealed class BytecodeInterpreter
     /// without bouncing through bytecode (chunk 47).</summary>
     private void DispatchToTier1OrBytecode(int target)
     {
+        // A resume marker (not a real bytecode address) names an IL-only
+        // predicate by functor id — e.g. a --strip-wam predicate reached via
+        // a runtime meta-call (CurrentFunctorAddresses maps it to the marker).
+        // Don't feed it to OnDispatch, which expects an address; hand it to the
+        // outer Dispatch loop, whose IsResumeMarker check routes it to the IL
+        // delegate via IlByFunctorId.
+        if (Engine.IsResumeMarker(target))
+        {
+            _engine.SetPc(target);
+            return;
+        }
 
         while (true)
         {
