@@ -160,6 +160,18 @@ that narrows a ground integer — a correctness fix across clpfd, not just `*`.
     focused engine session.** (Donald uses `label`, which the findall repro shows
     restores fine — donald may be this bug via a path that ends in `=`, or a
     sibling complex-linear limit. TBD.)
+  - **Refined by engine tracing (chunk 334 attempt, still NOT fixed):** the
+    `[wakeup] flush` trace NEVER fires for the failing repro — so it is NOT a
+    `verify_attributes` wakeup-queue issue (my first hypothesis). `X = 5` on a
+    clpfd attvar is checked WITHOUT queueing a wakeup. The Heisenbug remains: a
+    `get_attr(X, clpfd, fd(D,_))` probe in branch 2 reads `D = [1-9]` (domain
+    correctly restored) AND makes `X = 5` succeed; without the probe `X = 5`
+    fails as if the domain were still `[1-2]`. So in branch 2 the SYNCHRONOUS
+    attvar=integer domain check reads a STALE domain while `get_attr` reads the
+    restored one — two views of the domain out of sync until `get_attr` touches
+    it. The fix lives in the attvar-unification-with-integer domain check (how
+    clpfd validates a binding without a wakeup), not the trail/CP machinery.
+    Next session: instrument that synchronous check.
 - **alpha**, **multipl** — empty output: investigate (may be the same linear gap).
 - Several harder programs time out the GProlog oracle at 25s.
 - REPL `use_module(library(clpfd))` doesn't load the library / operators (had to
