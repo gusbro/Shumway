@@ -193,10 +193,51 @@ that narrows a ground integer — a correctness fix across clpfd, not just `*`.
     then cuts could still hit the original bug; rare (clpfd lib predicates aren't
     promoted) and left as a documented follow-up.
   - **donald** itself is *not* fully fixed by this: it now gets past the
-    soundness failure and hits a *separate* `type_error(evaluable) in is/2`
-    inside `clpfd_narrow_bounds` (a clpfd arithmetic gap on its complex
-    column-wise constraints) — the deep complex-linear-constraint work, still
-    deferred.
+    soundness failure and hits a *separate* `type_error(evaluable) in is/2`,
+    investigated in depth (chunk 336 below) but **not fixed** — it is a deep
+    engine attribute-value heap-lifetime bug, not a clpfd-library gap.
+
+### donald `type_error(evaluable, fd(_,_))` — investigated, root-caused to an engine heap-lifetime bug (chunk 336, NOT fixed)
+
+donald posts one big linear column constraint and labels 10 vars. Labeling
+**8+** of them throws `error(type_error(evaluable, fd(Dom, _)), is/2)` — an
+arithmetic `is/2` whose operand is a literal `fd(Domain, Props)` **clpfd
+attribute term**, i.e. a Prolog variable is bound to an attribute structure and
+then flows into a bound-arithmetic `is`. The investigation (each step a built +
+run probe, all instrumentation reverted afterwards):
+
+- **Not the post, the search.** Posting the constraint succeeds; only deep
+  `label/1` throws. Single bindings (`D=5`, `label([D])`) and short prefixes
+  (`label([D,O,N,A,L,G])`) are fine; the throw needs `≥8` labelled vars — i.e.
+  it needs deep **backtracking** through the propagator chain.
+- **Not heap GC.** `SHUMWAY_GC_THRESHOLD=0` (GC fully off) still throws — so it
+  is *not* the conservative collector failing to relocate `_attrTable` value
+  indices.
+- **Not the `#=` attvar=attvar aliasing.** `#=` is `clpfd_expr(L,X),
+  clpfd_expr(R,Y), X = Y` — unifying the two sum-tree top vars, which fires the
+  `verify_attributes` merge. Rewriting `#=` to a non-aliasing bounds form
+  (`$fd_le(X,Y), $fd_le(Y,X)`) still throws (with `fd([],_)` instead of
+  `fd(_,_)`). So the merge path is not the (sole) cause.
+- **Not the hook receiving a bad attribute.** A diagnostic clause at the top of
+  `verify_attributes/4` that throws if `Dom`/`Props` is unbound never fired —
+  the engine invokes the hook with a well-formed `fd(Dom, Props)`.
+- **Not `get_attr` mis-binding.** `get_attr/3` on a plain (non-attributed) var
+  correctly fails and leaves the var unbound.
+- **The consistent signature** across every variant is `fd(Dom, Props)` with the
+  **`Props` field unbound**. *No clpfd-library `put_attr` ever stores unbound
+  props* (every site passes a bound list or `[]`). So the malformed term is not
+  built by the library — it is the engine's attribute-value representation read
+  back stale: `_attrTable[home][module] = valueHeapIdx` stores the attribute
+  *by heap index*, and those heap cells are subject to heap-top rollback on
+  backtracking. The picture that fits all the evidence: deep labeling allocates
+  an attribute term high on the heap, backtracks past it (heap top rolls back,
+  the cells are reclaimed), and a record/trail edge leaves a `valueHeapIdx`
+  pointing at a reclaimed cell — materialising later as `fd(Dom, <unbound>)`.
+  This is the **attribute-value heap-lifetime under backtracking** subsystem
+  (touches the trail + heap invariants — a "stop and consult" area per
+  `CLAUDE.md`), not a one-line clpfd patch. Deferred to a focused engine
+  session; **not** shipped as a guess. Minimal trigger on hand:
+  `/tmp/r5.pl` (donald's constraint + `label([D,O,N,A,L,G,E,R])` under `catch`).
 - **alpha**, **multipl** — empty output: investigate (may be the same linear gap).
 - Several harder programs time out the GProlog oracle at 25s.
 - REPL `use_module(library(clpfd))` doesn't load the library / operators (had to
