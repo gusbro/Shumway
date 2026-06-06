@@ -109,14 +109,18 @@ agrees with GProlog on these.
 - **`**`** (power) in FD expressions → expands to repeated `$fd_times`
   (`X**2` → `X*X`). Parses now — but see the multiplication bug below.
 
-### KEY FINDING — `$fd_times` product propagator under-propagates (real bug)
+### `$fd_times` shared-var squaring bug — FIXED (chunk 331)
 
-`X*X #= 9, label([X])` gives **X = 1** (wrong; the only solution is 3). Same for
-`X*Y #= 9, X #= Y` → 1,1. The product propagator does not enforce the product
-when a factor is the same variable as the other (squaring) / when factors become
-ground during labeling — so any multiplication-with-shared-var constraint can
-yield a wrong answer. Pre-existing (the `**` work only surfaced it); the chunk-90
-multiplication tests don't cover `X*X`, a test gap. **Highest-value FD fix.**
+`X*X #= 9, label([X])` gave **X = 1** (wrong; only solution is 3). Root cause was
+not in `$fd_times` itself but in **`clpfd_narrow/2`**: when its first arg is a
+ground integer, it only checked the new domain was non-empty (`NewDom \== []`)
+instead of that the integer is IN it (`clpfd_in_dom`). So `$fd_times(1,1,9)` →
+`clpfd_narrow(9, [1-1])` succeeded without verifying 9 = 1. (`+` was unaffected
+because `$fd_plus` back-propagates the factor at post time, so labeling never
+reaches a wrong value.) One-line fix → `integer(X) -> clpfd_in_dom(X, NewDom)`.
+Now squares label correctly (X*X#=9 → 3, =16 → 4, …). Affects ANY propagator
+that narrows a ground integer — a correctness fix across clpfd, not just `*`.
+4 regression tests; chunk-90 mult tests had a gap (no squaring case).
 
 ### Other FD findings (TODO)
 

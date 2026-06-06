@@ -49,6 +49,32 @@ public class Chunk90Tests
     }
 
     [Fact]
+    public void Times_SharedVar_Squaring_LabelsCorrectly()
+    {
+        // Phase 28: X*X #= 9 must label X=3, not X=1. The product propagator's
+        // both-ground clause called clpfd_narrow(C, [P-P]) which, for a ground C
+        // (here C is the bound product 9), only checked the new domain was
+        // non-empty instead of that C was IN it — so X=1 (1*1=1 != 9) wrongly
+        // survived labeling. Surfaced by the reducer/ExamplesFD corpus.
+        Assert.Equal(Int(3), Fd().Query("X in 1..9, X*X #= 9, label([X]).")["X"]);
+    }
+
+    [Fact]
+    public void Times_SharedVar_Squaring_RejectsWrongValue()
+    {
+        Assert.False(Fd().Query("X in 1..9, X*X #= 9, X = 1.").Success);
+    }
+
+    [Fact]
+    public void Narrow_GroundInteger_ChecksMembership()
+    {
+        // The root cause, directly: a ground integer "narrowed" to a domain that
+        // doesn't contain it must fail, not succeed.
+        Assert.True(Fd().Query("X #= 2 * 2, X = 4.").Success);   // 4 in {4}
+        Assert.False(Fd().Query("X #= 2 * 2, X = 5.").Success);  // 4 not = 5
+    }
+
+    [Fact]
     public void Times_NonDivisibleBackward_Fails()
     {
         // X = 2*Y has no integer solution for an odd X.

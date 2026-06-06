@@ -262,7 +262,7 @@ internal static class Clpfd
         % an unchanged domain is a no-op, otherwise store it and re-run the
         % suspended propagators to a fixpoint.
         clpfd_narrow(X, NewDom) :-
-            ( integer(X) -> NewDom \== []
+            ( integer(X) -> clpfd_in_dom(X, NewDom)   % a ground int must be IN the new domain, not merely make it non-empty
             ; get_attr(X, clpfd, fd(OldDom, Props)) ->
                 ( NewDom == OldDom -> true
                 ; NewDom == [] -> fail
