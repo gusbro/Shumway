@@ -20,6 +20,15 @@ public static class ControlBuiltins
     public static bool Fail(Engine engine) => false;
     public static bool True(Engine engine) => true;
 
+    /// <summary><c>get_cpu_time(-Time)</c> — GNU-Prolog timing primitive:
+    /// binds <c>Time</c> to the CPU time consumed by the process so far, in
+    /// milliseconds. Used by the classic benchmark harness (common.pl) that the
+    /// Aquarius/Van Roy programs share. We report the .NET process'
+    /// total processor time, the closest equivalent.</summary>
+    public static bool GetCpuTime(Engine engine) =>
+        engine.UnifyRegisterWithCell(0, Cell.Int(
+            (long)System.Diagnostics.Process.GetCurrentProcess().TotalProcessorTime.TotalMilliseconds));
+
     /// <summary><c>halt/0</c> — terminates execution with exit code 0.
     /// Implemented by throwing <see cref="PrologHaltException"/>, which
     /// the outer <c>Query</c> path intercepts and converts into a

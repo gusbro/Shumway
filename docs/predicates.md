@@ -97,6 +97,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `catch(:Goal, +Catcher, :Recovery)` | Runs Goal, running Recovery if a thrown exception unifies with Catcher. |
 | `fail` | Always fails. |
 | `garbage_collect` | Mark-compacts the heap, reclaiming cells unreachable from the live machine state (ADR-016). Always succeeds. |
+| `get_cpu_time(-Time)` | Binds Time to the process CPU time so far, in milliseconds (GNU-Prolog timing primitive). |
 | `halt` | Halts the engine with exit code 0. |
 | `halt(+Status)` | Halts the engine with the given exit code. |
 | `ignore(:Goal)` | Runs Goal, succeeding whether or not Goal does. |

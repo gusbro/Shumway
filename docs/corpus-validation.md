@@ -28,7 +28,7 @@ GProlog can't run them).
 | ham | res(true) | ✅ | Hamiltonian |
 | meta_qsort | res(true) | ✅ | |
 | nand | res(true) | ✅ | nand-circuit synthesis |
-| nrev | res(true) | ⚠️ builtin | benchmark uses `get_cpu_time/1` (GProlog builtin) — TODO |
+| nrev | res(true) | ✅ runs | needed `get_cpu_time/1` (added); output is timing (LIPS), not output-comparable |
 | poly_10 | res(_) | ✅ | |
 | queens | res(true) | ✅ | |
 | queensn | res(true) | ✅ | |
@@ -37,7 +37,13 @@ GProlog can't run them).
 | tak | res(true) | ✅ | |
 | zebra | res(true) | ✅ | |
 
-14/16 matched out of the box; the two gaps:
+**Deep validation (computed output, not just `benchmark/0` success):** running
+`benchmark(true)` (which forces each program to WRITE its computed answer) and
+diffing stdout against the GProlog oracle — **all 15 deterministic programs are
+byte-identical to GProlog** (modulo list whitespace, `[1, 2]` vs `[1,2]`).
+`nrev` runs but only prints a LIPS/timing line, so it has no output to diff.
+
+The two gaps found and closed:
 
 ### reducer — FIXED (append/3 improper-list split)
 
@@ -55,21 +61,23 @@ fine — every suffix `L2` simply carries the improper tail
 L2 build instead of hardcoding `[]`; a proper list still has tail `[]`, so the
 common case is unchanged. Regression tests in `AtomListBuiltinsTests`.
 
-### nrev — `get_cpu_time/1` missing (TODO)
+### nrev — `get_cpu_time/1` added
 
-`nrev`'s `benchmark/1` calls `get_cpu_time/1` (a GProlog timing builtin Shumway
-lacks). Low priority; trivial to stub if a corpus program needs it for more than
-timing.
+`nrev`'s `benchmark/1` calls `get_cpu_time/1` (a GNU-Prolog timing builtin). Added
+as a C# builtin (`ControlBuiltins.GetCpuTime`, reports the .NET process'
+`TotalProcessorTime` in ms). nrev now runs; its output is a LIPS rate (timing), so
+nothing to deep-diff.
 
 ## Open gaps (cross-program)
 
 - `include/1` directive — worked around in the harness (concatenating `common.pl`);
   GProlog has it. TODO if a corpus program needs it structurally.
-- `get_cpu_time/1` — see nrev.
+
+## Status
+
+**ExamplesPl: 16/16 run; 15/15 deterministic programs byte-match GProlog.**
 
 ## TODO
 
-- Deepen ExamplesPl validation: diff the **computed output** (queens board, zebra
-  assignment) against GProlog, not just `benchmark/0` success.
 - ExamplesFD (31 CLP(FD) programs).
 - Vanilla `c:\temp` programs (LinesOfAction.pl, …).
