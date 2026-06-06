@@ -135,12 +135,31 @@ that narrows a ground integer — a correctness fix across clpfd, not just `*`.
     fix turns an uncatchable C# crash into a proper Prolog error. General
     robustness win.
   - The underlying error it was masking: a **clpfd soundness gap** — donald's
-    native constraint (`100000*D + … #= 100000*R + …`, the same variable on both
-    sides with summed coefficients) yields `false` where GProlog finds the
-    solution `[5,2,6,4,8,1,9,7,3,0]`. Bounds propagation over a complex linear
-    constraint with a repeated / both-sides variable is incomplete here. Deep —
-    needs dedicated propagator work, not a quick fix. The GProlog-shim path also
-    surfaces an `is/2`-on-attvar (`type_error(evaluable, fd(_,_))`) variant.
+    native constraint yields `false` where GProlog finds `[5,2,6,4,8,1,9,7,3,0]`.
+    The ground solution is ACCEPTED (`all_different` + the `#=` succeed on it) and
+    SURVIVES the initial propagation, yet `label/1` exhausts without finding it;
+    fixing `DD=5` then labelling the rest DOES find it — so the bug is in the
+    search's backtracking.
+  - **Dug to a precise minimal repro (chunk 333 investigation, NOT fixed):**
+    ```
+    X in 1..9, ( X #< 3 ; true ), X = 5.        % FALSE  (wrong — want X=5)
+    X in 1..9, ( X #< 3 ; true ), X #= 5.       % ok, X=5
+    X in 1..9, ( (X#<3,X#>5) ; true ), X = 5.   % ok, X=5
+    findall(X,(X in 1..9,(X#<3;X#>6),label([X])),L).  % ok, [1,2,7,8,9]
+    ```
+    The bug: unifying a clpfd attvar with an integer (`X = 5`) AFTER backtracking
+    out of a disjunction whose FIRST branch SUCCEEDED sees the branch's narrowed
+    (stale) domain — that narrowing isn't restored on this particular backtrack
+    path. The constraint form `X #= 5` and `label` (both via `clpfd_narrow`) are
+    unaffected; plain `=` goes through the attvar `verify_attributes` hook. So
+    it's an attvar-unify ↔ trail/backtrack interaction (extra-trail / `AttrModify`
+    undo), NOT a clpfd-propagator bug. The undo (`UnwindTrails` /
+    `ProcessExtraUnwind`) and the WAM-CP restore (`RestoreCommonFromCurrentCp`,
+    which DOES restore the extra trail) each look correct in isolation; the
+    discrepancy is the branch-succeeds-then-later-goal-fails path. **Deep; a
+    focused engine session.** (Donald uses `label`, which the findall repro shows
+    restores fine — donald may be this bug via a path that ends in `=`, or a
+    sibling complex-linear limit. TBD.)
 - **alpha**, **multipl** — empty output: investigate (may be the same linear gap).
 - Several harder programs time out the GProlog oracle at 25s.
 - REPL `use_module(library(clpfd))` doesn't load the library / operators (had to
