@@ -142,14 +142,18 @@ public static class AtomListBuiltins
             // L3 is a partial list while L1 is var — neither side is
             // sufficiently instantiated to drive the split. Chunk 131c.
             throw new PrologRuntimeException("instantiation_error");
-        if (cursor.Tag != Tag.Atom || cursor.AsAtomId != AtomTable.EmptyListId)
-            return false;   // improper L3
 
-        return AppendSplitAttempt(engine, elems, splitIdx: 0, returnPc, isResume: false);
+        // `cursor` is L3's final tail: [] for a proper list, or some other
+        // term (atom / compound) for an improper list. ISO append/3 splits an
+        // improper list too — every suffix L2 simply carries that tail
+        // (append([3], fac, [3|fac]) etc.), so we thread it through to the L2
+        // build instead of rejecting it. For a proper list this tail is [],
+        // so the behaviour is unchanged.
+        return AppendSplitAttempt(engine, elems, cursor, splitIdx: 0, returnPc, isResume: false);
     }
 
     private static bool AppendSplitAttempt(
-        Engine engine, IReadOnlyList<Cell> elems, int splitIdx, int returnPc, bool isResume)
+        Engine engine, IReadOnlyList<Cell> elems, Cell suffixTail, int splitIdx, int returnPc, bool isResume)
     {
         int n = elems.Count;
         if (splitIdx > n) return false;
@@ -160,16 +164,17 @@ public static class AtomListBuiltins
         {
             int nextSplit = splitIdx + 1;
             Func<Engine, int, bool> resume = (e, _) =>
-                AppendSplitAttempt(e, elems, nextSplit, returnPc, isResume: true);
+                AppendSplitAttempt(e, elems, suffixTail, nextSplit, returnPc, isResume: true);
             // arity 3: the CP must restore append/3's argument registers, else
             // a following body goal whose builtin call takes >= (resultReg+1)
             // args clobbers X0/X1 and the enumeration breaks on backtrack.
             engine.PushBuiltinChoicePoint(resume, arity: 3);
         }
 
-        // L1 = elems[0..splitIdx], L2 = elems[splitIdx..n].
-        int l1Heap = BuildListFromCells(engine, elems, 0, splitIdx);
-        int l2Heap = BuildListFromCells(engine, elems, splitIdx, n);
+        // L1 = elems[0..splitIdx] (always proper); L2 = elems[splitIdx..n] with
+        // L3's tail (ADR: [] for a proper L3, the improper tail otherwise).
+        int l1Heap = BuildListFromCells(engine, elems, 0, splitIdx, Cell.Atom(AtomTable.EmptyListId));
+        int l2Heap = BuildListFromCells(engine, elems, splitIdx, n, suffixTail);
         if (!engine.UnifyRegisterWithHeapAt(0, l1Heap)) return false;
         if (!engine.UnifyRegisterWithHeapAt(1, l2Heap)) return false;
         if (isResume) engine.ResumeAtReturnPc(returnPc);
@@ -177,14 +182,14 @@ public static class AtomListBuiltins
     }
 
     private static int BuildListFromCells(
-        Engine engine, IReadOnlyList<Cell> elems, int start, int end)
+        Engine engine, IReadOnlyList<Cell> elems, int start, int end, Cell finalTail)
     {
         int count = end - start;
         if (count == 0)
         {
-            int nilSlot = engine.AllocateHeap(1);
-            engine.SetHeap(nilSlot, Cell.Atom(AtomTable.EmptyListId));
-            return nilSlot;
+            int tailSlot = engine.AllocateHeap(1);
+            engine.SetHeap(tailSlot, finalTail);
+            return tailSlot;
         }
         int baseIdx = engine.AllocateHeap(2 * count + 1);
         for (int i = 0; i < count; i++)
@@ -194,7 +199,7 @@ public static class AtomListBuiltins
             engine.SetHeap(lisIdx, Cell.Lis(headIdx));
             engine.SetHeap(headIdx, elems[start + i]);
         }
-        engine.SetHeap(baseIdx + 2 * count, Cell.Atom(AtomTable.EmptyListId));
+        engine.SetHeap(baseIdx + 2 * count, finalTail);
         return baseIdx;
     }
 

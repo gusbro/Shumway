@@ -116,6 +116,47 @@ public class AtomListBuiltinsTests
         Assert.False(engine.Query("append([1, 2], [3, 4], [1, 2, 3]).").Success);
     }
 
+    [Fact]
+    public void Append_ForwardImproperTail_CarriesAtomTail()
+    {
+        // append([3], fac, X) — L2 is an atom, so the result is the improper
+        // list [3|fac]. (Phase 28: surfaced by the reducer corpus program.)
+        var engine = new PrologEngine();
+        var sol = engine.Query("append([3], fac, X).");
+        Assert.True(sol.Success);
+        Assert.Equal(Cmp(".", Int(3), Atom("fac")), sol["X"]);
+    }
+
+    [Fact]
+    public void Append_SplitImproperList_EnumeratesWithTail()
+    {
+        // ISO append/3 splits an improper list: append(P, F, [3|fac]) yields
+        // P=[],F=[3|fac] and P=[3],F=fac. Before the Phase-28 fix the
+        // var-L1 / improper-L3 path returned false, which broke the reducer
+        // corpus program (it uses append to peel a combinator's atom tag).
+        var engine = new PrologEngine();
+        var sols = engine.QueryAll("append(P, F, [3|fac]).").ToList();
+        Assert.Equal(2, sols.Count);
+        Assert.Equal(Nil, sols[0]["P"]);
+        Assert.Equal(Cmp(".", Int(3), Atom("fac")), sols[0]["F"]);
+        Assert.Equal(List(Int(3)), sols[1]["P"]);
+        Assert.Equal(Atom("fac"), sols[1]["F"]);
+    }
+
+    [Fact]
+    public void Append_ProperList_SplitUnchanged()
+    {
+        // Regression guard: a PROPER L3 still splits into N+1 proper solutions
+        // (the fix must not change the common case).
+        var engine = new PrologEngine();
+        var sols = engine.QueryAll("append(P, F, [a, b]).").ToList();
+        Assert.Equal(3, sols.Count);
+        Assert.Equal(Nil, sols[0]["P"]);
+        Assert.Equal(List(Atom("a"), Atom("b")), sols[0]["F"]);
+        Assert.Equal(List(Atom("a"), Atom("b")), sols[2]["P"]);
+        Assert.Equal(Nil, sols[2]["F"]);
+    }
+
     // ---------- atom_codes/2 ----------
 
     [Fact]
