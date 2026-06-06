@@ -77,7 +77,44 @@ nothing to deep-diff.
 
 **ExamplesPl: 16/16 run; 15/15 deterministic programs byte-match GProlog.**
 
+## ExamplesFD (31 CLP(FD)) — in progress
+
+GProlog's FD examples use GProlog's `fd_*` primitives, a different dialect from
+Shumway's SWI/SICStus-style clpfd (`in`/`ins`, `#=`, `all_different`, `label`).
+Added a **GProlog-FD compatibility shim** in `Clpfd.cs` mapping the core
+primitives — `fd_domain`→`ins`, `fd_labeling`→`label`, `fd_labelingff`→
+`labeling([ff],_)`, `fd_all_different`→`all_different`, `fd_atmost`/`fd_exactly`/
+`fd_only_one`/`fd_at_most_one`→reified counts, `fd_set_vector_max`→no-op — which
+covers **24/31** programs (the other 7 need `fd_element` (2), `fd_minimize`/
+`fd_tell` (5)).
+
+Also added a REPL **`--clpfd`** / `--clpr` flag: it calls `UseClpfd()` BEFORE
+consulting, so the constraint operators are in the table when files are parsed.
+(A `:- use_module(library(clpfd))` directive inside a file is too late — Shumway
+parses the whole file before running directives. That, and the fact that
+`use_module(library(clpfd))` doesn't persist the library / its operators to the
+REPL parser, are real gaps the corpus surfaced — see below.)
+
+### Validated so far (oracle-vs-Shumway diff of `q`'s solution, time stripped)
+
+MATCH: **crypta, eq10, eq20, five, send** (SEND+MORE=MONEY etc.). The core solver
+agrees with GProlog on these.
+
+### Gaps the FD corpus surfaced (TODO)
+
+- **`#<=>` / `#=>` / `#<=`** — GProlog's reification operators use a single
+  arrow; Shumway's clpfd spells them `#<==>` / `#==>` / `#<==`. Programs:
+  bdonald, … (parse error). Trivial alias to add.
+- **`**` (power) in FD expressions** — `type_error(fd_expression, _**2)`.
+  Program: digit8. Add `**` to the clpfd expression evaluator.
+- **alpha** — empty output (no solution found): real bug to investigate.
+- Several harder programs time out the GProlog oracle at 25s (bpigeon, bramsey,
+  magic, square, …) — slow searches, not necessarily Shumway issues.
+- REPL `use_module(library(clpfd))` doesn't actually load the library / operators
+  (had to add the `--clpfd` flag); worth fixing for user ergonomics.
+
 ## TODO
 
-- ExamplesFD (31 CLP(FD) programs).
+- Fix the FD gaps above (`#<=>` aliases, `**`, alpha) → widen ExamplesFD coverage.
+- The 7 programs needing `fd_element` / `fd_minimize` / `fd_tell`.
 - Vanilla `c:\temp` programs (LinesOfAction.pl, …).

@@ -60,8 +60,20 @@ internal static class Program
             engine.IlPromotion.Threshold = promoteN;
         if (stopwatch is not null)
             setupMsAtConsultStart = stopwatch.ElapsedMilliseconds;
+        // --clpfd / --clpr: enable the constraint library BEFORE consulting, so
+        // its operators (#=, in, .., {}/1, ...) are in the operator table when
+        // the named files are parsed (a `:- use_module(library(clpfd))` directive
+        // inside a file is too late — the file is parsed before directives run).
         foreach (string path in consultFiles)
+        {
+            if (path == "--clpfd") engine.UseClpfd();
+            else if (path == "--clpr") engine.UseClpr();
+        }
+        foreach (string path in consultFiles)
+        {
+            if (path is "--clpfd" or "--clpr") continue;
             ConsultFile(engine, path);
+        }
         if (stopwatch is not null)
             setupMsAtGoalStart = stopwatch.ElapsedMilliseconds;
 

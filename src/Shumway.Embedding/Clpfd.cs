@@ -90,6 +90,19 @@ internal static class Clpfd
         :- public '#\\/'/2.
         :- public '#\\'/1.
 
+        % GNU-Prolog FD compatibility shim (Phase 28): the ExamplesFD corpus
+        % uses GProlog's fd_* primitives, which map onto the SWI/SICStus-style
+        % clpfd above. Aliases so those programs run unchanged.
+        :- public fd_domain/3.
+        :- public fd_labeling/1.
+        :- public fd_labelingff/1.
+        :- public fd_all_different/1.
+        :- public fd_set_vector_max/1.
+        :- public fd_atmost/3.
+        :- public fd_exactly/3.
+        :- public fd_only_one/1.
+        :- public fd_at_most_one/1.
+
         % the prefix-negation operator is declared after the public block:
         % once `#\` is a prefix operator, the quoted atom in `'#\\'/1`
         % above would be misparsed as an operator awaiting an argument.
@@ -892,5 +905,26 @@ internal static class Clpfd
             ; DX = [V-V], DY = [V-V] -> E = false
             ; E = unknown
             ).
+
+        % ===== GNU-Prolog FD compatibility shim (Phase 28) =====
+        % Aliases mapping GProlog's fd_* primitives onto the clpfd above, so the
+        % ExamplesFD corpus runs unchanged. fd_domain/labeling/all_different are
+        % direct renames; fd_atmost/exactly/only_one/at_most_one are reified
+        % counts; fd_set_vector_max is a GProlog internal sizing hint (no-op).
+        fd_domain(Vars, Lo, Hi) :-
+            ( is_list(Vars) -> Vars ins Lo..Hi ; Vars in Lo..Hi ).
+        fd_labeling(Vars) :-
+            ( is_list(Vars) -> label(Vars) ; label([Vars]) ).
+        fd_labelingff(Vars) :-
+            ( is_list(Vars) -> labeling([ff], Vars) ; labeling([ff], [Vars]) ).
+        fd_all_different(Vars) :- all_different(Vars).
+        fd_set_vector_max(_).
+        fd_atmost(N, Vars, V) :- '$fd_count_eq'(Vars, V, C), C #=< N.
+        fd_exactly(N, Vars, V) :- '$fd_count_eq'(Vars, V, C), C #= N.
+        fd_only_one(Bs) :- sum(Bs, #=, 1).
+        fd_at_most_one(Bs) :- sum(Bs, #=<, 1).
+        '$fd_count_eq'([], _, 0).
+        '$fd_count_eq'([X|Xs], V, C) :-
+            B #<==> (X #= V), '$fd_count_eq'(Xs, V, C0), C #= C0 + B.
         """;
 }
