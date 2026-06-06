@@ -197,7 +197,54 @@ that narrows a ground integer — a correctness fix across clpfd, not just `*`.
     investigated in depth (chunk 336 below) but **not fixed** — it is a deep
     engine attribute-value heap-lifetime bug, not a clpfd-library gap.
 
-### donald `type_error(evaluable, fd(_,_))` — investigated, root-caused to an engine heap-lifetime bug (chunk 336, NOT fixed)
+### donald `type_error(evaluable, fd(_,_))` — FIXED (chunk 337): a cut dropped live attribute-trail entries
+
+**Root cause (chunk 337).** `Engine.CompactTrails` (run by every `Cut`) decides
+which extra-trail entries survive with the rule "keep if it references a heap
+cell older than the parent CP's heap top" — `entry.HeapIdx < parentHeapTop`.
+That is correct for a `ValueChange` entry, whose `HeapIdx` *is* the modified
+heap cell. But an **`AttrModify`** entry overloads `HeapIdx` to mean an index
+into `_attrTrailLog` (a monotonic counter of attribute mutations), **not a heap
+address**. Comparing that counter against a heap top is meaningless; once a
+long computation has mutated more attributes than the parent CP's heap top, the
+counter exceeds `parentHeapTop` and the rule **wrongly dropped the entry — even
+for an OLD attributed variable whose record-restore is still required.**
+
+clpfd's library is full of small `if-then-else`s and `!`s (`clpfd_ble`,
+`clpfd_bmin`, `clpfd_dom_max`, …), each of which cuts and compacts the trail.
+Deep labeling drives the attribute-mutation counter past the cut's (recent,
+high) heap top, so an old FD variable's domain stops being restored on
+backtracking to a labeling value-choice — its attribute term is left stale, or
+points at a heap cell already reclaimed by an unrelated heap-top rollback,
+surfacing as `fd(Dom, <unbound>)` in bound arithmetic. **Not heap GC, not the
+`#=` aliasing, not the hook** — exactly as narrowed in chunk 336; the missing
+piece was the cut-compaction misclassification.
+
+**Fix:** `CompactTrails` now decides per entry type — `CatchFrame` always
+survives, `AttrModify` survives iff the attvar's HOME
+(`_attrTrailLog[HeapIdx].Home`) is older than `parentHeapTop`, everything else
+keeps the original `HeapIdx < parentHeapTop` heap-cell test.
+
+**Impact on non-attvar programs: none.** The change is allocation-neutral
+(`--alloc` is byte-identical with and without it across nreverse/qsort/queens),
+and programs that use no attributed variables produce no `AttrModify` entries at
+all, so the only path that changed is never taken — the `switch` falls straight
+to the unchanged `ValueChange`/default arm. CompactTrails runs only on cut and
+only over the (usually tiny) extra trail.
+
+**Verification:** donald's known solution `[5,2,6,4,8,1,9,7,3,0]` is now found by
+`labeling([ff], LD)` (and `D=5, label(LD)`); a precise Core regression test
+(`Chunk337Tests`) reproduces the exact misclassification (old attvar, log index
+past the parent heap top, cut, backtrack → attribute must restore) and fails
+without the fix; all suites green (Core 425 / Compiler 282 / ISO 277 /
+Embedding 2062). **Remaining donald caveat:** plain leftmost `label(LD)` is very
+slow (donald notes its labelling order matters) — Shumway decomposes the linear
+constraint into binary `$fd_plus`/`$fd_times` bounds propagators, weaker than
+GProlog's native global linear constraint, so a bad variable order searches a
+huge tree. That is a propagation-strength gap, not a correctness bug: `ff` and a
+good order solve it instantly.
+
+#### Original investigation (chunk 336) — kept for the reasoning trail
 
 donald posts one big linear column constraint and labels 10 vars. Labeling
 **8+** of them throws `error(type_error(evaluable, fd(Dom, _)), is/2)` — an

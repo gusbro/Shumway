@@ -780,11 +780,29 @@ public sealed partial class Engine
                 bindingRead++;
             }
 
-            // CatchFrame entries record control state, not a heap cell, so
-            // the "young heap cell" drop rule does not apply — they must
-            // always survive so a later backtrack still restores the
-            // catch-frame stack.
-            if (entry.Type == TrailType.CatchFrame || entry.HeapIdx < parentHeapTop)
+            // Decide whether this entry must survive the cut's compaction.
+            // The "young heap cell" drop rule keeps an entry only when it
+            // references a cell that pre-dates the parent CP's heap top
+            // (younger cells are truncated on any outer backtrack, so the
+            // entry would serve no purpose). But `entry.HeapIdx` only IS a
+            // heap address for ValueChange; the other kinds overload it:
+            //   - AttrModify: HeapIdx indexes _attrTrailLog, NOT the heap.
+            //     The drop rule must test the attribute variable's HOME —
+            //     a young attvar is reclaimed on backtrack (its record
+            //     restore is moot), but an OLD attvar's record restore is
+            //     still required. Testing HeapIdx (a monotonic log counter)
+            //     against parentHeapTop is meaningless and, once the log
+            //     outgrows the heap top, wrongly drops live old-attvar
+            //     entries — breaking the restore chain so the record ends
+            //     up pointing at a reclaimed term (donald: fd(Dom, _)).
+            //   - CatchFrame: control state, not a heap cell — always keep.
+            bool survives = entry.Type switch
+            {
+                TrailType.CatchFrame => true,
+                TrailType.AttrModify => _attrTrailLog[entry.HeapIdx].Home < parentHeapTop,
+                _ => entry.HeapIdx < parentHeapTop,
+            };
+            if (survives)
             {
                 entry.BindingTrailMarker = bindingWrite;
                 _extraTrail[extraWrite++] = entry;
