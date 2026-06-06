@@ -160,18 +160,43 @@ that narrows a ground integer — a correctness fix across clpfd, not just `*`.
     focused engine session.** (Donald uses `label`, which the findall repro shows
     restores fine — donald may be this bug via a path that ends in `=`, or a
     sibling complex-linear limit. TBD.)
-  - **Refined by engine tracing (chunk 334 attempt, still NOT fixed):** the
-    `[wakeup] flush` trace NEVER fires for the failing repro — so it is NOT a
-    `verify_attributes` wakeup-queue issue (my first hypothesis). `X = 5` on a
-    clpfd attvar is checked WITHOUT queueing a wakeup. The Heisenbug remains: a
-    `get_attr(X, clpfd, fd(D,_))` probe in branch 2 reads `D = [1-9]` (domain
-    correctly restored) AND makes `X = 5` succeed; without the probe `X = 5`
-    fails as if the domain were still `[1-2]`. So in branch 2 the SYNCHRONOUS
-    attvar=integer domain check reads a STALE domain while `get_attr` reads the
-    restored one — two views of the domain out of sync until `get_attr` touches
-    it. The fix lives in the attvar-unification-with-integer domain check (how
-    clpfd validates a binding without a wakeup), not the trail/CP machinery.
-    Next session: instrument that synchronous check.
+  - **Refined by engine tracing (chunk 334 attempt):** the `[wakeup] flush`
+    trace fires only ONCE for the if-then-else repro — branch 1's `X = 5` —
+    then the whole goal fails with no second wakeup and no else branch. That
+    pinned it down.
+  - **FIXED — chunk 335 (cut must flush pending wakeups first).** Reproduced
+    cleanly: the bug needs the goal inside an **if-then-else condition** (or any
+    cut) — the *bare* query `X in 1..9,(X#<3;true),X=5` already gave `X=5`; only
+    `( (...) -> yes ; no )` failed (and failed to `false`, running *neither*
+    branch — the tell). Root cause: unifying a clpfd attvar with a value
+    (`X=5`) **queues** a `verify_attributes` wakeup (the domain check is
+    deferred to the next goal boundary) and the unify returns `true`. In
+    `(Cond -> Then ; Else)`, the very next thing after Cond's last goal is the
+    `->` **commit cut**, which removed both the inner `(X#<3;true)` choice point
+    and the else choice point *before* the pending wakeup ran. The wakeup then
+    fired (5 ∉ [1-2]), failed, and there were no choice points left to backtrack
+    into → unsound whole-goal failure. Bare queries have no cut, so the wakeup
+    failed while the `;true` CP still existed → branch 2 → `X=5`. The non-clpfd
+    nested-disjunction-in-`->` case always worked (no deferred wakeup). Fix:
+    `Opcode.Cut` / `Opcode.NeckCut` now call `FlushPendingWakeups` before
+    performing the cut, exactly like `Call` / `Proceed` / `Deallocate` already
+    did — a cut is a goal boundary too. A failed flush backtracks instead of
+    cutting. Verified: the repro now gives `yes`; the genuinely-impossible
+    `(X#<3,X=5)` still gives `no`; `once((member(V,[7,3]),X#=V))` over `X in 1..5`
+    now yields `X=3` (backtrack to the 2nd member solution *inside* `once`'s cut,
+    after the first constraint binding failed — the real-world shape). All four
+    suites green (Core 423 / Compiler 282 / ISO 277 / Embedding 2057). **Known
+    gap:** the Tier-1 IL compiler emits `engine.Cut` directly and never flushes
+    wakeups (it has no wakeup handling at all — it relies on the bytecode
+    interpreter's Call/Proceed boundaries via the Phase-16 threaded
+    continuation). An IL-*promoted* user predicate that binds a clpfd attvar and
+    then cuts could still hit the original bug; rare (clpfd lib predicates aren't
+    promoted) and left as a documented follow-up.
+  - **donald** itself is *not* fully fixed by this: it now gets past the
+    soundness failure and hits a *separate* `type_error(evaluable) in is/2`
+    inside `clpfd_narrow_bounds` (a clpfd arithmetic gap on its complex
+    column-wise constraints) — the deep complex-linear-constraint work, still
+    deferred.
 - **alpha**, **multipl** — empty output: investigate (may be the same linear gap).
 - Several harder programs time out the GProlog oracle at 25s.
 - REPL `use_module(library(clpfd))` doesn't load the library / operators (had to

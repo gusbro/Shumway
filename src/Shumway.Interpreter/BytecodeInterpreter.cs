@@ -928,6 +928,19 @@ public sealed class BytecodeInterpreter
                 // ---------- Cut opcodes ----------
 
                 case Opcode.NeckCut:
+                    // A cut is a goal boundary: any attribute-hook wakeup
+                    // queued by the preceding goal (e.g. a clpfd attvar bound
+                    // to a value whose domain check is still pending) must run
+                    // BEFORE the cut removes the choice points it might need to
+                    // backtrack into. Without this, a constraint that fails
+                    // after the cut commits has no surviving CP to retry —
+                    // surfacing as an unsound whole-goal failure inside an
+                    // if-then-else condition. (Phase 28)
+                    if (!FlushPendingWakeups(code))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
                     _engine.NeckCut();
                     _engine.AdvancePc(1);
                     break;
@@ -942,6 +955,14 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.Cut:
                 {
+                    // See NeckCut: flush pending attribute wakeups before the
+                    // cut commits, so a constraint that fails can still
+                    // backtrack into the about-to-be-pruned choice points.
+                    if (!FlushPendingWakeups(code))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
                     int slot = BytecodeIO.ReadInt32(code, pc + 1);
                     int barrier = (int)_engine.GetY(slot).Data;
                     _engine.Cut(barrier);
