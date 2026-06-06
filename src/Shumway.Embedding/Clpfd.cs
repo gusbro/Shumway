@@ -53,6 +53,12 @@ internal static class Clpfd
         :- op(760, yfx, #<==>).
         :- op(760, yfx, #==>).
         :- op(760, yfx, #<==).
+        % GNU-Prolog spells the reification operators with a single arrow,
+        % and uses ## for boolean exclusive-or.
+        :- op(760, yfx, #<=>).
+        :- op(760, yfx, #=>).
+        :- op(760, yfx, #<=).
+        :- op(720, yfx, ##).
 
         :- public '#='/2.
         :- public '#\\='/2.
@@ -102,6 +108,10 @@ internal static class Clpfd
         :- public fd_exactly/3.
         :- public fd_only_one/1.
         :- public fd_at_most_one/1.
+        :- public '#<=>'/2.
+        :- public '#=>'/2.
+        :- public '#<='/2.
+        :- public '##'/2.
 
         % the prefix-negation operator is declared after the public block:
         % once `#\` is a prefix operator, the quoted atom in `'#\\'/1`
@@ -410,8 +420,19 @@ internal static class Clpfd
             clpfd_makevar(V),
             clpfd_post('$fd_idiv'(VA, VB, V), [VA, VB, V]).
         clpfd_expr(- A, V) :- !, clpfd_expr(0 - A, V).
+        % A ** N (non-negative integer constant N) — GNU-Prolog FD allows power;
+        % expand to repeated $fd_times (X**2 -> X*X), N=0 -> 1, N=1 -> X.
+        clpfd_expr(A ** N, V) :- integer(N), N >= 0, !,
+            clpfd_expr(A, VA), clpfd_pow(VA, N, V).
         clpfd_expr(E, _) :-
             throw(error(type_error(fd_expression, E), _)).
+
+        clpfd_pow(_, 0, 1) :- !.
+        clpfd_pow(VA, 1, VA) :- !.
+        clpfd_pow(VA, N, V) :- N > 1, N1 is N - 1,
+            clpfd_pow(VA, N1, V0),
+            clpfd_makevar(V),
+            clpfd_post('$fd_times'(VA, V0, V), [VA, V0, V]).
 
         % ===== the six arithmetic constraints =====
         %! #=(?Expr1, ?Expr2) | CLP(FD) — arithmetic constraints | The two integer expressions are equal.
@@ -807,6 +828,11 @@ internal static class Clpfd
         %! #<==(+Constraint1, +Constraint2) | CLP(FD) — reification | Constraint2 implies Constraint1.
         '#<=='(C1, C2) :-
             clpfd_reify(C1, B1), clpfd_reify(C2, B2), B2 #=< B1.
+        % GNU-Prolog single-arrow reification operators (aliases) + ## (xor).
+        '#<=>'(X, Y) :- '#<==>'(X, Y).
+        '#=>'(X, Y) :- '#==>'(X, Y).
+        '#<='(X, Y) :- '#<=='(X, Y).
+        '##'(X, Y) :- X #\= Y.
         %! #/\(+Constraint1, +Constraint2) | CLP(FD) — reification | Both constraints hold (conjunction).
         '#/\\'(C1, C2) :- clpfd_reify(C1, 1), clpfd_reify(C2, 1).
         %! #\/(+Constraint1, +Constraint2) | CLP(FD) — reification | At least one constraint holds (disjunction).
@@ -845,6 +871,8 @@ internal static class Clpfd
         clpfd_reif_cmp((L #> R),   '#>',   L, R).
         clpfd_reif_cmp((L #=< R),  '#=<',  L, R).
         clpfd_reif_cmp((L #>= R),  '#>=',  L, R).
+        % GNU-Prolog ## = boolean exclusive-or; on 0/1 vars that is inequality.
+        clpfd_reif_cmp((L ## R),   '#\\=', L, R).
 
         % B #<==> Kind(X,Y). Once B is decided the constraint (or its
         % negation) is enforced; while B is open, an entailed constraint

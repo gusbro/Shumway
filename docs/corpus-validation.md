@@ -100,21 +100,44 @@ REPL parser, are real gaps the corpus surfaced — see below.)
 MATCH: **crypta, eq10, eq20, five, send** (SEND+MORE=MONEY etc.). The core solver
 agrees with GProlog on these.
 
-### Gaps the FD corpus surfaced (TODO)
+### Operator / expression gaps — ADDED (chunk 330)
 
-- **`#<=>` / `#=>` / `#<=`** — GProlog's reification operators use a single
-  arrow; Shumway's clpfd spells them `#<==>` / `#==>` / `#<==`. Programs:
-  bdonald, … (parse error). Trivial alias to add.
-- **`**` (power) in FD expressions** — `type_error(fd_expression, _**2)`.
-  Program: digit8. Add `**` to the clpfd expression evaluator.
-- **alpha** — empty output (no solution found): real bug to investigate.
-- Several harder programs time out the GProlog oracle at 25s (bpigeon, bramsey,
-  magic, square, …) — slow searches, not necessarily Shumway issues.
-- REPL `use_module(library(clpfd))` doesn't actually load the library / operators
-  (had to add the `--clpfd` flag); worth fixing for user ergonomics.
+- **`#<=>` / `#=>` / `#<=`** (single-arrow reification, GProlog spelling) →
+  aliases of Shumway's `#<==>` / `#==>` / `#<==`. Verified.
+- **`##`** (GProlog boolean exclusive-or) → reified as `#\=` (xor ≡ inequality on
+  0/1). Verified.
+- **`**`** (power) in FD expressions → expands to repeated `$fd_times`
+  (`X**2` → `X*X`). Parses now — but see the multiplication bug below.
+
+### KEY FINDING — `$fd_times` product propagator under-propagates (real bug)
+
+`X*X #= 9, label([X])` gives **X = 1** (wrong; the only solution is 3). Same for
+`X*Y #= 9, X #= Y` → 1,1. The product propagator does not enforce the product
+when a factor is the same variable as the other (squaring) / when factors become
+ground during labeling — so any multiplication-with-shared-var constraint can
+yield a wrong answer. Pre-existing (the `**` work only surfaced it); the chunk-90
+multiplication tests don't cover `X*X`, a test gap. **Highest-value FD fix.**
+
+### Other FD findings (TODO)
+
+- **`read_integer/1`** missing — bqueens, bramsey, interval, magic, square read
+  the problem size from input. Needs the builtin (+ a way to feed input, or a
+  default).
+- **donald** — `NotSupportedException: TermReader.Materialize …` (a Shumway
+  internal exception): real bug.
+- **alpha**, **multipl** — empty output: investigate (may be the mult bug).
+- Several harder programs time out the GProlog oracle at 25s.
+- REPL `use_module(library(clpfd))` doesn't load the library / operators (had to
+  add `--clpfd`); Shumway parses a whole file before running its directives, so
+  in-file `:- op` / `:- use_module` don't affect the same file. Both real gaps.
+
+**Current: 5/17 oracle-comparable programs byte-match** (crypta, eq10, eq20,
+five, send). The multiplication bug + missing `read_integer` block most of the
+rest.
 
 ## TODO
 
-- Fix the FD gaps above (`#<=>` aliases, `**`, alpha) → widen ExamplesFD coverage.
+- Fix the `$fd_times` shared-var / ground-enforcement bug (highest value).
+- `read_integer/1`; donald's materializer exception; alpha/multipl.
 - The 7 programs needing `fd_element` / `fd_minimize` / `fd_tell`.
 - Vanilla `c:\temp` programs (LinesOfAction.pl, …).
