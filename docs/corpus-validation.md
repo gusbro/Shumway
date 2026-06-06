@@ -127,9 +127,21 @@ that narrows a ground integer — a correctness fix across clpfd, not just `*`.
 - **`read_integer/1`** missing — bqueens, bramsey, interval, magic, square read
   the problem size from input. Needs the builtin (+ a way to feed input, or a
   default).
-- **donald** — `NotSupportedException: TermReader.Materialize …` (a Shumway
-  internal exception): real bug.
-- **alpha**, **multipl** — empty output: investigate (may be the mult bug).
+- **donald** — investigated (chunk 332):
+  - `TermReader.Materialize` threw `NotSupportedException` on a `Tag.Functor`
+    cell — **FIXED**: materialize a bare functor cell as the compound rooted at
+    it (ADR-017 normally wraps it in a STR ref; some paths land directly on the
+    functor). It was being hit while materialising an error term's culprit; the
+    fix turns an uncatchable C# crash into a proper Prolog error. General
+    robustness win.
+  - The underlying error it was masking: a **clpfd soundness gap** — donald's
+    native constraint (`100000*D + … #= 100000*R + …`, the same variable on both
+    sides with summed coefficients) yields `false` where GProlog finds the
+    solution `[5,2,6,4,8,1,9,7,3,0]`. Bounds propagation over a complex linear
+    constraint with a repeated / both-sides variable is incomplete here. Deep —
+    needs dedicated propagator work, not a quick fix. The GProlog-shim path also
+    surfaces an `is/2`-on-attvar (`type_error(evaluable, fd(_,_))`) variant.
+- **alpha**, **multipl** — empty output: investigate (may be the same linear gap).
 - Several harder programs time out the GProlog oracle at 25s.
 - REPL `use_module(library(clpfd))` doesn't load the library / operators (had to
   add `--clpfd`); Shumway parses a whole file before running its directives, so

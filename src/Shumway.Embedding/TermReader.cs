@@ -48,7 +48,13 @@ public static class TermReader
             Tag.Int => new IntTerm(cell.AsInt),
             Tag.BigInt => new BigIntTerm(engine.AsBigInt(cell)),
             Tag.Float => new FloatTerm(Cell.DecodeFloat(cell, engine.GetHeap(cell.FloatPairedIndex))),
-            Tag.Str => MaterializeStr(engine, cell, active),
+            Tag.Str => MaterializeCompoundAt(engine, cell.AsHeapIndex, active),
+            // A bare FUNCTOR cell reached as a value is the head of the compound
+            // that starts at this address (functor + args). ADR-017 normally
+            // wraps it in a STR ref, but some paths (e.g. a reserved/inline
+            // build whose ref was elided) land directly on the functor; treat it
+            // as the compound rooted here.
+            Tag.Functor => MaterializeCompoundAt(engine, derefAddr, active),
             Tag.Lis => MaterializeLis(engine, cell, active),
             Tag.Pstr => new StringTerm(engine.AsPstrString(derefAddr)),
             // Foreign cells round-trip as `'$foreign'(N)` compounds — the
@@ -63,9 +69,8 @@ public static class TermReader
         };
     }
 
-    private static Term MaterializeStr(Engine engine, Cell strCell, HashSet<int> active)
+    private static Term MaterializeCompoundAt(Engine engine, int functorIdx, HashSet<int> active)
     {
-        int functorIdx = strCell.AsHeapIndex;
         // Chunk 148: if we're already inside materialising this exact
         // STR (same functor address), return the cycle marker.
         if (!active.Add(functorIdx))
