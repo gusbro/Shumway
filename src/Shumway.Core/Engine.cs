@@ -3328,7 +3328,20 @@ public sealed partial class Engine
     /// <see cref="CutToLevel"/>; a false result means a wakeup failed and the
     /// caller must branch to its fail label instead of cutting. The
     /// <c>_pendingWakeups.Count</c> fast path keeps the overwhelmingly common
-    /// no-wakeup case (every non-attvar program) to a single field read.</summary>
+    /// no-wakeup case (every non-attvar program) to a single field read.
+    ///
+    /// <para>FUTURE (deferred, kept on purpose): this runtime guard costs
+    /// ~1-2.5 ns per IL cut even when no attribute hook exists. It could be
+    /// elided entirely by gating the IL EMISSION on
+    /// <see cref="HasVerifyAttributesHook"/> at promotion time (zero cost for
+    /// non-attvar IL programs). That was NOT done because it needs a
+    /// soundness-critical invariant — the IL promotion cache must be
+    /// invalidated whenever ANY consult first defines
+    /// <c>verify_attributes/4</c> (not just UseClpfd/UseClpr), or a predicate
+    /// promoted before a custom hook loaded would silently skip the flush. The
+    /// ~ns-per-cut cost is below the wall-clock noise floor and only applies to
+    /// opt-in Tier-1 IL, so the simple always-on runtime guard wins for now.</para>
+    /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public bool FlushWakeupsForIlCut()
