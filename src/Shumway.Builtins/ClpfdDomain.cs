@@ -165,6 +165,12 @@ public sealed class ClpfdDomain
         return Make(w, n);
     }
 
+    /// <summary>This domain with the finite integer interval [lo, hi] removed.</summary>
+    public ClpfdDomain RemoveInterval(long lo, long hi) => Above(lo - 1).Union(Below(hi + 1));
+
+    /// <summary>True when every value lies in [lo, hi] (the domain is a subset).</summary>
+    public bool Within(long lo, long hi) => !IsEmpty && Min >= lo && Max <= hi;
+
     /// <summary>Enumerate every value (finite domains only). Used by labeling.</summary>
     public System.Collections.Generic.IEnumerable<long> Values()
     {

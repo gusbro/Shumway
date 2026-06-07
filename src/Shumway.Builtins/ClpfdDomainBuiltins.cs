@@ -178,6 +178,85 @@ public static class ClpfdDomainBuiltins
         return start;
     }
 
+    /// <summary>$fd_hall(+Vars, +Doms, -Applies): native Hall-interval pruning
+    /// for all_distinct. Vars and Doms are parallel lists (Doms[i] is the domain
+    /// object of Vars[i]). Fails on a pigeonhole violation (more variables than
+    /// values in some interval). Otherwise unifies Applies with a list of
+    /// <c>V-NewDom</c> pairs for every variable whose domain a saturated Hall
+    /// interval shrank — the Prolog caller narrows each (re-propagating), so the
+    /// O(n^3) interval search runs natively while narrowing stays in the engine.</summary>
+    public static bool Hall(Engine engine)
+    {
+        var vars = ReadListCells(engine, 0);
+        var domCells = ReadListCells(engine, 1);
+        int n = vars.Count;
+        var work = new ClpfdDomain[n];
+        for (int i = 0; i < n; i++)
+            work[i] = engine.AsForeign<ClpfdDomain>(domCells[i])
+                ?? throw new PrologRuntimeException("type_error", "fd_domain");
+        var orig = (ClpfdDomain[])work.Clone();
+
+        // Candidate Hall bounds: the finite minima (lo) and maxima (hi).
+        for (int li = 0; li < n; li++)
+        {
+            if (work[li].IsEmpty) return false;
+            long lo = work[li].Min;
+            if (lo == ClpfdDomain.Inf) continue;
+            for (int hj = 0; hj < n; hj++)
+            {
+                long hi = work[hj].Max;
+                if (hi == ClpfdDomain.Sup || lo > hi) continue;
+                int count = 0;
+                for (int k = 0; k < n; k++)
+                    if (work[k].Within(lo, hi)) count++;
+                long size = hi - lo + 1;
+                if (count > size) return false;          // pigeonhole: unsatisfiable
+                if (count == size)
+                    for (int k = 0; k < n; k++)
+                        if (!work[k].Within(lo, hi))
+                            work[k] = work[k].RemoveInterval(lo, hi);
+            }
+        }
+
+        // Emit V-NewDom for every variable whose domain changed.
+        var changed = new System.Collections.Generic.List<int>();
+        for (int i = 0; i < n; i++)
+            if (!work[i].SameAs(orig[i])) changed.Add(i);
+
+        return engine.UnifyRegisterWithHeapAt(2,
+            BuildList(engine, changed.Count, j =>
+            {
+                int i = changed[j];
+                // Reference the variable (a Ref to its home) rather than
+                // embedding the deref'd AttVar/Int cell, so the Prolog caller's
+                // clpfd_narrow sees the real variable.
+                Cell vRef = vars[i].Tag is Tag.AttVar or Tag.Ref
+                    ? Cell.Ref(vars[i].AsHeapIndex) : vars[i];
+                int s = engine.AllocateHeap(3);
+                engine.SetHeap(s, Cell.Functor(MinusFunctor));
+                engine.SetHeap(s + 1, vRef);
+                engine.SetHeap(s + 2, engine.MakeForeign(work[i]));
+                return Cell.Str(s);
+            }));
+    }
+
+    /// <summary>Reads a proper Prolog list at the register into its (deref'd)
+    /// element cells.</summary>
+    private static System.Collections.Generic.List<Cell> ReadListCells(Engine engine, int reg)
+    {
+        var items = new System.Collections.Generic.List<Cell>();
+        Cell cur = Arg(engine, reg);
+        while (cur.Tag == Tag.Lis)
+        {
+            int h = cur.AsHeapIndex;
+            Cell head = engine.GetHeap(h);
+            if (head.Tag == Tag.Ref) head = engine.GetHeap(engine.Deref(head.AsHeapIndex));
+            items.Add(head);
+            cur = engine.GetHeap(engine.Deref(h + 1));
+        }
+        return items;
+    }
+
     public static void Register()
     {
         BuiltinsRegistry.Register("$dom_new", 3, New);
@@ -196,5 +275,6 @@ public static class ClpfdDomainBuiltins
         BuiltinsRegistry.Register("$dom_same", 2, Same);
         BuiltinsRegistry.Register("$dom_values", 2, Values);
         BuiltinsRegistry.Register("$dom_intervals", 2, Intervals);
+        BuiltinsRegistry.Register("$fd_hall", 3, Hall);
     }
 }

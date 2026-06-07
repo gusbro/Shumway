@@ -824,60 +824,23 @@ internal static class Clpfd
         clpfd_makevars([]).
         clpfd_makevars([X|Xs]) :- clpfd_makevar(X), clpfd_makevars(Xs).
 
+        % all_distinct's Hall-interval pruning. The O(n^3) interval search runs
+        % natively ($fd_hall, chunk 345): it reads the variables' current domains
+        % and returns the shrunk domain for every variable a saturated Hall
+        % interval pruned (or fails on a pigeonhole violation). Narrowing — and
+        % the re-propagation it drives — stays in the engine: clpfd_narrow each
+        % returned V-NewDom. The interpreted-Prolog version of this loop was far
+        % too slow (it made alpha first-fail ~8x slower).
         '$fd_alldiff'(Vars) :-
-            clpfd_ad_bounds(Vars, Lows, Highs),
-            clpfd_ad_los(Lows, Highs, Vars).
+            clpfd_doms(Vars, Doms),
+            '$fd_hall'(Vars, Doms, Applies),
+            clpfd_apply_doms(Applies).
 
-        % collect the integer domain minima (Lows) and maxima (Highs);
-        % inf/sup endpoints cannot bound a Hall interval and are dropped.
-        clpfd_ad_bounds([], [], []).
-        clpfd_ad_bounds([V|Vs], Lows, Highs) :-
-            clpfd_ad_bounds(Vs, L0, H0),
-            clpfd_dom_of(V, D), clpfd_dom_min(D, Mn), clpfd_dom_max(D, Mx),
-            ( integer(Mn) -> Lows = [Mn|L0] ; Lows = L0 ),
-            ( integer(Mx) -> Highs = [Mx|H0] ; Highs = H0 ).
+        clpfd_doms([], []).
+        clpfd_doms([V|Vs], [D|Ds]) :- clpfd_dom_of(V, D), clpfd_doms(Vs, Ds).
 
-        clpfd_ad_los([], _, _).
-        clpfd_ad_los([Lo|Ls], Highs, Vars) :-
-            clpfd_ad_his(Highs, Lo, Vars),
-            clpfd_ad_los(Ls, Highs, Vars).
-
-        clpfd_ad_his([], _, _).
-        clpfd_ad_his([Hi|Hs], Lo, Vars) :-
-            ( Lo =< Hi -> clpfd_ad_hall(Vars, Lo, Hi) ; true ),
-            clpfd_ad_his(Hs, Lo, Vars).
-
-        clpfd_ad_hall(Vars, Lo, Hi) :-
-            clpfd_ad_count(Vars, Lo, Hi, K),
-            Size is Hi - Lo + 1,
-            ( K > Size -> fail
-            ; K =:= Size -> clpfd_ad_remove(Vars, Lo, Hi)
-            ; true
-            ).
-
-        clpfd_ad_count([], _, _, 0).
-        clpfd_ad_count([V|Vs], Lo, Hi, K) :-
-            clpfd_ad_count(Vs, Lo, Hi, K0),
-            ( clpfd_ad_within(V, Lo, Hi) -> K is K0 + 1 ; K = K0 ).
-
-        clpfd_ad_within(V, Lo, Hi) :-
-            clpfd_dom_of(V, D), clpfd_dom_min(D, Mn), clpfd_dom_max(D, Mx),
-            clpfd_ble(Lo, Mn), clpfd_ble(Mx, Hi).
-
-        clpfd_ad_remove([], _, _).
-        clpfd_ad_remove([V|Vs], Lo, Hi) :-
-            ( clpfd_ad_within(V, Lo, Hi) -> true
-            ; clpfd_dom_of(V, D), clpfd_dom_sub_iv(D, Lo, Hi, D2),
-              clpfd_narrow(V, D2)
-            ),
-            clpfd_ad_remove(Vs, Lo, Hi).
-
-        % D with the integer interval [Lo,Hi] removed.
-        clpfd_dom_sub_iv(D, Lo, Hi, Out) :-
-            Lo1 is Lo - 1, Hi1 is Hi + 1,
-            clpfd_dom_above(D, Lo1, Lower),
-            clpfd_dom_below(D, Hi1, Upper),
-            '$dom_union'(Lower, Upper, Out).
+        clpfd_apply_doms([]).
+        clpfd_apply_doms([V-D | T]) :- clpfd_narrow(V, D), clpfd_apply_doms(T).
 
         % ===== reification =====
         % B #<==> C : the 0/1 variable B is 1 exactly when constraint C
@@ -1009,13 +972,14 @@ internal static class Clpfd
             ( is_list(Vars) -> label(Vars) ; label([Vars]) ).
         fd_labelingff(Vars) :-
             ( is_list(Vars) -> labeling([ff], Vars) ; labeling([ff], [Vars]) ).
-        % GProlog's fd_all_different maps to pairwise all_different rather than
-        % all_distinct: although all_distinct's Hall-interval pruning is
-        % strictly stronger, its per-propagation cost is far higher in
-        % interpreted Prolog, and on a permutation puzzle that re-fires the
-        % constraint thousands of times (alpha) the overhead dominates the
-        % pruning win — measured ~8x slower under first-fail labeling. (A C#
-        % all_distinct would flip this trade-off; see corpus-validation.md.)
+        % GProlog's fd_all_different maps to pairwise all_different, not the
+        % stronger all_distinct (native Hall, chunk 345). Even with native Hall,
+        % its O(n^3) re-fire on every domain change costs more than pairwise's
+        % fire-on-grounding on the crypt-arithmetic corpus (alpha ff ~3s vs ~7s),
+        % and the extra pruning does NOT make alpha's leftmost labelling feasible
+        % (that is node-count-bound under interpreted control, not propagation-
+        % bound). Users who want the strong global constraint call all_distinct/1
+        % directly.
         fd_all_different(Vars) :- all_different(Vars).
         fd_set_vector_max(_).
         fd_atmost(N, Vars, V) :- '$fd_count_eq'(Vars, V, C), C #=< N.

@@ -377,6 +377,41 @@ domain layer cuts the per-operation cost, not the *node count*, and leftmost on
 26 vars explores a huge tree — that needs a stronger labeling/all_distinct, a
 separate axis. donald and alpha-ff now solve comfortably.
 
+### Native Hall all_distinct — does NOT make alpha leftmost feasible (chunk 345)
+
+Chased the node-count axis: a native Hall-interval `all_distinct` (`$fd_hall`
+builtin — reads the variables' domains, runs the O(n³) interval search in C#,
+returns the shrunk domain per variable a saturated Hall interval pruned, and the
+Prolog caller narrows each so re-propagation stays in the engine). It replaces
+the interpreted-Prolog Hall (`clpfd_ad_*`) that was too slow to use at all.
+
+Two findings:
+
+- **It does not make alpha leftmost feasible.** Still times out (> 90 s). The
+  C# domain layer already made each propagation cheap; alpha leftmost is bound
+  by the *node count* (leftmost labels A, B, C… in order, and alpha's column
+  sums don't constrain the early letters until the late ones are set, so the
+  tree is huge) and by the interpreted *control flow per node* (the labelling
+  loop and the `clpfd_run` fixpoint's `call(P)` per propagator). Stronger
+  propagation doesn't shrink that tree enough.
+- **As the `fd_all_different` shim it is a net loss on the corpus.** Hall
+  re-fires its O(n³) pass on every domain change; pairwise `$fd_neq` only fires
+  when a variable grounds. On crypt-arithmetic the pairwise version is faster
+  (alpha first-fail ~3 s vs ~7 s). So `fd_all_different` stays pairwise.
+
+Kept the native Hall for **`all_distinct/1`** (the user-facing strong
+constraint): same pruning strength as the old Prolog Hall but native, so it is
+strictly better for problems that genuinely need it. This matches SWI/SICStus,
+where `all_different` is weak/cheap and `all_distinct` is strong/global, and the
+user chooses. All suites green (Embedding 2076 / Core 426 / ISO 277 /
+Compiler 282).
+
+**Where alpha leftmost stands:** it needs native-speed *control flow* (the
+labelling + propagator-dispatch loop), not just native propagation — i.e. moving
+`clpfd_run` / labelling enumeration into C#, or a fundamentally smaller search.
+A separate, larger effort; donald and alpha-first-fail are the achievable wins
+and are fast.
+
 #### Original investigation (chunk 336) — kept for the reasoning trail
 
 donald posts one big linear column constraint and labels 10 vars. Labeling
