@@ -3312,6 +3312,31 @@ public sealed partial class Engine
     /// The interpreter checks this at every goal boundary.</summary>
     public bool HasPendingWakeups => _pendingWakeups.Count > 0;
 
+    /// <summary>Set by the bytecode interpreter so Tier-1 IL code can run
+    /// pending <c>verify_attributes</c> wakeups through the interpreter's
+    /// goal-running machinery (which the IL delegate, holding only an
+    /// <see cref="Engine"/>, cannot reach directly). Returns false when a
+    /// hook failed.</summary>
+    internal Func<bool>? Tier1WakeupFlusher { get; set; }
+
+    /// <summary>Tier-1 IL cut support (Phase 28). A cut is a goal boundary:
+    /// any wakeup queued by the IL clause body (e.g. binding a clpfd attvar
+    /// in the head, then a neck cut) must run BEFORE the cut commits, or a
+    /// failing constraint has no surviving choice point to backtrack into —
+    /// the same unsoundness fixed for the bytecode interpreter in chunk 335.
+    /// The IL emit calls this immediately before <see cref="NeckCut"/> /
+    /// <see cref="CutToLevel"/>; a false result means a wakeup failed and the
+    /// caller must branch to its fail label instead of cutting. The
+    /// <c>_pendingWakeups.Count</c> fast path keeps the overwhelmingly common
+    /// no-wakeup case (every non-attvar program) to a single field read.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    public bool FlushWakeupsForIlCut()
+    {
+        if (_pendingWakeups.Count == 0) return true;
+        return Tier1WakeupFlusher is null || Tier1WakeupFlusher();
+    }
+
     /// <summary>Discards every queued wakeup. Called by the interpreter
     /// on backtracking — wakeups belong to the abandoned computation.</summary>
     public void ClearPendingWakeups() => _pendingWakeups.Clear();

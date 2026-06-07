@@ -149,6 +149,12 @@ public sealed class BytecodeInterpreter
         _floatLiterals = floatLiterals;
         _switchTables = switchTables;
         _bigIntLiterals = bigIntLiterals;
+        // Let Tier-1 IL code (which holds only an Engine) run pending
+        // attribute wakeups before an IL-emitted cut commits — the IL
+        // counterpart of the chunk-335 flush-before-cut. Wakeups run through
+        // the interpreter's goal machinery; `code` is fetched live so the
+        // wakeup goals see the current linked program. (Phase 28)
+        _engine.Tier1WakeupFlusher = () => FlushPendingWakeups(_engine.GetProgramView());
     }
 
     public Engine Engine => _engine;

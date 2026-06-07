@@ -182,6 +182,14 @@ public sealed class IlPredicateCompiler
         typeof(Engine).GetMethod(nameof(Engine.GetLevel), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineCutToLevelMethod =
         typeof(Engine).GetMethod(nameof(Engine.CutToLevel), new[] { typeof(int) })!;
+    // Phase 28 — a cut is a goal boundary, so pending attribute wakeups must
+    // run before the IL-emitted cut commits (the IL counterpart of the
+    // chunk-335 flush-before-cut). Returns false when a wakeup failed, which
+    // the emit turns into a branch to the clause fail label. Fast-returns true
+    // with a single field read when nothing is queued, so non-attvar programs
+    // pay essentially nothing per cut.
+    private static readonly MethodInfo EngineFlushWakeupsForIlCutMethod =
+        typeof(Engine).GetMethod(nameof(Engine.FlushWakeupsForIlCut), Type.EmptyTypes)!;
     // Chunk 216 — indexed-dispatch entry resolver (mirrors the WAM switch
     // cascade, returns the entry chain-node cursor). Keyed by functor id
     // so the same IL works under runtime promotion AND a persisted bundle
@@ -1552,6 +1560,11 @@ public sealed class IlPredicateCompiler
             }
             if (op == Opcode.NeckCut)
             {
+                // Flush pending attribute wakeups before committing — a failed
+                // constraint must backtrack while choice points still exist.
+                emit.LoadArgument(0);
+                emit.Call(EngineFlushWakeupsForIlCutMethod);
+                emit.BranchIfFalse(failLabel);
                 emit.LoadArgument(0);
                 emit.Call(EngineNeckCutMethod);
                 pc += OpcodeTable.Get(op).Size;
@@ -1569,8 +1582,14 @@ public sealed class IlPredicateCompiler
             }
             if (op == Opcode.Cut)
             {
-                // Deep cut: commit to the barrier stashed in Y[slot].
+                // Deep cut: commit to the barrier stashed in Y[slot]. Flush
+                // pending attribute wakeups first (see NeckCut above) so a
+                // constraint that fails can still backtrack into the
+                // about-to-be-pruned choice points.
                 int slot = BytecodeIO.ReadInt32(code, pc + 1);
+                emit.LoadArgument(0);
+                emit.Call(EngineFlushWakeupsForIlCutMethod);
+                emit.BranchIfFalse(failLabel);
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
                 emit.Call(EngineCutToLevelMethod);
