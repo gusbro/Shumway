@@ -77,6 +77,7 @@ internal static class Clpfd
         :- public '$fd_max'/3.
         :- public '$fd_abs'/2.
         :- public '$fd_idiv'/3.
+        :- public '$fd_linear'/4.
         :- public '$fd_set'/3.
         :- public '$fd_reif'/4.
         :- public '$fd_alldiff'/1.
@@ -441,12 +442,145 @@ internal static class Clpfd
         %! #>(?Expr1, ?Expr2) | CLP(FD) — arithmetic constraints | The first integer expression is strictly greater than the second.
         %! #=<(?Expr1, ?Expr2) | CLP(FD) — arithmetic constraints | The first integer expression is at most the second.
         %! #>=(?Expr1, ?Expr2) | CLP(FD) — arithmetic constraints | The first integer expression is at least the second.
+        % Each comparison first tries to read its two expressions as ONE linear
+        % form sum(Ci*Vi) Rel K (clpfd_norm), and if so posts a single global
+        % bounds-consistency propagator ($fd_linear) instead of decomposing the
+        % expression into a tree of binary $fd_plus / $fd_times. The global form
+        % is far stronger on scaled sums and repeated variables (crypt-
+        % arithmetic), because it combines a variable's coefficients
+        % (e.g. donald's D appears three times) and prunes each variable against
+        % every other at once. clpfd_norm FAILS on a non-linear expression
+        % (var*var, //, min/max/abs, **), so the fallback clause keeps the
+        % chunk-89..93 decomposition for those.
+        '#='(L, R)  :- clpfd_norm(L, R, Terms, Const), clpfd_worth_linear(Terms), !, RHS is -Const, clpfd_post_lin(Terms, =, RHS).
         '#='(L, R)  :- clpfd_expr(L, X), clpfd_expr(R, Y), X = Y.
         '#\\='(L, R) :- clpfd_expr(L, X), clpfd_expr(R, Y), clpfd_post('$fd_neq'(X, Y), [X, Y]).
+        '#<'(L, R)  :- clpfd_norm(L, R, Terms, Const), clpfd_worth_linear(Terms), !, RHS is -Const - 1, clpfd_post_lin(Terms, =<, RHS).
         '#<'(L, R)  :- clpfd_expr(L, X), clpfd_expr(R, Y), clpfd_post('$fd_lt'(X, Y), [X, Y]).
+        '#=<'(L, R) :- clpfd_norm(L, R, Terms, Const), clpfd_worth_linear(Terms), !, RHS is -Const, clpfd_post_lin(Terms, =<, RHS).
         '#=<'(L, R) :- clpfd_expr(L, X), clpfd_expr(R, Y), clpfd_post('$fd_le'(X, Y), [X, Y]).
         '#>'(L, R)  :- R #< L.
         '#>='(L, R) :- R #=< L.
+
+        % ===== linear normalisation: read L - R as sum(Ci*Vi) + Const =====
+        % clpfd_lin(Expr, K, T0, T, C0, C): accumulate K*Expr into the term list
+        % (a [Coeff-Var] per variable occurrence) and the running constant.
+        % Fails on any non-linear sub-term so the caller can fall back.
+        clpfd_lin(E, K, T0, T, C0, C) :- integer(E), !, C is C0 + K * E, T = T0.
+        clpfd_lin(E, K, T0, T, C0, C) :- var(E), !, T = [K-E | T0], C = C0.
+        clpfd_lin(A + B, K, T0, T, C0, C) :- !,
+            clpfd_lin(A, K, T0, T1, C0, C1), clpfd_lin(B, K, T1, T, C1, C).
+        clpfd_lin(A - B, K, T0, T, C0, C) :- !,
+            clpfd_lin(A, K, T0, T1, C0, C1), K1 is -K, clpfd_lin(B, K1, T1, T, C1, C).
+        clpfd_lin(- A, K, T0, T, C0, C) :- !, K1 is -K, clpfd_lin(A, K1, T0, T, C0, C).
+        clpfd_lin(A * B, K, T0, T, C0, C) :- integer(A), !, K1 is K * A, clpfd_lin(B, K1, T0, T, C0, C).
+        clpfd_lin(A * B, K, T0, T, C0, C) :- integer(B), !, K1 is K * B, clpfd_lin(A, K1, T0, T, C0, C).
+
+        clpfd_norm(L, R, Terms, Const) :-
+            clpfd_lin(L, 1, [], T1, 0, C1),
+            clpfd_lin(R, -1, T1, T2, C1, Const),
+            clpfd_combine(T2, Terms).
+
+        % The global propagator earns its O(n^2) cost only when the binary
+        % +/* decomposition would lose precision: a constraint with at least
+        % two terms AND a scaled coefficient (|C| >= 2). Crypt-arithmetic always
+        % qualifies (powers of ten, and a variable repeated across columns whose
+        % combined coefficient exceeds one). Plain unit-coefficient sums
+        % (A + B #= C, X #= Y) stay on the existing decomposition, preserving its
+        % aliasing and residual-goal projection.
+        clpfd_worth_linear(Terms) :- Terms = [_, _ | _], clpfd_any_scaled(Terms).
+        clpfd_any_scaled([C-_ | _]) :- ( C >= 2 ; C =< -2 ), !.
+        clpfd_any_scaled([_ | T]) :- clpfd_any_scaled(T).
+
+        % combine repeated variables (sum coefficients) and drop zero coeffs.
+        clpfd_combine([], []).
+        clpfd_combine([K-V | Rest], Out) :-
+            clpfd_collect(Rest, V, K, KTotal, Rest1),
+            ( KTotal =:= 0 -> Out = Out1 ; Out = [KTotal-V | Out1] ),
+            clpfd_combine(Rest1, Out1).
+        clpfd_collect([], _, K, K, []).
+        clpfd_collect([K2-V2 | T], V, K, KT, Rest) :-
+            ( V == V2 -> K1 is K + K2, clpfd_collect(T, V, K1, KT, Rest)
+            ; Rest = [K2-V2 | Rest1], clpfd_collect(T, V, K, KT, Rest1)
+            ).
+
+        % post the normalised constraint. Special cases keep the cheap shapes:
+        % no variables → a constant check; a pure Var = Var → aliasing (as the
+        % decomposition did). Everything else gets the global propagator.
+        clpfd_post_lin([], =,  RHS) :- !, RHS =:= 0.
+        clpfd_post_lin([], =<, RHS) :- !, 0 =< RHS.
+        clpfd_post_lin([1-X, -1-Y], =, 0) :- !, clpfd_makevar(X), clpfd_makevar(Y), X = Y.
+        clpfd_post_lin([-1-X, 1-Y], =, 0) :- !, clpfd_makevar(X), clpfd_makevar(Y), X = Y.
+        clpfd_post_lin(Terms, Rel, RHS) :-
+            clpfd_unzip(Terms, Coeffs, Vars),
+            clpfd_makevars(Vars),
+            clpfd_post('$fd_linear'(Coeffs, Vars, Rel, RHS), Vars).
+
+        clpfd_unzip([], [], []).
+        clpfd_unzip([C-V | T], [C | Cs], [V | Vs]) :- clpfd_unzip(T, Cs, Vs).
+
+        % ===== the global linear propagator: sum(Ci*Vi) Rel RHS =====
+        % Bounds consistency. SMin/SMax are the sum's reachable bounds; each
+        % variable is then pruned to the interval the constraint allows given
+        % every other variable's current domain. Rel is `=` or `=<` (the other
+        % relations reduce to these at post time). Re-fires through clpfd_run on
+        % every watched-variable narrowing, so a single post reaches a fixpoint.
+        '$fd_linear'(Coeffs, Vars, Rel, RHS) :-
+            clpfd_lin_sum(Coeffs, Vars, 0, SMin, 0, SMax),
+            clpfd_lin_check(Rel, SMin, SMax, RHS),
+            clpfd_lin_prune(Coeffs, Vars, [], [], Rel, RHS).
+
+        clpfd_lin_sum([], [], Lo, Lo, Hi, Hi).
+        clpfd_lin_sum([C | Cs], [V | Vs], Lo0, Lo, Hi0, Hi) :-
+            clpfd_term_bounds(C, V, TLo, THi),
+            clpfd_add_lo(Lo0, TLo, Lo1),
+            clpfd_add_hi(Hi0, THi, Hi1),
+            clpfd_lin_sum(Cs, Vs, Lo1, Lo, Hi1, Hi).
+
+        % contribution bounds [TLo, THi] of the term C*V over V's domain.
+        clpfd_term_bounds(C, V, TLo, THi) :-
+            clpfd_dom_of(V, D), clpfd_dom_min(D, Vmin), clpfd_dom_max(D, Vmax),
+            ( C > 0 -> clpfd_bmul(Vmin, C, TLo), clpfd_bmul(Vmax, C, THi)
+            ;          clpfd_bmul(Vmax, C, TLo), clpfd_bmul(Vmin, C, THi)
+            ).
+
+        clpfd_lin_check(=,  SMin, SMax, RHS) :- clpfd_ble(SMin, RHS), clpfd_ble(RHS, SMax).
+        clpfd_lin_check(=<, SMin, _,    RHS) :- clpfd_ble(SMin, RHS).
+
+        % Prune each variable in turn. For the variable at the current position
+        % the implied bound comes from the REST of the sum (every OTHER term),
+        % computed directly as prefix + suffix — NOT by subtracting this term
+        % from the total (the total is often infinite precisely because this
+        % var is still unbounded, e.g. the result var of X + Y #= Z) and NOT by
+        % matching variable identity (two distinct vars can be bound to the same
+        % value, so `==` would wrongly skip both). The prefix (DoneC/DoneV,
+        % already processed) and suffix (Cs/Vs) together are exactly the other
+        % terms. O(n) per variable, O(n^2) per propagation — fine for the small
+        % systems this targets, and it handles infinities cleanly (a second
+        % unbounded term simply leaves the rest open).
+        clpfd_lin_prune([], [], _, _, _, _).
+        clpfd_lin_prune([C | Cs], [V | Vs], DoneC, DoneV, Rel, RHS) :-
+            clpfd_lin_sum(DoneC, DoneV, 0, PLo, 0, PHi),
+            clpfd_lin_sum(Cs, Vs, PLo, RestLo, PHi, RestHi),
+            clpfd_lin_contrib(Rel, RHS, RestLo, RestHi, CLo, CHi),
+            clpfd_div_bounds(C, CLo, CHi, VLo, VHi),
+            clpfd_narrow_bounds(V, VLo, VHi),
+            clpfd_lin_prune(Cs, Vs, [C | DoneC], [V | DoneV], Rel, RHS).
+
+        % bounds [CLo, CHi] on this term's contribution C*V, given the rest of
+        % the sum lies in [RestLo, RestHi]. For `=` the contribution is pinned
+        % from both sides (C*V = RHS - rest); for `=<` only from above.
+        clpfd_lin_contrib(=, RHS, RestLo, RestHi, CLo, CHi) :-
+            clpfd_sub_lo(RHS, RestHi, CLo),
+            clpfd_sub_hi(RHS, RestLo, CHi).
+        clpfd_lin_contrib(=<, RHS, RestLo, _, inf, CHi) :-
+            clpfd_sub_hi(RHS, RestLo, CHi).
+
+        % divide the contribution interval by the coefficient to bound V.
+        clpfd_div_bounds(C, CLo, CHi, VLo, VHi) :-
+            ( C > 0 -> clpfd_bceildiv(CLo, C, VLo), clpfd_bfloordiv(CHi, C, VHi)
+            ;          clpfd_bceildiv(CHi, C, VLo), clpfd_bfloordiv(CLo, C, VHi)
+            ).
 
         % ===== propagators =====
         % X =< Y

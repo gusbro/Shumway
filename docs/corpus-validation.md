@@ -237,12 +237,39 @@ only over the (usually tiny) extra trail.
 (`Chunk337Tests`) reproduces the exact misclassification (old attvar, log index
 past the parent heap top, cut, backtrack → attribute must restore) and fails
 without the fix; all suites green (Core 425 / Compiler 282 / ISO 277 /
-Embedding 2062). **Remaining donald caveat:** plain leftmost `label(LD)` is very
-slow (donald notes its labelling order matters) — Shumway decomposes the linear
-constraint into binary `$fd_plus`/`$fd_times` bounds propagators, weaker than
-GProlog's native global linear constraint, so a bad variable order searches a
-huge tree. That is a propagation-strength gap, not a correctness bug: `ff` and a
-good order solve it instantly.
+Embedding 2062). **Remaining donald caveat (now addressed — chunk 340):** plain
+leftmost `label(LD)` was very slow because Shumway decomposed the linear
+constraint into a tree of binary `$fd_plus`/`$fd_times` bounds propagators,
+weaker than a global linear constraint.
+
+### clpfd propagation strength: a global linear propagator (chunk 340)
+
+A comparison whose two sides read as one linear form `sum(Ci*Vi) Rel K` — with
+≥2 terms and a scaled coefficient (`|Ci| >= 2`) — now posts a single
+bounds-consistency propagator (`$fd_linear`) over the whole sum instead of
+decomposing it into binary `$fd_plus`/`$fd_times`. The normaliser (`clpfd_norm`)
+flattens `L - R`, **combines a variable's coefficients** (donald's `D` appears
+three times → coefficient 100002; the binary form lost that), and drops cancels;
+the propagator prunes each variable from the *rest* of the sum (prefix+suffix,
+not total−self, so an unbounded result var like `Z` in `X+Y#=Z` is still pinned,
+and not by variable identity, so two vars bound to the same value aren't both
+skipped). Reduces to `=`/`=<`; the other relations redirect. A `|Ci|>=2`
+threshold keeps plain unit-coefficient sums (`A+B#=C`, `X#=Y`) on the existing
+decomposition, preserving its aliasing and residual-goal projection — crypt-
+arithmetic always crosses the threshold (powers of ten, repeated columns).
+
+**donald now solves under plain LEFTMOST `label(LD)`** (was non-terminating).
+Sound across multi-equation systems, negative coefficients, repeated variables
+and `scalar_product`; all four suites green (Core 426 / Compiler 282 / ISO 277 /
+Embedding 2064), 7 dedicated tests (`Chunk340Tests`). Still slower than GProlog
+(the propagator is interpreted Prolog, O(n²)/propagation, vs GProlog's native C
+linear constraint) — a constant-factor gap, not a completeness one.
+
+**alpha / multipl still open (NOT a regression — pre-existing):** `alpha` (26
+vars, 1..26, all_different + 19 column sums) — leftmost `q` still exhausts; the
+global propagator helps but the 26-var search needs more (stronger labeling /
+a faster propagator). `multipl` is "unknown multiplication" (var*var, genuinely
+non-linear) — outside the linear propagator; its gap is `$fd_times` strength.
 
 #### Original investigation (chunk 336) — kept for the reasoning trail
 
