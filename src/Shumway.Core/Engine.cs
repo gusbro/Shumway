@@ -795,10 +795,21 @@ public sealed partial class Engine
             //     outgrows the heap top, wrongly drops live old-attvar
             //     entries — breaking the restore chain so the record ends
             //     up pointing at a reclaimed term (donald: fd(Dom, _)).
+            //   - BigIntAlloc: HeapIdx is the bigint TABLE size before the
+            //     allocation, also NOT a heap address. The big-integer table
+            //     is a side table reclaimed only by these entries (nothing
+            //     else trims it), so — like CatchFrame — the entry must always
+            //     survive: a plain backtrack to an ancestor trims every bigint
+            //     allocated since, and the cut must keep that behaviour intact
+            //     (the committed bigints are dead once that ancestor backtrack
+            //     reclaims the heap cells referencing them). Dropping it on the
+            //     bogus `tableSize < parentHeapTop` test leaks table slots and
+            //     can reuse an id under a surviving reference.
             //   - CatchFrame: control state, not a heap cell — always keep.
             bool survives = entry.Type switch
             {
                 TrailType.CatchFrame => true,
+                TrailType.BigIntAlloc => true,
                 TrailType.AttrModify => _attrTrailLog[entry.HeapIdx].Home < parentHeapTop,
                 _ => entry.HeapIdx < parentHeapTop,
             };

@@ -1,3 +1,4 @@
+using System.Numerics;
 using Shumway.Core;
 using Xunit;
 
@@ -110,5 +111,44 @@ public class Chunk337Tests
 
         engine.UnwindTrails(outerBinding, outerExtra);
         Assert.Equal(v0, engine.GetAttr(x, mod));
+    }
+
+    // The sibling bug: BigIntAlloc entries overload HeapIdx to mean the
+    // big-integer TABLE size before the allocation (not a heap address). The
+    // old `HeapIdx < parentHeapTop` test wrongly dropped the entry once the
+    // table outgrew the parent CP's heap top, so a cut+backtrack failed to trim
+    // the bigint table — a leak (and potential id reuse under a surviving
+    // reference). The fix keeps BigIntAlloc entries unconditionally, matching
+    // plain (no-cut) backtracking.
+    [Fact]
+    public void Cut_TrimsBigIntTable_OnBacktrack_WhenTableIndexExceedsParentHeapTop()
+    {
+        var engine = new Engine();
+        var big = BigInteger.Pow(2, 100);   // out of 60-bit range → table slot
+
+        // Inflate the bigint table so its indices are large while the heap
+        // stays tiny — the parent CP's heap top will be far below the table
+        // index, the misclassified case.
+        for (int i = 0; i < 50; i++) engine.MakeBigInt(big + i);
+
+        engine.SetHbForTesting(engine.HeapTop);
+        engine.PushChoicePoint(0, 999);
+        int outerB = engine.B;
+        int outerBinding = engine.BindingTrailTop;
+        int outerExtra = engine.ExtraTrailTop;
+        int countAtOuter = engine.BigIntTableCount;
+
+        // Allocate a bigint above the outer CP — its BigIntAlloc entry has a
+        // table-index HeapIdx (~50) well above the parent heap top (~0).
+        engine.MakeBigInt(big + 9999);
+        Assert.Equal(countAtOuter + 1, engine.BigIntTableCount);
+
+        engine.PushChoicePoint(0, 998);
+        engine.Cut(outerB);
+
+        // Backtrack to the outer CP: the bigint table MUST be trimmed back.
+        // With the bug the dropped entry never trims, leaving the slot leaked.
+        engine.UnwindTrails(outerBinding, outerExtra);
+        Assert.Equal(countAtOuter, engine.BigIntTableCount);
     }
 }
