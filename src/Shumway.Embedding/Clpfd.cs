@@ -135,107 +135,62 @@ internal static class Clpfd
             ; R is C // K
             ).
 
-        % ===== domains: sorted lists of disjoint L-H intervals =====
-        clpfd_universal([inf-sup]).
+        % ===== domains: opaque C# interval objects (Phase 28) =====
+        % A domain is now a single immutable C# object (a Foreign cell), not a
+        % Prolog interval list. The dom_* helpers are thin wrappers over the
+        % native $dom_* builtins, so every propagator that calls them is
+        % unchanged; only the few predicates that destructured the interval list
+        % (narrow, $fd_set, labeling enumeration, reification, projection) are
+        % rewritten below. Profiling showed the interpreted interval walking
+        % dominated FD solving (chunk 342).
+        clpfd_universal(D)        :- '$dom_universal'(D).
+        clpfd_iv(L, H, IV)        :- '$dom_new'(L, H, IV).
+        clpfd_dom_min(D, L)       :- '$dom_min'(D, L).
+        clpfd_dom_max(D, H)       :- '$dom_max'(D, H).
+        clpfd_in_dom(V, D)        :- '$dom_contains'(D, V).
+        clpfd_dom_above(D, B, Out):- '$dom_above'(D, B, Out).
+        clpfd_dom_below(D, B, Out):- '$dom_below'(D, B, Out).
+        clpfd_dom_del(D, V, Out)  :- '$dom_del'(D, V, Out).
+        clpfd_dom_isect(A, B, Out):- '$dom_isect'(A, B, Out).
+        clpfd_dom_size(D, N)      :- '$dom_size'(D, N).
 
-        clpfd_iv(L, H, IV) :- ( clpfd_ble(L, H) -> IV = [L-H] ; IV = [] ).
-
-        clpfd_dom_min([L-_|_], L).
-        clpfd_dom_max([_-H], H) :- !.
-        clpfd_dom_max([_|T], H) :- clpfd_dom_max(T, H).
-
-        clpfd_in_dom(V, [L-H|T]) :-
-            ( clpfd_ble(L, V), clpfd_ble(V, H) -> true ; clpfd_in_dom(V, T) ).
-
-        % keep only the part of the domain at or below bound B
-        clpfd_dom_above([], _, []).
-        clpfd_dom_above([L-H|T], B, Out) :-
-            ( clpfd_ble(L, B) ->
-                clpfd_bmin(H, B, H2),
-                Out = [L-H2|Rest],
-                ( clpfd_blt(B, H) -> Rest = [] ; clpfd_dom_above(T, B, Rest) )
-            ; Out = []
-            ).
-
-        % keep only the part of the domain at or above bound B
-        clpfd_dom_below([], _, []).
-        clpfd_dom_below([L-H|T], B, Out) :-
-            ( clpfd_blt(H, B) -> clpfd_dom_below(T, B, Out)
-            ; clpfd_ble(B, L) -> Out = [L-H|Rest], clpfd_dom_below(T, B, Rest)
-            ; Out = [B-H|Rest], clpfd_dom_below(T, B, Rest)
-            ).
-
-        % remove the single integer value V
-        clpfd_dom_del([], _, []).
-        clpfd_dom_del([L-H|T], V, Out) :-
-            ( clpfd_ble(L, V), clpfd_ble(V, H) ->
-                V1 is V - 1, V2 is V + 1,
-                ( clpfd_ble(L, V1) -> Lo = [L-V1] ; Lo = [] ),
-                ( clpfd_ble(V2, H) -> Hi = [V2-H] ; Hi = [] ),
-                clpfd_app(Lo, Hi, Frag),
-                clpfd_app(Frag, T, Out)
-            ; Out = [L-H|Rest], clpfd_dom_del(T, V, Rest)
-            ).
-
-        % intersection of two sorted disjoint interval lists
-        clpfd_dom_isect([], _, []).
-        clpfd_dom_isect([_|_], [], []).
-        clpfd_dom_isect([A-B|R1], [C-D|R2], Out) :-
-            ( clpfd_blt(B, C) -> clpfd_dom_isect(R1, [C-D|R2], Out)
-            ; clpfd_blt(D, A) -> clpfd_dom_isect([A-B|R1], R2, Out)
-            ; clpfd_bmax(A, C, L), clpfd_bmin(B, D, H),
-              Out = [L-H|Rest],
-              ( clpfd_blt(B, D) -> clpfd_dom_isect(R1, [C-D|R2], Rest)
-              ; clpfd_dom_isect([A-B|R1], R2, Rest)
-              )
-            ).
-
+        % generic list append — still used for propagator (Props) lists.
         clpfd_app([], L, L).
         clpfd_app([H|T], L, [H|R]) :- clpfd_app(T, L, R).
 
-        % render a domain as an `in` domain expression for projection
-        clpfd_dom_expr([L-H], L..H) :- !.
-        clpfd_dom_expr([L-H|T], (L..H \/ Rest)) :- clpfd_dom_expr(T, Rest).
-
-        % number of integers a domain admits; an unbounded interval counts
-        % as a large constant — enough to deprioritise it under first-fail.
-        clpfd_dom_size([], 0).
-        clpfd_dom_size([L-H|T], N) :-
-            ( integer(L), integer(H) -> S is H - L + 1 ; S = 1000000000 ),
-            clpfd_dom_size(T, N0), N is N0 + S.
+        % render a domain as an `in` expression for residual-constraint display.
+        clpfd_dom_expr(D, Expr) :- '$dom_intervals'(D, IVs), clpfd_iv_expr(IVs, Expr).
+        clpfd_iv_expr([L-H], L..H) :- !.
+        clpfd_iv_expr([L-H|T], (L..H \/ Rest)) :- clpfd_iv_expr(T, Rest).
 
         % ===== FD variables =====
-        % the domain of X: a singleton for an integer, the attribute's
-        % domain for an FD variable, the universal domain otherwise.
+        % the domain of X: a singleton for an integer, the attribute's domain
+        % for an FD variable, the universal domain otherwise.
         clpfd_dom_of(X, D) :-
-            ( integer(X) -> D = [X-X]
+            ( integer(X) -> '$dom_new'(X, X, D)
             ; get_attr(X, clpfd, fd(D0, _)) -> D = D0
-            ; clpfd_universal(D)
+            ; '$dom_universal'(D)
             ).
 
-        % ensure X is usable as an FD term: a plain variable becomes an FD
-        % variable with the universal domain; an integer or existing FD
-        % variable is left as is.
         clpfd_makevar(X) :-
             ( integer(X) -> true
             ; get_attr(X, clpfd, _) -> true
-            ; var(X) -> clpfd_universal(U), put_attr(X, clpfd, fd(U, []))
+            ; var(X) -> '$dom_universal'(U), put_attr(X, clpfd, fd(U, []))
             ; throw(error(type_error(integer, X), _))
             ).
 
-        % narrow X's domain to NewDom: empty fails, a singleton binds X,
-        % an unchanged domain is a no-op, otherwise store it and re-run the
-        % suspended propagators to a fixpoint.
+        % narrow X's domain to NewDom (a domain object): empty fails, a singleton
+        % binds X, an unchanged domain is a no-op, else store + re-run propagators.
         clpfd_narrow(X, NewDom) :-
-            ( integer(X) -> clpfd_in_dom(X, NewDom)   % a ground int must be IN the new domain, not merely make it non-empty
+            ( integer(X) -> '$dom_contains'(NewDom, X)
             ; get_attr(X, clpfd, fd(OldDom, Props)) ->
-                ( NewDom == OldDom -> true
-                ; NewDom == [] -> fail
-                ; NewDom = [K-K] -> X = K
+                ( '$dom_same'(NewDom, OldDom) -> true
+                ; '$dom_empty'(NewDom) -> fail
+                ; '$dom_singleton'(NewDom, K) -> X = K
                 ; put_attr(X, clpfd, fd(NewDom, Props)), clpfd_run(Props)
                 )
-            ; NewDom == [] -> fail
-            ; NewDom = [K-K] -> X = K
+            ; '$dom_empty'(NewDom) -> fail
+            ; '$dom_singleton'(NewDom, K) -> X = K
             ; put_attr(X, clpfd, fd(NewDom, []))
             ).
 
@@ -260,7 +215,7 @@ internal static class Clpfd
         % move/merge a clpfd attribute onto V and re-propagate (used by the
         % verify_attributes hook when an FD variable is aliased to another).
         '$fd_set'(V, Dom, Props) :-
-            ( Dom = [K-K] -> V = K
+            ( '$dom_singleton'(Dom, K) -> V = K
             ; put_attr(V, clpfd, fd(Dom, Props)), clpfd_run(Props)
             ).
 
@@ -274,7 +229,7 @@ internal static class Clpfd
             ; var(Value) ->
                 ( get_attr(Value, clpfd, fd(Dom2, Props2)) ->
                     clpfd_dom_isect(Dom, Dom2, Dom3),
-                    Dom3 \== [],
+                    \+ '$dom_empty'(Dom3),
                     clpfd_app(Props, Props2, AllProps),
                     Goals = ['$fd_set'(Value, Dom3, AllProps)]
                 ; Goals = ['$fd_set'(Value, Dom, Props)]
@@ -613,14 +568,14 @@ internal static class Clpfd
         % still variable only the product C is narrowed, from the four
         % corner products, and only while every endpoint is finite.
         '$fd_times'(A, B, C) :-
-            ( integer(A), integer(B) -> P is A * B, clpfd_narrow(C, [P-P])
+            ( integer(A), integer(B) -> P is A * B, '$dom_new'(P, P, DP), clpfd_narrow(C, DP)
             ; integer(A) -> clpfd_times_one(A, B, C)
             ; integer(B) -> clpfd_times_one(B, A, C)
             ; clpfd_times_gen(A, B, C)
             ).
 
         % K * Y = C with K an integer constant.
-        clpfd_times_one(0, _, C) :- !, clpfd_narrow(C, [0-0]).
+        clpfd_times_one(0, _, C) :- !, '$dom_new'(0, 0, D0), clpfd_narrow(C, D0).
         clpfd_times_one(K, Y, C) :-
             clpfd_dom_of(Y, DY),
             clpfd_dom_min(DY, YMin), clpfd_dom_max(DY, YMax),
@@ -821,8 +776,7 @@ internal static class Clpfd
 
         % bind V to a value of its domain, on backtracking the next one.
         clpfd_pick(V, up)   :- clpfd_dom_of(V, D), clpfd_indomain_up(V, D).
-        clpfd_pick(V, down) :- clpfd_dom_of(V, D),
-                               clpfd_rev(D, [], R), clpfd_indomain_down(V, R).
+        clpfd_pick(V, down) :- clpfd_dom_of(V, D), clpfd_indomain_down(V, D).
 
         %! indomain(?Var) | CLP(FD) — labeling | Binds one variable to each value of its domain in turn, on backtracking.
         indomain(X) :-
@@ -830,29 +784,18 @@ internal static class Clpfd
             ; clpfd_dom_of(X, D), clpfd_indomain_up(X, D)
             ).
 
-        clpfd_indomain_up(_, []) :- fail.
-        clpfd_indomain_up(V, [L-H|T]) :-
-            ( L == inf -> throw(error(instantiation_error, _)) ; true ),
-            ( clpfd_enum_up(V, L, H)
-            ; clpfd_indomain_up(V, T)
-            ).
-        clpfd_enum_up(V, L, H) :-
-            ( H == sup -> throw(error(instantiation_error, _))
-            ; L =< H -> ( V = L ; L1 is L + 1, clpfd_enum_up(V, L1, H) )
-            ; fail
-            ).
-
-        clpfd_indomain_down(_, []) :- fail.
-        clpfd_indomain_down(V, [L-H|T]) :-
-            ( H == sup -> throw(error(instantiation_error, _)) ; true ),
-            ( clpfd_enum_down(V, H, L)
-            ; clpfd_indomain_down(V, T)
-            ).
-        clpfd_enum_down(V, H, L) :-
-            ( L == inf -> throw(error(instantiation_error, _))
-            ; L =< H -> ( V = H ; H1 is H - 1, clpfd_enum_down(V, H1, L) )
-            ; fail
-            ).
+        % Enumerate the domain's values (ascending for up, descending for down).
+        % An unbounded domain cannot be labelled — raise instantiation_error, as
+        % the interval-walking version did when it met inf/sup.
+        clpfd_indomain_up(V, D) :-
+            clpfd_dom_finite(D),
+            '$dom_values'(D, Vals), member(V, Vals).
+        clpfd_indomain_down(V, D) :-
+            clpfd_dom_finite(D),
+            '$dom_values'(D, Vals), clpfd_rev(Vals, [], R), member(V, R).
+        clpfd_dom_finite(D) :-
+            '$dom_min'(D, Mn), '$dom_max'(D, Mx),
+            ( ( Mn == inf ; Mx == sup ) -> throw(error(instantiation_error, _)) ; true ).
 
         clpfd_rev([], A, A).
         clpfd_rev([X|Xs], A, R) :- clpfd_rev(Xs, [X|A], R).
@@ -934,7 +877,7 @@ internal static class Clpfd
             Lo1 is Lo - 1, Hi1 is Hi + 1,
             clpfd_dom_above(D, Lo1, Lower),
             clpfd_dom_below(D, Hi1, Upper),
-            clpfd_app(Lower, Upper, Out).
+            '$dom_union'(Lower, Upper, Out).
 
         % ===== reification =====
         % B #<==> C : the 0/1 variable B is 1 exactly when constraint C
@@ -1045,13 +988,13 @@ internal static class Clpfd
         clpfd_entail_('#>=', DX, DY, XL, XH, YL, YH, E) :-
             clpfd_entail_('#=<', DY, DX, YL, YH, XL, XH, E).
         clpfd_entail_('#=', DX, DY, _, _, _, _, E) :-
-            ( clpfd_dom_isect(DX, DY, I), I == [] -> E = false
-            ; DX = [V-V], DY = [V-V] -> E = true
+            ( clpfd_dom_isect(DX, DY, I), '$dom_empty'(I) -> E = false
+            ; '$dom_singleton'(DX, V), '$dom_singleton'(DY, V) -> E = true
             ; E = unknown
             ).
         clpfd_entail_('#\\=', DX, DY, _, _, _, _, E) :-
-            ( clpfd_dom_isect(DX, DY, I), I == [] -> E = true
-            ; DX = [V-V], DY = [V-V] -> E = false
+            ( clpfd_dom_isect(DX, DY, I), '$dom_empty'(I) -> E = true
+            ; '$dom_singleton'(DX, V), '$dom_singleton'(DY, V) -> E = false
             ; E = unknown
             ).
 

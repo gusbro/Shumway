@@ -24,9 +24,10 @@ public static class StandardBuiltins
         if (System.Threading.Interlocked.Exchange(ref _initialized, 1) != 0)
             return;
 
-        // CLP(FD) native bound primitives (Phase 28) — the clpfd library calls
-        // these by name; they replace the retired Prolog bound helpers.
+        // CLP(FD) native bound + domain primitives (Phase 28) — the clpfd
+        // library calls these; they replace the retired Prolog helpers.
         FdBoundBuiltins.Register();
+        ClpfdDomainBuiltins.Register();
 
         const string Cmp = "Unification & comparison";
         BuiltinsRegistry.Register("=",   2, UnifyBuiltins.Unify,

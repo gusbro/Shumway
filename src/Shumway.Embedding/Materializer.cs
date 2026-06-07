@@ -101,6 +101,16 @@ public static class Materializer
                 return Cell.Lis(firstPair);
             }
 
+            // A foreign object round-trips through the AST as `'$foreign'(N)`
+            // (TermReader renders Tag.Foreign that way). Re-materialise it back
+            // to the same Foreign cell so copy_term/3 over an attributed
+            // variable whose attribute holds a foreign value — e.g. a clpfd
+            // domain object (Phase 28) — preserves it instead of leaving a bare
+            // `'$foreign'(N)` compound. Same engine, so the id is still valid.
+            case CompoundTerm c when c.Functor == "$foreign" && c.Args.Length == 1
+                                     && c.Args[0] is IntTerm fid:
+                return Cell.Foreign((int)fid.Value);
+
             case CompoundTerm c:
             {
                 int atomId = AtomTable.Intern(c.Functor, permanent: true).Id;

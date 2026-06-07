@@ -345,6 +345,38 @@ Tested IL promotion as a cheaper alternative to a C# domain layer. Two findings:
   pathological setting AND fixing it wouldn't help the speed goal, it is
   documented and left rather than fixed.
 
+### Native FD: the domain in C# (chunk 344) — the real speed win
+
+Moved the domain representation itself off the Prolog heap and into C#. A domain
+is now an immutable `ClpfdDomain` (a sorted `long[]` interval set, with `inf`/
+`sup` as the `long` sentinels), stored in the engine's foreign-object table and
+named by a `Foreign` cell from the `fd(Dom, Props)` attribute. Fifteen native
+`$dom_*` builtins (`new`, `universal`, `min`, `max`, `above`, `below`, `isect`,
+`union`, `del`, `size`, `contains`, `empty`, `singleton`, `same`, `values`,
+`intervals`) replace the interpreted interval-list walking. Backtracking needs no
+per-domain trailing: domains are immutable, and the attribute (which holds the
+Foreign cell) is already trailed, so restoring it restores the old domain.
+
+The clpfd library keeps the `clpfd_dom_*` predicate names as thin wrappers over
+the builtins, so every propagator is unchanged; only the predicates that
+destructured the interval list were rewritten — `clpfd_narrow`, `$fd_set`, the
+labeling enumeration (now `$dom_values` + `member`), reification entailment,
+`$fd_alldiff`'s interval subtraction (now `$dom_union`), and the projection
+(`$dom_intervals`). One subtlety: `copy_term/3` round-trips an attribute through
+the AST, where a foreign domain renders as `'$foreign'(N)`; the materializer now
+rebuilds that into the same Foreign cell, so projecting a copied FD variable's
+domain still works.
+
+**Result:** profiled alpha-ff exec **13 s → 2.9 s** (predicate calls 3.1M →
+0.92M); wall-clock alpha first-fail **~11 s → ~3 s (~3.5×)**, donald leftmost
+**28 s → ~5-8 s (~4×)**. All suites green (Core 426 / Compiler 282 / ISO 277 /
+Embedding 2071; 5 dedicated Chunk344Tests). The bottleneck is now native
+`get_attr` / `integer/1` / `$dom_above` — i.e. the work itself, not interpreter
+overhead. **alpha leftmost still times out** (the program's `lab(normal)`): the
+domain layer cuts the per-operation cost, not the *node count*, and leftmost on
+26 vars explores a huge tree — that needs a stronger labeling/all_distinct, a
+separate axis. donald and alpha-ff now solve comfortably.
+
 #### Original investigation (chunk 336) — kept for the reasoning trail
 
 donald posts one big linear column constraint and labels 10 vars. Labeling
