@@ -86,3 +86,48 @@ Result: `zebra` 259 → 199 (1.29× → **0.99×**); the set total moved 0.97 �
 and the last >1.10× outlier disappeared. Regression coverage in
 `Chunk347Tests` (batched run → one `unify_void(3)`; void runs split by a real
 arg stay separate).
+
+## Remaining gap analysis (aggregate opcode histogram)
+
+After the void batch, the per-predicate sweep across all 27 programs shows the
+worst remaining ratios are small (`flatten/extract_disj/4` 1.87 = 28 vs 15;
+the recurring set-ops `intersectv`/`unionv`/`diffv`/3 at 1.10 = 11 vs 10). An
+aggregate opcode histogram (Shumway vs GProlog, normalized for spelling, set
+total) explains them and, more importantly, separates real gaps from
+non-gaps:
+
+**The one real gap — register movement (`put_value` +512).** Shumway emits 512
+more `put_value` than GProlog, partly offset by GProlog emitting 299 more
+`get_variable`. GProlog's register allocator **preferences** a head sub-argument
+(extracted by `unify_variable`) directly into the argument register of the
+following call, and **pre-saves** the conflicting incoming args with
+`get_variable`; Shumway extracts sub-args into safe high registers and then
+shuffles them into argument position with `put_value`. Example
+(`intersectv([A|S1], S2, S) :- intersectv_2(S2, A, S1, S)`): GProlog 7
+instructions (unify A→x1, S1→x2 *in place*, pre-save S2/S), Shumway 8 (unify
+A→x3, S1→x4, then four `put_value`). The avoidable part is the temporary /
+single-call (leaf) clauses; genuine permanents crossing a call require
+`put_value_y` on both sides regardless (GProlog too). This is the deferred
+**GProlog-style register allocator** — a substantial, previously-attempted
+effort (see the `chunk-model-refinement-failed` note: it needs a proper
+allocator plus unsafe-variable handling, and a naive version broke CLP and
+collided body-cons registers). No safe shortcut.
+
+**Non-gaps (look like gaps in a raw diff, aren't):**
+- `put_unsafe_value` 0 vs **350** — Shumway heap-allocates permanents
+  (chunk 313), so a permanent variable never dangles when its environment is
+  deallocated; GProlog stack-allocates environments and must globalize unsafe
+  vars. Different design, same instruction count (Shumway's `put_value`
+  subsumes the role).
+- `put_void` 0 vs 127, `get_nil` → `get_atom([])` — naming only, parity count.
+
+**Where Shumway wins (do not regress):**
+- Fused arithmetic `a_int_bin`/`a_int_cmp`/`a_eval_*` (216 instrs) — GProlog
+  compiles `is`/comparisons as **calls** (its `call` is +117 for this reason).
+- Fused control: `allocate_get_level`, `neck_cut`, `deallocate_proceed`.
+- Inline nested compounds (ADR-019/020): Shumway `unify_structure` +
+  `put_structure` = 512 vs GProlog's 599 (`put_structure` + intermediate var).
+
+Bottom line: the void batch was the last *safe, fusion-style* count gap. The
+remaining ~0.96× → parity-everywhere headroom is the register allocator, which
+is a scheduled major effort rather than an incremental codegen tweak.
