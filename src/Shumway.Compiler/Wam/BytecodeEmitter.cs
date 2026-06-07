@@ -544,8 +544,31 @@ public sealed class BytecodeEmitter
         EmitInt(permSlot);
     }
 
+    // Position of the most recently emitted unify_void opcode, for coalescing.
+    private int _lastUnifyVoidPos = -1;
+
     public void EmitUnifyVoid(int count)
     {
+        // Coalesce consecutive void unifications into one unify_void(N), as
+        // GProlog does: a compound's anonymous arguments (house(red, _, _, _))
+        // become a single instruction rather than one per void. Safe because a
+        // merge only fires when this call lands EXACTLY at the end of the last
+        // unify_void (nothing emitted in between — within one structure's
+        // argument run); any intervening instruction, label or clause boundary
+        // moves the write position past it. (chunk 347)
+        if (_lastUnifyVoidPos >= 0 && _bytes.Count == _lastUnifyVoidPos + 5
+            && _bytes[_lastUnifyVoidPos] == (byte)Opcode.UnifyVoid)
+        {
+            int op = _lastUnifyVoidPos + 1;
+            int merged = (_bytes[op] | (_bytes[op + 1] << 8)
+                          | (_bytes[op + 2] << 16) | (_bytes[op + 3] << 24)) + count;
+            _bytes[op]     = (byte)(merged & 0xFF);
+            _bytes[op + 1] = (byte)((merged >> 8) & 0xFF);
+            _bytes[op + 2] = (byte)((merged >> 16) & 0xFF);
+            _bytes[op + 3] = (byte)((merged >> 24) & 0xFF);
+            return;
+        }
+        _lastUnifyVoidPos = _bytes.Count;
         _bytes.Add((byte)Opcode.UnifyVoid);
         EmitInt(count);
     }
