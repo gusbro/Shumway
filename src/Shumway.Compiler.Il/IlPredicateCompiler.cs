@@ -121,6 +121,15 @@ public sealed class IlPredicateCompiler
         typeof(Cell).GetProperty(nameof(Cell.AsHeapIndex))!.GetGetMethod()!;
     private static readonly MethodInfo CellAsAtomIdGetter =
         typeof(Cell).GetProperty(nameof(Cell.AsAtomId))!.GetGetMethod()!;
+    private static readonly MethodInfo CellAsIntGetter =
+        typeof(Cell).GetProperty(nameof(Cell.AsInt))!.GetGetMethod()!;
+    private static readonly MethodInfo CellAsFunctorIdGetter =
+        typeof(Cell).GetProperty(nameof(Cell.AsFunctorId))!.GetGetMethod()!;
+    // Cell.TagId yields the tag as a clean int32 on the IL stack (avoids
+    // enum-vs-int comparison friction in the inline index-resolve emit). It
+    // lives in Shumway.Core so a persisted-bundle .dll can call it.
+    private static readonly MethodInfo CellTagIdGetter =
+        typeof(Cell).GetProperty(nameof(Cell.TagId))!.GetGetMethod()!;
     private static readonly MethodInfo EngineSetRegisterMethod =
         typeof(Engine).GetMethod(nameof(Engine.SetRegister), new[] { typeof(int), typeof(Cell) })!;
     // ADR-018 — arithmetic instruction set runtime helpers (Shumway.Builtins.
@@ -2607,23 +2616,30 @@ public sealed class IlPredicateCompiler
             emit.LoadConstant(n + 1);
             emit.BranchIfEqual(nodeLabels[n]);
         }
-        // cursor 0 — the initial call: resolve the entry node via the WAM
-        // switch cascade, then branch to it. The functor id is emitted
-        // through EmitFunctorId (chunk 197) so a persisted-bundle .dll
-        // gets its functor id patched at LoadBundle to the runtime-process
-        // value; for runtime promotion it's a direct ldc.i4.
-        var entry = emit.DeclareLocal<int>("idx_entry");
-        emit.LoadArgument(0);
-        EmitFunctorId(emit, predicate.FunctorId);
-        emit.Call(IlIndexedDispatchResolveByFidMethod);
-        emit.StoreLocal(entry);
-        for (int n = 0; n < K; n++)
+        // cursor 0 — the initial call: decide the entry node from the indexed
+        // argument. The index decision is compiled to inline IL (deref + tag
+        // test + key compares branching straight to the node labels — the
+        // GProlog-style compiled switch), eliminating the per-call resolver
+        // (a per-engine dictionary lookup + a runtime graph walk). Falls back
+        // to that resolver only when the graph can't be built.
+        if (!TryEmitInlineIndexResolve(emit, info, nodeLabels))
         {
-            emit.LoadLocal(entry);
-            emit.LoadConstant(n);
-            emit.BranchIfEqual(nodeLabels[n]);
+            // Fallback. The functor id is emitted through EmitFunctorId
+            // (chunk 197) so a persisted-bundle .dll gets it patched at
+            // LoadBundle; for runtime promotion it's a direct ldc.i4.
+            var entry = emit.DeclareLocal<int>("idx_entry");
+            emit.LoadArgument(0);
+            EmitFunctorId(emit, predicate.FunctorId);
+            emit.Call(IlIndexedDispatchResolveByFidMethod);
+            emit.StoreLocal(entry);
+            for (int n = 0; n < K; n++)
+            {
+                emit.LoadLocal(entry);
+                emit.LoadConstant(n);
+                emit.BranchIfEqual(nodeLabels[n]);
+            }
+            emit.Branch(failLabel);   // unreachable: resolver always returns a valid node
         }
-        emit.Branch(failLabel);   // unreachable: resolver always returns a valid node
 
         // ---- Chain nodes: push the next-node CP (if any), run the clause body. ----
         for (int n = 0; n < K; n++)
@@ -2658,6 +2674,160 @@ public sealed class IlPredicateCompiler
         emit.MarkLabel(failLabel);
         emit.LoadConstant(false);
         emit.Return();
+    }
+
+    /// <summary>Emits the first-/multi-argument index decision as inline IL —
+    /// the compile-time-known <see cref="IndexGraph"/> walk lowered to native
+    /// branches (deref + tag test + key compares), branching straight to the
+    /// dispatch node labels. Replaces the per-call
+    /// <see cref="IlIndexedDispatch.ResolveEntryByFunctorId"/> (a per-engine
+    /// dictionary lookup + a runtime graph walk) with code the JIT keeps in
+    /// registers — the GProlog-style compiled switch. Returns false (emitting
+    /// nothing) when the graph can't be built, so the caller keeps the
+    /// resolver-call fallback.
+    ///
+    /// <para>Atom / functor keys go through <see cref="EmitAtomId"/> /
+    /// <see cref="EmitFunctorId"/> so a persisted bundle patches them to the
+    /// runtime ids at load; integer keys are stable literals. An integer cell
+    /// whose value is out of the int range simply matches no key and falls to
+    /// the default — exactly the runtime walk's semantics — so no range guard
+    /// is needed.</para></summary>
+    private static bool TryEmitInlineIndexResolve(
+        Sigil.Emit<PredicateDelegate> emit, IlIndexedDispatchInfo info,
+        Sigil.Label[] nodeLabels)
+    {
+        IndexGraph? graph = IlIndexGraph.Build(info);
+        if (graph is null) return false;
+        IndexNode[] gnodes = graph.Nodes;
+        var gLabels = new Sigil.Label[gnodes.Length];
+        for (int i = 0; i < gnodes.Length; i++)
+            gLabels[i] = emit.DefineLabel($"idx_g{i}");
+
+        var cellLoc = emit.DeclareLocal<Cell>("idx_cell");
+        var tmpCell = emit.DeclareLocal<Cell>("idx_tmpcell");
+        var tagLoc = emit.DeclareLocal<int>("idx_tag");
+        var keyLoc = emit.DeclareLocal<int>("idx_key");
+        var longLoc = emit.DeclareLocal<long>("idx_long");
+
+        Sigil.Label Target(IndexTarget t) => t.IsNode ? gLabels[t.Value] : nodeLabels[t.Value];
+
+        emit.Branch(gLabels[0]);
+
+        for (int i = 0; i < gnodes.Length; i++)
+        {
+            emit.MarkLabel(gLabels[i]);
+            IndexNode node = gnodes[i];
+
+            // ----- Deref the tested argument into cellLoc (one level, exactly
+            //       like IlIndexGraph.DerefArg). -----
+            emit.LoadArgument(0);
+            emit.LoadConstant(node.ArgIdx);
+            emit.Call(EngineGetRegisterMethod);
+            emit.StoreLocal(cellLoc);
+            // if cellLoc.Tag == Ref: cellLoc = engine.GetHeap(engine.Deref(cellLoc.AsHeapIndex))
+            emit.LoadLocalAddress(cellLoc);
+            emit.Call(CellTagIdGetter);
+            emit.LoadConstant((int)Tag.Ref);
+            var notRef = emit.DefineLabel($"idx_g{i}_notref");
+            emit.UnsignedBranchIfNotEqual(notRef);
+            emit.LoadArgument(0);                       // engine (receiver of GetHeap)
+            emit.LoadArgument(0);                       // engine (receiver of Deref)
+            emit.LoadLocalAddress(cellLoc);
+            emit.Call(CellAsHeapIndexGetter);
+            emit.Call(EngineDerefMethod);
+            emit.Call(EngineGetHeapMethod);
+            emit.StoreLocal(cellLoc);
+            emit.MarkLabel(notRef);
+
+            // ----- Load the (deref'd) tag once. -----
+            emit.LoadLocalAddress(cellLoc);
+            emit.Call(CellTagIdGetter);
+            emit.StoreLocal(tagLoc);
+
+            switch (node.Kind)
+            {
+                case IndexNodeKind.Term:
+                    EmitTagBranch(emit, tagLoc, (int)Tag.Lis, Target(node.ListTarget));
+                    EmitTagBranch(emit, tagLoc, (int)Tag.Str, Target(node.StructTarget));
+                    EmitTagBranch(emit, tagLoc, (int)Tag.Atom, Target(node.ConstTarget));
+                    EmitTagBranch(emit, tagLoc, (int)Tag.Int, Target(node.ConstTarget));
+                    EmitTagBranch(emit, tagLoc, (int)Tag.Float, Target(node.ConstTarget));
+                    emit.Branch(Target(node.VarTarget));   // Ref / anything else
+                    break;
+
+                case IndexNodeKind.Int:
+                {
+                    emit.LoadLocal(tagLoc);
+                    emit.LoadConstant((int)Tag.Int);
+                    emit.UnsignedBranchIfNotEqual(Target(node.DefaultTarget));
+                    emit.LoadLocalAddress(cellLoc);
+                    emit.Call(CellAsIntGetter);
+                    emit.StoreLocal(longLoc);
+                    int[] keys = node.Keys!;
+                    for (int k = 0; k < keys.Length; k++)
+                    {
+                        emit.LoadLocal(longLoc);
+                        emit.LoadConstant((long)keys[k]);
+                        emit.BranchIfEqual(Target(node.Targets![k]));
+                    }
+                    emit.Branch(Target(node.DefaultTarget));
+                    break;
+                }
+
+                case IndexNodeKind.Atom:
+                {
+                    emit.LoadLocal(tagLoc);
+                    emit.LoadConstant((int)Tag.Atom);
+                    emit.UnsignedBranchIfNotEqual(Target(node.DefaultTarget));
+                    emit.LoadLocalAddress(cellLoc);
+                    emit.Call(CellAsAtomIdGetter);
+                    emit.StoreLocal(keyLoc);
+                    int[] keys = node.Keys!;
+                    for (int k = 0; k < keys.Length; k++)
+                    {
+                        emit.LoadLocal(keyLoc);
+                        EmitAtomId(emit, keys[k]);          // patchable in persisted bundles
+                        emit.BranchIfEqual(Target(node.Targets![k]));
+                    }
+                    emit.Branch(Target(node.DefaultTarget));
+                    break;
+                }
+
+                case IndexNodeKind.Struct:
+                {
+                    emit.LoadLocal(tagLoc);
+                    emit.LoadConstant((int)Tag.Str);
+                    emit.UnsignedBranchIfNotEqual(Target(node.DefaultTarget));
+                    // fid = engine.GetHeap(cellLoc.AsHeapIndex).AsFunctorId
+                    emit.LoadArgument(0);
+                    emit.LoadLocalAddress(cellLoc);
+                    emit.Call(CellAsHeapIndexGetter);
+                    emit.Call(EngineGetHeapMethod);
+                    emit.StoreLocal(tmpCell);
+                    emit.LoadLocalAddress(tmpCell);
+                    emit.Call(CellAsFunctorIdGetter);
+                    emit.StoreLocal(keyLoc);
+                    int[] keys = node.Keys!;
+                    for (int k = 0; k < keys.Length; k++)
+                    {
+                        emit.LoadLocal(keyLoc);
+                        EmitFunctorId(emit, keys[k]);       // patchable in persisted bundles
+                        emit.BranchIfEqual(Target(node.Targets![k]));
+                    }
+                    emit.Branch(Target(node.DefaultTarget));
+                    break;
+                }
+            }
+        }
+        return true;
+    }
+
+    private static void EmitTagBranch(
+        Sigil.Emit<PredicateDelegate> emit, Sigil.Local tagLoc, int tag, Sigil.Label target)
+    {
+        emit.LoadLocal(tagLoc);
+        emit.LoadConstant(tag);
+        emit.BranchIfEqual(target);
     }
 
     /// <summary>Emits the IL for a non-indexed multi-clause predicate

@@ -24,6 +24,15 @@ public readonly struct Cell : IEquatable<Cell>
 
     public Tag Tag => (Tag)((int)(Data >> TagShift) & 0xF);
 
+    /// <summary>The tag as a raw <see cref="int"/>. Lets the Tier-1 IL emit
+    /// the index-dispatch tag test as a clean int32 comparison (the
+    /// <see cref="Tag"/> enum on the IL stack is awkward to compare against an
+    /// int constant), using a member that lives in this always-loaded core
+    /// assembly — a persisted-bundle .dll can call it (a helper in the
+    /// compiler assembly would not be visible to it). The JIT inlines it to
+    /// the same shift+mask.</summary>
+    public int TagId => (int)(Data >> TagShift) & 0xF;
+
     public long Payload => Data & PayloadMask;
 
     // The "AsX" accessors decode the low-32-bit id encoded in the payload. They do NOT
