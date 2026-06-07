@@ -265,11 +265,36 @@ Embedding 2064), 7 dedicated tests (`Chunk340Tests`). Still slower than GProlog
 (the propagator is interpreted Prolog, O(n²)/propagation, vs GProlog's native C
 linear constraint) — a constant-factor gap, not a completeness one.
 
-**alpha / multipl still open (NOT a regression — pre-existing):** `alpha` (26
-vars, 1..26, all_different + 19 column sums) — leftmost `q` still exhausts; the
-global propagator helps but the 26-var search needs more (stronger labeling /
-a faster propagator). `multipl` is "unknown multiplication" (var*var, genuinely
-non-linear) — outside the linear propagator; its gap is `$fd_times` strength.
+### alpha (chunk 341): O(n) finite fast path; solves under first-fail
+
+`alpha` (26 vars, 1..26, all_different + 20 column sums) is the corpus's hardest
+linear case. Two changes made it tractable:
+
+- **O(n) finite fast path in `$fd_linear`.** When every term bound is finite
+  (the case for all crypt-arithmetic — every variable has a bounded domain),
+  each term's rest-of-sum is the exact integer `SMin`/`SMax` minus that term's
+  own contribution: O(1) per variable, O(n) per propagation, vs the
+  O(n²) prefix+suffix walk (which is only needed when an unbounded variable
+  makes a subtraction `inf - inf` undefined). "Total minus self" is safe from
+  the value-coincidence pitfall because it subtracts THIS term arithmetically,
+  not every term sharing its value. **alpha under first-fail: 41 s → ~12 s.**
+- **`fd_all_different` stays pairwise `all_different`, NOT `all_distinct`.**
+  Tried mapping GProlog's `fd_all_different` to `all_distinct` (Hall-interval,
+  strictly stronger pruning) — but its per-propagation cost in interpreted
+  Prolog made a permutation puzzle that re-fires it thousands of times ~8×
+  *slower* (alpha ff 9 s → 71 s). Reverted. A C# `all_distinct` would flip this
+  trade-off and is the right next step for native-comparable FD speed.
+
+**alpha solves under first-fail with the correct GProlog answer**
+(`[5,13,9,16,20,4,24,21,25,17,23,2,8,12,10,19,7,11,15,3,1,26,6,22,14,18]`).
+**Leftmost (the program's `lab(normal)` default) is still too slow** — it is
+search-bound (a huge node count under leftmost), not propagation-cost-bound, so
+the O(n) path doesn't shrink it; closing that needs propagation as strong AND as
+fast as GProlog's native FD (a C# linear + all_distinct propagator). donald
+leftmost is the same shape (≈28 s, search-bound; ff/good order solve instantly).
+
+`multipl` is "unknown multiplication" (var*var, genuinely non-linear) — outside
+the linear propagator; its gap is `$fd_times` strength.
 
 #### Original investigation (chunk 336) — kept for the reasoning trail
 

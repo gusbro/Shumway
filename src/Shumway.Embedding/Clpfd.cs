@@ -528,7 +528,30 @@ internal static class Clpfd
         '$fd_linear'(Coeffs, Vars, Rel, RHS) :-
             clpfd_lin_sum(Coeffs, Vars, 0, SMin, 0, SMax),
             clpfd_lin_check(Rel, SMin, SMax, RHS),
-            clpfd_lin_prune(Coeffs, Vars, [], [], Rel, RHS).
+            ( integer(SMin), integer(SMax) ->
+                % All term bounds finite (every variable has a bounded domain —
+                % the case for all crypt-arithmetic). The rest of the sum for a
+                % term is then the exact integer SMin/SMax minus that term's own
+                % contribution: O(1) per variable, O(n) per propagation. This is
+                % safe from the value-coincidence pitfall of an identity-based
+                % skip because it subtracts THIS term's contribution
+                % arithmetically, not every term that happens to share its value.
+                clpfd_lin_prune_fin(Coeffs, Vars, Rel, RHS, SMin, SMax)
+            ; % Some bound is inf/sup (an unbounded variable). Fall back to the
+              % O(n^2) prefix+suffix rest, which subtraction can't express
+              % (inf - inf is undefined).
+              clpfd_lin_prune(Coeffs, Vars, [], [], Rel, RHS)
+            ).
+
+        clpfd_lin_prune_fin([], [], _, _, _, _).
+        clpfd_lin_prune_fin([C | Cs], [V | Vs], Rel, RHS, SMin, SMax) :-
+            clpfd_term_bounds(C, V, TLo, THi),
+            RestLo is SMin - TLo,
+            RestHi is SMax - THi,
+            clpfd_lin_contrib(Rel, RHS, RestLo, RestHi, CLo, CHi),
+            clpfd_div_bounds(C, CLo, CHi, VLo, VHi),
+            clpfd_narrow_bounds(V, VLo, VHi),
+            clpfd_lin_prune_fin(Cs, Vs, Rel, RHS, SMin, SMax).
 
         clpfd_lin_sum([], [], Lo, Lo, Hi, Hi).
         clpfd_lin_sum([C | Cs], [V | Vs], Lo0, Lo, Hi0, Hi) :-
@@ -1079,6 +1102,13 @@ internal static class Clpfd
             ( is_list(Vars) -> label(Vars) ; label([Vars]) ).
         fd_labelingff(Vars) :-
             ( is_list(Vars) -> labeling([ff], Vars) ; labeling([ff], [Vars]) ).
+        % GProlog's fd_all_different maps to pairwise all_different rather than
+        % all_distinct: although all_distinct's Hall-interval pruning is
+        % strictly stronger, its per-propagation cost is far higher in
+        % interpreted Prolog, and on a permutation puzzle that re-fires the
+        % constraint thousands of times (alpha) the overhead dominates the
+        % pruning win — measured ~8x slower under first-fail labeling. (A C#
+        % all_distinct would flip this trade-off; see corpus-validation.md.)
         fd_all_different(Vars) :- all_different(Vars).
         fd_set_vector_max(_).
         fd_atmost(N, Vars, V) :- '$fd_count_eq'(Vars, V, C), C #=< N.
