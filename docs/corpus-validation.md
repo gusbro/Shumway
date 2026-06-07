@@ -296,6 +296,38 @@ leftmost is the same shape (≈28 s, search-bound; ff/good order solve instantly
 `multipl` is "unknown multiplication" (var*var, genuinely non-linear) — outside
 the linear propagator; its gap is `$fd_times` strength.
 
+### Native FD: profiling + the first C# primitives (chunk 342)
+
+Profiled `alpha ff` (`-p:ShumwayProfile=true`). The cost is **not** concentrated
+in one place — it is the interpreted-Prolog overhead of clpfd spread across
+**~3.1M predicate calls** (≈4 µs each). Top by call count: `clpfd_ble` (230k) and
+the lowered `==`-chains inside it (4 × 230k), then the domain ops
+(`clpfd_dom_of` 87k, `clpfd_dom_below`/`above` ~70k each, `dom_max`/`min`,
+`clpfd_narrow`, `clpfd_run`). The single biggest builtin was **`==/2` at ≈1.36M
+calls** — the `A == inf` / `B == sup` bound tests scattered through the bound
+helpers.
+
+**First C# step:** moved the scalar bound primitives
+(`clpfd_ble`/`blt`/`bmin`/`bmax`, `add_lo`/`hi`, `sub_lo`/`hi`, `bneg`, `bmul`,
+`bfloordiv`/`bceildiv`) from Prolog to native builtins (`FdBoundBuiltins`), where
+a bound is a plain `long` with `inf`/`sup` as the `long` sentinels — so
+`clpfd_ble` collapses to one native `<=` and the 1.36M `==` disappear. Drop-in
+(same names; the Prolog clauses are removed so the module-local calls fall
+through to the builtins). Correct (all 118 clpfd tests green), but only **~8%**
+faster (alpha ff 12 s → 11 s) — confirming the cost is broad, not in the bound
+helpers themselves.
+
+**What this tells us:** the bound primitives were a large fraction of *calls* but
+a small fraction of *time*; the real cost is the breadth of interpreted clpfd
+machinery (the domain-list ops, attribute reads, the fixpoint driver). Closing
+the gap to GProlog's native FD needs the **domain representation itself in C#**
+(an immutable interval object referenced by id from the attribute, with all
+`dom_*` ops native), and/or fixing Tier-1 IL promotion for clpfd. (IL promotion
+already gives donald leftmost 28 s → 20 s with zero code change, but currently
+*breaks* alpha with a `type_error(evaluable)` — a Tier-1-IL-meets-clpfd bug worth
+its own session.) The bound primitives are the foundation those C# domain ops
+will reuse.
+
 #### Original investigation (chunk 336) — kept for the reasoning trail
 
 donald posts one big linear column constraint and labels 10 vars. Labeling

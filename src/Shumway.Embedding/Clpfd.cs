@@ -120,49 +120,13 @@ internal static class Clpfd
         :- op(710, fy, #\).
 
         % ===== bound order: inf < every integer < sup =====
-        clpfd_ble(A, B) :-
-            ( A == inf -> true
-            ; B == sup -> true
-            ; A == sup -> fail
-            ; B == inf -> fail
-            ; A =< B
-            ).
-        clpfd_blt(A, B) :- A \== B, clpfd_ble(A, B).
-        clpfd_bmin(A, B, M) :- ( clpfd_ble(A, B) -> M = A ; M = B ).
-        clpfd_bmax(A, B, M) :- ( clpfd_ble(A, B) -> M = B ; M = A ).
-
-        % bound arithmetic — mins never carry sup, maxes never carry inf,
-        % so the two indeterminate combinations never arise here.
-        clpfd_add_lo(A, B, R) :- ( ( A == inf ; B == inf ) -> R = inf ; R is A + B ).
-        clpfd_add_hi(A, B, R) :- ( ( A == sup ; B == sup ) -> R = sup ; R is A + B ).
-        clpfd_sub_lo(A, B, R) :- ( A == inf -> R = inf ; B == sup -> R = inf ; R is A - B ).
-        clpfd_sub_hi(A, B, R) :- ( A == sup -> R = sup ; B == inf -> R = sup ; R is A - B ).
-
-        % negate a bound
-        clpfd_bneg(inf, sup) :- !.
-        clpfd_bneg(sup, inf) :- !.
-        clpfd_bneg(X, Y) :- Y is -X.
-
-        % multiply a bound by a nonzero integer constant K
-        clpfd_bmul(B, K, R) :-
-            ( B == inf -> ( K > 0 -> R = inf ; R = sup )
-            ; B == sup -> ( K > 0 -> R = sup ; R = inf )
-            ; R is B * K
-            ).
-
-        % floor / ceil of a bound divided by a nonzero integer constant K.
-        % `mod` is floored (sign of divisor), so C - (C mod K) is the exact
-        % multiple of K at or below C, making the // division exact.
-        clpfd_bfloordiv(C, K, R) :-
-            ( C == inf -> ( K > 0 -> R = inf ; R = sup )
-            ; C == sup -> ( K > 0 -> R = sup ; R = inf )
-            ; M is C mod K, R is (C - M) // K
-            ).
-        clpfd_bceildiv(C, K, R) :-
-            ( C == inf -> ( K > 0 -> R = inf ; R = sup )
-            ; C == sup -> ( K > 0 -> R = sup ; R = inf )
-            ; NC is -C, M is NC mod K, R0 is (NC - M) // K, R is -R0
-            ).
+        % clpfd_ble/blt/bmin/bmax, clpfd_add_lo/hi, clpfd_sub_lo/hi, clpfd_bneg,
+        % clpfd_bmul, clpfd_bfloordiv, clpfd_bceildiv are now native builtins
+        % (FdBoundBuiltins, Phase 28): a bound is a plain long with inf/sup as
+        % the long sentinels, so the chain of `A == inf` / `B == sup` tests that
+        % dominated FD solving (≈1.36M ==/2 calls on alpha) becomes one native
+        % comparison. Removing the Prolog clauses lets the module-local calls
+        % fall through to the builtins.
 
         % truncating (toward zero) division of a bound by a positive K.
         clpfd_btruncdiv(C, K, R) :-
