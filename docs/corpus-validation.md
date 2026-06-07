@@ -322,11 +322,28 @@ a small fraction of *time*; the real cost is the breadth of interpreted clpfd
 machinery (the domain-list ops, attribute reads, the fixpoint driver). Closing
 the gap to GProlog's native FD needs the **domain representation itself in C#**
 (an immutable interval object referenced by id from the attribute, with all
-`dom_*` ops native), and/or fixing Tier-1 IL promotion for clpfd. (IL promotion
-already gives donald leftmost 28 s → 20 s with zero code change, but currently
-*breaks* alpha with a `type_error(evaluable)` — a Tier-1-IL-meets-clpfd bug worth
-its own session.) The bound primitives are the foundation those C# domain ops
+`dom_*` ops native). The bound primitives are the foundation those C# domain ops
 will reuse.
+
+### Tier-1 IL for clpfd: investigated, a dead end for the speed goal (chunk 343)
+
+Tested IL promotion as a cheaper alternative to a C# domain layer. Two findings:
+
+- **It barely helps.** alpha first-fail: Tier-0 12 s → IL (threshold 20-50)
+  ~10-11 s, ≈15%; donald leftmost 28 s → 20 s. IL shaves per-call dispatch, but
+  clpfd's cost is the *volume* of propagation operations, which IL doesn't
+  reduce. So even a clean IL path would not close the GProlog gap — the C#
+  domain layer is the only route.
+- **The `type_error(evaluable, inf)` is an edge case, not a general bug.** It
+  fires only at `Threshold = 1` (promote a predicate after its *first* call) on
+  an alpha-scale program (many constraints → deep `clpfd_run` fixpoint
+  recursion). At any sane threshold (≥ 20) clpfd + IL is correct, and the
+  **default `Threshold` is 0 (no promotion at all)**, so it never bites a real
+  run. The signature (a guarded `is` running with `inf` only under aggressive,
+  alpha-scale promotion) points at mid-flight promotion of a deeply-recursive
+  clpfd predicate — a deep Tier-1-IL hazard, not a clpfd bug. Given it needs a
+  pathological setting AND fixing it wouldn't help the speed goal, it is
+  documented and left rather than fixed.
 
 #### Original investigation (chunk 336) — kept for the reasoning trail
 
