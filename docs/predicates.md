@@ -199,6 +199,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `sort(+Key, +Order, +List, -Sorted)` | Sorts List by the given argument key (0 = whole term) and order (@<, @=<, @> or @>=). |
 | `subtract(+Set, +Delete, -Rest)` | Rest is Set without the elements that also occur in Delete. |
 | `sum_list(+List, -Sum)` | Sum is the sum of the numbers in List. |
+| `sumlist(+List, -Sum)` | Sum is the sum of the numbers in List (alias of sum_list/2). |
 | `union(+Set1, +Set2, -Union)` | Union holds the elements of Set1 not in Set2, followed by all of Set2. |
 
 ## Atoms & strings
@@ -255,6 +256,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `file_name_extension(?Base, ?Ext, ?Full)` | Relates a file name to its base and extension. With Full bound, splits at the last '.'; with Base and Ext bound, composes Base + '.' + Ext (or just Base when Ext is empty). SWI / SICStus compatible. |
 | `flush_output` | Flushes the current output stream (ISO §8.11.7). |
 | `flush_output(+Stream)` | Flushes the given stream (ISO §8.11.7). |
+| `format(+Format)` | Like format/2 with no arguments. |
 | `format(+Format, +Arguments)` | Writes formatted output from a control string and an argument list. |
 | `format(+Stream, +Format, +Arguments)` | Writes formatted output to the given stream. |
 | `format_to_atom(-Atom, +Format, +Args)` | Like format/2 but captures the formatted output into an atom. |

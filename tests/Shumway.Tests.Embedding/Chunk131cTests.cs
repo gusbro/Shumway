@@ -1,3 +1,4 @@
+using System.Linq;
 using Shumway.Compiler.Ast;
 using Shumway.Embedding;
 using Xunit;
@@ -87,12 +88,20 @@ public class Chunk131cTests
     // ---------- nth0/3 / nth1/3 ----------
 
     [Fact]
-    public void Nth0_VarIndex_RaisesInstantiationError()
+    public void Nth0_VarIndex_Enumerates()
     {
+        // SWI/SICStus behaviour (chunk 346): a variable index enumerates every
+        // position on backtracking, rather than raising instantiation_error —
+        // real programs iterate lists this way (e.g. nth0(Row, Board, R)).
         var e = new PrologEngine();
-        var sol = e.Query("catch(nth0(_N, [a,b,c], _X), error(E, _), true).");
-        Assert.True(sol.Success);
-        Assert.Equal(Atom("instantiation_error"), sol["E"]);
+        var pairs = e.QueryAll("nth0(N, [a, b, c], X).")
+            .Select(s => (((IntTerm)s["N"]).Value, ((AtomTerm)s["X"]).Name)).ToList();
+        Assert.Equal(new[] { (0L, "a"), (1L, "b"), (2L, "c") }, pairs);
+
+        // A bound element finds (and enumerates) only its positions.
+        var idx = e.QueryAll("nth0(N, [a, b, a], a).")
+            .Select(s => ((IntTerm)s["N"]).Value).ToList();
+        Assert.Equal(new long[] { 0, 2 }, idx);
     }
 
     [Fact]

@@ -249,6 +249,32 @@ public static class IOBuiltins
                 // string. SWI / SICStus surface this as a domain_error
                 // on the format spec.
                 throw new PrologRuntimeException("domain_error", "format_spec");
+
+            // Optional column/count argument before the spec char: a literal
+            // number (`~20|`, `~3c`), `*` (take it from the next argument), or
+            // `` `c `` (a fill character for ~t). (chunk 346)
+            int? num = null;
+            if (fmt[i] == '*')
+            {
+                i++;
+                Cell c = Resolve(engine, ConsumeArg(args, ref argIdx, name));
+                if (c.Tag != Tag.Int) throw new PrologRuntimeException("type_error", "integer");
+                num = (int)c.AsInt;
+            }
+            else if (fmt[i] == '`' && i + 1 < fmt.Length)
+            {
+                num = fmt[i + 1];
+                i += 2;
+            }
+            else
+            {
+                int v = 0; bool any = false;
+                while (i < fmt.Length && fmt[i] >= '0' && fmt[i] <= '9')
+                { v = v * 10 + (fmt[i] - '0'); i++; any = true; }
+                if (any) num = v;
+            }
+            if (i >= fmt.Length)
+                throw new PrologRuntimeException("domain_error", "format_spec");
             char spec = fmt[i];
             switch (spec)
             {
@@ -307,6 +333,30 @@ public static class IOBuiltins
                     output.Write(sb.ToString());
                     break;
                 }
+                case 'c':
+                {
+                    // ~Nc — emit the argument's character code N times (N = 1).
+                    Cell deref = Resolve(engine, ConsumeArg(args, ref argIdx, name));
+                    if (deref.Tag == Tag.Ref)
+                        throw new PrologRuntimeException("instantiation_error");
+                    if (deref.Tag != Tag.Int)
+                        throw new PrologRuntimeException("type_error", "character_code");
+                    int reps = num ?? 1;
+                    for (int r = 0; r < reps; r++) output.Write((char)deref.AsInt);
+                    break;
+                }
+                case 't':
+                    // Column fill point. Full column alignment (distributing
+                    // fill between ~t marks up to a ~| / ~+ stop) is not yet
+                    // implemented; without a stop ~t is a no-op anyway, which
+                    // covers the common `format('~tword~n')` shape.
+                    break;
+                case '|':
+                case '+':
+                    // Column stop — accepted (no padding emitted yet) so a
+                    // format string that aligns columns runs rather than
+                    // raising a domain_error. Output is unaligned, not wrong.
+                    break;
                 default:
                     // Chunk 131d: an unknown ~X spec is an ISO
                     // domain_error on the format string.

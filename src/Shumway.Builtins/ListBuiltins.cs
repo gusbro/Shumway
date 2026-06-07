@@ -56,10 +56,11 @@ public static class ListBuiltins
     private static bool NthImpl(Engine engine, bool oneBased)
     {
         Cell n = Resolve(engine, engine.GetRegister(0));
-        // Chunk 131c: ISO precedence — var index → instantiation_error;
-        // bound non-int → type_error(integer, _).
+        // A variable index enumerates every position on backtracking — the
+        // SWI/SICStus library behaviour real programs rely on (e.g. iterating a
+        // board with nth0(Row, Board, R)). A bound non-integer is a type error.
         if (n.Tag == Tag.Ref)
-            throw new PrologRuntimeException("instantiation_error");
+            return NthEnumerate(engine, oneBased, engine.BuiltinReturnPc, pos: 0, isResume: false);
         if (n.Tag != Tag.Int)
             throw new PrologRuntimeException("type_error", "integer");
         long target = n.AsInt;
@@ -77,6 +78,34 @@ public static class ListBuiltins
             i++;
         }
         return false;
+    }
+
+    /// <summary>Variable-index <c>nth0</c>/<c>nth1</c>: yield the element at
+    /// position <paramref name="pos"/>, then push a choice point so a backtrack
+    /// retries position <paramref name="pos"/>+1 — mirroring the Prolog
+    /// <c>nth0(I,[E|_],E) ; nth0(I,[_|T],E)</c> enumeration. A failed unification
+    /// at this position (a bound Elem that doesn't match) falls straight through
+    /// into that choice point.</summary>
+    private static bool NthEnumerate(Engine engine, bool oneBased, int returnPc, int pos, bool isResume)
+    {
+        Cell cur = Resolve(engine, engine.GetRegister(1));
+        for (int k = 0; k < pos && cur.Tag == Tag.Lis; k++)
+            cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+        if (cur.Tag != Tag.Lis) return false;          // past the list end
+
+        int headIdx = cur.AsHeapIndex;
+        Func<Engine, int, bool> resume =
+            (e, _) => NthEnumerate(e, oneBased, returnPc, pos + 1, isResume: true);
+        engine.PushBuiltinChoicePoint(resume, arity: 3);
+
+        long idxVal = oneBased ? pos + 1 : pos;
+        if (engine.UnifyRegisterWithCell(0, Cell.Int(idxVal))
+            && engine.UnifyRegisterWithHeapAt(2, headIdx))
+        {
+            if (isResume) engine.ResumeAtReturnPc(returnPc);
+            return true;
+        }
+        return false;                                   // → retries pos + 1
     }
 
     // ---------- reverse/2 ----------

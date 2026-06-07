@@ -47,6 +47,7 @@ internal static class Prelude
         :- public delete/3.
         :- public numlist/3.
         :- public sum_list/2.
+        :- public sumlist/2.
         :- public max_list/2.
         :- public min_list/2.
         :- public max_member/2.
@@ -69,6 +70,7 @@ internal static class Prelude
         :- public retractall/1.
         :- public listing/0.
         :- public listing/1.
+        :- public format/1.
         :- public format_to_atom/3.
         :- public '$call_conj'/3.
         :- public '$call_disj'/3.
@@ -264,6 +266,9 @@ internal static class Prelude
 
         %! sum_list(+List, -Sum) | Lists | Sum is the sum of the numbers in List.
         sum_list(L, S) :- '$sum_list'(L, 0, S).
+
+        %! sumlist(+List, -Sum) | Lists | Sum is the sum of the numbers in List (alias of sum_list/2).
+        sumlist(L, S) :- '$sum_list'(L, 0, S).
 
         %! max_list(+List, -Max) | Lists | Max is the largest number in the non-empty list.
         max_list([H|T], M) :- '$maxlist'(T, H, M).
@@ -515,6 +520,9 @@ internal static class Prelude
             ),
             '$listing_pred_source'(Name, Arity),
             nl.
+
+        %! format(+Format) | Input / output | Like format/2 with no arguments.
+        format(Format) :- format(Format, []).
 
         %! format_to_atom(-Atom, +Format, +Args) | Input / output | Like format/2 but captures the formatted output into an atom.
         format_to_atom(Atom, Format, Args) :-
