@@ -384,9 +384,40 @@ idiom; Blint has zero neck cuts, which would be no-ops). Both are emit problems:
    the detector/emit must distinguish a user predicate from a tail-position
    backtrackable/meta builtin (which also lowers to `Execute`).
 
-The detector is cut-free + proceed-terminal for now (the conservative, provably
-safe subset) — it is wired only into the diagnostic, not any emit path. The
-case-2 emit is the next focused piece, and the cut scoping is its core.
+### Case 2 emit — mid-body cut scoping (chunk 367)
+
+The soundness-critical core is done. A single-clause rule that makes user calls
+and/or cuts is inlined into a metaCp caller (gated `SHUMWAY_INLINE_RULES2`). Three
+pieces:
+
+- **Cut scoping** — the key insight: Shumway's deep cut is self-contained via a
+  Y-slot. `allocate_get_level` captures `engine._b0` into `Y[slot]` at the clause
+  prologue; `cut slot` later cuts to it. So the inlined cut is correct as long as
+  `_b0` holds the right barrier at the GetLevel point. The emit sets
+  `B0 = engine.B` at the inline entry (the same thing a threaded `Call` does before
+  dispatch), so the captured barrier prunes only the inlined body's choice points.
+- **Body-call threading** — the body's non-tail calls thread through the CALLER's
+  forward-resume cursor space. `callSiteCount` is extended by
+  `CountRuleInlineExtraCursors` so the resume-label array (and the O(1) cursor jump
+  table) covers them; the body is emitted via `EmitClauseBody` with the caller's
+  `callSiteIndexCounter`/`resumeLabels`/`cursorBase`. The `Call p` site itself
+  consumes one dead cursor (like the leaf/fact inline).
+- **Persisted path excluded** — the rule inline is restricted to the runtime
+  DynamicMethod path (`_persistPatches is null`); the persisted-bundle emit counts
+  cursors separately and would desync.
+
+**Soundness validated** on discriminating cases: `commit(X):-a(X),!` called from a
+caller commits `a` to its first solution AND a caller choice point created BEFORE
+the call (`member(S,[s1,s2])`) survives the cut — i.e. the cut prunes the body's
+CPs, not the caller's ([[extra-backtracking-not-sound]]). Full Embedding suite
+green with the flag on (2127); Blint lint output byte-identical OFF vs ON.
+
+**Coverage so far is small** (Blint: 2 sites) because the detector still rejects a
+body ending in a tail user-call (`Execute`) — and most cut-bearing rules are
+`p :- a, !, b` (ending in `Execute b`), not `p :- a, !` (ending in proceed). The
+next step is **tail-call un-tailing** (a trailing `Execute` → threaded non-tail
+call at a non-tail inline site, distinguishing a user predicate from a
+tail-position backtrackable/meta builtin), which takes Blint from 2 → ~89 sites.
 
 ### Case 3 — multi-clause rules
 

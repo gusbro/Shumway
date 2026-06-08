@@ -705,22 +705,24 @@ public sealed class IlPredicateCompiler
     /// <summary>Phase 29 case 2 (detector) — a single-clause RULE that can be
     /// inlined into a caller's IL method, generalising
     /// <see cref="IsInlinableLeafRule"/> to a body that also makes USER calls and
-    /// uses an environment frame (permanents). It must be a single clause, must
-    /// NOT cut (no cut / neck_cut / get_level / allocate_get_level — cut scoping
-    /// across an inline boundary is a separate problem), and must not use a meta
-    /// (<c>call</c>/<c>$call</c>) or backtrackable builtin (those need the
-    /// enclosing-call resume machinery). Everything else — allocate/deallocate,
-    /// Y-slots, head/body unify+arith, deterministic <c>CallBuiltin</c>, and user
-    /// <c>Call</c>/<c>Execute</c> — is allowed; the emit (a later chunk) threads
-    /// the body's calls through the caller's forward-resume cursor space and
-    /// un-tails a trailing <c>Execute</c>. Detector only here — sizes the case-2
-    /// opportunity and gates the emit.</summary>
-    internal static bool IsInlinableRule(CompiledPredicate pred)
+    /// uses an environment frame (permanents). Single clause; ends in
+    /// proceed / deallocate_proceed (a trailing tail <c>Execute</c> is rejected —
+    /// un-tailing it at a non-tail inline site, and telling a user predicate from
+    /// a tail-position backtrackable/meta builtin which also lowers to Execute, is
+    /// deferred); no meta (<c>call</c>/<c>$call</c>) or backtrackable builtin.
+    /// Everything else — allocate/deallocate, Y-slots, head/body unify+arith,
+    /// deterministic <c>CallBuiltin</c>, non-tail user <c>Call</c> — is allowed.
+    /// <para><paramref name="allowCut"/>: when false (the diagnostic / sizing use)
+    /// a cut disqualifies; when true (the emit use) the deep-cut family
+    /// (allocate_get_level / get_level / cut) and neck_cut are admitted — the emit
+    /// sets <c>B0 = engine.B</c> at the inline entry so the captured barrier prunes
+    /// only the inlined body's choice points.</para></summary>
+    internal static bool IsInlinableRule(CompiledPredicate pred, bool allowCut = false)
     {
         if (pred.ClauseCount != 1) return false;
         byte[] code = pred.Bytecode;
         int pc = 0;
-        bool endsTerminal = false;   // last op was proceed / deallocate_proceed / tail Execute
+        bool endsTerminal = false;   // last op was proceed / deallocate_proceed
         while (pc < code.Length)
         {
             var op = (Opcode)code[pc];
@@ -729,23 +731,16 @@ public sealed class IlPredicateCompiler
                 case Opcode.Proceed: endsTerminal = true; pc += 1; continue;
                 case Opcode.DeallocateProceed:
                     endsTerminal = true; pc += OpcodeTable.Get((byte)op).Size; continue;
-                // A trailing user tail-call (Execute): the rule's last goal is a
-                // user predicate. Inlining it at a non-tail site requires un-tailing
-                // the Execute into a threaded non-tail call, AND distinguishing a
-                // user predicate from a tail-position backtrackable/meta builtin
-                // (which also lowers to Execute) — both deferred to the emit. Reject
-                // for now so the detector only admits proceed-terminated bodies.
-                case Opcode.Execute: return false;
+                case Opcode.Execute: return false;   // trailing tail call — deferred
                 case Opcode.Meta: pc += 6; continue;
-                // Cut: pruning the caller's choice points across the inline
-                // boundary needs scoped-barrier handling — deferred (this is THE
-                // case-2 prerequisite: only 10/108 Blint single-clause-rule sites
-                // are cut-free, vs 89/108 once a mid-body cut is handled).
                 case Opcode.Cut:
                 case Opcode.NeckCut:
                 case Opcode.GetLevel:
                 case Opcode.AllocateGetLevel:
-                    return false;
+                    if (!allowCut) return false;
+                    endsTerminal = false;
+                    pc += OpcodeTable.Get((byte)op).Size;
+                    continue;
                 case Opcode.CallBuiltin:
                 {
                     var entry = Shumway.Builtins.BuiltinsRegistry.GetById(
@@ -776,6 +771,61 @@ public sealed class IlPredicateCompiler
     /// enables it while it is validated, before the default flips.</summary>
     internal static readonly bool InlineLeafRules =
         System.Environment.GetEnvironmentVariable("SHUMWAY_INLINE_RULES") == "1";
+
+    /// <summary>Phase 29 case 2 — gates inlining a single-clause RULE that makes
+    /// USER calls and/or cuts (<see cref="IsInlinableRule"/> with allowCut) into a
+    /// metaCp caller. Default OFF; <c>SHUMWAY_INLINE_RULES2=1</c> while validated.
+    /// Restricted to the metaCp caller path (where the forward-resume cursor count
+    /// is extended to cover the inlined body's threaded calls).</summary>
+    internal static readonly bool InlineRules2 =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_INLINE_RULES2") == "1";
+
+    /// <summary>The non-tail <c>Call</c> sites in <paramref name="predicate"/> whose
+    /// callee is a case-2 inlinable single-clause rule (has a body call and/or a
+    /// cut — a pure leaf rule stays on the case-1 path). Maps the call-site
+    /// <c>pc</c> to the callee. Empty unless <see cref="InlineRules2"/>.</summary>
+    private static Dictionary<int, CompiledPredicate> ComputeRuleInlineSites(
+        CompiledPredicate predicate, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+    {
+        var sites = new Dictionary<int, CompiledPredicate>();
+        // Runtime DynamicMethod path only: the persisted-bundle emit computes its
+        // own (base) callSiteCount and would desync against the extended resume
+        // cursors. (Restriction lifted when the persisted path counts them too.)
+        if (!InlineRules2 || calleeMap is null || _persistPatches is not null) return sites;
+        byte[] code = predicate.Bytecode;
+        int pc = 0;
+        while (pc < code.Length)
+        {
+            if ((Opcode)code[pc] == Opcode.Call)
+            {
+                int fid = FindCallSiteFunctorId(predicate.CallSites, pc);
+                if (fid >= 0 && calleeMap.TryGetValue(fid, out var callee)
+                    && IsInlinableRule(callee, allowCut: true)
+                    && !IsInlinableLeafRule(callee))   // pure leaf rules → case 1
+                {
+                    sites[pc] = callee;
+                    if (System.Environment.GetEnvironmentVariable("SHUMWAY_IL_SHAPE") == "1")
+                        System.Console.Error.WriteLine(
+                            $"[rule-inline] caller fid={predicate.FunctorId} callee fid={callee.FunctorId} "
+                            + $"bodycalls={CountNonTailCallOpcodes(callee.Bytecode)}");
+                }
+            }
+            pc += (Opcode)code[pc] == Opcode.Meta ? 6 : OpcodeTable.Get(code[pc]).Size;
+        }
+        return sites;
+    }
+
+    /// <summary>Extra forward-resume cursors the inlined rule bodies need — each
+    /// body's own non-tail <c>Call</c> sites thread through the CALLER's cursor
+    /// space, so the caller's resume-label array must be sized to include them.</summary>
+    private static int CountRuleInlineExtraCursors(
+        IReadOnlyDictionary<int, CompiledPredicate> sites)
+    {
+        int extra = 0;
+        foreach (var callee in sites.Values)
+            extra += CountNonTailCallOpcodes(callee.Bytecode);
+        return extra;
+    }
 
     /// <summary>A single-clause RULE whose body can be inlined FLAT into a caller
     /// (Phase 29 case 1) — like <see cref="IsLeafPredicate"/> but allowing a body
@@ -1006,7 +1056,11 @@ public sealed class IlPredicateCompiler
     private PredicateDelegate CompileSingleClause(CompiledPredicate predicate,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
-        int callSiteCount = CountNonTailCallOpcodes(predicate.Bytecode);
+        // Case-2 rule inline (chunk 367): each inlined rule body's own non-tail
+        // calls thread through THIS caller's forward-resume cursor space, so the
+        // resume-label array must be sized to include them.
+        int callSiteCount = CountNonTailCallOpcodes(predicate.Bytecode)
+            + CountRuleInlineExtraCursors(ComputeRuleInlineSites(predicate, calleeMap));
         if (callSiteCount == 0)
         {
             // No meta-CP needed: pure head match + tail call (or no body).
@@ -1539,6 +1593,10 @@ public sealed class IlPredicateCompiler
         // resume cursors (1..callSiteCount), i.e. from callSiteCount+1.
         var inlineSites = ComputeInlineSites(emit, predicate, calleeMap,
             firstCursor: callSiteCount + 1, out _);
+        // Case-2 rule inline (chunk 367): the bodies of these callees are emitted
+        // inline; their non-tail calls thread through this caller's resume cursors
+        // (already counted into callSiteCount → resumeLabels).
+        var ruleInlineSites = ComputeRuleInlineSites(predicate, calleeMap);
 
         _emitOwnerFid = predicate.FunctorId;
         // Cursor dispatch: 0 → start; N → resume_N; baseCursor+j → inlined
@@ -1579,7 +1637,7 @@ public sealed class IlPredicateCompiler
             emitSelfDelegate: emitSelf,
             calleeMap: calleeMap,
             selfFunctorId: predicate.FunctorId, selfTailLabel: startLabel,
-            inlineSites: inlineSites);
+            inlineSites: inlineSites, ruleInlineSites: ruleInlineSites);
 
         emit.MarkLabel(failLabel);
         emit.LoadConstant(false);
@@ -1766,7 +1824,8 @@ public sealed class IlPredicateCompiler
         int selfFunctorId = -1,
         Sigil.Label? selfTailLabel = null,
         bool resetCursorBeforeSelfTail = false,
-        IReadOnlyDictionary<int, InlineSite>? inlineSites = null)
+        IReadOnlyDictionary<int, InlineSite>? inlineSites = null,
+        IReadOnlyDictionary<int, CompiledPredicate>? ruleInlineSites = null)
     {
         int pc = start;
         while (pc < end)
@@ -2571,6 +2630,41 @@ public sealed class IlPredicateCompiler
                         int inlSiteIdx = callSiteIndexCounter();
                         emit.MarkLabel(resumeLabels[inlSiteIdx - 1]);
                     }
+                    pc += OpcodeTable.Get(op).Size;
+                    continue;
+                }
+
+                // Phase 29 case 2 (chunk 367): inline a single-clause rule that
+                // makes user calls and/or cuts. Set B0 = engine.B at the inline
+                // entry so the body's deep cut (allocate_get_level / get_level)
+                // captures THIS barrier — the inlined cut then prunes only the
+                // body's own choice points, not the caller's. The body is emitted
+                // with the CALLER's threading context, so its non-tail calls take
+                // forward-resume cursors in the caller's space (already counted
+                // into callSiteCount); its proceed/deallocate_proceed is suppressed
+                // so control falls through to the post-call continuation.
+                if (ruleInlineSites is not null
+                    && ruleInlineSites.TryGetValue(pc, out var ruleCallee)
+                    && callSiteIndexCounter is not null && resumeLabels is not null)
+                {
+                    emit.LoadArgument(0);                    // engine.SetB0(engine.B)
+                    emit.LoadArgument(0);
+                    emit.Call(EngineBGetter);
+                    emit.Call(EngineSetB0Method);
+                    EmitClauseBody(emit, ruleCallee.Bytecode, 0, ruleCallee.Bytecode.Length,
+                        failLabel, ruleCallee.CallSites,
+                        callSiteIndexCounter: callSiteIndexCounter,
+                        resumeLabels: resumeLabels,
+                        emitSelfDelegate: emitSelfDelegate,
+                        calleeMap: calleeMap,
+                        suppressProceedReturn: true,
+                        cursorBase: cursorBase);
+                    // Consume + mark the dead resume cursor reserved for THIS
+                    // Call site (no marker is ever set for it — the rule is
+                    // inlined — but the cursor switch has a slot, so the label
+                    // must be marked to keep the IL well-formed).
+                    int ruleSiteIdx = callSiteIndexCounter();
+                    emit.MarkLabel(resumeLabels[ruleSiteIdx - 1]);
                     pc += OpcodeTable.Get(op).Size;
                     continue;
                 }
