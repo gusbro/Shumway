@@ -58,8 +58,15 @@ Two enabling facts make inlining expressible in this model:
   realistic inlining.
 
 Precedent: chunk 69 already inlines **leaf** callees (single-clause,
-head-match-only, e.g. a fact with one clause) at **tail** (`Execute`) sites —
-`EmitClauseBody` emits the callee's body inline. This design generalises that.
+head-match-only, e.g. a fact with one clause) at **BOTH tail (`Execute`,
+EmitClauseBody ~line 2129) and non-tail (`Call`, ~line 2009)** sites —
+`EmitClauseBody(callee, suppressProceedReturn: true)` emits the callee's
+head-match in place; a single clause has no choice point, so there is nothing to
+merge. **So the deterministic single-clause case is DONE.** This design
+generalises it to the part that is left and that actually matters for crypt: the
+**multi-clause** case (odd/even/lefteven are 5-/4-clause facts), where the
+callee's clause alternatives create choice points that must be merged into the
+caller's cursor space. That merge is the whole of the remaining work.
 
 ## The hard parts
 
@@ -123,28 +130,71 @@ Eligibility for inlining `p` at a `Call p/n` site in `q`:
   duplicating `p` into many callers). Heuristic: inline if `p` has ≤ K call
   sites OR ≤ M clauses.
 
-Emit (replacing the `Call p/n` trampoline at the site):
-1. Allocate `q`-cursors `c_1 … c_{N-1}` for `p`'s clause-2..N alternatives, and a
-   continuation cursor / label `c_cont` for "p succeeded, run q's next goal".
-2. Emit `p`'s clause-1 entry: push an IL CP `(q's delegate, c_2)` (the next
-   alternative) if N>1, unify the head args against the argument registers, on
-   success `br c_cont`'s body, on failure `br` to the fail handler (which
-   backtracks — popping the CP we just pushed re-enters at `c_2`).
-3. At cursor `c_k` (k = 2..N): push CP `(q, c_{k+1})` if not last, unify clause
-   k's head, on success `br c_cont`'s body.
-4. `c_cont`: the caller's continuation — the IL for `q`'s goal after `p(X)`.
-   (Already emitted by EmitClauseBody as the post-call code; the inline just
-   reaches it by fall-through instead of via a resume marker.)
-5. Reuse `EnginePushIlChoicePoint` and the head-unify opcode emitters that
-   `EmitIndexedAtomBody` / `EmitTryMeElseChainBody` already use — Phase 1 is
-   largely "emit the callee's chain body, but with the caller's delegate + the
-   caller's cursor offsets, branching to the caller's continuation on match."
+### Concrete emit — a two-pass addition to the caller's compile
 
-Net effect: `odd(A)` in crypt becomes, inside `top`'s IL method, a small chain
-that pushes a CP and unifies — no marker, no `IlByFunctorId`, no delegate invoke.
-Backtracking re-enters `top`'s delegate at the alternative cursor (still one
-dispatch-loop hop per backtrack, but the forward path and the inter-predicate
-call are gone).
+The caller `q`'s delegate-top cursor switch is emitted *before* its body, but the
+inlined callees (and how many alternative cursors they need) are discovered
+*during* body emission. So inlining needs a pre-scan to fix the cursor layout
+first. Concretely, in `q`'s compile (`EmitSingleClauseMetaCpBody` /
+`EmitTryMeElseChainBody` / `EmitIndexedDispatchBody`):
+
+**Pass 0 — pre-scan + cursor allocation (new).** Walk `q`'s body bytecode; for
+every `Call p/n` / tail `Execute p/n` where `p` is an eligible multi-clause fact
+(`IsFactPredicate(p)`, `p.ClauseCount ≥ 2`, local, cursor budget ok), record
+`(siteOffset, p, K = p.ClauseCount)`. Append `K-1` "inlined-alternative" cursors
+to `q`'s cursor space (after `q`'s own clause cursors and its call-site-resume
+cursors), giving each site a `baseCursor`. Build `siteOffset → (baseCursor, K,
+clauseRanges)`. Check `total cursors < ResumeMarkerCursorStride (4096)`.
+
+**Pass 1 — cursor switch (extend existing).** For each inlined site, add to the
+delegate-top cursor dispatch: `if (cursor == baseCursor + j) br
+inlinedClauseLabel[site][j]` for `j = 0 … K-2` (the clause-2..K re-entry points).
+
+**Pass 2 — body emit (at the Call/Execute site, replacing the trampoline).**
+- Clause 1: if `K > 1`, `engine.PushIlChoicePoint(q-delegate, baseCursor+0,
+  q.arity)` (the next-alternative CP — points back at *q*, cursor `baseCursor+0`).
+  Then emit `p`'s clause-1 head-match against the argument registers (the `put_*`
+  before the call already set them). On match → fall through to the continuation
+  (the next opcode in `q`'s body). On head-match failure the `get_*`/`unify_*`
+  emitters already branch to `failLabel`; backtracking pops the CP we just
+  pushed → re-enters `q`'s delegate at `baseCursor+0` → clause 2.
+- At `inlinedClauseLabel[site][j]` (cursor `baseCursor+j`, clause `j+2`): if not
+  the last clause, `PushIlChoicePoint(q, baseCursor+j+1, q.arity)`; emit clause
+  `j+2`'s head-match; on match → `br continuationLabel[site]`. These bodies are
+  emitted after `q`'s main body (like the chain emit lays out clause bodies),
+  reached only via the cursor switch.
+- `continuationLabel[site]` = the post-call code (already where clause 1 falls
+  through). Non-tail: a label right after the site. Tail `Execute`: the
+  continuation is proceed/return (tail semantics) — `suppressProceedReturn`
+  stays false so the inlined fact's match proceeds like the tail call did.
+
+The argument registers seen by the clause-2..K head-matches are the *original*
+call args: the CP save/restore (`PushIlChoicePoint` snapshots arity registers,
+backtrack restores them) handles this exactly as a normal multi-clause
+predicate's clause backtracking does. No new arg mechanism.
+
+Net effect: `odd(A)` inside `top`'s IL method becomes a small in-method chain
+(push CP, unify) — no resume marker, no `IlByFunctorId` index, no delegate
+invoke. Backtracking re-enters `top`'s delegate at the alternative cursor (still
+one dispatch-loop hop per backtrack — the loop re-invokes the delegate at the
+cursor — but the *forward* call and its marker/index/invoke are gone, and the
+backtrack stays within `top`'s delegate rather than bouncing to `odd`'s).
+
+Reuses `EnginePushIlChoicePoint` and the head-unify opcode emitters
+`EmitIndexedAtomBody` / `EmitTryMeElseChainBody` already use; the genuinely new
+machinery is Pass 0 (cursor pre-allocation) and threading the inlined-cursor
+labels into each caller-shape's cursor switch (Pass 1).
+
+### Status
+
+Single-clause inline: done (chunk 69). Multi-clause inline (this): designed to
+implementation-readiness above, NOT yet built — it is the cursor-merging emit,
+an intricate change to the core cursor/CP layout across three caller-shape
+emitters, warranting a focused, heavily-tested implementation pass (the Embedding
+suite's backtracking coverage is the safety net) rather than a rushed one.
+Eligibility helper `IsFactPredicate` (generalise `IsLeafPredicate` to N
+head-match-only clauses + the switch/try/retry/trust dispatch skeleton) is the
+small first code piece.
 
 ## Risks / open questions
 
