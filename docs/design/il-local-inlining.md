@@ -187,14 +187,38 @@ labels into each caller-shape's cursor switch (Pass 1).
 
 ### Status
 
-Single-clause inline: done (chunk 69). Multi-clause inline (this): designed to
-implementation-readiness above, NOT yet built — it is the cursor-merging emit,
-an intricate change to the core cursor/CP layout across three caller-shape
-emitters, warranting a focused, heavily-tested implementation pass (the Embedding
-suite's backtracking coverage is the safety net) rather than a rushed one.
-Eligibility helper `IsFactPredicate` (generalise `IsLeafPredicate` to N
-head-match-only clauses + the switch/try/retry/trust dispatch skeleton) is the
-small first code piece.
+- Single-clause inline: done (chunk 69).
+- `IsFactPredicate` detector: done (chunk 358), tested.
+- **Multi-clause inline MECHANISM: BUILT + validated, gated `SHUMWAY_INLINE_FACTS=1`
+  (chunk 359).** The cursor-merging emit for the metaCp caller shape
+  (`ComputeInlineSites` pre-scan + alternative cursors in the caller's switch +
+  `EmitInlinedFact` chain with CPs pointing at the caller's delegate). **Correct:**
+  the full Embedding suite (2099 tests, heavy backtracking/cut/CP coverage) passes
+  with the flag ON; hand cases (`gen :- d(X), X>1`, nested `d(X), d(Y), X<Y`) give
+  the right answers. The hard part — multi-clause backtracking through an inlined
+  fact, merged into the caller's cursor space — works.
+
+- **BUT it does NOT yet WIN — chunk-359 emits a LINEAR try-chain over all K
+  clauses, dropping the fact's first-argument indexing.** For a call with a BOUND
+  arg (a *test*, e.g. crypt's `odd(G)` where G came from `mult`), the trampoline
+  used `switch_on_integer` to jump straight to the matching clause
+  (deterministic, no CP); the linear inline instead tries every clause with
+  CP push/pop. crypt is a mix of *generate* (unbound → try-all anyway, inline
+  neutral) and *test* (bound → indexing matters) calls, and the test calls
+  dominate the backtracking, so flag-ON crypt is ~12% SLOWER, not faster.
+
+### Phase 1b — preserve indexing (the win)
+
+To actually beat the trampoline, the inline must reproduce the fact's INDEXED
+dispatch, not a linear chain: emit the fact's own `switch_on_*` decision inline
+(reusing the chunk-348 inline-index-resolve / `IlIndexGraph` machinery) so a
+bound arg jumps straight to its clause (and, when it selects a single clause,
+pushes no CP — deterministic, exactly like the indexed delegate). Only the
+genuinely non-deterministic case (unbound arg → multiple candidate clauses)
+keeps the CP chain. This is the refinement that turns the validated mechanism
+into a crypt win; it builds directly on chunk 359's cursor-merging + the existing
+`IlIndexGraph`. (caller shapes beyond metaCp — chain / indexed — also still fall
+back to the trampoline; extend after 1b proves the win.)
 
 ## Risks / open questions
 

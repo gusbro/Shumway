@@ -1029,6 +1029,129 @@ public sealed class IlPredicateCompiler
         return del;
     }
 
+    // ============================================================================
+    // Chunk 359 — Tier-1 IL local-predicate inlining, Phase 1 (multi-clause facts)
+    // (docs/design/il-local-inlining.md). Gated OFF by default behind
+    // SHUMWAY_INLINE_FACTS=1 — a backtracking/cursor bug would give wrong
+    // answers, so the default path is untouched while this is validated.
+    // ============================================================================
+
+    internal static readonly bool InlineFacts =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_INLINE_FACTS") == "1";
+
+    /// <summary>A non-tail <c>Call p/n</c> site whose callee <c>p</c> is an
+    /// eligible multi-clause fact, to be inlined into the caller's IL method.
+    /// The fact's clause alternatives 2..K get cursors <see cref="BaseCursor"/>
+    /// .. in the CALLER's cursor space; on backtrack the caller's delegate is
+    /// re-entered at one of <see cref="AltLabels"/>; a clause match branches to
+    /// <see cref="Continuation"/> (the caller's post-call code).</summary>
+    private sealed class InlineSite
+    {
+        public required CompiledPredicate Fact { get; init; }
+        public required IReadOnlyList<(int Start, int End)> ClauseRanges { get; init; }
+        public required int BaseCursor { get; init; }
+        public required Sigil.Label[] AltLabels { get; init; }      // length K-1, clauses 2..K
+        public required Sigil.Label Continuation { get; init; }
+    }
+
+    /// <summary>Pre-scan a caller's body for inlinable multi-clause-fact Call
+    /// sites, allocating each <c>K-1</c> alternative cursors starting at
+    /// <paramref name="firstCursor"/> (must clear the call-site resume cursors)
+    /// and pre-defining their labels. Returns the per-call-offset map and, via
+    /// <paramref name="cursorsUsed"/>, how many cursors were taken. Empty when
+    /// inlining is off / the budget would overflow.</summary>
+    private static Dictionary<int, InlineSite> ComputeInlineSites(
+        Sigil.Emit<PredicateDelegate> emit, CompiledPredicate predicate,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
+        int firstCursor, out int cursorsUsed)
+    {
+        cursorsUsed = 0;
+        var sites = new Dictionary<int, InlineSite>();
+        if (!InlineFacts || calleeMap is null) return sites;
+        byte[] code = predicate.Bytecode;
+        int cursor = firstCursor;
+        int pc = 0;
+        while (pc < code.Length)
+        {
+            var op = (Opcode)code[pc];
+            if (op == Opcode.Call)
+            {
+                int fid = FindCallSiteFunctorId(predicate.CallSites, pc);
+                if (fid >= 0 && calleeMap.TryGetValue(fid, out var callee)
+                    && callee.ClauseCount >= 2 && IsFactPredicate(callee)
+                    && TryGetFactClauseRanges(callee, out var ranges)
+                    && ranges.Count == callee.ClauseCount)
+                {
+                    int k = ranges.Count;
+                    if (cursor + (k - 1) >= Engine.ResumeMarkerCursorStride) break; // budget
+                    var alt = new Sigil.Label[k - 1];
+                    for (int j = 0; j < k - 1; j++)
+                        alt[j] = emit.DefineLabel($"inl_{pc}_alt{j}");
+                    sites[pc] = new InlineSite
+                    {
+                        Fact = callee, ClauseRanges = ranges, BaseCursor = cursor,
+                        AltLabels = alt, Continuation = emit.DefineLabel($"inl_{pc}_cont"),
+                    };
+                    cursor += k - 1;
+                }
+            }
+            pc += op == Opcode.Meta ? 6 : OpcodeTable.Get((byte)op).Size;
+        }
+        cursorsUsed = cursor - firstCursor;
+        return sites;
+    }
+
+    /// <summary>A fact's per-clause head-match byte ranges (the
+    /// <see cref="TryDescribeSwitchedChain"/> / try-me-else describers give them
+    /// for the multi-clause dispatch shapes a compiled fact takes).</summary>
+    private static bool TryGetFactClauseRanges(
+        CompiledPredicate fact, out IReadOnlyList<(int Start, int End)> ranges)
+    {
+        if (TryDescribeSwitchedChain(fact, calleeMap: null, out var sc) && sc is not null)
+        { ranges = sc.Clauses; return true; }
+        if (TryDescribeTryMeElseChain(fact, calleeMap: null, out var tc) && tc is not null)
+        { ranges = tc.Clauses; return true; }
+        ranges = System.Array.Empty<(int, int)>();
+        return false;
+    }
+
+    /// <summary>Emits an inlined multi-clause fact's clause chain at a non-tail
+    /// call site (chunk 359). For each clause c (0..K-1): if not the last, push
+    /// an IL CP `(this delegate, BaseCursor+c, fact arity)` — its continuation
+    /// is the caller's delegate re-entered at the alternative cursor, which the
+    /// caller's cursor switch routes to <c>AltLabels[c]</c>; then emit clause c's
+    /// head match against the call args (already in the argument registers) with
+    /// the proceed suppressed; on match branch to the shared continuation (the
+    /// last clause falls through). A head-match failure branches to
+    /// <paramref name="failLabel"/> → returns false → the engine backtracks,
+    /// popping the CP and restoring the saved argument registers, and re-enters
+    /// at the next clause's alternative cursor.</summary>
+    private static void EmitInlinedFact(
+        Sigil.Emit<PredicateDelegate> emit, InlineSite site, Sigil.Label failLabel,
+        SelfDelegateEmitter emitSelf, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+    {
+        int factArity = site.Fact.Arity;
+        byte[] fcode = site.Fact.Bytecode;
+        int k = site.ClauseRanges.Count;
+        for (int c = 0; c < k; c++)
+        {
+            if (c > 0) emit.MarkLabel(site.AltLabels[c - 1]);   // backtrack re-entry for clause c+1
+            if (c < k - 1)
+            {
+                emit.LoadArgument(0);                      // engine
+                emitSelf(emit);                            // → this PredicateDelegate
+                emit.LoadConstant(site.BaseCursor + c);    // alternative cursor (next clause)
+                emit.LoadConstant(factArity);              // save the fact's argument registers
+                emit.Call(EnginePushIlCpMethod);
+            }
+            EmitClauseBody(emit, fcode, site.ClauseRanges[c].Start, site.ClauseRanges[c].End,
+                failLabel, Array.Empty<CallSite>(),
+                calleeMap: calleeMap, suppressProceedReturn: true);
+            if (c < k - 1) emit.Branch(site.Continuation);
+        }
+        emit.MarkLabel(site.Continuation);
+    }
+
     /// <summary>Shared meta-CP body emitter — used by both the
     /// DynamicMethod path (above) and the persisted path. The
     /// self-reference for re-pushing the meta-CP on each retry routes
@@ -1053,14 +1176,27 @@ public sealed class IlPredicateCompiler
         for (int i = 0; i < callSiteCount; i++)
             resumeLabels[i] = emit.DefineLabel($"resume_{i + 1}");
 
+        // Chunk 359: inlined multi-clause facts take cursors after the call-site
+        // resume cursors (1..callSiteCount), i.e. from callSiteCount+1.
+        var inlineSites = ComputeInlineSites(emit, predicate, calleeMap,
+            firstCursor: callSiteCount + 1, out _);
+
         _emitOwnerFid = predicate.FunctorId;
-        // Cursor dispatch: 0 → start; N → resume_N.
+        // Cursor dispatch: 0 → start; N → resume_N; baseCursor+j → inlined
+        // fact clause-(j+2) re-entry (the backtrack alternative).
         for (int i = 0; i < callSiteCount; i++)
         {
             emit.LoadArgument(1);
             emit.LoadConstant(i + 1);
             emit.BranchIfEqual(resumeLabels[i]);
         }
+        foreach (var site in inlineSites.Values)
+            for (int j = 0; j < site.AltLabels.Length; j++)
+            {
+                emit.LoadArgument(1);
+                emit.LoadConstant(site.BaseCursor + j);
+                emit.BranchIfEqual(site.AltLabels[j]);
+            }
         emit.Branch(startLabel);
 
         emit.MarkLabel(startLabel);
@@ -1074,7 +1210,8 @@ public sealed class IlPredicateCompiler
             resumeLabels: resumeLabels,
             emitSelfDelegate: emitSelf,
             calleeMap: calleeMap,
-            selfFunctorId: predicate.FunctorId, selfTailLabel: startLabel);
+            selfFunctorId: predicate.FunctorId, selfTailLabel: startLabel,
+            inlineSites: inlineSites);
 
         emit.MarkLabel(failLabel);
         emit.LoadConstant(false);
@@ -1260,7 +1397,8 @@ public sealed class IlPredicateCompiler
         int cursorBase = 1,
         int selfFunctorId = -1,
         Sigil.Label? selfTailLabel = null,
-        bool resetCursorBeforeSelfTail = false)
+        bool resetCursorBeforeSelfTail = false,
+        IReadOnlyDictionary<int, InlineSite>? inlineSites = null)
     {
         int pc = start;
         while (pc < end)
@@ -2046,6 +2184,28 @@ public sealed class IlPredicateCompiler
                 if (siteFunctorId < 0)
                     throw new InvalidOperationException(
                         $"Call opcode at pc={pc} has no matching call site in the predicate's metadata.");
+
+                // Chunk 359 — multi-clause fact inline (gated SHUMWAY_INLINE_FACTS).
+                // Emit the callee fact's clause chain in-method instead of the
+                // trampoline: each clause pushes a CP (this delegate @ the
+                // alternative cursor) then head-matches the call args; a match
+                // branches to the continuation (the post-call code), a head-match
+                // failure returns false → backtrack pops the CP → re-enters this
+                // delegate at the alternative cursor → next clause.
+                if (inlineSites is not null && inlineSites.TryGetValue(pc, out var inl))
+                {
+                    EmitInlinedFact(emit, inl, failLabel, emitSelfDelegate!, calleeMap);
+                    if (callSiteIndexCounter is not null && resumeLabels is not null)
+                    {
+                        // The inlined call has no trampoline resume; mark its
+                        // (dead) resume label so the cursor switch's branch to it
+                        // is well-formed, exactly as the chunk-69 leaf path does.
+                        int inlSiteIdx = callSiteIndexCounter();
+                        emit.MarkLabel(resumeLabels[inlSiteIdx - 1]);
+                    }
+                    pc += OpcodeTable.Get(op).Size;
+                    continue;
+                }
 
                 // Inlining (chunk 69): if the callee is a small static
                 // leaf, emit its body opcodes inline instead of routing
