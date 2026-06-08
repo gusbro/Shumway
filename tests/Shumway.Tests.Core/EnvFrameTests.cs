@@ -151,12 +151,31 @@ public class EnvFrameTests
         engine.SetCp(42);
         engine.Allocate(2);
 
-        int stackTopBefore = engine.StackTop;
         engine.Deallocate();
 
         Assert.Equal(-1, engine.E);
         Assert.Equal(42, engine.Cp);
-        // Per the WAM convention, _stackTop is NOT reduced.
+        // No choice point protects the frame (_b = -1 < the frame at 0), so
+        // deallocate reclaims its space — _stackTop drops back to the frame's
+        // start (standard WAM environment trimming on deallocate).
+        Assert.Equal(0, engine.StackTop);
+    }
+
+    [Fact]
+    public void Deallocate_KeepsFrame_WhenChoicePointProtectsIt()
+    {
+        // A choice point opened during the clause body sits above the frame, so
+        // the frame must survive deallocate — a backtrack into the CP could
+        // reactivate it. Reclaiming would corrupt the CP's saved slots.
+        var engine = new Engine();
+        engine.SetCp(42);
+        engine.Allocate(2);                 // frame at 0
+        engine.PushChoicePoint(0, 100);     // CP above the frame: _b >= 0 frame
+        int stackTopBefore = engine.StackTop;
+
+        engine.Deallocate();
+
+        // _b (the CP) is above the frame, so the reclamation is a no-op.
         Assert.Equal(stackTopBefore, engine.StackTop);
     }
 

@@ -462,17 +462,30 @@ public sealed partial class Engine
     }
 
     /// <summary>
-    /// Restores <see cref="Cp"/> and <see cref="E"/> from the current frame. Does NOT
-    /// reduce <see cref="StackTop"/> — the WAM convention is to leave the popped frame
-    /// in place until a subsequent op (e.g. <c>trust_me</c> or the equivalent reclamation
-    /// pass) determines it is safe to shrink the stack.
+    /// Restores <see cref="Cp"/> and <see cref="E"/> from the current frame, and
+    /// reclaims the popped frame's stack space when no choice point protects it
+    /// (the standard WAM environment trimming on deallocate). Without the
+    /// reclamation a deterministic tail-recursive loop — which runs
+    /// <c>deallocate; execute</c> every iteration and never backtracks — would
+    /// leave each frame in place and grow the stack by one frame per iteration,
+    /// forcing repeated stack-array reallocation (visible as a large
+    /// <c>Buffer.Memmove</c> share in a profile).
     /// </summary>
     public void Deallocate()
     {
         if (_e < 0)
             throw new InvalidOperationException("Deallocate called without an active environment frame.");
-        _cp = (int)_stack[_e + EnvCpOffset].Data;
-        _e = (int)_stack[_e + EnvCeOffset].Data;
+        int oldE = _e;
+        _cp = (int)_stack[oldE + EnvCpOffset].Data;
+        _e = (int)_stack[oldE + EnvCeOffset].Data;
+        // _b is the most recent choice point's stack index. _b < oldE means
+        // every live CP sits below the just-popped frame, so nothing at or above
+        // oldE is live (the frame was the topmost region) and its space is free.
+        // When a CP is at or above oldE (the clause body left an open choice
+        // point) the frame must stay — a backtrack could reactivate it — so the
+        // reclamation degrades to the original no-op. Only ever lowers _stackTop.
+        if (_b < oldE && _stackTop > oldE)
+            _stackTop = oldE;
     }
 
     /// <summary>Reads the <c>Y(k+1)</c> slot of the current environment frame.</summary>
