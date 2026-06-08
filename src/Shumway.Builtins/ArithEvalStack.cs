@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using Shumway.Core;
 
 namespace Shumway.Builtins;
@@ -210,7 +211,25 @@ public static class ArithEvalStack
     // 4 unify-Y, 5 set-reg, 6 set-Y.
 
     /// <summary><c>T is A op B</c> over two simple leaf operands.</summary>
+    // Chunk 354: integer fast lane is try/catch-free and AggressiveInlining, so
+    // the JIT inlines it into the Tier-1 IL delegate. Both operands read as
+    // inline ints and the op staying in 60-bit long arithmetic cannot raise a
+    // Prolog error, so the try/catch (which blocks inlining of the whole method
+    // and limits optimisation) moves to the cold slow path. Integer-heavy code
+    // (cx, crypt) never leaves the fast lane.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static bool FusedBin(Engine engine, int op,
+        int aKind, int aVal, int bKind, int bVal, int tKind, int tVal)
+    {
+        if (TryReadInt(engine, aKind, aVal, out long ai)
+            && TryReadInt(engine, bKind, bVal, out long bi)
+            && TryFastBin(op, ai, bi, out long r))
+            return Deliver(engine, tKind, tVal, Cell.Int(r));
+        return FusedBinSlow(engine, op, aKind, aVal, bKind, bVal, tKind, tVal);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool FusedBinSlow(Engine engine, int op,
         int aKind, int aVal, int bKind, int bVal, int tKind, int tVal)
     {
         Cell result;
@@ -229,7 +248,18 @@ public static class ArithEvalStack
     }
 
     /// <summary><c>A cmp B</c> over two simple leaf operands.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static bool FusedCmp(Engine engine, int rel,
+        int aKind, int aVal, int bKind, int bVal)
+    {
+        if (TryReadInt(engine, aKind, aVal, out long ai)
+            && TryReadInt(engine, bKind, bVal, out long bi))
+            return FastCmp(rel, ai, bi);
+        return FusedCmpSlow(engine, rel, aKind, aVal, bKind, bVal);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool FusedCmpSlow(Engine engine, int rel,
         int aKind, int aVal, int bKind, int bVal)
     {
         try
@@ -241,6 +271,23 @@ public static class ArithEvalStack
                 aInt ? new Number(ai) : an, bInt ? new Number(bi) : bn);
         }
         catch (PrologRuntimeException re) { re.StampBuiltin("is", 2); throw; }
+    }
+
+    // Non-throwing inline-int read for the fast lane: returns true + the long
+    // only for an int literal (kind 0) or a register/Y slot already holding an
+    // Int cell. Anything else (float, bigint, a compound to evaluate, an unbound
+    // var) returns false, so the caller falls to the slow path which runs the
+    // full ReadOperand (whose Evaluate raises instantiation_error / type_error)
+    // under the try/catch.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool TryReadInt(Engine engine, int kind, int val, out long iVal)
+    {
+        if (kind == 0) { iVal = val; return true; }
+        Cell c = kind == 4 ? engine.GetY(val) : engine.GetRegister(val);
+        if (c.Tag == Tag.Ref) c = engine.GetHeap(engine.Deref(c.AsHeapIndex));
+        if (c.Tag == Tag.Int) { iVal = c.AsInt; return true; }
+        iVal = 0;
+        return false;
     }
 
     // Reads a leaf operand. Returns true (int lane, iVal valid) for an integer
@@ -259,6 +306,7 @@ public static class ArithEvalStack
         return false;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool Deliver(Engine engine, int tKind, int tVal, Cell result)
     {
         switch (tKind)
@@ -288,6 +336,7 @@ public static class ArithEvalStack
     /// Number path) for a non-fast op, a zero divisor, or a result that
     /// overflows the 60-bit inline range (the Number path then promotes to
     /// BigInteger or raises the error, identically to <c>is/2</c>).</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool TryFastBin(int op, long a, long b, out long r)
     {
         switch ((ArithmeticEvaluator.BinOp)op)
@@ -295,7 +344,12 @@ public static class ArithEvalStack
             case ArithmeticEvaluator.BinOp.Add: r = a + b; return Fits60(r);
             case ArithmeticEvaluator.BinOp.Sub: r = a - b; return Fits60(r);
             case ArithmeticEvaluator.BinOp.Mul:
-                try { r = checked(a * b); } catch (OverflowException) { r = 0; return false; }
+                // Non-throwing 64-bit overflow check (a try/catch here would
+                // block inlining of the fast lane): the inputs are 60-bit, so
+                // a != 0 && (a*b)/a != b iff the product overflowed. Fits60 then
+                // filters the 60-bit→BigInteger escalation. Both → slow path.
+                r = unchecked(a * b);
+                if (a != 0 && r / a != b) { r = 0; return false; }
                 return Fits60(r);
             case ArithmeticEvaluator.BinOp.IntDiv:
                 if (b == 0) { r = 0; return false; }
@@ -325,6 +379,7 @@ public static class ArithEvalStack
         }
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool FastCmp(int rel, long a, long b) => (ArithmeticEvaluator.RelOp)rel switch
     {
         ArithmeticEvaluator.RelOp.Eq => a == b,
