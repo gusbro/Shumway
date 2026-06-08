@@ -94,6 +94,14 @@ public sealed partial class Engine
 
     public void MaybeCollectHeap()
     {
+        // Cooperative cancellation: checked at EVERY safe point (not only at the
+        // GC watermark). Lazy Y-slot allocation made many loops heap-light, so a
+        // watermark-only check left them uncancellable — and the watermark may
+        // now never be crossed. `_cancelRequested` is volatile and the branch is
+        // predicted not-taken, so the steady-state cost is ~one read per safe
+        // point.
+        if (_cancelRequested)
+            throw new OperationCanceledException("Prolog query cancelled at a safe point.");
         if (_gcOnlyAt >= 0)
         {
             _gcSafePointCount++;
@@ -113,15 +121,7 @@ public sealed partial class Engine
             return;
         }
         if (_gcThreshold <= 0 || _heapTop < _gcThreshold) return;
-        // Watermark crossed (~once per GcThreshold of heap allocation) — an
-        // infrequent, already-paid-for point to honour a cancellation request,
-        // so the common below-watermark path adds ZERO cancellation overhead.
-        // Limitation: a query that allocates no heap (e.g. `repeat, fail`, or
-        // any loop bounded in heap) never reaches here and is therefore not
-        // cancellable — the GC-safe-point granularity standard for cooperative
-        // cancellation. (Likewise if GC is disabled, GcThreshold <= 0.)
-        if (_cancelRequested)
-            throw new OperationCanceledException("Prolog query cancelled at a safe point.");
+        // Watermark crossed (~once per GcThreshold of heap allocation).
         CollectHeap();
         // Re-arm: collect again only once the heap doubles past what
         // survived (bounded below by the configured floor). If the

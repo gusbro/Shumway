@@ -37,18 +37,32 @@ public class EnvFrameTests
         Assert.Equal(100, (int)engine.GetStack(1).Data); // CP = previous _cp
         Assert.Equal(2, (int)engine.GetStack(2).Data);  // N = permanent count (ADR-016)
 
-        // Y slots are REFs to fresh heap unbounds.
-        AssertUnboundHeapRef(engine, engine.GetStack(3));
-        AssertUnboundHeapRef(engine, engine.GetStack(4));
+        // Y slots are left UNINITIALISED (lazy allocation): RawInt(0), a
+        // GC-skipped sentinel overwritten at the permanent's first occurrence.
+        AssertUninitialisedYSlot(engine.GetStack(3));
+        AssertUninitialisedYSlot(engine.GetStack(4));
     }
 
-    /// <summary>Asserts that the cell is a REF pointing to a heap cell that
-    /// self-references — i.e., the canonical unbound-variable representation.</summary>
-    private static void AssertUnboundHeapRef(Engine engine, Cell c)
+    /// <summary>Asserts that the cell is the uninitialised-Y-slot sentinel that
+    /// <c>allocate</c> leaves: <see cref="Tag.RawInt"/> (the heap GC skips it; no
+    /// per-permanent heap cell is allocated).</summary>
+    private static void AssertUninitialisedYSlot(Cell c)
     {
-        Assert.Equal(Tag.Ref, c.Tag);
-        int target = c.AsHeapIndex;
-        Assert.Equal(Cell.UnboundVar(target), engine.GetHeap(target));
+        Assert.Equal(Tag.RawInt, c.Tag);
+        Assert.Equal(0, (int)c.Data);
+    }
+
+    [Fact]
+    public void Allocate_DoesNotGrowTheHeap()
+    {
+        // Lazy Y-slot allocation: `allocate` must NOT allocate a heap cell per
+        // permanent (the old behaviour generated one dead heap cell per Y slot,
+        // driving the heap GC in permanent-heavy loops). The Y slots are the
+        // uninitialised RawInt sentinel until first written.
+        var engine = new Engine();
+        int heapBefore = engine.HeapTop;
+        engine.Allocate(8);
+        Assert.Equal(heapBefore, engine.HeapTop);   // zero heap growth
     }
 
     [Fact]
@@ -206,9 +220,9 @@ public class EnvFrameTests
         engine.SetY(1, Cell.Atom(42));
         Assert.Equal(Cell.Atom(42), engine.GetY(1));
 
-        // The other two slots still hold their initial unbound-heap REFs.
-        AssertUnboundHeapRef(engine, engine.GetY(0));
-        AssertUnboundHeapRef(engine, engine.GetY(2));
+        // The other two slots are still the uninitialised sentinel.
+        AssertUninitialisedYSlot(engine.GetY(0));
+        AssertUninitialisedYSlot(engine.GetY(2));
     }
 
     [Fact]

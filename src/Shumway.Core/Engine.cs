@@ -444,17 +444,19 @@ public sealed partial class Engine
         _stack[newE + EnvCeOffset] = Cell.RawInt(_e);
         _stack[newE + EnvCpOffset] = Cell.RawInt(_cp);
         _stack[newE + EnvNOffset] = Cell.RawInt(numPermanents);
-        // Y slots are initialised as REFs to fresh heap-unbound variables. Earlier drafts
-        // used a stack-self-pointing REF as an "uninitialised marker", but that complicates
-        // unify (the REF target would be a stack address rather than a heap index). Going
-        // through the heap on first allocation costs one extra heap cell per permanent
-        // but lets Deref/Bind/Unify treat permanents and ordinary variables uniformly.
+        // Y slots are left UNINITIALISED — tagged Cell.RawInt(0), which the heap
+        // GC's conservative stack scan skips (it is not a Ref), and which is
+        // never read: standard WAM codegen writes a permanent at its first
+        // occurrence (get_variable_y / put_variable_y / unify_variable_y, all of
+        // which overwrite the slot — put_variable_y allocates its own heap var)
+        // before any later occurrence reads it. Eagerly allocating a fresh
+        // heap-unbound var per permanent here (an earlier design, for Deref/Unify
+        // uniformity) was pure garbage in permanent-heavy loops — the slot is
+        // overwritten by the very next instruction, so the cell is immediately
+        // dead and drives the heap GC. Lazy allocation (this) matches a textbook
+        // WAM, where `allocate` does not touch the Y slots.
         for (int i = 0; i < numPermanents; i++)
-        {
-            int slot = newE + EnvY1Offset + i;
-            int heapIdx = AllocateHeapUnbound();
-            _stack[slot] = Cell.Ref(heapIdx);
-        }
+            _stack[newE + EnvY1Offset + i] = Cell.RawInt(0);
         _stackTop = newE + frameSize;
         _e = newE;
     }
