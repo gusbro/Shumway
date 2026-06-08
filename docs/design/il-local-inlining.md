@@ -227,31 +227,49 @@ The local-predicate inliner now BEATS the trampoline on the dispatch-bound
 benchmark. Label/local names are per-site-unique (the BaseCursor) — a caller can
 inline several facts.
 
-### Full-bench validation (chunk 360 follow-up) — DEFAULT STAYS OFF
+### Full-bench validation (chunk 360 follow-up) — chunk-361 conclusion was WRONG
 
-Ran the whole van-Roy bench set (27 programs) flag OFF vs ON.
-**Correctness: 27/27 byte-identical** (the inline never changes an answer).
-**Timing: MIXED — blocking regressions.**
-- Wins: crypt 0.77, sendmore 0.81, prover 0.81, poly_10 0.87, mu 0.89 (fact-heavy
-  / backtracking — the dispatch the inline removes dominated).
-- Neutral: most programs (~1.0 — the inline does not fire, a no-op).
-- **REGRESSIONS: sieve 1.42 (+42%!), boyer 1.15 (+15%).**
+Chunk 361 ran the 27-program bench OFF vs ON (single-run min-of-2) and concluded
+"DEFAULT STAYS OFF — sieve +42%, boyer +15%." **That conclusion was a thermal-noise
+artifact and is retracted.** Two facts kill it (chunk 362):
 
-So **`InlineFacts` stays OFF by default.** Likely cause of the regressions: the
-inline trades inter-predicate dispatch for CODE SIZE — several facts inlined into
-one caller bloat its IL method, hurting JIT/locality. For a dispatch-bound search
-(crypt) that is a win; for a compute-bound tight loop (sieve) the bloat costs more
-than the dispatch it saves.
+1. **sieve and boyer do not inline at all** — 0 inline sites each (no pure
+   multi-clause fact called from a metaCp caller). The reported +42% / +15% were
+   pure run-to-run variance (~40% stddev on this laptop) over a NO-OP, byte-identical
+   build. [[wallclock-ab-must-be-back-to-back]]
+2. **Only crypt and chat_parser ever inline** across the whole set. crypt wins
+   repeatably (~25%). chat_parser, measured robustly (min-of-8 interleaved), was
+   *within noise* (median ON faster, min ON 12% slower — indistinguishable from
+   parity) and its facts are wide grammar facts that gain nothing from the inline.
 
-**To enable by default, the inliner needs a PROFITABILITY HEURISTIC**, not just
-eligibility — only inline where it pays: e.g. cap inlined IL size per caller,
-prefer callers with many backtracking call sites (dispatch-bound), or skip
-inlining inside hot tight loops. Until then the validated, correct mechanism
-stays a gated opt-in (a demonstrated ~23% win for crypt-like programs).
+### Chunk 362 — profitability heuristic → DEFAULT ON
+
+Two principled gates, both in `ComputeInlineSites`:
+
+1. **Index-eligibility** (`TryGetFactFirstArgKeys`): inline only facts whose every
+   clause has a distinct constant first arg, so the Phase-1b index pre-filter makes
+   a BOUND call deterministic — the actual crypt win. A non-index fact would inline
+   as a plain linear chain: no indexing gain, only caller bloat.
+2. **Size budget** (`InlineCostBudget = 10`): inline only when
+   `clauseCount * (arity+1) ≤ 10` — a proxy for inlined head-match IL. crypt's
+   arity-1 generators cost ≤10 (5·2, 4·2); chat_parser's facts cost ≥12 (3·4, 6·4,
+   9·3). Removing dispatch pays off only for small facts; wide ones bloat the caller
+   past what they save.
+
+Effect: crypt keeps all 16 inline sites and its win; **chat_parser drops to 0 sites
+(a no-op, byte-identical IL → cannot regress)**; the other 25 programs were already
+no-ops. So every affected program either wins (crypt) or is unchanged — safe to
+default on. `InlineFacts` now defaults ON (`SHUMWAY_INLINE_FACTS != "0"`); set the
+var to `0` to disable. Full suite green with the inliner on by default
+(Embedding 2099, Compiler 284, Core 428, ISO 277). [[run-embedding-tests-for-engine-changes]]
+
+The budget is conservative against missed wins (a borderline winnable fact above 10
+is skipped) but safe against regression, which is what matters for an on-by-default
+transform. Tightening it (PGO call-frequency, per-caller IL-size cap) to admit
+larger profitable facts is a later refinement.
 
 ### Remaining (other follow-ups)
 
-- A profitability heuristic (above) is the gate to default-on.
 - Extend beyond the metaCp caller shape (try-me-else chain / indexed callers
   still fall back to the trampoline at their inlinable sites).
 - Phase 1b's index pre-filter handles the unique-constant-key shape; a fact with
