@@ -412,12 +412,32 @@ the call (`member(S,[s1,s2])`) survives the cut — i.e. the cut prunes the body
 CPs, not the caller's ([[extra-backtracking-not-sound]]). Full Embedding suite
 green with the flag on (2127); Blint lint output byte-identical OFF vs ON.
 
-**Coverage so far is small** (Blint: 2 sites) because the detector still rejects a
-body ending in a tail user-call (`Execute`) — and most cut-bearing rules are
-`p :- a, !, b` (ending in `Execute b`), not `p :- a, !` (ending in proceed). The
-next step is **tail-call un-tailing** (a trailing `Execute` → threaded non-tail
-call at a non-tail inline site, distinguishing a user predicate from a
-tail-position backtrackable/meta builtin), which takes Blint from 2 → ~89 sites.
+### Case 2 emit — tail-call un-tailing (chunk 368)
+
+A single-clause rule whose body ends in a tail user-call lowers to `Execute`.
+Inlined at a non-tail site, that tail call must become a threaded NON-TAIL call so
+control returns to the caller's continuation after the callee proceeds. The emit's
+`Execute` handler, when `suppressProceedReturn` (i.e. inlining), threads the call
+exactly like a non-tail `Call` (a forward-resume cursor in the caller's space,
+counted by `CountRuleBodyThreadedCalls` = body non-tail calls + 1 for the trailing
+`Execute`) instead of tail-returning. Safe because the **linker** rewrites a
+tail-position builtin `Execute → ExecuteBuiltin` (chunk 248), which the detector
+rejects — so in linked runtime bytecode a trailing `Execute` always targets a user
+predicate.
+
+Validated sound on combined cases: `chain(X,Y):-p(X),q(Y)` (no cut, tail `q`
+un-tailed) enumerates the full `p × q` under a caller `member` CP; `commit2(X,Y)
+:- a(X),!,b(Y)` commits `a`, un-tails `b`, and the caller CP survives. Full
+Embedding suite green flag-on (2132); Blint byte-identical OFF vs ON.
+
+**Coverage is still small** (Blint: 4 sites) — but the limiter is no longer the
+cut or the tail call. It is that **rule inline only fires in single-clause (metaCp)
+callers**: `ComputeRuleInlineSites` runs only on that path, so a case-2 rule called
+from a MULTI-clause caller (indexed / try-me-else chain) is not inlined. The ~89
+Blint sites counted call sites regardless of caller shape; most live in multi-clause
+callers. **Extending the cursor accounting to the indexed / chain caller shapes is
+the next coverage lever** (and the prerequisite for a real Blint speed win + a
+default flip). Speed at 4 sites is within noise.
 
 ### Case 3 — multi-clause rules
 

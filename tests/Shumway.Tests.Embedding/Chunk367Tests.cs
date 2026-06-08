@@ -38,16 +38,16 @@ public class Chunk367Tests
     [InlineData("c2(X) :- a(X), b(X), !.")]            // two calls then cut
     [InlineData("g(X) :- X > 0, !.")]                  // guard + cut (no-op cut)
     [InlineData("mid(X, Z) :- a(X), !, Z is X + 1.")] // mid-body cut + arith after
+    [InlineData("midtail(X) :- a(X), !, b(X).")]       // mid-body cut + trailing tail call (ch368)
     public void CutRule_IsInlinable_WhenAllowCut(string src)
     {
         Assert.True(IlPredicateCompiler.IsInlinableRule(CompileOne(src), allowCut: true));
-        // Without allowCut the same rule is rejected (the diagnostic / cut-free use).
+        // Without allowCut the same cut-bearing rule is rejected (cut-free use).
         Assert.False(IlPredicateCompiler.IsInlinableRule(CompileOne(src), allowCut: false));
     }
 
     [Theory]
     [InlineData("p(0) :- !. p(X) :- a(X).")]           // multi-clause (not 1 clause)
-    [InlineData("p(X) :- a(X), !, b(X).")]             // trailing tail call (Execute) — deferred
     public void NotEligible_EvenWithAllowCut(string src)
         => Assert.False(IlPredicateCompiler.IsInlinableRule(CompileOne(src), allowCut: true));
 

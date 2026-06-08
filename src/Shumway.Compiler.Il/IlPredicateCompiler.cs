@@ -731,7 +731,13 @@ public sealed class IlPredicateCompiler
                 case Opcode.Proceed: endsTerminal = true; pc += 1; continue;
                 case Opcode.DeallocateProceed:
                     endsTerminal = true; pc += OpcodeTable.Get((byte)op).Size; continue;
-                case Opcode.Execute: return false;   // trailing tail call — deferred
+                // A trailing tail call to a USER predicate (chunk 368): the emit
+                // un-tails it into a threaded non-tail call at a non-tail inline
+                // site. In linked runtime bytecode `Execute` always targets a user
+                // predicate (a tail-position builtin is ExecuteBuiltin, rejected
+                // below), so this is safe to thread.
+                case Opcode.Execute: endsTerminal = true; pc += OpcodeTable.Get((byte)op).Size; continue;
+                case Opcode.ExecuteBuiltin: return false;   // tail builtin — needs CallBuiltin machinery
                 case Opcode.Meta: pc += 6; continue;
                 case Opcode.Cut:
                 case Opcode.NeckCut:
@@ -817,14 +823,44 @@ public sealed class IlPredicateCompiler
 
     /// <summary>Extra forward-resume cursors the inlined rule bodies need — each
     /// body's own non-tail <c>Call</c> sites thread through the CALLER's cursor
-    /// space, so the caller's resume-label array must be sized to include them.</summary>
+    /// space, PLUS a trailing tail <c>Execute</c> (chunk 368), which the emit
+    /// un-tails into a threaded non-tail call and so also takes a cursor. The
+    /// caller's resume-label array must be sized to include all of them.</summary>
     private static int CountRuleInlineExtraCursors(
         IReadOnlyDictionary<int, CompiledPredicate> sites)
     {
         int extra = 0;
         foreach (var callee in sites.Values)
-            extra += CountNonTailCallOpcodes(callee.Bytecode);
+            extra += CountRuleBodyThreadedCalls(callee.Bytecode);
         return extra;
+    }
+
+    /// <summary>Threaded-call cursors an inlined rule body consumes: its non-tail
+    /// <c>Call</c>s plus a trailing tail <c>Execute</c> (un-tailed at a non-tail
+    /// inline site). Must match exactly what the body emission consumes.</summary>
+    private static int CountRuleBodyThreadedCalls(byte[] body)
+    {
+        int n = CountNonTailCallOpcodes(body);
+        if (BodyEndsInExecute(body)) n++;
+        return n;
+    }
+
+    /// <summary>True iff the body's terminal opcode is a tail <c>Execute</c>
+    /// (a user-predicate tail call) — the case the inline emit un-tails.</summary>
+    private static bool BodyEndsInExecute(byte[] body)
+    {
+        int pc = 0;
+        bool lastWasExecute = false;
+        while (pc < body.Length)
+        {
+            var op = (Opcode)body[pc];
+            if (op == Opcode.Meta) { pc += 6; continue; }
+            lastWasExecute = op == Opcode.Execute;
+            int size = OpcodeTable.Get((byte)op).Size;
+            if (size <= 0) return false;
+            pc += size;
+        }
+        return lastWasExecute;
     }
 
     /// <summary>A single-clause RULE whose body can be inlined FLAT into a caller
@@ -2809,6 +2845,45 @@ public sealed class IlPredicateCompiler
                 if (siteFunctorId < 0)
                     throw new InvalidOperationException(
                         $"Execute opcode at pc={pc} has no matching call site in the predicate's metadata.");
+
+                // Phase 29 chunk 368 — un-tail. When this body is being INLINED at
+                // a non-tail site (suppressProceedReturn), a trailing tail Execute
+                // must become a threaded NON-TAIL call: control has to return to the
+                // caller's continuation after the callee proceeds, not tail-return
+                // past it. Same threading as a non-tail Call (a forward-resume cursor
+                // in the caller's space, already counted by CountRuleBodyThreadedCalls
+                // → +1 for the trailing Execute). Always threads (never leaf-inlines
+                // the tail call) so the cursor count stays exact. In linked runtime
+                // bytecode Execute targets a user predicate (a tail builtin is
+                // ExecuteBuiltin), so the marker resolves to a real delegate/address.
+                if (suppressProceedReturn
+                    && callSiteIndexCounter is not null && resumeLabels is not null
+                    && siteFunctorId != selfFunctorId)
+                {
+                    int untailIdx = callSiteIndexCounter();
+                    int untailCursor = cursorBase + untailIdx - 1;
+                    emit.LoadArgument(0);                 // engine.SetB0(engine.B)
+                    emit.LoadArgument(0);
+                    emit.Call(EngineBGetter);
+                    emit.Call(EngineSetB0Method);
+                    emit.LoadArgument(0);                 // engine.SetCp(resume marker)
+                    EmitResumeMarker(emit, _emitOwnerFid, untailCursor);
+                    emit.Call(EngineSetCpMethod);
+                    emit.LoadArgument(0);                 // engine.SetPc(callee entry marker)
+                    EmitFunctorId(emit, siteFunctorId);
+                    emit.LoadConstant(0);
+                    emit.Call(EngineEncodeResumeMarkerMethod);
+                    emit.Call(EngineSetPcMethod);
+                    emit.LoadArgument(0);                 // IlTailCallPending = true; return true
+                    emit.LoadConstant(true);
+                    emit.Call(EngineIlTailCallPendingSetter);
+                    emit.LoadConstant(true);
+                    emit.Return();
+                    // Resume → fall through to the post-inline continuation.
+                    emit.MarkLabel(resumeLabels[untailIdx - 1]);
+                    pc += OpcodeTable.Get(op).Size;
+                    continue;
+                }
 
                 // Inlining (chunk 69): if the callee is a small static
                 // leaf, emit its body opcodes inline instead of going

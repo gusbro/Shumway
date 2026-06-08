@@ -34,6 +34,8 @@ public class Chunk366Tests
     [InlineData("p(X, Z) :- q(X, Y), Z is Y + 1.")]   // body user call (non-tail) + arith
     [InlineData("inc(X, Y) :- Y is X + 1.")]          // leaf rule (subset)
     [InlineData("twocall(X, Z) :- q(X, Y), r(Y, W), Z is W + 1.")] // two non-tail calls + arith
+    [InlineData("chain(X, Y) :- a(X, M), b(M, Y).")]  // ends in a tail user-call (chunk 368)
+    [InlineData("guarded(X) :- X > 0, q(X).")]        // guard then tail user-call
     public void SingleClauseCutFreeRule_IsInlinableRule(string src)
         => Assert.True(IlPredicateCompiler.IsInlinableRule(CompileOne(src)));
 
@@ -42,12 +44,12 @@ public class Chunk366Tests
     [InlineData("p(X) :- q(X), !, r(X).")]            // mid-body cut
     [InlineData("p(X) :- !, q(X).")]                  // neck cut
     [InlineData("p(0). p(X) :- q(X).")]               // multi-clause
-    [InlineData("p(X) :- between(1, 3, X).")]         // backtrackable builtin (tail Execute)
-    // A rule whose LAST goal is a user call lowers to a tail Execute; un-tailing it
-    // at a non-tail inline site is deferred to the emit, so the cut-free detector
-    // rejects a trailing Execute for now.
-    [InlineData("chain(X, Y) :- a(X, M), b(M, Y).")]
-    [InlineData("guarded(X) :- X > 0, q(X).")]
-    public void CutTailCallOrMultiClause_IsNotInlinableRule(string src)
+    public void CutOrMultiClause_IsNotInlinableRule(string src)
         => Assert.False(IlPredicateCompiler.IsInlinableRule(CompileOne(src)));
+
+    // NOTE on builtins: a tail-position builtin (between/3, atom/1, …) is rejected
+    // because the LINKER rewrites it Execute -> ExecuteBuiltin (chunk 248), which
+    // the detector rejects. An ISOLATED PredicateCompiler compile (no link) leaves
+    // it a generic Execute, so its classification is not asserted here. The rule
+    // inliner runs on the linked runtime bytecode, where the distinction holds.
 }
