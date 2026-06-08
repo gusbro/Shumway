@@ -702,6 +702,76 @@ public sealed class IlPredicateCompiler
         return sawProceed;
     }
 
+    /// <summary>Phase 29 case 1 — gates the extension of the chunk-69 leaf inline
+    /// to single-clause RULES with a deterministic builtin/arith/unify body
+    /// (<see cref="IsInlinableLeafRule"/>). Default OFF; <c>SHUMWAY_INLINE_RULES=1</c>
+    /// enables it while it is validated, before the default flips.</summary>
+    internal static readonly bool InlineLeafRules =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_INLINE_RULES") == "1";
+
+    /// <summary>A single-clause RULE whose body can be inlined FLAT into a caller
+    /// (Phase 29 case 1) — like <see cref="IsLeafPredicate"/> but allowing a body
+    /// of deterministic builtins, arithmetic and unification. It must create no
+    /// choice point, need no environment frame, make no user call, and not cut: so
+    /// NO allocate/deallocate, NO cut/neck_cut/get_level, NO Call/Execute (any
+    /// tier), and a <c>CallBuiltin</c> only to a deterministic, non-meta builtin.
+    /// Such a body runs to completion in one shot exactly like a leaf's head match
+    /// (a failing body op branches to the caller's fail label), so the EXISTING
+    /// leaf-inline emit (<see cref="EmitClauseBody"/> with
+    /// <c>suppressProceedReturn</c>) handles it with no new machinery — det
+    /// builtins emit no resume cursor, arith/unify ops branch to the fail
+    /// label.</summary>
+    internal static bool IsInlinableLeafRule(CompiledPredicate pred)
+    {
+        if (pred.ClauseCount != 1) return false;
+        byte[] code = pred.Bytecode;
+        int pc = 0;
+        bool sawProceed = false;
+        while (pc < code.Length)
+        {
+            var op = (Opcode)code[pc];
+            switch (op)
+            {
+                case Opcode.Proceed: sawProceed = true; pc += 1; continue;
+                case Opcode.Meta: pc += 6; continue;   // dbg-info, runtime no-op
+                // CP-creating / env / cut / user-call → not flat-inlinable.
+                case Opcode.Allocate:
+                case Opcode.Deallocate:
+                case Opcode.Cut:
+                case Opcode.NeckCut:
+                case Opcode.GetLevel:
+                case Opcode.Call:
+                case Opcode.Execute:
+                case Opcode.CallIl:
+                case Opcode.ExecuteIl:
+                case Opcode.CallBytecode:
+                case Opcode.ExecuteBytecode:
+                case Opcode.ExecuteBuiltin:
+                    return false;
+                case Opcode.CallBuiltin:
+                {
+                    var entry = Shumway.Builtins.BuiltinsRegistry.GetById(
+                        BytecodeIO.ReadInt32(code, pc + 1));
+                    // meta-call + backtrackable builtins need resume cursors /
+                    // the enclosing-call machinery — not a flat body.
+                    if (entry.Name is "call" or "$call"
+                        || IsBacktrackableBuiltinName(entry.Name))
+                        return false;
+                    pc += OpcodeTable.Get((byte)op).Size;
+                    continue;
+                }
+                default:
+                {
+                    int size = OpcodeTable.Get((byte)op).Size;
+                    if (size <= 0) return false;   // unknown / variable-size → bail
+                    pc += size;
+                    continue;
+                }
+            }
+        }
+        return sawProceed;
+    }
+
     /// <summary>True iff <paramref name="pred"/> is a pure FACT predicate: every
     /// clause is only head matching, and the bytecode is otherwise just the
     /// clause-dispatch skeleton (switch_on_* / try / retry / trust /
@@ -2441,7 +2511,8 @@ public sealed class IlPredicateCompiler
                 // there.
                 if (calleeMap is not null
                     && calleeMap.TryGetValue(siteFunctorId, out var calleePred)
-                    && IsLeafPredicate(calleePred))
+                    && (IsLeafPredicate(calleePred)
+                        || (InlineLeafRules && IsInlinableLeafRule(calleePred))))
                 {
                     EmitClauseBody(emit, calleePred.Bytecode, 0, calleePred.Bytecode.Length,
                         failLabel, Array.Empty<CallSite>(),
@@ -2581,7 +2652,8 @@ public sealed class IlPredicateCompiler
                 // tail-call site, so suppressProceedReturn stays false.
                 if (calleeMap is not null
                     && calleeMap.TryGetValue(siteFunctorId, out var calleePredX)
-                    && IsLeafPredicate(calleePredX))
+                    && (IsLeafPredicate(calleePredX)
+                        || (InlineLeafRules && IsInlinableLeafRule(calleePredX))))
                 {
                     EmitClauseBody(emit, calleePredX.Bytecode, 0, calleePredX.Bytecode.Length,
                         failLabel, Array.Empty<CallSite>(),

@@ -323,7 +323,50 @@ first:
 `Execute` is counted leaf too, so item 1's true pure-builtin subset is somewhat
 smaller — refine the diagnostic if scoping item 1.)
 
-### Remaining (other follow-ups)
+## Phase 29 — inlining RULES (chunk 365+)
+
+The chunk-364 survey showed facts are negligible in real code; rules are the
+payoff. Phase 29 attacks them easiest-first.
+
+### Case 1 — single-clause LEAF rules (chunk 365)
+
+A single-clause rule whose body is deterministic builtins / arithmetic /
+unification only — no env frame, no choice point, no cut, no user call — can be
+inlined FLAT exactly like the chunk-69 leaf inline (head-match-only). The
+mechanism is *free*: the existing leaf-inline site already calls
+`EmitClauseBody(callee, suppressProceedReturn)`, and that emitter already lowers
+det `CallBuiltin` (→ `Impl(engine)` + `brfalse fail`), arithmetic and unify
+opcodes inline with a fail-to-caller branch. So the whole change is the
+eligibility predicate `IsInlinableLeafRule` (single clause; reject
+allocate/deallocate, cut/neck_cut/get_level, Call/Execute any tier, and a
+`CallBuiltin` to a meta or backtrackable builtin) wired into both the non-tail
+`Call` and tail `Execute` inline sites.
+
+Gated behind `SHUMWAY_INLINE_RULES` (default OFF) while validated. Results:
+- **Correct** across the whole Embedding (Tier-1) suite with the flag ON, and
+  Blint's lint output is byte-identical OFF vs ON.
+- **~25 % faster** on a leaf-rule-heavy synthetic loop (`sq`/`pos`/`inc` called
+  in a tight loop; min ratio 0.731) — proof the inline fires and pays when the
+  leaf rules are hot.
+- **Neutral on Blint** (~1.03, within noise). Blint's hot path is the *non-leaf*
+  rules (survey: 188 non-leaf vs 41 leaf call sites), which case 1 doesn't touch.
+
+So case 1 is a correct, low-risk mechanism with a real but narrow win; the
+default stays OFF until cases 2/3 make a real program move. (A single builtin in
+TAIL position compiles to `Execute` not `CallBuiltin`, so `p(X):-integer(X)` is
+not yet covered — `EmitClauseBody` has no `ExecuteBuiltin` path; a follow-up.)
+
+### Case 2 — single-clause non-leaf rules (next)
+
+79 Blint call sites. Adds a nested env frame + the body's own (still-trampolined)
+calls. Deterministic, no clause backtracking. This is where Blint's time is.
+
+### Case 3 — multi-clause rules
+
+121 Blint call sites. Per-clause env-frame + body-goal emission on top of the
+fact inliner's cursor-merge / CPs-into-caller / O(1) jump table machinery.
+
+## Remaining (other follow-ups)
 
 - The det-path index pre-filter is a linear key-compare scan (O(clauses)); fine for
   the handful-of-clauses facts seen so far, but a very large index-eligible fact
