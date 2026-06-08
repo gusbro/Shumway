@@ -238,6 +238,12 @@ public sealed class IlPredicateCompiler
 #endif
     private static readonly MethodInfo EngineIlTailCallPendingSetter =
         typeof(Engine).GetProperty(nameof(Engine.IlTailCallPending))!.GetSetMethod()!;
+    // The watermark-gated heap-GC safe point the dispatch loop runs at every
+    // goal boundary; a self-tail-recursion in-method loop must call it at the
+    // back-edge so an allocating loop still collects (the loop bypasses the
+    // dispatch loop that would otherwise run it).
+    private static readonly MethodInfo EngineMaybeCollectHeapMethod =
+        typeof(Engine).GetMethod(nameof(Engine.MaybeCollectHeap), Type.EmptyTypes)!;
     private static readonly MethodInfo EngineCurrentFunctorAddressesGetter =
         typeof(Engine).GetProperty(nameof(Engine.CurrentFunctorAddresses))!.GetGetMethod()!;
     private static readonly MethodInfo IlExecuteHelperResolveMethod =
@@ -1193,7 +1199,9 @@ public sealed class IlPredicateCompiler
         SelfDelegateEmitter? emitSelfDelegate = null,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null,
         bool suppressProceedReturn = false,
-        int cursorBase = 1)
+        int cursorBase = 1,
+        int selfFunctorId = -1,
+        Sigil.Label? selfTailLabel = null)
     {
         int pc = start;
         while (pc < end)
@@ -2136,6 +2144,34 @@ public sealed class IlPredicateCompiler
                     pc += OpcodeTable.Get(op).Size;
                     continue;
                 }
+                // Self-tail-recursion → in-method loop (GProlog-style jump).
+                // When the tail call targets the predicate being emitted, the
+                // recursive call's args are already in the argument registers
+                // (the put_* before this Execute set them), so instead of the
+                // marker / return / dispatch-loop round trip we set the cut
+                // barrier, run the heap-GC safe point (the back-edge the
+                // dispatch loop would otherwise run), and branch straight to the
+                // method's cursor-0 entry. Skips EncodeResumeMarker, the return,
+                // OnDispatch, DecodeResumeMarker, the IlByFunctorId index and the
+                // indirect delegate invoke — the bulk of the per-call trampoline
+                // tax. Backtracking is unaffected: choice points are still on the
+                // WAM stack with their own continuations; this only changes how
+                // the FORWARD self-call reaches cursor 0. The Cp (the tail call's
+                // continuation) is left as the caller set it, exactly as the
+                // marker path does.
+                if (selfTailLabel is not null && siteFunctorId == selfFunctorId)
+                {
+                    // engine.SetB0(engine.B); engine.MaybeCollectHeap();
+                    emit.LoadArgument(0);
+                    emit.LoadArgument(0);
+                    emit.Call(EngineBGetter);
+                    emit.Call(EngineSetB0Method);
+                    emit.LoadArgument(0);
+                    emit.Call(EngineMaybeCollectHeapMethod);
+                    emit.Branch(selfTailLabel);
+                    pc += OpcodeTable.Get(op).Size;
+                    continue;
+                }
 #if DEBUG
                 if (DebugMode)
                 {
@@ -2616,6 +2652,13 @@ public sealed class IlPredicateCompiler
             emit.LoadConstant(n + 1);
             emit.BranchIfEqual(nodeLabels[n]);
         }
+        // Self-tail-recursion target: a self Execute in a clause body branches
+        // here (its args already in the argument registers) instead of the
+        // marker / dispatch-loop round trip — an in-method loop. Marked before
+        // the cursor-0 resolve so the loop re-runs the index decision on the
+        // new arguments.
+        var selfEntry = emit.DefineLabel("idx_self_entry");
+        emit.MarkLabel(selfEntry);
         // cursor 0 — the initial call: decide the entry node from the indexed
         // argument. The index decision is compiled to inline IL (deref + tag
         // test + key compares branching straight to the node labels — the
@@ -2668,7 +2711,9 @@ public sealed class IlPredicateCompiler
                 resumeLabels: resumeLabels,
                 emitSelfDelegate: emitSelf,
                 calleeMap: calleeMap,
-                cursorBase: callBase);
+                cursorBase: callBase,
+                selfFunctorId: predicate.FunctorId,
+                selfTailLabel: selfEntry);
         }
 
         emit.MarkLabel(failLabel);
