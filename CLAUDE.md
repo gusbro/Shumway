@@ -658,6 +658,44 @@ questions from Phase 11's deferred list:
   `retract` / `assertz` — and avoids redundant `TryDescribe*`
   attempts that were already rejecting the shape.
 
+**Phase 29 — Tier-1 IL inlining of RULES over real programs** — 🚧 **In flight.**
+
+The chunk-364 Blint survey showed the Phase-28 fact inliner is inert on real
+code (3 fact call sites vs 229 rule call sites). Phase 29 attacks the cases that
+actually matter, driven by real programs (Blint and the corpus) rather than
+synthetic benchmarks, reusing the Phase-28 inliner scaffold (cursor-merge,
+CPs-into-caller, the O(1) cursor jump table). Planned cases, easiest-first:
+
+1. **Single-clause LEAF rules** — body is builtins only (arith / compare /
+   type-test / unify), no nested predicate frame, no backtracking. A macro
+   expansion generalising the chunk-69 leaf inline (head-match-only) to
+   head + builtin-body. Lowest risk, broad Blint coverage (29 sites).
+2. **Single-clause non-leaf rules** — add a nested env frame + the body's own
+   (still-trampolined) calls. Deterministic, no clause backtracking (79 sites).
+3. **Multi-clause rules** — the payoff (121 sites): per-clause env-frame +
+   body-goal emission on top of the fact inliner's cursor-merge machinery.
+
+Discipline carried from Phase 28: profile-first, validate on real programs +
+the full Embedding (Tier-1) suite, measure interleaved min-of-N (never
+cross-run). [[wallclock-ab-must-be-back-to-back]]
+
+**Phase 28 — real-program validation corpus + Tier-1 IL runtime speed** — ✅ **Complete** (tagged `phase-28`; closure summary in [`docs/phase-28-closure.md`](docs/phase-28-closure.md)).
+
+Began as a GProlog-oracle validation corpus (real third-party Prolog, diffed
+against GNU Prolog) and became a sustained Tier-1 IL runtime-speed arc — the
+horizon being that a shipped program runs as Tier-1 IL packed in a bundle.
+Thirty-eight chunks (327–364). Highlights: corpus-surfaced engine fixes
+(`append/3` improper-list split; cut flushing attribute wakeups; `CompactTrails`
+dropping live `AttrModify`/`BigIntAlloc` entries); a **native C# clpfd domain
+layer** (~3.5–4×); WAM void-batching; and the Tier-1 speed arc — **lazy Y-slot
+allocation** (tight-loop heap GC was ~90%; ~4.6×), env-frame reclaim,
+try/catch-free arithmetic fast lanes, self-tail-recursion as an in-method loop,
+and the **local-predicate fact inliner** (default ON) whose 362→363 story —
+replacing a misguided size budget with an O(1) cursor jump table — is the
+phase's measurement lesson. The chunk-364 survey scopes Phase 29 (rule
+inlining). Carried discipline: trust the structural argument over thermal-noisy
+wall-clock; measure interleaved min-of-N.
+
 **Phase 27 — Tier-1 IL bundle slimming + non-last nested inline + cleanup** — ✅ **Complete** (tagged `phase-27`; closure summary in [`docs/phase-27-closure.md`](docs/phase-27-closure.md)).
 
 A mixed phase, four themes in order 1,3,4,2 (chunks 316–326 plus letter chunks
