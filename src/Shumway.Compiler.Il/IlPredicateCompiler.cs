@@ -1039,18 +1039,6 @@ public sealed class IlPredicateCompiler
     internal static readonly bool InlineFacts =
         System.Environment.GetEnvironmentVariable("SHUMWAY_INLINE_FACTS") != "0";
 
-    /// <summary>Profitability budget for fact inlining (chunk 362). A fact's
-    /// inline cost is <c>clauseCount * (arity + 1)</c> — a proxy for the
-    /// head-match IL emitted into the caller (≈ one unify op per arg per clause,
-    /// plus the per-clause dispatch). Inlining pays off only for SMALL facts where
-    /// removing the trampoline dispatch outweighs the caller-side bloat: crypt's
-    /// arity-1 generators cost ≤10 and win ~25%; chat_parser's wider grammar facts
-    /// cost ≥12 and regressed it. So the inliner stays a no-op for any fact above
-    /// the budget — the trampoline keeps them. Conservative against missed wins
-    /// (a borderline winnable fact above 10 is skipped), but safe against
-    /// regression, which is what matters for an on-by-default transform.</summary>
-    internal const int InlineCostBudget = 10;
-
     /// <summary>A non-tail <c>Call p/n</c> site whose callee <c>p</c> is an
     /// eligible multi-clause fact, to be inlined into the caller's IL method.
     /// The fact's clause alternatives 2..K get cursors <see cref="BaseCursor"/>
@@ -1098,13 +1086,13 @@ public sealed class IlPredicateCompiler
                     // chunk-360 index pre-filter makes a BOUND call deterministic
                     // (the clear crypt-style win). A fact without that index
                     // (a grammar/dictionary fact with compound or repeated first
-                    // args) would inline as a plain linear chain — no indexing
-                    // gain, plus code-size bloat in the caller — and regressed
-                    // chat_parser ~40%. The trampoline keeps those.
-                    && TryGetFactFirstArgKeys(callee.Bytecode, ranges, out _, out _)
-                    // Size budget: skip wide facts whose inlined head-match would
-                    // bloat the caller past the dispatch it saves (see InlineCostBudget).
-                    && ranges.Count * (callee.Arity + 1) <= InlineCostBudget)
+                    // args) inlines as a plain linear chain — no indexing gain —
+                    // so the trampoline keeps those. This is the ONLY size-ish
+                    // gate: re-entry is an O(1) jump table (see the cursor switch
+                    // in EmitSingleClauseMetaCpBody), so inlining a wide fact no
+                    // longer costs more than the trampoline — no clause-count
+                    // budget is needed (an earlier one was masking that flaw).
+                    && TryGetFactFirstArgKeys(callee.Bytecode, ranges, out _, out _))
                 {
                     int k = ranges.Count;
                     if (cursor + (k - 1) >= Engine.ResumeMarkerCursorStride) break; // budget
@@ -1361,21 +1349,30 @@ public sealed class IlPredicateCompiler
 
         _emitOwnerFid = predicate.FunctorId;
         // Cursor dispatch: 0 → start; N → resume_N; baseCursor+j → inlined
-        // fact clause-(j+2) re-entry (the backtrack alternative).
-        for (int i = 0; i < callSiteCount; i++)
+        // fact clause-(j+2) re-entry (the backtrack alternative). Cursors are
+        // dense small ints from 0 (ComputeInlineSites allocates contiguous
+        // ranges), so this is a single O(1) jump table (IL `switch`) — NOT a
+        // linear compare chain. That matters: every backtrack re-enters the
+        // delegate HERE, and an inlined fact's generate chain re-enters once per
+        // clause alternative; a linear switch would make that O(cursors) and grow
+        // with each inline site — making inlining cost MORE than the trampoline it
+        // replaces (the trampoline re-enters the callee's own compact dispatch).
+        // The jump table keeps re-entry constant, so inlining is strictly cheaper.
+        int maxCursor = callSiteCount;
+        foreach (var site in inlineSites.Values)
         {
-            emit.LoadArgument(1);
-            emit.LoadConstant(i + 1);
-            emit.BranchIfEqual(resumeLabels[i]);
+            int last = site.BaseCursor + site.AltLabels.Length - 1;
+            if (last > maxCursor) maxCursor = last;
         }
+        var cursorLabels = new Sigil.Label[maxCursor + 1];
+        for (int i = 0; i <= maxCursor; i++) cursorLabels[i] = startLabel; // 0 + any gap
+        for (int i = 0; i < callSiteCount; i++) cursorLabels[i + 1] = resumeLabels[i];
         foreach (var site in inlineSites.Values)
             for (int j = 0; j < site.AltLabels.Length; j++)
-            {
-                emit.LoadArgument(1);
-                emit.LoadConstant(site.BaseCursor + j);
-                emit.BranchIfEqual(site.AltLabels[j]);
-            }
-        emit.Branch(startLabel);
+                cursorLabels[site.BaseCursor + j] = site.AltLabels[j];
+        emit.LoadArgument(1);
+        emit.Switch(cursorLabels);
+        emit.Branch(startLabel);    // cursor out of range (unreachable) → start
 
         emit.MarkLabel(startLabel);
         int idxCounter = 0;

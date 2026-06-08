@@ -242,33 +242,58 @@ artifact and is retracted.** Two facts kill it (chunk 362):
    *within noise* (median ON faster, min ON 12% slower — indistinguishable from
    parity) and its facts are wide grammar facts that gain nothing from the inline.
 
-### Chunk 362 — profitability heuristic → DEFAULT ON
+### Chunk 362/363 — one principled gate + the O(1) cursor jump table → DEFAULT ON
 
-Two principled gates, both in `ComputeInlineSites`:
+**Chunk 362 (superseded in part):** added two gates — index-eligibility AND a
+`clauseCount*(arity+1) ≤ 10` size budget. The budget forced chat_parser to 0
+inline sites for a "clean" story, but it was the WRONG fix: it excluded perfectly
+normal facts (a 4-clause arity-2 fact costs 12 > 10) on a threshold tuned to two
+programs. The premise — "inlining a wide fact costs more than the trampoline" —
+pointed at a real cost, but that cost was an **implementation flaw, not an
+inherent property of inlining**.
 
-1. **Index-eligibility** (`TryGetFactFirstArgKeys`): inline only facts whose every
-   clause has a distinct constant first arg, so the Phase-1b index pre-filter makes
-   a BOUND call deterministic — the actual crypt win. A non-index fact would inline
-   as a plain linear chain: no indexing gain, only caller bloat.
-2. **Size budget** (`InlineCostBudget = 10`): inline only when
-   `clauseCount * (arity+1) ≤ 10` — a proxy for inlined head-match IL. crypt's
-   arity-1 generators cost ≤10 (5·2, 4·2); chat_parser's facts cost ≥12 (3·4, 6·4,
-   9·3). Removing dispatch pays off only for small facts; wide ones bloat the caller
-   past what they save.
+**Chunk 363 — found and fixed the real cost; budget removed.** Inlining should
+never cost MORE than the trampoline: same IL context, no dispatch round-trip. It
+did, because backtracking re-entered the caller delegate through a **linear
+cursor compare-chain** at the top of `EmitSingleClauseMetaCpBody` — and that chain
+grows with every inlined clause alternative. An inlined fact's generate path
+re-enters once per clause, so a 9-clause fact paid O(cursors) per backtrack, which
+the compact callee-side trampoline dispatch did not. Fix: the cursors are dense
+small ints from 0, so the compare-chain becomes a single **O(1) IL `switch` jump
+table**. Re-entry is now constant regardless of inline-site count, so inlining is
+strictly cheaper than the trampoline — and the jump table also speeds the normal
+multi-call resume path for every promoted predicate.
 
-Effect: crypt keeps all 16 inline sites and its win; **chat_parser drops to 0 sites
-(a no-op, byte-identical IL → cannot regress)**; the other 25 programs were already
-no-ops. So every affected program either wins (crypt) or is unchanged — safe to
-default on. `InlineFacts` now defaults ON (`SHUMWAY_INLINE_FACTS != "0"`); set the
-var to `0` to disable. Full suite green with the inliner on by default
-(Embedding 2099, Compiler 284, Core 428, ISO 277). [[run-embedding-tests-for-engine-changes]]
+With re-entry O(1), the only gate needed is **index-eligibility**
+(`TryGetFactFirstArgKeys`): inline a fact only when every clause has a distinct
+constant first arg, so the Phase-1b index pre-filter makes a BOUND call
+deterministic (the crypt win). A non-index fact would inline as a linear chain with
+no indexing gain, so the trampoline keeps it.
 
-The budget is conservative against missed wins (a borderline winnable fact above 10
-is skipped) but safe against regression, which is what matters for an on-by-default
-transform. Tightening it (PGO call-frequency, per-caller IL-size cap) to admit
-larger profitable facts is a later refinement.
+Measured (interleaved, OFF = `SHUMWAY_INLINE_FACTS=0`):
+- **crypt** ~22% faster (avg ratio 0.782, ON < OFF in 7/8 rounds) — 16 inline sites.
+- **chat_parser** neutral (avg 0.976) — its **9-clause** grammar fact now inlines
+  with no regression (it regressed before the jump table; the budget had hidden it
+  by excluding the fact entirely).
+- **nreverse / other non-inliners** unchanged (0 inline sites; jump table ≈ linear
+  chain when there are few cursors).
+
+`InlineFacts` defaults ON (`SHUMWAY_INLINE_FACTS != "0"`; set `0` to disable). Full
+suite green (Embedding 2103, Compiler 284, Core 428, ISO 277).
+[[run-embedding-tests-for-engine-changes]]
+
+LESSON: when a transform that removes work appears to cost more, suspect the
+transform's own machinery before adding a heuristic to avoid it. The budget would
+have permanently capped the inliner to tiny facts to dodge a bug that a jump table
+fixed outright.
 
 ### Remaining (other follow-ups)
+
+- The det-path index pre-filter is a linear key-compare scan (O(clauses)); fine for
+  the handful-of-clauses facts seen so far, but a very large index-eligible fact
+  called in bound mode would want a jump table / binary search there too (the
+  callee trampoline uses `switch_on_integer`). No cap is imposed now — add one only
+  if a real large-fact regression appears.
 
 - Extend beyond the metaCp caller shape (try-me-else chain / indexed callers
   still fall back to the trampoline at their inlinable sites).

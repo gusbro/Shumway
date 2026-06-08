@@ -7,38 +7,35 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// Chunk 362 (Phase 28): the Tier-1 IL fact inliner's profitability heuristic
-/// and its default-on flip. The inliner (chunks 358–360) merges a multi-clause
-/// FACT's clause dispatch into a hot caller's IL method, eliminating the
-/// trampoline. Chunk 361 wrongly left it OFF on a noisy full-bench reading;
-/// chunk 362 establishes that across the van-Roy set only crypt (win) and
-/// chat_parser (within noise) ever inline, then adds two principled gates so the
-/// default can flip ON safely:
-///   1. index-eligibility — only facts whose every clause has a distinct
-///      constant first arg (the Phase-1b index pre-filter makes a bound call
-///      deterministic); a non-index fact would inline as pure linear-chain bloat;
-///   2. a size budget — inline only when clauseCount*(arity+1) ≤ InlineCostBudget,
-///      so wide facts (chat_parser's grammar facts) stay on the trampoline.
+/// Chunk 362 (Phase 28): the Tier-1 IL fact inliner's profitability gate, its
+/// default-on flip, and the O(1) cursor jump table that makes inlining strictly
+/// cheaper than the trampoline.
+///
+/// The inliner (chunks 358–360) merges a multi-clause FACT's clause dispatch
+/// into a hot caller's IL method, eliminating the trampoline. Chunk 361 wrongly
+/// left it OFF on a noisy reading; chunk 362 establishes the real picture: only
+/// one principled gate is needed — index-eligibility (every clause has a distinct
+/// constant first arg, so the Phase-1b index pre-filter makes a bound call
+/// deterministic). A non-index fact would inline as a pure linear chain with no
+/// indexing gain, so the trampoline keeps it.
+///
+/// A short-lived clause-count/arity "size budget" (removed) was masking an
+/// implementation flaw: backtracking re-entered the caller delegate through a
+/// LINEAR cursor compare-chain that grew with each inlined alternative, so
+/// inlining a wide fact cost MORE than the trampoline it replaced. Replacing that
+/// with an O(1) jump table (the cursor switch in EmitSingleClauseMetaCpBody) made
+/// re-entry constant, so even a 9-clause grammar fact inlines without regressing —
+/// no size budget required.
 ///
 /// These tests pin the OUTCOME that matters: correct answers (incl. backtracking)
-/// with the inliner on by default, under forced Tier-1 promotion.
+/// with the inliner on by default, under forced Tier-1 promotion, for both small
+/// (crypt-shaped) and wide facts.
 /// </summary>
 public class Chunk362Tests
 {
     [Fact]
     public void InlineFacts_DefaultsOn()
         => Assert.True(IlPredicateCompiler.InlineFacts);
-
-    [Fact]
-    public void InlineCostBudget_KeepsCrypt_ExcludesGrammarFacts()
-    {
-        // crypt's generators (arity 1, 4–5 clauses) sit at or below the budget;
-        // chat_parser's grammar facts (arity 2–3, 6–9 clauses) sit above it.
-        Assert.True(5 * (1 + 1) <= IlPredicateCompiler.InlineCostBudget); // odd/even: 10
-        Assert.True(4 * (1 + 1) <= IlPredicateCompiler.InlineCostBudget); // lefteven: 8
-        Assert.False(3 * (3 + 1) <= IlPredicateCompiler.InlineCostBudget); // arity-3, 3 cl: 12
-        Assert.False(9 * (2 + 1) <= IlPredicateCompiler.InlineCostBudget); // arity-2, 9 cl: 27
-    }
 
     // A crypt-shaped, index-eligible small fact (distinct integer first args)
     // called from a hot caller — the inliner's target. Forcing promotion makes
@@ -73,7 +70,8 @@ pick(X, Y) :- d(X), d(Y).
         for (int i = 0; i < 3; i++) e.Query("pick(0, 0)."); // promote the caller
 
         // Unbound: the inlined fact's clause chain (with CPs into the caller's
-        // cursor space) must generate every (X,Y) pair, 5 × 5 = 25, in order.
+        // cursor space, re-entered via the jump table) must generate every (X,Y)
+        // pair, 5 × 5 = 25, in order.
         var pairs = new List<(long, long)>();
         foreach (var s in e.QueryAll("pick(X, Y)."))
             pairs.Add((((Shumway.Compiler.Ast.IntTerm)s["X"]!).Value,
@@ -87,9 +85,11 @@ pick(X, Y) :- d(X), d(Y).
         Assert.Equal(5, e.QueryAll("pick(6, Y).").Count());
     }
 
-    // A wide fact (arity 2, > budget clauses) is ABOVE the size budget, so the
-    // inliner is a no-op — it still must produce correct answers via the
-    // trampoline.
+    // A WIDE index-eligible fact (10 clauses) — above the (removed) size budget.
+    // With the O(1) cursor jump table it inlines without regressing, and must
+    // still produce correct answers both bound and via backtracking. This pins
+    // that the jump table — not a clause-count cap — is what keeps wide-fact
+    // inlining cheap.
     private const string WideFactProgram = @"
 :- public lookup/2.
 w(a, 1). w(b, 2). w(c, 3). w(d, 4). w(e, 5).
@@ -98,14 +98,15 @@ lookup(K, V) :- w(K, V).
 ";
 
     [Fact]
-    public void WideFact_AboveBudget_TrampolineStillCorrect()
+    public void WideFact_Inlined_BoundAndBacktrackingCorrect()
     {
         var e = new PrologEngine();
         e.IlPromotion.Threshold = 1;
         e.ConsultString(WideFactProgram);
         for (int i = 0; i < 3; i++) e.Query("lookup(a, _).");
-        Assert.True(e.Query("lookup(g, 7).").Success);
+        Assert.True(e.Query("lookup(g, 7).").Success);   // bound first arg → det
         Assert.False(e.Query("lookup(g, 8).").Success);
-        Assert.Equal(10, e.QueryAll("lookup(_, _).").Count());
+        Assert.False(e.Query("lookup(z, _).").Success);  // no key z
+        Assert.Equal(10, e.QueryAll("lookup(_, _).").Count()); // full enumeration
     }
 }
