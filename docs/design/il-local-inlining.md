@@ -227,11 +227,32 @@ The local-predicate inliner now BEATS the trampoline on the dispatch-bound
 benchmark. Label/local names are per-site-unique (the BaseCursor) — a caller can
 inline several facts.
 
-### Remaining (to enable by default)
+### Full-bench validation (chunk 360 follow-up) — DEFAULT STAYS OFF
 
-- Validate the full van-Roy bench set + Blint with the flag ON (ensure no
-  regression on non-crypt programs) before flipping `InlineFacts` to default-on.
-- Extend beyond the metaCp caller shape (try-me-else chain / indexed callers also
+Ran the whole van-Roy bench set (27 programs) flag OFF vs ON.
+**Correctness: 27/27 byte-identical** (the inline never changes an answer).
+**Timing: MIXED — blocking regressions.**
+- Wins: crypt 0.77, sendmore 0.81, prover 0.81, poly_10 0.87, mu 0.89 (fact-heavy
+  / backtracking — the dispatch the inline removes dominated).
+- Neutral: most programs (~1.0 — the inline does not fire, a no-op).
+- **REGRESSIONS: sieve 1.42 (+42%!), boyer 1.15 (+15%).**
+
+So **`InlineFacts` stays OFF by default.** Likely cause of the regressions: the
+inline trades inter-predicate dispatch for CODE SIZE — several facts inlined into
+one caller bloat its IL method, hurting JIT/locality. For a dispatch-bound search
+(crypt) that is a win; for a compute-bound tight loop (sieve) the bloat costs more
+than the dispatch it saves.
+
+**To enable by default, the inliner needs a PROFITABILITY HEURISTIC**, not just
+eligibility — only inline where it pays: e.g. cap inlined IL size per caller,
+prefer callers with many backtracking call sites (dispatch-bound), or skip
+inlining inside hot tight loops. Until then the validated, correct mechanism
+stays a gated opt-in (a demonstrated ~23% win for crypt-like programs).
+
+### Remaining (other follow-ups)
+
+- A profitability heuristic (above) is the gate to default-on.
+- Extend beyond the metaCp caller shape (try-me-else chain / indexed callers
   still fall back to the trampoline at their inlinable sites).
 - Phase 1b's index pre-filter handles the unique-constant-key shape; a fact with
   duplicate first-arg keys or a catch-all var clause keeps the linear chain
