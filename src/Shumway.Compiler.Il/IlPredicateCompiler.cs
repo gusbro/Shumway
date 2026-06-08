@@ -701,6 +701,53 @@ public sealed class IlPredicateCompiler
         return sawProceed;
     }
 
+    /// <summary>True iff <paramref name="pred"/> is a pure FACT predicate: every
+    /// clause is only head matching, and the bytecode is otherwise just the
+    /// clause-dispatch skeleton (switch_on_* / try / retry / trust /
+    /// try_me_else …) and <c>proceed</c> — no body calls, no environment
+    /// (permanent Y variables → there are no get_variable_y / allocate
+    /// opcodes), no arithmetic. Generalises <see cref="IsLeafPredicate"/> (the
+    /// single-clause special case) to any clause count. Eligibility for inlining
+    /// a multi-clause fact's clause dispatch into its caller's IL method —
+    /// Phase 1 of docs/design/il-local-inlining.md. (Single-clause facts are
+    /// already inlined by the chunk-69 leaf path; this covers the multi-clause
+    /// generators, e.g. crypt's odd/even.)</summary>
+    internal static bool IsFactPredicate(CompiledPredicate pred)
+    {
+        byte[] code = pred.Bytecode;
+        int pc = 0;
+        bool sawProceed = false;
+        while (pc < code.Length)
+        {
+            var op = (Opcode)code[pc];
+            if (op == Opcode.Proceed) { sawProceed = true; pc += 1; continue; }
+            if (op == Opcode.Meta) { pc += 6; continue; }   // dbg-info, runtime no-op
+            if (IsHeadMatchingOpcode(op) || IsFactDispatchOpcode(op))
+            {
+                int size = OpcodeTable.Get((byte)op).Size;
+                if (size <= 0) return false;
+                pc += size;
+                continue;
+            }
+            return false;   // a call / allocate / arith / Y-slot op → not a pure fact
+        }
+        return sawProceed;
+    }
+
+    /// <summary>The clause-dispatch skeleton opcodes a fact predicate may
+    /// contain besides head matching and <c>proceed</c> (first-argument indexing
+    /// + the try/retry/trust or try_me_else/retry_me_else/trust_me chains).</summary>
+    private static bool IsFactDispatchOpcode(Opcode op) => op switch
+    {
+        Opcode.SwitchOnTerm or Opcode.SwitchOnArg => true,
+        Opcode.SwitchOnAtom or Opcode.SwitchOnInteger or Opcode.SwitchOnStructure => true,
+        Opcode.SwitchOnAtomArg or Opcode.SwitchOnIntegerArg or Opcode.SwitchOnStructureArg => true,
+        Opcode.Try or Opcode.Retry or Opcode.Trust => true,
+        Opcode.TryMeElse or Opcode.RetryMeElse or Opcode.TrustMe => true,
+        Opcode.Nop => true,
+        _ => false,
+    };
+
     private static bool IsHeadMatchingOpcode(Opcode op) => op switch
     {
         Opcode.GetAtom => true,
