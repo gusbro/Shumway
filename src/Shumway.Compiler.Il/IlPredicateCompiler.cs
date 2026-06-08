@@ -848,10 +848,17 @@ public sealed class IlPredicateCompiler
     {
         var failLabel = emit.DefineLabel("fail");
         _emitOwnerFid = predicate.FunctorId;
+        // Self-tail-recursion → in-method loop (chunk 349): a self Execute
+        // branches here (args already in registers) rather than the marker /
+        // dispatch-loop round trip. For a leaf the body start IS the cursor-0
+        // entry (no cursor switch).
+        var selfEntry = emit.DefineLabel("self_entry");
+        emit.MarkLabel(selfEntry);
         EmitClauseBody(emit, predicate.Bytecode, 0, predicate.Bytecode.Length,
             failLabel, predicate.CallSites,
             callSiteIndexCounter: null, resumeLabels: null,
-            calleeMap: calleeMap);
+            calleeMap: calleeMap,
+            selfFunctorId: predicate.FunctorId, selfTailLabel: selfEntry);
         emit.MarkLabel(failLabel);
         emit.LoadConstant(false);
         emit.Return();
@@ -1011,12 +1018,16 @@ public sealed class IlPredicateCompiler
 
         emit.MarkLabel(startLabel);
         int idxCounter = 0;
+        // Self-tail-recursion → in-method loop (chunk 349): startLabel is the
+        // cursor-0 entry (the cursor switch above already branched the resume
+        // cursors away), so a self Execute branches straight back here.
         EmitClauseBody(emit, predicate.Bytecode, 0, predicate.Bytecode.Length,
             failLabel, predicate.CallSites,
             callSiteIndexCounter: () => ++idxCounter,
             resumeLabels: resumeLabels,
             emitSelfDelegate: emitSelf,
-            calleeMap: calleeMap);
+            calleeMap: calleeMap,
+            selfFunctorId: predicate.FunctorId, selfTailLabel: startLabel);
 
         emit.MarkLabel(failLabel);
         emit.LoadConstant(false);
@@ -1201,7 +1212,8 @@ public sealed class IlPredicateCompiler
         bool suppressProceedReturn = false,
         int cursorBase = 1,
         int selfFunctorId = -1,
-        Sigil.Label? selfTailLabel = null)
+        Sigil.Label? selfTailLabel = null,
+        bool resetCursorBeforeSelfTail = false)
     {
         int pc = start;
         while (pc < end)
@@ -2168,6 +2180,16 @@ public sealed class IlPredicateCompiler
                     emit.Call(EngineSetB0Method);
                     emit.LoadArgument(0);
                     emit.Call(EngineMaybeCollectHeapMethod);
+                    // A chain predicate's cursor-0 entry re-reads the incoming
+                    // cursor (arg 1) to pick clause 0; a fresh self-call must
+                    // restart from clause 0, so reset it. Harmless for the
+                    // indexed / single-clause entries (they branch past the
+                    // cursor switch and never re-read arg 1).
+                    if (resetCursorBeforeSelfTail)
+                    {
+                        emit.LoadConstant(0);
+                        emit.StoreArgument(1);
+                    }
                     emit.Branch(selfTailLabel);
                     pc += OpcodeTable.Get(op).Size;
                     continue;
@@ -2953,6 +2975,13 @@ public sealed class IlPredicateCompiler
             emit.BranchIfEqual(resumeLabels[j]);
         }
 
+        // Self-tail-recursion → in-method loop (chunk 350): a self Execute in
+        // any clause body resets the cursor to 0 and branches here, so the
+        // clause-entry chain re-dispatches from clause 0 (a fresh self-call must
+        // try the first clause, not re-enter the clause it was called from).
+        var selfEntry = emit.DefineLabel("chain_self_entry");
+        emit.MarkLabel(selfEntry);
+
         int siteCounter = 0;
         for (int i = 0; i < clauses.Count; i++)
         {
@@ -2982,7 +3011,10 @@ public sealed class IlPredicateCompiler
                 resumeLabels: resumeLabels,
                 emitSelfDelegate: emitSelf,
                 calleeMap: calleeMap,
-                cursorBase: N);
+                cursorBase: N,
+                selfFunctorId: predicate.FunctorId,
+                selfTailLabel: selfEntry,
+                resetCursorBeforeSelfTail: true);
 
             emit.MarkLabel(nextLabel);
         }
