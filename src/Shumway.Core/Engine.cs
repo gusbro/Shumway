@@ -1230,17 +1230,39 @@ public sealed partial class Engine
     /// variable inside a compound. In write mode allocate an unbound
     /// var on the heap and stash a REF to it in X[slot]; in read mode
     /// copy the cell at <c>UnifyPointer</c> into X[slot].</summary>
+    // Chunk 353: split into a small read-mode fast path (AggressiveInlining, so
+    // the JIT inlines it into the Tier-1 IL delegate and the interpreter — the
+    // common head-matching case: capture the cell at the unify pointer into a
+    // temp register, no heap allocation, no register grow) and a cold slow path
+    // (write mode, or a slot beyond the register bank). Surfaced as ~13% of a
+    // list-processing tight loop in a dotnet-trace profile.
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public void UnifyVariableX(int slot)
     {
-        // The IL emit calls this directly; unlike the bytecode
-        // interpreter's UnifyVariableX opcode handler (which routes
-        // through SetRegister) we don't get the auto-grow for free.
-        // Grow the register bank if a structure-unification slot
-        // exceeds the current size. Surfaced under
-        // SHUMWAY_IL_PROMOTE=1 linting Blint.pl: a multi-clause
-        // IL'd predicate's bytecode contained
-        // `unify_variable_x slot=256` while the engine's default
-        // register bank was 256 — IndexOutOfRangeException.
+        if (!_writeMode && slot < _registers.Length)
+        {
+            int ptr = _unifyPointer;
+            // A bare ATTVAR at the unify pointer is a variable at its home;
+            // capture it as a REF to that home (a copied ATTVAR's payload would
+            // no longer name its own slot). A plain REF / value copies fine.
+            Cell src = _heap[ptr];
+            _registers[slot] = src.Tag == Tag.AttVar ? Cell.Ref(ptr) : src;
+            _unifyPointer = ptr + 1;
+            return;
+        }
+        UnifyVariableXSlow(slot);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void UnifyVariableXSlow(int slot)
+    {
+        // The IL emit calls UnifyVariableX directly; unlike the bytecode
+        // interpreter's opcode handler (which routes through SetRegister) we
+        // don't get the auto-grow for free, so grow the bank when a
+        // structure-unification slot exceeds it (Blint had unify_variable_x
+        // slot=256 with a 256-register default bank).
         if (slot >= _registers.Length) EnsureRegisterCapacity(slot + 1);
         int ptr = _unifyPointer;
         if (_writeMode)
@@ -1260,11 +1282,6 @@ public sealed partial class Engine
         }
         else
         {
-            // A bare ATTVAR at the unify pointer is a variable at its
-            // home; capture it as a REF to that home, never as a copied
-            // ATTVAR cell (a copy's payload would no longer name its
-            // own slot). A plain REF copies fine — it's already a
-            // pointer. (chunk 77)
             Cell src = _heap[ptr];
             _registers[slot] = src.Tag == Tag.AttVar ? Cell.Ref(ptr) : src;
         }
@@ -1371,10 +1388,30 @@ public sealed partial class Engine
     /// mode against a LIS, or fails. The <see cref="UnifyPointer"/> is positioned at
     /// the head cell.
     /// </summary>
+    // Chunk 353: split into a small read-mode fast path (AggressiveInlining: the
+    // register directly holds an inline LIS cell — ADR-017 — so no deref, no
+    // allocation; the common case when consuming an existing list) and a cold
+    // slow path (deref, var-binding write mode, attvar, fail). ~10% of a
+    // list-processing tight loop in a dotnet-trace profile.
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public bool GetList(int regIdx)
     {
         _reservedWrite = false;   // ADR-020: head matching is never reserved
         Cell regCell = _registers[regIdx];
+        if (regCell.Tag == Tag.Lis)
+        {
+            _writeMode = false;
+            _unifyPointer = regCell.AsHeapIndex;
+            return true;
+        }
+        return GetListSlow(regCell);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private bool GetListSlow(Cell regCell)
+    {
         int finalAddr = -1;
         Cell finalCell = regCell;
         // REF or a bare ATTVAR cell (chunk 77) — both name a heap home;
