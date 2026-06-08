@@ -486,6 +486,7 @@ public sealed class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
         ArgumentNullException.ThrowIfNull(predicate);
+        DiagnoseInlineCandidates(predicate, calleeMap);
         if (predicate.ClauseCount == 1)
         {
             if (!CanCompileSingleClause(predicate, calleeMap))
@@ -1116,6 +1117,56 @@ public sealed class IlPredicateCompiler
                     $"[inline] caller fid={predicate.FunctorId} callee fid={s.Fact.FunctorId} "
                     + $"arity={s.Fact.Arity} clauses={s.ClauseRanges.Count}");
         return sites;
+    }
+
+    /// <summary>Exploratory diagnostic (SHUMWAY_IL_SHAPE=2): classify every
+    /// non-tail <c>Call</c> site's callee by inline-candidate shape, to see what
+    /// an EXTENDED inliner could reach beyond today's index-eligible multi-clause
+    /// fact. One <c>[cand] category callee=fid clauses=N</c> line per site;
+    /// aggregate a run with <c>sort | uniq -c</c>. Categories: <c>1cl-fact</c>
+    /// (leaf-inlinable today), <c>1cl-rule</c> (single-clause rule w/ body),
+    /// <c>Ncl-rule</c> (multi-clause rule), <c>Nfact-IDX(inlines)</c> (what the
+    /// current inliner takes), <c>Nfact-NOIDX</c> (multi-clause fact without a
+    /// unique-constant first-arg index), <c>Nfact-unshaped</c>,
+    /// <c>ext-or-builtin</c>, <c>var-or-control</c>.</summary>
+    private static void DiagnoseInlineCandidates(
+        CompiledPredicate predicate, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+    {
+        if (System.Environment.GetEnvironmentVariable("SHUMWAY_IL_SHAPE") != "2") return;
+        byte[] code = predicate.Bytecode;
+        int pc = 0;
+        while (pc < code.Length)
+        {
+            var op = (Opcode)code[pc];
+            if (op == Opcode.Call)
+            {
+                int fid = FindCallSiteFunctorId(predicate.CallSites, pc);
+                int clauses = 0;
+                string cat;
+                if (fid < 0) cat = "var-or-control";
+                else if (calleeMap is null || !calleeMap.TryGetValue(fid, out var callee))
+                    cat = "ext-or-builtin";
+                else
+                {
+                    clauses = callee.ClauseCount;
+                    // "leaf" = body makes no non-tail call to another predicate
+                    // (only builtins / arith / unify) — the easiest rule to inline.
+                    bool leaf = callee.CallSites is null || callee.CallSites.Count == 0;
+                    string lt = leaf ? "leaf" : "nonleaf";
+                    if (clauses == 1)
+                        cat = IsFactPredicate(callee) ? "1cl-fact" : $"1cl-rule-{lt}";
+                    else if (!IsFactPredicate(callee))
+                        cat = $"Ncl-rule-{lt}";
+                    else if (!TryGetFactClauseRanges(callee, out var ranges) || ranges.Count != clauses)
+                        cat = "Nfact-unshaped";
+                    else if (TryGetFactFirstArgKeys(callee.Bytecode, ranges, out _, out _))
+                        cat = "Nfact-IDX(inlines)";
+                    else cat = "Nfact-NOIDX";
+                }
+                System.Console.Error.WriteLine($"[cand] {cat} callee={fid} clauses={clauses}");
+            }
+            pc += op == Opcode.Meta ? 6 : OpcodeTable.Get((byte)op).Size;
+        }
     }
 
     /// <summary>A fact's per-clause head-match byte ranges (the

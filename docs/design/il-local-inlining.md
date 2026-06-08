@@ -287,6 +287,42 @@ transform's own machinery before adding a heuristic to avoid it. The budget woul
 have permanently capped the inliner to tiny facts to dodge a bug that a jump table
 fixed outright.
 
+### What else can be inlined — Blint survey (chunk 364)
+
+Before closing, surveyed a REAL program (`c:\temp\Blint.pl`, 2571 lines) to see
+what the fact inliner reaches and what an extended one would. A diagnostic
+(`SHUMWAY_IL_SHAPE=2`, `DiagnoseInlineCandidates`) classifies every non-tail
+`Call` site's callee by shape. Result on Blint (forced promotion, goal `test.`):
+
+| callee shape | call sites | distinct preds | inlinable today? |
+|---|--:|--:|---|
+| `Ncl-rule-nonleaf` (multi-clause rule, body has calls) | 109 | 57 | no |
+| `1cl-rule-nonleaf` (single-clause rule, body has calls) | 79 | 34 | no |
+| `1cl-rule-leaf` (single-clause rule, body = builtins only) | 29 | 14 | no |
+| `Ncl-rule-leaf` (multi-clause rule, body = builtins) | 12 | 8 | no |
+| facts (`Nfact-*`) | 3 | 2 | the 1 IDX one |
+
+**The fact inliner is essentially inert on real code** — Blint has 3 fact call
+sites vs **229 rule** call sites, and inlines 0 in practice. Real Prolog hot paths
+are RULES (head + body), not pure facts. So the meaningful next cases, easiest
+first:
+
+1. **Single-clause leaf rules** (29 sites): body is only builtins (arith, compare,
+   type tests, unify) — no nested predicate frame, no backtracking. The natural
+   generalisation of the chunk-69 leaf inline (head-match-only) to head + builtin
+   body — a macro expansion. Lowest risk, no env/CP machinery.
+2. **Single-clause non-leaf rules** (79 sites): add a nested env frame + the body's
+   own (still-trampolined) calls. Deterministic, no clause backtracking.
+3. **Multi-clause rules** (121 sites): the big one. KEY: the multi-clause-FACT
+   inliner already built (chunks 358–363) is exactly the structural groundwork —
+   cursor-merge, CPs pointing into the caller's delegate, the O(1) cursor jump
+   table. Extending to rules = add per-clause env-frame + body-goal emission on top
+   of that machinery. So facts were the hard scaffold; rules are the payoff.
+
+(`leaf` here = callee has no non-tail `Call`; a body whose only call is a tail
+`Execute` is counted leaf too, so item 1's true pure-builtin subset is somewhat
+smaller — refine the diagnostic if scoping item 1.)
+
 ### Remaining (other follow-ups)
 
 - The det-path index pre-filter is a linear key-compare scan (O(clauses)); fine for
