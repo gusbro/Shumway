@@ -100,39 +100,49 @@ public static class ArithEvalStack
     /// <summary>Pushes a 32-bit integer literal operand (a_eval_push kind 0).</summary>
     public static void PushInt(long value) => PushIntLane(value);
 
+    // Chunk 355: the integer fast lane (a register/Y slot holding an inline Int)
+    // raises no Prolog error, so it takes no try/catch — only the non-int
+    // Evaluate path can throw, and it lives in the cold PushEvalSlow.
+    // AggressiveInlining lets the JIT fold the fast lane into the Tier-1 IL
+    // delegate (mirrors chunk 354 for the eval-stack RPN path that crypt-style
+    // compound expressions — `C is A*B+Carry` — use).
     /// <summary>Evaluates the X-register and pushes the result (a_eval_push kind 3).</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void PushReg(Engine engine, int reg)
     {
-        try { PushCell(engine, engine.GetRegister(reg)); }
-        catch (PrologRuntimeException re) { re.StampBuiltin("is", 2); throw; }
+        Cell c = engine.GetRegister(reg);
+        if (c.Tag == Tag.Ref) c = engine.GetHeap(engine.Deref(c.AsHeapIndex));
+        if (c.Tag == Tag.Int) { PushIntLane(c.AsInt); return; }
+        PushEvalSlow(engine, c);
     }
 
     /// <summary>Evaluates the permanent (Y) slot and pushes the result
     /// (a_eval_push kind 4).</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void PushY(Engine engine, int slot)
     {
-        try { PushCell(engine, engine.GetY(slot)); }
-        catch (PrologRuntimeException re) { re.StampBuiltin("is", 2); throw; }
+        Cell c = engine.GetY(slot);
+        if (c.Tag == Tag.Ref) c = engine.GetHeap(engine.Deref(c.AsHeapIndex));
+        if (c.Tag == Tag.Int) { PushIntLane(c.AsInt); return; }
+        PushEvalSlow(engine, c);
     }
 
-    private static void PushCell(Engine engine, Cell cell)
+    // Non-int operand: a float / bigint cell, a compound sub-expression a var is
+    // bound to, or an unbound var (→ instantiation_error). The general evaluator
+    // can throw, so the try/catch (which would block inlining of the fast lane)
+    // lives here. The cell is already deref'd by the caller.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void PushEvalSlow(Engine engine, Cell cell)
     {
-        // Deref one level so the common "register holds an int" case takes the
-        // fast lane; anything else (float / bigint cell, a compound
-        // sub-expression a var is bound to, an unbound var → instantiation_error)
-        // goes through the general evaluator.
-        if (cell.Tag == Tag.Ref)
-            cell = engine.GetHeap(engine.Deref(cell.AsHeapIndex));
-        if (cell.Tag == Tag.Int)
-            PushIntLane(cell.AsInt);
-        else
-            Push(ArithmeticEvaluator.Evaluate(engine, cell));
+        try { Push(ArithmeticEvaluator.Evaluate(engine, cell)); }
+        catch (PrologRuntimeException re) { re.StampBuiltin("is", 2); throw; }
     }
 
     /// <summary>Applies a binary operator to the top two stack entries
     /// (a_eval_bin), leaving the result on top. Stays on raw longs when both
     /// operands are in the int lane and the op is integer-closed within 60
     /// bits; otherwise escalates to the <see cref="Number"/> path.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void Bin(int op)
     {
         int ai = _top - 2, bi = _top - 1;
@@ -142,15 +152,22 @@ public static class ArithEvalStack
             _top--;
             return;
         }
+        BinSlow(op, ai, bi);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void BinSlow(int op, int ai, int bi)
+    {
         Escalate(ai);
         Escalate(bi);
         try { _n![ai] = ArithmeticEvaluator.ApplyBin((ArithmeticEvaluator.BinOp)op, _n[ai], _n[bi]); }
         catch (PrologRuntimeException re) { re.StampBuiltin("is", 2); throw; }
-        _b[ai] = true;
+        _b![ai] = true;
         _top--;
     }
 
     /// <summary>Applies a unary operator to the top stack entry (a_eval_un).</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void Un(int op)
     {
         int ai = _top - 1;
@@ -159,6 +176,12 @@ public static class ArithEvalStack
             _i![ai] = r;
             return;
         }
+        UnSlow(op, ai);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void UnSlow(int op, int ai)
+    {
         Escalate(ai);
         try { _n![ai] = ArithmeticEvaluator.ApplyUn((ArithmeticEvaluator.UnOp)op, _n[ai]); }
         catch (PrologRuntimeException re) { re.StampBuiltin("is", 2); throw; }
