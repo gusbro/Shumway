@@ -487,6 +487,7 @@ public sealed class IlPredicateCompiler
     {
         ArgumentNullException.ThrowIfNull(predicate);
         DiagnoseInlineCandidates(predicate, calleeMap);
+        DiagnoseRegion(predicate, calleeMap);
         if (predicate.ClauseCount == 1)
         {
             if (!CanCompileSingleClause(predicate, calleeMap))
@@ -1357,6 +1358,25 @@ public sealed class IlPredicateCompiler
     /// current inliner takes), <c>Nfact-NOIDX</c> (multi-clause fact without a
     /// unique-constant first-arg index), <c>Nfact-unshaped</c>,
     /// <c>ext-or-builtin</c>, <c>var-or-control</c>.</summary>
+    /// <summary>Stage-1 diagnostic (SHUMWAY_IL_SHAPE=3): for each promoted
+    /// predicate, build its IL-eligible region (Phase 29 region compilation) and
+    /// report its size at the default budget and uncapped — to size real regions
+    /// and tune the budget before the emit stages. No emit.</summary>
+    private void DiagnoseRegion(
+        CompiledPredicate predicate, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+    {
+        if (System.Environment.GetEnvironmentVariable("SHUMWAY_IL_SHAPE") != "3") return;
+        if (calleeMap is null) return;
+        bool Eligible(CompiledPredicate p) => CanCompileCore(p, calleeMap, allowIndexedDispatch: true);
+        var capped = IlRegionBuilder.Build(predicate, calleeMap, extraEligible: Eligible);
+        var uncapped = IlRegionBuilder.Build(predicate, calleeMap, budgetBytes: 1_000_000, extraEligible: Eligible);
+        if (uncapped.MemberCount <= 1) return;   // no local closure → uninteresting
+        System.Console.Error.WriteLine(
+            $"[region] root fid={predicate.FunctorId} members={capped.MemberCount}"
+            + $" bytes={capped.TotalBytecodeBytes} (uncapped members={uncapped.MemberCount}"
+            + $" bytes={uncapped.TotalBytecodeBytes})");
+    }
+
     private static void DiagnoseInlineCandidates(
         CompiledPredicate predicate, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
     {

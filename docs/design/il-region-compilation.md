@@ -168,9 +168,18 @@ WAM state.
 
 ## Implementation plan (incremental, each validated on the Embedding Tier-1 suite)
 
-1. **Region discovery** — `BuildRegion(root, calleeMap, budget)` → ordered member
-   list + per-member metadata (local-call edges, IL size). Pure analysis + tests;
-   no emit.
+1. **Region discovery** — ✅ DONE (chunk 370). `IlRegionBuilder.Build(root,
+   calleeMap, budget, extraEligible)` → ordered member list (root first, BFS),
+   `IsIntraRegion(fid)`, `TotalBytecodeBytes`. Cycles → not re-expanded; budget →
+   edge stays a trampoline; dynamic / non-compiled / `extraEligible`-rejected →
+   excluded. `IlRegion` + `IlRegionBuilder` in `IlRegion.cs`; 9 Chunk370Tests.
+   Blint sizing (`SHUMWAY_IL_SHAPE=3`, IL-eligible members): **61 predicates have a
+   non-trivial local closure**, uncapped up to **76 members / 17.7 KB bytecode**;
+   at the default 3072-byte budget, ~10–18 members. So real programs have rich
+   local clusters and **the budget is the binding knob** (coverage vs method size;
+   ~3–4× bytecode→IL expansion → 3072 B ≈ 10–12 KB IL, safe). One root already
+   exceeds the budget alone (no region) — large roots want a higher budget or to
+   stay un-regioned.
 2. **Cursor planner** — assign the region's cursor space (block entries, return
    conts, resumes, clause alts); a table the emit consults. Tests.
 3. **Two-member skeleton** — root + one LEAF local member, no backtracking, no cut:
