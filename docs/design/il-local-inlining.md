@@ -207,18 +207,36 @@ labels into each caller-shape's cursor switch (Pass 1).
   neutral) and *test* (bound → indexing matters) calls, and the test calls
   dominate the backtracking, so flag-ON crypt is ~12% SLOWER, not faster.
 
-### Phase 1b — preserve indexing (the win)
+### Phase 1b — preserve indexing (DONE, chunk 360 — the win)
 
-To actually beat the trampoline, the inline must reproduce the fact's INDEXED
-dispatch, not a linear chain: emit the fact's own `switch_on_*` decision inline
-(reusing the chunk-348 inline-index-resolve / `IlIndexGraph` machinery) so a
-bound arg jumps straight to its clause (and, when it selects a single clause,
-pushes no CP — deterministic, exactly like the indexed delegate). Only the
-genuinely non-deterministic case (unbound arg → multiple candidate clauses)
-keeps the CP chain. This is the refinement that turns the validated mechanism
-into a crypt win; it builds directly on chunk 359's cursor-merging + the existing
-`IlIndexGraph`. (caller shapes beyond metaCp — chain / indexed — also still fall
-back to the trampoline; extend after 1b proves the win.)
+`EmitInlinedFact` now emits a first-argument index pre-filter for facts whose
+every clause has a DISTINCT constant first arg (all integer or all atom —
+crypt's odd/even/lefteven): deref X0; if it is the indexed type and BOUND,
+switch on the value straight to its single clause (deterministic, NO choice
+point) or fail; if UNBOUND, fall to the linear chain (generate); if a bound
+non-indexed type, fail. The deterministic clause's head match re-checks the
+(already-matched) key and unifies the rest — a non-indexed-arg mismatch fails to
+the caller's fail since the unique key leaves no other clause. Reuses the
+chunk-348 deref + Cell getters. (`TryGetFactFirstArgKeys` decides eligibility;
+non-eligible facts — var-headed or duplicate-key clauses — keep the plain linear
+chain.)
+
+**Result: crypt ~23% faster with the flag ON** (interleaved A/B, ON < OFF every
+round), and correct (Embedding 2099 green flag-on; top finds the solution).
+The local-predicate inliner now BEATS the trampoline on the dispatch-bound
+benchmark. Label/local names are per-site-unique (the BaseCursor) — a caller can
+inline several facts.
+
+### Remaining (to enable by default)
+
+- Validate the full van-Roy bench set + Blint with the flag ON (ensure no
+  regression on non-crypt programs) before flipping `InlineFacts` to default-on.
+- Extend beyond the metaCp caller shape (try-me-else chain / indexed callers also
+  still fall back to the trampoline at their inlinable sites).
+- Phase 1b's index pre-filter handles the unique-constant-key shape; a fact with
+  duplicate first-arg keys or a catch-all var clause keeps the linear chain
+  (correct, just not indexed) — generalising it (reuse `IlIndexGraph` fully) is a
+  later refinement.
 
 ## Risks / open questions
 

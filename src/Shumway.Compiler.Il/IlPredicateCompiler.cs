@@ -1133,6 +1133,104 @@ public sealed class IlPredicateCompiler
         int factArity = site.Fact.Arity;
         byte[] fcode = site.Fact.Bytecode;
         int k = site.ClauseRanges.Count;
+
+        // Phase 1b (chunk 360): when every clause has a DISTINCT constant first
+        // argument (all integer or all atom — crypt's odd/even/lefteven), emit a
+        // first-argument index pre-filter so a BOUND arg jumps straight to its
+        // single clause (deterministic, no choice point) instead of the linear
+        // scan — recovering the first-arg indexing the trampoline had. Only an
+        // UNBOUND arg falls to the chain (generate, try-all). A bound value with
+        // no matching key, or a bound non-indexed type, fails outright (a pure
+        // constant fact has no catch-all clause).
+        if (factArity >= 1
+            && TryGetFactFirstArgKeys(fcode, site.ClauseRanges, out bool isAtom, out int[] keys))
+        {
+            // Names must be unique per inline site (a caller can inline several
+            // facts); the site's BaseCursor is unique.
+            int u = site.BaseCursor;
+            var chainLabel = emit.DefineLabel($"inl{u}_chain");
+            var detLabels = new Sigil.Label[k];
+            for (int c = 0; c < k; c++) detLabels[c] = emit.DefineLabel($"inl{u}_det{c}");
+            var cellLoc = emit.DeclareLocal<Cell>($"inl{u}_cell");
+            var tagLoc = emit.DeclareLocal<int>($"inl{u}_tag");
+
+            // cell = deref(X0) (one level)
+            emit.LoadArgument(0);
+            emit.LoadConstant(0);
+            emit.Call(EngineGetRegisterMethod);
+            emit.StoreLocal(cellLoc);
+            emit.LoadLocalAddress(cellLoc);
+            emit.Call(CellTagIdGetter);
+            emit.LoadConstant((int)Tag.Ref);
+            var notRef = emit.DefineLabel($"inl{u}_notref");
+            emit.UnsignedBranchIfNotEqual(notRef);
+            emit.LoadArgument(0);
+            emit.LoadArgument(0);
+            emit.LoadLocalAddress(cellLoc);
+            emit.Call(CellAsHeapIndexGetter);
+            emit.Call(EngineDerefMethod);
+            emit.Call(EngineGetHeapMethod);
+            emit.StoreLocal(cellLoc);
+            emit.MarkLabel(notRef);
+
+            emit.LoadLocalAddress(cellLoc);
+            emit.Call(CellTagIdGetter);
+            emit.StoreLocal(tagLoc);
+            var notWant = emit.DefineLabel($"inl{u}_notwant");
+            emit.LoadLocal(tagLoc);
+            emit.LoadConstant((int)(isAtom ? Tag.Atom : Tag.Int));
+            emit.UnsignedBranchIfNotEqual(notWant);
+            // Bound indexed type → switch on the value to the single clause.
+            if (isAtom)
+            {
+                var keyLoc = emit.DeclareLocal<int>($"inl{u}_key");
+                emit.LoadLocalAddress(cellLoc);
+                emit.Call(CellAsAtomIdGetter);
+                emit.StoreLocal(keyLoc);
+                for (int c = 0; c < k; c++)
+                {
+                    emit.LoadLocal(keyLoc);
+                    emit.LoadConstant(keys[c]);
+                    emit.BranchIfEqual(detLabels[c]);
+                }
+            }
+            else
+            {
+                var vLoc = emit.DeclareLocal<long>($"inl{u}_v");
+                emit.LoadLocalAddress(cellLoc);
+                emit.Call(CellAsIntGetter);
+                emit.StoreLocal(vLoc);
+                for (int c = 0; c < k; c++)
+                {
+                    emit.LoadLocal(vLoc);
+                    emit.LoadConstant((long)keys[c]);
+                    emit.BranchIfEqual(detLabels[c]);
+                }
+            }
+            emit.Branch(failLabel);             // bound, no matching key → fail
+            emit.MarkLabel(notWant);
+            emit.LoadLocal(tagLoc);
+            emit.LoadConstant((int)Tag.Ref);
+            emit.BranchIfEqual(chainLabel);     // unbound → generate via the chain
+            emit.Branch(failLabel);             // bound non-indexed type → fail
+
+            // Deterministic single-clause entries (no CP): the head match
+            // re-checks the (already-matched) indexed arg and unifies the rest;
+            // a failure on a non-indexed arg falls through to the caller's fail
+            // since the unique key leaves no other clause to try.
+            for (int c = 0; c < k; c++)
+            {
+                emit.MarkLabel(detLabels[c]);
+                EmitClauseBody(emit, fcode, site.ClauseRanges[c].Start, site.ClauseRanges[c].End,
+                    failLabel, Array.Empty<CallSite>(),
+                    calleeMap: calleeMap, suppressProceedReturn: true);
+                emit.Branch(site.Continuation);
+            }
+            emit.MarkLabel(chainLabel);
+        }
+
+        // The linear clause chain — the generate (unbound-arg) path for an
+        // index-eligible fact, or every call for a non-index-eligible one.
         for (int c = 0; c < k; c++)
         {
             if (c > 0) emit.MarkLabel(site.AltLabels[c - 1]);   // backtrack re-entry for clause c+1
@@ -1150,6 +1248,57 @@ public sealed class IlPredicateCompiler
             if (c < k - 1) emit.Branch(site.Continuation);
         }
         emit.MarkLabel(site.Continuation);
+    }
+
+    /// <summary>For an all-constant-first-arg fact (every clause's first head
+    /// match against arg 0 is a distinct constant of one kind), returns the kind
+    /// (<paramref name="isAtom"/>) and the per-clause key. Enables the chunk-360
+    /// index pre-filter; returns false (→ plain linear chain) for any clause
+    /// whose first arg is a variable, a compound, a mixed kind, or a duplicate
+    /// of another clause's.</summary>
+    private static bool TryGetFactFirstArgKeys(
+        byte[] code, IReadOnlyList<(int Start, int End)> ranges, out bool isAtom, out int[] keys)
+    {
+        isAtom = false;
+        keys = new int[ranges.Count];
+        if (ranges.Count == 0) return false;
+        bool? atomKind = null;
+        var seen = new System.Collections.Generic.HashSet<int>();
+        for (int c = 0; c < ranges.Count; c++)
+        {
+            if (!TryReadFirstArgConst(code, ranges[c].Start, ranges[c].End, out bool a, out int key))
+                return false;
+            if (atomKind is null) atomKind = a;
+            else if (atomKind.Value != a) return false;   // mixed integer / atom
+            if (!seen.Add(key)) return false;             // duplicate key
+            keys[c] = key;
+        }
+        isAtom = atomKind!.Value;
+        return true;
+    }
+
+    private static bool TryReadFirstArgConst(byte[] code, int start, int end, out bool isAtom, out int key)
+    {
+        isAtom = false;
+        key = 0;
+        int pc = start;
+        while (pc < end)
+        {
+            var op = (Opcode)code[pc];
+            if (op == Opcode.Meta) { pc += 6; continue; }
+            if (op == Opcode.GetInteger)
+            {
+                if (BytecodeIO.ReadInt32(code, pc + 5) != 0) return false;
+                key = BytecodeIO.ReadInt32(code, pc + 1); isAtom = false; return true;
+            }
+            if (op == Opcode.GetAtom)
+            {
+                if (BytecodeIO.ReadInt32(code, pc + 5) != 0) return false;
+                key = BytecodeIO.ReadInt32(code, pc + 1); isAtom = true; return true;
+            }
+            return false;   // first head-match op isn't a constant on arg 0
+        }
+        return false;
     }
 
     /// <summary>Shared meta-CP body emitter — used by both the
