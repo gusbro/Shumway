@@ -702,6 +702,74 @@ public sealed class IlPredicateCompiler
         return sawProceed;
     }
 
+    /// <summary>Phase 29 case 2 (detector) — a single-clause RULE that can be
+    /// inlined into a caller's IL method, generalising
+    /// <see cref="IsInlinableLeafRule"/> to a body that also makes USER calls and
+    /// uses an environment frame (permanents). It must be a single clause, must
+    /// NOT cut (no cut / neck_cut / get_level / allocate_get_level — cut scoping
+    /// across an inline boundary is a separate problem), and must not use a meta
+    /// (<c>call</c>/<c>$call</c>) or backtrackable builtin (those need the
+    /// enclosing-call resume machinery). Everything else — allocate/deallocate,
+    /// Y-slots, head/body unify+arith, deterministic <c>CallBuiltin</c>, and user
+    /// <c>Call</c>/<c>Execute</c> — is allowed; the emit (a later chunk) threads
+    /// the body's calls through the caller's forward-resume cursor space and
+    /// un-tails a trailing <c>Execute</c>. Detector only here — sizes the case-2
+    /// opportunity and gates the emit.</summary>
+    internal static bool IsInlinableRule(CompiledPredicate pred)
+    {
+        if (pred.ClauseCount != 1) return false;
+        byte[] code = pred.Bytecode;
+        int pc = 0;
+        bool endsTerminal = false;   // last op was proceed / deallocate_proceed / tail Execute
+        while (pc < code.Length)
+        {
+            var op = (Opcode)code[pc];
+            switch (op)
+            {
+                case Opcode.Proceed: endsTerminal = true; pc += 1; continue;
+                case Opcode.DeallocateProceed:
+                    endsTerminal = true; pc += OpcodeTable.Get((byte)op).Size; continue;
+                // A trailing user tail-call (Execute): the rule's last goal is a
+                // user predicate. Inlining it at a non-tail site requires un-tailing
+                // the Execute into a threaded non-tail call, AND distinguishing a
+                // user predicate from a tail-position backtrackable/meta builtin
+                // (which also lowers to Execute) — both deferred to the emit. Reject
+                // for now so the detector only admits proceed-terminated bodies.
+                case Opcode.Execute: return false;
+                case Opcode.Meta: pc += 6; continue;
+                // Cut: pruning the caller's choice points across the inline
+                // boundary needs scoped-barrier handling — deferred (this is THE
+                // case-2 prerequisite: only 10/108 Blint single-clause-rule sites
+                // are cut-free, vs 89/108 once a mid-body cut is handled).
+                case Opcode.Cut:
+                case Opcode.NeckCut:
+                case Opcode.GetLevel:
+                case Opcode.AllocateGetLevel:
+                    return false;
+                case Opcode.CallBuiltin:
+                {
+                    var entry = Shumway.Builtins.BuiltinsRegistry.GetById(
+                        BytecodeIO.ReadInt32(code, pc + 1));
+                    if (entry.Name is "call" or "$call"
+                        || IsBacktrackableBuiltinName(entry.Name))
+                        return false;
+                    endsTerminal = false;
+                    pc += OpcodeTable.Get((byte)op).Size;
+                    continue;
+                }
+                default:
+                {
+                    int size = OpcodeTable.Get((byte)op).Size;
+                    if (size <= 0) return false;
+                    endsTerminal = false;
+                    pc += size;
+                    continue;
+                }
+            }
+        }
+        return endsTerminal;
+    }
+
     /// <summary>Phase 29 case 1 — gates the extension of the chunk-69 leaf inline
     /// to single-clause RULES with a deterministic builtin/arith/unify body
     /// (<see cref="IsInlinableLeafRule"/>). Default OFF; <c>SHUMWAY_INLINE_RULES=1</c>
@@ -1232,6 +1300,10 @@ public sealed class IlPredicateCompiler
                     else if (TryGetFactFirstArgKeys(callee.Bytecode, ranges, out _, out _))
                         cat = "Nfact-IDX(inlines)";
                     else cat = "Nfact-NOIDX";
+                    // Case-2 eligibility (single-clause, cut-free, no meta /
+                    // backtrackable builtin) — the opportunity the rule-body
+                    // inliner targets. Reported as a suffix tag.
+                    if (clauses == 1 && IsInlinableRule(callee)) cat += " [inl2]";
                 }
                 System.Console.Error.WriteLine($"[cand] {cat} callee={fid} clauses={clauses}");
             }

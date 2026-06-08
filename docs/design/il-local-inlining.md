@@ -356,10 +356,37 @@ default stays OFF until cases 2/3 make a real program move. (A single builtin in
 TAIL position compiles to `Execute` not `CallBuiltin`, so `p(X):-integer(X)` is
 not yet covered — `EmitClauseBody` has no `ExecuteBuiltin` path; a follow-up.)
 
-### Case 2 — single-clause non-leaf rules (next)
+### Case 2 — single-clause non-leaf rules (chunk 366 = detector + sizing)
 
-79 Blint call sites. Adds a nested env frame + the body's own (still-trampolined)
-calls. Deterministic, no clause backtracking. This is where Blint's time is.
+The `IsInlinableRule` detector + a `[cand] … [inl2]` tag in `DiagnoseInlineCandidates`
+sized the real opportunity on Blint. The finding reframes case 2 around **two
+emit prerequisites**, not the env-frame machinery (which `EmitClauseBody` already
+handles — allocate/deallocate/Y-slots are all there):
+
+| detector admits | Blint 1cl-rule call sites |
+|---|--:|
+| cut-free **and** proceed-terminated (no tail call) | **1** |
+| cut-free, tail `Execute` accepted | 25 |
+| **cut allowed**, tail `Execute` accepted | **89** (of 108) |
+
+So almost every single-clause rule in Blint either **ends in a tail user-call**
+(`Execute`) or **cuts mid-body** (`p :- a, !, b` — the "commit after checking"
+idiom; Blint has zero neck cuts, which would be no-ops). Both are emit problems:
+
+1. **Mid-body cut scoping** — THE prerequisite (10→89 sites). The inlined `Cut`
+   must prune only the choice points created since the inline entry, not the
+   caller's. Capture `engine.B` at the inline point as the cut barrier; emit the
+   inlined `Cut`/`NeckCut` to cut to it. Soundness-critical
+   ([[extra-backtracking-not-sound]]): a wrong barrier re-runs clauses ISO would
+   have cut away.
+2. **Tail-call un-tailing** — a body ending in `Execute` (its last goal is a user
+   call) must become a threaded non-tail call when inlined at a non-tail site, and
+   the detector/emit must distinguish a user predicate from a tail-position
+   backtrackable/meta builtin (which also lowers to `Execute`).
+
+The detector is cut-free + proceed-terminal for now (the conservative, provably
+safe subset) — it is wired only into the diagnostic, not any emit path. The
+case-2 emit is the next focused piece, and the cut scoping is its core.
 
 ### Case 3 — multi-clause rules
 
