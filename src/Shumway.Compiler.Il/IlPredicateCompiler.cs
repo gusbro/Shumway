@@ -498,7 +498,7 @@ public sealed class IlPredicateCompiler
         {
             var region = IlRegionBuilder.Build(predicate, calleeMap,
                 extraEligible: p => CanCompileCore(p, calleeMap, allowIndexedDispatch: true));
-            if (IsStage3RegionEmittable(region))
+            if (IsRegionEmittable(region, calleeMap))
             {
                 if (System.Environment.GetEnvironmentVariable("SHUMWAY_IL_SHAPE") == "1")
                     System.Console.Error.WriteLine(
@@ -902,9 +902,12 @@ public sealed class IlPredicateCompiler
         public int RegionFid;
         public Sigil.Label RetLabel = null!;
         public Sigil.Label DispatchLabel = null!;
+        public Sigil.Label FailLabel = null!;
         public IReadOnlyDictionary<int, Sigil.Label> MemberEntry = null!;
         public Sigil.Label[] CursorLabels = null!;
         public Dictionary<(int Member, int Pc), int> CursorBySite = null!;
+        // (member index, clause index 1..N-1) → the clause-alternative cursor.
+        public Dictionary<(int Member, int Clause), int> ClauseAltCursor = null!;
         public int CurrentMemberIndex;
     }
 
@@ -914,12 +917,16 @@ public sealed class IlPredicateCompiler
     /// builtins (no cut, no backtrackable / meta builtin, no cross-region user call,
     /// no multi-clause dispatch). The unhandled shapes (backtracking, cut,
     /// cross-region) come in Stages 4-6.</summary>
-    internal static bool IsStage3RegionEmittable(IlRegion region)
+    internal static bool IsRegionEmittable(
+        IlRegion region, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
         if (region.MemberCount < 2) return false;
         foreach (var m in region.Members)
         {
-            if (m.ClauseCount != 1) return false;           // multi-clause → Stage 4
+            // A multi-clause member must be a plain try_me_else chain (Stage 4);
+            // an indexed / switched dispatch is deferred to a later stage.
+            if (m.ClauseCount > 1 && !TryDescribeTryMeElseChain(m, calleeMap, out _))
+                return false;
             byte[] code = m.Bytecode;
             int pc = 0;
             while (pc < code.Length)
@@ -965,6 +972,23 @@ public sealed class IlPredicateCompiler
     private PredicateDelegate CompileRegion(IlRegion region, IlRegionPlan plan,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
     {
+        // The holder pattern gives the region method a reference to its OWN delegate
+        // (for PushIlChoicePoint when a multi-clause member's clause dispatch pushes
+        // a choice point that re-enters this method on backtrack).
+        lock (IndexedDelegateHolder.RegistrationLock)
+        {
+            int holderKey = _nextHolderKey;
+            var emitSelf = SelfFromHolder(holderKey);
+            var del = CompileRegionUnlocked(region, plan, calleeMap, emitSelf);
+            IndexedDelegateHolder.Register(holderKey, del);
+            _nextHolderKey = holderKey + 1;
+            return del;
+        }
+    }
+
+    private PredicateDelegate CompileRegionUnlocked(IlRegion region, IlRegionPlan plan,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, SelfDelegateEmitter emitSelf)
+    {
         var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
             $"ShumwayIlRegion_{region.Root.FunctorId}_{region.Root.Arity}",
             doVerify: DoVerify || DebugMode);
@@ -983,21 +1007,22 @@ public sealed class IlPredicateCompiler
         var cursorLabels = new Sigil.Label[plan.TotalCursors];
         cursorLabels[0] = memberEntry[regionFid];           // cursor 0 = root entry
         var cursorBySite = new Dictionary<(int, int), int>();
+        var clauseAltCursor = new Dictionary<(int, int), int>();
         foreach (var s in plan.Sites)
         {
             cursorLabels[s.Cursor] = emit.DefineLabel($"rcur_{s.Cursor}");
-            // ClauseAlt cursors are keyed by (member, clause) at emit time, not by
-            // pc — only call sites go in the (member, pc) lookup. (Stage 3 regions
-            // have no multi-clause members, so this is the call-cursor map.)
-            if (s.Kind != RegionCursorKind.ClauseAlt)
+            if (s.Kind == RegionCursorKind.ClauseAlt)
+                clauseAltCursor[(s.MemberIndex, s.ClauseIndex)] = s.Cursor;
+            else
                 cursorBySite[(s.MemberIndex, s.Pc)] = s.Cursor;
         }
 
         var ctx = new RegionEmitContext
         {
             Region = region, RegionFid = regionFid, RetLabel = retLabel,
-            DispatchLabel = dispatchLabel, MemberEntry = memberEntry,
+            DispatchLabel = dispatchLabel, FailLabel = failLabel, MemberEntry = memberEntry,
             CursorLabels = cursorLabels, CursorBySite = cursorBySite,
+            ClauseAltCursor = clauseAltCursor,
         };
 
         // cur = arg1; br dispatch (the switch routes the cursor to its label).
@@ -1012,9 +1037,12 @@ public sealed class IlPredicateCompiler
         {
             var member = region.Members[mi];
             ctx.CurrentMemberIndex = mi;
-            emit.MarkLabel(memberEntry[member.FunctorId]);
-            EmitClauseBody(emit, member.Bytecode, 0, member.Bytecode.Length,
-                failLabel, member.CallSites, calleeMap: calleeMap, regionCtx: ctx);
+            emit.MarkLabel(memberEntry[member.FunctorId]);   // clause 0 / single-clause entry
+            if (member.ClauseCount == 1)
+                EmitClauseBody(emit, member.Bytecode, 0, member.Bytecode.Length,
+                    failLabel, member.CallSites, calleeMap: calleeMap, regionCtx: ctx);
+            else
+                EmitRegionMultiClauseMember(emit, member, mi, ctx, emitSelf, calleeMap);
         }
 
         emit.MarkLabel(retLabel);
@@ -1033,6 +1061,40 @@ public sealed class IlPredicateCompiler
         emit.Return();
 
         return emit.CreateDelegate(Optimizations);
+    }
+
+    /// <summary>Emit a MULTI-clause member's block (Stage 4) — a try_me_else chain.
+    /// Clause 0 is at the member-entry label (already marked); clauses 1..N-1 are at
+    /// their <c>ClauseAlt</c> cursor labels. Before each clause except the last, push
+    /// a choice point carrying the NEXT clause's cursor + the region delegate, so a
+    /// head-match (or later) failure returns false → backtrack → the CP → re-enters
+    /// the region method at the next clause via <c>dispatch</c>. Each clause body is
+    /// region-aware (its proceed → <c>br ret</c>, its calls threaded by the plan).</summary>
+    private static void EmitRegionMultiClauseMember(
+        Sigil.Emit<PredicateDelegate> emit, CompiledPredicate member, int mi,
+        RegionEmitContext ctx, SelfDelegateEmitter emitSelf,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+    {
+        if (!TryDescribeTryMeElseChain(member, calleeMap, out var chain) || chain is null)
+            throw new InvalidOperationException(
+                $"Region member fid={member.FunctorId} is multi-clause but not a try_me_else chain.");
+        var clauses = chain.Clauses;
+        int n = clauses.Count;
+        for (int i = 0; i < n; i++)
+        {
+            if (i > 0)
+                emit.MarkLabel(ctx.CursorLabels[ctx.ClauseAltCursor[(mi, i)]]);
+            if (i < n - 1)
+            {
+                emit.LoadArgument(0);                         // engine
+                emitSelf(emit);                               // → region delegate
+                emit.LoadConstant(ctx.ClauseAltCursor[(mi, i + 1)]);
+                emit.LoadConstant(member.Arity);
+                emit.Call(EnginePushIlCpMethod);
+            }
+            EmitClauseBody(emit, member.Bytecode, clauses[i].Start, clauses[i].End,
+                ctx.FailLabel, member.CallSites, calleeMap: calleeMap, regionCtx: ctx);
+        }
     }
 
     /// <summary>Region-mode opcode handling (Stage 3). Returns true (and advances

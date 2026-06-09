@@ -14,7 +14,7 @@ namespace Shumway.Tests.Embedding;
 /// builtins only). End-to-end correctness is validated by the full Embedding suite
 /// run with SHUMWAY_REGION=1 (the region method produces identical answers to the
 /// trampoline) and by REPL cases; these tests pin the Stage-3 eligibility
-/// (<see cref="IlPredicateCompiler.IsStage3RegionEmittable"/>) on synthetic
+/// (<see cref="IlPredicateCompiler.IsRegionEmittable"/>) on synthetic
 /// regions, plus the default-off flag.
 /// </summary>
 public class Chunk373Tests
@@ -56,16 +56,21 @@ public class Chunk373Tests
         var root = Pred(1, 1, CallThenProceed(), (2, false));
         var region = IlRegionBuilder.Build(root, Map(root, leaf));
         Assert.Equal(2, region.MemberCount);
-        Assert.True(IlPredicateCompiler.IsStage3RegionEmittable(region));
+        Assert.True(IlPredicateCompiler.IsRegionEmittable(region));
     }
 
     [Fact]
-    public void MultiClauseMember_NotEmittable()
+    public void NonChainMultiClauseMember_NotEmittable()
     {
-        var leaf = Pred(2, 2, LeafProceed());          // 2 clauses → Stage 4
+        // A multi-clause member that is NOT a plain try_me_else chain (here a
+        // synthetic 2-clause body with no try_me_else) is not emittable — only
+        // chain members are (Stage 4). A REAL try_me_else-chain member IS emittable;
+        // that path is validated end-to-end (REPL findall cases + the full Embedding
+        // suite run with SHUMWAY_REGION=1), since the flag can't be toggled per-test.
+        var leaf = Pred(2, 2, LeafProceed());
         var root = Pred(1, 1, CallThenProceed(), (2, false));
         var region = IlRegionBuilder.Build(root, Map(root, leaf));
-        Assert.False(IlPredicateCompiler.IsStage3RegionEmittable(region));
+        Assert.False(IlPredicateCompiler.IsRegionEmittable(region));
     }
 
     [Fact]
@@ -74,7 +79,7 @@ public class Chunk373Tests
         var leaf = Pred(2, 1, NeckCutProceed());       // cut → Stage 5
         var root = Pred(1, 1, CallThenProceed(), (2, false));
         var region = IlRegionBuilder.Build(root, Map(root, leaf));
-        Assert.False(IlPredicateCompiler.IsStage3RegionEmittable(region));
+        Assert.False(IlPredicateCompiler.IsRegionEmittable(region));
     }
 
     [Fact]
@@ -84,6 +89,6 @@ public class Chunk373Tests
         var root = Pred(1, 1, LeafProceed());
         var region = IlRegionBuilder.Build(root, Map(root));
         Assert.Equal(1, region.MemberCount);
-        Assert.False(IlPredicateCompiler.IsStage3RegionEmittable(region));
+        Assert.False(IlPredicateCompiler.IsRegionEmittable(region));
     }
 }

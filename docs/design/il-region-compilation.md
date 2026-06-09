@@ -234,16 +234,24 @@ WAM state.
      ClauseAlt` + `RegionCursorSite.ClauseIndex`; tests in Chunk371Tests. Stage-3
      emit unaffected (its single-clause regions have no clause-alts; `cursorBySite`
      keeps only call cursors).
-   - **Dispatch emit (next)**: emit a multi-clause member block — the clause-entry
-     dispatch (clause 0 at the member-entry label, clauses 1..N-1 at their
-     `ClauseAlt` cursor labels), each clause (except the last) pushing
+   - **Dispatch emit DONE (chunk 375)**: `EmitRegionMultiClauseMember` emits a
+     try_me_else-chain member block — clause 0 at the member-entry label, clauses
+     1..N-1 at their `ClauseAlt` cursor labels; each clause except the last pushes
      `PushIlChoicePoint(region delegate, next-clause cursor, arity)` before its
-     region-aware body, with a head-match failure → region fail → backtrack → the CP
-     → the next clause. Needs the region method's self-delegate (the holder pattern,
-     `SelfFromHolder` + `IndexedDelegateHolder.Register`). Soundness-critical
-     ([[extra-backtracking-not-sound]]) — validated with discriminating findall
-     cases (a member enumerates all clauses; a caller CP created before the call
-     survives).
+     region-aware body, so a head-match failure → region fail → `return false` →
+     backtrack → the CP → re-enter the region method at the next clause via
+     `dispatch`. `CompileRegion` switched to the holder pattern (`SelfFromHolder` +
+     `IndexedDelegateHolder.Register`) for the self-delegate. `IsRegionEmittable`
+     (renamed) admits a multi-clause member iff it is a plain try_me_else chain
+     (indexed / switched dispatch deferred to Stage 6). **Validated sound** on
+     discriminating findall: a 3-clause chain member called intra-region enumerates
+     all 3 (tail and non-tail), and a caller `member(S,[s1,s2])` CP created BEFORE
+     the call survives the member's backtracking (`[s1-1,…,s2-3]`). **Full Embedding
+     suite green with SHUMWAY_REGION=1 (2153)** — the multi-clause path is correct
+     across the Tier-1 suite's many backtracking predicates.
+     (Note: integer/atom facts like `p(1).p(2).p(3).` compile to INDEXED dispatch,
+     not a chain, so they're Stage 6, not Stage 4 — a chain needs non-indexable
+     heads, e.g. `gen(R):-R=1. gen(R):-R=2.`)
 5. **Cut within the region** — reuse chunk-367 barrier scoping. Validate soundness
    (the discriminating `member`-survives-cut cases).
 6. **Cross-region calls + builtins** inside the region; **recursion/cycles** (br to
