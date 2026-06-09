@@ -76,6 +76,7 @@ internal static class Program
             StripSource = opts.StripSource,
             IncludeCompiledIl = opts.IncludeCompiledIl,
             StripWam = opts.StripWam,
+            RegionPruneReport = opts.RegionPruneReport,
             ForeignAssemblies = opts.ForeignDlls,
         };
 
@@ -191,6 +192,7 @@ internal static class Program
         public bool StripSource { get; set; }
         public bool IncludeCompiledIl { get; set; }
         public bool StripWam { get; set; }
+        public bool RegionPruneReport { get; set; }
         public string MapPath { get; set; } = "";
         public string ExePath { get; set; } = "";
         public string Goal { get; set; } = "";
@@ -253,6 +255,10 @@ internal static class Program
                 case "--strip-wam":
                     opts.IncludeCompiledIl = true;   // strip-wam implies IL
                     opts.StripWam = true;
+                    break;
+
+                case "--prune-report":
+                    opts.RegionPruneReport = true;
                     break;
 
                 case "--map":
@@ -405,6 +411,11 @@ internal static class Program
             + "                           landed in the bundle: per-module sizes, public\n"
             + "                           / dynamic predicate lists, reached / dropped\n"
             + "                           modules, totals. Linker-style audit output.\n"
+            + "      --prune-report       Stage-9 dead-region analysis: report how many\n"
+            + "                           predicate standalone forms would be prunable\n"
+            + "                           (region-absorbed or unreachable) if the bundle\n"
+            + "                           were region-compiled. Info diagnostic; no change\n"
+            + "                           to the bundle (shown with --verbose).\n"
             + "  -e, --exe <path>         Emit a single-file native executable for the\n"
             + "                           current platform. The exe loads the bundle and\n"
             + "                           runs --goal at startup, then exits 0 (success)\n"

@@ -447,9 +447,22 @@ WAM state.
        Blint (entry `test/0`): **18 externally-reachable seeds among 238 reached
        predicates** — the REAL seed set, broader than `shumway-compile --prune-report`'s
        11 call-graph roots because it keeps public/dynamic predicates also called
-       internally. 4 Chunk389Tests. NOT yet consumed: the fid bridge (map these
-       `(module, PredicateRef)` seeds to the functor ids `RegionReachability` needs) +
-       region-mode bundle compilation (prereq i) + the actual entry drop are 9b-2+.
+       internally. 4 Chunk389Tests.
+     - **9b-2 — the fid bridge + analysis report DONE (chunk 390).** Gated by
+       `LinkConfig.RegionPruneReport` / `shumway-link --prune-report`: after the walk the
+       linker decodes the reached modules (`CompiledModuleCodec`) into a global
+       fid→CompiledPredicate map, resolves the seeds to functor ids
+       (`ShmoLinker.ResolveSeedFids`, public — tries BOTH the mangled `module$name` and
+       the bare `name`, a sound over-keep), and runs `RegionReachability` twice — region-
+       aware (intra-region = `br`) and plain (every call trampolines) — so the report
+       separates the genuine region benefit from ordinary dead code. Blint (entry
+       `test/0`): **65 region-absorbed (standalone prunable) + 35 unreachable = 100 of
+       256**; the 65 matches `shumway-compile --prune-report`'s 67. Only **1 seed fid**
+       resolves (`test/0`) — correct: Blint's other 17 seeds are `:- dynamic`
+       predicates whose clauses live in the DynamicSeeds trailer, not the static
+       bytecode, and which are never region-compiled / never prunable. 5 Chunk390Tests.
+       A REPORT only; the applied prune still needs region-mode bundle compilation
+       (prereq i) + dropping each prunable predicate's standalone WAM/IL entry (9b-3+).
 10. **Linker IL / WAM dump options (PLANNED) — `shumway-link --dump-il` /
     `--dump-wam`.** The link step is the right place to dump the code that actually
     ships: after Stage 9 pruning, the linker holds the REAL IL that the bundle needs

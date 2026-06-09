@@ -1,4 +1,7 @@
 using Shumway.Builtins;
+using Shumway.Compiler.Il;
+using Shumway.Compiler.Wam;
+using Shumway.Core;
 
 namespace Shumway.Embedding;
 
@@ -90,6 +93,15 @@ public sealed class LinkConfig
     /// address. Produces a JIT-only bundle: under Native AOT the IL can't load
     /// and these predicates would be unrunnable.</summary>
     public bool StripWam { get; init; }
+
+    /// <summary>Stage 9 (dead-region) report opt-in. When true, after the reachability
+    /// walk the linker decodes the reached modules, resolves the externally-reachable
+    /// seeds to functor ids, and runs <see cref="RegionReachability"/> to report how many
+    /// predicate standalone forms WOULD be prunable if the bundle were region-compiled —
+    /// an analysis diagnostic (<c>stage9_prunable</c>), not yet an applied prune (which
+    /// also needs region-mode bundle compilation). Off by default (the decode + per-pred
+    /// region build is not free).</summary>
+    public bool RegionPruneReport { get; init; }
 
     /// <summary>When non-null, the linker writes info diagnostics
     /// describing its progress (modules visited, predicates reached,
@@ -487,6 +499,50 @@ public static class ShmoLinker
             $"Stage 9 (dead-region): {stage9Seeds.Count} externally-reachable seed(s) "
             + $"among {reached.Count} reached predicate(s).");
 
+        // ----- 6c. Stage 9 prune analysis (opt-in report) -----
+        // The fid bridge: decode the reached modules into CompiledPredicates (their
+        // functor ids + call graph, interned consistently in the global tables), resolve
+        // the (module, PredicateRef) seeds to functor ids, and run the dead-region
+        // reachability. A REPORT only — the applied prune also needs the bundle to
+        // region-compile (else a pruned predicate is reached by a live trampoline call).
+        if (config.RegionPruneReport)
+        {
+            var predicates = new Dictionary<int, CompiledPredicate>();
+            foreach (var obj in config.Objects)
+            {
+                if (!reachedModules.Contains(obj.ModuleName) || obj.Bytecode.Length == 0) continue;
+                foreach (var p in CompiledModuleCodec.Decode(obj.Bytecode).Predicates)
+                    predicates[p.FunctorId] = p;
+            }
+            if (predicates.Count > 0)
+            {
+                var byName = new Dictionary<(string, int), int>();
+                foreach (int fid in predicates.Keys)
+                {
+                    var (atomId, arity) = FunctorTable.Lookup(fid);
+                    byName[(AtomTable.GetById(atomId)?.Name ?? "", arity)] = fid;
+                }
+                var seedFids = ResolveSeedFids(stage9Seeds, byName);
+                var ic = new IlPredicateCompiler();
+                // Region-aware reachability (intra-region calls are br, don't reach the
+                // standalone) vs plain reachability (every call trampolines). The
+                // difference is the predicates that are LIVE but only reached as absorbed
+                // members — the genuine region-prune benefit; predicates in neither set
+                // are ordinary dead code (droppable independently of regions).
+                var regionReachable = RegionReachability.TrampolineReachable(
+                    predicates, seedFids, fid => ic.RegionMemberFids(predicates[fid], predicates));
+                var fullReachable = RegionReachability.TrampolineReachable(
+                    predicates, seedFids, fid => new[] { fid });
+                int absorbedOnly = fullReachable.Count(f => !regionReachable.Contains(f));
+                int deadCode = predicates.Count - fullReachable.Count;
+                Emit(LinkSeverity.Info, "stage9_prunable",
+                    $"Stage 9 (dead-region): of {predicates.Count} decoded predicates, "
+                    + $"{absorbedOnly} are region-absorbed (standalone prunable) and "
+                    + $"{deadCode} are unreachable — {absorbedOnly + deadCode} total prunable "
+                    + $"standalone forms under region compilation (from {seedFids.Count} seed fids).");
+            }
+        }
+
         // ----- 7. Unreachable modules → warning + drop -----
         var unreachable = new List<string>();
         foreach (var obj in config.Objects)
@@ -695,6 +751,31 @@ public static class ShmoLinker
                 && vis is PredicateVisibility.Public or PredicateVisibility.Dynamic)
                 seeds.Add((mod, pred));
         return seeds;
+    }
+
+    /// <summary>Stage 9 fid bridge: resolve the linker's <c>(module, PredicateRef)</c>
+    /// seeds to the functor ids the compiled bytecode uses, against
+    /// <paramref name="byName"/> (a <c>(functorName, arity) → fid</c> index built from
+    /// the decoded predicates). A predicate's functor name is either MANGLED
+    /// (<c>module$name</c>, for a local predicate — see <c>ModuleRewrite.MangledName</c>)
+    /// or BARE (<c>name</c>, for a public / dynamic predicate, and for a local entry that
+    /// the linker promoted to public). We add BOTH forms that exist: a seed's true fid is
+    /// always one of them, and including the other (if it happens to name a different
+    /// predicate) only over-KEEPS — sound, since the prune must never drop a seed. Pure;
+    /// public for direct testing.</summary>
+    public static HashSet<int> ResolveSeedFids(
+        IEnumerable<(string Module, PredicateRef Pred)> seeds,
+        IReadOnlyDictionary<(string Name, int Arity), int> byName)
+    {
+        var fids = new HashSet<int>();
+        foreach (var (mod, pred) in seeds)
+        {
+            if (byName.TryGetValue((mod + "$" + pred.Name, pred.Arity), out int local))
+                fids.Add(local);
+            if (byName.TryGetValue((pred.Name, pred.Arity), out int bare))
+                fids.Add(bare);
+        }
+        return fids;
     }
 
     /// <summary>Async wrapper. Offloads the synchronous
