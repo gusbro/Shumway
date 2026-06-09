@@ -208,12 +208,22 @@ WAM state.
      `Cp`). Tested in isolation (Chunk372Tests). Confirms the dispatch protocol: the
      loop, after `del(e,cursor)` returns true with `IlTailCallPending` false, does
      `SetPc(Cp)` — so a cross-region return needs only `return true`.
-   - **Method emit (in progress)**: the region method layout (`cur` local, the
-     `dispatch` jump table over the plan's cursors, member blocks, the shared `ret`
-     handler) + a region-aware body emit (proceed → `br ret`; intra-region call →
-     `SetB0` + `SetCp(returnMarker)` + `br member_entry`; cross-region / builtins
-     unchanged). This is the first risky emit — built carefully, validated vs the
-     trampoline before moving on.
+   - **Method emit DONE (chunk 373)**: `CompileRegion(region, plan, calleeMap)` emits
+     the region method — a `cur` local seeded from `arg1`; a `dispatch` IL `switch`
+     over the plan's cursor space (0 = root entry); each member as a labeled block;
+     a shared `ret` handler (`cur = RegionReturnCursor(e, fid); if ≥0 br dispatch;
+     else return true`). The body emit reuses `EmitClauseBody` with a
+     `RegionEmitContext`: `TryEmitRegionOpcode` rewrites proceed/deallocate_proceed →
+     `br ret`, an intra-region non-tail `Call` → `SetB0` + `SetCp(return marker)` +
+     `br member` + the return-continuation label, an intra-region tail `Execute` →
+     `SetB0` + `br member` (Cp unchanged); every other opcode (head match, unify,
+     arith, allocate/deallocate, deterministic builtin) is emitted unchanged.
+     `IsStage3RegionEmittable` gates the minimal subset (≥2 members, all
+     single-clause, intra-region calls + det builtins, no cut). Gated
+     `SHUMWAY_REGION=1`. Validated: minimal `go→a→{b,c}` and value-flow
+     `a(X,Y):-b(X),c(Y)` give identical answers to the trampoline; the **full
+     Embedding suite is green with SHUMWAY_REGION=1 (2147)**. 5 Chunk373Tests.
+     Stages 4–6 add multi-clause members (backtracking), cut, and cross-region calls.
 4. **Intra-region backtracking** — a multi-clause member as a block; CPs re-enter
    `dispatch`. Validate enumeration + a caller CP surviving.
 5. **Cut within the region** — reuse chunk-367 barrier scoping. Validate soundness

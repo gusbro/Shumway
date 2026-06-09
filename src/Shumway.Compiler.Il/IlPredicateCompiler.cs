@@ -255,6 +255,10 @@ public sealed class IlPredicateCompiler
     // address otherwise — so an IL-only callee needs no WAM body/address.
     private static readonly MethodInfo EngineEncodeResumeMarkerMethod =
         typeof(Engine).GetMethod(nameof(Engine.EncodeResumeMarker))!;
+    // Phase 29 region compilation — a member's proceed decodes Cp via this to
+    // choose intra-region br (a return cursor) vs cross-region return-to-loop (-1).
+    private static readonly MethodInfo EngineRegionReturnCursorMethod =
+        typeof(Engine).GetMethod(nameof(Engine.RegionReturnCursor))!;
     // Phase 19 — meta-call dispatch helper.
     private static readonly MethodInfo IlMetaCallHelperDispatchMethod =
         typeof(IlMetaCallHelper).GetMethod(nameof(IlMetaCallHelper.Dispatch))!;
@@ -488,6 +492,20 @@ public sealed class IlPredicateCompiler
         ArgumentNullException.ThrowIfNull(predicate);
         DiagnoseInlineCandidates(predicate, calleeMap);
         DiagnoseRegion(predicate, calleeMap);
+        // Phase 29 region compilation (Stage 3, gated): emit the root + its local
+        // closure as ONE IL method when the region is in the minimal subset.
+        if (RegionCompile && calleeMap is not null)
+        {
+            var region = IlRegionBuilder.Build(predicate, calleeMap,
+                extraEligible: p => CanCompileCore(p, calleeMap, allowIndexedDispatch: true));
+            if (IsStage3RegionEmittable(region))
+            {
+                if (System.Environment.GetEnvironmentVariable("SHUMWAY_IL_SHAPE") == "1")
+                    System.Console.Error.WriteLine(
+                        $"[region-emit] root fid={predicate.FunctorId} members={region.MemberCount}");
+                return CompileRegion(region, IlRegionPlanner.Plan(region), calleeMap);
+            }
+        }
         if (predicate.ClauseCount == 1)
         {
             if (!CanCompileSingleClause(predicate, calleeMap))
@@ -862,6 +880,218 @@ public sealed class IlPredicateCompiler
             pc += size;
         }
         return lastWasExecute;
+    }
+
+    // ========================================================================
+    // Phase 29 — IL REGION COMPILATION (flat local code space).
+    // docs/design/il-region-compilation.md. A region (root + reachable local
+    // callees, IlRegionBuilder) compiles to ONE IL method: each member a labeled
+    // block emitted once, an intra-region call a `br`. Stage 3 = single-clause
+    // members, intra-region calls + deterministic builtins only (no backtracking,
+    // no cut, no cross-region user calls — those are Stages 4-6).
+    // ========================================================================
+
+    internal static readonly bool RegionCompile =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_REGION") == "1";
+
+    /// <summary>The labels + cursor map threaded into <see cref="EmitClauseBody"/>
+    /// while emitting a region member's block.</summary>
+    private sealed class RegionEmitContext
+    {
+        public IlRegion Region = null!;
+        public int RegionFid;
+        public Sigil.Label RetLabel = null!;
+        public Sigil.Label DispatchLabel = null!;
+        public IReadOnlyDictionary<int, Sigil.Label> MemberEntry = null!;
+        public Sigil.Label[] CursorLabels = null!;
+        public Dictionary<(int Member, int Pc), int> CursorBySite = null!;
+        public int CurrentMemberIndex;
+    }
+
+    /// <summary>Stage-3 eligibility: a region this minimal emit can handle — at
+    /// least two members, every member single-clause, and every member's body
+    /// containing only intra-region <c>Call</c>/<c>Execute</c> and deterministic
+    /// builtins (no cut, no backtrackable / meta builtin, no cross-region user call,
+    /// no multi-clause dispatch). The unhandled shapes (backtracking, cut,
+    /// cross-region) come in Stages 4-6.</summary>
+    internal static bool IsStage3RegionEmittable(IlRegion region)
+    {
+        if (region.MemberCount < 2) return false;
+        foreach (var m in region.Members)
+        {
+            if (m.ClauseCount != 1) return false;           // multi-clause → Stage 4
+            byte[] code = m.Bytecode;
+            int pc = 0;
+            while (pc < code.Length)
+            {
+                var op = (Opcode)code[pc];
+                switch (op)
+                {
+                    case Opcode.Cut:
+                    case Opcode.NeckCut:
+                    case Opcode.GetLevel:
+                    case Opcode.AllocateGetLevel:
+                        return false;                       // cut → Stage 5
+                    case Opcode.Call:
+                    case Opcode.Execute:
+                    {
+                        int fid = FindCallSiteFunctorId(m.CallSites, pc);
+                        if (fid < 0 || !region.IsIntraRegion(fid)) return false;  // cross-region → Stage 6
+                        break;
+                    }
+                    case Opcode.CallBuiltin:
+                    {
+                        var e = Shumway.Builtins.BuiltinsRegistry.GetById(
+                            BytecodeIO.ReadInt32(code, pc + 1));
+                        if (e.Name is "call" or "$call" || IsBacktrackableBuiltinName(e.Name))
+                            return false;                   // resume-needing builtin → Stage 4/6
+                        break;
+                    }
+                }
+                int size = op == Opcode.Meta ? 6 : OpcodeTable.Get((byte)op).Size;
+                if (size <= 0) return false;
+                pc += size;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>Emit a whole region as one IL method (Stage 3). Layout: a `cur`
+    /// local seeded from <c>arg1</c>; a `dispatch` jump table over the plan's cursor
+    /// space (0 = root entry); each member as a labeled block; a shared `ret` handler
+    /// that decodes <c>Cp</c> (<see cref="Engine.RegionReturnCursor"/>) — intra-region
+    /// → <c>br dispatch</c> at the return cursor, cross-region → <c>return true</c>
+    /// (the loop runs <c>Cp</c>).</summary>
+    private PredicateDelegate CompileRegion(IlRegion region, IlRegionPlan plan,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+    {
+        var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
+            $"ShumwayIlRegion_{region.Root.FunctorId}_{region.Root.Arity}",
+            doVerify: DoVerify || DebugMode);
+        int regionFid = region.Root.FunctorId;
+        _emitOwnerFid = regionFid;
+
+        var failLabel = emit.DefineLabel("rfail");
+        var retLabel = emit.DefineLabel("rret");
+        var dispatchLabel = emit.DefineLabel("rdispatch");
+        var curLoc = emit.DeclareLocal<int>("rcur");
+
+        var memberEntry = new Dictionary<int, Sigil.Label>();
+        foreach (var m in region.Members)
+            memberEntry[m.FunctorId] = emit.DefineLabel($"rmember_{m.FunctorId}");
+
+        var cursorLabels = new Sigil.Label[plan.TotalCursors];
+        cursorLabels[0] = memberEntry[regionFid];           // cursor 0 = root entry
+        var cursorBySite = new Dictionary<(int, int), int>();
+        foreach (var s in plan.Sites)
+        {
+            cursorLabels[s.Cursor] = emit.DefineLabel($"rcur_{s.Cursor}");
+            cursorBySite[(s.MemberIndex, s.Pc)] = s.Cursor;
+        }
+
+        var ctx = new RegionEmitContext
+        {
+            Region = region, RegionFid = regionFid, RetLabel = retLabel,
+            DispatchLabel = dispatchLabel, MemberEntry = memberEntry,
+            CursorLabels = cursorLabels, CursorBySite = cursorBySite,
+        };
+
+        // cur = arg1; br dispatch (the switch routes the cursor to its label).
+        emit.LoadArgument(1);
+        emit.StoreLocal(curLoc);
+        emit.MarkLabel(dispatchLabel);
+        emit.LoadLocal(curLoc);
+        emit.Switch(cursorLabels);
+        emit.Branch(failLabel);                              // out of range (unreachable)
+
+        for (int mi = 0; mi < region.Members.Count; mi++)
+        {
+            var member = region.Members[mi];
+            ctx.CurrentMemberIndex = mi;
+            emit.MarkLabel(memberEntry[member.FunctorId]);
+            EmitClauseBody(emit, member.Bytecode, 0, member.Bytecode.Length,
+                failLabel, member.CallSites, calleeMap: calleeMap, regionCtx: ctx);
+        }
+
+        emit.MarkLabel(retLabel);
+        emit.LoadArgument(0);
+        emit.LoadConstant(regionFid);
+        emit.Call(EngineRegionReturnCursorMethod);
+        emit.StoreLocal(curLoc);
+        emit.LoadLocal(curLoc);
+        emit.LoadConstant(0);
+        emit.BranchIfGreaterOrEqual(dispatchLabel);          // intra-region return
+        emit.LoadConstant(true);                              // cross-region return
+        emit.Return();
+
+        emit.MarkLabel(failLabel);
+        emit.LoadConstant(false);
+        emit.Return();
+
+        return emit.CreateDelegate(Optimizations);
+    }
+
+    /// <summary>Region-mode opcode handling (Stage 3). Returns true (and advances
+    /// <paramref name="pcRef"/>) for the opcodes the region layout rewrites:
+    /// <c>proceed</c> / <c>deallocate_proceed</c> → <c>br ret</c>; an intra-region
+    /// non-tail <c>Call</c> → <c>SetB0</c> + <c>SetCp(return marker)</c> +
+    /// <c>br member</c> + the return-continuation label; an intra-region tail
+    /// <c>Execute</c> → <c>SetB0</c> + <c>br member</c> (Cp unchanged = the caller's
+    /// continuation). Returns false for every other opcode (head match, unify,
+    /// arith, allocate/deallocate, deterministic builtin), which the normal switch
+    /// emits unchanged.</summary>
+    private static bool TryEmitRegionOpcode(
+        Sigil.Emit<PredicateDelegate> emit, byte[] code, int pc, Opcode op,
+        RegionEmitContext ctx, ref int pcRef)
+    {
+        switch (op)
+        {
+            case Opcode.Proceed:
+                emit.Branch(ctx.RetLabel);
+                pcRef = pc + 1;
+                return true;
+            case Opcode.DeallocateProceed:
+                emit.LoadArgument(0);
+                emit.Call(EngineDeallocateMethod);
+                emit.Branch(ctx.RetLabel);
+                pcRef = pc + OpcodeTable.Get((byte)op).Size;
+                return true;
+            case Opcode.Call:
+            case Opcode.Execute:
+            {
+                var member = ctx.Region.Members[ctx.CurrentMemberIndex];
+                int fid = FindCallSiteFunctorId(member.CallSites, pc);
+                if (fid < 0 || !ctx.Region.IsIntraRegion(fid))
+                    return false;   // cross-region (Stage 6) — let the normal path run/throw
+                // engine.SetB0(engine.B) — the cut barrier for the callee block.
+                emit.LoadArgument(0);
+                emit.LoadArgument(0);
+                emit.Call(EngineBGetter);
+                emit.Call(EngineSetB0Method);
+                if (op == Opcode.Call)
+                {
+                    // Non-tail: register the forward continuation (Cp = return
+                    // marker), br to the member block, then mark the continuation
+                    // the member's proceed returns to via `ret` → dispatch.
+                    int cursor = ctx.CursorBySite[(ctx.CurrentMemberIndex, pc)];
+                    emit.LoadArgument(0);
+                    EmitResumeMarker(emit, ctx.RegionFid, cursor);
+                    emit.Call(EngineSetCpMethod);
+                    emit.Branch(ctx.MemberEntry[fid]);
+                    emit.MarkLabel(ctx.CursorLabels[cursor]);
+                }
+                else
+                {
+                    // Tail: Cp already holds this member's caller continuation, so
+                    // the callee's proceed returns straight to it. Just br.
+                    emit.Branch(ctx.MemberEntry[fid]);
+                }
+                pcRef = pc + OpcodeTable.Get((byte)op).Size;
+                return true;
+            }
+            default:
+                return false;
+        }
     }
 
     /// <summary>A single-clause RULE whose body can be inlined FLAT into a caller
@@ -1881,12 +2111,20 @@ public sealed class IlPredicateCompiler
         Sigil.Label? selfTailLabel = null,
         bool resetCursorBeforeSelfTail = false,
         IReadOnlyDictionary<int, InlineSite>? inlineSites = null,
-        IReadOnlyDictionary<int, CompiledPredicate>? ruleInlineSites = null)
+        IReadOnlyDictionary<int, CompiledPredicate>? ruleInlineSites = null,
+        RegionEmitContext? regionCtx = null)
     {
         int pc = start;
         while (pc < end)
         {
             var op = (Opcode)code[pc];
+            // Phase 29 region compilation (Stage 3): a member block's proceed /
+            // intra-region call become br's into the shared region method instead
+            // of returning to the dispatch loop. Handled before the normal opcode
+            // switch so the region layout takes precedence.
+            if (regionCtx is not null
+                && TryEmitRegionOpcode(emit, code, pc, op, regionCtx, ref pc))
+                continue;
             if (op == Opcode.Meta)
             {
                 // Dbg-info Meta opcode (chunk 55) — runtime no-op. Skip
