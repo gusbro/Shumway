@@ -72,10 +72,18 @@ public static class PersistedIlBuilder
     /// across processes since they're ordinal in the global AtomTable
     /// /FunctorTable, and the LINK process accumulates interns that
     /// the RUN process doesn't).</summary>
+    /// <param name="prunableFids">Stage 9b-3 (dead-region prune): functor ids of
+    /// ABSORBED-ONLY predicates — reached only as <c>br</c>-members of some live region
+    /// method, never standalone. They are SKIPPED here (no standalone IL method emitted),
+    /// since their code is already baked into the region methods that absorb them. They
+    /// REMAIN in <paramref name="predicates"/> (the callee map) so those region methods
+    /// can still absorb their bodies, and they keep their Tier-0 WAM as a safety fallback
+    /// (a later step may strip it). Null = no prune.</param>
     public static (byte[] DllBytes, IReadOnlyList<Entry> Entries,
         IReadOnlyList<IlPatchSite> Patches) Build(
         string assemblyName,
-        IReadOnlyDictionary<int, CompiledPredicate> predicates)
+        IReadOnlyDictionary<int, CompiledPredicate> predicates,
+        IReadOnlySet<int>? prunableFids = null)
     {
         var psab = new PersistedAssemblyBuilder(
             new AssemblyName(assemblyName), typeof(object).Assembly);
@@ -92,6 +100,10 @@ public static class PersistedIlBuilder
         var eligible = new List<(int FunctorId, CompiledPredicate Pred)>();
         foreach (var (functorId, pred) in predicates)
         {
+            // Stage 9b-3: an absorbed-only predicate gets no standalone IL method — its
+            // body lives in the region methods that absorb it (it stays in the callee
+            // map so they still find it). It keeps its WAM as a Tier-0 fallback.
+            if (prunableFids?.Contains(functorId) == true) continue;
             if (CanPersist(pred, probeCalleeMap)) eligible.Add((functorId, pred));
         }
 

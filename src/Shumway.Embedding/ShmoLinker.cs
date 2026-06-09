@@ -103,6 +103,15 @@ public sealed class LinkConfig
     /// region build is not free).</summary>
     public bool RegionPruneReport { get; init; }
 
+    /// <summary>Stage 9b-3 — the APPLIED dead-region prune. Implies
+    /// <see cref="IncludeCompiledIl"/>: the bundle is region-compiled (absorbed members
+    /// live inside region methods) and each ABSORBED-ONLY predicate (reached only as a
+    /// <c>br</c>-member, computed by <see cref="RegionReachability"/> from the
+    /// externally-reachable seeds) gets NO standalone IL method — removing the
+    /// all-as-roots duplication. The predicate keeps its Tier-0 WAM as a safety fallback.
+    /// Off by default.</summary>
+    public bool RegionPrune { get; init; }
+
     /// <summary>When non-null, the linker writes info diagnostics
     /// describing its progress (modules visited, predicates reached,
     /// etc.) to this writer. Useful for CLI <c>--verbose</c> mode.</summary>
@@ -499,13 +508,16 @@ public static class ShmoLinker
             $"Stage 9 (dead-region): {stage9Seeds.Count} externally-reachable seed(s) "
             + $"among {reached.Count} reached predicate(s).");
 
-        // ----- 6c. Stage 9 prune analysis (opt-in report) -----
+        // ----- 6c. Stage 9 dead-region analysis (report and/or applied prune) -----
         // The fid bridge: decode the reached modules into CompiledPredicates (their
         // functor ids + call graph, interned consistently in the global tables), resolve
         // the (module, PredicateRef) seeds to functor ids, and run the dead-region
-        // reachability. A REPORT only — the applied prune also needs the bundle to
-        // region-compile (else a pruned predicate is reached by a live trampoline call).
-        if (config.RegionPruneReport)
+        // reachability. The PRUNE SET is `absorbedOnly` = fullReachable − regionReachable
+        // (live but reached ONLY as a br-member of a live region) — NEVER the unreachable
+        // / dead-code bucket, so a meta-call-only predicate (absorbed by nothing, appears
+        // unreachable) is kept (the prune rule that avoids hardening ensure_linked).
+        var stage9PrunableFids = new HashSet<int>();
+        if (config.RegionPruneReport || config.RegionPrune)
         {
             var predicates = new Dictionary<int, CompiledPredicate>();
             foreach (var obj in config.Objects)
@@ -533,13 +545,15 @@ public static class ShmoLinker
                     predicates, seedFids, fid => ic.RegionMemberFids(predicates[fid], predicates));
                 var fullReachable = RegionReachability.TrampolineReachable(
                     predicates, seedFids, fid => new[] { fid });
-                int absorbedOnly = fullReachable.Count(f => !regionReachable.Contains(f));
+                foreach (int f in fullReachable)
+                    if (!regionReachable.Contains(f)) stage9PrunableFids.Add(f);
                 int deadCode = predicates.Count - fullReachable.Count;
                 Emit(LinkSeverity.Info, "stage9_prunable",
                     $"Stage 9 (dead-region): of {predicates.Count} decoded predicates, "
-                    + $"{absorbedOnly} are region-absorbed (standalone prunable) and "
-                    + $"{deadCode} are unreachable — {absorbedOnly + deadCode} total prunable "
-                    + $"standalone forms under region compilation (from {seedFids.Count} seed fids).");
+                    + $"{stage9PrunableFids.Count} are region-absorbed (standalone prunable) and "
+                    + $"{deadCode} are unreachable — {stage9PrunableFids.Count + deadCode} total "
+                    + $"prunable standalone forms under region compilation (from "
+                    + $"{seedFids.Count} seed fids).");
             }
         }
 
@@ -684,10 +698,28 @@ public static class ShmoLinker
             // here is a real bug, not an operator-ordering quirk.
             if (config.IncludeCompiledIl)
             {
-                bytes = BundleWriter.ToBytes(bundle,
-                    includeCompiledBytecode: true,
-                    includeCompiledIl: true,
-                    stripWam: config.StripWam);
+                // Stage 9b-3: --region-prune region-compiles the bundle (so absorbed
+                // members live inside region methods) and skips emitting a standalone IL
+                // method for each absorbed-only predicate. RegionCompile is a process-wide
+                // toggle on the IL compiler; set it for this build and RESTORE after, so an
+                // in-process caller (tests) isn't left with regions globally on. The
+                // prunable set is module-global but keyed by functor id, so each per-entry
+                // build matches only its own predicates.
+                bool savedRegionCompile = Shumway.Compiler.Il.IlPredicateCompiler.RegionCompile;
+                if (config.RegionPrune)
+                    Shumway.Compiler.Il.IlPredicateCompiler.RegionCompile = true;
+                try
+                {
+                    bytes = BundleWriter.ToBytes(bundle,
+                        includeCompiledBytecode: true,
+                        includeCompiledIl: true,
+                        stripWam: config.StripWam,
+                        prunableFids: config.RegionPrune ? stage9PrunableFids : null);
+                }
+                finally
+                {
+                    Shumway.Compiler.Il.IlPredicateCompiler.RegionCompile = savedRegionCompile;
+                }
                 // Re-read the bytes so the in-memory Bundle reflects
                 // the persisted-IL slots the writer populated.
                 bundle = BundleReader.FromBytes(bytes);

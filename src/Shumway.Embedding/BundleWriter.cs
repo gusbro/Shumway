@@ -35,7 +35,8 @@ public static class BundleWriter
     public static byte[] ToBytes(Bundle bundle,
         bool includeCompiledBytecode = false,
         bool includeCompiledIl = false,
-        bool stripWam = false)
+        bool stripWam = false,
+        IReadOnlySet<int>? prunableFids = null)
     {
         ArgumentNullException.ThrowIfNull(bundle);
         ValidateOrThrow(bundle);
@@ -63,7 +64,7 @@ public static class BundleWriter
                     _lastPatchTableBytes = null;
                     _lastEntriesTableBytes = null;
                     _lastIlFunctorIds = null;
-                    compiledIl = CompileEntryToIl(effective[i]);
+                    compiledIl = CompileEntryToIl(effective[i], prunableFids);
                     compiledIlPatches = _lastPatchTableBytes;
                     compiledIlEntries = _lastEntriesTableBytes;
                     // --strip-wam: drop the IL predicates' redundant WAM bodies.
@@ -175,7 +176,8 @@ public static class BundleWriter
     /// predicate. The resulting .dll bytes embed into the bundle and the
     /// load path uses them to bind <c>PredicateDelegate</c>s without
     /// re-running the Sigil pipeline at consult time.</summary>
-    private static byte[] CompileEntryToIl(BundleEntry entry)
+    private static byte[] CompileEntryToIl(BundleEntry entry,
+        IReadOnlySet<int>? prunableFids = null)
     {
         Shumway.Builtins.StandardBuiltins.EnsureRegistered();
         // Run through a full PrologEngine warm-up so the module
@@ -235,7 +237,7 @@ public static class BundleWriter
         // (the load path simply finds no methods to bind).
         var (dllBytes, persistedEntries, patches) = Shumway.Compiler.Il.PersistedIlBuilder.Build(
             "ShumwayCompiledIl_" + SanitiseModuleName(entry.ModuleName),
-            predicates);
+            predicates, prunableFids);
         // Phase 17 stash: the patch table the LoadBundle path needs to
         // overwrite each build-time atom/functor id sentinel with the
         // runtime-process equivalent. Plus the per-method (name, arity)

@@ -77,6 +77,7 @@ internal static class Program
             IncludeCompiledIl = opts.IncludeCompiledIl,
             StripWam = opts.StripWam,
             RegionPruneReport = opts.RegionPruneReport,
+            RegionPrune = opts.RegionPrune,
             ForeignAssemblies = opts.ForeignDlls,
         };
 
@@ -193,6 +194,7 @@ internal static class Program
         public bool IncludeCompiledIl { get; set; }
         public bool StripWam { get; set; }
         public bool RegionPruneReport { get; set; }
+        public bool RegionPrune { get; set; }
         public string MapPath { get; set; } = "";
         public string ExePath { get; set; } = "";
         public string Goal { get; set; } = "";
@@ -259,6 +261,11 @@ internal static class Program
 
                 case "--prune-report":
                     opts.RegionPruneReport = true;
+                    break;
+
+                case "--region-prune":
+                    opts.RegionPrune = true;
+                    opts.IncludeCompiledIl = true;   // the prune only applies to IL bundles
                     break;
 
                 case "--map":
@@ -416,6 +423,11 @@ internal static class Program
             + "                           (region-absorbed or unreachable) if the bundle\n"
             + "                           were region-compiled. Info diagnostic; no change\n"
             + "                           to the bundle (shown with --verbose).\n"
+            + "      --region-prune       Region-compile the bundle (implies\n"
+            + "                           --with-compiled-il) and drop the standalone IL of\n"
+            + "                           each absorbed-only predicate (reached only as a\n"
+            + "                           region br-member). Removes the all-as-roots\n"
+            + "                           duplication; each predicate keeps its Tier-0 WAM.\n"
             + "  -e, --exe <path>         Emit a single-file native executable for the\n"
             + "                           current platform. The exe loads the bundle and\n"
             + "                           runs --goal at startup, then exits 0 (success)\n"
