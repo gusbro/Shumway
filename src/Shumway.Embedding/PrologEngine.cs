@@ -2749,11 +2749,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// (address → functor id) — so the rewrite is in-place. Idempotent
     /// (skips sites whose opcode is no longer <c>Call</c>, e.g. when
     /// a re-link revisits a previously-rewritten persistent buffer).</summary>
+    private int _diagCallIlCount;
     private void InstallCallIlRewrites(
         Shumway.Interpreter.BytecodeInterpreter interp,
         Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> predicatesByAddress,
         byte[] queryBytes)
     {
+        _diagCallIlCount = 0;
         // Snapshot every currently-promoted IL delegate, indexed by
         // functor id. The PredicateDelegate -> Func<Engine,int,bool>
         // bridge allocates one wrapper per IL predicate, here at link
@@ -2775,6 +2777,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             }
         }
         interp.IlByFunctorId = ilTable;
+        bool ilDiag = System.Environment.GetEnvironmentVariable("SHUMWAY_IL_DIAG") == "1";
+        if (ilDiag)
+            System.Console.Error.WriteLine(
+                $"[il-diag] promoted/registered fids={IlPromotion.PromotedFunctorIds().Count()} "
+                + $"ilTable.Length={(ilTable?.Length ?? 0)} Threshold={IlPromotion.Threshold}");
 
         // Chunk 226 Stage B.2 — build a fid-keyed view of
         // predicatesByAddress so we can look up the callee's
@@ -2833,6 +2840,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     && ilTable[calleeFid] is not null;
                 if (hasIl)
                 {
+                    _diagCallIlCount++;
                     buf[bufOffset] = site.IsExecute
                         ? (byte)Shumway.Core.Opcode.ExecuteIl
                         : (byte)Shumway.Core.Opcode.CallIl;
@@ -2868,6 +2876,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 }
             }
         }
+        if (ilDiag)
+            System.Console.Error.WriteLine(
+                $"[il-diag] CallIl/ExecuteIl rewrites installed this query={_diagCallIlCount}");
     }
 
     /// <summary>Chunk 226/227 — true when the predicate is a dynamic

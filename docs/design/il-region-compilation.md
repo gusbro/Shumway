@@ -498,19 +498,18 @@ WAM state.
      - **9d — stripping the pruned predicates' WAM: ATTEMPTED, REVERTED, BLOCKED on two
        deeper issues (chunk 395).** The absorbed-only predicates keep their Tier-0 WAM as
        a fallback (9b-3); stripping it would cut another ~35 KB on Blint but is UNSOUND
-       today and broke Blint (`existence_error(blint_pred/3 / parse_infix_op/6)`). Two
-       root causes the WAM fallback was silently MASKING:
-       1. **The bundle runs Tier-0 WAM by default, not the region IL.** Persisted IL is
-          only USED when `IlPromotion.Threshold > 0` (chunk 230 made `Threshold == 0` run
-          pure bytecode for a per-call-lock perf reason). So a `--with-compiled-il` /
-          `--region-prune` bundle loaded in the default engine runs WAM — the region IL
-          is loaded but dead. The user's principle: building with IL/regions should mean
-          the IL is USED (dispatch region IL → standalone IL → WAM only for predicates
-          that compiled to neither). Making persisted-IL bundles IL-mandatory is the fix
-          (and prerequisite — without it the whole region effort is dead weight at run
-          time). NOTE: this means the prior "byte-identical" region validations confirmed
-          correctness but largely exercised the WAM path, not the region IL.
-       2. **Analysis ↔ compile region-membership inconsistency.** The prune set is
+       today and broke Blint (`existence_error(blint_pred/3 / parse_infix_op/6)`).
+       1. **NOT an IL-activation problem (chunk 396 corrected an earlier misdiagnosis).**
+          A first guess was that the bundle runs Tier-0 WAM (persisted IL gated by
+          `IlPromotion.Threshold > 0`). EMPIRICALLY FALSE: the persisted IL delegates are
+          registered unconditionally (`RegisterBoundDelegate`) and `InstallCallIlRewrites`
+          rewrites every Call-to-an-IL-callee to `CallIl` regardless of Threshold —
+          measured (`SHUMWAY_IL_DIAG=1`) **890 CallIl/ExecuteIl rewrites on the Blint
+          `--region-prune` bundle at Threshold 0**, so the region IL runs by default. The
+          chunk-230 "Threshold==0 ⇒ pure bytecode" applies only to WAM-only bundles (no
+          `CompiledIl`); a `--with-compiled-il` bundle already runs its IL — no IL-mandatory
+          work needed.
+       2. **Analysis ↔ compile region-membership inconsistency (the REAL blocker).** The prune set is
           computed by the linker over the `.shmo` bytecode, but `CompileEntryToIl`
           re-compiles from the entry SOURCE in a warm-up engine — the two can disagree on
           which predicates a region absorbs. So a predicate the analysis calls
