@@ -414,9 +414,29 @@ WAM state.
      (~26%), e.g. `blint_file` (absorbed into `blint_file_start`'s region).
    - **9b — wire the prune into the bundle build (PLANNED).** Two prerequisites the
      analysis does NOT yet have: (i) the bundle IL path must actually compile in REGION
-     mode (today regions are runtime-gated; the bundle compiles per-predicate), and
-     (ii) the linker must pass the REAL entry-point + public set as the external roots
-     (the dry-run approximates with call-graph roots). Then drop each prunable
+     mode (today regions are runtime-gated; the bundle compiles per-predicate, so
+     nothing is absorbed → nothing to prune — and a prune would be UNSOUND, since a
+     pruned predicate would still be reached by a live trampoline call); and (ii) the
+     linker must compute the complete **externally-reachable seed set** and pass it as
+     `RegionReachability`'s `externallyReachable` argument. That set is everything
+     callable BY NAME from outside the region-absorption world — a soundness
+     over-approximation, NOT just "all reachable":
+       - entry points (`--entry`),
+       - public predicates (`:- public` — the global namespace; another module / the
+         embedding host calls them by name),
+       - dynamic predicates (`:- dynamic`) AND visible predicates (`:- visible`, a
+         semantic alias of dynamic, chunk 265) — both are called by name and are never
+         region-compiled (they open with `enter_dynamic`), so they always keep a
+         standalone form,
+       - `:- ensure_linked` indicators and any other runtime meta-call (`call/1`) target
+         the linker can identify — invoked by name at run time.
+     A seed is needed both to KEEP the predicate itself and because the analysis follows
+     a seed's cross-region edges to keep its callees alive (a dynamic predicate that
+     reaches P only via meta-call would otherwise let P be wrongly pruned). The linker
+     already builds most of this (its module-reachability walk roots from entry points +
+     `ensure_linked` + qualified refs, and `ShmoObject.Defined` carries public / dynamic
+     / visible). The dry-run (`--prune-report`) approximates the seed set with the
+     call-graph roots; the real linker uses the set above. Then drop each prunable
      predicate's standalone WAM/IL entry from the bundle.
 10. **Linker IL / WAM dump options (PLANNED) — `shumway-link --dump-il` /
     `--dump-wam`.** The link step is the right place to dump the code that actually
