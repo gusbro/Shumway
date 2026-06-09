@@ -495,43 +495,49 @@ WAM state.
        743 KB per-predicate-IL bundle, down from 2.5×. A nice property the fixpoint gives:
        promoting a MIDDLE node de-dups its whole tail in one step (the recompute shows the
        tail is no longer shared). 3 Chunk394Tests.
-     - **9d — stripping the pruned predicates' WAM: ATTEMPTED, REVERTED, BLOCKED on two
-       deeper issues (chunk 395).** The absorbed-only predicates keep their Tier-0 WAM as
-       a fallback (9b-3); stripping it would cut another ~35 KB on Blint but is UNSOUND
-       today and broke Blint (`existence_error(blint_pred/3 / parse_infix_op/6)`).
-       1. **NOT an IL-activation problem (chunk 396 corrected an earlier misdiagnosis).**
-          A first guess was that the bundle runs Tier-0 WAM (persisted IL gated by
-          `IlPromotion.Threshold > 0`). EMPIRICALLY FALSE: the persisted IL delegates are
+     - **9d — stripping the pruned predicates' WAM: DONE (chunk 398).** The absorbed-only
+       predicates' Tier-0 WAM is now dropped under `--region-prune --strip-wam`; Blint's
+       stripped region-prune bundle is **598 KB vs 753 KB unstripped (−155 KB)**, runs
+       byte-identical to the Tier-0 reference, and the strip-wam-only and region-prune+strip
+       bundles BOTH produce identical lint output. Two issues had to be resolved (the path
+       there went through two misdiagnoses, recorded so they aren't re-walked):
+       1. **NOT an IL-activation problem (an earlier misdiagnosis, chunk 396).** A first
+          guess was that the bundle runs Tier-0 WAM (persisted IL gated by
+          `IlPromotion.Threshold > 0`). EMPIRICALLY FALSE: persisted IL delegates are
           registered unconditionally (`RegisterBoundDelegate`) and `InstallCallIlRewrites`
           rewrites every Call-to-an-IL-callee to `CallIl` regardless of Threshold —
           measured (`SHUMWAY_IL_DIAG=1`) **890 CallIl/ExecuteIl rewrites on the Blint
-          `--region-prune` bundle at Threshold 0**, so the region IL runs by default. The
-          chunk-230 "Threshold==0 ⇒ pure bytecode" applies only to WAM-only bundles (no
-          `CompiledIl`); a `--with-compiled-il` bundle already runs its IL — no IL-mandatory
-          work needed.
-       2. **Analysis ↔ compile region-membership inconsistency (the REAL blocker — root
-          cause isolated chunk 396).** The dead-region ANALYSIS (linker) decodes only the
+          `--region-prune` bundle at Threshold 0**. A `--with-compiled-il` bundle already
+          runs its IL — no IL-mandatory work needed.
+       2. **Analysis ↔ compile region-membership consistency (FIXED — move the prune into
+          the compile).** The dead-region ANALYSIS used to run in the linker over only the
           entry's OWN module bytecode (the `.shmo`), but the IL COMPILE's calleeMap is the
-          warm-up engine's FULL predicate set — the user module PLUS the prelude (plus any
-          other reached modules). Under the region BUDGET the two absorb DIFFERENT members
-          (the compile's BFS spends budget on prelude callees the analysis never sees), so
-          a predicate the analysis calls absorbed-only (`blint_pred/3`, a STATIC call —
-          confirmed via a public-entry test, ruling out the source-reconsult and
-          entry-promotion red herrings) is cross-region-called-by-fid in the real compile →
-          needs a standalone form. NOTE: the chunk-396 `CompileEntryToIl` change (prefer
-          `CompiledBytecode` over a source re-consult — right per "build with IL ⇒ use the
-          bytecode", Embedding 2181 green) ALIGNS the compile input with the runtime but
-          does NOT fix this, because the gap is the calleeMap COMPLETENESS (prelude), not
-          source-vs-bytecode. **Fix**: compute the prune over the EXACT calleeMap the
-          compile uses — i.e. move the analysis INTO `CompileEntryToIl` (where the warm-up
-          engine's full predicate set lives), passing it the seeds instead of a
-          pre-computed prune set; OR constrain regions to be same-module so the analysis's
-          per-module view matches.
-       Plus the variable-meta-call residual (an absorbed predicate ALSO `call(G)`-ed by a
-       runtime-built goal needs a standalone form — the `ensure_linked` case, which the
-       user does not want to widen). So a sound strip needs the analysis/compile calleeMap
-       consistency first; the WAM fallback stays until then. (Issue 1 above — "bundle runs
-       WAM by default" — was a MISDIAGNOSIS; the region IL is already used, chunk 396.)
+          warm-up engine's FULL predicate set — user module PLUS the prelude (plus any other
+          reached module). Under the region BUDGET the two absorbed DIFFERENT members. Fix:
+          the applied prune now runs INSIDE `BundleWriter.CompileEntryToIl`, over that exact
+          calleeMap. The linker passes the SEEDS (its externally-reachable set); the compile
+          resolves them to fids (`ShmoLinker.ResolveSeedFids`), runs `RegionRootSelector`
+          (Stage 9c) + `RegionReachability`, installs the forced roots, and the resulting
+          absorbed-only set is BOTH skipped for standalone IL AND WAM-stripped — so the prune
+          can't disagree with what ships. The linker's step-6c is now a `--prune-report`-only
+          DRY-RUN (its per-module figures no longer drive the build).
+       3. **Meta-call-by-fid to an absorbed predicate (the residual, now handled).** A
+          predicate reached ONLY as a region `br`-member by the static CallSites graph can
+          STILL be meta-called by functor id at runtime — e.g. Blint's `show_in_console/0`,
+          built as the TERM `not(show_in_console)` inside `ifthen(not(show_in_console), …)`
+          and run by the user-defined `ifthen/2`. That path is invisible to the CallSites
+          graph (the goal is constructed DATA, not a Call site), so the analysis marked it
+          absorbed-only and the strip removed it → `existence_error`. Guard: any predicate
+          whose head functor appears as a CONSTRUCTED constant anywhere in the bytecode
+          (`put_atom` / `put_structure[_r]` / write-mode `unify_atom` / `unify_structure`,
+          names DEMANGLED since a constructed goal carries the bare source name) is excluded
+          from the prune and keeps its standalone form — exactly the user's model "(los
+          menos) serán WAM si no se pudo armar región ni IL". Over-approximate (a
+          functor-shaped term used purely as data also keeps its predicate) but sound: it
+          only ever keeps MORE standalone forms, never strips a live one.
+       `CollectConstructedFunctors` (the guard) + the in-compile prune live in
+       `BundleWriter.cs`; `SHUMWAY_PRUNE_DIAG=1` prints the per-entry seed / forced-root /
+       absorbed-only counts.
      - **9b-1 — linker seed-set computation DONE (chunk 389).**
        `ShmoLinker.ComputeExternallyReachableSeeds(reachedRoots, reached, moduleDefined)`
        (public, pure): the entry / `ensure_linked` roots ∪ every reached PUBLIC ∪ every

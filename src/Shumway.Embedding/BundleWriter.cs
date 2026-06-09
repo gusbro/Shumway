@@ -36,7 +36,7 @@ public static class BundleWriter
         bool includeCompiledBytecode = false,
         bool includeCompiledIl = false,
         bool stripWam = false,
-        IReadOnlySet<int>? prunableFids = null)
+        IReadOnlyCollection<(string Module, PredicateRef Pred)>? regionPruneSeeds = null)
     {
         ArgumentNullException.ThrowIfNull(bundle);
         ValidateOrThrow(bundle);
@@ -64,22 +64,27 @@ public static class BundleWriter
                     _lastPatchTableBytes = null;
                     _lastEntriesTableBytes = null;
                     _lastIlFunctorIds = null;
-                    compiledIl = CompileEntryToIl(effective[i], prunableFids);
+                    _lastPrunableFids = null;
+                    compiledIl = CompileEntryToIl(effective[i], regionPruneSeeds);
                     compiledIlPatches = _lastPatchTableBytes;
                     compiledIlEntries = _lastEntriesTableBytes;
-                    // --strip-wam: drop the IL predicates' redundant WAM bodies.
-                    if (stripWam && compiledBytecode is not null && _lastIlFunctorIds is { Count: > 0 })
-                        compiledBytecode = StripIlBodies(compiledBytecode, _lastIlFunctorIds);
-                    // NOTE: the absorbed-only predicates KEEP their WAM (a Tier-0 fallback,
-                    // NOT stripped). Stripping is still UNSOUND — root cause now isolated
-                    // (§9d): the linker's prune ANALYSIS decodes only the entry's own
-                    // module bytecode, but the IL COMPILE's calleeMap is the warm-up
-                    // engine's FULL set (user module + prelude + …). Under the region
-                    // budget the two absorb DIFFERENT members, so a predicate the analysis
-                    // calls absorbed-only can be cross-region-called-by-fid in the real
-                    // compile (Blint: blint_pred/3 → existence_error once its WAM is gone).
-                    // The fix is to compute the prune over the EXACT calleeMap the compile
-                    // uses (or keep regions same-module); until then the WAM fallback stays.
+                    // --strip-wam: drop the redundant WAM bodies. Two disjoint sets:
+                    //  • standalone-IL predicates (_lastIlFunctorIds) — reached at runtime
+                    //    via their own IL delegate (CallIl / chunk-316 marker), never WAM.
+                    //  • absorbed-only predicates (_lastPrunableFids, §9d) — reached ONLY
+                    //    as a br-member inside a live region's IL method, never via the WAM
+                    //    trampoline. Now SOUND: the prune is computed (in CompileEntryToIl)
+                    //    over the EXACT calleeMap the IL compile uses (the warm-up engine's
+                    //    full user+prelude set), so the absorbed-only set matches the real
+                    //    region membership — the earlier per-module-analysis mismatch is gone.
+                    if (stripWam && compiledBytecode is not null)
+                    {
+                        var stripSet = new HashSet<int>();
+                        if (_lastIlFunctorIds is not null) stripSet.UnionWith(_lastIlFunctorIds);
+                        if (_lastPrunableFids is not null) stripSet.UnionWith(_lastPrunableFids);
+                        if (stripSet.Count > 0)
+                            compiledBytecode = StripIlBodies(compiledBytecode, stripSet);
+                    }
                 }
                 effective[i] = new BundleEntry(
                     effective[i].ModuleName,
@@ -187,7 +192,7 @@ public static class BundleWriter
     /// load path uses them to bind <c>PredicateDelegate</c>s without
     /// re-running the Sigil pipeline at consult time.</summary>
     private static byte[] CompileEntryToIl(BundleEntry entry,
-        IReadOnlySet<int>? prunableFids = null)
+        IReadOnlyCollection<(string Module, PredicateRef Pred)>? regionPruneSeeds = null)
     {
         Shumway.Builtins.StandardBuiltins.EnsureRegistered();
         // Run through a full PrologEngine warm-up so the module
@@ -252,11 +257,86 @@ public static class BundleWriter
             predicates[fid] = pred;
         foreach (var (fid, pred) in engine.PrecompiledStaticPredicates)
             predicates[fid] = pred;
+        // Stage 9b-3 / 9c / 9d: compute the dead-region prune set HERE, over the EXACT
+        // calleeMap the IL compile is about to use (`predicates` — the warm-up engine's
+        // FULL set: user module + prelude + every reached callee). The linker's per-module
+        // analysis (it decodes only the entry's own .shmo bytecode) diverged from this under
+        // the region budget — the two absorbed DIFFERENT members, so an "absorbed-only"
+        // predicate could be cross-region-called-by-fid in the real compile and break once
+        // its WAM was stripped (§9d). Running the prune where the real region membership is
+        // decided closes that gap. Absorbed-only predicates get no standalone IL (skipped in
+        // Build) and their WAM is strippable (ToBytes). The seeds come from the linker (the
+        // externally-reachable by-name-callable set); we resolve them against THIS engine's
+        // functor table.
+        HashSet<int>? prunableFids = null;
+        var savedForcedRoots = Shumway.Compiler.Il.IlPredicateCompiler.RegionForcedRootFids;
+        if (regionPruneSeeds is not null && predicates.Count > 0)
+        {
+            var byName = new Dictionary<(string, int), int>();
+            foreach (int fid in predicates.Keys)
+            {
+                var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(fid);
+                byName[(Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "", arity)] = fid;
+            }
+            var seedFids = ShmoLinker.ResolveSeedFids(regionPruneSeeds, byName);
+            var ic = new Shumway.Compiler.Il.IlPredicateCompiler();
+            long minSaving = long.TryParse(
+                System.Environment.GetEnvironmentVariable("SHUMWAY_REGION_ROOT_MINSAVE"),
+                out var ms) ? ms : 64;
+            var forcedRoots = Shumway.Compiler.Il.RegionRootSelector.ComputeForcedRoots(
+                predicates.Keys,
+                (f, ex) => ic.RegionMemberFids(predicates[f], predicates, ex),
+                f => predicates.TryGetValue(f, out var p) ? p.Bytecode.Length : 0,
+                minSaving);
+            var regionReachable = Shumway.Compiler.Il.RegionReachability.TrampolineReachable(
+                predicates, seedFids,
+                fid => ic.RegionMemberFids(predicates[fid], predicates, forcedRoots));
+            var fullReachable = Shumway.Compiler.Il.RegionReachability.TrampolineReachable(
+                predicates, seedFids, fid => new[] { fid });
+            var pruned = new HashSet<int>();
+            foreach (int f in fullReachable)
+                if (!regionReachable.Contains(f)) pruned.Add(f);
+            // §9d soundness guard: a predicate can be META-CALLED by functor id at runtime
+            // (e.g. `ifthen(not(P), …)` builds `not(P)` as a TERM and a user meta-predicate
+            // runs it) — a path the bytecode CallSites graph the region analysis walks does
+            // NOT see (the goal is constructed data, not a Call site). The region only
+            // br-absorbs DIRECT callers; a fid meta-call needs a standalone form. So any
+            // predicate whose head functor appears as a CONSTRUCTED constant anywhere
+            // (put_atom / put_structure / write-mode unify) is kept standalone — matching
+            // the user's model "(los menos) serán WAM si no se pudo armar región ni IL".
+            // Over-approximate (a functor-shaped term used purely as data also keeps its
+            // predicate) but sound: it only ever keeps MORE standalone forms, never strips
+            // a live one. (Blint: show_in_console/0, built inside `ifthen(not(...))`.)
+            int absorbedBeforeGuard = pruned.Count;
+            var metaTargets = new HashSet<(string, int)>();
+            foreach (var (_, p) in predicates)
+                CollectConstructedFunctors(p.Bytecode, metaTargets);
+            pruned.RemoveWhere(f =>
+            {
+                var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(f);
+                var nm = Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "";
+                return metaTargets.Contains((DemangleLocal(nm), arity));
+            });
+            prunableFids = pruned;
+            if (System.Environment.GetEnvironmentVariable("SHUMWAY_PRUNE_DIAG") is not null)
+                System.Console.Error.WriteLine(
+                    $"[prune-diag] module={entry.ModuleName} predicates={predicates.Count} "
+                    + $"seedFids={seedFids.Count} forcedRoots(regions)={forcedRoots.Count} "
+                    + $"regionReachable={regionReachable.Count} fullReachable={fullReachable.Count} "
+                    + $"absorbedOnly(pre-guard)={absorbedBeforeGuard} "
+                    + $"metaRescued={absorbedBeforeGuard - pruned.Count} "
+                    + $"pruned(stripped)={pruned.Count}");
+            // The Stage-9c promotions must hold during the IL compile below, so the regions
+            // Build emits match the membership the prune assumed. Restored after Build.
+            Shumway.Compiler.Il.IlPredicateCompiler.RegionForcedRootFids = forcedRoots;
+        }
+        _lastPrunableFids = prunableFids;
         // Caches still empty? Fall through to an empty assembly
         // (the load path simply finds no methods to bind).
         var (dllBytes, persistedEntries, patches) = Shumway.Compiler.Il.PersistedIlBuilder.Build(
             "ShumwayCompiledIl_" + SanitiseModuleName(entry.ModuleName),
             predicates, prunableFids);
+        Shumway.Compiler.Il.IlPredicateCompiler.RegionForcedRootFids = savedForcedRoots;
         // Phase 17 stash: the patch table the LoadBundle path needs to
         // overwrite each build-time atom/functor id sentinel with the
         // runtime-process equivalent. Plus the per-method (name, arity)
@@ -297,6 +377,67 @@ public static class BundleWriter
 
     [System.ThreadStaticAttribute]
     private static HashSet<int>? _lastIlFunctorIds;
+
+    /// <summary>Collects every predicate indicator <paramref name="code"/> CONSTRUCTS as a
+    /// term constant — atoms via <c>put_atom</c>/<c>put_constant</c>/write-mode
+    /// <c>unify_atom</c> (→ <c>name/0</c>) and compounds via
+    /// <c>put_structure[_r]</c>/<c>unify_structure</c> (→ <c>name/arity</c>). These are the
+    /// predicates potentially reachable by a runtime meta-call-by-fid, which the static
+    /// CallSites graph misses. Head-matching opcodes (<c>get_*</c>) are excluded — they
+    /// consume incoming data, they don't build a callable goal. Names are DEMANGLED (the
+    /// <c>module$</c> prefix stripped) because a constructed goal carries the BARE source
+    /// name while the compiled predicate's head functor is mangled
+    /// (<see cref="ModuleRewrite"/>). Used by the §9d region-prune guard.</summary>
+    private static void CollectConstructedFunctors(byte[] code, HashSet<(string, int)> into)
+    {
+        if (code is null || code.Length == 0) return;
+        foreach (var ins in Shumway.Core.Disassembler.Iterate(code, 0, code.Length))
+        {
+            switch (ins.Op)
+            {
+                case Shumway.Core.Opcode.PutAtom:
+                case Shumway.Core.Opcode.PutConstant:
+                case Shumway.Core.Opcode.PutConstantA1:
+                case Shumway.Core.Opcode.PutConstantA2:
+                case Shumway.Core.Opcode.UnifyConstant:
+                case Shumway.Core.Opcode.UnifyAtom:
+                    // Operand 0 is the atom id (OperandKind.Atom) → name/0.
+                    if (ins.Operands.Length > 0
+                        && Shumway.Core.AtomTable.GetById(ins.Operands[0])?.Name is { } an)
+                        into.Add((DemangleLocal(an), 0));
+                    break;
+                case Shumway.Core.Opcode.PutStructure:
+                case Shumway.Core.Opcode.PutStructureR:
+                case Shumway.Core.Opcode.UnifyStructure:
+                    // Operand 0 is the functor id (OperandKind.Functor) → name/arity.
+                    if (ins.Operands.Length > 0)
+                    {
+                        var (fa, far) = Shumway.Core.FunctorTable.Lookup(ins.Operands[0]);
+                        if (Shumway.Core.AtomTable.GetById(fa)?.Name is { } fn)
+                            into.Add((DemangleLocal(fn), far));
+                    }
+                    break;
+            }
+        }
+    }
+
+    /// <summary>Strips a leading <c>module$</c> prefix (see
+    /// <see cref="ModuleRewrite"/>'s <c>module + "$" + name</c> mangling) so a mangled head
+    /// functor (<c>user$show_in_console</c>) and the bare name a constructed goal carries
+    /// (<c>show_in_console</c>) compare equal. The <c>$</c> must be past position 0, so a
+    /// genuinely <c>$</c>-led system name (<c>$neg_2</c>) is left intact.</summary>
+    private static string DemangleLocal(string name)
+    {
+        int i = name.IndexOf('$');
+        return i > 0 ? name.Substring(i + 1) : name;
+    }
+
+    /// <summary>Side-channel staging slot (mirrors <see cref="_lastIlFunctorIds"/>): the
+    /// absorbed-only predicate fids computed by <see cref="CompileEntryToIl"/> over the
+    /// warm-up engine's exact calleeMap (§9d). The outer ToBytes loop unions this with
+    /// <see cref="_lastIlFunctorIds"/> for the --strip-wam set.</summary>
+    [System.ThreadStaticAttribute]
+    private static HashSet<int>? _lastPrunableFids;
 
     /// <summary>Rebuilds the CompiledModule blob with the WAM bodies of every
     /// IL-promoted predicate removed (--strip-wam). The predicate stays in the

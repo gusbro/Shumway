@@ -508,7 +508,7 @@ public static class ShmoLinker
             $"Stage 9 (dead-region): {stage9Seeds.Count} externally-reachable seed(s) "
             + $"among {reached.Count} reached predicate(s).");
 
-        // ----- 6c. Stage 9 dead-region analysis (report and/or applied prune) -----
+        // ----- 6c. Stage 9 dead-region analysis (DRY-RUN REPORT only) -----
         // The fid bridge: decode the reached modules into CompiledPredicates (their
         // functor ids + call graph, interned consistently in the global tables), resolve
         // the (module, PredicateRef) seeds to functor ids, and run the dead-region
@@ -516,9 +516,16 @@ public static class ShmoLinker
         // (live but reached ONLY as a br-member of a live region) — NEVER the unreachable
         // / dead-code bucket, so a meta-call-only predicate (absorbed by nothing, appears
         // unreachable) is kept (the prune rule that avoids hardening ensure_linked).
+        //
+        // §9d: this is an APPROXIMATION (it decodes only each module's own .shmo bytecode).
+        // The APPLIED prune is computed inside BundleWriter.CompileEntryToIl over the warm-up
+        // engine's EXACT calleeMap (user module + prelude + every reached callee), so the
+        // absorbed-only set matches the real region membership and a meta-callable absorbed
+        // predicate keeps its standalone form. Gated on --prune-report so plain --region-prune
+        // doesn't print per-module figures that diverge from what actually ships.
         var stage9PrunableFids = new HashSet<int>();
         var stage9ForcedRoots = new HashSet<int>();
-        if (config.RegionPruneReport || config.RegionPrune)
+        if (config.RegionPruneReport)
         {
             var predicates = new Dictionary<int, CompiledPredicate>();
             foreach (var obj in config.Objects)
@@ -732,19 +739,22 @@ public static class ShmoLinker
                 bool savedRegionCompile = Shumway.Compiler.Il.IlPredicateCompiler.RegionCompile;
                 var savedForcedRoots = Shumway.Compiler.Il.IlPredicateCompiler.RegionForcedRootFids;
                 if (config.RegionPrune)
-                {
                     Shumway.Compiler.Il.IlPredicateCompiler.RegionCompile = true;
-                    // Stage 9c: the promoted predicates stay region roots (excluded from
-                    // absorption) during the bundle's IL compile, matching the prune set.
-                    Shumway.Compiler.Il.IlPredicateCompiler.RegionForcedRootFids = stage9ForcedRoots;
-                }
                 try
                 {
+                    // Stage 9d: the prune (absorbed-only set + Stage-9c root selection) is
+                    // computed INSIDE BundleWriter.CompileEntryToIl, over the warm-up
+                    // engine's EXACT calleeMap (user module + prelude + every reached
+                    // callee) — the same set the IL compile uses. We pass it the seeds (the
+                    // externally-reachable by-name-callable predicates); it resolves them to
+                    // functor ids and installs the forced roots per entry. The step-6c
+                    // computation above is now just the dry-run REPORT (a per-module
+                    // approximation), not the applied prune.
                     bytes = BundleWriter.ToBytes(bundle,
                         includeCompiledBytecode: true,
                         includeCompiledIl: true,
                         stripWam: config.StripWam,
-                        prunableFids: config.RegionPrune ? stage9PrunableFids : null);
+                        regionPruneSeeds: config.RegionPrune ? stage9Seeds : null);
                 }
                 finally
                 {
