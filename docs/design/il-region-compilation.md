@@ -284,12 +284,26 @@ WAM state.
      cross-region enumeration (`[a-1,…,b-3]`). Full Embedding green at SHUMWAY_REGION=1
      (2153) — much broader region coverage now that cross-region calls don't reject.
      Recursion/cycles already work (the discovery br's to the existing block).
-   - **Remaining**: **backtrackable builtins** in a member (between/3 … — need a resume
-     cursor, currently rejected) and **indexed-dispatch multi-clause members**
-     (switch_on_term/atom/integer — the dominant real-program multi-clause shape, e.g.
-     int/atom facts `p(1).p(2).p(3).`). On Blint the region fires on only 2 predicates
-     (byte-identical output) until indexed members land — that is the real coverage
-     lever.
+   - **Indexed-dispatch members — attempted via exclusion (chunk 378), REVERTED.**
+     The plan was to NOT inline indexed members (keep their O(1) switch standalone)
+     but exclude them from region MEMBERSHIP so they become cross-region calls (which
+     6a handles). That works and is sound for an indexed callee (validated:
+     cross-region call to `idx(1).idx(2).idx(3).` enumerates + a caller CP survives).
+     BUT it surfaced a **clpfd cut+wakeup-in-region correctness bug**: with indexed
+     members excluded, a clpfd predicate (attributed-variable cut that flushes a
+     failing wakeup) now formed a region, and 2 chunk-339 tests failed under
+     `SHUMWAY_REGION=1`. AND the coverage gain was negligible (Blint 2 → 3 — most of
+     Blint's region rejections are NOT the indexed members but indexed/non-chain
+     ROOTS, which can't be region roots regardless). So the exclusion was reverted:
+     cost (a real correctness bug in the gated path) >> benefit (one extra Blint
+     region). The clpfd cut+wakeup-in-region interaction is a "stop and consult"
+     (attvar/trail) area needing dedicated investigation before indexed-member
+     coverage is worth pursuing.
+   - **State**: region compiler is correct + validated through Stage 6a, but **fires
+     on only ~2 Blint predicates** (byte-identical output). Real-program coverage is
+     blocked by: indexed/non-chain ROOTS (most Blint predicates), members with
+     backtrackable builtins, and the clpfd cut+wakeup-in-region bug. The mechanism is
+     sound; the real-world payoff has NOT been demonstrated.
 7. **Budget + method-size guard**; fall back to trampoline past the budget.
 8. **Gating + full-bench validation + measurement**; decide the default flip and
    whether the duplication inliners are subsumed.
