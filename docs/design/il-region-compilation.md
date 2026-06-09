@@ -284,47 +284,51 @@ WAM state.
      cross-region enumeration (`[a-1,…,b-3]`). Full Embedding green at SHUMWAY_REGION=1
      (2153) — much broader region coverage now that cross-region calls don't reject.
      Recursion/cycles already work (the discovery br's to the existing block).
-   - **Indexed-dispatch members — attempted via exclusion (chunk 378), REVERTED.**
-     The plan was to NOT inline indexed members (keep their O(1) switch standalone)
-     but exclude them from region MEMBERSHIP so they become cross-region calls (which
-     6a handles). That works and is sound for an indexed callee (validated:
-     cross-region call to `idx(1).idx(2).idx(3).` enumerates + a caller CP survives).
-     BUT it surfaced a **clpfd cut+wakeup-in-region correctness bug**: with indexed
-     members excluded, a clpfd predicate (attributed-variable cut that flushes a
-     failing wakeup) now formed a region, and 2 chunk-339 tests failed under
-     `SHUMWAY_REGION=1`. AND the coverage gain was negligible (Blint 2 → 3 — most of
-     Blint's region rejections are NOT the indexed members but indexed/non-chain
-     ROOTS, which can't be region roots regardless). So the exclusion was reverted:
-     cost (a real correctness bug in the gated path) >> benefit (one extra Blint
-     region). The clpfd cut+wakeup-in-region interaction is a "stop and consult"
-     (attvar/trail) area needing dedicated investigation before indexed-member
-     coverage is worth pursuing.
-   - **Wakeup flush at region boundaries DONE (chunk 379).** A correctness piece
-     independent of the indexed work: the interpreter flushes pending attribute
-     wakeups at every Call/Execute/Proceed/Deallocate goal boundary; IL relies on
-     control passing through the dispatch loop between trampoline calls to get those
-     flushes — but an intra-region `br`-call/return bypasses the loop. So the region
-     now flushes (`EmitRegionWakeupFlush` = `FlushWakeupsForIlCut; brfalse fail`) at
-     its OWN boundaries: before every `br`/trampoline call and at every proceed (same
-     class as the chunk-339 IL-cut flush). Harmless for non-attvar code (a
-     `_pendingWakeups.Count==0` fast path); Embedding REGION=1 stays 2153.
-   - **The deeper clpfd-in-region bug is NOT fully fixed (needs a dedicated session).**
-     The flush is necessary but insufficient: with indexed members excluded a large
-     clpfd-internal predicate (e.g. a **24-member region**) forms, and `X in 1..5,
-     m(X,R)` then FAILS where it should give `R=b` — constraint solving breaks in the
-     region. Root cause is below the single wakeup flush — the attvar/trail/wakeup
-     mechanism interacting with the region's `br`/cursor control flow and the
-     recursive interpretation `FlushWakeupsForIlCut` triggers (clpfd propagation),
-     at scale. An attvar/trail "stop and consult" area. So the indexed-member
-     exclusion stays REVERTED until this is debugged.
-   - **State**: region compiler is correct + validated through Stage 6a + the
-     boundary wakeup flush, but **fires on only ~2 Blint predicates** (byte-identical
-     output). Real-program coverage is blocked by: indexed/non-chain ROOTS (most Blint
-     predicates), members with backtrackable builtins, and the deeper clpfd-in-region
-     bug. The merge is opaque to the engine (anything N IL methods can do, 1 can do
-     within 64 KB) — these are implementation gaps, not fundamental barriers — but the
-     remaining ones (indexed-dispatch emission in-region; the clpfd-region bug) are
-     substantial focused work, and the real-world payoff has NOT been demonstrated.
+   - **Indexed-dispatch members — excluded from membership (chunk 380, kept).**
+     An indexed member is NOT inlined (its O(1) switch stays standalone); instead it
+     is excluded from region MEMBERSHIP (`IsRegionMemberEligible` = IL-compilable AND
+     single-clause-or-try_me_else-chain) so it becomes a cross-region call (which 6a
+     handles). Without this filter a region that merely *reaches* an indexed callee is
+     rejected wholesale by `IsRegionEmittable`; excluding the one callee unlocks the
+     rest. Sound for an indexed callee (cross-region enumeration + caller-CP survival
+     validated). This is what pulls clpfd-internal predicates into regions.
+   - **Wakeup flush at region boundaries DONE (chunk 379).** A correctness piece: the
+     interpreter flushes pending attribute wakeups at every
+     Call/Execute/Proceed/Deallocate goal boundary; IL relies on control passing
+     through the dispatch loop between trampoline calls to get those flushes — but an
+     intra-region `br`-call/return bypasses the loop. So the region flushes
+     (`EmitRegionWakeupFlush` = `FlushWakeupsForIlCut; brfalse fail`) at its OWN
+     boundaries: before every `br`/trampoline call and at every proceed (same class as
+     the chunk-339 IL-cut flush). Harmless for non-attvar code (a
+     `_pendingWakeups.Count==0` fast path).
+   - **The clpfd-in-region bug is FIXED (chunk 380) — it was a local-name collision,
+     exactly the "bug not barrier" the merge model predicts.** With indexed members
+     excluded, a 24-member clpfd-internal region (root `in/2`) formed and `X in 1..5,
+     m(X,R)` FAILED where it should give `R=b`. Root cause, isolated with a
+     deterministic BFS-order member cap: two members each with a `put_variable` at
+     pc 0 (here `clpfd_makevar` and `clpfd_dom_of`) both declared the Sigil local
+     `freshRef_pc0` — a pc-based local name is unique *within a single predicate* (pc
+     starts at 0) but **collides across members merged into one IL method**
+     (`InvalidOperationException: Local with name 'freshRef_pc0' already exists`),
+     which aborted the region compile and left `in/2` failing. NOT an attvar/trail/cut
+     interaction at all — the wakeup flush was a real but separate fix. The fix:
+     `EmitClauseBody` salts every per-member-emitted local name with the member index
+     (`_rm{CurrentMemberIndex}`) when `regionCtx != null` — the five pc-based locals
+     (`freshRef`, `freshRefY`, `preE_alloc`, `preE_dealloc`, `metaCallTarget`). This
+     is the local-naming half of making "N IL methods → 1 IL method is opaque to the
+     engine" actually true. Validated: `X in 1..5, m(X,R)` → `b`, the 2 chunk-339
+     clpfd cut+wakeup tests pass under `SHUMWAY_REGION=1`, full Embedding green at
+     `SHUMWAY_REGION=1` (only `Chunk373.Flag_DefaultsOff` "fails", correctly, because
+     the env var overrides the default-off flag it asserts).
+   - **State**: region compiler is correct + validated through Stage 6a + the boundary
+     wakeup flush + indexed-member exclusion + the local-collision fix. The merge is
+     opaque to the engine (anything N IL methods can do, 1 can do within 64 KB), as
+     the local-collision bug confirmed: it was a naming gap, not a fundamental barrier.
+     Remaining coverage gaps are indexed/non-chain ROOTS (most Blint predicates can't
+     be region *roots*) and members with backtrackable builtins; the bigger lever is
+     in-region indexed-dispatch *emission* (so indexed predicates can be roots/members
+     rather than trampoline boundaries). Real-world wall-clock payoff still to be
+     demonstrated under a default flip (Stage 8).
 7. **Budget + method-size guard**; fall back to trampoline past the budget.
 8. **Gating + full-bench validation + measurement**; decide the default flip and
    whether the duplication inliners are subsumed.

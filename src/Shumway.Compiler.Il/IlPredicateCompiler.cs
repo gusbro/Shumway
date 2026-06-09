@@ -497,12 +497,13 @@ public sealed class IlPredicateCompiler
         if (RegionCompile && calleeMap is not null)
         {
             var region = IlRegionBuilder.Build(predicate, calleeMap,
-                extraEligible: p => CanCompileCore(p, calleeMap, allowIndexedDispatch: true));
+                extraEligible: p => IsRegionMemberEligible(p, calleeMap));
             if (IsRegionEmittable(region, calleeMap))
             {
                 if (System.Environment.GetEnvironmentVariable("SHUMWAY_IL_SHAPE") == "1")
                     System.Console.Error.WriteLine(
-                        $"[region-emit] root fid={predicate.FunctorId} members={region.MemberCount}");
+                        $"[region-emit] root fid={predicate.FunctorId} members={region.MemberCount}"
+                        + " [" + string.Join(",", region.Members.Select(m => $"{m.FunctorId}({FidName(m.FunctorId)}x{m.ClauseCount})")) + "]");
                 return CompileRegion(region, IlRegionPlanner.Plan(region), calleeMap);
             }
         }
@@ -930,6 +931,14 @@ public sealed class IlPredicateCompiler
     /// builtins (no cut, no backtrackable / meta builtin, no cross-region user call,
     /// no multi-clause dispatch). The unhandled shapes (backtracking, cut,
     /// cross-region) come in Stages 4-6.</summary>
+    private static string FidName(int fid)
+    {
+        if (fid < 0) return "?";
+        try { var (a, ar) = Shumway.Core.FunctorTable.Lookup(fid);
+              return Shumway.Core.AtomTable.GetById(a)?.Name ?? "?"; }
+        catch { return "?"; }
+    }
+
     internal static bool IsRegionEmittable(
         IlRegion region, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
@@ -979,6 +988,18 @@ public sealed class IlPredicateCompiler
         }
         return true;
     }
+
+    /// <summary>Region-membership filter (Stage 6b). A callee is pulled into a region
+    /// only if it is itself IL-compilable AND its multi-clause dispatch is a plain
+    /// try_me_else chain (the only multi-clause shape the region emit handles, Stage
+    /// 4). An indexed / switch_on_term callee is NOT a chain, so it is excluded from
+    /// membership and stays a cross-region trampoline boundary — without this filter a
+    /// region that merely *reaches* an indexed callee would be rejected wholesale by
+    /// <see cref="IsRegionEmittable"/>, so excluding the one callee unlocks the rest.</summary>
+    private bool IsRegionMemberEligible(CompiledPredicate p,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+        => CanCompileCore(p, calleeMap, allowIndexedDispatch: true)
+           && (p.ClauseCount == 1 || TryDescribeTryMeElseChain(p, calleeMap, out _));
 
     /// <summary>Emit a whole region as one IL method (Stage 3). Layout: a `cur`
     /// local seeded from <c>arg1</c>; a `dispatch` jump table over the plan's cursor
@@ -1735,7 +1756,7 @@ public sealed class IlPredicateCompiler
     {
         if (System.Environment.GetEnvironmentVariable("SHUMWAY_IL_SHAPE") != "3") return;
         if (calleeMap is null) return;
-        bool Eligible(CompiledPredicate p) => CanCompileCore(p, calleeMap, allowIndexedDispatch: true);
+        bool Eligible(CompiledPredicate p) => IsRegionMemberEligible(p, calleeMap);
         var capped = IlRegionBuilder.Build(predicate, calleeMap, extraEligible: Eligible);
         var uncapped = IlRegionBuilder.Build(predicate, calleeMap, budgetBytes: 1_000_000, extraEligible: Eligible);
         if (uncapped.MemberCount <= 1) return;   // no local closure → uninteresting
@@ -2252,6 +2273,14 @@ public sealed class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? ruleInlineSites = null,
         RegionEmitContext? regionCtx = null)
     {
+        // In region mode every member is emitted into ONE shared IL method, so a
+        // pc-based local name (unique within a single predicate, where pc starts at
+        // 0) collides across members — two members each with, say, a put_variable at
+        // pc 0 would both declare `freshRef_pc0`. Salt every per-member-emitted local
+        // name with the member index so the shared method's local namespace stays
+        // collision-free (the N-methods-vs-1-method merge is opaque to the engine —
+        // this is the local-naming half of making that true).
+        string lt = regionCtx is null ? "" : $"_rm{regionCtx.CurrentMemberIndex}";
         int pc = start;
         while (pc < end)
         {
@@ -2478,7 +2507,7 @@ public sealed class IlPredicateCompiler
                 int arg = BytecodeIO.ReadInt32(code, pc + 5);
                 // Allocate fresh unbound, save its REF cell in a local, then
                 // assign it to both X[dest] and X[arg].
-                var refLocal = emit.DeclareLocal<Cell>($"freshRef_pc{pc}");
+                var refLocal = emit.DeclareLocal<Cell>($"freshRef_pc{pc}{lt}");
                 emit.LoadArgument(0);
                 emit.Call(EngineAllocateHeapUnboundMethod);
                 emit.Call(CellRefMethod);
@@ -2512,7 +2541,7 @@ public sealed class IlPredicateCompiler
                 // Y[slot] := X[arg] := Cell.Ref(engine.AllocateHeapUnbound())
                 int slot = BytecodeIO.ReadInt32(code, pc + 1);
                 int arg = BytecodeIO.ReadInt32(code, pc + 5);
-                var refLocal = emit.DeclareLocal<Cell>($"freshRefY_pc{pc}");
+                var refLocal = emit.DeclareLocal<Cell>($"freshRefY_pc{pc}{lt}");
                 emit.LoadArgument(0);
                 emit.Call(EngineAllocateHeapUnboundMethod);
                 emit.Call(CellRefMethod);
@@ -2545,7 +2574,7 @@ public sealed class IlPredicateCompiler
 #if DEBUG
                 if (DebugMode)
                 {
-                    var preELocal = emit.DeclareLocal<int>($"preE_alloc_pc{pc}");
+                    var preELocal = emit.DeclareLocal<int>($"preE_alloc_pc{pc}{lt}");
                     emit.LoadArgument(0);
                     emit.Call(EngineEGetter);
                     emit.StoreLocal(preELocal);
@@ -2574,7 +2603,7 @@ public sealed class IlPredicateCompiler
 #if DEBUG
                 if (DebugMode)
                 {
-                    var preELocal = emit.DeclareLocal<int>($"preE_dealloc_pc{pc}");
+                    var preELocal = emit.DeclareLocal<int>($"preE_dealloc_pc{pc}{lt}");
                     emit.LoadArgument(0);
                     emit.Call(EngineEGetter);
                     emit.StoreLocal(preELocal);
@@ -2723,7 +2752,7 @@ public sealed class IlPredicateCompiler
                     int siteIdx = callSiteIndexCounter();
                     int resumeCursor = cursorBase + siteIdx - 1;
 
-                    var target = emit.DeclareLocal<int>($"metaCallTarget_pc{pc}");
+                    var target = emit.DeclareLocal<int>($"metaCallTarget_pc{pc}{lt}");
 
                     // Compute the call arity and cut barrier per builtin.
                     //   call/N : arity = N, barrier = engine.B
