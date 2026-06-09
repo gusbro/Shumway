@@ -438,6 +438,18 @@ WAM state.
      / visible). The dry-run (`--prune-report`) approximates the seed set with the
      call-graph roots; the real linker uses the set above. Then drop each prunable
      predicate's standalone WAM/IL entry from the bundle.
+     - **9b-1 — linker seed-set computation DONE (chunk 389).**
+       `ShmoLinker.ComputeExternallyReachableSeeds(reachedRoots, reached, moduleDefined)`
+       (public, pure): the entry / `ensure_linked` roots ∪ every reached PUBLIC ∪ every
+       reached DYNAMIC predicate (Dynamic covers `:- visible`, chunk 265). Computed in
+       `Link` right after the reachability walk, reported as a `stage9_seeds` Info
+       diagnostic and exposed on `LinkResult.ExternallyReachableSeeds`. End-to-end on
+       Blint (entry `test/0`): **18 externally-reachable seeds among 238 reached
+       predicates** — the REAL seed set, broader than `shumway-compile --prune-report`'s
+       11 call-graph roots because it keeps public/dynamic predicates also called
+       internally. 4 Chunk389Tests. NOT yet consumed: the fid bridge (map these
+       `(module, PredicateRef)` seeds to the functor ids `RegionReachability` needs) +
+       region-mode bundle compilation (prereq i) + the actual entry drop are 9b-2+.
 10. **Linker IL / WAM dump options (PLANNED) — `shumway-link --dump-il` /
     `--dump-wam`.** The link step is the right place to dump the code that actually
     ships: after Stage 9 pruning, the linker holds the REAL IL that the bundle needs

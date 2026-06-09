@@ -134,12 +134,21 @@ public sealed class LinkResult
     public IReadOnlyList<string> UnreachableModules { get; }
     public IReadOnlyList<PredicateRef> MissingPredicates { get; }
 
+    /// <summary>Stage 9 (dead-region elimination) — the externally-reachable SEED set:
+    /// the reached predicates that must keep a standalone (trampoline-callable) form
+    /// because they are callable BY NAME from outside a region's <c>br</c>-absorption
+    /// (entry / ensure_linked roots + every reached public / dynamic predicate). The
+    /// seeds the linker feeds to <c>RegionReachability</c> once the bundle is
+    /// region-compiled; see <see cref="ShmoLinker.ComputeExternallyReachableSeeds"/>.</summary>
+    public IReadOnlyList<QualifiedPredicateRef> ExternallyReachableSeeds { get; }
+
     public LinkResult(bool success, Bundle? bundle, byte[]? bytes,
         IReadOnlyList<LinkDiagnostic> diagnostics,
         IReadOnlyList<PredicateRef> reachedPredicates,
         IReadOnlyList<string> reachedModules,
         IReadOnlyList<string> unreachableModules,
-        IReadOnlyList<PredicateRef> missingPredicates)
+        IReadOnlyList<PredicateRef> missingPredicates,
+        IReadOnlyList<QualifiedPredicateRef>? externallyReachableSeeds = null)
     {
         Success = success;
         Bundle = bundle;
@@ -149,6 +158,7 @@ public sealed class LinkResult
         ReachedModules = reachedModules;
         UnreachableModules = unreachableModules;
         MissingPredicates = missingPredicates;
+        ExternallyReachableSeeds = externallyReachableSeeds ?? Array.Empty<QualifiedPredicateRef>();
     }
 }
 
@@ -465,6 +475,18 @@ public static class ShmoLinker
             }
         }
 
+        // ----- 6b. Stage 9 (dead-region elimination) seed set -----
+        // The predicates that must keep a STANDALONE (trampoline-callable) form because
+        // they are callable BY NAME from outside a region's br-absorption. This is what
+        // the linker will feed to RegionReachability once the bundle is region-compiled
+        // (Stage 9b); for now we compute + report + expose it. A soundness
+        // over-approximation, never under.
+        var stage9Seeds = ComputeExternallyReachableSeeds(
+            roots.Select(r => (r.Module, r.Pred)), reached, moduleDefined);
+        Emit(LinkSeverity.Info, "stage9_seeds",
+            $"Stage 9 (dead-region): {stage9Seeds.Count} externally-reachable seed(s) "
+            + $"among {reached.Count} reached predicate(s).");
+
         // ----- 7. Unreachable modules → warning + drop -----
         var unreachable = new List<string>();
         foreach (var obj in config.Objects)
@@ -627,6 +649,9 @@ public static class ShmoLinker
         }
 
         var reachedList = reached.Select(r => r.Item2).Distinct().ToList();
+        var seedList = stage9Seeds
+            .Select(s => new QualifiedPredicateRef(s.Module, s.Pred.Name, s.Pred.Arity))
+            .ToList();
         return new LinkResult(
             success: success,
             bundle: bundle,
@@ -635,7 +660,41 @@ public static class ShmoLinker
             reachedPredicates: reachedList,
             reachedModules: reachedModules.ToList(),
             unreachableModules: unreachable,
-            missingPredicates: missing.ToList());
+            missingPredicates: missing.ToList(),
+            externallyReachableSeeds: seedList);
+    }
+
+    /// <summary>Stage 9 (dead-region elimination): the externally-reachable SEED set —
+    /// the reached predicates that must keep a STANDALONE (trampoline-callable) form
+    /// because they are callable BY NAME from outside a region's <c>br</c>-absorption,
+    /// so the dead-region prune must NEVER drop them. The set:
+    /// <list type="bullet">
+    ///   <item>the entry-point and <c>:- ensure_linked</c> roots
+    ///     (<paramref name="reachedRoots"/>) — invoked by name by the runtime;</item>
+    ///   <item>every reached PUBLIC predicate — the global namespace; another module or
+    ///     the embedding host can call it by name;</item>
+    ///   <item>every reached DYNAMIC predicate — called by name + asserted/retracted, and
+    ///     never region-compiled (<c>enter_dynamic</c>). This INCLUDES <c>:- visible</c>,
+    ///     which the compiler records as <see cref="PredicateVisibility.Dynamic"/>
+    ///     (its Arity-Prolog alias, chunk 265).</item>
+    /// </list>
+    /// A soundness over-approximation (keep too much, never prune something needed). This
+    /// is the set the linker passes as <c>RegionReachability.TrampolineReachable</c>'s
+    /// <c>externallyReachable</c> argument once the bundle is region-compiled. Pure;
+    /// public for direct testing.</summary>
+    public static HashSet<(string Module, PredicateRef Pred)> ComputeExternallyReachableSeeds(
+        IEnumerable<(string Module, PredicateRef Pred)> reachedRoots,
+        IEnumerable<(string Module, PredicateRef Pred)> reached,
+        IReadOnlyDictionary<string, Dictionary<PredicateRef, PredicateVisibility>> moduleDefined)
+    {
+        var seeds = new HashSet<(string, PredicateRef)>();
+        foreach (var r in reachedRoots) seeds.Add(r);   // entry / ensure_linked roots
+        foreach (var (mod, pred) in reached)
+            if (moduleDefined.TryGetValue(mod, out var defs)
+                && defs.TryGetValue(pred, out var vis)
+                && vis is PredicateVisibility.Public or PredicateVisibility.Dynamic)
+                seeds.Add((mod, pred));
+        return seeds;
     }
 
     /// <summary>Async wrapper. Offloads the synchronous
