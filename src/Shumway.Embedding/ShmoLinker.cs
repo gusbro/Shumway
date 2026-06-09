@@ -517,6 +517,7 @@ public static class ShmoLinker
         // / dead-code bucket, so a meta-call-only predicate (absorbed by nothing, appears
         // unreachable) is kept (the prune rule that avoids hardening ensure_linked).
         var stage9PrunableFids = new HashSet<int>();
+        var stage9ForcedRoots = new HashSet<int>();
         if (config.RegionPruneReport || config.RegionPrune)
         {
             var predicates = new Dictionary<int, CompiledPredicate>();
@@ -536,13 +537,36 @@ public static class ShmoLinker
                 }
                 var seedFids = ResolveSeedFids(stage9Seeds, byName);
                 var ic = new IlPredicateCompiler();
+
+                // Stage 9c: cost-based root selection. Promote shared members to their own
+                // roots (excluded from absorption) to cut inter-root duplication; passed
+                // to the region-membership probe as `extraExcluded`. minSaving (bytes)
+                // tunes the trade-off — env-overridable for measurement.
+                // Default 64 B: measured Blint optimum — below it (e.g. 0) over-promotes
+                // tiny shared predicates whose trampolines cost more than the dedup saving
+                // (100 roots / 925 KB vs 86 / 914 KB at 64). Env-overridable.
+                long minSaving = long.TryParse(
+                    Environment.GetEnvironmentVariable("SHUMWAY_REGION_ROOT_MINSAVE"), out var ms)
+                    ? ms : 64;
+                stage9ForcedRoots = RegionRootSelector.ComputeForcedRoots(
+                    predicates.Keys,
+                    (f, ex) => ic.RegionMemberFids(predicates[f], predicates, ex),
+                    f => predicates.TryGetValue(f, out var p) ? p.Bytecode.Length : 0,
+                    minSaving);
+                if (stage9ForcedRoots.Count > 0)
+                    Emit(LinkSeverity.Info, "stage9_roots",
+                        $"Stage 9c (root selection): promoted {stage9ForcedRoots.Count} shared "
+                        + $"predicate(s) to their own region root (minSaving={minSaving}B).");
+
                 // Region-aware reachability (intra-region calls are br, don't reach the
                 // standalone) vs plain reachability (every call trampolines). The
                 // difference is the predicates that are LIVE but only reached as absorbed
                 // members — the genuine region-prune benefit; predicates in neither set
-                // are ordinary dead code (droppable independently of regions).
+                // are ordinary dead code (droppable independently of regions). Both honour
+                // the Stage-9c promotions via `extraExcluded`.
                 var regionReachable = RegionReachability.TrampolineReachable(
-                    predicates, seedFids, fid => ic.RegionMemberFids(predicates[fid], predicates));
+                    predicates, seedFids,
+                    fid => ic.RegionMemberFids(predicates[fid], predicates, stage9ForcedRoots));
                 var fullReachable = RegionReachability.TrampolineReachable(
                     predicates, seedFids, fid => new[] { fid });
                 foreach (int f in fullReachable)
@@ -706,8 +730,14 @@ public static class ShmoLinker
                 // prunable set is module-global but keyed by functor id, so each per-entry
                 // build matches only its own predicates.
                 bool savedRegionCompile = Shumway.Compiler.Il.IlPredicateCompiler.RegionCompile;
+                var savedForcedRoots = Shumway.Compiler.Il.IlPredicateCompiler.RegionForcedRootFids;
                 if (config.RegionPrune)
+                {
                     Shumway.Compiler.Il.IlPredicateCompiler.RegionCompile = true;
+                    // Stage 9c: the promoted predicates stay region roots (excluded from
+                    // absorption) during the bundle's IL compile, matching the prune set.
+                    Shumway.Compiler.Il.IlPredicateCompiler.RegionForcedRootFids = stage9ForcedRoots;
+                }
                 try
                 {
                     bytes = BundleWriter.ToBytes(bundle,
@@ -719,6 +749,7 @@ public static class ShmoLinker
                 finally
                 {
                     Shumway.Compiler.Il.IlPredicateCompiler.RegionCompile = savedRegionCompile;
+                    Shumway.Compiler.Il.IlPredicateCompiler.RegionForcedRootFids = savedForcedRoots;
                 }
                 // Re-read the bytes so the in-memory Bundle reflects
                 // the persisted-IL slots the writer populated.

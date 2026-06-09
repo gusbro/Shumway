@@ -946,6 +946,13 @@ public sealed class IlPredicateCompiler
     public static bool RegionCompile { get; set; } =
         System.Environment.GetEnvironmentVariable("SHUMWAY_REGION") == "1";
 
+    /// <summary>Stage 9c (cost-based root selection): functor ids FORCED to be region
+    /// ROOTS — excluded from absorption into any OTHER region. Promoting a shared member
+    /// to its own root trades N duplicated copies of its sub-region for one copy + N
+    /// cross-region trampolines, cutting the all-as-roots inter-root duplication. Set by
+    /// the linker (save/restore) before a <c>--region-prune</c> build; null = none.</summary>
+    public static IReadOnlySet<int>? RegionForcedRootFids { get; set; }
+
     /// <summary>The labels + cursor map threaded into <see cref="EmitClauseBody"/>
     /// while emitting a region member's block.</summary>
     private sealed class RegionEmitContext
@@ -1084,7 +1091,8 @@ public sealed class IlPredicateCompiler
     private bool IsRegionMemberEligible(CompiledPredicate p,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
         => CanCompileCore(p, calleeMap, allowIndexedDispatch: true)
-           && RegionMemberOk(p, calleeMap, out _);
+           && RegionMemberOk(p, calleeMap, out _)
+           && RegionForcedRootFids?.Contains(p.FunctorId) != true;   // Stage 9c: forced root
 
     /// <summary>The set of functor ids a region rooted at <paramref name="root"/> would
     /// ABSORB as <c>br</c>-members when emitted (Stage 9 input) — the predicates whose
@@ -1097,10 +1105,20 @@ public sealed class IlPredicateCompiler
     /// the bundle is built in region mode.</summary>
     public IReadOnlyCollection<int> RegionMemberFids(
         CompiledPredicate root, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+        => RegionMemberFids(root, calleeMap, extraExcluded: null);
+
+    /// <param name="extraExcluded">Stage 9c: additional functor ids excluded from
+    /// absorption (treated as forced roots) for THIS computation, on top of
+    /// <see cref="RegionForcedRootFids"/> — lets the root selector probe regions for a
+    /// candidate promotion set without mutating the global static.</param>
+    public IReadOnlyCollection<int> RegionMemberFids(
+        CompiledPredicate root, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
+        IReadOnlySet<int>? extraExcluded)
     {
         if (calleeMap is null) return new[] { root.FunctorId };
         var region = IlRegionBuilder.Build(root, calleeMap,
-            extraEligible: p => IsRegionMemberEligible(p, calleeMap));
+            extraEligible: p => IsRegionMemberEligible(p, calleeMap)
+                && extraExcluded?.Contains(p.FunctorId) != true);
         if (!IsRegionEmittable(region, calleeMap)) return new[] { root.FunctorId };
         var s = new HashSet<int>(region.Members.Count);
         foreach (var m in region.Members) s.Add(m.FunctorId);
