@@ -413,10 +413,17 @@ WAM state.
      module dry-run (roots = call-graph roots): **Blint = 67 of 256 predicates prunable**
      (~26%), e.g. `blint_file` (absorbed into `blint_file_start`'s region).
    - **9b — wire the prune into the bundle build (PLANNED).** Two prerequisites the
-     analysis does NOT yet have: (i) the bundle IL path must actually compile in REGION
-     mode (today regions are runtime-gated; the bundle compiles per-predicate, so
-     nothing is absorbed → nothing to prune — and a prune would be UNSOUND, since a
-     pruned predicate would still be reached by a live trampoline call); and (ii) the
+     analysis does NOT yet have: (i) ✅ **DONE (chunk 391)** the bundle IL path must
+     actually compile in REGION mode — `EmitPersistedMethod` gained a region branch
+     (gated by `RegionCompile`, mirroring the runtime `Compile` integration) via a
+     shared `EmitRegionInto`; the region's functor-id / resume-marker uses already go
+     through the chunk-194 patchable helpers, so persisted region methods patch
+     cross-process. Validated: a region program round-trips through a
+     `--with-compiled-il` + `SHUMWAY_REGION=1` bundle and runs correctly cross-process
+     (caller CP survives); Blint emits 255 region methods and its bundle output is
+     byte-identical to the Tier-0 reference. The with-region bundle is ~2.3× bigger
+     (all-as-roots duplication) — exactly the bloat the prune removes. (Without the
+     prune this is correct but not yet a size win.) And (ii) the
      linker must compute the complete **externally-reachable seed set** and pass it as
      `RegionReachability`'s `externallyReachable` argument. That set is everything
      callable BY NAME from outside the region-absorption world — a soundness
