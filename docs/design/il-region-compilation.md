@@ -272,6 +272,24 @@ WAM state.
      were excluded from regions as cross-region). Region-off Embedding 2154 green.
 6. **Cross-region calls + builtins** inside the region; **recursion/cycles** (br to
    existing block).
+   - **Cross-region calls DONE (chunk 377)**: a member's call to a NON-member (a
+     dynamic / public / budget-pruned / not-yet-handled callee) stays the Phase-16
+     trampoline but with the plan's `CrossCallResume` cursor — `SetB0`; `SetCp(region
+     resume marker)`; `SetPc(callee entry marker)`; `IlTailCallPending`; `return` for
+     a non-tail Call (the loop re-enters the region at the cursor when the callee
+     proceeds); a tail Execute is the tail-trampoline (Cp unchanged). `IsRegionEmittable`
+     now admits cross-region Call/Execute. So a region no longer needs to be a CLOSED
+     local cluster — it can call out. Validated SOUND: a member's cross-region call to a
+     dynamic `d/1` enumerates (`[1,2,3]`) and a caller `gen(S)` CP survives the
+     cross-region enumeration (`[a-1,…,b-3]`). Full Embedding green at SHUMWAY_REGION=1
+     (2153) — much broader region coverage now that cross-region calls don't reject.
+     Recursion/cycles already work (the discovery br's to the existing block).
+   - **Remaining**: **backtrackable builtins** in a member (between/3 … — need a resume
+     cursor, currently rejected) and **indexed-dispatch multi-clause members**
+     (switch_on_term/atom/integer — the dominant real-program multi-clause shape, e.g.
+     int/atom facts `p(1).p(2).p(3).`). On Blint the region fires on only 2 predicates
+     (byte-identical output) until indexed members land — that is the real coverage
+     lever.
 7. **Budget + method-size guard**; fall back to trampoline past the budget.
 8. **Gating + full-bench validation + measurement**; decide the default flip and
    whether the duplication inliners are subsumed.

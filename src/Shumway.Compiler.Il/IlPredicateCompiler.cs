@@ -957,8 +957,10 @@ public sealed class IlPredicateCompiler
                     case Opcode.Call:
                     case Opcode.Execute:
                     {
-                        int fid = FindCallSiteFunctorId(m.CallSites, pc);
-                        if (fid < 0 || !region.IsIntraRegion(fid)) return false;  // cross-region → Stage 6
+                        // Intra-region (br) AND cross-region (Phase-16 trampoline with
+                        // the plan's resume cursor) calls are both handled (Stage 6).
+                        // A malformed call site (no metadata) is not.
+                        if (FindCallSiteFunctorId(m.CallSites, pc) < 0) return false;
                         break;
                     }
                     case Opcode.CallBuiltin:
@@ -1142,30 +1144,65 @@ public sealed class IlPredicateCompiler
             {
                 var member = ctx.Region.Members[ctx.CurrentMemberIndex];
                 int fid = FindCallSiteFunctorId(member.CallSites, pc);
-                if (fid < 0 || !ctx.Region.IsIntraRegion(fid))
-                    return false;   // cross-region (Stage 6) — let the normal path run/throw
-                // engine.SetB0(engine.B) — the cut barrier for the callee block.
+                if (fid < 0) return false;   // malformed — let the normal path throw
+                // engine.SetB0(engine.B) — the cut barrier for the callee.
                 emit.LoadArgument(0);
                 emit.LoadArgument(0);
                 emit.Call(EngineBGetter);
                 emit.Call(EngineSetB0Method);
+                bool intra = ctx.Region.IsIntraRegion(fid);
                 if (op == Opcode.Call)
                 {
-                    // Non-tail: register the forward continuation (Cp = return
-                    // marker), br to the member block, then mark the continuation
-                    // the member's proceed returns to via `ret` → dispatch.
+                    // Non-tail: register the forward continuation (Cp = a resume
+                    // marker into THIS region at the plan's cursor for this site).
                     int cursor = ctx.CursorBySite[(ctx.CurrentMemberIndex, pc)];
                     emit.LoadArgument(0);
                     EmitResumeMarker(emit, ctx.RegionFid, cursor);
                     emit.Call(EngineSetCpMethod);
+                    if (intra)
+                    {
+                        // Intra-region: br to the member block; its proceed returns
+                        // here via `ret` → dispatch → the continuation label.
+                        emit.Branch(ctx.MemberEntry[fid]);
+                    }
+                    else
+                    {
+                        // Cross-region: the Phase-16 trampoline — set Pc = callee
+                        // entry marker, return to the dispatch loop; when the callee
+                        // proceeds the loop re-enters this region at `cursor`.
+                        emit.LoadArgument(0);
+                        EmitFunctorId(emit, fid);
+                        emit.LoadConstant(0);
+                        emit.Call(EngineEncodeResumeMarkerMethod);
+                        emit.Call(EngineSetPcMethod);
+                        emit.LoadArgument(0);
+                        emit.LoadConstant(true);
+                        emit.Call(EngineIlTailCallPendingSetter);
+                        emit.LoadConstant(true);
+                        emit.Return();
+                    }
+                    emit.MarkLabel(ctx.CursorLabels[cursor]);   // the continuation
+                }
+                else if (intra)
+                {
+                    // Intra-region tail call: Cp already holds this member's caller
+                    // continuation, so the callee's proceed returns straight to it.
                     emit.Branch(ctx.MemberEntry[fid]);
-                    emit.MarkLabel(ctx.CursorLabels[cursor]);
                 }
                 else
                 {
-                    // Tail: Cp already holds this member's caller continuation, so
-                    // the callee's proceed returns straight to it. Just br.
-                    emit.Branch(ctx.MemberEntry[fid]);
+                    // Cross-region tail call: tail-trampoline (Cp unchanged = the
+                    // region's caller continuation; the callee's proceed returns to it).
+                    emit.LoadArgument(0);
+                    EmitFunctorId(emit, fid);
+                    emit.LoadConstant(0);
+                    emit.Call(EngineEncodeResumeMarkerMethod);
+                    emit.Call(EngineSetPcMethod);
+                    emit.LoadArgument(0);
+                    emit.LoadConstant(true);
+                    emit.Call(EngineIlTailCallPendingSetter);
+                    emit.LoadConstant(true);
+                    emit.Return();
                 }
                 pcRef = pc + OpcodeTable.Get((byte)op).Size;
                 return true;
