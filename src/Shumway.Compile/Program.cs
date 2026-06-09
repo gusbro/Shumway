@@ -1,3 +1,7 @@
+using System.Text;
+using Shumway.Compiler.Il;
+using Shumway.Compiler.Wam;
+using Shumway.Core;
 using Shumway.Embedding;
 
 namespace Shumway.Compile;
@@ -62,15 +66,16 @@ internal static class Program
         foreach (var input in opts.InputPaths)
         {
             string output = ResolveOutputPath(input, opts.OutputPath, multi);
-            int per = CompileOne(input, output, opts.Verbose, opts.BuildMode);
+            int per = CompileOne(input, output, opts);
             if (per != ExitOk) exit = per;
         }
         return exit;
     }
 
-    private static int CompileOne(string input, string output, bool verbose,
-        ShmoBuildMode buildMode)
+    private static int CompileOne(string input, string output, Options opts)
     {
+        bool verbose = opts.Verbose;
+        ShmoBuildMode buildMode = opts.BuildMode;
         Console.Error.WriteLine(
             $"shumway-compile: compiling {input} -> {output} "
             + $"[{buildMode.ToString().ToLowerInvariant()}]");
@@ -87,6 +92,8 @@ internal static class Program
             }
             var obj = result.Object!;
             ShmoWriter.WriteToFile(obj, output);
+            if (!string.IsNullOrEmpty(opts.DumpWamPath) || !string.IsNullOrEmpty(opts.DumpIlPath))
+                DumpArtifacts(obj, input, opts);
             if (verbose)
             {
                 Console.Error.WriteLine(
@@ -123,6 +130,69 @@ internal static class Program
         }
     }
 
+    /// <summary>Dumps the compiler's intermediate code for one module to text files
+    /// for manual analysis (--dump-wam / --dump-il). The module's WAM is decoded from
+    /// the just-built .shmo bytecode; the IL is produced by running the Tier-1 IL
+    /// compiler over each predicate (with the full module as the callee map, so region
+    /// compilation — when --regions is set — sees the local closure). Both append, with
+    /// per-predicate headers; the IL dump reuses the IL compiler's own FinishEmit dump
+    /// hook (<see cref="IlPredicateCompiler.IlDumpPath"/>).</summary>
+    private static void DumpArtifacts(ShmoObject obj, string input, Options opts)
+    {
+        var module = CompiledModuleCodec.Decode(obj.Bytecode);
+        var preds = module.Predicates;
+        var calleeMap = preds.ToDictionary(p => p.FunctorId);
+
+        if (!string.IsNullOrEmpty(opts.DumpWamPath))
+        {
+            var sb = new StringBuilder();
+            sb.Append($";;; ===== WAM dump: {input} (module {obj.ModuleName}, {preds.Count} predicates) =====\n");
+            foreach (var p in preds)
+            {
+                sb.Append($"\n;;; {PredName(p.FunctorId)}/{p.Arity} clauses={p.ClauseCount} bytes={p.Bytecode.Length}\n");
+                foreach (var ins in Disassembler.Iterate(p.Bytecode, 0, p.Bytecode.Length))
+                    sb.Append($"    {ins}\n");
+            }
+            File.AppendAllText(opts.DumpWamPath, sb.ToString());
+            Console.Error.WriteLine($"  WAM dump -> {opts.DumpWamPath} ({preds.Count} predicates)");
+        }
+
+        if (!string.IsNullOrEmpty(opts.DumpIlPath))
+        {
+            IlPredicateCompiler.IlDumpPath = opts.DumpIlPath;
+            IlPredicateCompiler.RegionCompile = opts.Regions;
+            File.AppendAllText(opts.DumpIlPath,
+                $";;; ===== IL dump: {input} (module {obj.ModuleName}, regions={opts.Regions}) =====\n");
+            int ok = 0, skipped = 0;
+            foreach (var p in preds)
+            {
+                var ic = new IlPredicateCompiler();
+                if (!ic.CanCompile(p, calleeMap)) { skipped++; continue; }
+                try { ic.Compile(p, calleeMap); ok++; }          // FinishEmit appends the IL
+                catch (Exception ex)
+                {
+                    File.AppendAllText(opts.DumpIlPath,
+                        $";;; (IL compile failed for {PredName(p.FunctorId)}/{p.Arity}: {ex.Message})\n");
+                    skipped++;
+                }
+            }
+            IlPredicateCompiler.IlDumpPath = null;               // don't leak into later files
+            Console.Error.WriteLine(
+                $"  IL dump -> {opts.DumpIlPath} ({ok} compiled, {skipped} skipped"
+                + (opts.Regions ? ", regions on)" : ")"));
+        }
+    }
+
+    private static string PredName(int fid)
+    {
+        try
+        {
+            var (atom, _) = FunctorTable.Lookup(fid);
+            return AtomTable.GetById(atom)?.Name ?? $"#{fid}";
+        }
+        catch { return $"#{fid}"; }
+    }
+
     private static string ResolveOutputPath(string input, string output, bool multi)
     {
         if (multi)
@@ -146,6 +216,9 @@ internal static class Program
         public string OutputPath { get; set; } = "";
         public bool Verbose { get; set; }
         public ShmoBuildMode BuildMode { get; set; } = ShmoBuildMode.Release;
+        public string DumpWamPath { get; set; } = "";
+        public string DumpIlPath { get; set; } = "";
+        public bool Regions { get; set; }
     }
 
     private static Options? ParseArgs(string[] args)
@@ -188,6 +261,19 @@ internal static class Program
                     opts.BuildMode = ShmoBuildMode.Release;
                     break;
 
+                case "--dump-wam":
+                    if (++i >= args.Length) { ReportMissing(arg); return null; }
+                    opts.DumpWamPath = args[i];
+                    break;
+
+                case "--dump-il":
+                    if (++i >= args.Length) { ReportMissing(arg); return null; }
+                    opts.DumpIlPath = args[i];
+                    break;
+
+                case "--regions":
+                    opts.Regions = true;
+                    break;
 
                 default:
                     if (arg.StartsWith("-"))
@@ -225,6 +311,16 @@ internal static class Program
             + "                       linker surfaces it in --map output and may keep it\n"
             + "                       source-bearing when --strip is in effect).\n"
             + "  -v, --verbose        Verbose progress output to stderr.\n"
-            + "  -h, --help           Show this message.");
+            + "      --dump-wam <f>   Append a human-readable disassembly of each\n"
+            + "                       predicate's WAM bytecode to file <f> (analysis).\n"
+            + "      --dump-il <f>    Append the Tier-1 IL the compiler generates for each\n"
+            + "                       predicate to file <f> (analysis). Add --regions to\n"
+            + "                       emit region methods (flat local code space).\n"
+            + "      --regions        With --dump-il, enable region compilation so the IL\n"
+            + "                       dump shows region methods instead of per-predicate.\n"
+            + "  -h, --help           Show this message.\n"
+            + "\n"
+            + "Note: --dump-wam / --dump-il APPEND; delete the file between runs. They\n"
+            + "are analysis aids and do not change the emitted .shmo (which is WAM).");
     }
 }

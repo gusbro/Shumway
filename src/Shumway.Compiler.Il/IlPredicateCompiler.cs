@@ -90,11 +90,12 @@ public sealed class IlPredicateCompiler
     public Sigil.OptimizationOptions Optimizations { get; set; }
         = Sigil.OptimizationOptions.None;
 
-    /// <summary>When <c>SHUMWAY_IL_DUMP</c> names a file, each compiled IL method's
-    /// textual instruction stream (Sigil <c>Instructions()</c>) is appended to it with
-    /// a header — for manual analysis of what the compiler emits (region or otherwise).
+    /// <summary>When set (the <c>SHUMWAY_IL_DUMP</c> env var by default, or a CLI flag
+    /// such as <c>shumway-compile --dump-il</c>), each compiled IL method's textual
+    /// instruction stream (Sigil <c>Instructions()</c>) is appended to this file with a
+    /// header — for manual analysis of what the compiler emits (region or otherwise).
     /// Off (null) by default; appends, so delete the file between runs.</summary>
-    private static readonly string? IlDumpPath =
+    public static string? IlDumpPath { get; set; } =
         System.Environment.GetEnvironmentVariable("SHUMWAY_IL_DUMP");
     private static readonly object IlDumpLock = new();
 
@@ -939,7 +940,10 @@ public sealed class IlPredicateCompiler
     // no cut, no cross-region user calls — those are Stages 4-6).
     // ========================================================================
 
-    internal static readonly bool RegionCompile =
+    /// <summary>Region compilation toggle — the <c>SHUMWAY_REGION</c> env var by
+    /// default, or a CLI flag (<c>shumway-compile --regions --dump-il</c>) so an IL
+    /// dump can show the region methods. Settable; read once per <c>Compile</c>.</summary>
+    public static bool RegionCompile { get; set; } =
         System.Environment.GetEnvironmentVariable("SHUMWAY_REGION") == "1";
 
     /// <summary>The labels + cursor map threaded into <see cref="EmitClauseBody"/>
