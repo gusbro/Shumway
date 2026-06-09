@@ -384,17 +384,39 @@ WAM state.
      no demonstrated payoff — the same outcome as the duplication inliner; mechanism
      correctness ≠ speed. The remaining identified gap vs GProlog is the WAM register
      allocator (chunk 347b), which is where Blint's time actually goes.
-9. **Module-level dead-region elimination** (build-time / bundle path). After
-   building every local predicate's extended region for a module, a local predicate
-   whose standalone delegate is no longer reached — because every caller is an
-   extended predicate that already absorbed it as a `br` block — is **unreachable**
-   and dropped from the compiled module. This is a reachability **fixpoint
-   closure**: keep public / visible / dynamic / entry-point predicates and any
-   predicate reached by a NON-inlined (trampoline) edge (un-pulled by budget or
-   non-local); drop a local predicate reached only by inlined (`br`) edges; iterate,
-   since dropping one may expose another. Applies to whole-module IL compilation
-   (the bundle path), NOT the runtime promotion path (where standalone delegates
-   coexist lazily). Shrinks the compiled module.
+9. **Module-level dead-region elimination — prune inaccessible regions at `.shum`
+   link time (PLANNED, prerequisite for IL inspection).** When the linker assembles a
+   `.shum`, it knows the complete picture the runtime never has in one place: every
+   entry point, every public/dynamic predicate, and — once regions are built — which
+   local predicates are reached ONLY as absorbed `br` members of another region. Such a
+   local predicate's standalone delegate is **unreachable** and must be **pruned** from
+   the bundle. This is a reachability **fixpoint closure**: keep public / visible /
+   dynamic / entry-point predicates and any predicate reached by a NON-inlined
+   (trampoline) edge (un-pulled by budget or non-local); drop a local predicate reached
+   only by inlined (`br`) edges; iterate, since dropping one may expose another. This is
+   a LINK-time pass (the bundle path), NOT the runtime promotion path (where standalone
+   delegates coexist lazily). It both shrinks the compiled module AND produces the
+   **real, minimal set of regions/predicates** — which is the prerequisite for
+   inspecting the IL that actually ships (Stage 11): `shumway-compile --dump-il`
+   (chunk 386) compiles EVERY predicate as a root, a superset; only the post-prune
+   link-time set is what runs.
+10. **Linker IL / WAM dump options (PLANNED) — `shumway-link --dump-il` /
+    `--dump-wam`.** The link step is the right place to dump the code that actually
+    ships: after Stage 9 pruning, the linker holds the REAL IL that the bundle needs
+    (the surviving roots/regions), not the per-predicate superset `shumway-compile`
+    produces. Mirror the chunk-386 compile-side flags (same `IlPredicateCompiler.
+    IlDumpPath` / `.RegionCompile` hooks + `Core.Disassembler` for WAM), but drive them
+    over the linker's final reachable set so the dump is the ground truth of what runs
+    cross-process / as `--exe`.
+11. **Inspect region IL for optimisations (GOAL — gated on Stages 9-10).** Once the
+    linker prunes to the real region set and can dump it, read the actual region IL
+    (the dispatch `switch`, per-member blocks, inline index resolve, CP pushes,
+    register save/restore) to find IL-level optimisation passes — e.g. redundant
+    deref/tag re-tests across members, dead cursor labels, CP pushes that a known-det
+    member doesn't need, common subexpression sharing between members now that they
+    live in one method. This is the payoff the whole-closure-in-one-method unit was
+    built to enable. Do it on the post-prune set so the analysis reflects what ships,
+    not the compile-time superset.
 
 ## Risks
 
