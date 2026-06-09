@@ -462,7 +462,23 @@ WAM state.
      pruned) AND variable-meta-called still needs the EXISTING `:- ensure_linked` (or
      public / dynamic) declaration — that target becomes a seed → region-reachable → not
      pruned. So the existing contract's scope is unchanged; we just do not widen it.
-     Then drop each prunable predicate's standalone WAM/IL entry from the bundle.
+     - **9b-3 — the APPLIED prune DONE (chunk 393), `shumway-link --region-prune`.**
+       Region-compiles the bundle (implies `--with-compiled-il`) and SKIPS emitting a
+       standalone IL method for each absorbed-only predicate
+       (`PersistedIlBuilder.Build`'s new `prunableFids` — skipped in the eligible pass
+       but kept in the callee map so the region methods still absorb its body, and keeps
+       its Tier-0 WAM as a fallback). The linker computes the prune set
+       (`fullReachable − regionReachable`, threaded `ToBytes → CompileEntryToIl → Build`)
+       and sets `RegionCompile` for the build (save/restore). Validated: synthetic +
+       Blint run correct; Blint bundle 1834 KB (all-as-roots region) → **1463 KB (−20% of
+       the region bloat)**, byte-identical output. Stays larger than the 743 KB
+       per-predicate-IL bundle: region-reachable ROOTS still duplicate their members (the
+       prune removes the absorbed-only standalone copies, not the inter-root
+       duplication) — region compilation is inherently bigger, and the chunk-382 A/B
+       already showed no runtime win on Blint. 2 Chunk393Tests. The mechanism is complete
+       + sound; the size/speed payoff awaits a call-bound program or a minimal-root-set
+       optimisation (not all-as-roots). Remaining: stripping the pruned predicates' WAM
+       too (currently kept as a fallback) for a further size cut.
      - **9b-1 — linker seed-set computation DONE (chunk 389).**
        `ShmoLinker.ComputeExternallyReachableSeeds(reachedRoots, reached, moduleDefined)`
        (public, pure): the entry / `ensure_linked` roots ∪ every reached PUBLIC ∪ every
