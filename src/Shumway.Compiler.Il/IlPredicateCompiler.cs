@@ -523,9 +523,10 @@ public sealed class IlPredicateCompiler
         {
             var region = IlRegionBuilder.Build(predicate, calleeMap,
                 extraEligible: p => IsRegionMemberEligible(p, calleeMap));
-            if (IsRegionEmittable(region, calleeMap))
+            bool shape1 = System.Environment.GetEnvironmentVariable("SHUMWAY_IL_SHAPE") == "1";
+            if (IsRegionEmittable(region, calleeMap, out var why))
             {
-                if (System.Environment.GetEnvironmentVariable("SHUMWAY_IL_SHAPE") == "1")
+                if (shape1)
                     System.Console.Error.WriteLine(
                         $"[region-emit] root fid={predicate.FunctorId} members={region.MemberCount}"
                         + " [" + string.Join(",", region.Members.Select(m => $"{m.FunctorId}({FidName(m.FunctorId)}x{m.ClauseCount})")) + "]");
@@ -533,6 +534,12 @@ public sealed class IlPredicateCompiler
                     m => TryDescribeIndexed(m, calleeMap, out var ii) ? ii!.Nodes.Count : 0);
                 return CompileRegion(region, rplan, calleeMap);
             }
+            // Explain why a predicate WITH a local closure didn't become a region —
+            // the coverage gaps (a backtrackable-builtin member, etc.).
+            if (shape1 && region.MemberCount >= 2)
+                System.Console.Error.WriteLine(
+                    $"[region-skip] root fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity}"
+                    + $" members={region.MemberCount}: {why}");
         }
         if (predicate.ClauseCount == 1)
         {
@@ -970,8 +977,18 @@ public sealed class IlPredicateCompiler
 
     internal static bool IsRegionEmittable(
         IlRegion region, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
+        => IsRegionEmittable(region, calleeMap, out _);
+
+    /// <summary>As <see cref="IsRegionEmittable(IlRegion, IReadOnlyDictionary{int, CompiledPredicate})"/>,
+    /// but on rejection sets <paramref name="reason"/> to a human-readable cause (which
+    /// member, which opcode) — surfaced under <c>SHUMWAY_IL_SHAPE=1</c> to explain why a
+    /// predicate with a local closure did NOT become a region (the coverage gaps).</summary>
+    internal static bool IsRegionEmittable(
+        IlRegion region, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
+        out string? reason)
     {
-        if (region.MemberCount < 2) return false;
+        reason = null;
+        if (region.MemberCount < 2) { reason = "members<2 (no local closure)"; return false; }
         foreach (var m in region.Members)
         {
             // A multi-clause member must be either a plain try_me_else chain (Stage 4)
@@ -982,13 +999,15 @@ public sealed class IlPredicateCompiler
             // switch/try opcodes that never reach EmitClauseBody).
             if (m.ClauseCount > 1 && !TryDescribeTryMeElseChain(m, calleeMap, out _))
             {
-                if (!TryDescribeIndexed(m, calleeMap, out var info)) return false;
+                if (!TryDescribeIndexed(m, calleeMap, out var info))
+                { reason = $"member {FidName(m.FunctorId)}/{m.Arity}: multi-clause, neither chain nor indexed"; return false; }
                 foreach (var (start, end) in info!.Clauses)
-                    if (!RegionBodyOpcodesOk(m.Bytecode, start, end, m.CallSites)) return false;
+                    if (!RegionBodyOpcodesOk(m.Bytecode, start, end, m.CallSites, out var r))
+                    { reason = $"member {FidName(m.FunctorId)}/{m.Arity} (indexed body): {r}"; return false; }
                 continue;
             }
-            if (!RegionBodyOpcodesOk(m.Bytecode, 0, m.Bytecode.Length, m.CallSites))
-                return false;
+            if (!RegionBodyOpcodesOk(m.Bytecode, 0, m.Bytecode.Length, m.CallSites, out var r2))
+            { reason = $"member {FidName(m.FunctorId)}/{m.Arity}: {r2}"; return false; }
         }
         return true;
     }
@@ -1001,7 +1020,12 @@ public sealed class IlPredicateCompiler
     /// needs a resume cursor the region planner doesn't yet allocate).</summary>
     private static bool RegionBodyOpcodesOk(
         byte[] code, int start, int end, IReadOnlyList<CallSite> callSites)
+        => RegionBodyOpcodesOk(code, start, end, callSites, out _);
+
+    private static bool RegionBodyOpcodesOk(
+        byte[] code, int start, int end, IReadOnlyList<CallSite> callSites, out string? reason)
     {
+        reason = null;
         int pc = start;
         while (pc < end)
         {
@@ -1010,19 +1034,20 @@ public sealed class IlPredicateCompiler
             {
                 case Opcode.Call:
                 case Opcode.Execute:
-                    if (FindCallSiteFunctorId(callSites, pc) < 0) return false;
+                    if (FindCallSiteFunctorId(callSites, pc) < 0)
+                    { reason = $"{op} @{pc} has no call-site metadata"; return false; }
                     break;
                 case Opcode.CallBuiltin:
                 {
                     var e = Shumway.Builtins.BuiltinsRegistry.GetById(
                         BytecodeIO.ReadInt32(code, pc + 1));
                     if (e.Name is "call" or "$call" || IsBacktrackableBuiltinName(e.Name))
-                        return false;                   // resume-needing builtin → Stage 4/6
+                    { reason = $"backtrackable/meta builtin '{e.Name}' @{pc} (needs a resume cursor)"; return false; }
                     break;
                 }
             }
             int size = op == Opcode.Meta ? 6 : OpcodeTable.Get((byte)op).Size;
-            if (size <= 0) return false;
+            if (size <= 0) { reason = $"undecodable opcode {op} @{pc}"; return false; }
             pc += size;
         }
         return true;
