@@ -658,6 +658,19 @@ public sealed class IlPredicateCompiler
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
+            if (op == Opcode.DeallocateProceed)
+            {
+                // Fused deallocate+proceed (chunk 220) — a body terminator. A
+                // single-clause body with a frame ending in a non-tail-call goal
+                // (a cut or a builtin) ends here; EmitClauseBody emits the
+                // deallocate then the proceed-return, so it IS compilable. Must be
+                // checked BEFORE IsSupportedOpcode (which also accepts it but does
+                // not record the terminator). Without this, e.g. `p(X):-a(X),!.`
+                // was wrongly rejected as cannot-compile.
+                sawTerminator = true;
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
             if (IsSupportedOpcode(op))
             {
                 pc += OpcodeTable.Get(op).Size;
@@ -934,11 +947,13 @@ public sealed class IlPredicateCompiler
                 var op = (Opcode)code[pc];
                 switch (op)
                 {
-                    case Opcode.Cut:
-                    case Opcode.NeckCut:
-                    case Opcode.GetLevel:
-                    case Opcode.AllocateGetLevel:
-                        return false;                       // cut → Stage 5
+                    // Cut (Stage 5): allowed. The intra-region call emits SetB0(e.B)
+                    // before the `br`, so a member's deep cut (allocate_get_level
+                    // captures _b0 into a Y-slot; cut slot cuts to it) and neck cut
+                    // (cut to _b0) prune only the member's own choice points —
+                    // including its clause-alternative CPs — exactly as a real call
+                    // would (chunk-367 barrier scoping). EmitClauseBody's normal
+                    // NeckCut/GetLevel/Cut/AllocateGetLevel handlers emit them.
                     case Opcode.Call:
                     case Opcode.Execute:
                     {

@@ -252,8 +252,24 @@ WAM state.
      (Note: integer/atom facts like `p(1).p(2).p(3).` compile to INDEXED dispatch,
      not a chain, so they're Stage 6, not Stage 4 — a chain needs non-indexable
      heads, e.g. `gen(R):-R=1. gen(R):-R=2.`)
-5. **Cut within the region** — reuse chunk-367 barrier scoping. Validate soundness
-   (the discriminating `member`-survives-cut cases).
+5. **Cut within the region** — ✅ DONE (chunk 376). The intra-region call already
+   emits `SetB0(e.B)` before the `br`, so a member's deep cut (allocate_get_level
+   captures `_b0` into a Y-slot; cut slot cuts to it) and neck cut prune only the
+   member's own choice points — including its clause-alternative CPs — exactly as a
+   real call would (chunk-367 barrier scoping). The change is just removing the cut
+   reject from `IsRegionEmittable`; `EmitClauseBody`'s normal NeckCut/GetLevel/Cut/
+   AllocateGetLevel handlers emit the cuts unchanged. Validated SOUND with the region
+   firing: `root(X):-gen(X),!` cuts the chain member `gen` to its first solution
+   (`[1]`), and a caller `gen(S)` CP created BEFORE the call survives the cut
+   (`[1-1,2-1,3-1]`). Full Embedding suite green at SHUMWAY_REGION=1 (2153).
+   - **Pre-existing bug fixed along the way**: `CanCompileSingleClause` did not treat
+     `deallocate_proceed` as a terminator (it was caught by the earlier
+     `IsSupportedOpcode` branch, which doesn't record the terminator), so a
+     single-clause body with a frame ending in a non-tail-call goal (a cut or a
+     builtin) — e.g. `p(X):-a(X),!.` — was wrongly rejected as cannot-compile. Moving
+     the `DeallocateProceed` terminator check before `IsSupportedOpcode` lets those
+     promote standalone AND become region members (without it, cut-bearing members
+     were excluded from regions as cross-region). Region-off Embedding 2154 green.
 6. **Cross-region calls + builtins** inside the region; **recursion/cycles** (br to
    existing block).
 7. **Budget + method-size guard**; fall back to trampoline past the budget.

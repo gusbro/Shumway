@@ -74,12 +74,18 @@ public class Chunk373Tests
     }
 
     [Fact]
-    public void MemberWithCut_NotEmittable()
+    public void MemberWithCut_IsEmittable_Stage5()
     {
-        var leaf = Pred(2, 1, NeckCutProceed());       // cut → Stage 5
+        // A member with a cut IS emittable since Stage 5: the intra-region call
+        // emits SetB0(e.B), so the member's cut prunes only its own choice points
+        // (chunk-367 barrier scoping). Validated end-to-end with discriminating
+        // findall cases (a member commits its body to the first solution while a
+        // caller CP created before the call survives) + the Embedding suite at
+        // SHUMWAY_REGION=1.
+        var leaf = Pred(2, 1, NeckCutProceed());
         var root = Pred(1, 1, CallThenProceed(), (2, false));
         var region = IlRegionBuilder.Build(root, Map(root, leaf));
-        Assert.False(IlPredicateCompiler.IsRegionEmittable(region));
+        Assert.True(IlPredicateCompiler.IsRegionEmittable(region));
     }
 
     [Fact]
