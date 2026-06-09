@@ -80,6 +80,40 @@ public class Chunk371Tests
         Assert.Equal((3, 1, 4), (plan.Sites[2].Cursor, plan.Sites[2].MemberIndex, plan.Sites[2].CalleeFid)); // b→d
     }
 
+    // A synthetic multi-clause member (clauseCount overrideable).
+    private static CompiledPredicate PredN(int fid, int clauseCount, params (int callee, bool isExecute)[] calls)
+    {
+        var body = new byte[10];
+        body[0] = (byte)Opcode.Proceed;
+        var sites = calls.Select((c, i) => new CallSite(i + 1, c.callee, c.isExecute)).ToList();
+        return new CompiledPredicate(body, fid, 0, clauseCount, sites, Array.Empty<int>());
+    }
+
+    [Fact]
+    public void MultiClauseMember_GetsClauseAltCursors()
+    {
+        // a (root) calls b; b is a 3-clause member → 2 clause-alt cursors (clauses
+        // 1 and 2). a→b is one intra return cursor. Root (a) single-clause.
+        var a = PredN(1, 1, (2, false));
+        var b = PredN(2, 3);
+        var plan = IlRegionPlanner.Plan(IlRegionBuilder.Build(a, Map(a, b)));
+        var alts = plan.Sites.Where(s => s.Kind == RegionCursorKind.ClauseAlt).ToList();
+        Assert.Equal(2, alts.Count);
+        Assert.Equal(new[] { 1, 2 }, alts.Select(s => s.ClauseIndex).ToArray());
+        Assert.All(alts, s => Assert.Equal(1, s.MemberIndex));   // all belong to b (member 1)
+        // plus the a→b intra return cursor.
+        Assert.Single(plan.Sites.Where(s => s.Kind == RegionCursorKind.IntraCallReturn));
+        Assert.Equal(4, plan.TotalCursors);   // root entry + 2 clause-alts + 1 return
+    }
+
+    [Fact]
+    public void SingleClauseMembers_HaveNoClauseAltCursors()
+    {
+        var a = PredN(1, 1, (2, false)); var b = PredN(2, 1);
+        var plan = IlRegionPlanner.Plan(IlRegionBuilder.Build(a, Map(a, b)));
+        Assert.Empty(plan.Sites.Where(s => s.Kind == RegionCursorKind.ClauseAlt));
+    }
+
     [Fact]
     public void SharedCallee_OneBlock_TwoReturnCursors()
     {

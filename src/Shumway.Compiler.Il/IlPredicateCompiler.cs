@@ -986,7 +986,11 @@ public sealed class IlPredicateCompiler
         foreach (var s in plan.Sites)
         {
             cursorLabels[s.Cursor] = emit.DefineLabel($"rcur_{s.Cursor}");
-            cursorBySite[(s.MemberIndex, s.Pc)] = s.Cursor;
+            // ClauseAlt cursors are keyed by (member, clause) at emit time, not by
+            // pc — only call sites go in the (member, pc) lookup. (Stage 3 regions
+            // have no multi-clause members, so this is the call-cursor map.)
+            if (s.Kind != RegionCursorKind.ClauseAlt)
+                cursorBySite[(s.MemberIndex, s.Pc)] = s.Cursor;
         }
 
         var ctx = new RegionEmitContext

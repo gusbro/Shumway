@@ -226,6 +226,24 @@ WAM state.
      Stages 4–6 add multi-clause members (backtracking), cut, and cross-region calls.
 4. **Intra-region backtracking** — a multi-clause member as a block; CPs re-enter
    `dispatch`. Validate enumeration + a caller CP surviving.
+   - **Planner extension DONE (chunk 374)**: a multi-clause member's non-first
+     clauses (1..N-1) each get a `ClauseAlt` cursor in the region cursor space
+     (assigned before the member's call cursors, in clause order). The member's
+     clause dispatch will push a choice point carrying it; a backtrack re-enters the
+     region method at that cursor (→ `dispatch` → the next clause). `RegionCursorKind.
+     ClauseAlt` + `RegionCursorSite.ClauseIndex`; tests in Chunk371Tests. Stage-3
+     emit unaffected (its single-clause regions have no clause-alts; `cursorBySite`
+     keeps only call cursors).
+   - **Dispatch emit (next)**: emit a multi-clause member block — the clause-entry
+     dispatch (clause 0 at the member-entry label, clauses 1..N-1 at their
+     `ClauseAlt` cursor labels), each clause (except the last) pushing
+     `PushIlChoicePoint(region delegate, next-clause cursor, arity)` before its
+     region-aware body, with a head-match failure → region fail → backtrack → the CP
+     → the next clause. Needs the region method's self-delegate (the holder pattern,
+     `SelfFromHolder` + `IndexedDelegateHolder.Register`). Soundness-critical
+     ([[extra-backtracking-not-sound]]) — validated with discriminating findall
+     cases (a member enumerates all clauses; a caller CP created before the call
+     survives).
 5. **Cut within the region** — reuse chunk-367 barrier scoping. Validate soundness
    (the discriminating `member`-survives-cut cases).
 6. **Cross-region calls + builtins** inside the region; **recursion/cycles** (br to

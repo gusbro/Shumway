@@ -137,12 +137,19 @@ internal enum RegionCursorKind
     /// <summary>The forward-resume point after a CROSS-region call (the Phase-16
     /// trampoline returns to the loop, which re-enters here).</summary>
     CrossCallResume,
+    /// <summary>A non-first clause of a MULTI-clause member (Stage 4). The member's
+    /// clause dispatch pushes a choice point carrying this cursor; a backtrack
+    /// re-enters the region method here to try the next clause.</summary>
+    ClauseAlt,
 }
 
-/// <summary>One assigned cursor in a region's cursor space (Stage 2). Cursor 0 is
-/// the root's entry (implicit); these carry 1..N.</summary>
+/// <summary>One assigned cursor in a region's cursor space. Cursor 0 is the root's
+/// entry (implicit); these carry 1..N. For a <see cref="RegionCursorKind.ClauseAlt"/>
+/// the <see cref="ClauseIndex"/> is the clause number (1..ClauseCount-1) and
+/// <see cref="Pc"/>/<see cref="CalleeFid"/> are unused (-1).</summary>
 internal readonly record struct RegionCursorSite(
-    int Cursor, RegionCursorKind Kind, int MemberIndex, int Pc, int CalleeFid);
+    int Cursor, RegionCursorKind Kind, int MemberIndex, int Pc, int CalleeFid,
+    int ClauseIndex = -1);
 
 /// <summary>The cursor plan for a region (Stage 2 artifact): the assignment of the
 /// region's forward-resume / intra-return cursor space, in the exact order the emit
@@ -183,8 +190,16 @@ internal static class IlRegionPlanner
         for (int mi = 0; mi < region.Members.Count; mi++)
         {
             var member = region.Members[mi];
-            // pc order — the emit walks bytecode forward, so cursor numbers must
-            // follow the call sites' byte offsets.
+            // Stage 4: a multi-clause member's non-first clauses (1..N-1) each get
+            // a clause-alternative cursor — the clause dispatch pushes a choice
+            // point carrying it, and a backtrack re-enters the region method here to
+            // try the next clause. (Clause 0 is reached by the forward br / cursor 0
+            // for the root, so it takes no separate cursor.) Assigned before the
+            // member's call cursors, in clause order.
+            for (int c = 1; c < member.ClauseCount; c++)
+                sites.Add(new RegionCursorSite(cursor++, RegionCursorKind.ClauseAlt, mi, -1, -1, c));
+            // Call cursors in pc order — the emit walks bytecode forward, so cursor
+            // numbers must follow the call sites' byte offsets.
             var ordered = new List<CallSite>(member.CallSites);
             ordered.Sort((x, y) => x.OpcodeOffset.CompareTo(y.OpcodeOffset));
             foreach (var cs in ordered)
