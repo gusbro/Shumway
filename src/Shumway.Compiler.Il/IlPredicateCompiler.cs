@@ -1123,6 +1123,21 @@ public sealed class IlPredicateCompiler
     /// continuation). Returns false for every other opcode (head match, unify,
     /// arith, allocate/deallocate, deterministic builtin), which the normal switch
     /// emits unchanged.</summary>
+    /// <summary>Flush pending attribute wakeups at a region goal boundary (a
+    /// `br`-call or a proceed), then fail (backtrack) if a constraint failed. The
+    /// interpreter flushes at every Call/Execute/Proceed/Deallocate; IL code relies
+    /// on control passing through the dispatch loop between trampoline calls to get
+    /// those flushes — but an intra-region call/return is a `br` that bypasses the
+    /// loop, so the region must flush at its OWN boundaries (same class as the
+    /// chunk-339 IL-cut flush). Cheap: a `_pendingWakeups.Count==0` fast path.</summary>
+    private static void EmitRegionWakeupFlush(
+        Sigil.Emit<PredicateDelegate> emit, Sigil.Label failLabel)
+    {
+        emit.LoadArgument(0);
+        emit.Call(EngineFlushWakeupsForIlCutMethod);
+        emit.BranchIfFalse(failLabel);
+    }
+
     private static bool TryEmitRegionOpcode(
         Sigil.Emit<PredicateDelegate> emit, byte[] code, int pc, Opcode op,
         RegionEmitContext ctx, ref int pcRef)
@@ -1130,12 +1145,14 @@ public sealed class IlPredicateCompiler
         switch (op)
         {
             case Opcode.Proceed:
+                EmitRegionWakeupFlush(emit, ctx.FailLabel);
                 emit.Branch(ctx.RetLabel);
                 pcRef = pc + 1;
                 return true;
             case Opcode.DeallocateProceed:
                 emit.LoadArgument(0);
                 emit.Call(EngineDeallocateMethod);
+                EmitRegionWakeupFlush(emit, ctx.FailLabel);
                 emit.Branch(ctx.RetLabel);
                 pcRef = pc + OpcodeTable.Get((byte)op).Size;
                 return true;
@@ -1145,6 +1162,9 @@ public sealed class IlPredicateCompiler
                 var member = ctx.Region.Members[ctx.CurrentMemberIndex];
                 int fid = FindCallSiteFunctorId(member.CallSites, pc);
                 if (fid < 0) return false;   // malformed — let the normal path throw
+                // Flush pending wakeups at this goal boundary (the br/trampoline
+                // bypasses the dispatch loop's flush); then set the cut barrier.
+                EmitRegionWakeupFlush(emit, ctx.FailLabel);
                 // engine.SetB0(engine.B) — the cut barrier for the callee.
                 emit.LoadArgument(0);
                 emit.LoadArgument(0);

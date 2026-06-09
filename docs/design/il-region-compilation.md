@@ -299,11 +299,32 @@ WAM state.
      region). The clpfd cut+wakeup-in-region interaction is a "stop and consult"
      (attvar/trail) area needing dedicated investigation before indexed-member
      coverage is worth pursuing.
-   - **State**: region compiler is correct + validated through Stage 6a, but **fires
-     on only ~2 Blint predicates** (byte-identical output). Real-program coverage is
-     blocked by: indexed/non-chain ROOTS (most Blint predicates), members with
-     backtrackable builtins, and the clpfd cut+wakeup-in-region bug. The mechanism is
-     sound; the real-world payoff has NOT been demonstrated.
+   - **Wakeup flush at region boundaries DONE (chunk 379).** A correctness piece
+     independent of the indexed work: the interpreter flushes pending attribute
+     wakeups at every Call/Execute/Proceed/Deallocate goal boundary; IL relies on
+     control passing through the dispatch loop between trampoline calls to get those
+     flushes — but an intra-region `br`-call/return bypasses the loop. So the region
+     now flushes (`EmitRegionWakeupFlush` = `FlushWakeupsForIlCut; brfalse fail`) at
+     its OWN boundaries: before every `br`/trampoline call and at every proceed (same
+     class as the chunk-339 IL-cut flush). Harmless for non-attvar code (a
+     `_pendingWakeups.Count==0` fast path); Embedding REGION=1 stays 2153.
+   - **The deeper clpfd-in-region bug is NOT fully fixed (needs a dedicated session).**
+     The flush is necessary but insufficient: with indexed members excluded a large
+     clpfd-internal predicate (e.g. a **24-member region**) forms, and `X in 1..5,
+     m(X,R)` then FAILS where it should give `R=b` — constraint solving breaks in the
+     region. Root cause is below the single wakeup flush — the attvar/trail/wakeup
+     mechanism interacting with the region's `br`/cursor control flow and the
+     recursive interpretation `FlushWakeupsForIlCut` triggers (clpfd propagation),
+     at scale. An attvar/trail "stop and consult" area. So the indexed-member
+     exclusion stays REVERTED until this is debugged.
+   - **State**: region compiler is correct + validated through Stage 6a + the
+     boundary wakeup flush, but **fires on only ~2 Blint predicates** (byte-identical
+     output). Real-program coverage is blocked by: indexed/non-chain ROOTS (most Blint
+     predicates), members with backtrackable builtins, and the deeper clpfd-in-region
+     bug. The merge is opaque to the engine (anything N IL methods can do, 1 can do
+     within 64 KB) — these are implementation gaps, not fundamental barriers — but the
+     remaining ones (indexed-dispatch emission in-region; the clpfd-region bug) are
+     substantial focused work, and the real-world payoff has NOT been demonstrated.
 7. **Budget + method-size guard**; fall back to trampoline past the budget.
 8. **Gating + full-bench validation + measurement**; decide the default flip and
    whether the duplication inliners are subsumed.
