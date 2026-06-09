@@ -62,6 +62,11 @@ include the per-clause source-position markers. DCG rules are expanded;
 directives are skipped. The same functionality is available in-process
 via `Shumway.Compiler.Wam.PredicateDisassembler`.
 
+For the **Tier-1 IL** counterpart — what the IL compiler emits for a
+module, including region methods — use
+[`shumway-compile --dump-il`](#dumping-generated-wam-and-il-for-analysis)
+(and `--dump-wam` for a whole-module, dump-to-file WAM disassembly).
+
 ---
 
 ## Building from source
@@ -262,6 +267,9 @@ Flags:
 | `-r, --release` | Release build (default). Smaller `.shmo`, no per-instruction debug info. |
 | `-d, --debug` | Debug build. The build mode is recorded in the `.shmo` and surfaces in `shumway-link --map` output. |
 | `-v, --verbose` | After each file, list every `:- public` and `:- dynamic` indicator the module exports. |
+| `--dump-wam <file>` | Append a readable disassembly of each predicate's WAM bytecode to `<file>` (analysis aid; see below). |
+| `--dump-il <file>` | Append the Tier-1 IL the compiler generates for each predicate to `<file>` (analysis aid; see below). |
+| `--regions` | With `--dump-il`, enable **region compilation** so the IL dump shows region methods (flat local code space) instead of one method per predicate. |
 | `-h, --help` | Usage summary. |
 
 **Error handling**: the compiler is C-style — on a parse or directive
@@ -269,6 +277,49 @@ error, it resyncs to the next clause-terminator dot and keeps going,
 so you see every error in one pass (up to a 100-error cap). All
 diagnostics are printed in the standard `file:line:col: error: msg`
 shape. Exit codes: `0` ok, `1` compile error, `3` usage error.
+
+#### Dumping generated WAM and IL for analysis
+
+Two analysis flags write the compiler's intermediate code to a text file
+so you can read exactly what it generates for a module. They are
+diagnostic aids — **they do not change the emitted `.shmo`** (always WAM)
+— and both **append**, so delete the target file between runs.
+
+```bash
+# Dump both the WAM and the region-form IL for a module.
+shumway-compile --dump-wam prog.wam.txt --dump-il prog.il.txt --regions \
+  -o prog.shmo prog.pl
+```
+
+- **`--dump-wam <file>`** decodes the just-built module and appends a
+  readable disassembly of every predicate's WAM bytecode — the same
+  `switch_on_term` / `try` / `retry` / `trust` dispatch and clause bodies
+  the Tier-0 interpreter runs. (For ad-hoc, stdout-only WAM inspection of
+  a single predicate, [`shumway-disasm`](#inspecting-compiled-bytecode-shumway-disasm)
+  is often handier; `--dump-wam` is the whole-module, dump-to-file form
+  that pairs with `--dump-il`.)
+
+- **`--dump-il <file>`** runs the Tier-1 IL compiler over each predicate
+  — with the whole module as the callee map, so it can see the local
+  closure — and appends each generated method's IL. Without `--regions`
+  you get one method per predicate; with `--regions` you get the
+  **region** methods, where a predicate and its transitively-reachable
+  local callees are compiled into one IL method (each member a labelled
+  block, intra-region calls a `br`). This is how you inspect what
+  Tier-1 actually emits, including the region dispatch `switch`, the
+  per-member blocks, and the inline first-argument index decision.
+
+Each method is preceded by a header — `;;; user$pick/2 clauses=3 …` for
+WAM, `;;; ===== region root=… members=[…] =====` or `;;; ===== compile
+fid=… =====` for IL. Note the dump compiles **every** predicate as a
+region root, so it is a superset of what runs (at runtime only
+invocation-promoted predicates become roots; many are only reached as
+members of another region).
+
+> The same hooks are reachable in-process: set
+> `Shumway.Compiler.Il.IlPredicateCompiler.IlDumpPath` (and
+> `.RegionCompile`) before compiling, or use the `SHUMWAY_IL_DUMP` /
+> `SHUMWAY_REGION` environment variables when running the REPL.
 
 ### Step 2 — `shumway-link` (linker)
 
