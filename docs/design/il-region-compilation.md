@@ -495,8 +495,32 @@ WAM state.
        743 KB per-predicate-IL bundle, down from 2.5×. A nice property the fixpoint gives:
        promoting a MIDDLE node de-dups its whole tail in one step (the recompute shows the
        tail is no longer shared). 3 Chunk394Tests.
-       Remaining: stripping the pruned predicates' WAM too (currently kept as a fallback)
-       for a further cut.
+     - **9d — stripping the pruned predicates' WAM: ATTEMPTED, REVERTED, BLOCKED on two
+       deeper issues (chunk 395).** The absorbed-only predicates keep their Tier-0 WAM as
+       a fallback (9b-3); stripping it would cut another ~35 KB on Blint but is UNSOUND
+       today and broke Blint (`existence_error(blint_pred/3 / parse_infix_op/6)`). Two
+       root causes the WAM fallback was silently MASKING:
+       1. **The bundle runs Tier-0 WAM by default, not the region IL.** Persisted IL is
+          only USED when `IlPromotion.Threshold > 0` (chunk 230 made `Threshold == 0` run
+          pure bytecode for a per-call-lock perf reason). So a `--with-compiled-il` /
+          `--region-prune` bundle loaded in the default engine runs WAM — the region IL
+          is loaded but dead. The user's principle: building with IL/regions should mean
+          the IL is USED (dispatch region IL → standalone IL → WAM only for predicates
+          that compiled to neither). Making persisted-IL bundles IL-mandatory is the fix
+          (and prerequisite — without it the whole region effort is dead weight at run
+          time). NOTE: this means the prior "byte-identical" region validations confirmed
+          correctness but largely exercised the WAM path, not the region IL.
+       2. **Analysis ↔ compile region-membership inconsistency.** The prune set is
+          computed by the linker over the `.shmo` bytecode, but `CompileEntryToIl`
+          re-compiles from the entry SOURCE in a warm-up engine — the two can disagree on
+          which predicates a region absorbs. So a predicate the analysis calls
+          absorbed-only (`blint_pred/3`, a static call) can be CROSS-region-called by fid
+          in the real compile → needs a standalone form. Fix: the analysis must run on the
+          SAME predicates the compile uses (one source).
+       Plus the variable-meta-call residual (an absorbed predicate ALSO `call(G)`-ed needs
+       a standalone form — the `ensure_linked` case, which the user does not want to widen).
+       So a sound strip needs (1) IL-mandatory dispatch + (2) analysis/compile consistency
+       first; the WAM fallback stays until then.
      - **9b-1 — linker seed-set computation DONE (chunk 389).**
        `ShmoLinker.ComputeExternallyReachableSeeds(reachedRoots, reached, moduleDefined)`
        (public, pure): the entry / `ensure_linked` roots ∪ every reached PUBLIC ∪ every

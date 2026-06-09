@@ -70,6 +70,16 @@ public static class BundleWriter
                     // --strip-wam: drop the IL predicates' redundant WAM bodies.
                     if (stripWam && compiledBytecode is not null && _lastIlFunctorIds is { Count: > 0 })
                         compiledBytecode = StripIlBodies(compiledBytecode, _lastIlFunctorIds);
+                    // NOTE: the absorbed-only predicates KEEP their WAM (a Tier-0 fallback,
+                    // NOT stripped). Stripping it is unsound today: the prune set is
+                    // computed by the linker over the .shmo bytecode, but the IL compile
+                    // runs on the warm-up engine's bytecode — they can disagree on region
+                    // membership, so a predicate the analysis calls absorbed-only may be
+                    // cross-region-CALLED-by-fid in the real compile (Blint: blint_pred/3,
+                    // parse_infix_op/6 → existence_error once their WAM is gone). The WAM
+                    // fallback covers that gap. A sound strip needs the analysis + compile
+                    // to share one predicate source (and the variable-meta-call residual to
+                    // be ensure_linked). See docs/design/il-region-compilation.md §9d.
                 }
                 effective[i] = new BundleEntry(
                     effective[i].ModuleName,
@@ -286,7 +296,7 @@ public static class BundleWriter
     /// bytecode callers, the chunk-316 marker for IL callers), never through a
     /// WAM address — so the body is pure dead weight. JIT-only: under Native
     /// AOT the IL can't load and these predicates would be unrunnable.</summary>
-    private static byte[] StripIlBodies(byte[] compiledModuleBytes, HashSet<int> ilFids)
+    private static byte[] StripIlBodies(byte[] compiledModuleBytes, IReadOnlySet<int> ilFids)
     {
         var module = CompiledModuleCodec.Decode(compiledModuleBytes);
         var kept = new List<Shumway.Compiler.Wam.CompiledPredicate>(module.Predicates.Count);
