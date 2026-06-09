@@ -436,8 +436,26 @@ WAM state.
      already builds most of this (its module-reachability walk roots from entry points +
      `ensure_linked` + qualified refs, and `ShmoObject.Defined` carries public / dynamic
      / visible). The dry-run (`--prune-report`) approximates the seed set with the
-     call-graph roots; the real linker uses the set above. Then drop each prunable
-     predicate's standalone WAM/IL entry from the bundle.
+     call-graph roots; the real linker uses the set above.
+   - **THE PRUNE RULE (soundness — do NOT harden the `ensure_linked` contract).** Prune
+     P **only if P was ABSORBED as a `br`-member of some live region** and is not
+     otherwise reachable as a standalone. The prune set is exactly
+     **`fullReachable − regionReachable`** (reachable via ALL static edges, minus
+     reachable via cross-region edges only = "live but reached only as an absorbed
+     member"). **Never prune a predicate that was part of NO region** — i.e. never touch
+     the unreachable / dead-code bucket. This is what keeps the prune sound WITHOUT
+     forcing every meta-call target to be declared: a static-local predicate reached only
+     by a runtime (variable) `call(Goal)` has no static caller, so it is absorbed by no
+     region and appears "unreachable" to the analysis (the meta-call edge is not in the
+     static graph) → it lands in the keep bucket automatically, no `:- ensure_linked`
+     needed. Dead code is likewise kept (the linker does no per-predicate dead-code
+     elimination anyway). The chunk-390 report already isolates this set (Blint: 65
+     region-absorbed, the prune target, vs 35 unreachable, kept). Residual (~1%, NOT a
+     new burden): a predicate that is BOTH statically called (→ absorbed, its standalone
+     pruned) AND variable-meta-called still needs the EXISTING `:- ensure_linked` (or
+     public / dynamic) declaration — that target becomes a seed → region-reachable → not
+     pruned. So the existing contract's scope is unchanged; we just do not widen it.
+     Then drop each prunable predicate's standalone WAM/IL entry from the bundle.
      - **9b-1 — linker seed-set computation DONE (chunk 389).**
        `ShmoLinker.ComputeExternallyReachableSeeds(reachedRoots, reached, moduleDefined)`
        (public, pure): the entry / `ensure_linked` roots ∪ every reached PUBLIC ∪ every
