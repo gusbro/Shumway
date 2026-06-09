@@ -141,6 +141,12 @@ internal enum RegionCursorKind
     /// clause dispatch pushes a choice point carrying this cursor; a backtrack
     /// re-enters the region method here to try the next clause.</summary>
     ClauseAlt,
+    /// <summary>A chain node of an INDEXED member (Stage 6c). The member's index
+    /// decision branches forward to a node's label; a bucket-chain backtrack pushes a
+    /// choice point carrying the NEXT node's cursor, re-entering the region method at
+    /// that node. One cursor per <see cref="IlIndexedDispatchInfo"/> node; the node
+    /// index rides in <see cref="RegionCursorSite.ClauseIndex"/>.</summary>
+    IndexNode,
 }
 
 /// <summary>One assigned cursor in a region's cursor space. Cursor 0 is the root's
@@ -182,7 +188,13 @@ internal sealed class IlRegionPlan
 /// chunk-368-style un-tailing.</summary>
 internal static class IlRegionPlanner
 {
-    public static IlRegionPlan Plan(IlRegion region)
+    /// <param name="indexNodeCount">For an INDEXED member, the number of dispatch
+    /// nodes (<see cref="IlIndexedDispatchInfo"/>.Nodes.Count) — each gets an
+    /// <see cref="RegionCursorKind.IndexNode"/> cursor instead of the try_me_else
+    /// chain's clause-alt cursors. Returns 0 for a non-indexed member. Null (the
+    /// default) means no member is indexed — the pre-Stage-6c behaviour.</param>
+    public static IlRegionPlan Plan(
+        IlRegion region, Func<CompiledPredicate, int>? indexNodeCount = null)
     {
         ArgumentNullException.ThrowIfNull(region);
         var sites = new List<RegionCursorSite>();
@@ -190,6 +202,17 @@ internal static class IlRegionPlanner
         for (int mi = 0; mi < region.Members.Count; mi++)
         {
             var member = region.Members[mi];
+            int nodes = indexNodeCount?.Invoke(member) ?? 0;
+            if (nodes > 0)
+            {
+                // Stage 6c: an indexed member — one IndexNode cursor per dispatch
+                // node (a bucket-chain backtrack pushes the next node's cursor). The
+                // node index rides in the ClauseIndex slot. Assigned before the
+                // member's call cursors, in node order.
+                for (int n = 0; n < nodes; n++)
+                    sites.Add(new RegionCursorSite(cursor++, RegionCursorKind.IndexNode, mi, -1, -1, n));
+            }
+            else
             // Stage 4: a multi-clause member's non-first clauses (1..N-1) each get
             // a clause-alternative cursor — the clause dispatch pushes a choice
             // point carrying it, and a backtrack re-enters the region method here to

@@ -284,14 +284,29 @@ WAM state.
      cross-region enumeration (`[a-1,…,b-3]`). Full Embedding green at SHUMWAY_REGION=1
      (2153) — much broader region coverage now that cross-region calls don't reject.
      Recursion/cycles already work (the discovery br's to the existing block).
-   - **Indexed-dispatch members — excluded from membership (chunk 380, kept).**
-     An indexed member is NOT inlined (its O(1) switch stays standalone); instead it
-     is excluded from region MEMBERSHIP (`IsRegionMemberEligible` = IL-compilable AND
-     single-clause-or-try_me_else-chain) so it becomes a cross-region call (which 6a
-     handles). Without this filter a region that merely *reaches* an indexed callee is
-     rejected wholesale by `IsRegionEmittable`; excluding the one callee unlocks the
-     rest. Sound for an indexed callee (cross-region enumeration + caller-CP survival
-     validated). This is what pulls clpfd-internal predicates into regions.
+   - **Indexed-dispatch members — EMITTED in-region (chunk 381, Stage 6c).** An
+     indexed (switch_on_term/arg) callee is now a full region member, not a
+     trampoline boundary. `EmitRegionIndexedMember` is the region analog of
+     `EmitIndexedDispatchBody`: the member-entry label holds the inline index decision
+     (`TryEmitInlineIndexResolve`, the compile-time index graph lowered to deref +
+     tag/key branches) which branches forward to a chain node's label; each node
+     pushes the region delegate's choice point carrying the NEXT node's region cursor
+     (a bucket-chain backtrack re-enters via the dispatch switch) then branches to its
+     clause body; bodies are emitted region-aware (proceed → `br ret`, intra calls →
+     `br`) exactly like every other member. The planner gains a
+     `RegionCursorKind.IndexNode` (one cursor per dispatch node, replacing the
+     try_me_else chain's clause-alts); `IlRegionPlanner.Plan` takes an
+     `indexNodeCount` callback. `IsRegionEmittable`/`IsRegionMemberEligible` now admit
+     indexed members (validating the CLAUSE BODY ranges, since the resolve replaces
+     the dispatch cascade). The index resolve's labels/locals are salted per member
+     (`_rm{mi}`, same fix class as chunk 380). VALIDATED SOUND across atom/integer/
+     struct index node kinds: a bound key dispatches deterministically, an unbound key
+     enumerates all clauses via the node CPs, and a caller CP created before the
+     indexed call survives the full index-node backtracking (`co(S,K,V)` =
+     caller-`gen(S)` × every indexed answer). clpfd repro still `b`. **Blint regions
+     jump from 2 → 24** (now incl. indexed members `parse_subgoal1x10`,
+     `lint_msg_textx16`, `parse_subgoal_contx4`, regions up to **17 members**), output
+     byte-identical OFF vs ON. Embedding default 2154 green, REGION=1 all real pass.
    - **Wakeup flush at region boundaries DONE (chunk 379).** A correctness piece: the
      interpreter flushes pending attribute wakeups at every
      Call/Execute/Proceed/Deallocate goal boundary; IL relies on control passing
@@ -320,15 +335,19 @@ WAM state.
      clpfd cut+wakeup tests pass under `SHUMWAY_REGION=1`, full Embedding green at
      `SHUMWAY_REGION=1` (only `Chunk373.Flag_DefaultsOff` "fails", correctly, because
      the env var overrides the default-off flag it asserts).
-   - **State**: region compiler is correct + validated through Stage 6a + the boundary
-     wakeup flush + indexed-member exclusion + the local-collision fix. The merge is
-     opaque to the engine (anything N IL methods can do, 1 can do within 64 KB), as
-     the local-collision bug confirmed: it was a naming gap, not a fundamental barrier.
-     Remaining coverage gaps are indexed/non-chain ROOTS (most Blint predicates can't
-     be region *roots*) and members with backtrackable builtins; the bigger lever is
-     in-region indexed-dispatch *emission* (so indexed predicates can be roots/members
-     rather than trampoline boundaries). Real-world wall-clock payoff still to be
-     demonstrated under a default flip (Stage 8).
+   - **State (post-381)**: region compiler is correct + validated through Stage 6c —
+     discovery / planner / single-clause / try_me_else-chain / cut / cross-region /
+     **indexed members** — all sound (Embedding default 2154, REGION=1 all real pass;
+     Blint 24 regions byte-identical). The merge being opaque to the engine is
+     confirmed twice over (the local-collision and the index-resolve naming both turned
+     out to be salting gaps, not barriers). With indexed members emittable, an indexed
+     predicate can also be a region ROOT now (the region builds from it and, if a local
+     closure exists, CompileRegion handles it) — so most Blint multi-clause predicates
+     are reachable. Remaining coverage gap: members with backtrackable builtins (need a
+     resume cursor; planner + emit extension). **Real-world wall-clock payoff still to
+     be demonstrated** — coverage is now broad (24 Blint regions), so the next step is
+     a measured A/B (Stage 8 gating) to see whether flat `br` dispatch actually beats
+     the trampoline on Blint before flipping the default.
 7. **Budget + method-size guard**; fall back to trampoline past the budget.
 8. **Gating + full-bench validation + measurement**; decide the default flip and
    whether the duplication inliners are subsumed.

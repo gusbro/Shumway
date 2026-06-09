@@ -504,7 +504,9 @@ public sealed class IlPredicateCompiler
                     System.Console.Error.WriteLine(
                         $"[region-emit] root fid={predicate.FunctorId} members={region.MemberCount}"
                         + " [" + string.Join(",", region.Members.Select(m => $"{m.FunctorId}({FidName(m.FunctorId)}x{m.ClauseCount})")) + "]");
-                return CompileRegion(region, IlRegionPlanner.Plan(region), calleeMap);
+                var rplan = IlRegionPlanner.Plan(region,
+                    m => TryDescribeIndexed(m, calleeMap, out var ii) ? ii!.Nodes.Count : 0);
+                return CompileRegion(region, rplan, calleeMap);
             }
         }
         if (predicate.ClauseCount == 1)
@@ -922,6 +924,8 @@ public sealed class IlPredicateCompiler
         public Dictionary<(int Member, int Pc), int> CursorBySite = null!;
         // (member index, clause index 1..N-1) → the clause-alternative cursor.
         public Dictionary<(int Member, int Clause), int> ClauseAltCursor = null!;
+        // (member index, node index 0..K-1) → the IndexNode cursor (Stage 6c).
+        public Dictionary<(int Member, int Node), int> IndexNodeCursor = null!;
         public int CurrentMemberIndex;
     }
 
@@ -945,61 +949,73 @@ public sealed class IlPredicateCompiler
         if (region.MemberCount < 2) return false;
         foreach (var m in region.Members)
         {
-            // A multi-clause member must be a plain try_me_else chain (Stage 4);
-            // an indexed / switched dispatch is deferred to a later stage.
+            // A multi-clause member must be either a plain try_me_else chain (Stage 4)
+            // or an indexed switch_on_term/arg dispatch (Stage 6c). An indexed member
+            // is emitted body-range by body-range (the resolve replaces the dispatch
+            // cascade), so for it we validate the CLAUSE BODIES — the code that
+            // actually emits — not the full bytecode (whose cascade carries
+            // switch/try opcodes that never reach EmitClauseBody).
             if (m.ClauseCount > 1 && !TryDescribeTryMeElseChain(m, calleeMap, out _))
-                return false;
-            byte[] code = m.Bytecode;
-            int pc = 0;
-            while (pc < code.Length)
             {
-                var op = (Opcode)code[pc];
-                switch (op)
-                {
-                    // Cut (Stage 5): allowed. The intra-region call emits SetB0(e.B)
-                    // before the `br`, so a member's deep cut (allocate_get_level
-                    // captures _b0 into a Y-slot; cut slot cuts to it) and neck cut
-                    // (cut to _b0) prune only the member's own choice points —
-                    // including its clause-alternative CPs — exactly as a real call
-                    // would (chunk-367 barrier scoping). EmitClauseBody's normal
-                    // NeckCut/GetLevel/Cut/AllocateGetLevel handlers emit them.
-                    case Opcode.Call:
-                    case Opcode.Execute:
-                    {
-                        // Intra-region (br) AND cross-region (Phase-16 trampoline with
-                        // the plan's resume cursor) calls are both handled (Stage 6).
-                        // A malformed call site (no metadata) is not.
-                        if (FindCallSiteFunctorId(m.CallSites, pc) < 0) return false;
-                        break;
-                    }
-                    case Opcode.CallBuiltin:
-                    {
-                        var e = Shumway.Builtins.BuiltinsRegistry.GetById(
-                            BytecodeIO.ReadInt32(code, pc + 1));
-                        if (e.Name is "call" or "$call" || IsBacktrackableBuiltinName(e.Name))
-                            return false;                   // resume-needing builtin → Stage 4/6
-                        break;
-                    }
-                }
-                int size = op == Opcode.Meta ? 6 : OpcodeTable.Get((byte)op).Size;
-                if (size <= 0) return false;
-                pc += size;
+                if (!TryDescribeIndexed(m, calleeMap, out var info)) return false;
+                foreach (var (start, end) in info!.Clauses)
+                    if (!RegionBodyOpcodesOk(m.Bytecode, start, end, m.CallSites)) return false;
+                continue;
             }
+            if (!RegionBodyOpcodesOk(m.Bytecode, 0, m.Bytecode.Length, m.CallSites))
+                return false;
         }
         return true;
     }
 
-    /// <summary>Region-membership filter (Stage 6b). A callee is pulled into a region
-    /// only if it is itself IL-compilable AND its multi-clause dispatch is a plain
-    /// try_me_else chain (the only multi-clause shape the region emit handles, Stage
-    /// 4). An indexed / switch_on_term callee is NOT a chain, so it is excluded from
-    /// membership and stays a cross-region trampoline boundary — without this filter a
-    /// region that merely *reaches* an indexed callee would be rejected wholesale by
-    /// <see cref="IsRegionEmittable"/>, so excluding the one callee unlocks the rest.</summary>
+    /// <summary>Validates that a region member's body code (<paramref name="start"/>..
+    /// <paramref name="end"/>) uses only opcodes the region emit handles: cut is
+    /// allowed (chunk-367 barrier scoping); a <c>Call</c>/<c>Execute</c> must have
+    /// call-site metadata (intra-region <c>br</c> / cross-region trampoline, Stage 6);
+    /// a <c>CallBuiltin</c> must be deterministic (a backtrackable / meta builtin
+    /// needs a resume cursor the region planner doesn't yet allocate).</summary>
+    private static bool RegionBodyOpcodesOk(
+        byte[] code, int start, int end, IReadOnlyList<CallSite> callSites)
+    {
+        int pc = start;
+        while (pc < end)
+        {
+            var op = (Opcode)code[pc];
+            switch (op)
+            {
+                case Opcode.Call:
+                case Opcode.Execute:
+                    if (FindCallSiteFunctorId(callSites, pc) < 0) return false;
+                    break;
+                case Opcode.CallBuiltin:
+                {
+                    var e = Shumway.Builtins.BuiltinsRegistry.GetById(
+                        BytecodeIO.ReadInt32(code, pc + 1));
+                    if (e.Name is "call" or "$call" || IsBacktrackableBuiltinName(e.Name))
+                        return false;                   // resume-needing builtin → Stage 4/6
+                    break;
+                }
+            }
+            int size = op == Opcode.Meta ? 6 : OpcodeTable.Get((byte)op).Size;
+            if (size <= 0) return false;
+            pc += size;
+        }
+        return true;
+    }
+
+    /// <summary>Region-membership filter (Stage 6b/6c). A callee is pulled into a
+    /// region only if it is itself IL-compilable AND its multi-clause dispatch is a
+    /// shape the region emit handles: a plain try_me_else chain (Stage 4,
+    /// <see cref="EmitRegionMultiClauseMember"/>) or an indexed switch_on_term/arg
+    /// dispatch (Stage 6c, <see cref="EmitRegionIndexedMember"/>). Anything else (e.g.
+    /// a backtrackable-builtin body the planner can't yet thread) stays a cross-region
+    /// trampoline boundary.</summary>
     private bool IsRegionMemberEligible(CompiledPredicate p,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
         => CanCompileCore(p, calleeMap, allowIndexedDispatch: true)
-           && (p.ClauseCount == 1 || TryDescribeTryMeElseChain(p, calleeMap, out _));
+           && (p.ClauseCount == 1
+               || TryDescribeTryMeElseChain(p, calleeMap, out _)
+               || TryDescribeIndexed(p, calleeMap, out _));
 
     /// <summary>Emit a whole region as one IL method (Stage 3). Layout: a `cur`
     /// local seeded from <c>arg1</c>; a `dispatch` jump table over the plan's cursor
@@ -1046,11 +1062,14 @@ public sealed class IlPredicateCompiler
         cursorLabels[0] = memberEntry[regionFid];           // cursor 0 = root entry
         var cursorBySite = new Dictionary<(int, int), int>();
         var clauseAltCursor = new Dictionary<(int, int), int>();
+        var indexNodeCursor = new Dictionary<(int, int), int>();
         foreach (var s in plan.Sites)
         {
             cursorLabels[s.Cursor] = emit.DefineLabel($"rcur_{s.Cursor}");
             if (s.Kind == RegionCursorKind.ClauseAlt)
                 clauseAltCursor[(s.MemberIndex, s.ClauseIndex)] = s.Cursor;
+            else if (s.Kind == RegionCursorKind.IndexNode)
+                indexNodeCursor[(s.MemberIndex, s.ClauseIndex)] = s.Cursor;
             else
                 cursorBySite[(s.MemberIndex, s.Pc)] = s.Cursor;
         }
@@ -1060,7 +1079,7 @@ public sealed class IlPredicateCompiler
             Region = region, RegionFid = regionFid, RetLabel = retLabel,
             DispatchLabel = dispatchLabel, FailLabel = failLabel, MemberEntry = memberEntry,
             CursorLabels = cursorLabels, CursorBySite = cursorBySite,
-            ClauseAltCursor = clauseAltCursor,
+            ClauseAltCursor = clauseAltCursor, IndexNodeCursor = indexNodeCursor,
         };
 
         // cur = arg1; br dispatch (the switch routes the cursor to its label).
@@ -1079,6 +1098,8 @@ public sealed class IlPredicateCompiler
             if (member.ClauseCount == 1)
                 EmitClauseBody(emit, member.Bytecode, 0, member.Bytecode.Length,
                     failLabel, member.CallSites, calleeMap: calleeMap, regionCtx: ctx);
+            else if (TryDescribeIndexed(member, calleeMap, out var idxInfo))
+                EmitRegionIndexedMember(emit, member, mi, idxInfo!, ctx, emitSelf, calleeMap);
             else
                 EmitRegionMultiClauseMember(emit, member, mi, ctx, emitSelf, calleeMap);
         }
@@ -1131,6 +1152,80 @@ public sealed class IlPredicateCompiler
                 emit.Call(EnginePushIlCpMethod);
             }
             EmitClauseBody(emit, member.Bytecode, clauses[i].Start, clauses[i].End,
+                ctx.FailLabel, member.CallSites, calleeMap: calleeMap, regionCtx: ctx);
+        }
+    }
+
+    /// <summary>Emit an INDEXED member's block (Stage 6c) — the region analog of
+    /// <see cref="EmitIndexedDispatchBody"/>. The member-entry label (already marked)
+    /// holds the inline index decision (deref + tag/key tests, lowered from the
+    /// compile-time index graph), branching forward to a chain node's label. A node
+    /// pushes the region delegate's choice point carrying the NEXT node's region
+    /// cursor (so a bucket-chain backtrack re-enters this method at that node via the
+    /// dispatch switch), then branches to its clause body. Clause bodies are emitted
+    /// once and region-aware (proceed → <c>br ret</c>, intra calls → <c>br</c>, their
+    /// own calls threaded by the plan) exactly like every other member — the only
+    /// indexed-specific code is the resolve + the per-node CP push. The node labels
+    /// ARE the region cursor labels, so forward (resolve) and backward (CP) reach the
+    /// same block. Index resolve labels/locals are salted per member
+    /// (<c>_rm{mi}</c>) so several indexed members share one IL method cleanly.</summary>
+    private static void EmitRegionIndexedMember(
+        Sigil.Emit<PredicateDelegate> emit, CompiledPredicate member, int mi,
+        IlIndexedDispatchInfo info, RegionEmitContext ctx, SelfDelegateEmitter emitSelf,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+    {
+        int K = info.Nodes.Count;
+        int N = info.Clauses.Count;
+        string salt = $"_rm{mi}";
+
+        // Node entry = the region cursor label (shared forward-resolve + backtrack
+        // re-entry). Body labels are local to this member's block.
+        var nodeLabels = new Sigil.Label[K];
+        for (int n = 0; n < K; n++)
+            nodeLabels[n] = ctx.CursorLabels[ctx.IndexNodeCursor[(mi, n)]];
+        var bodyLabels = new Sigil.Label[N];
+        for (int i = 0; i < N; i++)
+            bodyLabels[i] = emit.DefineLabel($"ridx_body_{mi}_{i}");
+
+        // ---- Resolve (member entry, forward): pick the entry node from the indexed
+        //      argument. Inline when the graph builds; else the runtime resolver. ----
+        if (!TryEmitInlineIndexResolve(emit, info, nodeLabels, salt))
+        {
+            var entry = emit.DeclareLocal<int>($"ridx_entry{salt}");
+            emit.LoadArgument(0);
+            EmitFunctorId(emit, member.FunctorId);
+            emit.Call(IlIndexedDispatchResolveByFidMethod);
+            emit.StoreLocal(entry);
+            for (int n = 0; n < K; n++)
+            {
+                emit.LoadLocal(entry);
+                emit.LoadConstant(n);
+                emit.BranchIfEqual(nodeLabels[n]);
+            }
+            emit.Branch(ctx.FailLabel);   // unreachable: resolver returns a valid node
+        }
+
+        // ---- Chain nodes: push the next-node region CP (if any), run the body. ----
+        for (int n = 0; n < K; n++)
+        {
+            emit.MarkLabel(nodeLabels[n]);
+            int next = info.Nodes[n].NextCursor;
+            if (next >= 0)
+            {
+                emit.LoadArgument(0);                            // engine
+                emitSelf(emit);                                 // → region delegate
+                emit.LoadConstant(ctx.IndexNodeCursor[(mi, next)]);   // next node's region cursor
+                emit.LoadConstant(member.Arity);
+                emit.Call(EnginePushIlCpMethod);
+            }
+            emit.Branch(bodyLabels[info.Nodes[n].ClauseIndex]);
+        }
+
+        // ---- Clause bodies, region-aware, emitted once and shared across nodes. ----
+        for (int i = 0; i < N; i++)
+        {
+            emit.MarkLabel(bodyLabels[i]);
+            EmitClauseBody(emit, member.Bytecode, info.Clauses[i].Start, info.Clauses[i].End,
                 ctx.FailLabel, member.CallSites, calleeMap: calleeMap, regionCtx: ctx);
         }
     }
@@ -3932,20 +4027,22 @@ public sealed class IlPredicateCompiler
     /// is needed.</para></summary>
     private static bool TryEmitInlineIndexResolve(
         Sigil.Emit<PredicateDelegate> emit, IlIndexedDispatchInfo info,
-        Sigil.Label[] nodeLabels)
+        Sigil.Label[] nodeLabels, string salt = "")
     {
+        // `salt` makes the label / local names unique when several indexed members
+        // share one IL method (region compilation) — empty for the standalone path.
         IndexGraph? graph = IlIndexGraph.Build(info);
         if (graph is null) return false;
         IndexNode[] gnodes = graph.Nodes;
         var gLabels = new Sigil.Label[gnodes.Length];
         for (int i = 0; i < gnodes.Length; i++)
-            gLabels[i] = emit.DefineLabel($"idx_g{i}");
+            gLabels[i] = emit.DefineLabel($"idx_g{i}{salt}");
 
-        var cellLoc = emit.DeclareLocal<Cell>("idx_cell");
-        var tmpCell = emit.DeclareLocal<Cell>("idx_tmpcell");
-        var tagLoc = emit.DeclareLocal<int>("idx_tag");
-        var keyLoc = emit.DeclareLocal<int>("idx_key");
-        var longLoc = emit.DeclareLocal<long>("idx_long");
+        var cellLoc = emit.DeclareLocal<Cell>($"idx_cell{salt}");
+        var tmpCell = emit.DeclareLocal<Cell>($"idx_tmpcell{salt}");
+        var tagLoc = emit.DeclareLocal<int>($"idx_tag{salt}");
+        var keyLoc = emit.DeclareLocal<int>($"idx_key{salt}");
+        var longLoc = emit.DeclareLocal<long>($"idx_long{salt}");
 
         Sigil.Label Target(IndexTarget t) => t.IsNode ? gLabels[t.Value] : nodeLabels[t.Value];
 
@@ -3966,7 +4063,7 @@ public sealed class IlPredicateCompiler
             emit.LoadLocalAddress(cellLoc);
             emit.Call(CellTagIdGetter);
             emit.LoadConstant((int)Tag.Ref);
-            var notRef = emit.DefineLabel($"idx_g{i}_notref");
+            var notRef = emit.DefineLabel($"idx_g{i}_notref{salt}");
             emit.UnsignedBranchIfNotEqual(notRef);
             emit.LoadArgument(0);                       // engine (receiver of GetHeap)
             emit.LoadArgument(0);                       // engine (receiver of Deref)
