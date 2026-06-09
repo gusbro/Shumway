@@ -71,15 +71,15 @@ public static class BundleWriter
                     if (stripWam && compiledBytecode is not null && _lastIlFunctorIds is { Count: > 0 })
                         compiledBytecode = StripIlBodies(compiledBytecode, _lastIlFunctorIds);
                     // NOTE: the absorbed-only predicates KEEP their WAM (a Tier-0 fallback,
-                    // NOT stripped). Stripping it is unsound today: the prune set is
-                    // computed by the linker over the .shmo bytecode, but the IL compile
-                    // runs on the warm-up engine's bytecode — they can disagree on region
-                    // membership, so a predicate the analysis calls absorbed-only may be
-                    // cross-region-CALLED-by-fid in the real compile (Blint: blint_pred/3,
-                    // parse_infix_op/6 → existence_error once their WAM is gone). The WAM
-                    // fallback covers that gap. A sound strip needs the analysis + compile
-                    // to share one predicate source (and the variable-meta-call residual to
-                    // be ensure_linked). See docs/design/il-region-compilation.md §9d.
+                    // NOT stripped). Stripping is still UNSOUND — root cause now isolated
+                    // (§9d): the linker's prune ANALYSIS decodes only the entry's own
+                    // module bytecode, but the IL COMPILE's calleeMap is the warm-up
+                    // engine's FULL set (user module + prelude + …). Under the region
+                    // budget the two absorb DIFFERENT members, so a predicate the analysis
+                    // calls absorbed-only can be cross-region-called-by-fid in the real
+                    // compile (Blint: blint_pred/3 → existence_error once its WAM is gone).
+                    // The fix is to compute the prune over the EXACT calleeMap the compile
+                    // uses (or keep regions same-module); until then the WAM fallback stays.
                 }
                 effective[i] = new BundleEntry(
                     effective[i].ModuleName,
@@ -212,11 +212,16 @@ public static class BundleWriter
         // engine.LoadBundle on a single-entry bundle, which populates
         // PrecompiledStaticPredicates from CompiledBytecode.
         var engine = new Shumway.Embedding.PrologEngine();
-        if (!string.IsNullOrEmpty(entry.Source))
-        {
-            engine.ConsultString(entry.Source);
-        }
-        else if (entry.CompiledBytecode is not null && entry.Defined.Count > 0)
+        // Prefer the COMPILED BYTECODE (the .shmo) over re-consulting the source: it is
+        // the ground truth that (a) ships in the bundle, (b) the runtime LoadBundle
+        // dispatches against, and (c) the linker's dead-region ANALYSIS decodes. Compiling
+        // the IL from a fresh re-consult of the source instead would re-run a different
+        // pipeline and could disagree on which predicates a region absorbs — the Stage-9d
+        // analysis↔compile inconsistency that broke the WAM strip. (You asked for embedded
+        // IL → the bundle is self-contained from its bytecode; the source re-consult is a
+        // fallback only for entries that carry no compiled bytecode, e.g. hand-built
+        // test bundles.)
+        if (entry.CompiledBytecode is not null && entry.Defined.Count > 0)
         {
             // Construct a single-entry bundle whose CompiledIl is null
             // so LoadBundle takes the source-less LoadEntryFromBytecode
@@ -229,6 +234,10 @@ public static class BundleWriter
                 compiledIlPatches: null, compiledIlEntries: null,
                 dynamicSeeds: entry.DynamicSeeds);
             engine.LoadBundle(new Bundle(new[] { bareEntry }));
+        }
+        else if (!string.IsNullOrEmpty(entry.Source))
+        {
+            engine.ConsultString(entry.Source);
         }
         engine.Query("true.");
         // Pull every IL-eligible predicate the warm-up populated.

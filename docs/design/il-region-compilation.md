@@ -509,17 +509,29 @@ WAM state.
           chunk-230 "Threshold==0 ⇒ pure bytecode" applies only to WAM-only bundles (no
           `CompiledIl`); a `--with-compiled-il` bundle already runs its IL — no IL-mandatory
           work needed.
-       2. **Analysis ↔ compile region-membership inconsistency (the REAL blocker).** The prune set is
-          computed by the linker over the `.shmo` bytecode, but `CompileEntryToIl`
-          re-compiles from the entry SOURCE in a warm-up engine — the two can disagree on
-          which predicates a region absorbs. So a predicate the analysis calls
-          absorbed-only (`blint_pred/3`, a static call) can be CROSS-region-called by fid
-          in the real compile → needs a standalone form. Fix: the analysis must run on the
-          SAME predicates the compile uses (one source).
-       Plus the variable-meta-call residual (an absorbed predicate ALSO `call(G)`-ed needs
-       a standalone form — the `ensure_linked` case, which the user does not want to widen).
-       So a sound strip needs (1) IL-mandatory dispatch + (2) analysis/compile consistency
-       first; the WAM fallback stays until then.
+       2. **Analysis ↔ compile region-membership inconsistency (the REAL blocker — root
+          cause isolated chunk 396).** The dead-region ANALYSIS (linker) decodes only the
+          entry's OWN module bytecode (the `.shmo`), but the IL COMPILE's calleeMap is the
+          warm-up engine's FULL predicate set — the user module PLUS the prelude (plus any
+          other reached modules). Under the region BUDGET the two absorb DIFFERENT members
+          (the compile's BFS spends budget on prelude callees the analysis never sees), so
+          a predicate the analysis calls absorbed-only (`blint_pred/3`, a STATIC call —
+          confirmed via a public-entry test, ruling out the source-reconsult and
+          entry-promotion red herrings) is cross-region-called-by-fid in the real compile →
+          needs a standalone form. NOTE: the chunk-396 `CompileEntryToIl` change (prefer
+          `CompiledBytecode` over a source re-consult — right per "build with IL ⇒ use the
+          bytecode", Embedding 2181 green) ALIGNS the compile input with the runtime but
+          does NOT fix this, because the gap is the calleeMap COMPLETENESS (prelude), not
+          source-vs-bytecode. **Fix**: compute the prune over the EXACT calleeMap the
+          compile uses — i.e. move the analysis INTO `CompileEntryToIl` (where the warm-up
+          engine's full predicate set lives), passing it the seeds instead of a
+          pre-computed prune set; OR constrain regions to be same-module so the analysis's
+          per-module view matches.
+       Plus the variable-meta-call residual (an absorbed predicate ALSO `call(G)`-ed by a
+       runtime-built goal needs a standalone form — the `ensure_linked` case, which the
+       user does not want to widen). So a sound strip needs the analysis/compile calleeMap
+       consistency first; the WAM fallback stays until then. (Issue 1 above — "bundle runs
+       WAM by default" — was a MISDIAGNOSIS; the region IL is already used, chunk 396.)
      - **9b-1 — linker seed-set computation DONE (chunk 389).**
        `ShmoLinker.ComputeExternallyReachableSeeds(reachedRoots, reached, moduleDefined)`
        (public, pure): the entry / `ensure_linked` roots ∪ every reached PUBLIC ∪ every
