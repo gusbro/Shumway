@@ -351,6 +351,20 @@ WAM state.
 7. **Budget + method-size guard**; fall back to trampoline past the budget.
 8. **Gating + full-bench validation + measurement**; decide the default flip and
    whether the duplication inliners are subsumed.
+   - **MEASURED on Blint (chunk 382): NO clear win — default stays OFF.** Same binary,
+     `SHUMWAY_REGION=1` toggle, `SHUMWAY_IL_PROMOTE=1` both sides (Tier-1 trampoline vs
+     Tier-1 region), interleaved min-of-N on the `SHUMWAY_TIMING=1` exec phase (97.5% of
+     total). **One-shot exec (N=1, includes JIT): region LOSES ~19%** (OFF min 4153 ms,
+     ON min 4945 ms) — the penalty is JIT compiling region's big methods (up to 17
+     members each). **Steady-state per-lint (slope (exec@N12−exec@N2)/10, JIT removed):
+     WITHIN NOISE** (OFF min 995 ms, ON min 943 ms; ranges 995-1288 vs 943-1153 overlap).
+     JIT is ~3.4 s one-time vs ~1 s/lint steady-state, so a one-shot is JIT-bound and
+     region worsens it. Why no dispatch win: Blint's hot path is parsing
+     (unification / list / char-IO), not predicate-call-bound, and the Phase-16 threaded
+     trampoline is already cheap. Region is correct, broad-coverage infrastructure with
+     no demonstrated payoff — the same outcome as the duplication inliner; mechanism
+     correctness ≠ speed. The remaining identified gap vs GProlog is the WAM register
+     allocator (chunk 347b), which is where Blint's time actually goes.
 9. **Module-level dead-region elimination** (build-time / bundle path). After
    building every local predicate's extended region for a module, a local predicate
    whose standalone delegate is no longer reached — because every caller is an
