@@ -1982,6 +1982,21 @@ public sealed partial class Engine
         return (slot / ResumeMarkerCursorStride, slot % ResumeMarkerCursorStride);
     }
 
+    /// <summary>Phase 29 region compilation — at a region member's proceed, decode
+    /// the continuation (<see cref="Cp"/>): if it is a resume marker INTO this
+    /// region (functor id == <paramref name="regionRootFunctorId"/>) the member's
+    /// proceed continues inside the region's IL method at the returned cursor (the
+    /// emit does an intra-method <c>br</c>); otherwise (a different functor, or not
+    /// a marker at all — the region's own caller-continuation) it returns −1 and the
+    /// member returns to the dispatch loop, which runs <c>Cp</c>.</summary>
+    public int RegionReturnCursor(int regionRootFunctorId)
+    {
+        int cp = _cp;
+        if (!IsResumeMarker(cp)) return -1;
+        var (fid, cursor) = DecodeResumeMarker(cp);
+        return fid == regionRootFunctorId ? cursor : -1;
+    }
+
     private struct IlChoicePointEntry
     {
         public Func<Engine, int, bool> Del;

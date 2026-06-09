@@ -201,6 +201,19 @@ WAM state.
 3. **Two-member skeleton** — root + one LEAF local member, no backtracking, no cut:
    emit the single method with `dispatch`, `br`-call, `ret`-decode. Validate
    answers vs trampoline.
+   - **Foundation DONE (chunk 372)**: `Engine.RegionReturnCursor(regionRootFid)` —
+     the `ret` handler's Cp-decode. At a member's proceed: if `Cp` is a resume
+     marker into THIS region → the return cursor (intra-region, the emit `br`s to
+     `dispatch`); else −1 (cross-region, the member returns true and the loop runs
+     `Cp`). Tested in isolation (Chunk372Tests). Confirms the dispatch protocol: the
+     loop, after `del(e,cursor)` returns true with `IlTailCallPending` false, does
+     `SetPc(Cp)` — so a cross-region return needs only `return true`.
+   - **Method emit (in progress)**: the region method layout (`cur` local, the
+     `dispatch` jump table over the plan's cursors, member blocks, the shared `ret`
+     handler) + a region-aware body emit (proceed → `br ret`; intra-region call →
+     `SetB0` + `SetCp(returnMarker)` + `br member_entry`; cross-region / builtins
+     unchanged). This is the first risky emit — built carefully, validated vs the
+     trampoline before moving on.
 4. **Intra-region backtracking** — a multi-clause member as a block; CPs re-enter
    `dispatch`. Validate enumeration + a caller CP surviving.
 5. **Cut within the region** — reuse chunk-367 barrier scoping. Validate soundness
@@ -210,6 +223,17 @@ WAM state.
 7. **Budget + method-size guard**; fall back to trampoline past the budget.
 8. **Gating + full-bench validation + measurement**; decide the default flip and
    whether the duplication inliners are subsumed.
+9. **Module-level dead-region elimination** (build-time / bundle path). After
+   building every local predicate's extended region for a module, a local predicate
+   whose standalone delegate is no longer reached — because every caller is an
+   extended predicate that already absorbed it as a `br` block — is **unreachable**
+   and dropped from the compiled module. This is a reachability **fixpoint
+   closure**: keep public / visible / dynamic / entry-point predicates and any
+   predicate reached by a NON-inlined (trampoline) edge (un-pulled by budget or
+   non-local); drop a local predicate reached only by inlined (`br`) edges; iterate,
+   since dropping one may expose another. Applies to whole-module IL compilation
+   (the bundle path), NOT the runtime promotion path (where standalone delegates
+   coexist lazily). Shrinks the compiled module.
 
 ## Risks
 
