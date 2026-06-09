@@ -1136,6 +1136,27 @@ public sealed class IlPredicateCompiler
         var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
             $"ShumwayIlRegion_{region.Root.FunctorId}_{region.Root.Arity}",
             doVerify: DoVerify || DebugMode);
+        EmitRegionInto(emit, emitSelf, region, plan, calleeMap);
+        int regionFid = region.Root.FunctorId;
+        return FinishEmit(emit,
+            $"region root={regionFid} {FidName(regionFid)} members=["
+            + string.Join(",", region.Members.Select(m => $"{m.FunctorId}:{FidName(m.FunctorId)}/{m.Arity}x{m.ClauseCount}"))
+            + "]");
+    }
+
+    /// <summary>Emit a region's body into <paramref name="emit"/> — shared by the runtime
+    /// DynamicMethod path (<see cref="CompileRegionUnlocked"/>) and the persisted-IL
+    /// TypeBuilder path (<see cref="EmitPersistedMethod"/>, prereq-i for the bundle
+    /// dead-region prune). The two differ only in how the method is created and how
+    /// <paramref name="emitSelf"/> resolves the self-delegate (holder vs delegates-array
+    /// field); the region layout — dispatch switch, member blocks, ret / fail handlers —
+    /// and its functor-id / resume-marker uses (all through the chunk-194 patchable
+    /// helpers) are identical, so persisted region methods patch correctly cross-process.</summary>
+    private void EmitRegionInto(
+        Sigil.Emit<PredicateDelegate> emit, SelfDelegateEmitter emitSelf,
+        IlRegion region, IlRegionPlan plan,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+    {
         int regionFid = region.Root.FunctorId;
         _emitOwnerFid = regionFid;
 
@@ -1208,11 +1229,6 @@ public sealed class IlPredicateCompiler
         emit.MarkLabel(failLabel);
         emit.LoadConstant(false);
         emit.Return();
-
-        return FinishEmit(emit,
-            $"region root={regionFid} {FidName(regionFid)} members=["
-            + string.Join(",", region.Members.Select(m => $"{m.FunctorId}:{FidName(m.FunctorId)}/{m.Arity}x{m.ClauseCount}"))
-            + "]");
     }
 
     /// <summary>Emit a MULTI-clause member's block (Stage 4) — a try_me_else chain.
@@ -1759,6 +1775,33 @@ public sealed class IlPredicateCompiler
         SelfDelegateEmitter? emitSelf = delegatesField is null
             ? null
             : SelfFromArrayField(delegatesField, slot);
+
+        // Prereq-i for the Stage-9 bundle prune: region compilation in the persisted-IL
+        // path. A region method bakes its absorbed members' bodies in, so once it ships
+        // their standalone forms can be pruned. The region emit uses the chunk-194
+        // patchable functor-id / resume-marker helpers, so it patches cross-process like
+        // every other persisted method. (Region compilation is off unless RegionCompile
+        // is set; with it on, EVERY predicate compiles as a region root — correct but
+        // duplicative until the prune skips absorbed-only members.)
+        if (RegionCompile && calleeMap is not null)
+        {
+            var region = IlRegionBuilder.Build(predicate, calleeMap,
+                extraEligible: p => IsRegionMemberEligible(p, calleeMap));
+            if (IsRegionEmittable(region, calleeMap))
+            {
+                if (emitSelf is null)
+                    throw new InvalidOperationException(
+                        "Region predicate needs a delegates field for self-reference.");
+                var plan = IlRegionPlanner.Plan(region,
+                    m => TryDescribeIndexed(m, calleeMap, out var ii) ? ii!.Nodes.Count : 0);
+                if (System.Environment.GetEnvironmentVariable("SHUMWAY_IL_SHAPE") == "1")
+                    System.Console.Error.WriteLine(
+                        $"[region-persist] root fid={predicate.FunctorId} {FidName(predicate.FunctorId)} "
+                        + $"members={region.MemberCount}");
+                EmitRegionInto(emit, emitSelf, region, plan, calleeMap);
+                return emit.CreateMethod(Optimizations);
+            }
+        }
 
         if (predicate.ClauseCount == 1)
         {
