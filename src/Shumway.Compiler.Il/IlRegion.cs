@@ -60,18 +60,34 @@ internal sealed class IlRegion
 /// dynamic predicate, or one past the budget) stays a trampoline.</summary>
 internal static class IlRegionBuilder
 {
-    /// <summary>Default budget in bytecode bytes. Conservative: WAM bytecode lowers
-    /// to several times its size in IL, so this stays well under the 64 KB method /
-    /// Sigil ReturnTracer ceilings once expanded.</summary>
-    public const int DefaultBudgetBytes = 3072;
+    /// <summary>Fallback budget in bytecode bytes when nothing else is set.
+    /// Conservative: WAM bytecode lowers to several times its size in IL, so this
+    /// stays well under the 64 KB method / Sigil ReturnTracer ceilings once
+    /// expanded.</summary>
+    public const int FallbackBudgetBytes = 3072;
+
+    /// <summary>The active budget — the "aggressiveness" knob. Configurable via the
+    /// <c>SHUMWAY_REGION_BUDGET</c> env var (bytecode bytes); a higher value pulls
+    /// more locals into a region (bigger method, more calls flattened to <c>br</c>),
+    /// a lower one keeps regions small. A CLI / compiler option can map an
+    /// aggressiveness level onto this later. The budget is the prune point: a member
+    /// that would push the region past it stays a trampoline boundary — i.e. a
+    /// region that would otherwise overflow is pruned, and the un-pulled callees are
+    /// treated as ordinary (visible) predicates reached by the trampoline. (A real
+    /// post-emit IL-size guard — fall back if the EMITTED method nears 64 KB — is a
+    /// later stage; this bytecode proxy is the first-line bound.)</summary>
+    public static readonly int DefaultBudgetBytes =
+        int.TryParse(Environment.GetEnvironmentVariable("SHUMWAY_REGION_BUDGET"), out var b) && b > 0
+            ? b : FallbackBudgetBytes;
 
     public static IlRegion Build(
         CompiledPredicate root,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
-        int budgetBytes = DefaultBudgetBytes,
+        int budgetBytes = -1,
         Func<CompiledPredicate, bool>? extraEligible = null)
     {
         ArgumentNullException.ThrowIfNull(root);
+        if (budgetBytes < 0) budgetBytes = DefaultBudgetBytes;
         var members = new List<CompiledPredicate> { root };
         var memberFids = new HashSet<int> { root.FunctorId };
         if (calleeMap is null)
@@ -107,4 +123,79 @@ internal static class IlRegionBuilder
     /// the linker's visibility map / the compiler instance).</summary>
     private static bool IsStructurallyEligible(CompiledPredicate p)
         => p.Bytecode.Length > 0 && p.Bytecode[0] != (byte)Opcode.EnterDynamic;
+}
+
+/// <summary>What a region cursor re-enters at (Stage 2). The region method's
+/// dispatch switch routes a cursor to its label; a cursor is set either from the
+/// method's <c>arg1</c> (initial call / backtrack from the loop) or from the
+/// decoded <c>Cp</c> on an intra-region return.</summary>
+internal enum RegionCursorKind
+{
+    /// <summary>The continuation after an INTRA-region call (the callee's block
+    /// runs via a <c>br</c>; its proceed returns here through the dispatch switch).</summary>
+    IntraCallReturn,
+    /// <summary>The forward-resume point after a CROSS-region call (the Phase-16
+    /// trampoline returns to the loop, which re-enters here).</summary>
+    CrossCallResume,
+}
+
+/// <summary>One assigned cursor in a region's cursor space (Stage 2). Cursor 0 is
+/// the root's entry (implicit); these carry 1..N.</summary>
+internal readonly record struct RegionCursorSite(
+    int Cursor, RegionCursorKind Kind, int MemberIndex, int Pc, int CalleeFid);
+
+/// <summary>The cursor plan for a region (Stage 2 artifact): the assignment of the
+/// region's forward-resume / intra-return cursor space, in the exact order the emit
+/// (a later stage) will consume it — per member (region order), per non-tail call
+/// site (pc order). The plan IS the spec the emit follows, so the dispatch jump
+/// table and the emit's cursor consumption agree by construction.
+///
+/// <para>STAGE 2 scope: single-clause members' non-tail <c>Call</c> sites only.
+/// Multi-clause clause-alternative cursors and backtrackable-builtin resume cursors
+/// are added when those member shapes are handled (Stages 4+).</para></summary>
+internal sealed class IlRegionPlan
+{
+    public IlRegion Region { get; }
+    /// <summary>Cursors 1..N (cursor 0 = the root entry, implicit).</summary>
+    public IReadOnlyList<RegionCursorSite> Sites { get; }
+
+    internal IlRegionPlan(IlRegion region, IReadOnlyList<RegionCursorSite> sites)
+    { Region = region; Sites = sites; }
+
+    /// <summary>Size of the region's cursor space (jump-table width) — N + 1 for
+    /// the root entry at cursor 0.</summary>
+    public int TotalCursors => Sites.Count + 1;
+}
+
+/// <summary>Stage 2 — assigns a region's cursor space. Walks each member in region
+/// order, and within a member its non-tail <c>Call</c> sites in pc order, giving
+/// each the next cursor (intra-region → a return continuation; cross-region → a
+/// trampoline resume). Tail <c>Execute</c> sites take no cursor (intra-region is a
+/// <c>br</c>; cross-region is a tail trampoline) — so the region model needs no
+/// chunk-368-style un-tailing.</summary>
+internal static class IlRegionPlanner
+{
+    public static IlRegionPlan Plan(IlRegion region)
+    {
+        ArgumentNullException.ThrowIfNull(region);
+        var sites = new List<RegionCursorSite>();
+        int cursor = 1;   // cursor 0 = root entry
+        for (int mi = 0; mi < region.Members.Count; mi++)
+        {
+            var member = region.Members[mi];
+            // pc order — the emit walks bytecode forward, so cursor numbers must
+            // follow the call sites' byte offsets.
+            var ordered = new List<CallSite>(member.CallSites);
+            ordered.Sort((x, y) => x.OpcodeOffset.CompareTo(y.OpcodeOffset));
+            foreach (var cs in ordered)
+            {
+                if (cs.IsExecute) continue;   // tail call: br (intra) or tail trampoline (cross)
+                var kind = region.IsIntraRegion(cs.CalleeFunctorId)
+                    ? RegionCursorKind.IntraCallReturn
+                    : RegionCursorKind.CrossCallResume;
+                sites.Add(new RegionCursorSite(cursor++, kind, mi, cs.OpcodeOffset, cs.CalleeFunctorId));
+            }
+        }
+        return new IlRegionPlan(region, sites);
+    }
 }

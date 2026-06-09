@@ -180,8 +180,24 @@ WAM state.
    ~3–4× bytecode→IL expansion → 3072 B ≈ 10–12 KB IL, safe). One root already
    exceeds the budget alone (no region) — large roots want a higher budget or to
    stay un-regioned.
-2. **Cursor planner** — assign the region's cursor space (block entries, return
-   conts, resumes, clause alts); a table the emit consults. Tests.
+   **Budget knob**: the budget is configurable via the `SHUMWAY_REGION_BUDGET`
+   env var (`IlRegionBuilder.DefaultBudgetBytes`); a CLI / compiler aggressiveness
+   option can map onto it. The budget is the prune point — a member that would push
+   the region past it stays a trampoline boundary, so a region that would overflow
+   is pruned and the un-pulled callees are ordinary (visible) predicates. A real
+   post-emit IL-size guard (fall back if the EMITTED method nears 64 KB, vs the
+   current bytecode proxy) is Stage 7.
+2. **Cursor planner** — ✅ DONE (chunk 371). `IlRegionPlanner.Plan(region)` →
+   `IlRegionPlan`: cursor 0 = root entry; each non-tail `Call` gets the next cursor
+   (intra-region → `IntraCallReturn`, cross-region → `CrossCallResume`), walked per
+   member in region order, per call site in pc order — the exact order the emit
+   consumes, so the dispatch jump table and the emit agree by construction. Tail
+   `Execute` takes no cursor (intra = `br`, cross = tail trampoline) — **the region
+   model needs no chunk-368 un-tailing**. `RegionCursorKind` / `RegionCursorSite` /
+   `IlRegionPlan` / `IlRegionPlanner` in `IlRegion.cs`; 5 Chunk371Tests. Stage-2
+   scope is single-clause members' non-tail calls; multi-clause clause-alternative
+   cursors and backtrackable-builtin resume cursors are added with those shapes
+   (Stages 4+).
 3. **Two-member skeleton** — root + one LEAF local member, no backtracking, no cut:
    emit the single method with `dispatch`, `br`-call, `ret`-decode. Validate
    answers vs trampoline.
