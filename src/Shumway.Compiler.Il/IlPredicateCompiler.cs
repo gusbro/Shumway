@@ -2132,7 +2132,11 @@ public sealed class IlPredicateCompiler
                 for (int c = 0; c < k; c++)
                 {
                     emit.LoadLocal(keyLoc);
-                    emit.LoadConstant(keys[c]);
+                    EmitAtomId(emit, keys[c]);   // patchable: a persisted bundle resolves
+                                                 // the runtime atom id at load (a raw
+                                                 // build-time id would mismatch a fresh
+                                                 // process — the chunk-359 inliner's
+                                                 // persisted-bundle correctness bug).
                     emit.BranchIfEqual(detLabels[c]);
                 }
             }
