@@ -335,19 +335,38 @@ WAM state.
      clpfd cut+wakeup tests pass under `SHUMWAY_REGION=1`, full Embedding green at
      `SHUMWAY_REGION=1` (only `Chunk373.Flag_DefaultsOff` "fails", correctly, because
      the env var overrides the default-off flag it asserts).
-   - **State (post-381)**: region compiler is correct + validated through Stage 6c —
+   - **Backtrackable-builtin members — excluded from membership (chunk 385, Stage 6d,
+     "path 1").** A member whose emitted body calls a backtrackable / meta builtin
+     (`retract`, `atom_concat` via `concat`, `call` via `once`, `s_get_char`, ...) needs
+     a resume cursor the region planner doesn't yet allocate, so `IsRegionEmittable`
+     rejected the whole region if any member had one — and on Blint ONE such member
+     poisoned the region for **60 local-closure predicates** (e.g. `blint_file/1`'s
+     22-member region died on member `parse_pred/3`'s `retract`). Path 1: refuse such a
+     callee MEMBERSHIP (`IsRegionMemberEligible` now runs the shared `RegionMemberOk`
+     per-member check) so it stays a cross-region trampoline (Stage 6a) and the rest of
+     the region still forms. `RegionMemberOk` is the per-member validation factored out
+     and shared with `IsRegionEmittable`. Result: **Blint regions 24 → 55** (skips 60 →
+     4; the 4 left are predicates whose OWN root body has a backtrackable builtin — they
+     can't be a region root without the resume-cursor threading, and stay standalone).
+     `blint_file/1` is now absorbed into `blint_file_start`'s 21-member region. Blint
+     byte-identical OFF vs ON; Embedding default 2157, REGION=1 all real pass. The
+     `[region-skip]` diagnostic (chunk 384, SHUMWAY_IL_SHAPE=1) reports the cause for any
+     local-closure predicate that still isn't a region.
+   - **State (post-385)**: region compiler is correct + validated through Stage 6d —
      discovery / planner / single-clause / try_me_else-chain / cut / cross-region /
-     **indexed members** — all sound (Embedding default 2154, REGION=1 all real pass;
-     Blint 24 regions byte-identical). The merge being opaque to the engine is
-     confirmed twice over (the local-collision and the index-resolve naming both turned
-     out to be salting gaps, not barriers). With indexed members emittable, an indexed
-     predicate can also be a region ROOT now (the region builds from it and, if a local
-     closure exists, CompileRegion handles it) — so most Blint multi-clause predicates
-     are reachable. Remaining coverage gap: members with backtrackable builtins (need a
-     resume cursor; planner + emit extension). **Real-world wall-clock payoff still to
-     be demonstrated** — coverage is now broad (24 Blint regions), so the next step is
-     a measured A/B (Stage 8 gating) to see whether flat `br` dispatch actually beats
-     the trampoline on Blint before flipping the default.
+     indexed members / backtrackable-builtin-member exclusion — all sound (Embedding
+     default 2157, REGION=1 all real pass; Blint **55 regions** byte-identical). The
+     merge being opaque to the engine is confirmed three times over (local-collision,
+     index-resolve naming, and now the membership-exclusion trick — all gaps, not
+     barriers). Coverage on Blint is now broad (55 of ~95 promotable predicate clusters).
+     **Real-world wall-clock payoff still NOT demonstrated** — the chunk-382 A/B (at 24
+     regions) showed no win because Blint's hot path is parsing, not call dispatch; more
+     coverage doesn't change that bottleneck. The infrastructure is kept and broadened
+     deliberately as the substrate for: (a) OTHER real programs that MAY be call-bound;
+     (b) Stage 9 module-level dead-region elimination; (c) further IL-level optimisation
+     passes that want whole-closure-in-one-method as their unit. The remaining membership
+     gap is root-body backtrackable builtins (the 4) + the proper resume-cursor threading
+     that would let a backtrackable builtin live INSIDE a member (path 2).
 7. **Budget + method-size guard**; fall back to trampoline past the budget.
 8. **Gating + full-bench validation + measurement**; decide the default flip and
    whether the duplication inliners are subsumed.

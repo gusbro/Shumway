@@ -990,25 +990,39 @@ public sealed class IlPredicateCompiler
         reason = null;
         if (region.MemberCount < 2) { reason = "members<2 (no local closure)"; return false; }
         foreach (var m in region.Members)
+            if (!RegionMemberOk(m, calleeMap, out var r))
+            { reason = $"member {FidName(m.FunctorId)}/{m.Arity}: {r}"; return false; }
+        return true;
+    }
+
+    /// <summary>The per-member validation shared by <see cref="IsRegionEmittable(IlRegion,
+    /// IReadOnlyDictionary{int, CompiledPredicate}, out string)"/> (which members of a
+    /// formed region are all OK) and <see cref="IsRegionMemberEligible"/> (whether a
+    /// callee may be PULLED IN as a member). A member must be a shape the region emit
+    /// handles — single-clause, try_me_else chain, or indexed switch_on_term/arg — and
+    /// its emitted body (the full bytecode, or per-clause ranges for an indexed member,
+    /// since the resolve replaces the dispatch cascade) must use only opcodes the region
+    /// handles (cut OK; Call/Execute with metadata; no backtrackable / meta builtin —
+    /// those need a resume cursor the planner doesn't yet allocate). Sharing this between
+    /// the two callers is what makes path-1 work: a callee whose body has a backtrackable
+    /// builtin is now refused MEMBERSHIP (stays a cross-region trampoline) instead of
+    /// being pulled in and then rejecting the whole region.</summary>
+    private static bool RegionMemberOk(
+        CompiledPredicate m, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
+        out string? reason)
+    {
+        reason = null;
+        if (m.ClauseCount > 1 && !TryDescribeTryMeElseChain(m, calleeMap, out _))
         {
-            // A multi-clause member must be either a plain try_me_else chain (Stage 4)
-            // or an indexed switch_on_term/arg dispatch (Stage 6c). An indexed member
-            // is emitted body-range by body-range (the resolve replaces the dispatch
-            // cascade), so for it we validate the CLAUSE BODIES — the code that
-            // actually emits — not the full bytecode (whose cascade carries
-            // switch/try opcodes that never reach EmitClauseBody).
-            if (m.ClauseCount > 1 && !TryDescribeTryMeElseChain(m, calleeMap, out _))
-            {
-                if (!TryDescribeIndexed(m, calleeMap, out var info))
-                { reason = $"member {FidName(m.FunctorId)}/{m.Arity}: multi-clause, neither chain nor indexed"; return false; }
-                foreach (var (start, end) in info!.Clauses)
-                    if (!RegionBodyOpcodesOk(m.Bytecode, start, end, m.CallSites, out var r))
-                    { reason = $"member {FidName(m.FunctorId)}/{m.Arity} (indexed body): {r}"; return false; }
-                continue;
-            }
-            if (!RegionBodyOpcodesOk(m.Bytecode, 0, m.Bytecode.Length, m.CallSites, out var r2))
-            { reason = $"member {FidName(m.FunctorId)}/{m.Arity}: {r2}"; return false; }
+            if (!TryDescribeIndexed(m, calleeMap, out var info))
+            { reason = "multi-clause, neither chain nor indexed"; return false; }
+            foreach (var (start, end) in info!.Clauses)
+                if (!RegionBodyOpcodesOk(m.Bytecode, start, end, m.CallSites, out var r))
+                { reason = $"(indexed body) {r}"; return false; }
+            return true;
         }
+        if (!RegionBodyOpcodesOk(m.Bytecode, 0, m.Bytecode.Length, m.CallSites, out var r2))
+        { reason = r2; return false; }
         return true;
     }
 
@@ -1053,19 +1067,20 @@ public sealed class IlPredicateCompiler
         return true;
     }
 
-    /// <summary>Region-membership filter (Stage 6b/6c). A callee is pulled into a
-    /// region only if it is itself IL-compilable AND its multi-clause dispatch is a
-    /// shape the region emit handles: a plain try_me_else chain (Stage 4,
-    /// <see cref="EmitRegionMultiClauseMember"/>) or an indexed switch_on_term/arg
-    /// dispatch (Stage 6c, <see cref="EmitRegionIndexedMember"/>). Anything else (e.g.
-    /// a backtrackable-builtin body the planner can't yet thread) stays a cross-region
-    /// trampoline boundary.</summary>
+    /// <summary>Region-membership filter (Stage 6b/6c/6d). A callee is pulled into a
+    /// region only if it is itself IL-compilable AND <see cref="RegionMemberOk"/> — a
+    /// shape the region emit handles (single-clause / try_me_else chain / indexed) whose
+    /// emitted body uses only region-handled opcodes. Stage 6d (path 1): a callee whose
+    /// body contains a backtrackable / meta builtin (<c>retract</c>, <c>atom_concat</c>,
+    /// <c>call</c>, ...) is NOT pulled in — it stays a cross-region trampoline boundary
+    /// (Stage 6a) and the rest of the region still forms, instead of one such callee
+    /// poisoning the whole region (which is what blocked ~60 Blint local-closure
+    /// predicates). The resume-cursor threading that would let such a builtin live INSIDE
+    /// a member is a later step.</summary>
     private bool IsRegionMemberEligible(CompiledPredicate p,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
         => CanCompileCore(p, calleeMap, allowIndexedDispatch: true)
-           && (p.ClauseCount == 1
-               || TryDescribeTryMeElseChain(p, calleeMap, out _)
-               || TryDescribeIndexed(p, calleeMap, out _));
+           && RegionMemberOk(p, calleeMap, out _);
 
     /// <summary>Emit a whole region as one IL method (Stage 3). Layout: a `cur`
     /// local seeded from <c>arg1</c>; a `dispatch` jump table over the plan's cursor
