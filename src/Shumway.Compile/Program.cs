@@ -94,6 +94,8 @@ internal static class Program
             ShmoWriter.WriteToFile(obj, output);
             if (!string.IsNullOrEmpty(opts.DumpWamPath) || !string.IsNullOrEmpty(opts.DumpIlPath))
                 DumpArtifacts(obj, input, opts);
+            if (opts.PruneReport)
+                PruneReport(obj, input);
             if (verbose)
             {
                 Console.Error.WriteLine(
@@ -183,6 +185,36 @@ internal static class Program
         }
     }
 
+    /// <summary>Stage-9 dry run: report which predicates the dead-region reachability
+    /// analysis would PRUNE if this module were region-compiled into a bundle — those
+    /// reached only as absorbed br-members of some region. Module-level approximation:
+    /// the external roots are the call-graph roots (predicates with no in-module caller,
+    /// i.e. the entry points / externally-called predicates); a real linker uses the
+    /// actual entry-point + public set. Analysis only — changes nothing.</summary>
+    private static void PruneReport(ShmoObject obj, string input)
+    {
+        var module = CompiledModuleCodec.Decode(obj.Bytecode);
+        var preds = module.Predicates.ToDictionary(p => p.FunctorId);
+
+        // Call-graph roots: a predicate no OTHER in-module predicate calls.
+        var calledByOthers = new HashSet<int>();
+        foreach (var p in module.Predicates)
+            foreach (var cs in p.CallSites)
+                if (cs.CalleeFunctorId != p.FunctorId && preds.ContainsKey(cs.CalleeFunctorId))
+                    calledByOthers.Add(cs.CalleeFunctorId);
+        var roots = preds.Keys.Where(f => !calledByOthers.Contains(f)).ToList();
+
+        var ic = new IlPredicateCompiler();
+        var prunable = RegionReachability.Prunable(
+            preds, roots, fid => ic.RegionMemberFids(preds[fid], preds));
+
+        Console.Error.WriteLine(
+            $"  prune-report ({input}): {preds.Count} predicates, {roots.Count} roots, "
+            + $"{prunable.Count} prunable (reached only as absorbed br-members).");
+        foreach (int fid in prunable.OrderBy(x => x))
+            Console.Error.WriteLine($"    - {PredName(fid)}");
+    }
+
     private static string PredName(int fid)
     {
         try
@@ -219,6 +251,7 @@ internal static class Program
         public string DumpWamPath { get; set; } = "";
         public string DumpIlPath { get; set; } = "";
         public bool Regions { get; set; }
+        public bool PruneReport { get; set; }
     }
 
     private static Options? ParseArgs(string[] args)
@@ -275,6 +308,10 @@ internal static class Program
                     opts.Regions = true;
                     break;
 
+                case "--prune-report":
+                    opts.PruneReport = true;
+                    break;
+
                 default:
                     if (arg.StartsWith("-"))
                     {
@@ -318,6 +355,10 @@ internal static class Program
             + "                       emit region methods (flat local code space).\n"
             + "      --regions        With --dump-il, enable region compilation so the IL\n"
             + "                       dump shows region methods instead of per-predicate.\n"
+            + "      --prune-report   Stage-9 dry run: report which predicates would be\n"
+            + "                       pruned (reached only as absorbed br-members) if this\n"
+            + "                       module were region-compiled into a bundle. Analysis\n"
+            + "                       only; uses the call-graph roots as the entry set.\n"
             + "  -h, --help           Show this message.\n"
             + "\n"
             + "Note: --dump-wam / --dump-il APPEND; delete the file between runs. They\n"

@@ -1086,6 +1086,27 @@ public sealed class IlPredicateCompiler
         => CanCompileCore(p, calleeMap, allowIndexedDispatch: true)
            && RegionMemberOk(p, calleeMap, out _);
 
+    /// <summary>The set of functor ids a region rooted at <paramref name="root"/> would
+    /// ABSORB as <c>br</c>-members when emitted (Stage 9 input) — the predicates whose
+    /// standalone form this root makes intra-region, INCLUDING the root itself. Matches
+    /// exactly what <see cref="Compile"/> emits: it builds the region with the runtime
+    /// membership filter, and returns just <c>{root}</c> when the region is not emittable
+    /// (root stays a per-predicate method, so every callee trampolines out). Independent
+    /// of <see cref="RegionCompile"/> — it answers "if region-compiled, what is absorbed",
+    /// which the dead-region reachability (<see cref="RegionReachability"/>) consumes when
+    /// the bundle is built in region mode.</summary>
+    public IReadOnlyCollection<int> RegionMemberFids(
+        CompiledPredicate root, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+    {
+        if (calleeMap is null) return new[] { root.FunctorId };
+        var region = IlRegionBuilder.Build(root, calleeMap,
+            extraEligible: p => IsRegionMemberEligible(p, calleeMap));
+        if (!IsRegionEmittable(region, calleeMap)) return new[] { root.FunctorId };
+        var s = new HashSet<int>(region.Members.Count);
+        foreach (var m in region.Members) s.Add(m.FunctorId);
+        return s;
+    }
+
     /// <summary>Emit a whole region as one IL method (Stage 3). Layout: a `cur`
     /// local seeded from <c>arg1</c>; a `dispatch` jump table over the plan's cursor
     /// space (0 = root entry); each member as a labeled block; a shared `ret` handler

@@ -385,21 +385,39 @@ WAM state.
      correctness ≠ speed. The remaining identified gap vs GProlog is the WAM register
      allocator (chunk 347b), which is where Blint's time actually goes.
 9. **Module-level dead-region elimination — prune inaccessible regions at `.shum`
-   link time (PLANNED, prerequisite for IL inspection).** When the linker assembles a
-   `.shum`, it knows the complete picture the runtime never has in one place: every
-   entry point, every public/dynamic predicate, and — once regions are built — which
-   local predicates are reached ONLY as absorbed `br` members of another region. Such a
-   local predicate's standalone delegate is **unreachable** and must be **pruned** from
-   the bundle. This is a reachability **fixpoint closure**: keep public / visible /
-   dynamic / entry-point predicates and any predicate reached by a NON-inlined
-   (trampoline) edge (un-pulled by budget or non-local); drop a local predicate reached
-   only by inlined (`br`) edges; iterate, since dropping one may expose another. This is
-   a LINK-time pass (the bundle path), NOT the runtime promotion path (where standalone
-   delegates coexist lazily). It both shrinks the compiled module AND produces the
-   **real, minimal set of regions/predicates** — which is the prerequisite for
-   inspecting the IL that actually ships (Stage 11): `shumway-compile --dump-il`
-   (chunk 386) compiles EVERY predicate as a root, a superset; only the post-prune
-   link-time set is what runs.
+   link time (prerequisite for IL inspection).** When the linker assembles a `.shum`,
+   it knows the complete picture the runtime never has in one place: every entry point,
+   every public/dynamic predicate, and — once regions are built — which local predicates
+   are reached ONLY as absorbed `br` members of another region. Such a local predicate's
+   standalone delegate is **unreachable** and must be **pruned** from the bundle. This
+   is a reachability **fixpoint closure**: keep public / visible / dynamic / entry-point
+   predicates and any predicate reached by a NON-inlined (trampoline) edge (un-pulled by
+   budget or non-local); drop a local predicate reached only by inlined (`br`) edges;
+   iterate, since dropping one may expose another. This is a LINK-time pass (the bundle
+   path), NOT the runtime promotion path (where standalone delegates coexist lazily). It
+   both shrinks the compiled module AND produces the **real, minimal set of
+   regions/predicates** — the prerequisite for inspecting the IL that actually ships
+   (Stage 11): `shumway-compile --dump-il` (chunk 386) compiles EVERY predicate as a
+   root, a superset; only the post-prune link-time set is what runs.
+   - **9a — the reachability analysis DONE (chunk 388).** `RegionReachability`
+     (`src/Shumway.Compiler.Il/RegionReachability.cs`): a pure fixpoint over region
+     roots. `TrampolineReachable(predicates, externallyReachable, regionMembers)` seeds
+     with the external roots, and for each live root follows only its region's
+     CROSS-region (trampoline) edges — a member's call to a predicate the region does
+     NOT absorb — to discover more live roots; `Prunable` is the complement.
+     `regionMembers` is `IlPredicateCompiler.RegionMemberFids(root, calleeMap)` (the
+     absorbed-fid set the compiler actually emits, or `{root}` when the region isn't
+     emittable). 7 synthetic Chunk388Tests (chain-absorbed → prune interior;
+     cross-region callee kept; absorbed-but-public kept; diamond; split-caller kept;
+     builtin callee ignored; cycle terminates). `shumway-compile --prune-report` is the
+     module dry-run (roots = call-graph roots): **Blint = 67 of 256 predicates prunable**
+     (~26%), e.g. `blint_file` (absorbed into `blint_file_start`'s region).
+   - **9b — wire the prune into the bundle build (PLANNED).** Two prerequisites the
+     analysis does NOT yet have: (i) the bundle IL path must actually compile in REGION
+     mode (today regions are runtime-gated; the bundle compiles per-predicate), and
+     (ii) the linker must pass the REAL entry-point + public set as the external roots
+     (the dry-run approximates with call-graph roots). Then drop each prunable
+     predicate's standalone WAM/IL entry from the bundle.
 10. **Linker IL / WAM dump options (PLANNED) — `shumway-link --dump-il` /
     `--dump-wam`.** The link step is the right place to dump the code that actually
     ships: after Stage 9 pruning, the linker holds the REAL IL that the bundle needs
