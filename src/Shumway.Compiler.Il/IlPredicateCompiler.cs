@@ -90,6 +90,31 @@ public sealed class IlPredicateCompiler
     public Sigil.OptimizationOptions Optimizations { get; set; }
         = Sigil.OptimizationOptions.None;
 
+    /// <summary>When <c>SHUMWAY_IL_DUMP</c> names a file, each compiled IL method's
+    /// textual instruction stream (Sigil <c>Instructions()</c>) is appended to it with
+    /// a header — for manual analysis of what the compiler emits (region or otherwise).
+    /// Off (null) by default; appends, so delete the file between runs.</summary>
+    private static readonly string? IlDumpPath =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_IL_DUMP");
+    private static readonly object IlDumpLock = new();
+
+    /// <summary>Finalize an emit into a delegate, dumping its IL first when
+    /// <c>SHUMWAY_IL_DUMP</c> is set. Call instead of <c>emit.CreateDelegate</c> at
+    /// every compile site so the dump covers them all.</summary>
+    private PredicateDelegate FinishEmit(Sigil.Emit<PredicateDelegate> emit, string header)
+    {
+        if (IlDumpPath is not null)
+        {
+            string text;
+            try { text = emit.Instructions(); }
+            catch (System.Exception ex) { text = $"(Instructions() failed: {ex.Message})"; }
+            lock (IlDumpLock)
+                System.IO.File.AppendAllText(IlDumpPath,
+                    $"\n;;; ===== {header} =====\n{text}\n");
+        }
+        return emit.CreateDelegate(Optimizations);
+    }
+
     private static readonly MethodInfo CellAtomMethod =
         typeof(Cell).GetMethod(nameof(Cell.Atom), new[] { typeof(int) })!;
     private static readonly MethodInfo CellIntMethod =
@@ -1119,7 +1144,10 @@ public sealed class IlPredicateCompiler
         emit.LoadConstant(false);
         emit.Return();
 
-        return emit.CreateDelegate(Optimizations);
+        return FinishEmit(emit,
+            $"region root={regionFid} {FidName(regionFid)} members=["
+            + string.Join(",", region.Members.Select(m => $"{m.FunctorId}:{FidName(m.FunctorId)}/{m.Arity}x{m.ClauseCount}"))
+            + "]");
     }
 
     /// <summary>Emit a MULTI-clause member's block (Stage 4) — a try_me_else chain.
@@ -1589,7 +1617,8 @@ public sealed class IlPredicateCompiler
                 $"ShumwayIl_{predicate.FunctorId}_{predicate.Arity}",
                 doVerify: DoVerify || DebugMode);
             EmitSingleClauseLeafBody(emit, predicate, calleeMap);
-            return emit.CreateDelegate(Optimizations);
+            return FinishEmit(emit,
+                $"single-leaf fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity}");
         }
         lock (IndexedDelegateHolder.RegistrationLock)
             return CompileSingleClauseWithMetaCpUnlocked(predicate, callSiteCount, calleeMap);
@@ -1737,7 +1766,8 @@ public sealed class IlPredicateCompiler
             $"ShumwayIl_metacp_{predicate.FunctorId}_{predicate.Arity}",
             doVerify: DoVerify || DebugMode);
         EmitSingleClauseMetaCpBody(emit, predicate, callSiteCount, calleeMap, emitSelf);
-        var del = emit.CreateDelegate(Optimizations);
+        var del = FinishEmit(emit,
+            $"compile fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity} clauses={predicate.ClauseCount}");
         IndexedDelegateHolder.Register(holderKey, del);
         _nextHolderKey = holderKey + 1;
         return del;
@@ -3893,7 +3923,8 @@ public sealed class IlPredicateCompiler
             var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
                 $"ShumwayIl_idx_{predicate.FunctorId}", doVerify: DoVerify || DebugMode);
             EmitIndexedDispatchBody(emit, predicate, info, calleeMap, emitSelf);
-            var del = emit.CreateDelegate(Optimizations);
+            var del = FinishEmit(emit,
+            $"compile fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity} clauses={predicate.ClauseCount}");
             IndexedDelegateHolder.Register(holderKey, del);
             _nextHolderKey = holderKey + 1;
             return del;
@@ -4193,7 +4224,8 @@ public sealed class IlPredicateCompiler
             doVerify: DoVerify || DebugMode);
         EmitTryMeElseChainBody(emit, predicate, info, calleeMap, emitSelf);
 
-        var del = emit.CreateDelegate(Optimizations);
+        var del = FinishEmit(emit,
+            $"compile fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity} clauses={predicate.ClauseCount}");
         IndexedDelegateHolder.Register(holderKey, del);
         _nextHolderKey = holderKey + 1;
         return del;
@@ -4446,7 +4478,8 @@ public sealed class IlPredicateCompiler
             doVerify: DoVerify || DebugMode);
         EmitIndexedAtomBody(emit, predicate, info, emitSelf, profileKey, groundOrder, calleeMap);
 
-        var del = emit.CreateDelegate(Optimizations);
+        var del = FinishEmit(emit,
+            $"compile fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity} clauses={predicate.ClauseCount}");
         IndexedDelegateHolder.Register(holderKey, del);
         _nextHolderKey = holderKey + 1;
         return del;
