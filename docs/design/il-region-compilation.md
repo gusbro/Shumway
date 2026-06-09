@@ -475,10 +475,28 @@ WAM state.
        per-predicate-IL bundle: region-reachable ROOTS still duplicate their members (the
        prune removes the absorbed-only standalone copies, not the inter-root
        duplication) — region compilation is inherently bigger, and the chunk-382 A/B
-       already showed no runtime win on Blint. 2 Chunk393Tests. The mechanism is complete
-       + sound; the size/speed payoff awaits a call-bound program or a minimal-root-set
-       optimisation (not all-as-roots). Remaining: stripping the pruned predicates' WAM
-       too (currently kept as a fallback) for a further size cut.
+       already showed no runtime win on Blint. 2 Chunk393Tests.
+     - **9c — cost-based root selection (minimal-root-set) DONE (chunk 394).** Cuts the
+       inter-root duplication 9b-3 doesn't touch: a member shared by N regions is baked
+       into all N. The selector promotes such a member to its OWN root (one copy + N
+       trampolines) when it pays off. **Cost model**: absorbing M bakes in M AND its whole
+       absorbed sub-closure, so the duplicated code per absorbing region is
+       **size(region(M))** (M's region closure, NOT M's bytecode); promoting M saves
+       `(dup(M) − 1) × size(region(M))`. Regions overlap, so it's a GLOBAL optimisation —
+       an **iterative greedy fixpoint** (`RegionRootSelector.ComputeForcedRoots`): build
+       all regions with the current promotion set excluded, score every still-shared
+       predicate, promote the best, recompute, repeat until none beats `minSaving`
+       (default 64 B, the measured Blint optimum, env `SHUMWAY_REGION_ROOT_MINSAVE`).
+       Forced roots are excluded from absorption via `IlPredicateCompiler.
+       RegionForcedRootFids` (static, set by the linker for the build) + the
+       `RegionMemberFids(extraExcluded)` overload (for the selector's probes). **MEASURED
+       on Blint**: bundle 1834 KB (all-as-roots) → 1463 KB (9b-3) → **~914 KB (9b-3 + 9c,
+       86 promoted)**, byte-identical to the Tier-0 reference — now within ~23% of the
+       743 KB per-predicate-IL bundle, down from 2.5×. A nice property the fixpoint gives:
+       promoting a MIDDLE node de-dups its whole tail in one step (the recompute shows the
+       tail is no longer shared). 3 Chunk394Tests.
+       Remaining: stripping the pruned predicates' WAM too (currently kept as a fallback)
+       for a further cut.
      - **9b-1 — linker seed-set computation DONE (chunk 389).**
        `ShmoLinker.ComputeExternallyReachableSeeds(reachedRoots, reached, moduleDefined)`
        (public, pure): the entry / `ensure_linked` roots ∪ every reached PUBLIC ∪ every
