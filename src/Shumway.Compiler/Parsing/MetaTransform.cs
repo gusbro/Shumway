@@ -76,6 +76,9 @@ public static class MetaTransform
                 Term newBody;
                 if (HasTransparentBranchCut(body))
                 {
+                    if (System.Environment.GetEnvironmentVariable("SHUMWAY_CUTFIX_DIAG") == "1")
+                        System.Console.Error.WriteLine(
+                            $"[cutfix] {(head is CompoundTerm hc ? hc.Functor + "/" + hc.Args.Length : head is AtomTerm ha ? ha.Name + "/0" : "?")} at {ruleTerm.Position}");
                     counter++;
                     string cutK = $"$CutB_{counter}";
                     Term transformed = TransformGoal(body, ref counter, helpers, cutK);
