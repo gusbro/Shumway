@@ -1478,6 +1478,23 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 addrToName[addr] = $"{name}/{arity}";
             }
 
+        // Chunk 403: nearest-predicate-at-or-below resolver for pc-keyed counters
+        // (retry_me_else attribution) — a clause's retry pc sits INSIDE its
+        // predicate's code range, past the entry address.
+        var sortedAddrs = addrToName.Keys.ToArray();
+        Array.Sort(sortedAddrs);
+        string? NearestName(int pc)
+        {
+            int lo = 0, hi = sortedAddrs.Length - 1, best = -1;
+            while (lo <= hi)
+            {
+                int mid = (lo + hi) / 2;
+                if (sortedAddrs[mid] <= pc) { best = mid; lo = mid + 1; }
+                else hi = mid - 1;
+            }
+            return best >= 0 ? addrToName[sortedAddrs[best]] : null;
+        }
+
         return Shumway.Core.Profiler.Report(
             addressName: a => addrToName.TryGetValue(a, out var n) ? n : null,
             builtinName: id =>
@@ -1485,7 +1502,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 var e = Shumway.Builtins.BuiltinsRegistry.GetById(id);
                 return $"{e.Name}/{e.Arity}";
             },
-            top: top);
+            top: top,
+            nearestPredicateName: NearestName);
     }
 
     /// <summary>Chunk 209 — per-module set of BARE (un-mangled) local

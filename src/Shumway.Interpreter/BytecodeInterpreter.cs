@@ -672,7 +672,8 @@ public sealed class BytecodeInterpreter
                     // lookup + profiler bump per chain step. Profiled
                     // Blint had 23.5M direct dispatch→CheckVisible
                     // pairs / run.
-                    if (!TryInlineCheckVisible(code, codeArr, codeLen, pc + 9))
+                    if (!TryInlineCheckVisible(code, codeArr, codeLen, pc + 9,
+                            deadSkipTo: nextClause))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                     }
@@ -681,6 +682,7 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.RetryMeElse:
                 {
+                    Shumway.Core.Profiler.RetryAt(pc);
                     int nextClause = BytecodeIO.ReadInt32(code, pc + 1);
                     _engine.RetryMeElse(nextClause);
                     // A demoted chain head (asserta's in-place
@@ -699,7 +701,8 @@ public sealed class BytecodeInterpreter
                            == (byte)Opcode.Nop;
                     int afterPc = pc + (demoted ? 9 : 5);
                     // Chunk 221 peephole fusion (see TryMeElse).
-                    if (!TryInlineCheckVisible(code, codeArr, codeLen, afterPc))
+                    if (!TryInlineCheckVisible(code, codeArr, codeLen, afterPc,
+                            deadSkipTo: nextClause))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                     }
@@ -2338,9 +2341,21 @@ public sealed class BytecodeInterpreter
     /// chain step adds up on dynamic-predicate-heavy workloads
     /// (Blint saw 23.5M direct dispatch→CheckVisible pairs / run).</para>
     /// </summary>
+    /// <param name="deadSkipTo">Chunk 403 — the dispatch opcode's own <c>next</c>
+    /// operand (the following chain entry), or -1 (trust_me, no next). When the
+    /// visibility check fails and this is >= 0, jump STRAIGHT to the next entry
+    /// instead of failing into a full backtrack: the check is the FIRST thing after
+    /// the dispatch opcode, so nothing has mutated since the choice point's state
+    /// was pushed/restored — the backtrack would restore registers/trail to values
+    /// they already hold. The CP's next-clause slot was already advanced by the
+    /// dispatch opcode, so the direct jump leaves identical machine state, minus
+    /// the redundant restore. On Blint this removes one full backtrack per DEAD
+    /// chain entry (a retract-heavy dynamic predicate accumulates thousands —
+    /// 1.56M of the 3.38M backtracks in a self-lint were exactly this).</param>
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
-    private bool TryInlineCheckVisible(Shumway.Core.ProgramView code, byte[] codeArr, int codeLen, int afterPc)
+    private bool TryInlineCheckVisible(Shumway.Core.ProgramView code, byte[] codeArr, int codeLen, int afterPc,
+        int deadSkipTo = -1)
     {
         if (afterPc + 17 > codeLen
             || (code.Overflow is null ? codeArr[afterPc] : code[afterPc])
@@ -2352,7 +2367,12 @@ public sealed class BytecodeInterpreter
         long born = BytecodeIO.ReadInt64(code, afterPc + 1);
         long died = BytecodeIO.ReadInt64(code, afterPc + 9);
         long g = _engine.CurrentViewGen;
-        if (born > g || died <= g) return false;
+        if (born > g || died <= g)
+        {
+            if (deadSkipTo < 0) return false;        // trust_me: genuine fail
+            _engine.SetPc(deadSkipTo);               // dead entry: next, no backtrack
+            return true;
+        }
         _engine.SetPc(afterPc + 17);
         return true;
     }

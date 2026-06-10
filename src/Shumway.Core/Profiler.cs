@@ -67,6 +67,7 @@ public static class Profiler
         _lastOpcode = 0xFF;
         _reallocs.Clear();
         _callsByAddress.Clear();
+        _retryByPc.Clear();
         _builtinCounts.Clear();
         _builtinTicks.Clear();
         _builtinBytes.Clear();
@@ -108,6 +109,19 @@ public static class Profiler
         _callsByAddress.TryGetValue(address, out long c);
         _callsByAddress[address] = c + 1;
         _totalCalls++;
+    }
+
+    private static readonly Dictionary<int, long> _retryByPc = new();
+
+    /// <summary>Records one retry_me_else execution at <paramref name="pc"/>
+    /// (chunk 403 diagnosis aid). The report buckets these by the owning
+    /// predicate (nearest predicate entry at-or-below the pc) — naming WHICH
+    /// predicates burn time scanning linear clause chains on backtrack.</summary>
+    [Conditional("SHUMWAY_PROFILE")]
+    public static void RetryAt(int pc)
+    {
+        _retryByPc.TryGetValue(pc, out long c);
+        _retryByPc[pc] = c + 1;
     }
 
     /// <summary>Marks the start of a builtin invocation. Pushes a timer
@@ -188,7 +202,8 @@ public static class Profiler
     public static string Report(
         System.Func<int, string?>? addressName = null,
         System.Func<int, string?>? builtinName = null,
-        int top = 25)
+        int top = 25,
+        System.Func<int, string?>? nearestPredicateName = null)
     {
         if (!Enabled) return string.Empty;
 
@@ -242,6 +257,24 @@ public static class Profiler
             sb.AppendLine("-- notes --");
             foreach (var (label, count) in TopN(_notes, 50))
                 sb.AppendLine($"  {count,14:N0}  {label}");
+        }
+
+        if (_retryByPc.Count > 0)
+        {
+            // Chunk 403: attribute retry_me_else executions (linear clause-chain
+            // scanning on backtrack) to the OWNING predicate — group the per-pc
+            // counters by the nearest predicate entry at-or-below each pc.
+            var byPred = new Dictionary<string, long>();
+            foreach (var (pc, count) in _retryByPc)
+            {
+                string name = nearestPredicateName?.Invoke(pc) ?? $"@{pc}";
+                byPred.TryGetValue(name, out long c);
+                byPred[name] = c + count;
+            }
+            sb.AppendLine();
+            sb.AppendLine($"-- top {top} retry_me_else by owning predicate --");
+            foreach (var (name, count) in TopN(byPred, top))
+                sb.AppendLine($"  {count,12:N0}  {name}");
         }
 
         sb.AppendLine();
