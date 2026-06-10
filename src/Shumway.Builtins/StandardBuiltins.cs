@@ -235,6 +235,8 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("$list_length",              2, MultiSolutionHelpers.ListLength);
         BuiltinsRegistry.Register("$make_var_list",            2, MultiSolutionHelpers.MakeVarList);
         BuiltinsRegistry.Register("$sub_atom_decompositions",  2, MultiSolutionHelpers.SubAtomDecompositions);
+        // Chunk 408 — branch-cut barrier capture (MetaTransform cut transparency).
+        BuiltinsRegistry.Register("$get_cut_barrier",          1, MultiSolutionHelpers.GetCutBarrier);
 
         // String-oriented builtins (chunk 40).
         BuiltinsRegistry.Register("string_length", 2, StringBuiltins.StringLength,

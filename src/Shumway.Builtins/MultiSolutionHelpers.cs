@@ -18,6 +18,18 @@ namespace Shumway.Builtins;
 /// </summary>
 public static class MultiSolutionHelpers
 {
+    /// <summary>Chunk 408 — <c>'$get_cut_barrier'(K)</c>: unifies K with the
+    /// clause's cut barrier (<see cref="Engine.B0"/>, the choice-point level the
+    /// caller's Call/Execute established — what a neck cut commits to). Inserted
+    /// by <c>MetaTransform</c> as the FIRST body goal of a clause that has a
+    /// <c>!</c> inside a <c>;</c>/<c>-&gt;</c> branch: the branch lowers to a
+    /// synthesised helper, and the captured barrier threads through to it so the
+    /// branch cut commits the HOST clause (ISO 7.8.8 cut transparency in
+    /// then/else and disjunction branches) instead of just the helper. The cut
+    /// itself runs as <c>'$call'(!, K)</c> — the chunk-88 barrier-cut path.</summary>
+    public static bool GetCutBarrier(Engine engine)
+        => engine.UnifyRegisterWithCell(0, Cell.Int(engine.B0));
+
     /// <summary><c>'$list_length'(List, N)</c> — given a proper list,
     /// bind <c>N</c> to its length. Fails for partial / improper
     /// lists. Used by the prelude's <c>length/2</c> when the list is

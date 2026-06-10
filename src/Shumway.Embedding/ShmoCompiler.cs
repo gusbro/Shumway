@@ -180,8 +180,12 @@ public static class ShmoCompiler
         // Now apply the static-pipeline transforms. These may add
         // synthetic helper clauses (MetaTransform extracts catch's
         // protected goal, ; / -> branches, etc. into helper preds).
+        // Chunk 407 — module-local meta-wrapper unfold first (see
+        // MetaWrapperUnfold): staticInput excludes dynamic-head clauses,
+        // so any detected wrapper is immutable.
         var clauses = PhraseTransform.Apply(
-            MetaTransform.Apply(DcgTransform.Apply(staticInput)));
+            MetaTransform.Apply(DcgTransform.Apply(
+                MetaWrapperUnfold.Apply(staticInput))));
 
         var definedOrder = new List<PredicateRef>();
         var definedSet = new HashSet<PredicateRef>();

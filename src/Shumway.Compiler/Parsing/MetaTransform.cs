@@ -63,7 +63,33 @@ public static class MetaTransform
             {
                 Term head = ruleTerm.Args[0];
                 Term body = ruleTerm.Args[1];
-                Term newBody = TransformGoal(body, ref counter, helpers);
+                // Chunk 408 — ISO 7.8.8 cut transparency. A `!` inside a
+                // `;` / `->` then/else BRANCH must commit the HOST clause, but
+                // the branch lowers to a synthesised helper whose own clause
+                // dispatch the `!` would otherwise cut instead (the bug: d(X)
+                // :- X -> !, true. left d's second clause reachable). When the
+                // body has such a branch cut, capture the host's barrier into
+                // a fresh variable as the FIRST body goal (CallBuiltin doesn't
+                // touch B0, so it still holds the caller's Call-site value =
+                // the neck barrier) and thread it into the helpers, where the
+                // branch `!` becomes '$call'(!, K) — the chunk-88 barrier cut.
+                Term newBody;
+                if (HasTransparentBranchCut(body))
+                {
+                    counter++;
+                    string cutK = $"$CutB_{counter}";
+                    Term transformed = TransformGoal(body, ref counter, helpers, cutK);
+                    newBody = new CompoundTerm(",", new[]
+                    {
+                        (Term)new CompoundTerm("$get_cut_barrier",
+                            new Term[] { new VarTerm(cutK) }),
+                        transformed,
+                    }) { Position = ruleTerm.Position };
+                }
+                else
+                {
+                    newBody = TransformGoal(body, ref counter, helpers, cutK: null);
+                }
                 Term newRuleTerm = new CompoundTerm(":-", new[] { head, newBody }) { Position = ruleTerm.Position };
                 result.Add(new Clause(ClauseKind.Rule, newRuleTerm, clause.Position));
             }
@@ -77,13 +103,20 @@ public static class MetaTransform
         return result;
     }
 
-    private static Term TransformGoal(Term goal, ref int counter, List<Clause> helpers)
+    /// <param name="cutK">Chunk 408 — the host clause's captured cut-barrier
+    /// variable, threaded through cut-TRANSPARENT positions only (conjunction,
+    /// disjunction branches, if-then-else then/else). Null when the host body
+    /// has no branch cut, or in cut-OPAQUE positions (an if-then-else
+    /// condition, \+, call/N, findall/bagof/setof/forall/catch goals) — there
+    /// a branch `!` keeps today's helper-local scope.</param>
+    private static Term TransformGoal(Term goal, ref int counter, List<Clause> helpers,
+        string? cutK = null)
     {
         // Conjunction: recurse into both halves.
         if (goal is CompoundTerm { Functor: "," } conj && conj.Args.Length == 2)
         {
-            Term lhs = TransformGoal(conj.Args[0], ref counter, helpers);
-            Term rhs = TransformGoal(conj.Args[1], ref counter, helpers);
+            Term lhs = TransformGoal(conj.Args[0], ref counter, helpers, cutK);
+            Term rhs = TransformGoal(conj.Args[1], ref counter, helpers, cutK);
             return new CompoundTerm(",", new[] { lhs, rhs }) { Position = goal.Position };
         }
 
@@ -102,7 +135,7 @@ public static class MetaTransform
                 (Term)itoOnly,
                 new AtomTerm("fail"),
             }) { Position = goal.Position };
-            return TransformGoal(withFallback, ref counter, helpers);
+            return TransformGoal(withFallback, ref counter, helpers, cutK);
         }
 
         // \+ G  or  not(G)  with a syntactically-callable inner goal —
@@ -278,10 +311,79 @@ public static class MetaTransform
         // dispatch then handles.
         if (goal is CompoundTerm disj && disj.Functor == ";" && disj.Args.Length == 2)
         {
-            return SynthesizeDisjunctionHelper(disj.Args[0], disj.Args[1], ref counter, helpers);
+            return SynthesizeDisjunctionHelper(disj.Args[0], disj.Args[1], ref counter, helpers, cutK);
         }
 
         return goal;
+    }
+
+    /// <summary>Chunk 408 — does <paramref name="body"/> contain a <c>!</c> in a
+    /// cut-TRANSPARENT branch position (inside a <c>;</c> branch or an
+    /// if-then-else then/else, possibly nested)? Such a body needs the host
+    /// barrier captured and threaded. A top-level <c>!</c> (plain conjunction)
+    /// compiles as a normal clause cut and does not count; cut-opaque positions
+    /// (a condition, <c>\+</c>, meta-goal arguments) do not count.</summary>
+    private static bool HasTransparentBranchCut(Term body)
+    {
+        static bool InsideBranch(Term t) => t switch
+        {
+            AtomTerm { Name: "!" } => true,
+            CompoundTerm { Functor: ",", Args.Length: 2 } c
+                => InsideBranch(c.Args[0]) || InsideBranch(c.Args[1]),
+            CompoundTerm { Functor: ";", Args.Length: 2 } c
+                => (c.Args[0] is CompoundTerm { Functor: "->", Args.Length: 2 } ite
+                        ? InsideBranch(ite.Args[1])          // then (cond is opaque)
+                        : InsideBranch(c.Args[0]))
+                   || InsideBranch(c.Args[1]),
+            CompoundTerm { Functor: "->", Args.Length: 2 } c
+                => InsideBranch(c.Args[1]),                  // then (cond is opaque)
+            _ => false,
+        };
+        // At the TOP level of the body we are not inside a branch yet: descend
+        // through conjunction; a ;/-> here means its branches are branch
+        // positions (handled by InsideBranch).
+        return body switch
+        {
+            CompoundTerm { Functor: ",", Args.Length: 2 } c
+                => HasTransparentBranchCut(c.Args[0]) || HasTransparentBranchCut(c.Args[1]),
+            CompoundTerm { Functor: ";", Args.Length: 2 } c
+                => (c.Args[0] is CompoundTerm { Functor: "->", Args.Length: 2 } ite
+                        ? InsideBranch(ite.Args[1])
+                        : InsideBranch(c.Args[0]))
+                   || InsideBranch(c.Args[1]),
+            CompoundTerm { Functor: "->", Args.Length: 2 } c
+                => InsideBranch(c.Args[1]),
+            _ => false,
+        };
+    }
+
+    /// <summary>Chunk 408 — rewrites every cut-transparent <c>!</c> at the
+    /// conjunction level of a branch term into <c>'$call'(!, K)</c> (the
+    /// chunk-88 barrier cut). Nested <c>;</c>/<c>-&gt;</c> inside the branch
+    /// are left for the recursive transform (their own helper synthesis
+    /// replaces THEIR branch cuts with the same K); cut-opaque subterms are
+    /// untouched.</summary>
+    private static Term ReplaceTransparentCuts(Term branch, string cutK)
+    {
+        switch (branch)
+        {
+            case AtomTerm { Name: "!" }:
+                return new CompoundTerm("$call", new Term[]
+                {
+                    new AtomTerm("!"),
+                    new VarTerm(cutK),
+                });
+            case CompoundTerm { Functor: ",", Args.Length: 2 } c:
+            {
+                Term l = ReplaceTransparentCuts(c.Args[0], cutK);
+                Term r = ReplaceTransparentCuts(c.Args[1], cutK);
+                if (ReferenceEquals(l, c.Args[0]) && ReferenceEquals(r, c.Args[1]))
+                    return branch;
+                return new CompoundTerm(",", new[] { l, r }) { Position = c.Position };
+            }
+            default:
+                return branch;
+        }
     }
 
     /// <summary>True iff <paramref name="goal"/> is an atom / compound that
@@ -325,14 +427,32 @@ public static class MetaTransform
     /// and the regular WAM choice-point dispatch makes the disjunction
     /// behave with the right backtracking semantics.</summary>
     private static Term SynthesizeDisjunctionHelper(
-        Term left, Term right, ref int counter, List<Clause> helpers)
+        Term left, Term right, ref int counter, List<Clause> helpers,
+        string? cutK = null)
     {
         counter++;
         string helperName = $"$disj_{counter}";
 
+        // Chunk 408 — branch cuts become '$call'(!, K) BEFORE free-variable
+        // collection, so the captured-barrier variable K rides into the
+        // helper's head like any other free variable. Branch positions only;
+        // an if-then-else condition stays opaque (its cuts keep helper scope).
+        Term branchLeft = left;
+        if (cutK is not null)
+        {
+            branchLeft = left is CompoundTerm { Functor: "->", Args.Length: 2 } ite0
+                ? new CompoundTerm("->", new[]
+                  {
+                      ite0.Args[0],
+                      ReplaceTransparentCuts(ite0.Args[1], cutK),
+                  }) { Position = ite0.Position }
+                : ReplaceTransparentCuts(left, cutK);
+            right = ReplaceTransparentCuts(right, cutK);
+        }
+
         var freeVars = new List<string>();
         var seen = new HashSet<string>();
-        CollectNamedVars(left, freeVars, seen);
+        CollectNamedVars(branchLeft, freeVars, seen);
         CollectNamedVars(right, freeVars, seen);
 
         Term BuildHelperHead() => freeVars.Count == 0
@@ -345,11 +465,11 @@ public static class MetaTransform
         // recursing through TransformGoal on `left` itself would
         // bounce off the standalone `(A -> B)` rewrite above and
         // ping-pong infinitely.
-        if (left is CompoundTerm ite && ite.Functor == "->" && ite.Args.Length == 2)
+        if (branchLeft is CompoundTerm ite && ite.Functor == "->" && ite.Args.Length == 2)
         {
-            Term cond = TransformGoal(ite.Args[0], ref counter, helpers);
-            Term then = TransformGoal(ite.Args[1], ref counter, helpers);
-            Term recursedRightIte = TransformGoal(right, ref counter, helpers);
+            Term cond = TransformGoal(ite.Args[0], ref counter, helpers, cutK: null);
+            Term then = TransformGoal(ite.Args[1], ref counter, helpers, cutK);
+            Term recursedRightIte = TransformGoal(right, ref counter, helpers, cutK);
             // Clause 1: '$disj_N'(...) :- A, !, B.
             Term clause1Body = new CompoundTerm(",", new[]
             {
@@ -369,8 +489,8 @@ public static class MetaTransform
         }
 
         // Plain disjunction.
-        Term recursedLeft = TransformGoal(left, ref counter, helpers);
-        Term recursedRight = TransformGoal(right, ref counter, helpers);
+        Term recursedLeft = TransformGoal(branchLeft, ref counter, helpers, cutK);
+        Term recursedRight = TransformGoal(right, ref counter, helpers, cutK);
         // Clause 1: '$disj_N'(...) :- A.
         helpers.Add(new Clause(
             ClauseKind.Rule,

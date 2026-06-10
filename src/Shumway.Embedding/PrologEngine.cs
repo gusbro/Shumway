@@ -5325,7 +5325,15 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
         foreach (var (name, manifest) in _modules)
         {
-            var transformed = ClausePipeline.Apply(manifest.Clauses, modeTable);
+            // Chunk 407 — module-local meta-wrapper unfold (ifthen/2-style user
+            // control wrappers called with statically-known goals become inline
+            // if-then-else, eliminating the goal-term build + wrapper frame +
+            // runtime meta-dispatch). Runs BEFORE the pipeline so MetaTransform
+            // lowers the inserted control constructs. manifest.Clauses is the
+            // STATIC clause set (dynamic-head clauses were routed to
+            // _dynamicClauses), so a detected wrapper is immutable by invariant.
+            var unfolded = MetaWrapperUnfold.Apply(manifest.Clauses);
+            var transformed = ClausePipeline.Apply(unfolded, modeTable);
 
             var locals = ComputeLocalFunctors(transformed, manifest.PublicFunctors);
             // Chunk 209: fold in the bare local fids contributed by a
