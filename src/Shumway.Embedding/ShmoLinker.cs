@@ -1239,7 +1239,7 @@ public static class ShmoLinker
             byte[] ilEntries = e.CompiledIlEntries ?? Array.Empty<byte>();
             bw.Write((uint)ilEntries.Length);
             bw.Write(ilEntries);
-            // V4+ (chunk 209): dynamic seeds trailer.
+            // Dynamic seeds trailer (chunk 209).
             bw.Write((uint)e.DynamicSeeds.Count);
             foreach (var seed in e.DynamicSeeds)
             {
@@ -1253,12 +1253,16 @@ public static class ShmoLinker
                 }
             }
         }
-        // V5+ (chunk 247): foreign-assemblies trailer. Must mirror
-        // BundleWriter.ToBytes's V5 section exactly so a bundle
+        // Foreign-assemblies trailer (chunk 247). Must mirror
+        // BundleWriter.ToBytes's section exactly so a bundle
         // round-trips through either writer identically.
         bw.Write((uint)bundle.ForeignAssemblies.Count);
         foreach (var asmName in bundle.ForeignAssemblies)
             WriteString(bw, asmName);
+        // Snapshot presence byte (chunk 264) — part of the single supported
+        // layout (chunk 413 froze the format: every section unconditional).
+        // A linker-produced bundle never carries a save-state snapshot.
+        bw.Write((byte)0);
         bw.Flush();
         return ms.ToArray();
     }

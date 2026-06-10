@@ -119,7 +119,7 @@ public static class BundleWriter
             byte[] compiledIl = entry.CompiledIl ?? Array.Empty<byte>();
             bw.Write((uint)compiledIl.Length);
             bw.Write(compiledIl);
-            // V2+: per-predicate visibility metadata. Empty list is fine —
+            // Per-predicate visibility metadata. Empty list is fine —
             // the source-less load path only fires when this is non-empty
             // AND Source is stripped.
             bw.Write((uint)entry.Defined.Count);
@@ -129,7 +129,7 @@ public static class BundleWriter
                 bw.Write((uint)d.Indicator.Arity);
                 bw.Write((byte)d.Visibility);
             }
-            // V3+ (Phase 17): IL patch table + per-method entries table.
+            // IL patch table + per-method entries table (Phase 17).
             // Both always emitted (even empty) so layout stays positional.
             byte[] patches = entry.CompiledIlPatches ?? Array.Empty<byte>();
             bw.Write((uint)patches.Length);
@@ -137,7 +137,7 @@ public static class BundleWriter
             byte[] ilEntries = entry.CompiledIlEntries ?? Array.Empty<byte>();
             bw.Write((uint)ilEntries.Length);
             bw.Write(ilEntries);
-            // V4+ (chunk 209): dynamic seeds trailer.
+            // Dynamic seeds trailer (chunk 209).
             bw.Write((uint)entry.DynamicSeeds.Count);
             foreach (var seed in entry.DynamicSeeds)
             {
@@ -151,13 +151,13 @@ public static class BundleWriter
                 }
             }
         }
-        // V5+ (chunk 247): foreign-assemblies trailer after the
+        // Foreign-assemblies trailer (chunk 247) after the
         // per-entry payloads. Pre-V5 readers stop after the last
         // entry and never see this section.
         bw.Write((uint)bundle.ForeignAssemblies.Count);
         foreach (var name in bundle.ForeignAssemblies)
             WriteLengthPrefixedUtf8(bw, name);
-        // V6+ (chunk 264): optional save-state snapshot trailer. A
+        // Save-state snapshot trailer (chunk 264). A
         // regular shumway-link / shumway-compile bundle writes
         // snapshotPresent=0 (one byte) and stops; PrologEngine.SaveState
         // writes snapshotPresent=1 and the consult-history + dynamic-

@@ -27,10 +27,15 @@ public static class BundleReader
                 "Bundle: magic bytes don't match 'SHUM' — not a Shumway bundle.");
 
         uint version = br.ReadUInt32();
-        if (version < 1 || version > BundleFormat.CurrentVersion)
+        // Pre-release format policy (see BundleFormat): exactly ONE supported
+        // layout, frozen version number, no backward compatibility — a stale
+        // bundle fails here (or on a truncated section); rebuild it by
+        // re-linking.
+        if (version != BundleFormat.CurrentVersion)
             throw new InvalidDataException(
                 $"Bundle: format version {version} is not supported by this runtime "
-                + $"(expected 1..{BundleFormat.CurrentVersion}).");
+                + $"(requires {BundleFormat.CurrentVersion}; pre-release formats are "
+                + "not backward compatible — rebuild the bundle).");
 
         uint moduleCount = br.ReadUInt32();
         var entries = new BundleEntry[moduleCount];
@@ -58,87 +63,72 @@ public static class BundleReader
                         $"Bundle: truncated compiled-IL section (expected "
                         + $"{compiledIlLength} bytes, got {compiledIl.Length}).");
             }
-            // V2+: per-predicate visibility metadata. Empty list for V1.
-            List<ShmoDefinedPredicate>? defined = null;
-            if (version >= 2)
+            // Per-predicate visibility metadata.
+            uint definedCount = br.ReadUInt32();
+            var defined = new List<ShmoDefinedPredicate>((int)definedCount);
+            for (uint j = 0; j < definedCount; j++)
             {
-                uint definedCount = br.ReadUInt32();
-                defined = new List<ShmoDefinedPredicate>((int)definedCount);
-                for (uint j = 0; j < definedCount; j++)
-                {
-                    string predName = ReadLengthPrefixedUtf8(br);
-                    uint arity = br.ReadUInt32();
-                    byte vis = br.ReadByte();
-                    defined.Add(new ShmoDefinedPredicate(
-                        new PredicateRef(predName, (int)arity),
-                        (PredicateVisibility)vis));
-                }
+                string predName = ReadLengthPrefixedUtf8(br);
+                uint arity = br.ReadUInt32();
+                byte vis = br.ReadByte();
+                defined.Add(new ShmoDefinedPredicate(
+                    new PredicateRef(predName, (int)arity),
+                    (PredicateVisibility)vis));
             }
-            // V3+ (Phase 17): IL patch table + per-method entries table.
+            // IL patch table + per-method entries table (Phase 17).
             byte[]? compiledIlPatches = null;
             byte[]? compiledIlEntries = null;
-            if (version >= 3)
+            uint patchLength = br.ReadUInt32();
+            if (patchLength > 0)
             {
-                uint patchLength = br.ReadUInt32();
-                if (patchLength > 0)
-                {
-                    compiledIlPatches = br.ReadBytes((int)patchLength);
-                    if (compiledIlPatches.Length != patchLength)
-                        throw new InvalidDataException(
-                            $"Bundle: truncated IL patch table (expected "
-                            + $"{patchLength} bytes, got {compiledIlPatches.Length}).");
-                }
-                uint entriesLength = br.ReadUInt32();
-                if (entriesLength > 0)
-                {
-                    compiledIlEntries = br.ReadBytes((int)entriesLength);
-                    if (compiledIlEntries.Length != entriesLength)
-                        throw new InvalidDataException(
-                            $"Bundle: truncated IL entries table (expected "
-                            + $"{entriesLength} bytes, got {compiledIlEntries.Length}).");
-                }
+                compiledIlPatches = br.ReadBytes((int)patchLength);
+                if (compiledIlPatches.Length != patchLength)
+                    throw new InvalidDataException(
+                        $"Bundle: truncated IL patch table (expected "
+                        + $"{patchLength} bytes, got {compiledIlPatches.Length}).");
             }
-            // V4+ (chunk 209): dynamic seeds trailer.
-            List<ShmoDynamicSeed>? dynamicSeeds = null;
-            if (version >= 4)
+            uint entriesLength = br.ReadUInt32();
+            if (entriesLength > 0)
             {
-                uint seedCount = br.ReadUInt32();
-                dynamicSeeds = new List<ShmoDynamicSeed>((int)seedCount);
-                for (uint j = 0; j < seedCount; j++)
+                compiledIlEntries = br.ReadBytes((int)entriesLength);
+                if (compiledIlEntries.Length != entriesLength)
+                    throw new InvalidDataException(
+                        $"Bundle: truncated IL entries table (expected "
+                        + $"{entriesLength} bytes, got {compiledIlEntries.Length}).");
+            }
+            // Dynamic seeds trailer (chunk 209).
+            uint seedCount = br.ReadUInt32();
+            var dynamicSeeds = new List<ShmoDynamicSeed>((int)seedCount);
+            for (uint j = 0; j < seedCount; j++)
+            {
+                string seedName = ReadLengthPrefixedUtf8(br);
+                int seedArity = (int)br.ReadUInt32();
+                uint clauseCount = br.ReadUInt32();
+                var encoded = new byte[clauseCount][];
+                for (uint k = 0; k < clauseCount; k++)
                 {
-                    string seedName = ReadLengthPrefixedUtf8(br);
-                    int seedArity = (int)br.ReadUInt32();
-                    uint clauseCount = br.ReadUInt32();
-                    var encoded = new byte[clauseCount][];
-                    for (uint k = 0; k < clauseCount; k++)
-                    {
-                        uint byteCount = br.ReadUInt32();
-                        byte[] bytes = br.ReadBytes((int)byteCount);
-                        if (bytes.Length != byteCount)
-                            throw new InvalidDataException(
-                                $"Bundle: truncated dynamic-seed clause for "
-                                + $"{seedName}/{seedArity} (expected {byteCount}, got {bytes.Length}).");
-                        encoded[k] = bytes;
-                    }
-                    dynamicSeeds.Add(new ShmoDynamicSeed(
-                        new PredicateRef(seedName, seedArity), encoded));
+                    uint byteCount = br.ReadUInt32();
+                    byte[] bytes = br.ReadBytes((int)byteCount);
+                    if (bytes.Length != byteCount)
+                        throw new InvalidDataException(
+                            $"Bundle: truncated dynamic-seed clause for "
+                            + $"{seedName}/{seedArity} (expected {byteCount}, got {bytes.Length}).");
+                    encoded[k] = bytes;
                 }
+                dynamicSeeds.Add(new ShmoDynamicSeed(
+                    new PredicateRef(seedName, seedArity), encoded));
             }
             entries[i] = new BundleEntry(name, source, compiled, compiledIl, defined,
                 compiledIlPatches, compiledIlEntries, dynamicSeeds);
         }
-        // V5+ (chunk 247): foreign-assemblies trailer.
-        List<string>? foreignAssemblies = null;
-        if (version >= 5)
-        {
-            uint asmCount = br.ReadUInt32();
-            foreignAssemblies = new List<string>((int)asmCount);
-            for (uint i = 0; i < asmCount; i++)
-                foreignAssemblies.Add(ReadLengthPrefixedUtf8(br));
-        }
-        // V6+ (chunk 264): optional save-state snapshot trailer.
+        // Foreign-assemblies trailer (chunk 247).
+        uint asmCount = br.ReadUInt32();
+        var foreignAssemblies = new List<string>((int)asmCount);
+        for (uint i = 0; i < asmCount; i++)
+            foreignAssemblies.Add(ReadLengthPrefixedUtf8(br));
+        // Save-state snapshot trailer (chunk 264): one presence byte, then the
+        // payload when a PrologEngine.SaveState bundle carries a snapshot.
         BundleSnapshot? snapshot = null;
-        if (version >= 6 && br.BaseStream.Position < br.BaseStream.Length)
         {
             byte snapshotPresent = br.ReadByte();
             if (snapshotPresent == 1)
