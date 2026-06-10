@@ -46,11 +46,12 @@ public class Chunk169Tests
     }
 
     [Fact]
-    public void ShmoFormat_CurrentVersion_IsThree()
+    public void ShmoFormat_CurrentVersion_IsFour()
     {
-        // V3 (chunk 209) adds the dynamic-seeds trailer. V1/V2 still
+        // V3 (chunk 209) adds the dynamic-seeds trailer; V4 (chunk 411) the
+        // clause-terms LTO trailer. V1..V3 still
         // readable (MinSupportedVersion stays 1).
-        Assert.Equal(3, ShmoFormat.CurrentVersion);
+        Assert.Equal(4, ShmoFormat.CurrentVersion);
         Assert.Equal(1, ShmoFormat.MinSupportedVersion);
     }
 

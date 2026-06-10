@@ -131,8 +131,27 @@ public static class ShmoReader
             }
         }
 
+        // V4+ adds the clauseTerms trailer (the LTO channel).
+        byte[][] clauseTerms = Array.Empty<byte[]>();
+        if (version >= 4)
+        {
+            uint clauseCount = br.ReadUInt32();
+            clauseTerms = new byte[clauseCount][];
+            for (uint i = 0; i < clauseCount; i++)
+            {
+                uint byteCount = br.ReadUInt32();
+                byte[] bytes = br.ReadBytes((int)byteCount);
+                if (bytes.Length != byteCount)
+                    throw new InvalidDataException(
+                        $".shmo: truncated clause-terms entry {i} "
+                        + $"(expected {byteCount}, got {bytes.Length}).");
+                clauseTerms[i] = bytes;
+            }
+        }
+
         return new ShmoObject(moduleName, source, bytecode,
-            defined, ensureLinked, callGraph, qrefs, buildMode, dynamicSeeds);
+            defined, ensureLinked, callGraph, qrefs, buildMode, dynamicSeeds,
+            clauseTerms);
     }
 
     private static string ReadLengthPrefixedUtf8(BinaryReader br)

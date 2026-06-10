@@ -81,6 +81,14 @@ public static class ShmoWriter
             }
         }
 
+        // V4+ clause-terms trailer (the LTO channel — raw static clauses).
+        bw.Write((uint)obj.ClauseTerms.Count);
+        foreach (var encoded in obj.ClauseTerms)
+        {
+            bw.Write((uint)encoded.Length);
+            bw.Write(encoded);
+        }
+
         bw.Flush();
         return ms.ToArray();
     }

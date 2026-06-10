@@ -109,6 +109,18 @@ public sealed class ShmoObject
     /// store. Empty for V1/V2 objects.</summary>
     public IReadOnlyList<ShmoDynamicSeed> DynamicSeeds { get; }
 
+    /// <summary>Chunk 411 — the module's STATIC clauses as
+    /// <see cref="TermCodec"/>-encoded terms, RAW (post-parse, pre-DCG /
+    /// pre-MetaTransform / pre-unfold; dynamic-head clauses excluded — those
+    /// travel in <see cref="DynamicSeeds"/>). The LTO channel (user decision,
+    /// mirroring fat object files): always present, Release included — the
+    /// <c>.shmo</c> is an intermediate build artifact; IP stripping applies to
+    /// the shipped <c>.shum</c>/exe, not here. The linker uses it for
+    /// cross-module link-time optimization (the chunk-407 meta-wrapper unfold's
+    /// cross-module driver recompiles affected callers from these clauses), and
+    /// it is the substrate for any future LTO pass.</summary>
+    public IReadOnlyList<byte[]> ClauseTerms { get; }
+
     public ShmoObject(
         string moduleName,
         string source,
@@ -118,7 +130,8 @@ public sealed class ShmoObject
         IReadOnlyDictionary<PredicateRef, IReadOnlyList<PredicateRef>> callGraph,
         IReadOnlyList<QualifiedPredicateRef> qualifiedRefs,
         ShmoBuildMode buildMode = ShmoBuildMode.Release,
-        IReadOnlyList<ShmoDynamicSeed>? dynamicSeeds = null)
+        IReadOnlyList<ShmoDynamicSeed>? dynamicSeeds = null,
+        IReadOnlyList<byte[]>? clauseTerms = null)
     {
         ModuleName = moduleName;
         Source = source;
@@ -129,6 +142,7 @@ public sealed class ShmoObject
         QualifiedRefs = qualifiedRefs;
         BuildMode = buildMode;
         DynamicSeeds = dynamicSeeds ?? System.Array.Empty<ShmoDynamicSeed>();
+        ClauseTerms = clauseTerms ?? System.Array.Empty<byte[]>();
     }
 }
 

@@ -248,9 +248,20 @@ public static class ShmoLinker
             }
         }
 
+        // ----- 0. Chunk 411 — cross-module meta-wrapper unfold (the LTO pass) -----
+        // V4 .shmo objects carry their raw static clauses (ClauseTerms). Detect
+        // every module's wrapper templates, export the PUBLIC ones globally, and
+        // rewrite each module's call sites against (own locals ∪ global publics);
+        // modules whose rewrite gained a CROSS-module unfold (beyond what their
+        // compile-time local pass already did) are recompiled from their clause
+        // terms. Runs before everything else so the reachability walk and the
+        // bundle see the final call graph.
+        IReadOnlyList<ShmoObject> objects = CrossModuleUnfold(
+            config.Objects, Emit, out var ltoPublicWrappers);
+
         // ----- 1. Index objects, detect duplicate module names -----
         var byModule = new Dictionary<string, ShmoObject>();
-        foreach (var obj in config.Objects)
+        foreach (var obj in objects)
         {
             if (byModule.ContainsKey(obj.ModuleName))
             {
@@ -267,7 +278,7 @@ public static class ShmoLinker
         var globalDynamic = new Dictionary<PredicateRef, List<string>>(); // pred → modules
         // Index each module's locally-defined indicators for quick lookup.
         var moduleDefined = new Dictionary<string, Dictionary<PredicateRef, PredicateVisibility>>();
-        foreach (var obj in config.Objects)
+        foreach (var obj in objects)
         {
             var localMap = new Dictionary<PredicateRef, PredicateVisibility>();
             moduleDefined[obj.ModuleName] = localMap;
@@ -405,7 +416,7 @@ public static class ShmoLinker
             }
             roots.Add((mod, ep, $"entry {ep}"));
         }
-        foreach (var obj in config.Objects)
+        foreach (var obj in objects)
         {
             foreach (var el in obj.EnsureLinked)
             {
@@ -423,6 +434,11 @@ public static class ShmoLinker
                 roots.Add((mod, el, $"ensure_linked from '{obj.ModuleName}'"));
             }
         }
+        // Chunk 411 — public meta-wrappers stay linked even when the LTO unfold
+        // removed their last static call site: a runtime-built goal may still
+        // dispatch to them, and the unfold must never shrink the linked set.
+        foreach (var (mod, pred) in ltoPublicWrappers)
+            roots.Add((mod, pred, $"lto wrapper in '{mod}'"));
 
         // ----- 6. Reachability walk -----
         var reached = new HashSet<(string, PredicateRef)>();
@@ -543,7 +559,7 @@ public static class ShmoLinker
         if (config.RegionPruneReport)
         {
             var predicates = new Dictionary<int, CompiledPredicate>();
-            foreach (var obj in config.Objects)
+            foreach (var obj in objects)
             {
                 if (!reachedModules.Contains(obj.ModuleName) || obj.Bytecode.Length == 0) continue;
                 foreach (var p in CompiledModuleCodec.Decode(obj.Bytecode).Predicates)
@@ -605,7 +621,7 @@ public static class ShmoLinker
 
         // ----- 7. Unreachable modules → warning + drop -----
         var unreachable = new List<string>();
-        foreach (var obj in config.Objects)
+        foreach (var obj in objects)
         {
             if (reachedModules.Contains(obj.ModuleName)) continue;
             unreachable.Add(obj.ModuleName);
@@ -663,7 +679,7 @@ public static class ShmoLinker
             // Stable order: the linker preserves the order objects came
             // in, but drops the unreachable ones.
             var entries = new List<BundleEntry>();
-            foreach (var obj in config.Objects)
+            foreach (var obj in objects)
             {
                 if (!reachedModules.Contains(obj.ModuleName)) continue;
                 // Chunk 179: when StripSource is requested, also strip
@@ -866,6 +882,142 @@ public static class ShmoLinker
                 && vis is PredicateVisibility.Public or PredicateVisibility.Dynamic)
                 seeds.Add((mod, pred));
         return seeds;
+    }
+
+    /// <summary>Chunk 411 — the cross-module meta-wrapper unfold (LTO pass).
+    /// Decodes each V4 module's raw clause terms, detects wrapper templates
+    /// (<see cref="Shumway.Compiler.Parsing.MetaWrapperUnfold"/>), exports the
+    /// PUBLIC ones into a global registry, and rewrites every module against
+    /// (own locals ∪ global publics) — locals shadow publics, matching call
+    /// resolution. A module is recompiled (from its clause terms, via
+    /// <see cref="ShmoCompiler.CompileFromParts"/>) only when the cross-module
+    /// part contributed a rewrite its compile-time LOCAL unfold (chunk 407)
+    /// didn't already produce — detected per clause: full-rewrite changed it
+    /// while local-only left it alone. (A clause with BOTH a local and a cross
+    /// site in it is conservatively skipped — the cross site keeps calling the
+    /// public wrapper, which is correct, just un-optimized.) Wrapper modules
+    /// themselves are never modified; their standalone predicates remain for
+    /// runtime-built goals. Pre-V4 objects (no clause terms) pass through
+    /// untouched — they neither export wrappers nor get rewritten.</summary>
+    /// <param name="publicWrappers">OUT — every PUBLIC wrapper detected, as
+    /// (definingModule, indicator). The caller adds these to the reachability
+    /// ROOTS: unfolding can remove the last static call to a wrapper, but a
+    /// runtime-built goal (<c>call/1</c>, <c>=..</c>) may still dispatch to it
+    /// (the chunk-401 lesson) — the unfold must optimize call sites, never
+    /// shrink the linked set. Over-keeps (wrappers whose every site stayed
+    /// un-unfolded are roots too) — sound and tiny.</param>
+    private static IReadOnlyList<ShmoObject> CrossModuleUnfold(
+        IReadOnlyList<ShmoObject> objects,
+        Action<LinkSeverity, string, string, string?> emit,
+        out List<(string Module, PredicateRef Pred)> publicWrappers)
+    {
+        publicWrappers = new List<(string, PredicateRef)>();
+        // Decode each module's raw static clauses (the V4 LTO channel).
+        var decoded = new Dictionary<string, List<Shumway.Compiler.Ast.Clause>>();
+        foreach (var obj in objects)
+        {
+            if (obj.ClauseTerms.Count == 0) continue;
+            var list = new List<Shumway.Compiler.Ast.Clause>(obj.ClauseTerms.Count);
+            foreach (var enc in obj.ClauseTerms)
+                list.Add(TermCodec.DecodeClause(enc));
+            decoded[obj.ModuleName] = list;
+        }
+        if (decoded.Count == 0) return objects;
+
+        // Per-module wrapper registries + the global PUBLIC registry.
+        var localReg = new Dictionary<string, Shumway.Compiler.Parsing.MetaWrapperUnfold.WrapperRegistry>();
+        var publicReg = Shumway.Compiler.Parsing.MetaWrapperUnfold.WrapperRegistry.Empty;
+        foreach (var obj in objects)
+        {
+            if (!decoded.TryGetValue(obj.ModuleName, out var cls)) continue;
+            var reg = Shumway.Compiler.Parsing.MetaWrapperUnfold.DetectRegistry(cls);
+            if (reg.Count == 0) continue;
+            localReg[obj.ModuleName] = reg;
+            var pubs = new HashSet<(string, int)>();
+            foreach (var d in obj.Defined)
+                if (d.Visibility == PredicateVisibility.Public)
+                    pubs.Add((d.Indicator.Name, d.Indicator.Arity));
+            var pub = reg.Restrict((n, a) => pubs.Contains((n, a)));
+            if (pub.Count > 0)
+            {
+                publicReg = pub.MergeOver(publicReg);
+                foreach (var (n, a) in pub.Keys)
+                    publicWrappers.Add((obj.ModuleName, new PredicateRef(n, a)));
+            }
+        }
+        if (publicReg.Count == 0) return objects;   // nothing visible cross-module
+
+        var result = new List<ShmoObject>(objects.Count);
+        foreach (var obj in objects)
+        {
+            if (!decoded.TryGetValue(obj.ModuleName, out var raw))
+            {
+                result.Add(obj);
+                continue;
+            }
+            var own = localReg.TryGetValue(obj.ModuleName, out var lr)
+                ? lr
+                : Shumway.Compiler.Parsing.MetaWrapperUnfold.WrapperRegistry.Empty;
+            // Shadowing follows call resolution: ANY predicate this module
+            // DEFINES (template-shaped or not) takes its calls, so the public
+            // wrapper registry must not apply to those indicators here — only
+            // the module's own templates may (via `own`).
+            var definedHere = new HashSet<(string, int)>();
+            foreach (var d in obj.Defined)
+                definedHere.Add((d.Indicator.Name, d.Indicator.Arity));
+            var visiblePublics = publicReg.Restrict((n, a) => !definedHere.Contains((n, a)));
+            var full = own.MergeOver(visiblePublics);
+            var localOnly = Shumway.Compiler.Parsing.MetaWrapperUnfold.Apply(raw, own);
+            var fullRewrite = Shumway.Compiler.Parsing.MetaWrapperUnfold.Apply(raw, full);
+            bool crossContributed = false;
+            if (!ReferenceEquals(fullRewrite, raw))
+            {
+                for (int i = 0; i < raw.Count; i++)
+                {
+                    bool fullChanged = !ReferenceEquals(fullRewrite[i], raw[i]);
+                    bool localChanged = !ReferenceEquals(
+                        ReferenceEquals(localOnly, raw) ? raw[i] : localOnly[i], raw[i]);
+                    if (fullChanged && !localChanged) { crossContributed = true; break; }
+                }
+            }
+            if (!crossContributed)
+            {
+                result.Add(obj);
+                continue;
+            }
+
+            // Recompile from the rewritten clauses + the module's own metadata.
+            var publicSet = new HashSet<PredicateRef>();
+            var dynamicSet = new HashSet<PredicateRef>();
+            foreach (var d in obj.Defined)
+            {
+                if (d.Visibility == PredicateVisibility.Public) publicSet.Add(d.Indicator);
+                else if (d.Visibility == PredicateVisibility.Dynamic) dynamicSet.Add(d.Indicator);
+            }
+            var rawAll = new List<Shumway.Compiler.Ast.Clause>(fullRewrite);
+            foreach (var seed in obj.DynamicSeeds)
+                foreach (var enc in seed.EncodedClauses)
+                    rawAll.Add(TermCodec.DecodeClause(enc));
+            var errors = new List<ShmoCompileError>();
+            var res = ShmoCompiler.CompileFromParts(
+                obj.ModuleName, obj.Source, rawAll, publicSet, dynamicSet,
+                new List<PredicateRef>(obj.EnsureLinked),
+                new List<QualifiedPredicateRef>(), obj.BuildMode, errors);
+            if (!res.Success || res.Object is null)
+            {
+                emit(LinkSeverity.Warning, "lto_unfold_recompile_failed",
+                    $"module {obj.ModuleName}: cross-module unfold recompile failed "
+                    + $"({errors.Count} error(s)); keeping the original object.",
+                    obj.ModuleName);
+                result.Add(obj);
+                continue;
+            }
+            emit(LinkSeverity.Info, "lto_unfold",
+                $"module {obj.ModuleName}: cross-module meta-wrapper unfold applied; recompiled.",
+                obj.ModuleName);
+            result.Add(res.Object);
+        }
+        return result;
     }
 
     /// <summary>Stage 9 fid bridge: resolve the linker's <c>(module, PredicateRef)</c>

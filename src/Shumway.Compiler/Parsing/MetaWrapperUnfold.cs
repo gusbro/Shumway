@@ -67,19 +67,73 @@ public static class MetaWrapperUnfold
     /// <summary>One detected wrapper: the equivalent control template
     /// (a term over the wrapper's own head variables) plus the head-variable
     /// names in argument order, so instantiation is clone-with-substitution.</summary>
-    private sealed class WrapperTemplate
+    internal sealed class WrapperTemplate
     {
         public required Term Body { get; init; }
         public required string[] ArgVars { get; init; }
     }
 
-    /// <summary>Applies the unfold over one module's clause list. Returns the
-    /// input list unchanged (same reference) when no wrapper is detected or no
-    /// call site qualifies, so the common no-wrapper path stays allocation-free.</summary>
+    /// <summary>Opaque wrapper registry for the two-phase (cross-module) API:
+    /// the linker detects each module's wrappers once, filters them by
+    /// visibility, merges (caller-local first), and rewrites every module
+    /// against the merged view. See <see cref="DetectRegistry"/>.</summary>
+    public sealed class WrapperRegistry
+    {
+        internal readonly Dictionary<(string Name, int Arity), WrapperTemplate> Map;
+        internal WrapperRegistry(Dictionary<(string, int), WrapperTemplate> map) => Map = map;
+
+        public int Count => Map.Count;
+        public IEnumerable<(string Name, int Arity)> Keys => Map.Keys;
+
+        /// <summary>A registry restricted to the given predicate indicators
+        /// (the linker keeps only a module's PUBLIC wrappers for export).</summary>
+        public WrapperRegistry Restrict(System.Func<string, int, bool> keep)
+        {
+            var m = new Dictionary<(string, int), WrapperTemplate>();
+            foreach (var (k, v) in Map)
+                if (keep(k.Name, k.Arity)) m[k] = v;
+            return new WrapperRegistry(m);
+        }
+
+        /// <summary>Merges with <paramref name="fallback"/>; entries in THIS
+        /// registry win (caller-module locals shadow global publics).</summary>
+        public WrapperRegistry MergeOver(WrapperRegistry fallback)
+        {
+            var m = new Dictionary<(string, int), WrapperTemplate>(fallback.Map);
+            foreach (var (k, v) in Map) m[k] = v;
+            return new WrapperRegistry(m);
+        }
+
+        public static readonly WrapperRegistry Empty =
+            new(new Dictionary<(string, int), WrapperTemplate>());
+    }
+
+    /// <summary>Detects the conservative wrapper templates defined in
+    /// <paramref name="clauses"/> (one module's static clause list).</summary>
+    public static WrapperRegistry DetectRegistry(IReadOnlyList<Clause> clauses)
+    {
+        ArgumentNullException.ThrowIfNull(clauses);
+        return new WrapperRegistry(DetectWrappers(clauses));
+    }
+
+    /// <summary>Applies the unfold over one module's clause list, detecting the
+    /// module's own wrappers (the module-local driver). Returns the input list
+    /// unchanged (same reference) when nothing changes.</summary>
     public static IReadOnlyList<Clause> Apply(IReadOnlyList<Clause> clauses)
     {
         ArgumentNullException.ThrowIfNull(clauses);
-        var wrappers = DetectWrappers(clauses);
+        return Apply(clauses, DetectRegistry(clauses));
+    }
+
+    /// <summary>Applies the unfold against an explicit wrapper registry (the
+    /// linker's cross-module driver). Returns the input list unchanged (same
+    /// reference) when no call site qualifies.</summary>
+    public static IReadOnlyList<Clause> Apply(
+        IReadOnlyList<Clause> clauses, WrapperRegistry registry)
+    {
+        ArgumentNullException.ThrowIfNull(clauses);
+        ArgumentNullException.ThrowIfNull(registry);
+        var wrappers = registry.Map;
         if (System.Environment.GetEnvironmentVariable("SHUMWAY_UNFOLD_DIAG") == "1"
             && wrappers.Count > 0)
             System.Console.Error.WriteLine("[unfold] wrappers: " + string.Join(", ",

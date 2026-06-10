@@ -64,16 +64,31 @@ namespace Shumway.Embedding;
 ///                       bytes       : TermCodec-encoded clause term
 /// </code>
 ///
+/// <para>V4 (chunk 411): adds a <c>clauseTerms</c> trailer — the module's RAW
+/// static clauses (post-parse, pre-transform; dynamic heads excluded, they
+/// travel in <c>dynamicSeeds</c>) as <see cref="TermCodec"/>-encoded blobs.
+/// The LTO channel: present in Release too (the <c>.shmo</c> is an
+/// intermediate artifact, like a fat object file with embedded IR; IP
+/// stripping applies to the shipped <c>.shum</c>/exe, not here). Consumed by
+/// the linker's cross-module meta-wrapper unfold, which recompiles affected
+/// caller modules from these clauses. Layout after <c>dynamicSeeds</c>:</para>
+/// <code>
+///                 clauseTermsCount  : uint32
+///                   for each clause:
+///                     byteCount     : uint32
+///                     bytes         : TermCodec-encoded clause term
+/// </code>
+///
 /// <para>V1 (legacy): identical to V2 minus the <c>buildMode</c> byte.
-/// The reader accepts V1/V2/V3; older versions default to empty
-/// <c>DynamicSeeds</c>.</para>
+/// The reader accepts V1..V4; older versions default to empty
+/// <c>DynamicSeeds</c> / <c>ClauseTerms</c>.</para>
 /// </summary>
 public static class ShmoFormat
 {
     public static readonly byte[] Magic = new byte[] { (byte)'S', (byte)'H', (byte)'M', (byte)'O' };
 
     /// <summary>The version this build of the writer produces.</summary>
-    public const int CurrentVersion = 3;
+    public const int CurrentVersion = 4;
 
     /// <summary>The minimum version the reader will accept. V1 objects
     /// are still readable but their build mode defaults to

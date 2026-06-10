@@ -151,6 +151,31 @@ public static class ShmoCompiler
         if (errors.Count > 0)
             return new ShmoCompileResult(null, errors);
 
+        return CompileFromParts(
+            moduleDirectiveSeen ? moduleName : PrologEngine.DefaultModuleName,
+            source, rawClauses, publicSet, dynamicSet, ensureLinked,
+            qualifiedRefs, buildMode, errors);
+    }
+
+    /// <summary>Chunk 411 — the compile back-half, shared by
+    /// <see cref="TryCompileSource"/> (after its parse + directive pass) and the
+    /// linker's cross-module unfold recompile (which reconstructs the inputs
+    /// from a V4 <c>.shmo</c>'s metadata + <c>ClauseTerms</c>/<c>DynamicSeeds</c>
+    /// and re-enters here with rewritten clauses). <paramref name="moduleName"/>
+    /// is the RESOLVED runtime module name (the caller has already applied the
+    /// "no :- module directive ⇒ user" rule). <paramref name="qualifiedRefs"/>
+    /// is appended to by the call-graph walk.</summary>
+    internal static ShmoCompileResult CompileFromParts(
+        string moduleName,
+        string source,
+        List<Clause> rawClauses,
+        HashSet<PredicateRef> publicSet,
+        HashSet<PredicateRef> dynamicSet,
+        List<PredicateRef> ensureLinked,
+        List<QualifiedPredicateRef> qualifiedRefs,
+        ShmoBuildMode buildMode,
+        List<ShmoCompileError> errors)
+    {
         // Partition raw clauses: dynamic-head ones become DynamicSeeds
         // (RAW), the rest go through the same DcgTransform +
         // MetaTransform + PhraseTransform pipeline ConsultString uses.
@@ -289,20 +314,12 @@ public static class ShmoCompiler
                 Shumway.Core.AtomTable.Intern(p.Name, permanent: true).Id, p.Arity);
             if (!publicFids.Contains(fid)) localFids.Add(fid);
         }
-        // The mangling context must use the same module name the engine
-        // would use at consult time — without a `:- module(name).`
-        // directive the engine defaults to PrologEngine.DefaultModuleName
-        // ("user"), and the .shmo bytecode has to agree, otherwise its
-        // mangled local-functor ids ("foo$bar") disagree with the
-        // engine's ("user$bar") and the warmed IL delegates call into
-        // names the engine has never registered. The fallback parameter
-        // is still used for ShmoObject.ModuleName (the diagnostic label
-        // surfaced by the linker), it just doesn't drive the mangling
-        // unless the source itself declared a module.
-        string rewriteModuleName = moduleDirectiveSeen
-            ? moduleName
-            : PrologEngine.DefaultModuleName;
-        var rewriteCtx = new ModuleRewrite.Context(rewriteModuleName, localFids, dynamicFids);
+        // The mangling context uses the RESOLVED runtime module name (the
+        // "no :- module directive ⇒ user" rule was applied by the caller),
+        // matching what SetupQueryFromTerm would apply at consult time —
+        // otherwise the bytecode's mangled local-functor ids ("foo$bar")
+        // disagree with the engine's ("user$bar").
+        var rewriteCtx = new ModuleRewrite.Context(moduleName, localFids, dynamicFids);
         var rewritten = new List<Clause>(staticClauses.Count);
         foreach (var clause in staticClauses)
             rewritten.Add(ModuleRewrite.Rewrite(clause, rewriteCtx));
@@ -337,22 +354,17 @@ public static class ShmoCompiler
         foreach (var (ind, encodedList) in dynamicSeedAccum)
             dynamicSeeds.Add(new ShmoDynamicSeed(ind, encodedList));
 
-        // Chunk 209: without a `:- module(name).` directive the source
-        // lands in the engine's DefaultModuleName ("user"). ShmoObject's
-        // ModuleName has to match that, otherwise LoadEntryFromBytecode
-        // would register the predicates under the file-fallback name
-        // and SetupQueryFromTerm's userLocalsCache (computed from the
-        // `user` module) would miss them — leaving the dynamic-clause
-        // ModuleRewrite (which always runs against the user-module
-        // locals at line 4017-4021) unable to mangle this module's
-        // calls. The fallback file name is still used as the linker's
-        // diagnostic identity below.
-        string runtimeModuleName = moduleDirectiveSeen
-            ? moduleName
-            : PrologEngine.DefaultModuleName;
+        // Chunk 411 — the LTO channel: persist the RAW static clauses
+        // (pre-unfold, pre-pipeline) so the linker can re-run the full
+        // transform stack (cross-module unfold included) and recompile this
+        // module without its source. Release included by design — the .shmo
+        // is an intermediate artifact; IP stripping applies to .shum/exe.
+        var clauseTerms = new List<byte[]>(staticInput.Count);
+        foreach (var clause in staticInput)
+            clauseTerms.Add(TermCodec.EncodeClause(clause));
 
         var obj = new ShmoObject(
-            moduleName: runtimeModuleName,
+            moduleName: moduleName,
             source: persistedSource,
             bytecode: bytecode,
             defined: defined,
@@ -360,7 +372,8 @@ public static class ShmoCompiler
             callGraph: callGraphRO,
             qualifiedRefs: qualifiedRefs,
             buildMode: buildMode,
-            dynamicSeeds: dynamicSeeds);
+            dynamicSeeds: dynamicSeeds,
+            clauseTerms: clauseTerms);
         return new ShmoCompileResult(obj, errors);
     }
 
