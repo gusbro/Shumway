@@ -347,7 +347,7 @@ shumway-link -o app.shum \
 | `-m, --map <path>` | Write a C-toolchain-style audit file describing what landed in the bundle: per-module sizes, exported / dynamic predicate lists, dropped modules, totals. |
 | `-i, --with-compiled-il` | Persist a Tier-1 IL assembly inside the bundle so it runs as compiled IL (no load-time JIT of the WAM). |
 | `--region-prune` | Region-compile the bundle (implies `--with-compiled-il`): a predicate and its local closure share one IL method, and each absorbed-only predicate drops its standalone IL. Removes the all-as-roots duplication. |
-| `--strip-wam` | Implies `--with-compiled-il`. Drop the redundant WAM bodies of the standalone-IL predicates (each has its own IL delegate). The bundle then ships IL for those, not WAM. JIT-only (the IL must load — not for Native AOT). **Ignored under `--region-prune`** (a region's cross-region call to a stripped predicate would mis-dispatch); a warning is emitted and the WAM is kept. |
+| `--strip-wam` | Implies `--with-compiled-il`. Drop the redundant WAM bodies of the predicates the bundle runs as IL — standalone-IL predicates (each has its own IL delegate) and, under `--region-prune`, the region-absorbed members too (each is reachable by functor id through its region method's member-entry cursor). The bundle then ships IL, not WAM. JIT-only (the IL must load — not for Native AOT). |
 | `--prune-report` | Stage-9 dead-region dry-run: report how many standalone forms would be prunable. Info diagnostic; no change to the bundle. |
 | `--dump-wam <path>` | Append a disassembly of the WAM the bundle **ships** (each entry's final bytecode, after `--strip-wam` / region prune) to `<path>`. See [below](#dumping-the-shipped-il--wam-from-the-linker). |
 | `--dump-il <path>` | Append the Tier-1 IL the bundle **ships** to `<path>` (implies `--with-compiled-il`). See [below](#dumping-the-shipped-il--wam-from-the-linker). |
@@ -397,12 +397,10 @@ shumway-link -o app.shum --entry main/0 \
   `--with-compiled-il` (there is no IL to dump otherwise). This is the IL that
   runs cross-process and as `--exe`.
 - **`--dump-wam <file>`** appends the WAM of each bundle entry's **final**
-  bytecode, *after* any strip. With `--strip-wam` *without* `--region-prune`,
-  the standalone-IL predicates' WAM is gone (they run on IL) so the dump shrinks
-  to only the predicates that kept a Tier-0 body. Under `--region-prune` the
-  strip is a no-op (see the flag table), so the WAM is retained in full and the
-  dump shows every predicate — that WAM is the correctness fallback for
-  by-fid / meta calls into region members.
+  bytecode, *after* any strip. With `--strip-wam` the dump shrinks to only the
+  predicates that kept a Tier-0 body (with `--region-prune --strip-wam` it can
+  be empty — the whole user module runs on IL; that emptiness is the
+  confirmation the strip was complete).
 
 Both **append** — delete the files between runs.
 

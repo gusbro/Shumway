@@ -147,6 +147,14 @@ internal enum RegionCursorKind
     /// that node. One cursor per <see cref="IlIndexedDispatchInfo"/> node; the node
     /// index rides in <see cref="RegionCursorSite.ClauseIndex"/>.</summary>
     IndexNode,
+    /// <summary>A non-root member's ENTRY (chunk 402). Lets an EXTERNAL by-fid call
+    /// dispatch INTO the region at that member — the load path maps a stripped
+    /// member's functor to <c>EncodeResumeMarker(rootFid, thisCursor)</c> in
+    /// <c>CurrentFunctorAddresses</c>, and the dispatch loop's marker route invokes
+    /// the region delegate at this cursor. The cursor's label IS the member's entry
+    /// label (no separate block); assigned AFTER all other cursors so the existing
+    /// site-consumption order is untouched.</summary>
+    MemberEntry,
 }
 
 /// <summary>One assigned cursor in a region's cursor space. Cursor 0 is the root's
@@ -234,6 +242,13 @@ internal static class IlRegionPlanner
                 sites.Add(new RegionCursorSite(cursor++, kind, mi, cs.OpcodeOffset, cs.CalleeFunctorId));
             }
         }
+        // Chunk 402: one MemberEntry cursor per NON-root member (the root is cursor 0),
+        // assigned after every other cursor so the emit's existing consumption order is
+        // untouched. The cursor's switch slot points at the member's entry label, making
+        // the member externally callable by fid via a resume-marker alias — the
+        // prerequisite for stripping an absorbed-only member's WAM.
+        for (int mi = 1; mi < region.Members.Count; mi++)
+            sites.Add(new RegionCursorSite(cursor++, RegionCursorKind.MemberEntry, mi, -1, -1));
         return new IlRegionPlan(region, sites);
     }
 }

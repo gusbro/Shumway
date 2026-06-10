@@ -495,30 +495,46 @@ WAM state.
        743 KB per-predicate-IL bundle, down from 2.5×. A nice property the fixpoint gives:
        promoting a MIDDLE node de-dups its whole tail in one step (the recompute shows the
        tail is no longer shared). 3 Chunk394Tests.
-     - **9d — stripping the pruned predicates' WAM under regions: ATTEMPTED (chunks 398/400),
-       then DISABLED as UNSOUND (chunk 401).** `--strip-wam` is now a NO-OP under
-       `--region-prune` (warns `stripwam_region_incompatible`); the WAM stays as the Tier-0
-       fallback. WHY it was reverted — the chunk-398/399 validation used Blint's `test/0`
-       entry (which lints a hard-coded `Blint.pl`), but a `--exe`/`--goal main` build prunes
-       a DIFFERENT set (the prune is entry-dependent) and exercises the argv-driven `main`
-       path the entry-only check never ran. Two real failures surfaced there:
-       * **absorbed-only meta-called by fid** — `main/1`, reached by name from the top level
-         and through `main/0`'s `catch`, lost its standalone form once stripped →
-         `existence_error(main/1)`. The constructed-constant guard (issue 3 below) catches
-         meta-targets built *directly* as a term, but NOT a predicate reached via a plain
-         Call from inside a meta-called wrapper.
-       * **cross-region call to a stripped standalone-IL predicate** — a region reaches a
-         non-member by a trampoline that sets `Pc = EncodeResumeMarker(callee.fid, 0)`; with
-         the callee's WAM gone the dispatch landed on that marker address and the interpreter
-         fetched it as a PC → `startPc 0x… is outside [0, …)` (Blint's file-not-found path).
-       Even the "safe" standalone-IL strip (fine WITHOUT regions, pre-398) breaks here. So
-       the strip and region compilation are incompatible until the cross-region trampoline
-       resolves a stripped callee via its IL delegate (and absorbed members are made
-       fid-resolvable into their region — the member-entry-cursor idea). Region-prune still
-       delivers its size win by dropping the absorbed-only STANDALONE IL (9b-3); only the WAM
-       strip is off. `Chunk401Tests` guard it (the strip is a verified no-op under regions).
+     - **9d — stripping the pruned predicates' WAM: DONE FOR REAL (chunk 402), after the
+       chunk-398/400 attempt shipped broken and chunk 401 disabled it.** The chunk-401
+       incident (user-reported: a `--exe --goal main` Blint parsed wrong /
+       `startPc 0x… out of range` on a missing file — the chunk-398/399 validation only ran
+       the `test/0` entry, and the prune is ENTRY-DEPENDENT) decomposed into two root causes,
+       both now fixed structurally:
+       * **`Run()`'s startPc bounds guard rejected resume-marker addresses — a PRE-EXISTING
+         `--strip-wam` bug, no regions needed.** `catch/3` recovery resolves the recovery
+         predicate through `CurrentFunctorAddresses`; a stripped predicate's entry there is
+         its marker alias (`EncodeResumeMarker(fid, 0)`, intentionally above the code range),
+         and `RunCatching` → `interp.Run(program, marker)` threw before the dispatch loop's
+         `IsResumeMarker` routing could see it. Fix: the guard admits a marker start PC.
+         Verified fail-when-reverted (`Chunk402Tests`).
+       * **Absorbed-only members had no by-fid resolution — fixed with MEMBER-ENTRY
+         CURSORS.** The planner now assigns one `RegionCursorKind.MemberEntry` cursor per
+         non-root member, appended AFTER all other cursors (existing consumption order
+         untouched); its dispatch-switch slot is the member's entry label (no new block).
+         The persisted entry metadata carries the (memberName, arity, cursor) table
+         (`IlPersistedEntry.RegionMembers`, name-relative), and `LoadBundle` aliases each
+         member with no better resolution to `EncodeResumeMarker(rootFid, entryCursor)` in
+         `CurrentFunctorAddresses` — so a top-level query, a meta-call through a user
+         meta-predicate, or a catch recovery dispatches INTO the owning region method at the
+         member's entry. `ResolveTargetMaybeAutoPromoted` (the unresolved-Call sentinel
+         path) also accepts a marker value — sound for module visibility because the
+         sentinel's fid was chosen by the link layer.
+       **Runtime cost: zero on hot paths.** Static linked calls (CallIl/ExecuteIl rewrites)
+       and intra-region `br`s are untouched; the member alias only enters via the EXISTING
+       address-map lookup on by-fid paths (meta-call / sentinel / recovery — already
+       map-probing), and the marker dispatch is the same Phase-16 machinery as any IL call:
+       O(1) `ilTable[rootFid]` + the region's jump-table switch. The switch grows by one
+       slot per member (a label reuse, no code).
+       The chunk-398 constructed-constant meta-guard is GONE — superseded: every absorbed
+       member is now fid-resolvable, so nothing needs rescuing from the prune. Measured on
+       Blint (`-E main/0 --region-prune --strip-wam`): **599 674 vs 754 863 B unstripped
+       (−155 KB, −21%)**; both `--exe --goal main` runs (Blint.pl, missing file)
+       byte-identical to the no-region build; the by-fid REPL queries (`main(['Blint.pl'])`)
+       that used to `existence_error` now run; `test/0` byte-identical. Embedding 2189 /
+       REGION=1 all-real-pass / Core 432 / ISO 277.
        The history below is kept because the prune-correctness work (issues 2-3) still
-       stands; only the WAM *strip* on top of it was unsound.
+       stands; the chunk-398/400 WAM strip on top of it was unsound until chunk 402.
        Two issues had to be resolved (the path there went through two misdiagnoses):
        1. **NOT an IL-activation problem (an earlier misdiagnosis, chunk 396).** A first
           guess was that the bundle runs Tier-0 WAM (persisted IL gated by

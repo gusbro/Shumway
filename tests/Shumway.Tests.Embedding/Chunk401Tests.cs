@@ -67,23 +67,13 @@ public class Chunk401Tests
         Assert.False(engine.Query("run(5, D), D == neg.").Success);
     }
 
+    // Chunk 402 re-enabled the strip under regions (member-entry cursors make every
+    // absorbed member fid-resolvable INTO its region, so dropping its WAM is sound).
+    // The guard flips: the strip must now actually REMOVE WAM bodies — while the Theory
+    // above proves the meta-called path still runs. If the aliases ever regress, the
+    // Theory catches the runtime break; this catches the strip silently no-op'ing.
     [Fact]
-    public void RegionPrune_StripWam_IsIgnored_AndWarns()
-    {
-        var result = Link(regionPrune: true, stripWam: true);
-        Assert.True(result.Success);
-        // The combination is reported as incompatible (strip skipped under regions).
-        Assert.Contains(result.Diagnostics,
-            d => d.Code == "stripwam_region_incompatible");
-    }
-
-    // The precise, deterministic guard: under --region-prune the strip is a NO-OP, so the
-    // shipped WAM is byte-for-byte what --region-prune (no strip) ships. If a future change
-    // re-applies the strip under regions (the chunks-398/400 mistake), the entry's decoded
-    // predicate set shrinks and this fails — independent of whether any one program happens
-    // to hit the runtime crash.
-    [Fact]
-    public void RegionPrune_RetainsFullWam_StripIsNoOp()
+    public void RegionPrune_StripWam_RemovesWam_AndStaysCallable()
     {
         var withStrip = Link(regionPrune: true, stripWam: true);
         var noStrip = Link(regionPrune: true, stripWam: false);
@@ -95,8 +85,7 @@ public class Chunk401Tests
                 .First(e => e.CompiledBytecode is { Length: > 0 });
             return CompiledModuleCodec.Decode(entry.CompiledBytecode!).Predicates.Count;
         }
-        // Same predicate count → no WAM body was dropped by the strip.
-        Assert.Equal(Preds(noStrip), Preds(withStrip));
-        Assert.True(Preds(withStrip) > 0);
+        Assert.True(Preds(withStrip) < Preds(noStrip),
+            $"strip should drop WAM bodies (with={Preds(withStrip)}, without={Preds(noStrip)})");
     }
 }

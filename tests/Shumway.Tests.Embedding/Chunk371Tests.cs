@@ -32,16 +32,24 @@ public class Chunk371Tests
     private static Dictionary<int, CompiledPredicate> Map(params CompiledPredicate[] ps)
         => ps.ToDictionary(p => p.FunctorId);
 
+    // Chunk 402 adds one MemberEntry cursor per NON-root member, appended AFTER every
+    // other cursor (so the pre-402 consumption order is untouched). These tests assert
+    // the call/alt cursor structure, so they filter the entry cursors out — and a
+    // dedicated test below pins the MemberEntry tail itself.
+    private static List<RegionCursorSite> CallSites(IlRegionPlan plan)
+        => plan.Sites.Where(s => s.Kind != RegionCursorKind.MemberEntry).ToList();
+
     [Fact]
     public void Chain_AssignsIntraReturnCursors()
     {
         // a→b→c, all in region → each non-tail call is an intra-region return.
         var a = Pred(1, 10, (2, false)); var b = Pred(2, 10, (3, false)); var c = Pred(3, 10);
         var plan = IlRegionPlanner.Plan(IlRegionBuilder.Build(a, Map(a, b, c)));
-        Assert.Equal(2, plan.Sites.Count);                 // a→b and b→c
-        Assert.Equal(3, plan.TotalCursors);                // + root entry
-        Assert.All(plan.Sites, s => Assert.Equal(RegionCursorKind.IntraCallReturn, s.Kind));
-        Assert.Equal(new[] { 1, 2 }, plan.Sites.Select(s => s.Cursor).ToArray());
+        var sites = CallSites(plan);
+        Assert.Equal(2, sites.Count);                      // a→b and b→c
+        Assert.Equal(5, plan.TotalCursors);                // + root entry + 2 member entries
+        Assert.All(sites, s => Assert.Equal(RegionCursorKind.IntraCallReturn, s.Kind));
+        Assert.Equal(new[] { 1, 2 }, sites.Select(s => s.Cursor).ToArray());
     }
 
     [Fact]
@@ -50,10 +58,11 @@ public class Chunk371Tests
         // a→b is intra; a→x (x not in map) is cross-region → a trampoline resume.
         var a = Pred(1, 10, (2, false), (99, false)); var b = Pred(2, 10);
         var plan = IlRegionPlanner.Plan(IlRegionBuilder.Build(a, Map(a, b)));
-        Assert.Equal(2, plan.Sites.Count);
-        Assert.Equal(RegionCursorKind.IntraCallReturn, plan.Sites[0].Kind);   // →b
-        Assert.Equal(RegionCursorKind.CrossCallResume, plan.Sites[1].Kind);   // →x
-        Assert.Equal(99, plan.Sites[1].CalleeFid);
+        var sites = CallSites(plan);
+        Assert.Equal(2, sites.Count);
+        Assert.Equal(RegionCursorKind.IntraCallReturn, sites[0].Kind);   // →b
+        Assert.Equal(RegionCursorKind.CrossCallResume, sites[1].Kind);   // →x
+        Assert.Equal(99, sites[1].CalleeFid);
     }
 
     [Fact]
@@ -62,8 +71,8 @@ public class Chunk371Tests
         // a→b is a tail call (Execute) — no cursor (intra: br; cross: tail trampoline).
         var a = Pred(1, 10, (2, true)); var b = Pred(2, 10);
         var plan = IlRegionPlanner.Plan(IlRegionBuilder.Build(a, Map(a, b)));
-        Assert.Empty(plan.Sites);
-        Assert.Equal(1, plan.TotalCursors);   // just the root entry
+        Assert.Empty(CallSites(plan));
+        Assert.Equal(2, plan.TotalCursors);   // root entry + b's member entry
     }
 
     [Fact]
@@ -74,10 +83,27 @@ public class Chunk371Tests
         var b = Pred(2, 10, (4, false)); var c = Pred(3, 10); var d = Pred(4, 10);
         var plan = IlRegionPlanner.Plan(IlRegionBuilder.Build(a, Map(a, b, c, d)));
         // member order is BFS: a(0), b(1), c(2), d(3).
-        Assert.Equal(3, plan.Sites.Count);
-        Assert.Equal((1, 0, 2), (plan.Sites[0].Cursor, plan.Sites[0].MemberIndex, plan.Sites[0].CalleeFid)); // a→b
-        Assert.Equal((2, 0, 3), (plan.Sites[1].Cursor, plan.Sites[1].MemberIndex, plan.Sites[1].CalleeFid)); // a→c
-        Assert.Equal((3, 1, 4), (plan.Sites[2].Cursor, plan.Sites[2].MemberIndex, plan.Sites[2].CalleeFid)); // b→d
+        var sites = CallSites(plan);
+        Assert.Equal(3, sites.Count);
+        Assert.Equal((1, 0, 2), (sites[0].Cursor, sites[0].MemberIndex, sites[0].CalleeFid)); // a→b
+        Assert.Equal((2, 0, 3), (sites[1].Cursor, sites[1].MemberIndex, sites[1].CalleeFid)); // a→c
+        Assert.Equal((3, 1, 4), (sites[2].Cursor, sites[2].MemberIndex, sites[2].CalleeFid)); // b→d
+    }
+
+    [Fact]
+    public void MemberEntryCursors_AppendedLast_OnePerNonRootMember()
+    {
+        // Chunk 402: a→b→c gives 2 call cursors (1, 2), then one MemberEntry per
+        // non-root member (b, c) at cursors 3 and 4 — after everything else, so the
+        // emit's existing consumption order is untouched.
+        var a = Pred(1, 10, (2, false)); var b = Pred(2, 10, (3, false)); var c = Pred(3, 10);
+        var plan = IlRegionPlanner.Plan(IlRegionBuilder.Build(a, Map(a, b, c)));
+        var entries = plan.Sites.Where(s => s.Kind == RegionCursorKind.MemberEntry).ToList();
+        Assert.Equal(2, entries.Count);
+        Assert.Equal(new[] { 3, 4 }, entries.Select(s => s.Cursor).ToArray());
+        Assert.Equal(new[] { 1, 2 }, entries.Select(s => s.MemberIndex).ToArray());
+        // They are the LAST cursors in the plan.
+        Assert.Equal(plan.TotalCursors - 1, entries[^1].Cursor);
     }
 
     // A synthetic multi-clause member (clauseCount overrideable).
@@ -103,7 +129,7 @@ public class Chunk371Tests
         Assert.All(alts, s => Assert.Equal(1, s.MemberIndex));   // all belong to b (member 1)
         // plus the a→b intra return cursor.
         Assert.Single(plan.Sites.Where(s => s.Kind == RegionCursorKind.IntraCallReturn));
-        Assert.Equal(4, plan.TotalCursors);   // root entry + 2 clause-alts + 1 return
+        Assert.Equal(5, plan.TotalCursors);   // root entry + 2 alts + 1 return + b's entry
     }
 
     [Fact]
@@ -123,8 +149,9 @@ public class Chunk371Tests
         var region = IlRegionBuilder.Build(a, Map(a, b));
         Assert.Equal(2, region.MemberCount);                 // b once
         var plan = IlRegionPlanner.Plan(region);
-        Assert.Equal(2, plan.Sites.Count);                   // two return cursors
-        Assert.Equal(new[] { 1, 2 }, plan.Sites.Select(s => s.Cursor).ToArray());
-        Assert.All(plan.Sites, s => Assert.Equal(2, s.CalleeFid));
+        var sites = CallSites(plan);
+        Assert.Equal(2, sites.Count);                        // two return cursors
+        Assert.Equal(new[] { 1, 2 }, sites.Select(s => s.Cursor).ToArray());
+        Assert.All(sites, s => Assert.Equal(2, s.CalleeFid));
     }
 }

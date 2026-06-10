@@ -183,7 +183,13 @@ public sealed class BytecodeInterpreter
     public InterpreterResult Run(ProgramView code, int startPc)
     {
         ArgumentNullException.ThrowIfNull(code.Primary);
-        if (startPc < 0 || startPc >= code.Length)
+        // A resume-marker start PC is legal: a --strip-wam predicate has no WAM
+        // address, so CurrentFunctorAddresses maps its functor to
+        // EncodeResumeMarker(fid, 0) and a caller that resolved it that way (e.g.
+        // RunCatching entering a catch frame's recovery goal) hands us the marker.
+        // The dispatch loop's IsResumeMarker check — which sits BEFORE its own
+        // bounds check for exactly this reason — routes it to the IL delegate.
+        if ((startPc < 0 || startPc >= code.Length) && !Engine.IsResumeMarker(startPc))
             throw new ArgumentOutOfRangeException(nameof(startPc),
                 $"startPc 0x{startPc:X} is outside [0, 0x{code.Length:X}).");
 
@@ -2258,6 +2264,15 @@ public sealed class BytecodeInterpreter
                 && latest >= 0
                 && latest < prog.Length
                 && (Opcode)prog[latest] == Opcode.EnterDynamic)
+                return latest;
+            // Chunk 402: a --strip-wam predicate has no WAM address; its map entry is
+            // a resume MARKER (a standalone delegate's (fid, 0), or a region member's
+            // (rootFid, memberEntryCursor) alias). Accept it — the Call/Execute handler
+            // SetPc's it and the dispatch loop's marker route invokes the IL. Module
+            // visibility is not widened: the sentinel's fid was chosen by the LINK
+            // layer (mangled for a local), so resolving that exact fid's own alias
+            // grants nothing the link didn't already grant. Cold path — sentinels only.
+            if (Engine.IsResumeMarker(latest))
                 return latest;
         }
         throw PrologRuntimeException.UndefinedProcedure(fid);

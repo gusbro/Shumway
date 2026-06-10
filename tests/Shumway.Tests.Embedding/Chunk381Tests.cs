@@ -49,9 +49,10 @@ public class Chunk381Tests
         Assert.All(nodes, s => Assert.Equal(1, s.MemberIndex));                        // all belong to m
         // No clause-alt cursors for an indexed member (it uses IndexNode instead).
         Assert.Empty(plan.Sites.Where(s => s.Kind == RegionCursorKind.ClauseAlt));
-        // root entry + 3 node cursors + the root's a→m intra-return cursor.
+        // root entry + 3 node cursors + the root's a→m intra-return cursor + m's
+        // chunk-402 MemberEntry cursor.
         Assert.Single(plan.Sites.Where(s => s.Kind == RegionCursorKind.IntraCallReturn));
-        Assert.Equal(5, plan.TotalCursors);
+        Assert.Equal(6, plan.TotalCursors);
     }
 
     [Fact]

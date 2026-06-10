@@ -68,26 +68,29 @@ public static class BundleWriter
                     compiledIl = CompileEntryToIl(effective[i], regionPruneSeeds);
                     compiledIlPatches = _lastPatchTableBytes;
                     compiledIlEntries = _lastEntriesTableBytes;
-                    // --strip-wam: drop the redundant WAM bodies of STANDALONE-IL predicates
-                    // (_lastIlFunctorIds) — each has its own registered IL delegate, so a
-                    // runtime call (direct CallIl, OR a by-fid top-level / meta-call resolved
-                    // through CurrentFunctorAddresses + the chunk-316 marker) reaches the IL,
-                    // never the WAM. Safe — WITHOUT region compilation.
-                    //
-                    // It is NOT safe under --region-prune (regionPruneSeeds != null). A region
-                    // method reaches a non-member by a CROSS-REGION trampoline that sets
-                    // Pc = EncodeResumeMarker(callee.fid, 0) and lets the dispatch loop resolve
-                    // the callee. If that callee's WAM was stripped, the resolution lands on a
-                    // resume-marker address that the bytecode interpreter then fetches as a real
-                    // PC → "startPc 0x… is outside [0, …)" (observed on Blint's error path:
-                    // file-not-found → main/0's catch → cross-region call to a stripped root).
-                    // Region-prune already drops the absorbed-only predicates' STANDALONE IL
-                    // (its size win); the WAM stays as the correct Tier-0 fallback. Making the
-                    // strip safe under regions needs the cross-region trampoline to resolve a
-                    // stripped callee via its IL delegate — a separate fix. Until then, skip.
-                    if (stripWam && regionPruneSeeds is null
-                        && compiledBytecode is not null && _lastIlFunctorIds is { Count: > 0 })
-                        compiledBytecode = StripIlBodies(compiledBytecode, _lastIlFunctorIds);
+                    // --strip-wam: drop the redundant WAM bodies. Two sets, both now safe
+                    // (chunk 402):
+                    //  • STANDALONE-IL predicates (_lastIlFunctorIds) — each has its own IL
+                    //    delegate; every by-fid path (CallIl, meta-call via the chunk-316
+                    //    marker alias, and catch-recovery via the chunk-402 Run() marker fix)
+                    //    reaches the IL, never the WAM.
+                    //  • ABSORBED-ONLY region members (_lastPrunableFids) — no standalone
+                    //    form, but each region method publishes its members' entry cursors
+                    //    (RegionCursorKind.MemberEntry → IlPersistedEntry.RegionMembers), and
+                    //    LoadBundle aliases the member's functor to
+                    //    EncodeResumeMarker(rootFid, entryCursor) — so a by-fid call (a
+                    //    top-level query, a meta-call through a user meta-predicate, a catch
+                    //    recovery) dispatches INTO the owning region at the member's entry.
+                    //    This is what the chunk-401 incident (Blint --exe --goal main:
+                    //    existence_error(main/1) / startPc out of range) was missing.
+                    if (stripWam && compiledBytecode is not null)
+                    {
+                        var stripSet = new HashSet<int>();
+                        if (_lastIlFunctorIds is not null) stripSet.UnionWith(_lastIlFunctorIds);
+                        if (_lastPrunableFids is not null) stripSet.UnionWith(_lastPrunableFids);
+                        if (stripSet.Count > 0)
+                            compiledBytecode = StripIlBodies(compiledBytecode, stripSet);
+                    }
                 }
                 effective[i] = new BundleEntry(
                     effective[i].ModuleName,
@@ -299,35 +302,17 @@ public static class BundleWriter
             var pruned = new HashSet<int>();
             foreach (int f in fullReachable)
                 if (!regionReachable.Contains(f)) pruned.Add(f);
-            // §9d soundness guard: a predicate can be META-CALLED by functor id at runtime
-            // (e.g. `ifthen(not(P), …)` builds `not(P)` as a TERM and a user meta-predicate
-            // runs it) — a path the bytecode CallSites graph the region analysis walks does
-            // NOT see (the goal is constructed data, not a Call site). The region only
-            // br-absorbs DIRECT callers; a fid meta-call needs a standalone form. So any
-            // predicate whose head functor appears as a CONSTRUCTED constant anywhere
-            // (put_atom / put_structure / write-mode unify) is kept standalone — matching
-            // the user's model "(los menos) serán WAM si no se pudo armar región ni IL".
-            // Over-approximate (a functor-shaped term used purely as data also keeps its
-            // predicate) but sound: it only ever keeps MORE standalone forms, never strips
-            // a live one. (Blint: show_in_console/0, built inside `ifthen(not(...))`.)
-            int absorbedBeforeGuard = pruned.Count;
-            var metaTargets = new HashSet<(string, int)>();
-            foreach (var (_, p) in predicates)
-                CollectConstructedFunctors(p.Bytecode, metaTargets);
-            pruned.RemoveWhere(f =>
-            {
-                var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(f);
-                var nm = Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "";
-                return metaTargets.Contains((DemangleLocal(nm), arity));
-            });
+            // (The chunk-398 constructed-constant meta-guard that used to rescue meta-call
+            // targets from the prune is GONE — superseded by chunk 402's member-entry
+            // aliases: EVERY absorbed member is fid-resolvable into its region method via
+            // CurrentFunctorAddresses, so a meta-call / top-level / catch-recovery call to
+            // a pruned member dispatches correctly without a standalone form.)
             prunableFids = pruned;
             if (System.Environment.GetEnvironmentVariable("SHUMWAY_PRUNE_DIAG") is not null)
                 System.Console.Error.WriteLine(
                     $"[prune-diag] module={entry.ModuleName} predicates={predicates.Count} "
                     + $"seedFids={seedFids.Count} forcedRoots(regions)={forcedRoots.Count} "
                     + $"regionReachable={regionReachable.Count} fullReachable={fullReachable.Count} "
-                    + $"absorbedOnly(pre-guard)={absorbedBeforeGuard} "
-                    + $"metaRescued={absorbedBeforeGuard - pruned.Count} "
                     + $"pruned(stripped)={pruned.Count}");
             // The Stage-9c promotions must hold during the IL compile below, so the regions
             // Build emits match the membership the prune assumed. Restored after Build.
@@ -362,6 +347,7 @@ public static class BundleWriter
                 Arity = pe.Arity,
                 MethodName = pe.MethodName,
                 IndexGraph = pe.IndexGraph,
+                RegionMembers = pe.RegionMembers,
             });
         }
         _lastEntriesTableBytes = Shumway.Compiler.Il.IlPersistedEntryCodec.Encode(persistedEntryList);
@@ -380,60 +366,6 @@ public static class BundleWriter
 
     [System.ThreadStaticAttribute]
     private static HashSet<int>? _lastIlFunctorIds;
-
-    /// <summary>Collects every predicate indicator <paramref name="code"/> CONSTRUCTS as a
-    /// term constant — atoms via <c>put_atom</c>/<c>put_constant</c>/write-mode
-    /// <c>unify_atom</c> (→ <c>name/0</c>) and compounds via
-    /// <c>put_structure[_r]</c>/<c>unify_structure</c> (→ <c>name/arity</c>). These are the
-    /// predicates potentially reachable by a runtime meta-call-by-fid, which the static
-    /// CallSites graph misses. Head-matching opcodes (<c>get_*</c>) are excluded — they
-    /// consume incoming data, they don't build a callable goal. Names are DEMANGLED (the
-    /// <c>module$</c> prefix stripped) because a constructed goal carries the BARE source
-    /// name while the compiled predicate's head functor is mangled
-    /// (<see cref="ModuleRewrite"/>). Used by the §9d region-prune guard.</summary>
-    private static void CollectConstructedFunctors(byte[] code, HashSet<(string, int)> into)
-    {
-        if (code is null || code.Length == 0) return;
-        foreach (var ins in Shumway.Core.Disassembler.Iterate(code, 0, code.Length))
-        {
-            switch (ins.Op)
-            {
-                case Shumway.Core.Opcode.PutAtom:
-                case Shumway.Core.Opcode.PutConstant:
-                case Shumway.Core.Opcode.PutConstantA1:
-                case Shumway.Core.Opcode.PutConstantA2:
-                case Shumway.Core.Opcode.UnifyConstant:
-                case Shumway.Core.Opcode.UnifyAtom:
-                    // Operand 0 is the atom id (OperandKind.Atom) → name/0.
-                    if (ins.Operands.Length > 0
-                        && Shumway.Core.AtomTable.GetById(ins.Operands[0])?.Name is { } an)
-                        into.Add((DemangleLocal(an), 0));
-                    break;
-                case Shumway.Core.Opcode.PutStructure:
-                case Shumway.Core.Opcode.PutStructureR:
-                case Shumway.Core.Opcode.UnifyStructure:
-                    // Operand 0 is the functor id (OperandKind.Functor) → name/arity.
-                    if (ins.Operands.Length > 0)
-                    {
-                        var (fa, far) = Shumway.Core.FunctorTable.Lookup(ins.Operands[0]);
-                        if (Shumway.Core.AtomTable.GetById(fa)?.Name is { } fn)
-                            into.Add((DemangleLocal(fn), far));
-                    }
-                    break;
-            }
-        }
-    }
-
-    /// <summary>Strips a leading <c>module$</c> prefix (see
-    /// <see cref="ModuleRewrite"/>'s <c>module + "$" + name</c> mangling) so a mangled head
-    /// functor (<c>user$show_in_console</c>) and the bare name a constructed goal carries
-    /// (<c>show_in_console</c>) compare equal. The <c>$</c> must be past position 0, so a
-    /// genuinely <c>$</c>-led system name (<c>$neg_2</c>) is left intact.</summary>
-    private static string DemangleLocal(string name)
-    {
-        int i = name.IndexOf('$');
-        return i > 0 ? name.Substring(i + 1) : name;
-    }
 
     /// <summary>Side-channel staging slot (mirrors <see cref="_lastIlFunctorIds"/>): the
     /// absorbed-only predicate fids computed by <see cref="CompileEntryToIl"/> over the

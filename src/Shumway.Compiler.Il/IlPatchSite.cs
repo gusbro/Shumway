@@ -85,6 +85,16 @@ public sealed class IlPersistedEntry
     /// self-contained shape. Registered at LoadBundle so a stripped indexed
     /// predicate dispatches without a WAM body.</summary>
     public byte[]? IndexGraph { get; init; }
+
+    /// <summary>Chunk 402 — for a REGION method, the non-root members' external-entry
+    /// cursor table: <c>(memberFunctorName, arity, entryCursor)</c> per absorbed member
+    /// (the <c>RegionCursorKind.MemberEntry</c> cursors in the method's dispatch
+    /// switch). Name-relative like <see cref="Name"/>. LoadBundle uses it to alias a
+    /// member with no standalone form (no own IL, WAM stripped) to
+    /// <c>EncodeResumeMarker(thisEntry'sRuntimeFid, entryCursor)</c> in
+    /// <c>CurrentFunctorAddresses</c>, so a by-fid call dispatches INTO the region at
+    /// that member. Null/empty for a non-region method.</summary>
+    public IReadOnlyList<(string Name, int Arity, int Cursor)>? RegionMembers { get; init; }
 }
 
 public static class IlPersistedEntryCodec
@@ -110,6 +120,18 @@ public static class IlPersistedEntryCodec
             byte[] graph = e.IndexGraph ?? System.Array.Empty<byte>();
             bw.Write((uint)graph.Length);
             bw.Write(graph);
+            // Chunk 402: region member-entry cursor table (0 for non-region methods).
+            var members = e.RegionMembers;
+            bw.Write((uint)(members?.Count ?? 0));
+            if (members is not null)
+                foreach (var (mName, mArity, mCursor) in members)
+                {
+                    byte[] mNameBytes = System.Text.Encoding.UTF8.GetBytes(mName);
+                    bw.Write((uint)mNameBytes.Length);
+                    bw.Write(mNameBytes);
+                    bw.Write(mArity);
+                    bw.Write(mCursor);
+                }
         }
         bw.Flush();
         return ms.ToArray();
@@ -137,6 +159,20 @@ public static class IlPersistedEntryCodec
             string methodName = System.Text.Encoding.UTF8.GetString(br.ReadBytes((int)methodLen));
             uint graphLen = br.ReadUInt32();
             byte[]? graph = graphLen == 0 ? null : br.ReadBytes((int)graphLen);
+            uint memberCount = br.ReadUInt32();
+            List<(string, int, int)>? members = null;
+            if (memberCount > 0)
+            {
+                members = new List<(string, int, int)>((int)memberCount);
+                for (uint m = 0; m < memberCount; m++)
+                {
+                    uint mNameLen = br.ReadUInt32();
+                    string mName = System.Text.Encoding.UTF8.GetString(br.ReadBytes((int)mNameLen));
+                    int mArity = br.ReadInt32();
+                    int mCursor = br.ReadInt32();
+                    members.Add((mName, mArity, mCursor));
+                }
+            }
             result.Add(new IlPersistedEntry
             {
                 Slot = slot,
@@ -144,6 +180,7 @@ public static class IlPersistedEntryCodec
                 Arity = arity,
                 MethodName = methodName,
                 IndexGraph = graph,
+                RegionMembers = members,
             });
         }
         return result;

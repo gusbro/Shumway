@@ -760,15 +760,7 @@ public static class ShmoLinker
                 // region mode + forced roots when --region-prune is on.
                 var savedIlDump = Shumway.Compiler.Il.IlPredicateCompiler.IlDumpPath;
                 if (config.RegionPrune)
-                {
                     Shumway.Compiler.Il.IlPredicateCompiler.RegionCompile = true;
-                    if (config.StripWam)
-                        Emit(LinkSeverity.Warning, "stripwam_region_incompatible",
-                            "--strip-wam is ignored under --region-prune: a region's "
-                            + "cross-region call to a stripped predicate would mis-dispatch "
-                            + "(startPc out of range). The absorbed-only IL is still dropped "
-                            + "(region-prune's size win); the WAM stays as the Tier-0 fallback.");
-                }
                 if (config.DumpIlPath is not null)
                 {
                     Shumway.Compiler.Il.IlPredicateCompiler.IlDumpPath = config.DumpIlPath;

@@ -99,6 +99,14 @@ public sealed class IlPredicateCompiler
         System.Environment.GetEnvironmentVariable("SHUMWAY_IL_DUMP");
     private static readonly object IlDumpLock = new();
 
+    /// <summary>Chunk 402 — per-call output of <see cref="EmitPersistedMethod"/>: when
+    /// the method compiled as a REGION, the (memberFunctorName, arity, entryCursor)
+    /// table of its non-root members (the <see cref="RegionCursorKind.MemberEntry"/>
+    /// cursors); null for a non-region method. <see cref="PersistedIlBuilder"/> persists
+    /// it per entry so LoadBundle can alias a stripped member's functor to
+    /// <c>EncodeResumeMarker(rootFid, entryCursor)</c>.</summary>
+    internal List<(string Name, int Arity, int Cursor)>? LastRegionMemberCursors;
+
     /// <summary>Finalize an emit into a delegate, dumping its IL first when
     /// <c>SHUMWAY_IL_DUMP</c> is set. Call instead of <c>emit.CreateDelegate</c> at
     /// every compile site so the dump covers them all.</summary>
@@ -1239,6 +1247,14 @@ public sealed class IlPredicateCompiler
         var indexNodeCursor = new Dictionary<(int, int), int>();
         foreach (var s in plan.Sites)
         {
+            if (s.Kind == RegionCursorKind.MemberEntry)
+            {
+                // Chunk 402: an external-entry cursor — its switch slot IS the member's
+                // entry label (already defined above); no separate block, no site map.
+                cursorLabels[s.Cursor] =
+                    memberEntry[region.Members[s.MemberIndex].FunctorId];
+                continue;
+            }
             cursorLabels[s.Cursor] = emit.DefineLabel($"rcur_{s.Cursor}");
             if (s.Kind == RegionCursorKind.ClauseAlt)
                 clauseAltCursor[(s.MemberIndex, s.ClauseIndex)] = s.Cursor;
@@ -1839,6 +1855,10 @@ public sealed class IlPredicateCompiler
             ? null
             : SelfFromArrayField(delegatesField, slot);
 
+        // Chunk 402: reset the per-method member-cursor output so a non-region method
+        // doesn't inherit the previous region's table.
+        LastRegionMemberCursors = null;
+
         // Prereq-i for the Stage-9 bundle prune: region compilation in the persisted-IL
         // path. A region method bakes its absorbed members' bodies in, so once it ships
         // their standalone forms can be pruned. The region emit uses the chunk-194
@@ -1857,6 +1877,20 @@ public sealed class IlPredicateCompiler
                         "Region predicate needs a delegates field for self-reference.");
                 var plan = IlRegionPlanner.Plan(region,
                     m => TryDescribeIndexed(m, calleeMap, out var ii) ? ii!.Nodes.Count : 0);
+                // Chunk 402: hand the builder the (memberName, arity, entryCursor) table
+                // so the load path can alias a stripped member's functor to
+                // EncodeResumeMarker(rootFid, entryCursor) — name-relative (the runtime
+                // process re-interns the name; functor ids drift cross-process).
+                var memberCursors = new List<(string Name, int Arity, int Cursor)>();
+                foreach (var s in plan.Sites)
+                    if (s.Kind == RegionCursorKind.MemberEntry)
+                    {
+                        var m = region.Members[s.MemberIndex];
+                        var (mAtom, mArity) = FunctorTable.Lookup(m.FunctorId);
+                        memberCursors.Add(
+                            (AtomTable.GetById(mAtom)?.Name ?? "", mArity, s.Cursor));
+                    }
+                LastRegionMemberCursors = memberCursors;
                 if (System.Environment.GetEnvironmentVariable("SHUMWAY_IL_SHAPE") == "1")
                     System.Console.Error.WriteLine(
                         $"[region-persist] root fid={predicate.FunctorId} {FidName(predicate.FunctorId)} "

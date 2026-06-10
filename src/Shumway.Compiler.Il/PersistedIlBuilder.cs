@@ -60,6 +60,12 @@ public static class PersistedIlBuilder
         /// for self-contained shapes. Registered at LoadBundle so a stripped
         /// indexed predicate dispatches without its WAM body.</summary>
         public byte[]? IndexGraph { get; init; }
+
+        /// <summary>Chunk 402 — for a REGION method, the non-root members'
+        /// external-entry cursor table (name, arity, MemberEntry cursor); null
+        /// otherwise. Flows into <see cref="IlPersistedEntry.RegionMembers"/> so
+        /// LoadBundle can alias a stripped member to its region entry.</summary>
+        public IReadOnlyList<(string Name, int Arity, int Cursor)>? RegionMembers { get; init; }
     }
 
     /// <summary>Builds an in-memory .dll holding IL for every
@@ -261,6 +267,9 @@ public static class PersistedIlBuilder
                 MethodName = methodName,
                 DelegateSlot = slot++,
                 IndexGraph = indexGraph,
+                // Chunk 402: a region method reports its members' external-entry
+                // cursors so the load path can alias stripped members into it.
+                RegionMembers = ic.LastRegionMemberCursors,
                 // Strippable when self-contained (not indexed) OR indexed with a
                 // persisted graph. An indexed predicate whose graph build failed
                 // keeps its WAM (the delegate would still read it).

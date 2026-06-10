@@ -2625,6 +2625,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // anyway).
             Dictionary<string, (string Name, int Arity, int Slot)>? methodInfo = null;
             Dictionary<string, byte[]>? graphByMethod = null;
+            Dictionary<string, IReadOnlyList<(string Name, int Arity, int Cursor)>>?
+                regionMembersByMethod = null;
             if (entry.CompiledIlEntries is not null && entry.CompiledIlEntries.Length > 0)
             {
                 methodInfo = new Dictionary<string, (string, int, int)>();
@@ -2634,6 +2636,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     methodInfo[pe.MethodName] = (pe.Name, pe.Arity, pe.Slot);
                     if (pe.IndexGraph is { Length: > 0 } g)
                         (graphByMethod ??= new Dictionary<string, byte[]>())[pe.MethodName] = g;
+                    if (pe.RegionMembers is { Count: > 0 } rm)
+                        (regionMembersByMethod ??= new())[pe.MethodName] = rm;
                 }
             }
             var bound = new List<(int Slot, int FunctorId,
@@ -2670,6 +2674,21 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 if (graphByMethod is not null
                     && graphByMethod.TryGetValue(method.Name, out var graphBytes))
                     _persistedIndexGraphs[functorId] = graphBytes;
+                // Chunk 402: a region method publishes its members' entry cursors.
+                // functorId here is the region ROOT's runtime fid; alias each member's
+                // runtime fid to a marker that dispatches the region delegate at the
+                // member's entry. Consumed (lowest priority) by the query address map.
+                if (regionMembersByMethod is not null
+                    && regionMembersByMethod.TryGetValue(method.Name, out var rMembers))
+                {
+                    foreach (var (mName, mArity, mCursor) in rMembers)
+                    {
+                        int mAid = Shumway.Core.AtomTable.Intern(mName, permanent: true).Id;
+                        int mFid = Shumway.Core.FunctorTable.Intern(mAid, mArity);
+                        _regionMemberAliases[mFid] =
+                            Engine.EncodeResumeMarker(functorId, mCursor);
+                    }
+                }
             }
 
             // Populate the static delegates array (chunk 71 multi-clause
@@ -3081,6 +3100,15 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// fresh engine at setup (the indexed-dispatch cache is per-engine), so a
     /// stripped indexed predicate resolves its entry clause without a WAM body.</summary>
     private readonly Dictionary<int, byte[]> _persistedIndexGraphs = new();
+
+    /// <summary>Chunk 402 — region member-entry aliases, keyed by the member's runtime
+    /// functor id; the value is <c>EncodeResumeMarker(regionRootRuntimeFid, entryCursor)</c>.
+    /// Populated at LoadBundle from each region method's <see cref="Shumway.Compiler.Il.
+    /// IlPersistedEntry.RegionMembers"/> table. Injected into the query address map
+    /// (lowest priority — only for a member with no WAM address and no standalone IL
+    /// delegate) so a by-fid call to a stripped absorbed member dispatches INTO its
+    /// region method at the member's entry cursor.</summary>
+    private readonly Dictionary<int, int> _regionMemberAliases = new();
 
     /// <summary>Chunk 230 — read-only view of
     /// <see cref="_precompiledStaticPredicates"/>. Lets
@@ -5699,6 +5727,27 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             if (!addressMap.ContainsKey(ilFid))
                 addressMap[ilFid] = marker;
             var (atomId, arity) = FunctorTable.Lookup(ilFid);
+            string name = AtomTable.GetById(atomId)?.Name ?? "";
+            int dollar = name.IndexOf('$');
+            if (dollar <= 0) continue;
+            if (!_modules.ContainsKey(name.Substring(0, dollar))) continue;
+            int bareFid = FunctorTable.Intern(
+                AtomTable.Intern(name.Substring(dollar + 1), permanent: true).Id, arity);
+            if (!addressMap.ContainsKey(bareFid))
+                addressMap[bareFid] = marker;
+        }
+
+        // Chunk 402 — region member-entry aliases, LOWEST priority: an absorbed-only
+        // member with no WAM address (stripped) and no standalone IL delegate (pruned)
+        // still resolves by fid — into its region method at the member's entry cursor.
+        // The ContainsKey guards keep every better resolution (a real WAM address, or
+        // a standalone delegate's (fid, 0) marker from the loop above) ahead of it.
+        // Same bare-name aliasing as above: meta-calls name predicates unmangled.
+        foreach (var (memberFid, marker) in _regionMemberAliases)
+        {
+            if (!addressMap.ContainsKey(memberFid))
+                addressMap[memberFid] = marker;
+            var (atomId, arity) = FunctorTable.Lookup(memberFid);
             string name = AtomTable.GetById(atomId)?.Name ?? "";
             int dollar = name.IndexOf('$');
             if (dollar <= 0) continue;
