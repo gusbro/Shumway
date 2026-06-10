@@ -619,7 +619,7 @@ public sealed class BytecodeInterpreter
                 {
                     int n = BytecodeIO.ReadInt32(code, pc + 1);
                     _engine.Allocate(n);
-                    _engine.AdvancePc(5);   // allocate is 5 bytes
+                    RunGetVariableYRun(code, codeArr, codeLen, pc + 5);   // chunk 415
                     break;
                 }
 
@@ -637,7 +637,7 @@ public sealed class BytecodeInterpreter
                     int slot = BytecodeIO.ReadInt32(code, pc + 5);
                     _engine.Allocate(n);
                     _engine.GetLevel(slot);
-                    _engine.AdvancePc(10);
+                    RunGetVariableYRun(code, codeArr, codeLen, pc + 10);   // chunk 415
                     break;
                 }
 
@@ -996,7 +996,10 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.AdvancePc(9);
+                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 9))   // chunk 415
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                    }
                     break;
                 }
 
@@ -1034,7 +1037,11 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.AdvancePc(5);
+                    // Chunk 415 — consume the following unify-family run inline.
+                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                    }
                     break;
                 }
 
@@ -1052,7 +1059,10 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.AdvancePc(1);
+                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 1))   // chunk 415
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                    }
                     break;
 
                 case Opcode.GetListA2:
@@ -1061,7 +1071,10 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.AdvancePc(1);
+                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 1))   // chunk 415
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                    }
                     break;
 
                 // ---------- Unify-mode opcodes (consume cells via _unifyPointer) ----------
@@ -1072,7 +1085,10 @@ public sealed class BytecodeInterpreter
                     if (_engine.ReservedWrite)   // ADR-020
                     {
                         _engine.UnifyVariableX(target);
-                        _engine.AdvancePc(5);
+                        if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))   // chunk 415
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                        }
                         break;
                     }
                     int ptr = _engine.UnifyPointer;
@@ -1091,7 +1107,10 @@ public sealed class BytecodeInterpreter
                             src.Tag == Tag.AttVar ? Cell.Ref(ptr) : src);
                     }
                     _engine.SetUnifyPointer(ptr + 1);
-                    _engine.AdvancePc(5);
+                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))   // chunk 415
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                    }
                     break;
                 }
 
@@ -1129,7 +1148,10 @@ public sealed class BytecodeInterpreter
                     if (_engine.ReservedWrite)   // ADR-020
                     {
                         _engine.UnifyValueX(src);
-                        _engine.AdvancePc(5);
+                        if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))   // chunk 415
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                        }
                         break;
                     }
                     int ptr = _engine.UnifyPointer;
@@ -1147,7 +1169,10 @@ public sealed class BytecodeInterpreter
                         }
                     }
                     _engine.SetUnifyPointer(ptr + 1);
-                    _engine.AdvancePc(5);
+                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))   // chunk 415
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                    }
                     break;
                 }
 
@@ -1187,7 +1212,10 @@ public sealed class BytecodeInterpreter
                     if (_engine.ReservedWrite)   // ADR-020
                     {
                         _engine.UnifyArgCell(value);
-                        _engine.AdvancePc(5);
+                        if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))   // chunk 415
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                        }
                         break;
                     }
                     int ptr = _engine.UnifyPointer;
@@ -1205,7 +1233,10 @@ public sealed class BytecodeInterpreter
                         }
                     }
                     _engine.SetUnifyPointer(ptr + 1);
-                    _engine.AdvancePc(5);
+                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))   // chunk 415
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                    }
                     break;
                 }
 
@@ -1216,7 +1247,10 @@ public sealed class BytecodeInterpreter
                     if (_engine.ReservedWrite)   // ADR-020
                     {
                         _engine.UnifyArgCell(value);
-                        _engine.AdvancePc(5);
+                        if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))   // chunk 415
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                        }
                         break;
                     }
                     int ptr = _engine.UnifyPointer;
@@ -1234,7 +1268,10 @@ public sealed class BytecodeInterpreter
                         }
                     }
                     _engine.SetUnifyPointer(ptr + 1);
-                    _engine.AdvancePc(5);
+                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))   // chunk 415
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                    }
                     break;
                 }
 
@@ -1244,7 +1281,10 @@ public sealed class BytecodeInterpreter
                     if (_engine.ReservedWrite)   // ADR-020
                     {
                         _engine.UnifyArgCell(value);
-                        _engine.AdvancePc(1);
+                        if (!RunUnifySequence(code, codeArr, codeLen, pc + 1))   // chunk 415
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                        }
                         break;
                     }
                     int ptr = _engine.UnifyPointer;
@@ -1262,7 +1302,10 @@ public sealed class BytecodeInterpreter
                         }
                     }
                     _engine.SetUnifyPointer(ptr + 1);
-                    _engine.AdvancePc(1);
+                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 1))   // chunk 415
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                    }
                     break;
                 }
 
@@ -1285,7 +1328,10 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.AdvancePc(1);
+                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 1))   // chunk 415
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                    }
                     break;
                 }
 
@@ -1295,7 +1341,10 @@ public sealed class BytecodeInterpreter
                     if (_engine.ReservedWrite)   // ADR-020
                     {
                         _engine.UnifyVoid(count);
-                        _engine.AdvancePc(5);
+                        if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))   // chunk 415
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                        }
                         break;
                     }
                     int ptr = _engine.UnifyPointer;
@@ -1305,7 +1354,10 @@ public sealed class BytecodeInterpreter
                             _engine.AllocateHeapUnbound();
                     }
                     _engine.SetUnifyPointer(ptr + count);
-                    _engine.AdvancePc(5);
+                    if (!RunUnifySequence(code, codeArr, codeLen, pc + 5))   // chunk 415
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                    }
                     break;
                 }
 
@@ -1325,7 +1377,7 @@ public sealed class BytecodeInterpreter
                     int dest = BytecodeIO.ReadInt32(code, pc + 1);
                     int arg = BytecodeIO.ReadInt32(code, pc + 5);
                     _engine.SetY(dest, _engine.GetRegister(arg));
-                    _engine.AdvancePc(9);
+                    RunGetVariableYRun(code, codeArr, codeLen, pc + 9);   // chunk 415
                     break;
                 }
 
@@ -1434,7 +1486,7 @@ public sealed class BytecodeInterpreter
                     int src = BytecodeIO.ReadInt32(code, pc + 1);
                     int arg = BytecodeIO.ReadInt32(code, pc + 5);
                     _engine.SetRegister(arg, _engine.GetY(src));
-                    _engine.AdvancePc(9);
+                    RunPutValueYRun(code, codeArr, codeLen, pc + 9);   // chunk 415
                     break;
                 }
 
@@ -2389,6 +2441,217 @@ public sealed class BytecodeInterpreter
         }
         _engine.SetPc(afterPc + 17);
         return true;
+    }
+
+    /// <summary>Chunk 415 — unify-run fusion. After a unify-family opcode
+    /// succeeds, the head/argument-matching code is almost always a RUN of more
+    /// unify-family opcodes (Blint pairs: unify_list→unify_atom 945K,
+    /// unify_atom→unify_list 782K, get_list→unify_value_x 666K, …): consume the
+    /// whole run here in a tight loop with a small switch instead of going back
+    /// around the main dispatch loop (marker check + bounds check + split-view
+    /// branch + the big switch) once per opcode. Bodies are EXACT MIRRORS of the
+    /// main-loop cases — keep them in sync when touching either (the chunk-221
+    /// precedent). Profiler counts stay truthful: each opcode consumed here is
+    /// recorded. On failure returns false WITHOUT touching Pc — the caller
+    /// backtracks, which restores Pc from the choice point, exactly as the
+    /// individual cases behave. On success Pc is written ONCE, at run exit.</summary>
+    private bool RunUnifySequence(Shumway.Core.ProgramView code, byte[] codeArr, int codeLen, int pc)
+    {
+        while (pc < codeLen)
+        {
+            byte op = code.Overflow is null ? codeArr[pc] : code[pc];
+            switch ((Opcode)op)
+            {
+                case Opcode.UnifyVariableX:
+                {
+                    Shumway.Core.Profiler.Opcode(op);
+                    int target = BytecodeIO.ReadInt32(code, pc + 1);
+                    if (_engine.ReservedWrite)   // ADR-020
+                    {
+                        _engine.UnifyVariableX(target);
+                        pc += 5;
+                        continue;
+                    }
+                    int ptr = _engine.UnifyPointer;
+                    if (_engine.WriteMode)
+                    {
+                        int idx = _engine.AllocateHeapUnbound();
+                        _engine.SetRegister(target, Cell.Ref(idx));
+                    }
+                    else
+                    {
+                        Cell src = _engine.GetHeap(ptr);
+                        _engine.SetRegister(target,
+                            src.Tag == Tag.AttVar ? Cell.Ref(ptr) : src);
+                    }
+                    _engine.SetUnifyPointer(ptr + 1);
+                    pc += 5;
+                    continue;
+                }
+                case Opcode.UnifyValueX:
+                {
+                    Shumway.Core.Profiler.Opcode(op);
+                    int src = BytecodeIO.ReadInt32(code, pc + 1);
+                    if (_engine.ReservedWrite)   // ADR-020
+                    {
+                        _engine.UnifyValueX(src);
+                        pc += 5;
+                        continue;
+                    }
+                    int ptr = _engine.UnifyPointer;
+                    if (_engine.WriteMode)
+                    {
+                        int idx = _engine.AllocateHeap(1);
+                        _engine.SetHeap(idx, _engine.GetRegister(src));
+                    }
+                    else if (!_engine.UnifyRegisterWithHeapAt(src, ptr))
+                    {
+                        return false;
+                    }
+                    _engine.SetUnifyPointer(ptr + 1);
+                    pc += 5;
+                    continue;
+                }
+                case Opcode.UnifyConstant:
+                case Opcode.UnifyAtom:
+                {
+                    Shumway.Core.Profiler.Opcode(op);
+                    Cell value = Cell.Atom(BytecodeIO.ReadInt32(code, pc + 1));
+                    if (_engine.ReservedWrite)   // ADR-020
+                    {
+                        _engine.UnifyArgCell(value);
+                        pc += 5;
+                        continue;
+                    }
+                    int ptr = _engine.UnifyPointer;
+                    if (_engine.WriteMode)
+                    {
+                        int idx = _engine.AllocateHeap(1);
+                        _engine.SetHeap(idx, value);
+                    }
+                    else if (!_engine.UnifyHeapWithCell(ptr, value))
+                    {
+                        return false;
+                    }
+                    _engine.SetUnifyPointer(ptr + 1);
+                    pc += 5;
+                    continue;
+                }
+                case Opcode.UnifyInteger:
+                {
+                    Shumway.Core.Profiler.Opcode(op);
+                    Cell value = Cell.Int(BytecodeIO.ReadInt32(code, pc + 1));
+                    if (_engine.ReservedWrite)   // ADR-020
+                    {
+                        _engine.UnifyArgCell(value);
+                        pc += 5;
+                        continue;
+                    }
+                    int ptr = _engine.UnifyPointer;
+                    if (_engine.WriteMode)
+                    {
+                        int idx = _engine.AllocateHeap(1);
+                        _engine.SetHeap(idx, value);
+                    }
+                    else if (!_engine.UnifyHeapWithCell(ptr, value))
+                    {
+                        return false;
+                    }
+                    _engine.SetUnifyPointer(ptr + 1);
+                    pc += 5;
+                    continue;
+                }
+                case Opcode.UnifyNil:
+                {
+                    Shumway.Core.Profiler.Opcode(op);
+                    Cell value = Cell.Atom(AtomTable.EmptyListId);
+                    if (_engine.ReservedWrite)   // ADR-020
+                    {
+                        _engine.UnifyArgCell(value);
+                        pc += 1;
+                        continue;
+                    }
+                    int ptr = _engine.UnifyPointer;
+                    if (_engine.WriteMode)
+                    {
+                        int idx = _engine.AllocateHeap(1);
+                        _engine.SetHeap(idx, value);
+                    }
+                    else if (!_engine.UnifyHeapWithCell(ptr, value))
+                    {
+                        return false;
+                    }
+                    _engine.SetUnifyPointer(ptr + 1);
+                    pc += 1;
+                    continue;
+                }
+                case Opcode.UnifyList:
+                {
+                    Shumway.Core.Profiler.Opcode(op);
+                    if (!_engine.UnifyList()) return false;
+                    pc += 1;
+                    continue;
+                }
+                case Opcode.UnifyVoid:
+                {
+                    Shumway.Core.Profiler.Opcode(op);
+                    int count = BytecodeIO.ReadInt32(code, pc + 1);
+                    if (_engine.ReservedWrite)   // ADR-020
+                    {
+                        _engine.UnifyVoid(count);
+                        pc += 5;
+                        continue;
+                    }
+                    int ptr = _engine.UnifyPointer;
+                    if (_engine.WriteMode)
+                    {
+                        for (int i = 0; i < count; i++)
+                            _engine.AllocateHeapUnbound();
+                    }
+                    _engine.SetUnifyPointer(ptr + count);
+                    pc += 5;
+                    continue;
+                }
+                default:
+                    _engine.SetPc(pc);
+                    return true;
+            }
+        }
+        _engine.SetPc(pc);
+        return true;
+    }
+
+    /// <summary>Chunk 415 — clause-prologue / call-setup move runs. Consecutive
+    /// <c>get_variable_y</c> (save args to permanents at clause entry: Blint
+    /// pairs 862K+578K+294K) and consecutive <c>put_value_y</c> (load call args
+    /// from permanents: 677K) never fail — fuse each run into one dispatch.
+    /// Pc is written once at exit.</summary>
+    private void RunGetVariableYRun(Shumway.Core.ProgramView code, byte[] codeArr, int codeLen, int pc)
+    {
+        while (pc + 9 <= codeLen
+               && (code.Overflow is null ? codeArr[pc] : code[pc]) == (byte)Opcode.GetVariableY)
+        {
+            Shumway.Core.Profiler.Opcode((byte)Opcode.GetVariableY);
+            int slot = BytecodeIO.ReadInt32(code, pc + 1);
+            int arg = BytecodeIO.ReadInt32(code, pc + 5);
+            _engine.SetY(slot, _engine.GetRegister(arg));
+            pc += 9;
+        }
+        _engine.SetPc(pc);
+    }
+
+    private void RunPutValueYRun(Shumway.Core.ProgramView code, byte[] codeArr, int codeLen, int pc)
+    {
+        while (pc + 9 <= codeLen
+               && (code.Overflow is null ? codeArr[pc] : code[pc]) == (byte)Opcode.PutValueY)
+        {
+            Shumway.Core.Profiler.Opcode((byte)Opcode.PutValueY);
+            int slot = BytecodeIO.ReadInt32(code, pc + 1);
+            int arg = BytecodeIO.ReadInt32(code, pc + 5);
+            _engine.SetRegister(arg, _engine.GetY(slot));
+            pc += 9;
+        }
+        _engine.SetPc(pc);
     }
 
     private bool TryBacktrack()
