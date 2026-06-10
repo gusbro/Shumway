@@ -78,6 +78,8 @@ internal static class Program
             StripWam = opts.StripWam,
             RegionPruneReport = opts.RegionPruneReport,
             RegionPrune = opts.RegionPrune,
+            DumpWamPath = opts.DumpWamPath,
+            DumpIlPath = opts.DumpIlPath,
             ForeignAssemblies = opts.ForeignDlls,
         };
 
@@ -195,6 +197,8 @@ internal static class Program
         public bool StripWam { get; set; }
         public bool RegionPruneReport { get; set; }
         public bool RegionPrune { get; set; }
+        public string? DumpWamPath { get; set; }
+        public string? DumpIlPath { get; set; }
         public string MapPath { get; set; } = "";
         public string ExePath { get; set; } = "";
         public string Goal { get; set; } = "";
@@ -266,6 +270,17 @@ internal static class Program
                 case "--region-prune":
                     opts.RegionPrune = true;
                     opts.IncludeCompiledIl = true;   // the prune only applies to IL bundles
+                    break;
+
+                case "--dump-wam":
+                    if (++i >= args.Length) { ReportMissing(arg); return null; }
+                    opts.DumpWamPath = args[i];
+                    break;
+
+                case "--dump-il":
+                    if (++i >= args.Length) { ReportMissing(arg); return null; }
+                    opts.DumpIlPath = args[i];
+                    opts.IncludeCompiledIl = true;   // nothing to dump unless IL is built
                     break;
 
                 case "--map":
@@ -428,6 +443,14 @@ internal static class Program
             + "                           each absorbed-only predicate (reached only as a\n"
             + "                           region br-member). Removes the all-as-roots\n"
             + "                           duplication; each predicate keeps its Tier-0 WAM.\n"
+            + "      --dump-wam <path>    Append a disassembly of the WAM the bundle SHIPS\n"
+            + "                           (each entry's final bytecode, after --strip-wam /\n"
+            + "                           region prune) to <path>, for analysis. The ground\n"
+            + "                           truth of the linked Tier-0 code. Appends.\n"
+            + "      --dump-il <path>     Append the Tier-1 IL the bundle SHIPS to <path>\n"
+            + "                           (implies --with-compiled-il). Reflects exactly what\n"
+            + "                           runs cross-process / as --exe: post-prune, region\n"
+            + "                           mode + forced roots under --region-prune. Appends.\n"
             + "  -e, --exe <path>         Emit a single-file native executable for the\n"
             + "                           current platform. The exe loads the bundle and\n"
             + "                           runs --goal at startup, then exits 0 (success)\n"

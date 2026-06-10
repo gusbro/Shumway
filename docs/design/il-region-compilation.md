@@ -563,14 +563,27 @@ WAM state.
        bytecode, and which are never region-compiled / never prunable. 5 Chunk390Tests.
        A REPORT only; the applied prune still needs region-mode bundle compilation
        (prereq i) + dropping each prunable predicate's standalone WAM/IL entry (9b-3+).
-10. **Linker IL / WAM dump options (PLANNED) — `shumway-link --dump-il` /
-    `--dump-wam`.** The link step is the right place to dump the code that actually
-    ships: after Stage 9 pruning, the linker holds the REAL IL that the bundle needs
-    (the surviving roots/regions), not the per-predicate superset `shumway-compile`
-    produces. Mirror the chunk-386 compile-side flags (same `IlPredicateCompiler.
-    IlDumpPath` / `.RegionCompile` hooks + `Core.Disassembler` for WAM), but drive them
-    over the linker's final reachable set so the dump is the ground truth of what runs
-    cross-process / as `--exe`.
+10. **Linker IL / WAM dump options — DONE (chunk 399) — `shumway-link --dump-il <f>` /
+    `--dump-wam <f>`.** The link step dumps the code that actually SHIPS: after Stage 9
+    pruning, the linker holds the REAL IL the bundle needs (the surviving roots/regions),
+    not the per-predicate superset `shumway-compile` produces.
+    - **`--dump-il`** routes the PERSISTED-IL emit's per-method dump to the file. A new
+      `IlPredicateCompiler.FinishPersistedEmit(emit, header)` (the `EmitPersistedMethod`
+      counterpart of the chunk-383 `FinishEmit`) dumps `emit.Instructions()` to
+      `IlDumpPath` before `CreateMethod`, at both create sites (region + per-predicate);
+      the linker sets `IlDumpPath` around the `BundleWriter.ToBytes` build (save/restore).
+      So the dump reflects EXACTLY what runs — post-prune, region mode + forced roots under
+      `--region-prune`. Implies `--with-compiled-il` (no IL to dump otherwise). On Blint
+      `--region-prune --strip-wam`: **108 region-method dumps** (each headed
+      `persist region root fid=… members=N [member list]`) + 248 standalone.
+    - **`--dump-wam`** decodes each bundle entry's FINAL `CompiledBytecode` (after
+      `--strip-wam` / region prune) via `CompiledModuleCodec` + `Core.Disassembler`
+      (`DumpBundleWam`). Ground truth of the Tier-0 code that remains: plain `--dump-wam`
+      → all 256 Blint predicates; `--region-prune --dump-wam` → 256 (WAM kept as fallback);
+      `--region-prune --strip-wam --dump-wam` → **0 predicates** (correct — the whole
+      user-module WAM is stripped, the bundle runs on IL).
+    Both APPEND (delete between runs). Chunk 398's report-gating change (step-6c now
+    `--prune-report`-only) updated `Chunk393Tests` to opt into the report. Embedding 2181.
 11. **Inspect region IL for optimisations (GOAL — gated on Stages 9-10).** Once the
     linker prunes to the real region set and can dump it, read the actual region IL
     (the dispatch `switch`, per-member blocks, inline index resolve, CP pushes,

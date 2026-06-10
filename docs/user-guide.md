@@ -345,6 +345,12 @@ shumway-link -o app.shum \
 | `--allow-undefined` | Downgrade missing-predicate errors to warnings; still produce the bundle. The engine raises `existence_error/2` at call time if the missing predicate is actually invoked. |
 | `-s, --strip` | Remove the embedded Prolog source from every bundle entry. Bytecode preserved. Useful for size analysis / IP-protection. **Known limitation**: stripped bundles currently fail to dispatch their predicates (the engine still re-consults source on load); a `stripped_bundle` warning is emitted. |
 | `-m, --map <path>` | Write a C-toolchain-style audit file describing what landed in the bundle: per-module sizes, exported / dynamic predicate lists, dropped modules, totals. |
+| `-i, --with-compiled-il` | Persist a Tier-1 IL assembly inside the bundle so it runs as compiled IL (no load-time JIT of the WAM). |
+| `--region-prune` | Region-compile the bundle (implies `--with-compiled-il`): a predicate and its local closure share one IL method, and each absorbed-only predicate drops its standalone IL. Removes the all-as-roots duplication. |
+| `--strip-wam` | Implies `--with-compiled-il`. Drop the redundant WAM bodies of the predicates the bundle runs as IL (standalone-IL + region-absorbed). The bundle then ships IL, not WAM. JIT-only (the IL must load — not for Native AOT). |
+| `--prune-report` | Stage-9 dead-region dry-run: report how many standalone forms would be prunable. Info diagnostic; no change to the bundle. |
+| `--dump-wam <path>` | Append a disassembly of the WAM the bundle **ships** (each entry's final bytecode, after `--strip-wam` / region prune) to `<path>`. See [below](#dumping-the-shipped-il--wam-from-the-linker). |
+| `--dump-il <path>` | Append the Tier-1 IL the bundle **ships** to `<path>` (implies `--with-compiled-il`). See [below](#dumping-the-shipped-il--wam-from-the-linker). |
 | `-e, --exe <path>` | Emit a single-file native executable. See [step 3a](#step-3a--producing-a-runnable-executable). |
 | `-g, --goal Term` | The goal the `--exe` runs at startup. Trailing `.` optional. |
 | `--self-contained` | Used with `--exe`: bake the .NET runtime into the binary (~70 MB exe, runs on machines without .NET). Default is framework-dependent (~5-10 MB exe, requires .NET 10 runtime on the target). |
@@ -369,6 +375,34 @@ The linker performs three checks:
    the bundle with an `unreachable_module` warning.
 
 Exit codes: `0` ok, `1` link error, `3` usage error.
+
+#### Dumping the shipped IL / WAM from the linker
+
+`shumway-compile --dump-il` / `--dump-wam` (above) dump a single module as a
+**superset** — every predicate compiled as a region root. The linker's
+equivalents dump the **ground truth of what the bundle actually ships**, after
+reachability + the Stage-9 region prune:
+
+```bash
+shumway-link -o app.shum --entry main/0 \
+  --region-prune --strip-wam \
+  --dump-il app.il.txt --dump-wam app.wam.txt \
+  lib.shmo app.shmo
+```
+
+- **`--dump-il <file>`** appends the persisted Tier-1 IL the bundle ships —
+  post-prune, region mode + forced roots under `--region-prune`. Each method
+  is headed `;;; ===== persist region root fid=… members=N [member list] =====`
+  (a region) or `;;; ===== persist fid=… clauses=N =====` (standalone). Implies
+  `--with-compiled-il` (there is no IL to dump otherwise). This is the IL that
+  runs cross-process and as `--exe`.
+- **`--dump-wam <file>`** appends the WAM of each bundle entry's **final**
+  bytecode, *after* `--strip-wam` / region prune. With `--strip-wam` the
+  user-module WAM is gone (the bundle runs on IL) so the dump is empty — that
+  emptiness is the confirmation the strip was complete. Without `--strip-wam`
+  the absorbed predicates keep their WAM as a Tier-0 fallback and appear here.
+
+Both **append** — delete the files between runs.
 
 ### Step 3 — Load the bundle
 

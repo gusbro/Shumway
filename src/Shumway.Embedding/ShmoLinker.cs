@@ -112,6 +112,21 @@ public sealed class LinkConfig
     /// Off by default.</summary>
     public bool RegionPrune { get; init; }
 
+    /// <summary>Stage 10 — when non-null, append a human-readable disassembly of the WAM
+    /// each bundle entry SHIPS (its final <c>CompiledBytecode</c>, AFTER any
+    /// <see cref="StripWam"/> / region prune) to this path. The ground truth of the Tier-0
+    /// code in the linked bundle, post-link — narrower than <c>shumway-compile --dump-wam</c>
+    /// (which dumps a single .shmo before linking). Appends; delete between runs.</summary>
+    public string? DumpWamPath { get; init; }
+
+    /// <summary>Stage 10 — when non-null, append the Tier-1 IL the bundle SHIPS to this
+    /// path. Implies <see cref="IncludeCompiledIl"/> (there is no IL to dump otherwise); the
+    /// dump fires from inside the persisted-IL build, so it reflects exactly what runs —
+    /// post-prune, region mode + forced roots when <see cref="RegionPrune"/> is set — not the
+    /// all-as-roots superset <c>shumway-compile --dump-il</c> produces. Appends; delete
+    /// between runs.</summary>
+    public string? DumpIlPath { get; init; }
+
     /// <summary>When non-null, the linker writes info diagnostics
     /// describing its progress (modules visited, predicates reached,
     /// etc.) to this writer. Useful for CLI <c>--verbose</c> mode.</summary>
@@ -727,7 +742,9 @@ public static class ShmoLinker
             // BundleWriter still validates via a sub-engine ConsultString;
             // the linker has already done the heavy lifting so a failure
             // here is a real bug, not an operator-ordering quirk.
-            if (config.IncludeCompiledIl)
+            // Stage 10: --dump-il has no IL to dump unless the bundle builds it, so it
+            // implies --with-compiled-il (the dump fires from inside the persisted build).
+            if (config.IncludeCompiledIl || config.DumpIlPath is not null)
             {
                 // Stage 9b-3: --region-prune region-compiles the bundle (so absorbed
                 // members live inside region methods) and skips emitting a standalone IL
@@ -738,8 +755,19 @@ public static class ShmoLinker
                 // build matches only its own predicates.
                 bool savedRegionCompile = Shumway.Compiler.Il.IlPredicateCompiler.RegionCompile;
                 var savedForcedRoots = Shumway.Compiler.Il.IlPredicateCompiler.RegionForcedRootFids;
+                // Stage 10: route the persisted-IL emit's per-method dump (FinishPersistedEmit)
+                // to --dump-il, so the dump is EXACTLY the IL this bundle ships — post-prune,
+                // region mode + forced roots when --region-prune is on.
+                var savedIlDump = Shumway.Compiler.Il.IlPredicateCompiler.IlDumpPath;
                 if (config.RegionPrune)
                     Shumway.Compiler.Il.IlPredicateCompiler.RegionCompile = true;
+                if (config.DumpIlPath is not null)
+                {
+                    Shumway.Compiler.Il.IlPredicateCompiler.IlDumpPath = config.DumpIlPath;
+                    File.AppendAllText(config.DumpIlPath,
+                        $";;; ===== shumway-link IL dump (regionPrune={config.RegionPrune}, "
+                        + $"stripWam={config.StripWam}) =====\n");
+                }
                 try
                 {
                     // Stage 9d: the prune (absorbed-only set + Stage-9c root selection) is
@@ -760,7 +788,11 @@ public static class ShmoLinker
                 {
                     Shumway.Compiler.Il.IlPredicateCompiler.RegionCompile = savedRegionCompile;
                     Shumway.Compiler.Il.IlPredicateCompiler.RegionForcedRootFids = savedForcedRoots;
+                    Shumway.Compiler.Il.IlPredicateCompiler.IlDumpPath = savedIlDump;
                 }
+                if (config.DumpIlPath is not null)
+                    Emit(LinkSeverity.Info, "dump_il",
+                        $"IL dump -> {config.DumpIlPath} (the shipped Tier-1 IL).");
                 // Re-read the bytes so the in-memory Bundle reflects
                 // the persisted-IL slots the writer populated.
                 bundle = BundleReader.FromBytes(bytes);
@@ -774,6 +806,16 @@ public static class ShmoLinker
                 // fail for reasons (operator ordering, prelude
                 // assumptions) that the linker shouldn't second-guess.
                 bytes = SerialiseBundle(bundle);
+            }
+
+            // Stage 10: dump the WAM each entry actually SHIPS — its final
+            // CompiledBytecode, AFTER any --strip-wam / region prune (the IL branch
+            // re-read `bundle` from the post-strip bytes above).
+            if (config.DumpWamPath is not null)
+            {
+                DumpBundleWam(bundle, config.DumpWamPath);
+                Emit(LinkSeverity.Info, "dump_wam",
+                    $"WAM dump -> {config.DumpWamPath} (the shipped Tier-0 bytecode).");
             }
         }
 
@@ -849,6 +891,39 @@ public static class ShmoLinker
                 fids.Add(bare);
         }
         return fids;
+    }
+
+    /// <summary>Stage 10: append a human-readable WAM disassembly of every predicate in
+    /// every bundle entry's final <c>CompiledBytecode</c> (the bytecode the bundle ships)
+    /// to <paramref name="path"/>, with per-entry / per-predicate headers. Stripped
+    /// predicates (their bodies dropped by <c>--strip-wam</c>) simply don't appear — so the
+    /// dump is the ground truth of the Tier-0 code that remains.</summary>
+    private static void DumpBundleWam(Bundle bundle, string path)
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var entry in bundle.Entries)
+        {
+            byte[]? bc = entry.CompiledBytecode;
+            if (bc is null || bc.Length == 0) continue;
+            Shumway.Compiler.Wam.CompiledModule module;
+            try { module = CompiledModuleCodec.Decode(bc); }
+            catch (Exception ex)
+            {
+                sb.Append($";;; (module {entry.ModuleName}: WAM decode failed: {ex.Message})\n");
+                continue;
+            }
+            sb.Append($";;; ===== WAM dump: module {entry.ModuleName} "
+                + $"({module.Predicates.Count} predicates) =====\n");
+            foreach (var p in module.Predicates)
+            {
+                var (atomId, arity) = FunctorTable.Lookup(p.FunctorId);
+                string name = AtomTable.GetById(atomId)?.Name ?? "?";
+                sb.Append($"\n;;; {name}/{arity} clauses={p.ClauseCount} bytes={p.Bytecode.Length}\n");
+                foreach (var ins in Shumway.Core.Disassembler.Iterate(p.Bytecode, 0, p.Bytecode.Length))
+                    sb.Append($"    {ins}\n");
+            }
+        }
+        File.AppendAllText(path, sb.ToString());
     }
 
     /// <summary>Async wrapper. Offloads the synchronous

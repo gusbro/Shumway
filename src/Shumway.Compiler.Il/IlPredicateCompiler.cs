@@ -116,6 +116,26 @@ public sealed class IlPredicateCompiler
         return emit.CreateDelegate(Optimizations);
     }
 
+    /// <summary>Persisted-path counterpart of <see cref="FinishEmit"/>: dumps the IL to
+    /// <see cref="IlDumpPath"/> (when set) then finalizes into a <c>MethodBuilder</c>.
+    /// Used at the <see cref="EmitPersistedMethod"/> create sites so a LINKER dump
+    /// (<c>shumway-link --dump-il</c>) shows the EXACT IL the bundle ships — post-prune,
+    /// region mode, forced roots — rather than the runtime all-as-roots superset.</summary>
+    private System.Reflection.Emit.MethodBuilder FinishPersistedEmit(
+        Sigil.Emit<PredicateDelegate> emit, string header)
+    {
+        if (IlDumpPath is not null)
+        {
+            string text;
+            try { text = emit.Instructions(); }
+            catch (System.Exception ex) { text = $"(Instructions() failed: {ex.Message})"; }
+            lock (IlDumpLock)
+                System.IO.File.AppendAllText(IlDumpPath,
+                    $"\n;;; ===== {header} =====\n{text}\n");
+        }
+        return emit.CreateMethod(Optimizations);
+    }
+
     private static readonly MethodInfo CellAtomMethod =
         typeof(Cell).GetMethod(nameof(Cell.Atom), new[] { typeof(int) })!;
     private static readonly MethodInfo CellIntMethod =
@@ -1817,7 +1837,10 @@ public sealed class IlPredicateCompiler
                         $"[region-persist] root fid={predicate.FunctorId} {FidName(predicate.FunctorId)} "
                         + $"members={region.MemberCount}");
                 EmitRegionInto(emit, emitSelf, region, plan, calleeMap);
-                return emit.CreateMethod(Optimizations);
+                return FinishPersistedEmit(emit,
+                    $"persist region root fid={predicate.FunctorId} {FidName(predicate.FunctorId)}"
+                    + $"/{predicate.Arity} members={region.MemberCount} "
+                    + $"[{string.Join(", ", region.Members.Select(m => FidName(m.FunctorId) + "/" + m.Arity))}]");
             }
         }
 
@@ -1879,7 +1902,9 @@ public sealed class IlPredicateCompiler
                 + "is outside the IL subset.");
         }
 
-        return emit.CreateMethod(Optimizations);
+        return FinishPersistedEmit(emit,
+            $"persist fid={predicate.FunctorId} {FidName(predicate.FunctorId)}"
+            + $"/{predicate.Arity} clauses={predicate.ClauseCount}");
     }
 
     private PredicateDelegate CompileSingleClauseWithMetaCpUnlocked(

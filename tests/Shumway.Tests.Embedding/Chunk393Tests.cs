@@ -35,6 +35,11 @@ public class Chunk393Tests
             EntryPoints = new[] { new PredicateRef("run", 1) },
             RegionPrune = true,   // implies IncludeCompiledIl
             IncludeCompiledIl = true,
+            // Chunk 398: the per-module "stage9_prunable" dry-run report is now opt-in
+            // (the APPLIED prune moved into BundleWriter.CompileEntryToIl over the exact
+            // calleeMap). Prune_FindsAbsorbedOnlyPredicates asserts on that report, so it
+            // requests it; harmless for PrunedBundle_LoadsAndRunsCorrectly.
+            RegionPruneReport = true,
         });
     }
 
