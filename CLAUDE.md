@@ -957,6 +957,7 @@ When proposing changes:
 | Arithmetic instruction set (RPN eval stack) | ADR-018 (proposed) |
 | Inline nested compound build — last-arg | ADR-019 |
 | Inline nested compound build — non-last (reserve-upfront + write-pointer stack) | ADR-020 |
+| Register allocator — REJECTED with survey data (Class-B ceiling 1.5% on real code, unsound) | ADR-021 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | Builtins catalog | docs/design/builtins-catalog.md |

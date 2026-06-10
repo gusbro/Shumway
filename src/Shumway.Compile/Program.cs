@@ -79,6 +79,12 @@ internal static class Program
         Console.Error.WriteLine(
             $"shumway-compile: compiling {input} -> {output} "
             + $"[{buildMode.ToString().ToLowerInvariant()}]");
+        // Chunk 405 — register-allocator design survey. Classifies every permanent
+        // allocated while compiling this file (Class B = live only across inline
+        // goals; Class A = crosses a real call, irreducible). Diagnostic.
+        bool ySurvey = Environment.GetEnvironmentVariable("SHUMWAY_Y_SURVEY") == "1";
+        if (ySurvey)
+            Shumway.Compiler.Wam.ClauseCompiler.YSurvey = new();
         try
         {
             var result = ShmoCompiler.TryCompileFile(input, buildMode, maxErrors: 100);
@@ -92,6 +98,21 @@ internal static class Program
             }
             var obj = result.Object!;
             ShmoWriter.WriteToFile(obj, output);
+            if (ySurvey && Shumway.Compiler.Wam.ClauseCompiler.YSurvey is { } survey)
+            {
+                int totalPerms = survey.Values.Sum(v => v.PermTotal);
+                int totalB = survey.Values.Sum(v => v.ClassB);
+                Console.Error.WriteLine(
+                    $"[y-survey] {input}: permanents={totalPerms} classB(inline-only)={totalB} "
+                    + $"({(totalPerms == 0 ? 0 : 100.0 * totalB / totalPerms):F1}%)");
+                foreach (var (pred, v) in survey
+                    .Where(kv => kv.Value.ClassB > 0)
+                    .OrderByDescending(kv => kv.Value.ClassB)
+                    .Take(30))
+                    Console.Error.WriteLine(
+                        $"[y-survey]   {pred,-40} perms={v.PermTotal,3} classB={v.ClassB,3}");
+                Shumway.Compiler.Wam.ClauseCompiler.YSurvey = null;
+            }
             if (!string.IsNullOrEmpty(opts.DumpWamPath) || !string.IsNullOrEmpty(opts.DumpIlPath))
                 DumpArtifacts(obj, input, opts);
             if (opts.PruneReport)

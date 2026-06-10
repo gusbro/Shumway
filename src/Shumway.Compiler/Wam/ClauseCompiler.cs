@@ -111,6 +111,26 @@ public sealed class ClauseCompiler
         // appears in. Chunk 0 = head + first goal; chunk i >= 1 = goal i.
         var permanents = ClassifyPermanents(headArgs, goals);
 
+        // Chunk 405 (register-allocator design survey, SHUMWAY_Y_SURVEY=1):
+        // quantify the CEILING of the classic-allocator arc by classifying each
+        // permanent. Class B = a permanent whose chunk-crossings are ALL over
+        // inline-compiled goals (cut / =/2 / is / the six comparisons — no real
+        // call between its first and last use), i.e. the variable a
+        // chunk-transparency allocator would demote to a temp (the refuted
+        // Phase-25/26 refinement). Class A = crosses a real call — irreducible
+        // in the WAM model (the callee owns the X registers; only the
+        // environment survives a call). Diagnostic only; no codegen change.
+        if (YSurvey is not null)
+        {
+            var transparent = ClassifyPermanentsInlineTransparent(headArgs, goals);
+            int classB = 0;
+            foreach (var p in permanents)
+                if (!transparent.Contains(p)) classB++;
+            string key = $"{name}/{headArgs.Length}";
+            YSurvey.TryGetValue(key, out var prev);
+            YSurvey[key] = (prev.PermTotal + permanents.Count, prev.ClassB + classB);
+        }
+
         // Cut analysis: a `!` after position 0 in the goal list is a deep cut
         // and needs an extra Y slot to hold the cut barrier (captured by
         // get_level at body start). A `!` at position 0 is a neck cut and
@@ -253,6 +273,57 @@ public sealed class ClauseCompiler
     /// chunks — those need permanent (Y) storage to survive an intervening call.
     /// The result is deterministic (insertion-ordered) so Y slot indices are
     /// stable for given source.</summary>
+    /// <summary>Chunk 405 survey output (see the call site above): per
+    /// <c>name/arity</c>, the total permanents allocated across its clauses and
+    /// how many are Class B (live only across inline goals). Null = off (the
+    /// default; the CLI sets it under <c>SHUMWAY_Y_SURVEY=1</c>).</summary>
+    public static Dictionary<string, (int PermTotal, int ClassB)>? YSurvey;
+
+    /// <summary>Chunk 405 survey — <see cref="ClassifyPermanents"/> under the
+    /// refuted inline-transparency model: a goal the compiler lowers WITHOUT a
+    /// call (cut, <c>=/2</c>, <c>is/2</c>, the six arithmetic comparisons) does
+    /// not end a chunk, so a variable whose uses straddle only such goals stays
+    /// temporary. NOT used for codegen (unsound — choice-point liveness is not
+    /// clause-local, see the chunk-model-refinement-failed record); used only to
+    /// size what a sound allocator could ever reclaim.</summary>
+    private static HashSet<string> ClassifyPermanentsInlineTransparent(
+        Term[] headArgs, List<Term> goals)
+    {
+        var occurs = new Dictionary<string, HashSet<int>>();
+        void Visit(Term t, int chunk)
+        {
+            switch (t)
+            {
+                case VarTerm v when v.Name != "_":
+                    if (!occurs.TryGetValue(v.Name, out var s))
+                        occurs[v.Name] = s = new HashSet<int>();
+                    s.Add(chunk);
+                    break;
+                case CompoundTerm c:
+                    foreach (Term arg in c.Args) Visit(arg, chunk);
+                    break;
+            }
+        }
+        static bool IsInlineGoal(Term g) => g switch
+        {
+            AtomTerm { Name: "!" or "true" } => true,
+            CompoundTerm { Args.Length: 2 } c =>
+                c.Functor is "=" or "is" or "<" or ">" or "=<" or ">=" or "=:=" or "=\\=",
+            _ => false,
+        };
+        foreach (Term arg in headArgs) Visit(arg, 0);
+        int ch = 0;
+        for (int i = 0; i < goals.Count; i++)
+        {
+            Visit(goals[i], ch);
+            if (!IsInlineGoal(goals[i])) ch++;
+        }
+        var perms = new HashSet<string>();
+        foreach (var (nm, set) in occurs)
+            if (set.Count >= 2) perms.Add(nm);
+        return perms;
+    }
+
     private static List<string> ClassifyPermanents(Term[] headArgs, List<Term> goals)
     {
         var occurs = new Dictionary<string, HashSet<int>>();
