@@ -5980,24 +5980,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // CellsAllocated after the query completes (the engine is
         // otherwise local and discarded). Read-only diagnostic; does not
         // affect execution.
-        // Chunk 404: fold the retiring engine's dead-chain-unlink count into the
-        // running total before the reference is replaced (the counter is per-query
-        // Engine state; the unlinks themselves persist in the program bytes).
-        if (_lastQueryEngine is not null)
-            _deadChainUnlinksRetired += _lastQueryEngine.DeadChainUnlinks;
         _lastQueryEngine = engine;
         return (programView, varNames, varHeapIndices, engine, interp);
     }
 
     private Engine? _lastQueryEngine;
-    private long _deadChainUnlinksRetired;
-
-    /// <summary>Chunk 404 — total dead dynamic-chain entries bypassed in place
-    /// across this engine's lifetime (see <see cref="Engine.DeadChainUnlinks"/>).
-    /// Deterministic diagnostic for tests; the patches themselves live in the
-    /// persistent program bytes.</summary>
-    public long DeadChainUnlinks =>
-        _deadChainUnlinksRetired + (_lastQueryEngine?.DeadChainUnlinks ?? 0);
 
     /// <summary>Monotonic count of WAM heap cells reserved by the most
     /// recent query's engine (0 before any query). A deterministic,
