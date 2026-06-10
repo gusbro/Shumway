@@ -673,7 +673,7 @@ public sealed class BytecodeInterpreter
                     // Blint had 23.5M direct dispatch→CheckVisible
                     // pairs / run.
                     if (!TryInlineCheckVisible(code, codeArr, codeLen, pc + 9,
-                            deadSkipTo: nextClause))
+                            deadSkipTo: nextClause, dispatchPc: pc))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                     }
@@ -702,7 +702,7 @@ public sealed class BytecodeInterpreter
                     int afterPc = pc + (demoted ? 9 : 5);
                     // Chunk 221 peephole fusion (see TryMeElse).
                     if (!TryInlineCheckVisible(code, codeArr, codeLen, afterPc,
-                            deadSkipTo: nextClause))
+                            deadSkipTo: nextClause, dispatchPc: pc))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                     }
@@ -2355,7 +2355,7 @@ public sealed class BytecodeInterpreter
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     private bool TryInlineCheckVisible(Shumway.Core.ProgramView code, byte[] codeArr, int codeLen, int afterPc,
-        int deadSkipTo = -1)
+        int deadSkipTo = -1, int dispatchPc = -1)
     {
         if (afterPc + 17 > codeLen
             || (code.Overflow is null ? codeArr[afterPc] : code[afterPc])
@@ -2370,11 +2370,136 @@ public sealed class BytecodeInterpreter
         if (born > g || died <= g)
         {
             if (deadSkipTo < 0) return false;        // trust_me: genuine fail
-            _engine.SetPc(deadSkipTo);               // dead entry: next, no backtrack
+            // Chunk 404: bypass any consecutive globally-invisible tombstones
+            // beyond the immediate next entry and patch them out of the chain.
+            _engine.SetPc(dispatchPc >= 0
+                ? CompactDeadChain(code, codeArr, codeLen, dispatchPc, deadSkipTo)
+                : deadSkipTo);
             return true;
         }
         _engine.SetPc(afterPc + 17);
         return true;
+    }
+
+    /// <summary>Chunk 404 — in-place dead-chain compaction (the O(N²) fix for a
+    /// retract-heavy dynamic predicate within one query). Called from the dead path
+    /// of <see cref="TryInlineCheckVisible"/>: the current chain entry at
+    /// <paramref name="dispatchPc"/> is a tombstone and we are about to jump to its
+    /// <paramref name="firstNext"/>. Scan forward from there, bypassing every
+    /// consecutive entry whose <c>died &lt;= Engine.MinLiveViewGen()</c> — invisible
+    /// to every live choice point's view AND to every future call (future view-gens
+    /// ≥ the current generation ≥ died) — and patch THIS entry's next operand (at
+    /// <c>dispatchPc + 1</c>; both try_me_else and retry_me_else keep it there) to
+    /// the first survivor, so no later scan walks those tombstones again.
+    ///
+    /// <para>Soundness: bypassed entries stay physically in the buffer, their own
+    /// operands untouched — a choice point whose Bp aims AT one re-enters it and
+    /// follows its (possibly compacted) next normally; only the path THROUGH them
+    /// shortens. An entry born after the current view (born &gt; g) is invisible to
+    /// us but visible to future calls — it always has <c>died &gt; minLive</c>
+    /// (alive: MaxValue; retracted later: died &gt; born &gt; g ≥ minLive), so the
+    /// single died-bound also protects future-born entries. In-place operand
+    /// patching of the live program is the established chunk-127/128 mechanism
+    /// (assertz/asserta/retract already do it mid-query).</para></summary>
+    private int CompactDeadChain(Shumway.Core.ProgramView code, byte[] codeArr, int codeLen,
+        int dispatchPc, int firstNext)
+    {
+        int target = firstNext;
+        long minLive = 0;
+        bool haveMinLive = false;
+        int bypassed = 0;
+        while (target + 5 <= codeLen)
+        {
+            // Entry shape: retry_me_else <next:int4> [4×Nop pad] check_visible born died.
+            byte op = code.Overflow is null ? codeArr[target] : code[target];
+            if (op != (byte)Opcode.RetryMeElse) break;
+            int next = BytecodeIO.ReadInt32(code, target + 1);
+            int after = target + 5;
+            if (after < codeLen
+                && (code.Overflow is null ? codeArr[after] : code[after]) == (byte)Opcode.Nop)
+                after = target + 9;            // demoted-head 9-byte footprint
+            if (after + 17 > codeLen) break;
+            if ((code.Overflow is null ? codeArr[after] : code[after])
+                != (byte)Opcode.CheckVisible) break;
+            long died = BytecodeIO.ReadInt64(code, after + 9);
+            if (!haveMinLive)
+            {
+                minLive = MinLiveChainViewGen(code, codeArr, codeLen);
+                haveMinLive = true;
+            }
+            if (died > minLive) break;         // some live chain view (or the future) sees it
+            target = next;                     // globally invisible — bypass
+            bypassed++;
+        }
+        if (bypassed > 0 && TryPatchInt32(code, dispatchPc + 1, target))
+            _engine.DeadChainUnlinks += bypassed;
+        return target;
+    }
+
+    /// <summary>Chunk 404 — the smallest logical-update view that can still RE-READ a
+    /// dynamic chain's next pointers, or <see cref="long.MaxValue"/> when none can.
+    /// A saved CP ViewGen is only ever consumed by <c>check_visible</c> when
+    /// backtracking re-enters the chain THROUGH that CP — i.e. when the CP's
+    /// <c>Bp</c> points at a chain entry (<c>retry_me_else</c> followed by
+    /// <c>check_visible</c>, allowing the demoted-head Nop pad). Every OTHER way
+    /// into a chain goes through <c>enter_dynamic</c>, which re-samples the CURRENT
+    /// generation — so control/static CPs (a catch frame, a disjunction) holding old
+    /// ViewGens do not pin tombstones alive; without this filter a single long-lived
+    /// control CP at the top of a query (Blint's <c>main</c> catch) blocks every
+    /// intra-query unlink. Walks the whole CP stack (the chain-CP subset is not
+    /// bottom-monotone), capped at 512 frames (deeper → <see cref="long.MinValue"/>,
+    /// unlink nothing). Called only on the dead-traversal path.</summary>
+    private long MinLiveChainViewGen(Shumway.Core.ProgramView code, byte[] codeArr, int codeLen)
+    {
+        long min = long.MaxValue;
+        int b = _engine.B;
+        int hops = 0;
+        while (b >= 0)
+        {
+            if (++hops > 512) return long.MinValue;   // too deep — stay conservative
+            int bp = _engine.CpBpOf(b);
+            if (bp >= 0 && bp + 5 <= codeLen
+                && (code.Overflow is null ? codeArr[bp] : code[bp]) == (byte)Opcode.RetryMeElse)
+            {
+                int after = bp + 5;
+                if (after < codeLen
+                    && (code.Overflow is null ? codeArr[after] : code[after]) == (byte)Opcode.Nop)
+                    after = bp + 9;
+                if (after + 17 <= codeLen
+                    && (code.Overflow is null ? codeArr[after] : code[after])
+                       == (byte)Opcode.CheckVisible)
+                {
+                    long v = _engine.CpViewGenOf(b);
+                    if (v < min) min = v;
+                }
+            }
+            b = _engine.CpPrevOf(b);
+        }
+        return min;
+    }
+
+    /// <summary>Writes an int32 operand into the live program, handling the
+    /// split persistent/transient view. Gives up (returns false) only when the
+    /// four bytes straddle the split boundary — the jump still happens, the
+    /// patch just doesn't persist this time.</summary>
+    private static bool TryPatchInt32(Shumway.Core.ProgramView code, int at, int value)
+    {
+        if (code.Overflow is null)
+        {
+            BytecodeIO.WriteInt32(code.Primary, at, value);
+            return true;
+        }
+        if (at + 4 <= code.Split)
+        {
+            BytecodeIO.WriteInt32(code.Primary, at, value);
+            return true;
+        }
+        if (at >= code.Split)
+        {
+            BytecodeIO.WriteInt32(code.Overflow, at - code.Split, value);
+            return true;
+        }
+        return false;
     }
 
     private bool TryBacktrack()

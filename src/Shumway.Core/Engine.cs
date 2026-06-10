@@ -1849,6 +1849,36 @@ public sealed partial class Engine
     public long ViewGenOf(int cpBase, int arity) =>
         _stack[cpBase + CpViewGenOffset(arity)].Payload;   // strip RawInt tag
 
+    /// <summary>Chunk 404 — per-frame choice-point accessors for the dead-chain
+    /// unlink's live-view walk (the interpreter filters frames by what their
+    /// <c>Bp</c> points at, which needs the program bytes the Engine doesn't
+    /// hold). <paramref name="cpBase"/> is a frame base as linked by
+    /// <see cref="CpBOffset"/> prev-links starting from <see cref="B"/>.</summary>
+    public int CpBpOf(int cpBase)
+    {
+        int arity = (int)_stack[cpBase + CpArityOffset].Payload;
+        return (int)_stack[cpBase + CpBpOffset(arity)].Payload;
+    }
+
+    /// <summary>The previous frame's base (-1 at the bottom). See <see cref="CpBpOf"/>.</summary>
+    public int CpPrevOf(int cpBase)
+    {
+        int arity = (int)_stack[cpBase + CpArityOffset].Payload;
+        return (int)_stack[cpBase + CpBOffset(arity)].Payload;
+    }
+
+    /// <summary>The frame's saved logical-update view. See <see cref="CpBpOf"/>.</summary>
+    public long CpViewGenOf(int cpBase)
+    {
+        int arity = (int)_stack[cpBase + CpArityOffset].Payload;
+        return _stack[cpBase + CpViewGenOffset(arity)].Payload;
+    }
+
+    /// <summary>Chunk 404 diagnostics — total dead dynamic-chain entries bypassed
+    /// in place (a predecessor's next operand patched past them). Tests assert it
+    /// moves; never used for control flow.</summary>
+    public long DeadChainUnlinks;
+
     // Phase 16 chunk 183: chunk-50 IlSubroutineRunner, chunk-66
     // BacktrackRunner and chunk-174 SetBacktrackFloor callbacks were
     // deleted when IL non-tail Call dispatch switched to threaded
