@@ -495,12 +495,31 @@ WAM state.
        743 KB per-predicate-IL bundle, down from 2.5×. A nice property the fixpoint gives:
        promoting a MIDDLE node de-dups its whole tail in one step (the recompute shows the
        tail is no longer shared). 3 Chunk394Tests.
-     - **9d — stripping the pruned predicates' WAM: DONE (chunk 398).** The absorbed-only
-       predicates' Tier-0 WAM is now dropped under `--region-prune --strip-wam`; Blint's
-       stripped region-prune bundle is **598 KB vs 753 KB unstripped (−155 KB)**, runs
-       byte-identical to the Tier-0 reference, and the strip-wam-only and region-prune+strip
-       bundles BOTH produce identical lint output. Two issues had to be resolved (the path
-       there went through two misdiagnoses, recorded so they aren't re-walked):
+     - **9d — stripping the pruned predicates' WAM under regions: ATTEMPTED (chunks 398/400),
+       then DISABLED as UNSOUND (chunk 401).** `--strip-wam` is now a NO-OP under
+       `--region-prune` (warns `stripwam_region_incompatible`); the WAM stays as the Tier-0
+       fallback. WHY it was reverted — the chunk-398/399 validation used Blint's `test/0`
+       entry (which lints a hard-coded `Blint.pl`), but a `--exe`/`--goal main` build prunes
+       a DIFFERENT set (the prune is entry-dependent) and exercises the argv-driven `main`
+       path the entry-only check never ran. Two real failures surfaced there:
+       * **absorbed-only meta-called by fid** — `main/1`, reached by name from the top level
+         and through `main/0`'s `catch`, lost its standalone form once stripped →
+         `existence_error(main/1)`. The constructed-constant guard (issue 3 below) catches
+         meta-targets built *directly* as a term, but NOT a predicate reached via a plain
+         Call from inside a meta-called wrapper.
+       * **cross-region call to a stripped standalone-IL predicate** — a region reaches a
+         non-member by a trampoline that sets `Pc = EncodeResumeMarker(callee.fid, 0)`; with
+         the callee's WAM gone the dispatch landed on that marker address and the interpreter
+         fetched it as a PC → `startPc 0x… is outside [0, …)` (Blint's file-not-found path).
+       Even the "safe" standalone-IL strip (fine WITHOUT regions, pre-398) breaks here. So
+       the strip and region compilation are incompatible until the cross-region trampoline
+       resolves a stripped callee via its IL delegate (and absorbed members are made
+       fid-resolvable into their region — the member-entry-cursor idea). Region-prune still
+       delivers its size win by dropping the absorbed-only STANDALONE IL (9b-3); only the WAM
+       strip is off. `Chunk401Tests` guard it (the strip is a verified no-op under regions).
+       The history below is kept because the prune-correctness work (issues 2-3) still
+       stands; only the WAM *strip* on top of it was unsound.
+       Two issues had to be resolved (the path there went through two misdiagnoses):
        1. **NOT an IL-activation problem (an earlier misdiagnosis, chunk 396).** A first
           guess was that the bundle runs Tier-0 WAM (persisted IL gated by
           `IlPromotion.Threshold > 0`). EMPIRICALLY FALSE: persisted IL delegates are

@@ -68,23 +68,26 @@ public static class BundleWriter
                     compiledIl = CompileEntryToIl(effective[i], regionPruneSeeds);
                     compiledIlPatches = _lastPatchTableBytes;
                     compiledIlEntries = _lastEntriesTableBytes;
-                    // --strip-wam: drop the redundant WAM bodies. Two disjoint sets:
-                    //  • standalone-IL predicates (_lastIlFunctorIds) — reached at runtime
-                    //    via their own IL delegate (CallIl / chunk-316 marker), never WAM.
-                    //  • absorbed-only predicates (_lastPrunableFids, §9d) — reached ONLY
-                    //    as a br-member inside a live region's IL method, never via the WAM
-                    //    trampoline. Now SOUND: the prune is computed (in CompileEntryToIl)
-                    //    over the EXACT calleeMap the IL compile uses (the warm-up engine's
-                    //    full user+prelude set), so the absorbed-only set matches the real
-                    //    region membership — the earlier per-module-analysis mismatch is gone.
-                    if (stripWam && compiledBytecode is not null)
-                    {
-                        var stripSet = new HashSet<int>();
-                        if (_lastIlFunctorIds is not null) stripSet.UnionWith(_lastIlFunctorIds);
-                        if (_lastPrunableFids is not null) stripSet.UnionWith(_lastPrunableFids);
-                        if (stripSet.Count > 0)
-                            compiledBytecode = StripIlBodies(compiledBytecode, stripSet);
-                    }
+                    // --strip-wam: drop the redundant WAM bodies of STANDALONE-IL predicates
+                    // (_lastIlFunctorIds) — each has its own registered IL delegate, so a
+                    // runtime call (direct CallIl, OR a by-fid top-level / meta-call resolved
+                    // through CurrentFunctorAddresses + the chunk-316 marker) reaches the IL,
+                    // never the WAM. Safe — WITHOUT region compilation.
+                    //
+                    // It is NOT safe under --region-prune (regionPruneSeeds != null). A region
+                    // method reaches a non-member by a CROSS-REGION trampoline that sets
+                    // Pc = EncodeResumeMarker(callee.fid, 0) and lets the dispatch loop resolve
+                    // the callee. If that callee's WAM was stripped, the resolution lands on a
+                    // resume-marker address that the bytecode interpreter then fetches as a real
+                    // PC → "startPc 0x… is outside [0, …)" (observed on Blint's error path:
+                    // file-not-found → main/0's catch → cross-region call to a stripped root).
+                    // Region-prune already drops the absorbed-only predicates' STANDALONE IL
+                    // (its size win); the WAM stays as the correct Tier-0 fallback. Making the
+                    // strip safe under regions needs the cross-region trampoline to resolve a
+                    // stripped callee via its IL delegate — a separate fix. Until then, skip.
+                    if (stripWam && regionPruneSeeds is null
+                        && compiledBytecode is not null && _lastIlFunctorIds is { Count: > 0 })
+                        compiledBytecode = StripIlBodies(compiledBytecode, _lastIlFunctorIds);
                 }
                 effective[i] = new BundleEntry(
                     effective[i].ModuleName,
