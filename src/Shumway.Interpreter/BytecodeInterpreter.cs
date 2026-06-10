@@ -2109,6 +2109,10 @@ public sealed class BytecodeInterpreter
     /// point remains).</para></summary>
     private bool DispatchCall(ProgramView code, int callArity, int barrier)
     {
+        // Chunk 406 sizing (profile builds only): how many goals are dispatched by
+        // runtime term inspection — the cost class the link-time meta-wrapper
+        // unfold (ADR-021 candidate #2) removes.
+        Shumway.Core.Profiler.Note("meta_dispatch (DispatchCall)");
         int pc = _engine.P;
         Cell goal = DerefCell(_engine.GetRegister(0));
 
@@ -2155,21 +2159,25 @@ public sealed class BytecodeInterpreter
         // cut, so $call_neg needs no barrier.
         if (functorId == ConjFunctorId)
         {
+            Shumway.Core.Profiler.Note("meta_dispatch: control construct");
             _engine.SetRegister(2, Cell.Int(barrier));
             functorId = CallConjFunctorId;
         }
         else if (functorId == DisjFunctorId)
         {
+            Shumway.Core.Profiler.Note("meta_dispatch: control construct");
             _engine.SetRegister(2, Cell.Int(barrier));
             functorId = CallDisjFunctorId;
         }
         else if (functorId == ArrowFunctorId)
         {
+            Shumway.Core.Profiler.Note("meta_dispatch: control construct");
             _engine.SetRegister(2, Cell.Int(barrier));
             functorId = CallArrowFunctorId;
         }
         else if (functorId == NegFunctorId || functorId == NotFunctorId)
         {
+            Shumway.Core.Profiler.Note("meta_dispatch: control construct");
             functorId = CallNegFunctorId;
         }
 
