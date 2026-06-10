@@ -584,15 +584,37 @@ WAM state.
       user-module WAM is stripped, the bundle runs on IL).
     Both APPEND (delete between runs). Chunk 398's report-gating change (step-6c now
     `--prune-report`-only) updated `Chunk393Tests` to opt into the report. Embedding 2181.
-11. **Inspect region IL for optimisations (GOAL — gated on Stages 9-10).** Once the
-    linker prunes to the real region set and can dump it, read the actual region IL
-    (the dispatch `switch`, per-member blocks, inline index resolve, CP pushes,
-    register save/restore) to find IL-level optimisation passes — e.g. redundant
-    deref/tag re-tests across members, dead cursor labels, CP pushes that a known-det
-    member doesn't need, common subexpression sharing between members now that they
-    live in one method. This is the payoff the whole-closure-in-one-method unit was
-    built to enable. Do it on the post-prune set so the analysis reflects what ships,
-    not the compile-time superset.
+11. **Inspect region IL for optimisations — STARTED (chunk 400).** Drove a frequency
+    analysis over Blint's shipped region IL (`shumway-link --region-prune --strip-wam
+    --dump-il`, 108 region methods + 248 standalone). Findings + what was / wasn't acted on:
+    - **Self-delegate reload (the cleanest cross-member CSE) — HOISTED.** Every
+      multi-clause / indexed member's `PushIlChoicePoint` reloaded the SAME region
+      self-delegate: `SelfFromArrayField` = 3 IL ops (`ldsfld`/`ldc.i4`/`ldelem`) in the
+      persisted path, `SelfFromHolder` = a dictionary lookup in the runtime path. 1470
+      push sites bundle-wide. `EmitRegionInto` now loads it ONCE into a local ahead of the
+      dispatch switch (which dominates every member / cursor label, so the store reaches
+      every push site) and hands members a loader that reads it. Gated on ≥3 push sites
+      (the hoist costs 4 ops once, so it only shrinks at `2·P−4 > 0`; the exact push count
+      is the plan's ClauseAlt + IndexNode cursors). Result: Blint bundle **598326 →
+      594230 bytes (−4 KB)**, ~1470 fewer IL ops in hoisted regions, and the runtime path's
+      holder lookup runs once per invocation instead of once per push. (Note: the
+      `--dump-il` LINE count goes UP because adding the local renumbers all later locals —
+      a text-render artifact; the bundle byte size is the truth.) Blint byte-identical,
+      Embedding 2181 / REGION=1 all-real-pass.
+    - **`FlushWakeupsForIlCut` (1765 sites, ~3 IL ops each) — LEFT ALONE.** The chunk-379
+      wakeup flushes at every region br / proceed dominate the IL after the CP machinery.
+      Eliminating provably-redundant ones is a soundness-delicate dataflow problem (the
+      clpfd-in-region history, chunks 378-380); not worth the risk for a phase with no
+      demonstrated wall-clock payoff.
+    - **`put_value` round-trips (`SetY(k,GetReg(r))` … `SetRegister(r,GetY(k))`) — OUT OF
+      SCOPE.** A faithful lowering of the WAM head/body register traffic; removing it is
+      the WAM register-allocator lever (see `chunk-model-refinement-failed` memory), a
+      separate hard effort, not an IL peephole.
+    Net: the region IL is mostly irreducible faithful WAM lowering. The one clean,
+    safe, validated micro-opt (the self-delegate hoist) lands a small size win; the larger
+    levers are either soundness-delicate or belong to the register allocator — consistent
+    with chunk-382's finding that region compilation has no demonstrated real-program
+    wall-clock payoff.
 
 ## Risks
 

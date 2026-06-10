@@ -1174,7 +1174,8 @@ public sealed class IlPredicateCompiler
         var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
             $"ShumwayIlRegion_{region.Root.FunctorId}_{region.Root.Arity}",
             doVerify: DoVerify || DebugMode);
-        EmitRegionInto(emit, emitSelf, region, plan, calleeMap);
+        EmitRegionInto(emit, emitSelf, region, plan, calleeMap,
+            typeof(Func<Engine, int, bool>));   // runtime path: SelfFromHolder → Func
         int regionFid = region.Root.FunctorId;
         return FinishEmit(emit,
             $"region root={regionFid} {FidName(regionFid)} members=["
@@ -1193,10 +1194,34 @@ public sealed class IlPredicateCompiler
     private void EmitRegionInto(
         Sigil.Emit<PredicateDelegate> emit, SelfDelegateEmitter emitSelf,
         IlRegion region, IlRegionPlan plan,
-        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
+        System.Type selfDelType)
     {
         int regionFid = region.Root.FunctorId;
         _emitOwnerFid = regionFid;
+
+        // Stage 11 (IL-size / CSE): every multi-clause / indexed member's
+        // PushIlChoicePoint reloads the SAME region self-delegate — SelfFromArrayField is
+        // 3 IL ops (ldsfld/ldc.i4/ldelem) and SelfFromHolder is a per-push dictionary
+        // lookup. Hoist that load to ONE local here, ahead of the dispatch switch (which
+        // dominates every member / cursor label, so the store reaches every push site),
+        // and hand members a loader that just reads it: −2 IL ops per push site, and the
+        // holder lookup runs once per invocation instead of once per push. The hoist costs
+        // 4 IL ops once (load + store), so it only SHRINKS the method at ≥3 push sites
+        // (saving 2·P−4); below that it'd grow it, so gate on the exact push count — the
+        // plan's ClauseAlt + IndexNode cursors are one-per-emitSelf-push by construction.
+        SelfDelegateEmitter effectiveSelf = emitSelf;
+        int pushSites = 0;
+        foreach (var s in plan.Sites)
+            if (s.Kind == RegionCursorKind.ClauseAlt || s.Kind == RegionCursorKind.IndexNode)
+                pushSites++;
+        if (pushSites >= 3)
+        {
+            var selfDelLoc = emit.DeclareLocal(selfDelType, "rselfdel");
+            emitSelf(emit);
+            emit.StoreLocal(selfDelLoc);
+            effectiveSelf = e => e.LoadLocal(selfDelLoc);
+        }
 
         var failLabel = emit.DefineLabel("rfail");
         var retLabel = emit.DefineLabel("rret");
@@ -1248,9 +1273,9 @@ public sealed class IlPredicateCompiler
                 EmitClauseBody(emit, member.Bytecode, 0, member.Bytecode.Length,
                     failLabel, member.CallSites, calleeMap: calleeMap, regionCtx: ctx);
             else if (TryDescribeIndexed(member, calleeMap, out var idxInfo))
-                EmitRegionIndexedMember(emit, member, mi, idxInfo!, ctx, emitSelf, calleeMap);
+                EmitRegionIndexedMember(emit, member, mi, idxInfo!, ctx, effectiveSelf, calleeMap);
             else
-                EmitRegionMultiClauseMember(emit, member, mi, ctx, emitSelf, calleeMap);
+                EmitRegionMultiClauseMember(emit, member, mi, ctx, effectiveSelf, calleeMap);
         }
 
         emit.MarkLabel(retLabel);
@@ -1836,7 +1861,8 @@ public sealed class IlPredicateCompiler
                     System.Console.Error.WriteLine(
                         $"[region-persist] root fid={predicate.FunctorId} {FidName(predicate.FunctorId)} "
                         + $"members={region.MemberCount}");
-                EmitRegionInto(emit, emitSelf, region, plan, calleeMap);
+                EmitRegionInto(emit, emitSelf, region, plan, calleeMap,
+                    typeof(PredicateDelegate));   // persisted path: SelfFromArrayField → PredicateDelegate
                 return FinishPersistedEmit(emit,
                     $"persist region root fid={predicate.FunctorId} {FidName(predicate.FunctorId)}"
                     + $"/{predicate.Arity} members={region.MemberCount} "
