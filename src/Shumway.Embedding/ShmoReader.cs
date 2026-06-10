@@ -28,10 +28,15 @@ public static class ShmoReader
                 ".shmo: magic bytes don't match 'SHMO' — not a Shumway object file.");
 
         uint version = br.ReadUInt32();
-        if (version < ShmoFormat.MinSupportedVersion || version > ShmoFormat.CurrentVersion)
+        // Pre-release format policy (see ShmoFormat): exactly ONE supported
+        // layout, frozen version number, no backward compatibility — a stale
+        // .shmo (older layout under the same number) fails on a truncated
+        // section below; regenerate it by recompiling.
+        if (version != ShmoFormat.CurrentVersion)
             throw new InvalidDataException(
                 $".shmo: format version {version} is not supported by this linker "
-                + $"(supports {ShmoFormat.MinSupportedVersion}..{ShmoFormat.CurrentVersion}).");
+                + $"(requires {ShmoFormat.CurrentVersion}; pre-release formats are "
+                + "not backward compatible — recompile the source).");
 
         string moduleName = ReadLengthPrefixedUtf8(br);
         string source = ReadLengthPrefixedUtf8(br);
@@ -42,17 +47,11 @@ public static class ShmoReader
                 $".shmo: truncated bytecode section (expected "
                 + $"{bytecodeLength} bytes, got {bytecode.Length}).");
 
-        // V2+ adds the build-mode byte after the bytecode payload.
-        // V1 objects default to Release (the byte didn't exist).
-        ShmoBuildMode buildMode = ShmoBuildMode.Release;
-        if (version >= 2)
-        {
-            byte mode = br.ReadByte();
-            if (mode > (byte)ShmoBuildMode.Debug)
-                throw new InvalidDataException(
-                    $".shmo: unknown build-mode code {mode}.");
-            buildMode = (ShmoBuildMode)mode;
-        }
+        byte mode = br.ReadByte();
+        if (mode > (byte)ShmoBuildMode.Debug)
+            throw new InvalidDataException(
+                $".shmo: unknown build-mode code {mode}.");
+        ShmoBuildMode buildMode = (ShmoBuildMode)mode;
 
         uint definedCount = br.ReadUInt32();
         var defined = new ShmoDefinedPredicate[definedCount];
@@ -104,49 +103,41 @@ public static class ShmoReader
             qrefs[i] = new QualifiedPredicateRef(module, name, arity);
         }
 
-        // V3+ adds dynamicSeeds trailer.
-        ShmoDynamicSeed[] dynamicSeeds = Array.Empty<ShmoDynamicSeed>();
-        if (version >= 3)
+        // dynamicSeeds trailer.
+        uint seedCount = br.ReadUInt32();
+        var dynamicSeeds = new ShmoDynamicSeed[seedCount];
+        for (uint i = 0; i < seedCount; i++)
         {
-            uint seedCount = br.ReadUInt32();
-            dynamicSeeds = new ShmoDynamicSeed[seedCount];
-            for (uint i = 0; i < seedCount; i++)
-            {
-                string name = ReadLengthPrefixedUtf8(br);
-                int arity = (int)br.ReadUInt32();
-                uint clauseCount = br.ReadUInt32();
-                var encoded = new byte[clauseCount][];
-                for (uint j = 0; j < clauseCount; j++)
-                {
-                    uint byteCount = br.ReadUInt32();
-                    byte[] bytes = br.ReadBytes((int)byteCount);
-                    if (bytes.Length != byteCount)
-                        throw new InvalidDataException(
-                            $".shmo: truncated dynamic-seed clause for "
-                            + $"{name}/{arity} (expected {byteCount}, got {bytes.Length}).");
-                    encoded[j] = bytes;
-                }
-                dynamicSeeds[i] = new ShmoDynamicSeed(
-                    new PredicateRef(name, arity), encoded);
-            }
-        }
-
-        // V4+ adds the clauseTerms trailer (the LTO channel).
-        byte[][] clauseTerms = Array.Empty<byte[]>();
-        if (version >= 4)
-        {
+            string name = ReadLengthPrefixedUtf8(br);
+            int arity = (int)br.ReadUInt32();
             uint clauseCount = br.ReadUInt32();
-            clauseTerms = new byte[clauseCount][];
-            for (uint i = 0; i < clauseCount; i++)
+            var encoded = new byte[clauseCount][];
+            for (uint j = 0; j < clauseCount; j++)
             {
                 uint byteCount = br.ReadUInt32();
                 byte[] bytes = br.ReadBytes((int)byteCount);
                 if (bytes.Length != byteCount)
                     throw new InvalidDataException(
-                        $".shmo: truncated clause-terms entry {i} "
-                        + $"(expected {byteCount}, got {bytes.Length}).");
-                clauseTerms[i] = bytes;
+                        $".shmo: truncated dynamic-seed clause for "
+                        + $"{name}/{arity} (expected {byteCount}, got {bytes.Length}).");
+                encoded[j] = bytes;
             }
+            dynamicSeeds[i] = new ShmoDynamicSeed(
+                new PredicateRef(name, arity), encoded);
+        }
+
+        // clauseTerms trailer (the LTO channel).
+        uint termCount = br.ReadUInt32();
+        var clauseTerms = new byte[termCount][];
+        for (uint i = 0; i < termCount; i++)
+        {
+            uint byteCount = br.ReadUInt32();
+            byte[] bytes = br.ReadBytes((int)byteCount);
+            if (bytes.Length != byteCount)
+                throw new InvalidDataException(
+                    $".shmo: truncated clause-terms entry {i} "
+                    + $"(expected {byteCount}, got {bytes.Length}).");
+            clauseTerms[i] = bytes;
         }
 
         return new ShmoObject(moduleName, source, bytecode,

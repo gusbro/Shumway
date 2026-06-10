@@ -67,7 +67,7 @@ public static class ShmoWriter
             bw.Write((uint)q.Arity);
         }
 
-        // V3+ dynamic seeds trailer.
+        // dynamicSeeds trailer.
         bw.Write((uint)obj.DynamicSeeds.Count);
         foreach (var seed in obj.DynamicSeeds)
         {
@@ -81,7 +81,7 @@ public static class ShmoWriter
             }
         }
 
-        // V4+ clause-terms trailer (the LTO channel — raw static clauses).
+        // clauseTerms trailer (the LTO channel — raw static clauses).
         bw.Write((uint)obj.ClauseTerms.Count);
         foreach (var encoded in obj.ClauseTerms)
         {

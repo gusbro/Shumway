@@ -152,7 +152,7 @@ public class Chunk160Tests
         bytes[7] = 0x00;
         var ex = Assert.Throws<InvalidDataException>(() => ShmoReader.FromBytes(bytes));
         Assert.Contains("999", ex.Message);
-        Assert.Contains("supports", ex.Message);
+        Assert.Contains("requires", ex.Message);
     }
 
     [Fact]

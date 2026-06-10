@@ -64,14 +64,14 @@ namespace Shumway.Embedding;
 ///                       bytes       : TermCodec-encoded clause term
 /// </code>
 ///
-/// <para>V4 (chunk 411): adds a <c>clauseTerms</c> trailer — the module's RAW
-/// static clauses (post-parse, pre-transform; dynamic heads excluded, they
-/// travel in <c>dynamicSeeds</c>) as <see cref="TermCodec"/>-encoded blobs.
-/// The LTO channel: present in Release too (the <c>.shmo</c> is an
-/// intermediate artifact, like a fat object file with embedded IR; IP
-/// stripping applies to the shipped <c>.shum</c>/exe, not here). Consumed by
-/// the linker's cross-module meta-wrapper unfold, which recompiles affected
-/// caller modules from these clauses. Layout after <c>dynamicSeeds</c>:</para>
+/// <para>The <c>clauseTerms</c> trailer (chunk 411) — the module's RAW static
+/// clauses (post-parse, pre-transform; dynamic heads excluded, they travel in
+/// <c>dynamicSeeds</c>) as <see cref="TermCodec"/>-encoded blobs. The LTO
+/// channel: present in Release too (the <c>.shmo</c> is an intermediate
+/// artifact, like a fat object file with embedded IR; IP stripping applies to
+/// the shipped <c>.shum</c>/exe, not here). Consumed by the linker's
+/// cross-module meta-wrapper unfold, which recompiles affected caller modules
+/// from these clauses. Layout after <c>dynamicSeeds</c>:</para>
 /// <code>
 ///                 clauseTermsCount  : uint32
 ///                   for each clause:
@@ -79,21 +79,25 @@ namespace Shumway.Embedding;
 ///                     bytes         : TermCodec-encoded clause term
 /// </code>
 ///
-/// <para>V1 (legacy): identical to V2 minus the <c>buildMode</c> byte.
-/// The reader accepts V1..V4; older versions default to empty
-/// <c>DynamicSeeds</c> / <c>ClauseTerms</c>.</para>
+/// <para>PRE-RELEASE FORMAT POLICY: there is exactly ONE supported layout —
+/// this one — and the version number is FROZEN. No Shumway artifact has
+/// shipped publicly, so backward compatibility and version bumps are
+/// deliberately not maintained (regenerate stale <c>.shmo</c> files by
+/// recompiling); the number starts meaning something at the first public
+/// release. Do not add <c>version &gt;=</c> conditionals to the reader.</para>
 /// </summary>
 public static class ShmoFormat
 {
     public static readonly byte[] Magic = new byte[] { (byte)'S', (byte)'H', (byte)'M', (byte)'O' };
 
-    /// <summary>The version this build of the writer produces.</summary>
-    public const int CurrentVersion = 4;
+    /// <summary>The single supported format version — frozen pre-release
+    /// (see the format-policy note above). Writer and reader both require
+    /// exactly this value.</summary>
+    public const int CurrentVersion = 3;
 
-    /// <summary>The minimum version the reader will accept. V1 objects
-    /// are still readable but their build mode defaults to
-    /// <see cref="ShmoBuildMode.Release"/>.</summary>
-    public const int MinSupportedVersion = 1;
+    /// <summary>Equal to <see cref="CurrentVersion"/>: no backward
+    /// compatibility before the first public release.</summary>
+    public const int MinSupportedVersion = CurrentVersion;
 }
 
 /// <summary>Compilation mode the <c>.shmo</c> was built in.
