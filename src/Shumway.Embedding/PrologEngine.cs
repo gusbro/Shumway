@@ -2814,11 +2814,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             }
         }
         interp.IlByFunctorId = ilTable;
-        bool ilDiag = System.Environment.GetEnvironmentVariable("SHUMWAY_IL_DIAG") == "1";
-        if (ilDiag)
-            System.Console.Error.WriteLine(
-                $"[il-diag] promoted/registered fids={IlPromotion.PromotedFunctorIds().Count()} "
-                + $"ilTable.Length={(ilTable?.Length ?? 0)} Threshold={IlPromotion.Threshold}");
+        DiagIlTable(ilTable);
 
         // Chunk 226 Stage B.2 — build a fid-keyed view of
         // predicatesByAddress so we can look up the callee's
@@ -2877,7 +2873,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     && ilTable[calleeFid] is not null;
                 if (hasIl)
                 {
-                    _diagCallIlCount++;
+                    DiagCountCallIlRewrite();
                     buf[bufOffset] = site.IsExecute
                         ? (byte)Shumway.Core.Opcode.ExecuteIl
                         : (byte)Shumway.Core.Opcode.CallIl;
@@ -2913,7 +2909,28 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 }
             }
         }
-        if (ilDiag)
+        DiagIlRewriteTotal();
+    }
+
+    /// <summary>Chunk 414 — diag-build-only (<c>-p:ShumwayDiag=true</c> +
+    /// <c>SHUMWAY_IL_DIAG=1</c>): the chunk-396 per-query IL-dispatch
+    /// diagnostics. All three hooks are stripped from normal builds.</summary>
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    private void DiagIlTable(Func<Shumway.Core.Engine, int, bool>?[]? ilTable)
+    {
+        if (System.Environment.GetEnvironmentVariable("SHUMWAY_IL_DIAG") == "1")
+            System.Console.Error.WriteLine(
+                $"[il-diag] promoted/registered fids={IlPromotion.PromotedFunctorIds().Count()} "
+                + $"ilTable.Length={(ilTable?.Length ?? 0)} Threshold={IlPromotion.Threshold}");
+    }
+
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    private void DiagCountCallIlRewrite() => _diagCallIlCount++;
+
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    private void DiagIlRewriteTotal()
+    {
+        if (System.Environment.GetEnvironmentVariable("SHUMWAY_IL_DIAG") == "1")
             System.Console.Error.WriteLine(
                 $"[il-diag] CallIl/ExecuteIl rewrites installed this query={_diagCallIlCount}");
     }

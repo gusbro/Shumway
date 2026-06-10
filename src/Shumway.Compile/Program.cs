@@ -100,6 +100,10 @@ internal static class Program
             ShmoWriter.WriteToFile(obj, output);
             if (ySurvey && Shumway.Compiler.Wam.ClauseCompiler.YSurvey is { } survey)
             {
+                if (survey.Count == 0)
+                    Console.Error.WriteLine(
+                        "[y-survey] empty — the per-clause collection is compiled in only "
+                        + "with a `dotnet build -p:ShumwayDiag=true` build (chunk 414).");
                 int totalPerms = survey.Values.Sum(v => v.PermTotal);
                 int totalB = survey.Values.Sum(v => v.ClassB);
                 Console.Error.WriteLine(

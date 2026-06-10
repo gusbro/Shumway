@@ -134,18 +134,7 @@ public static class PersistedIlBuilder
         // answer names the divergent predicate(s).
         int rangeLo = 0;
         int rangeHi = int.MaxValue;
-        var rangeStr = System.Environment.GetEnvironmentVariable("SHUMWAY_PERSIST_RANGE");
-        if (!string.IsNullOrEmpty(rangeStr))
-        {
-            var parts = rangeStr.Split(',');
-            if (parts.Length == 2
-                && int.TryParse(parts[0], out int rLo)
-                && int.TryParse(parts[1], out int rHi))
-            {
-                rangeLo = rLo;
-                rangeHi = rHi;
-            }
-        }
+        DiagReadPersistRange(ref rangeLo, ref rangeHi);
         // Stable ordering for bisection: sort eligible by functorId.
         eligible.Sort((a, b) => a.FunctorId.CompareTo(b.FunctorId));
 
@@ -158,32 +147,11 @@ public static class PersistedIlBuilder
         var entries = new List<Entry>();
         int slot = 0;
         int ordinal = 0;
-        bool dumpOrdinals = System.Environment.GetEnvironmentVariable(
-            "SHUMWAY_PERSIST_DUMP_ORDINALS") == "1";
-        // SHUMWAY_PERSIST_DUMP_FIDS="name1,name2,..." prints the build-time
-        // functor id of every listed Name/Arity (e.g. "retractall/1,$disj_1/1").
-        // Pair with the same env-var on the run side (PrologEngine.LoadBundle)
-        // to diagnose cross-process id drift.
-        var dumpFidsEnv = System.Environment.GetEnvironmentVariable("SHUMWAY_PERSIST_DUMP_FIDS");
-        if (!string.IsNullOrEmpty(dumpFidsEnv))
-        {
-            foreach (var ind in dumpFidsEnv.Split(','))
-            {
-                var slash = ind.IndexOf('/');
-                if (slash < 0) continue;
-                if (!int.TryParse(ind.AsSpan(slash + 1), out int ar)) continue;
-                string nm = ind.Substring(0, slash);
-                int aid = AtomTable.Intern(nm).Id;
-                int fid = FunctorTable.Intern(aid, ar);
-                System.Console.Error.WriteLine($"[build-fid] {nm}/{ar} atom={aid} functor={fid}");
-            }
-        }
+        DiagDumpBuildFids();
         foreach (var (functorId, pred) in eligible)
         {
             int thisOrdinal = ordinal++;
-            if (dumpOrdinals)
-                System.Console.Error.WriteLine(
-                    $"[persist] ord={thisOrdinal} fid={functorId} {ResolveFunctorName(functorId)} clauses={pred.ClauseCount}");
+            DiagDumpOrdinal(thisOrdinal, functorId, pred);
             if (thisOrdinal < rangeLo || thisOrdinal >= rangeHi)
                 continue;
             string functorName = ResolveFunctorName(functorId);
@@ -221,33 +189,7 @@ public static class PersistedIlBuilder
                 System.Console.Error.WriteLine(
                     $"shumway-persisted-il: skipped {functorName} "
                     + $"(fid={functorId}): {ex.GetType().Name}: {ex.Message}");
-                var skipDumpPath = System.Environment.GetEnvironmentVariable("SHUMWAY_PERSIST_SKIP_DUMP");
-                if (!string.IsNullOrEmpty(skipDumpPath))
-                {
-                    using var w = System.IO.File.AppendText(skipDumpPath);
-                    w.WriteLine($"=== {functorName} (fid={functorId}) ===");
-                    w.WriteLine(ex.ToString());
-                    if (ex.GetType().GetProperty("DebugInstructions") is { } pi
-                        && pi.GetValue(ex) is string instructions)
-                        w.WriteLine("---- IL so far ----\n" + instructions);
-                    w.WriteLine("---- Bytecode ----");
-                    int q = 0;
-                    while (q < pred.Bytecode.Length)
-                    {
-                        byte op = pred.Bytecode[q];
-                        var info = Shumway.Core.OpcodeTable.Get(op);
-                        w.Write($"  {q:D4}: {(Shumway.Core.Opcode)op,-22}");
-                        if (info.Size > 1)
-                        {
-                            for (int j = 1; j + 4 <= info.Size; j += 4)
-                                w.Write($" {Shumway.Core.BytecodeIO.ReadInt32(pred.Bytecode, q + j)}");
-                        }
-                        w.WriteLine();
-                        if (info.Size == 0) break;
-                        q += info.Size;
-                    }
-                    w.WriteLine();
-                }
+                DiagDumpSkippedPredicate(functorName, functorId, pred, ex);
                 if (patches.Count > patchesBeforeThisPred)
                     patches.RemoveRange(patchesBeforeThisPred,
                         patches.Count - patchesBeforeThisPred);
@@ -413,6 +355,90 @@ public static class PersistedIlBuilder
         // engine's linked code + switch tables. No build-time runtime state
         // crosses the process boundary.
         return new IlPredicateCompiler().CanCompile(pred, calleeMap);
+    }
+
+    // ----- Chunk 414 — diag-build-only hooks (-p:ShumwayDiag=true), stripped
+    // from normal builds via [Conditional("SHUMWAY_DIAG")]. -----
+
+    /// <summary>SHUMWAY_PERSIST_RANGE="lo,hi" — bisection aid restricting the
+    /// persisted set to eligible-ordinal range [lo, hi). No-op (defaults stay)
+    /// in normal builds.</summary>
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    private static void DiagReadPersistRange(ref int rangeLo, ref int rangeHi)
+    {
+        var rangeStr = System.Environment.GetEnvironmentVariable("SHUMWAY_PERSIST_RANGE");
+        if (string.IsNullOrEmpty(rangeStr)) return;
+        var parts = rangeStr.Split(',');
+        if (parts.Length == 2
+            && int.TryParse(parts[0], out int rLo)
+            && int.TryParse(parts[1], out int rHi))
+        {
+            rangeLo = rLo;
+            rangeHi = rHi;
+        }
+    }
+
+    /// <summary>SHUMWAY_PERSIST_DUMP_FIDS="name/arity,..." — prints each
+    /// indicator's build-time atom/functor id (cross-process drift diagnosis;
+    /// pair with the run side).</summary>
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    private static void DiagDumpBuildFids()
+    {
+        var dumpFidsEnv = System.Environment.GetEnvironmentVariable("SHUMWAY_PERSIST_DUMP_FIDS");
+        if (string.IsNullOrEmpty(dumpFidsEnv)) return;
+        foreach (var ind in dumpFidsEnv.Split(','))
+        {
+            var slash = ind.IndexOf('/');
+            if (slash < 0) continue;
+            if (!int.TryParse(ind.AsSpan(slash + 1), out int ar)) continue;
+            string nm = ind.Substring(0, slash);
+            int aid = AtomTable.Intern(nm).Id;
+            int fid = FunctorTable.Intern(aid, ar);
+            System.Console.Error.WriteLine($"[build-fid] {nm}/{ar} atom={aid} functor={fid}");
+        }
+    }
+
+    /// <summary>SHUMWAY_PERSIST_DUMP_ORDINALS=1 — one line per eligible
+    /// predicate with its bisection ordinal.</summary>
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    private static void DiagDumpOrdinal(int ordinal, int functorId, CompiledPredicate pred)
+    {
+        if (System.Environment.GetEnvironmentVariable("SHUMWAY_PERSIST_DUMP_ORDINALS") == "1")
+            System.Console.Error.WriteLine(
+                $"[persist] ord={ordinal} fid={functorId} {ResolveFunctorName(functorId)} clauses={pred.ClauseCount}");
+    }
+
+    /// <summary>SHUMWAY_PERSIST_SKIP_DUMP=&lt;file&gt; — appends the emit
+    /// exception + bytecode of a predicate the persisted-IL build skipped.</summary>
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    private static void DiagDumpSkippedPredicate(
+        string functorName, int functorId, CompiledPredicate pred, Exception ex)
+    {
+        var skipDumpPath = System.Environment.GetEnvironmentVariable("SHUMWAY_PERSIST_SKIP_DUMP");
+        if (string.IsNullOrEmpty(skipDumpPath)) return;
+        using var w = System.IO.File.AppendText(skipDumpPath);
+        w.WriteLine($"=== {functorName} (fid={functorId}) ===");
+        w.WriteLine(ex.ToString());
+        if (ex.GetType().GetProperty("DebugInstructions") is { } pi
+            && pi.GetValue(ex) is string instructions)
+            w.WriteLine("---- IL so far ----\n" + instructions);
+        w.WriteLine("---- Bytecode ----");
+        int q = 0;
+        while (q < pred.Bytecode.Length)
+        {
+            byte op = pred.Bytecode[q];
+            var info = Shumway.Core.OpcodeTable.Get(op);
+            w.Write($"  {q:D4}: {(Shumway.Core.Opcode)op,-22}");
+            if (info.Size > 1)
+            {
+                for (int j = 1; j + 4 <= info.Size; j += 4)
+                    w.Write($" {Shumway.Core.BytecodeIO.ReadInt32(pred.Bytecode, q + j)}");
+            }
+            w.WriteLine();
+            if (info.Size == 0) break;
+            q += info.Size;
+        }
+        w.WriteLine();
     }
 
     private static string ResolveFunctorName(int functorId)

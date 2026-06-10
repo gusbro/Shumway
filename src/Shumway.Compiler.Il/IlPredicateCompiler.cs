@@ -99,6 +99,19 @@ public sealed class IlPredicateCompiler
         System.Environment.GetEnvironmentVariable("SHUMWAY_IL_DUMP");
     private static readonly object IlDumpLock = new();
 
+    /// <summary>Chunk 414 — env-gated shape diagnostics, stripped from normal
+    /// builds (Release AND Debug) via <c>[Conditional("SHUMWAY_DIAG")]</c>;
+    /// build with <c>-p:ShumwayDiag=true</c> to compile them in, then activate
+    /// with <c>SHUMWAY_IL_SHAPE=&lt;level&gt;</c> at run time. The
+    /// <paramref name="message"/> closure (and its captures) only exists in
+    /// diag builds — the call site is removed otherwise.</summary>
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    private static void DiagShape(string level, bool when, Func<string> message)
+    {
+        if (when && System.Environment.GetEnvironmentVariable("SHUMWAY_IL_SHAPE") == level)
+            System.Console.Error.WriteLine(message());
+    }
+
     /// <summary>Chunk 402 — per-call output of <see cref="EmitPersistedMethod"/>: when
     /// the method compiled as a REGION, the (memberFunctorName, arity, entryCursor)
     /// table of its non-root members (the <see cref="RegionCursorKind.MemberEntry"/>
@@ -552,23 +565,20 @@ public sealed class IlPredicateCompiler
         {
             var region = IlRegionBuilder.Build(predicate, calleeMap,
                 extraEligible: p => IsRegionMemberEligible(p, calleeMap));
-            bool shape1 = System.Environment.GetEnvironmentVariable("SHUMWAY_IL_SHAPE") == "1";
             if (IsRegionEmittable(region, calleeMap, out var why))
             {
-                if (shape1)
-                    System.Console.Error.WriteLine(
-                        $"[region-emit] root fid={predicate.FunctorId} members={region.MemberCount}"
-                        + " [" + string.Join(",", region.Members.Select(m => $"{m.FunctorId}({FidName(m.FunctorId)}x{m.ClauseCount})")) + "]");
+                DiagShape("1", true, () =>
+                    $"[region-emit] root fid={predicate.FunctorId} members={region.MemberCount}"
+                    + " [" + string.Join(",", region.Members.Select(m => $"{m.FunctorId}({FidName(m.FunctorId)}x{m.ClauseCount})")) + "]");
                 var rplan = IlRegionPlanner.Plan(region,
                     m => TryDescribeIndexed(m, calleeMap, out var ii) ? ii!.Nodes.Count : 0);
                 return CompileRegion(region, rplan, calleeMap);
             }
             // Explain why a predicate WITH a local closure didn't become a region —
             // the coverage gaps (a backtrackable-builtin member, etc.).
-            if (shape1 && region.MemberCount >= 2)
-                System.Console.Error.WriteLine(
-                    $"[region-skip] root fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity}"
-                    + $" members={region.MemberCount}: {why}");
+            DiagShape("1", region.MemberCount >= 2, () =>
+                $"[region-skip] root fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity}"
+                + $" members={region.MemberCount}: {why}");
         }
         if (predicate.ClauseCount == 1)
         {
@@ -906,10 +916,9 @@ public sealed class IlPredicateCompiler
                     && !IsInlinableLeafRule(callee))   // pure leaf rules → case 1
                 {
                     sites[pc] = callee;
-                    if (System.Environment.GetEnvironmentVariable("SHUMWAY_IL_SHAPE") == "1")
-                        System.Console.Error.WriteLine(
-                            $"[rule-inline] caller fid={predicate.FunctorId} callee fid={callee.FunctorId} "
-                            + $"bodycalls={CountNonTailCallOpcodes(callee.Bytecode)}");
+                    DiagShape("1", true, () =>
+                        $"[rule-inline] caller fid={predicate.FunctorId} callee fid={callee.FunctorId} "
+                        + $"bodycalls={CountNonTailCallOpcodes(callee.Bytecode)}");
                 }
             }
             pc += (Opcode)code[pc] == Opcode.Meta ? 6 : OpcodeTable.Get(code[pc]).Size;
@@ -1891,10 +1900,9 @@ public sealed class IlPredicateCompiler
                             (AtomTable.GetById(mAtom)?.Name ?? "", mArity, s.Cursor));
                     }
                 LastRegionMemberCursors = memberCursors;
-                if (System.Environment.GetEnvironmentVariable("SHUMWAY_IL_SHAPE") == "1")
-                    System.Console.Error.WriteLine(
-                        $"[region-persist] root fid={predicate.FunctorId} {FidName(predicate.FunctorId)} "
-                        + $"members={region.MemberCount}");
+                DiagShape("1", true, () =>
+                    $"[region-persist] root fid={predicate.FunctorId} {FidName(predicate.FunctorId)} "
+                    + $"members={region.MemberCount}");
                 EmitRegionInto(emit, emitSelf, region, plan, calleeMap,
                     typeof(PredicateDelegate));   // persisted path: SelfFromArrayField → PredicateDelegate
                 return FinishPersistedEmit(emit,
@@ -2065,11 +2073,9 @@ public sealed class IlPredicateCompiler
             pc += op == Opcode.Meta ? 6 : OpcodeTable.Get((byte)op).Size;
         }
         cursorsUsed = cursor - firstCursor;
-        if (sites.Count > 0 && System.Environment.GetEnvironmentVariable("SHUMWAY_IL_SHAPE") == "1")
-            foreach (var s in sites.Values)
-                System.Console.Error.WriteLine(
-                    $"[inline] caller fid={predicate.FunctorId} callee fid={s.Fact.FunctorId} "
-                    + $"arity={s.Fact.Arity} clauses={s.ClauseRanges.Count}");
+        DiagShape("1", sites.Count > 0, () => string.Join("\n", sites.Values.Select(s =>
+            $"[inline] caller fid={predicate.FunctorId} callee fid={s.Fact.FunctorId} "
+            + $"arity={s.Fact.Arity} clauses={s.ClauseRanges.Count}")));
         return sites;
     }
 
@@ -2087,6 +2093,7 @@ public sealed class IlPredicateCompiler
     /// predicate, build its IL-eligible region (Phase 29 region compilation) and
     /// report its size at the default budget and uncapped — to size real regions
     /// and tune the budget before the emit stages. No emit.</summary>
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
     private void DiagnoseRegion(
         CompiledPredicate predicate, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
     {
@@ -2102,6 +2109,7 @@ public sealed class IlPredicateCompiler
             + $" bytes={uncapped.TotalBytecodeBytes})");
     }
 
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
     private static void DiagnoseInlineCandidates(
         CompiledPredicate predicate, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
     {

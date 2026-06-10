@@ -308,12 +308,9 @@ public static class BundleWriter
             // CurrentFunctorAddresses, so a meta-call / top-level / catch-recovery call to
             // a pruned member dispatches correctly without a standalone form.)
             prunableFids = pruned;
-            if (System.Environment.GetEnvironmentVariable("SHUMWAY_PRUNE_DIAG") is not null)
-                System.Console.Error.WriteLine(
-                    $"[prune-diag] module={entry.ModuleName} predicates={predicates.Count} "
-                    + $"seedFids={seedFids.Count} forcedRoots(regions)={forcedRoots.Count} "
-                    + $"regionReachable={regionReachable.Count} fullReachable={fullReachable.Count} "
-                    + $"pruned(stripped)={pruned.Count}");
+            DiagPrune(entry.ModuleName, predicates.Count, seedFids.Count,
+                forcedRoots.Count, regionReachable.Count, fullReachable.Count,
+                pruned.Count);
             // The Stage-9c promotions must hold during the IL compile below, so the regions
             // Build emits match the membership the prune assumed. Restored after Build.
             Shumway.Compiler.Il.IlPredicateCompiler.RegionForcedRootFids = forcedRoots;
@@ -362,6 +359,21 @@ public static class BundleWriter
                 stripFids.Add(pe.FunctorId);
         _lastIlFunctorIds = stripFids;
         return dllBytes;
+    }
+
+    /// <summary>Chunk 414 — diag-build-only (<c>-p:ShumwayDiag=true</c> +
+    /// <c>SHUMWAY_PRUNE_DIAG=1</c>): per-entry region-prune figures.
+    /// Stripped from normal builds.</summary>
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    private static void DiagPrune(string moduleName, int predicates, int seedFids,
+        int forcedRoots, int regionReachable, int fullReachable, int pruned)
+    {
+        if (System.Environment.GetEnvironmentVariable("SHUMWAY_PRUNE_DIAG") is not null)
+            System.Console.Error.WriteLine(
+                $"[prune-diag] module={moduleName} predicates={predicates} "
+                + $"seedFids={seedFids} forcedRoots(regions)={forcedRoots} "
+                + $"regionReachable={regionReachable} fullReachable={fullReachable} "
+                + $"pruned(stripped)={pruned}");
     }
 
     [System.ThreadStaticAttribute]

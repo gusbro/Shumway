@@ -64,6 +64,20 @@ public static class MetaWrapperUnfold
 {
     private const int MaxUnfoldDepth = 32;
 
+    /// <summary>Chunk 414 — diag-build-only (<c>-p:ShumwayDiag=true</c> +
+    /// <c>SHUMWAY_UNFOLD_DIAG=1</c>): lists the wrappers a registry holds.
+    /// Stripped from normal builds.</summary>
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    private static void DiagWrappers(
+        Dictionary<(string Name, int Arity), WrapperTemplate> wrappers)
+    {
+        if (System.Environment.GetEnvironmentVariable("SHUMWAY_UNFOLD_DIAG") == "1"
+            && wrappers.Count > 0)
+            System.Console.Error.WriteLine("[unfold] wrappers: " + string.Join(", ",
+                System.Linq.Enumerable.Select(wrappers,
+                    kv => $"{kv.Key.Name}/{kv.Key.Arity}")));
+    }
+
     /// <summary>One detected wrapper: the equivalent control template
     /// (a term over the wrapper's own head variables) plus the head-variable
     /// names in argument order, so instantiation is clone-with-substitution.</summary>
@@ -134,11 +148,7 @@ public static class MetaWrapperUnfold
         ArgumentNullException.ThrowIfNull(clauses);
         ArgumentNullException.ThrowIfNull(registry);
         var wrappers = registry.Map;
-        if (System.Environment.GetEnvironmentVariable("SHUMWAY_UNFOLD_DIAG") == "1"
-            && wrappers.Count > 0)
-            System.Console.Error.WriteLine("[unfold] wrappers: " + string.Join(", ",
-                System.Linq.Enumerable.Select(wrappers,
-                    kv => $"{kv.Key.Name}/{kv.Key.Arity}")));
+        DiagWrappers(wrappers);
         if (wrappers.Count == 0) return clauses;
 
         List<Clause>? result = null;

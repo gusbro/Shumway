@@ -45,4 +45,18 @@
     <DefineConstants>$(DefineConstants);SHUMWAY_PROFILE</DefineConstants>
   </PropertyGroup>
 
+  <!--
+    Chunk 414 — env-var-activated developer diagnostics (the SHUMWAY_*_DIAG /
+    dump / survey / GC-fuzz family). The [Conditional("SHUMWAY_DIAG")] hooks
+    only exist in builds made with:
+      dotnet build -p:ShumwayDiag=true
+    A normal build — Release OR Debug — strips every call site at compile
+    time: the env-var checks themselves are gone from the IL, so a Prolog
+    application running on a stock Shumway build pays nothing and leaks no
+    diagnostic surface.
+  -->
+  <PropertyGroup Condition="'$(ShumwayDiag)' == 'true'">
+    <DefineConstants>$(DefineConstants);SHUMWAY_DIAG</DefineConstants>
+  </PropertyGroup>
+
 </Project>

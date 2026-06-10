@@ -111,25 +111,9 @@ public sealed class ClauseCompiler
         // appears in. Chunk 0 = head + first goal; chunk i >= 1 = goal i.
         var permanents = ClassifyPermanents(headArgs, goals);
 
-        // Chunk 405 (register-allocator design survey, SHUMWAY_Y_SURVEY=1):
-        // quantify the CEILING of the classic-allocator arc by classifying each
-        // permanent. Class B = a permanent whose chunk-crossings are ALL over
-        // inline-compiled goals (cut / =/2 / is / the six comparisons — no real
-        // call between its first and last use), i.e. the variable a
-        // chunk-transparency allocator would demote to a temp (the refuted
-        // Phase-25/26 refinement). Class A = crosses a real call — irreducible
-        // in the WAM model (the callee owns the X registers; only the
-        // environment survives a call). Diagnostic only; no codegen change.
-        if (YSurvey is not null)
-        {
-            var transparent = ClassifyPermanentsInlineTransparent(headArgs, goals);
-            int classB = 0;
-            foreach (var p in permanents)
-                if (!transparent.Contains(p)) classB++;
-            string key = $"{name}/{headArgs.Length}";
-            YSurvey.TryGetValue(key, out var prev);
-            YSurvey[key] = (prev.PermTotal + permanents.Count, prev.ClassB + classB);
-        }
+        // Chunk 405 register-allocator survey (ADR-021), diag builds only —
+        // see DiagYSurvey. Stripped from normal builds (chunk 414).
+        DiagYSurvey(name, headArgs, goals, permanents);
 
         // Cut analysis: a `!` after position 0 in the goal list is a deep cut
         // and needs an extra Y slot to hold the cut barrier (captured by
@@ -276,8 +260,31 @@ public sealed class ClauseCompiler
     /// <summary>Chunk 405 survey output (see the call site above): per
     /// <c>name/arity</c>, the total permanents allocated across its clauses and
     /// how many are Class B (live only across inline goals). Null = off (the
-    /// default; the CLI sets it under <c>SHUMWAY_Y_SURVEY=1</c>).</summary>
+    /// default; the CLI sets it under <c>SHUMWAY_Y_SURVEY=1</c>). Chunk 414:
+    /// the per-clause collection only exists in <c>-p:ShumwayDiag=true</c>
+    /// builds — in a normal build the survey stays empty.</summary>
     public static Dictionary<string, (int PermTotal, int ClassB)>? YSurvey;
+
+    /// <summary>Chunk 405 (register-allocator design survey, ADR-021):
+    /// quantifies the CEILING of the classic-allocator arc by classifying each
+    /// permanent. Class B = a permanent whose chunk-crossings are ALL over
+    /// inline-compiled goals (cut / =/2 / is / the six comparisons), i.e. what
+    /// a chunk-transparency allocator would demote; Class A = crosses a real
+    /// call — irreducible in the WAM model. Diagnostic only; stripped from
+    /// normal builds via <c>[Conditional("SHUMWAY_DIAG")]</c> (chunk 414).</summary>
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    private static void DiagYSurvey(
+        string name, Term[] headArgs, List<Term> goals, List<string> permanents)
+    {
+        if (YSurvey is null) return;
+        var transparent = ClassifyPermanentsInlineTransparent(headArgs, goals);
+        int classB = 0;
+        foreach (var p in permanents)
+            if (!transparent.Contains(p)) classB++;
+        string key = $"{name}/{headArgs.Length}";
+        YSurvey.TryGetValue(key, out var prev);
+        YSurvey[key] = (prev.PermTotal + permanents.Count, prev.ClassB + classB);
+    }
 
     /// <summary>Chunk 405 survey — <see cref="ClassifyPermanents"/> under the
     /// refuted inline-transparency model: a goal the compiler lowers WITHOUT a

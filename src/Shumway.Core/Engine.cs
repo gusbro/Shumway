@@ -156,14 +156,24 @@ public sealed partial class Engine
         _bindingTrail = new int[config.InitialBindingTrailSize];
         _extraTrail = new ExtraTrailEntry[config.InitialExtraTrailSize];
         _gcThreshold = config.GcThreshold;
-        // Diagnostic override of the auto-collection watermark (ADR-016):
-        // SHUMWAY_GC_THRESHOLD=0 disables auto-GC, =N sets the cell
-        // watermark. Lets a measurement compare GC-on vs GC-off in one
-        // build without recompiling.
+        // Chunk 414 — the GC fuzz/bisect env overrides (SHUMWAY_GC_THRESHOLD /
+        // GC_STRESS / GC_AT / GC_UPTO) only exist in -p:ShumwayDiag=true
+        // builds; a normal build never reads the environment here. The fuzz
+        // FIELDS and their (branch-predicted) checks in MaybeCollectHeap stay,
+        // because the test suite also drives them programmatically
+        // (GcStressMode / EngineConfig).
+        DiagReadGcOverrides();
+    }
+
+    /// <summary>Chunk 414 — diag-build-only env overrides for the ADR-016 GC:
+    /// watermark replacement, every-safe-point stress mode (fuzz), and the
+    /// collect-at-exactly-N / collect-up-to-N bisection knobs. Stripped from
+    /// normal builds via <c>[Conditional("SHUMWAY_DIAG")]</c>.</summary>
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    private void DiagReadGcOverrides()
+    {
         if (int.TryParse(System.Environment.GetEnvironmentVariable("SHUMWAY_GC_THRESHOLD"), out int gcThr))
             _gcThreshold = gcThr;
-        // Opt-in fuzz mode: collect at every safe point so the test suite
-        // exercises GC relocation against every query shape (ADR-016).
         _gcStressMode = System.Environment.GetEnvironmentVariable("SHUMWAY_GC_STRESS") == "1";
         if (int.TryParse(System.Environment.GetEnvironmentVariable("SHUMWAY_GC_AT"), out int gcAt))
             _gcOnlyAt = gcAt;

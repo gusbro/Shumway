@@ -76,9 +76,7 @@ public static class MetaTransform
                 Term newBody;
                 if (HasTransparentBranchCut(body))
                 {
-                    if (System.Environment.GetEnvironmentVariable("SHUMWAY_CUTFIX_DIAG") == "1")
-                        System.Console.Error.WriteLine(
-                            $"[cutfix] {(head is CompoundTerm hc ? hc.Functor + "/" + hc.Args.Length : head is AtomTerm ha ? ha.Name + "/0" : "?")} at {ruleTerm.Position}");
+                    DiagCutfix(head, ruleTerm);
                     counter++;
                     string cutK = $"$CutB_{counter}";
                     Term transformed = TransformGoal(body, ref counter, helpers, cutK);
@@ -112,6 +110,17 @@ public static class MetaTransform
     /// has no branch cut, or in cut-OPAQUE positions (an if-then-else
     /// condition, \+, call/N, findall/bagof/setof/forall/catch goals) — there
     /// a branch `!` keeps today's helper-local scope.</param>
+    /// <summary>Chunk 414 — diag-build-only (<c>-p:ShumwayDiag=true</c> +
+    /// <c>SHUMWAY_CUTFIX_DIAG=1</c>): names each clause the branch-cut
+    /// transparency capture fires on. Stripped from normal builds.</summary>
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    private static void DiagCutfix(Term head, CompoundTerm ruleTerm)
+    {
+        if (System.Environment.GetEnvironmentVariable("SHUMWAY_CUTFIX_DIAG") == "1")
+            System.Console.Error.WriteLine(
+                $"[cutfix] {(head is CompoundTerm hc ? hc.Functor + "/" + hc.Args.Length : head is AtomTerm ha ? ha.Name + "/0" : "?")} at {ruleTerm.Position}");
+    }
+
     private static Term TransformGoal(Term goal, ref int counter, List<Clause> helpers,
         string? cutK = null)
     {
