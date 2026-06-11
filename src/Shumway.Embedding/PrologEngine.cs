@@ -1736,9 +1736,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
     /// <summary>Minimum number of dead (retracted-but-still-linked)
     /// clauses in a chunk-127 dynamic chain before reclamation kicks in.
-    /// Reclaiming has a fixed cost (recompile the live clauses), so we
-    /// wait until the dead clauses clearly dominate the per-call scan.</summary>
+    /// Re-threading costs O(live) pointer patches (it does NOT recompile
+    /// anything — see <see cref="GarbageCollectClauses"/>), so this only
+    /// amortises the choice-point scan and the patch writes. Every
+    /// dispatch between reclaims walks up to this many tombstones.</summary>
     private const int ReclaimDeadThreshold = 32;
+
+    /// <summary>Chunk 420 — number of times the automatic dead-chain
+    /// reclamation actually fired across this engine's lifetime.
+    /// Deterministic diagnostic for tests; the re-thread itself lives in
+    /// the persistent program bytes.</summary>
+    public long ChainReclaims { get; private set; }
 
     /// <summary>Phase 20 — physically drops retracted-but-still-linked
     /// clauses from a dynamic predicate's chunk-127 chain by rebuilding
@@ -1749,7 +1757,16 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// address (SavedBp) points at a chunk in this chain. So reclamation
     /// is safe exactly when no active choice point resumes into the
     /// chain. A fresh call re-samples the current generation at
-    /// enter_dynamic and never sees the dropped clauses.</summary>
+    /// enter_dynamic and never sees the dropped clauses.
+    ///
+    /// <para>Chunk 420 dropped the old <c>dead &lt; Entries.Count</c>
+    /// gate (a chunk-150-era leftover from when reclamation recompiled
+    /// the live clauses): it made the steady-state tombstone load scale
+    /// with the LIVE clause count, so a busy predicate with ~125 live
+    /// entries (Blint's <c>saved_cur_line_i/2</c> save-stack) sat
+    /// permanently at ~100 tombstones that every read walked — 1.55M
+    /// retry dispatches per lint. The re-thread is O(live) pointer
+    /// patches, so the dead count alone is the right trigger.</para></summary>
     private void TryReclaimDeadDynamicChain(Engine engine, int functorId)
     {
         if (engine.CurrentProgram is null) return;
@@ -1759,7 +1776,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // fallback and aren't handled here.
         if (chain.HeadClauseAddr < 0 || chain.TrampolineExecuteOperandAddr < 0) return;
         int dead = chain.DeadChunks.Count;
-        if (dead < ReclaimDeadThreshold || dead < chain.Entries.Count) return;
+        if (dead < ReclaimDeadThreshold) return;
         // A source-block clause (ChunkAddr < 0) isn't individually
         // relocatable — skip reclamation if the chain holds any.
         foreach (var e in chain.Entries)
@@ -1775,6 +1792,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         chainAddrs.Add(chain.HeadClauseAddr);
         foreach (var (_, savedBp, _) in engine.EnumerateChoicePoints())
             if (chainAddrs.Contains(savedBp)) return;
+        ChainReclaims++;
 
         // Safe and worthwhile — re-thread the chain through its live
         // entries in place (chunk 150). This keeps the trampoline at its
