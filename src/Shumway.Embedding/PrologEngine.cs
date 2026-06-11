@@ -1739,8 +1739,15 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// Re-threading costs O(live) pointer patches (it does NOT recompile
     /// anything — see <see cref="GarbageCollectClauses"/>), so this only
     /// amortises the choice-point scan and the patch writes. Every
-    /// dispatch between reclaims walks up to this many tombstones.</summary>
-    private const int ReclaimDeadThreshold = 32;
+    /// dispatch between reclaims walks up to this many tombstones — the
+    /// real cost for read-heavy churn idioms (Blint's <c>next_char_i</c>
+    /// unget buffer is READ via <c>call/1</c> dispatch ~105K times per
+    /// lint, each walking the tombstones the threshold lets linger).
+    /// Chunk 422 swept the value on Blint's deterministic opcode count:
+    /// 32→29.21M, 16→28.40M, 8→28.02M, 4→27.78M, 2→27.69M. 4 is the
+    /// knee — below it the per-fire fixed costs (the CP-stack scan and
+    /// the chainAddrs set) buy almost nothing.</summary>
+    private const int ReclaimDeadThreshold = 4;
 
     /// <summary>Chunk 420 — number of times the automatic dead-chain
     /// reclamation actually fired across this engine's lifetime.
