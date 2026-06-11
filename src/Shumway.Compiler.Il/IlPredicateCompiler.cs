@@ -1974,7 +1974,8 @@ public sealed class IlPredicateCompiler
                 if (emitSelf is null)
                     throw new InvalidOperationException(
                         "Single-clause meta-CP predicate needs a delegates field for self-reference.");
-                EmitSingleClauseMetaCpBody(emit, predicate, callSiteCount, calleeMap, emitSelf);
+                EmitSingleClauseMetaCpBody(emit, predicate, callSiteCount, calleeMap, emitSelf,
+                    typeof(PredicateDelegate));   // persisted path: SelfFromArrayField → PredicateDelegate
             }
         }
         else if (TryDescribeIndexed(predicate, calleeMap, out var indexedInfo))
@@ -1987,21 +1988,24 @@ public sealed class IlPredicateCompiler
             if (emitSelf is null)
                 throw new InvalidOperationException(
                     "Indexed-dispatch predicate needs a delegates field for self-reference.");
-            EmitIndexedDispatchBody(emit, predicate, indexedInfo!, calleeMap, emitSelf);
+            EmitIndexedDispatchBody(emit, predicate, indexedInfo!, calleeMap, emitSelf,
+                typeof(PredicateDelegate));   // persisted path: SelfFromArrayField → PredicateDelegate
         }
         else if (TryDescribeIndexedAtomPredicate(predicate, calleeMap, out var atomInfo))
         {
             if (emitSelf is null)
                 throw new InvalidOperationException(
                     "Indexed-atom predicate needs a delegates field for self-reference.");
-            EmitIndexedAtomBody(emit, predicate, atomInfo!, emitSelf, calleeMap: calleeMap);
+            EmitIndexedAtomBody(emit, predicate, atomInfo!, emitSelf,
+                typeof(PredicateDelegate), calleeMap: calleeMap);
         }
         else if (TryDescribeTryMeElseChain(predicate, calleeMap, out var chainInfo))
         {
             if (emitSelf is null)
                 throw new InvalidOperationException(
                     "Try-me-else chain predicate needs a delegates field for self-reference.");
-            EmitTryMeElseChainBody(emit, predicate, chainInfo!, calleeMap, emitSelf);
+            EmitTryMeElseChainBody(emit, predicate, chainInfo!, calleeMap, emitSelf,
+                typeof(PredicateDelegate));   // persisted path: SelfFromArrayField → PredicateDelegate
         }
         else if (TryDescribeSwitchedChain(predicate, calleeMap, out var switchedInfo))
         {
@@ -2011,7 +2015,8 @@ public sealed class IlPredicateCompiler
             if (emitSelf is null)
                 throw new InvalidOperationException(
                     "Switched-chain predicate needs a delegates field for self-reference.");
-            EmitTryMeElseChainBody(emit, predicate, switchedInfo!, calleeMap, emitSelf);
+            EmitTryMeElseChainBody(emit, predicate, switchedInfo!, calleeMap, emitSelf,
+                typeof(PredicateDelegate));   // persisted path: SelfFromArrayField → PredicateDelegate
         }
         else
         {
@@ -2034,7 +2039,8 @@ public sealed class IlPredicateCompiler
         var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
             $"ShumwayIl_metacp_{predicate.FunctorId}_{predicate.Arity}",
             doVerify: DoVerify || DebugMode);
-        EmitSingleClauseMetaCpBody(emit, predicate, callSiteCount, calleeMap, emitSelf);
+        EmitSingleClauseMetaCpBody(emit, predicate, callSiteCount, calleeMap, emitSelf,
+            typeof(Func<Engine, int, bool>));   // runtime path: SelfFromHolder → Func
         var del = FinishEmit(emit,
             $"compile fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity} clauses={predicate.ClauseCount}");
         IndexedDelegateHolder.Register(holderKey, del);
@@ -2417,7 +2423,8 @@ public sealed class IlPredicateCompiler
         CompiledPredicate predicate,
         int callSiteCount,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
-        SelfDelegateEmitter emitSelf)
+        SelfDelegateEmitter emitSelf,
+        System.Type selfDelType)
     {
         var failLabel = emit.DefineLabel("fail");
         var startLabel = emit.DefineLabel("start");
@@ -2464,6 +2471,26 @@ public sealed class IlPredicateCompiler
         foreach (var site in inlineSites.Values)
             for (int j = 0; j < site.AltLabels.Length; j++)
                 cursorLabels[site.BaseCursor + j] = site.AltLabels[j];
+
+        // Chunk 426 (CSE, mirrors the region Stage-11 hoist): every inlined-fact
+        // clause alternative's PushIlChoicePoint reloads the SAME self-delegate —
+        // a per-push holder dictionary probe on the runtime path. Hoist that load
+        // to ONE local ahead of the cursor switch (which dominates every push
+        // site, including the backtrack re-entries), so each push is a LoadLocal.
+        // Gate on ≥2 pushes: below that the hoist's load+store would only grow
+        // the method. An inline site with k clauses pushes k−1 CPs = AltLabels.
+        SelfDelegateEmitter effectiveSelf = emitSelf;
+        int pushSites = 0;
+        foreach (var site in inlineSites.Values)
+            pushSites += site.AltLabels.Length;
+        if (pushSites >= 2)
+        {
+            var selfDelLoc = emit.DeclareLocal(selfDelType, "mselfdel");
+            emitSelf(emit);
+            emit.StoreLocal(selfDelLoc);
+            effectiveSelf = e => e.LoadLocal(selfDelLoc);
+        }
+
         emit.LoadArgument(1);
         emit.Switch(cursorLabels);
         emit.Branch(startLabel);    // cursor out of range (unreachable) → start
@@ -2477,7 +2504,7 @@ public sealed class IlPredicateCompiler
             failLabel, predicate.CallSites,
             callSiteIndexCounter: () => ++idxCounter,
             resumeLabels: resumeLabels,
-            emitSelfDelegate: emitSelf,
+            emitSelfDelegate: effectiveSelf,
             calleeMap: calleeMap,
             selfFunctorId: predicate.FunctorId, selfTailLabel: startLabel,
             inlineSites: inlineSites, ruleInlineSites: ruleInlineSites);
@@ -4229,7 +4256,8 @@ public sealed class IlPredicateCompiler
             var emitSelf = SelfFromHolder(holderKey);
             var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
                 $"ShumwayIl_idx_{predicate.FunctorId}", doVerify: DoVerify || DebugMode);
-            EmitIndexedDispatchBody(emit, predicate, info, calleeMap, emitSelf);
+            EmitIndexedDispatchBody(emit, predicate, info, calleeMap, emitSelf,
+                typeof(Func<Engine, int, bool>));   // runtime path: SelfFromHolder → Func
             var del = FinishEmit(emit,
             $"compile fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity} clauses={predicate.ClauseCount}");
             IndexedDelegateHolder.Register(holderKey, del);
@@ -4243,7 +4271,8 @@ public sealed class IlPredicateCompiler
         CompiledPredicate predicate,
         IlIndexedDispatchInfo info,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
-        SelfDelegateEmitter emitSelf)
+        SelfDelegateEmitter emitSelf,
+        System.Type selfDelType)
     {
         int K = info.Nodes.Count;
         int N = info.Clauses.Count;
@@ -4263,27 +4292,45 @@ public sealed class IlPredicateCompiler
 
         _emitOwnerFid = predicate.FunctorId;
 
-        // ---- Top: dispatch on the incoming cursor (arg 1). ----
-        // Call-site resumes first (a backtrack into a body's post-Call point).
-        for (int j = 0; j < totalCallSites; j++)
-        {
-            emit.LoadArgument(1);
-            emit.LoadConstant(callBase + j);
-            emit.BranchIfEqual(resumeLabels[j]);
-        }
-        // Chain-node resumes (a backtrack into the next bucket node).
+        // Chunk 426 (CSE, mirrors the region Stage-11 hoist): every chain node's
+        // PushIlChoicePoint reloads the SAME self-delegate — a per-push holder
+        // dictionary probe on the runtime path. Hoist it to ONE local ahead of
+        // the cursor switch (which dominates every node label, fresh AND
+        // backtrack re-entries); gate on ≥2 pushes so the load+store only ever
+        // shrinks the per-invocation work.
+        SelfDelegateEmitter effectiveSelf = emitSelf;
+        int pushSites = 0;
         for (int n = 0; n < K; n++)
+            if (info.Nodes[n].NextCursor >= 0) pushSites++;
+        if (pushSites >= 2)
         {
-            emit.LoadArgument(1);
-            emit.LoadConstant(n + 1);
-            emit.BranchIfEqual(nodeLabels[n]);
+            var selfDelLoc = emit.DeclareLocal(selfDelType, "iselfdel");
+            emitSelf(emit);
+            emit.StoreLocal(selfDelLoc);
+            effectiveSelf = e => e.LoadLocal(selfDelLoc);
         }
+
         // Self-tail-recursion target: a self Execute in a clause body branches
         // here (its args already in the argument registers) instead of the
         // marker / dispatch-loop round trip — an in-method loop. Marked before
         // the cursor-0 resolve so the loop re-runs the index decision on the
         // new arguments.
         var selfEntry = emit.DefineLabel("idx_self_entry");
+
+        // ---- Top: dispatch on the incoming cursor (arg 1). ----
+        // Chunk 426: one O(1) jump table (IL `switch`) over the dense cursor
+        // space — 0 → entry resolve; 1..K → chain node; K+1.. → call-site
+        // resume — replacing the linear compare chain every invocation (fresh
+        // calls AND backtrack re-entries) used to pay in full. An out-of-range
+        // cursor falls through to the entry, exactly as the old chain did.
+        var cursorLabels = new Sigil.Label[callBase + totalCallSites];
+        cursorLabels[0] = selfEntry;
+        for (int n = 0; n < K; n++) cursorLabels[n + 1] = nodeLabels[n];
+        for (int j = 0; j < totalCallSites; j++)
+            cursorLabels[callBase + j] = resumeLabels[j];
+        emit.LoadArgument(1);
+        emit.Switch(cursorLabels);
+        emit.Branch(selfEntry);     // cursor out of range (unreachable) → entry
         emit.MarkLabel(selfEntry);
         // cursor 0 — the initial call: decide the entry node from the indexed
         // argument. The index decision is compiled to inline IL (deref + tag
@@ -4301,12 +4348,10 @@ public sealed class IlPredicateCompiler
             EmitFunctorId(emit, predicate.FunctorId);
             emit.Call(IlIndexedDispatchResolveByFidMethod);
             emit.StoreLocal(entry);
-            for (int n = 0; n < K; n++)
-            {
-                emit.LoadLocal(entry);
-                emit.LoadConstant(n);
-                emit.BranchIfEqual(nodeLabels[n]);
-            }
+            // Chunk 426: node indices are dense 0..K-1 → O(1) jump table
+            // instead of a linear compare chain.
+            emit.LoadLocal(entry);
+            emit.Switch(nodeLabels);
             emit.Branch(failLabel);   // unreachable: resolver always returns a valid node
         }
 
@@ -4318,7 +4363,7 @@ public sealed class IlPredicateCompiler
             if (next >= 0)
             {
                 emit.LoadArgument(0);            // engine
-                emitSelf(emit);                  // → PredicateDelegate
+                effectiveSelf(emit);             // → PredicateDelegate (chunk-426 hoisted local)
                 emit.LoadConstant(next + 1);     // resume cursor of the next node
                 emit.LoadConstant(predicate.Arity);
                 emit.Call(EnginePushIlCpMethod);
@@ -4335,7 +4380,7 @@ public sealed class IlPredicateCompiler
                 failLabel, predicate.CallSites,
                 callSiteIndexCounter: () => ++siteCounter,
                 resumeLabels: resumeLabels,
-                emitSelfDelegate: emitSelf,
+                emitSelfDelegate: effectiveSelf,
                 calleeMap: calleeMap,
                 cursorBase: callBase,
                 selfFunctorId: predicate.FunctorId,
@@ -4529,7 +4574,8 @@ public sealed class IlPredicateCompiler
         var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
             $"ShumwayIl_tryelse_{predicate.FunctorId}",
             doVerify: DoVerify || DebugMode);
-        EmitTryMeElseChainBody(emit, predicate, info, calleeMap, emitSelf);
+        EmitTryMeElseChainBody(emit, predicate, info, calleeMap, emitSelf,
+            typeof(Func<Engine, int, bool>));   // runtime path: SelfFromHolder → Func
 
         var del = FinishEmit(emit,
             $"compile fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity} clauses={predicate.ClauseCount}");
@@ -4549,7 +4595,8 @@ public sealed class IlPredicateCompiler
         CompiledPredicate predicate,
         TryMeElseChainInfo info,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
-        SelfDelegateEmitter emitSelf)
+        SelfDelegateEmitter emitSelf,
+        System.Type selfDelType)
     {
         var clauses = info.Clauses;
         var failLabel = emit.DefineLabel("fail");
@@ -4571,38 +4618,57 @@ public sealed class IlPredicateCompiler
 
         _emitOwnerFid = predicate.FunctorId;
 
-        // Top-level Call-site cursor dispatch — runs before the
-        // clause-entry chain so an incoming cursor=N+j short-circuits
-        // straight to its resume point inside whichever clause the
-        // Call site lives in.
-        for (int j = 0; j < totalCallSites; j++)
+        // Chunk 426 (CSE, mirrors the region Stage-11 hoist): every clause's
+        // PushIlChoicePoint reloads the SAME self-delegate — a per-push holder
+        // dictionary probe on the runtime path. Hoist it to ONE local ahead of
+        // the cursor switch (which dominates every clause entry, fresh AND
+        // backtrack re-entries); gate on ≥2 pushes so the load+store only ever
+        // shrinks the per-invocation work. N clauses push N−1 CPs.
+        SelfDelegateEmitter effectiveSelf = emitSelf;
+        if (N - 1 >= 2)
         {
-            emit.LoadArgument(1);
-            emit.LoadConstant(N + j);
-            emit.BranchIfEqual(resumeLabels[j]);
+            var selfDelLoc = emit.DeclareLocal(selfDelType, "cselfdel");
+            emitSelf(emit);
+            emit.StoreLocal(selfDelLoc);
+            effectiveSelf = e => e.LoadLocal(selfDelLoc);
         }
 
+        // Top-level cursor dispatch. Chunk 426: one O(1) jump table (IL
+        // `switch`) over the dense cursor space — 0..N-1 → clause entry;
+        // N..N+M-1 → call-site resume — replacing the linear compare chain
+        // (resume compares + one compare interleaved per clause) that every
+        // invocation used to walk. An out-of-range cursor falls through to
+        // fail, exactly as the old chain's final fall-through did.
+        var clauseLabels = new Sigil.Label[N];
+        for (int i = 0; i < N; i++)
+            clauseLabels[i] = emit.DefineLabel($"clause_entry_{i}");
+        var cursorLabels = new Sigil.Label[N + totalCallSites];
+        for (int i = 0; i < N; i++) cursorLabels[i] = clauseLabels[i];
+        for (int j = 0; j < totalCallSites; j++)
+            cursorLabels[N + j] = resumeLabels[j];
+        emit.LoadArgument(1);
+        emit.Switch(cursorLabels);
+        // cursor out of [0..N+M-1] (unreachable) → fail.
+        emit.Branch(failLabel);
+
         // Self-tail-recursion → in-method loop (chunk 350): a self Execute in
-        // any clause body resets the cursor to 0 and branches here, so the
-        // clause-entry chain re-dispatches from clause 0 (a fresh self-call must
-        // try the first clause, not re-enter the clause it was called from).
+        // any clause body resets the cursor to 0 and branches here — clause
+        // 0's entry (a fresh self-call must try the first clause, not re-enter
+        // the clause it was called from).
         var selfEntry = emit.DefineLabel("chain_self_entry");
         emit.MarkLabel(selfEntry);
 
         int siteCounter = 0;
         for (int i = 0; i < clauses.Count; i++)
         {
-            var nextLabel = emit.DefineLabel($"after_clause_{i}");
-            emit.LoadArgument(1);
-            emit.LoadConstant(i);
-            emit.UnsignedBranchIfNotEqual(nextLabel);
+            emit.MarkLabel(clauseLabels[i]);
 
             // If there's a later clause, push an IL CP for it before
             // running this clause's body.
             if (i < clauses.Count - 1)
             {
                 emit.LoadArgument(0);                      // engine
-                emitSelf(emit);                            // → PredicateDelegate
+                effectiveSelf(emit);                       // → PredicateDelegate (chunk-426 hoisted local)
                 emit.LoadConstant(i + 1);                  // next cursor
                 emit.LoadConstant(predicate.Arity);
                 emit.Call(EnginePushIlCpMethod);
@@ -4616,18 +4682,14 @@ public sealed class IlPredicateCompiler
                 failLabel, predicate.CallSites,
                 callSiteIndexCounter: () => ++siteCounter,
                 resumeLabels: resumeLabels,
-                emitSelfDelegate: emitSelf,
+                emitSelfDelegate: effectiveSelf,
                 calleeMap: calleeMap,
                 cursorBase: N,
                 selfFunctorId: predicate.FunctorId,
                 selfTailLabel: selfEntry,
                 resetCursorBeforeSelfTail: true);
-
-            emit.MarkLabel(nextLabel);
         }
 
-        // cursor out of [0..N-1] (and not a Call-site resume above) → fail.
-        emit.Branch(failLabel);
         emit.MarkLabel(failLabel);
         emit.LoadConstant(false);
         emit.Return();
@@ -4783,7 +4845,9 @@ public sealed class IlPredicateCompiler
         var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
             $"ShumwayIl_indexed_{predicate.FunctorId}",
             doVerify: DoVerify || DebugMode);
-        EmitIndexedAtomBody(emit, predicate, info, emitSelf, profileKey, groundOrder, calleeMap);
+        EmitIndexedAtomBody(emit, predicate, info, emitSelf,
+            typeof(Func<Engine, int, bool>),   // runtime path: SelfFromHolder → Func
+            profileKey, groundOrder, calleeMap);
 
         var del = FinishEmit(emit,
             $"compile fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity} clauses={predicate.ClauseCount}");
@@ -4814,6 +4878,7 @@ public sealed class IlPredicateCompiler
         CompiledPredicate predicate,
         IndexedAtomInfo info,
         SelfDelegateEmitter emitSelf,
+        System.Type selfDelType,
         int profileKey = -1,
         int[]? groundOrder = null,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
@@ -4854,28 +4919,37 @@ public sealed class IlPredicateCompiler
         for (int j = 0; j < totalCallSites; j++)
             callResumeLabels[j] = emit.DefineLabel($"call_resume_{j + 1}");
 
-        // Top-level cursor switch.
-        // Call-site resume cursors first (chunk 182 forward-resume).
-        for (int j = 0; j < totalCallSites; j++)
+        // Chunk 426 (CSE, mirrors the region Stage-11 hoist): every var-path
+        // clause's PushIlChoicePoint reloads the SAME self-delegate — a
+        // per-push holder dictionary probe on the runtime path. Hoist it to
+        // ONE local ahead of the cursor switch (which dominates every
+        // varEnter label, fresh AND backtrack re-entries); gate on ≥2 pushes
+        // so the load+store only ever shrinks the per-invocation work.
+        SelfDelegateEmitter effectiveSelf = emitSelf;
+        if (n - 1 >= 2)
         {
-            emit.LoadArgument(1);
-            emit.LoadConstant(n + j);
-            emit.BranchIfEqual(callResumeLabels[j]);
+            var selfDelLoc = emit.DeclareLocal(selfDelType, "aselfdel");
+            emitSelf(emit);
+            emit.StoreLocal(selfDelLoc);
+            effectiveSelf = e => e.LoadLocal(selfDelLoc);
         }
-        // Clause-entry cursors 1..n-1 → varEnter[cursor].
-        for (int i = 1; i < n; i++)
-        {
-            emit.LoadArgument(1);
-            emit.LoadConstant(i);
-            emit.BranchIfEqual(varEnterLabels[i]);
-        }
-        // cursor == 0 falls through to tag dispatch; anything else
-        // unreachable → fail.
+
+        // Top-level cursor dispatch. Chunk 426: one O(1) jump table (IL
+        // `switch`) over the dense cursor space — 0 → tag dispatch; 1..n-1 →
+        // varEnter[cursor]; n..n+M-1 → call-site resume — replacing the
+        // linear compare chain that tested cursor==0 LAST, making the
+        // fresh-call path (by far the most common) pay the whole chain. An
+        // out-of-range cursor falls through to fail, exactly as the old
+        // chain's explicit default did.
         var cursorZero = emit.DefineLabel("cursor_zero");
+        var cursorLabels = new Sigil.Label[n + totalCallSites];
+        cursorLabels[0] = cursorZero;
+        for (int i = 1; i < n; i++) cursorLabels[i] = varEnterLabels[i];
+        for (int j = 0; j < totalCallSites; j++)
+            cursorLabels[n + j] = callResumeLabels[j];
         emit.LoadArgument(1);
-        emit.LoadConstant(0);
-        emit.BranchIfEqual(cursorZero);
-        emit.Branch(failLabel);
+        emit.Switch(cursorLabels);
+        emit.Branch(failLabel);     // cursor out of range (unreachable) → fail
         emit.MarkLabel(cursorZero);
 
         // cursor == 0: deref A1, dispatch on tag.
@@ -4954,7 +5028,7 @@ public sealed class IlPredicateCompiler
             if (i < n - 1)
             {
                 emit.LoadArgument(0);                  // engine
-                emitSelf(emit);                        // → PredicateDelegate
+                effectiveSelf(emit);                   // → PredicateDelegate (chunk-426 hoisted local)
                 emit.LoadConstant(i + 1);              // next cursor
                 emit.LoadConstant(1);                  // arity
                 emit.Call(EnginePushIlCpMethod);
@@ -4974,7 +5048,7 @@ public sealed class IlPredicateCompiler
                 failLabel, predicate.CallSites,
                 callSiteIndexCounter: () => ++siteCounter,
                 resumeLabels: callResumeLabels,
-                emitSelfDelegate: emitSelf,
+                emitSelfDelegate: effectiveSelf,
                 calleeMap: calleeMap,
                 cursorBase: n);
         }
