@@ -45,8 +45,17 @@ public class Chunk373Tests
         => ps.ToDictionary(p => p.FunctorId);
 
     [Fact]
-    public void Flag_DefaultsOff()
-        => Assert.False(IlPredicateCompiler.RegionCompile);
+    public void Flag_DefaultsOn()
+    {
+        // Chunk 418 — region compilation defaults ON (validated: corpus
+        // output-identical, qsort -22% / boyer -15% / ITE-recursion ~2x,
+        // one-shot neutral under default promotion). SHUMWAY_REGION=0
+        // still disables it, so skip the assert when the suite runs with
+        // the override.
+        if (System.Environment.GetEnvironmentVariable("SHUMWAY_REGION") == "0")
+            return;
+        Assert.True(IlPredicateCompiler.RegionCompile);
+    }
 
     [Fact]
     public void SingleClauseLeafRegion_IsEmittable()

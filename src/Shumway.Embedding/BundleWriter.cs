@@ -318,10 +318,32 @@ public static class BundleWriter
         _lastPrunableFids = prunableFids;
         // Caches still empty? Fall through to an empty assembly
         // (the load path simply finds no methods to bind).
-        var (dllBytes, persistedEntries, patches) = Shumway.Compiler.Il.PersistedIlBuilder.Build(
-            "ShumwayCompiledIl_" + SanitiseModuleName(entry.ModuleName),
-            predicates, prunableFids);
-        Shumway.Compiler.Il.IlPredicateCompiler.RegionForcedRootFids = savedForcedRoots;
+        //
+        // Chunk 418 — bundle region policy lives HERE, not in the runtime
+        // default: a persisted bundle region-compiles ONLY when it also
+        // prunes (regionPruneSeeds present). Region-compiling all-as-roots
+        // without the prune bakes every absorbed member into every region
+        // that pulls it (measured 2.3× bundle bloat, chunk 391). The
+        // RUNTIME default (IlPredicateCompiler.RegionCompile, now ON) is
+        // deliberately overridden for the persisted build either way so a
+        // direct ToBytes caller gets the same bundle regardless of the
+        // process-wide toggle.
+        bool savedRegionCompile = Shumway.Compiler.Il.IlPredicateCompiler.RegionCompile;
+        Shumway.Compiler.Il.IlPredicateCompiler.RegionCompile = regionPruneSeeds is not null;
+        byte[] dllBytes;
+        System.Collections.Generic.IReadOnlyList<Shumway.Compiler.Il.PersistedIlBuilder.Entry> persistedEntries;
+        System.Collections.Generic.IReadOnlyList<Shumway.Compiler.Il.IlPatchSite> patches;
+        try
+        {
+            (dllBytes, persistedEntries, patches) = Shumway.Compiler.Il.PersistedIlBuilder.Build(
+                "ShumwayCompiledIl_" + SanitiseModuleName(entry.ModuleName),
+                predicates, prunableFids);
+        }
+        finally
+        {
+            Shumway.Compiler.Il.IlPredicateCompiler.RegionCompile = savedRegionCompile;
+            Shumway.Compiler.Il.IlPredicateCompiler.RegionForcedRootFids = savedForcedRoots;
+        }
         // Phase 17 stash: the patch table the LoadBundle path needs to
         // overwrite each build-time atom/functor id sentinel with the
         // runtime-process equivalent. Plus the per-method (name, arity)

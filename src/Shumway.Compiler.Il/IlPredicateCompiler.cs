@@ -977,11 +977,19 @@ public sealed class IlPredicateCompiler
     // no cut, no cross-region user calls — those are Stages 4-6).
     // ========================================================================
 
-    /// <summary>Region compilation toggle — the <c>SHUMWAY_REGION</c> env var by
-    /// default, or a CLI flag (<c>shumway-compile --regions --dump-il</c>) so an IL
-    /// dump can show the region methods. Settable; read once per <c>Compile</c>.</summary>
+    /// <summary>Region compilation toggle. DEFAULT ON since chunk 418: the
+    /// chunk-418 validation showed regions fix the if-then-else lowering tax
+    /// (the <c>$disj</c> helper costs two trampoline round-trips per iteration
+    /// and breaks self-loop detection — regions make both intra-method
+    /// branches: ~2× on ITE-recursion shapes, qsort −22%, boyer −15%, corpus
+    /// output-identical, one-shot neutral under default promotion). Set
+    /// <c>SHUMWAY_REGION=0</c> to disable. The PERSISTED bundle path ignores
+    /// this default — BundleWriter region-compiles a bundle only together
+    /// with the dead-region prune (all-as-roots region bundles measured 2.3×
+    /// bigger, chunk 391). Settable (CLI dumps, tests); read once per
+    /// <c>Compile</c>.</summary>
     public static bool RegionCompile { get; set; } =
-        System.Environment.GetEnvironmentVariable("SHUMWAY_REGION") == "1";
+        System.Environment.GetEnvironmentVariable("SHUMWAY_REGION") != "0";
 
     /// <summary>Stage 9c (cost-based root selection): functor ids FORCED to be region
     /// ROOTS — excluded from absorption into any OTHER region. Promoting a shared member

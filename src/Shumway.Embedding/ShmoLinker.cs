@@ -103,14 +103,17 @@ public sealed class LinkConfig
     /// region build is not free).</summary>
     public bool RegionPruneReport { get; init; }
 
-    /// <summary>Stage 9b-3 — the APPLIED dead-region prune. Implies
-    /// <see cref="IncludeCompiledIl"/>: the bundle is region-compiled (absorbed members
-    /// live inside region methods) and each ABSORBED-ONLY predicate (reached only as a
-    /// <c>br</c>-member, computed by <see cref="RegionReachability"/> from the
+    /// <summary>Stage 9b-3 — the APPLIED dead-region prune. When the bundle builds
+    /// compiled IL (<see cref="IncludeCompiledIl"/>), it is region-compiled (absorbed
+    /// members live inside region methods) and each ABSORBED-ONLY predicate (reached only
+    /// as a <c>br</c>-member, computed by <see cref="RegionReachability"/> from the
     /// externally-reachable seeds) gets NO standalone IL method — removing the
     /// all-as-roots duplication. The predicate keeps its Tier-0 WAM as a safety fallback.
-    /// Off by default.</summary>
-    public bool RegionPrune { get; init; }
+    /// ON by default since chunk 418 (regions validated correct + faster on call-bound
+    /// code; an unpruned region bundle is 2.3× bigger for nothing); set false
+    /// (CLI <c>--no-region-prune</c>) to build one standalone IL method per predicate.
+    /// Ignored for WAM-only bundles.</summary>
+    public bool RegionPrune { get; init; } = true;
 
     /// <summary>Stage 10 — when non-null, append a human-readable disassembly of the WAM
     /// each bundle entry SHIPS (its final <c>CompiledBytecode</c>, AFTER any
@@ -762,21 +765,17 @@ public static class ShmoLinker
             // implies --with-compiled-il (the dump fires from inside the persisted build).
             if (config.IncludeCompiledIl || config.DumpIlPath is not null)
             {
-                // Stage 9b-3: --region-prune region-compiles the bundle (so absorbed
+                // Stage 9b-3: region-prune region-compiles the bundle (so absorbed
                 // members live inside region methods) and skips emitting a standalone IL
-                // method for each absorbed-only predicate. RegionCompile is a process-wide
-                // toggle on the IL compiler; set it for this build and RESTORE after, so an
-                // in-process caller (tests) isn't left with regions globally on. The
-                // prunable set is module-global but keyed by functor id, so each per-entry
-                // build matches only its own predicates.
-                bool savedRegionCompile = Shumway.Compiler.Il.IlPredicateCompiler.RegionCompile;
+                // method for each absorbed-only predicate. Since chunk 418 the
+                // region-compile decision for the persisted build lives in
+                // BundleWriter.CompileEntryToIl (region iff pruning), so the linker no
+                // longer toggles RegionCompile here.
                 var savedForcedRoots = Shumway.Compiler.Il.IlPredicateCompiler.RegionForcedRootFids;
                 // Stage 10: route the persisted-IL emit's per-method dump (FinishPersistedEmit)
                 // to --dump-il, so the dump is EXACTLY the IL this bundle ships — post-prune,
                 // region mode + forced roots when --region-prune is on.
                 var savedIlDump = Shumway.Compiler.Il.IlPredicateCompiler.IlDumpPath;
-                if (config.RegionPrune)
-                    Shumway.Compiler.Il.IlPredicateCompiler.RegionCompile = true;
                 if (config.DumpIlPath is not null)
                 {
                     Shumway.Compiler.Il.IlPredicateCompiler.IlDumpPath = config.DumpIlPath;
@@ -802,7 +801,6 @@ public static class ShmoLinker
                 }
                 finally
                 {
-                    Shumway.Compiler.Il.IlPredicateCompiler.RegionCompile = savedRegionCompile;
                     Shumway.Compiler.Il.IlPredicateCompiler.RegionForcedRootFids = savedForcedRoots;
                     Shumway.Compiler.Il.IlPredicateCompiler.IlDumpPath = savedIlDump;
                 }
