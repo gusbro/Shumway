@@ -1688,10 +1688,18 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// already-compiled dispatch's <c>check_visible</c> filters it out
     /// from now on.</summary>
     internal bool RemoveDynamicByReference(
-        Engine engine, int functorId, Clause clause)
+        Engine engine, int functorId, Clause clause, int knownIndex = -1)
     {
         if (!_dynamicClauses.TryGetValue(functorId, out var list)) return false;
-        int idx = list.IndexOf(clause);
+        // Chunk 423: retract's first step scans the live list, so it
+        // already knows the match's index — trust it after a cheap
+        // reference check instead of an O(N) IndexOf (Blint: 80K
+        // retracts × an ~125-entry IndexOf walk). The resume path
+        // scans a tail snapshot whose indices don't map; it passes -1.
+        int idx = knownIndex >= 0 && knownIndex < list.Count
+                  && ReferenceEquals(list[knownIndex], clause)
+            ? knownIndex
+            : list.IndexOf(clause);
         if (idx < 0) return false;
         // Chunk 155d: for a chunk-155a indexed predicate, capture the
         // matched clause's body address from the var chain BEFORE

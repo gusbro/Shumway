@@ -24,7 +24,7 @@ public static class GlobalVarsBuiltins
 {
     public static bool NbSetval(Engine engine)
     {
-        string name = ResolveAtomName(engine, engine.GetRegister(0), "nb_setval/2");
+        int nameId = ResolveAtomId(engine, engine.GetRegister(0));
         Cell value = Resolve(engine, engine.GetRegister(1));
         // For value-bearing cells (Int / Atom / Float-paired / BigInt
         // / Foreign) the cell itself carries the value, safe across
@@ -33,14 +33,14 @@ public static class GlobalVarsBuiltins
         // cases need a deep snapshot, which a future chunk will add.
         // The accumulator / counter pattern that motivates global vars
         // overwhelmingly uses integers, so this works in practice.
-        Globals(engine).Set(name, value, backtrackable: false);
+        Globals(engine).Set(nameId, value, backtrackable: false);
         return true;
     }
 
     public static bool NbGetval(Engine engine)
     {
-        string name = ResolveAtomName(engine, engine.GetRegister(0), "nb_getval/2");
-        if (!Globals(engine).TryGet(name, out Cell stored))
+        int nameId = ResolveAtomId(engine, engine.GetRegister(0));
+        if (!Globals(engine).TryGet(nameId, out Cell stored))
             throw new PrologRuntimeException("existence_error", "variable");
         return engine.UnifyRegisterWithCell(1, stored);
     }
@@ -53,8 +53,7 @@ public static class GlobalVarsBuiltins
         Cell nameCell = Resolve(engine, engine.GetRegister(0));
         if (nameCell.Tag == Tag.Atom)
         {
-            string name = AtomTable.GetById(nameCell.AsAtomId)?.Name ?? "";
-            if (!Globals(engine).TryGet(name, out Cell stored)) return false;
+            if (!Globals(engine).TryGet(nameCell.AsAtomId, out Cell stored)) return false;
             return engine.UnifyRegisterWithCell(1, stored);
         }
         // Var name → enumerate. Use the standard CP-driven pattern.
@@ -85,16 +84,16 @@ public static class GlobalVarsBuiltins
 
     public static bool BSetval(Engine engine)
     {
-        string name = ResolveAtomName(engine, engine.GetRegister(0), "b_setval/2");
+        int nameId = ResolveAtomId(engine, engine.GetRegister(0));
         Cell value = Resolve(engine, engine.GetRegister(1));
-        Globals(engine).Set(name, value, backtrackable: true);
+        Globals(engine).Set(nameId, value, backtrackable: true);
         return true;
     }
 
     public static bool BGetval(Engine engine)
     {
-        string name = ResolveAtomName(engine, engine.GetRegister(0), "b_getval/2");
-        if (!Globals(engine).TryGet(name, out Cell stored))
+        int nameId = ResolveAtomId(engine, engine.GetRegister(0));
+        if (!Globals(engine).TryGet(nameId, out Cell stored))
             throw new PrologRuntimeException("existence_error", "variable");
         return engine.UnifyRegisterWithCell(1, stored);
     }
@@ -110,14 +109,17 @@ public static class GlobalVarsBuiltins
         return host.GlobalVars;
     }
 
-    private static string ResolveAtomName(Engine engine, Cell cell, string builtinName)
+    /// <summary>Chunk 423 — the store is keyed by atom id (see
+    /// <see cref="GlobalVarStore"/>), so the builtins resolve the key
+    /// to its id and never touch the name string on the hot path.</summary>
+    private static int ResolveAtomId(Engine engine, Cell cell)
     {
         Cell d = Resolve(engine, cell);
         if (d.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
         if (d.Tag != Tag.Atom)
             throw new PrologRuntimeException("type_error", "atom");
-        return AtomTable.GetById(d.AsAtomId)?.Name ?? "";
+        return d.AsAtomId;
     }
 
     private static Cell Resolve(Engine engine, Cell c)

@@ -3196,7 +3196,12 @@ public static class MetaBuiltins
         bool unifyResult = engine.Unify(patternHeap, candSlot);
         RetractTrace.HeapStateAfterUnify(engine, patternHeap, candSlot, unifyResult);
 
-        host.RemoveDynamicByReference(engine, patternFid, candidate);
+        // Chunk 423: the first step's candidates ARE the live list, so
+        // matchIndex is the live index — pass it through to skip the
+        // O(N) IndexOf. A resume scans a tail snapshot (indices don't
+        // map onto the mutated live list): pass -1 to fall back.
+        host.RemoveDynamicByReference(engine, patternFid, candidate,
+            knownIndex: isResume ? -1 : matchIndex);
         engine.SetHb(savedHb);
         if (isResume) engine.ResumeAtReturnPc(returnPc);
         return true;
