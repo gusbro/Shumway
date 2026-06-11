@@ -35,7 +35,7 @@ public class Chunk393Tests
             EntryPoints = new[] { new PredicateRef("run", 1) },
             RegionPrune = true,   // implies IncludeCompiledIl
             IncludeCompiledIl = true,
-            // Chunk 398: the per-module "stage9_prunable" dry-run report is now opt-in
+            // Chunk 398: the per-module "prune_analysis" dry-run report is now opt-in
             // (the APPLIED prune moved into BundleWriter.CompileEntryToIl over the exact
             // calleeMap). Prune_FindsAbsorbedOnlyPredicates asserts on that report, so it
             // requests it; harmless for PrunedBundle_LoadsAndRunsCorrectly.
@@ -48,7 +48,7 @@ public class Chunk393Tests
     {
         var result = LinkWithPrune();
         Assert.True(result.Success);
-        var diag = result.Diagnostics.FirstOrDefault(d => d.Code == "stage9_prunable");
+        var diag = result.Diagnostics.FirstOrDefault(d => d.Code == "prune_analysis");
         Assert.NotNull(diag);
         // The message reports "<N> are region-absorbed (standalone prunable)"; N > 0
         // here (g/p/r/co are reached only as br-members of run's region).

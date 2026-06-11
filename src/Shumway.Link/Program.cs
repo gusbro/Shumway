@@ -267,13 +267,6 @@ internal static class Program
                     opts.RegionPruneReport = true;
                     break;
 
-                case "--region-prune":
-                    // Default since chunk 418 — kept as an accepted flag for
-                    // compatibility; still implies an IL bundle.
-                    opts.RegionPrune = true;
-                    opts.IncludeCompiledIl = true;
-                    break;
-
                 case "--no-region-prune":
                     opts.RegionPrune = false;
                     break;
@@ -429,8 +422,6 @@ internal static class Program
             + "                           shared-method layout. Mainly for inspecting the\n"
             + "                           generated code; bundles are larger and typically\n"
             + "                           slower.\n"
-            + "      --region-prune       Accepted for compatibility — this is already the\n"
-            + "                           default behaviour of --with-compiled-il.\n"
             + "      --strip-wam          Implies --with-compiled-il, and additionally\n"
             + "                           drops the portable bytecode of every predicate\n"
             + "                           that has compiled IL. Smaller bundles. The result\n"

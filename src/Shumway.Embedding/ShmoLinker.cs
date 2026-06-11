@@ -538,9 +538,9 @@ public static class ShmoLinker
         // over-approximation, never under.
         var stage9Seeds = ComputeExternallyReachableSeeds(
             roots.Select(r => (r.Module, r.Pred)), reached, moduleDefined);
-        Emit(LinkSeverity.Info, "stage9_seeds",
-            $"Stage 9 (dead-region): {stage9Seeds.Count} externally-reachable seed(s) "
-            + $"among {reached.Count} reached predicate(s).");
+        Emit(LinkSeverity.Info, "prune_seeds",
+            $"code pruning: {stage9Seeds.Count} of {reached.Count} reached predicate(s) "
+            + "are callable by name from outside and keep a standalone compiled form.");
 
         // ----- 6c. Stage 9 dead-region analysis (DRY-RUN REPORT only) -----
         // The fid bridge: decode the reached modules into CompiledPredicates (their
@@ -555,7 +555,7 @@ public static class ShmoLinker
         // The APPLIED prune is computed inside BundleWriter.CompileEntryToIl over the warm-up
         // engine's EXACT calleeMap (user module + prelude + every reached callee), so the
         // absorbed-only set matches the real region membership and a meta-callable absorbed
-        // predicate keeps its standalone form. Gated on --prune-report so plain --region-prune
+        // predicate keeps its standalone form. Gated on --prune-report so a plain IL link
         // doesn't print per-module figures that diverge from what actually ships.
         var stage9PrunableFids = new HashSet<int>();
         var stage9ForcedRoots = new HashSet<int>();
@@ -595,9 +595,10 @@ public static class ShmoLinker
                     f => predicates.TryGetValue(f, out var p) ? p.Bytecode.Length : 0,
                     minSaving);
                 if (stage9ForcedRoots.Count > 0)
-                    Emit(LinkSeverity.Info, "stage9_roots",
-                        $"Stage 9c (root selection): promoted {stage9ForcedRoots.Count} shared "
-                        + $"predicate(s) to their own region root (minSaving={minSaving}B).");
+                    Emit(LinkSeverity.Info, "prune_roots",
+                        $"prune analysis: {stage9ForcedRoots.Count} shared predicate(s) "
+                        + "get their own compiled method instead of being duplicated "
+                        + $"into callers (min saving {minSaving} bytes).");
 
                 // Region-aware reachability (intra-region calls are br, don't reach the
                 // standalone) vs plain reachability (every call trampolines). The
@@ -613,12 +614,12 @@ public static class ShmoLinker
                 foreach (int f in fullReachable)
                     if (!regionReachable.Contains(f)) stage9PrunableFids.Add(f);
                 int deadCode = predicates.Count - fullReachable.Count;
-                Emit(LinkSeverity.Info, "stage9_prunable",
-                    $"Stage 9 (dead-region): of {predicates.Count} decoded predicates, "
-                    + $"{stage9PrunableFids.Count} are region-absorbed (standalone prunable) and "
-                    + $"{deadCode} are unreachable — {stage9PrunableFids.Count + deadCode} total "
-                    + $"prunable standalone forms under region compilation (from "
-                    + $"{seedFids.Count} seed fids).");
+                Emit(LinkSeverity.Info, "prune_analysis",
+                    $"prune analysis: of {predicates.Count} compiled predicates, "
+                    + $"{stage9PrunableFids.Count} are only called from inside shared "
+                    + $"methods (standalone form prunable) and {deadCode} are unreachable "
+                    + $"— {stage9PrunableFids.Count + deadCode} prunable standalone forms "
+                    + $"(from {seedFids.Count} entry seeds).");
             }
         }
 
@@ -774,7 +775,7 @@ public static class ShmoLinker
                 var savedForcedRoots = Shumway.Compiler.Il.IlPredicateCompiler.RegionForcedRootFids;
                 // Stage 10: route the persisted-IL emit's per-method dump (FinishPersistedEmit)
                 // to --dump-il, so the dump is EXACTLY the IL this bundle ships — post-prune,
-                // region mode + forced roots when --region-prune is on.
+                // region mode + forced roots when the prune is on (the default).
                 var savedIlDump = Shumway.Compiler.Il.IlPredicateCompiler.IlDumpPath;
                 if (config.DumpIlPath is not null)
                 {

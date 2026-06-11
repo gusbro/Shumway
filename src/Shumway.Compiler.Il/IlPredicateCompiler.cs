@@ -995,7 +995,7 @@ public sealed class IlPredicateCompiler
     /// ROOTS — excluded from absorption into any OTHER region. Promoting a shared member
     /// to its own root trades N duplicated copies of its sub-region for one copy + N
     /// cross-region trampolines, cutting the all-as-roots inter-root duplication. Set by
-    /// the linker (save/restore) before a <c>--region-prune</c> build; null = none.</summary>
+    /// the bundle build (save/restore) before a pruned-IL build; null = none.</summary>
     public static IReadOnlySet<int>? RegionForcedRootFids { get; set; }
 
     /// <summary>The labels + cursor map threaded into <see cref="EmitClauseBody"/>
