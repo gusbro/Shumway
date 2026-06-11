@@ -3059,7 +3059,14 @@ public static class MetaBuiltins
             throw new Shumway.Core.PrologRuntimeException(
                 "permission_error", "modify,static_procedure");
 
-        var candidates = new List<Clause>(host.DynamicClausesFor(patternFid));
+        // Chunk 421: scan the LIVE clause list directly — no snapshot copy.
+        // This is sound for the first step: the scan runs to completion
+        // before anything can mutate the list (no goal executes between
+        // here and the match). The logical-update-view snapshot is taken
+        // ONLY if a choice point is pushed (the remaining-candidates tail
+        // is copied into the resume closure at push time, which is still
+        // call time) — the common `retract(_), !` idiom never pays it.
+        IReadOnlyList<Clause> candidates = host.DynamicClausesFor(patternFid);
         RetractTrace.Begin(null!, patternFid, candidates.Count);
         int returnPc = engine.BuiltinReturnPc;
         // patternHeap is the pattern's heap home (the result of
@@ -3134,7 +3141,7 @@ public static class MetaBuiltins
     /// match — that is what makes <c>retract/1</c> enumerate every matching
     /// clause on backtracking.</summary>
     private static bool RetractStep(Engine engine, PrologEngine host,
-        int patternFid, List<Clause> candidates, int startIndex, int returnPc,
+        int patternFid, IReadOnlyList<Clause> candidates, int startIndex, int returnPc,
         bool isResume, int patternHeap)
     {
         // ADR-016: on a resumed step, re-read the pattern from register 0.
@@ -3156,18 +3163,22 @@ public static class MetaBuiltins
 
         // Push the choice point before the real unification below, so a
         // backtrack's trail unwind peels off exactly this solution's
-        // bindings before the resume retracts the next match. patternHeap
-        // is closed over the resume so it's not re-read from register 0
-        // on backtrack — see the comment in Retract for why register 0
-        // can't be trusted post-resume.
+        // bindings before the resume retracts the next match.
         if (matchIndex + 1 < candidates.Count)
         {
-            int next = matchIndex + 1;
+            // Chunk 421: snapshot ONLY the remaining candidates into the
+            // resume closure, here at push time (still call time, so the
+            // ISO logical-update view is the same one a full up-front copy
+            // captured). The live list mutates the moment the retract
+            // returns; the resume must not read it.
+            var tail = new Clause[candidates.Count - (matchIndex + 1)];
+            for (int i = 0; i < tail.Length; i++)
+                tail[i] = candidates[matchIndex + 1 + i];
             // patternHeap is re-read from register 0 on resume (see above),
             // so the resume need not close over it. Push with arity 1 so
             // the CP saves register 0 — the GC then relocates it.
             Func<Engine, int, bool> resume = (e, _) => RetractStep(
-                e, host, patternFid, candidates, next, returnPc,
+                e, host, patternFid, tail, 0, returnPc,
                 isResume: true, patternHeap: -1);
             RetractTrace.PrePush(engine);
             engine.PushBuiltinChoicePoint(resume, arity: 1);
@@ -3195,12 +3206,23 @@ public static class MetaBuiltins
     /// whose clause unifies with the retract pattern in register 0, or −1
     /// when none does. The trial unification is fully rolled back; the
     /// caller re-does it for the chosen candidate after its choice point
-    /// is in place.</summary>
+    /// is in place.
+    ///
+    /// <para>Chunk 421: each trial used to materialise the WHOLE candidate
+    /// clause onto the engine heap before unifying — for a keyed retract
+    /// over a long predicate (Blint's <c>retract(saved_cur_line_i(Line,_))</c>
+    /// over ~125 clauses) that is ~K clause materialisations per call, all
+    /// but one rolled back. <see cref="DefiniteMismatch"/> now skips a
+    /// candidate on a PROVEN structural mismatch (distinct atoms / ints /
+    /// functors at the same position) with zero allocation; only candidates
+    /// it cannot refute pay the materialise-and-unify trial.</para></summary>
     private static int FindRetractMatch(
-        Engine engine, List<Clause> candidates, int startIndex, int patternHeap)
+        Engine engine, IReadOnlyList<Clause> candidates, int startIndex, int patternHeap)
     {
         for (int i = startIndex; i < candidates.Count; i++)
         {
+            if (DefiniteMismatch(engine, patternHeap, candidates[i].Term, depth: 4))
+                continue;
             int savedHeapTop = engine.HeapTop;
             int savedBindingTrail = engine.BindingTrailTop;
             int savedExtraTrail = engine.ExtraTrailTop;
@@ -3219,6 +3241,77 @@ public static class MetaBuiltins
             if (matches) return i;
         }
         return -1;
+    }
+
+    /// <summary>Chunk 421 — true only when the pattern at
+    /// <paramref name="heapIdx"/> PROVABLY cannot unify with the candidate
+    /// AST <paramref name="ast"/>: distinct atoms, distinct inline ints,
+    /// distinct principal functors, or an atomic vs a compound. Anything
+    /// uncertain — variables on either side, big integers, floats vs the
+    /// float table, partial strings, foreigns, depth exhausted — returns
+    /// false and the caller falls back to the real materialise-and-unify
+    /// trial, so this can only SKIP work, never change the outcome.</summary>
+    private static bool DefiniteMismatch(Engine engine, int heapIdx, Term ast, int depth)
+    {
+        if (depth <= 0 || ast is VarTerm) return false;
+        int idx = engine.Deref(heapIdx);
+        Cell c = engine.GetHeap(idx);
+        switch (c.Tag)
+        {
+            case Tag.Atom:
+                return ast switch
+                {
+                    AtomTerm a => AtomTable.Intern(a.Name, permanent: false).Id != c.AsAtomId,
+                    IntTerm or FloatTerm or CompoundTerm or BigIntTerm => true,
+                    _ => false,
+                };
+            case Tag.Int:
+                return ast switch
+                {
+                    IntTerm n => n.Value != c.AsInt,
+                    AtomTerm or FloatTerm or CompoundTerm => true,
+                    _ => false,   // BigIntTerm etc.: uncertain
+                };
+            case Tag.Str:
+            {
+                Cell f = engine.GetHeap(c.AsHeapIndex);
+                if (f.Tag != Tag.Functor) return false;
+                switch (ast)
+                {
+                    case CompoundTerm ct:
+                    {
+                        var (atomId, arity) = FunctorTable.Lookup(f.AsFunctorId);
+                        if (arity != ct.Args.Length
+                            || atomId != AtomTable.Intern(ct.Functor, permanent: false).Id)
+                            return true;
+                        for (int i = 0; i < arity; i++)
+                            if (DefiniteMismatch(engine, c.AsHeapIndex + 1 + i,
+                                    ct.Args[i], depth - 1))
+                                return true;
+                        return false;
+                    }
+                    case AtomTerm or IntTerm or FloatTerm or BigIntTerm:
+                        return true;
+                    default:
+                        return false;   // StringTerm vs './2 shapes: uncertain
+                }
+            }
+            case Tag.Lis:   // ADR-017 inline cons: [head, tail] at AsHeapIndex
+                return ast switch
+                {
+                    CompoundTerm ct when ct.Functor == "." && ct.Args.Length == 2 =>
+                        DefiniteMismatch(engine, c.AsHeapIndex, ct.Args[0], depth - 1)
+                        || DefiniteMismatch(engine, c.AsHeapIndex + 1, ct.Args[1], depth - 1),
+                    CompoundTerm => true,
+                    AtomTerm or IntTerm or FloatTerm or BigIntTerm => true,
+                    _ => false,   // StringTerm: a string can be a char list
+                };
+            default:
+                // Ref/AttVar (could bind to anything), Float/BigInt/String/
+                // Pstr/Foreign (cross-representation equivalences live in
+                // the real unifier): uncertain.
+                return false;
+        }
     }
 
     private static int ExtractHeadFunctorIdFromClause(Clause clause)
