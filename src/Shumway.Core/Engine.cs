@@ -1618,6 +1618,13 @@ public sealed partial class Engine
     // for one query's linked layout).
     public IReadOnlyDictionary<int, int>? CurrentFunctorAddresses { get; set; }
 
+    /// <summary>Chunk 417 — runtime action for a call to an undefined
+    /// procedure (the ISO <c>unknown</c> prolog flag, wired through
+    /// dispatch via <see cref="UnknownProcedure.Fails"/>). Set by the
+    /// embedding layer at query setup and updated live by
+    /// <c>set_prolog_flag(unknown, _)</c>.</summary>
+    public UnknownAction OnUnknown { get; set; } = UnknownAction.Error;
+
     // ----- Meta-call route cache (chunk 416) -----
     //
     // Shared by the bytecode interpreter's DispatchCall and Tier-1's

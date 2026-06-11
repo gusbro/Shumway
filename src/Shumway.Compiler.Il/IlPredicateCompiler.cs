@@ -5234,7 +5234,12 @@ public sealed class IlPredicateCompiler
             engine.SetB0(cutBarrier);
             if (addresses is null
                 || !addresses.TryGetValue(functorId, out int address))
-                throw PrologRuntimeException.UndefinedProcedure(functorId);
+            {
+                // Chunk 417: honour the `unknown` flag (throws on error).
+                if (UnknownProcedure.Fails(engine, functorId))
+                    return SyncFail;
+                throw PrologRuntimeException.UndefinedProcedure(functorId);   // unreachable
+            }
             if (routeCacheable)
                 cache[routeKey] = new MetaRoute(userKind, address);
             return address;

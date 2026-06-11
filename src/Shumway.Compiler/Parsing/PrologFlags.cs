@@ -64,9 +64,11 @@ public sealed class PrologFlags
     /// reaction to a call to an undefined predicate: <c>error</c>
     /// (raise <c>existence_error/2</c>, the default), <c>fail</c>
     /// (silently fail), or <c>warning</c> (emit a warning then
-    /// fail). The engine itself currently always errors; the value
-    /// surfaced here is informational until the engine wires it
-    /// through dispatch.</summary>
+    /// fail). Wired through dispatch since chunk 417: every
+    /// undefined-procedure point (static Call/Execute sentinels, the
+    /// resume-marker fallback, both meta-call dispatchers, the
+    /// in-engine hook goal runner) honours it via
+    /// <c>Engine.OnUnknown</c>.</summary>
     public string Unknown { get; set; } = "error";
 
     /// <summary>ISO <c>occurs_check</c> flag. <c>false</c> (the

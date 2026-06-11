@@ -5308,16 +5308,20 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         Term clauseTerm = new CompoundTerm(":-", new[] { head, queryTerm });
         var syntheticClause = new Clause(ClauseKind.Rule, clauseTerm, queryTerm.Position);
 
-        // Phase 19+ — apply the implicit_dynamic pre-scan to the
-        // query body itself. This catches the REPL pattern
-        // `?- assertz(pepe), call(pepe).` where assertz and call
-        // appear in the same query: without this scan the linker
-        // wouldn't see pepe as dynamic before laying out the
-        // call site, and the call would fail with
-        // undefined_procedure. Same logic as ConsultString's
-        // call to CollectImplicitDynamics.
-        if (_flags.ImplicitDynamic)
-            CollectImplicitDynamics(new[] { syntheticClause }, new HashSet<int>());
+        // Chunk 417 — the Phase-19+ implicit_dynamic pre-scan is NO
+        // LONGER applied to the query body. Pre-declaring an
+        // assertz-target made it observable as an EMPTY dynamic
+        // predicate from the query's start, so a goal sequenced BEFORE
+        // the assertz in the same query (`catch(call(zzz(1)), _, true),
+        // assertz(zzz(1))`) saw it fail instead of raising
+        // existence_error — diverging from ISO/SWI and from the same
+        // goal without the later assertz. The REPL pattern the pre-scan
+        // existed for (`?- assertz(pepe), call(pepe).`) is covered by
+        // the chunk-207 runtime path: assertz auto-promotes and
+        // materialises a trampoline mid-query; a direct call site's
+        // unresolved sentinel re-resolves through
+        // ResolveTargetMaybeAutoPromoted and a meta-call probes the
+        // live CurrentFunctorAddresses.
 
         // Validate public uniqueness across modules. The check raises before
         // any compilation so the error message points squarely at the user's
@@ -5815,6 +5819,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // stable functor-id lookup instead of an embedded address
             // that would only be valid for one query's linked layout.
             CurrentFunctorAddresses = addressMap,
+            // Chunk 417 — the ISO `unknown` flag, wired through dispatch.
+            OnUnknown = _flags.Unknown switch
+            {
+                "fail" => Shumway.Core.UnknownAction.Fail,
+                "warning" => Shumway.Core.UnknownAction.Warning,
+                _ => Shumway.Core.UnknownAction.Error,
+            },
             // String literal pool for IL-emitted get_pstr/put_pstr
             // (chunk 50) and the linked program byte array for the
             // IL Call re-entry helper.

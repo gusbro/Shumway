@@ -312,7 +312,12 @@ public sealed class BytecodeInterpreter
                             _engine.SetPc(addr);   // run the callee's bytecode
                             continue;
                         }
-                        throw Shumway.Core.PrologRuntimeException.UndefinedProcedure(functorId);
+                        // Chunk 417: honour the `unknown` flag (throws on error).
+                        if (Shumway.Core.UnknownProcedure.Fails(_engine, functorId))
+                        {
+                            if (!TryBacktrack()) return InterpreterResult.Failed;
+                            continue;
+                        }
                     }
                     throw new InvalidOperationException(
                         $"Resume marker at PC 0x{pc:X} decodes to functor "
@@ -394,6 +399,11 @@ public sealed class BytecodeInterpreter
                     int target = BytecodeIO.ReadInt32(code, pc + 1);
                     int numLivePerms = BytecodeIO.ReadInt32(code, pc + 5);
                     target = ResolveTargetMaybeAutoPromoted(target);
+                    if (target == UnknownFailTarget)   // chunk 417: unknown=fail
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
                     Shumway.Core.Profiler.Call(target);
                     // Env trimming (chunk 57): shrink the current frame to
                     // num_live_perms Y slots before dispatching, so the callee's
@@ -415,6 +425,11 @@ public sealed class BytecodeInterpreter
                     }
                     int target = BytecodeIO.ReadInt32(code, pc + 1);
                     target = ResolveTargetMaybeAutoPromoted(target);
+                    if (target == UnknownFailTarget)   // chunk 417: unknown=fail
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
                     Shumway.Core.Profiler.Call(target);
                     _engine.SetB0(_engine.B);   // tail call still enters a new procedure
                     DispatchToTier1OrBytecode(target);
@@ -495,6 +510,11 @@ public sealed class BytecodeInterpreter
                     int target = BytecodeIO.ReadInt32(code, pc + 1);
                     int numLivePerms = BytecodeIO.ReadInt32(code, pc + 5);
                     target = ResolveTargetMaybeAutoPromoted(target);
+                    if (target == UnknownFailTarget)   // chunk 417: unknown=fail
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
                     Shumway.Core.Profiler.Call(target);
                     _engine.TrimEnv(numLivePerms);
                     _engine.SetCp(pc + 9);  // CallBytecode is 9 bytes, same as Call
@@ -555,6 +575,11 @@ public sealed class BytecodeInterpreter
                     }
                     int target = BytecodeIO.ReadInt32(code, pc + 1);
                     target = ResolveTargetMaybeAutoPromoted(target);
+                    if (target == UnknownFailTarget)   // chunk 417: unknown=fail
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
                     Shumway.Core.Profiler.Call(target);
                     _engine.SetB0(_engine.B);
                     _engine.MaybeCollectHeap();
@@ -2138,7 +2163,8 @@ public sealed class BytecodeInterpreter
         if (addrs is not null && addrs.TryGetValue(functorId, out int addr))
             return RunGoalInEngine(code, addr);
 
-        throw PrologRuntimeException.UndefinedProcedure(functorId);
+        // Chunk 417: honour the `unknown` flag (throws on error).
+        return !Shumway.Core.UnknownProcedure.Fails(_engine, functorId);
     }
 
     /// <summary>Backtrackable runtime dispatch for <c>call/1..7</c> (chunk
@@ -2343,7 +2369,10 @@ public sealed class BytecodeInterpreter
 
         // No negative caching: an unresolved functor can become resolvable
         // later in the same query (chunk-207 auto-promotion).
-        throw PrologRuntimeException.UndefinedProcedure(functorId);
+        // Chunk 417: honour the `unknown` flag (throws on error).
+        if (Shumway.Core.UnknownProcedure.Fails(_engine, functorId))
+            return TryBacktrack();
+        throw PrologRuntimeException.UndefinedProcedure(functorId);   // unreachable
     }
 
     /// <summary>Invokes a builtin reached as a runtime meta-call goal
@@ -2429,8 +2458,18 @@ public sealed class BytecodeInterpreter
             if (Engine.IsResumeMarker(latest))
                 return latest;
         }
-        throw PrologRuntimeException.UndefinedProcedure(fid);
+        // Chunk 417: honour the `unknown` flag — error throws here,
+        // fail/warning hand the caller the fail sentinel.
+        if (Shumway.Core.UnknownProcedure.Fails(_engine, fid))
+            return UnknownFailTarget;
+        throw PrologRuntimeException.UndefinedProcedure(fid);   // unreachable
     }
+
+    /// <summary>Chunk 417 — sentinel returned by
+    /// <see cref="ResolveTargetMaybeAutoPromoted"/> when the target is an
+    /// undefined procedure and the <c>unknown</c> flag says fail: the
+    /// Call/Execute handlers backtrack instead of dispatching.</summary>
+    private const int UnknownFailTarget = int.MinValue;
 
     /// <summary>Runs the predicate at <paramref name="target"/> as a goal
     /// in the <em>current</em> engine — same heap, trail, stack and

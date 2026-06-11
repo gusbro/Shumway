@@ -954,6 +954,14 @@ public static class MetaBuiltins
                 throw new ShumwayPrologException(
                     IsoError.DomainError("flag_value", new AtomTerm(valueName)));
             host.Flags.Unknown = valueName;
+            // Chunk 417 — take effect mid-query: dispatch reads the
+            // live engine's OnUnknown, not the host flags.
+            engine.OnUnknown = valueName switch
+            {
+                "fail" => Shumway.Core.UnknownAction.Fail,
+                "warning" => Shumway.Core.UnknownAction.Warning,
+                _ => Shumway.Core.UnknownAction.Error,
+            };
             return true;
         }
         if (flagName == "occurs_check")
