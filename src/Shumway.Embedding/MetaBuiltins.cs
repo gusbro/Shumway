@@ -964,6 +964,18 @@ public static class MetaBuiltins
             };
             return true;
         }
+        if (flagName == "arity_compat")
+        {
+            // Phase 30 — Arity/Prolog32 compatibility mode. The parse-time
+            // features ($...$ atoms, #line, directive annotations) apply to
+            // SUBSEQUENT consults; the ClauseReader's directive pre-pass
+            // handles a mid-file flip.
+            if (valueName != "true" && valueName != "false")
+                throw new ShumwayPrologException(
+                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+            host.Flags.ArityCompat = valueName == "true";
+            return true;
+        }
         if (flagName == "occurs_check")
         {
             if (valueName != "false" && valueName != "true" && valueName != "error")
@@ -1056,6 +1068,9 @@ public static class MetaBuiltins
 
             case "implicit_dynamic":
                 return UnifyAtom(engine, 1, host.Flags.ImplicitDynamic ? "true" : "false");
+
+            case "arity_compat":
+                return UnifyAtom(engine, 1, host.Flags.ArityCompat ? "true" : "false");
 
             case "compile_mode":
                 return UnifyAtom(engine, 1, host.Flags.EmitDebugInfo ? "debug" : "release");

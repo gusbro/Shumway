@@ -44,6 +44,19 @@ public sealed class PrologFlags
     /// that don't set it sees no surprise transformations.</summary>
     public bool CharConversionEnabled { get; set; }
 
+    /// <summary>Phase 30 — Arity/Prolog32 compatibility mode (the
+    /// <c>arity_compat</c> prolog flag; also <c>shumway-compile
+    /// --arity</c>). Off by default. Enables, and will keep
+    /// accumulating, Arity dialect features: <c>$...$</c> quoted
+    /// atoms (a <c>$</c> inside doubles, a <c>'</c> needs no
+    /// escape), C-preprocessor <c>#line</c> markers (skipped AND
+    /// honoured — the lexer adopts the directive's line number so
+    /// error positions track the original source), and annotated
+    /// directive indicators (<c>:- public foo/8:far.</c>,
+    /// <c>:- public f/2:system(...)</c> — the annotation after the
+    /// <c>:</c> is accepted and ignored).</summary>
+    public bool ArityCompat { get; set; }
+
     /// <summary>The conversion table itself: a character maps to its
     /// replacement, missing entries pass through unchanged. The
     /// <c>:- char_conversion(In, Out)</c> directive and the runtime

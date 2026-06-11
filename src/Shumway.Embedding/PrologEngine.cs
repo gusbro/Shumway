@@ -2336,6 +2336,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 if (valueName == "true") _flags.ImplicitDynamic = true;
                 else if (valueName == "false") _flags.ImplicitDynamic = false;
                 break;
+            case "arity_compat":
+                // Phase 30 — consult-time directive form. The ClauseReader's
+                // pre-pass already flipped the live lexer for THIS file; this
+                // records it for subsequent consults.
+                if (valueName == "true") _flags.ArityCompat = true;
+                else if (valueName == "false") _flags.ArityCompat = false;
+                break;
             case "unknown":
                 if (valueName == "error" || valueName == "fail" || valueName == "warning")
                     _flags.Unknown = valueName;
@@ -5065,10 +5072,24 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private static bool TryReadFunctorSpec(Term term, out (string Name, int Arity) spec)
     {
         if (term is CompoundTerm slash && slash.Functor == "/" && slash.Args.Length == 2
-            && slash.Args[0] is AtomTerm name && slash.Args[1] is IntTerm arity)
+            && slash.Args[0] is AtomTerm name)
         {
-            spec = (name.Name, (int)arity.Value);
-            return true;
+            Term arityTerm = slash.Args[1];
+            // Phase 30 (arity_compat) — Arity annotates directive indicators:
+            // `:- public foo/8:far.` / `:- public f/2:system(...)`. With `:`
+            // at xfy 200 (tighter than `/` 400) that parses as
+            // /(name, :(arity, Annotation)) — accept and IGNORE the
+            // annotation. The shape has no ISO meaning, so it is stripped
+            // unconditionally rather than gated (a non-Arity program can't
+            // reach it with valid syntax).
+            if (arityTerm is CompoundTerm colon && colon.Functor == ":"
+                && colon.Args.Length == 2)
+                arityTerm = colon.Args[0];
+            if (arityTerm is IntTerm arity)
+            {
+                spec = (name.Name, (int)arity.Value);
+                return true;
+            }
         }
         spec = ("", 0);
         return false;

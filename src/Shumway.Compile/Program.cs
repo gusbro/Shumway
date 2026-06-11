@@ -87,7 +87,8 @@ internal static class Program
             Shumway.Compiler.Wam.ClauseCompiler.YSurvey = new();
         try
         {
-            var result = ShmoCompiler.TryCompileFile(input, buildMode, maxErrors: 100);
+            var result = ShmoCompiler.TryCompileFile(input, buildMode, maxErrors: 100,
+                arityCompat: opts.ArityCompat);
             if (!result.Success)
             {
                 foreach (var err in result.Errors)
@@ -277,6 +278,7 @@ internal static class Program
         public string DumpIlPath { get; set; } = "";
         public bool Regions { get; set; }
         public bool PruneReport { get; set; }
+        public bool ArityCompat { get; set; }
     }
 
     private static Options? ParseArgs(string[] args)
@@ -327,6 +329,10 @@ internal static class Program
                 case "--dump-il":
                     if (++i >= args.Length) { ReportMissing(arg); return null; }
                     opts.DumpIlPath = args[i];
+                    break;
+
+                case "--arity":
+                    opts.ArityCompat = true;
                     break;
 
                 case "--regions":
@@ -386,6 +392,12 @@ internal static class Program
             + "                       --regions to show related predicates compiled\n"
             + "                       together into shared methods, as an optimized\n"
             + "                       bundle lays them out.\n"
+            + "      --arity          Enable Arity/Prolog32 compatibility mode (the\n"
+            + "                       arity_compat flag): $...$ quoted atoms, C\n"
+            + "                       preprocessor #line markers (positions honoured),\n"
+            + "                       and annotated directives (foo/8:far). The flag\n"
+            + "                       can also be set per file with\n"
+            + "                       :- set_prolog_flag(arity_compat, true).\n"
             + "      --regions        With --dump-il, show the shared-method (region)\n"
             + "                       layout instead of one method per predicate.\n"
             + "      --prune-report   Report which of this module's predicates would need\n"

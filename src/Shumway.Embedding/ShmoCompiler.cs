@@ -76,7 +76,8 @@ public static class ShmoCompiler
     public static ShmoCompileResult TryCompileSource(string source,
         string moduleNameFallback = "user",
         ShmoBuildMode buildMode = ShmoBuildMode.Release,
-        int maxErrors = 100)
+        int maxErrors = 100,
+        bool arityCompat = false)
     {
         ArgumentNullException.ThrowIfNull(source);
         Shumway.Builtins.StandardBuiltins.EnsureRegistered();
@@ -92,7 +93,13 @@ public static class ShmoCompiler
 
         var errors = new List<ShmoCompileError>();
         var allClauses = new List<Clause>();
-        foreach (var entry in new ClauseReader(new Lexer(source), OperatorTable.Default())
+        // Phase 30: `shumway-compile --arity` pre-enables the Arity
+        // compatibility mode for the whole file (the in-file
+        // set_prolog_flag(arity_compat, _) directive can still flip it).
+        var readerFlags = new Shumway.Compiler.Parsing.PrologFlags
+        { ArityCompat = arityCompat };
+        foreach (var entry in new ClauseReader(new Lexer(source),
+                     OperatorTable.Default(), readerFlags)
                  .ReadAllCollectingErrors(maxErrors))
         {
             if (entry.IsError)
@@ -382,12 +389,13 @@ public static class ShmoCompiler
     /// name (sans extension) as the module-name fallback.</summary>
     public static ShmoCompileResult TryCompileFile(string path,
         ShmoBuildMode buildMode = ShmoBuildMode.Release,
-        int maxErrors = 100)
+        int maxErrors = 100,
+        bool arityCompat = false)
     {
         ArgumentNullException.ThrowIfNull(path);
         string source = File.ReadAllText(path);
         string fallback = Path.GetFileNameWithoutExtension(path);
-        return TryCompileSource(source, fallback, buildMode, maxErrors);
+        return TryCompileSource(source, fallback, buildMode, maxErrors, arityCompat);
     }
 
     // ------------------------------------------------------------------------
@@ -491,10 +499,19 @@ public static class ShmoCompiler
     private static bool TryReadFunctorSpec(Term term, out PredicateRef spec)
     {
         if (term is CompoundTerm slash && slash.Functor == "/" && slash.Args.Length == 2
-            && slash.Args[0] is AtomTerm name && slash.Args[1] is IntTerm arity)
+            && slash.Args[0] is AtomTerm name)
         {
-            spec = new PredicateRef(name.Name, (int)arity.Value);
-            return true;
+            Term arityTerm = slash.Args[1];
+            // Phase 30 (arity_compat) — strip an Arity directive annotation
+            // (`foo/8:far`, `f/2:system(...)`); see PrologEngine's twin.
+            if (arityTerm is CompoundTerm colon && colon.Functor == ":"
+                && colon.Args.Length == 2)
+                arityTerm = colon.Args[0];
+            if (arityTerm is IntTerm arity)
+            {
+                spec = new PredicateRef(name.Name, (int)arity.Value);
+                return true;
+            }
         }
         spec = default;
         return false;

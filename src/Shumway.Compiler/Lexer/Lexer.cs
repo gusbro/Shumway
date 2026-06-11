@@ -49,6 +49,18 @@ public sealed class Lexer
     // tokenizing. Quoted contexts bypass the conversion.
     private readonly IReadOnlyDictionary<char, char>? _charConversion;
 
+    /// <summary>Phase 30 — Arity/Prolog32 compatibility (the
+    /// <c>arity_compat</c> flag). Mutable so a
+    /// <c>:- set_prolog_flag(arity_compat, true)</c> directive can flip
+    /// it mid-stream (the ClauseReader writes it when it applies the
+    /// directive). Enables <c>$...$</c> quoted atoms (escape a
+    /// <c>$</c> by doubling; everything else, including <c>'</c> and
+    /// backslash, is literal) and <c>#line N "file"</c> markers at the
+    /// start of a line (consumed; the lexer adopts N as the next
+    /// line's number so positions track the preprocessor's original
+    /// source).</summary>
+    public bool ArityCompat { get; set; }
+
     public Lexer(string source)
     {
         ArgumentNullException.ThrowIfNull(source);
@@ -106,6 +118,7 @@ public sealed class Lexer
         if (c >= 'a' && c <= 'z') return ParseUnquotedAtom(pos);
         if (raw == '\'') return ParseQuotedAtom(pos);
         if (raw == '"') return ParseString(pos);
+        if (raw == '$' && ArityCompat) return ParseDollarAtom(pos);
 
         switch (c)
         {
@@ -202,6 +215,25 @@ public sealed class Lexer
                     }
                     Advance();
                 }
+            }
+            else if (ArityCompat && c == '#' && _column == 1
+                     && string.CompareOrdinal(_source, _offset, "#line", 0, 5) == 0)
+            {
+                // Phase 30 — C-preprocessor line marker: `#line N "file"`.
+                // Consume the whole line; adopt N as the NEXT line's number
+                // so token positions (and therefore parse-error positions)
+                // track the preprocessor's original source rather than the
+                // expanded .i file.
+                int scan = _offset + 5;
+                while (scan < _source.Length && _source[scan] == ' ') scan++;
+                int numStart = scan;
+                while (scan < _source.Length && char.IsDigit(_source[scan])) scan++;
+                int lineNo = 0;
+                bool haveNum = scan > numStart
+                    && int.TryParse(_source.AsSpan(numStart, scan - numStart), out lineNo);
+                while (_offset < _source.Length && _source[_offset] != '\n') Advance();
+                if (_offset < _source.Length) Advance();   // the newline itself
+                if (haveNum) _line = lineNo;
             }
             else
             {
@@ -402,6 +434,44 @@ public sealed class Lexer
             {
                 Advance();
                 sb.Append((char)ReadEscapeSequence(pos));
+            }
+            else
+            {
+                sb.Append(c);
+                Advance();
+            }
+        }
+    }
+
+    /// <summary>Phase 30 — Arity <c>$...$</c> quoted atom. Mirrors
+    /// <see cref="ParseQuotedAtom"/> with the delimiter swapped: a
+    /// <c>$</c> inside is escaped by doubling (<c>$$</c>), so the
+    /// standalone token <c>$$</c> is the empty atom (like <c>''</c>).
+    /// Unlike <c>'...'</c> there are NO backslash escapes — Arity-era
+    /// sources put Windows paths inside <c>$...$</c>, so every
+    /// non-delimiter character is literal.</summary>
+    private Token ParseDollarAtom(SourcePosition pos)
+    {
+        Advance();   // opening $
+        var sb = new StringBuilder();
+        while (true)
+        {
+            if (_offset >= _source.Length)
+                throw new LexerException(
+                    $"Unterminated $-quoted atom starting at {pos}.", pos);
+            char c = _source[_offset];
+            if (c == '$')
+            {
+                if (Peek(1) == '$')
+                {
+                    sb.Append('$');
+                    Advance(); Advance();
+                }
+                else
+                {
+                    Advance();
+                    return new Token(TokenKind.Atom, pos, sb.ToString());
+                }
             }
             else
             {

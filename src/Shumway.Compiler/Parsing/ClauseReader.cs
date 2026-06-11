@@ -42,8 +42,15 @@ public sealed class ClauseReader
         ArgumentNullException.ThrowIfNull(flags);
         _operators = operators;
         _flags = flags;
+        _lexer = lexer;
+        // Phase 30: the flag affects LEXING ($...$ atoms, #line markers),
+        // so the lexer adopts the caller's setting up front; the
+        // set_prolog_flag directive (below) can also flip it mid-file.
+        lexer.ArityCompat = flags.ArityCompat;
         _parser = new Parser(lexer, operators, flags);
     }
+
+    private readonly global::Shumway.Compiler.Lexer.Lexer _lexer;
 
     public OperatorTable Operators => _operators;
 
@@ -179,6 +186,22 @@ public sealed class ClauseReader
                     $"set_prolog_flag/2 directive: unknown double_quotes value '{valueName.Name}' "
                     + "(expected codes / chars / atom / string).", pos),
             };
+        }
+        else if (flagName.Name == "arity_compat")
+        {
+            // Phase 30 — must take effect during LEXING (it gates the
+            // $...$ atom syntax and #line markers), so flip the live
+            // lexer too, like char_conversion does via its shared map.
+            bool on = valueName.Name switch
+            {
+                "true" => true,
+                "false" => false,
+                _ => throw new ParseException(
+                    $"set_prolog_flag/2 directive: unknown arity_compat value "
+                    + $"'{valueName.Name}' (expected true / false).", pos),
+            };
+            _flags.ArityCompat = on;
+            _lexer.ArityCompat = on;
         }
         // Unknown flags are silently ignored at parse time — the
         // runtime builtin raises a domain_error instead, which is
