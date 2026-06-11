@@ -1618,6 +1618,28 @@ public sealed partial class Engine
     // for one query's linked layout).
     public IReadOnlyDictionary<int, int>? CurrentFunctorAddresses { get; set; }
 
+    // ----- Meta-call route cache (chunk 416) -----
+    //
+    // Shared by the bytecode interpreter's DispatchCall and Tier-1's
+    // IlMetaCallHelper.Dispatch: maps a runtime goal's
+    // ((atomId << 16) | totalArity) to its resolved dispatch route, so a
+    // repeat meta-call of the same functor skips the functor intern, the
+    // control-construct comparisons, the builtins probe and the
+    // address-map probe. Stamped with the CurrentFunctorAddresses
+    // instance it was built against; the dispatchers discard it when the
+    // stamp no longer matches (a new query linked a new map). See
+    // MetaRoute.cs for the soundness argument.
+    public Dictionary<long, MetaRoute>? MetaRouteCache;
+    public object? MetaRouteCacheStamp;
+
+    /// <summary>Scratch buffer for <c>call/N</c>'s extra arguments while
+    /// the goal's own arguments are loaded into the low X registers.
+    /// Safe as a single per-engine buffer: the extras are consumed into
+    /// registers before anything (builtin impl, recursive dispatch) can
+    /// re-enter the meta-call path. Sized for call/8; larger arities
+    /// fall back to a fresh allocation.</summary>
+    public readonly Cell[] MetaExtraScratch = new Cell[8];
+
     /// <summary>Functor id of the user hook <c>verify_attributes/4</c>.
     /// Interned once; used by <see cref="MergeAttributes"/> to detect
     /// whether the program defines an attribute-unification hook (its

@@ -30,6 +30,15 @@ public sealed class BuiltinEntry
     /// or null for an undocumented internal helper.</summary>
     public string? Summary { get; }
 
+    /// <summary>True for the <c>call/1..7</c> family. Precomputed so the
+    /// dispatch hot paths test a bool instead of comparing
+    /// <see cref="Name"/> against <c>"call"</c> per call (chunk 416).</summary>
+    public bool IsCall { get; }
+
+    /// <summary>True for <c>'$call'/2</c>, the chunk-88 barrier-carrying
+    /// meta-call. Precomputed like <see cref="IsCall"/>.</summary>
+    public bool IsDollarCall { get; }
+
     public BuiltinEntry(int id, string name, int arity, BuiltinImpl impl,
         string? category = null, string? template = null, string? summary = null)
     {
@@ -40,6 +49,8 @@ public sealed class BuiltinEntry
         Category = category;
         Template = template;
         Summary = summary;
+        IsCall = name == "call";
+        IsDollarCall = name == "$call";
     }
 
     public override string ToString() => $"{Name}/{Arity} (#{Id})";

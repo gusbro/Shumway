@@ -5065,8 +5065,15 @@ public sealed class IlPredicateCompiler
             Cell goal = DerefCell(engine, engine.GetRegister(0));
 
             // Save call/N's extra args before SetRegister reshuffles them.
-            Cell[] extra = callArity > 1 ? new Cell[callArity - 1] : System.Array.Empty<Cell>();
-            for (int i = 0; i < callArity - 1; i++)
+            // Per-engine scratch (chunk 416): consumed into registers below,
+            // before any recursion or builtin can re-enter.
+            int extraCount = callArity - 1;
+            Cell[] extra = extraCount <= 0
+                ? System.Array.Empty<Cell>()
+                : extraCount <= engine.MetaExtraScratch.Length
+                    ? engine.MetaExtraScratch
+                    : new Cell[extraCount];
+            for (int i = 0; i < extraCount; i++)
                 extra[i] = engine.GetRegister(i + 1);
 
             int atomId;
@@ -5092,30 +5099,77 @@ public sealed class IlPredicateCompiler
                     throw new PrologRuntimeException("type_error", "callable");
             }
 
-            int totalArity = goalArity + (callArity - 1);
+            int totalArity = goalArity + extraCount;
             for (int i = 0; i < goalArity; i++)
                 engine.SetRegister(i, engine.GetHeap(argBase + i));
-            for (int i = 0; i < callArity - 1; i++)
+            for (int i = 0; i < extraCount; i++)
                 engine.SetRegister(goalArity + i, extra[i]);
+
+            // Chunk 416 — shared meta-call route cache (see MetaRoute.cs).
+            // Same cache the bytecode interpreter's DispatchCall fills; each
+            // dispatcher executes a cached kind exactly as its own slow path.
+            var addresses = engine.CurrentFunctorAddresses;
+            var cache = engine.MetaRouteCache;
+            if (cache is null || !ReferenceEquals(engine.MetaRouteCacheStamp, addresses))
+            {
+                cache = engine.MetaRouteCache =
+                    new System.Collections.Generic.Dictionary<long, MetaRoute>();
+                engine.MetaRouteCacheStamp = addresses;
+            }
+            bool routeCacheable = (uint)totalArity <= 0xFFFF;
+            long routeKey = ((long)atomId << 16) | (uint)totalArity;
+            if (routeCacheable && cache.TryGetValue(routeKey, out var route))
+            {
+                switch (route.Kind)
+                {
+                    case MetaRouteKind.Cut:
+                        engine.Cut(cutBarrier);
+                        return SyncSuccess;
+                    case MetaRouteKind.True:
+                        return SyncSuccess;
+                    case MetaRouteKind.Fail:
+                        return SyncFail;
+                    case MetaRouteKind.CallRecurse:
+                        return Dispatch(engine,
+                            Shumway.Builtins.BuiltinsRegistry.GetById(route.Arg).Arity,
+                            engine.B);
+                    case MetaRouteKind.DollarCall:
+                        return Dispatch(engine, 1,
+                            (int)DerefCell(engine, engine.GetRegister(1)).AsInt);
+                    case MetaRouteKind.Builtin:
+                        return InvokeBuiltinGoal(engine, route.Arg);
+                    case MetaRouteKind.BarrierHelperJump:
+                        engine.SetRegister(2, Cell.Int(cutBarrier));
+                        engine.SetB0(cutBarrier);
+                        return route.Arg;
+                    case MetaRouteKind.Jump:
+                        engine.SetB0(cutBarrier);
+                        return route.Arg;
+                }
+            }
 
             int functorId = FunctorTable.Intern(atomId, totalArity);
             // Chunk-88 control-construct routing — `!` inside the
             // runtime goal commits to the call's barrier via the
             // $call_* helpers' arity-3 form (X[2] carries the barrier).
+            var userKind = MetaRouteKind.Jump;
             if (functorId == ConjFid)
             {
                 engine.SetRegister(2, Cell.Int(cutBarrier));
                 functorId = CallConjFid;
+                userKind = MetaRouteKind.BarrierHelperJump;
             }
             else if (functorId == DisjFid)
             {
                 engine.SetRegister(2, Cell.Int(cutBarrier));
                 functorId = CallDisjFid;
+                userKind = MetaRouteKind.BarrierHelperJump;
             }
             else if (functorId == ArrowFid)
             {
                 engine.SetRegister(2, Cell.Int(cutBarrier));
                 functorId = CallArrowFid;
+                userKind = MetaRouteKind.BarrierHelperJump;
             }
             else if (functorId == NegFid || functorId == NotFid)
             {
@@ -5128,11 +5182,23 @@ public sealed class IlPredicateCompiler
             // through to its next opcode.
             if (functorId == CutFid)
             {
+                if (routeCacheable)
+                    cache[routeKey] = new MetaRoute(MetaRouteKind.Cut, 0);
                 engine.Cut(cutBarrier);
                 return SyncSuccess;
             }
-            if (functorId == TrueFid) return SyncSuccess;
-            if (functorId == FailFid) return SyncFail;
+            if (functorId == TrueFid)
+            {
+                if (routeCacheable)
+                    cache[routeKey] = new MetaRoute(MetaRouteKind.True, 0);
+                return SyncSuccess;
+            }
+            if (functorId == FailFid)
+            {
+                if (routeCacheable)
+                    cache[routeKey] = new MetaRoute(MetaRouteKind.Fail, 0);
+                return SyncFail;
+            }
 
             // Builtin-as-goal. The recursion case (call(call(...))) is
             // handled by re-entering Dispatch with the recovered arity
@@ -5140,29 +5206,25 @@ public sealed class IlPredicateCompiler
             if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out int builtinId))
             {
                 var builtin = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
-                if (builtin.Name == "call")
+                if (builtin.IsCall)
                 {
                     // call(call(...)) — inner call's arity is the
                     // builtin's arity, barrier resets to engine.B
                     // (a fresh call boundary).
+                    if (routeCacheable)
+                        cache[routeKey] = new MetaRoute(MetaRouteKind.CallRecurse, builtinId);
                     return Dispatch(engine, builtin.Arity, engine.B);
                 }
-                if (builtin.Name == "$call")
+                if (builtin.IsDollarCall)
                 {
+                    if (routeCacheable)
+                        cache[routeKey] = new MetaRoute(MetaRouteKind.DollarCall, builtinId);
                     int innerBarrier = (int)DerefCell(engine, engine.GetRegister(1)).AsInt;
                     return Dispatch(engine, 1, innerBarrier);
                 }
-                engine.CurrentBuiltinName = builtin.Name;
-                engine.CurrentBuiltinArity = builtin.Arity;
-                try
-                {
-                    return builtin.Impl(engine) ? SyncSuccess : SyncFail;
-                }
-                catch (PrologRuntimeException re)
-                {
-                    re.StampBuiltin(builtin.Name, builtin.Arity);
-                    throw;
-                }
+                if (routeCacheable)
+                    cache[routeKey] = new MetaRoute(MetaRouteKind.Builtin, builtinId);
+                return InvokeBuiltinGoal(engine, builtinId);
             }
 
             // User predicate. Set the cut barrier the call's `!` will
@@ -5170,10 +5232,31 @@ public sealed class IlPredicateCompiler
             // caller threads Cp = resume_marker, Pc = target,
             // IlTailCallPending = true.
             engine.SetB0(cutBarrier);
-            if (engine.CurrentFunctorAddresses is null
-                || !engine.CurrentFunctorAddresses.TryGetValue(functorId, out int address))
+            if (addresses is null
+                || !addresses.TryGetValue(functorId, out int address))
                 throw PrologRuntimeException.UndefinedProcedure(functorId);
+            if (routeCacheable)
+                cache[routeKey] = new MetaRoute(userKind, address);
             return address;
+        }
+
+        /// <summary>Invokes a builtin reached as a runtime meta-call goal
+        /// (chunk 416 — shared by the slow path and the cached
+        /// Builtin route).</summary>
+        private static int InvokeBuiltinGoal(Engine engine, int builtinId)
+        {
+            var builtin = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+            engine.CurrentBuiltinName = builtin.Name;
+            engine.CurrentBuiltinArity = builtin.Arity;
+            try
+            {
+                return builtin.Impl(engine) ? SyncSuccess : SyncFail;
+            }
+            catch (PrologRuntimeException re)
+            {
+                re.StampBuiltin(builtin.Name, builtin.Arity);
+                throw;
+            }
         }
 
         private static Cell DerefCell(Engine engine, Cell c) =>
