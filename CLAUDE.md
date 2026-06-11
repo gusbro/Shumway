@@ -658,26 +658,33 @@ questions from Phase 11's deferred list:
   `retract` / `assertz` — and avoids redundant `TryDescribe*`
   attempts that were already rejecting the shape.
 
-**Phase 29 — Tier-1 IL inlining of RULES over real programs** — 🚧 **In flight.**
+**Phase 30 — Arity/Prolog32 compatibility, round 2** — 🚧 **In flight.**
 
-The chunk-364 Blint survey showed the Phase-28 fact inliner is inert on real
-code (3 fact call sites vs 229 rule call sites). Phase 29 attacks the cases that
-actually matter, driven by real programs (Blint and the corpus) rather than
-synthetic benchmarks, reusing the Phase-28 inliner scaffold (cursor-merge,
-CPs-into-caller, the O(1) cursor jump table). Planned cases, easiest-first:
+Widens the Phase-24 Arity source-compat work, driven by the reference material
+at `C:\Arity` (doc/ARITY.HLP.txt predicate listing, demo programs, the C
+embedding API headers) and real Arity programs. Scope being surveyed: diff the
+Arity predicate listing against the current builtin/prelude surface; run the
+demo `.ARI` programs; close the gaps real programs hit.
 
-1. **Single-clause LEAF rules** — body is builtins only (arith / compare /
-   type-test / unify), no nested predicate frame, no backtracking. A macro
-   expansion generalising the chunk-69 leaf inline (head-match-only) to
-   head + builtin-body. Lowest risk, broad Blint coverage (29 sites).
-2. **Single-clause non-leaf rules** — add a nested env frame + the body's own
-   (still-trampolined) calls. Deterministic, no clause backtracking (79 sites).
-3. **Multi-clause rules** — the payoff (121 sites): per-clause env-frame +
-   body-goal emission on top of the fact inliner's cursor-merge machinery.
+**Phase 29 — region compilation shipped + engine correctness/runtime arc** — ✅ **Complete** (tagged `phase-29`; closure summary in [`docs/phase-29-closure.md`](docs/phase-29-closure.md)).
 
-Discipline carried from Phase 28: profile-first, validate on real programs +
-the full Embedding (Tier-1) suite, measure interleaved min-of-N (never
-cross-run). [[wallclock-ab-must-be-back-to-back]]
+Opened as Tier-1 rule inlining (chunk-364 survey); the user's REGION COMPILATION
+model (each local predicate's body emitted once inside the caller's IL method,
+intra-region calls a `br`) superseded the duplication inliner and shipped as the
+DEFAULT. Sixty chunks (365–424). Highlights: regions through every member shape
+(single-clause / chains / indexed / cut / cross-region / backtrackable builtins /
+meta-calls via `BuiltinResume` cursors — Blint 0 region-skips); the dead-region
+prune + WAM strip making `--strip-wam` bundles sound end-to-end; regions
+**default ON** after the chunk-418 validation found the real lever (the
+`(C->T;E)` lowering: ~2× on ITE-recursion, qsort −22%, boyer −15%, corpus
+output-identical); **ADR-021** rejecting the register-allocator arc with survey
+data; the link-time `MetaWrapperUnfold` (Blint meta-dispatches −99.9%) + the ISO
+branch-cut transparency fix; the ISO `unknown` flag wired through dispatch; the
+dynamic-mutation cost arc (tombstone reclaim by dead count, threshold 4 — Blint
+opcodes −4.9% deterministic; retract −70% alloc); interpreter superinstruction
+runs; format freeze + `[Conditional("SHUMWAY_DIAG")]` diagnostics. The chunk-404
+unlink corruption was fully post-mortemed (two distinct defects) and its shapes
+pinned by a churn regression suite.
 
 **Phase 28 — real-program validation corpus + Tier-1 IL runtime speed** — ✅ **Complete** (tagged `phase-28`; closure summary in [`docs/phase-28-closure.md`](docs/phase-28-closure.md)).
 
