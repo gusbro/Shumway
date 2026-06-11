@@ -155,6 +155,16 @@ internal enum RegionCursorKind
     /// label (no separate block); assigned AFTER all other cursors so the existing
     /// site-consumption order is untouched.</summary>
     MemberEntry,
+    /// <summary>Chunk 424 — the post-site resume point of a backtrackable builtin
+    /// (<c>between/3</c>, <c>retract/1</c>, …) or a runtime meta-call
+    /// (<c>call/N</c>, <c>'$call'/2</c>) inside a member's body. A backtrackable
+    /// builtin's choice-point closure calls <c>ResumeAtReturnPc</c> with
+    /// <c>EncodeResumeMarker(rootFid, thisCursor)</c> (the chunk-218 mechanism, with
+    /// the REGION's fid+cursor instead of a standalone predicate's); a non-tail
+    /// meta-call threads its dispatch with <c>Cp</c> set to the same marker
+    /// (chunk-182). Either way the dispatch loop re-enters the region method here.
+    /// Keyed by (member, pc) like the call cursors.</summary>
+    BuiltinResume,
 }
 
 /// <summary>One assigned cursor in a region's cursor space. Cursor 0 is the root's
@@ -201,8 +211,15 @@ internal static class IlRegionPlanner
     /// <see cref="RegionCursorKind.IndexNode"/> cursor instead of the try_me_else
     /// chain's clause-alt cursors. Returns 0 for a non-indexed member. Null (the
     /// default) means no member is indexed — the pre-Stage-6c behaviour.</param>
+    /// <param name="builtinResumePcs">Chunk 424 — per member, the (sorted) byte
+    /// offsets of <c>CallBuiltin</c> sites that need a
+    /// <see cref="RegionCursorKind.BuiltinResume"/> cursor: backtrackable builtins
+    /// and runtime meta-calls. Null means none (the pre-424 behaviour). The
+    /// classification lives in the compiler (it needs the builtins registry); the
+    /// planner only assigns cursors.</param>
     public static IlRegionPlan Plan(
-        IlRegion region, Func<CompiledPredicate, int>? indexNodeCount = null)
+        IlRegion region, Func<CompiledPredicate, int>? indexNodeCount = null,
+        Func<CompiledPredicate, IReadOnlyList<int>>? builtinResumePcs = null)
     {
         ArgumentNullException.ThrowIfNull(region);
         var sites = new List<RegionCursorSite>();
@@ -223,24 +240,35 @@ internal static class IlRegionPlanner
             else
             // Stage 4: a multi-clause member's non-first clauses (1..N-1) each get
             // a clause-alternative cursor — the clause dispatch pushes a choice
-            // point carrying it, and a backtrack re-enters the region method here to
-            // try the next clause. (Clause 0 is reached by the forward br / cursor 0
-            // for the root, so it takes no separate cursor.) Assigned before the
-            // member's call cursors, in clause order.
+            // point carrying this cursor, and a backtrack re-enters the region method
+            // here to try the next clause. (Clause 0 is reached by the forward br /
+            // cursor 0 for the root, so it takes no separate cursor.) Assigned before
+            // the member's call cursors, in clause order.
             for (int c = 1; c < member.ClauseCount; c++)
                 sites.Add(new RegionCursorSite(cursor++, RegionCursorKind.ClauseAlt, mi, -1, -1, c));
-            // Call cursors in pc order — the emit walks bytecode forward, so cursor
-            // numbers must follow the call sites' byte offsets.
+            // Body-site cursors in pc order — the emit walks bytecode forward, so
+            // cursor numbers must follow the byte offsets. Two site kinds merge here:
+            // non-tail Call sites (intra return / cross resume) and chunk-424
+            // builtin-resume sites (backtrackable / meta CallBuiltin).
             var ordered = new List<CallSite>(member.CallSites);
             ordered.Sort((x, y) => x.OpcodeOffset.CompareTo(y.OpcodeOffset));
+            IReadOnlyList<int> bpcs = builtinResumePcs?.Invoke(member)
+                ?? Array.Empty<int>();
+            int bi = 0;
             foreach (var cs in ordered)
             {
+                while (bi < bpcs.Count && bpcs[bi] < cs.OpcodeOffset)
+                    sites.Add(new RegionCursorSite(cursor++,
+                        RegionCursorKind.BuiltinResume, mi, bpcs[bi++], -1));
                 if (cs.IsExecute) continue;   // tail call: br (intra) or tail trampoline (cross)
                 var kind = region.IsIntraRegion(cs.CalleeFunctorId)
                     ? RegionCursorKind.IntraCallReturn
                     : RegionCursorKind.CrossCallResume;
                 sites.Add(new RegionCursorSite(cursor++, kind, mi, cs.OpcodeOffset, cs.CalleeFunctorId));
             }
+            while (bi < bpcs.Count)
+                sites.Add(new RegionCursorSite(cursor++,
+                    RegionCursorKind.BuiltinResume, mi, bpcs[bi++], -1));
         }
         // Chunk 402: one MemberEntry cursor per NON-root member (the root is cursor 0),
         // assigned after every other cursor so the emit's existing consumption order is

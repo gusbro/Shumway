@@ -352,6 +352,23 @@ WAM state.
      byte-identical OFF vs ON; Embedding default 2157, REGION=1 all real pass. The
      `[region-skip]` diagnostic (chunk 384, SHUMWAY_IL_SHAPE=1) reports the cause for any
      local-closure predicate that still isn't a region.
+   - **Backtrackable-builtin / meta-call members — INCLUDED (chunk 424, Stage 6d
+     "path 2").** The planner gained `RegionCursorKind.BuiltinResume`: one cursor per
+     backtrackable-builtin or `call/N`/`'$call'/2 ` site in a member's body (keyed
+     (member, pc), merged with the call cursors in pc order). The emit threads the
+     existing mechanisms with the REGION's identity: a backtrackable builtin pre-sets
+     `BuiltinReturnPc = EncodeResumeMarker(regionRootFid, cursor)` (chunk 218); a
+     non-tail meta-call sets `Cp` to the same marker shape (chunk 182) — either way the
+     dispatch loop re-enters the region method at the post-site switch slot. The
+     chunk-385 membership refusal and the `RegionBodyOpcodesOk` rejection are gone:
+     a predicate whose body retracts / between's / meta-calls is now a full member
+     (and a valid root). Blint: **0 region-skips** (was 4 roots + per-member
+     exclusions); 52 region roots (fewer than 55 because former trampoline-boundary
+     callees are now absorbed into bigger regions). Validated: 9 Chunk424Tests
+     (builtin enumeration re-entering the region, clause-CP × builtin-CP cross
+     product, retract members, tail + non-tail meta-call members, cursor
+     interleaving, cut pruning the builtin CP, caller-CP survival), full suites,
+     Blint byte-identical in REPL and `--strip-wam` persisted bundle.
    - **State (post-385)**: region compiler is correct + validated through Stage 6d —
      discovery / planner / single-clause / try_me_else-chain / cut / cross-region /
      indexed members / backtrackable-builtin-member exclusion — all sound (Embedding

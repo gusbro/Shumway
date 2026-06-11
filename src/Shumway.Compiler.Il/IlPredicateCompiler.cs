@@ -571,7 +571,8 @@ public sealed class IlPredicateCompiler
                     $"[region-emit] root fid={predicate.FunctorId} members={region.MemberCount}"
                     + " [" + string.Join(",", region.Members.Select(m => $"{m.FunctorId}({FidName(m.FunctorId)}x{m.ClauseCount})")) + "]");
                 var rplan = IlRegionPlanner.Plan(region,
-                    m => TryDescribeIndexed(m, calleeMap, out var ii) ? ii!.Nodes.Count : 0);
+                    m => TryDescribeIndexed(m, calleeMap, out var ii) ? ii!.Nodes.Count : 0,
+                    m => RegionBuiltinResumePcs(m, calleeMap));
                 return CompileRegion(region, rplan, calleeMap);
             }
             // Explain why a predicate WITH a local closure didn't become a region —
@@ -1107,20 +1108,60 @@ public sealed class IlPredicateCompiler
                     if (FindCallSiteFunctorId(callSites, pc) < 0)
                     { reason = $"{op} @{pc} has no call-site metadata"; return false; }
                     break;
-                case Opcode.CallBuiltin:
-                {
-                    var e = Shumway.Builtins.BuiltinsRegistry.GetById(
-                        BytecodeIO.ReadInt32(code, pc + 1));
-                    if (e.Name is "call" or "$call" || IsBacktrackableBuiltinName(e.Name))
-                    { reason = $"backtrackable/meta builtin '{e.Name}' @{pc} (needs a resume cursor)"; return false; }
-                    break;
-                }
+                // Chunk 424: backtrackable / meta CallBuiltin sites are now
+                // region-emittable — the planner allocates each a
+                // BuiltinResume cursor and the emit threads the chunk-218 /
+                // chunk-182 markers with the REGION's fid+cursor.
             }
             int size = op == Opcode.Meta ? 6 : OpcodeTable.Get((byte)op).Size;
             if (size <= 0) { reason = $"undecodable opcode {op} @{pc}"; return false; }
             pc += size;
         }
         return true;
+    }
+
+    /// <summary>Chunk 424 — the (sorted) byte offsets of <paramref name="m"/>'s
+    /// <c>CallBuiltin</c> sites that need a <see cref="RegionCursorKind.BuiltinResume"/>
+    /// cursor: backtrackable builtins (chunk 218's <c>BuiltinReturnPc</c> resume) and
+    /// runtime meta-calls (<c>call/N</c>, <c>'$call'/2</c> — chunk-182 threading).
+    /// Walks the same ranges <see cref="RegionMemberOk"/> validates: clause ranges for
+    /// an indexed member (its dispatch tables aren't linearly decodable), the whole
+    /// body otherwise.</summary>
+    private static IReadOnlyList<int> RegionBuiltinResumePcs(
+        CompiledPredicate m, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+    {
+        var pcs = new List<int>();
+        if (m.ClauseCount > 1 && !TryDescribeTryMeElseChain(m, calleeMap, out _)
+            && TryDescribeIndexed(m, calleeMap, out var info))
+        {
+            foreach (var (start, end) in info!.Clauses)
+                CollectBuiltinResumePcs(m.Bytecode, start, end, pcs);
+        }
+        else
+        {
+            CollectBuiltinResumePcs(m.Bytecode, 0, m.Bytecode.Length, pcs);
+        }
+        pcs.Sort();
+        return pcs;
+    }
+
+    private static void CollectBuiltinResumePcs(byte[] code, int start, int end, List<int> pcs)
+    {
+        int pc = start;
+        while (pc < end)
+        {
+            var op = (Opcode)code[pc];
+            if (op == Opcode.CallBuiltin)
+            {
+                var e = Shumway.Builtins.BuiltinsRegistry.GetById(
+                    BytecodeIO.ReadInt32(code, pc + 1));
+                if (e.IsCall || e.IsDollarCall || IsBacktrackableBuiltinName(e.Name))
+                    pcs.Add(pc);
+            }
+            int size = op == Opcode.Meta ? 6 : OpcodeTable.Get((byte)op).Size;
+            if (size <= 0) return;
+            pc += size;
+        }
     }
 
     /// <summary>Region-membership filter (Stage 6b/6c/6d). A callee is pulled into a
@@ -1893,7 +1934,8 @@ public sealed class IlPredicateCompiler
                     throw new InvalidOperationException(
                         "Region predicate needs a delegates field for self-reference.");
                 var plan = IlRegionPlanner.Plan(region,
-                    m => TryDescribeIndexed(m, calleeMap, out var ii) ? ii!.Nodes.Count : 0);
+                    m => TryDescribeIndexed(m, calleeMap, out var ii) ? ii!.Nodes.Count : 0,
+                    m => RegionBuiltinResumePcs(m, calleeMap));
                 // Chunk 402: hand the builder the (memberName, arity, entryCursor) table
                 // so the load path can alias a stripped member's functor to
                 // EncodeResumeMarker(rootFid, entryCursor) — name-relative (the runtime
@@ -3101,12 +3143,32 @@ public sealed class IlPredicateCompiler
                         // No special handling here — the non-tail path
                         // is correct.
                     }
-                    if (callSiteIndexCounter is null || resumeLabels is null)
-                        throw new InvalidOperationException(
-                            "IL meta-call requires callSiteIndexCounter + "
-                            + "resumeLabels for forward-resume cursor allocation.");
-                    int siteIdx = callSiteIndexCounter();
-                    int resumeCursor = cursorBase + siteIdx - 1;
+                    // Chunk 424 — inside a region the cursor comes from the
+                    // PLAN (keyed by this site's pc) and the marker carries
+                    // the REGION's fid, so the dispatch loop re-enters the
+                    // region method at the right switch slot. Standalone
+                    // keeps the chunk-182 sequential counter.
+                    int resumeCursor;
+                    Sigil.Label metaResumeLabel;
+                    int markerOwnerFid;
+                    if (regionCtx is not null)
+                    {
+                        resumeCursor = regionCtx.CursorBySite[
+                            (regionCtx.CurrentMemberIndex, pc)];
+                        metaResumeLabel = regionCtx.CursorLabels[resumeCursor];
+                        markerOwnerFid = regionCtx.RegionFid;
+                    }
+                    else
+                    {
+                        if (callSiteIndexCounter is null || resumeLabels is null)
+                            throw new InvalidOperationException(
+                                "IL meta-call requires callSiteIndexCounter + "
+                                + "resumeLabels for forward-resume cursor allocation.");
+                        int siteIdx = callSiteIndexCounter();
+                        resumeCursor = cursorBase + siteIdx - 1;
+                        metaResumeLabel = resumeLabels[siteIdx - 1];
+                        markerOwnerFid = _emitOwnerFid;
+                    }
 
                     var target = emit.DeclareLocal<int>($"metaCallTarget_pc{pc}{lt}");
 
@@ -3143,7 +3205,7 @@ public sealed class IlPredicateCompiler
                     emit.LoadConstant(IlMetaCallHelper.SyncSuccess);
                     emit.UnsignedBranchIfNotEqual(threadedLabel);
                     // sync success — skip the threading and go to resume.
-                    emit.Branch(resumeLabels[siteIdx - 1]);
+                    emit.Branch(metaResumeLabel);
 
                     emit.MarkLabel(threadedLabel);
                     // Threaded dispatch.
@@ -3157,7 +3219,7 @@ public sealed class IlPredicateCompiler
                     if (!tailCall)
                     {
                         emit.LoadArgument(0);
-                        EmitResumeMarker(emit, _emitOwnerFid, resumeCursor);
+                        EmitResumeMarker(emit, markerOwnerFid, resumeCursor);
                         emit.Call(EngineSetCpMethod);
                     }
                     emit.LoadArgument(0);
@@ -3169,7 +3231,7 @@ public sealed class IlPredicateCompiler
                     emit.LoadConstant(true);
                     emit.Return();
 
-                    emit.MarkLabel(resumeLabels[siteIdx - 1]);
+                    emit.MarkLabel(metaResumeLabel);
                     pc += OpcodeTable.Get(op).Size;
                     continue;
                 }
@@ -3188,17 +3250,34 @@ public sealed class IlPredicateCompiler
                 // the post-builtin label. Non-backtrackable builtins skip
                 // the cursor allocation — straight invocation.
                 bool isBacktrackable = IsBacktrackableBuiltinName(builtinName);
-                int builtinResumeIdx = -1;
+                Sigil.Label? builtinResumeLabel = null;
                 if (isBacktrackable)
                 {
-                    if (callSiteIndexCounter is null || resumeLabels is null)
-                        throw new InvalidOperationException(
-                            "Backtrackable builtin in IL requires callSiteIndexCounter + resumeLabels.");
-                    builtinResumeIdx = callSiteIndexCounter();
-                    int resumeCursor = cursorBase + builtinResumeIdx - 1;
+                    // Chunk 424 — region members take their cursor from the
+                    // PLAN (keyed by pc) with the REGION's fid in the marker;
+                    // standalone keeps the chunk-218 sequential counter.
+                    int resumeCursor;
+                    int markerOwnerFid;
+                    if (regionCtx is not null)
+                    {
+                        resumeCursor = regionCtx.CursorBySite[
+                            (regionCtx.CurrentMemberIndex, pc)];
+                        builtinResumeLabel = regionCtx.CursorLabels[resumeCursor];
+                        markerOwnerFid = regionCtx.RegionFid;
+                    }
+                    else
+                    {
+                        if (callSiteIndexCounter is null || resumeLabels is null)
+                            throw new InvalidOperationException(
+                                "Backtrackable builtin in IL requires callSiteIndexCounter + resumeLabels.");
+                        int builtinResumeIdx = callSiteIndexCounter();
+                        resumeCursor = cursorBase + builtinResumeIdx - 1;
+                        builtinResumeLabel = resumeLabels[builtinResumeIdx - 1];
+                        markerOwnerFid = _emitOwnerFid;
+                    }
                     // engine.BuiltinReturnPc = EncodeResumeMarker(ownerFid, resumeCursor);
                     emit.LoadArgument(0);
-                    EmitResumeMarker(emit, _emitOwnerFid, resumeCursor);
+                    EmitResumeMarker(emit, markerOwnerFid, resumeCursor);
                     emit.Call(EngineBuiltinReturnPcSetter);
                 }
                 emit.LoadConstant(builtinId);
@@ -3211,14 +3290,11 @@ public sealed class IlPredicateCompiler
                 {
                     // After a successful first invocation, fall through.
                     // On a CP-resume, the dispatcher decodes the marker and
-                    // re-invokes this IL with cursor=resumeCursor; the top
-                    // dispatch routes it to this label, which continues the
-                    // body at the post-builtin position.
-                    // resumeLabels was null-checked above where
-                    // builtinResumeIdx was assigned; the compiler
-                    // doesn't track the invariant across the
-                    // `isBacktrackable` branches.
-                    emit.MarkLabel(resumeLabels![builtinResumeIdx - 1]);
+                    // re-invokes this IL (or the region method) with
+                    // cursor=resumeCursor; the top dispatch routes it to this
+                    // label, which continues the body at the post-builtin
+                    // position.
+                    emit.MarkLabel(builtinResumeLabel!);
                 }
                 pc += OpcodeTable.Get(op).Size;
                 continue;
