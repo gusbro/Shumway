@@ -349,6 +349,16 @@ internal static class Program
                         Console.Error.WriteLine($"shumway-compile: unknown option '{arg}'.");
                         return null;
                     }
+                    // Chunk 434 — wildcard inputs (`shumway-compile *.pl`,
+                    // `src\*.ari`). The Windows shell hands globs through
+                    // verbatim, so expand them here. A pattern matching
+                    // nothing is a usage error (silently compiling zero
+                    // files would read as success).
+                    if (arg.IndexOfAny(WildcardChars) >= 0)
+                    {
+                        if (!TryExpandWildcard(arg, opts.InputPaths)) return null;
+                        break;
+                    }
                     opts.InputPaths.Add(arg);
                     break;
             }
@@ -362,6 +372,40 @@ internal static class Program
         return opts;
     }
 
+    private static readonly char[] WildcardChars = { '*', '?' };
+
+    /// <summary>Chunk 434 — expands a wildcard input argument against the
+    /// file system (directory part + pattern part), appending the matches
+    /// in case-insensitive sorted order so multi-file output is
+    /// deterministic. Returns false (after printing the error) when the
+    /// pattern matches nothing or the directory is unusable.</summary>
+    private static bool TryExpandWildcard(string arg, List<string> into)
+    {
+        string dir = Path.GetDirectoryName(arg) is { Length: > 0 } d ? d : ".";
+        string pattern = Path.GetFileName(arg);
+        List<string> matches;
+        try
+        {
+            matches = Directory.EnumerateFiles(dir, pattern).ToList();
+        }
+        catch (Exception ex) when (ex is IOException
+                                || ex is DirectoryNotFoundException
+                                || ex is ArgumentException
+                                || ex is UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine($"shumway-compile: cannot expand '{arg}': {ex.Message}");
+            return false;
+        }
+        if (matches.Count == 0)
+        {
+            Console.Error.WriteLine($"shumway-compile: no files match '{arg}'.");
+            return false;
+        }
+        matches.Sort(StringComparer.OrdinalIgnoreCase);
+        into.AddRange(matches);
+        return true;
+    }
+
     private static void ReportMissing(string option) =>
         Console.Error.WriteLine($"shumway-compile: option '{option}' requires a value.");
 
@@ -372,6 +416,8 @@ internal static class Program
             + "\n"
             + "Compiles Prolog source files into object modules (.shmo). Use shumway-link\n"
             + "to combine .shmo files into a runnable bundle (.shum) or an executable.\n"
+            + "Inputs may use wildcards (e.g. *.pl, src\\*.ari) — expanded by the\n"
+            + "compiler itself, in sorted order, so they work from any shell.\n"
             + "\n"
             + "Options:\n"
             + "  -o, --output <path>  Output .shmo path (single input) or output\n"
