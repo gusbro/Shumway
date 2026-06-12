@@ -2671,7 +2671,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 LoadEntryFromBytecode(entry);
                 continue;
             }
-            ConsultString(entry.Source);
+            // Chunk 440 — consult under the entry's module name so a
+            // module-less file keeps the per-file module identity its
+            // .shmo bytecode was compiled (and mangled) with, instead of
+            // merging into the rolling "user" module.
+            ConsultStringInner(entry.Source, recordInHistory: true,
+                moduleNameFallback: entry.ModuleName);
         }
 
         // Decode each entry's CompiledModule and stash the predicates
@@ -3159,6 +3164,15 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             var slot = GetOrCreateDynamicSlot(fid);
             foreach (var encoded in seed.EncodedClauses)
                 slot.Add(TermCodec.DecodeClause(encoded));
+            // Chunk 440 — remember which module these clauses came from.
+            // The entry's static bytecode was mangled by ShmoCompiler
+            // under entry.ModuleName, so the query-setup rewrite of these
+            // rehydrated clauses must run under the SAME module context
+            // (module name + that module's locals) or a body call to a
+            // module-local predicate stays bare while its target is
+            // `module$name`-mangled.
+            if (entry.ModuleName != DefaultModuleName)
+                _dynamicSeedModule[fid] = entry.ModuleName;
         }
 
         var module = CompiledModuleCodec.Decode(entry.CompiledBytecode);
@@ -3299,6 +3313,27 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private HashSet<int>? _staticRewriteUserLocals;
     private HashSet<int>? _staticRewriteHeadFids;
     private int _staticRewriteGen = -1;
+
+    /// <summary>Chunk 440 — per-module locals sets computed by the static
+    /// rewrite pass (the same `locals` each module's ModuleRewrite context
+    /// gets), cached alongside <see cref="_staticRewriteUserLocals"/>. The
+    /// dynamic-clause rewrite consults it so a dynamic clause attributed to
+    /// a non-user module (see <see cref="_dynamicSeedModule"/>) mangles its
+    /// body calls against THAT module's locals — matching the entry's
+    /// static bytecode, which ShmoCompiler mangled under the per-file
+    /// module name.</summary>
+    private Dictionary<string, HashSet<int>>? _staticRewriteModuleLocals;
+
+    /// <summary>Chunk 440 — module attribution for dynamic predicates whose
+    /// clauses came from a named module: bundle dynamic-seed rehydration
+    /// (<see cref="LoadEntryFromBytecode"/>) and source-bearing bundle
+    /// entries consulted under the entry's module name. A fid absent here
+    /// rewrites under the default user context (runtime asserts, plain
+    /// ConsultString — unchanged behaviour). Chunk 209 used to sidestep
+    /// this by forcing every module-less .shmo to module "user", which made
+    /// two module-less files unlinkable (duplicate_module) and aliased
+    /// their locals.</summary>
+    private readonly Dictionary<int, string> _dynamicSeedModule = new();
 
     /// <summary>Chunk 430 — per-functor cache of the dynamic clause lists'
     /// transform + rewrite (ClausePipeline + ModuleRewrite under the
@@ -4571,7 +4606,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         ConsultStringInner(source, recordInHistory: true);
     }
 
-    private void ConsultStringInner(string source, bool recordInHistory)
+    private void ConsultStringInner(string source, bool recordInHistory,
+        string? moduleNameFallback = null)
     {
         // Save-state chunk 264: record every user-visible consult so
         // SaveState can serialize it. The prelude (auto-loaded by the
@@ -4590,7 +4626,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             new Lexer(source, _flags.CharConversionEnabled ? _flags.CharConversion : null),
             _operators, _flags).ReadAll().ToList();
 
-        string moduleName = DefaultModuleName;
+        // Chunk 440 — a source-bearing bundle entry consults under the
+        // entry's module name (the per-file fallback ShmoCompiler resolved
+        // at compile time), so two module-less files keep their own local
+        // namespaces instead of merging into a rolling "user" module. A
+        // plain ConsultString (no fallback) keeps the historic behaviour.
+        string moduleName = string.IsNullOrEmpty(moduleNameFallback)
+            ? DefaultModuleName
+            : moduleNameFallback;
         bool moduleDirectiveSeen = false;
         var publics = new HashSet<int>();
         var clauses = new List<Clause>();
@@ -4741,6 +4784,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     if (_dynamicFunctors.Contains(fid))
                     {
                         GetOrCreateDynamicSlot(fid).Add(c);
+                        // Chunk 440 — clauses routed here from a named
+                        // module (a source-bearing bundle entry, or an
+                        // explicit `:- module/1` source) must be rewritten
+                        // under that module's context at query setup so
+                        // their body calls to module-locals mangle the
+                        // same way the module's static clauses do.
+                        if (moduleName != DefaultModuleName)
+                            _dynamicSeedModule[fid] = moduleName;
                         continue;
                     }
                 }
@@ -4774,9 +4825,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         if (_flags.ImplicitDynamic)
             CollectImplicitDynamics(clauses, publics);
 
-        if (moduleDirectiveSeen)
+        if (moduleDirectiveSeen || moduleName != DefaultModuleName)
         {
-            // Explicit module: replace any previous load of this module.
+            // Explicit module (or a chunk-440 per-file fallback module
+            // from a source-bearing bundle entry): replace any previous
+            // load of this module.
             var manifest = new ModuleManifest(moduleName);
             manifest.Clauses.AddRange(clauses);
             manifest.PublicFunctors.UnionWith(publics);
@@ -5585,6 +5638,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // can call it by name.
         List<Clause> allRewritten;
         HashSet<int>? userLocalsCache;
+        // Chunk 440 — every module's locals set, for the per-fid dynamic-
+        // clause rewrite below (a dynamic clause attributed to module M
+        // rewrites under M's context, not user's).
+        Dictionary<string, HashSet<int>>? moduleLocalsCache;
         // Chunk 430 — head functor ids of every clause in allRewritten
         // (static + dynamic program). Maintained alongside the clause
         // list so the stub emission and the cacheableFunctors snapshot
@@ -5607,12 +5664,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // ASTs and safe to share across queries.
             allRewritten = new List<Clause>(_staticRewriteClauses);
             userLocalsCache = _staticRewriteUserLocals;
+            moduleLocalsCache = _staticRewriteModuleLocals;
             rewrittenHeadFids = new HashSet<int>(_staticRewriteHeadFids!);
         }
         else
         {
             allRewritten = new List<Clause>();
             userLocalsCache = null;
+            moduleLocalsCache = new Dictionary<string, HashSet<int>>();
             foreach (var (name, manifest) in _modules)
             {
                 // Chunk 407 — module-local meta-wrapper unfold (ifthen/2-style user
@@ -5633,6 +5692,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 if (_precompiledModuleLocals.TryGetValue(name, out var bundleLocals))
                     locals.UnionWith(bundleLocals);
                 if (name == DefaultModuleName) userLocalsCache = locals;
+                moduleLocalsCache[name] = locals;
 
                 var ctx = new ModuleRewrite.Context(name, locals, _dynamicFunctors);
                 foreach (var clause in transformed)
@@ -5646,6 +5706,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // mutation bumps _derivationGen).
             _staticRewriteClauses = new List<Clause>(allRewritten);
             _staticRewriteUserLocals = userLocalsCache;
+            _staticRewriteModuleLocals = moduleLocalsCache;
             _staticRewriteHeadFids = new HashSet<int>(rewrittenHeadFids);
             _staticRewriteGen = _derivationGen;
         }
@@ -5687,15 +5748,35 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 DefaultModuleName,
                 userLocalsCache ?? new HashSet<int>(),
                 _dynamicFunctors);
+            // Chunk 440 — per-module contexts for dynamic predicates whose
+            // clauses came from a named module (bundle seeds / source-
+            // bearing entries). Built lazily; everything unattributed
+            // keeps the user context above.
+            Dictionary<string, ModuleRewrite.Context>? namedDynCtx = null;
             foreach (var (fid, clauses) in _dynamicClauses)
             {
                 if (clauses.Count == 0) continue;
                 if (!_dynamicRewriteCache.TryGetValue(fid, out var entry))
                 {
+                    var fidCtx = dynCtx;
+                    if (_dynamicSeedModule.TryGetValue(fid, out var seedModule))
+                    {
+                        namedDynCtx ??= new Dictionary<string, ModuleRewrite.Context>();
+                        if (!namedDynCtx.TryGetValue(seedModule, out fidCtx))
+                        {
+                            HashSet<int>? seedLocals = null;
+                            moduleLocalsCache?.TryGetValue(seedModule, out seedLocals);
+                            fidCtx = new ModuleRewrite.Context(
+                                seedModule,
+                                seedLocals ?? new HashSet<int>(),
+                                _dynamicFunctors);
+                            namedDynCtx[seedModule] = fidCtx;
+                        }
+                    }
                     var transformed = ClausePipeline.Apply(clauses, modeTable);
                     var rewritten = new List<Clause>(transformed.Count);
                     foreach (var clause in transformed)
-                        rewritten.Add(ModuleRewrite.Rewrite(clause, dynCtx));
+                        rewritten.Add(ModuleRewrite.Rewrite(clause, fidCtx));
                     // Head fids include any MetaTransform helper clauses'
                     // heads, mirroring what the per-clause HeadFunctorIdOf
                     // walk over allRewritten used to collect.

@@ -79,9 +79,11 @@ public static class ShmoCompiler
     }
 
     /// <summary>Compiles <paramref name="source"/> in memory.
-    /// <paramref name="moduleNameFallback"/> is used when the source
-    /// has no <c>:- module/1</c> directive; pass the empty string for
-    /// "<c>user</c>" — Shumway's default.</summary>
+    /// <paramref name="moduleNameFallback"/> is the module name when the
+    /// source has no <c>:- module/1</c> directive (chunk 440 — it is no
+    /// longer collapsed to "user"; per-file module identity is what keeps
+    /// two module-less files' locals from aliasing). Pass the empty
+    /// string for "<c>user</c>" — Shumway's default.</summary>
     public static ShmoObject CompileSource(string source,
         string moduleNameFallback = "user",
         ShmoBuildMode buildMode = ShmoBuildMode.Release)
@@ -159,8 +161,20 @@ public static class ShmoCompiler
         //      etc. need to be visible — CollectCalls descends into
         //      meta-builtin goal args (chunk 209) so the raw body still
         //      enumerates everything reachable.
-        string moduleName = moduleNameFallback;
-        bool moduleDirectiveSeen = false;
+        // Chunk 440 — the fallback (the file's base name when compiling a
+        // file, "user" for bare in-memory sources) IS the module name when
+        // no `:- module/1` directive is present. The chunk-209 forcing of
+        // PrologEngine.DefaultModuleName here made every module-less file
+        // compile as module "user": two such files could never be linked
+        // together (duplicate_module), and their locals would have aliased
+        // (`user$helper`) even if the linker had allowed it. The consumers
+        // chunk 209 was protecting — dynamic-seed rehydration's
+        // ModuleRewrite context and the bundle-local-fid feed — are now
+        // per-entry-module-aware (see PrologEngine.LoadEntryFromBytecode +
+        // SetupQueryFromTerm's _dynamicSeedModule attribution).
+        string moduleName = string.IsNullOrEmpty(moduleNameFallback)
+            ? PrologEngine.DefaultModuleName
+            : moduleNameFallback;
         var publicSet = new HashSet<PredicateRef>();
         var dynamicSet = new HashSet<PredicateRef>();
         var ensureLinked = new List<PredicateRef>();
@@ -175,9 +189,8 @@ public static class ShmoCompiler
             {
                 try
                 {
-                    if (ProcessDirective(d.Args[0], ref moduleName,
-                            publicSet, dynamicSet, ensureLinked))
-                        moduleDirectiveSeen = true;
+                    ProcessDirective(d.Args[0], ref moduleName,
+                        publicSet, dynamicSet, ensureLinked);
                 }
                 catch (InvalidOperationException ex)
                 {
@@ -212,7 +225,7 @@ public static class ShmoCompiler
             return new ShmoCompileResult(null, errors, warnings);
 
         return CompileFromParts(
-            moduleDirectiveSeen ? moduleName : PrologEngine.DefaultModuleName,
+            moduleName,
             source, rawClauses, publicSet, dynamicSet, ensureLinked,
             qualifiedRefs, buildMode, errors, warnings);
     }
@@ -222,9 +235,10 @@ public static class ShmoCompiler
     /// linker's cross-module unfold recompile (which reconstructs the inputs
     /// from a V4 <c>.shmo</c>'s metadata + <c>ClauseTerms</c>/<c>DynamicSeeds</c>
     /// and re-enters here with rewritten clauses). <paramref name="moduleName"/>
-    /// is the RESOLVED runtime module name (the caller has already applied the
-    /// "no :- module directive ⇒ user" rule). <paramref name="qualifiedRefs"/>
-    /// is appended to by the call-graph walk.</summary>
+    /// is the RESOLVED runtime module name (the `:- module/1` directive's
+    /// argument, else the per-file fallback — chunk 440).
+    /// <paramref name="qualifiedRefs"/> is appended to by the call-graph
+    /// walk.</summary>
     internal static ShmoCompileResult CompileFromParts(
         string moduleName,
         string source,
@@ -376,10 +390,11 @@ public static class ShmoCompiler
             if (!publicFids.Contains(fid)) localFids.Add(fid);
         }
         // The mangling context uses the RESOLVED runtime module name (the
-        // "no :- module directive ⇒ user" rule was applied by the caller),
-        // matching what SetupQueryFromTerm would apply at consult time —
-        // otherwise the bytecode's mangled local-functor ids ("foo$bar")
-        // disagree with the engine's ("user$bar").
+        // directive's argument, else the per-file fallback — chunk 440),
+        // matching what the engine applies when it loads the entry: the
+        // source-bearing LoadBundle path consults under the entry's module
+        // name, and the source-less path's dynamic-seed rehydration rewrites
+        // under the same name via _dynamicSeedModule.
         var rewriteCtx = new ModuleRewrite.Context(moduleName, localFids, dynamicFids);
         var rewritten = new List<Clause>(staticClauses.Count);
         foreach (var clause in staticClauses)
@@ -456,11 +471,9 @@ public static class ShmoCompiler
     // Directive handling
     // ------------------------------------------------------------------------
 
-    /// <summary>Returns true iff the directive was a <c>:- module/1</c>
-    /// — the caller uses this to decide whether the source declared its
-    /// own module name (and therefore drives the rewrite context) or
-    /// whether it should fall back to the engine's default module name
-    /// for mangling consistency.</summary>
+    /// <summary>Returns true iff the directive was a <c>:- module/1</c>;
+    /// a module directive overwrites <paramref name="moduleName"/> (which
+    /// arrives pre-seeded with the per-file fallback — chunk 440).</summary>
     private static bool ProcessDirective(Term body, ref string moduleName,
         HashSet<PredicateRef> publicSet,
         HashSet<PredicateRef> dynamicSet,

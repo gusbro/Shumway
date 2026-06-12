@@ -22,17 +22,20 @@ public class Chunk161Tests
     }
 
     [Fact]
-    public void NoModuleDirective_UsesDefaultUserModule()
+    public void NoModuleDirective_UsesPerFileFallback()
     {
-        // Chunk 209: without a `:- module(name).` directive the source
-        // lands in the engine's DefaultModuleName ("user") at consult
-        // time, so the .shmo's ModuleName must match — otherwise
-        // LoadEntryFromBytecode registers the predicates under the file
-        // name and the dynamic-clause ModuleRewrite (which always runs
-        // against the user module) can't mangle this module's local
-        // calls. The file-name fallback is no longer the module identity.
+        // Chunk 440 (reverses chunk 209's forcing): without a
+        // `:- module(name).` directive the fallback IS the module name —
+        // per-file module identity is what lets two module-less files
+        // link together without their locals aliasing. The consumers
+        // chunk 209's "user" forcing protected (dynamic-seed rehydration,
+        // source-bearing bundle consult) are now per-entry-module-aware.
         var obj = ShmoCompiler.CompileSource("p(1).\n", moduleNameFallback: "myfile");
-        Assert.Equal(PrologEngine.DefaultModuleName, obj.ModuleName);
+        Assert.Equal("myfile", obj.ModuleName);
+        // The bare default (and the documented empty string) still mean
+        // "user", so in-memory consult-style compiles are unchanged.
+        Assert.Equal(PrologEngine.DefaultModuleName,
+            ShmoCompiler.CompileSource("p(1).\n").ModuleName);
     }
 
     [Fact]
@@ -220,7 +223,7 @@ public class Chunk161Tests
     }
 
     [Fact]
-    public void CompileFile_NoModuleDirective_UsesDefaultUserModule()
+    public void CompileFile_NoModuleDirective_UsesFileBaseName()
     {
         string inputPath = Path.Combine(Path.GetTempPath(),
             $"mymodule-{Guid.NewGuid():N}.pl");
@@ -228,12 +231,12 @@ public class Chunk161Tests
         {
             File.WriteAllText(inputPath, "p(1).\n");
             var obj = ShmoCompiler.CompileFile(inputPath);
-            // Chunk 209: no :- module/1 directive → the source belongs
-            // to the engine's default "user" module at consult time, so
-            // the .shmo records that, not the file name. (The file name
-            // is still used as the linker's diagnostic label for
-            // explicit-module sources.)
-            Assert.Equal(PrologEngine.DefaultModuleName, obj.ModuleName);
+            // Chunk 440: no :- module/1 directive → the file's base name
+            // is the module name (CLAUDE.md invariant: each source file
+            // is one module). Chunk 209 used to force "user" here, which
+            // made any two module-less files unlinkable (duplicate_module).
+            Assert.Equal(Path.GetFileNameWithoutExtension(inputPath),
+                obj.ModuleName);
         }
         finally
         {

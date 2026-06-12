@@ -268,8 +268,18 @@ public static class ShmoLinker
         {
             if (byModule.ContainsKey(obj.ModuleName))
             {
+                // Chunk 440 — a module-less file compiles under its file's
+                // base name, so this now fires only for a genuine clash:
+                // two files declaring the same `:- module/1`, or two
+                // module-less files with the same base name compiled from
+                // different directories. The name is baked into the
+                // bytecode's local mangling at compile time, so the linker
+                // cannot rename one of them; the user must disambiguate.
                 Emit(LinkSeverity.Error, "duplicate_module",
-                    $"Module '{obj.ModuleName}' is defined in two .shmo objects.",
+                    $"Module '{obj.ModuleName}' is defined in two .shmo objects. "
+                    + "If neither source has a ':- module/1' directive, the module "
+                    + "name is the source file's base name — rename one file or "
+                    + "give it an explicit ':- module(name).' directive and recompile.",
                     obj.ModuleName);
                 continue;
             }
