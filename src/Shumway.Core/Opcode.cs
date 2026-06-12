@@ -1,23 +1,29 @@
 namespace Shumway.Core;
 
 /// <summary>
-/// WAM bytecode opcodes. Values are fixed by docs/design/wam-instruction-set.md and ADR-006.
-/// Ranges are reserved by category so future opcodes can be added without renumbering:
+/// WAM bytecode opcodes. The encoding framework (fixed-size instructions, operand
+/// layout) is defined by docs/design/wam-instruction-set.md and ADR-006.
+///
+/// <para>Chunk 429: values are assigned CONTIGUOUSLY (0x00..0x65, no gaps) so the
+/// interpreter's dispatch <c>switch</c> compiles to ONE dense jump table. The old
+/// per-category reserved ranges (get 0x01.., put 0x20.., unify 0x40.., …) left the
+/// ~90 cases scattered across 11 disjoint clusters, which made Roslyn emit a chain
+/// of cluster-selection compares in front of several smaller tables — measurable on
+/// the ~28M dispatches of a Blint run. Pre-release, the numeric values carry no
+/// compatibility obligation (no released bundles exist), so they may be renumbered
+/// freely — but keep the block dense: add new opcodes at the end of the dispatched
+/// block (before <see cref="ReservedExtension"/>), renumbering the tail.</para>
 /// <list type="bullet">
-///   <item>0x00: <see cref="ReservedInvalid"/> — catches PC corruption when dispatched.</item>
-///   <item>0x01..0x1F: get instructions.</item>
-///   <item>0x20..0x3F: put instructions.</item>
-///   <item>0x40..0x4F: unify instructions (read/write-mode-sensitive).</item>
-///   <item>0x50..0x5F: control flow.</item>
-///   <item>0x60..0x6F: choice points.</item>
-///   <item>0x70..0x7F: indexing.</item>
-///   <item>0x80..0x8F: cut.</item>
-///   <item>0x90..0x9F: builtin call and specialised builtin opcodes.</item>
-///   <item>0xA0..0xBF: consolidated patterns (A1/A2 specialisations).</item>
-///   <item>0xC0..0xCF: PSTR-specific.</item>
-///   <item>0xD0..0xFD: reserved for future use.</item>
-///   <item>0xFE: <see cref="Meta"/> opcode with a sub-byte for kind (only DbgInfo in v1).</item>
-///   <item>0xFF: <see cref="ReservedExtension"/> — escape mechanism for a hypothetical extended encoding.</item>
+///   <item>0x00: <see cref="ReservedInvalid"/> — catches PC corruption when dispatched.
+///     Must stay 0x00 (zeroed memory dispatches as corruption).</item>
+///   <item>0x01..0x5A: every opcode the interpreter dispatches, grouped by category
+///     (get, put, unify, control, choice points, indexing, cut, builtin call,
+///     consolidated/fused, PSTR, arithmetic), ending with <see cref="Meta"/> — the
+///     dense jump-table block.</item>
+///   <item>0x5B: <see cref="ReservedExtension"/> — escape mechanism for a
+///     hypothetical extended encoding (no dispatch case).</item>
+///   <item>0x5C..0x65: reserved specialised-builtin opcodes (never emitted, no
+///     dispatch case).</item>
 /// </list>
 /// </summary>
 public enum Opcode : byte
@@ -39,56 +45,56 @@ public enum Opcode : byte
     GetBigInt = 0x0C,
 
     // Put instructions
-    PutVariableX = 0x20,
-    PutVariableY = 0x21,
-    PutValueX = 0x22,
-    PutValueY = 0x23,
-    PutConstant = 0x24,
-    PutInteger = 0x25,
-    PutAtom = 0x26,
-    PutNil = 0x27,
-    PutStructure = 0x28,
-    PutList = 0x29,
-    PutFloat = 0x2A,
-    PutBigInt = 0x2B,
+    PutVariableX = 0x0D,
+    PutVariableY = 0x0E,
+    PutValueX = 0x0F,
+    PutValueY = 0x10,
+    PutConstant = 0x11,
+    PutInteger = 0x12,
+    PutAtom = 0x13,
+    PutNil = 0x14,
+    PutStructure = 0x15,
+    PutList = 0x16,
+    PutFloat = 0x17,
+    PutBigInt = 0x18,
     // ADR-020: reserve-upfront write-mode roots for a term tree that contains a
     // non-last nested compound. The reserve size is baked at compile time (no
     // runtime FunctorTable lookup). put_structure_r carries <functorId:4>
     // <packed:4> where packed = regIdx (low 24 bits) | argCount (high byte) —
     // 9 bytes, same width as put_structure. put_list_r carries <regIdx:4> and
     // reserves 2 (5 bytes).
-    PutStructureR = 0x2C,
-    PutListR = 0x2D,
+    PutStructureR = 0x19,
+    PutListR = 0x1A,
 
     // Unify instructions (read/write-mode-sensitive)
-    UnifyVariableX = 0x40,
-    UnifyVariableY = 0x41,
-    UnifyValueX = 0x42,
-    UnifyValueY = 0x43,
-    UnifyConstant = 0x44,
-    UnifyInteger = 0x45,
-    UnifyAtom = 0x46,
-    UnifyNil = 0x47,
-    UnifyVoid = 0x48,
-    UnifyFloat = 0x49,
-    UnifyBigInt = 0x4A,
+    UnifyVariableX = 0x1B,
+    UnifyVariableY = 0x1C,
+    UnifyValueX = 0x1D,
+    UnifyValueY = 0x1E,
+    UnifyConstant = 0x1F,
+    UnifyInteger = 0x20,
+    UnifyAtom = 0x21,
+    UnifyNil = 0x22,
+    UnifyVoid = 0x23,
+    UnifyFloat = 0x24,
+    UnifyBigInt = 0x25,
     // ADR-019: inline nested compound build (write mode) / match (read mode).
-    UnifyStructure = 0x4B,   // opcode + 4-byte functor id = 5 bytes
-    UnifyList = 0x4C,        // 1 byte
+    UnifyStructure = 0x26,   // opcode + 4-byte functor id = 5 bytes
+    UnifyList = 0x27,        // 1 byte
 
     // Control
-    Allocate = 0x50,
-    Deallocate = 0x51,
-    Call = 0x52,
-    Execute = 0x53,
-    Proceed = 0x54,
-    Halt = 0x55,
+    Allocate = 0x28,
+    Deallocate = 0x29,
+    Call = 0x2A,
+    Execute = 0x2B,
+    Proceed = 0x2C,
+    Halt = 0x2D,
     // ADR-015 chunk C step 4: a 1-byte no-op. Used as padding when
     // asserta converts the chain's old head from try_me_else (9 bytes)
     // to retry_me_else (5 bytes) — the trailing 4 arity-operand bytes
     // are overwritten with 4 nops so the in-place patch keeps the
     // rest of the clause layout unchanged.
-    Nop = 0x56,
+    Nop = 0x2E,
 
     // Chunk 225 Stage B.1 — fast-path Call for predicates with bundle-IL
     // already registered at link time. Same byte width (9) and operand
@@ -98,7 +104,7 @@ public enum Opcode : byte
     // Tier1Dispatcher?.OnDispatch interface call + dictionary probe
     // every Call does today; the interpreter looks the delegate up
     // directly in its IlByFunctorId array.
-    CallIl = 0x57,
+    CallIl = 0x2F,
 
     // Chunk 226 Stage B.2 — fast-path Call for predicates known to be
     // permanently bytecode-only (dynamic predicates per chunk 159,
@@ -110,7 +116,7 @@ public enum Opcode : byte
     // unchanged. Skips the Tier1Dispatcher?.OnDispatch interface call
     // + dictionary probe; the interpreter does MaybeCollectHeap +
     // SetPc(target) directly.
-    CallBytecode = 0x58,
+    CallBytecode = 0x30,
 
     // Chunk 227 Stage B.3 — tail-call counterparts of CallIl /
     // CallBytecode. Same 5-byte width as Execute ([op:1][operand:4]);
@@ -119,8 +125,8 @@ public enum Opcode : byte
     // callee functor id (looked up in IlByFunctorId);
     // ExecuteBytecode's operand is the absolute target address
     // (just SetPc).
-    ExecuteIl = 0x59,
-    ExecuteBytecode = 0x5A,
+    ExecuteIl = 0x31,
+    ExecuteBytecode = 0x32,
 
     // Chunk 248 — tail-call counterpart of CallBuiltin. Same 5-byte
     // width as Execute / ExecuteIl ([op:1][builtinId:4]); the
@@ -133,60 +139,53 @@ public enum Opcode : byte
     // numLivePerms field that CallBuiltin carries: a tail call
     // doesn't trim env (Deallocate has already restored the
     // parent frame, or there was never one).
-    ExecuteBuiltin = 0x5B,
+    ExecuteBuiltin = 0x33,
 
     // Choice points
-    TryMeElse = 0x60,
-    RetryMeElse = 0x61,
-    TrustMe = 0x62,
-    Try = 0x63,
-    Retry = 0x64,
-    Trust = 0x65,
+    TryMeElse = 0x34,
+    RetryMeElse = 0x35,
+    TrustMe = 0x36,
+    Try = 0x37,
+    Retry = 0x38,
+    Trust = 0x39,
 
     // ADR-015 chunk C, bytecode-level dispatch — generation-filtered
     // dynamic predicates (logical update view at the bytecode level, no
     // builtin indirection).
-    EnterDynamic = 0x66,    // sample DbGeneration -> CurrentViewGen
-    CheckVisible = 0x67,    // <born:8> <died:8> — skip clause if not visible
+    EnterDynamic = 0x3A,    // sample DbGeneration -> CurrentViewGen
+    CheckVisible = 0x3B,    // <born:8> <died:8> — skip clause if not visible
 
     // Indexing
-    SwitchOnTerm = 0x70,
-    SwitchOnAtom = 0x71,
-    SwitchOnInteger = 0x72,
-    SwitchOnStructure = 0x73,
+    SwitchOnTerm = 0x3C,
+    SwitchOnAtom = 0x3D,
+    SwitchOnInteger = 0x3E,
+    SwitchOnStructure = 0x3F,
     // Multi-arg indexing (Phase 2): same semantics as the four above, but
     // dispatch on an arbitrary argument register A[k] (encoded as the first
     // operand) instead of A1 (X[0]).
-    SwitchOnArg = 0x74,
-    SwitchOnAtomArg = 0x75,
-    SwitchOnIntegerArg = 0x76,
-    SwitchOnStructureArg = 0x77,
+    SwitchOnArg = 0x40,
+    SwitchOnAtomArg = 0x41,
+    SwitchOnIntegerArg = 0x42,
+    SwitchOnStructureArg = 0x43,
 
     // Cut
-    NeckCut = 0x80,
-    GetLevel = 0x81,
-    Cut = 0x82,
+    NeckCut = 0x44,
+    GetLevel = 0x45,
+    Cut = 0x46,
 
-    // Builtin call and specialised builtin opcodes
-    CallBuiltin = 0x90,
-    UnifyEq = 0x91,
-    IsOp = 0x92,
-    LessThan = 0x93,
-    GreaterThan = 0x94,
-    LessEq = 0x95,
-    GreaterEq = 0x96,
-    ArithEq = 0x97,
-    ArithNotEq = 0x98,
-    StructEq = 0x99,
-    StructNotEq = 0x9A,
+    // Builtin call (the reserved specialised-builtin opcodes — never
+    // emitted, no interpreter dispatch case — live at the END of the
+    // enum, after ReservedExtension, so they don't punch holes in the
+    // chunk-429 dense jump-table block).
+    CallBuiltin = 0x47,
 
     // Consolidated patterns
-    GetConstantA1 = 0xA0,
-    GetConstantA2 = 0xA1,
-    PutConstantA1 = 0xA2,
-    PutConstantA2 = 0xA3,
-    GetListA1 = 0xA4,
-    GetListA2 = 0xA5,
+    GetConstantA1 = 0x48,
+    GetConstantA2 = 0x49,
+    PutConstantA1 = 0x4A,
+    PutConstantA2 = 0x4B,
+    GetListA1 = 0x4C,
+    GetListA2 = 0x4D,
 
     // Chunk 220 — opcode fusion. Profiled pairs in Blint workload:
     //   Allocate (5) + GetLevel (5)  : 14.0M pairs / run — clause prologue with deep cut.
@@ -194,13 +193,13 @@ public enum Opcode : byte
     // Fused opcodes use the SAME total byte width as the two they replace,
     // with the second opcode's byte slot overwritten with Nop so no
     // operand-address shifts cascade through try_me_else / switch tables.
-    AllocateGetLevel = 0xA6,   // 10 bytes: op + count(4) + Nop + slot(4)
-    DeallocateProceed = 0xA7,  // 2 bytes:  op + Nop
+    AllocateGetLevel = 0x4E,   // 10 bytes: op + count(4) + Nop + slot(4)
+    DeallocateProceed = 0x4F,  // 2 bytes:  op + Nop
 
     // PSTR
-    GetPstr = 0xC0,
-    PutPstr = 0xC1,
-    UnifyPstrHead = 0xC2,
+    GetPstr = 0x50,
+    PutPstr = 0x51,
+    UnifyPstrHead = 0x52,
 
     // ADR-018 — arithmetic instruction set. `X is Expr` and the six
     // comparisons compile to a postfix (RPN) sequence over a per-engine
@@ -214,11 +213,11 @@ public enum Opcode : byte
     //   AEvalUn   <op:4>               — pop a, push op(a).
     //   AEvalIs   <kind:4> <target:4>  — pop result, unify with X/Y[target].
     //   AEvalCmp  <rel:4>              — pop b, pop a, compare; fail = backtrack.
-    AEvalPush = 0xD0,   // 9 bytes
-    AEvalBin = 0xD1,    // 5 bytes
-    AEvalUn = 0xD2,     // 5 bytes
-    AEvalIs = 0xD3,     // 9 bytes
-    AEvalCmp = 0xD4,    // 5 bytes
+    AEvalPush = 0x53,   // 9 bytes
+    AEvalBin = 0x54,    // 5 bytes
+    AEvalUn = 0x55,     // 5 bytes
+    AEvalIs = 0x56,     // 9 bytes
+    AEvalCmp = 0x57,    // 5 bytes
 
     //   Fused flat-arithmetic ops (ADR-018). Collapse the common single-operator
     //   `T is A op B` and `A cmp B` over simple leaf operands into one dispatch
@@ -230,12 +229,29 @@ public enum Opcode : byte
     //           — T is A op B; tKind ∈ {3 unify-reg,4 unify-Y,5 set-reg,6 set-Y}.
     //   AIntCmp <rel:4> <aKind:4><aVal:4> <bKind:4><bVal:4>
     //           — A cmp B; fail = backtrack.
-    AIntBin = 0xD5,     // 29 bytes
-    AIntCmp = 0xD6,     // 21 bytes
+    AIntBin = 0x58,     // 17 bytes (compact encoding, chunk 311)
+    AIntCmp = 0x59,     // 13 bytes (compact encoding, chunk 311)
 
-    // Meta and extension
-    Meta = 0xFE,
-    ReservedExtension = 0xFF,
+    // Meta — last member of the dense dispatched block (chunk 429).
+    Meta = 0x5A,
+
+    // Extension escape — reserved, never dispatched.
+    ReservedExtension = 0x5B,
+
+    // Reserved specialised-builtin opcodes. Defined in OpcodeTable but
+    // never emitted by the compiler and never dispatched by the
+    // interpreter; parked after ReservedExtension so the dispatched
+    // block 0x00..0x5A stays hole-free (chunk 429).
+    UnifyEq = 0x5C,
+    IsOp = 0x5D,
+    LessThan = 0x5E,
+    GreaterThan = 0x5F,
+    LessEq = 0x60,
+    GreaterEq = 0x61,
+    ArithEq = 0x62,
+    ArithNotEq = 0x63,
+    StructEq = 0x64,
+    StructNotEq = 0x65,
 }
 
 /// <summary>Sub-opcodes for <see cref="Opcode.Meta"/>. Only <see cref="DbgInfo"/> exists in v1.</summary>

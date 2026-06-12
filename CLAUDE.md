@@ -66,9 +66,8 @@ These are hard constraints. If a change requires breaking one of them, **stop an
 ### Bytecode
 
 - **Bytecode opcode 0x00 is reserved as Invalid.** Encountering it during dispatch indicates corruption — fail loudly.
-- **Opcode 0xFE is the Meta opcode** with a sub-byte for kind (currently only DbgInfo).
-- **Opcode 0xFF is reserved as Extension** for a future escape mechanism. Do not use in v1.
-- **All other opcodes (0x01–0xFD) follow fixed-size encoding** with operands as unaligned ints. Sizes are determined by a per-opcode table.
+- **Opcodes are numbered CONTIGUOUSLY** (chunk 429) so the interpreter's switch compiles to one dense jump table. The Meta opcode (sub-byte for kind, currently only DbgInfo) sits at the end of the dense dispatch block, ReservedExtension right after it; new opcodes are added at the end of the dense block (see Opcode.cs for live values — do NOT cite numeric values in docs).
+- **All dispatched opcodes follow fixed-size encoding** with operands as unaligned ints. Sizes are determined by a per-opcode table.
 
 ### Trail and backtracking
 
