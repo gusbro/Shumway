@@ -492,17 +492,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
 
         // Compile the new clause (transforms identical to the chain
-        // path).
-        var single = new[] { newClause };
-        var transformed = ClausePipeline.Apply(single, Modes);
-        var dynCtx = new ModuleRewrite.Context(
-            DefaultModuleName, new HashSet<int>(), _dynamicFunctors);
-        var rewritten = transformed.Select(c => ModuleRewrite.Rewrite(c, dynCtx))
-            .ToList();
-        if (rewritten.Count == 0) return false;
-        var compiledClause = new Shumway.Compiler.Wam.ClauseCompiler().Compile(
-            rewritten[0],
-            _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts);
+        // path; chunk 427 — shared helper with a fact fast path).
+        var compiledClause = CompileRuntimeAssertClause(functorId, newClause);
+        if (compiledClause is null) return false;
 
         // Body chunk: [meta(dbg, 0)] + body bytes. Clause-source-position
         // index is irrelevant for runtime-asserted clauses; the dbg marker is
@@ -579,11 +571,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         SyncPersistentFromEngine(engine);
 
         // Refresh interpreter pools — the clause may have interned new
-        // literals.
-        engine.RefreshLiteralPoolsCallback?.Invoke(
-            _literalPools.Strings.Snapshot(),
-            _literalPools.Floats.Snapshot(),
-            _literalPools.BigInts.Snapshot());
+        // literals (chunk 427: skipped when the pools didn't grow).
+        RefreshLiteralPoolsIfGrown(engine);
         return true;
     }
 
@@ -897,17 +886,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // dedupes, but the same-key path adds bucket + var manually.
         chainsToDemote = chainsToDemote.Distinct().ToList();
 
-        // Compile the new clause's body.
-        var single = new[] { newClause };
-        var transformed = ClausePipeline.Apply(single, Modes);
-        var dynCtx = new ModuleRewrite.Context(
-            DefaultModuleName, new HashSet<int>(), _dynamicFunctors);
-        var rewritten = transformed.Select(c => ModuleRewrite.Rewrite(c, dynCtx))
-            .ToList();
-        if (rewritten.Count == 0) return false;
-        var compiledClause = new Shumway.Compiler.Wam.ClauseCompiler().Compile(
-            rewritten[0],
-            _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts);
+        // Compile the new clause's body (chunk 427 — shared helper with
+        // a fact fast path).
+        var compiledClause = CompileRuntimeAssertClause(functorId, newClause);
+        if (compiledClause is null) return false;
 
         var bodyEmitter = new Shumway.Compiler.Wam.BytecodeEmitter();
         if (_flags.EmitDebugInfo) bodyEmitter.EmitMetaDbgInfo(0);
@@ -994,10 +976,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
 
         SyncPersistentFromEngine(engine);
-        engine.RefreshLiteralPoolsCallback?.Invoke(
-            _literalPools.Strings.Snapshot(),
-            _literalPools.Floats.Snapshot(),
-            _literalPools.BigInts.Snapshot());
+        // Chunk 427: refresh skipped when the pools didn't grow.
+        RefreshLiteralPoolsIfGrown(engine);
         return true;
     }
 
@@ -1615,18 +1595,22 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
     /// <summary>Adds <paramref name="clause"/> to the end of its predicate's
     /// dynamic clause list. The predicate must have been declared
-    /// <c>:- dynamic foo/N</c> previously (in any module).</summary>
-    internal void Assertz(Clause clause)
+    /// <c>:- dynamic foo/N</c> previously (in any module). Returns the
+    /// head's functor id (chunk 427 — the caller needs it for the
+    /// incremental dispatch update; returning it avoids a second
+    /// extraction's string intern).</summary>
+    internal int Assertz(Clause clause)
     {
         int fid = ExtractHeadFunctorId(clause);
         EnsureDynamic(fid);
         GetOrCreateDynamicSlot(fid).Add(clause);
         InvalidateDynamicCache(fid);
+        return fid;
     }
 
     /// <summary>Adds <paramref name="clause"/> at the front of its predicate's
-    /// dynamic clause list.</summary>
-    internal void Asserta(Clause clause)
+    /// dynamic clause list. Returns the head's functor id (chunk 427).</summary>
+    internal int Asserta(Clause clause)
     {
         int fid = ExtractHeadFunctorId(clause);
         EnsureDynamic(fid);
@@ -1636,6 +1620,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // PrependDynamicClauseIncremental — the in-place path can
         // handle most indexed-dynamic asserta cases now, and only
         // genuinely-unhandled ones force a rebuild.
+        return fid;
     }
 
     /// <summary>Removes the first clause whose <see cref="Clause"/> is
@@ -3225,6 +3210,26 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// precondition for caching the static linked region, whose bytecode
     /// embeds those ids.</summary>
     private readonly Shumway.Compiler.Wam.LiteralPools _literalPools = new();
+
+    /// <summary>Chunk 427 — runtime-assert compile cache. The per-assert
+    /// pipeline used to build a fresh <see cref="ModuleRewrite.Context"/>
+    /// (+ HashSet) and ClauseCompiler per call; both are safe to reuse
+    /// (ClauseCompiler re-binds its pool refs at the top of every Compile;
+    /// the Context only holds set references, so <c>_dynamicFunctors</c>
+    /// mutations stay visible through it), so one of each per engine
+    /// suffices.</summary>
+    private Shumway.Compiler.Wam.ClauseCompiler? _assertClauseCompiler;
+    private ModuleRewrite.Context? _assertDynCtx;
+
+    /// <summary>Chunk 427 — the literal-pool lengths the live query's
+    /// interpreter currently holds; recorded at query setup and after each
+    /// refresh. <see cref="RefreshLiteralPoolsIfGrown"/> compares against
+    /// these (not "did this one compile grow the pool") so a compile that
+    /// interned a literal and then bailed to a fallback path can't leave a
+    /// later same-literal compile thinking the interpreter is current.</summary>
+    private int _interpStringCount;
+    private int _interpFloatCount;
+    private int _interpBigIntCount;
 
     /// <summary>The static program, linked once and reused across queries
     /// (ADR-015 chunk B). Null until the first query builds it; nulled
@@ -5947,6 +5952,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             interp.RefreshLiteralPools(s, f, b);
             engine.CurrentStringLiterals = s;
         };
+        // Chunk 427 — record the pool lengths the interpreter was built
+        // with; RefreshLiteralPoolsIfGrown compares against these so the
+        // per-assert refresh (three Snapshot() array copies) only runs
+        // when a compile actually interned a new literal.
+        _interpStringCount = module.StringLiterals.Count;
+        _interpFloatCount = module.FloatLiterals.Count;
+        _interpBigIntCount = module.BigIntLiterals.Count;
 
         // Chunk 144: lets a PrologRuntimeException thrown from a
         // builtin Impl carry the offending term in its error/2 value
@@ -6075,6 +6087,69 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// harness <c>--alloc</c> mode.</summary>
     public long LastQueryCellsAllocated => _lastQueryEngine?.CellsAllocated ?? 0;
 
+    /// <summary>Chunk 427 — single-clause transform + compile for the four
+    /// runtime <c>assertz</c> / <c>asserta</c> compile sites (chain and
+    /// extensible-indexed, append and prepend). Facts take a fast path that
+    /// bypasses the ClausePipeline and ModuleRewrite entirely — each pass is
+    /// a verified structural no-op for a fact: DcgTransform rewrites only
+    /// <c>DcgRule</c> clauses, MetaTransform and PhraseTransform rewrite
+    /// only <c>Rule</c> bodies, and ModuleRewrite's dynamic context carries
+    /// an empty local-functor set so a fact head never mangles. The one
+    /// pass that CAN touch a fact is mode specialization (<c>H.</c> →
+    /// <c>H :- !.</c> when every declared mode is deterministic), so the
+    /// fast path is gated on <c>!Modes.AllModesDeterministic</c>. Returns
+    /// <c>null</c> when the transform produced nothing (the pre-427
+    /// <c>rewritten.Count == 0</c> guard).</summary>
+    private Shumway.Compiler.Wam.CompiledClause? CompileRuntimeAssertClause(
+        int functorId, Clause newClause)
+    {
+        Clause toCompile;
+        if (newClause.Kind == Shumway.Compiler.Ast.ClauseKind.Fact
+            && !Modes.AllModesDeterministic(functorId))
+        {
+            toCompile = newClause;
+        }
+        else
+        {
+            // Apply the same transforms the setup path runs — dynamic
+            // clauses share a flat module rewrite context. Only the first
+            // transformed clause is compiled (any MetaTransform helpers
+            // follow it in the list) — same as the pre-427 per-site code.
+            var transformed = ClausePipeline.Apply(new[] { newClause }, Modes);
+            if (transformed.Count == 0) return null;
+            _assertDynCtx ??= new ModuleRewrite.Context(
+                DefaultModuleName, new HashSet<int>(), _dynamicFunctors);
+            toCompile = ModuleRewrite.Rewrite(transformed[0], _assertDynCtx);
+        }
+        _assertClauseCompiler ??= new Shumway.Compiler.Wam.ClauseCompiler();
+        return _assertClauseCompiler.Compile(
+            toCompile,
+            _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts);
+    }
+
+    /// <summary>Chunk 427 — refreshes the interpreter's literal pools only
+    /// when the engine pools actually grew past what the interpreter holds
+    /// (recorded at query setup / last refresh). The pools are append-only
+    /// with stable ids (<see cref="Shumway.Compiler.Wam.LiteralPool{T}"/>),
+    /// so unchanged counts mean the interpreter's snapshot is already
+    /// complete and the three per-assert <c>Snapshot()</c> array copies can
+    /// be skipped — the common case: an asserted fact like
+    /// <c>next_char_i(42)</c> interns nothing.</summary>
+    private void RefreshLiteralPoolsIfGrown(Engine engine)
+    {
+        if (_literalPools.Strings.Count == _interpStringCount
+            && _literalPools.Floats.Count == _interpFloatCount
+            && _literalPools.BigInts.Count == _interpBigIntCount)
+            return;
+        engine.RefreshLiteralPoolsCallback?.Invoke(
+            _literalPools.Strings.Snapshot(),
+            _literalPools.Floats.Snapshot(),
+            _literalPools.BigInts.Snapshot());
+        _interpStringCount = _literalPools.Strings.Count;
+        _interpFloatCount = _literalPools.Floats.Count;
+        _interpBigIntCount = _literalPools.BigInts.Count;
+    }
+
     /// <summary>ADR-015 chunk C step 4: incrementally compile and append a
     /// newly asserted clause's bytecode, then patch the chain's tail
     /// <c>&lt;next&gt;</c> operand to link it in. Avoids a full predicate
@@ -6129,17 +6204,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
 
         // Apply the same transforms the setup path runs — dynamic clauses
-        // share a flat module rewrite context.
-        var single = new[] { newClause };
-        var transformed = ClausePipeline.Apply(single, Modes);
-        var dynCtx = new ModuleRewrite.Context(
-            DefaultModuleName, new HashSet<int>(), _dynamicFunctors);
-        var rewritten = transformed.Select(c => ModuleRewrite.Rewrite(c, dynCtx))
-            .ToList();
-        if (rewritten.Count == 0) return;
-        var compiledClause = new ClauseCompiler().Compile(
-            rewritten[0],
-            _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts);
+        // share a flat module rewrite context (chunk 427 — shared helper
+        // with a fact fast path).
+        var compiledClause = CompileRuntimeAssertClause(functorId, newClause);
+        if (compiledClause is null) return;
 
         // Build the chunk:
         //   retry_me_else <fail-stub>   (5 bytes — chain op, <next>=fail-stub)
@@ -6195,11 +6263,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
         // The clause may have interned new literals — refresh the
         // interpreter so check_visible isn't running against a stale
-        // pool snapshot for any subsequent call.
-        engine.RefreshLiteralPoolsCallback?.Invoke(
-            _literalPools.Strings.Snapshot(),
-            _literalPools.Floats.Snapshot(),
-            _literalPools.BigInts.Snapshot());
+        // pool snapshot for any subsequent call (chunk 427: skipped
+        // when the pools didn't grow).
+        RefreshLiteralPoolsIfGrown(engine);
     }
 
     /// <summary>Test hook: returns the chain's current tail-next address
@@ -6258,17 +6324,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
         var (_, arity) = FunctorTable.Lookup(functorId);
 
-        // Same transform pipeline as the setup path.
-        var single = new[] { newClause };
-        var transformed = ClausePipeline.Apply(single, Modes);
-        var dynCtx = new ModuleRewrite.Context(
-            DefaultModuleName, new HashSet<int>(), _dynamicFunctors);
-        var rewritten = transformed.Select(c => ModuleRewrite.Rewrite(c, dynCtx))
-            .ToList();
-        if (rewritten.Count == 0) return;
-        var compiledClause = new ClauseCompiler().Compile(
-            rewritten[0],
-            _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts);
+        // Same transform pipeline as the setup path (chunk 427 — shared
+        // helper with a fact fast path).
+        var compiledClause = CompileRuntimeAssertClause(functorId, newClause);
+        if (compiledClause is null) return;
 
         // Chunk layout:
         //   try_me_else <chain-head-target>, <arity>   (9 bytes)
@@ -6340,11 +6399,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // AppendCode may have reallocated.
         SyncPersistentFromEngine(engine);
 
-        // Refresh interpreter pools — same reasoning as the assertz path.
-        engine.RefreshLiteralPoolsCallback?.Invoke(
-            _literalPools.Strings.Snapshot(),
-            _literalPools.Floats.Snapshot(),
-            _literalPools.BigInts.Snapshot());
+        // Refresh interpreter pools — same reasoning as the assertz path
+        // (chunk 427: skipped when the pools didn't grow).
+        RefreshLiteralPoolsIfGrown(engine);
     }
 
     /// <summary>ADR-015 chunk C: recompiles a dynamic predicate from its

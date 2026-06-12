@@ -3025,9 +3025,10 @@ public static class MetaBuiltins
 
         Term clauseTerm = MaterializeRegister(engine, 0);
         var clause = Shumway.Compiler.Ast.Clause.From(clauseTerm);
-        if (prepend) host.Asserta(clause);
-        else host.Assertz(clause);
-        int fid = ExtractHeadFunctorIdFromClause(clause);
+        // Chunk 427: Asserta/Assertz extract the head functor id anyway —
+        // take it from the return instead of re-extracting (a second
+        // string intern per assert).
+        int fid = prepend ? host.Asserta(clause) : host.Assertz(clause);
         // ADR-015 chunk C step 4: incremental dispatch — the canonical
         // path (the chunk-C redirect is gone).
         //   assertz → append a chunk and patch the tail's <next>.
