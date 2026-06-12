@@ -328,6 +328,14 @@ internal static class Program
                         Console.Error.WriteLine($"shumway-link: unknown option '{arg}'.");
                         return null;
                     }
+                    // Chunk 435 — wildcard inputs (`shumway-link ... *.shmo`),
+                    // expanded here since the Windows shell passes globs
+                    // verbatim (the chunk-434 shumway-compile counterpart).
+                    if (arg.IndexOfAny(WildcardChars) >= 0)
+                    {
+                        if (!TryExpandWildcard(arg, opts.InputPaths)) return null;
+                        break;
+                    }
                     opts.InputPaths.Add(arg);
                     break;
             }
@@ -367,6 +375,40 @@ internal static class Program
         return opts;
     }
 
+    private static readonly char[] WildcardChars = { '*', '?' };
+
+    /// <summary>Chunk 435 — expands a wildcard input argument against the
+    /// file system (directory part + pattern part), appending matches in
+    /// case-insensitive sorted order. Returns false (after printing the
+    /// error) when nothing matches or the directory is unusable. Mirrors
+    /// shumway-compile's chunk-434 expansion.</summary>
+    private static bool TryExpandWildcard(string arg, List<string> into)
+    {
+        string dir = System.IO.Path.GetDirectoryName(arg) is { Length: > 0 } d ? d : ".";
+        string pattern = System.IO.Path.GetFileName(arg);
+        List<string> matches;
+        try
+        {
+            matches = System.IO.Directory.EnumerateFiles(dir, pattern).ToList();
+        }
+        catch (Exception ex) when (ex is System.IO.IOException
+                                || ex is System.IO.DirectoryNotFoundException
+                                || ex is ArgumentException
+                                || ex is UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine($"shumway-link: cannot expand '{arg}': {ex.Message}");
+            return false;
+        }
+        if (matches.Count == 0)
+        {
+            Console.Error.WriteLine($"shumway-link: no files match '{arg}'.");
+            return false;
+        }
+        matches.Sort(StringComparer.OrdinalIgnoreCase);
+        into.AddRange(matches);
+        return true;
+    }
+
     private static bool ParseEntryList(string specList, List<PredicateRef> output)
     {
         foreach (string item in specList.Split(',', StringSplitOptions.RemoveEmptyEntries))
@@ -394,7 +436,8 @@ internal static class Program
             + "\n"
             + "Links compiled Prolog modules (.shmo, produced by shumway-compile) into a\n"
             + "single runnable bundle (.shum) or a native executable. Only code reachable\n"
-            + "from the entry points is kept.\n"
+            + "from the entry points is kept. Inputs may use wildcards (e.g. *.shmo) —\n"
+            + "expanded by the linker itself, in sorted order, so they work from any shell.\n"
             + "\n"
             + "Options:\n"
             + "  -o, --output <path>      Output bundle path. Required unless --exe is given.\n"
