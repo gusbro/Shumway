@@ -546,8 +546,10 @@ public sealed class ClauseCompiler
 
         // Snapshot home → head-var name for X-mapped vars with home < N.
         // Updated as saves rebind vars out of the arg range.
+        // (chunk 433 — the loop only reads the map, so iterate Names
+        // directly instead of materialising a defensive ToList copy.)
         var homeToVar = new Dictionary<int, string>();
-        foreach (var name in s.Xs.Names.ToList())
+        foreach (var name in s.Xs.Names)
         {
             if (s.Ys.ContainsKey(name)) continue;
             int home = s.Xs.GetSlot(name);
@@ -558,9 +560,16 @@ public sealed class ClauseCompiler
         var forced = new HashSet<string>();
         for (int i = 0; i < N; i++)
             CollectForcedSaves(gArgs[i], depth: 0, s, N, forced);
-        foreach (string name in forced.OrderBy(n => s.Xs.GetSlot(n)))
+        // chunk 433 — in-place sort instead of LINQ OrderBy. The Seq component
+        // reproduces OrderBy's stability over the set's enumeration order
+        // exactly (two names CAN share a slot via head-arg aliasing).
+        var forcedOrder = new List<(int Slot, int Seq, string Name)>(forced.Count);
+        foreach (string name in forced)
+            forcedOrder.Add((s.Xs.GetSlot(name), forcedOrder.Count, name));
+        forcedOrder.Sort(static (a, b) => a.Slot != b.Slot
+            ? a.Slot.CompareTo(b.Slot) : a.Seq.CompareTo(b.Seq));
+        foreach (var (home, _, name) in forcedOrder)
         {
-            int home = s.Xs.GetSlot(name);
             int safe = s.Xs.AllocateAnonymousSlot();
             s.Emitter.EmitPutValueX(home, safe);
             s.Xs.Rebind(name, safe);
@@ -590,11 +599,17 @@ public sealed class ClauseCompiler
         }
 
         // === Step 3: Iteratively break cycles in the cross-arg graph. ===
+        // chunk 433 — the per-node reads sets and successor lists are
+        // allocated ONCE and cleared/refilled per cycle-break iteration
+        // (Recompute used to allocate N fresh HashSets per iteration, and
+        // FindCycleNode + TopoSort each rebuilt per-node successor lists).
         var reads = new HashSet<int>[N];
+        var succ = new List<int>[N];
         var writesDst = new bool[N];
+        for (int i = 0; i < N; i++) { reads[i] = new HashSet<int>(); succ[i] = new List<int>(); }
         Recompute();
 
-        while (FindCycleNode(reads, writesDst, N) is int cycleNode)
+        while (FindCycleNode(succ, N) is int cycleNode)
         {
             if (!homeToVar.TryGetValue(cycleNode, out var hv)) break;
             int safe = s.Xs.AllocateAnonymousSlot();
@@ -605,14 +620,28 @@ public sealed class ClauseCompiler
         }
 
         // === Step 4: Topological sort of the now-acyclic graph. ===
-        return TopoSort(reads, writesDst, N);
+        return TopoSort(succ, N);
 
         void Recompute()
         {
             for (int i = 0; i < N; i++)
             {
-                reads[i] = ComputeDirectReads(gArgs[i], s, N);
+                reads[i].Clear();
+                FillDirectReads(gArgs[i], s, N, reads[i]);
                 writesDst[i] = ArgWritesDst(gArgs[i], i, s);
+            }
+            // Successor lists (edge i → j iff j ∈ reads[i], j ≠ i, arg j
+            // writes X[j]), sorted ascending — shared by the cycle finder
+            // (which visited them in this order before chunk 433 too) and
+            // the topo sort (whose result is order-insensitive: in-degrees
+            // and the SortedSet ready queue decide the output).
+            for (int i = 0; i < N; i++)
+            {
+                succ[i].Clear();
+                foreach (int j in reads[i])
+                    if (j != i && j < N && writesDst[j])
+                        succ[i].Add(j);
+                succ[i].Sort();
             }
         }
     }
@@ -645,10 +674,11 @@ public sealed class ClauseCompiler
     /// <summary>Set of X-register slots in <c>[0, N)</c> that <paramref name="arg"/>'s
     /// own emission would read directly — flat-var sources (and direct
     /// sub-args of a top-level compound). Sub-compounds contribute via
-    /// <see cref="CollectForcedSaves"/>, not here.</summary>
-    private static HashSet<int> ComputeDirectReads(Term arg, CompileState s, int N)
+    /// <see cref="CollectForcedSaves"/>, not here. (chunk 433 — fills a
+    /// caller-owned set so the scheduler reuses one set per node across
+    /// cycle-break iterations instead of allocating fresh ones.)</summary>
+    private static void FillDirectReads(Term arg, CompileState s, int N, HashSet<int> reads)
     {
-        var reads = new HashSet<int>();
         switch (arg)
         {
             case VarTerm v when v.Name != "_" && !s.Ys.ContainsKey(v.Name) && !s.Xs.IsNewName(v.Name):
@@ -668,7 +698,6 @@ public sealed class ClauseCompiler
                 }
                 break;
         }
-        return reads;
     }
 
     /// <summary>True iff <paramref name="arg"/> at dst <paramref name="dst"/>
@@ -689,11 +718,12 @@ public sealed class ClauseCompiler
     }
 
     /// <summary>Finds any node that participates in a cycle of the arg
-    /// dependency graph (edge <c>i → j</c> iff <c>j ∈ reads[i]</c> and
-    /// <c>j ≠ i</c> and arg <c>j</c> writes <c>X[j]</c>). Returns the
-    /// node's index, or <c>null</c> when the graph is acyclic. Iterative
-    /// DFS with three-colour marking keeps the stack bounded.</summary>
-    private static int? FindCycleNode(HashSet<int>[] reads, bool[] writesDst, int N)
+    /// dependency graph (the precomputed sorted successor lists from the
+    /// scheduler's <c>Recompute</c> — chunk 433: previously rebuilt + sorted
+    /// per DFS node here). Returns the node's index, or <c>null</c> when the
+    /// graph is acyclic. Iterative DFS with three-colour marking keeps the
+    /// stack bounded.</summary>
+    private static int? FindCycleNode(List<int>[] succ, int N)
     {
         var color = new int[N]; // 0 white, 1 gray, 2 black
         for (int start = 0; start < N; start++)
@@ -701,7 +731,7 @@ public sealed class ClauseCompiler
             if (color[start] != 0) continue;
             var stack = new Stack<(int Node, List<int>.Enumerator Iter)>();
             color[start] = 1;
-            stack.Push((start, Successors(reads[start], start, writesDst, N).GetEnumerator()));
+            stack.Push((start, succ[start].GetEnumerator()));
             while (stack.Count > 0)
             {
                 var top = stack.Pop();
@@ -714,7 +744,7 @@ public sealed class ClauseCompiler
                     if (color[next] == 0)
                     {
                         color[next] = 1;
-                        stack.Push((next, Successors(reads[next], next, writesDst, N).GetEnumerator()));
+                        stack.Push((next, succ[next].GetEnumerator()));
                     }
                 }
                 else
@@ -726,32 +756,18 @@ public sealed class ClauseCompiler
         return null;
     }
 
-    private static List<int> Successors(HashSet<int> r, int self, bool[] writesDst, int N)
-    {
-        var list = new List<int>();
-        foreach (int j in r)
-            if (j != self && j < N && writesDst[j])
-                list.Add(j);
-        list.Sort();
-        return list;
-    }
-
     /// <summary>Kahn's topological sort of the arg dependency graph,
-    /// preferring lower indices on ties for deterministic output.</summary>
-    private static int[] TopoSort(HashSet<int>[] reads, bool[] writesDst, int N)
+    /// preferring lower indices on ties for deterministic output.
+    /// (chunk 433 — consumes the scheduler's precomputed successor lists
+    /// instead of re-deriving per-node edge lists from the reads sets;
+    /// the SortedSet ready queue makes the output order-insensitive to
+    /// edge-list order, so the result is unchanged.)</summary>
+    private static int[] TopoSort(List<int>[] succ, int N)
     {
         var inDeg = new int[N];
-        var outEdges = new List<int>[N];
-        for (int i = 0; i < N; i++) outEdges[i] = new List<int>();
         for (int i = 0; i < N; i++)
-        {
-            foreach (int j in reads[i])
-            {
-                if (j == i || j >= N || !writesDst[j]) continue;
-                outEdges[i].Add(j);
+            foreach (int j in succ[i])
                 inDeg[j]++;
-            }
-        }
         var result = new int[N];
         int outIdx = 0;
         var ready = new SortedSet<int>();
@@ -762,8 +778,8 @@ public sealed class ClauseCompiler
             int n = ready.Min;
             ready.Remove(n);
             result[outIdx++] = n;
-            foreach (int succ in outEdges[n])
-                if (--inDeg[succ] == 0) ready.Add(succ);
+            foreach (int next in succ[n])
+                if (--inDeg[next] == 0) ready.Add(next);
         }
         if (outIdx != N)
             for (int i = 0; i < N; i++) result[i] = i;

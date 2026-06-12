@@ -456,12 +456,47 @@ public sealed class IlPredicateCompiler
     }
 
     /// <summary>Wraps <see cref="IlIndexedDispatch.TryDescribe"/> with the
-    /// IL-subset body-opcode check.</summary>
+    /// IL-subset body-opcode check. Chunk 433 — memoized per predicate (see
+    /// <see cref="IlShapeMemo"/>): the structural walk runs once per
+    /// immutable <see cref="CompiledPredicate"/>; the calleeMap-dependent
+    /// Call-resolvability check is re-applied per call.</summary>
     private static bool TryDescribeIndexed(CompiledPredicate predicate,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
         out IlIndexedDispatchInfo? info)
-        => IlIndexedDispatch.TryDescribe(predicate,
-            (op, pc) => IsClauseBodyOpcode(op, predicate, pc, calleeMap), out info);
+    {
+        if (predicate.IlIndexedShapeMemo is not IlShapeMemo memo)
+        {
+            var callFids = new List<int>();
+            IlIndexedDispatch.TryDescribe(predicate,
+                (op, pc) => IsClauseBodyOpcodeStructural(op, predicate, pc, callFids),
+                out var raw);
+            memo = new IlShapeMemo(raw, callFids);
+            predicate.IlIndexedShapeMemo = memo;
+        }
+        return memo.Resolve(calleeMap, out info);
+    }
+
+    /// <summary>Chunk 433 — structural variant of
+    /// <see cref="IsClauseBodyOpcode"/> for the memoized describers: a
+    /// <c>Call</c> site is always accepted and its callee fid RECORDED into
+    /// <paramref name="callFids"/> (−1 when the site has no metadata), making
+    /// the describe result a pure function of the immutable predicate. The
+    /// calleeMap-dependent rejection the original applied at each Call is
+    /// re-applied by <see cref="IlShapeMemo.Resolve{T}"/> — equivalent,
+    /// because the describers use the predicate only as a conjunctive
+    /// accept/reject filter.</summary>
+    private static bool IsClauseBodyOpcodeStructural(
+        Opcode op, CompiledPredicate predicate, int pc, List<int> callFids)
+    {
+        if (op == Opcode.Call)
+        {
+            callFids.Add(FindCallSiteFunctorId(predicate.CallSites, pc));
+            return true;
+        }
+        // Every non-Call opcode ignores the calleeMap, so delegating with
+        // null is exact.
+        return IsClauseBodyOpcode(op, predicate, pc, calleeMap: null);
+    }
 
     /// <summary>True iff this predicate compiles to the chunk-216/217 full
     /// indexed-dispatch IL, whose delegate rebuilds its switch model lazily by
@@ -775,9 +810,29 @@ public sealed class IlPredicateCompiler
     }
 #endif
 
+    /// <summary>Chunk 433 — binary search. <see cref="CompiledPredicate.CallSites"/>
+    /// is built in ascending <c>OpcodeOffset</c> order at every construction
+    /// site (per-clause emission appends sites forward, predicate assembly
+    /// concatenates clauses at increasing offsets, and the bundle codec
+    /// round-trips that order), and offsets are unique (one site per opcode),
+    /// so the linear scan this replaces — run per Call/Execute opcode inside
+    /// every describe walk, region validation and emit — was O(sites) for no
+    /// reason. A miss falls back to the linear scan, so behaviour is exact
+    /// even for an unsorted list.</summary>
     private static int FindCallSiteFunctorId(
         IReadOnlyList<CallSite> sites, int opcodeOffset)
     {
+        int lo = 0, hi = sites.Count - 1;
+        while (lo <= hi)
+        {
+            int mid = (lo + hi) >> 1;
+            int off = sites[mid].OpcodeOffset;
+            if (off == opcodeOffset) return sites[mid].CalleeFunctorId;
+            if (off < opcodeOffset) lo = mid + 1;
+            else hi = mid - 1;
+        }
+        // Defensive miss path: exact parity with the pre-433 linear scan in
+        // case a future construction site ever emits out-of-order sites.
         for (int i = 0; i < sites.Count; i++)
             if (sites[i].OpcodeOffset == opcodeOffset) return sites[i].CalleeFunctorId;
         return -1;
@@ -858,8 +913,8 @@ public sealed class IlPredicateCompiler
                 {
                     var entry = Shumway.Builtins.BuiltinsRegistry.GetById(
                         BytecodeIO.ReadInt32(code, pc + 1));
-                    if (entry.Name is "call" or "$call"
-                        || IsBacktrackableBuiltinName(entry.Name))
+                    // chunk 433 — precomputed flags instead of name compares.
+                    if (entry.IsCall || entry.IsDollarCall || entry.IsBacktrackable)
                         return false;
                     endsTerminal = false;
                     pc += OpcodeTable.Get((byte)op).Size;
@@ -897,14 +952,20 @@ public sealed class IlPredicateCompiler
     /// callee is a case-2 inlinable single-clause rule (has a body call and/or a
     /// cut — a pure leaf rule stays on the case-1 path). Maps the call-site
     /// <c>pc</c> to the callee. Empty unless <see cref="InlineRules2"/>.</summary>
+    /// <summary>Chunk 433 — shared empty result so the gated-off path (the
+    /// default: <see cref="InlineRules2"/> unset) allocates nothing per call.
+    /// Callers only read the returned map.</summary>
+    private static readonly Dictionary<int, CompiledPredicate> NoRuleInlineSites = new();
+
     private static Dictionary<int, CompiledPredicate> ComputeRuleInlineSites(
         CompiledPredicate predicate, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
     {
-        var sites = new Dictionary<int, CompiledPredicate>();
         // Runtime DynamicMethod path only: the persisted-bundle emit computes its
         // own (base) callSiteCount and would desync against the extended resume
         // cursors. (Restriction lifted when the persisted path counts them too.)
-        if (!InlineRules2 || calleeMap is null || _persistPatches is not null) return sites;
+        if (!InlineRules2 || calleeMap is null || _persistPatches is not null)
+            return NoRuleInlineSites;
+        var sites = new Dictionary<int, CompiledPredicate>();
         byte[] code = predicate.Bytecode;
         int pc = 0;
         while (pc < code.Length)
@@ -1155,7 +1216,8 @@ public sealed class IlPredicateCompiler
             {
                 var e = Shumway.Builtins.BuiltinsRegistry.GetById(
                     BytecodeIO.ReadInt32(code, pc + 1));
-                if (e.IsCall || e.IsDollarCall || IsBacktrackableBuiltinName(e.Name))
+                // chunk 433 — precomputed flag instead of the name switch.
+                if (e.IsCall || e.IsDollarCall || e.IsBacktrackable)
                     pcs.Add(pc);
             }
             int size = op == Opcode.Meta ? 6 : OpcodeTable.Get((byte)op).Size;
@@ -1176,9 +1238,33 @@ public sealed class IlPredicateCompiler
     /// a member is a later step.</summary>
     private bool IsRegionMemberEligible(CompiledPredicate p,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
-        => CanCompileCore(p, calleeMap, allowIndexedDispatch: true)
-           && RegionMemberOk(p, calleeMap, out _)
-           && RegionForcedRootFids?.Contains(p.FunctorId) != true;   // Stage 9c: forced root
+    {
+        // Stage 9c: forced root. Checked LIVE (not cached) — the bundle build
+        // mutates the RegionForcedRootFids static between the root-selector
+        // probe phase and the compile phase.
+        if (RegionForcedRootFids?.Contains(p.FunctorId) == true) return false;
+        // Chunk 433 — the rest (CanCompileCore + RegionMemberOk) is a pure
+        // function of (predicate, calleeMap), recomputed thousands of times by
+        // the RegionRootSelector fixpoint (once per call-site edge per region
+        // build per iteration). Cache per fid for the current calleeMap
+        // instance (fid → predicate is unique within one map; a new map —
+        // e.g. the next query's promotion view — resets the cache).
+        if (!ReferenceEquals(_regionMemberPureCacheMap, calleeMap)
+            || _regionMemberPureCache is null)
+        {
+            _regionMemberPureCache = new Dictionary<int, bool>();
+            _regionMemberPureCacheMap = calleeMap;
+        }
+        if (_regionMemberPureCache.TryGetValue(p.FunctorId, out bool ok)) return ok;
+        ok = CanCompileCore(p, calleeMap, allowIndexedDispatch: true)
+             && RegionMemberOk(p, calleeMap, out _);
+        _regionMemberPureCache[p.FunctorId] = ok;
+        return ok;
+    }
+
+    /// <summary>Chunk 433 — see <see cref="IsRegionMemberEligible"/>.</summary>
+    private Dictionary<int, bool>? _regionMemberPureCache;
+    private IReadOnlyDictionary<int, CompiledPredicate>? _regionMemberPureCacheMap;
 
     /// <summary>The set of functor ids a region rooted at <paramref name="root"/> would
     /// ABSORB as <c>br</c>-members when emitted (Stage 9 input) — the predicates whose
@@ -1639,8 +1725,8 @@ public sealed class IlPredicateCompiler
                         BytecodeIO.ReadInt32(code, pc + 1));
                     // meta-call + backtrackable builtins need resume cursors /
                     // the enclosing-call machinery — not a flat body.
-                    if (entry.Name is "call" or "$call"
-                        || IsBacktrackableBuiltinName(entry.Name))
+                    // chunk 433 — precomputed flags instead of name compares.
+                    if (entry.IsCall || entry.IsDollarCall || entry.IsBacktrackable)
                         return false;
                     pc += OpcodeTable.Get((byte)op).Size;
                     continue;
@@ -1825,9 +1911,11 @@ public sealed class IlPredicateCompiler
     {
         // Case-2 rule inline (chunk 367): each inlined rule body's own non-tail
         // calls thread through THIS caller's forward-resume cursor space, so the
-        // resume-label array must be sized to include them.
+        // resume-label array must be sized to include them. Chunk 433 — computed
+        // ONCE here and passed down (EmitSingleClauseMetaCpBody used to recompute).
+        var ruleInlineSites = ComputeRuleInlineSites(predicate, calleeMap);
         int callSiteCount = CountNonTailCallOpcodes(predicate.Bytecode)
-            + CountRuleInlineExtraCursors(ComputeRuleInlineSites(predicate, calleeMap));
+            + CountRuleInlineExtraCursors(ruleInlineSites);
         if (callSiteCount == 0)
         {
             // No meta-CP needed: pure head match + tail call (or no body).
@@ -1839,7 +1927,8 @@ public sealed class IlPredicateCompiler
                 $"single-leaf fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity}");
         }
         lock (IndexedDelegateHolder.RegistrationLock)
-            return CompileSingleClauseWithMetaCpUnlocked(predicate, callSiteCount, calleeMap);
+            return CompileSingleClauseWithMetaCpUnlocked(
+                predicate, callSiteCount, calleeMap, ruleInlineSites);
     }
 
     /// <summary>The shared single-clause-leaf body emit used by both the
@@ -2032,7 +2121,8 @@ public sealed class IlPredicateCompiler
 
     private PredicateDelegate CompileSingleClauseWithMetaCpUnlocked(
         CompiledPredicate predicate, int callSiteCount,
-        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null,
+        Dictionary<int, CompiledPredicate>? ruleInlineSites = null)
     {
         int holderKey = _nextHolderKey;
         var emitSelf = SelfFromHolder(holderKey);
@@ -2040,7 +2130,8 @@ public sealed class IlPredicateCompiler
             $"ShumwayIl_metacp_{predicate.FunctorId}_{predicate.Arity}",
             doVerify: DoVerify || DebugMode);
         EmitSingleClauseMetaCpBody(emit, predicate, callSiteCount, calleeMap, emitSelf,
-            typeof(Func<Engine, int, bool>));   // runtime path: SelfFromHolder → Func
+            typeof(Func<Engine, int, bool>),   // runtime path: SelfFromHolder → Func
+            ruleInlineSites);                  // chunk 433 — precomputed by the caller
         var del = FinishEmit(emit,
             $"compile fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity} clauses={predicate.ClauseCount}");
         IndexedDelegateHolder.Register(holderKey, del);
@@ -2424,7 +2515,8 @@ public sealed class IlPredicateCompiler
         int callSiteCount,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
         SelfDelegateEmitter emitSelf,
-        System.Type selfDelType)
+        System.Type selfDelType,
+        Dictionary<int, CompiledPredicate>? ruleInlineSites = null)
     {
         var failLabel = emit.DefineLabel("fail");
         var startLabel = emit.DefineLabel("start");
@@ -2445,8 +2537,11 @@ public sealed class IlPredicateCompiler
             firstCursor: callSiteCount + 1, out _);
         // Case-2 rule inline (chunk 367): the bodies of these callees are emitted
         // inline; their non-tail calls thread through this caller's resume cursors
-        // (already counted into callSiteCount → resumeLabels).
-        var ruleInlineSites = ComputeRuleInlineSites(predicate, calleeMap);
+        // (already counted into callSiteCount → resumeLabels). Chunk 433 — the
+        // runtime path precomputed this when sizing callSiteCount and passes it
+        // down; the persisted path (null) computes it here (a no-op under
+        // _persistPatches — ComputeRuleInlineSites returns the shared empty map).
+        ruleInlineSites ??= ComputeRuleInlineSites(predicate, calleeMap);
 
         _emitOwnerFid = predicate.FunctorId;
         // Cursor dispatch: 0 → start; N → resume_N; baseCursor+j → inlined
@@ -2514,18 +2609,12 @@ public sealed class IlPredicateCompiler
         emit.Return();
     }
 
-    /// <summary>Chunk 218 — builtins that push a CP and call
-    /// <c>ResumeAtReturnPc</c> on retry. Their IL <c>call_builtin</c> site
-    /// needs a resume marker so the resume re-enters the IL caller (the
-    /// builtin reads <c>engine.BuiltinReturnPc</c> at first invocation;
-    /// the IL pre-sets it to the marker).</summary>
-    private static bool IsBacktrackableBuiltinName(string name) => name switch
-    {
-        "between" or "append" or "atom_concat" or "string_concat"
-        or "nb_current" or "current_op" or "current_char_conversion"
-        or "current_stream" or "stream_property" or "repeat" or "retract" => true,
-        _ => false,
-    };
+    // Chunk 218's IsBacktrackableBuiltinName — builtins that push a CP and
+    // call ResumeAtReturnPc on retry, whose IL call_builtin site needs a
+    // resume marker — moved to Shumway.Builtins.BuiltinEntry.IsBacktrackableName
+    // in chunk 433 so the registry precomputes a per-entry IsBacktrackable
+    // flag; every emit-time site now reads the flag instead of running the
+    // name switch per CallBuiltin per bytecode walk.
 
     /// <summary>Counts non-tail <c>Call</c> opcodes in a clause's
     /// bytecode (Opcode.Call only — Opcode.Execute is the tail-call
@@ -2547,11 +2636,12 @@ public sealed class IlPredicateCompiler
             else if (b == (byte)Opcode.CallBuiltin)
             {
                 int builtinId = BytecodeIO.ReadInt32(bytecode, pc + 1);
-                string n = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId).Name;
+                var e = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
                 // call/$call thread through IlMetaCallHelper.Dispatch
                 // (chunk 182); backtrackable builtins need a resume marker
-                // for their CP's resume (chunk 218).
-                if (n == "call" || n == "$call" || IsBacktrackableBuiltinName(n)) count++;
+                // for their CP's resume (chunk 218). Chunk 433 —
+                // precomputed flags instead of name compares.
+                if (e.IsCall || e.IsDollarCall || e.IsBacktrackable) count++;
             }
             var info = OpcodeTable.Get(b);
             if (!info.IsDefined || info.Size == 0) break;
@@ -3126,12 +3216,13 @@ public sealed class IlPredicateCompiler
             if (op == Opcode.CallBuiltin)
             {
                 int builtinId = BytecodeIO.ReadInt32(code, pc + 1);
-                string builtinName =
-                    Shumway.Builtins.BuiltinsRegistry.GetById(builtinId).Name;
-                int builtinArity =
-                    Shumway.Builtins.BuiltinsRegistry.GetById(builtinId).Arity;
+                // chunk 433 — one GetById (was two: Name then Arity), and the
+                // precomputed IsCall / IsDollarCall / IsBacktrackable flags
+                // instead of per-walk name compares.
+                var builtinEntry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+                int builtinArity = builtinEntry.Arity;
 
-                if (builtinName == "call" || builtinName == "$call")
+                if (builtinEntry.IsCall || builtinEntry.IsDollarCall)
                 {
                     // Phase 19 — meta-call dispatch. Three outcomes from
                     // IlMetaCallHelper.Dispatch:
@@ -3203,7 +3294,7 @@ public sealed class IlPredicateCompiler
                     //   call/N : arity = N, barrier = engine.B
                     //   $call/2: arity = 1, barrier = X[1].AsInt
                     emit.LoadArgument(0);                    // engine
-                    if (builtinName == "$call")
+                    if (builtinEntry.IsDollarCall)
                     {
                         emit.LoadConstant(1);                // arity 1
                         // barrier = ReadIntRegister(engine, 1) — derefs the
@@ -3276,7 +3367,7 @@ public sealed class IlPredicateCompiler
                 // dispatcher decodes the marker and re-enters this IL at
                 // the post-builtin label. Non-backtrackable builtins skip
                 // the cursor allocation — straight invocation.
-                bool isBacktrackable = IsBacktrackableBuiltinName(builtinName);
+                bool isBacktrackable = builtinEntry.IsBacktrackable;   // chunk 433
                 Sigil.Label? builtinResumeLabel = null;
                 if (isBacktrackable)
                 {
@@ -3519,15 +3610,7 @@ public sealed class IlPredicateCompiler
                 // preCallB back, drives Engine.BacktrackRunner to
                 // fetch the callee's next solution, and re-enters
                 // the body at the post-call label.
-                int siteFunctorId = -1;
-                for (int i = 0; i < callSites.Count; i++)
-                {
-                    if (callSites[i].OpcodeOffset == pc)
-                    {
-                        siteFunctorId = callSites[i].CalleeFunctorId;
-                        break;
-                    }
-                }
+                int siteFunctorId = FindCallSiteFunctorId(callSites, pc);   // chunk 433
                 if (siteFunctorId < 0)
                     throw new InvalidOperationException(
                         $"Call opcode at pc={pc} has no matching call site in the predicate's metadata.");
@@ -3717,15 +3800,7 @@ public sealed class IlPredicateCompiler
                 // the callee's address via the engine's current functor
                 // address map (set per query) using the stable functor
                 // id from the call site metadata.
-                int siteFunctorId = -1;
-                for (int i = 0; i < callSites.Count; i++)
-                {
-                    if (callSites[i].OpcodeOffset == pc)
-                    {
-                        siteFunctorId = callSites[i].CalleeFunctorId;
-                        break;
-                    }
-                }
+                int siteFunctorId = FindCallSiteFunctorId(callSites, pc);   // chunk 433
                 if (siteFunctorId < 0)
                     throw new InvalidOperationException(
                         $"Execute opcode at pc={pc} has no matching call site in the predicate's metadata.");
@@ -4023,6 +4098,23 @@ public sealed class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
         out TryMeElseChainInfo? info)
     {
+        // Chunk 433 — memoized per predicate (see IlShapeMemo): the
+        // structural walk runs once; the calleeMap-dependent Call check is
+        // re-applied per call.
+        if (predicate.IlTryMeElseShapeMemo is not IlShapeMemo memo)
+        {
+            var callFids = new List<int>();
+            TryDescribeTryMeElseChainStructural(predicate, callFids, out var raw);
+            memo = new IlShapeMemo(raw, callFids);
+            predicate.IlTryMeElseShapeMemo = memo;
+        }
+        return memo.Resolve(calleeMap, out info);
+    }
+
+    private static bool TryDescribeTryMeElseChainStructural(
+        CompiledPredicate predicate, List<int> callFids,
+        out TryMeElseChainInfo? info)
+    {
         info = null;
         byte[] code = predicate.Bytecode;
         if (code.Length == 0) return false;
@@ -4052,7 +4144,7 @@ public sealed class IlPredicateCompiler
             // end of bytecode. Body opcodes must all be in the IL
             // subset (the per-clause emission walks them again to emit
             // IL; we just need to size-walk here).
-            if (!IsClauseBodyOpcode(op, predicate, pc, calleeMap)) return false;
+            if (!IsClauseBodyOpcodeStructural(op, predicate, pc, callFids)) return false;
             pc += OpcodeTable.Get(op).Size;
         }
 
@@ -4146,6 +4238,23 @@ public sealed class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
         out TryMeElseChainInfo? info)
     {
+        // Chunk 433 — memoized per predicate (see IlShapeMemo): the
+        // structural walk runs once; the calleeMap-dependent Call check is
+        // re-applied per call.
+        if (predicate.IlSwitchedChainShapeMemo is not IlShapeMemo memo)
+        {
+            var callFids = new List<int>();
+            TryDescribeSwitchedChainStructural(predicate, callFids, out var raw);
+            memo = new IlShapeMemo(raw, callFids);
+            predicate.IlSwitchedChainShapeMemo = memo;
+        }
+        return memo.Resolve(calleeMap, out info);
+    }
+
+    private static bool TryDescribeSwitchedChainStructural(
+        CompiledPredicate predicate, List<int> callFids,
+        out TryMeElseChainInfo? info)
+    {
         info = null;
         byte[] code = predicate.Bytecode;
         if (code.Length == 0) return false;
@@ -4218,7 +4327,7 @@ public sealed class IlPredicateCompiler
                 var op = (Opcode)code[q];
                 var opInfo = OpcodeTable.Get((byte)op);
                 if (!opInfo.IsDefined || opInfo.Size == 0) return false;
-                if (!IsClauseBodyOpcode(op, predicate, q, calleeMap)) return false;
+                if (!IsClauseBodyOpcodeStructural(op, predicate, q, callFids)) return false;
                 q += opInfo.Size;
             }
         }
@@ -4714,6 +4823,23 @@ public sealed class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
         out IndexedAtomInfo? info)
     {
+        // Chunk 433 — memoized per predicate (see IlShapeMemo): the
+        // structural walk runs once; the calleeMap-dependent Call check is
+        // re-applied per call.
+        if (predicate.IlIndexedAtomShapeMemo is not IlShapeMemo memo)
+        {
+            var callFids = new List<int>();
+            TryDescribeIndexedAtomPredicateStructural(predicate, callFids, out var raw);
+            memo = new IlShapeMemo(raw, callFids);
+            predicate.IlIndexedAtomShapeMemo = memo;
+        }
+        return memo.Resolve(calleeMap, out info);
+    }
+
+    private static bool TryDescribeIndexedAtomPredicateStructural(
+        CompiledPredicate predicate, List<int> callFids,
+        out IndexedAtomInfo? info)
+    {
         info = null;
         if (predicate.Arity != 1) return false;
         byte[] code = predicate.Bytecode;
@@ -4804,7 +4930,7 @@ public sealed class IlPredicateCompiler
                     var op = (Opcode)code[q];
                     var opInfo = OpcodeTable.Get((byte)op);
                     if (!opInfo.IsDefined || opInfo.Size == 0) return false;
-                    if (!IsClauseBodyOpcode(op, predicate, q, calleeMap)) return false;
+                    if (!IsClauseBodyOpcodeStructural(op, predicate, q, callFids)) return false;
                     q += opInfo.Size;
                 }
                 allTrivial = false;

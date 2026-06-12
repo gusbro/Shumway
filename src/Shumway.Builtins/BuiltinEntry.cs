@@ -39,6 +39,25 @@ public sealed class BuiltinEntry
     /// meta-call. Precomputed like <see cref="IsCall"/>.</summary>
     public bool IsDollarCall { get; }
 
+    /// <summary>True for builtins that push a choice point and resume via
+    /// <c>ResumeAtReturnPc</c> (the chunk-218 mechanism) — their Tier-1 IL
+    /// <c>call_builtin</c> site needs a forward-resume cursor. Precomputed in
+    /// the constructor (the <see cref="IsCall"/> precedent) so emit-time
+    /// classification reads a bool instead of running the name switch per
+    /// <c>CallBuiltin</c> per bytecode walk (chunk 433).</summary>
+    public bool IsBacktrackable { get; }
+
+    /// <summary>Canonical backtrackable-builtin name set (chunk 218; moved
+    /// here from <c>IlPredicateCompiler.IsBacktrackableBuiltinName</c> in
+    /// chunk 433 so the flag above can be precomputed at registration).</summary>
+    public static bool IsBacktrackableName(string name) => name switch
+    {
+        "between" or "append" or "atom_concat" or "string_concat"
+        or "nb_current" or "current_op" or "current_char_conversion"
+        or "current_stream" or "stream_property" or "repeat" or "retract" => true,
+        _ => false,
+    };
+
     public BuiltinEntry(int id, string name, int arity, BuiltinImpl impl,
         string? category = null, string? template = null, string? summary = null)
     {
@@ -51,6 +70,7 @@ public sealed class BuiltinEntry
         Summary = summary;
         IsCall = name == "call";
         IsDollarCall = name == "$call";
+        IsBacktrackable = IsBacktrackableName(name);
     }
 
     public override string ToString() => $"{Name}/{Arity} (#{Id})";

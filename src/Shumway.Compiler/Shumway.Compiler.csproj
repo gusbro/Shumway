@@ -5,6 +5,12 @@
     <ProjectReference Include="..\Shumway.Builtins\Shumway.Builtins.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- chunk 433: the IL compiler memoizes its shape analyses on
+         CompiledPredicate's internal cache slots. -->
+    <InternalsVisibleTo Include="Shumway.Compiler.Il" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>

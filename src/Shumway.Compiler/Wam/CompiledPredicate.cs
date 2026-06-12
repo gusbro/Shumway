@@ -62,6 +62,26 @@ public sealed class CompiledPredicate
     /// shared across engines via the global caches.</summary>
     internal int PoolFreeMemo;
 
+    /// <summary>Chunk 433 — memoized Tier-1 IL shape analyses (the
+    /// <see cref="PoolFreeMemo"/> precedent). Each slot holds the IL
+    /// compiler's <c>IlShapeMemo</c> for one shape recogniser
+    /// (chunk-216 indexed dispatch, try_me_else chain, switched chain,
+    /// indexed-atom): the structural describe result — a pure function of
+    /// the immutable bytecode / call sites / switch tables — plus the
+    /// recorded <c>Call</c>-site callee fids whose calleeMap resolvability
+    /// is re-checked per call. <c>object</c>-typed because the result types
+    /// live in <c>Shumway.Compiler.Il</c> (which sees these internals via
+    /// InternalsVisibleTo). A reference write is atomic, so the lazy
+    /// once-write is safe for predicates shared across engines (a benign
+    /// race recomputes the same value).</summary>
+    internal object? IlIndexedShapeMemo;
+    /// <summary>See <see cref="IlIndexedShapeMemo"/> (chunk 433).</summary>
+    internal object? IlTryMeElseShapeMemo;
+    /// <summary>See <see cref="IlIndexedShapeMemo"/> (chunk 433).</summary>
+    internal object? IlSwitchedChainShapeMemo;
+    /// <summary>See <see cref="IlIndexedShapeMemo"/> (chunk 433).</summary>
+    internal object? IlIndexedAtomShapeMemo;
+
     /// <summary>One <see cref="SourcePosition"/> per clause, in source
     /// order. Aligned with the <c>Meta(DbgInfo, clauseIndex)</c> opcodes
     /// the predicate compiler emits at each clause boundary (chunk 55):

@@ -54,21 +54,44 @@ public static class RegionRootSelector
         var promoted = new HashSet<int>();
         var regionOf = new Dictionary<int, IReadOnlyCollection<int>>(fids.Count);
         var sizeOf = new Dictionary<int, long>(fids.Count);
+        // Chunk 433 — incremental fixpoint. Rebuilding EVERY region per greedy
+        // iteration was O(fids × promotions) region BFS walks; but promoting X
+        // can only change regions whose member set CONTAINED X. Proof: the
+        // region BFS skips a non-absorbed callee via `continue` regardless of
+        // WHY it is skipped (ineligible, already excluded, or over budget) —
+        // skipping never consumes budget or stops the walk — so adding X to the
+        // excluded set leaves every walk that never absorbed X byte-identical.
+        // Track member-fid → the roots whose current region contains it, and
+        // per iteration recompute only the affected roots.
+        var rootsByMember = new Dictionary<int, HashSet<int>>();
+
+        void Recompute(int fid)
+        {
+            if (regionOf.TryGetValue(fid, out var old))
+                foreach (int m in old)
+                    if (rootsByMember.TryGetValue(m, out var set)) set.Remove(fid);
+            var members = regionMembersOf(fid, promoted);
+            regionOf[fid] = members;
+            long s = 0;
+            foreach (int m in members)
+            {
+                s += predicateSize(m);
+                if (!rootsByMember.TryGetValue(m, out var set))
+                    rootsByMember[m] = set = new HashSet<int>();
+                set.Add(fid);
+            }
+            sizeOf[fid] = s;
+        }
+
+        // 1. Build every predicate's region once (no promotions yet). Insertion
+        //    is in `fids` order; later recomputes overwrite values in place, so
+        //    regionOf's enumeration order — and therefore dup's insertion order
+        //    and the scoring loop's first-wins tie-breaking — matches the
+        //    pre-433 rebuild-everything behaviour exactly.
+        foreach (int fid in fids) Recompute(fid);
 
         while (true)
         {
-            // 1. Build every predicate's region with the current promotion set excluded.
-            regionOf.Clear();
-            sizeOf.Clear();
-            foreach (int fid in fids)
-            {
-                var members = regionMembersOf(fid, promoted);
-                regionOf[fid] = members;
-                long s = 0;
-                foreach (int m in members) s += predicateSize(m);
-                sizeOf[fid] = s;
-            }
-
             // 2. Duplication: how many OTHER regions absorb each predicate as a member.
             var dup = new Dictionary<int, int>(fids.Count);
             foreach (var (root, members) in regionOf)
@@ -88,6 +111,15 @@ public static class RegionRootSelector
             if (best < 0) break;
             promoted.Add(best);
             onPromote?.Invoke(best, dup[best], sizeOf[best]);
+
+            // 4. Recompute only the regions whose member set contained the
+            //    just-promoted fid (snapshot first — Recompute edits the sets).
+            if (rootsByMember.TryGetValue(best, out var affectedSet))
+            {
+                var affected = new int[affectedSet.Count];
+                affectedSet.CopyTo(affected);
+                foreach (int root in affected) Recompute(root);
+            }
         }
         return promoted;
     }
