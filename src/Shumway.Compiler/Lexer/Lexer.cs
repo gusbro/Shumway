@@ -153,6 +153,75 @@ public sealed class Lexer
             pos);
     }
 
+    /// <summary>Chunk 436 — error-recovery escape hatch. When
+    /// <see cref="NextToken"/> throws a <see cref="LexerException"/>
+    /// (e.g. a character the tokenizer has no lexeme for, like Arity's
+    /// backquote char literals), the resync loop calls this to step
+    /// past the offending character so scanning can make progress —
+    /// otherwise the same character would throw again forever. No-op
+    /// at end of input (the unterminated-quote exceptions leave the
+    /// cursor there).</summary>
+    public void SkipInvalidCharacter()
+    {
+        if (_offset < _source.Length) Advance();
+    }
+
+    /// <summary>Phase 30 chunk 436 — Arity <c>:- c.</c> native-code
+    /// sections. Called by the ClauseReader right after it consumed a
+    /// <c>:- c.</c> directive (arity_compat only): the text that
+    /// follows is C source, not Prolog, so it must be skipped RAW —
+    /// it would otherwise hit the tokenizer. Scans physical lines for
+    /// one whose start (after optional blanks) is the directive
+    /// <c>:- prolog.</c> (blanks allowed between <c>:-</c> and
+    /// <c>prolog</c> and before the <c>.</c>), consumes through that
+    /// directive's dot, and returns — normal clause reading resumes
+    /// after it. EOF inside the section ends the source normally.
+    /// Line/column tracking is maintained (every character goes
+    /// through <see cref="Advance"/>); <c>#line</c> markers inside the
+    /// C text are deliberately NOT interpreted — positions continue
+    /// the current numbering, which stays monotonic and sane.</summary>
+    public void SkipNativeCodeSection()
+    {
+        // Skip the remainder of the line carrying the `:- c.` itself —
+        // Arity allows C code on the same line after the dot.
+        while (_offset < _source.Length && _source[_offset] != '\n') Advance();
+        while (_offset < _source.Length)
+        {
+            Advance();   // consume the newline; cursor is at a line start
+            if (TryConsumePrologDirective()) return;
+            while (_offset < _source.Length && _source[_offset] != '\n') Advance();
+        }
+    }
+
+    /// <summary>Matches the <c>:- prolog.</c> end-of-C-section shape at
+    /// the current cursor (a line start): optional blanks, <c>:-</c>,
+    /// optional blanks, <c>prolog</c>, optional blanks, <c>.</c>, then
+    /// end of token (whitespace / EOF / a <c>%</c> comment). On a match
+    /// the cursor advances past the dot and the method returns true;
+    /// otherwise the cursor is untouched.</summary>
+    private bool TryConsumePrologDirective()
+    {
+        int scan = _offset;
+        while (scan < _source.Length && (_source[scan] == ' ' || _source[scan] == '\t')) scan++;
+        if (scan + 1 >= _source.Length || _source[scan] != ':' || _source[scan + 1] != '-')
+            return false;
+        scan += 2;
+        while (scan < _source.Length && (_source[scan] == ' ' || _source[scan] == '\t')) scan++;
+        if (scan + 6 > _source.Length
+            || string.CompareOrdinal(_source, scan, "prolog", 0, 6) != 0)
+            return false;
+        scan += 6;
+        while (scan < _source.Length && (_source[scan] == ' ' || _source[scan] == '\t')) scan++;
+        if (scan >= _source.Length || _source[scan] != '.') return false;
+        scan++;
+        // The dot must terminate the clause (mirrors the tokenizer's
+        // end-dot rule): EOF, whitespace, or a % comment.
+        if (scan < _source.Length && !char.IsWhiteSpace(_source[scan]) && _source[scan] != '%')
+            return false;
+        while (_offset < scan) Advance();
+        return true;
+    }
+
     /// <summary>Convenience wrapper that yields all tokens up to and including the
     /// final <see cref="TokenKind.Eof"/>.</summary>
     public IEnumerable<Token> Tokenize()

@@ -32,11 +32,20 @@ public sealed class ShmoCompileResult
 {
     public ShmoObject? Object { get; }
     public IReadOnlyList<ShmoCompileError> Errors { get; }
+
+    /// <summary>Chunk 436 — non-fatal diagnostics (same shape as
+    /// <see cref="Errors"/>). Currently produced for unknown directives
+    /// under <c>arity_compat</c>; warnings never fail the compile and
+    /// don't affect <see cref="Success"/>.</summary>
+    public IReadOnlyList<ShmoCompileError> Warnings { get; }
+
     public bool Success => Errors.Count == 0;
 
-    public ShmoCompileResult(ShmoObject? obj, IReadOnlyList<ShmoCompileError> errors)
+    public ShmoCompileResult(ShmoObject? obj, IReadOnlyList<ShmoCompileError> errors,
+        IReadOnlyList<ShmoCompileError>? warnings = null)
     {
         Object = obj;
         Errors = errors;
+        Warnings = warnings ?? Array.Empty<ShmoCompileError>();
     }
 }

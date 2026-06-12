@@ -89,6 +89,11 @@ internal static class Program
         {
             var result = ShmoCompiler.TryCompileFile(input, buildMode, maxErrors: 100,
                 arityCompat: opts.ArityCompat);
+            // Chunk 436 — warnings (e.g. unknown directives under
+            // --arity) are reported but never fail the compile.
+            foreach (var warn in result.Warnings)
+                Console.Error.WriteLine(
+                    $"{input}:{warn.Line}:{warn.Column}: warning: {warn.Message}");
             if (!result.Success)
             {
                 foreach (var err in result.Errors)
@@ -151,7 +156,8 @@ internal static class Program
         }
         catch (Exception ex) when (ex is InvalidOperationException
                                 || ex is InvalidDataException
-                                || ex is IOException)
+                                || ex is IOException
+                                || ex is UnauthorizedAccessException)
         {
             Console.Error.WriteLine($"shumway-compile: error: {ex.Message}");
             return ExitCompileError;
@@ -441,8 +447,11 @@ internal static class Program
             + "      --arity          Enable Arity/Prolog32 compatibility mode (the\n"
             + "                       arity_compat flag): $...$ quoted atoms, C\n"
             + "                       preprocessor #line markers (positions honoured),\n"
-            + "                       and annotated directives (foo/8:far). The flag\n"
-            + "                       can also be set per file with\n"
+            + "                       annotated directives (foo/8:far), :- c. native-\n"
+            + "                       code sections (skipped until :- prolog. or EOF),\n"
+            + "                       and unknown directives reported as warnings\n"
+            + "                       instead of failing the compile. The flag can\n"
+            + "                       also be set per file with\n"
             + "                       :- set_prolog_flag(arity_compat, true).\n"
             + "      --regions        With --dump-il, show the shared-method (region)\n"
             + "                       layout instead of one method per predicate.\n"

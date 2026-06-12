@@ -33,6 +33,30 @@ namespace Shumway.Embedding;
 /// </summary>
 public static class ShmoCompiler
 {
+    /// <summary>Chunk 436 — every directive name some stage of the
+    /// toolchain actually handles: the ShmoCompiler itself (module /
+    /// public / dynamic / visible / ensure_linked), the ClauseReader's
+    /// in-place pre-pass (op / set_prolog_flag / char_conversion, plus
+    /// the arity_compat <c>c</c> / <c>prolog</c> section markers), and
+    /// the PrologEngine consult pass (discontiguous / multifile /
+    /// table / mode). Anything else is an UNKNOWN directive: under
+    /// <c>arity_compat</c> it's reported as a warning and skipped
+    /// (Arity sources carry directives like <c>extrn</c> that have no
+    /// Shumway meaning); without the flag behaviour is unchanged.</summary>
+    internal static readonly HashSet<string> RecognizedDirectives = new()
+    {
+        "module", "public", "dynamic", "visible", "ensure_linked",
+        "op", "set_prolog_flag", "char_conversion",
+        "discontiguous", "multifile", "table", "mode",
+        "c", "prolog",
+    };
+
+    /// <summary>Chunk 436 — unknown directives whose arity_compat
+    /// warning is suppressed entirely. Empty by default; callers (or
+    /// embedders) add names of directives they know are harmless noise
+    /// in their corpus.</summary>
+    public static readonly HashSet<string> SilentlyIgnoredDirectives = new();
+
     /// <summary>Compiles <paramref name="path"/> to a <see cref="ShmoObject"/>.
     /// The module name defaults to the file's bare name (without
     /// extension) when no <c>:- module(Name).</c> directive is
@@ -92,6 +116,7 @@ public static class ShmoCompiler
         MetaBuiltins.EnsureRegistered();
 
         var errors = new List<ShmoCompileError>();
+        var warnings = new List<ShmoCompileError>();
         var allClauses = new List<Clause>();
         // Phase 30: `shumway-compile --arity` pre-enables the Arity
         // compatibility mode for the whole file (the in-file
@@ -109,7 +134,7 @@ public static class ShmoCompiler
                 allClauses.Add(entry.Clause);
         }
         if (errors.Count >= maxErrors)
-            return new ShmoCompileResult(null, errors);
+            return new ShmoCompileResult(null, errors, warnings);
         // First pass: walk RAW (untransformed) clauses to read
         // directives (so we know which predicates are dynamic) and
         // collect the raw bodies. We need the raw bodies for two
@@ -151,17 +176,37 @@ public static class ShmoCompiler
                     errors.Add(new ShmoCompileError(ex.Message,
                         clause.Position.Line, clause.Position.Column));
                 }
+                // Chunk 436 (arity_compat only): an unrecognised
+                // directive is a WARNING, not an error — Arity sources
+                // carry directives (`:- extrn ...`, `:- disable_*`)
+                // with no Shumway meaning; compilation continues.
+                // readerFlags reflects in-file set_prolog_flag flips.
+                if (readerFlags.ArityCompat)
+                {
+                    string dirName = d.Args[0] switch
+                    {
+                        AtomTerm dirAtom => dirAtom.Name,
+                        CompoundTerm dirComp => dirComp.Functor,
+                        _ => "",
+                    };
+                    if (dirName.Length > 0
+                        && !RecognizedDirectives.Contains(dirName)
+                        && !SilentlyIgnoredDirectives.Contains(dirName))
+                        warnings.Add(new ShmoCompileError(
+                            $"unknown directive '{dirName}' ignored (arity_compat)",
+                            clause.Position.Line, clause.Position.Column));
+                }
                 continue;
             }
             rawClauses.Add(clause);
         }
         if (errors.Count > 0)
-            return new ShmoCompileResult(null, errors);
+            return new ShmoCompileResult(null, errors, warnings);
 
         return CompileFromParts(
             moduleDirectiveSeen ? moduleName : PrologEngine.DefaultModuleName,
             source, rawClauses, publicSet, dynamicSet, ensureLinked,
-            qualifiedRefs, buildMode, errors);
+            qualifiedRefs, buildMode, errors, warnings);
     }
 
     /// <summary>Chunk 411 — the compile back-half, shared by
@@ -181,7 +226,8 @@ public static class ShmoCompiler
         List<PredicateRef> ensureLinked,
         List<QualifiedPredicateRef> qualifiedRefs,
         ShmoBuildMode buildMode,
-        List<ShmoCompileError> errors)
+        List<ShmoCompileError> errors,
+        List<ShmoCompileError>? warnings = null)
     {
         // Partition raw clauses: dynamic-head ones become DynamicSeeds
         // (RAW), the rest go through the same DcgTransform +
@@ -381,7 +427,7 @@ public static class ShmoCompiler
             buildMode: buildMode,
             dynamicSeeds: dynamicSeeds,
             clauseTerms: clauseTerms);
-        return new ShmoCompileResult(obj, errors);
+        return new ShmoCompileResult(obj, errors, warnings);
     }
 
     /// <summary>Like <see cref="TryCompileSource"/> but reads the

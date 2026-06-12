@@ -47,7 +47,19 @@ public sealed class ClauseReader
         // so the lexer adopts the caller's setting up front; the
         // set_prolog_flag directive (below) can also flip it mid-file.
         lexer.ArityCompat = flags.ArityCompat;
+        if (flags.ArityCompat) DefineArityCompatOperators(operators);
         _parser = new Parser(lexer, operators, flags);
+    }
+
+    /// <summary>Chunk 436 — operators Arity sources rely on for their
+    /// declaration directives. <c>:- extrn foo/3:far, bar/2.</c>
+    /// declares external predicates; parsed like the other declaration
+    /// prefixes (fx 1150) so the directive at least round-trips —
+    /// downstream it's an unrecognised directive and surfaces as an
+    /// arity_compat warning rather than a parse error.</summary>
+    private static void DefineArityCompatOperators(OperatorTable operators)
+    {
+        operators.Define("extrn", 1150, OperatorType.Fx);
     }
 
     private readonly global::Shumway.Compiler.Lexer.Lexer _lexer;
@@ -64,10 +76,38 @@ public sealed class ClauseReader
             Clause clause = Clause.From(term);
 
             if (clause.Kind == ClauseKind.Directive)
+            {
                 ProcessDirective(clause);
+                if (TryHandleAritySectionDirective(clause)) continue;
+            }
 
             yield return clause;
         }
+    }
+
+    /// <summary>Chunk 436 (arity_compat only) — Arity native-code
+    /// sections. <c>:- c.</c> switches the source to embedded C that
+    /// must be skipped RAW (it isn't parseable as Prolog) until a line
+    /// starting with the directive <c>:- prolog.</c> (or EOF, which
+    /// ends the module normally); <c>:- prolog.</c> met in normal
+    /// Prolog mode is a silent no-op. Returns true when the directive
+    /// was consumed here (the caller drops it — it never reaches the
+    /// compile/consult directive pass).</summary>
+    private bool TryHandleAritySectionDirective(Clause clause)
+    {
+        if (!_flags.ArityCompat) return false;
+        if (clause.Term is not CompoundTerm d || d.Args.Length != 1
+            || d.Args[0] is not AtomTerm a)
+            return false;
+        if (a.Name == "c")
+        {
+            // The lexer takes over the raw character stream; a stale
+            // peeked token would replay ahead of the resumed input.
+            _parser.DiscardLookahead();
+            _lexer.SkipNativeCodeSection();
+            return true;
+        }
+        return a.Name == "prolog";
     }
 
     /// <summary>Like <see cref="ReadAll"/> but with C-style error
@@ -81,25 +121,39 @@ public sealed class ClauseReader
     public IEnumerable<ClauseOrError> ReadAllCollectingErrors(int maxErrors = 100)
     {
         int errors = 0;
-        while (!_parser.IsAtEnd())
+        while (true)
         {
             Clause? parsed = null;
             ClauseOrError? errorEntry = null;
+            bool atEnd = false;
             try
             {
-                Term term = _parser.ReadClauseTerm();
-                parsed = Clause.From(term);
-                if (parsed.Kind == ClauseKind.Directive)
+                // Chunk 436: IsAtEnd peeks the next token, so it too can
+                // throw on unlexable input — it must sit inside the
+                // recovery try or a bad character right after a clause
+                // escapes as a crash.
+                if (_parser.IsAtEnd())
                 {
-                    try { ProcessDirective(parsed); }
-                    catch (ParseException dirEx)
+                    atEnd = true;
+                }
+                else
+                {
+                    Term term = _parser.ReadClauseTerm();
+                    parsed = Clause.From(term);
+                    if (parsed.Kind == ClauseKind.Directive)
                     {
-                        // A directive that parsed structurally but
-                        // failed in ApplyOpDirective / etc. counts as
-                        // an error but the directive clause itself
-                        // is discarded.
-                        errorEntry = ClauseOrError.Error(dirEx.Message, dirEx.Position);
-                        parsed = null;
+                        try { ProcessDirective(parsed); }
+                        catch (ParseException dirEx)
+                        {
+                            // A directive that parsed structurally but
+                            // failed in ApplyOpDirective / etc. counts as
+                            // an error but the directive clause itself
+                            // is discarded.
+                            errorEntry = ClauseOrError.Error(dirEx.Message, dirEx.Position);
+                            parsed = null;
+                        }
+                        if (parsed is not null && TryHandleAritySectionDirective(parsed))
+                            parsed = null;   // consumed (`:- c.` / `:- prolog.`)
                     }
                 }
             }
@@ -108,6 +162,17 @@ public sealed class ClauseReader
                 errorEntry = ClauseOrError.Error(ex.Message, ex.Position);
                 _parser.SkipToClauseTerminator();
             }
+            catch (LexerException ex)
+            {
+                // Chunk 436: a tokenizer error (e.g. Arity's backquote
+                // char literals — a character Shumway has no lexeme
+                // for) is a diagnostic like any parse error, not a
+                // crash. SkipToClauseTerminator steps over unlexable
+                // characters raw, so the resync always progresses.
+                errorEntry = ClauseOrError.Error(ex.Message, ex.Position);
+                _parser.SkipToClauseTerminator();
+            }
+            if (atEnd) yield break;
 
             if (errorEntry is not null)
             {
@@ -202,6 +267,7 @@ public sealed class ClauseReader
             };
             _flags.ArityCompat = on;
             _lexer.ArityCompat = on;
+            if (on) DefineArityCompatOperators(_operators);
         }
         // Unknown flags are silently ignored at parse time — the
         // runtime builtin raises a domain_error instead, which is

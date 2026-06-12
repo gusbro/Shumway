@@ -4695,6 +4695,24 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // op/3 already processed in-place by ClauseReader. Other
             // unrecognised directives pass through silently — they may be
             // implementation-defined hooks that future chunks handle.
+            // Chunk 436 (arity_compat only): same policy as
+            // shumway-compile — an unknown directive is reported as a
+            // warning (to stderr) and consult continues. Without the
+            // flag the silent pass-through above is unchanged.
+            else if (_flags.ArityCompat)
+            {
+                string dirName = body switch
+                {
+                    AtomTerm dirAtom => dirAtom.Name,
+                    CompoundTerm dirComp => dirComp.Functor,
+                    _ => "",
+                };
+                if (dirName.Length > 0
+                    && !ShmoCompiler.RecognizedDirectives.Contains(dirName)
+                    && !ShmoCompiler.SilentlyIgnoredDirectives.Contains(dirName))
+                    Console.Error.WriteLine(
+                        $"warning: unknown directive '{dirName}' ignored (arity_compat)");
+            }
         }
 
         // Discontiguous enforcement (chunk 60): clauses for a given

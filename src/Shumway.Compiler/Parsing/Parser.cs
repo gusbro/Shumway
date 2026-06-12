@@ -77,15 +77,37 @@ public sealed class Parser
     /// to resync after a <see cref="ParseException"/> so the next
     /// clause can still be parsed — error-recovery in C-compiler
     /// style. The terminator dot itself is consumed; the next call
-    /// to <see cref="ReadClauseTerm"/> starts on a clean clause.</summary>
+    /// to <see cref="ReadClauseTerm"/> starts on a clean clause.
+    /// <para>Chunk 436: the resync itself must never throw — a
+    /// character the lexer can't tokenize (the very thing that may
+    /// have caused the error being recovered from) is stepped over
+    /// raw via <see cref="Lexer.Lexer.SkipInvalidCharacter"/>, so any
+    /// malformed input yields diagnostics rather than a crash.</para>
+    /// </summary>
     public void SkipToClauseTerminator()
     {
         while (true)
         {
-            Token tok = NextToken();
+            Token tok;
+            try
+            {
+                tok = NextToken();
+            }
+            catch (LexerException)
+            {
+                _lexer.SkipInvalidCharacter();
+                continue;
+            }
             if (tok.Kind == TokenKind.Dot || tok.Kind == TokenKind.Eof) return;
         }
     }
+
+    /// <summary>Chunk 436 — drops any buffered lookahead tokens.
+    /// Called by the ClauseReader before handing the raw character
+    /// stream to <see cref="Lexer.Lexer.SkipNativeCodeSection"/>
+    /// (Arity <c>:- c.</c> sections): a stale peeked token would
+    /// otherwise replay ahead of the post-section input.</summary>
+    public void DiscardLookahead() => _lookahead.Clear();
 
     // ---------- Core recursive reader ----------
 
