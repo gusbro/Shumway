@@ -31,6 +31,18 @@ public sealed class Parser
     private readonly PrologFlags _flags;
     private readonly List<Token> _lookahead = new();
 
+    /// <summary>Phase 30 chunk 438 (arity_compat) — true once the
+    /// current clause has consumed a <c>--&gt;</c> atom token. Embedded
+    /// native goals (<c>{ raw C }</c> substituted by <c>true</c>) apply
+    /// only to NON-DCG clauses: inside a DCG rule braces keep their
+    /// standard Prolog <c>{}/1</c> meaning. "Is this a DCG clause?" is
+    /// decided by linear token order — the <c>--&gt;</c> token appears
+    /// before any body <c>{</c> — which token consumption preserves
+    /// (tokens are consumed strictly in stream order regardless of
+    /// prefetch depth). Reset whenever a new top-level term read starts
+    /// (<see cref="ReadClauseTerm"/> / <see cref="ReadTerm"/>).</summary>
+    private bool _sawDcgArrow;
+
     public Parser(Lexer.Lexer lexer) : this(lexer, OperatorTable.Default(), new PrologFlags())
     {
     }
@@ -53,12 +65,17 @@ public sealed class Parser
     /// <summary>Reads a single term (no trailing dot expected). Returns when an
     /// operator or token at the top of the stream cannot be consumed at the current
     /// precedence ceiling.</summary>
-    public Term ReadTerm() => ReadTermInternal(1200, out _);
+    public Term ReadTerm()
+    {
+        _sawDcgArrow = false;   // chunk 438 — new top-level term read
+        return ReadTermInternal(1200, out _);
+    }
 
     /// <summary>Reads a term followed by the clause-terminator dot. Throws if the
     /// dot is missing.</summary>
     public Term ReadClauseTerm()
     {
+        _sawDcgArrow = false;   // chunk 438 — new clause starts here
         Term t = ReadTermInternal(1200, out _);
         Token tok = NextToken();
         if (tok.Kind != TokenKind.Dot)
@@ -388,6 +405,43 @@ public sealed class Parser
                 return ReadList(pos);
 
             case TokenKind.LBrace:
+                // Phase 30 chunk 438 (arity_compat only) — Arity embedded
+                // native goal: in a NON-DCG clause a body goal can be raw
+                // native code between braces (`p :- g, { C code; }, h.`).
+                // The brace content is not Prolog-lexable, so it is
+                // skipped RAW by the lexer (naive brace counting) and the
+                // goal `true` is substituted. TODO: the real
+                // implementation (compiling/binding the native code)
+                // comes later — for now the goal is a no-op.
+                //
+                // In a DCG rule (`head --> body`) braces keep their ISO
+                // {}/1 meaning — detection is the per-clause _sawDcgArrow
+                // flag (the --> token consumed before this `{` in linear
+                // order). Known trade-off, documented: under the flag,
+                // CLP(R)'s `{Constraint}` syntax in a normal clause (and
+                // a `{...}` argument of a directive) is swallowed as
+                // native code — acceptable, Arity sources don't use
+                // CLP(R).
+                if (_flags.ArityCompat && !_sawDcgArrow)
+                {
+                    // Lookahead invariant: the raw skip must begin at the
+                    // character right after this `{`, so no token may
+                    // have been prefetched past it. That holds by
+                    // construction — multi-token peeks (PeekTokenAt(1/2))
+                    // run only when the token at offset 0 is an Atom, so
+                    // nothing is ever fetched beyond an LBrace sitting at
+                    // the front of the stream, and consuming the `{`
+                    // therefore drains the buffer. Guarded here so any
+                    // future lookahead change fails loudly instead of
+                    // silently mis-skipping.
+                    if (_lookahead.Count > 0)
+                        throw new ParseException(
+                            "internal: token lookahead extends past a native '{' goal "
+                            + "(arity_compat); raw skip would start at the wrong position.",
+                            pos);
+                    _lexer.SkipNativeGoalBlock(pos);
+                    return new AtomTerm("true") { Position = pos };
+                }
                 return ReadBrace(pos);
 
             default:
@@ -513,13 +567,22 @@ public sealed class Parser
 
     private Token NextToken()
     {
+        Token t;
         if (_lookahead.Count > 0)
         {
-            Token t = _lookahead[0];
+            t = _lookahead[0];
             _lookahead.RemoveAt(0);
-            return t;
         }
-        return _lexer.NextToken();
+        else
+        {
+            t = _lexer.NextToken();
+        }
+        // Chunk 438 — DCG detection for Arity native goals: record that
+        // the current clause consumed the --> arrow. (A quoted '-->'
+        // atom is indistinguishable from the operator token here —
+        // harmless: it only widens braces back to their ISO meaning.)
+        if (t.Kind == TokenKind.Atom && t.Text == "-->") _sawDcgArrow = true;
+        return t;
     }
 
     private Token PeekToken() => PeekTokenAt(0);

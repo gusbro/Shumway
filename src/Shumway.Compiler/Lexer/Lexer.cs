@@ -62,7 +62,9 @@ public sealed class Lexer
     /// same semantics as <c>0'x</c> including escapes), and literal
     /// backslash inside <c>'...'</c> quoted atoms (chunk 437 — Arity
     /// has no backslash escapes there; <c>''</c> doubling still
-    /// applies).</summary>
+    /// applies), and <c>$</c> terminating symbol-atom runs (chunk 438 —
+    /// <c>X=$texto$</c> is <c>=</c> + the atom <c>texto</c>, not the
+    /// atom <c>=$</c>).</summary>
     public bool ArityCompat { get; set; }
 
     public Lexer(string source)
@@ -196,6 +198,36 @@ public sealed class Lexer
             if (TryConsumePrologDirective()) return;
             while (_offset < _source.Length && _source[_offset] != '\n') Advance();
         }
+    }
+
+    /// <summary>Phase 30 chunk 438 — Arity embedded native goals
+    /// (arity_compat only). In Arity a body goal can be raw native code
+    /// between braces: <c>p :- goal, { C statements; }, otra.</c> The
+    /// parser calls this immediately after it consumed the opening
+    /// <c>{</c> token (with no further token prefetched — see the
+    /// lookahead invariant documented at the call site), and the brace
+    /// content is skipped RAW: it is C, not Prolog, so it must never
+    /// reach the tokenizer. Skipping uses naive brace counting so
+    /// nested native blocks (<c>{ if (x) { y(); } }</c>) balance;
+    /// braces inside C string literals or comments are NOT understood
+    /// and could unbalance the count — acceptable for now, the corpus
+    /// doesn't exhibit it. Stops with the cursor just past the matching
+    /// <c>}</c>. EOF before balance throws (an error diagnostic in the
+    /// collecting reader, never a crash). Line/column tracking is
+    /// maintained (every character goes through <see cref="Advance"/>).</summary>
+    public void SkipNativeGoalBlock(SourcePosition openBracePos)
+    {
+        int depth = 1;
+        while (_offset < _source.Length)
+        {
+            char c = _source[_offset];
+            Advance();
+            if (c == '{') depth++;
+            else if (c == '}' && --depth == 0) return;
+        }
+        throw new LexerException(
+            $"Unterminated native code goal '{{' starting at {openBracePos}.",
+            openBracePos);
     }
 
     /// <summary>Matches the <c>:- prolog.</c> end-of-C-section shape at
@@ -355,7 +387,20 @@ public sealed class Lexer
     private Token ParseSymbolAtom(SourcePosition pos)
     {
         int start = _offset;
-        while (_offset < _source.Length && IsSymbolChar(_source[_offset])) Advance();
+        // Phase 30 chunk 438 (arity_compat): `$` terminates a symbol-atom
+        // run instead of joining it, so `X=$texto$` lexes as `=` followed
+        // by the $-quoted atom `texto` rather than the maximal-munch atom
+        // `=$`. A LEADING `$` never reaches here under the flag — the
+        // dispatcher routes it to ParseDollarAtom — so this only affects
+        // `$` appearing mid-run. None of Shumway's own vocabulary forms a
+        // symbolic atom containing `$`: internal names like '$call' are
+        // $-LEADING and always written quoted (TermRenderer quotes any
+        // atom mixing graphic and alphanumeric chars), and no operator
+        // contains `$`. Flag off: ISO maximal munch unchanged (`=$` is
+        // one atom).
+        while (_offset < _source.Length && IsSymbolChar(_source[_offset])
+               && !(ArityCompat && _source[_offset] == '$'))
+            Advance();
         return new Token(TokenKind.Atom, pos, BuildText(start, _offset));
     }
 
