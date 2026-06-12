@@ -64,6 +64,129 @@ public sealed class ClauseReader
 
     private readonly global::Shumway.Compiler.Lexer.Lexer _lexer;
 
+    // ------------------------------------------------------------------
+    // Chunk 437 — `:- define(TermA = TermB).` (ALWAYS active, not gated
+    // by arity_compat). After the directive, every subterm of a
+    // subsequent clause that is value-equal to TermA is replaced by
+    // TermB. The directive is consumed here — it never reaches the
+    // compile/consult directive pass. Fast path: the overwhelmingly
+    // common LHS is an atom, probed O(1) by name; non-atom LHSs go in a
+    // (rare) linear list.
+    // ------------------------------------------------------------------
+    private Dictionary<string, Term>? _atomDefines;
+    private List<(Term Lhs, Term Rhs)>? _otherDefines;
+
+    /// <summary>Chunk 437 — recognises and records a
+    /// <c>:- define(TermA = TermB).</c> directive. Returns true when the
+    /// directive was consumed here (the caller drops it). Semantic
+    /// choices:
+    /// <list type="bullet">
+    /// <item>Always active — NOT gated by arity_compat. The directive
+    /// has no clash with any ISO directive name.</item>
+    /// <item>A redefinition of the same LHS overwrites the earlier
+    /// mapping (last definition wins from that point in the source
+    /// on).</item>
+    /// <item>A structurally wrong define (<c>:- define(x).</c> without
+    /// <c>=</c>, wrong arity, …) throws <see cref="ParseException"/> —
+    /// an error diagnostic in the collecting path, never a crash.</item>
+    /// </list></summary>
+    private bool TryHandleDefineDirective(Clause clause)
+    {
+        if (clause.Term is not CompoundTerm d || d.Args.Length != 1) return false;
+        if (d.Args[0] is not CompoundTerm { Functor: "define" } def) return false;
+        if (def.Args.Length != 1
+            || def.Args[0] is not CompoundTerm { Functor: "=", Args.Length: 2 } eq)
+            throw new ParseException(
+                "define directive: expected :- define(TermA = TermB).",
+                clause.Position);
+
+        Term lhs = eq.Args[0];
+        Term rhs = eq.Args[1];
+        if (lhs is AtomTerm lhsAtom)
+        {
+            // Fast path: atom LHS keyed by name, O(1) probe per atom
+            // subterm during substitution.
+            (_atomDefines ??= new Dictionary<string, Term>())[lhsAtom.Name] = rhs;
+        }
+        else
+        {
+            _otherDefines ??= new List<(Term, Term)>();
+            for (int i = 0; i < _otherDefines.Count; i++)
+            {
+                if (_otherDefines[i].Lhs.Equals(lhs))
+                {
+                    _otherDefines[i] = (lhs, rhs);
+                    return true;
+                }
+            }
+            _otherDefines.Add((lhs, rhs));
+        }
+        return true;
+    }
+
+    /// <summary>Chunk 437 — applies every active define to
+    /// <paramref name="clause"/>'s term. Semantic choices:
+    /// <list type="bullet">
+    /// <item>SINGLE PASS: every subterm is checked once, top-down,
+    /// against ALL active defines together. A substituted result is NOT
+    /// re-scanned — <c>define(a = f(a))</c> cannot loop, and with both
+    /// <c>define(a = b)</c> and <c>define(b = c)</c> active, <c>a</c>
+    /// rewrites to <c>b</c>, not <c>c</c> (no re-expansion).</item>
+    /// <item>A matched subterm's interior is not walked — the RHS is
+    /// inserted verbatim (and the immutable RHS node is shared by every
+    /// substitution site).</item>
+    /// <item>Functor NAMES are not renamed: <c>define(f = g)</c>
+    /// rewrites the ATOM <c>f</c> wherever it occurs as a (sub)term, but
+    /// <c>f(1)</c> keeps its functor — a compound's name is not a
+    /// subterm position.</item>
+    /// <item>Defines do not apply inside another define directive's own
+    /// arguments (callers consume defines BEFORE calling this).</item>
+    /// </list></summary>
+    private Clause ApplyDefines(Clause clause)
+    {
+        if (_atomDefines is null && _otherDefines is null) return clause;
+        Term substituted = SubstituteDefines(clause.Term);
+        // Re-classify: substitution at the clause's top level could in
+        // principle change its shape (e.g. an atom clause rewritten to a
+        // :-/2 term).
+        return ReferenceEquals(substituted, clause.Term)
+            ? clause
+            : Clause.From(substituted);
+    }
+
+    private Term SubstituteDefines(Term t)
+    {
+        // Whole-subterm match first (top-down). Atom subterms only ever
+        // match the name-keyed dictionary (an AtomTerm LHS always lands
+        // there); everything else probes the rare non-atom list.
+        if (t is AtomTerm a)
+        {
+            if (_atomDefines is not null
+                && _atomDefines.TryGetValue(a.Name, out Term? atomRhs))
+                return atomRhs;
+            return t;
+        }
+        if (_otherDefines is not null)
+        {
+            foreach (var (lhs, rhs) in _otherDefines)
+                if (lhs.Equals(t)) return rhs;
+        }
+        if (t is CompoundTerm c)
+        {
+            Term[]? newArgs = null;
+            for (int i = 0; i < c.Args.Length; i++)
+            {
+                Term s = SubstituteDefines(c.Args[i]);
+                if (newArgs is null && !ReferenceEquals(s, c.Args[i]))
+                    newArgs = (Term[])c.Args.Clone();
+                if (newArgs is not null) newArgs[i] = s;
+            }
+            if (newArgs is not null)
+                return new CompoundTerm(c.Functor, newArgs) { Position = c.Position };
+        }
+        return t;
+    }
+
     public OperatorTable Operators => _operators;
 
     /// <summary>Parses every clause in the underlying source and yields them in
@@ -74,6 +197,15 @@ public sealed class ClauseReader
         {
             Term term = _parser.ReadClauseTerm();
             Clause clause = Clause.From(term);
+
+            // Chunk 437: a `:- define(A = B).` directive is consumed
+            // here, BEFORE substitution — active defines are not applied
+            // inside another define directive's own arguments.
+            if (clause.Kind == ClauseKind.Directive
+                && TryHandleDefineDirective(clause))
+                continue;
+
+            clause = ApplyDefines(clause);
 
             if (clause.Kind == ClauseKind.Directive)
             {
@@ -142,7 +274,23 @@ public sealed class ClauseReader
                     parsed = Clause.From(term);
                     if (parsed.Kind == ClauseKind.Directive)
                     {
-                        try { ProcessDirective(parsed); }
+                        try
+                        {
+                            // Chunk 437: define directives are consumed
+                            // pre-substitution (a malformed one — e.g.
+                            // `:- define(x).` without `=` — throws and is
+                            // captured as a diagnostic like any other
+                            // directive error).
+                            if (TryHandleDefineDirective(parsed))
+                            {
+                                parsed = null;   // consumed
+                            }
+                            else
+                            {
+                                parsed = ApplyDefines(parsed);
+                                ProcessDirective(parsed);
+                            }
+                        }
                         catch (ParseException dirEx)
                         {
                             // A directive that parsed structurally but
@@ -154,6 +302,10 @@ public sealed class ClauseReader
                         }
                         if (parsed is not null && TryHandleAritySectionDirective(parsed))
                             parsed = null;   // consumed (`:- c.` / `:- prolog.`)
+                    }
+                    else
+                    {
+                        parsed = ApplyDefines(parsed);
                     }
                 }
             }

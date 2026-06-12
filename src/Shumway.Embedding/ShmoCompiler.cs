@@ -52,10 +52,18 @@ public static class ShmoCompiler
     };
 
     /// <summary>Chunk 436 — unknown directives whose arity_compat
-    /// warning is suppressed entirely. Empty by default; callers (or
-    /// embedders) add names of directives they know are harmless noise
-    /// in their corpus.</summary>
-    public static readonly HashSet<string> SilentlyIgnoredDirectives = new();
+    /// warning is suppressed entirely. Callers (or embedders) add names
+    /// of directives they know are harmless noise in their corpus.
+    /// Chunk 437 seeds <c>extrn</c> — Arity's external-predicate
+    /// declaration is ubiquitous in real sources and has no Shumway
+    /// meaning (the linker resolves cross-module calls itself), so it
+    /// is ignored without even a warning. The engine consult path
+    /// (<see cref="PrologEngine"/>'s ConsultString warning pass)
+    /// consults this same set.</summary>
+    public static readonly HashSet<string> SilentlyIgnoredDirectives = new()
+    {
+        "extrn",
+    };
 
     /// <summary>Compiles <paramref name="path"/> to a <see cref="ShmoObject"/>.
     /// The module name defaults to the file's bare name (without

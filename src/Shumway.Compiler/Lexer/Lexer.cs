@@ -55,10 +55,14 @@ public sealed class Lexer
     /// it mid-stream (the ClauseReader writes it when it applies the
     /// directive). Enables <c>$...$</c> quoted atoms (escape a
     /// <c>$</c> by doubling; everything else, including <c>'</c> and
-    /// backslash, is literal) and <c>#line N "file"</c> markers at the
+    /// backslash, is literal), <c>#line N "file"</c> markers at the
     /// start of a line (consumed; the lexer adopts N as the next
     /// line's number so positions track the preprocessor's original
-    /// source).</summary>
+    /// source), backquote char-code literals (<c>`x</c> — chunk 437,
+    /// same semantics as <c>0'x</c> including escapes), and literal
+    /// backslash inside <c>'...'</c> quoted atoms (chunk 437 — Arity
+    /// has no backslash escapes there; <c>''</c> doubling still
+    /// applies).</summary>
     public bool ArityCompat { get; set; }
 
     public Lexer(string source)
@@ -119,6 +123,7 @@ public sealed class Lexer
         if (raw == '\'') return ParseQuotedAtom(pos);
         if (raw == '"') return ParseString(pos);
         if (raw == '$' && ArityCompat) return ParseDollarAtom(pos);
+        if (raw == '`' && ArityCompat) return ParseBackquoteCharLiteral(pos);
 
         switch (c)
         {
@@ -434,6 +439,24 @@ public sealed class Lexer
         return new Token(TokenKind.Integer, pos, intSource) { BigValue = big, HasBigValue = true };
     }
 
+    /// <summary>Phase 30 chunk 437 — Arity backquote char-code literal
+    /// (<c>`x</c>), arity_compat only. Arity writes character codes as a
+    /// backquote followed by one character; the corpus uses them in list
+    /// and argument positions (<c>[_, `x|_]</c>). Tokenizes to the same
+    /// INTEGER token the ISO <c>0'x</c> form produces, sharing
+    /// <see cref="ReadCharCodeLiteral"/> — so escape sequences behave
+    /// exactly like <c>0'</c> (<c>`\n</c> is 10, <c>`\\</c> is 92, …).
+    /// Without the flag the backquote stays an unlexable character
+    /// (recovered as a diagnostic per chunk 436).</summary>
+    private Token ParseBackquoteCharLiteral(SourcePosition pos)
+    {
+        int start = _offset;
+        Advance();   // the backquote
+        int code = ReadCharCodeLiteral(pos);
+        return new Token(TokenKind.Integer, pos, _source[start.._offset])
+            { IntValue = code };
+    }
+
     private int ReadCharCodeLiteral(SourcePosition pos)
     {
         if (_offset >= _source.Length)
@@ -499,8 +522,14 @@ public sealed class Lexer
                     return new Token(TokenKind.Atom, pos, sb.ToString());
                 }
             }
-            else if (c == '\\')
+            else if (c == '\\' && !ArityCompat)
             {
+                // Chunk 437: Arity does NOT interpret backslash escapes
+                // inside '...' quoted atoms — '\' is the one-character
+                // backslash atom (Arity-era sources put Windows paths in
+                // quoted atoms). Under arity_compat the backslash falls
+                // through to the literal-character branch below; the
+                // doubled-quote escape ('') above applies in both modes.
                 Advance();
                 sb.Append((char)ReadEscapeSequence(pos));
             }

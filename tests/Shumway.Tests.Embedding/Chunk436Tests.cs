@@ -30,17 +30,28 @@ public class Chunk436Tests
     [Fact]
     public void UnknownDirective_WarnsUnderFlag_CompileSucceeds()
     {
-        var r = ShmoCompiler.TryCompileSource(
-            ":- extrn concat_l/3:far,\n" +
-            "         on/2:far.\n" +
-            "p(1).\n",
-            arityCompat: true);
-        Assert.True(r.Success);
-        Assert.NotNull(r.Object);
-        var warning = Assert.Single(r.Warnings);
-        Assert.Equal("unknown directive 'extrn' ignored (arity_compat)",
-            warning.Message);
-        Assert.Equal(1, warning.Line);
+        // Chunk 437 seeds 'extrn' into SilentlyIgnoredDirectives; pull it
+        // out for the duration so this test still exercises the warning
+        // path with the operator-form directive.
+        bool removed = ShmoCompiler.SilentlyIgnoredDirectives.Remove("extrn");
+        try
+        {
+            var r = ShmoCompiler.TryCompileSource(
+                ":- extrn concat_l/3:far,\n" +
+                "         on/2:far.\n" +
+                "p(1).\n",
+                arityCompat: true);
+            Assert.True(r.Success);
+            Assert.NotNull(r.Object);
+            var warning = Assert.Single(r.Warnings);
+            Assert.Equal("unknown directive 'extrn' ignored (arity_compat)",
+                warning.Message);
+            Assert.Equal(1, warning.Line);
+        }
+        finally
+        {
+            if (removed) ShmoCompiler.SilentlyIgnoredDirectives.Add("extrn");
+        }
     }
 
     [Fact]
@@ -84,18 +95,31 @@ public class Chunk436Tests
     [Fact]
     public void SilentlyIgnoredDirectives_SuppressesTheWarning()
     {
-        Assert.True(ShmoCompiler.SilentlyIgnoredDirectives.Add("extrn"));
+        // Chunk 437: 'extrn' ships in the set out of the box, so the
+        // suppression needs no caller setup.
+        Assert.Contains("extrn", ShmoCompiler.SilentlyIgnoredDirectives);
+        var r = ShmoCompiler.TryCompileSource(
+            ":- extrn foo/1:far.\np(1).\n",
+            arityCompat: true);
+        Assert.True(r.Success);
+        Assert.Empty(r.Warnings);
+    }
+
+    [Fact]
+    public void SilentlyIgnoredDirectives_CallerAddedNameSuppressesToo()
+    {
+        Assert.True(ShmoCompiler.SilentlyIgnoredDirectives.Add("disable_debug"));
         try
         {
             var r = ShmoCompiler.TryCompileSource(
-                ":- extrn foo/1:far.\np(1).\n",
+                ":- disable_debug.\np(1).\n",
                 arityCompat: true);
             Assert.True(r.Success);
             Assert.Empty(r.Warnings);
         }
         finally
         {
-            ShmoCompiler.SilentlyIgnoredDirectives.Remove("extrn");
+            ShmoCompiler.SilentlyIgnoredDirectives.Remove("disable_debug");
         }
     }
 
@@ -205,16 +229,22 @@ public class Chunk436Tests
     {
         // The arity.pl crash shape: Arity's backquote char-code literal
         // (`x) threw a LexerException that escaped the error-recovery
-        // resync entirely. Both flag states must recover.
-        foreach (bool flag in new[] { true, false })
-        {
-            var r = ShmoCompiler.TryCompileSource(
-                "p(L) :- not(L = [_, `x|_]).\n" +
-                "q(1).\n",
-                arityCompat: flag);
-            Assert.False(r.Success);
-            Assert.Contains(r.Errors, err => err.Message.Contains("Unexpected character '`'"));
-        }
+        // resync entirely. Without the flag it is still an unlexable
+        // character — but recovered as a diagnostic, never a crash.
+        // (Chunk 437: WITH the flag `x now lexes as a char-code integer
+        // and the source compiles — see Chunk437Tests.)
+        var r = ShmoCompiler.TryCompileSource(
+            "p(L) :- not(L = [_, `x|_]).\n" +
+            "q(1).\n",
+            arityCompat: false);
+        Assert.False(r.Success);
+        Assert.Contains(r.Errors, err => err.Message.Contains("Unexpected character '`'"));
+
+        var on = ShmoCompiler.TryCompileSource(
+            "p(L) :- not(L = [_, `x|_]).\n" +
+            "q(1).\n",
+            arityCompat: true);
+        Assert.True(on.Success);
     }
 
     [Fact]
