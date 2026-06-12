@@ -179,6 +179,9 @@ public sealed partial class Engine
             _gcOnlyAt = gcAt;
         if (int.TryParse(System.Environment.GetEnvironmentVariable("SHUMWAY_GC_UPTO"), out int gcUpTo))
             _gcUpTo = gcUpTo;
+        // Chunk 428 — fold the knobs into the single steady-state flag
+        // MaybeCollectHeap's inlined guard tests.
+        UpdateGcDiagActive();
     }
 
     private static void Validate(EngineConfig c)
@@ -499,20 +502,31 @@ public sealed partial class Engine
     }
 
     /// <summary>Reads the <c>Y(k+1)</c> slot of the current environment frame.</summary>
+    // Chunk 428 — the inline throw blocked JIT inlining of these two,
+    // which every Y-slot opcode in BOTH tiers calls. Hoisted to the cold
+    // ThrowNoEnv helper (the ThrowBadAlloc pattern) + AggressiveInlining.
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public Cell GetY(int slot)
     {
-        if (_e < 0)
-            throw new InvalidOperationException("No environment frame is active.");
+        if (_e < 0) ThrowNoEnv();
         return _stack[_e + EnvY1Offset + slot];
     }
 
     /// <summary>Writes the <c>Y(k+1)</c> slot of the current environment frame.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public void SetY(int slot, Cell value)
     {
-        if (_e < 0)
-            throw new InvalidOperationException("No environment frame is active.");
+        if (_e < 0) ThrowNoEnv();
         _stack[_e + EnvY1Offset + slot] = value;
     }
+
+    [System.Diagnostics.CodeAnalysis.DoesNotReturn]
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static void ThrowNoEnv()
+        => throw new InvalidOperationException("No environment frame is active.");
 
     // ----- Choice-point frame layout (ADR-005) -----
     //
@@ -968,10 +982,13 @@ public sealed partial class Engine
 
     /// <summary>Unifies the cell held in <c>Y[<paramref name="permSlot"/>]</c> of the
     /// current environment frame with <c>X[<paramref name="regIdx"/>]</c>.</summary>
+    // Chunk 428 — guard throw hoisted to ThrowNoEnv (see GetY) on the
+    // three UnifyPermanent* entry points so the guards inline.
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public bool UnifyPermanentWithRegister(int permSlot, int regIdx)
     {
-        if (_e < 0)
-            throw new InvalidOperationException("No environment frame is active.");
+        if (_e < 0) ThrowNoEnv();
         return UnifyCells(_stack[_e + EnvY1Offset + permSlot], _registers[regIdx]);
     }
 
@@ -983,19 +1000,21 @@ public sealed partial class Engine
     /// <summary>Unifies <c>Y[<paramref name="permSlot"/>]</c> with an immediate
     /// <paramref name="value"/> cell. Used by the ADR-018 <c>a_eval_is</c> opcode
     /// when the <c>is/2</c> target is a permanent variable.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public bool UnifyPermanentWithCell(int permSlot, Cell value)
     {
-        if (_e < 0)
-            throw new InvalidOperationException("No environment frame is active.");
+        if (_e < 0) ThrowNoEnv();
         return UnifyCells(_stack[_e + EnvY1Offset + permSlot], value);
     }
 
     /// <summary>Unifies <c>Y[<paramref name="permSlot"/>]</c> with the heap cell at
     /// <paramref name="heapIdx"/>. Used by <c>unify_value_y</c> in read mode.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public bool UnifyPermanentWithHeapAt(int permSlot, int heapIdx)
     {
-        if (_e < 0)
-            throw new InvalidOperationException("No environment frame is active.");
+        if (_e < 0) ThrowNoEnv();
         return UnifyCells(_stack[_e + EnvY1Offset + permSlot], Cell.Ref(heapIdx));
     }
 
@@ -1143,10 +1162,34 @@ public sealed partial class Engine
     /// variable to it) or read mode (when the dereferenced cell is a matching STR) or
     /// fails. The <see cref="UnifyPointer"/> is positioned at the first argument cell.
     /// </summary>
+    // Chunk 428: split like GetList (chunk 353) — an AggressiveInlining
+    // fast path for the read-mode case where the register directly holds
+    // an inline STR cell (ADR-017: the Str tag rides in the referring
+    // slot, so no deref, no allocation — the common case when matching an
+    // already-built compound), and a NoInlining cold body for everything
+    // else (deref, var-binding write mode, attvar, fail).
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public bool GetStructure(int functorId, int regIdx)
     {
         _reservedWrite = false;   // ADR-020: head matching is never reserved
         Cell regCell = _registers[regIdx];
+        if (regCell.Tag == Tag.Str)
+        {
+            int functorIdx = regCell.AsHeapIndex;
+            if (_heap[functorIdx].AsFunctorId != functorId)
+                return false;
+            _writeMode = false;
+            _unifyPointer = functorIdx + 1;
+            return true;
+        }
+        return GetStructureSlow(functorId, regCell);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private bool GetStructureSlow(int functorId, Cell regCell)
+    {
         int finalAddr = -1;
         Cell finalCell = regCell;
         // A register may hold a REF or — once chunk 77's attvars exist —
@@ -2615,6 +2658,11 @@ public sealed partial class Engine
             TrailBinding(varAddr);
     }
 
+    // Chunk 428 — AggressiveInlining: with the capacity compare now inline
+    // in EnsureBindingTrailCapacity this whole method flattens into the
+    // Bind call sites as compare + store + increment.
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     private void TrailBinding(int heapIdx)
     {
         EnsureBindingTrailCapacity(1);
@@ -3023,8 +3071,30 @@ public sealed partial class Engine
     /// </summary>
     private bool UnifyLis(int hA, int hB)
     {
-        if (!Unify(hA, hB)) return false;
-        return Unify(hA + 1, hB + 1);
+        // Chunk 428: walk the list spine iteratively. The previous shape
+        // (Unify head, then Unify tails re-entering UnifyLis) recursed one
+        // C# frame per element, so a long list risked the stack overflow
+        // acknowledged in UnifyStr's doc note. Heads still unify through
+        // the normal recursive call (nesting depth, not spine length); the
+        // tails are deref'd here and the loop continues while both remain
+        // cons cells, delegating anything else to the general Unify.
+        while (true)
+        {
+            if (!Unify(hA, hB)) return false;
+            int aAddr = Deref(hA + 1);
+            int bAddr = Deref(hB + 1);
+            if (aAddr == bAddr) { Profiler.Unify(); return true; }   // the tail Unify the recursion used to count
+            Cell aCell = _heap[aAddr];
+            Cell bCell = _heap[bAddr];
+            if (aCell.Tag == Tag.Lis && bCell.Tag == Tag.Lis)
+            {
+                Profiler.Unify();   // the tail Unify the recursion used to count
+                hA = aCell.AsHeapIndex;
+                hB = bCell.AsHeapIndex;
+                continue;
+            }
+            return Unify(aAddr, bAddr);
+        }
     }
 
     /// <summary>Cell-based occurs-check unification (ADR-017) — the
@@ -3587,15 +3657,38 @@ public sealed partial class Engine
         return (count, floor);
     }
 
+    // Chunk 428 — each wrapper carries the fast capacity compare inline
+    // (the AllocateHeap pattern at the top of this file) so the per-push
+    // cost at every TrailBinding / PushChoicePoint / Allocate / extra-trail
+    // write is one compare + predicted-not-taken branch. GrowIfNeeded's
+    // while loop made it non-inlinable, so before this every capacity
+    // check was a real call.
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     private void EnsureStackCapacity(int extra)
-        => GrowIfNeeded(ref _stack, _stackTop, extra, _config.MaxStackSize, "stack");
+    {
+        if (_stackTop + extra > _stack.Length)
+            GrowIfNeeded(ref _stack, _stackTop, extra, _config.MaxStackSize, "stack");
+    }
 
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     private void EnsureBindingTrailCapacity(int extra)
-        => GrowIfNeeded(ref _bindingTrail, _bindingTrailTop, extra, _config.MaxBindingTrailSize, "binding trail");
+    {
+        if (_bindingTrailTop + extra > _bindingTrail.Length)
+            GrowIfNeeded(ref _bindingTrail, _bindingTrailTop, extra, _config.MaxBindingTrailSize, "binding trail");
+    }
 
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     private void EnsureExtraTrailCapacity(int extra)
-        => GrowIfNeeded(ref _extraTrail, _extraTrailTop, extra, _config.MaxExtraTrailSize, "extra trail");
+    {
+        if (_extraTrailTop + extra > _extraTrail.Length)
+            GrowIfNeeded(ref _extraTrail, _extraTrailTop, extra, _config.MaxExtraTrailSize, "extra trail");
+    }
 
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static void GrowIfNeeded<T>(ref T[] buffer, int top, int extra, int maxSize, string name)
     {
         long required = (long)top + extra;
@@ -3717,9 +3810,26 @@ public sealed partial class Engine
         return true;
     }
 
-    private bool AreLisStructurallyEqual(int aHeadIdx, int bHeadIdx) =>
-        AreStructurallyEqual(_heap[aHeadIdx], _heap[bHeadIdx])
-        && AreStructurallyEqual(_heap[aHeadIdx + 1], _heap[bHeadIdx + 1]);
+    private bool AreLisStructurallyEqual(int aHeadIdx, int bHeadIdx)
+    {
+        // Chunk 428: loop the spine (mirrors UnifyLis) so ==/2 over a long
+        // list does not recurse one C# frame per element. Resolving a tail
+        // is idempotent, so handing a non-cons pair to AreStructurallyEqual
+        // (which resolves again) is exact.
+        while (true)
+        {
+            if (!AreStructurallyEqual(_heap[aHeadIdx], _heap[bHeadIdx])) return false;
+            Cell ta = ResolveForStructuralCompare(_heap[aHeadIdx + 1]);
+            Cell tb = ResolveForStructuralCompare(_heap[bHeadIdx + 1]);
+            if (ta.Tag == Tag.Lis && tb.Tag == Tag.Lis)
+            {
+                aHeadIdx = ta.AsHeapIndex;
+                bHeadIdx = tb.AsHeapIndex;
+                continue;
+            }
+            return AreStructurallyEqual(ta, tb);
+        }
+    }
 
     /// <summary>Sets <c>CP</c> directly. The interpreter uses this from the <c>call</c>
     /// instruction; tests use it to seed the engine state before running a fragment.

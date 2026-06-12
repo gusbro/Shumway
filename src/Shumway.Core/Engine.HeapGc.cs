@@ -47,7 +47,21 @@ public sealed partial class Engine
     /// <summary>When true, <see cref="MaybeCollectHeap"/> collects at
     /// every safe point — the ADR-016 fuzz mode used to validate
     /// relocation against every query shape in the test suite.</summary>
-    public bool GcStressMode { get => _gcStressMode; set => _gcStressMode = value; }
+    public bool GcStressMode
+    {
+        get => _gcStressMode;
+        set { _gcStressMode = value; UpdateGcDiagActive(); }
+    }
+
+    // Chunk 428 — single "any diag knob set" flag, maintained at the
+    // places _gcStressMode / _gcOnlyAt / _gcUpTo are written (this setter
+    // + DiagReadGcOverrides), so the steady-state MaybeCollectHeap check
+    // is one volatile read + one fused compare instead of five sequential
+    // field tests per safe point.
+    private bool _gcDiagActive;
+
+    private void UpdateGcDiagActive()
+        => _gcDiagActive = _gcStressMode || _gcOnlyAt >= 0 || _gcUpTo >= 0;
 
     /// <summary>Called at engine safe points (goal boundaries — see the
     /// interpreter's dispatch / resume-marker sites) to run a collection
@@ -92,6 +106,17 @@ public sealed partial class Engine
     /// not yet cleared.</summary>
     public bool IsCancellationRequested => _cancelRequested;
 
+    // Chunk 428 — hot/cold split. The guard is AggressiveInlining so each
+    // safe-point call site inlines to: a volatile _cancelRequested read +
+    // one compare (the diag flag and the watermark, fused into a single
+    // early return on the steady-state path). Everything that can actually
+    // do work — cancellation throw, diag modes, the collection + re-arm —
+    // lives in the NoInlining slow body. NB: when auto-collection is
+    // disabled (_gcThreshold <= 0) the `_heapTop < _gcThreshold` test is
+    // never true, so those (test-only) configurations pay the cold call;
+    // the slow body's threshold check keeps the no-collect behavior.
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public void MaybeCollectHeap()
     {
         // Cooperative cancellation: checked at EVERY safe point (not only at the
@@ -101,7 +126,21 @@ public sealed partial class Engine
         // predicted not-taken, so the steady-state cost is ~one read per safe
         // point.
         if (_cancelRequested)
-            throw new OperationCanceledException("Prolog query cancelled at a safe point.");
+            ThrowQueryCancelled();
+        if (!_gcDiagActive && _heapTop < _gcThreshold) return;
+        MaybeCollectHeapSlow();
+    }
+
+    [System.Diagnostics.CodeAnalysis.DoesNotReturn]
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static void ThrowQueryCancelled()
+        => throw new OperationCanceledException("Prolog query cancelled at a safe point.");
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void MaybeCollectHeapSlow()
+    {
         if (_gcOnlyAt >= 0)
         {
             _gcSafePointCount++;
