@@ -10,8 +10,10 @@ namespace Shumway.Tests.Embedding;
 /// <see cref="ShmoCompiler.SilentlyIgnoredDirectives"/> (covered in
 /// <see cref="Chunk436Tests"/>, which adapts to the seed).</item>
 /// <item>Backquote char-code literals (<c>`x</c>) under arity_compat
-/// only — same INTEGER token as <c>0'x</c>, escapes included. Flag off:
-/// still an unlexable character (error diagnostic).</item>
+/// only — same INTEGER token as <c>0'x</c>. Flag off: still an
+/// unlexable character (error diagnostic). (Chunk 439 revised the
+/// escape rule: the character after the backquote is taken LITERALLY,
+/// no escape processing — see <see cref="Chunk439Tests"/>.)</item>
 /// <item>Literal backslash inside <c>'...'</c> quoted atoms under
 /// arity_compat only — no escape processing; <c>''</c> doubling still
 /// escapes the quote. Flag off: ISO escapes unchanged.</item>
@@ -28,15 +30,16 @@ public class Chunk437Tests
     // ------------------------------------------------------------------
 
     [Fact]
-    public void Backquote_InList_WithEscapes_FlagOn()
+    public void Backquote_InList_FlagOn()
     {
         var e = new PrologEngine();
-        // Prolog source: codes([`a, `\n, `\\]).  — expect [97, 10, 92],
-        // exactly what 0'a, 0'\n, 0'\\ would produce.
+        // Prolog source: codes([`a, `b, `\]).  — expect [97, 98, 92].
+        // Chunk 439: the char after the backquote is taken literally
+        // (Arity has no escape processing here), so `\ is 92 directly.
         e.ConsultString(
             ":- set_prolog_flag(arity_compat, true).\n" +
-            "codes([`a, `\\n, `\\\\]).\n");
-        Assert.True(e.Query("codes([97, 10, 92]).").Success);
+            "codes([`a, `b, `\\]).\n");
+        Assert.True(e.Query("codes([97, 98, 92]).").Success);
     }
 
     [Fact]

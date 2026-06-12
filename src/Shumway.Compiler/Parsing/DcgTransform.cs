@@ -92,6 +92,29 @@ public static class DcgTransform
             return (goal, sOut);
         }
 
+        // Double-quoted string terminal (chunk 439 — standard DCG, not
+        // dialect-gated). Under double_quotes = codes / chars the parser
+        // already expanded "ab" into a cons list at parse time, so the
+        // terminal-list case above covers those modes. Under the default
+        // `string` mode the literal survives as a StringTerm; a DCG
+        // terminal must still mean "consume these characters", so expand
+        // to the equivalent code-list terminal (Shumway's PSTR is a
+        // compact character-code list, so codes are the representation a
+        // string already unifies with): "ab" emits
+        // sIn = [0'a, 0'b | sOut]; the empty string "" consumes nothing
+        // (S0 = S), mirroring the [] empty terminal.
+        if (body is StringTerm str)
+        {
+            if (str.Content.Length == 0)
+                return (new AtomTerm("true"), sIn);
+            var sOut = FreshState(ref counter);
+            Term acc = sOut;
+            for (int i = str.Content.Length - 1; i >= 0; i--)
+                acc = new CompoundTerm(".", new Term[] { new IntTerm(str.Content[i]), acc });
+            Term goal = new CompoundTerm("=", new[] { (Term)sIn, acc });
+            return (goal, sOut);
+        }
+
         // Prolog escape: { G } — emit G as a plain goal, don't thread sIn.
         if (body is CompoundTerm { Functor: "{}" } brace && brace.Args.Length == 1)
             return (brace.Args[0], sIn);

@@ -484,22 +484,35 @@ public sealed class Lexer
         return new Token(TokenKind.Integer, pos, intSource) { BigValue = big, HasBigValue = true };
     }
 
-    /// <summary>Phase 30 chunk 437 — Arity backquote char-code literal
-    /// (<c>`x</c>), arity_compat only. Arity writes character codes as a
-    /// backquote followed by one character; the corpus uses them in list
-    /// and argument positions (<c>[_, `x|_]</c>). Tokenizes to the same
-    /// INTEGER token the ISO <c>0'x</c> form produces, sharing
-    /// <see cref="ReadCharCodeLiteral"/> — so escape sequences behave
-    /// exactly like <c>0'</c> (<c>`\n</c> is 10, <c>`\\</c> is 92, …).
+    /// <summary>Phase 30 chunks 437/439 — Arity backquote char-code
+    /// literal (<c>`x</c>), arity_compat only. Arity writes character
+    /// codes as a backquote followed by one character; the corpus uses
+    /// them in list and argument positions (<c>[_, `x|_]</c>). Tokenizes
+    /// to the same INTEGER token the ISO <c>0'x</c> form produces — but
+    /// unlike <c>0'</c>, Arity does NOT process escape sequences after
+    /// the backquote (chunk 439, consistent with the chunk-437
+    /// literal-backslash rule for <c>'...'</c> under the flag): the NEXT
+    /// character is taken literally, whatever it is — <c>`\</c> is 92,
+    /// <c>`)</c> is 41, <c>`'</c> is 39, a backquote followed by a
+    /// space is 32. A backquote at end of input or immediately followed
+    /// by a line break is an error diagnostic (a code-of-newline is not
+    /// a shape the corpus writes; far more likely a stray backquote).
     /// Without the flag the backquote stays an unlexable character
     /// (recovered as a diagnostic per chunk 436).</summary>
     private Token ParseBackquoteCharLiteral(SourcePosition pos)
     {
         int start = _offset;
         Advance();   // the backquote
-        int code = ReadCharCodeLiteral(pos);
+        if (_offset >= _source.Length)
+            throw new LexerException(
+                $"Unterminated ` character-code literal at {pos}.", pos);
+        char c = _source[_offset];
+        if (c == '\n' || c == '\r')
+            throw new LexerException(
+                $"` character-code literal followed by a line break at {pos}.", pos);
+        Advance();
         return new Token(TokenKind.Integer, pos, _source[start.._offset])
-            { IntValue = code };
+            { IntValue = c };
     }
 
     private int ReadCharCodeLiteral(SourcePosition pos)
@@ -564,7 +577,8 @@ public sealed class Lexer
                 else
                 {
                     Advance();
-                    return new Token(TokenKind.Atom, pos, sb.ToString());
+                    return new Token(TokenKind.Atom, pos, sb.ToString())
+                        { WasQuoted = true };
                 }
             }
             else if (c == '\\' && !ArityCompat)
@@ -613,7 +627,8 @@ public sealed class Lexer
                 else
                 {
                     Advance();
-                    return new Token(TokenKind.Atom, pos, sb.ToString());
+                    return new Token(TokenKind.Atom, pos, sb.ToString())
+                        { WasQuoted = true };
                 }
             }
             else

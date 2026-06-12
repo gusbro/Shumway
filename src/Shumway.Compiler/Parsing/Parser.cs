@@ -390,7 +390,11 @@ public sealed class Parser
                 // back to before the `[!` rather than re-entering the snip.
                 // Trade-off: a list whose first element is the cut atom now
                 // needs to be written `[(!), ...]` instead of `[!, ...]`.
-                if (PeekToken().Kind == TokenKind.Atom && PeekToken().Text == "!")
+                // A QUOTED '!' is never a snip opener (chunk 439): the
+                // Arity corpus writes lists like ['!', Token], which must
+                // parse as ordinary two-element lists.
+                if (PeekToken().Kind == TokenKind.Atom && PeekToken().Text == "!"
+                    && !PeekToken().WasQuoted)
                 {
                     NextToken();   // consume the opening '!'
                     Term snipBody = ReadTermInternal(1200, out _);
@@ -498,6 +502,15 @@ public sealed class Parser
         while (PeekToken().Kind == TokenKind.Comma)
         {
             NextToken();
+            // Arity tolerates a dangling comma at the end of an argument
+            // list (chunk 439; subviews.pl: `ifthenelse(..., save_old_mod,
+            // % comment \n )`) — under the flag a comma immediately
+            // followed by the closing `)` is treated as if absent. The
+            // narrowest tolerance the corpus needs: arg lists only
+            // (closing == RParen), never lists/curlies, never flag-off.
+            if (_flags.ArityCompat && closing == TokenKind.RParen
+                && PeekToken().Kind == TokenKind.RParen)
+                break;
             args.Add(ReadTermInternal(999, out _));
         }
         ExpectKind(closing);
