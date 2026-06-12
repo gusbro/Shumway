@@ -28,7 +28,33 @@ public static class Materializer
     /// floats, strings, lists, compounds, and variables return <c>Ref</c>
     /// or <c>Lis</c> cells pointing at freshly-allocated heap regions.</summary>
     public static Cell MaterializeAsCell(Engine engine, Term term)
-        => MaterializeAsCell(engine, term, new Dictionary<string, int>());
+    {
+        // chunk 432: the per-call variable-map Dictionary is pooled on the
+        // engine (clear-on-use). Variable identity must NOT leak across
+        // calls — the clear before each use preserves the "share within a
+        // single call" contract exactly as a fresh dictionary did. The
+        // depth counter guards re-entrancy: only the outermost call uses
+        // the pooled instance; a nested one allocates fresh.
+        engine.MaterializeDepth++;
+        try
+        {
+            Dictionary<string, int> varMap;
+            if (engine.MaterializeDepth == 1)
+            {
+                varMap = engine.MaterializeScratchMap ??= new Dictionary<string, int>();
+                varMap.Clear();
+            }
+            else
+            {
+                varMap = new Dictionary<string, int>();
+            }
+            return MaterializeAsCell(engine, term, varMap);
+        }
+        finally
+        {
+            engine.MaterializeDepth--;
+        }
+    }
 
     private static Cell MaterializeAsCell(
         Engine engine, Term term, Dictionary<string, int> varMap)

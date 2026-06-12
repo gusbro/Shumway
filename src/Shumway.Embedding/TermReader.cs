@@ -30,10 +30,47 @@ public static class TermReader
     /// into an AST <see cref="Term"/>. Follows REF chains and recurses into
     /// compound / list structures; cycles are broken via a synthetic
     /// <c>VarTerm("_C{addr}")</c> placeholder.</summary>
-    public static Term Materialize(Engine engine, int heapIdx) =>
-        Materialize(engine, heapIdx, new HashSet<int>());
+    public static Term Materialize(Engine engine, int heapIdx)
+    {
+        // chunk 432: the cycle-detection HashSet used to be allocated per
+        // call — one per findall solution. It is now (a) created lazily,
+        // only when the walk first meets a compound / list (atoms, ints
+        // and unbound vars never touch it), and (b) pooled on the engine,
+        // clear-on-use. The depth counter guards re-entrancy: only the
+        // outermost walk may use the pooled instance; a nested walk
+        // allocates fresh.
+        engine.TermWalkDepth++;
+        try
+        {
+            HashSet<int>? active = null;
+            return Materialize(engine, heapIdx, ref active);
+        }
+        finally
+        {
+            engine.TermWalkDepth--;
+        }
+    }
 
-    private static Term Materialize(Engine engine, int heapIdx, HashSet<int> active)
+    /// <summary>Lazily provides the cycle-detection set for the current walk
+    /// (chunk 432) — pooled at depth 1, freshly allocated when nested.</summary>
+    private static HashSet<int> EnsureActive(Engine engine, ref HashSet<int>? active)
+    {
+        if (active is null)
+        {
+            if (engine.TermWalkDepth == 1)
+            {
+                active = engine.TermWalkScratchSet ??= new HashSet<int>();
+                active.Clear();
+            }
+            else
+            {
+                active = new HashSet<int>();
+            }
+        }
+        return active;
+    }
+
+    private static Term Materialize(Engine engine, int heapIdx, ref HashSet<int>? active)
     {
         int derefAddr = engine.Deref(heapIdx);
         Cell cell = engine.GetHeap(derefAddr);
@@ -52,14 +89,14 @@ public static class TermReader
             Tag.Int => new IntTerm(cell.AsInt),
             Tag.BigInt => new BigIntTerm(engine.AsBigInt(cell)),
             Tag.Float => new FloatTerm(Cell.DecodeFloat(cell, engine.GetHeap(cell.FloatPairedIndex))),
-            Tag.Str => MaterializeCompoundAt(engine, cell.AsHeapIndex, active),
+            Tag.Str => MaterializeCompoundAt(engine, cell.AsHeapIndex, ref active),
             // A bare FUNCTOR cell reached as a value is the head of the compound
             // that starts at this address (functor + args). ADR-017 normally
             // wraps it in a STR ref, but some paths (e.g. a reserved/inline
             // build whose ref was elided) land directly on the functor; treat it
             // as the compound rooted here.
-            Tag.Functor => MaterializeCompoundAt(engine, derefAddr, active),
-            Tag.Lis => MaterializeLis(engine, cell, active),
+            Tag.Functor => MaterializeCompoundAt(engine, derefAddr, ref active),
+            Tag.Lis => MaterializeLis(engine, cell, ref active),
             Tag.Pstr => new StringTerm(engine.AsPstrString(derefAddr)),
             // Foreign cells round-trip as `'$foreign'(N)` compounds — the
             // payload's identity (the engine's foreign table entry) is
@@ -73,8 +110,11 @@ public static class TermReader
         };
     }
 
-    private static Term MaterializeCompoundAt(Engine engine, int functorIdx, HashSet<int> active)
+    private static Term MaterializeCompoundAt(Engine engine, int functorIdx, ref HashSet<int>? activeRef)
     {
+        // chunk 432: first compound met on this walk creates (or rents) the
+        // cycle set.
+        HashSet<int> active = EnsureActive(engine, ref activeRef);
         // Chunk 148: if we're already inside materialising this exact
         // STR (same functor address), return the cycle marker.
         if (!active.Add(functorIdx))
@@ -87,7 +127,7 @@ public static class TermReader
 
             var args = new Term[arity];
             for (int i = 0; i < arity; i++)
-                args[i] = Materialize(engine, functorIdx + 1 + i, active);
+                args[i] = Materialize(engine, functorIdx + 1 + i, ref activeRef);
             // chunk 431: seed the node's cached functor id from the cell.
             return new CompoundTerm(name, args, functorCell.AsFunctorId);
         }
@@ -97,8 +137,10 @@ public static class TermReader
         }
     }
 
-    private static Term MaterializeLis(Engine engine, Cell lisCell, HashSet<int> active)
+    private static Term MaterializeLis(Engine engine, Cell lisCell, ref HashSet<int>? activeRef)
     {
+        // chunk 432: lazy/pooled cycle set — see EnsureActive.
+        HashSet<int> active = EnsureActive(engine, ref activeRef);
         // Walk the list spine iteratively: a recursive descent down the
         // tail would use one C# stack frame per element and overflow on a
         // long list. Only the (shallow) elements recurse.
@@ -130,13 +172,13 @@ public static class TermReader
                     return cycleResult;
                 }
                 spineAddrs.Add(headIdx);
-                heads.Add(Materialize(engine, headIdx, active));
+                heads.Add(Materialize(engine, headIdx, ref activeRef));
                 tailIdx = headIdx + 1;
                 Cell tailCell = engine.GetHeap(engine.Deref(tailIdx));
                 if (tailCell.Tag != Tag.Lis) break;
                 cur = tailCell;
             }
-            Term result = Materialize(engine, tailIdx, active);
+            Term result = Materialize(engine, tailIdx, ref activeRef);
             for (int i = heads.Count - 1; i >= 0; i--)
                 result = new CompoundTerm(".", new[] { heads[i], result }, consFid);
             return result;

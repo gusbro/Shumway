@@ -19,6 +19,12 @@ public sealed partial class Engine
     private bool[]? _gcMarked;
     private int[]? _gcForward;
     private int[]? _gcWork;
+    // chunk 432: mark-phase state for the de-closured GcMarkCell /
+    // GcMarkReferents (they were closure-capturing locals invoked through
+    // Action<int> / Action<Cell> — a delegate call per register / stack
+    // slot / trail entry per collection). Valid only inside CollectHeap.
+    private int _gcWorkTop;
+    private int _gcOldTop;
 
     // Adaptive auto-collection threshold (cells). Starts at the config
     // value; after each collection it is raised to twice the surviving
@@ -193,87 +199,20 @@ public sealed partial class Engine
         // ---- Phase 1: mark every cell reachable from the roots. ----
         bool[] marked = _gcMarked is { } m && m.Length >= oldTop ? m : (_gcMarked = new bool[oldTop]);
         System.Array.Clear(marked, 0, oldTop);
-        int[] work = _gcWork is { } w && w.Length >= 1024 ? w : (_gcWork = new int[1024]);
-        int workTop = 0;
+        if (_gcWork is null || _gcWork.Length < 1024) _gcWork = new int[1024];
+        // chunk 432: the mark primitives are private methods over these
+        // fields (direct calls from MarkRoots / the trace loop); delegates
+        // remain only for the external OnGcMark hook.
+        _gcWorkTop = 0;
+        _gcOldTop = oldTop;
 
-        // Local mark/enqueue. Guards bounds defensively — a root should
-        // never reference outside [0, oldTop), but a stray value must not
-        // crash the collector.
-        void MarkCell(int addr)
-        {
-            if ((uint)addr >= (uint)oldTop || marked[addr]) return;
-            marked[addr] = true;
-            if (workTop == work.Length)
-            {
-                System.Array.Resize(ref work, work.Length * 2);
-                _gcWork = work;
-            }
-            work[workTop++] = addr;
-        }
+        MarkRoots(oldTop);
+        OnGcMark?.Invoke(GcMarkCell, GcMarkReferents);
 
-        // Enqueue the cells a value cell references (without marking the
-        // value cell itself — used both for heap cells during the trace
-        // and for root cells that live off-heap in registers / Y slots).
-        // The whole stack is scanned conservatively (see MarkRoots), so a
-        // value cell can be a genuine live reference OR a stale leftover in
-        // a dead slot. Every payload is bounds-guarded, and a Str is only
-        // followed when its target really is a Functor cell — a stale Str
-        // pointing at a non-functor (or out of range) is left as a leaf
-        // rather than chasing garbage into FunctorTable. Control words are
-        // never seen here: they are Tag.RawInt, which falls through to the
-        // leaf default. The worst a stale-but-plausible ref can do is
-        // over-retain (keep a still-addressable cell alive) — never crash
-        // and never corrupt.
-        void MarkReferents(Cell c)
-        {
-            switch (c.Tag)
-            {
-                case Tag.Ref:
-                case Tag.AttVar:
-                    MarkCell(c.AsHeapIndex);
-                    break;
-                case Tag.Str:
-                {
-                    int f = c.AsHeapIndex;
-                    if ((uint)f >= (uint)oldTop || _heap[f].Tag != Tag.Functor) break;
-                    MarkCell(f);
-                    var (_, arity) = FunctorTable.Lookup(_heap[f].AsFunctorId);
-                    for (int i = 1; i <= arity && f + i < oldTop; i++) MarkCell(f + i);
-                    break;
-                }
-                case Tag.Lis:
-                {
-                    int h = c.AsHeapIndex;
-                    if ((uint)(h + 1) >= (uint)oldTop) break;
-                    MarkCell(h);
-                    MarkCell(h + 1);
-                    break;
-                }
-                case Tag.Float:
-                    MarkCell(c.FloatPairedIndex);
-                    break;
-                case Tag.Pstr:
-                {
-                    int bufStart = c.AsPstrBufferIndex;
-                    int bufCount = (c.AsPstrOffset + c.AsPstrLength
-                                    + Cell.PstrCodeUnitsPerBuffer - 1)
-                                   / Cell.PstrCodeUnitsPerBuffer;
-                    if ((uint)(bufStart + bufCount) >= (uint)oldTop) break;
-                    for (int i = 0; i < bufCount; i++) MarkCell(bufStart + i);
-                    MarkCell(bufStart + bufCount);   // logical tail cell
-                    break;
-                }
-                // Atom, Int, Functor, BigInt, String, Foreign, PstrBuffer,
-                // RawInt (control words): leaves.
-            }
-        }
-
-        MarkRoots(MarkReferents, MarkCell, oldTop);
-        OnGcMark?.Invoke(MarkCell, MarkReferents);
-
-        // Trace to fixpoint.
-        while (workTop > 0)
-            MarkReferents(_heap[work[--workTop]]);
+        // Trace to fixpoint. (_gcWork can be resized by GcMarkCell, so
+        // re-read the field each iteration.)
+        while (_gcWorkTop > 0)
+            GcMarkReferents(_heap[_gcWork[--_gcWorkTop]]);
 
         // ---- Phase 2: forwarding addresses (order-preserving slide). ----
         // forward[i] = number of marked cells in [0, i). New address of a
@@ -347,6 +286,83 @@ public sealed partial class Engine
 
     private static bool InBounds(int idx, int oldTop) => (uint)idx < (uint)oldTop;
 
+    // chunk 432 — de-closured mark/enqueue (was a closure local invoked
+    // through Action<int>). Guards bounds defensively — a root should
+    // never reference outside [0, _gcOldTop), but a stray value must not
+    // crash the collector.
+    private void GcMarkCell(int addr)
+    {
+        bool[] marked = _gcMarked!;
+        if ((uint)addr >= (uint)_gcOldTop || marked[addr]) return;
+        marked[addr] = true;
+        int[] work = _gcWork!;
+        if (_gcWorkTop == work.Length)
+        {
+            System.Array.Resize(ref work, work.Length * 2);
+            _gcWork = work;
+        }
+        work[_gcWorkTop++] = addr;
+    }
+
+    // chunk 432 — de-closured referent enqueue (was a closure local invoked
+    // through Action<Cell>). Enqueues the cells a value cell references
+    // (without marking the value cell itself — used both for heap cells
+    // during the trace and for root cells that live off-heap in registers /
+    // Y slots). The whole stack is scanned conservatively (see MarkRoots),
+    // so a value cell can be a genuine live reference OR a stale leftover in
+    // a dead slot. Every payload is bounds-guarded, and a Str is only
+    // followed when its target really is a Functor cell — a stale Str
+    // pointing at a non-functor (or out of range) is left as a leaf
+    // rather than chasing garbage into FunctorTable. Control words are
+    // never seen here: they are Tag.RawInt, which falls through to the
+    // leaf default. The worst a stale-but-plausible ref can do is
+    // over-retain (keep a still-addressable cell alive) — never crash
+    // and never corrupt.
+    private void GcMarkReferents(Cell c)
+    {
+        int oldTop = _gcOldTop;
+        switch (c.Tag)
+        {
+            case Tag.Ref:
+            case Tag.AttVar:
+                GcMarkCell(c.AsHeapIndex);
+                break;
+            case Tag.Str:
+            {
+                int f = c.AsHeapIndex;
+                if ((uint)f >= (uint)oldTop || _heap[f].Tag != Tag.Functor) break;
+                GcMarkCell(f);
+                var (_, arity) = FunctorTable.Lookup(_heap[f].AsFunctorId);
+                for (int i = 1; i <= arity && f + i < oldTop; i++) GcMarkCell(f + i);
+                break;
+            }
+            case Tag.Lis:
+            {
+                int h = c.AsHeapIndex;
+                if ((uint)(h + 1) >= (uint)oldTop) break;
+                GcMarkCell(h);
+                GcMarkCell(h + 1);
+                break;
+            }
+            case Tag.Float:
+                GcMarkCell(c.FloatPairedIndex);
+                break;
+            case Tag.Pstr:
+            {
+                int bufStart = c.AsPstrBufferIndex;
+                int bufCount = (c.AsPstrOffset + c.AsPstrLength
+                                + Cell.PstrCodeUnitsPerBuffer - 1)
+                               / Cell.PstrCodeUnitsPerBuffer;
+                if ((uint)(bufStart + bufCount) >= (uint)oldTop) break;
+                for (int i = 0; i < bufCount; i++) GcMarkCell(bufStart + i);
+                GcMarkCell(bufStart + bufCount);   // logical tail cell
+                break;
+            }
+            // Atom, Int, Functor, BigInt, String, Foreign, PstrBuffer,
+            // RawInt (control words): leaves.
+        }
+    }
+
     // Relocate a bare heap-address root, leaving an out-of-range index
     // (a transient/dead slot, never a live heap cell) untouched.
     private static int RelocIndex(int idx, int[] forward)
@@ -369,26 +385,28 @@ public sealed partial class Engine
     /// a real tagged cell that gets marked regardless of which frame owns
     /// it. A stale reference in a dead slot can only over-retain a still-
     /// valid cell, never corrupt — and never crashes, thanks to the
-    /// bounds + Str-functor guards in MarkReferents. This avoids the
+    /// bounds + Str-functor guards in GcMarkReferents. This avoids the
     /// fragile precise frame-liveness walk, which under-counted roots in
     /// the tabling fixpoint's reused stack. Trails and catch frames carry
-    /// bare heap indices, so they are marked explicitly.</summary>
-    private void MarkRoots(System.Action<Cell> markReferents, System.Action<int> markCell, int oldTop)
+    /// bare heap indices, so they are marked explicitly. chunk 432: calls
+    /// the de-closured <see cref="GcMarkReferents"/> /
+    /// <see cref="GcMarkCell"/> directly — no per-slot delegate invoke.</summary>
+    private void MarkRoots(int oldTop)
     {
         // X registers — conservative: scan the whole bank.
         for (int i = 0; i < _registers.Length; i++)
-            markReferents(_registers[i]);
+            GcMarkReferents(_registers[i]);
 
         // Entire control stack — conservative. Control words are RawInt
         // (leaves); every real ref is marked no matter which frame it is in.
         for (int i = 0; i < _stackTop; i++)
-            markReferents(_stack[i]);
+            GcMarkReferents(_stack[i]);
 
         // Binding trail: each entry is the heap address of a bound
         // variable that a backtrack will reset, so the cell must stay
         // valid (root) and the entry is relocated later.
         for (int k = 0; k < _bindingTrailTop; k++)
-            markCell(_bindingTrail[k]);
+            GcMarkCell(_bindingTrail[k]);
 
         // Extra trail: ValueChange entries carry a heap address and an old
         // cell value that a backtrack restores; both are roots. The other
@@ -399,8 +417,8 @@ public sealed partial class Engine
             var e = _extraTrail[k];
             if (e.Type == TrailType.ValueChange)
             {
-                markCell(e.HeapIdx);
-                markReferents(e.OldValue);
+                GcMarkCell(e.HeapIdx);
+                GcMarkReferents(e.OldValue);
             }
         }
 
@@ -411,8 +429,8 @@ public sealed partial class Engine
         for (int i = 0; i < _catchFrames.Count; i++)
         {
             CatchFrame cf = _catchFrames[i];
-            markCell(cf.CatcherHeapIdx);
-            markCell(cf.RecoveryHeapIdx);
+            GcMarkCell(cf.CatcherHeapIdx);
+            GcMarkCell(cf.RecoveryHeapIdx);
         }
     }
 

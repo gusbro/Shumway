@@ -166,24 +166,28 @@ public static class AtomTable
     public static Atom Intern(string name, bool permanent = false)
     {
         ArgumentNullException.ThrowIfNull(name);
-        // Lock-free fast path: a permanent atom satisfies any intern
-        // request (permanent or not) because its identity is stable and it
-        // is never collected. Covers the hot tokenizer path and most
-        // predicate-name interning without touching _lock.
-        if (_permanentByName.TryGetValue(name, out var perm))
-            return perm;
-        // Chunk 222: lock-free fast path for transient atoms. The
-        // existing _byName WeakReference is published under _lock but
-        // read here without — ConcurrentDictionary makes that safe.
-        // The WeakReference target may have been GC-collected since
-        // publication; treat that as a miss and fall through. If the
-        // caller asked for permanent: true and the atom we found is
-        // still transient, fall through too so PromoteToPermanentLocked
-        // runs under the lock (rare path — almost every transient
-        // re-intern is a permanent:false request).
-        if (!permanent
-            && _byName.TryGetValue(name, out var liveRef)
-            && liveRef.TryGetTarget(out var alive))
+        if (permanent)
+        {
+            // Lock-free fast path (chunks 213/222, unchanged): a permanent
+            // atom satisfies a permanent intern request directly; its
+            // identity is stable and it is never collected. A transient
+            // hit must NOT short-circuit here — it needs
+            // PromoteToPermanentLocked under the lock.
+            if (_permanentByName.TryGetValue(name, out var perm))
+                return perm;
+        }
+        // chunk 432: ONE lock-free by-name probe for the transient
+        // (permanent:false) path — it used to probe _permanentByName first
+        // (a guaranteed miss for a transient atom, paying a full string
+        // hash) and then _byName. Every live atom of EITHER tier has a
+        // _byName entry, and a permanent's WeakReference target is strongly
+        // held by _permanentById so TryGetTarget always succeeds for it —
+        // so a single _byName hit satisfies a permanent:false request
+        // regardless of tier (chunk 222's safety argument for the
+        // lock-free read of the ConcurrentDictionary still applies; a
+        // GC-collected weak target is a miss and falls through to _lock).
+        else if (_byName.TryGetValue(name, out var liveRef)
+                 && liveRef.TryGetTarget(out var alive))
         {
             return alive;
         }

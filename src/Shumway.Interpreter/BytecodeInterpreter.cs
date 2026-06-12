@@ -751,8 +751,20 @@ public sealed class BytecodeInterpreter
                 // every clause's CheckVisible reads the call's stable view.
                 case Opcode.EnterDynamic:
                 {
-                    var provider = _engine.DbGenerationProvider;
-                    _engine.CurrentViewGen = provider is null ? 0L : provider();
+                    // chunk 432: sample through the shared GenerationBox (one
+                    // field read) instead of invoking the Func<long> provider
+                    // per dynamic-predicate call. The provider remains as the
+                    // fallback for bare-Engine tests that wire it directly.
+                    var box = _engine.DbGenerationBox;
+                    if (box is not null)
+                    {
+                        _engine.CurrentViewGen = box.Value;
+                    }
+                    else
+                    {
+                        var provider = _engine.DbGenerationProvider;
+                        _engine.CurrentViewGen = provider is null ? 0L : provider();
+                    }
                     _engine.SetPc(pc + 1);   // chunk 429
                     break;
                 }

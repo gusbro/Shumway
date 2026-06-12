@@ -89,15 +89,17 @@ public static class AtomListBuiltins
     /// </list></summary>
     public static bool Append(Engine engine)
     {
-        // Walk L1 collecting head cells. Then build new cons cells with
-        // L2 as the final tail.
-        var heads = new List<Cell>();
+        // chunk 432: two-pass det path — walk L1's spine once to count
+        // (and classify the tail), reserve the result cells in one
+        // allocation, then walk again filling. Replaces a List<Cell>
+        // head buffer allocated per call; the det path is now
+        // intermediate-allocation-free.
+        int count = 0;
         Cell cursor = Resolve(engine, engine.GetRegister(0));
         while (cursor.Tag == Tag.Lis)
         {
-            int headIdx = cursor.AsHeapIndex;
-            heads.Add(engine.GetHeap(headIdx));
-            cursor = Resolve(engine, engine.GetHeap(headIdx + 1));
+            count++;
+            cursor = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex + 1));
         }
         if (cursor.Tag == Tag.Ref)
             return AppendSplit(engine, engine.BuiltinReturnPc);
@@ -106,19 +108,24 @@ public static class AtomListBuiltins
 
         Cell l2 = engine.GetRegister(1);
 
-        if (heads.Count == 0)
+        if (count == 0)
             return engine.UnifyRegisters(2, 1);
 
         // Allocate 2N + 1 cells: N pairs of (LIS, head) + 1 tail slot.
-        int start = engine.AllocateHeap(2 * heads.Count + 1);
-        for (int i = 0; i < heads.Count; i++)
+        // (ADR-017 layout: pair i's LIS cell at start + 2i points at its
+        // head cell, start + 2i + 1; the cell after the head — the next
+        // pair's LIS slot, or the final extra slot — is the tail.)
+        int start = engine.AllocateHeap(2 * count + 1);
+        cursor = Resolve(engine, engine.GetRegister(0));
+        for (int i = 0; i < count; i++)
         {
+            int srcHeadIdx = cursor.AsHeapIndex;
             int lisIdx = start + 2 * i;
-            int headIdx = lisIdx + 1;
-            engine.SetHeap(lisIdx, Cell.Lis(headIdx));
-            engine.SetHeap(headIdx, heads[i]);
+            engine.SetHeap(lisIdx, Cell.Lis(lisIdx + 1));
+            engine.SetHeap(lisIdx + 1, engine.GetHeap(srcHeadIdx));
+            cursor = Resolve(engine, engine.GetHeap(srcHeadIdx + 1));
         }
-        engine.SetHeap(start + 2 * heads.Count, l2);
+        engine.SetHeap(start + 2 * count, l2);
 
         return engine.UnifyRegisterWithHeapAt(2, start);
     }

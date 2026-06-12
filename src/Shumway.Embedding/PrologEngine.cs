@@ -524,7 +524,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         {
             var em = new Shumway.Compiler.Wam.BytecodeEmitter();
             em.EmitRetryMeElse(failStub);
-            em.EmitCheckVisible(born: _dbGeneration, died: long.MaxValue);
+            em.EmitCheckVisible(born: _dbGeneration.Value, died: long.MaxValue);
             em.EmitExecute(targetBody);
             return engine.AppendCode(em.ToBytes());
         }
@@ -944,7 +944,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // + execute <bodyAddr>.
             var em = new Shumway.Compiler.Wam.BytecodeEmitter();
             em.EmitTryMeElse(oldHead, arity);
-            em.EmitCheckVisible(born: _dbGeneration, died: long.MaxValue);
+            em.EmitCheckVisible(born: _dbGeneration.Value, died: long.MaxValue);
             em.EmitExecute(bodyAddr);
             int newHead = engine.AppendCode(em.ToBytes());
             prog = engine.CurrentProgram!;
@@ -1004,7 +1004,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                                             : startAddr + em.Position + thisSize;
             if (i == 0) em.EmitTryMeElse(nextAddr, headArity);
             else        em.EmitRetryMeElse(nextAddr);
-            em.EmitCheckVisible(born: _dbGeneration, died: long.MaxValue);
+            em.EmitCheckVisible(born: _dbGeneration.Value, died: long.MaxValue);
             em.EmitExecute(bodies[i]);
         }
         int chunkAddr = engine.AppendCode(em.ToBytes());
@@ -1245,7 +1245,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 if (target == bodyAddr)
                 {
                     int diedAddr = cur + chainHeaderSize + 9;
-                    Shumway.Core.BytecodeIO.WriteInt64(prog, diedAddr, _dbGeneration);
+                    Shumway.Core.BytecodeIO.WriteInt64(prog, diedAddr, _dbGeneration.Value);
                     anyPatched = true;
                 }
                 int next = Shumway.Core.BytecodeIO.ReadInt32(prog, cur + 1);
@@ -1321,7 +1321,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                                             : startAddr + em.Position + thisSize;
             if (i == 0) em.EmitTryMeElse(nextAddr, headArity);
             else        em.EmitRetryMeElse(nextAddr);
-            em.EmitCheckVisible(born: _dbGeneration, died: long.MaxValue);
+            em.EmitCheckVisible(born: _dbGeneration.Value, died: long.MaxValue);
             em.EmitExecute(bodies[i]);
         }
         int chunkAddr = engine.AppendCode(em.ToBytes());
@@ -1382,7 +1382,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return chain.Entries[clauseIndex].NextOperandAddr;
     }
 
-    private long _dbGeneration;
+    // chunk 432: the generation lives in a shared GenerationBox handed to
+    // every Engine this host sets up, so enter_dynamic samples it with a
+    // field read instead of a Func<long> invoke per dynamic call. The ONE
+    // bump site is InvalidateDynamicCache (every assertz / asserta /
+    // retract / abolish funnels through it).
+    private readonly Shumway.Core.GenerationBox _dbGeneration = new();
 
     /// <summary>A monotonic counter bumped by every <c>assertz</c> /
     /// <c>asserta</c> / <c>retract</c> / <c>abolish</c> — the
@@ -1394,7 +1399,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// it land with the dynamic-dispatch chunk that reads them. Also a
     /// useful public signal: an embedder can detect whether the dynamic
     /// database changed since it last looked.</summary>
-    public long DbGeneration => _dbGeneration;
+    public long DbGeneration => _dbGeneration.Value;
 
     /// <summary>Set of functor ids declared <c>:- dynamic</c> across every
     /// module. The set is global so a single shared store can satisfy
@@ -1877,7 +1882,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         {
             if (entry.DiedOperandAddr > 0)
                 Shumway.Core.BytecodeIO.WriteInt64(
-                    program, entry.DiedOperandAddr, _dbGeneration);
+                    program, entry.DiedOperandAddr, _dbGeneration.Value);
             // Chunk 150: stage incremental chunks for GC reclamation.
             if (entry.ChunkAddr >= 0)
                 chain.DeadChunks.Add((entry.ChunkAddr, entry.ChunkLength));
@@ -3543,7 +3548,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // asserta, retract, abolish), so this is the one place the
         // ADR-015 generation clock has to advance and the chunk-158
         // auto-compaction mutation counter ticks.
-        _dbGeneration++;
+        _dbGeneration.Value++;
         _persistentMutationsSinceCompact++;
         DropDynamicPredicateCacheEntry(functorId);
         // Chunk 430 — the functor's clause list changed, so its cached
@@ -6165,10 +6170,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             CurrentStringLiterals = module.StringLiterals,
             CurrentProgram = program,
             // ADR-015 chunk C — bytecode-level dynamic dispatch reads the
-            // host's generation through this callback at every
-            // enter_dynamic opcode (avoids the interpreter depending on
-            // the embedding layer's types).
-            DbGenerationProvider = () => _dbGeneration,
+            // host's generation at every enter_dynamic opcode. chunk 432:
+            // through the shared GenerationBox (a field read) instead of
+            // a Func<long> invoke per dynamic call.
+            DbGenerationBox = _dbGeneration,
             // ADR-015 chunk C step 4: where the fail-stub lives in the
             // prefix. Used by the upcoming incremental-assertz path and
             // by dynamic predicates' last-clause chain instructions.
@@ -6490,7 +6495,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         var emitter = new BytecodeEmitter();
         emitter.EmitRetryMeElse(engine.DynamicFailStubAddr);
         const int NextOperandLocal = 1;        // position of <next> operand
-        emitter.EmitCheckVisible(born: _dbGeneration, died: long.MaxValue);
+        emitter.EmitCheckVisible(born: _dbGeneration.Value, died: long.MaxValue);
         const int DiedOperandLocal = 5 + 9;    // retry_me_else (5) + opcode (1) + born (8)
         int bodyStartLocal = emitter.Position;
         emitter.AppendBytes(compiledClause.Bytecode);
@@ -6613,7 +6618,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         var emitter = new BytecodeEmitter();
         emitter.EmitTryMeElse(chainHeadTarget, arity);
         const int NextOperandLocal = 1;
-        emitter.EmitCheckVisible(born: _dbGeneration, died: long.MaxValue);
+        emitter.EmitCheckVisible(born: _dbGeneration.Value, died: long.MaxValue);
         const int DiedOperandLocal = 9 + 9;            // try_me_else (9) + opcode (1) + born (8)
         int bodyStartLocal = emitter.Position;
         emitter.AppendBytes(compiledClause.Bytecode);
@@ -6706,7 +6711,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         var entry = chain.Entries[clauseIndex];
         var program = engine.CurrentProgram;
         if (program is not null && entry.DiedOperandAddr > 0)
-            BytecodeIO.WriteInt64(program, entry.DiedOperandAddr, _dbGeneration);
+            BytecodeIO.WriteInt64(program, entry.DiedOperandAddr, _dbGeneration.Value);
         // Chunk 150: stage the chunk for free-list reuse on GC, but
         // only when it was an incrementally-allocated chunk (consult-
         // time blocks have ChunkAddr=-1 and can't be freed without

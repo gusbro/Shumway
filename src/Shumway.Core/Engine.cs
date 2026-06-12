@@ -86,6 +86,18 @@ public sealed partial class Engine
     // handler walks it from the top to find a matching catcher.
     private readonly List<CatchFrame> _catchFrames = new();
 
+    // ----- chunk 432: pooled scratch for the embedding layer's term
+    // walkers (TermReader / Materializer — findall runs both once per
+    // solution). Cleared on use rather than allocated per call. The depth
+    // counters guard re-entrancy: only the OUTERMOST walk uses the pooled
+    // instance; a nested walk (e.g. a findall nested inside another
+    // findall's collect) allocates a fresh one. Engines are single-
+    // threaded internally, so no synchronisation is needed.
+    public HashSet<int>? TermWalkScratchSet;
+    public int TermWalkDepth;
+    public Dictionary<string, int>? MaterializeScratchMap;
+    public int MaterializeDepth;
+
     private int _stackTop;
     private int _extraTrailTop;
 
@@ -1915,8 +1927,17 @@ public sealed partial class Engine
     /// <summary>Reads the host's current dynamic-database generation.
     /// Wired by the embedding layer at query setup so the
     /// <c>enter_dynamic</c> opcode can sample it without the interpreter
-    /// having to depend on the embedding layer's types.</summary>
+    /// having to depend on the embedding layer's types. chunk 432: kept as
+    /// the fallback for bare-Engine tests; the production path is
+    /// <see cref="DbGenerationBox"/>, which the interpreter checks first.</summary>
     public Func<long>? DbGenerationProvider { get; set; }
+
+    /// <summary>chunk 432 — the host's generation clock as a shared
+    /// <see cref="GenerationBox"/>: <c>enter_dynamic</c> reads
+    /// <c>Box.Value</c> directly (no delegate invoke per dynamic call).
+    /// Null for bare engines, which fall back to
+    /// <see cref="DbGenerationProvider"/>.</summary>
+    public GenerationBox? DbGenerationBox { get; set; }
 
     /// <summary>ADR-015 chunk C step 4: refreshes the interpreter's
     /// literal pools after an <c>assertz</c> / <c>asserta</c> may have
@@ -2861,6 +2882,17 @@ public sealed partial class Engine
                     var record = _attrTable[home];
                     if (oldValue < 0) record.Remove(mod);
                     else record[mod] = oldValue;
+                    // chunk 432: truncate the side log. entry.HeapIdx is the
+                    // log index assigned at append time (TrailAttrChange),
+                    // and extra-trail entries unwind strictly in reverse
+                    // append order, so every log record at or above this
+                    // index belongs to an entry already unwound (or dropped
+                    // by a cut's CompactTrails, whose surviving entries keep
+                    // their original — lower — indices). Without this the
+                    // log grew unboundedly under clpfd labeling.
+                    if (_attrTrailLog.Count > entry.HeapIdx)
+                        _attrTrailLog.RemoveRange(
+                            entry.HeapIdx, _attrTrailLog.Count - entry.HeapIdx);
                 }
                 break;
             case TrailType.CatchFrame:
@@ -3882,4 +3914,18 @@ public sealed partial class Engine
     internal void SetUnifyPointer(int idx) => _unifyPointer = idx;
 
     internal ReadOnlySpan<int> BindingTrailSpan => _bindingTrail.AsSpan(0, _bindingTrailTop);
+}
+
+/// <summary>chunk 432 — shared mutable holder for the host's dynamic-database
+/// generation (the ADR-015 logical-update-view clock). The embedding layer
+/// keeps ONE box per <c>PrologEngine</c>, increments <c>Value</c> wherever it
+/// bumps the generation, and hands the same box to every <see cref="Engine"/>
+/// it sets up — so the <c>enter_dynamic</c> opcode samples the generation with
+/// a plain field read instead of invoking a <c>Func&lt;long&gt;</c> per
+/// dynamic-predicate call. Single-writer (the host), read by the engine the
+/// host is driving; engine access is serialized by the embedding contract.</summary>
+public sealed class GenerationBox
+{
+    /// <summary>The current generation value.</summary>
+    public long Value;
 }
