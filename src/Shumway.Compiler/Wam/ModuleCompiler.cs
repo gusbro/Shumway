@@ -169,6 +169,20 @@ public sealed class ModuleCompiler
     /// none of its operands carry pool-specific literal ids.</para></summary>
     public static bool IsCachedPredicateReusable(CompiledPredicate pred)
     {
+        // Chunk 430 — the scan below is a pure function of the immutable
+        // bytecode; memoize it on the predicate so the three per-query
+        // call sites (cache reuse here, plus the static / dynamic cache
+        // populate loops at query setup) stop re-walking every cached
+        // predicate's entire bytecode on every query.
+        int memo = pred.PoolFreeMemo;
+        if (memo != 0) return memo == 2;
+        bool result = ComputePoolFree(pred);
+        pred.PoolFreeMemo = result ? 2 : 1;
+        return result;
+    }
+
+    private static bool ComputePoolFree(CompiledPredicate pred)
+    {
         byte[] code = pred.Bytecode;
         int pc = 0;
         while (pc < code.Length)

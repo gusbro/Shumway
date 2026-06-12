@@ -2146,6 +2146,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             _dynamicFunctors.Add(fid);
             if (!_dynamicClauses.ContainsKey(fid))
                 _dynamicClauses[fid] = new List<Clause>();
+            // Chunk 430 — the dynamic-functor set feeds the ModuleRewrite
+            // contexts; this is the one mutation path that doesn't run
+            // through InvalidatePersistent, so advance the derivation
+            // generation explicitly. (Auto-promotion can't actually change
+            // a static rewrite — the promoted functor has no static
+            // clauses, so it was never module-local — but a one-time
+            // re-transform per promotion is cheap insurance.)
+            _derivationGen++;
             return;
         }
 
@@ -3127,6 +3135,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // new predicates.
         _staticLink = null;
         _staticPredicateCache.Clear();
+        _skipCompileMergedCache = null;   // chunk 430 — static cache cleared
         InvalidatePersistent();
     }
 
@@ -3204,6 +3213,85 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     public IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> StaticPredicateCache
         => _staticPredicateCache;
     private readonly Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate> _staticPredicateCache = new();
+
+    // ====================================================================
+    // Chunk 430 — per-query setup caching. Query setup used to re-derive
+    // stable state on every query: the full transform chain over every
+    // consulted module (prelude included), three dictionary merges, and a
+    // bare-alias loop doing two Substring allocs + an intern per linked
+    // functor. Everything below is a cache of one of those derivations,
+    // keyed either by the derivation generation or by the persistent-link
+    // rebuild.
+    // ====================================================================
+
+    /// <summary>Chunk 430 — derivation generation. Bumped by every mutation
+    /// that can change the per-module transform pipeline's output: consult,
+    /// bundle load, abolish, restore_state and every dynamic-functor-set
+    /// change funnel through <see cref="InvalidatePersistent"/> (which
+    /// bumps), and the implicit_dynamic auto-promotion in
+    /// <see cref="EnsureDynamic"/> (which doesn't invalidate the persistent
+    /// buffer) bumps explicitly. Bumping more often than strictly necessary
+    /// (e.g. on the chunk-158 compaction) is safe — it just costs one
+    /// re-transform at the next query setup, which was the per-query status
+    /// quo before this chunk.</summary>
+    private int _derivationGen;
+
+    /// <summary>Chunk 430 — cached output of the static transform chain
+    /// (MetaWrapperUnfold → ClausePipeline → ModuleRewrite) over every
+    /// consulted module, plus the user-module locals set and the set of
+    /// rewritten-clause head functor ids. A pure function of the module
+    /// manifests, the mode table, the dynamic-functor set and the
+    /// precompiled module locals — all of which bump
+    /// <see cref="_derivationGen"/> when they change. Between consults,
+    /// every query reuses this instead of re-transforming the whole program
+    /// (the ~600-line prelude included) per query.</summary>
+    private List<Clause>? _staticRewriteClauses;
+    private HashSet<int>? _staticRewriteUserLocals;
+    private HashSet<int>? _staticRewriteHeadFids;
+    private int _staticRewriteGen = -1;
+
+    /// <summary>Chunk 430 — per-functor cache of the dynamic clause lists'
+    /// transform + rewrite (ClausePipeline + ModuleRewrite under the
+    /// user-module dynamic context, including any MetaTransform helper
+    /// clauses the pipeline synthesised, whose head fids are recorded
+    /// alongside). An entry drops when its functor's clause list mutates
+    /// (<see cref="InvalidateDynamicCache"/>); the whole table drops when
+    /// <see cref="_derivationGen"/> moves (the rewrite context's inputs —
+    /// user locals, dynamic-functor set, mode table — may have changed).</summary>
+    private readonly Dictionary<int, (List<Clause> Clauses, List<int> HeadFids)>
+        _dynamicRewriteCache = new();
+    private int _dynamicRewriteGen = -1;
+
+    /// <summary>Chunk 430 — merged skip-compile cache (the per-query merge
+    /// of <see cref="_precompiledClauseCache"/> +
+    /// <see cref="_staticPredicateCache"/> + <see cref="_dynamicPredicateCache"/>,
+    /// dynamic winning, exactly the precedence the per-query merge used).
+    /// Maintained incrementally: nulled wherever
+    /// <see cref="_staticPredicateCache"/> is cleared, kept in step with
+    /// every <see cref="_dynamicPredicateCache"/> add / remove
+    /// (<see cref="DropDynamicPredicateCacheEntry"/>).</summary>
+    private Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? _skipCompileMergedCache;
+
+    /// <summary>Chunk 430 — link metadata derived from
+    /// <see cref="_staticLink"/> + <see cref="_dynamicLink"/>:
+    /// <see cref="_persistentAddressesCache"/> is the merged REAL address
+    /// map (fed to the query linker as external symbols — it must NOT
+    /// contain aliases, or a query call site to a module-local predicate's
+    /// bare name would link-resolve and break module visibility);
+    /// <see cref="_persistentAddressBaseCache"/> additionally carries the
+    /// bare-name aliases for module-local predicates (the chunk-86
+    /// meta-call alias loop, hoisted out of the per-query path);
+    /// <see cref="_persistentPredsByAddressCache"/> is the merged
+    /// predicates-by-address map. All three are rebuilt exactly when the
+    /// persistent regions are rebuilt (<c>builtPersistentNow</c>); every
+    /// <see cref="_staticLink"/> invalidation also forces that via
+    /// <see cref="InvalidatePersistent"/>, and the link results themselves
+    /// are immutable (the chunk-155c switch-table mirror mutates
+    /// <c>_dynamicLink.SwitchTables</c> only, which is why the merged
+    /// switch-table list is still rebuilt per query).</summary>
+    private Dictionary<int, int>? _persistentAddressesCache;
+    private Dictionary<int, int>? _persistentAddressBaseCache;
+    private Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? _persistentPredsByAddressCache;
 
     /// <summary>Persistent literal pools (ADR-015 chunk B). One set for the
     /// engine's life, so a literal keeps a stable id across queries — the
@@ -3290,6 +3378,15 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         _persistentProgram = null;
         _persistentLength = 0;
         _dynamicLink = null;
+        // Chunk 430 — every mutation that can change the per-module
+        // transform derivation funnels through here (consult, bundle
+        // load, abolish, restore_state, dynamic-functor-set changes);
+        // advance the derivation generation so the static / dynamic
+        // rewrite caches recompute at the next query setup. The
+        // persistent link-metadata caches need no explicit nulling:
+        // they are rebuilt whenever the persistent buffer is
+        // (builtPersistentNow), which this method forces.
+        _derivationGen++;
         // The free-list refers to offsets in the now-invalidated
         // buffer; clear it so reused chunks in the rebuilt buffer
         // start from a clean slate.
@@ -3403,7 +3500,29 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // auto-compaction mutation counter ticks.
         _dbGeneration++;
         _persistentMutationsSinceCompact++;
+        DropDynamicPredicateCacheEntry(functorId);
+        // Chunk 430 — the functor's clause list changed, so its cached
+        // transformed/rewritten clauses are stale too.
+        _dynamicRewriteCache.Remove(functorId);
+    }
+
+    /// <summary>Chunk 430 — removes a dynamic predicate's compiled-bytecode
+    /// cache entry and keeps the merged skip-compile cache in step, falling
+    /// back to the static / precompiled tier's entry when one exists (the
+    /// same precedence the merge uses: precompiled &lt; static &lt;
+    /// dynamic). Used by <see cref="InvalidateDynamicCache"/> and the
+    /// chunk-75 JIT hotness-flip drops at query setup.</summary>
+    private void DropDynamicPredicateCacheEntry(int functorId)
+    {
         _dynamicPredicateCache.Remove(functorId);
+        var merged = _skipCompileMergedCache;
+        if (merged is null) return;
+        if (_staticPredicateCache.TryGetValue(functorId, out var stat))
+            merged[functorId] = stat;
+        else if (_precompiledClauseCache.TryGetValue(functorId, out var pre))
+            merged[functorId] = pre;
+        else
+            merged.Remove(functorId);
     }
 
     /// <summary>Runs an AST goal through the same machinery as the string
@@ -3838,6 +3957,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             _dynChains.Clear();
             _staticPredicateCache.Clear();
             _dynamicPredicateCache.Clear();
+            _skipCompileMergedCache = null;   // chunk 430 — both caches cleared
             _precompiledStaticPredicates.Clear();
             _staticLink = null;
             InvalidatePersistent();
@@ -4023,6 +4143,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // Compiled-code caches must be dropped so the next query
         // recompiles against the trimmed manifest.
         _staticPredicateCache.Clear();
+        _skipCompileMergedCache = null;   // chunk 430 — static cache cleared
         _staticLink = null;
         InvalidatePersistent();
     }
@@ -4412,6 +4533,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // compiled-static-predicate cache so the next query recompiles,
         // and the ADR-015 cached static linked region with it.
         _staticPredicateCache.Clear();
+        _skipCompileMergedCache = null;   // chunk 430 — static cache cleared
         _staticLink = null;
         InvalidatePersistent();
         var rawClauses = new ClauseReader(
@@ -5393,8 +5515,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // rewritten under the user module's context but kept out of that
         // module's local set — its head functor stays bare so the launcher
         // can call it by name.
-        var allRewritten = new List<Clause>();
-        HashSet<int>? userLocalsCache = null;
+        List<Clause> allRewritten;
+        HashSet<int>? userLocalsCache;
+        // Chunk 430 — head functor ids of every clause in allRewritten
+        // (static + dynamic program). Maintained alongside the clause
+        // list so the stub emission and the cacheableFunctors snapshot
+        // below stop re-interning every clause head per query.
+        HashSet<int> rewrittenHeadFids;
 
         // Chunk 74 — mode specialization. Built once per query setup; the
         // transform appends an implicit cut to every clause of a
@@ -5403,30 +5530,56 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // final plain-rule body.
         var modeTable = Modes;
 
-        foreach (var (name, manifest) in _modules)
+        if (_staticRewriteGen == _derivationGen && _staticRewriteClauses is not null)
         {
-            // Chunk 407 — module-local meta-wrapper unfold (ifthen/2-style user
-            // control wrappers called with statically-known goals become inline
-            // if-then-else, eliminating the goal-term build + wrapper frame +
-            // runtime meta-dispatch). Runs BEFORE the pipeline so MetaTransform
-            // lowers the inserted control constructs. manifest.Clauses is the
-            // STATIC clause set (dynamic-head clauses were routed to
-            // _dynamicClauses), so a detected wrapper is immutable by invariant.
-            var unfolded = MetaWrapperUnfold.Apply(manifest.Clauses);
-            var transformed = ClausePipeline.Apply(unfolded, modeTable);
+            // Chunk 430 — the static program hasn't changed since the
+            // last setup: reuse the transformed + rewritten clause list.
+            // Copy it, because stubs and the synthetic query clause are
+            // appended below; the Clause objects themselves are immutable
+            // ASTs and safe to share across queries.
+            allRewritten = new List<Clause>(_staticRewriteClauses);
+            userLocalsCache = _staticRewriteUserLocals;
+            rewrittenHeadFids = new HashSet<int>(_staticRewriteHeadFids!);
+        }
+        else
+        {
+            allRewritten = new List<Clause>();
+            userLocalsCache = null;
+            foreach (var (name, manifest) in _modules)
+            {
+                // Chunk 407 — module-local meta-wrapper unfold (ifthen/2-style user
+                // control wrappers called with statically-known goals become inline
+                // if-then-else, eliminating the goal-term build + wrapper frame +
+                // runtime meta-dispatch). Runs BEFORE the pipeline so MetaTransform
+                // lowers the inserted control constructs. manifest.Clauses is the
+                // STATIC clause set (dynamic-head clauses were routed to
+                // _dynamicClauses), so a detected wrapper is immutable by invariant.
+                var unfolded = MetaWrapperUnfold.Apply(manifest.Clauses);
+                var transformed = ClausePipeline.Apply(unfolded, modeTable);
 
-            var locals = ComputeLocalFunctors(transformed, manifest.PublicFunctors);
-            // Chunk 209: fold in the bare local fids contributed by a
-            // bundled (precompiled) version of this module — those
-            // predicates aren't in manifest.Clauses, so the line above
-            // can't see them.
-            if (_precompiledModuleLocals.TryGetValue(name, out var bundleLocals))
-                locals.UnionWith(bundleLocals);
-            if (name == DefaultModuleName) userLocalsCache = locals;
+                var locals = ComputeLocalFunctors(transformed, manifest.PublicFunctors);
+                // Chunk 209: fold in the bare local fids contributed by a
+                // bundled (precompiled) version of this module — those
+                // predicates aren't in manifest.Clauses, so the line above
+                // can't see them.
+                if (_precompiledModuleLocals.TryGetValue(name, out var bundleLocals))
+                    locals.UnionWith(bundleLocals);
+                if (name == DefaultModuleName) userLocalsCache = locals;
 
-            var ctx = new ModuleRewrite.Context(name, locals, _dynamicFunctors);
-            foreach (var clause in transformed)
-                allRewritten.Add(ModuleRewrite.Rewrite(clause, ctx));
+                var ctx = new ModuleRewrite.Context(name, locals, _dynamicFunctors);
+                foreach (var clause in transformed)
+                    allRewritten.Add(ModuleRewrite.Rewrite(clause, ctx));
+            }
+            rewrittenHeadFids = new HashSet<int>();
+            foreach (var c in allRewritten)
+                rewrittenHeadFids.Add(HeadFunctorIdOf(c));
+            // Chunk 430 — snapshot for the next setup (the transform chain
+            // is a pure function of the consulted program; every input
+            // mutation bumps _derivationGen).
+            _staticRewriteClauses = new List<Clause>(allRewritten);
+            _staticRewriteUserLocals = userLocalsCache;
+            _staticRewriteHeadFids = new HashSet<int>(rewrittenHeadFids);
+            _staticRewriteGen = _derivationGen;
         }
 
         // Dynamic clauses asserted at runtime (or declared
@@ -5450,16 +5603,43 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // namespacing are a more invasive change parked for later.
         if (_dynamicClauses.Count > 0)
         {
+            // Chunk 430 — per-functor transform cache. A functor's entry
+            // is dropped by InvalidateDynamicCache when its clause list
+            // mutates; the whole table is dropped when the derivation
+            // generation moves (the dynamic rewrite context's inputs —
+            // user locals, dynamic-functor set, mode table — may have
+            // changed). So a query after N asserts re-transforms only
+            // the asserted functors, not every dynamic predicate.
+            if (_dynamicRewriteGen != _derivationGen)
+            {
+                _dynamicRewriteCache.Clear();
+                _dynamicRewriteGen = _derivationGen;
+            }
             var dynCtx = new ModuleRewrite.Context(
                 DefaultModuleName,
                 userLocalsCache ?? new HashSet<int>(),
                 _dynamicFunctors);
-            foreach (var (_, clauses) in _dynamicClauses)
+            foreach (var (fid, clauses) in _dynamicClauses)
             {
                 if (clauses.Count == 0) continue;
-                var transformed = ClausePipeline.Apply(clauses, modeTable);
-                foreach (var clause in transformed)
-                    allRewritten.Add(ModuleRewrite.Rewrite(clause, dynCtx));
+                if (!_dynamicRewriteCache.TryGetValue(fid, out var entry))
+                {
+                    var transformed = ClausePipeline.Apply(clauses, modeTable);
+                    var rewritten = new List<Clause>(transformed.Count);
+                    foreach (var clause in transformed)
+                        rewritten.Add(ModuleRewrite.Rewrite(clause, dynCtx));
+                    // Head fids include any MetaTransform helper clauses'
+                    // heads, mirroring what the per-clause HeadFunctorIdOf
+                    // walk over allRewritten used to collect.
+                    var headFids = new List<int>(rewritten.Count);
+                    foreach (var c in rewritten)
+                        headFids.Add(HeadFunctorIdOf(c));
+                    entry = (rewritten, headFids);
+                    _dynamicRewriteCache[fid] = entry;
+                }
+                allRewritten.AddRange(entry.Clauses);
+                foreach (int f in entry.HeadFids)
+                    rewrittenHeadFids.Add(f);
             }
         }
 
@@ -5467,8 +5647,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // these, calls to a dynamic predicate that's been declared but
         // never assertz'd would fail at link time with an unresolved-call
         // error. The stub always fails — its purpose is just to give the
-        // predicate a valid bytecode home.
-        EmitEmptyDynamicStubs(allRewritten, queryTerm.Position);
+        // predicate a valid bytecode home. Chunk 430: the precomputed
+        // head-fid set replaces the per-query re-intern of every clause
+        // head; stub fids are added to it as they're emitted.
+        EmitEmptyDynamicStubs(allRewritten, queryTerm.Position, rewrittenHeadFids);
 
         // Snapshot the functor ids of every clause that exists *before*
         // the synthetic query clause is added — the static + dynamic
@@ -5476,10 +5658,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // the __query__ clause, and any auxiliary predicate a transform
         // or the compiler derives from a query's control constructs, are
         // query-specific — caching them would let one query's goal leak
-        // into the next.
-        var cacheableFunctors = new HashSet<int>();
-        foreach (var c in allRewritten)
-            cacheableFunctors.Add(HeadFunctorIdOf(c));
+        // into the next. (Chunk 430 — rewrittenHeadFids is exactly the
+        // head fids of allRewritten at this point, stubs included.)
+        var cacheableFunctors = rewrittenHeadFids;
 
         // Synthetic query clause — rewrite in the user module's context, but
         // with userLocalsCache (which doesn't include __query__) so the
@@ -5508,7 +5689,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         {
             if (_jitIndexProfile.HotnessChangedSinceCompile(fid))
             {
-                _dynamicPredicateCache.Remove(fid);
+                // Chunk 430 — route through the drop helper so the merged
+                // skip-compile cache stays in step.
+                DropDynamicPredicateCacheEntry(fid);
                 anyHotnessFlip = true;
             }
             if (!_jitIndexProfile.IsHot(fid))
@@ -5518,7 +5701,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         {
             if (_jitIndexProfile.HotnessChangedSinceCompile(fid))
             {
-                _dynamicPredicateCache.Remove(fid);
+                DropDynamicPredicateCacheEntry(fid);   // chunk 430
                 anyHotnessFlip = true;
             }
             if (!_jitIndexProfile.IsHot(fid))
@@ -5539,27 +5722,28 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         //     asserta / retract / abolish that touches the functor.
         // ModuleCompiler reuses any cached predicate whose bytecode doesn't
         // reference per-module literal pools.
-        IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? skipCompileCache;
-        if (_precompiledClauseCache.Count == 0
-            && _dynamicPredicateCache.Count == 0
-            && _staticPredicateCache.Count == 0)
+        // Chunk 430 — the three-way merge is maintained incrementally
+        // across queries instead of being re-copied per query: built here
+        // on demand, nulled wherever _staticPredicateCache is cleared,
+        // kept in step with every dynamic-cache add / remove
+        // (DropDynamicPredicateCacheEntry) and with the two populate
+        // loops below. Merge precedence unchanged: bundle precompiled
+        // (chunk 55), static (chunk 82), then dynamic (chunk 68) —
+        // dynamic last so a predicate that turned dynamic wins over a
+        // stale static entry (a consult clears the static cache anyway).
+        var mergedSkip = _skipCompileMergedCache;
+        if (mergedSkip is null)
         {
-            skipCompileCache = null;
-        }
-        else
-        {
-            // Merge the three caches: bundle precompiled (chunk 55),
-            // static (chunk 82), then dynamic (chunk 68) — dynamic last
-            // so a predicate that turned dynamic wins over a stale static
-            // entry (a consult clears the static cache anyway).
-            var merged = new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>(
+            mergedSkip = new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>(
                 _precompiledClauseCache);
             foreach (var (fid, pred) in _staticPredicateCache)
-                merged[fid] = pred;
+                mergedSkip[fid] = pred;
             foreach (var (fid, pred) in _dynamicPredicateCache)
-                merged[fid] = pred;
-            skipCompileCache = merged;
+                mergedSkip[fid] = pred;
+            _skipCompileMergedCache = mergedSkip;
         }
+        IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? skipCompileCache =
+            mergedSkip.Count == 0 ? null : mergedSkip;
         // Pre-compute the fail-stub address — it sits at the end of the
         // launcher prefix, at offset Call(9) + Halt(1) = 10. We need it
         // available to the compiler so dynamic predicates emit their
@@ -5589,7 +5773,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     pred.FunctorId, _jitIndexProfile.IsHot(pred.FunctorId));
                 if (_dynamicPredicateCache.ContainsKey(pred.FunctorId)) continue;
                 if (Shumway.Compiler.Wam.ModuleCompiler.IsCachedPredicateReusable(pred))
+                {
                     _dynamicPredicateCache[pred.FunctorId] = pred;
+                    // Chunk 430 — mirror into the merged skip-compile
+                    // cache (dynamic has top precedence in the merge).
+                    if (_skipCompileMergedCache is not null)
+                        _skipCompileMergedCache[pred.FunctorId] = pred;
+                }
             }
         }
 
@@ -5705,10 +5895,37 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
         // Build the merged external-symbols table for the query
         // linker — it resolves calls into both the static and
-        // dynamic regions of the persistent buffer.
-        var persistentAddresses =
-            new Dictionary<int, int>(staticLink.Addresses);
-        foreach (var (fid, a) in _dynamicLink!.Addresses) persistentAddresses[fid] = a;
+        // dynamic regions of the persistent buffer. Chunk 430: cached
+        // alongside the persistent link itself (the LinkResult address
+        // maps are immutable), together with the bare-alias overlay and
+        // the merged predicates-by-address map — rebuilding the three
+        // per query re-copied two large dictionaries and re-ran the
+        // alias loop's per-functor string work for no observable change
+        // while the persistent regions are reused.
+        if (builtPersistentNow || _persistentAddressesCache is null)
+        {
+            var pa = new Dictionary<int, int>(staticLink.Addresses);
+            foreach (var (fid, a) in _dynamicLink!.Addresses) pa[fid] = a;
+            _persistentAddressesCache = pa;
+
+            // Runtime call/1 (chunk 86) dispatches a goal by its bare
+            // functor, but a module-local predicate is linked under its
+            // mangled "module$name" functor. Pre-compute the persistent
+            // regions' bare-functor aliases once per rebuild; the
+            // per-query loop below only has to alias the (tiny) query
+            // region. Module set changes always invalidate the
+            // persistent regions, so the _modules guard inside stays
+            // consistent with this cache's lifetime.
+            var baseMap = new Dictionary<int, int>(pa);
+            AddBareLocalAliases(baseMap, pa);
+            _persistentAddressBaseCache = baseMap;
+
+            var pba = new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>(
+                staticLink.PredicatesByAddress);
+            foreach (var (a, p) in _dynamicLink.PredicatesByAddress) pba[a] = p;
+            _persistentPredsByAddressCache = pba;
+        }
+        var persistentAddresses = _persistentAddressesCache;
 
         // The per-query region is appended in a SEPARATE buffer at a
         // logical address well above the persistent buffer's end.
@@ -5727,8 +5944,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         byte[] queryBytes = queryLink.Bytecode;
 
         // Merge the three regions' link metadata; downstream code is
-        // region-agnostic and reads this combined view.
-        var mergedAddresses = new Dictionary<int, int>(persistentAddresses);
+        // region-agnostic and reads this combined view. Chunk 430: seed
+        // from the cached persistent base, which already carries the
+        // persistent regions' bare-name aliases — a query-region REAL
+        // address overwrites a colliding alias here, preserving the old
+        // construction order (reals were always in the map before the
+        // alias loop ran). The only observable delta is that the
+        // profiler's diagnostic map now also contains those aliases.
+        var mergedAddresses = new Dictionary<int, int>(_persistentAddressBaseCache!);
         foreach (var (fid, a) in queryLink.Addresses) mergedAddresses[fid] = a;
         // Phase 20: keep the functor→address map of the most recent
         // query so the profiler can resolve a recorded callee address
@@ -5737,15 +5960,18 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // skip entirely.
         if (Shumway.Core.Profiler.Enabled)
             _profileFunctorAddresses = mergedAddresses;
+        // The merged switch-table list is still rebuilt per query (cheap
+        // reference copies): the chunk-155c new-key assertz path REPLACES
+        // entries of _dynamicLink.SwitchTables in place for cross-query
+        // persistence, so a cached merged snapshot would go stale.
         var mergedSwitchTables =
             new List<Shumway.Core.SwitchTable>(staticLink.SwitchTables);
-        mergedSwitchTables.AddRange(_dynamicLink.SwitchTables);
+        mergedSwitchTables.AddRange(_dynamicLink!.SwitchTables);
         mergedSwitchTables.AddRange(queryLink.SwitchTables);
+        // Chunk 430 — persistent part pre-merged at rebuild time.
         var mergedPredicatesByAddress =
             new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>(
-                staticLink.PredicatesByAddress);
-        foreach (var (a, p) in _dynamicLink.PredicatesByAddress)
-            mergedPredicatesByAddress[a] = p;
+                _persistentPredsByAddressCache!);
         foreach (var (a, p) in queryLink.PredicatesByAddress)
             mergedPredicatesByAddress[a] = p;
         // The "program" in the LinkResult is now a logical concept —
@@ -5789,27 +6015,30 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             if (!cacheableFunctors.Contains(fid) || _dynamicFunctors.Contains(fid)) continue;
             if (_staticPredicateCache.ContainsKey(fid)) continue;
             if (Shumway.Compiler.Wam.ModuleCompiler.IsCachedPredicateReusable(pred))
+            {
                 _staticPredicateCache[fid] = pred;
+                // Chunk 430 — mirror into the merged skip-compile cache.
+                // Dynamic entries take precedence in the merge; a fid here
+                // is never in the dynamic cache (it isn't in
+                // _dynamicFunctors, and abolish drops cache entries when
+                // a functor leaves the dynamic set), but keep the guard
+                // so the precedence is structural rather than assumed.
+                if (_skipCompileMergedCache is not null
+                    && !_dynamicPredicateCache.ContainsKey(fid))
+                    _skipCompileMergedCache[fid] = pred;
+            }
         }
 
         // Runtime call/1 (chunk 86) dispatches a goal by its bare functor,
         // but a module-local predicate is linked under its mangled
         // "module$name" functor. Add a bare-functor alias for each so a
         // runtime call/N can resolve a local predicate by its plain name.
-        var addressMap = new Dictionary<int, int>(linkResult.Addresses);
-        foreach (var (mangledFunctorId, address) in linkResult.Addresses)
-        {
-            var (atomId, arity) = FunctorTable.Lookup(mangledFunctorId);
-            string mangledName = AtomTable.GetById(atomId)?.Name ?? "";
-            int dollar = mangledName.IndexOf('$');
-            if (dollar <= 0) continue;
-            if (!_modules.ContainsKey(mangledName.Substring(0, dollar))) continue;
-            int bareFunctorId = FunctorTable.Intern(
-                AtomTable.Intern(mangledName.Substring(dollar + 1), permanent: true).Id,
-                arity);
-            if (!addressMap.ContainsKey(bareFunctorId))
-                addressMap[bareFunctorId] = address;
-        }
+        // Chunk 430: the persistent regions' aliases are already in
+        // mergedAddresses (pre-computed at persistent rebuild — see
+        // _persistentAddressBaseCache); only the query region's handful
+        // of entries still need the per-query string walk.
+        var addressMap = new Dictionary<int, int>(mergedAddresses);
+        AddBareLocalAliases(addressMap, queryLink.Addresses);
 
         // --strip-wam: a predicate whose WAM body was dropped from the bundle
         // (its IL delegate carries the body) has no entry in linkResult.Addresses,
@@ -6576,19 +6805,20 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// resolve at link time (and fail at runtime — which is what an
     /// "empty dynamic predicate" should do).</summary>
     private void EmitEmptyDynamicStubs(
-        List<Clause> allRewritten, Shumway.Compiler.Lexer.SourcePosition pos)
+        List<Clause> allRewritten, Shumway.Compiler.Lexer.SourcePosition pos,
+        HashSet<int> seen)
     {
+        // Chunk 430 — `seen` arrives as the precomputed head-fid set of
+        // allRewritten (maintained by the caller's cached transform
+        // bookkeeping), replacing the per-query walk that re-interned
+        // every clause head. Stub fids are added to the set so the
+        // caller's cacheableFunctors snapshot includes them, exactly as
+        // the old post-stub HeadFunctorIdOf walk did.
         if (_dynamicFunctors.Count == 0) return;
-
-        var seen = new HashSet<int>();
-        foreach (var c in allRewritten)
-            if (TryExtractHead(c, out string n, out int a))
-                seen.Add(FunctorTable.Intern(
-                    AtomTable.Intern(n, permanent: true).Id, a));
 
         foreach (int fid in _dynamicFunctors)
         {
-            if (seen.Contains(fid)) continue;
+            if (!seen.Add(fid)) continue;
             var (atomId, arity) = FunctorTable.Lookup(fid);
             string name = AtomTable.GetById(atomId)?.Name ?? "?";
             Term head = arity == 0
@@ -6598,6 +6828,33 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     Enumerable.Range(0, arity).Select(_ => (Term)new VarTerm("_")).ToArray());
             Term stubTerm = new CompoundTerm(":-", new[] { head, (Term)new AtomTerm("fail") });
             allRewritten.Add(new Clause(ClauseKind.Rule, stubTerm, pos));
+        }
+    }
+
+    /// <summary>Chunk 430 — the chunk-86 bare-functor alias computation,
+    /// factored out so it can run once per persistent rebuild over the
+    /// persistent regions' addresses (cached in
+    /// <see cref="_persistentAddressBaseCache"/>) and per query over just
+    /// the query region's addresses. For every <c>module$name</c> entry in
+    /// <paramref name="entries"/> whose module is loaded, adds
+    /// <c>name/arity → address</c> to <paramref name="map"/> unless the
+    /// bare functor already resolves (a real definition or an earlier
+    /// alias wins, preserving the original first-wins semantics).</summary>
+    private void AddBareLocalAliases(
+        Dictionary<int, int> map, IReadOnlyDictionary<int, int> entries)
+    {
+        foreach (var (mangledFunctorId, address) in entries)
+        {
+            var (atomId, arity) = FunctorTable.Lookup(mangledFunctorId);
+            string mangledName = AtomTable.GetById(atomId)?.Name ?? "";
+            int dollar = mangledName.IndexOf('$');
+            if (dollar <= 0) continue;
+            if (!_modules.ContainsKey(mangledName.Substring(0, dollar))) continue;
+            int bareFunctorId = FunctorTable.Intern(
+                AtomTable.Intern(mangledName.Substring(dollar + 1), permanent: true).Id,
+                arity);
+            if (!map.ContainsKey(bareFunctorId))
+                map[bareFunctorId] = address;
         }
     }
 

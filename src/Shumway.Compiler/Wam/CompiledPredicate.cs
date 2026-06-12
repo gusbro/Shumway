@@ -52,6 +52,16 @@ public sealed class CompiledPredicate
     /// location.</summary>
     public SourcePosition SourcePosition { get; }
 
+    /// <summary>Chunk 430 — memoized result of
+    /// <see cref="ModuleCompiler.IsCachedPredicateReusable"/>. The bytecode
+    /// is immutable once constructed, so the literal-pool scan is a pure
+    /// function of this instance; query setup used to re-walk the whole
+    /// predicate's bytecode per cached predicate per query. Encoding:
+    /// 0 = not yet computed, 1 = false, 2 = true. An <c>int</c> (not
+    /// <c>bool?</c>) so the lazy write is atomic — compiled predicates are
+    /// shared across engines via the global caches.</summary>
+    internal int PoolFreeMemo;
+
     /// <summary>One <see cref="SourcePosition"/> per clause, in source
     /// order. Aligned with the <c>Meta(DbgInfo, clauseIndex)</c> opcodes
     /// the predicate compiler emits at each clause boundary (chunk 55):
