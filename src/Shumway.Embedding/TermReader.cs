@@ -44,7 +44,11 @@ public static class TermReader
             // variable — its attributes are engine-side metadata, not
             // part of the term's AST shape. (chunk 77)
             Tag.Ref or Tag.AttVar => new VarTerm($"_G{derefAddr}"),
-            Tag.Atom => new AtomTerm(NameOfAtom(cell.AsAtomId)),
+            // chunk 431: seed the AST node's lazily-cached atom id — we
+            // have it in hand here, so downstream consumers (Materializer,
+            // retract's DefiniteMismatch, assert's head-functor extraction)
+            // skip the by-name re-intern entirely.
+            Tag.Atom => new AtomTerm(NameOfAtom(cell.AsAtomId), cell.AsAtomId),
             Tag.Int => new IntTerm(cell.AsInt),
             Tag.BigInt => new BigIntTerm(engine.AsBigInt(cell)),
             Tag.Float => new FloatTerm(Cell.DecodeFloat(cell, engine.GetHeap(cell.FloatPairedIndex))),
@@ -84,7 +88,8 @@ public static class TermReader
             var args = new Term[arity];
             for (int i = 0; i < arity; i++)
                 args[i] = Materialize(engine, functorIdx + 1 + i, active);
-            return new CompoundTerm(name, args);
+            // chunk 431: seed the node's cached functor id from the cell.
+            return new CompoundTerm(name, args, functorCell.AsFunctorId);
         }
         finally
         {
@@ -106,6 +111,10 @@ public static class TermReader
         var spineAddrs = new List<int>();
         Cell cur = lisCell;
         int tailIdx;
+        // chunk 431: intern './2' once per spine walk and seed every cons
+        // node's cached functor id, so a later Materializer/assert pass over
+        // the list never re-interns the cons functor by name per element.
+        int consFid = FunctorTable.Intern(AtomTable.ConsFunctorId, 2);
         try
         {
             while (true)
@@ -117,7 +126,7 @@ public static class TermReader
                     // list with the cycle marker rather than recursing.
                     Term cycleResult = new VarTerm($"_C{headIdx}");
                     for (int i = heads.Count - 1; i >= 0; i--)
-                        cycleResult = new CompoundTerm(".", new[] { heads[i], cycleResult });
+                        cycleResult = new CompoundTerm(".", new[] { heads[i], cycleResult }, consFid);
                     return cycleResult;
                 }
                 spineAddrs.Add(headIdx);
@@ -129,7 +138,7 @@ public static class TermReader
             }
             Term result = Materialize(engine, tailIdx, active);
             for (int i = heads.Count - 1; i >= 0; i--)
-                result = new CompoundTerm(".", new[] { heads[i], result });
+                result = new CompoundTerm(".", new[] { heads[i], result }, consFid);
             return result;
         }
         finally

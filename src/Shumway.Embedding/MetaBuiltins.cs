@@ -3098,8 +3098,8 @@ public static class MetaBuiltins
         // heap address that's BELOW the CP's saved heap top — so
         // it survives the backtrack truncation. Capturing it once
         // here side-steps the register-clobber.
-        return RetractStep(engine, host, patternFid, candidates, 0, returnPc,
-            isResume: false, patternHeap);
+        return RetractStep(engine, host, patternFid, candidates, returnPc,
+            patternHeap);
     }
 
     /// <summary>Reads the pattern's head functor id straight from the
@@ -3151,25 +3151,19 @@ public static class MetaBuiltins
     private static readonly int _ruleFunctorAtomId =
         AtomTable.Intern(":-", permanent: true).Id;
 
-    /// <summary>Removes the next clause (from <paramref name="startIndex"/>
-    /// onward) that unifies with the retract pattern. When later candidates
-    /// remain it leaves a choice point whose resume retracts the following
-    /// match — that is what makes <c>retract/1</c> enumerate every matching
-    /// clause on backtracking.</summary>
+    /// <summary>Removes the first clause that unifies with the retract
+    /// pattern — the entry step, scanning the LIVE clause list (chunk 421:
+    /// no snapshot copy; nothing can mutate the list before this scan
+    /// completes). When later candidates remain it leaves a choice point
+    /// whose resume retracts the following match — that is what makes
+    /// <c>retract/1</c> enumerate every matching clause on backtracking.</summary>
     private static bool RetractStep(Engine engine, PrologEngine host,
-        int patternFid, IReadOnlyList<Clause> candidates, int startIndex, int returnPc,
-        bool isResume, int patternHeap)
+        int patternFid, IReadOnlyList<Clause> candidates, int returnPc,
+        int patternHeap)
     {
-        // ADR-016: on a resumed step, re-read the pattern from register 0.
-        // The choice point below is pushed with arity 1, so the WAM CP
-        // machinery saved register 0 (the pattern's REF) and the heap GC
-        // relocates it like any saved argument; the restore repopulates
-        // register 0 before this delegate runs. Closing a raw heap index
-        // over the resume (the old approach) would dangle after a
-        // mid-enumeration collection moved the pattern cell.
-        if (isResume) patternHeap = engine.MaterializeRegisterForTrace(0);
-        RetractTrace.StepEntry(engine, isResume, startIndex);
-        int matchIndex = FindRetractMatch(engine, candidates, startIndex, patternHeap);
+        RetractTrace.StepEntry(engine, isResume: false, startIndex: 0);
+        int matchIndex = FindRetractMatch(
+            engine, candidates, 0, candidates.Count, patternHeap);
         if (matchIndex < 0)
         {
             RetractTrace.NoMatch(candidates.Count);
@@ -3187,17 +3181,29 @@ public static class MetaBuiltins
             // ISO logical-update view is the same one a full up-front copy
             // captured). The live list mutates the moment the retract
             // returns; the resume must not read it.
-            var tail = new Clause[candidates.Count - (matchIndex + 1)];
-            for (int i = 0; i < tail.Length; i++)
-                tail[i] = candidates[matchIndex + 1 + i];
-            // patternHeap is re-read from register 0 on resume (see above),
-            // so the resume need not close over it. Push with arity 1 so
-            // the CP saves register 0 — the GC then relocates it.
-            Func<Engine, int, bool> resume = (e, _) => RetractStep(
-                e, host, patternFid, tail, 0, returnPc,
-                isResume: true, patternHeap: -1);
+            //
+            // chunk 431: the copy lands in a pooled per-engine buffer
+            // instead of a fresh array, and the whole enumeration shares
+            // this ONE snapshot — each resume advances a start index
+            // rather than re-copying its own tail-of-tail (the old code's
+            // O(k²) copying across a k-solution enumeration). The buffer
+            // returns to the pool at the enumeration's terminal resume, or
+            // via OnPrune when a cut discards the CP (the audit's
+            // `retract(_), !` case — pre-431 that tail copy was pure
+            // garbage).
+            int count = candidates.Count - (matchIndex + 1);
+            Clause[] snap = host.RentRetractSnapshot(count);
+            for (int i = 0; i < count; i++)
+                snap[i] = candidates[matchIndex + 1 + i];
+            // patternHeap is re-read from register 0 on resume (see
+            // RetractResumeStep), so the resume need not close over it.
+            // Push with arity 1 so the CP saves register 0 — the GC then
+            // relocates it.
+            Func<Engine, int, bool> resume = (e, _) => RetractResumeStep(
+                e, host, patternFid, snap, count, 0, returnPc);
+            Action onPrune = () => host.ReturnRetractSnapshot(snap, count);
             RetractTrace.PrePush(engine);
-            engine.PushBuiltinChoicePoint(resume, arity: 1);
+            engine.PushBuiltinChoicePoint(resume, arity: 1, onPrune);
             RetractTrace.PostPush(engine);
         }
 
@@ -3214,12 +3220,83 @@ public static class MetaBuiltins
 
         // Chunk 423: the first step's candidates ARE the live list, so
         // matchIndex is the live index — pass it through to skip the
-        // O(N) IndexOf. A resume scans a tail snapshot (indices don't
-        // map onto the mutated live list): pass -1 to fall back.
+        // O(N) IndexOf.
         host.RemoveDynamicByReference(engine, patternFid, candidate,
-            knownIndex: isResume ? -1 : matchIndex);
+            knownIndex: matchIndex);
         engine.SetHb(savedHb);
-        if (isResume) engine.ResumeAtReturnPc(returnPc);
+        return true;
+    }
+
+    /// <summary>chunk 431 — the resumed retract step, scanning the
+    /// enumeration's call-time snapshot from <paramref name="startIndex"/>.
+    /// Semantics are identical to the pre-431 resume (which copied a fresh
+    /// tail array per step); only the buffer management changed — see
+    /// <see cref="RetractStep"/>. <paramref name="snapCount"/> bounds the
+    /// used range of <paramref name="snap"/>, which may be a pooled buffer
+    /// longer than the snapshot it holds.</summary>
+    private static bool RetractResumeStep(Engine engine, PrologEngine host,
+        int patternFid, Clause[] snap, int snapCount, int startIndex, int returnPc)
+    {
+        // ADR-016: re-read the pattern from register 0. The choice point
+        // was pushed with arity 1, so the WAM CP machinery saved register 0
+        // (the pattern's REF) and the heap GC relocates it like any saved
+        // argument; the restore repopulates register 0 before this delegate
+        // runs. Closing a raw heap index over the resume would dangle after
+        // a mid-enumeration collection moved the pattern cell.
+        int patternHeap = engine.MaterializeRegisterForTrace(0);
+        RetractTrace.StepEntry(engine, isResume: true, startIndex);
+        int matchIndex = FindRetractMatch(
+            engine, snap, startIndex, snapCount, patternHeap);
+        if (matchIndex < 0)
+        {
+            // Enumeration exhausted — nothing references the snapshot once
+            // this (already-popped) CP's delegate returns; recycle it.
+            host.ReturnRetractSnapshot(snap, snapCount);
+            RetractTrace.NoMatch(snapCount);
+            return false;
+        }
+        RetractTrace.MatchFound(matchIndex, snap[matchIndex]);
+
+        Clause candidate = snap[matchIndex];
+        bool morePending = matchIndex + 1 < snapCount;
+        if (morePending)
+        {
+            // Re-arm with the SAME snapshot, advancing the start index —
+            // the snapshot is immutable and exclusively owned by this
+            // enumeration (the CP that carried it was popped before this
+            // delegate ran), so no copy is needed.
+            int nextStart = matchIndex + 1;
+            Func<Engine, int, bool> resume = (e, _) => RetractResumeStep(
+                e, host, patternFid, snap, snapCount, nextStart, returnPc);
+            Action onPrune = () => host.ReturnRetractSnapshot(snap, snapCount);
+            RetractTrace.PrePush(engine);
+            engine.PushBuiltinChoicePoint(resume, arity: 1, onPrune);
+            RetractTrace.PostPush(engine);
+        }
+
+        int savedHb = engine.Hb;
+        engine.SetHb(engine.HeapTop);
+        Cell candidateCell = Materializer.MaterializeAsCell(engine, candidate.Term);
+        int candSlot = engine.AllocateHeap(1);
+        engine.SetHeap(candSlot, candidateCell);
+
+        RetractTrace.HeapStateBeforeUnify(engine, patternHeap, candSlot, savedHb);
+        bool unifyResult = engine.Unify(patternHeap, candSlot);
+        RetractTrace.HeapStateAfterUnify(engine, patternHeap, candSlot, unifyResult);
+
+        // A resume scans a tail snapshot (indices don't map onto the
+        // mutated live list): pass -1 to fall back to the IndexOf path.
+        host.RemoveDynamicByReference(engine, patternFid, candidate,
+            knownIndex: -1);
+        engine.SetHb(savedHb);
+        if (!morePending)
+        {
+            // Last candidate consumed and no new CP holds the snapshot —
+            // recycle it (the `candidate` local keeps the clause alive
+            // through the clear).
+            host.ReturnRetractSnapshot(snap, snapCount);
+        }
+        engine.ResumeAtReturnPc(returnPc);
         return true;
     }
 
@@ -3238,9 +3315,13 @@ public static class MetaBuiltins
     /// functors at the same position) with zero allocation; only candidates
     /// it cannot refute pay the materialise-and-unify trial.</para></summary>
     private static int FindRetractMatch(
-        Engine engine, IReadOnlyList<Clause> candidates, int startIndex, int patternHeap)
+        Engine engine, IReadOnlyList<Clause> candidates, int startIndex,
+        int endExclusive, int patternHeap)
     {
-        for (int i = startIndex; i < candidates.Count; i++)
+        // chunk 431: endExclusive bounds the scan explicitly — a resume's
+        // candidates live in a pooled buffer that may be longer than the
+        // snapshot it holds, so candidates.Count is not the right bound.
+        for (int i = startIndex; i < endExclusive; i++)
         {
             if (DefiniteMismatch(engine, patternHeap, candidates[i].Term, depth: 4))
                 continue;
@@ -3282,7 +3363,9 @@ public static class MetaBuiltins
             case Tag.Atom:
                 return ast switch
                 {
-                    AtomTerm a => AtomTable.Intern(a.Name, permanent: false).Id != c.AsAtomId,
+                    // chunk 431: cached id — this used to re-intern the
+                    // candidate's atom by name on EVERY retract trial.
+                    AtomTerm a => a.ResolveAtomId() != c.AsAtomId,
                     IntTerm or FloatTerm or CompoundTerm or BigIntTerm => true,
                     _ => false,
                 };
@@ -3301,10 +3384,14 @@ public static class MetaBuiltins
                 {
                     case CompoundTerm ct:
                     {
-                        var (atomId, arity) = FunctorTable.Lookup(f.AsFunctorId);
-                        if (arity != ct.Args.Length
-                            || atomId != AtomTable.Intern(ct.Functor, permanent: false).Id)
+                        // chunk 431: functor ids are canonical (one id per
+                        // (atom, arity) pair — FunctorTable.Intern converges
+                        // losers of its publish race onto the winner), so a
+                        // single cached-id comparison replaces the per-trial
+                        // FunctorTable.Lookup + by-name atom re-intern.
+                        if (ct.ResolveFunctorId() != f.AsFunctorId)
                             return true;
+                        int arity = ct.Args.Length;
                         for (int i = 0; i < arity; i++)
                             if (DefiniteMismatch(engine, c.AsHeapIndex + 1 + i,
                                     ct.Args[i], depth - 1))
@@ -3342,10 +3429,13 @@ public static class MetaBuiltins
             : clause.Term;
         return head switch
         {
-            AtomTerm a => FunctorTable.Intern(
-                AtomTable.Intern(a.Name, permanent: true).Id, 0),
-            CompoundTerm c => FunctorTable.Intern(
-                AtomTable.Intern(c.Functor, permanent: true).Id, c.Args.Length),
+            // chunk 431: read-through the node's cached ids. The atom is
+            // interned transient here, but every asserted clause is also
+            // compiled by ClauseCompiler, whose InternAtom pins predicate
+            // and literal names permanent — promotion keeps the id, so the
+            // cache stays valid.
+            AtomTerm a => FunctorTable.Intern(a.ResolveAtomId(), 0),
+            CompoundTerm c => c.ResolveFunctorId(),
             // Chunk 131e: ISO §8.9.3 — an unbound head raises
             // instantiation_error; anything else non-callable raises
             // type_error(callable, _).

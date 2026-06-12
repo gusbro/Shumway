@@ -1665,6 +1665,48 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// (Chunk 150.)</summary>
     internal IEnumerable<int> AllDynamicFunctors() => _dynamicFunctors.ToArray();
 
+    // chunk 431 — single spare buffer reused across retract/1's remaining-
+    // candidates snapshots (the ISO call-time view copied at CP-push time).
+    // One buffer covers the overwhelmingly common case (non-nested retract);
+    // a nested enumeration that misses simply allocates, exactly like the
+    // pre-431 code. Lifecycle: the buffer is exclusively owned by one
+    // enumeration from Rent until the matching Return, which fires at
+    // exactly one of (a) the resume's no-further-match failure, (b) the
+    // resume's last-candidate success (no new CP pushed), or (c) the CP's
+    // OnPrune when a cut discards it (chunk 245 — fired exactly once, and
+    // cleared on pop so a resumed CP can never also prune). Discard paths
+    // with no hook (exception unwind, query teardown) just drop the buffer
+    // to the .NET GC — same as pre-431, never a double-hand-out.
+    private Clause[]? _retractSnapshotSpare;
+    private const int RetractSnapshotSpareMaxLen = 4096;
+
+    /// <summary>chunk 431 — returns a buffer with at least
+    /// <paramref name="minLength"/> slots for a retract tail snapshot,
+    /// reusing the per-engine spare when it fits.</summary>
+    internal Clause[] RentRetractSnapshot(int minLength)
+    {
+        Clause[]? spare = _retractSnapshotSpare;
+        if (spare is not null && spare.Length >= minLength)
+        {
+            _retractSnapshotSpare = null;
+            return spare;
+        }
+        return new Clause[minLength];
+    }
+
+    /// <summary>chunk 431 — hands a snapshot buffer back for reuse. Clears
+    /// the used range so the pool never pins retracted clause ASTs alive,
+    /// and keeps the larger of (current spare, returned buffer), capped so
+    /// one huge predicate can't park a giant array on the engine.</summary>
+    internal void ReturnRetractSnapshot(Clause[] buffer, int usedCount)
+    {
+        System.Array.Clear(buffer, 0, usedCount);
+        if (buffer.Length > RetractSnapshotSpareMaxLen) return;
+        Clause[]? spare = _retractSnapshotSpare;
+        if (spare is null || spare.Length < buffer.Length)
+            _retractSnapshotSpare = buffer;
+    }
+
     /// <summary>Removes the clause object identical to <paramref name="clause"/>
     /// from the dynamic store (used after the runtime caller has matched it
     /// via unification on a materialised heap copy). When ADR-015 chunk C
@@ -2455,10 +2497,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             : clause.Term;
         return head switch
         {
-            AtomTerm a => FunctorTable.Intern(
-                AtomTable.Intern(a.Name, permanent: true).Id, 0),
-            CompoundTerm c => FunctorTable.Intern(
-                AtomTable.Intern(c.Functor, permanent: true).Id, c.Args.Length),
+            // chunk 431: read-through the AST node's cached ids (seeded by
+            // TermReader on the assert path) — drops a string-keyed table
+            // probe per assert. The lazy intern is transient; ClauseCompiler
+            // promotes asserted predicate names permanent when it compiles
+            // the clause, and promotion preserves the id.
+            AtomTerm a => FunctorTable.Intern(a.ResolveAtomId(), 0),
+            CompoundTerm c => c.ResolveFunctorId(),
             // Chunk 131e: ISO assertz/asserta/retract — a clause head
             // that isn't callable raises type_error(callable, Head);
             // an unbound head raises instantiation_error.

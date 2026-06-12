@@ -36,7 +36,17 @@ public static class Materializer
         switch (term)
         {
             case AtomTerm a:
-                return Cell.Atom(AtomTable.Intern(a.Name, permanent: true).Id);
+                // chunk 431: read the node's lazily-cached id (seeded by
+                // TermReader when the AST came off a heap) instead of a
+                // by-name re-intern per visit. The intern, when it does
+                // happen, is TRANSIENT — the old `permanent: true` pinned
+                // every atom transiting a meta-builtin to the eternal tier,
+                // defeating the three-tier atom GC (ADR-003). Safety: the
+                // Transient tier holds a strong in-table reference; the only
+                // collection mechanism is AtomTable.Sweep, whose contract
+                // requires the caller's mark phase to include atom ids
+                // reachable from engine heaps — exactly where this id goes.
+                return Cell.Atom(a.ResolveAtomId());
 
             case IntTerm n:
                 // 60-bit inline range: anything wider hops to the BigInteger
@@ -113,8 +123,11 @@ public static class Materializer
 
             case CompoundTerm c:
             {
-                int atomId = AtomTable.Intern(c.Functor, permanent: true).Id;
-                int functorId = FunctorTable.Intern(atomId, c.Args.Length);
+                // chunk 431: cached functor id (transient intern on first
+                // use) — see the AtomTerm case above for the tier-safety
+                // argument; the two string-keyed table probes per compound
+                // visit collapse to a field read once the node is warm.
+                int functorId = c.ResolveFunctorId();
 
                 // Reserve the STR + Functor + arg cells up front; recurse for
                 // each arg afterwards so children can freely extend the heap.
