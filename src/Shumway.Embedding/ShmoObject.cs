@@ -38,6 +38,35 @@ public readonly record struct QualifiedPredicateRef(string Module, string Name, 
     public override string ToString() => $"{Module}:{Name}/{Arity}";
 }
 
+/// <summary>Chunk 441 — one call-graph edge: the unqualified target plus
+/// the DIRECT-vs-META marker.
+///
+/// <para><see cref="IsMeta"/> is <c>true</c> when every reference this
+/// MODULE makes to <see cref="Target"/> sits inside a meta-call argument
+/// — <c>call/1</c>, the <c>call/N</c> closure goal, or the goal argument
+/// of <c>findall</c> / <c>bagof</c> / <c>setof</c> / <c>forall</c> /
+/// <c>once</c> / <c>ignore</c> / <c>catch</c> / <c>\+</c> / <c>not</c> —
+/// and <c>false</c> when at least one reference is a plain body goal
+/// (or the target only appears in synthesised helper bodies the
+/// transform pipeline produced). The bit is computed module-wide per
+/// TARGET (not per call site): the MetaTransform pipeline erases the
+/// meta wrappers before the call-graph walk (chunk-205 rewrites
+/// <c>call(g(X))</c> to a direct <c>g(X)</c>; findall goals are inlined
+/// into <c>$disj</c> helper bodies), so a per-site bit measured on the
+/// transformed bodies would mis-mark exactly the sites that matter. A
+/// module-wide bit is also the conservative direction — one direct
+/// reference anywhere in the module marks every edge to that target
+/// DIRECT.</para>
+///
+/// <para>The linker uses the marker for Arity call semantics (an
+/// undeclared predicate that is only ever meta-called links as an
+/// implicit empty dynamic); for non-Arity modules it is carried but
+/// ignored.</para></summary>
+public readonly record struct ShmoCallEdge(PredicateRef Target, bool IsMeta)
+{
+    public override string ToString() => IsMeta ? $"{Target}[meta]" : Target.ToString();
+}
+
 /// <summary>One predicate defined inside a <c>.shmo</c>, together with
 /// its visibility.</summary>
 public sealed class ShmoDefinedPredicate
@@ -74,7 +103,8 @@ public sealed class ShmoDefinedPredicate
 /// reachability roots so a predicate only invoked via runtime meta-call
 /// is not dead-code-eliminated.</item>
 /// <item><see cref="CallGraph"/> — for each defined predicate, the set
-/// of unqualified call targets the linker should follow.</item>
+/// of unqualified call targets the linker should follow, each marked
+/// DIRECT or META (<see cref="ShmoCallEdge"/>, chunk 441).</item>
 /// <item><see cref="QualifiedRefs"/> — explicit <c>Module:Goal</c> call
 /// sites. Rare; resolved against the named module's public set rather
 /// than the flat global namespace.</item>
@@ -87,7 +117,7 @@ public sealed class ShmoObject
     public byte[] Bytecode { get; }
     public IReadOnlyList<ShmoDefinedPredicate> Defined { get; }
     public IReadOnlyList<PredicateRef> EnsureLinked { get; }
-    public IReadOnlyDictionary<PredicateRef, IReadOnlyList<PredicateRef>> CallGraph { get; }
+    public IReadOnlyDictionary<PredicateRef, IReadOnlyList<ShmoCallEdge>> CallGraph { get; }
     public IReadOnlyList<QualifiedPredicateRef> QualifiedRefs { get; }
 
     /// <summary>The compilation mode the <c>.shmo</c> was built in
@@ -95,6 +125,16 @@ public sealed class ShmoObject
     /// <see cref="ShmoBuildMode.Release"/> for compatibility with V1
     /// objects that didn't carry the flag.</summary>
     public ShmoBuildMode BuildMode { get; }
+
+    /// <summary>Chunk 441 — <c>true</c> when the module was compiled in
+    /// Arity compatibility mode (<c>shumway-compile --arity</c>, or an
+    /// in-file <c>:- set_prolog_flag(arity_compat, true)</c> at any
+    /// point during the compile). The linker uses it to apply Arity
+    /// call semantics to this module's unresolved references: a call to
+    /// an undeclared predicate is valid in Arity — it fails if nothing
+    /// was asserted — so the linker registers the target as an implicit
+    /// empty dynamic predicate instead of erroring.</summary>
+    public bool ArityCompat { get; }
 
     /// <summary>Chunk 209 — clauses for <c>:- dynamic foo/N.</c>
     /// predicates carried as <see cref="TermCodec"/>-encoded terms
@@ -127,11 +167,12 @@ public sealed class ShmoObject
         byte[] bytecode,
         IReadOnlyList<ShmoDefinedPredicate> defined,
         IReadOnlyList<PredicateRef> ensureLinked,
-        IReadOnlyDictionary<PredicateRef, IReadOnlyList<PredicateRef>> callGraph,
+        IReadOnlyDictionary<PredicateRef, IReadOnlyList<ShmoCallEdge>> callGraph,
         IReadOnlyList<QualifiedPredicateRef> qualifiedRefs,
         ShmoBuildMode buildMode = ShmoBuildMode.Release,
         IReadOnlyList<ShmoDynamicSeed>? dynamicSeeds = null,
-        IReadOnlyList<byte[]>? clauseTerms = null)
+        IReadOnlyList<byte[]>? clauseTerms = null,
+        bool arityCompat = false)
     {
         ModuleName = moduleName;
         Source = source;
@@ -143,6 +184,7 @@ public sealed class ShmoObject
         BuildMode = buildMode;
         DynamicSeeds = dynamicSeeds ?? System.Array.Empty<ShmoDynamicSeed>();
         ClauseTerms = clauseTerms ?? System.Array.Empty<byte[]>();
+        ArityCompat = arityCompat;
     }
 }
 

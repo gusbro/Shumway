@@ -24,16 +24,17 @@ public class Chunk160Tests
             new PredicateRef("indirect_target", 0),
             new PredicateRef("via_meta_call", 3),
         };
-        var callGraph = new Dictionary<PredicateRef, IReadOnlyList<PredicateRef>>
+        var callGraph = new Dictionary<PredicateRef, IReadOnlyList<ShmoCallEdge>>
         {
             [new PredicateRef("foo", 1)] = new[]
             {
-                new PredicateRef("helper", 2),
-                new PredicateRef("write", 1),
+                new ShmoCallEdge(new PredicateRef("helper", 2), IsMeta: false),
+                new ShmoCallEdge(new PredicateRef("write", 1), IsMeta: false),
             },
             [new PredicateRef("helper", 2)] = new[]
             {
-                new PredicateRef("counter", 1),
+                // chunk 441 — the per-edge META marker round-trips too.
+                new ShmoCallEdge(new PredicateRef("counter", 1), IsMeta: true),
             },
         };
         var qrefs = new[]
@@ -109,7 +110,7 @@ public class Chunk160Tests
             bytecode: Array.Empty<byte>(),
             defined: Array.Empty<ShmoDefinedPredicate>(),
             ensureLinked: Array.Empty<PredicateRef>(),
-            callGraph: new Dictionary<PredicateRef, IReadOnlyList<PredicateRef>>(),
+            callGraph: new Dictionary<PredicateRef, IReadOnlyList<ShmoCallEdge>>(),
             qualifiedRefs: Array.Empty<QualifiedPredicateRef>());
         byte[] bytes = ShmoWriter.ToBytes(obj);
         var restored = ShmoReader.FromBytes(bytes);
@@ -168,7 +169,7 @@ public class Chunk160Tests
                 new ShmoDefinedPredicate(new PredicateRef("p", 0), PredicateVisibility.Public),
             },
             ensureLinked: Array.Empty<PredicateRef>(),
-            callGraph: new Dictionary<PredicateRef, IReadOnlyList<PredicateRef>>(),
+            callGraph: new Dictionary<PredicateRef, IReadOnlyList<ShmoCallEdge>>(),
             qualifiedRefs: Array.Empty<QualifiedPredicateRef>());
         byte[] bytes = ShmoWriter.ToBytes(obj);
         // Find and corrupt the visibility byte. V2 layout:
@@ -177,9 +178,10 @@ public class Chunk160Tests
         //  + 4 sourceLen
         //  + 4 bytecodeLen
         //  + 1 buildMode                                 ← V2 addition
+        //  + 1 arityCompat                               ← chunk 441
         //  + 4 definedCount + 4 nameLen + 1 ('p') + 4 arity + 1 visibility
-        // visibility byte is at offset 4+4 + 4+1 + 4 + 4 + 1 + 4 + 4+1 + 4 = 35.
-        bytes[35] = 99;
+        // visibility byte is at offset 4+4 + 4+1 + 4 + 4 + 1 + 1 + 4 + 4+1 + 4 = 36.
+        bytes[36] = 99;
         var ex = Assert.Throws<InvalidDataException>(() => ShmoReader.FromBytes(bytes));
         Assert.Contains("visibility", ex.Message);
     }

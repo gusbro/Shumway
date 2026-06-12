@@ -133,16 +133,25 @@ public static class ShmoCompiler
         // set_prolog_flag(arity_compat, _) directive can still flip it).
         var readerFlags = new Shumway.Compiler.Parsing.PrologFlags
         { ArityCompat = arityCompat };
+        // Chunk 441 — record whether Arity mode was EVER on during the
+        // compile (the --arity pre-enable, or an in-file
+        // set_prolog_flag(arity_compat, true) flip at any point). The
+        // resulting ShmoObject carries it so the linker can apply Arity
+        // call semantics (undeclared predicate → implicit empty
+        // dynamic) to this module's unresolved references.
+        bool arityEverOn = arityCompat;
         foreach (var entry in new ClauseReader(new Lexer(source),
                      OperatorTable.Default(), readerFlags)
                  .ReadAllCollectingErrors(maxErrors))
         {
+            arityEverOn |= readerFlags.ArityCompat;
             if (entry.IsError)
                 errors.Add(new ShmoCompileError(entry.ErrorMessage!,
                     entry.ErrorPosition.Line, entry.ErrorPosition.Column));
             else if (entry.Clause is not null)
                 allClauses.Add(entry.Clause);
         }
+        arityEverOn |= readerFlags.ArityCompat;
         if (errors.Count >= maxErrors)
             return new ShmoCompileResult(null, errors, warnings);
         // First pass: walk RAW (untransformed) clauses to read
@@ -227,7 +236,7 @@ public static class ShmoCompiler
         return CompileFromParts(
             moduleName,
             source, rawClauses, publicSet, dynamicSet, ensureLinked,
-            qualifiedRefs, buildMode, errors, warnings);
+            qualifiedRefs, buildMode, errors, warnings, arityEverOn);
     }
 
     /// <summary>Chunk 411 — the compile back-half, shared by
@@ -249,7 +258,8 @@ public static class ShmoCompiler
         List<QualifiedPredicateRef> qualifiedRefs,
         ShmoBuildMode buildMode,
         List<ShmoCompileError> errors,
-        List<ShmoCompileError>? warnings = null)
+        List<ShmoCompileError>? warnings = null,
+        bool arityCompat = false)
     {
         // Partition raw clauses: dynamic-head ones become DynamicSeeds
         // (RAW), the rest go through the same DcgTransform +
@@ -283,9 +293,36 @@ public static class ShmoCompiler
         // Chunk 407 — module-local meta-wrapper unfold first (see
         // MetaWrapperUnfold): staticInput excludes dynamic-head clauses,
         // so any detected wrapper is immutable.
-        var clauses = PhraseTransform.Apply(
-            MetaTransform.Apply(DcgTransform.Apply(
-                MetaWrapperUnfold.Apply(staticInput))));
+        // Chunk 441 — the pipeline is split at the MetaTransform
+        // boundary: preMeta (post-unfold, post-DCG, pre-MetaTransform)
+        // is the LAST stage where meta-call structure is still visible
+        // (MetaTransform's chunk-205 rewrite turns `call(g(X))` into a
+        // direct `g(X)` and inlines findall/bagof/... goals into
+        // helper bodies). The DIRECT-vs-META edge marking walks
+        // preMeta; the call-graph EDGES still walk the fully
+        // transformed clauses below, unchanged.
+        var preMeta = DcgTransform.Apply(MetaWrapperUnfold.Apply(staticInput));
+        var clauses = PhraseTransform.Apply(MetaTransform.Apply(preMeta));
+
+        // Chunk 441 — module-wide DIRECT / META reference sets. A
+        // target lands in metaRefs when referenced from inside a
+        // meta-call argument, in directRefs when referenced as a plain
+        // body goal; an edge's IsMeta = metaRefs ∧ ¬directRefs (see
+        // ShmoCallEdge). Dynamic-head clauses' RAW bodies are walked
+        // too, mirroring the edge walk below.
+        var metaRefs = new HashSet<PredicateRef>();
+        var directRefs = new HashSet<PredicateRef>();
+        foreach (var clause in preMeta)
+        {
+            if (TryExtractHead(clause) is null) continue;
+            MarkCalls(ExtractBody(clause), inMeta: false, metaRefs, directRefs);
+        }
+        foreach (var rawClause in rawClauses)
+        {
+            PredicateRef? rawHead = TryExtractHead(rawClause);
+            if (rawHead is null || !dynamicSet.Contains(rawHead.Value)) continue;
+            MarkCalls(ExtractBody(rawClause), inMeta: false, metaRefs, directRefs);
+        }
 
         var definedOrder = new List<PredicateRef>();
         var definedSet = new HashSet<PredicateRef>();
@@ -422,9 +459,18 @@ public static class ShmoCompiler
         // standard "consult from source" tooling stay intact.
         string persistedSource = buildMode == ShmoBuildMode.Release ? "" : source;
 
-        var callGraphRO = new Dictionary<PredicateRef, IReadOnlyList<PredicateRef>>();
+        // Chunk 441 — stamp each edge with the module-wide
+        // DIRECT-vs-META marker (meta-only targets get IsMeta=true).
+        var callGraphRO = new Dictionary<PredicateRef, IReadOnlyList<ShmoCallEdge>>();
         foreach (var (k, v) in callGraph)
-            callGraphRO[k] = v.ToArray();
+        {
+            var edgeArr = new ShmoCallEdge[v.Count];
+            int ei = 0;
+            foreach (var t in v)
+                edgeArr[ei++] = new ShmoCallEdge(
+                    t, metaRefs.Contains(t) && !directRefs.Contains(t));
+            callGraphRO[k] = edgeArr;
+        }
 
         var dynamicSeeds = new List<ShmoDynamicSeed>(dynamicSeedAccum.Count);
         foreach (var (ind, encodedList) in dynamicSeedAccum)
@@ -449,7 +495,8 @@ public static class ShmoCompiler
             qualifiedRefs: qualifiedRefs,
             buildMode: buildMode,
             dynamicSeeds: dynamicSeeds,
-            clauseTerms: clauseTerms);
+            clauseTerms: clauseTerms,
+            arityCompat: arityCompat);
         return new ShmoCompileResult(obj, errors, warnings);
     }
 
@@ -718,6 +765,139 @@ public static class ShmoCompiler
                 return;
         }
     }
+
+    // ------------------------------------------------------------------------
+    // Chunk 441 — DIRECT-vs-META reference marking
+    // ------------------------------------------------------------------------
+
+    /// <summary>Walks a PRE-MetaTransform body recording every unqualified
+    /// reference into <paramref name="directRefs"/> (plain body goal) or
+    /// <paramref name="metaRefs"/> (inside a meta-call argument). The meta
+    /// positions: <c>call/1</c>'s goal (recursively), a <c>call/N</c>
+    /// closure's effective target (<c>call(g, X)</c> → <c>g/1</c>), and the
+    /// goal arguments of <c>catch/3</c> (goal + recovery),
+    /// <c>findall/3,4</c>, <c>bagof/3</c>, <c>setof/3</c>, <c>forall/2</c>,
+    /// <c>once/1</c>, <c>ignore/1</c>, <c>\+/1</c> and <c>not/1</c> — every
+    /// construct whose goal is meta-dispatched at runtime, matching the set
+    /// <see cref="CollectCalls"/> descends into. Control constructs
+    /// (<c>,</c> <c>;</c> <c>-&gt;</c> <c>*-&gt;</c>) propagate the current
+    /// context; a <c>^/2</c> existential wrapper inside a meta goal is
+    /// transparent. Module-qualified goals are skipped (the qualified-ref
+    /// channel resolves those). The walk mirrors <see cref="CollectCalls"/>'
+    /// target shapes so the recorded indicators line up with the edges the
+    /// transformed-body walk emits.</summary>
+    private static void MarkCalls(Term body, bool inMeta,
+        HashSet<PredicateRef> metaRefs, HashSet<PredicateRef> directRefs)
+    {
+        switch (body)
+        {
+            case CompoundTerm c:
+                if ((c.Functor == "," || c.Functor == ";" || c.Functor == "->"
+                     || c.Functor == "*->") && c.Args.Length == 2)
+                {
+                    MarkCalls(c.Args[0], inMeta, metaRefs, directRefs);
+                    MarkCalls(c.Args[1], inMeta, metaRefs, directRefs);
+                    return;
+                }
+                // Negation-as-failure runs its argument as a goal — under
+                // Arity, `\+ und_fact(X)` over a never-asserted fact
+                // predicate is valid (it succeeds). META.
+                if ((c.Functor == "\\+" || c.Functor == "not") && c.Args.Length == 1)
+                {
+                    MarkCalls(c.Args[0], inMeta: true, metaRefs, directRefs);
+                    return;
+                }
+                if (c.Functor == ":" && c.Args.Length == 2
+                    && c.Args[0] is AtomTerm)
+                    return;   // qualified ref — separate resolution channel.
+                if (c.Functor == "call" && c.Args.Length == 1)
+                {
+                    MarkCalls(c.Args[0], inMeta: true, metaRefs, directRefs);
+                    return;
+                }
+                // call/N closure: the effective runtime target is the
+                // closure's functor with the extra args appended —
+                // exactly what the chunk-205 static rewrite turns it
+                // into, so the recorded indicator matches that edge.
+                // Control-construct closures (call((a,b), X) etc.) stay
+                // on the runtime CallBuiltin path and produce no edge;
+                // skip them here too.
+                if (c.Functor == "call" && c.Args.Length >= 2)
+                {
+                    int extra = c.Args.Length - 1;
+                    if (c.Args[0] is AtomTerm closA
+                        && !IsControlConstructName(closA.Name, extra))
+                        metaRefs.Add(new PredicateRef(closA.Name, extra));
+                    else if (c.Args[0] is CompoundTerm closC
+                        && !IsControlConstructName(closC.Functor, closC.Args.Length + extra))
+                        metaRefs.Add(new PredicateRef(closC.Functor, closC.Args.Length + extra));
+                    return;
+                }
+                if (c.Functor == "catch" && c.Args.Length == 3)
+                {
+                    MarkCalls(c.Args[0], inMeta: true, metaRefs, directRefs);
+                    MarkCalls(c.Args[2], inMeta: true, metaRefs, directRefs);
+                    return;
+                }
+                if ((c.Functor == "findall" || c.Functor == "bagof"
+                     || c.Functor == "setof") && c.Args.Length == 3)
+                {
+                    MarkCalls(c.Args[1], inMeta: true, metaRefs, directRefs);
+                    return;
+                }
+                if (c.Functor == "findall" && c.Args.Length == 4)
+                {
+                    MarkCalls(c.Args[1], inMeta: true, metaRefs, directRefs);
+                    return;
+                }
+                if (c.Functor == "forall" && c.Args.Length == 2)
+                {
+                    MarkCalls(c.Args[0], inMeta: true, metaRefs, directRefs);
+                    MarkCalls(c.Args[1], inMeta: true, metaRefs, directRefs);
+                    return;
+                }
+                if ((c.Functor == "once" || c.Functor == "ignore")
+                    && c.Args.Length == 1)
+                {
+                    MarkCalls(c.Args[0], inMeta: true, metaRefs, directRefs);
+                    return;
+                }
+                // Existential quantifier inside a bagof/setof goal —
+                // transparent wrapper around the real goal.
+                if (c.Functor == "^" && c.Args.Length == 2 && inMeta)
+                {
+                    MarkCalls(c.Args[1], inMeta: true, metaRefs, directRefs);
+                    return;
+                }
+                (inMeta ? metaRefs : directRefs)
+                    .Add(new PredicateRef(c.Functor, c.Args.Length));
+                return;
+
+            case AtomTerm a:
+                if (a.Name == "!") return;
+                (inMeta ? metaRefs : directRefs)
+                    .Add(new PredicateRef(a.Name, 0));
+                return;
+
+            default:
+                return;
+        }
+    }
+
+    /// <summary>The control constructs the chunk-205 static
+    /// <c>call/N</c> rewrite refuses to extend (they stay on the runtime
+    /// dispatcher and never produce a call-graph edge). Mirrors
+    /// <c>MetaTransform.IsStaticallyExtendable</c>'s exclude set.</summary>
+    private static bool IsControlConstructName(string name, int effectiveArity)
+        => (name, effectiveArity) switch
+        {
+            (",", 2) or (";", 2) or ("->", 2) or ("*->", 2) => true,
+            ("\\+", 1) or ("not", 1) => true,
+            ("!", 0) => true,
+            ("catch", 3) or ("throw", 1) => true,
+            ("call", _) => true,
+            _ => false,
+        };
 
     private static void AddQualifiedCallTarget(string module, Term goal,
         List<QualifiedPredicateRef> qrefs)

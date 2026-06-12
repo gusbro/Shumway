@@ -24,6 +24,8 @@ namespace Shumway.Embedding;
 ///                 bytecodeLength   : uint32
 ///                 bytecodeBytes    : bytes (CompiledModuleCodec output)
 ///                 buildMode        : byte (0=release, 1=debug)        [V2+]
+///                 arityCompat      : byte (0/1 — compiled in Arity
+///                                    compatibility mode)              [chunk 441]
 ///                 definedCount     : uint32
 ///                   for each defined predicate:
 ///                     name         : len-prefixed UTF-8
@@ -41,6 +43,10 @@ namespace Shumway.Embedding;
 ///                       for each edge target:
 ///                         name     : len-prefixed UTF-8
 ///                         arity    : uint32
+///                         isMeta   : byte (0=direct, 1=meta — every
+///                                    in-module reference to the target
+///                                    sits inside a meta-call argument;
+///                                    see ShmoCallEdge)         [chunk 441]
 ///                 qualifiedRefsCount: uint32
 ///                   for each:
 ///                     module       : len-prefixed UTF-8

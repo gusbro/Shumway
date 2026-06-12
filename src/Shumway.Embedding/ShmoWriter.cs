@@ -30,6 +30,7 @@ public static class ShmoWriter
         bw.Write((uint)obj.Bytecode.Length);
         bw.Write(obj.Bytecode);
         bw.Write((byte)obj.BuildMode);   // V2+
+        bw.Write((byte)(obj.ArityCompat ? 1 : 0));   // chunk 441
 
         bw.Write((uint)obj.Defined.Count);
         foreach (var d in obj.Defined)
@@ -52,10 +53,11 @@ public static class ShmoWriter
             WriteLengthPrefixedUtf8(bw, kv.Key.Name);
             bw.Write((uint)kv.Key.Arity);
             bw.Write((uint)kv.Value.Count);
-            foreach (var target in kv.Value)
+            foreach (var edge in kv.Value)
             {
-                WriteLengthPrefixedUtf8(bw, target.Name);
-                bw.Write((uint)target.Arity);
+                WriteLengthPrefixedUtf8(bw, edge.Target.Name);
+                bw.Write((uint)edge.Target.Arity);
+                bw.Write((byte)(edge.IsMeta ? 1 : 0));   // chunk 441
             }
         }
 

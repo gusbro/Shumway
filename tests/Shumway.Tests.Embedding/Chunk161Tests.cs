@@ -13,6 +13,12 @@ namespace Shumway.Tests.Embedding;
 /// </summary>
 public class Chunk161Tests
 {
+    /// <summary>Chunk 441 changed call-graph edges from bare
+    /// <see cref="PredicateRef"/>s to <see cref="ShmoCallEdge"/>s (the
+    /// DIRECT/META marker). These tests assert on targets only.</summary>
+    private static List<PredicateRef> Targets(IReadOnlyList<ShmoCallEdge> edges)
+        => edges.Select(e => e.Target).ToList();
+
     [Fact]
     public void ModuleDirective_SetsName()
     {
@@ -81,8 +87,9 @@ public class Chunk161Tests
         var obj = ShmoCompiler.CompileSource(
             "foo(X) :- bar(X), baz(X, 1).\nbar(_).\nbaz(_, _).\n");
         Assert.True(obj.CallGraph.TryGetValue(new PredicateRef("foo", 1), out var edges));
-        Assert.Contains(new PredicateRef("bar", 1), edges!);
-        Assert.Contains(new PredicateRef("baz", 2), edges!);
+        var targets = Targets(edges!);
+        Assert.Contains(new PredicateRef("bar", 1), targets);
+        Assert.Contains(new PredicateRef("baz", 2), targets);
     }
 
     [Fact]
@@ -97,7 +104,7 @@ public class Chunk161Tests
         var obj = ShmoCompiler.CompileSource(
             "f(X) :- (a(X) ; b(X) -> c(X) ; d(X)), e(X).\n"
             + "a(_). b(_). c(_). d(_). e(_).\n");
-        var edges = obj.CallGraph[new PredicateRef("f", 1)];
+        var edges = Targets(obj.CallGraph[new PredicateRef("f", 1)]);
         // Conjunction is still flattened so e/1 is a direct edge.
         Assert.Contains(new PredicateRef("e", 1), edges);
         // Control operators are never direct call targets.
@@ -124,7 +131,8 @@ public class Chunk161Tests
         // table.
         var obj = ShmoCompiler.CompileSource(
             "f(X) :- \\+ g(X), call(h(X)).\ng(_). h(_).\n");
-        var edges = obj.CallGraph[new PredicateRef("f", 1)];
+        var rawEdges = obj.CallGraph[new PredicateRef("f", 1)];
+        var edges = Targets(rawEdges);
         // \+ now resolves through a $neg_N helper (no direct g/1).
         Assert.Contains(edges, e => e.Name.StartsWith("$neg_"));
         // h/1 stays a direct edge — call/1 with a known goal
@@ -132,9 +140,14 @@ public class Chunk161Tests
         Assert.Contains(new PredicateRef("h", 1), edges);
         Assert.DoesNotContain(new PredicateRef("\\+", 1), edges);
         Assert.DoesNotContain(new PredicateRef("call", 1), edges);
+        // Chunk 441 — h/1 is referenced ONLY inside call/1, so its edge
+        // carries the META marker; g/1 (inside \+, also a meta position)
+        // likewise. A defined predicate's meta marking is harmless — the
+        // linker only consults IsMeta for UNRESOLVED references.
+        Assert.True(rawEdges.Single(e => e.Target == new PredicateRef("h", 1)).IsMeta);
         // g/1 is reachable via the negation helper's own callgraph.
         var negHelper = edges.First(e => e.Name.StartsWith("$neg_"));
-        var negEdges = obj.CallGraph[negHelper];
+        var negEdges = Targets(obj.CallGraph[negHelper]);
         Assert.Contains(new PredicateRef("g", 1), negEdges);
     }
 
@@ -143,7 +156,7 @@ public class Chunk161Tests
     {
         var obj = ShmoCompiler.CompileSource(
             "f :- !, done.\ndone.\n");
-        var edges = obj.CallGraph[new PredicateRef("f", 0)];
+        var edges = Targets(obj.CallGraph[new PredicateRef("f", 0)]);
         Assert.DoesNotContain(new PredicateRef("!", 0), edges);
         Assert.Contains(new PredicateRef("done", 0), edges);
     }
@@ -157,7 +170,7 @@ public class Chunk161Tests
         // either way at link time.
         var obj = ShmoCompiler.CompileSource(
             "f(X) :- X is 1 + 2, write(X).\n");
-        var edges = obj.CallGraph[new PredicateRef("f", 1)];
+        var edges = Targets(obj.CallGraph[new PredicateRef("f", 1)]);
         Assert.Contains(new PredicateRef("is", 2), edges);
         Assert.Contains(new PredicateRef("write", 1), edges);
     }
@@ -171,7 +184,7 @@ public class Chunk161Tests
         Assert.Equal("lists", qref.Module);
         Assert.Equal("append", qref.Name);
         Assert.Equal(3, qref.Arity);
-        var edges = obj.CallGraph[new PredicateRef("f", 2)];
+        var edges = Targets(obj.CallGraph[new PredicateRef("f", 2)]);
         Assert.DoesNotContain(new PredicateRef("append", 3), edges);
     }
 
@@ -192,7 +205,7 @@ public class Chunk161Tests
             d => d.Indicator.Name == "sentence" && d.Indicator.Arity == 2);
         Assert.Contains(obj.Defined,
             d => d.Indicator.Name == "noun" && d.Indicator.Arity == 2);
-        var sentenceEdges = obj.CallGraph[new PredicateRef("sentence", 2)];
+        var sentenceEdges = Targets(obj.CallGraph[new PredicateRef("sentence", 2)]);
         Assert.Contains(new PredicateRef("noun", 2), sentenceEdges);
         Assert.Contains(new PredicateRef("verb", 2), sentenceEdges);
     }

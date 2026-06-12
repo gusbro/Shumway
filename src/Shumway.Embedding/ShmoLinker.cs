@@ -457,6 +457,29 @@ public static class ShmoLinker
         var reached = new HashSet<(string, PredicateRef)>();
         var reachedModules = new HashSet<string>();
         var missing = new HashSet<PredicateRef>();
+        // Chunk 441 — Arity call semantics for arity-compiled modules:
+        // META-CALLING an undeclared predicate is VALID in Arity (it
+        // simply fails when nothing was asserted, and works once
+        // something is). An unresolved edge whose referencing module was
+        // compiled with arity_compat AND whose ShmoCallEdge.IsMeta
+        // marker is set (every in-module reference sits inside a
+        // meta-call argument) is DEFERRED into pendingArityMeta instead
+        // of erroring. After the walk, each pending target whose every
+        // unresolved reference was such a meta edge (no DIRECT or
+        // non-arity reference put it in `missing`) is registered as an
+        // implicit EMPTY DYNAMIC predicate — exactly as if the first
+        // referencing file had declared `:- dynamic Name/Arity.` with
+        // zero clauses — so the bundle gets an empty trampoline: calls
+        // fail cleanly at runtime and a later assertz works through the
+        // normal dynamic machinery (implicit_dynamic). A DIRECT body
+        // goal to an undefined predicate stays today's
+        // missing_predicate error, even in an arity module.
+        // implicitDynamics is keyed by the module the implicit
+        // declaration is attributed to; folded into that module's
+        // bundle-entry Defined list in step 8.
+        var implicitDynamics = new Dictionary<string, List<PredicateRef>>();
+        var pendingArityMeta =
+            new Dictionary<PredicateRef, List<(string Module, PredicateRef Caller)>>();
         var qrefHandledModules = new HashSet<string>();
         var queue = new Queue<(string Module, PredicateRef Pred)>();
         foreach (var r in roots)
@@ -501,8 +524,9 @@ public static class ShmoLinker
 
             if (!byModule.TryGetValue(curMod, out var modObj)) continue;
             if (!modObj.CallGraph.TryGetValue(curPred, out var edges)) continue;
-            foreach (var edge in edges)
+            foreach (var callEdge in edges)
             {
+                var edge = callEdge.Target;
                 // 1) Module-local definition wins.
                 if (moduleDefined[curMod].ContainsKey(edge))
                 {
@@ -528,7 +552,23 @@ public static class ShmoLinker
                 if (builtinPredicates.Contains(edge)) continue;
                 // 5) Prelude public? Always resolves.
                 if (preludePublics.Contains(edge)) continue;
-                // 6) Anything else is missing.
+                // 6) Chunk 441 — a META-marked edge from an Arity-
+                //    compiled module: defer the decision. If by the end
+                //    of the walk the target collected ONLY such
+                //    references (nothing put it in `missing`), it links
+                //    as an implicit empty dynamic below; otherwise the
+                //    direct/non-arity reference already errored.
+                if (modObj.ArityCompat && callEdge.IsMeta)
+                {
+                    if (!pendingArityMeta.TryGetValue(edge, out var pendList))
+                    {
+                        pendList = new List<(string, PredicateRef)>();
+                        pendingArityMeta[edge] = pendList;
+                    }
+                    pendList.Add((curMod, curPred));
+                    continue;
+                }
+                // 7) Anything else is missing.
                 if (missing.Add(edge))
                 {
                     Emit(config.AllowUndefined ? LinkSeverity.Warning : LinkSeverity.Error,
@@ -538,6 +578,41 @@ public static class ShmoLinker
                         curMod);
                 }
             }
+        }
+
+        // ----- 6a-arity. Chunk 441 — implicit empty dynamics -----
+        // Decide each deferred meta-only target now that every
+        // unresolved reference has been seen. A target also referenced
+        // DIRECTLY (or from a non-arity module) is in `missing` — its
+        // error already fired; skip it. Otherwise register the target as
+        // an empty dynamic attributed to the FIRST referencing module
+        // (multiple arity modules meta-referencing the same target get
+        // exactly one registration). An empty dynamic has no clauses and
+        // no call graph, so registering after the walk adds no
+        // reachability; marking it reached + Dynamic in moduleDefined
+        // makes it a prune seed in step 6b exactly like a declared
+        // dynamic (dynamics keep a by-name-callable standalone form).
+        foreach (var (target, refs) in pendingArityMeta)
+        {
+            if (missing.Contains(target)) continue;
+            string ownerMod = refs[0].Module;
+            moduleDefined[ownerMod][target] = PredicateVisibility.Dynamic;
+            if (!globalDynamic.TryGetValue(target, out var implList))
+            {
+                implList = new List<string>();
+                globalDynamic[target] = implList;
+            }
+            implList.Add(ownerMod);
+            if (!implicitDynamics.TryGetValue(ownerMod, out var perMod))
+            {
+                perMod = new List<PredicateRef>();
+                implicitDynamics[ownerMod] = perMod;
+            }
+            perMod.Add(target);
+            reached.Add((ownerMod, target));
+            Emit(LinkSeverity.Info, "arity_implicit_dynamic",
+                $"arity: undeclared predicate {target} (meta-called from "
+                + $"'{ownerMod}') linked as empty dynamic.", ownerMod);
         }
 
         // ----- 6b. Stage 9 (dead-region elimination) seed set -----
@@ -751,12 +826,43 @@ public static class ShmoLinker
                         ? recompiled.Bytecode : null;
                 }
 
+                // Chunk 441 — fold the implicit empty dynamics this
+                // (arity-compiled) module's unresolved references created
+                // into its Defined list, exactly as a source-level
+                // `:- dynamic Name/Arity.` with zero clauses would have:
+                // the source-less LoadBundle path registers each as a
+                // dynamic functor with an empty clause list, and query
+                // setup emits the fail-only stub trampoline. A clauseless
+                // dynamic declaration adds no bytecode, so the entry's
+                // CompiledBytecode is untouched; source-bearing entries
+                // get the directive prepended so the ConsultString load
+                // path registers the same declaration.
+                IReadOnlyList<ShmoDefinedPredicate> entryDefined = obj.Defined;
+                if (implicitDynamics.TryGetValue(obj.ModuleName, out var implicits)
+                    && implicits.Count > 0)
+                {
+                    var augmentedDefined = new List<ShmoDefinedPredicate>(obj.Defined);
+                    foreach (var p in implicits)
+                        augmentedDefined.Add(new ShmoDefinedPredicate(
+                            p, PredicateVisibility.Dynamic));
+                    entryDefined = augmentedDefined;
+                    if (!string.IsNullOrEmpty(entrySource))
+                    {
+                        var dsb = new System.Text.StringBuilder();
+                        foreach (var p in implicits)
+                            dsb.Append(":- dynamic ").Append(p.Name).Append('/')
+                               .Append(p.Arity).Append(".\n");
+                        dsb.Append(entrySource);
+                        entrySource = dsb.ToString();
+                    }
+                }
+
                 entries.Add(new BundleEntry(
                     moduleName: obj.ModuleName,
                     source: entrySource,
                     compiledBytecode: entryBytecode,
                     compiledIl: null,
-                    defined: obj.Defined,
+                    defined: entryDefined,
                     dynamicSeeds: obj.DynamicSeeds));
             }
             // Chunk 179: the chunk-172 "stripped_bundle" warning is gone —
@@ -1011,7 +1117,8 @@ public static class ShmoLinker
             var res = ShmoCompiler.CompileFromParts(
                 obj.ModuleName, obj.Source, rawAll, publicSet, dynamicSet,
                 new List<PredicateRef>(obj.EnsureLinked),
-                new List<QualifiedPredicateRef>(), obj.BuildMode, errors);
+                new List<QualifiedPredicateRef>(), obj.BuildMode, errors,
+                arityCompat: obj.ArityCompat);
             if (!res.Success || res.Object is null)
             {
                 emit(LinkSeverity.Warning, "lto_unfold_recompile_failed",

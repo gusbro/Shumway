@@ -53,6 +53,14 @@ public static class ShmoReader
                 $".shmo: unknown build-mode code {mode}.");
         ShmoBuildMode buildMode = (ShmoBuildMode)mode;
 
+        // Chunk 441 — Arity-compat compile mode (pre-release layout
+        // change, version frozen; see the ShmoFormat policy note).
+        byte arityByte = br.ReadByte();
+        if (arityByte > 1)
+            throw new InvalidDataException(
+                $".shmo: unknown arity-compat code {arityByte}.");
+        bool arityCompat = arityByte == 1;
+
         uint definedCount = br.ReadUInt32();
         var defined = new ShmoDefinedPredicate[definedCount];
         for (uint i = 0; i < definedCount; i++)
@@ -77,18 +85,24 @@ public static class ShmoReader
         }
 
         uint callerCount = br.ReadUInt32();
-        var callGraph = new Dictionary<PredicateRef, IReadOnlyList<PredicateRef>>();
+        var callGraph = new Dictionary<PredicateRef, IReadOnlyList<ShmoCallEdge>>();
         for (uint i = 0; i < callerCount; i++)
         {
             string callerName = ReadLengthPrefixedUtf8(br);
             int callerArity = (int)br.ReadUInt32();
             uint edgeCount = br.ReadUInt32();
-            var targets = new PredicateRef[edgeCount];
+            var targets = new ShmoCallEdge[edgeCount];
             for (uint j = 0; j < edgeCount; j++)
             {
                 string tName = ReadLengthPrefixedUtf8(br);
                 int tArity = (int)br.ReadUInt32();
-                targets[j] = new PredicateRef(tName, tArity);
+                byte metaByte = br.ReadByte();   // chunk 441
+                if (metaByte > 1)
+                    throw new InvalidDataException(
+                        $".shmo: unknown call-edge meta marker {metaByte} for "
+                        + $"{tName}/{tArity}.");
+                targets[j] = new ShmoCallEdge(
+                    new PredicateRef(tName, tArity), metaByte == 1);
             }
             callGraph[new PredicateRef(callerName, callerArity)] = targets;
         }
@@ -142,7 +156,7 @@ public static class ShmoReader
 
         return new ShmoObject(moduleName, source, bytecode,
             defined, ensureLinked, callGraph, qrefs, buildMode, dynamicSeeds,
-            clauseTerms);
+            clauseTerms, arityCompat);
     }
 
     private static string ReadLengthPrefixedUtf8(BinaryReader br)
