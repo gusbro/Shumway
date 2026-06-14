@@ -183,32 +183,58 @@ public static class ArithmeticBuiltins
         }
         if (x.Tag == Tag.Ref)
         {
-            int returnPc = engine.BuiltinReturnPc;
-            return BetweenStep(engine, current: loVal, hiVal, returnPc, isResume: false);
+            // Enumerate loVal..hiVal. The resume state lives in ONE per-CALL
+            // cursor object + a cached delegate (allocated once, here) that is
+            // re-pushed unchanged on every backtrack — so a long range costs
+            // O(1) managed allocation, not one closure + display-class per
+            // value. The old per-step closure made the failure-driven idiom
+            // (e.g. between(1, 100000000, X), X =:= N) churn gigabytes of Gen0
+            // garbage — the dominant cost versus a C builtin's tight loop.
+            if (loVal < hiVal)
+            {
+                var cursor = new BetweenCursor(loVal, hiVal, engine.BuiltinReturnPc);
+                // arity: 3 — the CP must save/restore between's three argument
+                // registers (X0..X2). The resume writes the result into X2, but
+                // a following body goal whose builtin call takes >= 3 args
+                // clobbers X2; without restoring it the resume's
+                // UnifyRegisterWithCell(2, ...) would corrupt the enumeration.
+                engine.PushBuiltinChoicePoint(cursor.Resume, arity: 3);
+            }
+            return engine.UnifyRegisterWithCell(2, Cell.Int(loVal));
         }
         return false;
     }
 
-    private static bool BetweenStep(
-        Engine engine, long current, long hi, int returnPc, bool isResume)
+    /// <summary>Resume state for a non-deterministic <c>between/3</c>
+    /// enumeration: the running position plus a cached resume delegate.
+    /// One instance per <c>between</c> call; the delegate is re-pushed
+    /// unchanged on each backtrack, so advancing the range allocates nothing
+    /// per step (the previous per-step closure was the bottleneck on long
+    /// ranges).</summary>
+    private sealed class BetweenCursor
     {
-        if (current > hi) return false;
-        if (current < hi)
+        private long _current;
+        private readonly long _hi;
+        private readonly int _returnPc;
+        public readonly Func<Engine, int, bool> Resume;
+
+        public BetweenCursor(long start, long hi, int returnPc)
         {
-            long next = current + 1;
-            Func<Engine, int, bool> resume = (e, _) =>
-                BetweenStep(e, next, hi, returnPc, isResume: true);
-            // arity: 3 — the CP must save/restore between's three argument
-            // registers (X0..X2). The resume writes the result into X2, but a
-            // following body goal whose builtin call takes >= 3 args clobbers
-            // X2 (and beyond); without restoring it, the resume's
-            // UnifyRegisterWithCell(2, ...) would operate on a corrupt
-            // register and the enumeration breaks after one or two values.
-            engine.PushBuiltinChoicePoint(resume, arity: 3);
+            _current = start;
+            _hi = hi;
+            _returnPc = returnPc;
+            Resume = Step;
         }
-        if (!engine.UnifyRegisterWithCell(2, Cell.Int(current))) return false;
-        if (isResume) engine.ResumeAtReturnPc(returnPc);
-        return true;
+
+        private bool Step(Engine engine, int _)
+        {
+            long next = ++_current;   // this backtrack yields the next value
+            if (next < _hi)
+                engine.PushBuiltinChoicePoint(Resume, arity: 3);
+            if (!engine.UnifyRegisterWithCell(2, Cell.Int(next))) return false;
+            engine.ResumeAtReturnPc(_returnPc);
+            return true;
+        }
     }
 
     /// <summary><c>succ(X, Y)</c> — successor of a non-negative integer.
