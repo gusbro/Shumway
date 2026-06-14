@@ -2651,7 +2651,34 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     asmName);
             RegisterForeignAssembly(resolved);
         }
-        foreach (var entry in bundle.Entries)
+        // A shumway-lib librarian archive stores its modules as verbatim
+        // .shmo objects (bundle.ArchiveMembers) rather than post-link
+        // Entries. Derive a runnable entry from each — exactly the fields a
+        // .shmo carries that the per-entry load path below needs — and run it
+        // through the same machinery, so an archive loads identically to
+        // consulting each object's source / loading its compiled bytecode.
+        // No linking or pruning happens: every member is kept verbatim.
+        IReadOnlyList<BundleEntry> effectiveEntries = bundle.Entries;
+        if (bundle.ArchiveMembers.Count > 0)
+        {
+            var combined = new List<BundleEntry>(
+                bundle.Entries.Count + bundle.ArchiveMembers.Count);
+            combined.AddRange(bundle.Entries);
+            foreach (var member in bundle.ArchiveMembers)
+            {
+                var shmo = ShmoReader.FromBytes(member.ShmoBytes);
+                combined.Add(new BundleEntry(
+                    shmo.ModuleName, shmo.Source,
+                    compiledBytecode: shmo.Bytecode,
+                    compiledIl: null,
+                    defined: shmo.Defined,
+                    compiledIlPatches: null,
+                    compiledIlEntries: null,
+                    dynamicSeeds: shmo.DynamicSeeds));
+            }
+            effectiveEntries = combined;
+        }
+        foreach (var entry in effectiveEntries)
         {
             // Chunk 178: source-less load. When the bundle was built
             // with --strip (or compiled in Release with chunk 177's
@@ -2693,7 +2720,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // had already invoked Sigil for every promotable predicate
         // by the time the persisted bind ran — the persisted IL was
         // technically loaded but never used.
-        foreach (var entry in bundle.Entries)
+        foreach (var entry in effectiveEntries)
         {
             // A persisted-IL blob is JIT-able IL — loading and running it
             // is runtime code generation, so under Native AOT the entry's
@@ -2811,7 +2838,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             }
         }
 
-        foreach (var entry in bundle.Entries)
+        foreach (var entry in effectiveEntries)
         {
             if (entry.CompiledBytecode is null) continue;
             // Source-less entries already decoded above.
@@ -6088,7 +6115,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             loadOffset: _querySplit,
             externalSymbols: persistentAddresses,
             switchTableIdBase:
-                staticLink.SwitchTables.Count + _dynamicLink.SwitchTables.Count);
+                // _dynamicLink is non-null here (built in the
+                // builtPersistentNow block above); ! matches the sibling
+                // sites at _dynamicLink!.Addresses / .SwitchTables.
+                staticLink.SwitchTables.Count + _dynamicLink!.SwitchTables.Count);
 
         byte[] queryBytes = queryLink.Bytecode;
 

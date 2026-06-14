@@ -186,6 +186,17 @@ public static class BundleWriter
         {
             bw.Write((byte)0);
         }
+        // Librarian archive trailer (shumway-lib): verbatim .shmo objects.
+        // 0 for everything except a librarian-assembled archive — mirrors
+        // ShmoLinker.SerialiseBundle exactly so a bundle round-trips through
+        // either writer identically.
+        bw.Write((uint)bundle.ArchiveMembers.Count);
+        foreach (var member in bundle.ArchiveMembers)
+        {
+            WriteLengthPrefixedUtf8(bw, member.FileName);
+            bw.Write((uint)member.ShmoBytes.Length);
+            bw.Write(member.ShmoBytes);
+        }
         bw.Flush();
         return ms.ToArray();
     }

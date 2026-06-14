@@ -48,6 +48,11 @@ namespace Shumway.Embedding;
 ///                     dynamicOnly  : byte
 ///                     consultCount : uint32 + { len:uint32, utf-8 }*
 ///                     dynamicCount : uint32 + seeds (same shape as above)
+///                 archiveCount     : uint32   (shumway-lib librarian — 0
+///                       from the linker / compiler / SaveState)
+///                   each member    : { fileNameLen:uint32, fileNameBytes:utf-8,
+///                                      shmoByteCount:uint32, shmoBytes (verbatim
+///                                      .shmo image) }
 /// </code>
 ///
 /// <para>PRE-RELEASE FORMAT POLICY (same as <see cref="ShmoFormat"/>): there

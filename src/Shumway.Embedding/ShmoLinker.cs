@@ -1379,6 +1379,17 @@ public static class ShmoLinker
         // layout (chunk 413 froze the format: every section unconditional).
         // A linker-produced bundle never carries a save-state snapshot.
         bw.Write((byte)0);
+        // Librarian archive trailer (shumway-lib) — always empty here: the
+        // linker stores its modules as post-link Entries, never as archive
+        // members. Written so a linker bundle and a librarian bundle share
+        // one on-disk layout (BundleReader reads this section either way).
+        bw.Write((uint)bundle.ArchiveMembers.Count);
+        foreach (var member in bundle.ArchiveMembers)
+        {
+            WriteString(bw, member.FileName);
+            bw.Write((uint)member.ShmoBytes.Length);
+            bw.Write(member.ShmoBytes);
+        }
         bw.Flush();
         return ms.ToArray();
     }

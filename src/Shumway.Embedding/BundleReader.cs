@@ -162,7 +162,24 @@ public static class BundleReader
                 snapshot = new BundleSnapshot(dynamicOnly, consultHistory, dynamicClauses);
             }
         }
-        return new Bundle(entries, foreignAssemblies, snapshot);
+        // Librarian archive trailer (shumway-lib): the verbatim .shmo objects
+        // the bundle was assembled from. 0 for linker / compiler / SaveState
+        // bundles; non-zero only for a librarian archive (whose Entries are
+        // then empty — LoadBundle derives a runnable entry per member).
+        uint archiveCount = br.ReadUInt32();
+        var archiveMembers = new List<BundleArchiveMember>((int)archiveCount);
+        for (uint i = 0; i < archiveCount; i++)
+        {
+            string fileName = ReadLengthPrefixedUtf8(br);
+            uint shmoLength = br.ReadUInt32();
+            byte[] shmoBytes = br.ReadBytes((int)shmoLength);
+            if (shmoBytes.Length != shmoLength)
+                throw new InvalidDataException(
+                    $"Bundle: truncated archive member '{fileName}' (expected "
+                    + $"{shmoLength} bytes, got {shmoBytes.Length}).");
+            archiveMembers.Add(new BundleArchiveMember(fileName, shmoBytes));
+        }
+        return new Bundle(entries, foreignAssemblies, snapshot, archiveMembers);
     }
 
     private static string ReadLengthPrefixedUtf8(BinaryReader br)

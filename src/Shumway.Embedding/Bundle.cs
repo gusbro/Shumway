@@ -28,6 +28,23 @@ public sealed class Bundle
     /// consumes it. Bundles built by shumway-link have this null.</summary>
     public BundleSnapshot? Snapshot { get; }
 
+    /// <summary>The library/archive section: the verbatim <c>.shmo</c>
+    /// objects this bundle was assembled from by the <c>shumway-lib</c>
+    /// librarian. Empty for bundles produced by the linker / compiler /
+    /// <see cref="PrologEngine.SaveState"/> — those store their modules
+    /// in <see cref="Entries"/> as post-link runnable form and consume
+    /// their <c>.shmo</c> inputs.
+    ///
+    /// <para>A librarian archive is the dual: it keeps the <em>original</em>
+    /// objects so they can be listed and extracted byte-identically, with
+    /// no linking or dead-module pruning. It is still directly runnable —
+    /// <see cref="PrologEngine.LoadBundle(Bundle)"/> derives a runnable
+    /// entry from each member (consulting its source, or loading its
+    /// compiled bytecode), so a librarian bundle has no
+    /// <see cref="Entries"/> of its own and stores each module exactly
+    /// once.</para></summary>
+    public IReadOnlyList<BundleArchiveMember> ArchiveMembers { get; }
+
     public Bundle(IReadOnlyList<BundleEntry> entries)
         : this(entries, foreignAssemblies: null) { }
 
@@ -39,11 +56,39 @@ public sealed class Bundle
     public Bundle(
         IReadOnlyList<BundleEntry> entries,
         IReadOnlyList<string>? foreignAssemblies,
-        BundleSnapshot? snapshot)
+        BundleSnapshot? snapshot,
+        IReadOnlyList<BundleArchiveMember>? archiveMembers = null)
     {
         Entries = entries;
         ForeignAssemblies = foreignAssemblies ?? Array.Empty<string>();
         Snapshot = snapshot;
+        ArchiveMembers = archiveMembers ?? Array.Empty<BundleArchiveMember>();
+    }
+}
+
+/// <summary>One member of a <c>shumway-lib</c> librarian archive: the
+/// verbatim bytes of a <c>.shmo</c> compiled-object file plus the original
+/// file name it was added under. The librarian stores objects unchanged so
+/// <c>shumway-lib extract</c> reproduces the exact input <c>.shmo</c> and
+/// <c>shumway-lib list</c> can report each module's metadata; the engine
+/// derives a runnable <see cref="BundleEntry"/> from
+/// <see cref="ShmoBytes"/> at load time. See
+/// <see cref="Bundle.ArchiveMembers"/>.</summary>
+public sealed class BundleArchiveMember
+{
+    /// <summary>The file name (no directory) this object was added under;
+    /// <c>extract</c> writes the member back out under this name. Carried
+    /// only for ergonomics — the archive keys members by module name.</summary>
+    public string FileName { get; }
+
+    /// <summary>The complete, unmodified <c>.shmo</c> byte image
+    /// (<see cref="ShmoReader"/> / <see cref="ShmoWriter"/> round-trip).</summary>
+    public byte[] ShmoBytes { get; }
+
+    public BundleArchiveMember(string fileName, byte[] shmoBytes)
+    {
+        FileName = fileName;
+        ShmoBytes = shmoBytes;
     }
 }
 

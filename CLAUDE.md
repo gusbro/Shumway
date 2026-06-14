@@ -665,6 +665,25 @@ embedding API headers) and real Arity programs. Scope being surveyed: diff the
 Arity predicate listing against the current builtin/prelude surface; run the
 demo `.ARI` programs; close the gaps real programs hit.
 
+- **Chunk 442 — `shumway-lib` librarian (new CLI)**. A fourth CLI tool
+  (`src/Shumway.Lib/`, assembly `shumway-lib`) that packages chosen `.shmo`
+  objects into a runnable `.shum` *without* the linker's reachability analysis
+  / dead-module pruning — every object you add is kept. Commands: `create`,
+  `add`/`r`, `delete`/`d`, `list`/`t`, `extract`/`x` (wildcards + `-C` out-dir),
+  the usual `ar`-style surface. The `.shum` format gains a first-class **archive
+  section** (`Bundle.ArchiveMembers` — each a verbatim `.shmo` image keyed by
+  module name; written by both `.shum` writers, read by `BundleReader`; no
+  version bump, pre-release layout-change-free): the linker stores its modules
+  as post-link `BundleEntry`s, the librarian stores them as raw `.shmo`s, and
+  `LoadBundle` derives a runnable entry from each member at load — so an archive
+  is directly runnable with **zero duplication** (the `ar`/`.a` model) and
+  `extract` reproduces the input byte-for-byte. Cross-module public calls
+  resolve at load with no link step (verified debug + source-stripped release).
+  `Shumway.Embedding.Librarian` is the tested API the CLI wraps. 11
+  LibrarianTests; gate suites Embedding 2357 / Core 432 / Compiler 284 / ISO
+  277, all green. (Also fixed a latent `_dynamicLink` CS8602 in the query-setup
+  linker that any compilation perturbation could surface.)
+
 **Phase 29 — region compilation shipped + engine correctness/runtime arc** — ✅ **Complete** (tagged `phase-29`; closure summary in [`docs/phase-29-closure.md`](docs/phase-29-closure.md)).
 
 Opened as Tier-1 rule inlining (chunk-364 survey); the user's REGION COMPILATION
