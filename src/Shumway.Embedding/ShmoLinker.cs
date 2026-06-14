@@ -155,6 +155,35 @@ public sealed class LinkConfig
     /// <c>engine.RegisterPredicates(instance)</c> explicitly for
     /// those.</para></summary>
     public IReadOnlyList<string> ForeignAssemblies { get; init; } = Array.Empty<string>();
+
+    /// <summary>Library inputs (C-archive semantics). Each entry is a
+    /// <c>.shum</c> librarian archive (built by <c>shumway-lib</c>) broken
+    /// out into its member <c>.shmo</c> objects. Unlike
+    /// <see cref="Objects"/> — every one of which is always linked — a
+    /// library's members are pulled in ONLY on demand, to satisfy a
+    /// reference the explicit objects (plus builtins / prelude) leave
+    /// unresolved. Libraries are searched FIFO: when more than one provides
+    /// a symbol, the one earlier in this list wins. Pulls are transitive (a
+    /// pulled member's own references pull further members) and feed the
+    /// same cross-module LTO + reachability + prune as the explicit
+    /// objects, so a pulled member is optimized exactly like one passed
+    /// directly. Members no reference reaches are simply not linked.</summary>
+    public IReadOnlyList<LinkLibrary> Libraries { get; init; } = Array.Empty<LinkLibrary>();
+}
+
+/// <summary>One library input to <see cref="ShmoLinker.Link"/>: a
+/// <c>.shum</c> librarian archive's member <c>.shmo</c> objects, in archive
+/// order (the FIFO tie-break within a single library). See
+/// <see cref="LinkConfig.Libraries"/>.</summary>
+public sealed class LinkLibrary
+{
+    public string Name { get; }
+    public IReadOnlyList<ShmoObject> Members { get; }
+    public LinkLibrary(string name, IReadOnlyList<ShmoObject> members)
+    {
+        Name = name;
+        Members = members;
+    }
 }
 
 /// <summary>Outcome of one <see cref="ShmoLinker.Link"/> call.
@@ -251,6 +280,19 @@ public static class ShmoLinker
             }
         }
 
+        // ----- 0a. Library resolution (C-archive semantics) -----
+        // Explicit .shmo objects always link; .shum library members are pulled
+        // in on demand, FIFO, to satisfy otherwise-unresolved references
+        // (transitive, to a fixpoint). Done BEFORE the LTO unfold so the full
+        // object set — explicit + pulled — goes through cross-module
+        // optimization together (the resolve-then-optimize order real LTO
+        // linkers use); a pulled member is optimized exactly like one passed
+        // directly.
+        IReadOnlyList<ShmoObject> linkInput = config.Libraries.Count == 0
+            ? config.Objects
+            : PullLibraryMembers(config.Objects, config.Libraries,
+                config.EntryPoints, Emit);
+
         // ----- 0. Chunk 411 — cross-module meta-wrapper unfold (the LTO pass) -----
         // V4 .shmo objects carry their raw static clauses (ClauseTerms). Detect
         // every module's wrapper templates, export the PUBLIC ones globally, and
@@ -260,7 +302,7 @@ public static class ShmoLinker
         // terms. Runs before everything else so the reachability walk and the
         // bundle see the final call graph.
         IReadOnlyList<ShmoObject> objects = CrossModuleUnfold(
-            config.Objects, Emit, out var ltoPublicWrappers);
+            linkInput, Emit, out var ltoPublicWrappers);
 
         // ----- 1. Index objects, detect duplicate module names -----
         var byModule = new Dictionary<string, ShmoObject>();
@@ -1311,6 +1353,197 @@ public static class ShmoLinker
             + string.Join(", ", matches.Select(m => $"'{m}'"))
             + "). Mark exactly one definition :- public, or qualify the "
             + "entry as Module:Pred to disambiguate.";
+        return null;
+    }
+
+    /// <summary>C-archive library resolution (see
+    /// <see cref="LinkConfig.Libraries"/>). The explicit objects are always
+    /// linked; each library's members are pulled in only on demand to satisfy
+    /// a reference the explicit set (plus builtins / prelude) leaves
+    /// unresolved, searching libraries FIFO (first provider wins) and pulling
+    /// transitively to a fixpoint. Returns the explicit objects followed by
+    /// the pulled members in pull order; the caller runs the normal pipeline
+    /// (LTO unfold + reachability + prune) over the whole set.
+    ///
+    /// <para>Pulls are at MODULE granularity — like a C linker pulling a whole
+    /// <c>.o</c> to get one symbol. This selection deliberately only needs to
+    /// avoid UNDER-pulling: it follows the same call-graph / qref / ensure_linked
+    /// edges the main reachability walk does, but on the pre-LTO graph. Any
+    /// member it over-pulls the main walk drops as unreachable; anything it
+    /// somehow under-pulls surfaces as a normal <c>missing_predicate</c>. The
+    /// arity-meta / missing distinction is left entirely to the main
+    /// walk — here an unresolved edge a library can't satisfy is just dropped.</para></summary>
+    private static IReadOnlyList<ShmoObject> PullLibraryMembers(
+        IReadOnlyList<ShmoObject> explicitObjects,
+        IReadOnlyList<LinkLibrary> libraries,
+        IReadOnlyList<PredicateRef> entryPoints,
+        Action<LinkSeverity, string, string, string?> emit)
+    {
+        // FIFO-ordered flat list of every library member.
+        var libMembers = new List<(string Lib, ShmoObject Member)>();
+        foreach (var lib in libraries)
+            foreach (var m in lib.Members)
+                libMembers.Add((lib.Name, m));
+
+        // Namespace over the currently-included modules; grows as members pull.
+        var included = new Dictionary<string, ShmoObject>();
+        var publicOf = new Dictionary<PredicateRef, string>();
+        var dynamicOf = new Dictionary<PredicateRef, List<string>>();
+        var definedOf = new Dictionary<string, HashSet<PredicateRef>>();
+
+        void Index(ShmoObject o)
+        {
+            if (!definedOf.TryGetValue(o.ModuleName, out var defs))
+                definedOf[o.ModuleName] = defs = new HashSet<PredicateRef>();
+            foreach (var d in o.Defined)
+            {
+                defs.Add(d.Indicator);
+                // TryAdd keeps the FIRST: explicit objects (indexed up front)
+                // win over libraries, and earlier libraries win over later —
+                // the FIFO / "explicit wins" tie-break, for free.
+                if (d.Visibility == PredicateVisibility.Public)
+                    publicOf.TryAdd(d.Indicator, o.ModuleName);
+                else if (d.Visibility == PredicateVisibility.Dynamic)
+                {
+                    if (!dynamicOf.TryGetValue(d.Indicator, out var list))
+                        dynamicOf[d.Indicator] = list = new List<string>();
+                    list.Add(o.ModuleName);
+                }
+            }
+        }
+
+        foreach (var o in explicitObjects)
+            if (included.TryAdd(o.ModuleName, o)) Index(o); // dup module: main link diagnoses
+
+        // Builtins + prelude publics never trigger a pull.
+        StandardBuiltins.EnsureRegistered();
+        MetaBuiltins.EnsureRegistered();
+        var available = new HashSet<PredicateRef>();
+        foreach (var b in BuiltinsRegistry.AllEntries())
+            available.Add(new PredicateRef(b.Name, b.Arity));
+        available.Add(new PredicateRef("true", 0));
+        available.Add(new PredicateRef("fail", 0));
+        available.Add(new PredicateRef("false", 0));
+        foreach (var d in ShmoCompiler.CompileSource(Prelude.Source).Defined)
+            if (d.Visibility == PredicateVisibility.Public)
+                available.Add(d.Indicator);
+
+        var pulled = new List<ShmoObject>();
+        var queue = new Queue<(string Module, PredicateRef Pred)>();
+        var reached = new HashSet<(string, PredicateRef)>();
+        var entered = new HashSet<string>();
+
+        // Pull the first FIFO library member that provides `pred`. For call
+        // edges only a cross-module-visible (:- public / :- dynamic) definition
+        // qualifies; for entry / ensure_linked roots a local definition counts
+        // too (entry-point local promotion). A module name already taken (by an
+        // explicit object or an earlier pull) is skipped — first module wins.
+        bool PullProviding(PredicateRef pred, bool crossModuleOnly)
+        {
+            foreach (var (libName, m) in libMembers)
+            {
+                if (included.ContainsKey(m.ModuleName)) continue;
+                bool provides = false;
+                foreach (var d in m.Defined)
+                    if (d.Indicator.Equals(pred)
+                        && (!crossModuleOnly || d.Visibility != PredicateVisibility.Local))
+                    { provides = true; break; }
+                if (!provides) continue;
+                included[m.ModuleName] = m;
+                Index(m);
+                pulled.Add(m);
+                emit(LinkSeverity.Info, "library_member_pulled",
+                    $"pulled module '{m.ModuleName}' from library '{libName}' to satisfy {pred}.",
+                    m.ModuleName);
+                return true;
+            }
+            return false;
+        }
+
+        // Pull a member by module NAME (an explicit Module:Pred qualified ref).
+        bool PullModule(string moduleName)
+        {
+            if (included.ContainsKey(moduleName)) return true;
+            foreach (var (libName, m) in libMembers)
+            {
+                if (m.ModuleName != moduleName) continue;
+                included[m.ModuleName] = m;
+                Index(m);
+                pulled.Add(m);
+                emit(LinkSeverity.Info, "library_member_pulled",
+                    $"pulled module '{m.ModuleName}' from library '{libName}' (qualified reference).",
+                    m.ModuleName);
+                return true;
+            }
+            return false;
+        }
+
+        // Enqueue the provider(s) of a call-edge target, pulling a library
+        // member first when the included set can't satisfy it.
+        void ResolveEdge(string curMod, PredicateRef target)
+        {
+            if (definedOf.TryGetValue(curMod, out var dm) && dm.Contains(target))
+            { queue.Enqueue((curMod, target)); return; }
+            if (publicOf.TryGetValue(target, out var pmod))
+            { queue.Enqueue((pmod, target)); return; }
+            if (dynamicOf.TryGetValue(target, out var dmods))
+            { foreach (var d in dmods) queue.Enqueue((d, target)); return; }
+            if (available.Contains(target)) return;
+            if (PullProviding(target, crossModuleOnly: true))
+            {
+                if (publicOf.TryGetValue(target, out var pmod2)) queue.Enqueue((pmod2, target));
+                else if (dynamicOf.TryGetValue(target, out var dmods2))
+                    foreach (var d in dmods2) queue.Enqueue((d, target));
+            }
+            // else leave unresolved — the main walk reports missing / arity-meta.
+        }
+
+        // Roots: entry points (which may live only in a library).
+        foreach (var ep in entryPoints)
+        {
+            if (publicOf.TryGetValue(ep, out var pmod)) { queue.Enqueue((pmod, ep)); continue; }
+            if (dynamicOf.TryGetValue(ep, out var dmods))
+            { foreach (var d in dmods) queue.Enqueue((d, ep)); continue; }
+            string? localMod = FindDefiningModule(definedOf, ep);
+            if (localMod is not null) { queue.Enqueue((localMod, ep)); continue; }
+            if (available.Contains(ep)) continue;
+            if (PullProviding(ep, crossModuleOnly: false)
+                && FindDefiningModule(definedOf, ep) is { } pulledMod)
+                queue.Enqueue((pulledMod, ep));
+        }
+
+        while (queue.Count > 0)
+        {
+            var (curMod, curPred) = queue.Dequeue();
+            if (!reached.Add((curMod, curPred))) continue;
+
+            if (entered.Add(curMod) && included.TryGetValue(curMod, out var firstVisit))
+            {
+                foreach (var el in firstVisit.EnsureLinked)
+                    ResolveEdge(curMod, el);
+                foreach (var qr in firstVisit.QualifiedRefs)
+                    if (PullModule(qr.Module))
+                        queue.Enqueue((qr.Module, new PredicateRef(qr.Name, qr.Arity)));
+            }
+
+            if (!included.TryGetValue(curMod, out var modObj)) continue;
+            if (!modObj.CallGraph.TryGetValue(curPred, out var edges)) continue;
+            foreach (var e in edges)
+                ResolveEdge(curMod, e.Target);
+        }
+
+        if (pulled.Count == 0) return explicitObjects;
+        var result = new List<ShmoObject>(explicitObjects.Count + pulled.Count);
+        result.AddRange(explicitObjects);
+        result.AddRange(pulled);
+        return result;
+    }
+
+    private static string? FindDefiningModule(
+        Dictionary<string, HashSet<PredicateRef>> definedOf, PredicateRef pred)
+    {
+        foreach (var kv in definedOf)
+            if (kv.Value.Contains(pred)) return kv.Key;
         return null;
     }
 

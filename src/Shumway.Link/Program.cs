@@ -39,12 +39,36 @@ internal static class Program
         var opts = ParseArgs(args);
         if (opts is null) return ExitUsageError;
 
+        // Inputs route by extension: .shum is a LIBRARY (its members are
+        // pulled on demand, FIFO), anything else is an OBJECT (.shmo, always
+        // linked). A .shum must be a shumway-lib librarian archive (it carries
+        // its objects); a linked bundle has none and can't serve as a library.
         var objects = new List<ShmoObject>();
+        var libraries = new List<LinkLibrary>();
         foreach (var path in opts.InputPaths)
         {
             try
             {
-                objects.Add(ShmoReader.ReadFromFile(path));
+                if (path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase))
+                {
+                    var lib = BundleReader.ReadFromFile(path);
+                    if (lib.ArchiveMembers.Count == 0)
+                    {
+                        Console.Error.WriteLine(
+                            $"shumway-link: library '{path}' is a linked bundle, not a "
+                            + "librarian archive — it has no objects to link against. "
+                            + "Build a library with shumway-lib.");
+                        return ExitLinkError;
+                    }
+                    var members = new List<ShmoObject>(lib.ArchiveMembers.Count);
+                    foreach (var m in lib.ArchiveMembers)
+                        members.Add(ShmoReader.FromBytes(m.ShmoBytes));
+                    libraries.Add(new LinkLibrary(System.IO.Path.GetFileName(path), members));
+                }
+                else
+                {
+                    objects.Add(ShmoReader.ReadFromFile(path));
+                }
             }
             catch (Exception ex) when (ex is InvalidDataException || ex is IOException)
             {
@@ -72,6 +96,7 @@ internal static class Program
             Objects = objects,
             EntryPoints = opts.EntryPoints,
             AllowUndefined = opts.AllowUndefined,
+            Libraries = libraries,
             VerboseOut = opts.Verbose ? Console.Error : null,
             StripSource = opts.StripSource,
             IncludeCompiledIl = opts.IncludeCompiledIl,
@@ -349,7 +374,8 @@ internal static class Program
         }
         if (opts.InputPaths.Count == 0)
         {
-            Console.Error.WriteLine("shumway-link: at least one .shmo input is required.");
+            Console.Error.WriteLine(
+                "shumway-link: at least one input is required (.shmo object or .shum library).");
             return null;
         }
         if (opts.EntryPoints.Count == 0 && string.IsNullOrEmpty(opts.Goal))
@@ -432,12 +458,18 @@ internal static class Program
     private static void PrintUsage()
     {
         Console.Error.WriteLine(
-            "Usage: shumway-link {-o <output.shum> | -e <output.exe>} {-E pred/N | -g Goal} [options] <a.shmo b.shmo ...>\n"
+            "Usage: shumway-link {-o <output.shum> | -e <output.exe>} {-E pred/N | -g Goal} [options] <a.shmo ... [lib.shum ...]>\n"
             + "\n"
             + "Links compiled Prolog modules (.shmo, produced by shumway-compile) into a\n"
             + "single runnable bundle (.shum) or a native executable. Only code reachable\n"
             + "from the entry points is kept. Inputs may use wildcards (e.g. *.shmo) —\n"
             + "expanded by the linker itself, in sorted order, so they work from any shell.\n"
+            + "\n"
+            + "Inputs route by extension. A .shmo is an object and is always linked. A .shum\n"
+            + "is a LIBRARY (a librarian archive built by shumway-lib): its modules are pulled\n"
+            + "in only on demand, to satisfy a reference the objects leave unresolved, like a\n"
+            + "C archive (.a/.lib). Libraries are searched in the order given; the first that\n"
+            + "provides a needed predicate wins. Modules no reference reaches are not linked.\n"
             + "\n"
             + "Options:\n"
             + "  -o, --output <path>      Output bundle path. Required unless --exe is given.\n"

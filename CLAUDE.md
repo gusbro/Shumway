@@ -684,6 +684,26 @@ demo `.ARI` programs; close the gaps real programs hit.
   277, all green. (Also fixed a latent `_dynamicLink` CS8602 in the query-setup
   linker that any compilation perturbation could surface.)
 
+- **Chunk 443 — `shumway-link` accepts `.shum` libraries (C-archive
+  semantics)**. The linker now takes `.shum` inputs as *libraries* alongside
+  `.shmo` *objects* (routed by extension). Objects always link; a library's
+  members are pulled in **only on demand** to satisfy a reference the explicit
+  objects (plus builtins / prelude) leave unresolved — searched **FIFO** (first
+  providing library wins; explicit objects win over any library), pulled at
+  module granularity (like a C linker pulling a whole `.o`), **transitively** to
+  a fixpoint. Members no reference reaches are not linked. A `.shum` library
+  must be a `shumway-lib` archive (it carries its `.shmo`s); a linked bundle has
+  none → clean error. Implementation: `LinkConfig.Libraries` (`LinkLibrary` =
+  named member list) + a `PullLibraryMembers` pre-pass that resolves
+  reachability with FIFO pull and returns explicit ∪ pulled. It runs **before**
+  the chunk-411 cross-module LTO unfold, so the full set is optimized together
+  (resolve-then-optimize, the real-LTO-linker order — pulled members get the
+  same cross-module unfold as explicit ones, including library wrappers, since
+  each `.shmo` carries its `ClauseTerms`). Under-pull is impossible for the
+  edges the main walk follows; anything genuinely unprovided still surfaces as
+  `missing_predicate`. 6 LinkLibraryTests; gate Embedding 2363 / Core 432 /
+  Compiler 284 / ISO 277, all green.
+
 **Phase 29 — region compilation shipped + engine correctness/runtime arc** — ✅ **Complete** (tagged `phase-29`; closure summary in [`docs/phase-29-closure.md`](docs/phase-29-closure.md)).
 
 Opened as Tier-1 rule inlining (chunk-364 survey); the user's REGION COMPILATION
