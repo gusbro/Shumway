@@ -159,7 +159,10 @@ internal static class Program
         {
             try
             {
-                ShmoBundleMap.WriteToFile(objects, opts.EntryPoints, result, opts.MapPath);
+                // result.LinkedObjects = explicit objects + any pulled library
+                // members, so the map lists pulled library modules too.
+                ShmoBundleMap.WriteToFile(
+                    result.LinkedObjects, opts.EntryPoints, result, opts.MapPath);
                 if (opts.Verbose)
                     Console.Error.WriteLine($"shumway-link: wrote map {opts.MapPath}.");
             }

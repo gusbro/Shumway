@@ -116,6 +116,45 @@ public sealed class LinkLibraryTests
     }
 
     [Fact]
+    public void LinkedObjects_IncludePulledMembers_ForTheMap()
+    {
+        // result.LinkedObjects = explicit objects + pulled members (what the
+        // --map writer consumes), so a pulled module is visible there.
+        var lib = Lib("lib.shum", Obj(Greet, "greet"), Obj(Unused, "unused"));
+        var r = Link(new[] { Obj(App, "app") }, new[] { lib }, ("run", 0));
+
+        var linkedModules = r.LinkedObjects.Select(o => o.ModuleName).ToHashSet();
+        Assert.Contains("app", linkedModules);
+        Assert.Contains("greet", linkedModules);     // pulled — now in LinkedObjects
+        Assert.DoesNotContain("unused", linkedModules); // not pulled
+    }
+
+    [Fact]
+    public void ForeignPredicate_IsNotPulledFromALibrary()
+    {
+        // A library member exports c247_double/2 — the SAME indicator a foreign
+        // DLL (C247Math) provides. With the foreign assembly given, the linker
+        // resolves the call to the foreign and must NOT pull the library member
+        // (a foreign is "already available", like a builtin).
+        string testDll = typeof(C247Math).Assembly.Location;
+        var app = Obj(
+            ":- module(fapp).\n:- public run/0.\nrun :- c247_double(5, X), X = 10.\n", "fapp");
+        var lib = Lib("lib.shum",
+            Obj(":- module(libdbl).\n:- public c247_double/2.\nc247_double(_, _).\n", "libdbl"));
+
+        var r = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { app },
+            Libraries = new[] { lib },
+            EntryPoints = new[] { new PredicateRef("run", 0) },
+            ForeignAssemblies = new[] { testDll },
+        });
+
+        Assert.True(r.Success, string.Join(", ", r.Diagnostics.Select(d => d.Message)));
+        Assert.DoesNotContain("libdbl", r.ReachedModules);  // foreign won; nothing pulled
+    }
+
+    [Fact]
     public void EntryPointDefinedOnlyInLibrary_IsPulled()
     {
         // No explicit objects at all: the entry point and its callee both

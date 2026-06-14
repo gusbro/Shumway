@@ -210,13 +210,22 @@ public sealed class LinkResult
     /// region-compiled; see <see cref="ShmoLinker.ComputeExternallyReachableSeeds"/>.</summary>
     public IReadOnlyList<QualifiedPredicateRef> ExternallyReachableSeeds { get; }
 
+    /// <summary>The objects the linker actually resolved against: the explicit
+    /// <see cref="LinkConfig.Objects"/> followed by any members pulled from
+    /// <see cref="LinkConfig.Libraries"/> on demand (the pre-LTO form, same as
+    /// the explicit objects). Equal to <c>config.Objects</c> when no libraries
+    /// were given. The CLI feeds this to the <c>--map</c> writer so pulled
+    /// library modules appear in the map alongside the explicit ones.</summary>
+    public IReadOnlyList<ShmoObject> LinkedObjects { get; }
+
     public LinkResult(bool success, Bundle? bundle, byte[]? bytes,
         IReadOnlyList<LinkDiagnostic> diagnostics,
         IReadOnlyList<PredicateRef> reachedPredicates,
         IReadOnlyList<string> reachedModules,
         IReadOnlyList<string> unreachableModules,
         IReadOnlyList<PredicateRef> missingPredicates,
-        IReadOnlyList<QualifiedPredicateRef>? externallyReachableSeeds = null)
+        IReadOnlyList<QualifiedPredicateRef>? externallyReachableSeeds = null,
+        IReadOnlyList<ShmoObject>? linkedObjects = null)
     {
         Success = success;
         Bundle = bundle;
@@ -227,6 +236,7 @@ public sealed class LinkResult
         UnreachableModules = unreachableModules;
         MissingPredicates = missingPredicates;
         ExternallyReachableSeeds = externallyReachableSeeds ?? Array.Empty<QualifiedPredicateRef>();
+        LinkedObjects = linkedObjects ?? Array.Empty<ShmoObject>();
     }
 }
 
@@ -280,6 +290,14 @@ public static class ShmoLinker
             }
         }
 
+        // ----- 0-foreign. Chunk 247/444 — reflect foreign DLLs up front -----
+        // Their [PrologPredicate] indicators are "already available" and must
+        // be known BEFORE the library pull pre-pass, so a library member is
+        // never pulled to satisfy a reference a foreign predicate provides.
+        // The names + indicators are reused by step 4b (no second reflection).
+        var foreignIndicators = ReflectForeignAssemblies(
+            config, Emit, out var foreignAssemblyNames);
+
         // ----- 0a. Library resolution (C-archive semantics) -----
         // Explicit .shmo objects always link; .shum library members are pulled
         // in on demand, FIFO, to satisfy otherwise-unresolved references
@@ -291,7 +309,7 @@ public static class ShmoLinker
         IReadOnlyList<ShmoObject> linkInput = config.Libraries.Count == 0
             ? config.Objects
             : PullLibraryMembers(config.Objects, config.Libraries,
-                config.EntryPoints, Emit);
+                config.EntryPoints, foreignIndicators, Emit);
 
         // ----- 0. Chunk 411 — cross-module meta-wrapper unfold (the LTO pass) -----
         // V4 .shmo objects carry their raw static clauses (ClauseTerms). Detect
@@ -388,56 +406,13 @@ public static class ShmoLinker
         builtinPredicates.Add(new PredicateRef("fail", 0));
         builtinPredicates.Add(new PredicateRef("false", 0));
 
-        // ----- 4b. Chunk 247: reflect foreign DLLs, add their
-        //          [PrologPredicate] indicators to the resolved set,
-        //          record their filenames for the bundle trailer. -----
-        var foreignAssemblyNames = new List<string>();
-        foreach (var asmPath in config.ForeignAssemblies)
-        {
-            System.Reflection.Assembly asm;
-            try { asm = System.Reflection.Assembly.LoadFrom(asmPath); }
-            catch (Exception ex)
-            {
-                Emit(LinkSeverity.Error, "foreign_assembly_load_failed",
-                    $"Could not load foreign assembly '{asmPath}': {ex.Message}");
-                continue;
-            }
-            int discovered = 0;
-            foreach (var type in SafeGetTypes(asm))
-            {
-                foreach (var method in type.GetMethods(
-                    System.Reflection.BindingFlags.Public
-                    | System.Reflection.BindingFlags.NonPublic
-                    | System.Reflection.BindingFlags.Static
-                    | System.Reflection.BindingFlags.Instance
-                    | System.Reflection.BindingFlags.DeclaredOnly))
-                {
-                    var attr = System.Reflection.CustomAttributeExtensions
-                        .GetCustomAttribute<PrologPredicateAttribute>(method);
-                    if (attr is null) continue;
-                    string name = attr.Name ?? method.Name;
-                    builtinPredicates.Add(new PredicateRef(name, attr.Arity));
-                    discovered++;
-                }
-            }
-            // Only record the assembly for runtime auto-load if we
-            // actually found at least one [PrologPredicate]. Avoids
-            // padding the trailer (and the runtime probe path) with
-            // irrelevant DLLs the user happened to pass.
-            if (discovered > 0)
-            {
-                foreignAssemblyNames.Add(System.IO.Path.GetFileName(asmPath));
-                Emit(LinkSeverity.Info, "foreign_assembly_loaded",
-                    $"Loaded foreign assembly '{System.IO.Path.GetFileName(asmPath)}' "
-                    + $"with {discovered} [PrologPredicate] method(s).");
-            }
-            else
-            {
-                Emit(LinkSeverity.Warning, "foreign_assembly_empty",
-                    $"Foreign assembly '{asmPath}' carries no [PrologPredicate] "
-                    + "methods; ignored.");
-            }
-        }
+        // ----- 4b. Chunk 247 / chunk 444: fold the foreign-DLL
+        //          [PrologPredicate] indicators into the resolved builtin
+        //          set. They are reflected ONCE up front (step 0-foreign)
+        //          so the library pull pre-pass already treated them as
+        //          available — a library member is never pulled to satisfy
+        //          a reference a foreign predicate provides. -----
+        builtinPredicates.UnionWith(foreignIndicators);
 
         // ----- 5. Resolve roots -----
         // Phase 18: relax the ":- public required" rule for entry points.
@@ -1005,7 +980,8 @@ public static class ShmoLinker
             reachedModules: reachedModules.ToList(),
             unreachableModules: unreachable,
             missingPredicates: missing.ToList(),
-            externallyReachableSeeds: seedList);
+            externallyReachableSeeds: seedList,
+            linkedObjects: linkInput);
     }
 
     /// <summary>Stage 9 (dead-region elimination): the externally-reachable SEED set —
@@ -1356,6 +1332,69 @@ public static class ShmoLinker
         return null;
     }
 
+    /// <summary>Chunk 247/444 — reflects every <c>--foreign-dll</c> assembly,
+    /// returning the set of <c>[PrologPredicate]</c> <c>(name, arity)</c>
+    /// indicators it exposes and (via <paramref name="assemblyNames"/>) the
+    /// file names of the assemblies that carried at least one, for the bundle
+    /// trailer. Pulled out of the main link body so the figures are computed
+    /// ONCE and available to both the library pull pre-pass (which must not
+    /// pull a member to satisfy a foreign-provided reference) and the
+    /// builtin-set snapshot.</summary>
+    private static HashSet<PredicateRef> ReflectForeignAssemblies(
+        LinkConfig config,
+        Action<LinkSeverity, string, string, string?> emit,
+        out List<string> assemblyNames)
+    {
+        var indicators = new HashSet<PredicateRef>();
+        assemblyNames = new List<string>();
+        foreach (var asmPath in config.ForeignAssemblies)
+        {
+            System.Reflection.Assembly asm;
+            try { asm = System.Reflection.Assembly.LoadFrom(asmPath); }
+            catch (Exception ex)
+            {
+                emit(LinkSeverity.Error, "foreign_assembly_load_failed",
+                    $"Could not load foreign assembly '{asmPath}': {ex.Message}", null);
+                continue;
+            }
+            int discovered = 0;
+            foreach (var type in SafeGetTypes(asm))
+            {
+                foreach (var method in type.GetMethods(
+                    System.Reflection.BindingFlags.Public
+                    | System.Reflection.BindingFlags.NonPublic
+                    | System.Reflection.BindingFlags.Static
+                    | System.Reflection.BindingFlags.Instance
+                    | System.Reflection.BindingFlags.DeclaredOnly))
+                {
+                    var attr = System.Reflection.CustomAttributeExtensions
+                        .GetCustomAttribute<PrologPredicateAttribute>(method);
+                    if (attr is null) continue;
+                    string name = attr.Name ?? method.Name;
+                    indicators.Add(new PredicateRef(name, attr.Arity));
+                    discovered++;
+                }
+            }
+            // Only record the assembly for runtime auto-load if we actually
+            // found at least one [PrologPredicate] — avoids padding the trailer
+            // (and the runtime probe path) with irrelevant DLLs.
+            if (discovered > 0)
+            {
+                assemblyNames.Add(System.IO.Path.GetFileName(asmPath));
+                emit(LinkSeverity.Info, "foreign_assembly_loaded",
+                    $"Loaded foreign assembly '{System.IO.Path.GetFileName(asmPath)}' "
+                    + $"with {discovered} [PrologPredicate] method(s).", null);
+            }
+            else
+            {
+                emit(LinkSeverity.Warning, "foreign_assembly_empty",
+                    $"Foreign assembly '{asmPath}' carries no [PrologPredicate] "
+                    + "methods; ignored.", null);
+            }
+        }
+        return indicators;
+    }
+
     /// <summary>C-archive library resolution (see
     /// <see cref="LinkConfig.Libraries"/>). The explicit objects are always
     /// linked; each library's members are pulled in only on demand to satisfy
@@ -1377,6 +1416,7 @@ public static class ShmoLinker
         IReadOnlyList<ShmoObject> explicitObjects,
         IReadOnlyList<LinkLibrary> libraries,
         IReadOnlyList<PredicateRef> entryPoints,
+        IReadOnlySet<PredicateRef> foreignIndicators,
         Action<LinkSeverity, string, string, string?> emit)
     {
         // FIFO-ordered flat list of every library member.
@@ -1427,6 +1467,9 @@ public static class ShmoLinker
         foreach (var d in ShmoCompiler.CompileSource(Prelude.Source).Defined)
             if (d.Visibility == PredicateVisibility.Public)
                 available.Add(d.Indicator);
+        // Foreign predicates (from --foreign-dll) resolve too — never pull a
+        // library member to satisfy one.
+        available.UnionWith(foreignIndicators);
 
         var pulled = new List<ShmoObject>();
         var queue = new Queue<(string Module, PredicateRef Pred)>();

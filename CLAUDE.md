@@ -704,6 +704,18 @@ demo `.ARI` programs; close the gaps real programs hit.
   `missing_predicate`. 6 LinkLibraryTests; gate Embedding 2363 / Core 432 /
   Compiler 284 / ISO 277, all green.
 
+- **Chunk 444 — chunk-443 follow-ups (`--map` + foreign-pred interaction)**.
+  (1) `--map` now lists pulled library modules: `LinkResult.LinkedObjects`
+  exposes the resolved set (explicit ∪ pulled, pre-LTO form) and the CLI feeds
+  it to `ShmoBundleMap` instead of just the explicit objects (identical map for
+  non-library links). (2) `--foreign-dll` predicates are now honored by the
+  library pull pre-pass: foreign-assembly reflection moved to a single up-front
+  `ReflectForeignAssemblies` helper (run once, reused by the builtin snapshot),
+  and its indicators feed the selection's "already available" set — so a
+  library member is never pulled to satisfy a reference a foreign predicate
+  provides (foreign wins, like a builtin). 8 LinkLibraryTests (2 new); gate
+  Embedding 2365 / Core 432 / Compiler 284 / ISO 277, all green.
+
 **Phase 29 — region compilation shipped + engine correctness/runtime arc** — ✅ **Complete** (tagged `phase-29`; closure summary in [`docs/phase-29-closure.md`](docs/phase-29-closure.md)).
 
 Opened as Tier-1 rule inlining (chunk-364 survey); the user's REGION COMPILATION
