@@ -37,7 +37,7 @@ public class Chunk346Tests
     {
         var e = new PrologEngine();
         var rows = e.QueryAll("nth1(N, [x, y, z], E).")
-            .Select(s => (((IntTerm)s["N"]).Value, ((AtomTerm)s["E"]).Name)).ToList();
+            .Select(s => (((IntTerm)s["N"]!).Value, ((AtomTerm)s["E"]!).Name)).ToList();
         Assert.Equal(new[] { (1L, "x"), (2L, "y"), (3L, "z") }, rows);
 
         // The board-iteration shape: enumerate a list of lists.

@@ -48,10 +48,10 @@ public class Chunk381Tests
         Assert.Equal(new[] { 0, 1, 2 }, nodes.Select(s => s.ClauseIndex).ToArray());  // node index
         Assert.All(nodes, s => Assert.Equal(1, s.MemberIndex));                        // all belong to m
         // No clause-alt cursors for an indexed member (it uses IndexNode instead).
-        Assert.Empty(plan.Sites.Where(s => s.Kind == RegionCursorKind.ClauseAlt));
+        Assert.DoesNotContain(plan.Sites, s => s.Kind == RegionCursorKind.ClauseAlt);
         // root entry + 3 node cursors + the root's a→m intra-return cursor + m's
         // chunk-402 MemberEntry cursor.
-        Assert.Single(plan.Sites.Where(s => s.Kind == RegionCursorKind.IntraCallReturn));
+        Assert.Single(plan.Sites, s => s.Kind == RegionCursorKind.IntraCallReturn);
         Assert.Equal(6, plan.TotalCursors);
     }
 
@@ -65,7 +65,7 @@ public class Chunk381Tests
         var region = IlRegionBuilder.Build(root, Map(root, m));
         var plan = IlRegionPlanner.Plan(region, _ => 0);   // nothing is indexed
 
-        Assert.Empty(plan.Sites.Where(s => s.Kind == RegionCursorKind.IndexNode));
+        Assert.DoesNotContain(plan.Sites, s => s.Kind == RegionCursorKind.IndexNode);
         Assert.Equal(2, plan.Sites.Count(s => s.Kind == RegionCursorKind.ClauseAlt));  // clauses 1,2
     }
 
@@ -76,7 +76,7 @@ public class Chunk381Tests
         var root = Pred(1, 1, (2, false));
         var m = Pred(2, 2);
         var plan = IlRegionPlanner.Plan(IlRegionBuilder.Build(root, Map(root, m)));
-        Assert.Empty(plan.Sites.Where(s => s.Kind == RegionCursorKind.IndexNode));
-        Assert.Single(plan.Sites.Where(s => s.Kind == RegionCursorKind.ClauseAlt));    // 2-clause m
+        Assert.DoesNotContain(plan.Sites, s => s.Kind == RegionCursorKind.IndexNode);
+        Assert.Single(plan.Sites, s => s.Kind == RegionCursorKind.ClauseAlt);    // 2-clause m
     }
 }

@@ -38,7 +38,7 @@ public class Chunk349Tests
             "sum(N, A, R) :- N > 0, A1 is A + N, N1 is N - 1, sum(N1, A1, R).\n");
         var s = e.Query("sum(100, 0, R).");
         Assert.True(s.Success);
-        Assert.Equal(5050L, ((IntTerm)s["R"]).Value);   // 1+..+100
+        Assert.Equal(5050L, ((IntTerm)s["R"]!).Value);   // 1+..+100
     }
 
     [Fact]
@@ -84,7 +84,7 @@ public class Chunk349Tests
             "last([_|T], X) :- last(T, X).\n");
         var s = e.Query("last([1,2,3,4,5], X).");
         Assert.True(s.Success);
-        Assert.Equal(5L, ((IntTerm)s["X"]).Value);
+        Assert.Equal(5L, ((IntTerm)s["X"]!).Value);
         Assert.Single(e.QueryAll("last([1,2,3], X)."));   // deterministic
     }
 }

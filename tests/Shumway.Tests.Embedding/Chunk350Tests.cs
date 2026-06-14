@@ -52,7 +52,7 @@ public class Chunk350Tests
             "path(X, Y) :- edge(X, Y).\n" +
             "path(X, Y) :- edge(X, Z), path(Z, Y).\n");
         var ys = e.QueryAll("path(a, Y).")
-            .Select(s => ((AtomTerm)s["Y"]).Name).ToList();
+            .Select(s => ((AtomTerm)s["Y"]!).Name).ToList();
         // Direct edge a->b first (clause 1), then a->b->c via the recursion.
         Assert.Equal(new[] { "b", "c" }, ys);
     }
@@ -69,7 +69,7 @@ public class Chunk350Tests
             "path(X, Y) :- edge(X, Y).\n" +
             "path(X, Y) :- edge(X, Z), path(Z, Y).\n");
         var reached = e.QueryAll("path(a, Y).")
-            .Select(s => ((AtomTerm)s["Y"]).Name).OrderBy(n => n).ToList();
+            .Select(s => ((AtomTerm)s["Y"]!).Name).OrderBy(n => n).ToList();
         // a reaches b, c, e, and d (twice: a-b-c-d and a-b-e-d).
         Assert.Equal(new[] { "b", "c", "d", "d", "e" }, reached);
         Assert.True(e.Query("path(a, d).").Success);

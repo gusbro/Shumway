@@ -75,7 +75,7 @@ public class Chunk420Tests
         var s = e.Query("back(a), back(b), back(c), loop(150), dump(R).");
         Assert.True(s.Success);
         // 150 rounds of deterministic rotation: the multiset survives.
-        var r = s["R"]!.ToString();
+        var r = s["R"]!.ToString()!;
         Assert.Contains("a", r);
         Assert.Contains("b", r);
         Assert.Contains("c", r);

@@ -95,12 +95,12 @@ public class Chunk131cTests
         // real programs iterate lists this way (e.g. nth0(Row, Board, R)).
         var e = new PrologEngine();
         var pairs = e.QueryAll("nth0(N, [a, b, c], X).")
-            .Select(s => (((IntTerm)s["N"]).Value, ((AtomTerm)s["X"]).Name)).ToList();
+            .Select(s => (((IntTerm)s["N"]!).Value, ((AtomTerm)s["X"]!).Name)).ToList();
         Assert.Equal(new[] { (0L, "a"), (1L, "b"), (2L, "c") }, pairs);
 
         // A bound element finds (and enumerates) only its positions.
         var idx = e.QueryAll("nth0(N, [a, b, a], a).")
-            .Select(s => ((IntTerm)s["N"]).Value).ToList();
+            .Select(s => ((IntTerm)s["N"]!).Value).ToList();
         Assert.Equal(new long[] { 0, 2 }, idx);
     }
 

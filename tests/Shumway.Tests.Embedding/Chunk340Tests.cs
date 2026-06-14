@@ -47,7 +47,7 @@ public class Chunk340Tests
         var sols = Fd().QueryAll(
             "X in 1..5, Y in 1..5, X + Y #= 6, label([X, Y]).").ToList();
         Assert.Equal(5, sols.Count);
-        Assert.Contains(sols, s => s["X"].Equals(Int(3)) && s["Y"].Equals(Int(3)));
+        Assert.Contains(sols, s => s["X"]!.Equals(Int(3)) && s["Y"]!.Equals(Int(3)));
     }
 
     // Scaled coefficients pin a unique solution by propagation alone.
@@ -77,7 +77,7 @@ public class Chunk340Tests
     {
         var sols = Fd().QueryAll(
             "X in 0..9, Y in 0..9, 3*X - 2*Y #= 1, label([X, Y]).").ToList();
-        var pairs = sols.Select(s => (((IntTerm)s["X"]).Value, ((IntTerm)s["Y"]).Value))
+        var pairs = sols.Select(s => (((IntTerm)s["X"]!).Value, ((IntTerm)s["Y"]!).Value))
                         .OrderBy(p => p.Item1).ToList();
         Assert.Equal(new[] { (1L, 1L), (3L, 4L), (5L, 7L) }, pairs);
     }

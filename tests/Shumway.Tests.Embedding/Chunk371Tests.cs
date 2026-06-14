@@ -128,7 +128,7 @@ public class Chunk371Tests
         Assert.Equal(new[] { 1, 2 }, alts.Select(s => s.ClauseIndex).ToArray());
         Assert.All(alts, s => Assert.Equal(1, s.MemberIndex));   // all belong to b (member 1)
         // plus the a→b intra return cursor.
-        Assert.Single(plan.Sites.Where(s => s.Kind == RegionCursorKind.IntraCallReturn));
+        Assert.Single(plan.Sites, s => s.Kind == RegionCursorKind.IntraCallReturn);
         Assert.Equal(5, plan.TotalCursors);   // root entry + 2 alts + 1 return + b's entry
     }
 
@@ -137,7 +137,7 @@ public class Chunk371Tests
     {
         var a = PredN(1, 1, (2, false)); var b = PredN(2, 1);
         var plan = IlRegionPlanner.Plan(IlRegionBuilder.Build(a, Map(a, b)));
-        Assert.Empty(plan.Sites.Where(s => s.Kind == RegionCursorKind.ClauseAlt));
+        Assert.DoesNotContain(plan.Sites, s => s.Kind == RegionCursorKind.ClauseAlt);
     }
 
     [Fact]

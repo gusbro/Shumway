@@ -39,7 +39,7 @@ public class Chunk344Tests
         // 1..9 minus {4,5} via two #\= ; label must yield exactly the holes-removed set.
         var sols = Fd().QueryAll(
             "X in 1..9, X #\\= 4, X #\\= 5, label([X]).").ToList();
-        var got = sols.Select(s => ((IntTerm)s["X"]).Value).OrderBy(v => v).ToList();
+        var got = sols.Select(s => ((IntTerm)s["X"]!).Value).OrderBy(v => v).ToList();
         Assert.Equal(new long[] { 1, 2, 3, 6, 7, 8, 9 }, got);
     }
 
@@ -61,7 +61,7 @@ public class Chunk344Tests
         var sols = Fd().QueryAll(
             "X in 1..5, Y in 1..5, X + Y #= 6, label([X, Y]).").ToList();
         Assert.Equal(5, sols.Count);
-        Assert.Contains(sols, s => s["X"].Equals(Int(3)) && s["Y"].Equals(Int(3)));
+        Assert.Contains(sols, s => s["X"]!.Equals(Int(3)) && s["Y"]!.Equals(Int(3)));
 
         var sq = Fd().Query("X in 0..9, 2*X + X #= 9.");
         Assert.True(sq.Success);
@@ -77,7 +77,7 @@ public class Chunk344Tests
         // the variable stays constrained (a later label only yields 6..9).
         var sols = Fd().QueryAll(
             "X in 1..9, X #> 5, copy_term(X, _, Gs), label([X]).").ToList();
-        var got = sols.Select(s => ((IntTerm)s["X"]).Value).OrderBy(v => v).ToList();
+        var got = sols.Select(s => ((IntTerm)s["X"]!).Value).OrderBy(v => v).ToList();
         Assert.Equal(new long[] { 6, 7, 8, 9 }, got);
     }
 
