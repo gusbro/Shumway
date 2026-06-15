@@ -157,9 +157,11 @@ internal static class Prelude
             '$length_enum'(T, N, Acc1).
 
         %! sub_atom(+Atom, ?Before, ?Length, ?After, ?SubAtom) | Atoms & strings | Backtracks over every (Before, Length, After, SubAtom) decomposition of an atom.
+        % '$sub_atom_enum' yields each decomposition lazily (a backtrackable
+        % builtin), so a long atom no longer materialises all O(n^2)
+        % decompositions onto the heap before member/2 walks them.
         sub_atom(Atom, Before, Length, After, Sub) :-
-            '$sub_atom_decompositions'(Atom, Decomps),
-            member([Before, Length, After, Sub], Decomps).
+            '$sub_atom_enum'(Atom, Before, Length, After, Sub).
 
         %! maplist(:Goal, ?List) | Lists | Succeeds if Goal holds for every element of List.
         maplist(_, []).
