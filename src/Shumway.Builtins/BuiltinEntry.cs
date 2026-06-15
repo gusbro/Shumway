@@ -54,7 +54,15 @@ public sealed class BuiltinEntry
     {
         "between" or "append" or "atom_concat" or "string_concat"
         or "nb_current" or "current_op" or "current_char_conversion"
-        or "current_stream" or "stream_property" or "repeat" or "retract" => true,
+        or "current_stream" or "stream_property" or "repeat" or "retract"
+        // Cursor builtins added in the backtrackable-builtin alloc sweep: each
+        // PushBuiltinChoicePoint's at runtime, so the IL emit MUST set up the
+        // chunk-218 resume marker + BuiltinReturnPc. WAM tolerated the omission
+        // (its CallBuiltin handler always sets BuiltinReturnPc); Tier-1 IL did
+        // not — a missing name made the resume jump to PC 0 and lose solutions.
+        or "$clause_enum" or "$current_predicate_enum"
+        or "nth0" or "nth1" or "recorded" or "keys"
+        or "string_search" or "directory" => true,
         _ => false,
     };
 
