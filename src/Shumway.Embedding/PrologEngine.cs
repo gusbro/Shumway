@@ -4633,6 +4633,16 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         ConsultStringInner(source, recordInHistory: true);
     }
 
+    /// <summary>Cached parse of the internal prelude. The prelude source is a
+    /// compile-time constant, consulted identically into every fresh engine
+    /// with default operators/flags and no operator/flag directives that would
+    /// make the parse engine-dependent — so its <see cref="ClauseReader"/>
+    /// output (the bulk of each engine's construction cost) is parsed once and
+    /// the immutable AST shared across engines. Compilation to WAM still
+    /// happens lazily per engine at query setup, exactly as a fresh parse
+    /// would, so engine state and behaviour are unchanged.</summary>
+    private static List<Clause>? s_preludeClauses;
+
     private void ConsultStringInner(string source, bool recordInHistory,
         string? moduleNameFallback = null)
     {
@@ -4649,9 +4659,21 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         _skipCompileMergedCache = null;   // chunk 430 — static cache cleared
         _staticLink = null;
         InvalidatePersistent();
-        var rawClauses = new ClauseReader(
-            new Lexer(source, _flags.CharConversionEnabled ? _flags.CharConversion : null),
-            _operators, _flags).ReadAll().ToList();
+        List<Clause> rawClauses;
+        if (ReferenceEquals(source, Prelude.Source) && s_preludeClauses is { } cached)
+        {
+            rawClauses = cached;   // reuse the one-time prelude parse
+        }
+        else
+        {
+            rawClauses = new ClauseReader(
+                new Lexer(source, _flags.CharConversionEnabled ? _flags.CharConversion : null),
+                _operators, _flags).ReadAll().ToList();
+            // First prelude consult in the process: cache its parse (computed
+            // with this engine's default operators/flags) for every later one.
+            if (ReferenceEquals(source, Prelude.Source))
+                System.Threading.Volatile.Write(ref s_preludeClauses, rawClauses);
+        }
 
         // Chunk 440 — a source-bearing bundle entry consults under the
         // entry's module name (the per-file fallback ShmoCompiler resolved
