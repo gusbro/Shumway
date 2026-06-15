@@ -128,10 +128,14 @@ internal static class Prelude
         '$call_neg'(G) :- ( call(G) -> fail ; true ).
 
         %! clause(+Head, ?Body) | Database | Enumerates the clauses (Head :- Body) of a predicate.
+        % '$clause_enum' yields matching clauses lazily (a backtrackable
+        % builtin): only the candidate being tried is materialised on the heap,
+        % instead of building the whole O(#clauses) Head-Body pair list up front
+        % for member/2 to walk. The Head-Body pair is built here so its
+        % variables are the caller's.
         clause(H, B) :-
             nonvar(H),
-            '$all_clauses_of'(H, Pairs),
-            member(H-B, Pairs).
+            '$clause_enum'(H, H-B).
 
         %! current_predicate(?PredicateIndicator) | Database | Enumerates the defined predicates as Name/Arity indicators.
         % '$current_predicate_enum' yields indicators lazily (a backtrackable

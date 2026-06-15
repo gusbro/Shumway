@@ -127,6 +127,7 @@ public static class MetaBuiltins
         // bridge into the engine's clause and functor stores, then iterate
         // via the prelude's member/2.
         BuiltinsRegistry.Register("$all_clauses_of",            2, AllClausesOf);
+        BuiltinsRegistry.Register("$clause_enum",               2, ClauseEnum);
         BuiltinsRegistry.Register("$all_predicate_indicators",  1, AllPredicateIndicators);
         BuiltinsRegistry.Register("$current_predicate_enum",    1, CurrentPredicateEnum);
         BuiltinsRegistry.Register("$listable_predicates", 1, ListablePredicates);
@@ -2042,6 +2043,54 @@ public static class MetaBuiltins
         }
         Cell listCell = Materializer.MaterializeAsCell(engine, tail);
         return engine.UnifyRegisterWithCell(1, listCell);
+    }
+
+    /// <summary><c>'$clause_enum'(Head, Head-Body)</c> — the LAZY backing for
+    /// <c>clause/2</c>. The prelude passes the query's <c>Head-Body</c> pair as
+    /// the second argument (built Prolog-side, so its variables are the user's),
+    /// and this yields each matching clause one at a time on backtracking:
+    /// per candidate it materialises just that clause's <c>-(Head, Body)</c>
+    /// pair (head and body share variables, so the pair must be one
+    /// materialisation) and unifies the query pair against it. Replaces
+    /// <see cref="AllClausesOf"/> + <c>member/2</c>, which built the whole
+    /// O(#clauses) pair list on the heap up front — here only the candidate
+    /// being tried is on the heap, and a backtrack reclaims it.
+    ///
+    /// <para>The first register (Head) is used only to find the functor; the
+    /// actual unification is against the pair in the second register, so the
+    /// shared <c>Head</c> variable binds consistently from there.</para></summary>
+    public static bool ClauseEnum(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "'$clause_enum'/2 requires a PrologEngine host.");
+
+        Term headPattern = MaterializeRegister(engine, 0);
+        int fid = ExtractCallableFunctorId(headPattern, "clause/2");
+
+        var candidates = new List<Clause>();
+        candidates.AddRange(host.DynamicClausesFor(fid));
+        candidates.AddRange(host.StaticClausesFor(fid));
+
+        int returnPc = engine.BuiltinReturnPc;
+        // arity 2 (clause/2): save the arg registers across backtracks.
+        return Shumway.Core.IndexEnumCursor.Start(engine, candidates.Count, 2, returnPc,
+            (e, i) => ClauseEnumUnify(e, candidates[i]));
+    }
+
+    private static bool ClauseEnumUnify(Engine engine, Clause candidate)
+    {
+        Term head = candidate.Kind == ClauseKind.Rule
+            ? ((CompoundTerm)candidate.Term).Args[0]
+            : candidate.Term;
+        Term body = candidate.Kind == ClauseKind.Rule
+            ? ((CompoundTerm)candidate.Term).Args[1]
+            : new AtomTerm("true");
+        // One materialisation so the clause's Head and Body share variables;
+        // unify the query's Head-Body pair (register 1) against it.
+        Cell pairCell = Materializer.MaterializeAsCell(
+            engine, new CompoundTerm("-", new[] { head, body }));
+        return engine.UnifyRegisterWithCell(1, pairCell);
     }
 
     /// <summary><c>'$all_predicate_indicators'(List)</c> — returns a list
