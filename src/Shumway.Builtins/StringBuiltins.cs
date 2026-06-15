@@ -74,26 +74,46 @@ public static class StringBuiltins
                 "string_concat/3 requires either A+B or AB to be ground");
         string ab = ReadStringOrAtom(engine, 2, "string_concat/3");
         int returnPc = engine.BuiltinReturnPc;
-        return StringConcatSplitAttempt(engine, ab, splitIdx: 0, returnPc, isResume: false);
+        return new StringConcatSplitCursor(ab, returnPc).Start(engine);
     }
 
-    private static bool StringConcatSplitAttempt(
-        Engine engine, string ab, int splitIdx, int returnPc, bool isResume)
+    /// <summary>Resume state for the non-deterministic <c>string_concat/3</c>
+    /// split: the string being split and the running split index, plus a
+    /// cached resume delegate — allocated once per call, re-pushed unchanged
+    /// on each backtrack (no per-split closure).</summary>
+    private sealed class StringConcatSplitCursor
     {
-        if (splitIdx > ab.Length) return false;
-        if (splitIdx < ab.Length)
+        private readonly string _ab;
+        private readonly int _returnPc;
+        private int _splitIdx;
+        public readonly Func<Engine, int, bool> Resume;
+
+        public StringConcatSplitCursor(string ab, int returnPc)
         {
-            int nextSplit = splitIdx + 1;
-            Func<Engine, int, bool> resume = (e, _) =>
-                StringConcatSplitAttempt(e, ab, nextSplit, returnPc, isResume: true);
-            engine.PushBuiltinChoicePoint(resume, arity: 3);  // restore string_concat/3 args (a backtrack-clobbered result reg breaks enumeration)
+            _ab = ab;
+            _returnPc = returnPc;
+            _splitIdx = 0;
+            Resume = (e, _) => Attempt(e, isResume: true);
         }
-        int aPstr = engine.MakePstr(ab.Substring(0, splitIdx));
-        int bPstr = engine.MakePstr(ab.Substring(splitIdx));
-        if (!engine.UnifyRegisterWithCell(0, Cell.Ref(aPstr))) return false;
-        if (!engine.UnifyRegisterWithCell(1, Cell.Ref(bPstr))) return false;
-        if (isResume) engine.ResumeAtReturnPc(returnPc);
-        return true;
+
+        public bool Start(Engine engine) => Attempt(engine, isResume: false);
+
+        private bool Attempt(Engine engine, bool isResume)
+        {
+            int splitIdx = _splitIdx;
+            if (splitIdx > _ab.Length) return false;
+            if (splitIdx < _ab.Length)
+            {
+                _splitIdx = splitIdx + 1;
+                engine.PushBuiltinChoicePoint(Resume, arity: 3);  // restore string_concat/3 args
+            }
+            int aPstr = engine.MakePstr(_ab.Substring(0, splitIdx));
+            int bPstr = engine.MakePstr(_ab.Substring(splitIdx));
+            if (!engine.UnifyRegisterWithCell(0, Cell.Ref(aPstr))) return false;
+            if (!engine.UnifyRegisterWithCell(1, Cell.Ref(bPstr))) return false;
+            if (isResume) engine.ResumeAtReturnPc(_returnPc);
+            return true;
+        }
     }
 
     /// <summary><c>string_chars(String, Chars)</c> — bidirectional

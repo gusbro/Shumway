@@ -408,25 +408,29 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
                   .AppendLine(">(__result));");
                 break;
             case ReturnShape.NonDet:
-                // First call: build the iterator from the user method,
-                // then hand off to the advance helper. The advance
-                // helper handles both MoveNext+CP-push (for solutions)
-                // and Dispose+fail (for exhaustion).
+                // First call: build the iterator from the user method, then
+                // drive it through a NonDetForeignCursor. The cursor holds the
+                // iterator + resume PC + a cached resume delegate, and re-pushes
+                // it unchanged on each backtrack (no per-solution closure); the
+                // per-predicate "unify the current value" step is a static
+                // method group, so its delegate is cached too.
                 sb.Append(indent).Append("    var __iter = ").Append(call).AppendLine("!.GetEnumerator();");
-                sb.Append(indent).Append("    return ")
-                  .Append(advanceHelperName(b))
-                  .AppendLine("(engine, host, __iter, engine.BuiltinReturnPc);");
+                sb.Append(indent)
+                  .Append("    return new global::Shumway.Embedding.NonDetForeignCursor<")
+                  .Append(b.ElementTypeName).AppendLine(">(");
+                sb.Append(indent).Append("        __iter, engine.BuiltinReturnPc, host, ")
+                  .Append(nonDetUnifyName(b)).AppendLine(").Start(engine);");
                 sb.Append(indent).AppendLine("}");
                 sb.AppendLine();
-                EmitNonDetAdvance(sb, indent, b);
+                EmitNonDetUnify(sb, indent, b);
                 return;
         }
 
         sb.Append(indent).AppendLine("}");
     }
 
-    private static string advanceHelperName(BridgeModel b)
-        => "_" + b.MethodName + "_PrologNonDetAdvance";
+    private static string nonDetUnifyName(BridgeModel b)
+        => "_" + b.MethodName + "_PrologNonDetUnify";
 
     /// <summary>Chunk 246 — after the user method returns, unify
     /// every out (-) and ref-with-bound-value (?) parameter back
@@ -471,46 +475,23 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
         }
     }
 
-    /// <summary>Emits the chunk-244 non-det advance helper: one
-    /// MoveNext step, push a CP that re-enters on backtrack, unify
-    /// the current value with the next register. Returns false on
-    /// exhaustion (the engine then continues backtracking past the
-    /// foreign CP) or on a unify failure (same effect; the CP we
-    /// just pushed will re-enter on the engine's backtrack pass).</summary>
-    private static void EmitNonDetAdvance(StringBuilder sb, string indent, BridgeModel b)
+    /// <summary>Emits the per-predicate "unify the current solution value"
+    /// step as a STATIC method (chunk 244 logic, restructured): a static
+    /// method group has its delegate cached by the compiler, so handing it to
+    /// <see cref="NonDetForeignCursor{T}"/> costs no per-call allocation. The
+    /// cursor drives the MoveNext + CP-push + Dispose machinery.</summary>
+    private static void EmitNonDetUnify(StringBuilder sb, string indent, BridgeModel b)
     {
-        sb.Append(indent).Append("private static bool ").Append(advanceHelperName(b))
-          .Append("(global::Shumway.Core.Engine engine, global::Shumway.Embedding.PrologEngine host, ")
-          .Append("global::System.Collections.Generic.IEnumerator<")
-          .Append(b.ElementTypeName).AppendLine("> iter, int returnPc)");
+        sb.Append(indent).Append("private static bool ").Append(nonDetUnifyName(b))
+          .Append("(global::Shumway.Embedding.PrologEngine host, ")
+          .Append("global::Shumway.Core.Engine engine, ")
+          .Append(b.ElementTypeName).AppendLine(" __current)");
         sb.Append(indent).AppendLine("{");
-        sb.Append(indent).AppendLine("    if (!iter.MoveNext())");
-        sb.Append(indent).AppendLine("    {");
-        sb.Append(indent).AppendLine("        iter.Dispose();");
-        sb.Append(indent).AppendLine("        return false;");
-        sb.Append(indent).AppendLine("    }");
-        // Push a re-arming CP that, on backtrack, advances the
-        // iterator one more step. The CP captures the iterator and
-        // the resume PC by closure. The onPrune callback (chunk
-        // 245) Disposes the iterator if Prolog `!` cuts past this
-        // CP without the engine backtracking through it — the
-        // MoveNext-returns-false path of this helper already
-        // handles the exhaustion case.
-        sb.Append(indent).Append("    var __capturedIter = iter;");
-        sb.AppendLine();
-        sb.Append(indent).Append("    engine.PushBuiltinChoicePoint((e, _) =>");
-        sb.AppendLine();
-        sb.Append(indent).AppendLine("    {");
-        sb.Append(indent).Append("        bool __ok = ")
-          .Append(advanceHelperName(b)).AppendLine("(e, host, __capturedIter, returnPc);");
-        sb.Append(indent).AppendLine("        if (__ok) e.ResumeAtReturnPc(returnPc);");
-        sb.Append(indent).AppendLine("        return __ok;");
-        sb.Append(indent).AppendLine("    }, arity: 0, onPrune: __capturedIter.Dispose);");
-        // Unify the current value with the register right after the
-        // typed input args.
+        // Unify the current value with the register right after the typed
+        // input args.
         sb.Append(indent).Append("    return global::Shumway.Embedding.RegisterMarshalling.UnifyRegisterWithTerm(")
           .Append("engine, ").Append(b.TypedParameters.Count)
-          .Append(", host.ToTerm<").Append(b.ElementTypeName).AppendLine(">(iter.Current));");
+          .Append(", host.ToTerm<").Append(b.ElementTypeName).AppendLine(">(__current));");
         sb.Append(indent).AppendLine("}");
     }
 

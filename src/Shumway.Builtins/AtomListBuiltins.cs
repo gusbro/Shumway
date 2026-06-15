@@ -156,36 +156,59 @@ public static class AtomListBuiltins
         // (append([3], fac, [3|fac]) etc.), so we thread it through to the L2
         // build instead of rejecting it. For a proper list this tail is [],
         // so the behaviour is unchanged.
-        return AppendSplitAttempt(engine, elems, cursor, splitIdx: 0, returnPc, isResume: false);
+        return new AppendSplitCursor(elems, cursor, returnPc).Start(engine);
     }
 
-    private static bool AppendSplitAttempt(
-        Engine engine, IReadOnlyList<Cell> elems, Cell suffixTail, int splitIdx, int returnPc, bool isResume)
+    /// <summary>Resume state for the non-deterministic <c>append/3</c> split:
+    /// the collected L3 elements, the (possibly improper) tail, and the
+    /// running split index, plus a cached resume delegate — allocated once
+    /// per call and re-pushed unchanged on each backtrack, no per-split
+    /// closure.</summary>
+    private sealed class AppendSplitCursor
     {
-        int n = elems.Count;
-        if (splitIdx > n) return false;
+        private readonly IReadOnlyList<Cell> _elems;
+        private readonly Cell _suffixTail;
+        private readonly int _returnPc;
+        private int _splitIdx;
+        public readonly Func<Engine, int, bool> Resume;
 
-        // Push a CP for the next split point first (unless we're at the
-        // last one), so a backtrack into us retries with splitIdx + 1.
-        if (splitIdx < n)
+        public AppendSplitCursor(IReadOnlyList<Cell> elems, Cell suffixTail, int returnPc)
         {
-            int nextSplit = splitIdx + 1;
-            Func<Engine, int, bool> resume = (e, _) =>
-                AppendSplitAttempt(e, elems, suffixTail, nextSplit, returnPc, isResume: true);
+            _elems = elems;
+            _suffixTail = suffixTail;
+            _returnPc = returnPc;
+            _splitIdx = 0;
+            Resume = (e, _) => Attempt(e, isResume: true);
+        }
+
+        public bool Start(Engine engine) => Attempt(engine, isResume: false);
+
+        private bool Attempt(Engine engine, bool isResume)
+        {
+            int n = _elems.Count;
+            int splitIdx = _splitIdx;
+            if (splitIdx > n) return false;
+
+            // Push a CP for the next split point first (unless we're at the
+            // last one), so a backtrack into us retries with splitIdx + 1.
             // arity 3: the CP must restore append/3's argument registers, else
             // a following body goal whose builtin call takes >= (resultReg+1)
             // args clobbers X0/X1 and the enumeration breaks on backtrack.
-            engine.PushBuiltinChoicePoint(resume, arity: 3);
-        }
+            if (splitIdx < n)
+            {
+                _splitIdx = splitIdx + 1;
+                engine.PushBuiltinChoicePoint(Resume, arity: 3);
+            }
 
-        // L1 = elems[0..splitIdx] (always proper); L2 = elems[splitIdx..n] with
-        // L3's tail (ADR: [] for a proper L3, the improper tail otherwise).
-        int l1Heap = BuildListFromCells(engine, elems, 0, splitIdx, Cell.Atom(AtomTable.EmptyListId));
-        int l2Heap = BuildListFromCells(engine, elems, splitIdx, n, suffixTail);
-        if (!engine.UnifyRegisterWithHeapAt(0, l1Heap)) return false;
-        if (!engine.UnifyRegisterWithHeapAt(1, l2Heap)) return false;
-        if (isResume) engine.ResumeAtReturnPc(returnPc);
-        return true;
+            // L1 = elems[0..splitIdx] (always proper); L2 = elems[splitIdx..n]
+            // with L3's tail ([] for a proper L3, the improper tail otherwise).
+            int l1Heap = BuildListFromCells(engine, _elems, 0, splitIdx, Cell.Atom(AtomTable.EmptyListId));
+            int l2Heap = BuildListFromCells(engine, _elems, splitIdx, n, _suffixTail);
+            if (!engine.UnifyRegisterWithHeapAt(0, l1Heap)) return false;
+            if (!engine.UnifyRegisterWithHeapAt(1, l2Heap)) return false;
+            if (isResume) engine.ResumeAtReturnPc(_returnPc);
+            return true;
+        }
     }
 
     private static int BuildListFromCells(
@@ -330,30 +353,50 @@ public static class AtomListBuiltins
 
         string cName = AtomTable.GetById(cCell.AsAtomId)?.Name ?? "";
         int returnPc = engine.BuiltinReturnPc;
-        return AtomConcatSplitAttempt(engine, cName, splitIdx: 0, returnPc, isResume: false);
+        return new AtomConcatSplitCursor(cName, returnPc).Start(engine);
     }
 
-    private static bool AtomConcatSplitAttempt(
-        Engine engine, string cName, int splitIdx, int returnPc, bool isResume)
+    /// <summary>Resume state for the non-deterministic <c>atom_concat/3</c>
+    /// split: the atom being split and the running split index, plus a cached
+    /// resume delegate — allocated once per call, re-pushed unchanged on each
+    /// backtrack (no per-split closure).</summary>
+    private sealed class AtomConcatSplitCursor
     {
-        if (splitIdx > cName.Length) return false;
+        private readonly string _cName;
+        private readonly int _returnPc;
+        private int _splitIdx;
+        public readonly Func<Engine, int, bool> Resume;
 
-        if (splitIdx < cName.Length)
+        public AtomConcatSplitCursor(string cName, int returnPc)
         {
-            int nextSplit = splitIdx + 1;
-            Func<Engine, int, bool> resume = (e, _) =>
-                AtomConcatSplitAttempt(e, cName, nextSplit, returnPc, isResume: true);
-            engine.PushBuiltinChoicePoint(resume, arity: 3);  // restore atom_concat/3 args (see AppendSplitAttempt)
+            _cName = cName;
+            _returnPc = returnPc;
+            _splitIdx = 0;
+            Resume = (e, _) => Attempt(e, isResume: true);
         }
 
-        string a = cName.Substring(0, splitIdx);
-        string b = cName.Substring(splitIdx);
-        int aAtomId = AtomTable.Intern(a, permanent: false).Id;
-        int bAtomId = AtomTable.Intern(b, permanent: false).Id;
-        if (!engine.UnifyRegisterWithCell(0, Cell.Atom(aAtomId))) return false;
-        if (!engine.UnifyRegisterWithCell(1, Cell.Atom(bAtomId))) return false;
-        if (isResume) engine.ResumeAtReturnPc(returnPc);
-        return true;
+        public bool Start(Engine engine) => Attempt(engine, isResume: false);
+
+        private bool Attempt(Engine engine, bool isResume)
+        {
+            int splitIdx = _splitIdx;
+            if (splitIdx > _cName.Length) return false;
+
+            if (splitIdx < _cName.Length)
+            {
+                _splitIdx = splitIdx + 1;
+                engine.PushBuiltinChoicePoint(Resume, arity: 3);  // restore atom_concat/3 args
+            }
+
+            string a = _cName.Substring(0, splitIdx);
+            string b = _cName.Substring(splitIdx);
+            int aAtomId = AtomTable.Intern(a, permanent: false).Id;
+            int bAtomId = AtomTable.Intern(b, permanent: false).Id;
+            if (!engine.UnifyRegisterWithCell(0, Cell.Atom(aAtomId))) return false;
+            if (!engine.UnifyRegisterWithCell(1, Cell.Atom(bAtomId))) return false;
+            if (isResume) engine.ResumeAtReturnPc(_returnPc);
+            return true;
+        }
     }
 
     // ---------- Helpers ----------

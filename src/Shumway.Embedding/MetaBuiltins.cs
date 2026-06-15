@@ -2720,7 +2720,7 @@ public static class MetaBuiltins
 
         var sub = host.CreateSubEngine();
         var iter = sub.QueryAll(callGoal).GetEnumerator();
-        return AdvanceCallNEnumerator(engine, iter, returnPc, isResume: false);
+        return new CallNCursor(iter, returnPc).Start(engine);
     }
 
     /// <summary>Pulls the next solution from <paramref name="iter"/> and
@@ -2787,35 +2787,50 @@ public static class MetaBuiltins
         }
     }
 
-    private static bool AdvanceCallNEnumerator(
-        Engine engine, IEnumerator<Solution> iter, int returnPc, bool isResume)
+    /// <summary>Resume state for a backtrackable <c>call/N</c>: the solution
+    /// enumerator plus a cached resume delegate (allocated once per call,
+    /// re-pushed unchanged on every backtrack — no per-solution closure).</summary>
+    private sealed class CallNCursor
     {
-        if (!iter.MoveNext())
+        private readonly IEnumerator<Solution> _iter;
+        private readonly int _returnPc;
+        public readonly Func<Engine, int, bool> Resume;
+
+        public CallNCursor(IEnumerator<Solution> iter, int returnPc)
         {
-            iter.Dispose();
-            return false;
+            _iter = iter;
+            _returnPc = returnPc;
+            Resume = (e, _) => Advance(e, isResume: true);
         }
 
-        // Push a CP optimistically — we don't know without consuming
-        // whether there's another solution, but if there isn't the
-        // resume delegate's first MoveNext returns false and the CP
-        // collapses cleanly.
-        Func<Engine, int, bool> resume = (e, _) =>
-            AdvanceCallNEnumerator(e, iter, returnPc, isResume: true);
-        engine.PushBuiltinChoicePoint(resume, arity: 0);
+        public bool Start(Engine engine) => Advance(engine, isResume: false);
 
-        Solution sol = iter.Current;
-        foreach (var (name, value) in sol.Bindings)
+        private bool Advance(Engine engine, bool isResume)
         {
-            int addr = ExtractAddrFromName(name);
-            if (addr < 0) continue;
-            Cell boundCell = Materializer.MaterializeAsCell(engine, value);
-            int slot = engine.AllocateHeap(1);
-            engine.SetHeap(slot, boundCell);
-            if (!engine.Unify(addr, slot)) return false;
+            if (!_iter.MoveNext())
+            {
+                _iter.Dispose();
+                return false;
+            }
+
+            // Push a CP optimistically — we don't know without consuming
+            // whether there's another solution, but if there isn't the
+            // resume's first MoveNext returns false and the CP collapses.
+            engine.PushBuiltinChoicePoint(Resume, arity: 0);
+
+            Solution sol = _iter.Current;
+            foreach (var (name, value) in sol.Bindings)
+            {
+                int addr = ExtractAddrFromName(name);
+                if (addr < 0) continue;
+                Cell boundCell = Materializer.MaterializeAsCell(engine, value);
+                int slot = engine.AllocateHeap(1);
+                engine.SetHeap(slot, boundCell);
+                if (!engine.Unify(addr, slot)) return false;
+            }
+            if (isResume) engine.ResumeAtReturnPc(_returnPc);
+            return true;
         }
-        if (isResume) engine.ResumeAtReturnPc(returnPc);
-        return true;
     }
 
     private static Term AppendArgs(Term goal, Term[] extras)
@@ -3213,15 +3228,15 @@ public static class MetaBuiltins
             Clause[] snap = host.RentRetractSnapshot(count);
             for (int i = 0; i < count; i++)
                 snap[i] = candidates[matchIndex + 1 + i];
-            // patternHeap is re-read from register 0 on resume (see
-            // RetractResumeStep), so the resume need not close over it.
-            // Push with arity 1 so the CP saves register 0 — the GC then
-            // relocates it.
-            Func<Engine, int, bool> resume = (e, _) => RetractResumeStep(
-                e, host, patternFid, snap, count, 0, returnPc);
-            Action onPrune = () => host.ReturnRetractSnapshot(snap, count);
+            // The resume + onPrune delegates live on ONE cursor (allocated
+            // here, re-pushed unchanged on every backtrack) rather than a
+            // fresh pair per matching clause. patternHeap is re-read from
+            // register 0 on resume, so the cursor need not close over it; the
+            // CP is pushed with arity 1 so the WAM saves register 0 and the
+            // GC relocates it.
+            var cursor = new RetractCursor(host, patternFid, snap, count, returnPc);
             RetractTrace.PrePush(engine);
-            engine.PushBuiltinChoicePoint(resume, arity: 1, onPrune);
+            engine.PushBuiltinChoicePoint(cursor.Resume, arity: 1, cursor.OnPrune);
             RetractTrace.PostPush(engine);
         }
 
@@ -3245,77 +3260,100 @@ public static class MetaBuiltins
         return true;
     }
 
-    /// <summary>chunk 431 — the resumed retract step, scanning the
-    /// enumeration's call-time snapshot from <paramref name="startIndex"/>.
-    /// Semantics are identical to the pre-431 resume (which copied a fresh
-    /// tail array per step); only the buffer management changed — see
-    /// <see cref="RetractStep"/>. <paramref name="snapCount"/> bounds the
-    /// used range of <paramref name="snap"/>, which may be a pooled buffer
-    /// longer than the snapshot it holds.</summary>
-    private static bool RetractResumeStep(Engine engine, PrologEngine host,
-        int patternFid, Clause[] snap, int snapCount, int startIndex, int returnPc)
+    /// <summary>chunk 431 — resume state for a backtrackable <c>retract/1</c>
+    /// enumeration: the call-time snapshot of remaining candidates, the
+    /// running start index, and cached <c>Resume</c> + <c>OnPrune</c>
+    /// delegates (allocated once per enumeration, re-pushed unchanged on each
+    /// backtrack — no per-clause closure pair). Semantics are identical to the
+    /// pre-cursor resume; only the per-step allocation moved onto the cursor.
+    /// <c>_snapCount</c> bounds the used range of <c>_snap</c>, which may be a
+    /// pooled buffer longer than the snapshot it holds.</summary>
+    private sealed class RetractCursor
     {
-        // ADR-016: re-read the pattern from register 0. The choice point
-        // was pushed with arity 1, so the WAM CP machinery saved register 0
-        // (the pattern's REF) and the heap GC relocates it like any saved
-        // argument; the restore repopulates register 0 before this delegate
-        // runs. Closing a raw heap index over the resume would dangle after
-        // a mid-enumeration collection moved the pattern cell.
-        int patternHeap = engine.MaterializeRegisterForTrace(0);
-        RetractTrace.StepEntry(engine, isResume: true, startIndex);
-        int matchIndex = FindRetractMatch(
-            engine, snap, startIndex, snapCount, patternHeap);
-        if (matchIndex < 0)
-        {
-            // Enumeration exhausted — nothing references the snapshot once
-            // this (already-popped) CP's delegate returns; recycle it.
-            host.ReturnRetractSnapshot(snap, snapCount);
-            RetractTrace.NoMatch(snapCount);
-            return false;
-        }
-        RetractTrace.MatchFound(matchIndex, snap[matchIndex]);
+        private readonly PrologEngine _host;
+        private readonly int _patternFid;
+        private readonly Clause[] _snap;
+        private readonly int _snapCount;
+        private readonly int _returnPc;
+        private int _startIndex;
+        public readonly Func<Engine, int, bool> Resume;
+        public readonly Action OnPrune;
 
-        Clause candidate = snap[matchIndex];
-        bool morePending = matchIndex + 1 < snapCount;
-        if (morePending)
+        public RetractCursor(PrologEngine host, int patternFid, Clause[] snap,
+            int snapCount, int returnPc)
         {
-            // Re-arm with the SAME snapshot, advancing the start index —
-            // the snapshot is immutable and exclusively owned by this
-            // enumeration (the CP that carried it was popped before this
-            // delegate ran), so no copy is needed.
-            int nextStart = matchIndex + 1;
-            Func<Engine, int, bool> resume = (e, _) => RetractResumeStep(
-                e, host, patternFid, snap, snapCount, nextStart, returnPc);
-            Action onPrune = () => host.ReturnRetractSnapshot(snap, snapCount);
-            RetractTrace.PrePush(engine);
-            engine.PushBuiltinChoicePoint(resume, arity: 1, onPrune);
-            RetractTrace.PostPush(engine);
+            _host = host;
+            _patternFid = patternFid;
+            _snap = snap;
+            _snapCount = snapCount;
+            _returnPc = returnPc;
+            _startIndex = 0;
+            Resume = (e, _) => Step(e);
+            OnPrune = () => _host.ReturnRetractSnapshot(_snap, _snapCount);
         }
 
-        int savedHb = engine.Hb;
-        engine.SetHb(engine.HeapTop);
-        Cell candidateCell = Materializer.MaterializeAsCell(engine, candidate.Term);
-        int candSlot = engine.AllocateHeap(1);
-        engine.SetHeap(candSlot, candidateCell);
-
-        RetractTrace.HeapStateBeforeUnify(engine, patternHeap, candSlot, savedHb);
-        bool unifyResult = engine.Unify(patternHeap, candSlot);
-        RetractTrace.HeapStateAfterUnify(engine, patternHeap, candSlot, unifyResult);
-
-        // A resume scans a tail snapshot (indices don't map onto the
-        // mutated live list): pass -1 to fall back to the IndexOf path.
-        host.RemoveDynamicByReference(engine, patternFid, candidate,
-            knownIndex: -1);
-        engine.SetHb(savedHb);
-        if (!morePending)
+        private bool Step(Engine engine)
         {
-            // Last candidate consumed and no new CP holds the snapshot —
-            // recycle it (the `candidate` local keeps the clause alive
-            // through the clear).
-            host.ReturnRetractSnapshot(snap, snapCount);
+            // ADR-016: re-read the pattern from register 0. The choice point
+            // was pushed with arity 1, so the WAM CP machinery saved
+            // register 0 (the pattern's REF) and the heap GC relocates it
+            // like any saved argument; the restore repopulates register 0
+            // before this delegate runs. Closing a raw heap index over the
+            // resume would dangle after a mid-enumeration collection moved
+            // the pattern cell.
+            int patternHeap = engine.MaterializeRegisterForTrace(0);
+            RetractTrace.StepEntry(engine, isResume: true, _startIndex);
+            int matchIndex = FindRetractMatch(
+                engine, _snap, _startIndex, _snapCount, patternHeap);
+            if (matchIndex < 0)
+            {
+                // Enumeration exhausted — nothing references the snapshot once
+                // this (already-popped) CP's delegate returns; recycle it.
+                _host.ReturnRetractSnapshot(_snap, _snapCount);
+                RetractTrace.NoMatch(_snapCount);
+                return false;
+            }
+            RetractTrace.MatchFound(matchIndex, _snap[matchIndex]);
+
+            Clause candidate = _snap[matchIndex];
+            bool morePending = matchIndex + 1 < _snapCount;
+            if (morePending)
+            {
+                // Re-arm with the SAME snapshot + delegates, advancing the
+                // start index — the snapshot is immutable and exclusively
+                // owned by this enumeration (the CP that carried it was
+                // popped before this delegate ran), so no copy is needed.
+                _startIndex = matchIndex + 1;
+                RetractTrace.PrePush(engine);
+                engine.PushBuiltinChoicePoint(Resume, arity: 1, OnPrune);
+                RetractTrace.PostPush(engine);
+            }
+
+            int savedHb = engine.Hb;
+            engine.SetHb(engine.HeapTop);
+            Cell candidateCell = Materializer.MaterializeAsCell(engine, candidate.Term);
+            int candSlot = engine.AllocateHeap(1);
+            engine.SetHeap(candSlot, candidateCell);
+
+            RetractTrace.HeapStateBeforeUnify(engine, patternHeap, candSlot, savedHb);
+            bool unifyResult = engine.Unify(patternHeap, candSlot);
+            RetractTrace.HeapStateAfterUnify(engine, patternHeap, candSlot, unifyResult);
+
+            // A resume scans a tail snapshot (indices don't map onto the
+            // mutated live list): pass -1 to fall back to the IndexOf path.
+            _host.RemoveDynamicByReference(engine, _patternFid, candidate,
+                knownIndex: -1);
+            engine.SetHb(savedHb);
+            if (!morePending)
+            {
+                // Last candidate consumed and no new CP holds the snapshot —
+                // recycle it (the `candidate` local keeps the clause alive
+                // through the clear).
+                _host.ReturnRetractSnapshot(_snap, _snapCount);
+            }
+            engine.ResumeAtReturnPc(_returnPc);
+            return true;
         }
-        engine.ResumeAtReturnPc(returnPc);
-        return true;
     }
 
     /// <summary>Index of the first candidate (from <paramref name="startIndex"/>)
