@@ -28,6 +28,11 @@ public sealed class IlBacktrackReproTests
     [Theory]
     [InlineData("f1(1). f1(2). f1(3).\nmc(H, B) :- '$clause_enum'(H, H-B).", "mc(f1(X), true)")]
     [InlineData("p(_). q(_, _).\ncp(I) :- '$current_predicate_enum'(I).", "cp(p/N)")]
+    [InlineData("sa(B, L, S) :- sub_atom(banana, B, L, _, S).", "sa(B, 2, S)")]
+    // Preceding choice point before the backtrackable builtin (the sf1 / maplist
+    // shape): member/2 leaves CPs, then sub_atom enumerates.
+    [InlineData("mp(M, P) :- member(M, [a, b]), sub_atom(shumway, 0, 1, _, P).", "mp(M, P)")]
+    [InlineData("mb(M, X) :- member(M, [a, b]), between(1, 2, X).", "mb(M, X)")]
     [InlineData("nt(I, X) :- nth1(I, [a, b, c], X).", "nt(I, X)")]
     [InlineData("rc(K, V) :- recorded(K, V, _).", "(recordz(k, va, _), recordz(k, vb, _), rc(k, V))")]
     // SEPARATE bug (not the cursor fix): retract on a dynamic predicate from an

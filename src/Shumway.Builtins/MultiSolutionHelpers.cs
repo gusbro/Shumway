@@ -144,17 +144,52 @@ public static class MultiSolutionHelpers
         return engine.UnifyRegisterWithCell(1, tailCell);
     }
 
-    // NOTE: a lazy backtrackable-builtin enumerator ('$sub_atom_enum', arity 5)
-    // was added and then REVERTED. It yielded each decomposition on backtracking
-    // via a builtin choice point instead of materialising the O(n²) list — but
-    // under Tier-1 IL its choice point did not propagate its success when a
-    // preceding choice point was live: maplist(..), sub_atom(A,0,4,_,S) looped
-    // (maplist re-ran), and (X=1;X=2), sub_atom(..) silently failed, while
-    // Tier-0 was correct. Other backtrackable builtins (between/3, current_op/3,
-    // the recorded-database enumerators) do not hit it; the exact Tier-1 IL
-    // interaction specific to this builtin's shape was not root-caused. The
-    // eager SubAtomDecompositions + member/2 form (plain WAM choice points) is
-    // correct under both tiers, so sub_atom/5 uses it; sub_atom is rarely hot.
+    /// <summary><c>'$sub_atom_enum'(Atom, Before, Length, After, Sub)</c> — the
+    /// LAZY sub_atom/5 enumerator. Yields each <c>(Before, Length, After, Sub)</c>
+    /// decomposition one at a time on backtracking via the shared
+    /// <see cref="IndexEnumCursor"/>, instead of materialising all
+    /// <c>(len+1)(len+2)/2</c> decompositions onto the heap up front (O(1) extra
+    /// memory rather than O(n²)). Enumeration order is before-major, length
+    /// ascending — identical to the eager list — so a bound argument filters via
+    /// the per-decomposition unification.
+    ///
+    /// <para>This was reverted once (b0417db) because it lost / looped under
+    /// Tier-1 IL; the root cause was a MISSING <c>IsBacktrackable</c> flag (the
+    /// IL emit skipped the resume-marker / <c>BuiltinReturnPc</c> setup, so the
+    /// cursor resumed at PC 0). With <c>$sub_atom_enum</c> now listed in
+    /// <see cref="Shumway.Builtins.BuiltinEntry.IsBacktrackableName"/> it is
+    /// correct under both tiers.</para></summary>
+    public static bool SubAtomEnum(Engine engine)
+    {
+        Cell atomCell = Resolve(engine, engine.GetRegister(0));
+        if (atomCell.Tag == Tag.Ref)
+            throw new PrologRuntimeException("instantiation_error");
+        if (atomCell.Tag != Tag.Atom)
+            throw new PrologRuntimeException("type_error", "atom");
+        string name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
+        int len = name.Length;
+        int total = (len + 1) * (len + 2) / 2;   // Σ_{before=0..len} (len-before+1)
+
+        // Sequential (before, length) state shared by every tryAt call: the
+        // IndexEnumCursor driver invokes tryAt with i = 0,1,2,… strictly in
+        // order, so advancing the pair by one per call keeps it in lock-step
+        // with i — O(1) per decomposition, no heap list.
+        int before = 0, length = 0;
+        bool TryAt(Engine e, int i)
+        {
+            int b = before, l = length;
+            if (length < len - before) length++;
+            else { before++; length = 0; }
+            int after = len - b - l;
+            if (!e.UnifyRegisterWithCell(1, Cell.Int(b))) return false;
+            if (!e.UnifyRegisterWithCell(2, Cell.Int(l))) return false;
+            if (!e.UnifyRegisterWithCell(3, Cell.Int(after))) return false;
+            int subAtomId = AtomTable.Intern(name.Substring(b, l), permanent: false).Id;
+            return e.UnifyRegisterWithCell(4, Cell.Atom(subAtomId));
+        }
+
+        return IndexEnumCursor.Start(engine, total, arity: 5, engine.BuiltinReturnPc, TryAt);
+    }
 
     private static int BuildFreshVarList(Engine engine, int count)
     {

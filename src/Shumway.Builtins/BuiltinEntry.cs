@@ -60,7 +60,7 @@ public sealed class BuiltinEntry
         // chunk-218 resume marker + BuiltinReturnPc. WAM tolerated the omission
         // (its CallBuiltin handler always sets BuiltinReturnPc); Tier-1 IL did
         // not — a missing name made the resume jump to PC 0 and lose solutions.
-        or "$clause_enum" or "$current_predicate_enum"
+        or "$clause_enum" or "$current_predicate_enum" or "$sub_atom_enum"
         or "nth0" or "nth1" or "recorded" or "keys"
         or "string_search" or "directory" => true,
         _ => false,

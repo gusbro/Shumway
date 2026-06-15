@@ -190,17 +190,13 @@ internal static class Prelude
             '$length_enum'(T, N, Acc1).
 
         %! sub_atom(+Atom, ?Before, ?Length, ?After, ?SubAtom) | Atoms & strings | Backtracks over every (Before, Length, After, SubAtom) decomposition of an atom.
-        % '$sub_atom_decompositions' materialises every decomposition as a list
-        % and member/2 walks it, so each decomposition is a plain WAM choice
-        % point. NOTE: a lazy backtrackable-builtin form ('$sub_atom_enum')
-        % was tried and reverted — its choice point did not propagate its
-        % success under Tier-1 IL when a preceding choice point was live
-        % (e.g. maplist(..), sub_atom(..) looped / failed). The eager form
-        % costs O(n^2) heap for the decomposition list but is correct under
-        % both tiers; sub_atom is rarely a hot path. See the chunk note.
+        % '$sub_atom_enum' yields each decomposition lazily (a backtrackable
+        % builtin), so a long atom no longer materialises all O(n^2)
+        % decompositions onto the heap before member/2 walks them. (The earlier
+        % revert to the eager form was due to a missing IsBacktrackable flag that
+        % broke it under Tier-1 IL — now fixed.)
         sub_atom(Atom, Before, Length, After, Sub) :-
-            '$sub_atom_decompositions'(Atom, Decomps),
-            member([Before, Length, After, Sub], Decomps).
+            '$sub_atom_enum'(Atom, Before, Length, After, Sub).
 
         %! maplist(:Goal, ?List) | Lists | Succeeds if Goal holds for every element of List.
         maplist(_, []).
