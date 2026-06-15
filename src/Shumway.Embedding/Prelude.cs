@@ -134,10 +134,12 @@ internal static class Prelude
             member(H-B, Pairs).
 
         %! current_predicate(?PredicateIndicator) | Database | Enumerates the defined predicates as Name/Arity indicators.
+        % '$current_predicate_enum' yields indicators lazily (a backtrackable
+        % builtin), so the full O(n) indicator list is no longer built on the
+        % heap before member/2 walks it.
         current_predicate(I) :-
             '$check_predicate_indicator'(I),
-            '$all_predicate_indicators'(All),
-            member(I, All).
+            '$current_predicate_enum'(I).
 
         '$check_predicate_indicator'(I) :- var(I), !.
         '$check_predicate_indicator'(_/_) :- !.

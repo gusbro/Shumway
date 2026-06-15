@@ -128,6 +128,7 @@ public static class MetaBuiltins
         // via the prelude's member/2.
         BuiltinsRegistry.Register("$all_clauses_of",            2, AllClausesOf);
         BuiltinsRegistry.Register("$all_predicate_indicators",  1, AllPredicateIndicators);
+        BuiltinsRegistry.Register("$current_predicate_enum",    1, CurrentPredicateEnum);
         BuiltinsRegistry.Register("$listable_predicates", 1, ListablePredicates);
         // Chunk 254 — listing path bypasses clause/2 + write/1 to
         // preserve the original VarTerm names parser captured. The
@@ -2076,6 +2077,38 @@ public static class MetaBuiltins
             listTerm = new CompoundTerm(".", new[] { indicators[i], listTerm });
         Cell listCell = Materializer.MaterializeAsCell(engine, listTerm);
         return engine.UnifyRegisterWithCell(0, listCell);
+    }
+
+    /// <summary><c>'$current_predicate_enum'(?PI)</c> — the LAZY backing for
+    /// <c>current_predicate/1</c>. Yields each known predicate's
+    /// <c>Name/Arity</c> indicator one at a time on backtracking (a cursor
+    /// over the snapshot), instead of building the whole O(n) indicator list
+    /// on the heap up front for <c>member/2</c> to walk. Indicators are ground,
+    /// so the per-step unification just filters against a bound <c>PI</c>.</summary>
+    public static bool CurrentPredicateEnum(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "'$current_predicate_enum'/1 requires a PrologEngine host.");
+
+        var seen = new HashSet<int>();
+        var indicators = new List<Term>();
+        void AddIndicator(int functorId)
+        {
+            if (!seen.Add(functorId)) return;
+            var (atomId, arity) = FunctorTable.Lookup(functorId);
+            string name = AtomTable.GetById(atomId)?.Name ?? "?";
+            indicators.Add(new CompoundTerm("/",
+                new Term[] { new AtomTerm(name), new IntTerm(arity) }));
+        }
+        foreach (int fid in BuiltinsRegistry.AllRegisteredFunctorIds())
+            AddIndicator(fid);
+        foreach (int fid in host.AllStaticAndDynamicFunctors())
+            AddIndicator(fid);
+
+        int returnPc = engine.BuiltinReturnPc;
+        return Shumway.Core.IndexEnumCursor.Start(engine, indicators.Count, 1, returnPc,
+            (e, i) => e.UnifyRegisterWithCell(0, Materializer.MaterializeAsCell(e, indicators[i])));
     }
 
     /// <summary><c>'$listable_predicates'/1</c> — the user-defined
