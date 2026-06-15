@@ -59,26 +59,19 @@ public static class GlobalVarsBuiltins
         // Var name → enumerate. Use the standard CP-driven pattern.
         var entries = Globals(engine).All().ToArray();
         int returnPc = engine.BuiltinReturnPc;
-        return NbCurrentStep(engine, entries, 0, returnPc, isResume: false);
+        // arity 2: the CP must restore nb_current/2's args (a backtrack-
+        // clobbered result reg breaks the enumeration).
+        return IndexEnumCursor.Start(engine, entries.Length, 2, returnPc,
+            (e, i) => NbCurrentUnify(e, entries, i));
     }
 
-    private static bool NbCurrentStep(
-        Engine engine, (string Name, Cell Value)[] entries,
-        int idx, int returnPc, bool isResume)
+    private static bool NbCurrentUnify(
+        Engine engine, (string Name, Cell Value)[] entries, int idx)
     {
-        if (idx >= entries.Length) return false;
-        if (idx + 1 < entries.Length)
-        {
-            int nextIdx = idx + 1;
-            Func<Engine, int, bool> resume = (e, _) =>
-                NbCurrentStep(e, entries, nextIdx, returnPc, isResume: true);
-            engine.PushBuiltinChoicePoint(resume, arity: 2);  // restore nb_current/2 args (a backtrack-clobbered result reg breaks enumeration)
-        }
         var (name, value) = entries[idx];
         Cell nameCell = Cell.Atom(AtomTable.Intern(name, permanent: false).Id);
         if (!engine.UnifyRegisterWithCell(0, nameCell)) return false;
         if (!engine.UnifyRegisterWithCell(1, value)) return false;
-        if (isResume) engine.ResumeAtReturnPc(returnPc);
         return true;
     }
 

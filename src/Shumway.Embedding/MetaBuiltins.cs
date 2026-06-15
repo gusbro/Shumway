@@ -528,22 +528,16 @@ public static class MetaBuiltins
             ?? throw new InvalidOperationException("Engine has no stream registry.");
         var handles = registry.All().ToArray();
         int returnPc = engine.BuiltinReturnPc;
-        return CurrentStreamStep(engine, handles, 0, returnPc, isResume: false);
+        // arity 3 (current_stream/3): save the arg registers so a wrapping
+        // findall can't clobber them between solutions (chunk-293/294 fix,
+        // missed for these enumerators).
+        return IndexEnumCursor.Start(engine, handles.Length, 3, returnPc,
+            (e, i) => CurrentStreamUnify(e, handles, i));
     }
 
-    private static bool CurrentStreamStep(
-        Engine engine, Shumway.Core.StreamHandle[] handles,
-        int idx, int returnPc, bool isResume)
+    private static bool CurrentStreamUnify(
+        Engine engine, Shumway.Core.StreamHandle[] handles, int idx)
     {
-        if (idx >= handles.Length) return false;
-        if (idx + 1 < handles.Length)
-        {
-            int nextIdx = idx + 1;
-            Func<Engine, int, bool> resume = (e, _) =>
-                CurrentStreamStep(e, handles, nextIdx, returnPc, isResume: true);
-            engine.PushBuiltinChoicePoint(resume, arity: 0);
-        }
-
         var h = handles[idx];
         string fnText = h.Filename ?? h.Alias ?? "";
         Cell fnCell = Cell.Atom(AtomTable.Intern(fnText, permanent: false).Id);
@@ -553,7 +547,6 @@ public static class MetaBuiltins
         if (!engine.UnifyRegisterWithCell(0, fnCell)) return false;
         if (!engine.UnifyRegisterWithCell(1, modeCell)) return false;
         if (!engine.UnifyRegisterWithCell(2, streamCell)) return false;
-        if (isResume) engine.ResumeAtReturnPc(returnPc);
         return true;
     }
 
@@ -592,29 +585,20 @@ public static class MetaBuiltins
                     new Term[] { new IntTerm(pos.Value) })));
         }
         int returnPc = engine.BuiltinReturnPc;
-        return StreamPropertyStep(engine, pairs.ToArray(), 0, returnPc, isResume: false);
+        var pairArr = pairs.ToArray();
+        return IndexEnumCursor.Start(engine, pairArr.Length, 2, returnPc,  // arity 2 (stream_property/2)
+            (e, i) => StreamPropertyUnify(e, pairArr, i));
     }
 
-    private static bool StreamPropertyStep(
-        Engine engine, (Shumway.Core.StreamHandle Handle, Term Property)[] pairs,
-        int idx, int returnPc, bool isResume)
+    private static bool StreamPropertyUnify(
+        Engine engine, (Shumway.Core.StreamHandle Handle, Term Property)[] pairs, int idx)
     {
-        if (idx >= pairs.Length) return false;
-        if (idx + 1 < pairs.Length)
-        {
-            int nextIdx = idx + 1;
-            Func<Engine, int, bool> resume = (e, _) =>
-                StreamPropertyStep(e, pairs, nextIdx, returnPc, isResume: true);
-            engine.PushBuiltinChoicePoint(resume, arity: 0);
-        }
-
         var (h, prop) = pairs[idx];
         Cell streamCell = engine.MakeForeign(h);
         Cell propCell = Materializer.MaterializeAsCell(engine, prop);
 
         if (!engine.UnifyRegisterWithCell(0, streamCell)) return false;
         if (!engine.UnifyRegisterWithCell(1, propCell)) return false;
-        if (isResume) engine.ResumeAtReturnPc(returnPc);
         return true;
     }
 
@@ -1352,28 +1336,15 @@ public static class MetaBuiltins
         // sees a stable view even if op/3 mutates the table mid-enum.
         var ops = host.EnumerateOperators().ToArray();
         int returnPc = engine.BuiltinReturnPc;
-        return CurrentOpStep(engine, ops, 0, returnPc, isResume: false);
+        return IndexEnumCursor.Start(engine, ops.Length, 3, returnPc,  // arity 3 (current_op/3)
+            (e, i) => CurrentOpUnify(e, ops, i));
     }
 
-    private static bool CurrentOpStep(
+    private static bool CurrentOpUnify(
         Engine engine,
         (int Precedence, Shumway.Compiler.Parsing.OperatorType Type, string Name)[] ops,
-        int idx, int returnPc, bool isResume)
+        int idx)
     {
-        if (idx >= ops.Length) return false;
-
-        // Push a CP for the next iteration first so a backtrack
-        // returns here. The engine's standard backtrack handler will
-        // unwind any partial bindings from this attempt before firing
-        // the CP, exactly the same pattern AppendSplitAttempt uses.
-        if (idx + 1 < ops.Length)
-        {
-            int nextIdx = idx + 1;
-            Func<Engine, int, bool> resume = (e, _) =>
-                CurrentOpStep(e, ops, nextIdx, returnPc, isResume: true);
-            engine.PushBuiltinChoicePoint(resume, arity: 0);
-        }
-
         var (prec, type, name) = ops[idx];
         string typeName = type switch
         {
@@ -1392,7 +1363,6 @@ public static class MetaBuiltins
                 Cell.Atom(AtomTable.Intern(typeName, permanent: true).Id))) return false;
         if (!engine.UnifyRegisterWithCell(2,
                 Cell.Atom(AtomTable.Intern(name, permanent: true).Id))) return false;
-        if (isResume) engine.ResumeAtReturnPc(returnPc);
         return true;
     }
 
@@ -1443,27 +1413,18 @@ public static class MetaBuiltins
             .Select(kv => (In: kv.Key, Out: kv.Value))
             .ToArray();
         int returnPc = engine.BuiltinReturnPc;
-        return CurrentCharConversionStep(engine, entries, 0, returnPc, isResume: false);
+        return IndexEnumCursor.Start(engine, entries.Length, 2, returnPc,  // arity 2 (current_char_conversion/2)
+            (e, i) => CurrentCharConversionUnify(e, entries, i));
     }
 
-    private static bool CurrentCharConversionStep(
-        Engine engine, (char In, char Out)[] entries,
-        int idx, int returnPc, bool isResume)
+    private static bool CurrentCharConversionUnify(
+        Engine engine, (char In, char Out)[] entries, int idx)
     {
-        if (idx >= entries.Length) return false;
-        if (idx + 1 < entries.Length)
-        {
-            int nextIdx = idx + 1;
-            Func<Engine, int, bool> resume = (e, _) =>
-                CurrentCharConversionStep(e, entries, nextIdx, returnPc, isResume: true);
-            engine.PushBuiltinChoicePoint(resume, arity: 0);
-        }
         var (ic, oc) = entries[idx];
         int inAtomId = AtomTable.Intern(ic.ToString(), permanent: true).Id;
         int outAtomId = AtomTable.Intern(oc.ToString(), permanent: true).Id;
         if (!engine.UnifyRegisterWithCell(0, Cell.Atom(inAtomId))) return false;
         if (!engine.UnifyRegisterWithCell(1, Cell.Atom(outAtomId))) return false;
-        if (isResume) engine.ResumeAtReturnPc(returnPc);
         return true;
     }
 
@@ -4163,25 +4124,17 @@ public static class MetaBuiltins
         var entries = host.Records.Recorded(key).ToList();
         if (entries.Count == 0) return false;
         int returnPc = engine.BuiltinReturnPc;
-        return RecordedStep(engine, entries, index: 0, returnPc, isResume: false);
+        return IndexEnumCursor.Start(engine, entries.Count, 3, returnPc,  // arity 3 (recorded/3)
+            (e, i) => RecordedUnify(e, entries, i));
     }
 
-    private static bool RecordedStep(
-        Engine engine, List<(int Ref, Term Term)> entries, int index, int returnPc, bool isResume)
+    private static bool RecordedUnify(
+        Engine engine, List<(int Ref, Term Term)> entries, int index)
     {
-        if (index >= entries.Count) return false;
-        if (index < entries.Count - 1)
-        {
-            int nextIndex = index + 1;
-            engine.PushBuiltinChoicePoint(
-                (e, _) => RecordedStep(e, entries, nextIndex, returnPc, isResume: true),
-                arity: 0);
-        }
         var (refVal, termVal) = entries[index];
         Cell termCell = Materializer.MaterializeAsCell(engine, termVal);
         if (!engine.UnifyRegisterWithCell(1, termCell)) return false;
         if (!engine.UnifyRegisterWithCell(2, Cell.Int(refVal))) return false;
-        if (isResume) engine.ResumeAtReturnPc(returnPc);
         return true;
     }
 
@@ -4232,24 +4185,14 @@ public static class MetaBuiltins
         var keys = host.Records.AllKeys().ToList();
         if (keys.Count == 0) return false;
         int returnPc = engine.BuiltinReturnPc;
-        return KeysStep(engine, keys, index: 0, returnPc, isResume: false);
+        return IndexEnumCursor.Start(engine, keys.Count, 1, returnPc,  // arity 1 (keys/1)
+            (e, i) => KeysUnify(e, keys, i));
     }
 
-    private static bool KeysStep(
-        Engine engine, List<Term> keys, int index, int returnPc, bool isResume)
+    private static bool KeysUnify(Engine engine, List<Term> keys, int index)
     {
-        if (index >= keys.Count) return false;
-        if (index < keys.Count - 1)
-        {
-            int nextIndex = index + 1;
-            engine.PushBuiltinChoicePoint(
-                (e, _) => KeysStep(e, keys, nextIndex, returnPc, isResume: true),
-                arity: 0);
-        }
         Cell c = Materializer.MaterializeAsCell(engine, keys[index]);
-        if (!engine.UnifyRegisterWithCell(0, c)) return false;
-        if (isResume) engine.ResumeAtReturnPc(returnPc);
-        return true;
+        return engine.UnifyRegisterWithCell(0, c);
     }
 
     public static bool Ref1(Engine engine)
@@ -4627,23 +4570,8 @@ public static class MetaBuiltins
         }
         if (positions.Count == 0) return false;
         int returnPc = engine.BuiltinReturnPc;
-        return StringSearchStep(engine, positions, index: 0, returnPc, isResume: false);
-    }
-
-    private static bool StringSearchStep(
-        Engine engine, List<int> positions, int index, int returnPc, bool isResume)
-    {
-        if (index >= positions.Count) return false;
-        if (index < positions.Count - 1)
-        {
-            int nextIndex = index + 1;
-            engine.PushBuiltinChoicePoint(
-                (e, _) => StringSearchStep(e, positions, nextIndex, returnPc, isResume: true),
-                arity: 0);
-        }
-        if (!engine.UnifyRegisterWithCell(2, Cell.Int(positions[index]))) return false;
-        if (isResume) engine.ResumeAtReturnPc(returnPc);
-        return true;
+        return IndexEnumCursor.Start(engine, positions.Count, 3, returnPc,  // arity 3 (string_search/3)
+            (e, i) => engine.UnifyRegisterWithCell(2, Cell.Int(positions[i])));
     }
 
     // ============================================================================
@@ -4938,21 +4866,13 @@ public static class MetaBuiltins
             .ToList();
         if (entries.Count == 0) return false;
         int returnPc = engine.BuiltinReturnPc;
-        return Directory6Step(engine, entries, index: 0, returnPc, isResume: false);
+        return IndexEnumCursor.Start(engine, entries.Count, 6, returnPc,  // arity 6 (directory/6)
+            (e, i) => Directory6Unify(e, entries, i));
     }
 
-    private static bool Directory6Step(
-        Engine engine, List<System.IO.FileSystemInfo> entries, int index,
-        int returnPc, bool isResume)
+    private static bool Directory6Unify(
+        Engine engine, List<System.IO.FileSystemInfo> entries, int index)
     {
-        if (index >= entries.Count) return false;
-        if (index < entries.Count - 1)
-        {
-            int nextIndex = index + 1;
-            engine.PushBuiltinChoicePoint(
-                (e, _) => Directory6Step(e, entries, nextIndex, returnPc, isResume: true),
-                arity: 0);
-        }
         var info = entries[index];
         // Arity-style mode bits: ReadOnly=1, Hidden=2, System=4,
         // Directory=16, Archive=32 — .NET FileAttributes uses the
@@ -4972,7 +4892,6 @@ public static class MetaBuiltins
         if (!engine.UnifyRegisterWithCell(3, Cell.Atom(timeAid))) return false;
         if (!engine.UnifyRegisterWithCell(4, Cell.Atom(dateAid))) return false;
         if (!engine.UnifyRegisterWithCell(5, Cell.Int(size))) return false;
-        if (isResume) engine.ResumeAtReturnPc(returnPc);
         return true;
     }
 }
