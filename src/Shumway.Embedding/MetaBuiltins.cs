@@ -2744,26 +2744,23 @@ public static class MetaBuiltins
     /// correctly when the goal has more than one solution.</para></summary>
     private static bool CallN(Engine engine, int totalArity)
     {
-        if (engine.Host is not PrologEngine host)
-            throw new InvalidOperationException(
-                "call/N requires the engine to be hosted by a PrologEngine.");
-
-        Term goal = MaterializeRegister(engine, 0);
-        var extras = new Term[totalArity - 1];
-        for (int i = 0; i < extras.Length; i++)
-            extras[i] = MaterializeRegister(engine, i + 1);
-
-        Term callGoal = AppendArgs(goal, extras);
-
-        // The call_builtin instruction is 9 bytes long; the return PC
-        // for our CP is the byte immediately after it. We capture this
-        // here (before the sub-engine runs) so the closure recursion in
-        // AdvanceCallNEnumerator carries the right value.
-        int returnPc = engine.BuiltinReturnPc;
-
-        var sub = host.CreateSubEngine();
-        var iter = sub.QueryAll(callGoal).GetEnumerator();
-        return new CallNCursor(iter, returnPc).Start(engine);
+        // DEAD PATH — must never run. call/N is dispatched IN THE LIVE ENGINE:
+        // the call_builtin opcode handler sees the builtin's IsCall flag and
+        // routes to BytecodeInterpreter.DispatchCall (Tier-0) — and the Tier-1
+        // IL emit routes through IlMetaCallHelper.Dispatch — both of which run
+        // the goal directly in this engine (so assert/retract from the called
+        // goal are visible to the caller, per Phase 4 + chunks 86/88/205). This
+        // builtin body (the historical isolated-sub-engine fallback) is never
+        // reached. The sub-engine deep-copies the dynamic store, so if it DID
+        // run, side effects from the called goal would silently not bleed back —
+        // a correctness bug. Fail loudly instead of producing wrong answers.
+        _ = totalArity;
+        throw new InvalidOperationException(
+            "call/N reached the sub-engine fallback in MetaBuiltins.CallN, but " +
+            "call/N must be dispatched in the live engine by DispatchCall (Tier-0) " +
+            "or IlMetaCallHelper (Tier-1). Reaching here means the IsCall meta-" +
+            "dispatch routing was bypassed — a bug to fix at the dispatch site, " +
+            "not here.");
     }
 
     /// <summary>Pulls the next solution from <paramref name="iter"/> and
@@ -2830,68 +2827,9 @@ public static class MetaBuiltins
         }
     }
 
-    /// <summary>Resume state for a backtrackable <c>call/N</c>: the solution
-    /// enumerator plus a cached resume delegate (allocated once per call,
-    /// re-pushed unchanged on every backtrack — no per-solution closure).</summary>
-    private sealed class CallNCursor
-    {
-        private readonly IEnumerator<Solution> _iter;
-        private readonly int _returnPc;
-        public readonly Func<Engine, int, bool> Resume;
-
-        public CallNCursor(IEnumerator<Solution> iter, int returnPc)
-        {
-            _iter = iter;
-            _returnPc = returnPc;
-            Resume = (e, _) => Advance(e, isResume: true);
-        }
-
-        public bool Start(Engine engine) => Advance(engine, isResume: false);
-
-        private bool Advance(Engine engine, bool isResume)
-        {
-            if (!_iter.MoveNext())
-            {
-                _iter.Dispose();
-                return false;
-            }
-
-            // Push a CP optimistically — we don't know without consuming
-            // whether there's another solution, but if there isn't the
-            // resume's first MoveNext returns false and the CP collapses.
-            engine.PushBuiltinChoicePoint(Resume, arity: 0);
-
-            Solution sol = _iter.Current;
-            foreach (var (name, value) in sol.Bindings)
-            {
-                int addr = ExtractAddrFromName(name);
-                if (addr < 0) continue;
-                Cell boundCell = Materializer.MaterializeAsCell(engine, value);
-                int slot = engine.AllocateHeap(1);
-                engine.SetHeap(slot, boundCell);
-                if (!engine.Unify(addr, slot)) return false;
-            }
-            if (isResume) engine.ResumeAtReturnPc(_returnPc);
-            return true;
-        }
-    }
-
-    private static Term AppendArgs(Term goal, Term[] extras)
-    {
-        if (extras.Length == 0) return goal;
-        return goal switch
-        {
-            AtomTerm a => new CompoundTerm(a.Name, extras),
-            CompoundTerm c => new CompoundTerm(
-                c.Functor,
-                c.Args.Concat(extras).ToArray()),
-            // Chunk 131e: ISO call/N — a non-callable goal raises
-            // type_error(callable, Goal); an unbound goal raises
-            // instantiation_error.
-            VarTerm => throw new Shumway.Core.PrologRuntimeException("instantiation_error"),
-            _ => throw new Shumway.Core.PrologRuntimeException("type_error", "callable"),
-        };
-    }
+    // (CallNCursor + AppendArgs removed — call/N is dispatched in the live
+    // engine by DispatchCall / IlMetaCallHelper; MetaBuiltins.CallN is now a
+    // dead-path guard that throws. See CallN.)
 
     private static int ExtractAddrFromName(string name)
     {
