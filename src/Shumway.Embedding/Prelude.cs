@@ -37,6 +37,9 @@ internal static class Prelude
         :- public foldl/4.
         :- public foldl/5.
         :- public aggregate_all/3.
+        :- public forall/2.
+        :- public catch/3.
+        :- public '$catch_run'/1.
         :- public copy_term/3.
         :- public select/3.
         :- public permutation/2.
@@ -126,6 +129,30 @@ internal static class Prelude
         '$call_disj'(_, B, K) :- '$call'(B, K).
         '$call_arrow'(C, T, K) :- call(C), !, '$call'(T, K).
         '$call_neg'(G) :- ( call(G) -> fail ; true ).
+
+        %! forall(:Condition, :Action) | Control | Succeeds if Action holds for every solution of Condition.
+        % \+ (Condition, \+ Action). Condition and Action run in the LIVE engine
+        % via call/1 (so their side effects are visible to the caller). A
+        % statically-callable forall/2 is rewritten inline to this same negation
+        % pair by MetaTransform; this clause is the runtime fallback for a
+        % variable Condition/Action (it must NOT use an isolated sub-engine —
+        % that would hide the called goals' assert/retract).
+        forall(Cond, Action) :- \+ ( call(Cond), \+ call(Action) ).
+
+        %! catch(:Goal, ?Catcher, :Recovery) | Control | Runs Goal; if it throws a ball unifying Catcher, runs Recovery instead.
+        % Runs in the LIVE engine using the chunk-85 catch-frame machinery
+        % ('$catch_begin' pushes a frame carrying Catcher + a recovery goal;
+        % the engine's throw handler unwinds to it and dispatches the recovery).
+        % A statically-callable catch/3 is rewritten inline by MetaTransform to
+        % the same shape with generated helpers; this clause is the runtime
+        % fallback for a variable Goal/Recovery. '$catch_run'/1 wraps the
+        % (arbitrary, possibly control-construct) Recovery so the recovery
+        % dispatch resolves a real predicate address and call/1 then runs it.
+        catch(Goal, Catcher, Recovery) :-
+            '$catch_begin'(Catcher, '$catch_run'(Recovery)),
+            call(Goal),
+            '$catch_end'.
+        '$catch_run'(Recovery) :- call(Recovery).
 
         %! clause(+Head, ?Body) | Database | Enumerates the clauses (Head :- Body) of a predicate.
         % '$clause_enum' yields matching clauses lazily (a backtrackable

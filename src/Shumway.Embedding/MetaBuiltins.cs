@@ -44,8 +44,9 @@ public static class MetaBuiltins
             FindAgg, "bagof(?Template, :Goal, -List)", "Collects Goal's solutions, grouped by free-variable witness; fails when there are none.");
         BuiltinsRegistry.Register("setof",   3, Setof,
             FindAgg, "setof(?Template, :Goal, -List)", "Like bagof/3 but the result list is sorted and duplicate-free.");
-        BuiltinsRegistry.Register("forall",  2, Forall,
-            FindAgg, "forall(:Condition, :Action)", "Succeeds if Action holds for every solution of Condition.");
+        // forall/2 is a prelude predicate (live-engine \+ (call(C), \+ call(A))),
+        // not a builtin — the old isolated-sub-engine builtin hid the called
+        // goals' side effects. See Prelude forall/2.
         BuiltinsRegistry.Register("copy_term", 2, CopyTerm,
             Term, "copy_term(+Term, -Copy)", "Copies a term with fresh variables.");
         BuiltinsRegistry.Register("$copy_term_3_prep", 3, CopyTerm3Prep);
@@ -115,10 +116,11 @@ public static class MetaBuiltins
 
         BuiltinsRegistry.Register("throw", 1, Throw,
             Control, "throw(+Exception)", "Throws an exception term, unwinding to the nearest catch/3.");
-        BuiltinsRegistry.Register("catch", 3, Catch,
-            Control, "catch(:Goal, +Catcher, :Recovery)", "Runs Goal, running Recovery if a thrown exception unifies with Catcher.");
-        // In-engine catch/3 plumbing (chunk 85) — MetaTransform rewrites a
-        // catch/3 with a callable goal into a goal-helper guarded by these.
+        // catch/3 is a prelude predicate built on the chunk-85 catch-frame
+        // plumbing ($catch_begin/$catch_end), not a builtin — the old isolated-
+        // sub-engine builtin hid the guarded goal's side effects. MetaTransform
+        // rewrites a statically-callable catch/3 inline to the same shape; the
+        // prelude clause is the runtime fallback for a variable Goal/Recovery.
         BuiltinsRegistry.Register("$catch_begin", 2, CatchBegin);
         BuiltinsRegistry.Register("$catch_end",   0, CatchEnd);
 
@@ -2567,94 +2569,14 @@ public static class MetaBuiltins
         throw new ShumwayPrologException(error);
     }
 
-    /// <summary><c>catch(Goal, Catcher, Recovery)</c> — runs <c>Goal</c> in a
-    /// peer sub-engine.
-    /// <list type="bullet">
-    /// <item>If <c>Goal</c> succeeds, the first solution's bindings flow back
-    ///   to the caller and <c>catch</c> succeeds without consulting
-    ///   <c>Catcher</c> / <c>Recovery</c>.</item>
-    /// <item>If <c>Goal</c> fails cleanly, <c>catch</c> fails too.</item>
-    /// <item>If <c>Goal</c> throws (via <c>throw/1</c>), the thrown term is
-    ///   materialised on the caller's heap and trial-unified with
-    ///   <c>Catcher</c>. On a match, the bindings stick and <c>Recovery</c>
-    ///   runs in a fresh sub-engine; on a mismatch, the trial bindings are
-    ///   unwound and the original exception is re-raised.</item>
-    /// </list></summary>
-    public static bool Catch(Engine engine)
-    {
-        if (engine.Host is not PrologEngine host)
-            throw new InvalidOperationException(
-                "catch/3 requires the engine to be hosted by a PrologEngine.");
-
-        Term goal = MaterializeRegister(engine, 0);
-
-        var sub = host.CreateSubEngine();
-        ShumwayPrologException? toCatch = null;
-        try
-        {
-            foreach (Solution sol in sub.QueryAll(goal))
-            {
-                BindBack(engine, sol.Bindings);
-                return true;
-            }
-            // No solutions. If the sub-engine halted, re-raise so the
-            // parent QueryAll (or surrounding catch) sees the halt — ISO
-            // catch/3 explicitly does NOT intercept halt.
-            if (sub.LastHaltExitCode.HasValue)
-                throw new PrologHaltException(sub.LastHaltExitCode.Value);
-            return false;
-        }
-        catch (ShumwayPrologException ex)
-        {
-            toCatch = ex;
-        }
-        catch (PrologRuntimeException re)
-        {
-            // Promote the Core-level structured error into the ISO
-            // error(Kind, _) term, then funnel into the same recovery
-            // path the user's throw/1 would have hit.
-            // Chunk 130: the throwing builtin's Name/Arity is on the
-            // exception itself (stamped by the interpreter dispatch as
-            // the throw unwound past the impl), so the translation
-            // doesn't need an engine reference here.
-            toCatch = new ShumwayPrologException(TranslateRuntimeError(re));
-        }
-
-        // Trial-unify the thrown term with the caller's Catcher register.
-        // The state save / unwind matches retract's pattern: if the
-        // unification fails we must roll back every speculative binding
-        // before re-raising so the surrounding context sees the engine
-        // state it had before the throw.
-        int savedHeapTop = engine.HeapTop;
-        int savedBindingTrail = engine.BindingTrailTop;
-        int savedExtraTrail = engine.ExtraTrailTop;
-        int savedHb = engine.Hb;
-        engine.SetHb(engine.HeapTop);
-
-        Cell thrownCell = Materializer.MaterializeAsCell(engine, toCatch!.Term);
-        int thrownSlot = engine.AllocateHeap(1);
-        engine.SetHeap(thrownSlot, thrownCell);
-
-        if (!engine.UnifyRegisterWithHeapAt(1, thrownSlot))
-        {
-            engine.UnwindTrails(savedBindingTrail, savedExtraTrail);
-            engine.SetHeapTop(savedHeapTop);
-            engine.SetHb(savedHb);
-            throw toCatch;   // rethrow the translated (or original) ShumwayPrologException
-        }
-        engine.SetHb(savedHb);
-
-        // Catcher matched — its bindings stick. Re-read Recovery now so
-        // any variables shared with Catcher show up substituted.
-        Term recovery = MaterializeRegister(engine, 2);
-        var sub2 = host.CreateSubEngine();
-        foreach (Solution sol in sub2.QueryAll(recovery))
-        {
-            BindBack(engine, sol.Bindings);
-            return true;
-        }
-        return false;
-    }
+    // catch/3 is now a prelude predicate built on the chunk-85 catch-frame
+    // plumbing ($catch_begin/$catch_end), running the guarded goal in the LIVE
+    // engine. The old isolated-sub-engine builtin (which ran Goal in a peer
+    // sub-engine and bound back only the first solution) was removed — it hid
+    // the guarded goal's assert/retract and other side effects from the caller,
+    // and was only ever the fallback for a variable Goal/Recovery anyway (a
+    // statically-callable catch/3 is rewritten inline by MetaTransform). See
+    // Prelude catch/3.
 
     /// <summary><c>'$catch_begin'(Catcher, RecoveryGoal)</c> (chunk 85) —
     /// opens a catch/3 scope. Copies the catcher and the recovery-goal call
@@ -3905,38 +3827,9 @@ public static class MetaBuiltins
         return BindList(engine, results);
     }
 
-    /// <summary><c>forall(Cond, Then)</c> — the variable-goal fallback for
-    /// forall/2. With callable arguments the MetaTransform rewrites
-    /// <c>forall(C, T)</c> to <c>\+ (C, \+ T)</c>, which splices both goals
-    /// into the clause body and runs them in the live engine (chunk 84); this
-    /// builtin only runs when an argument is still a variable at compile time.
-    /// It succeeds iff every solution of <c>Cond</c> makes <c>Then</c> succeed,
-    /// enumerating <c>Cond</c> in a peer sub-engine and checking <c>Then</c>
-    /// per solution, bailing on the first counter-example.</summary>
-    public static bool Forall(Engine engine)
-    {
-        if (engine.Host is not PrologEngine host)
-            throw new InvalidOperationException(
-                "forall/2 requires the engine to be hosted by a PrologEngine.");
-
-        Term cond = MaterializeRegister(engine, 0);
-        Term then = MaterializeRegister(engine, 1);
-
-        var subCond = host.CreateSubEngine();
-        foreach (Solution sol in subCond.QueryAll(cond))
-        {
-            Term thenInstance = Substitute(then, sol.Bindings);
-            var subThen = host.CreateSubEngine();
-            bool thenSucceeded = false;
-            foreach (Solution _ in subThen.QueryAll(thenInstance))
-            {
-                thenSucceeded = true;
-                break;
-            }
-            if (!thenSucceeded) return false;
-        }
-        return true;
-    }
+    // forall/2 is now a prelude predicate (live-engine \+ (call(C), \+ call(A)));
+    // the old isolated-sub-engine builtin was removed (it hid the called goals'
+    // assert/retract). See Prelude forall/2.
 
     /// <summary>Shared workhorse for findall/bagof/setof: reads Template and
     /// Goal, optionally strips <c>^/2</c> existential wrappers from the

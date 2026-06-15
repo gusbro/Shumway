@@ -94,8 +94,9 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `call(:Goal, +Extra1, ..., +Extra4)` | Calls a goal extended with four extra arguments. |
 | `call(:Goal, +Extra1, ..., +Extra5)` | Calls a goal extended with five extra arguments. |
 | `call(:Goal, +Extra1, ..., +Extra6)` | Calls a goal extended with six extra arguments. |
-| `catch(:Goal, +Catcher, :Recovery)` | Runs Goal, running Recovery if a thrown exception unifies with Catcher. |
+| `catch(:Goal, ?Catcher, :Recovery)` | Runs Goal; if it throws a ball unifying Catcher, runs Recovery instead. |
 | `fail` | Always fails. |
+| `forall(:Condition, :Action)` | Succeeds if Action holds for every solution of Condition. |
 | `garbage_collect` | Mark-compacts the heap, reclaiming cells unreachable from the live machine state (ADR-016). Always succeeds. |
 | `get_cpu_time(-Time)` | Binds Time to the process CPU time so far, in milliseconds (GNU-Prolog timing primitive). |
 | `halt` | Halts the engine with exit code 0. |
@@ -114,7 +115,6 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `bagof(?Template, :Goal, -List)` | Collects Goal's solutions, grouped by free-variable witness; fails when there are none. |
 | `findall(?Template, :Goal, -List)` | Collects an instance of Template for every solution of Goal into a list. |
 | `findall(?Template, :Goal, -List, ?Tail)` | Like findall/3 but the result is a difference list ending in Tail. |
-| `forall(:Condition, :Action)` | Succeeds if Action holds for every solution of Condition. |
 | `setof(?Template, :Goal, -List)` | Like bagof/3 but the result list is sorted and duplicate-free. |
 
 ## Database
