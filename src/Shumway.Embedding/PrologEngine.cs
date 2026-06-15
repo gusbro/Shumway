@@ -1545,7 +1545,16 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     public IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? CurrentPredicatesByAddressForTest
         => _currentPredicatesByAddress;
 
-    public PrologEngine()
+    public PrologEngine() : this(consultPrelude: true) { }
+
+    /// <summary>Bare construction: when <paramref name="consultPrelude"/> is
+    /// <c>false</c> the engine starts WITHOUT the internal prelude. Used by
+    /// <see cref="FromBundle(Bundle)"/> so a bundle that bakes a precompiled
+    /// prelude (shumway-link <c>--exe</c> / <c>--bake-prelude</c>) supplies it
+    /// instead of the engine paying the parse + compile at startup. A bare
+    /// engine is unusable until a prelude is installed (the bundle's, or the
+    /// FromBundle fallback consult).</summary>
+    internal PrologEngine(bool consultPrelude)
     {
         // The standard builtins (=/2, ==/2, etc.) need to be registered before
         // the WAM compiler can recognise them. EnsureRegistered is idempotent.
@@ -1558,7 +1567,48 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // multi-solution predicates (member/2, clause/2, current_predicate/1)
         // that ride the standard WAM choice-point machinery instead of
         // faking backtracking inside a single-shot builtin.
-        ConsultStringInner(Prelude.Source, recordInHistory: false);
+        if (consultPrelude)
+            ConsultStringInner(Prelude.Source, recordInHistory: false);
+    }
+
+    /// <summary>Loads a bundle into a fresh engine, using the bundle's BAKED
+    /// prelude (produced by <c>shumway-link --exe</c> / <c>--bake-prelude</c>)
+    /// when present so startup skips compiling the prelude. Falls back to
+    /// consulting the prelude when the bundle doesn't carry one (older bundles
+    /// or a link without <c>--bake-prelude</c>). The fast-startup entry point
+    /// the generated <c>--exe</c> uses; the result is equivalent to
+    /// <c>var e = new PrologEngine(); e.LoadBundle(bundle);</c>.</summary>
+    public static PrologEngine FromBundle(Bundle bundle)
+    {
+        ArgumentNullException.ThrowIfNull(bundle);
+        return LoadBundleBare(bundle, bundleDir: null);
+    }
+
+    /// <summary>File-path overload of <see cref="FromBundle(Bundle)"/>.</summary>
+    public static PrologEngine FromBundle(string path)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        return LoadBundleBare(BundleReader.ReadFromFile(path),
+            System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(path)));
+    }
+
+    private static PrologEngine LoadBundleBare(Bundle bundle, string? bundleDir)
+    {
+        var engine = new PrologEngine(consultPrelude: false);
+        // The prelude must be present BEFORE the bundle's entries load — a
+        // persisted-IL entry resolves its call targets / region-member aliases
+        // against the prelude's functors at load, and the same prelude-then-
+        // program order a normal `new PrologEngine(); LoadBundle()` uses keeps
+        // that sound. When the bundle BAKES the prelude (a Tier-0 --exe), it
+        // supplies it as an entry, so we let LoadBundleCore install it; only
+        // when no baked prelude is present do we consult it up front.
+        bool bundleHasPrelude = false;
+        foreach (var e in bundle.Entries)
+            if (e.ModuleName == Prelude.ModuleName) { bundleHasPrelude = true; break; }
+        if (!bundleHasPrelude)
+            engine.ConsultStringInner(Prelude.Source, recordInHistory: false);
+        engine.LoadBundleCore(bundle, bundleDir);
+        return engine;
     }
 
     /// <summary>Builds a peer <see cref="PrologEngine"/> sharing this engine's
@@ -2677,6 +2727,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     dynamicSeeds: shmo.DynamicSeeds));
             }
             effectiveEntries = combined;
+        }
+        // A bundle may bake a precompiled `$prelude` entry (shumway-link
+        // --exe / --bake-prelude) so a bare engine (FromBundle / the generated
+        // --exe) gets the prelude without compiling it. A NORMAL engine
+        // already consulted the prelude in its constructor, so that entry is
+        // redundant here — drop it to avoid a double install.
+        if (_modules.ContainsKey(Prelude.ModuleName)
+            && effectiveEntries.Any(e => e.ModuleName == Prelude.ModuleName))
+        {
+            effectiveEntries = effectiveEntries
+                .Where(e => e.ModuleName != Prelude.ModuleName).ToList();
         }
         foreach (var entry in effectiveEntries)
         {

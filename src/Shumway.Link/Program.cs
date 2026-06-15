@@ -97,6 +97,15 @@ internal static class Program
             EntryPoints = opts.EntryPoints,
             AllowUndefined = opts.AllowUndefined,
             Libraries = libraries,
+            // --exe deploys a startup-sensitive single-engine app, so bake the
+            // prelude by default there; otherwise only on explicit opt-in.
+            // NOT for IL bundles (--with-compiled-il / --strip-wam): the user's
+            // IL is compiled against the engine's own (constructor) prelude, so
+            // a bare engine running it against a baked prelude is inconsistent.
+            // IL --exe keeps the constructor prelude (FromBundle's fallback
+            // consult), which the lazy parse cache already makes cheap.
+            BakePrelude = (opts.BakePrelude || !string.IsNullOrEmpty(opts.ExePath))
+                && !opts.IncludeCompiledIl,
             VerboseOut = opts.Verbose ? Console.Error : null,
             StripSource = opts.StripSource,
             IncludeCompiledIl = opts.IncludeCompiledIl,
@@ -225,6 +234,7 @@ internal static class Program
         public bool StripWam { get; set; }
         public bool RegionPruneReport { get; set; }
         public bool RegionPrune { get; set; } = true;   // default since chunk 418
+        public bool BakePrelude { get; set; }
         public string? DumpWamPath { get; set; }
         public string? DumpIlPath { get; set; }
         public string MapPath { get; set; } = "";
@@ -293,6 +303,10 @@ internal static class Program
 
                 case "--prune-report":
                     opts.RegionPruneReport = true;
+                    break;
+
+                case "--bake-prelude":
+                    opts.BakePrelude = true;
                     break;
 
                 case "--no-region-prune":
@@ -500,6 +514,12 @@ internal static class Program
             + "                           shared-method layout. Mainly for inspecting the\n"
             + "                           generated code; bundles are larger and typically\n"
             + "                           slower.\n"
+            + "      --bake-prelude       Embed the precompiled standard library (prelude)\n"
+            + "                           in the bundle so loading it skips compiling the\n"
+            + "                           prelude at startup. Automatic with --exe. Larger\n"
+            + "                           bundle, faster start; load via PrologEngine.\n"
+            + "                           FromBundle (a plain new PrologEngine()+LoadBundle\n"
+            + "                           ignores it, having its own prelude).\n"
             + "      --strip-wam          Implies --with-compiled-il, and additionally\n"
             + "                           drops the portable bytecode of every predicate\n"
             + "                           that has compiled IL. Smaller bundles. The result\n"

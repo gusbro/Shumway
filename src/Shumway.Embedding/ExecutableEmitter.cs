@@ -261,7 +261,11 @@ internal static class Program
     {{
         try
         {{
-            var engine = new PrologEngine();
+            // Fast startup: a bare engine loads the bundle's baked, precompiled
+            // prelude (shumway-link --exe bakes it) instead of parsing +
+            // compiling the ~780-line prelude at runtime; falls back to
+            // consulting it if the bundle carries none.
+            var engine = PrologEngine.FromBundle(LoadEmbeddedBundle());
             // Chunk 173: opt-in Tier-1 IL with per-opcode debug markers.
             // Set SHUMWAY_IL_PROMOTE=N (N>=1) to enable promotion,
             // optionally SHUMWAY_IL_DEBUG=1 to inject post-opcode
@@ -282,7 +286,6 @@ internal static class Program
             // strip argv[0] before reading their own args — the
             // SWI / SICStus idiom — work as-is.
             engine.Flags.Argv = System.Environment.GetCommandLineArgs();
-            engine.LoadBundle(LoadEmbeddedBundle());
             var sol = engine.Query(@""{escaped}"");
             // halt/1 inside the goal is captured by the engine into
             // LastHaltExitCode; honour it as the process exit code,

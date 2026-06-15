@@ -169,6 +169,18 @@ public sealed class LinkConfig
     /// objects, so a pulled member is optimized exactly like one passed
     /// directly. Members no reference reaches are simply not linked.</summary>
     public IReadOnlyList<LinkLibrary> Libraries { get; init; } = Array.Empty<LinkLibrary>();
+
+    /// <summary>When <c>true</c>, bake the precompiled internal prelude into
+    /// the bundle as a source-stripped <c>$prelude</c> entry (its WAM bytecode,
+    /// and — under <see cref="IncludeCompiledIl"/> — its Tier-1 IL). A
+    /// bare-loaded engine (<see cref="PrologEngine.FromBundle(Bundle)"/>, the
+    /// generated <c>--exe</c>) then gets the prelude precompiled instead of
+    /// parsing + compiling the ~780-line prelude at startup; a normal engine
+    /// that already consulted the prelude drops the redundant entry on load.
+    /// Auto-enabled by the CLI for <c>--exe</c>; off by default (so ordinary
+    /// <c>.shum</c> bundles aren't bloated with the prelude they re-consult
+    /// anyway).</summary>
+    public bool BakePrelude { get; init; }
 }
 
 /// <summary>One library input to <see cref="ShmoLinker.Link"/>: a
@@ -881,6 +893,25 @@ public static class ShmoLinker
                     compiledIl: null,
                     defined: entryDefined,
                     dynamicSeeds: obj.DynamicSeeds));
+            }
+            // Bake the precompiled prelude so a bare-loaded engine
+            // (PrologEngine.FromBundle / the generated --exe) gets it without
+            // parsing + compiling the ~780-line prelude at startup. Source-
+            // stripped (CompiledBytecode + Defined), so --with-compiled-il also
+            // IL-compiles it via the per-entry path. A normal engine that
+            // already has the prelude drops this entry on load.
+            if (config.BakePrelude)
+            {
+                entries.Add(new BundleEntry(
+                    moduleName: preludeObj.ModuleName,
+                    source: "",
+                    compiledBytecode: preludeObj.Bytecode,
+                    compiledIl: null,
+                    defined: preludeObj.Defined,
+                    dynamicSeeds: preludeObj.DynamicSeeds));
+                Emit(LinkSeverity.Info, "prelude_baked",
+                    "baked the precompiled prelude into the bundle "
+                    + "(bare-load startup skips prelude compilation).");
             }
             // Chunk 179: the chunk-172 "stripped_bundle" warning is gone —
             // stripped bundles now dispatch correctly via chunk 178's
