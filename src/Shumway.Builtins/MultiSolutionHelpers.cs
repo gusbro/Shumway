@@ -144,72 +144,17 @@ public static class MultiSolutionHelpers
         return engine.UnifyRegisterWithCell(1, tailCell);
     }
 
-    /// <summary><c>'$sub_atom_enum'(Atom, Before, Length, After, Sub)</c> — the
-    /// LAZY sub_atom/5 enumerator. Yields each <c>(Before, Length, After, Sub)</c>
-    /// decomposition one at a time on backtracking (a per-call cursor advancing
-    /// through the before×length space), instead of materialising all
-    /// <c>(len+1)(len+2)/2</c> decompositions onto the heap up front like
-    /// <see cref="SubAtomDecompositions"/> + <c>member/2</c> did — O(1) extra
-    /// memory rather than O(n²). Enumeration order (before-major, length
-    /// ascending) is identical, so any of Before/Length/After/Sub being bound
-    /// filters by the per-decomposition unification exactly as before.</summary>
-    public static bool SubAtomEnum(Engine engine)
-    {
-        Cell atomCell = Resolve(engine, engine.GetRegister(0));
-        if (atomCell.Tag == Tag.Ref)
-            throw new PrologRuntimeException("instantiation_error");
-        if (atomCell.Tag != Tag.Atom)
-            throw new PrologRuntimeException("type_error", "atom");
-        string name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
-        return new SubAtomCursor(name, engine.BuiltinReturnPc).Start(engine);
-    }
-
-    /// <summary>Resume state for <c>'$sub_atom_enum'</c>: the atom and the
-    /// running (before, length) position, plus a cached resume delegate
-    /// (allocated once per call, re-pushed unchanged each backtrack).</summary>
-    private sealed class SubAtomCursor
-    {
-        private readonly string _name;
-        private readonly int _len;
-        private readonly int _returnPc;
-        private int _before;
-        private int _length;
-        public readonly Func<Engine, int, bool> Resume;
-
-        public SubAtomCursor(string name, int returnPc)
-        {
-            _name = name;
-            _len = name.Length;
-            _returnPc = returnPc;
-            _before = 0;
-            _length = 0;
-            Resume = (e, _) => Step(e, isResume: true);
-        }
-
-        public bool Start(Engine engine) => Step(engine, isResume: false);
-
-        private bool Step(Engine engine, bool isResume)
-        {
-            if (_before > _len) return false;
-            int before = _before, length = _length;
-
-            // Advance (before, length) to the next decomposition: length grows
-            // until len-before, then before grows and length resets — the same
-            // before-major / length-ascending order the eager list produced.
-            if (_length < _len - _before) _length++;
-            else { _before++; _length = 0; }
-            if (_before <= _len) engine.PushBuiltinChoicePoint(Resume, arity: 5);
-
-            int after = _len - before - length;
-            if (!engine.UnifyRegisterWithCell(1, Cell.Int(before))) return false;
-            if (!engine.UnifyRegisterWithCell(2, Cell.Int(length))) return false;
-            if (!engine.UnifyRegisterWithCell(3, Cell.Int(after))) return false;
-            int subAtomId = AtomTable.Intern(_name.Substring(before, length), permanent: false).Id;
-            if (!engine.UnifyRegisterWithCell(4, Cell.Atom(subAtomId))) return false;
-            if (isResume) engine.ResumeAtReturnPc(_returnPc);
-            return true;
-        }
-    }
+    // NOTE: a lazy backtrackable-builtin enumerator ('$sub_atom_enum', arity 5)
+    // was added and then REVERTED. It yielded each decomposition on backtracking
+    // via a builtin choice point instead of materialising the O(n²) list — but
+    // under Tier-1 IL its choice point did not propagate its success when a
+    // preceding choice point was live: maplist(..), sub_atom(A,0,4,_,S) looped
+    // (maplist re-ran), and (X=1;X=2), sub_atom(..) silently failed, while
+    // Tier-0 was correct. Other backtrackable builtins (between/3, current_op/3,
+    // the recorded-database enumerators) do not hit it; the exact Tier-1 IL
+    // interaction specific to this builtin's shape was not root-caused. The
+    // eager SubAtomDecompositions + member/2 form (plain WAM choice points) is
+    // correct under both tiers, so sub_atom/5 uses it; sub_atom is rarely hot.
 
     private static int BuildFreshVarList(Engine engine, int count)
     {

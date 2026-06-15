@@ -235,7 +235,6 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("$list_length",              2, MultiSolutionHelpers.ListLength);
         BuiltinsRegistry.Register("$make_var_list",            2, MultiSolutionHelpers.MakeVarList);
         BuiltinsRegistry.Register("$sub_atom_decompositions",  2, MultiSolutionHelpers.SubAtomDecompositions);
-        BuiltinsRegistry.Register("$sub_atom_enum",            5, MultiSolutionHelpers.SubAtomEnum);
         // Chunk 408 — branch-cut barrier capture (MetaTransform cut transparency).
         BuiltinsRegistry.Register("$get_cut_barrier",          1, MultiSolutionHelpers.GetCutBarrier);
 

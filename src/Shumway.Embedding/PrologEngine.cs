@@ -955,26 +955,6 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // and redirect any that match.
         RedirectChainHeads(engine, predAddr, redirectMap);
 
-        // Diag: dump atom table post-asserta.
-        {
-            int constLbl_d = Shumway.Core.BytecodeIO.ReadInt32(engine.CurrentProgram!, predAddr + 6);
-            if (constLbl_d > 0 && constLbl_d + 5 <= engine.CurrentProgram!.Length
-                && engine.CurrentProgram![constLbl_d] == (byte)Shumway.Core.Opcode.SwitchOnAtom)
-            {
-                int tid_d = Shumway.Core.BytecodeIO.ReadInt32(engine.CurrentProgram!, constLbl_d + 1);
-                var tbl = engine.GetSwitchTable(tid_d);
-                if (tbl is not null)
-                {
-                    var sb = new System.Text.StringBuilder();
-                    sb.Append($"[155f-diag] post-asserta atomTable id={tid_d}, default={tbl.DefaultAddress}, entries=[");
-                    for (int i = 0; i < tbl.Count; i++)
-                        sb.Append($"{tbl.Keys[i]}→{tbl.Values[i]},");
-                    sb.Append("]");
-                    System.Console.Error.WriteLine(sb.ToString());
-                }
-            }
-        }
-
         SyncPersistentFromEngine(engine);
         // Chunk 427: refresh skipped when the pools didn't grow.
         RefreshLiteralPoolsIfGrown(engine);
