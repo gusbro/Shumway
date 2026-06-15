@@ -60,7 +60,7 @@ public static class ListBuiltins
         // SWI/SICStus library behaviour real programs rely on (e.g. iterating a
         // board with nth0(Row, Board, R)). A bound non-integer is a type error.
         if (n.Tag == Tag.Ref)
-            return NthEnumerate(engine, oneBased, engine.BuiltinReturnPc, pos: 0, isResume: false);
+            return NthStep(engine, new NthCursor(oneBased, engine.BuiltinReturnPc), isResume: false);
         if (n.Tag != Tag.Int)
             throw new PrologRuntimeException("type_error", "integer");
         long target = n.AsInt;
@@ -86,23 +86,45 @@ public static class ListBuiltins
     /// <c>nth0(I,[E|_],E) ; nth0(I,[_|T],E)</c> enumeration. A failed unification
     /// at this position (a bound Elem that doesn't match) falls straight through
     /// into that choice point.</summary>
-    private static bool NthEnumerate(Engine engine, bool oneBased, int returnPc, int pos, bool isResume)
+    /// <summary>Resume state for a variable-index <c>nth0</c>/<c>nth1</c>
+    /// enumeration: the running position plus a cached resume delegate
+    /// (allocated once per call, re-pushed unchanged on every backtrack —
+    /// no per-position closure). The position is re-walked from register 1
+    /// each step rather than caching a heap index, because a heap GC between
+    /// backtracks can move the list cells.</summary>
+    private sealed class NthCursor
+    {
+        public int Pos;
+        public readonly bool OneBased;
+        public readonly int ReturnPc;
+        public readonly Func<Engine, int, bool> Resume;
+
+        public NthCursor(bool oneBased, int returnPc)
+        {
+            OneBased = oneBased;
+            ReturnPc = returnPc;
+            Pos = 0;
+            Resume = (e, _) => NthStep(e, this, isResume: true);
+        }
+    }
+
+    private static bool NthStep(Engine engine, NthCursor c, bool isResume)
     {
         Cell cur = Resolve(engine, engine.GetRegister(1));
-        for (int k = 0; k < pos && cur.Tag == Tag.Lis; k++)
+        for (int k = 0; k < c.Pos && cur.Tag == Tag.Lis; k++)
             cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
         if (cur.Tag != Tag.Lis) return false;          // past the list end
 
         int headIdx = cur.AsHeapIndex;
-        Func<Engine, int, bool> resume =
-            (e, _) => NthEnumerate(e, oneBased, returnPc, pos + 1, isResume: true);
-        engine.PushBuiltinChoicePoint(resume, arity: 3);
+        int pos = c.Pos;
+        c.Pos = pos + 1;
+        engine.PushBuiltinChoicePoint(c.Resume, arity: 3);
 
-        long idxVal = oneBased ? pos + 1 : pos;
+        long idxVal = c.OneBased ? pos + 1 : pos;
         if (engine.UnifyRegisterWithCell(0, Cell.Int(idxVal))
             && engine.UnifyRegisterWithHeapAt(2, headIdx))
         {
-            if (isResume) engine.ResumeAtReturnPc(returnPc);
+            if (isResume) engine.ResumeAtReturnPc(c.ReturnPc);
             return true;
         }
         return false;                                   // → retries pos + 1

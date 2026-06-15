@@ -2759,14 +2759,32 @@ public static class MetaBuiltins
 
     private static void ArmRepeat(Engine engine, int returnPc)
     {
-        engine.PushBuiltinChoicePoint(
-            (e, _) =>
-            {
-                ArmRepeat(e, returnPc);
-                e.ResumeAtReturnPc(returnPc);
-                return true;
-            },
-            arity: 0);
+        // The CP re-arms with ONE cached delegate (held on the cursor) rather
+        // than a fresh closure per backtrack — repeat drives unbounded
+        // failure-driven loops (`repeat, Goal, fail`), so a per-backtrack
+        // closure was ~100 bytes of Gen0 garbage per iteration, the same
+        // bottleneck fixed in between/3.
+        var cursor = new RepeatCursor(returnPc);
+        engine.PushBuiltinChoicePoint(cursor.Resume, arity: 0);
+    }
+
+    private sealed class RepeatCursor
+    {
+        private readonly int _returnPc;
+        public readonly Func<Engine, int, bool> Resume;
+
+        public RepeatCursor(int returnPc)
+        {
+            _returnPc = returnPc;
+            Resume = Step;
+        }
+
+        private bool Step(Engine engine, int _)
+        {
+            engine.PushBuiltinChoicePoint(Resume, arity: 0);   // re-arm, same delegate
+            engine.ResumeAtReturnPc(_returnPc);
+            return true;
+        }
     }
 
     private static bool AdvanceCallNEnumerator(
