@@ -499,9 +499,15 @@ internal static class Prelude
         % every match; the `fail` undoes each solution's bindings, keeping
         % Head general. Facts are retracted by the head form, rules by the
         % (Head :- Body) form.
+        % retractall on an UNDEFINED predicate is a silent no-op (SWI / SICStus);
+        % on a STATIC one it raises permission_error. '$retractall_modifiable'
+        % succeeds only for a dynamic predicate, so the retract loop runs just
+        % then; undefined makes it fail into the `true` arm.
         retractall(Head) :-
-            ( retract(Head), fail ; true ),
-            ( retract((Head :- _)), fail ; true ).
+            ( '$retractall_modifiable'(Head)
+            -> ( retract(Head), fail ; true ),
+               ( retract((Head :- _)), fail ; true )
+            ; true ).
 
         %! listing | Database | Lists the clauses of every user-defined predicate — consulted or asserted, never builtins or library predicates.
         listing :-

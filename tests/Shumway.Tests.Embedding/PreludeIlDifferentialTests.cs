@@ -121,17 +121,11 @@ public sealed class PreludeIlDifferentialTests
 
     // Predicates with a KNOWN, tracked Tier-1 IL divergence not yet fixed. Each
     // is verified to STILL diverge (a tripwire — when the underlying bug is
-    // fixed the case here fails, prompting removal from this set).
-    private static readonly System.Collections.Generic.Dictionary<string, string> KnownIlUnsafe = new()
-    {
-        // retract on a (pre-declared) dynamic predicate, reached from an
-        // IL-compiled TOP-LEVEL query, throws permission_error(modify,
-        // static_procedure). retractall/1 from a NAMED predicate is fine
-        // (IlBacktrackReproTests.clr passes) — this is a dynamic-mutation-under-
-        // IL issue in the query-wrapper path, SEPARATE from the cursor-builtin
-        // IsBacktrackable fix. Tracked for a dedicated investigation.
-        ["retractall/1"] = "retract on a dynamic predicate from an IL top-level query throws permission_error",
-    };
+    // fixed the case here fails, prompting removal from this set). Empty now: the
+    // one entry (retractall/1) turned out NOT to be an IL bug — its warm-up
+    // retractall-on-an-undefined-predicate threw permission_error in BOTH tiers
+    // (a tier-independent retractall leniency bug, since fixed).
+    private static readonly System.Collections.Generic.Dictionary<string, string> KnownIlUnsafe = new();
 
     public static System.Collections.Generic.IEnumerable<object[]> Cases()
     {

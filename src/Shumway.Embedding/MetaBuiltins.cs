@@ -106,6 +106,7 @@ public static class MetaBuiltins
             + "for forward compatibility.");
         BuiltinsRegistry.Register("retract", 1, Retract,
             Database, "retract(+Clause)", "Removes the first clause that unifies with the argument.");
+        BuiltinsRegistry.Register("$retractall_modifiable", 1, RetractAllModifiable);
         // ADR-016: reachability-based heap garbage collection. Runs as a
         // goal (a safe point — all structures complete and rooted in
         // registers / Y slots / choice points). Always succeeds.
@@ -2987,6 +2988,22 @@ public static class MetaBuiltins
     /// retracts the next matching clause, so <c>(retract(C), fail ; true)</c>
     /// removes every match. The candidate set is snapshotted at call time
     /// (ISO's logical-update view).</summary>
+    /// <summary><c>'$retractall_modifiable'(Head)</c> — retractall/1's guard
+    /// (see <see cref="PrologEngine.IsRetractAllModifiable"/>): succeeds when
+    /// Head's predicate is dynamic (run the retract loop), FAILS when it is
+    /// undefined (retractall is a no-op), and raises
+    /// <c>permission_error(modify, static_procedure)</c> for a static procedure
+    /// or builtin.</summary>
+    public static bool RetractAllModifiable(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "'$retractall_modifiable'/1: PrologEngine host required.");
+        int headHeap = engine.MaterializeRegisterForTrace(0);
+        int fid = ReadPatternHeadFunctorId(engine, headHeap);
+        return host.IsRetractAllModifiable(fid);
+    }
+
     public static bool Retract(Engine engine)
     {
         if (engine.Host is not PrologEngine host)

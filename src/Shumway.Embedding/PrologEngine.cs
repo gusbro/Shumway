@@ -2202,6 +2202,21 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return list;
     }
 
+    /// <summary>retractall/1 modifiability check (SWI / SICStus semantics):
+    /// returns <c>true</c> when the predicate is dynamic (so the retract loop
+    /// should run), <c>false</c> when it is UNDEFINED (retractall is then a
+    /// silent no-op — the predicate is left undefined, no dispatch trampoline is
+    /// fabricated), and throws <c>permission_error(modify, static_procedure)</c>
+    /// for a static procedure or a builtin (you can't retractall those).</summary>
+    internal bool IsRetractAllModifiable(int fid)
+    {
+        if (_dynamicFunctors.Contains(fid)) return true;
+        if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _) || HasStaticClauses(fid))
+            throw new Shumway.Core.PrologRuntimeException(
+                "permission_error", "modify,static_procedure");
+        return false;   // undefined → retractall is a no-op
+    }
+
     private void EnsureDynamic(int fid)
     {
         if (_dynamicFunctors.Contains(fid)) return;
