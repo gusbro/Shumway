@@ -19,15 +19,18 @@ namespace Shumway.Tests.Embedding;
 /// under plain SLD the second clause loops.</para></summary>
 public sealed class TablingBundleTests
 {
+    // CYCLIC graph (a -> b -> c -> a, plus c -> d): reach(a, Y) must detect the
+    // tabled subgoal recurring in-progress or it loops. reach(a, _) = {a,b,c,d}.
     private const string Program =
         ":- public ans/1.\n" +
         ":- table reach/2.\n" +
         "edge(a, b).\n" +
         "edge(b, c).\n" +
+        "edge(c, a).\n" +
         "edge(c, d).\n" +
         "reach(X, Y) :- edge(X, Y).\n" +
         "reach(X, Y) :- edge(X, Z), reach(Z, Y).\n" +
-        "ans(L) :- findall(Y, reach(a, Y), L0), msort(L0, L).\n";
+        "ans(L) :- findall(Y, reach(a, Y), L0), sort(L0, L).\n";
 
     // Tabled NEGATION (well-founded semantics). `\+ win(Y)` over the tabled
     // win/1 is rewritten to '$tbl_negate'; the transform adds a '$wfs_mode'
@@ -122,6 +125,18 @@ public sealed class TablingBundleTests
         }
     }
 
+    // MUTUAL recursion through a p<->q cycle (two tabled predicates). p(a) is
+    // the only fact; p(b) terminates only via in-progress detection across both
+    // subgoals. who(L) = sorted truths reachable as p — just [a].
+    private const string MutualProgram =
+        ":- public who/1.\n" +
+        ":- table p/1.\n" +
+        ":- table q/1.\n" +
+        "p(a).\n" +
+        "p(X) :- q(X).\n" +
+        "q(X) :- p(X).\n" +
+        "who(L) :- findall(X, ( member(X, [a,b]), p(X) ), L0), sort(L0, L).\n";
+
     private static byte[] Link(ShmoBuildMode mode, bool il, bool stripWam) =>
         ShmoLinker.Link(new LinkConfig
         {
@@ -131,6 +146,25 @@ public sealed class TablingBundleTests
             IncludeCompiledIl = il,
             StripWam = stripWam,
         }).Bytes!;
+
+    [Theory]
+    [InlineData(ShmoBuildMode.Release)]
+    [InlineData(ShmoBuildMode.Debug)]
+    public void Tier0Bundle_MutualRecursion(ShmoBuildMode mode)
+    {
+        var bytes = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { ShmoCompiler.CompileSource(MutualProgram, "mut", mode) },
+            EntryPoints = new[] { new PredicateRef("who", 1) },
+            BakePrelude = true,
+            IncludeCompiledIl = false,
+            StripWam = false,
+        }).Bytes!;
+        var engine = PrologEngine.FromBundle(BundleReader.FromBytes(bytes));
+        var sols = engine.QueryAll("who(L).").ToList();
+        Assert.Single(sols);
+        Assert.Equal(".(a, [])", sols[0].Bindings["L"].ToString());
+    }
 
     // Tier-0 (no IL) loads in-process via FromBundle. Release is the
     // previously-broken case (source stripped → the load-time transform had no
@@ -144,7 +178,7 @@ public sealed class TablingBundleTests
         var sols = engine.QueryAll("ans(L).").ToList();
         Assert.Single(sols);
         // [b, c, d] — left-recursive reach/2 terminates only via tabling.
-        Assert.Equal(".(b, .(c, .(d, [])))", sols[0].Bindings["L"].ToString());
+        Assert.Equal(".(a, .(b, .(c, .(d, []))))", sols[0].Bindings["L"].ToString());
     }
 
     // IL bundles need the persisted-IL load path, which is only faithful in a
@@ -190,11 +224,12 @@ public sealed class TablingBundleTests
             proc.WaitForExit(30000);
 
             Assert.True(proc.ExitCode == 0, $"exit {proc.ExitCode}\n{stdout}\n{stderr}");
-            Assert.Contains("[b, c, d]", stdout);
+            Assert.Contains("[a, b, c, d]", stdout);
         }
         finally
         {
             try { Directory.Delete(tmp, recursive: true); } catch { }
         }
     }
+
 }

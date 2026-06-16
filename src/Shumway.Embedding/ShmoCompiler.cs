@@ -299,9 +299,11 @@ public static class ShmoCompiler
         // p/N, '$tbase$p'/N and '$trec$p'/N become public to keep module
         // mangling from desyncing the driver's data-position references from
         // their definitions (the engine transform makes the same predicates
-        // public for the same reason). The '$tbase$p'/'$trec$p' fixpoint bodies
-        // are kept on Tier 0 by IlPredicateCompiler's name exclusion; the driver
-        // and acyclic memoisation compile to IL normally.
+        // public for the same reason). All three compile to IL normally — the
+        // fixpoint's in-progress detection reads the table via clause/2 (a
+        // backtrackable builtin), which is sound under Tier-1 since the
+        // chunk-e76a535 IsBacktrackable fix; cyclic / mutual-recursive / WFS
+        // tabling is covered as IL by TablingBundleTests.
         if (tabledSet is { Count: > 0 })
         {
             var tabledFids = new HashSet<int>();
