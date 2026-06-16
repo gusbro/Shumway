@@ -41,30 +41,15 @@ public sealed class BuiltinEntry
 
     /// <summary>True for builtins that push a choice point and resume via
     /// <c>ResumeAtReturnPc</c> (the chunk-218 mechanism) — their Tier-1 IL
-    /// <c>call_builtin</c> site needs a forward-resume cursor. Precomputed in
-    /// the constructor (the <see cref="IsCall"/> precedent) so emit-time
-    /// classification reads a bool instead of running the name switch per
-    /// <c>CallBuiltin</c> per bytecode walk (chunk 433).</summary>
-    public bool IsBacktrackable { get; }
-
-    /// <summary>Canonical backtrackable-builtin name set (chunk 218; moved
-    /// here from <c>IlPredicateCompiler.IsBacktrackableBuiltinName</c> in
-    /// chunk 433 so the flag above can be precomputed at registration).</summary>
-    public static bool IsBacktrackableName(string name) => name switch
-    {
-        "between" or "append" or "atom_concat" or "string_concat"
-        or "nb_current" or "current_op" or "current_char_conversion"
-        or "current_stream" or "stream_property" or "repeat" or "retract"
-        // Cursor builtins added in the backtrackable-builtin alloc sweep: each
-        // PushBuiltinChoicePoint's at runtime, so the IL emit MUST set up the
-        // chunk-218 resume marker + BuiltinReturnPc. WAM tolerated the omission
-        // (its CallBuiltin handler always sets BuiltinReturnPc); Tier-1 IL did
-        // not — a missing name made the resume jump to PC 0 and lose solutions.
-        or "$clause_enum" or "$current_predicate_enum" or "$sub_atom_enum"
-        or "nth0" or "nth1" or "recorded" or "keys"
-        or "string_search" or "directory" => true,
-        _ => false,
-    };
+    /// <c>call_builtin</c> site needs a forward-resume cursor.
+    ///
+    /// <para>DERIVED, not declared: <see cref="BacktrackableDetector"/> walks the
+    /// implementation's IL for a transitive call to a CP-creating sink, so a new
+    /// cursor builtin can't be silently forgotten (the old hand-maintained name
+    /// list was exactly that footgun). Read only by the IL compiler — a non-AOT
+    /// context — and cached per method, so the reflection is lazy and never runs
+    /// under Native AOT.</para></summary>
+    public bool IsBacktrackable => BacktrackableDetector.IsBacktrackable(Impl);
 
     public BuiltinEntry(int id, string name, int arity, BuiltinImpl impl,
         string? category = null, string? template = null, string? summary = null)
@@ -78,7 +63,6 @@ public sealed class BuiltinEntry
         Summary = summary;
         IsCall = name == "call";
         IsDollarCall = name == "$call";
-        IsBacktrackable = IsBacktrackableName(name);
     }
 
     public override string ToString() => $"{Name}/{Arity} (#{Id})";

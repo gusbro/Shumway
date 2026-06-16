@@ -2609,12 +2609,12 @@ public sealed class IlPredicateCompiler
         emit.Return();
     }
 
-    // Chunk 218's IsBacktrackableBuiltinName — builtins that push a CP and
-    // call ResumeAtReturnPc on retry, whose IL call_builtin site needs a
-    // resume marker — moved to Shumway.Builtins.BuiltinEntry.IsBacktrackableName
-    // in chunk 433 so the registry precomputes a per-entry IsBacktrackable
-    // flag; every emit-time site now reads the flag instead of running the
-    // name switch per CallBuiltin per bytecode walk.
+    // Chunk 218's IsBacktrackableBuiltinName — builtins that push a CP and call
+    // ResumeAtReturnPc on retry, whose IL call_builtin site needs a resume
+    // marker — is now BuiltinEntry.IsBacktrackable, DERIVED by reflection
+    // (BacktrackableDetector) from each builtin's IL rather than a hand list, so
+    // a new cursor builtin can't be silently forgotten. Every emit-time site
+    // reads the per-entry flag.
 
     /// <summary>Counts non-tail <c>Call</c> opcodes in a clause's
     /// bytecode (Opcode.Call only — Opcode.Execute is the tail-call

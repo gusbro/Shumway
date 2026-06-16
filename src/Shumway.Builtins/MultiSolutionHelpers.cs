@@ -156,9 +156,9 @@ public static class MultiSolutionHelpers
     /// <para>This was reverted once (b0417db) because it lost / looped under
     /// Tier-1 IL; the root cause was a MISSING <c>IsBacktrackable</c> flag (the
     /// IL emit skipped the resume-marker / <c>BuiltinReturnPc</c> setup, so the
-    /// cursor resumed at PC 0). With <c>$sub_atom_enum</c> now listed in
-    /// <see cref="Shumway.Builtins.BuiltinEntry.IsBacktrackableName"/> it is
-    /// correct under both tiers.</para></summary>
+    /// cursor resumed at PC 0). <see cref="BacktrackableDetector"/> now derives
+    /// that flag from this method's IL (it calls <c>IndexEnumCursor.Start</c>),
+    /// so it is correct under both tiers automatically.</para></summary>
     public static bool SubAtomEnum(Engine engine)
     {
         Cell atomCell = Resolve(engine, engine.GetRegister(0));
