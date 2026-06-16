@@ -302,7 +302,7 @@ internal static class Program
                     opts.RegionPruneReport = true;
                     break;
 
-                case "--bake-prelude":
+                case "--stdlib":
                     opts.BakePrelude = true;
                     break;
 
@@ -511,12 +511,13 @@ internal static class Program
             + "                           shared-method layout. Mainly for inspecting the\n"
             + "                           generated code; bundles are larger and typically\n"
             + "                           slower.\n"
-            + "      --bake-prelude       Embed the precompiled standard library (prelude)\n"
-            + "                           in the bundle so loading it skips compiling the\n"
-            + "                           prelude at startup. Automatic with --exe. Larger\n"
-            + "                           bundle, faster start; load via PrologEngine.\n"
-            + "                           FromBundle (a plain new PrologEngine()+LoadBundle\n"
-            + "                           ignores it, having its own prelude).\n"
+            + "      --stdlib             Embed the precompiled standard library (the\n"
+            + "                           prelude) in the bundle so loading it skips\n"
+            + "                           compiling the stdlib at startup (and, under\n"
+            + "                           --with-compiled-il, ships it as Tier-1 IL too).\n"
+            + "                           Automatic with --exe. Larger bundle, faster start;\n"
+            + "                           load via PrologEngine.FromBundle (a plain\n"
+            + "                           new PrologEngine()+LoadBundle ignores it).\n"
             + "      --strip-wam          Implies --with-compiled-il, and additionally\n"
             + "                           drops the portable bytecode of every predicate\n"
             + "                           that has compiled IL. Smaller bundles. The result\n"

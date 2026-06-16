@@ -1530,7 +1530,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// <summary>Bare construction: when <paramref name="consultPrelude"/> is
     /// <c>false</c> the engine starts WITHOUT the internal prelude. Used by
     /// <see cref="FromBundle(Bundle)"/> so a bundle that bakes a precompiled
-    /// prelude (shumway-link <c>--exe</c> / <c>--bake-prelude</c>) supplies it
+    /// prelude (shumway-link <c>--exe</c> / <c>--stdlib</c>) supplies it
     /// instead of the engine paying the parse + compile at startup. A bare
     /// engine is unusable until a prelude is installed (the bundle's, or the
     /// FromBundle fallback consult).</summary>
@@ -1552,10 +1552,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     }
 
     /// <summary>Loads a bundle into a fresh engine, using the bundle's BAKED
-    /// prelude (produced by <c>shumway-link --exe</c> / <c>--bake-prelude</c>)
+    /// prelude (produced by <c>shumway-link --exe</c> / <c>--stdlib</c>)
     /// when present so startup skips compiling the prelude. Falls back to
     /// consulting the prelude when the bundle doesn't carry one (older bundles
-    /// or a link without <c>--bake-prelude</c>). The fast-startup entry point
+    /// or a link without <c>--stdlib</c>). The fast-startup entry point
     /// the generated <c>--exe</c> uses; the result is equivalent to
     /// <c>var e = new PrologEngine(); e.LoadBundle(bundle);</c>.</summary>
     public static PrologEngine FromBundle(Bundle bundle)
@@ -2724,7 +2724,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             effectiveEntries = combined;
         }
         // A bundle may bake a precompiled `$prelude` entry (shumway-link
-        // --exe / --bake-prelude) so a bare engine (FromBundle / the generated
+        // --exe / --stdlib) so a bare engine (FromBundle / the generated
         // --exe) gets the prelude without compiling it. A NORMAL engine
         // already consulted the prelude in its constructor, so that entry is
         // redundant here — drop it to avoid a double install.

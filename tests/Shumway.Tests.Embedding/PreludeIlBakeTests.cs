@@ -7,7 +7,7 @@ using Xunit;
 
 namespace Shumway.Tests.Embedding;
 
-/// <summary>Baking the prelude as Tier-1 IL (--bake-prelude --with-compiled-il):
+/// <summary>Baking the prelude as Tier-1 IL (--stdlib --with-compiled-il):
 /// the $prelude bundle entry carries compiled IL, and a bundle whose prelude is
 /// already IL runs prelude predicates correctly (same answers as a normal WAM
 /// engine) — the fast-startup deployment (no parse, no compile at load).
