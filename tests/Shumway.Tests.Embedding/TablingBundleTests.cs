@@ -29,6 +29,99 @@ public sealed class TablingBundleTests
         "reach(X, Y) :- edge(X, Z), reach(Z, Y).\n" +
         "ans(L) :- findall(Y, reach(a, Y), L0), msort(L0, L).\n";
 
+    // Tabled NEGATION (well-founded semantics). `\+ win(Y)` over the tabled
+    // win/1 is rewritten to '$tbl_negate'; the transform adds a '$wfs_mode'
+    // marker so a DIRECT top-level tabled call (game/1 -> win/1, routed through
+    // '$tbl_dispatch') runs the alternating fixpoint. c wins (moves to dead-end
+    // d), d loses, a<->b is a draw (undefined -> a direct call fails, since
+    // undefined is not true). game/1 calls win/1 directly — exercising the
+    // '$wfs_mode' path (well_founded/2 would bypass it by running the fixpoint
+    // itself). status/1 also checks the three-valued report directly.
+    private const string WfsProgram =
+        ":- public game/1.\n" +
+        ":- public status/2.\n" +
+        ":- table win/1.\n" +
+        "move(a, b).  move(b, a).  move(c, d).\n" +
+        "win(X) :- move(X, Y), \\+ win(Y).\n" +
+        "game(P) :- win(P).\n" +
+        "status(P, S) :- well_founded(win(P), S).\n";
+
+    private static byte[] LinkWfs(ShmoBuildMode mode, bool il) =>
+        ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { ShmoCompiler.CompileSource(WfsProgram, "wfs", mode) },
+            EntryPoints = new[] { new PredicateRef("game", 1), new PredicateRef("status", 2) },
+            BakePrelude = true,
+            IncludeCompiledIl = il,
+            StripWam = false,
+        }).Bytes!;
+
+    [Theory]
+    [InlineData(ShmoBuildMode.Release)]
+    [InlineData(ShmoBuildMode.Debug)]
+    public void Tier0Bundle_WellFounded(ShmoBuildMode mode)
+    {
+        var engine = PrologEngine.FromBundle(BundleReader.FromBytes(LinkWfs(mode, il: false)));
+        // Direct tabled call through the '$wfs_mode' fixpoint path.
+        Assert.True(engine.Query("game(c).").Success);    // c wins
+        Assert.False(engine.Query("game(d).").Success);   // d loses
+        Assert.False(engine.Query("game(a).").Success);   // a is a draw (undefined, not true)
+        // Three-valued report (via well_founded/2 directly).
+        Assert.True(engine.Query("status(c, true).").Success);
+        Assert.True(engine.Query("status(d, false).").Success);
+        Assert.True(engine.Query("status(a, undefined).").Success);
+    }
+
+    // WFS under --with-compiled-il, cross-process: the '$wfs_mode' marker rides
+    // the dynamic-seed path (same as Tier-0 release), so the fixpoint activates.
+    [Fact]
+    public void IlBundle_WellFounded_CrossProcess()
+    {
+        byte[] bytes = LinkWfs(ShmoBuildMode.Release, il: true);
+
+        string replDll = Path.Combine(
+            Path.GetFullPath(Path.Combine(
+                Path.GetDirectoryName(typeof(TablingBundleTests).Assembly.Location)!,
+                "..", "..", "..", "..", "..")),
+            "src", "Shumway.Repl", "bin", "Release", "net10.0", "shumway.dll");
+        if (!File.Exists(replDll)) return;   // dev convenience: needs a Release REPL build
+
+        string tmp = Path.Combine(Path.GetTempPath(), "shumway-wfs-" + Guid.NewGuid());
+        Directory.CreateDirectory(tmp);
+        try
+        {
+            string bundlePath = Path.Combine(tmp, "wfs.shum");
+            File.WriteAllBytes(bundlePath, bytes);
+
+            var psi = new ProcessStartInfo("dotnet")
+            {
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            psi.ArgumentList.Add(replDll);
+            psi.ArgumentList.Add(bundlePath);
+
+            using var proc = Process.Start(psi)!;
+            proc.StandardInput.WriteLine("status(c, Sc).");   // Sc = true
+            proc.StandardInput.WriteLine("status(a, Sa).");   // Sa = undefined
+            proc.StandardInput.WriteLine("halt.");
+            proc.StandardInput.Close();
+            string stdout = proc.StandardOutput.ReadToEnd();
+            string stderr = proc.StandardError.ReadToEnd();
+            proc.WaitForExit(30000);
+
+            Assert.True(proc.ExitCode == 0, $"exit {proc.ExitCode}\n{stdout}\n{stderr}");
+            Assert.Contains("Sc = true", stdout);
+            Assert.Contains("Sa = undefined", stdout);
+        }
+        finally
+        {
+            try { Directory.Delete(tmp, recursive: true); } catch { }
+        }
+    }
+
     private static byte[] Link(ShmoBuildMode mode, bool il, bool stripWam) =>
         ShmoLinker.Link(new LinkConfig
         {

@@ -319,6 +319,38 @@ public static class ShmoCompiler
             // throwaway set suffices here.
             staticInput = PrologEngine.TransformTabledPredicates(
                 staticInput, tabledFids, new HashSet<int>());
+
+            // Tabled NEGATION (well-founded semantics): when a clause negates a
+            // tabled goal the transform adds a '$wfs_mode' marker fact so
+            // '$tbl_dispatch' runs the alternating fixpoint. '$wfs_mode'/0 is a
+            // DYNAMIC functor (prelude :- dynamic) read at runtime via
+            // clause/2 — which in a source-stripped bundle sees only the
+            // DYNAMIC store (LoadEntryFromBytecode has no static AST). The
+            // engine consult path leaves it a static clause, visible there via
+            // StaticClausesFor; here we instead route it to the dynamic seeds
+            // (rehydrated into _dynamicClauses at load) so a release / IL bundle
+            // exposes it too. Dynamic functors are unmangled and may be declared
+            // by multiple modules, so coexisting with the prelude's declaration
+            // is fine. The static clause is dropped so the functor isn't
+            // compiled both static and dynamic.
+            var wfsRef = new PredicateRef("$wfs_mode", 0);
+            Clause? wfsClause = null;
+            var keptStatic = new List<Clause>(staticInput.Count);
+            foreach (var c in staticInput)
+            {
+                if (TryExtractHead(c) is { Name: "$wfs_mode", Arity: 0 })
+                    wfsClause = c;
+                else
+                    keptStatic.Add(c);
+            }
+            if (wfsClause is not null)
+            {
+                staticInput = keptStatic;
+                dynamicSet.Add(wfsRef);
+                if (!dynamicSeedAccum.TryGetValue(wfsRef, out var seedList))
+                    dynamicSeedAccum[wfsRef] = seedList = new List<byte[]>();
+                seedList.Add(TermCodec.EncodeClause(wfsClause));
+            }
         }
 
         // Now apply the static-pipeline transforms. These may add
