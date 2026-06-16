@@ -833,6 +833,7 @@ public static class ShmoLinker
                 // augmented source. The BundleWriter's own
                 // CompileEntryToBytes path uses bare ModuleCompiler and
                 // would NotSupportedException on any DCG rule.
+                HashSet<PredicateRef>? promotedToPublic = null;
                 if (promotionsByModule.TryGetValue(obj.ModuleName, out var promoted)
                     && !string.IsNullOrEmpty(entrySource))
                 {
@@ -854,6 +855,56 @@ public static class ShmoLinker
                     entryBytecode = recompiled.Bytecode.Length > 0
                         ? recompiled.Bytecode : null;
                 }
+                else if (promoted is not null && obj.ClauseTerms.Count > 0)
+                {
+                    // Source-STRIPPED (release) object: no source to augment,
+                    // but the chunk-411 ClauseTerms carry the raw static
+                    // clauses. Recompile from them with the local entry points
+                    // added to the public set, so each promoted predicate gets
+                    // a BARE (un-mangled) head — callable by its plain name (a
+                    // `--goal main` entry, a runtime call/N) — WITHOUT widening
+                    // any other local's visibility. The previous behaviour
+                    // skipped promotion entirely here (the guard required a
+                    // non-empty source), leaving the entry mangled `module$name`
+                    // while the bare-name query / entry goal missed it →
+                    // existence_error. We also mark the promoted entries Public
+                    // in entryDefined below so the source-less
+                    // LoadEntryFromBytecode registers them un-mangled, matching
+                    // the recompiled bytecode.
+                    var rPublic = new HashSet<PredicateRef>();
+                    var rDynamic = new HashSet<PredicateRef>();
+                    foreach (var d in obj.Defined)
+                    {
+                        if (d.Visibility == PredicateVisibility.Public) rPublic.Add(d.Indicator);
+                        else if (d.Visibility == PredicateVisibility.Dynamic) rDynamic.Add(d.Indicator);
+                    }
+                    foreach (var pr in promoted) rPublic.Add(pr);
+                    var rawAll = new List<Shumway.Compiler.Ast.Clause>(obj.ClauseTerms.Count);
+                    foreach (var enc in obj.ClauseTerms)
+                        rawAll.Add(TermCodec.DecodeClause(enc));
+                    foreach (var seed in obj.DynamicSeeds)
+                        foreach (var enc in seed.EncodedClauses)
+                            rawAll.Add(TermCodec.DecodeClause(enc));
+                    var perrs = new List<ShmoCompileError>();
+                    var recompiled = ShmoCompiler.CompileFromParts(
+                        obj.ModuleName, "", rawAll, rPublic, rDynamic,
+                        new List<PredicateRef>(obj.EnsureLinked),
+                        new List<QualifiedPredicateRef>(), ShmoBuildMode.Release, perrs,
+                        arityCompat: obj.ArityCompat);
+                    if (recompiled.Success && recompiled.Object is { } robj
+                        && robj.Bytecode.Length > 0)
+                    {
+                        entryBytecode = robj.Bytecode;
+                        promotedToPublic = new HashSet<PredicateRef>(promoted);
+                    }
+                    else
+                    {
+                        Emit(LinkSeverity.Warning, "entry_promotion_failed",
+                            $"module {obj.ModuleName}: could not promote local entry "
+                            + "point(s) in a source-stripped object; the entry goal may "
+                            + "raise existence_error.", obj.ModuleName);
+                    }
+                }
 
                 // Chunk 441 — fold the implicit empty dynamics this
                 // (arity-compiled) module's unresolved references created
@@ -867,10 +918,23 @@ public static class ShmoLinker
                 // get the directive prepended so the ConsultString load
                 // path registers the same declaration.
                 IReadOnlyList<ShmoDefinedPredicate> entryDefined = obj.Defined;
+                // Source-stripped entry-point promotion (above): mark the
+                // promoted predicates Public so LoadEntryFromBytecode registers
+                // them un-mangled, consistent with the recompiled bare-head
+                // bytecode.
+                if (promotedToPublic is not null)
+                {
+                    var redef = new List<ShmoDefinedPredicate>(entryDefined.Count);
+                    foreach (var d in entryDefined)
+                        redef.Add(promotedToPublic.Contains(d.Indicator)
+                            ? new ShmoDefinedPredicate(d.Indicator, PredicateVisibility.Public)
+                            : d);
+                    entryDefined = redef;
+                }
                 if (implicitDynamics.TryGetValue(obj.ModuleName, out var implicits)
                     && implicits.Count > 0)
                 {
-                    var augmentedDefined = new List<ShmoDefinedPredicate>(obj.Defined);
+                    var augmentedDefined = new List<ShmoDefinedPredicate>(entryDefined);
                     foreach (var p in implicits)
                         augmentedDefined.Add(new ShmoDefinedPredicate(
                             p, PredicateVisibility.Dynamic));
