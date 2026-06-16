@@ -59,15 +59,15 @@ public static class BundleWriter
                 if (includeCompiledBytecode && compiledBytecode is null)
                     compiledBytecode = CompileEntryToBytes(effective[i].Source);
                 byte[]? compiledIlEntries = effective[i].CompiledIlEntries;
-                // The baked prelude ships as Tier-0 WAM only — it is NOT
-                // IL-compiled or WAM-stripped. Its complex control predicates
-                // (tabling fixpoint, well-founded negation, the $call_* meta
-                // helpers) don't yet region-compile soundly under --strip-wam,
-                // and a bound-but-unsound IL delegate would run instead of the
-                // correct WAM. The startup win (precompiled prelude, no parse)
-                // is preserved; user code still runs as IL.
-                bool skipIl = effective[i].ModuleName == Prelude.ModuleName;
-                if (includeCompiledIl && compiledIl is null && !skipIl)
+                // The baked prelude is IL-compiled like any other entry. Its
+                // static predicates (member, maplist, sort, catch/forall, the
+                // tabling/WFS drivers, the $call_* meta helpers) region-compile;
+                // its dynamic predicates ($tbl_*, attribute_goals/4, $wfs_mode)
+                // are excluded by the IL compiler (enter_dynamic layout) and stay
+                // Tier-0 trampolines, so --strip-wam keeps exactly their WAM. The
+                // prelude's IL codegen is validated WAM-vs-IL by
+                // PreludeIlDifferentialTests + the full suite under promotion.
+                if (includeCompiledIl && compiledIl is null)
                 {
                     _lastPatchTableBytes = null;
                     _lastEntriesTableBytes = null;

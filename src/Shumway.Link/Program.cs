@@ -98,14 +98,11 @@ internal static class Program
             AllowUndefined = opts.AllowUndefined,
             Libraries = libraries,
             // --exe deploys a startup-sensitive single-engine app, so bake the
-            // prelude by default there; otherwise only on explicit opt-in.
-            // NOT for IL bundles (--with-compiled-il / --strip-wam): the user's
-            // IL is compiled against the engine's own (constructor) prelude, so
-            // a bare engine running it against a baked prelude is inconsistent.
-            // IL --exe keeps the constructor prelude (FromBundle's fallback
-            // consult), which the lazy parse cache already makes cheap.
-            BakePrelude = (opts.BakePrelude || !string.IsNullOrEmpty(opts.ExePath))
-                && !opts.IncludeCompiledIl,
+            // prelude by default there; otherwise only on explicit opt-in. Under
+            // --with-compiled-il / --strip-wam the baked prelude is itself
+            // IL-compiled (its static predicates), so an IL --exe starts with a
+            // fully precompiled prelude — no parse, no compile.
+            BakePrelude = opts.BakePrelude || !string.IsNullOrEmpty(opts.ExePath),
             VerboseOut = opts.Verbose ? Console.Error : null,
             StripSource = opts.StripSource,
             IncludeCompiledIl = opts.IncludeCompiledIl,
