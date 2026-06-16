@@ -444,6 +444,18 @@ public sealed class IlPredicateCompiler
     internal bool CanCompileCore(CompiledPredicate predicate,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, bool allowIndexedDispatch)
     {
+        // Tabling semi-naive fixpoint predicates ('$tbase$p' / '$trec$p')
+        // stay on Tier 0. The fixpoint asserts in-progress / answer-table
+        // markers and re-reads them WITHIN the same evaluation; that
+        // same-query assert-then-read (ADR-015 logical update view) does not
+        // hold through IL-compiled code, so a self-re-deriving (cyclic /
+        // coinductive) subgoal fails to detect itself in-progress and loops.
+        // The driver clause 'p :- $tbl_dispatch(...)' and acyclic memoisation
+        // are fine under IL; this targets only the fixpoint engine. FUTURE
+        // (option b): make the in-progress logical-update-view sound under IL
+        // and lift this.
+        if (IsTablingFixpointPredicate(predicate.FunctorId)) return false;
+
         if (predicate.ClauseCount == 1) return CanCompileSingleClause(predicate, calleeMap);
         // Chunk 216 — full indexed dispatch (O(1) switch + bucket chains).
         // Preferred over the linear IndexedAtom / SwitchedChain recognisers
@@ -453,6 +465,18 @@ public sealed class IlPredicateCompiler
         if (TryDescribeIndexedAtomPredicate(predicate, calleeMap, out _)) return true;
         if (TryDescribeTryMeElseChain(predicate, calleeMap, out _)) return true;
         return TryDescribeSwitchedChain(predicate, calleeMap, out _);
+    }
+
+    /// <summary>True for a tabling semi-naive fixpoint predicate
+    /// (<c>'$tbase$p'</c> / <c>'$trec$p'</c>) — kept on Tier 0; see
+    /// <see cref="CanCompileCore"/> for why.</summary>
+    private static bool IsTablingFixpointPredicate(int functorId)
+    {
+        var (atomId, _) = Shumway.Core.FunctorTable.Lookup(functorId);
+        string? name = Shumway.Core.AtomTable.GetById(atomId)?.Name;
+        return name is not null
+            && (name.StartsWith("$tbase$", System.StringComparison.Ordinal)
+                || name.StartsWith("$trec$", System.StringComparison.Ordinal));
     }
 
     /// <summary>Wraps <see cref="IlIndexedDispatch.TryDescribe"/> with the

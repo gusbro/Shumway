@@ -187,6 +187,7 @@ public static class ShmoCompiler
         var publicSet = new HashSet<PredicateRef>();
         var dynamicSet = new HashSet<PredicateRef>();
         var ensureLinked = new List<PredicateRef>();
+        var tabledSet = new HashSet<PredicateRef>();
         var qualifiedRefs = new List<QualifiedPredicateRef>();
         var rawClauses = new List<Clause>();
 
@@ -199,7 +200,7 @@ public static class ShmoCompiler
                 try
                 {
                     ProcessDirective(d.Args[0], ref moduleName,
-                        publicSet, dynamicSet, ensureLinked);
+                        publicSet, dynamicSet, ensureLinked, tabledSet);
                 }
                 catch (InvalidOperationException ex)
                 {
@@ -236,7 +237,7 @@ public static class ShmoCompiler
         return CompileFromParts(
             moduleName,
             source, rawClauses, publicSet, dynamicSet, ensureLinked,
-            qualifiedRefs, buildMode, errors, warnings, arityEverOn);
+            qualifiedRefs, buildMode, errors, warnings, arityEverOn, tabledSet);
     }
 
     /// <summary>Chunk 411 — the compile back-half, shared by
@@ -259,7 +260,8 @@ public static class ShmoCompiler
         ShmoBuildMode buildMode,
         List<ShmoCompileError> errors,
         List<ShmoCompileError>? warnings = null,
-        bool arityCompat = false)
+        bool arityCompat = false,
+        HashSet<PredicateRef>? tabledSet = null)
     {
         // Partition raw clauses: dynamic-head ones become DynamicSeeds
         // (RAW), the rest go through the same DcgTransform +
@@ -285,6 +287,38 @@ public static class ShmoCompiler
             {
                 staticInput.Add(clause);
             }
+        }
+
+        // Tabling (chunk 104 transform, moved to COMPILE time). A
+        // `:- table p/N` predicate's static clauses are re-headed to the
+        // semi-naive '$tbase$p'/'$trec$p' split and a driver clause
+        // 'p(..) :- $tbl_dispatch(p(..), $tbase$p(..), $trec$p(..))' is added,
+        // exactly as PrologEngine.ConsultString does at consult time — but
+        // here, so the .shmo bytecode (and the persisted ClauseTerms, which the
+        // linker's LTO unfold re-runs) already carry the transformed clauses.
+        // p/N, '$tbase$p'/N and '$trec$p'/N become public to keep module
+        // mangling from desyncing the driver's data-position references from
+        // their definitions (the engine transform makes the same predicates
+        // public for the same reason). The '$tbase$p'/'$trec$p' fixpoint bodies
+        // are kept on Tier 0 by IlPredicateCompiler's name exclusion; the driver
+        // and acyclic memoisation compile to IL normally.
+        if (tabledSet is { Count: > 0 })
+        {
+            var tabledFids = new HashSet<int>();
+            foreach (var t in tabledSet)
+            {
+                int fid = Shumway.Core.FunctorTable.Intern(
+                    Shumway.Core.AtomTable.Intern(t.Name, permanent: true).Id, t.Arity);
+                tabledFids.Add(fid);
+                publicSet.Add(t);
+                publicSet.Add(new PredicateRef("$tbase$" + t.Name, t.Arity));
+                publicSet.Add(new PredicateRef("$trec$" + t.Name, t.Arity));
+            }
+            // The engine transform mutates a functor-id `publics` set purely as
+            // an OUTPUT (the public indicators are derived above directly), so a
+            // throwaway set suffices here.
+            staticInput = PrologEngine.TransformTabledPredicates(
+                staticInput, tabledFids, new HashSet<int>());
         }
 
         // Now apply the static-pipeline transforms. These may add
@@ -524,7 +558,8 @@ public static class ShmoCompiler
     private static bool ProcessDirective(Term body, ref string moduleName,
         HashSet<PredicateRef> publicSet,
         HashSet<PredicateRef> dynamicSet,
-        List<PredicateRef> ensureLinked)
+        List<PredicateRef> ensureLinked,
+        HashSet<PredicateRef> tabledSet)
     {
         if (body is CompoundTerm m && m.Functor == "module" && m.Args.Length == 1
             && m.Args[0] is AtomTerm a)
@@ -558,6 +593,21 @@ public static class ShmoCompiler
         {
             foreach (var spec in ReadFunctorSpecs(el.Args[0], "ensure_linked"))
                 ensureLinked.Add(spec);
+            return false;
+        }
+        // :- table p/N — tabling. Recorded here so CompileFromParts can apply
+        // the semi-naive transform (PrologEngine.TransformTabledPredicates) at
+        // COMPILE time, baking the '$tbase$p'/'$trec$p'/driver clauses into the
+        // .shmo bytecode. Without this the transform only ran at consult/load
+        // time off the entry's SOURCE — so a source-stripped (release) bundle
+        // could not table at all, and an IL bundle's raw-predicate IL shadowed
+        // the load-time driver. (The engine's consult-time transform stays for
+        // plain ConsultString and the debug-bundle re-consult path; no single
+        // path double-applies.)
+        if (body is CompoundTerm tbl && tbl.Functor == "table" && tbl.Args.Length == 1)
+        {
+            foreach (var spec in ReadFunctorSpecs(tbl.Args[0], "table"))
+                tabledSet.Add(spec);
             return false;
         }
         // Other directives (op/3, set_prolog_flag, etc.) are ignored

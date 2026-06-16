@@ -5087,7 +5087,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// <c>'$trec$p'/N</c> are made public so module mangling — which does
     /// not reach the driver's data-position references — cannot desync
     /// them.</summary>
-    private static List<Clause> TransformTabledPredicates(
+    internal static List<Clause> TransformTabledPredicates(
         List<Clause> clauses, HashSet<int> tabled, HashSet<int> publics)
     {
         var result = new List<Clause>();
