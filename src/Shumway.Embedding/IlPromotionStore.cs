@@ -64,9 +64,9 @@ public sealed class IlPromotionStore
     /// inline context established on the current thread (the IL-compile worker).</summary>
     private T WithNativeInline<T>(Func<T> compile)
     {
-        var prev = Compiler.BeginNativeInline(NativeInlineProvider?.Invoke());
+        var prev = IlPredicateCompiler.BeginNativeInline(NativeInlineProvider?.Invoke());
         try { return compile(); }
-        finally { Compiler.EndNativeInline(prev); }
+        finally { IlPredicateCompiler.EndNativeInline(prev); }
     }
 
     /// <summary>Stack size for the worker thread that drives every

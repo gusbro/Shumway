@@ -2703,8 +2703,9 @@ public sealed class IlPredicateCompiler
 
     /// <summary>Enable native-block inlining for subsequent compiles on this
     /// thread (see <see cref="_nativeInline"/>). Returns the previous context so
-    /// the caller can restore it.</summary>
-    public Shumway.Compiler.NativeC.NativeInlineContext? BeginNativeInline(
+    /// the caller can restore it. Static — the context is thread-static, so it must
+    /// be set on whichever thread actually runs the Sigil emit.</summary>
+    public static Shumway.Compiler.NativeC.NativeInlineContext? BeginNativeInline(
         Shumway.Compiler.NativeC.NativeInlineContext? context)
     {
         var prev = _nativeInline;
@@ -2712,7 +2713,7 @@ public sealed class IlPredicateCompiler
         return prev;
     }
 
-    public void EndNativeInline(Shumway.Compiler.NativeC.NativeInlineContext? restore)
+    public static void EndNativeInline(Shumway.Compiler.NativeC.NativeInlineContext? restore)
         => _nativeInline = restore;
 
     /// <summary>ADR-022 item 2 — total native blocks inlined into IL across all

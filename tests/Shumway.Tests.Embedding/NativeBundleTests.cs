@@ -145,6 +145,32 @@ public sealed class NativeBundleTests
     }
 
     [Fact]
+    public void BuildTimeInline_PersistedIlBundle_InlinesAndRuns()
+    {
+        // Item 2 stage C: a --with-compiled-il bundle inlines the native block at
+        // BUILD time (the build engine auto-discovers Shumway.Native.Interop, so
+        // the persisted IL emits a direct cross-assembly call). The block runs with
+        // no $native_run dispatch; the load engine needs no UseNativeInterop because
+        // the interop call was bound at build.
+        int before = Shumway.Compiler.Il.IlPredicateCompiler.NativeBlocksInlined;
+        var bytes = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { ShmoCompiler.CompileSource(CmpProgram, "prog", ShmoBuildMode.Release) },
+            EntryPoints = new[] { new PredicateRef("cmp", 3) },
+            StripSource = true,
+            BakePrelude = true,
+            IncludeCompiledIl = true,
+        }).Bytes!;
+        // the inline happened during the build (compiling the bundle's IL).
+        Assert.True(Shumway.Compiler.Il.IlPredicateCompiler.NativeBlocksInlined > before);
+
+        var e = new PrologEngine();   // note: no UseNativeInterop — the call is baked
+        e.LoadBundle(BundleReader.FromBytes(bytes));
+        Assert.True(e.Query("cmp(abc, abd, R), R == -1.").Success);
+        Assert.True(e.Query("cmp(abc, abc, R), R == 0.").Success);
+    }
+
+    [Fact]
     public void ReleaseBundle_MissingInterop_ThrowsAtRun()
     {
         // The bundle compiles (interop is not resolved at compile time), but a

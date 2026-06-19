@@ -353,6 +353,15 @@ public static class BundleWriter
         // process-wide toggle.
         bool savedRegionCompile = Shumway.Compiler.Il.IlPredicateCompiler.RegionCompile;
         Shumway.Compiler.Il.IlPredicateCompiler.RegionCompile = regionPruneSeeds is not null;
+        // ADR-022 item 2 (stage C) — inline this module's native blocks into the
+        // persisted IL. The build engine carries the block table (rehydrated from
+        // the bundle's NativeBlocks at LoadBundle); a block's interop functions are
+        // resolved against the build engine's interop class (auto-discovered
+        // `Shumway.Native.Interop`, or whatever was registered). When interop isn't
+        // available at build the inliner declines and the call stays a `$native_run`
+        // dispatch, which the loaded engine runs via the runtime delegate.
+        var prevInline = Shumway.Compiler.Il.IlPredicateCompiler.BeginNativeInline(
+            engine.GetNativeInlineContext());
         byte[] dllBytes;
         System.Collections.Generic.IReadOnlyList<Shumway.Compiler.Il.PersistedIlBuilder.Entry> persistedEntries;
         System.Collections.Generic.IReadOnlyList<Shumway.Compiler.Il.IlPatchSite> patches;
@@ -366,6 +375,7 @@ public static class BundleWriter
         {
             Shumway.Compiler.Il.IlPredicateCompiler.RegionCompile = savedRegionCompile;
             Shumway.Compiler.Il.IlPredicateCompiler.RegionForcedRootFids = savedForcedRoots;
+            Shumway.Compiler.Il.IlPredicateCompiler.EndNativeInline(prevInline);
         }
         // Phase 17 stash: the patch table the LoadBundle path needs to
         // overwrite each build-time atom/functor id sentinel with the
