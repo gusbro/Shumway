@@ -78,59 +78,33 @@ public class Chunk438Tests
     // 2. Embedded native goals { ... } (arity_compat only, non-DCG)
     // ------------------------------------------------------------------
 
+    // A native block the compiler cannot handle — a call to a function the interop
+    // class does not provide, C control flow, or un-parseable text — is a CONSULT
+    // ERROR, never a silent no-op (a no-op'd block would make the program misbehave
+    // without the author noticing). The raw span is still captured
+    // (NativeBlockCaptureTests); a handled block running end-to-end is in
+    // NativeWiringTests.
+
     [Fact]
-    public void NativeGoal_MiddleOfBody_ActsAsTrue()
+    public void NativeGoal_MissingInteropFunction_IsAConsultError()
     {
         var e = new PrologEngine();
-        e.ConsultString(
+        Assert.Throws<System.InvalidOperationException>(() => e.ConsultString(
             ":- set_prolog_flag(arity_compat, true).\n" +
-            "p(X, Y) :- X = 1, { call_some_c_function(x, 1); }, Y is X + 1.\n");
-        Assert.True(e.Query("p(1, 2).").Success);
-        Assert.False(e.Query("p(2, _).").Success);
+            "p(X, Y) :- X = 1, { call_some_c_function(x, 1); }, Y is X + 1.\n"));
     }
 
     [Fact]
-    public void NativeGoal_NestedBraces_BalancedByCounting()
+    public void NativeGoal_ControlFlow_IsAConsultError()
     {
         var e = new PrologEngine();
-        e.ConsultString(
+        // Nested braces still balance under the raw skip (capture), but C control
+        // flow is not compilable → a consult error, not a silent no-op.
+        Assert.Throws<System.InvalidOperationException>(() => e.ConsultString(
             ":- set_prolog_flag(arity_compat, true).\n" +
-            "q(ok) :- { if (x) { y(); } else { z(); } }.\n");
-        Assert.True(e.Query("q(ok).").Success);
+            "q(ok) :- { if (x) { y(); } else { z(); } }.\n"));
     }
 
-    [Fact]
-    public void NativeGoal_MultiplePerBody()
-    {
-        var e = new PrologEngine();
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "r(A, B) :- { one(); }, A = 1, { two(); }, B = 2.\n");
-        Assert.True(e.Query("r(1, 2).").Success);
-    }
-
-    [Fact]
-    public void NativeGoal_AsLastGoal()
-    {
-        var e = new PrologEngine();
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "s(done) :- atom(done), { finalize(); }.\n");
-        Assert.True(e.Query("s(done).").Success);
-    }
-
-    [Fact]
-    public void NativeGoal_ContentNotPrologLexable_SkippedRaw()
-    {
-        var e = new PrologEngine();
-        // The brace content contains an unbalanced apostrophe and an
-        // unbalanced double quote — un-lexable as Prolog. Only a RAW
-        // skip survives this.
-        e.ConsultString(
-            ":- set_prolog_flag(arity_compat, true).\n" +
-            "u(ok) :- { it's raw \" C text; }, true.\n");
-        Assert.True(e.Query("u(ok).").Success);
-    }
 
     [Fact]
     public void NativeGoal_Unterminated_ErrorDiagnosticNotCrash()
@@ -167,14 +141,15 @@ public class Chunk438Tests
     public void DcgFollowedByNormalClause_FlagResetPerClause()
     {
         var e = new PrologEngine();
-        // The saw-arrow state is per clause: the DCG rule's braces are
-        // Prolog; the NEXT (non-DCG) clause's braces are native again.
+        // The saw-arrow state is per clause: the DCG rule's braces are Prolog
+        // (Y is X+1 as an ordinary goal); the NEXT (non-DCG) clause's braces are
+        // native — here a compilable native-arithmetic block (R is 1+1).
         e.ConsultString(
             ":- set_prolog_flag(arity_compat, true).\n" +
             "inc(X) --> [X], { Y is X + 1 }, [Y].\n" +
-            "plain(ok) :- { native(stuff); }.\n");
+            "plain(R) :- { R is 1 + 1 }, integer(R).\n");
         Assert.True(e.Query("phrase(inc(1), [1, 2]).").Success);
-        Assert.True(e.Query("plain(ok).").Success);
+        Assert.True(e.Query("plain(2).").Success);
     }
 
     // ------------------------------------------------------------------

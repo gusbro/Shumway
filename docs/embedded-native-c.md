@@ -98,7 +98,8 @@ string_length_bytes(S, L) :-
 For every Prolog variable a block marshals, Shumway must determine its **.NET
 type** and its **direction** (input read on entry / output unified on exit). It
 does this from the surrounding **Prolog guards** plus the block's own structure. If
-it cannot, **the block is left inert** (a no-op, with a warning) — it does nothing.
+it cannot, **consulting fails with an error** (§7) — a block is never silently
+ignored.
 
 So: **guard the variables your block uses.**
 
@@ -189,24 +190,30 @@ function. Be aware of the trade-offs:
   noticeable in a large application with many assemblies;
 - it only finds a type with that exact full name — a differently named class is not
   discovered (use `UseNativeInterop` for those);
-- if no such class is found, every block that calls a native function is left inert.
+- if no such class is found, every block that calls a native function fails to
+  consult (§7).
 
 So in any real application, call `UseNativeInterop(typeof(YourClass))` explicitly.
 
 ---
 
-## 7. Graceful degradation
+## 7. Errors are loud — blocks are never silently ignored
 
-A block is left as a **no-op** (and a warning is written to standard error) when:
+A native block that the compiler cannot handle raises a **consult error** — it is
+never silently turned into a no-op. A no-op'd block would make the program
+misbehave without you noticing, so consulting fails instead, with a message naming
+the problem. This happens when:
 
-- it uses unsupported syntax — C control flow, or the deferred term/reftype tier
-  (`->`, `..`, `preftype`);
-- a variable's type or mode cannot be inferred (add a guard); or
-- it calls a native function your interop class does not provide.
+- the block uses **unsupported syntax** — C control flow, or the deferred
+  term/reftype tier (`->`, `..`, `preftype`);
+- a **variable's type or mode cannot be inferred** (add a guard, §4); or
+- it **calls a native function your interop class does not provide** (the message
+  names the function; register the class with `UseNativeInterop` and implement the
+  method).
 
-In every case the program still **consults and runs** — only that one block does
-nothing. This means a source that uses native code runs unchanged (blocks inert)
-even before you write the interop layer.
+So set up your interop class **before** consulting, and make sure every native
+function a block calls exists. If a source uses a native construct Shumway does not
+yet support, it will not consult until that support lands — by design.
 
 ---
 
@@ -258,7 +265,8 @@ System.Console.WriteLine(engine.Query("calc(3, 4, R).").Get<long>("R"));        
   as IL is a planned refinement (it does not change the surface you write).
 - **int / float / string tier.** Whole-term marshalling (Arity's `reftype` /
   `preftype` machinery, `fill_par` / `reftype_term`, `->` and `..`) and C control
-  flow are not supported yet; such blocks are left inert.
+  flow are not supported yet; a source using them raises a consult error (§7)
+  rather than running incorrectly.
 
 See `docs/architecture/adr/022-embedded-native-c-blocks.md` for the design and
 rationale.

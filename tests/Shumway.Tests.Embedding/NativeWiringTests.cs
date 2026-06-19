@@ -46,16 +46,28 @@ public sealed class NativeWiringTests
     }
 
     [Fact]
-    public void UnsupportedBlock_LeftInert_StillConsultsAndRuns()
+    public void UnsupportedBlock_IsAConsultError()
     {
-        // A reftype block (the deferred tier) fails to parse → left as the no-op
-        // $native_goal, so the predicate still consults and succeeds (the block
-        // does nothing). A warning is emitted to stderr.
+        // A reftype block (the deferred tier) cannot be compiled — consulting must
+        // FAIL, never silently no-op it (a no-op'd block would misbehave unnoticed).
         var e = new PrologEngine();
-        e.ConsultString(
+        var ex = Assert.Throws<InvalidOperationException>(() => e.ConsultString(
             ":- set_prolog_flag(arity_compat, true).\n" +
-            "p(ok) :- { X is ((*RefType)->ntype) }.\n");
+            "p(ok) :- { X is ((*RefType)->ntype) }.\n"));
+        Assert.Contains("native block", ex.Message);
+    }
 
-        Assert.True(e.Query("p(ok).").Success);
+    [Fact]
+    public void MissingInteropFunction_IsAConsultError()
+    {
+        // The interop class provides strcmp/sum but not 'nope' — consulting a block
+        // that calls it must fail loudly, naming the missing function.
+        var e = new PrologEngine();
+        e.UseNativeInterop(typeof(Interop));
+        var ex = Assert.Throws<InvalidOperationException>(() => e.ConsultString(
+            ":- set_prolog_flag(arity_compat, true).\n" +
+            ":- c.\nint nope(int);\n:- prolog.\n" +
+            "f(A, R) :- integer(A), { R is 'nope'(A) }, integer(R).\n"));
+        Assert.Contains("nope", ex.Message);
     }
 }

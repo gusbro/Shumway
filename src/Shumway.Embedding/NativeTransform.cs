@@ -12,11 +12,12 @@ namespace Shumway.Embedding;
 /// using the module's <c>:- c</c> symbol table (the captured
 /// <c>'$native_decls'</c> regions) for prototypes and globals.
 ///
-/// <para>Graceful by design: a block that the int/float/string tier cannot parse
-/// (the deferred term/reftype forms) or whose variables it cannot type is LEFT as
-/// the no-op <c>'$native_goal'/1</c> — the program still consults exactly as it
-/// did before the wiring; only the supported blocks become live. A warning is
-/// emitted for each skipped block.</para></summary>
+/// <para>Fails LOUDLY: a block that cannot be parsed (unsupported native syntax —
+/// the deferred term/reftype tier, C control flow), whose variables' type/mode
+/// cannot be inferred, or that calls a function the configured interop class does
+/// not provide, raises a consult error. It is never silently left inert — a
+/// no-op'd block would make the program misbehave without the author noticing.
+/// </para></summary>
 internal static class NativeTransform
 {
     private static int _counter;
@@ -45,14 +46,14 @@ internal static class NativeTransform
     {
         if (t is not CompoundTerm c) return t;
         if (c.Functor == "$native_goal" && c.Args.Length == 1 && c.Args[0] is StringTerm s)
-            return TransformBlock(s.Content, clauseTerm, cDecls, resolve) ?? t;
+            return TransformBlock(s.Content, clauseTerm, cDecls, resolve);
         var args = new Term[c.Args.Length];
         for (int i = 0; i < c.Args.Length; i++)
             args[i] = Rewrite(c.Args[i], clauseTerm, cDecls, resolve);
         return new CompoundTerm(c.Functor, args) { Position = c.Position };
     }
 
-    private static Term? TransformBlock(string text, Term clauseTerm, List<CDecl> cDecls,
+    private static Term TransformBlock(string text, Term clauseTerm, List<CDecl> cDecls,
         Func<string, System.Reflection.MethodInfo?> resolve)
     {
         List<CStmt> stmts;
@@ -62,28 +63,22 @@ internal static class NativeTransform
         }
         catch (CParseException ex)
         {
-            Warn($"embedded native block left inert (unsupported syntax): {ex.Message}");
-            return null;   // e.g. the deferred term/reftype tier
+            throw Error($"unsupported native syntax: {ex.Message} (offset {ex.Offset}). "
+                + "C control flow and the term/reftype tier are not compilable yet.");
         }
 
         var info = NativeInference.Analyze(clauseTerm, stmts, cDecls);
         if (info.Diagnostics.Count > 0)
-        {
-            Warn($"embedded native block left inert: {info.Diagnostics[0]}");
-            return null;
-        }
+            throw Error(info.Diagnostics[0]);
 
-        // Leave the block inert when an interop function it calls is not provided
-        // by the configured Shumway.Native.Interop class. This keeps a program
-        // whose interop layer is absent behaving exactly as the pre-wiring no-op
-        // (rather than failing at runtime on the missing method).
+        // Every interop function the block calls must be a public static method of
+        // the configured interop class — otherwise the program would misbehave
+        // silently. Fail at consult instead.
         foreach (var fn in CollectCallNames(stmts))
             if (resolve(fn) is null)
-            {
-                Warn($"embedded native block left inert: interop function '{fn}' "
-                    + "is not a public static method of Shumway.Native.Interop.");
-                return null;
-            }
+                throw Error($"calls '{fn}', which is not a public static method of the interop "
+                    + "class. Register the class with PrologEngine.UseNativeInterop(typeof(...)) "
+                    + "(or name it Shumway.Native.Interop for auto-discovery) and implement the method.");
 
         string name = "$nb$" + System.Threading.Interlocked.Increment(ref _counter);
         BuiltinsRegistry.Register(name, info.PrologVars.Count,
@@ -91,6 +86,9 @@ internal static class NativeTransform
         var callArgs = info.PrologVars.Select(v => (Term)new VarTerm(v.Name)).ToArray();
         return new CompoundTerm(name, callArgs);
     }
+
+    private static System.InvalidOperationException Error(string detail)
+        => new($"embedded native block: {detail}");
 
     /// <summary>The names of the non-intrinsic C functions a block calls — the
     /// ones that must resolve to Shumway.Native.Interop methods (MakeCString /
@@ -130,6 +128,4 @@ internal static class NativeTransform
         foreach (var a in c.Args) if (Mentions(a, functor)) return true;
         return false;
     }
-
-    private static void Warn(string msg) => System.Console.Error.WriteLine($"warning: {msg}");
 }
