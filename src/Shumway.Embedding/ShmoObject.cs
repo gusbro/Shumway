@@ -161,6 +161,15 @@ public sealed class ShmoObject
     /// it is the substrate for any future LTO pass.</summary>
     public IReadOnlyList<byte[]> ClauseTerms { get; }
 
+    /// <summary>ADR-022 item 1 — the module's embedded native blocks. The
+    /// compiler rewrites each <c>{ … }</c> block to a portable
+    /// <c>'$native_run'('$nb$…', Vars)</c> dispatch (in <see cref="Bytecode"/> and
+    /// <see cref="ClauseTerms"/>); the block's marshalling data travels here, so a
+    /// source-stripped bundle can run it. At load
+    /// <see cref="PrologEngine.LoadBundle(Bundle)"/> repopulates the engine's block
+    /// table from these. Empty for a module with no native blocks.</summary>
+    public IReadOnlyList<ShmoNativeBlock> NativeBlocks { get; }
+
     public ShmoObject(
         string moduleName,
         string source,
@@ -172,7 +181,8 @@ public sealed class ShmoObject
         ShmoBuildMode buildMode = ShmoBuildMode.Release,
         IReadOnlyList<ShmoDynamicSeed>? dynamicSeeds = null,
         IReadOnlyList<byte[]>? clauseTerms = null,
-        bool arityCompat = false)
+        bool arityCompat = false,
+        IReadOnlyList<ShmoNativeBlock>? nativeBlocks = null)
     {
         ModuleName = moduleName;
         Source = source;
@@ -185,6 +195,28 @@ public sealed class ShmoObject
         DynamicSeeds = dynamicSeeds ?? System.Array.Empty<ShmoDynamicSeed>();
         ClauseTerms = clauseTerms ?? System.Array.Empty<byte[]>();
         ArityCompat = arityCompat;
+        NativeBlocks = nativeBlocks ?? System.Array.Empty<ShmoNativeBlock>();
+    }
+}
+
+/// <summary>ADR-022 — one embedded native block's marshalling data, carried
+/// across the compile/load boundary. <see cref="Name"/> is the dispatch atom
+/// (<c>'$nb$…'</c>) the bytecode references; <see cref="RawText"/> is the block's
+/// statement source (re-parsed to the statement list at load — the C symbol table
+/// is not needed at run time, only for the compile-time inference already baked
+/// into <see cref="Vars"/>); <see cref="Vars"/> are the marshalled Prolog
+/// variables, in argument-register order.</summary>
+public sealed class ShmoNativeBlock
+{
+    public string Name { get; }
+    public string RawText { get; }
+    public IReadOnlyList<Shumway.Compiler.NativeC.NativeVar> Vars { get; }
+    public ShmoNativeBlock(string name, string rawText,
+        IReadOnlyList<Shumway.Compiler.NativeC.NativeVar> vars)
+    {
+        Name = name;
+        RawText = rawText;
+        Vars = vars;
     }
 }
 

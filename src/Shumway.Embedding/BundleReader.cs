@@ -118,8 +118,10 @@ public static class BundleReader
                 dynamicSeeds.Add(new ShmoDynamicSeed(
                     new PredicateRef(seedName, seedArity), encoded));
             }
+            // Native-blocks trailer (ADR-022).
+            var nativeBlocks = ReadNativeBlocks(br);
             entries[i] = new BundleEntry(name, source, compiled, compiledIl, defined,
-                compiledIlPatches, compiledIlEntries, dynamicSeeds);
+                compiledIlPatches, compiledIlEntries, dynamicSeeds, nativeBlocks);
         }
         // Foreign-assemblies trailer (chunk 247).
         uint asmCount = br.ReadUInt32();
@@ -191,5 +193,29 @@ public static class BundleReader
                 "Bundle: truncated string section (expected "
                 + $"{length} bytes, got {bytes.Length}).");
         return Encoding.UTF8.GetString(bytes);
+    }
+
+    /// <summary>ADR-022 — deserialise one entry's native blocks (mirrors
+    /// <see cref="BundleWriter.WriteNativeBlocks"/>).</summary>
+    private static List<ShmoNativeBlock> ReadNativeBlocks(BinaryReader br)
+    {
+        uint nbCount = br.ReadUInt32();
+        var blocks = new List<ShmoNativeBlock>((int)nbCount);
+        for (uint j = 0; j < nbCount; j++)
+        {
+            string nbName = ReadLengthPrefixedUtf8(br);
+            string rawText = ReadLengthPrefixedUtf8(br);
+            uint varCount = br.ReadUInt32();
+            var vars = new Shumway.Compiler.NativeC.NativeVar[varCount];
+            for (uint k = 0; k < varCount; k++)
+            {
+                string vName = ReadLengthPrefixedUtf8(br);
+                var kind = (Shumway.Compiler.NativeC.NativeKind)br.ReadByte();
+                var mode = (Shumway.Compiler.NativeC.NativeMode)br.ReadByte();
+                vars[k] = new Shumway.Compiler.NativeC.NativeVar(vName, kind, mode);
+            }
+            blocks.Add(new ShmoNativeBlock(nbName, rawText, vars));
+        }
+        return blocks;
     }
 }

@@ -956,7 +956,8 @@ public static class ShmoLinker
                     compiledBytecode: entryBytecode,
                     compiledIl: null,
                     defined: entryDefined,
-                    dynamicSeeds: obj.DynamicSeeds));
+                    dynamicSeeds: obj.DynamicSeeds,
+                    nativeBlocks: obj.NativeBlocks));
             }
             // Bake the precompiled prelude so a bare-loaded engine
             // (PrologEngine.FromBundle / the generated --exe) gets it without
@@ -1739,6 +1740,9 @@ public static class ShmoLinker
                     bw.Write(enc);
                 }
             }
+            // Native-blocks trailer (ADR-022). Shared serialiser so this in-line
+            // writer and BundleWriter emit byte-identical sections.
+            BundleWriter.WriteNativeBlocks(bw, e.NativeBlocks);
         }
         // Foreign-assemblies trailer (chunk 247). Must mirror
         // BundleWriter.ToBytes's section exactly so a bundle

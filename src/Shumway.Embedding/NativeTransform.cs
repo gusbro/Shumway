@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.Linq;
-using Shumway.Builtins;
 using Shumway.Compiler.Ast;
 using Shumway.Compiler.NativeC;
 
@@ -20,16 +19,26 @@ namespace Shumway.Embedding;
 /// </para></summary>
 internal static class NativeTransform
 {
-    private static int _counter;
-
+    /// <summary>Rewrites every captured <c>'$native_goal'(Text)</c> to a portable
+    /// <c>'$native_run'('$nb$…', V1..Vk)</c> dispatch and hands the analysed block
+    /// (name, variables, statements) to <paramref name="registerBlock"/> — which
+    /// stores it where it will be found at run time (the live engine's block table
+    /// in-process; a serialized bundle table for separate compilation). Block names
+    /// are <paramref name="namePrefix"/> + a per-call index, so the same source
+    /// compiled twice produces the same names (the baked bytecode references the
+    /// block by name and must match the table populated at load).</summary>
     public static List<Clause> Apply(IReadOnlyList<Clause> clauses, List<CDecl> cDecls,
-        Func<string, System.Reflection.MethodInfo?> resolveInterop)
+        Func<string, System.Reflection.MethodInfo?>? resolveInterop,
+        Action<string, NativeVar[], CStmt[], string> registerBlock,
+        string namePrefix)
     {
+        int index = 0;
         var result = new List<Clause>(clauses.Count);
         foreach (var clause in clauses)
         {
             if (!Mentions(clause.Term, "$native_goal")) { result.Add(clause); continue; }
-            result.Add(Clause.From(Rewrite(clause.Term, clause.Term, cDecls, resolveInterop)));
+            result.Add(Clause.From(Rewrite(clause.Term, clause.Term, cDecls,
+                resolveInterop, registerBlock, namePrefix, ref index)));
         }
         return result;
     }
@@ -42,19 +51,23 @@ internal static class NativeTransform
     // Rewrite occurrences of $native_goal(StringTerm) in `t`. `clauseTerm` is the
     // WHOLE clause (kept intact for guard-based inference).
     private static Term Rewrite(Term t, Term clauseTerm, List<CDecl> cDecls,
-        Func<string, System.Reflection.MethodInfo?> resolve)
+        Func<string, System.Reflection.MethodInfo?>? resolve,
+        Action<string, NativeVar[], CStmt[], string> registerBlock, string namePrefix, ref int index)
     {
         if (t is not CompoundTerm c) return t;
         if (c.Functor == "$native_goal" && c.Args.Length == 1 && c.Args[0] is StringTerm s)
-            return TransformBlock(s.Content, clauseTerm, cDecls, resolve);
+            return TransformBlock(s.Content, clauseTerm, cDecls, resolve,
+                registerBlock, namePrefix + (index++));
         var args = new Term[c.Args.Length];
         for (int i = 0; i < c.Args.Length; i++)
-            args[i] = Rewrite(c.Args[i], clauseTerm, cDecls, resolve);
+            args[i] = Rewrite(c.Args[i], clauseTerm, cDecls, resolve,
+                registerBlock, namePrefix, ref index);
         return new CompoundTerm(c.Functor, args) { Position = c.Position };
     }
 
     private static Term TransformBlock(string text, Term clauseTerm, List<CDecl> cDecls,
-        Func<string, System.Reflection.MethodInfo?> resolve)
+        Func<string, System.Reflection.MethodInfo?>? resolve,
+        Action<string, NativeVar[], CStmt[], string> registerBlock, string name)
     {
         List<CStmt> stmts;
         try
@@ -73,18 +86,27 @@ internal static class NativeTransform
 
         // Every interop function the block calls must be a public static method of
         // the configured interop class — otherwise the program would misbehave
-        // silently. Fail at consult instead.
-        foreach (var fn in CollectCallNames(stmts))
-            if (resolve(fn) is null)
-                throw Error($"calls '{fn}', which is not a public static method of the interop "
-                    + "class. Register the class with PrologEngine.UseNativeInterop(typeof(...)) "
-                    + "(or name it Shumway.Native.Interop for auto-discovery) and implement the method.");
+        // silently. Fail at consult instead. (Compile-time / bundle path passes
+        // resolve == null: the interop class is unknown then, so resolution is
+        // enforced at run time when the block executes, and at link by
+        // --foreign-dll. Either way an unresolved call is a hard error, never a
+        // silent no-op.)
+        if (resolve is not null)
+            foreach (var fn in CollectCallNames(stmts))
+                if (resolve(fn) is null)
+                    throw Error($"calls '{fn}', which is not a public static method of the interop "
+                        + "class. Register the class with PrologEngine.UseNativeInterop(typeof(...)) "
+                        + "(or name it Shumway.Native.Interop for auto-discovery) and implement the method.");
 
-        string name = "$nb$" + System.Threading.Interlocked.Increment(ref _counter);
-        BuiltinsRegistry.Register(name, info.PrologVars.Count,
-            NativeBlockRunner.Build(info.PrologVars, stmts));
-        var callArgs = info.PrologVars.Select(v => (Term)new VarTerm(v.Name)).ToArray();
-        return new CompoundTerm(name, callArgs);
+        // Hand the analysed block to the sink (engine table or bundle table), and
+        // emit the portable dispatch `'$native_run'('$nb$…', V1..Vk)`.
+        var vars = info.PrologVars.ToArray();
+        registerBlock(name, vars, stmts.ToArray(), text);
+        var callArgs = new Term[vars.Length + 1];
+        callArgs[0] = new AtomTerm(name);
+        for (int i = 0; i < vars.Length; i++)
+            callArgs[i + 1] = new VarTerm(vars[i].Name);
+        return new CompoundTerm("$native_run", callArgs);
     }
 
     private static System.InvalidOperationException Error(string detail)

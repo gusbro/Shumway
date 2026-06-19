@@ -91,6 +91,21 @@ public static class ShmoWriter
             bw.Write(encoded);
         }
 
+        // nativeBlocks trailer (ADR-022 — embedded native-block marshalling).
+        bw.Write((uint)obj.NativeBlocks.Count);
+        foreach (var nb in obj.NativeBlocks)
+        {
+            WriteLengthPrefixedUtf8(bw, nb.Name);
+            WriteLengthPrefixedUtf8(bw, nb.RawText);
+            bw.Write((uint)nb.Vars.Count);
+            foreach (var v in nb.Vars)
+            {
+                WriteLengthPrefixedUtf8(bw, v.Name);
+                bw.Write((byte)v.Kind);
+                bw.Write((byte)v.Mode);
+            }
+        }
+
         bw.Flush();
         return ms.ToArray();
     }

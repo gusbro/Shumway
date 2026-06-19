@@ -154,9 +154,28 @@ public static class ShmoReader
             clauseTerms[i] = bytes;
         }
 
+        // nativeBlocks trailer (ADR-022 — embedded native-block marshalling).
+        uint nbCount = br.ReadUInt32();
+        var nativeBlocks = new ShmoNativeBlock[nbCount];
+        for (uint i = 0; i < nbCount; i++)
+        {
+            string nbName = ReadLengthPrefixedUtf8(br);
+            string rawText = ReadLengthPrefixedUtf8(br);
+            uint varCount = br.ReadUInt32();
+            var vars = new Shumway.Compiler.NativeC.NativeVar[varCount];
+            for (uint j = 0; j < varCount; j++)
+            {
+                string vName = ReadLengthPrefixedUtf8(br);
+                var vKind = (Shumway.Compiler.NativeC.NativeKind)br.ReadByte();
+                var vMode = (Shumway.Compiler.NativeC.NativeMode)br.ReadByte();
+                vars[j] = new Shumway.Compiler.NativeC.NativeVar(vName, vKind, vMode);
+            }
+            nativeBlocks[i] = new ShmoNativeBlock(nbName, rawText, vars);
+        }
+
         return new ShmoObject(moduleName, source, bytecode,
             defined, ensureLinked, callGraph, qrefs, buildMode, dynamicSeeds,
-            clauseTerms, arityCompat);
+            clauseTerms, arityCompat, nativeBlocks);
     }
 
     private static string ReadLengthPrefixedUtf8(BinaryReader br)

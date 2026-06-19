@@ -194,6 +194,10 @@ public static class ShmoCompiler
         var tabledSet = new HashSet<PredicateRef>();
         var qualifiedRefs = new List<QualifiedPredicateRef>();
         var rawClauses = new List<Clause>();
+        // ADR-022 — accumulate the raw text of every `:- c` region (carried as a
+        // synthetic `'$native_decls'(Text)` directive) so CompileFromParts can
+        // build the C symbol table for native-block type inference.
+        var nativeDecls = new System.Text.StringBuilder();
 
         foreach (var clause in allClauses)
         {
@@ -201,6 +205,12 @@ public static class ShmoCompiler
                 && clause.Term is CompoundTerm d
                 && d.Functor == ":-" && d.Args.Length == 1)
             {
+                if (d.Args[0] is CompoundTerm nd && nd.Functor == "$native_decls"
+                    && nd.Args.Length == 1 && nd.Args[0] is StringTerm ndText)
+                {
+                    nativeDecls.Append(ndText.Content).Append('\n');
+                    continue;
+                }
                 try
                 {
                     ProcessDirective(d.Args[0], ref moduleName,
@@ -241,7 +251,8 @@ public static class ShmoCompiler
         return CompileFromParts(
             moduleName,
             source, rawClauses, publicSet, dynamicSet, ensureLinked,
-            qualifiedRefs, buildMode, errors, warnings, arityEverOn, tabledSet);
+            qualifiedRefs, buildMode, errors, warnings, arityEverOn, tabledSet,
+            nativeDecls.Length > 0 ? nativeDecls.ToString() : null);
     }
 
     /// <summary>Chunk 411 — the compile back-half, shared by
@@ -265,7 +276,8 @@ public static class ShmoCompiler
         List<ShmoCompileError> errors,
         List<ShmoCompileError>? warnings = null,
         bool arityCompat = false,
-        HashSet<PredicateRef>? tabledSet = null)
+        HashSet<PredicateRef>? tabledSet = null,
+        string? nativeDecls = null)
     {
         // Partition raw clauses: dynamic-head ones become DynamicSeeds
         // (RAW), the rest go through the same DcgTransform +
@@ -280,6 +292,18 @@ public static class ShmoCompiler
             PredicateRef? head = TryExtractHead(clause);
             if (head is not null && dynamicSet.Contains(head.Value))
             {
+                // ADR-022 — a native `{ … }` block inside a DYNAMIC predicate is
+                // not supported: dynamic clauses are rehydrated RAW at load and the
+                // native transform never runs on them, so the block would silently
+                // no-op. Fail loudly (the user mandate: blocks are never inert).
+                if (NativeTransform.HasNativeBlock(new[] { clause }))
+                {
+                    errors.Add(new ShmoCompileError(
+                        $"embedded native block in dynamic predicate {head.Value} "
+                        + "is not supported (move the block to a static predicate).",
+                        clause.Position.Line, clause.Position.Column));
+                    return new ShmoCompileResult(null, errors, warnings);
+                }
                 if (!dynamicSeedAccum.TryGetValue(head.Value, out var seedList))
                 {
                     seedList = new List<byte[]>();
@@ -290,6 +314,35 @@ public static class ShmoCompiler
             else
             {
                 staticInput.Add(clause);
+            }
+        }
+
+        // ADR-022 — embedded native blocks. Rewrite each static-clause
+        // `$native_goal(Text)` to the portable `'$native_run'('$nb$mod$i', Vars)`
+        // dispatch and collect the per-block marshalling data, so the baked
+        // bytecode + persisted ClauseTerms reference the dispatch and the .shmo
+        // carries the block table (rehydrated into the engine's block table at
+        // load). Interop resolution is NOT validated here (the interop class isn't
+        // known at compile time) — it is enforced at run time when a block executes
+        // (an unresolved call throws) and at link time by `--foreign-dll`.
+        var nativeBlocks = new List<ShmoNativeBlock>();
+        if (NativeTransform.HasNativeBlock(staticInput))
+        {
+            var cDecls = string.IsNullOrEmpty(nativeDecls)
+                ? new List<Shumway.Compiler.NativeC.CDecl>()
+                : Shumway.Compiler.NativeC.CParser.ParseDeclarations(nativeDecls);
+            try
+            {
+                staticInput = NativeTransform.Apply(staticInput, cDecls,
+                    resolveInterop: null,
+                    (name, vars, _, rawText) =>
+                        nativeBlocks.Add(new ShmoNativeBlock(name, rawText, vars)),
+                    "$nb$" + moduleName + "$");
+            }
+            catch (InvalidOperationException ex)
+            {
+                errors.Add(new ShmoCompileError(ex.Message, 0, 0));
+                return new ShmoCompileResult(null, errors, warnings);
             }
         }
 
@@ -568,7 +621,8 @@ public static class ShmoCompiler
             buildMode: buildMode,
             dynamicSeeds: dynamicSeeds,
             clauseTerms: clauseTerms,
-            arityCompat: arityCompat);
+            arityCompat: arityCompat,
+            nativeBlocks: nativeBlocks);
         return new ShmoCompileResult(obj, errors, warnings);
     }
 

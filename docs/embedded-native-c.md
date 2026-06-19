@@ -11,9 +11,11 @@ is compiled into code that marshals values between Prolog and .NET and calls
 `Shumway.Native.Interop`. The embedded C is, in effect, a small DSL for calling
 into your .NET interop layer with Prolog↔.NET marshalling generated for you.
 
-> **Status.** This page describes the int / float / string tier, working
-> in-process (via `ConsultString`). The term/reftype tier, IL emission, and the
-> bundle / `--foreign-dll` deployment path are in progress — see *Limitations*.
+> **Status.** This page describes the int / float / string tier, working both
+> in-process (via `ConsultString`) and through the separate-compilation / bundle
+> pipeline (`shumway-compile` → `shumway-link`, including source-stripped Release
+> bundles and the generated `--exe`). The term/reftype tier and IL emission are in
+> progress — see *Limitations*.
 
 ---
 
@@ -255,12 +257,32 @@ System.Console.WriteLine(engine.Query("calc(3, 4, R).").Get<long>("R"));        
 
 ---
 
-## 9. Limitations (work in progress)
+## 9. Bundles and separate compilation
 
-- **In-process only.** Native blocks are wired when a source is *consulted* into an
-  engine. The separate-compilation / bundle path (`shumway-link --foreign-dll`,
-  source-stripped release bundles, the generated `--exe`) and the configurable
-  interop namespace are not wired yet.
+Native blocks survive the whole `.pl → .shmo → .shum` pipeline. The compiler
+rewrites each `{ … }` block to a portable internal dispatch and records the
+block's marshalling data in the object/bundle; at load the engine repopulates its
+block table, so even a **source-stripped Release bundle** (and the native `--exe`
+it produces) runs the blocks. There is one rule to remember:
+
+- **Register your interop class before loading the bundle.** Interop resolution is
+  not baked at compile time (the compiler doesn't know your class), so call
+  `engine.UseNativeInterop(typeof(YourClass))` *before* `engine.LoadBundle(...)`,
+  exactly as for `ConsultString`. A block that calls a function the running
+  engine's interop class does not provide raises a hard error when it executes
+  (§7) — never a silent no-op.
+
+A native block inside a `:- dynamic` predicate is rejected at compile time (its
+clauses are rehydrated without the native transform, so the block would be
+inert). Put native blocks in static predicates.
+
+> `shumway-link --foreign-dll <YourInterop.dll>` records the assembly so a bundle
+> can auto-load it at run time; this validates the block's calls at link time too.
+
+---
+
+## 10. Limitations (work in progress)
+
 - **Interpreted.** A block currently runs through a small interpreter; emitting it
   as IL is a planned refinement (it does not change the surface you write).
 - **int / float / string tier.** Whole-term marshalling (Arity's `reftype` /

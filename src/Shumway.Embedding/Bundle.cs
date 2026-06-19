@@ -159,6 +159,13 @@ public sealed class BundleEntry
     /// <see cref="PrologEngine.ConsultString(string)"/>.</summary>
     public IReadOnlyList<ShmoDynamicSeed> DynamicSeeds { get; }
 
+    /// <summary>ADR-022 — this module's embedded native blocks (marshalling data
+    /// for each <c>{ … }</c> block, keyed by its dispatch atom). At load
+    /// <see cref="PrologEngine.LoadBundle(Bundle)"/> repopulates the engine's block
+    /// table so a source-stripped bundle runs the blocks. See
+    /// <see cref="ShmoObject.NativeBlocks"/>.</summary>
+    public IReadOnlyList<ShmoNativeBlock> NativeBlocks { get; }
+
     public BundleEntry(
         string moduleName, string source,
         byte[]? compiledBytecode = null,
@@ -166,7 +173,8 @@ public sealed class BundleEntry
         IReadOnlyList<ShmoDefinedPredicate>? defined = null,
         byte[]? compiledIlPatches = null,
         byte[]? compiledIlEntries = null,
-        IReadOnlyList<ShmoDynamicSeed>? dynamicSeeds = null)
+        IReadOnlyList<ShmoDynamicSeed>? dynamicSeeds = null,
+        IReadOnlyList<ShmoNativeBlock>? nativeBlocks = null)
     {
         ModuleName = moduleName;
         Source = source;
@@ -176,5 +184,6 @@ public sealed class BundleEntry
         CompiledIlEntries = compiledIlEntries;
         Defined = defined ?? Array.Empty<ShmoDefinedPredicate>();
         DynamicSeeds = dynamicSeeds ?? Array.Empty<ShmoDynamicSeed>();
+        NativeBlocks = nativeBlocks ?? Array.Empty<ShmoNativeBlock>();
     }
 }

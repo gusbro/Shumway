@@ -74,6 +74,18 @@ public static class MetaBuiltins
             Control, "repeat",
             "Succeeds, and succeeds again on every backtrack — an unbounded choice point.");
 
+        // ADR-022 item 1 — the embedded-native-block dispatcher. The native
+        // transform rewrites a captured block to `'$native_run'('$nb$…', V1..Vk)`;
+        // this fixed builtin (one impl, registered for every arity the var count
+        // can take) reads the block name from register 0, looks the block up in the
+        // engine's table, and runs it with the variables in registers 1.. . Using a
+        // fixed builtin + a name argument (rather than a per-block synthesized
+        // builtin) keeps the bytecode reference portable cross-process — the
+        // CompiledModuleCodec round-trips the name, and there is no per-block id to
+        // keep consistent between compile and load.
+        for (int arity = 1; arity <= 33; arity++)
+            BuiltinsRegistry.Register("$native_run", arity, NativeRun);
+
         BuiltinsRegistry.Register("assertz", 1, Assertz,
             Database, "assertz(+Clause)", "Adds a clause to the end of its dynamic predicate.");
         BuiltinsRegistry.Register("asserta", 1, Asserta,
@@ -2718,6 +2730,22 @@ public static class MetaBuiltins
     {
         ArmRepeat(engine, engine.BuiltinReturnPc);
         return true;
+    }
+
+    /// <summary>ADR-022 — runs the embedded native block named by argument 0,
+    /// with its Prolog variables in registers 1.. (see the registration in
+    /// <see cref="EnsureRegistered"/>).</summary>
+    public static bool NativeRun(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new System.InvalidOperationException("'$native_run' requires a PrologEngine host.");
+        var nameTerm = RegisterMarshalling.ReadRegisterAsTerm(engine, 0);
+        if (nameTerm is not AtomTerm at)
+            throw new System.InvalidOperationException("'$native_run': block name must be an atom.");
+        var block = host.NativeBlock(at.Name)
+            ?? throw new System.InvalidOperationException(
+                $"'$native_run': native block '{at.Name}' is not registered.");
+        return NativeBlockRunner.RunBlock(engine, block.Vars, block.Stmts, regOffset: 1);
     }
 
     private static void ArmRepeat(Engine engine, int returnPc)

@@ -24,38 +24,38 @@ public static class NativeBlockRunner
     public static BuiltinImpl Build(
         IReadOnlyList<NativeVar> vars,
         IReadOnlyList<CStmt> stmts)
+        => engine => RunBlock(engine, vars, stmts, regOffset: 0);
+
+    /// <summary>Runs a native block against the engine: the block's Prolog
+    /// variables are in argument registers <paramref name="regOffset"/> ..
+    /// <c>regOffset + vars.Count - 1</c> (in <paramref name="vars"/> order). Used
+    /// by <see cref="Build"/> (offset 0, a per-block builtin) and by the
+    /// <c>'$native_run'</c> dispatch (offset 1, after the block-name argument).</summary>
+    public static bool RunBlock(Engine engine, IReadOnlyList<NativeVar> vars,
+        IReadOnlyList<CStmt> stmts, int regOffset)
     {
-        // register index per Prolog variable name
+        var host = (PrologEngine)engine.Host!;
+        Func<string, MethodInfo?> resolveInterop = host.ResolveNativeInterop;
         var index = new Dictionary<string, int>();
         for (int i = 0; i < vars.Count; i++) index[vars[i].Name] = i;
-        var kindOf = vars.ToDictionary(v => v.Name, v => v.Kind);
 
-        return engine =>
+        var env = new Dictionary<string, object?>();
+        foreach (var v in vars)
+            if (v.Mode == NativeMode.Input)
+                env[v.Name] = ReadInput(host, engine, regOffset + index[v.Name], v.Kind);
+
+        var outputs = new Dictionary<string, object?>();
+        foreach (var st in stmts)
+            ExecStmt(st, env, outputs, index, resolveInterop);
+
+        foreach (var (name, value) in outputs)
         {
-            var host = (PrologEngine)engine.Host!;
-            Func<string, MethodInfo?> resolveInterop = host.ResolveNativeInterop;
-            var env = new Dictionary<string, object?>();
-
-            // ----- marshal inputs (Prolog → .NET) -----
-            foreach (var v in vars)
-                if (v.Mode == NativeMode.Input)
-                    env[v.Name] = ReadInput(host, engine, index[v.Name], v.Kind);
-
-            // ----- run the statements -----
-            var outputs = new Dictionary<string, object?>();
-            foreach (var st in stmts)
-                ExecStmt(st, env, outputs, index, resolveInterop);
-
-            // ----- marshal outputs (.NET → Prolog) + unify -----
-            foreach (var (name, value) in outputs)
-            {
-                if (!index.ContainsKey(name)) continue;   // an output that is not a register var
-                var term = ToTerm(host, kindOf[name], value);
-                if (!RegisterMarshalling.UnifyRegisterWithTerm(engine, index[name], term))
-                    return false;
-            }
-            return true;
-        };
+            if (!index.TryGetValue(name, out int i)) continue;   // not a register var
+            var term = ToTerm(host, vars[i].Kind, value);
+            if (!RegisterMarshalling.UnifyRegisterWithTerm(engine, regOffset + i, term))
+                return false;
+        }
+        return true;
     }
 
     // -----------------------------------------------------------------------

@@ -2719,7 +2719,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     defined: shmo.Defined,
                     compiledIlPatches: null,
                     compiledIlEntries: null,
-                    dynamicSeeds: shmo.DynamicSeeds));
+                    dynamicSeeds: shmo.DynamicSeeds,
+                    nativeBlocks: shmo.NativeBlocks));
             }
             effectiveEntries = combined;
         }
@@ -3256,6 +3257,19 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // `module$name`-mangled.
             if (entry.ModuleName != DefaultModuleName)
                 _dynamicSeedModule[fid] = entry.ModuleName;
+        }
+
+        // ADR-022 — repopulate this engine's native-block table so the baked
+        // `'$native_run'('$nb$…', Vars)` dispatch (in the entry's bytecode) finds
+        // its block at run time. The C statement source is re-parsed here (the C
+        // symbol table is only needed for the compile-time inference, already
+        // baked into the serialized vars); a malformed block would have failed at
+        // compile, so a parse error here is a corrupt bundle — surfaced, not
+        // swallowed.
+        foreach (var nb in entry.NativeBlocks)
+        {
+            var stmts = Shumway.Compiler.NativeC.CParser.ParseStatements(nb.RawText);
+            AddNativeBlock(nb.Name, nb.Vars.ToArray(), stmts.ToArray());
         }
 
         var module = CompiledModuleCodec.Decode(entry.CompiledBytecode);
@@ -4062,6 +4076,26 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
         return _nativeInterop.TryGetValue(name, out var m) ? m : null;
     }
+
+    // ADR-022 item 1 — per-engine table of embedded native blocks, keyed by a
+    // stable name. The `'$native_goal'(Text)` capture is rewritten to
+    // `'$native_run'('$nb$…', V1..Vk)`; the `$native_run` builtin looks the block
+    // up here by name (portable cross-process — the bytecode references the name,
+    // not a synthesized-builtin id) and runs it. Populated at consult (in-process)
+    // and at bundle load (from the serialized table).
+    private readonly Dictionary<string,
+        (Shumway.Compiler.NativeC.NativeVar[] Vars, Shumway.Compiler.NativeC.CStmt[] Stmts)>
+        _nativeBlocks = new();
+
+    private int _nativeBlockConsultSeq;
+
+    internal void AddNativeBlock(string name,
+        Shumway.Compiler.NativeC.NativeVar[] vars, Shumway.Compiler.NativeC.CStmt[] stmts)
+        => _nativeBlocks[name] = (vars, stmts);
+
+    internal (Shumway.Compiler.NativeC.NativeVar[] Vars, Shumway.Compiler.NativeC.CStmt[] Stmts)?
+        NativeBlock(string name)
+        => _nativeBlocks.TryGetValue(name, out var b) ? b : null;
 
     /// <summary>Save-state chunk 264 — writes a snapshot of this engine's
     /// state to <paramref name="path"/> as a V6 .shum bundle.
@@ -4962,16 +4996,19 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             clauses = TransformTabledPredicates(clauses, tabledFunctors, publics);
 
         // ADR-022 — embedded native-code wiring. Rewrite each captured
-        // `$native_goal(RawText)` body goal into a per-block synthesized foreign
-        // (the block's Prolog vars as args), using the C symbol table parsed from
-        // the accumulated `:- c` regions. Only runs when a block is present;
-        // unsupported blocks (the deferred term/reftype tier) stay no-op.
+        // `$native_goal(RawText)` body goal into a portable `'$native_run'('$nb$…',
+        // Vars)` dispatch and register the analysed block in this engine's block
+        // table, using the C symbol table parsed from the accumulated `:- c`
+        // regions. Only runs when a block is present; an unsupported block raises a
+        // consult error (it is never silently left inert).
         if (NativeTransform.HasNativeBlock(clauses))
         {
             var cDecls = nativeDecls is null
                 ? new List<Shumway.Compiler.NativeC.CDecl>()
                 : Shumway.Compiler.NativeC.CParser.ParseDeclarations(nativeDecls.ToString());
-            clauses = NativeTransform.Apply(clauses, cDecls, ResolveNativeInterop);
+            string prefix = "$nb$" + (_nativeBlockConsultSeq++) + "$";
+            clauses = NativeTransform.Apply(clauses, cDecls, ResolveNativeInterop,
+                (name, vars, stmts, _) => AddNativeBlock(name, vars, stmts), prefix);
         }
 
         // Phase 19+ — implicit_dynamic pre-scan. When the flag is on

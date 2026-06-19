@@ -108,7 +108,8 @@ public static class BundleWriter
                     effective[i].Defined,
                     compiledIlPatches,
                     compiledIlEntries,
-                    effective[i].DynamicSeeds);
+                    effective[i].DynamicSeeds,
+                    effective[i].NativeBlocks);
             }
         }
 
@@ -158,6 +159,8 @@ public static class BundleWriter
                     bw.Write(enc);
                 }
             }
+            // Native-blocks trailer (ADR-022).
+            WriteNativeBlocks(bw, entry.NativeBlocks);
         }
         // Foreign-assemblies trailer (chunk 247) after the
         // per-entry payloads. Pre-V5 readers stop after the last
@@ -262,7 +265,8 @@ public static class BundleWriter
                 entry.ModuleName, source: "", compiledBytecode: entry.CompiledBytecode,
                 compiledIl: null, defined: entry.Defined,
                 compiledIlPatches: null, compiledIlEntries: null,
-                dynamicSeeds: entry.DynamicSeeds);
+                dynamicSeeds: entry.DynamicSeeds,
+                nativeBlocks: entry.NativeBlocks);
             engine.LoadBundle(new Bundle(new[] { bareEntry }));
         }
         else if (!string.IsNullOrEmpty(entry.Source))
@@ -508,5 +512,27 @@ public static class BundleWriter
         byte[] bytes = Encoding.UTF8.GetBytes(s);
         bw.Write((uint)bytes.Length);
         bw.Write(bytes);
+    }
+
+    /// <summary>ADR-022 — serialise one entry's native blocks. Shared by this
+    /// writer and <see cref="ShmoLinker"/>'s in-line bundle serialiser so a bundle
+    /// round-trips identically through either; mirrored by
+    /// <see cref="BundleReader"/>.</summary>
+    internal static void WriteNativeBlocks(BinaryWriter bw,
+        IReadOnlyList<ShmoNativeBlock> blocks)
+    {
+        bw.Write((uint)blocks.Count);
+        foreach (var nb in blocks)
+        {
+            WriteLengthPrefixedUtf8(bw, nb.Name);
+            WriteLengthPrefixedUtf8(bw, nb.RawText);
+            bw.Write((uint)nb.Vars.Count);
+            foreach (var v in nb.Vars)
+            {
+                WriteLengthPrefixedUtf8(bw, v.Name);
+                bw.Write((byte)v.Kind);
+                bw.Write((byte)v.Mode);
+            }
+        }
     }
 }
