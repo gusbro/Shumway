@@ -4083,18 +4083,15 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     // up here by name (portable cross-process — the bytecode references the name,
     // not a synthesized-builtin id) and runs it. Populated at consult (in-process)
     // and at bundle load (from the serialized table).
-    private readonly Dictionary<string,
-        (Shumway.Compiler.NativeC.NativeVar[] Vars, Shumway.Compiler.NativeC.CStmt[] Stmts)>
-        _nativeBlocks = new();
+    private readonly Dictionary<string, NativeBlockEntry> _nativeBlocks = new();
 
     private int _nativeBlockConsultSeq;
 
     internal void AddNativeBlock(string name,
         Shumway.Compiler.NativeC.NativeVar[] vars, Shumway.Compiler.NativeC.CStmt[] stmts)
-        => _nativeBlocks[name] = (vars, stmts);
+        => _nativeBlocks[name] = new NativeBlockEntry(vars, stmts);
 
-    internal (Shumway.Compiler.NativeC.NativeVar[] Vars, Shumway.Compiler.NativeC.CStmt[] Stmts)?
-        NativeBlock(string name)
+    internal NativeBlockEntry? NativeBlock(string name)
         => _nativeBlocks.TryGetValue(name, out var b) ? b : null;
 
     /// <summary>Save-state chunk 264 — writes a snapshot of this engine's

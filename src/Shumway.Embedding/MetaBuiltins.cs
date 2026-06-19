@@ -2745,7 +2745,20 @@ public static class MetaBuiltins
         var block = host.NativeBlock(at.Name)
             ?? throw new System.InvalidOperationException(
                 $"'$native_run': native block '{at.Name}' is not registered.");
-        return NativeBlockRunner.RunBlock(engine, block.Vars, block.Stmts, regOffset: 1);
+        // Compile the block to a delegate on first execution (in engine context,
+        // so interop resolves to concrete methods); cache it, with the interpreter
+        // as the fallback when compilation isn't possible (an unsupported
+        // construct, or Native AOT). Item 2 — replaces the interpreter on the hot
+        // path with JIT-compiled IL.
+        if (!block.CompileTried)
+        {
+            block.Compiled = NativeBlockCompiler.TryCompile(
+                block.Vars, block.Stmts, regOffset: 1, host.ResolveNativeInterop);
+            block.CompileTried = true;
+        }
+        return block.Compiled is not null
+            ? block.Compiled(engine)
+            : NativeBlockRunner.RunBlock(engine, block.Vars, block.Stmts, regOffset: 1);
     }
 
     private static void ArmRepeat(Engine engine, int returnPc)

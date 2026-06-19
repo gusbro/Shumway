@@ -285,10 +285,16 @@ inert). Put native blocks in static predicates.
 
 ---
 
-## 10. Limitations (work in progress)
+## 10. Performance and limitations
 
-- **Interpreted.** A block currently runs through a small interpreter; emitting it
-  as IL is a planned refinement (it does not change the surface you write).
+- **Compiled at run time.** On its first execution a block is compiled to a
+  delegate (an Expression tree, which the JIT turns into IL) — no per-call
+  dictionaries, boxing or tree-walk, and interop calls go direct. The small
+  interpreter remains as a fallback for constructs the compiler does not yet
+  handle and for Native AOT (where no IL is generated at run time). None of this
+  changes the surface you write. *Inlining a block directly into an
+  ahead-of-time-compiled (`--with-compiled-il`) predicate's IL is a further
+  refinement still in progress.*
 - **int / float / string tier.** Whole-term marshalling (Arity's `reftype` /
   `preftype` machinery, `fill_par` / `reftype_term`, `->` and `..`) and C control
   flow are not supported yet; a source using them raises a consult error (§7)

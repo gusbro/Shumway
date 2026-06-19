@@ -8,6 +8,21 @@ using Shumway.Core;
 
 namespace Shumway.Embedding;
 
+/// <summary>ADR-022 — a registered native block plus its lazily-compiled fast
+/// path. The interpreter (<see cref="NativeBlockRunner.RunBlock"/>) is always
+/// available; on first execution <c>'$native_run'</c> compiles the block to a
+/// delegate (<see cref="NativeBlockCompiler"/>) in engine context and caches it,
+/// falling back to the interpreter when compilation isn't possible (an
+/// unsupported construct, or Native AOT — no runtime IL generation).</summary>
+public sealed class NativeBlockEntry
+{
+    public NativeVar[] Vars { get; }
+    public CStmt[] Stmts { get; }
+    internal Func<Engine, bool>? Compiled;
+    internal bool CompileTried;
+    public NativeBlockEntry(NativeVar[] vars, CStmt[] stmts) { Vars = vars; Stmts = stmts; }
+}
+
 /// <summary>ADR-022 step 4 (first cut) — turns an analysed native block into a
 /// <see cref="BuiltinImpl"/>: a synthesized foreign whose argument registers are
 /// the block's Prolog variables (in <paramref name="vars"/> order). It marshals
