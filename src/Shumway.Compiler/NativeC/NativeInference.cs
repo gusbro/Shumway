@@ -153,6 +153,10 @@ public static class NativeInference
                 break;
             case CAddrOfExpr a: WalkExpr(a.Operand, prologVars, referenced, globalNames, globalsUsed, intrinsicIn, intrinsicOut); break;
             case CDerefExpr d: WalkExpr(d.Operand, prologVars, referenced, globalNames, globalsUsed, intrinsicIn, intrinsicOut); break;
+            case CBinaryExpr bin:
+                WalkExpr(bin.Left, prologVars, referenced, globalNames, globalsUsed, intrinsicIn, intrinsicOut);
+                WalkExpr(bin.Right, prologVars, referenced, globalNames, globalsUsed, intrinsicIn, intrinsicOut);
+                break;
             case CCallExpr c:
                 bool inStr = c.Name == "MakeCString";
                 bool outStr = c.Name is "MakePrologString" or "MakePrologStringEx";
@@ -191,8 +195,22 @@ public static class NativeInference
                 : globalType.TryGetValue(id.Name, out var gt) ? MapType(gt, typedefs)
                 : null,
             CCallExpr c when protoReturn.TryGetValue(c.Name, out var rt) => MapType(rt, typedefs),
+            CBinaryExpr b => CombineKind(
+                InferExprKind(b.Left, localType, globalType, protoReturn, typedefs),
+                InferExprKind(b.Right, localType, globalType, protoReturn, typedefs)),
             _ => null,
         };
+
+    /// <summary>The result kind of a binary arithmetic expression: floating wins
+    /// over integer, long over int. Null if either operand's kind is unknown.</summary>
+    private static NativeKind? CombineKind(NativeKind? a, NativeKind? b)
+    {
+        if (a is null || b is null) return null;
+        if (a is NativeKind.Double or NativeKind.Float || b is NativeKind.Double or NativeKind.Float)
+            return NativeKind.Double;
+        if (a == NativeKind.Long || b == NativeKind.Long) return NativeKind.Long;
+        return NativeKind.Int;
+    }
 
     /// <summary>Maps a (typedef-resolved) C type to a <see cref="NativeKind"/>, or
     /// null when it is outside the int/float/string tier (e.g. a reftype pointer —

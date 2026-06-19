@@ -109,10 +109,36 @@ public sealed class CParser
     // Expressions
     // -----------------------------------------------------------------------
 
-    private CExpr ParseExpr()
+    private CExpr ParseExpr() => ParseAdditive();
+
+    private CExpr ParseAdditive()
     {
-        if (Is(CTokenKind.Amp)) { Next(); return new CAddrOfExpr(ParseExpr()); }
-        if (Is(CTokenKind.Star)) { Next(); return new CDerefExpr(ParseExpr()); }
+        var e = ParseMultiplicative();
+        while (Is(CTokenKind.Plus) || Is(CTokenKind.Minus))
+        {
+            char op = Is(CTokenKind.Plus) ? '+' : '-';
+            Next();
+            e = new CBinaryExpr(op, e, ParseMultiplicative());
+        }
+        return e;
+    }
+
+    private CExpr ParseMultiplicative()
+    {
+        var e = ParseUnary();
+        while (Is(CTokenKind.Star) || Is(CTokenKind.Slash))
+        {
+            char op = Is(CTokenKind.Star) ? '*' : '/';
+            Next();
+            e = new CBinaryExpr(op, e, ParseUnary());
+        }
+        return e;
+    }
+
+    private CExpr ParseUnary()
+    {
+        if (Is(CTokenKind.Amp)) { Next(); return new CAddrOfExpr(ParseUnary()); }
+        if (Is(CTokenKind.Star)) { Next(); return new CDerefExpr(ParseUnary()); }
         return ParsePrimary();
     }
 

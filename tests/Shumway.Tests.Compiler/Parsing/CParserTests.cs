@@ -94,6 +94,23 @@ public sealed class CParserTests
         Assert.IsType<CBindStmt>(s[1]);
     }
 
+    [Fact]
+    public void Arithmetic_PrecedenceAndAssignment()
+    {
+        // `X is A + B * 2` → A + (B * 2); `buffer_len = (Len - 1)`.
+        var s = CParser.ParseStatements("X is A + B * 2; buffer_len = (Len - 1)");
+        var add = Assert.IsType<CBinaryExpr>(Assert.IsType<CBindStmt>(s[0]).Value);
+        Assert.Equal('+', add.Op);
+        Assert.Equal("A", Assert.IsType<CIdentExpr>(add.Left).Name);
+        var mul = Assert.IsType<CBinaryExpr>(add.Right);   // B * 2 binds tighter
+        Assert.Equal('*', mul.Op);
+        Assert.Equal(2L, Assert.IsType<CIntExpr>(mul.Right).Value);
+
+        var asg = Assert.IsType<CAssignStmt>(s[1]);
+        Assert.Equal("buffer_len", Assert.IsType<CIdentExpr>(asg.Target).Name);
+        Assert.Equal('-', Assert.IsType<CBinaryExpr>(asg.Value).Op);
+    }
+
     // ----- declarations -----
 
     [Fact]

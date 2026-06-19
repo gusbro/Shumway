@@ -129,6 +129,9 @@ public static class NativeBlockRunner
                     if (outVar is not null) outputs[outVar] = src is null ? null : Eval(src, env, outputs, resolve);
                     return null;
                 }
+            case CBinaryExpr b:
+                return EvalBinary(b.Op,
+                    Eval(b.Left, env, outputs, resolve), Eval(b.Right, env, outputs, resolve));
             case CCallExpr c:
                 return CallInterop(c, env, outputs, resolve);
             default:
@@ -157,6 +160,19 @@ public static class NativeBlockRunner
             args[i] = i < ps.Length ? ConvertArg(v, ps[i].ParameterType) : v;
         }
         return m.Invoke(null, args);
+    }
+
+    private static object EvalBinary(char op, object? l, object? r)
+    {
+        if (l is double || r is double)
+        {
+            double a = System.Convert.ToDouble(l), b = System.Convert.ToDouble(r);
+            return op switch { '+' => a + b, '-' => a - b, '*' => a * b, '/' => a / b,
+                _ => throw new System.NotSupportedException($"native operator '{op}'") };
+        }
+        long la = System.Convert.ToInt64(l), lb = System.Convert.ToInt64(r);
+        return op switch { '+' => la + lb, '-' => la - lb, '*' => la * lb, '/' => la / lb,
+            _ => throw new System.NotSupportedException($"native operator '{op}'") };
     }
 
     private static object? ConvertArg(object? v, System.Type t)

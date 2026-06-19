@@ -85,6 +85,18 @@ public sealed class NativeBlockRunnerTests
     }
 
     [Fact]
+    public void Arithmetic_InBind_RunsEndToEnd()
+    {
+        // Z is A * 2 + 1 — simple native arithmetic, no Interop call. integer(Z)
+        // after the block types the output.
+        var (n, _) = Emit(
+            "f(A, Z):- integer(A), { Z is A * 2 + 1 }, integer(Z).\n", "", "arith");
+        var e = new PrologEngine();
+        Assert.True(e.Query($"{n}(10, Z), Z == 21.").Success);
+        Assert.True(e.Query($"{n}(0, Z), Z == 1.").Success);
+    }
+
+    [Fact]
     public void MakePrologString_UnifiesOutputString()
     {
         var (n, _) = Emit(

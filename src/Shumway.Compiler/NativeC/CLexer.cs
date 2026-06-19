@@ -10,7 +10,7 @@ namespace Shumway.Compiler.NativeC;
 public enum CTokenKind
 {
     Ident, QuotedName, Int, String,
-    Colon, Semicolon, Comma, Equals, Amp, Star,
+    Colon, Semicolon, Comma, Equals, Amp, Star, Plus, Minus, Slash,
     LParen, RParen, LBracket, RBracket, LBrace, RBrace,
     Other, Eof,
 }
@@ -151,6 +151,9 @@ public static class CLexer
                 '=' => CTokenKind.Equals,
                 '&' => CTokenKind.Amp,
                 '*' => CTokenKind.Star,
+                '+' => CTokenKind.Plus,
+                '-' => CTokenKind.Minus,
+                '/' => CTokenKind.Slash,
                 '(' => CTokenKind.LParen,
                 ')' => CTokenKind.RParen,
                 '[' => CTokenKind.LBracket,

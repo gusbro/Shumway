@@ -96,6 +96,10 @@ public sealed record CAddrOfExpr(CExpr Operand) : CExpr;
 /// <summary><c>*x</c> — pointer dereference.</summary>
 public sealed record CDerefExpr(CExpr Operand) : CExpr;
 
+/// <summary>A simple binary arithmetic expression — <c>Len - 1</c>, <c>A + B</c>.
+/// <see cref="Op"/> is one of <c>+ - * /</c>.</summary>
+public sealed record CBinaryExpr(char Op, CExpr Left, CExpr Right) : CExpr;
+
 /// <summary>The <c>(void)</c> "no argument" marker, e.g.
 /// <c>'get_exepath'(void)</c>.</summary>
 public sealed record CVoidExpr : CExpr;
