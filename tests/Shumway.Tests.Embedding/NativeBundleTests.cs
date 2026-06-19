@@ -104,6 +104,47 @@ public sealed class NativeBundleTests
     }
 
     [Fact]
+    public void Tier1Inline_NativeBlock_Runs()
+    {
+        // Item 2 stage C: when cmp/3 promotes to Tier-1 IL, its `$native_run` call
+        // is inlined directly into the IL (the interop strcmp is a direct call).
+        // Validates the inlined IL produces correct results.
+        int before = Shumway.Compiler.Il.IlPredicateCompiler.NativeBlocksInlined;
+        var e = new PrologEngine();
+        e.UseNativeInterop(typeof(Interop));
+        e.IlPromotion.Threshold = 1;
+        e.ConsultString(CmpProgram);
+        for (int i = 0; i < 5; i++)
+            Assert.True(e.Query("cmp(abc, abd, R), R == -1.").Success);
+        Assert.True(e.Query("cmp(abc, abc, R), R == 0.").Success);
+        Assert.True(e.Query("cmp(xyz, abc, R), R == 1.").Success);
+        // confirm the block was actually inlined into IL (not run via dispatch).
+        Assert.True(Shumway.Compiler.Il.IlPredicateCompiler.NativeBlocksInlined > before);
+    }
+
+    [Fact]
+    public void Tier1Inline_ArithmeticWithLocal_Runs()
+    {
+        // A heavier inline: a block-local (T), a binary (T * 2) and two interop
+        // calls, all promoted into the predicate's IL.
+        const string program =
+            ":- set_prolog_flag(arity_compat, true).\n" +
+            ":- public calc/3.\n" +
+            ":- c.\nlong sum(int, int);\n:- prolog.\n" +
+            "calc(A, B, R) :- integer(A), integer(B), " +
+            "{ T: long; T is 'sum'(A, B); R is T * 2 }, integer(R).\n";
+        int before = Shumway.Compiler.Il.IlPredicateCompiler.NativeBlocksInlined;
+        var e = new PrologEngine();
+        e.UseNativeInterop(typeof(Interop));
+        e.IlPromotion.Threshold = 1;
+        e.ConsultString(program);
+        for (int i = 0; i < 5; i++)
+            Assert.Equal(14L, e.Query("calc(3, 4, R).").Get<long>("R"));
+        Assert.Equal(-2L, e.Query("calc(2, -3, R).").Get<long>("R"));
+        Assert.True(Shumway.Compiler.Il.IlPredicateCompiler.NativeBlocksInlined > before);
+    }
+
+    [Fact]
     public void ReleaseBundle_MissingInterop_ThrowsAtRun()
     {
         // The bundle compiles (interop is not resolved at compile time), but a

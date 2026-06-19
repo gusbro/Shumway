@@ -55,6 +55,20 @@ public sealed class IlPromotionStore
     /// reflection in its type initialiser is not reached.</summary>
     private IlPredicateCompiler Compiler => _compilerInstance ??= new IlPredicateCompiler();
 
+    /// <summary>ADR-022 item 2 — supplies the native-block inline context (the
+    /// engine sets this). Consulted on the IL-compile worker thread so the
+    /// thread-static context is established there; null → no inlining.</summary>
+    public Func<Shumway.Compiler.NativeC.NativeInlineContext?>? NativeInlineProvider { get; set; }
+
+    /// <summary>Runs <paramref name="compile"/> with this engine's native-block
+    /// inline context established on the current thread (the IL-compile worker).</summary>
+    private T WithNativeInline<T>(Func<T> compile)
+    {
+        var prev = Compiler.BeginNativeInline(NativeInlineProvider?.Invoke());
+        try { return compile(); }
+        finally { Compiler.EndNativeInline(prev); }
+    }
+
     /// <summary>Stack size for the worker thread that drives every
     /// Sigil-emitted IL compile. Defensive belt — the size
     /// threshold (<see cref="MaxIlPromotionBytecodeBytes"/>) keeps
@@ -172,7 +186,8 @@ public sealed class IlPromotionStore
         // parse_args/2). Run on an expanded-stack worker thread —
         // StackOverflowException is uncatchable, so prevention is the
         // only option.
-        var result = RunOnLargeStack(() => Compiler.CompileInstrumented(predicate, calleeMap));
+        var result = RunOnLargeStack(() =>
+            WithNativeInline(() => Compiler.CompileInstrumented(predicate, calleeMap)));
         _delegates[functorId] = result.Delegate;
         if (result.ProfileKey >= 0)
             _pgoProfileKeys[functorId] = result.ProfileKey;
@@ -204,7 +219,7 @@ public sealed class IlPromotionStore
             if (!predicateLookup.TryGetValue(functorId, out var predicate))
                 continue;   // predicate not in this query's program — retry later
             var optimized = RunOnLargeStack(
-                () => Compiler.CompileOptimized(predicate, profileKey, calleeMap));
+                () => WithNativeInline(() => Compiler.CompileOptimized(predicate, profileKey, calleeMap)));
             _delegates[functorId] = optimized;
             _pgoProfileKeys.Remove(functorId);
             _pgoOptimized.Add(functorId);
@@ -284,7 +299,7 @@ public sealed class IlPromotionStore
             _unpromotable.Add(functorId);
             return null;
         }
-        var del = RunOnLargeStack(() => Compiler.Compile(predicate, calleeMap));
+        var del = RunOnLargeStack(() => WithNativeInline(() => Compiler.Compile(predicate, calleeMap)));
         _delegates[functorId] = del;
         return del;
     }

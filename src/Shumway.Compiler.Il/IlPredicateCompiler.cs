@@ -2691,6 +2691,36 @@ public sealed class IlPredicateCompiler
     [System.ThreadStaticAttribute] private static List<IlPatchSite>? _persistPatches;
     [System.ThreadStaticAttribute] private static int _persistNextSentinel;
 
+    // ADR-022 item 2 — set (by Shumway.Embedding, which owns the block table and
+    // interop class) while compiling, so a `'$native_run'('$nb$…', regs)` call is
+    // inlined directly into the predicate's IL instead of dispatched as a builtin.
+    // Null → no inlining (the call stays a normal builtin dispatch, run via the
+    // interpreter / runtime delegate). All emitted calls are MemberRefs (interop +
+    // marshalling), which the CLR resolves by name/signature at load — so this is
+    // persisted-IL-safe with no entry in the Phase-17 patch table.
+    [System.ThreadStaticAttribute]
+    private static Shumway.Compiler.NativeC.NativeInlineContext? _nativeInline;
+
+    /// <summary>Enable native-block inlining for subsequent compiles on this
+    /// thread (see <see cref="_nativeInline"/>). Returns the previous context so
+    /// the caller can restore it.</summary>
+    public Shumway.Compiler.NativeC.NativeInlineContext? BeginNativeInline(
+        Shumway.Compiler.NativeC.NativeInlineContext? context)
+    {
+        var prev = _nativeInline;
+        _nativeInline = context;
+        return prev;
+    }
+
+    public void EndNativeInline(Shumway.Compiler.NativeC.NativeInlineContext? restore)
+        => _nativeInline = restore;
+
+    /// <summary>ADR-022 item 2 — total native blocks inlined into IL across all
+    /// compiles on this process (test/diagnostic observability: distinguishes a
+    /// real inline from a fall-back to builtin dispatch, which is otherwise
+    /// behaviourally identical).</summary>
+    public static int NativeBlocksInlined;
+
     /// <summary>Begin a persisted-emit batch. Subsequent
     /// <see cref="EmitPersistedMethod"/> calls (until
     /// <see cref="EndPersistEmit"/>) accumulate patch sites into the
@@ -2797,6 +2827,11 @@ public sealed class IlPredicateCompiler
         // this is the local-naming half of making that true).
         string lt = regionCtx is null ? "" : $"_rm{regionCtx.CurrentMemberIndex}";
         int pc = start;
+        // ADR-022 item 2 — the atom most recently put into argument register 0, or
+        // -1. A `'$native_run'('$nb$…', regs)` goal loads its block-name atom into
+        // A0 just before the call (see the disasm in NativeBundleTests); tracking it
+        // lets the CallBuiltin handler recover which block to inline.
+        int regZeroAtom = -1;
         while (pc < end)
         {
             var op = (Opcode)code[pc];
@@ -2934,6 +2969,7 @@ public sealed class IlPredicateCompiler
             {
                 int atomId = BytecodeIO.ReadInt32(code, pc + 1);
                 int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                if (arg == 0) regZeroAtom = atomId;   // ADR-022 — track A0 for $native_run
                 emit.LoadArgument(0);
                 emit.LoadConstant(arg);
                 EmitAtomId(emit, atomId);
@@ -3221,6 +3257,21 @@ public sealed class IlPredicateCompiler
                 // instead of per-walk name compares.
                 var builtinEntry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
                 int builtinArity = builtinEntry.Arity;
+
+                // ADR-022 item 2 — inline an embedded native block directly into
+                // this method's IL instead of dispatching `$native_run`. Declines
+                // (falls through to the normal builtin dispatch, which runs the
+                // block via the interpreter / runtime delegate) when no inline
+                // context is set, the block can't be recovered, or it uses a
+                // construct outside the compilable tier.
+                if (_nativeInline is not null && builtinEntry.Name == "$native_run"
+                    && NativeBlockInliner.TryEmit(emit, _nativeInline, regZeroAtom, failLabel))
+                {
+                    System.Threading.Interlocked.Increment(ref NativeBlocksInlined);
+                    regZeroAtom = -1;
+                    pc += OpcodeTable.Get(op).Size;
+                    continue;
+                }
 
                 if (builtinEntry.IsCall || builtinEntry.IsDollarCall)
                 {

@@ -1543,6 +1543,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // they spawn sub-PrologEngines — Builtins can't reference Embedding.
         MetaBuiltins.EnsureRegistered();
 
+        // ADR-022 item 2 — let Tier-1 IL inline this engine's native blocks at
+        // their `$native_run` call sites. The provider returns null until a block
+        // is registered, so non-native programs pay nothing.
+        IlPromotion.NativeInlineProvider = GetNativeInlineContext;
+
         // Consult the internal prelude — Prolog-level definitions of
         // multi-solution predicates (member/2, clause/2, current_predicate/1)
         // that ride the standard WAM choice-point machinery instead of
@@ -4093,6 +4098,47 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
     internal NativeBlockEntry? NativeBlock(string name)
         => _nativeBlocks.TryGetValue(name, out var b) ? b : null;
+
+    private Shumway.Compiler.NativeC.NativeInlineContext? _nativeInlineContext;
+
+    /// <summary>ADR-022 item 2 — the context the IL compiler uses to inline this
+    /// engine's native blocks (build-time IL). Null until a block is registered;
+    /// then built once (the marshalling handles are constant; the block lookup and
+    /// interop resolver close over this engine, so they track later state).</summary>
+    internal Shumway.Compiler.NativeC.NativeInlineContext? GetNativeInlineContext()
+    {
+        if (_nativeBlocks.Count == 0) return null;
+        return _nativeInlineContext ??= BuildNativeInlineContext();
+    }
+
+    private Shumway.Compiler.NativeC.NativeInlineContext BuildNativeInlineContext()
+    {
+        var fromTerm = typeof(PrologEngine).GetMethod(nameof(FromTerm))!;
+        var toTerm = typeof(PrologEngine).GetMethod(nameof(ToTerm))!;
+        return new Shumway.Compiler.NativeC.NativeInlineContext
+        {
+            BlockProvider = n =>
+            {
+                var e = NativeBlock(n);
+                return e is null ? null
+                    : new Shumway.Compiler.NativeC.NativeBlockBody(e.Vars, e.Stmts);
+            },
+            InteropResolver = ResolveNativeInterop,
+            ReadRegisterAsTerm = typeof(RegisterMarshalling)
+                .GetMethod(nameof(RegisterMarshalling.ReadRegisterAsTerm))!,
+            UnifyRegisterWithTerm = typeof(RegisterMarshalling)
+                .GetMethod(nameof(RegisterMarshalling.UnifyRegisterWithTerm))!,
+            HostGetter = typeof(Engine).GetProperty(nameof(Engine.Host))!.GetGetMethod()!,
+            HostType = typeof(PrologEngine),
+            FromTermLong = fromTerm.MakeGenericMethod(typeof(long)),
+            FromTermDouble = fromTerm.MakeGenericMethod(typeof(double)),
+            FromTermString = fromTerm.MakeGenericMethod(typeof(string)),
+            ToTermLong = toTerm.MakeGenericMethod(typeof(long)),
+            ToTermDouble = toTerm.MakeGenericMethod(typeof(double)),
+            AtomTermCtor = typeof(Shumway.Compiler.Ast.AtomTerm)
+                .GetConstructor(new[] { typeof(string) })!,
+        };
+    }
 
     /// <summary>Save-state chunk 264 — writes a snapshot of this engine's
     /// state to <paramref name="path"/> as a V6 .shum bundle.
