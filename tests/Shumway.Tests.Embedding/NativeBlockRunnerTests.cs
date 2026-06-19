@@ -26,7 +26,6 @@ public sealed class NativeBlockRunnerTests
         public static long add(long a, long b) => a + b;
         public static string banner() => "blint";
     }
-    private static MethodInfo? Resolve(string name) => typeof(Interop).GetMethod(name);
 
     private static IEnumerable<CompoundTerm> Find(Term t, string f, int a)
     {
@@ -53,7 +52,7 @@ public sealed class NativeBlockRunnerTests
 
         string name = "nbtest_" + label;
         BuiltinsRegistry.Register(name, info.PrologVars.Count,
-            NativeBlockRunner.Build(info.PrologVars, stmts, Resolve));
+            NativeBlockRunner.Build(info.PrologVars, stmts));
         return (name, info.PrologVars.Count);
     }
 
@@ -66,7 +65,7 @@ public sealed class NativeBlockRunnerTests
             "strcmp_p(LS, RS, X):- LLen=255, RLen=255, "
             + "{ 'MakeCString'(lbuf, LLen, &LS); 'MakeCString'(rbuf, RLen, &RS); X is 'strcmp'(lbuf, rbuf) }, !.\n",
             "char lbuf[255];\nchar rbuf[255];\nint strcmp(const char*, const char*);\n", "strcmp");
-        var e = new PrologEngine();
+        var e = new PrologEngine(); e.UseNativeInterop(typeof(Interop));
         Assert.True(e.Query($"{n}(abc, abc, X), X == 0.").Success);
         Assert.True(e.Query($"{n}(abc, abd, X), X == -1.").Success);
         Assert.True(e.Query($"{n}(abd, abc, X), X == 1.").Success);
@@ -79,7 +78,7 @@ public sealed class NativeBlockRunnerTests
         var (n, _) = Emit(
             "f(A, B, Z):- integer(A), integer(B), { Z is 'add'(A, B) }.\n",
             "long add(int, int);\n", "add");
-        var e = new PrologEngine();
+        var e = new PrologEngine(); e.UseNativeInterop(typeof(Interop));
         Assert.True(e.Query($"{n}(2, 3, Z), Z == 5.").Success);
         Assert.True(e.Query($"{n}(40, 2, Z), Z == 42.").Success);
     }
@@ -91,7 +90,7 @@ public sealed class NativeBlockRunnerTests
         // after the block types the output.
         var (n, _) = Emit(
             "f(A, Z):- integer(A), { Z is A * 2 + 1 }, integer(Z).\n", "", "arith");
-        var e = new PrologEngine();
+        var e = new PrologEngine(); e.UseNativeInterop(typeof(Interop));
         Assert.True(e.Query($"{n}(10, Z), Z == 21.").Success);
         Assert.True(e.Query($"{n}(0, Z), Z == 1.").Success);
     }
@@ -102,7 +101,7 @@ public sealed class NativeBlockRunnerTests
         var (n, _) = Emit(
             "g(Out):- { 'MakePrologString'('banner'(void), &Out) }.\n",
             "const char* banner(void);\n", "banner");
-        var e = new PrologEngine();
+        var e = new PrologEngine(); e.UseNativeInterop(typeof(Interop));
         Assert.True(e.Query($"{n}(Out), Out == blint.").Success);
     }
 }

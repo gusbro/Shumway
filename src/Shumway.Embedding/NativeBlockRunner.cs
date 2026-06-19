@@ -17,14 +17,13 @@ namespace Shumway.Embedding;
 /// tier is handled — the term/reftype tier is deferred.</summary>
 public static class NativeBlockRunner
 {
-    /// <param name="resolveInterop">Maps a C function name to the implementing
-    /// <see cref="MethodInfo"/> (a <c>public static</c> of the interop class).
-    /// Supplied by the linker's <c>--foreign-dll</c> reflection (step 5); a test
-    /// passes its own class.</param>
+    /// <summary>Builds the foreign for a block. The interop resolver is taken
+    /// from the engine the builtin is invoked on (<see cref="PrologEngine.
+    /// ResolveNativeInterop"/>), so the same synthesized builtin works for any
+    /// engine and any configured interop class.</summary>
     public static BuiltinImpl Build(
         IReadOnlyList<NativeVar> vars,
-        IReadOnlyList<CStmt> stmts,
-        Func<string, MethodInfo?> resolveInterop)
+        IReadOnlyList<CStmt> stmts)
     {
         // register index per Prolog variable name
         var index = new Dictionary<string, int>();
@@ -34,6 +33,7 @@ public static class NativeBlockRunner
         return engine =>
         {
             var host = (PrologEngine)engine.Host!;
+            Func<string, MethodInfo?> resolveInterop = host.ResolveNativeInterop;
             var env = new Dictionary<string, object?>();
 
             // ----- marshal inputs (Prolog → .NET) -----
@@ -44,7 +44,7 @@ public static class NativeBlockRunner
             // ----- run the statements -----
             var outputs = new Dictionary<string, object?>();
             foreach (var st in stmts)
-                ExecStmt(st, env, outputs, resolveInterop);
+                ExecStmt(st, env, outputs, index, resolveInterop);
 
             // ----- marshal outputs (.NET → Prolog) + unify -----
             foreach (var (name, value) in outputs)
@@ -84,14 +84,20 @@ public static class NativeBlockRunner
         };
 
     private static void ExecStmt(CStmt st, Dictionary<string, object?> env,
-        Dictionary<string, object?> outputs, Func<string, MethodInfo?> resolve)
+        Dictionary<string, object?> outputs, Dictionary<string, int> prologVars,
+        Func<string, MethodInfo?> resolve)
     {
         switch (st)
         {
             case CVarDeclStmt:
                 break;   // a local declaration — storage materialises on first assignment
             case CBindStmt b:
-                outputs[b.Var] = Eval(b.Value, env, outputs, resolve);
+                // `Var is e` binds an OUTPUT Prolog variable (goes to `outputs`,
+                // unified at the end) — but the same `is` form also binds a
+                // block-local intermediate (e.g. `T is sum(A,B)` where T is read
+                // by a later statement); that goes to the local environment.
+                (prologVars.ContainsKey(b.Var) ? outputs : env)[b.Var] =
+                    Eval(b.Value, env, outputs, resolve);
                 break;
             case CAssignStmt { Target: CIdentExpr id } a:
                 env[id.Name] = Eval(a.Value, env, outputs, resolve);
@@ -112,7 +118,8 @@ public static class NativeBlockRunner
             case CIntExpr n: return n.Value;
             case CStringExpr s: return s.Value;
             case CIdentExpr id:
-                return env.TryGetValue(id.Name, out var val) ? val : null;
+                return env.TryGetValue(id.Name, out var val) ? val
+                    : outputs.TryGetValue(id.Name, out var ov) ? ov : null;
             case CCallExpr { Name: "MakeCString" } mk:
                 // buf := the input Prolog string named by `&Str`.
                 {

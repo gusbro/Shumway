@@ -4024,6 +4024,45 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// loaded into a given engine.</para></summary>
     public void UseClpr() => ConsultString(Clpr.Source);
 
+    // ADR-022 — the interop class whose public static methods back the C
+    // functions called from embedded native `{...}` blocks. Defaults to
+    // auto-discovering `Shumway.Native.Interop` across the loaded assemblies;
+    // UseNativeInterop overrides it with an explicit class.
+    private Dictionary<string, System.Reflection.MethodInfo>? _nativeInterop;
+
+    /// <summary>Binds the class whose <c>public static</c> methods implement the
+    /// C functions called from embedded native blocks (ADR-022). Call before
+    /// consulting Arity sources that use <c>{...}</c> blocks. Without an explicit
+    /// call the engine auto-discovers a class named <c>Shumway.Native.Interop</c>
+    /// in the loaded assemblies.</summary>
+    public void UseNativeInterop(Type interopClass)
+    {
+        ArgumentNullException.ThrowIfNull(interopClass);
+        _nativeInterop = interopClass
+            .GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .GroupBy(m => m.Name)
+            .ToDictionary(g => g.Key, g => g.First());   // C has no overloading
+    }
+
+    /// <summary>Resolves a native-block C function name to its implementing
+    /// method, auto-discovering <c>Shumway.Native.Interop</c> on first use if
+    /// <see cref="UseNativeInterop"/> was never called. Returns null when no such
+    /// method exists.</summary>
+    internal System.Reflection.MethodInfo? ResolveNativeInterop(string name)
+    {
+        if (_nativeInterop is null)
+        {
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                Type? t = null;
+                try { t = asm.GetType("Shumway.Native.Interop"); } catch { }
+                if (t is not null) { UseNativeInterop(t); break; }
+            }
+            _nativeInterop ??= new Dictionary<string, System.Reflection.MethodInfo>();
+        }
+        return _nativeInterop.TryGetValue(name, out var m) ? m : null;
+    }
+
     /// <summary>Save-state chunk 264 — writes a snapshot of this engine's
     /// state to <paramref name="path"/> as a V6 .shum bundle.
     ///
@@ -4746,6 +4785,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         HashSet<int>? pendingMultifile = null;
         HashSet<int>? tabledFunctors = null;
         Dictionary<int, List<Shumway.Compiler.Modes.ModeDeclaration>>? pendingModes = null;
+        // ADR-022 — accumulated raw text of this consult's `:- c` regions (the
+        // captured `$native_decls` directives), parsed into the C symbol table
+        // for the embedded native-block transform below.
+        System.Text.StringBuilder? nativeDecls = null;
 
         foreach (var clause in rawClauses)
         {
@@ -4811,6 +4854,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 foreach (var (n, a) in tableSpecs)
                     tabledFunctors.Add(FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a));
+            }
+            else if (body is CompoundTerm { Functor: "$native_decls", Args: [StringTerm cText] })
+            {
+                // ADR-022 — a captured `:- c` region. Accumulate its raw C text
+                // (in source order) for the symbol table the block transform uses.
+                (nativeDecls ??= new System.Text.StringBuilder()).Append(cText.Content).Append('\n');
             }
             else if (body is CompoundTerm spf
                      && spf.Functor == "set_prolog_flag"
@@ -4911,6 +4960,19 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // routing so it only sees the static clauses.
         if (tabledFunctors is not null && tabledFunctors.Count > 0)
             clauses = TransformTabledPredicates(clauses, tabledFunctors, publics);
+
+        // ADR-022 — embedded native-code wiring. Rewrite each captured
+        // `$native_goal(RawText)` body goal into a per-block synthesized foreign
+        // (the block's Prolog vars as args), using the C symbol table parsed from
+        // the accumulated `:- c` regions. Only runs when a block is present;
+        // unsupported blocks (the deferred term/reftype tier) stay no-op.
+        if (NativeTransform.HasNativeBlock(clauses))
+        {
+            var cDecls = nativeDecls is null
+                ? new List<Shumway.Compiler.NativeC.CDecl>()
+                : Shumway.Compiler.NativeC.CParser.ParseDeclarations(nativeDecls.ToString());
+            clauses = NativeTransform.Apply(clauses, cDecls, ResolveNativeInterop);
+        }
 
         // Phase 19+ — implicit_dynamic pre-scan. When the flag is on
         // (the default), walk every clause body for a literal
