@@ -238,6 +238,12 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("$sub_atom_enum",            5, MultiSolutionHelpers.SubAtomEnum);
         // Chunk 408 — branch-cut barrier capture (MetaTransform cut transparency).
         BuiltinsRegistry.Register("$get_cut_barrier",          1, MultiSolutionHelpers.GetCutBarrier);
+        // Phase 30 (ADR-022) step 1 — Arity embedded native goal placeholder.
+        // The parser now emits '$native_goal'(RawCText) for a `{ ... }` block
+        // (capturing the raw span instead of dropping it). Until the native
+        // codegen lands (step 4) it is a no-op that succeeds — same runtime
+        // behaviour as the previous `true` substitution.
+        BuiltinsRegistry.Register("$native_goal",              1, ControlBuiltins.True);
 
         // String-oriented builtins (chunk 40).
         BuiltinsRegistry.Register("string_length", 2, StringBuiltins.StringLength,

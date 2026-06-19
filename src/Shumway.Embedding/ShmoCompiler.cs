@@ -49,6 +49,10 @@ public static class ShmoCompiler
         "op", "set_prolog_flag", "char_conversion",
         "discontiguous", "multifile", "table", "mode",
         "c", "prolog",
+        // Phase 30 (ADR-022) step 1 — the synthetic directive the ClauseReader
+        // emits to carry a captured `:- c` region's raw declaration text. An
+        // ignored directive until the C-subset parser consumes it (step 2).
+        "$native_decls",
     };
 
     /// <summary>Chunk 436 — unknown directives whose arity_compat

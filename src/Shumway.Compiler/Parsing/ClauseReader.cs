@@ -210,7 +210,12 @@ public sealed class ClauseReader
             if (clause.Kind == ClauseKind.Directive)
             {
                 ProcessDirective(clause);
-                if (TryHandleAritySectionDirective(clause)) continue;
+                if (TryHandleAritySectionDirective(clause, out var sectionRepl))
+                {
+                    // `:- c.` → captured `$native_decls` directive; `:- prolog.` → drop.
+                    if (sectionRepl is not null) yield return sectionRepl;
+                    continue;
+                }
             }
 
             yield return clause;
@@ -225,8 +230,9 @@ public sealed class ClauseReader
     /// Prolog mode is a silent no-op. Returns true when the directive
     /// was consumed here (the caller drops it — it never reaches the
     /// compile/consult directive pass).</summary>
-    private bool TryHandleAritySectionDirective(Clause clause)
+    private bool TryHandleAritySectionDirective(Clause clause, out Clause? replacement)
     {
+        replacement = null;
         if (!_flags.ArityCompat) return false;
         if (clause.Term is not CompoundTerm d || d.Args.Length != 1
             || d.Args[0] is not AtomTerm a)
@@ -236,7 +242,21 @@ public sealed class ClauseReader
             // The lexer takes over the raw character stream; a stale
             // peeked token would replay ahead of the resumed input.
             _parser.DiscardLookahead();
-            _lexer.SkipNativeCodeSection();
+            string declsText = _lexer.SkipNativeCodeSection();
+            // Phase 30 (ADR-022) step 1 — capture the raw `:- c` declaration
+            // text in a synthetic `:- '$native_decls'(RawText)` directive (raw
+            // text as a non-interned StringTerm) so a later stage can hand it to
+            // the C-subset parser. Until then it is an ignored directive
+            // (`$native_decls` is in ShmoCompiler.RecognizedDirectives so no
+            // arity_compat warning fires).
+            replacement = Clause.From(new CompoundTerm(":-",
+                new Term[]
+                {
+                    new CompoundTerm("$native_decls",
+                        new Term[] { new StringTerm(declsText) { Position = clause.Position } })
+                        { Position = clause.Position },
+                })
+                { Position = clause.Position });
             return true;
         }
         return a.Name == "prolog";
@@ -300,8 +320,11 @@ public sealed class ClauseReader
                             errorEntry = ClauseOrError.Error(dirEx.Message, dirEx.Position);
                             parsed = null;
                         }
-                        if (parsed is not null && TryHandleAritySectionDirective(parsed))
-                            parsed = null;   // consumed (`:- c.` / `:- prolog.`)
+                        if (parsed is not null
+                            && TryHandleAritySectionDirective(parsed, out var sectionRepl))
+                            // `:- c.` → captured `$native_decls` directive (yielded
+                            // below); `:- prolog.` → null (dropped).
+                            parsed = sectionRepl;
                     }
                     else
                     {

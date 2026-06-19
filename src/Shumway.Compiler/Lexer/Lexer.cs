@@ -187,17 +187,27 @@ public sealed class Lexer
     /// through <see cref="Advance"/>); <c>#line</c> markers inside the
     /// C text are deliberately NOT interpreted — positions continue
     /// the current numbering, which stays monotonic and sane.</summary>
-    public void SkipNativeCodeSection()
+    public string SkipNativeCodeSection()
     {
+        // Phase 30 (ADR-022) step 1 — return the RAW C declaration text of the
+        // region (everything between `:- c.` and the terminating `:- prolog.`,
+        // including C on the `:- c.` line itself), so a later stage can hand it
+        // to the C-subset parser instead of discarding it. The `:- prolog.`
+        // line is excluded from the returned span.
+        int start = _offset;
         // Skip the remainder of the line carrying the `:- c.` itself —
         // Arity allows C code on the same line after the dot.
         while (_offset < _source.Length && _source[_offset] != '\n') Advance();
         while (_offset < _source.Length)
         {
             Advance();   // consume the newline; cursor is at a line start
-            if (TryConsumePrologDirective()) return;
+            int lineStart = _offset;
+            if (TryConsumePrologDirective())
+                return _source.Substring(start, lineStart - start);
             while (_offset < _source.Length && _source[_offset] != '\n') Advance();
         }
+        // EOF inside the section — the C text runs to end of source.
+        return _source.Substring(start, _offset - start);
     }
 
     /// <summary>Phase 30 chunk 438 — Arity embedded native goals
@@ -215,15 +225,21 @@ public sealed class Lexer
     /// <c>}</c>. EOF before balance throws (an error diagnostic in the
     /// collecting reader, never a crash). Line/column tracking is
     /// maintained (every character goes through <see cref="Advance"/>).</summary>
-    public void SkipNativeGoalBlock(SourcePosition openBracePos)
+    public string SkipNativeGoalBlock(SourcePosition openBracePos)
     {
+        // Phase 30 (ADR-022) step 1 — return the RAW C statement text BETWEEN the
+        // braces (the parser already consumed the opening `{`; the closing `}` is
+        // excluded), so a later stage can hand it to the C-subset parser instead
+        // of substituting a no-op.
+        int start = _offset;
         int depth = 1;
         while (_offset < _source.Length)
         {
             char c = _source[_offset];
             Advance();
             if (c == '{') depth++;
-            else if (c == '}' && --depth == 0) return;
+            else if (c == '}' && --depth == 0)
+                return _source.Substring(start, _offset - 1 - start);   // exclude closing }
         }
         throw new LexerException(
             $"Unterminated native code goal '{{' starting at {openBracePos}.",

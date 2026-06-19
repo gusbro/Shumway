@@ -443,8 +443,16 @@ public sealed class Parser
                             "internal: token lookahead extends past a native '{' goal "
                             + "(arity_compat); raw skip would start at the wrong position.",
                             pos);
-                    _lexer.SkipNativeGoalBlock(pos);
-                    return new AtomTerm("true") { Position = pos };
+                    // Phase 30 (ADR-022) step 1 — capture the raw C statement
+                    // text and carry it in a `'$native_goal'(RawText)` term (the
+                    // raw text as a non-interned StringTerm). Until the native
+                    // codegen lands (step 4), '$native_goal'/1 is a no-op builtin
+                    // — same runtime behaviour as the previous `true`, but the
+                    // span is no longer lost.
+                    string nativeText = _lexer.SkipNativeGoalBlock(pos);
+                    return new CompoundTerm("$native_goal",
+                        new Term[] { new StringTerm(nativeText) { Position = pos } })
+                        { Position = pos };
                 }
                 return ReadBrace(pos);
 
