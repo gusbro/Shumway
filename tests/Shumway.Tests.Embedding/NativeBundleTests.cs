@@ -77,6 +77,32 @@ public sealed class NativeBundleTests
         Assert.Equal(14L, e.Query("calc(3, 4, R).").Get<long>("R"));
     }
 
+    [Theory]
+    [InlineData(false)]   // --with-compiled-il
+    [InlineData(true)]    // --with-compiled-il --strip-wam
+    public void IlBundle_NativeBlock_Runs(bool stripWam)
+    {
+        // A persisted-IL bundle: the predicate's `$native_run` dispatch is baked
+        // into IL; at run time it reaches NativeRun, which compiles the block (the
+        // engine has the interop class) and runs it. Validates that build-time IL
+        // bundles already run native blocks correctly via part 1, before the
+        // inline optimization (part 2).
+        var bytes = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { ShmoCompiler.CompileSource(CmpProgram, "prog", ShmoBuildMode.Release) },
+            EntryPoints = new[] { new PredicateRef("cmp", 3) },
+            StripSource = true,
+            BakePrelude = true,
+            IncludeCompiledIl = true,
+            StripWam = stripWam,
+        }).Bytes!;
+
+        var e = new PrologEngine();
+        e.UseNativeInterop(typeof(Interop));
+        e.LoadBundle(BundleReader.FromBytes(bytes));
+        Assert.True(e.Query("cmp(abc, abd, R), R == -1.").Success);
+    }
+
     [Fact]
     public void ReleaseBundle_MissingInterop_ThrowsAtRun()
     {
