@@ -22,6 +22,7 @@ reference see [`predicates.md`](predicates.md).
 6. [Module directives reference](#module-directives-reference)
 7. [Worked example: tiny rules engine](#worked-example-tiny-rules-engine)
 8. [Native AOT publishing](#native-aot-publishing)
+9. [Embedded native C (`:- c` / `{…}`)](embedded-native-c.md) — calling .NET methods from Arity-style native blocks
 
 ---
 
