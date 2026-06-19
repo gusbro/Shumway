@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Reflection;
 using Shumway.Builtins;
 using Shumway.Compiler.NativeC;
@@ -166,7 +168,41 @@ public static class NativeBlockRunner
             object? v = Eval(c.Args[i], env, outputs, resolve);
             args[i] = i < ps.Length ? ConvertArg(v, ps[i].ParameterType) : v;
         }
-        return m.Invoke(null, args);
+        return InvokerFor(m)(args);
+    }
+
+    // Quick-win over the interpreted path: invoke each interop method through a
+    // compiled thunk (a `(object?[]) => method(...)` delegate) cached per method,
+    // instead of paying reflection's `MethodInfo.Invoke` on every call (the
+    // dominant cost — invoke is ~100× a direct call). The args are already coerced
+    // to the parameter types by ConvertArg, so the thunk only unboxes + calls.
+    // Under Native AOT there is no runtime IL generation, so the thunk falls back
+    // to reflection invoke — this interpreted path is exactly what runs under AOT,
+    // and correctness there matters more than the speed-up. (Tier-1 IL emission —
+    // item 2 — bypasses this whole path, emitting the call inline.)
+    private static readonly ConcurrentDictionary<MethodInfo, Func<object?[], object?>>
+        _invokers = new();
+
+    private static Func<object?[], object?> InvokerFor(MethodInfo m)
+        => _invokers.GetOrAdd(m, BuildInvoker);
+
+    private static Func<object?[], object?> BuildInvoker(MethodInfo m)
+    {
+        if (!System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported)
+            return args => m.Invoke(null, args);
+
+        var argsParam = Expression.Parameter(typeof(object?[]), "args");
+        var ps = m.GetParameters();
+        var callArgs = new Expression[ps.Length];
+        for (int i = 0; i < ps.Length; i++)
+            callArgs[i] = Expression.Convert(
+                Expression.ArrayIndex(argsParam, Expression.Constant(i)),
+                ps[i].ParameterType);
+        Expression call = Expression.Call(m, callArgs);
+        Expression body = m.ReturnType == typeof(void)
+            ? Expression.Block(call, Expression.Constant(null, typeof(object)))
+            : Expression.Convert(call, typeof(object));
+        return Expression.Lambda<Func<object?[], object?>>(body, argsParam).Compile();
     }
 
     private static object EvalBinary(char op, object? l, object? r)

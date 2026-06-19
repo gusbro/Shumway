@@ -276,8 +276,12 @@ A native block inside a `:- dynamic` predicate is rejected at compile time (its
 clauses are rehydrated without the native transform, so the block would be
 inert). Put native blocks in static predicates.
 
-> `shumway-link --foreign-dll <YourInterop.dll>` records the assembly so a bundle
-> can auto-load it at run time; this validates the block's calls at link time too.
+> **Interop resolution is checked at run time, not at link time — by design.** The
+> linker cannot know which interop class the running engine will register (you may
+> call `UseNativeInterop` at run time with any class), so validating a block's
+> calls against a `--foreign-dll` at link time would reject programs that are in
+> fact correct. Resolution therefore happens when a block executes, where it is a
+> hard error if a called function is missing (§7).
 
 ---
 
