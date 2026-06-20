@@ -100,6 +100,10 @@ internal static class Program
                     Console.Error.WriteLine($"{input}:{err.Line}:{err.Column}: error: {err.Message}");
                 Console.Error.WriteLine(
                     $"shumway-compile: {result.Errors.Count} error(s) in {input}.");
+                // Match a C compiler: a failed compile must not leave a stale
+                // object behind — a later link would silently pick it up and mask
+                // the error. Remove any pre-existing output for this input.
+                RemoveStaleOutput(output);
                 return ExitCompileError;
             }
             var obj = result.Object!;
@@ -160,7 +164,24 @@ internal static class Program
                                 || ex is UnauthorizedAccessException)
         {
             Console.Error.WriteLine($"shumway-compile: error: {ex.Message}");
+            RemoveStaleOutput(output);
             return ExitCompileError;
+        }
+    }
+
+    /// <summary>A failed compile must not leave a stale object file behind (a later
+    /// link would silently pick it up), so remove any pre-existing output — what a
+    /// C compiler does when compilation fails.</summary>
+    private static void RemoveStaleOutput(string output)
+    {
+        try
+        {
+            if (File.Exists(output)) File.Delete(output);
+        }
+        catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine(
+                $"shumway-compile: warning: could not remove stale {output}: {ex.Message}");
         }
     }
 

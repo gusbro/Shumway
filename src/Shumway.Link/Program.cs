@@ -145,6 +145,10 @@ internal static class Program
 
         if (!result.Success)
         {
+            // A failed link must not leave a stale bundle behind — a later run /
+            // --exe would silently pick it up and mask the error (what a C linker
+            // does on failure).
+            RemoveStaleOutput(opts.OutputPath);
             return ExitLinkError;
         }
 
@@ -468,6 +472,22 @@ internal static class Program
 
     private static void ReportMissing(string option) =>
         Console.Error.WriteLine($"shumway-link: option '{option}' requires a value.");
+
+    /// <summary>A failed link must not leave a stale bundle behind, so remove any
+    /// pre-existing output — what a C linker does when linking fails.</summary>
+    private static void RemoveStaleOutput(string? output)
+    {
+        if (string.IsNullOrEmpty(output)) return;
+        try
+        {
+            if (System.IO.File.Exists(output)) System.IO.File.Delete(output);
+        }
+        catch (Exception ex) when (ex is System.IO.IOException || ex is UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine(
+                $"shumway-link: warning: could not remove stale {output}: {ex.Message}");
+        }
+    }
 
     private static void PrintUsage()
     {
