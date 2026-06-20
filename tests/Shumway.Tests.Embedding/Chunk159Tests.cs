@@ -28,19 +28,23 @@ public class Chunk159Tests
         FunctorTable.Intern(AtomTable.Intern(n, permanent: true).Id, arity);
 
     [Fact]
-    public void DynamicPredicate_HotInvocation_NotIlPromoted()
+    public void DynamicPredicate_HotInvocation_IlPromoted()
     {
+        // ADR-023 supersedes the chunk-159 rule. A read-hot dynamic predicate with
+        // stable clauses is now promoted to Tier-1 IL as a SNAPSHOT of its visible
+        // clauses; the asserts here happen before the hot calls, so the predicate
+        // is stable while it warms and promotes (a later mutation would evict it —
+        // see DynamicIlPromotionTests).
         var e = new PrologEngine();
         e.JitIndexing.Threshold = 1;        // make it hot fast.
-        e.IlPromotion.Threshold = 2;        // and try to IL-promote it.
+        e.IlPromotion.Threshold = 2;        // and IL-promote it.
         e.ConsultString(":- dynamic d/1.");
         e.Query("assertz(d(a)).");
         e.Query("assertz(d(b)).");
-        // Several calls — enough to cross IL threshold if eligible.
+        // Several calls — enough to cross IL threshold (no mutation in between).
         for (int i = 0; i < 10; i++) e.Query("d(a).");
-        // Dynamic predicates are unpromotable post chunk 159.
-        Assert.True(e.IlPromotion.IsUnpromotable(Fid("d", 1)));
-        Assert.False(e.IlPromotion.IsPromoted(Fid("d", 1)));
+        Assert.True(e.IlPromotion.IsPromoted(Fid("d", 1)));
+        Assert.False(e.IlPromotion.IsUnpromotable(Fid("d", 1)));
     }
 
     [Fact]

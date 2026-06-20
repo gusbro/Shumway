@@ -1547,6 +1547,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // their `$native_run` call sites. The provider returns null until a block
         // is registered, so non-native programs pay nothing.
         IlPromotion.NativeInlineProvider = GetNativeInlineContext;
+        // ADR-023 — let a read-hot, mutation-cold `:- dynamic` predicate run as
+        // Tier-1 IL (a snapshot of its visible clauses), evicted on any mutation.
+        IlPromotion.DynamicSnapshotProvider = BuildDynamicSnapshot;
 
         // Consult the internal prelude — Prolog-level definitions of
         // multi-solution predicates (member/2, clause/2, current_predicate/1)
@@ -1691,6 +1694,30 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return _dynamicClauses.TryGetValue(functorId, out var list)
             ? list
             : Array.Empty<Clause>();
+    }
+
+    /// <summary>ADR-023 — compiles a STATIC-style snapshot of dynamic predicate
+    /// <paramref name="fid"/>'s currently-visible clauses (a plain
+    /// <c>try_me_else</c> chain, no <c>enter_dynamic</c> / <c>check_visible</c>),
+    /// for Tier-1 IL promotion. Reuses the same transformed clauses the dynamic
+    /// bytecode is built from (<see cref="_dynamicRewriteCache"/>, populated at
+    /// query setup), filtered to this predicate's own clauses — the MetaTransform
+    /// helper clauses it may have spawned are separate predicates. Returns null
+    /// when the predicate has no visible clauses or its rewrite cache isn't built
+    /// yet; <see cref="IlPromotionStore"/> treats null as a retry, not a permanent
+    /// rejection. A later mutation evicts the snapshot (see
+    /// <see cref="InvalidateDynamicCache"/>).</summary>
+    internal Shumway.Compiler.Wam.CompiledPredicate? BuildDynamicSnapshot(int fid)
+    {
+        if (!_dynamicClauses.TryGetValue(fid, out var raw) || raw.Count == 0) return null;
+        if (!_dynamicRewriteCache.TryGetValue(fid, out var entry)) return null;
+        var own = new List<Clause>(entry.Clauses.Count);
+        for (int i = 0; i < entry.Clauses.Count; i++)
+            if (entry.HeadFids[i] == fid) own.Add(entry.Clauses[i]);
+        if (own.Count == 0) return null;
+        return new Shumway.Compiler.Wam.PredicateCompiler { EmitDebugInfo = _flags.EmitDebugInfo }
+            .Compile(own, _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts,
+                enableIndexing: true, isDynamic: false, failStubAddr: 0);
     }
 
     /// <summary>True iff the given functor was declared
@@ -3688,6 +3715,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         _dbGeneration.Value++;
         _persistentMutationsSinceCompact++;
         DropDynamicPredicateCacheEntry(functorId);
+        // ADR-023 — the predicate changed, so any cached Tier-1 IL snapshot of it
+        // is stale: evict it. The next call falls back to the in-place-patched
+        // Tier-0 bytecode (the current database); the predicate re-warms before
+        // re-snapshotting, and past the churn limit stays on Tier 0.
+        IlPromotion.EvictDelegate(functorId);
         // Chunk 430 — the functor's clause list changed, so its cached
         // transformed/rewritten clauses are stale too.
         _dynamicRewriteCache.Remove(functorId);

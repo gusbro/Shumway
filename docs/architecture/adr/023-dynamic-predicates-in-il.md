@@ -2,7 +2,15 @@
 
 ## Status
 
-Proposed (Phase 30).
+Accepted (Phase 30) — implemented. `IlPromotionStore` gains `DynamicSnapshotProvider`,
+`EvictDelegate`, and the eviction-churn limit; `RecordInvocation` compiles a
+static-style snapshot for the `enter_dynamic` shape instead of rejecting it;
+`PrologEngine.BuildDynamicSnapshot` produces the snapshot from the rewrite cache
+and `InvalidateDynamicCache` evicts on every mutation. `IsExcludedByLayout` still
+classifies the *bytecode* shape (used by `Warm` and the link-time
+`IsPermanentlyBytecodeOnly` → `CallBytecode` rewrite, which already keeps dynamic
+call sites on the OnDispatch path via `!IsDynamicPredicate`). Covered by
+`DynamicIlPromotionTests` (promote / evict / retract / churn-guard / LUV).
 
 Supersedes the standing rule, from ADR-015 / chunk 159
 (`IlPromotionStore.IsExcludedByLayout`), that a `:- dynamic` predicate always

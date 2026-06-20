@@ -69,6 +69,37 @@ public sealed class IlPromotionStore
         finally { IlPredicateCompiler.EndNativeInline(prev); }
     }
 
+    /// <summary>ADR-023 — builds a static-style snapshot <see cref="CompiledPredicate"/>
+    /// of a dynamic predicate's currently-visible clauses (set by the engine).
+    /// Returns null when the predicate has no visible clauses or its rewrite cache
+    /// isn't built yet.</summary>
+    public Func<int, CompiledPredicate?>? DynamicSnapshotProvider { get; set; }
+
+    /// <summary>ADR-023 — per-functor count of how many times a promoted dynamic
+    /// snapshot has been evicted by a mutation. Past <see cref="EvictionChurnLimit"/>
+    /// the predicate is pinned to Tier 0.</summary>
+    private readonly Dictionary<int, int> _evictions = new();
+
+    /// <summary>ADR-023 — a dynamic predicate evicted this many times is mutation-
+    /// hot; stop the promote→evict churn and keep it on Tier 0 for good.</summary>
+    public int EvictionChurnLimit { get; set; } = 3;
+
+    /// <summary>ADR-023 — drops a dynamic predicate's cached IL snapshot after a
+    /// mutation (assert/retract/abolish), so the next call falls back to the
+    /// in-place-patched Tier-0 bytecode (the current database) and the predicate
+    /// re-warms before re-snapshotting. Counts the eviction toward the churn limit
+    /// only when a delegate was actually present (a real promote→evict cycle).
+    /// A no-op for a predicate that was never promoted.</summary>
+    public void EvictDelegate(int functorId)
+    {
+        if (!_delegates.Remove(functorId)) return;
+        _counters.Remove(functorId);
+        _pgoProfileKeys.Remove(functorId);
+        _pgoOptimized.Remove(functorId);
+        _evictions.TryGetValue(functorId, out int e);
+        _evictions[functorId] = e + 1;
+    }
+
     /// <summary>Stack size for the worker thread that drives every
     /// Sigil-emitted IL compile. Defensive belt — the size
     /// threshold (<see cref="MaxIlPromotionBytecodeBytes"/>) keeps
@@ -163,8 +194,17 @@ public sealed class IlPromotionStore
         if (_delegates.ContainsKey(functorId)) return _delegates[functorId];
         if (_unpromotable.Contains(functorId)) return null;
         if (IsExcludedFromPromotion(functorId)) { MarkUnpromotable(functorId, "query"); return null; }
-        if (IsExcludedByLayout(predicate)) { MarkUnpromotable(functorId, "dynamic"); return null; }
-        if (IsExcludedBySize(predicate)) { MarkUnpromotable(functorId, "size"); return null; }
+
+        // ADR-023 — a `:- dynamic` predicate (bytecode opens with enter_dynamic) is
+        // promoted as a SNAPSHOT of its currently-visible clauses, not the mutable
+        // chain; a later mutation evicts it (EvictDelegate). A predicate that has
+        // proven mutation-hot (≥ EvictionChurnLimit evictions) is pinned to Tier 0.
+        bool isDynamic = IsExcludedByLayout(predicate);
+        if (isDynamic && _evictions.TryGetValue(functorId, out int ev) && ev >= EvictionChurnLimit)
+        {
+            MarkUnpromotable(functorId, "dynamic-churn");
+            return null;
+        }
 
         _counters.TryGetValue(functorId, out int count);
         count++;
@@ -172,9 +212,27 @@ public sealed class IlPromotionStore
 
         if (count < Threshold) return null;
 
-        if (!Compiler.CanCompile(predicate, calleeMap))
+        // For a dynamic predicate, compile a static-style snapshot of its visible
+        // clauses instead of the enter_dynamic chain. A null snapshot (no visible
+        // clauses, or the rewrite cache not yet built) is a retry, NOT a permanent
+        // rejection — the clauses may arrive on a later assertz.
+        CompiledPredicate target = predicate;
+        if (isDynamic)
         {
-            MarkUnpromotable(functorId, "cannot-compile:" + Compiler.DescribeRejection(predicate, calleeMap));
+            var snapshot = DynamicSnapshotProvider?.Invoke(functorId);
+            if (snapshot is null) return null;
+            target = snapshot;
+        }
+
+        if (IsExcludedBySize(target))
+        {
+            MarkUnpromotable(functorId, isDynamic ? "dynamic-size" : "size");
+            return null;
+        }
+
+        if (!Compiler.CanCompile(target, calleeMap))
+        {
+            MarkUnpromotable(functorId, "cannot-compile:" + Compiler.DescribeRejection(target, calleeMap));
             return null;
         }
 
@@ -187,7 +245,7 @@ public sealed class IlPromotionStore
         // StackOverflowException is uncatchable, so prevention is the
         // only option.
         var result = RunOnLargeStack(() =>
-            WithNativeInline(() => Compiler.CompileInstrumented(predicate, calleeMap)));
+            WithNativeInline(() => Compiler.CompileInstrumented(target, calleeMap)));
         _delegates[functorId] = result.Delegate;
         if (result.ProfileKey >= 0)
             _pgoProfileKeys[functorId] = result.ProfileKey;

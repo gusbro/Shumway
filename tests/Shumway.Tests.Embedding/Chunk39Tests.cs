@@ -175,23 +175,22 @@ public class Chunk39Tests
     [Fact]
     public void Engine_UnpromotablePredicate_StaysOnTier0Forever()
     {
-        // Chunk 66 made non-leaf callees IL-eligible, and chunk 215 made
-        // deep cut (get_level + Cut) IL-eligible too — both shapes this
-        // test previously relied on now promote. Use a shape that is
-        // *architecturally* excluded and always will be: a dynamic
-        // predicate. Its enter_dynamic dispatch relies on per-clause
-        // check_visible + in-place mutation (assertz/retract); a cached IL
-        // delegate could not observe a mid-life retract (chunk 159), so
-        // IsExcludedByLayout marks it unpromotable on first sighting and
-        // never retries.
+        // Chunk 66 made non-leaf callees IL-eligible, chunk 215 made deep cut
+        // eligible, and ADR-023 made dynamic predicates eligible (snapshot +
+        // evict-on-mutation) — all shapes this test previously relied on now
+        // promote. A predicate that is *marked unpromotable via the dispatch path
+        // and never retried* now is a mutation-hot dynamic: past the churn limit
+        // (ADR-023) it is pinned to Tier 0 for good.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
-        engine.ConsultString(
-            ":- dynamic foo/1.\n" +
-            ":- public foo/1.\n" +
-            "foo(a).\n");
-        for (int i = 0; i < 5; i++) engine.Query("foo(_).");
+        engine.ConsultString(":- dynamic foo/1.\nfoo(a).\n");
         int fid = FunctorId("foo", 1);
+        for (int round = 0; round < 6; round++)
+        {
+            for (int i = 0; i < 3; i++) engine.Query("foo(_).");   // warm → promote
+            engine.Query("assertz(foo(a)).");                       // mutate → evict
+        }
+        for (int i = 0; i < 5; i++) engine.Query("foo(_).");
         Assert.True(engine.IlPromotion.IsUnpromotable(fid));
         Assert.False(engine.IlPromotion.IsPromoted(fid));
     }
