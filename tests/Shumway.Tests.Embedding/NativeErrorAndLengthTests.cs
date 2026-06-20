@@ -10,6 +10,27 @@ namespace Shumway.Tests.Embedding;
 // (2) a faulty native block's error names the predicate and the line.
 public sealed class NativeErrorAndLengthTests
 {
+    private static class LenInterop
+    {
+        public static int strlen(string s) => s.Length;
+    }
+
+    [Fact]
+    public void MakePrologStringGuard_TypesItsArgsAsString()
+    {
+        // daemon.pl's prolog_call_fact pattern: Fact's type is known because a
+        // clause goal make_prolog_string(Fact, _) implies it is a string — even
+        // without an explicit atom/1 guard on Fact.
+        var e = new PrologEngine();
+        e.UseNativeInterop(typeof(LenInterop));
+        e.ConsultString(
+            ":- set_prolog_flag(arity_compat, true).\n" +
+            ":- c.\nint strlen(const char*);\n:- prolog.\n" +
+            "make_prolog_string(A, A) :- atom(A), !.\n" +
+            "g(Fact, L) :- make_prolog_string(Fact, _), { L is 'strlen'(Fact) }, integer(L).\n");
+        Assert.Equal(5L, e.Query("g(hello, L).").Get<long>("L"));
+    }
+
     [Fact]
     public void MakeCStringLengthArg_TypesItsVariableAsInteger()
     {

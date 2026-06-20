@@ -298,6 +298,16 @@ public static class NativeInference
                 case "term": typeGuard[v.Name] = NativeKind.Term; break;
             }
         }
+        // Arity string-conversion predicates: both arguments are strings/atoms
+        // (e.g. `make_prolog_string(Atom, Atom) :- atom(Atom), !.`). A variable a
+        // block later marshals, bound by one of these in the clause body, is a
+        // string — a type source even without an explicit atom/1 guard.
+        if (c.Args.Length == 2 && c.Functor is "make_prolog_string" or "make_c_string")
+        {
+            foreach (var a in c.Args)
+                if (a is VarTerm sv && !typeGuard.ContainsKey(sv.Name))
+                    typeGuard[sv.Name] = NativeKind.String;
+        }
         foreach (var a in c.Args) CollectGuards(a, hasVar, hasNonvar, typeGuard);
     }
 }
