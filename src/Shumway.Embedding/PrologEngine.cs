@@ -4998,6 +4998,27 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // discontiguous declaration.
         ValidateContiguity(clauses, pendingDiscontiguous);
 
+        // ADR-022 — embedded native-code wiring. Rewrite each captured
+        // `$native_goal(RawText)` body goal into a portable `'$native_run'('$nb$…',
+        // Vars)` dispatch and register the analysed block in this engine's block
+        // table, using the C symbol table parsed from the accumulated `:- c`
+        // regions. Runs BEFORE the dynamic-clause routing below: a `:- dynamic` /
+        // `:- visible` predicate whose source clauses use native code must have its
+        // blocks transformed too (declaring a predicate dynamic is about
+        // assert/retract, not about whether its source clauses can compile) — the
+        // routing then moves the rewritten clause (carrying `$native_run`) into the
+        // runtime store, where it runs the block exactly as a static clause does.
+        // An unsupported block raises a consult error (never silently inert).
+        if (NativeTransform.HasNativeBlock(clauses))
+        {
+            var cDecls = nativeDecls is null
+                ? new List<Shumway.Compiler.NativeC.CDecl>()
+                : Shumway.Compiler.NativeC.CParser.ParseDeclarations(nativeDecls.ToString());
+            string prefix = "$nb$" + (_nativeBlockConsultSeq++) + "$";
+            clauses = NativeTransform.Apply(clauses, cDecls, ResolveNativeInterop,
+                (name, vars, stmts, _) => AddNativeBlock(name, vars, stmts), prefix);
+        }
+
         // Source-declared clauses for dynamic predicates (chunk 68): route
         // them to the runtime _dynamicClauses store so retract / assertz
         // see them just like runtime-asserted clauses do. Without this
@@ -5037,22 +5058,6 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // routing so it only sees the static clauses.
         if (tabledFunctors is not null && tabledFunctors.Count > 0)
             clauses = TransformTabledPredicates(clauses, tabledFunctors, publics);
-
-        // ADR-022 — embedded native-code wiring. Rewrite each captured
-        // `$native_goal(RawText)` body goal into a portable `'$native_run'('$nb$…',
-        // Vars)` dispatch and register the analysed block in this engine's block
-        // table, using the C symbol table parsed from the accumulated `:- c`
-        // regions. Only runs when a block is present; an unsupported block raises a
-        // consult error (it is never silently left inert).
-        if (NativeTransform.HasNativeBlock(clauses))
-        {
-            var cDecls = nativeDecls is null
-                ? new List<Shumway.Compiler.NativeC.CDecl>()
-                : Shumway.Compiler.NativeC.CParser.ParseDeclarations(nativeDecls.ToString());
-            string prefix = "$nb$" + (_nativeBlockConsultSeq++) + "$";
-            clauses = NativeTransform.Apply(clauses, cDecls, ResolveNativeInterop,
-                (name, vars, stmts, _) => AddNativeBlock(name, vars, stmts), prefix);
-        }
 
         // Phase 19+ — implicit_dynamic pre-scan. When the flag is on
         // (the default), walk every clause body for a literal
