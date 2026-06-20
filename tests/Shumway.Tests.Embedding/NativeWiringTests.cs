@@ -51,7 +51,7 @@ public sealed class NativeWiringTests
         // A reftype block (the deferred tier) cannot be compiled — consulting must
         // FAIL, never silently no-op it (a no-op'd block would misbehave unnoticed).
         var e = new PrologEngine();
-        var ex = Assert.Throws<InvalidOperationException>(() => e.ConsultString(
+        var ex = Assert.ThrowsAny<InvalidOperationException>(() => e.ConsultString(
             ":- set_prolog_flag(arity_compat, true).\n" +
             "p(ok) :- { X is ((*RefType)->ntype) }.\n"));
         Assert.Contains("native block", ex.Message);
@@ -64,7 +64,7 @@ public sealed class NativeWiringTests
         // that calls it must fail loudly, naming the missing function.
         var e = new PrologEngine();
         e.UseNativeInterop(typeof(Interop));
-        var ex = Assert.Throws<InvalidOperationException>(() => e.ConsultString(
+        var ex = Assert.ThrowsAny<InvalidOperationException>(() => e.ConsultString(
             ":- set_prolog_flag(arity_compat, true).\n" +
             ":- c.\nint nope(int);\n:- prolog.\n" +
             "f(A, R) :- integer(A), { R is 'nope'(A) }, integer(R).\n"));

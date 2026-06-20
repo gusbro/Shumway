@@ -310,6 +310,11 @@ public static class ShmoCompiler
                         nativeBlocks.Add(new ShmoNativeBlock(name, rawText, vars)),
                     "$nb$" + moduleName + "$");
             }
+            catch (NativeBlockCompileException ex)
+            {
+                errors.Add(new ShmoCompileError(ex.Message, ex.Line, ex.Column));
+                return new ShmoCompileResult(null, errors, warnings);
+            }
             catch (InvalidOperationException ex)
             {
                 errors.Add(new ShmoCompileError(ex.Message, 0, 0));

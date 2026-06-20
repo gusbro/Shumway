@@ -89,7 +89,9 @@ public class Chunk438Tests
     public void NativeGoal_MissingInteropFunction_IsAConsultError()
     {
         var e = new PrologEngine();
-        Assert.Throws<System.InvalidOperationException>(() => e.ConsultString(
+        // ThrowsAny: the consult error is a NativeBlockCompileException (an
+        // InvalidOperationException subclass carrying the block's line).
+        Assert.ThrowsAny<System.InvalidOperationException>(() => e.ConsultString(
             ":- set_prolog_flag(arity_compat, true).\n" +
             "p(X, Y) :- X = 1, { call_some_c_function(x, 1); }, Y is X + 1.\n"));
     }
@@ -100,7 +102,7 @@ public class Chunk438Tests
         var e = new PrologEngine();
         // Nested braces still balance under the raw skip (capture), but C control
         // flow is not compilable → a consult error, not a silent no-op.
-        Assert.Throws<System.InvalidOperationException>(() => e.ConsultString(
+        Assert.ThrowsAny<System.InvalidOperationException>(() => e.ConsultString(
             ":- set_prolog_flag(arity_compat, true).\n" +
             "q(ok) :- { if (x) { y(); } else { z(); } }.\n"));
     }

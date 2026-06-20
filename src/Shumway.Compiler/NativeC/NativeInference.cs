@@ -71,6 +71,7 @@ public static class NativeInference
         var intrinsicOut = new HashSet<string>();          // &Var to MakePrologString
         var referenced = new HashSet<string>();            // any Prolog var the block reads
         var globalsUsed = new HashSet<string>();
+        var lengthHint = new Dictionary<string, NativeKind>();  // MakeCString length arg → Int
 
         foreach (var st in block)
         {
@@ -86,16 +87,20 @@ public static class NativeInference
                         rhsKind[b.Var] = k;
                     WalkExpr(b.Value, prologVars, referenced, globalType.Keys, globalsUsed,
                         intrinsicIn, intrinsicOut);
+                    CollectLengthHints(b.Value, prologVars, lengthHint);
                     break;
                 case CAssignStmt a:
                     WalkExpr(a.Target, prologVars, referenced, globalType.Keys, globalsUsed,
                         intrinsicIn, intrinsicOut);
                     WalkExpr(a.Value, prologVars, referenced, globalType.Keys, globalsUsed,
                         intrinsicIn, intrinsicOut);
+                    CollectLengthHints(a.Target, prologVars, lengthHint);
+                    CollectLengthHints(a.Value, prologVars, lengthHint);
                     break;
                 case CCallStmt c:
                     WalkExpr(c.Call, prologVars, referenced, globalType.Keys, globalsUsed,
                         intrinsicIn, intrinsicOut);
+                    CollectLengthHints(c.Call, prologVars, lengthHint);
                     break;
             }
         }
@@ -122,6 +127,10 @@ public static class NativeInference
             NativeKind? kind = null;
             if (declHint.TryGetValue(name, out var dh)) kind = MapType(dh, typedefs);
             if (kind is null && rhsKind.TryGetValue(name, out var rk)) kind = rk;
+            // MakeCString(buffer, length, &Var): the length argument is an integer.
+            // The intrinsic itself discards it, but when the same variable is used
+            // elsewhere in the block (e.g. `buffer_len = Len - 1`) its type is known.
+            if (kind is null && lengthHint.TryGetValue(name, out var lh)) kind = lh;
             if (kind is null && (intrinsicIn.Contains(name) || intrinsicOut.Contains(name)))
                 kind = NativeKind.String;
             if (kind is null && typeGuard.TryGetValue(name, out var tg)) kind = tg;
@@ -180,6 +189,33 @@ public static class NativeInference
                 foreach (var arg in c.Args)
                     WalkExpr(arg, prologVars, referenced, globalNames, globalsUsed, intrinsicIn, intrinsicOut);
                 break;
+        }
+    }
+
+    /// <summary>Records the integer type of a <c>MakeCString(buffer, length,
+    /// &amp;Var)</c> call's <em>length</em> argument (its second positional arg)
+    /// when that argument is a Prolog variable. The intrinsic discards the length,
+    /// but the type is genuinely known — so a variable that is also used elsewhere
+    /// in the block (arithmetic, another call) doesn't fail type inference.</summary>
+    private static void CollectLengthHints(CExpr e, HashSet<string> prologVars,
+        Dictionary<string, NativeKind> hint)
+    {
+        switch (e)
+        {
+            case CCallExpr { Name: "MakeCString" } c:
+                if (c.Args.Count >= 2 && c.Args[1] is CIdentExpr len && prologVars.Contains(len.Name))
+                    hint[len.Name] = NativeKind.Int;
+                foreach (var arg in c.Args) CollectLengthHints(arg, prologVars, hint);
+                break;
+            case CCallExpr c2:
+                foreach (var arg in c2.Args) CollectLengthHints(arg, prologVars, hint);
+                break;
+            case CBinaryExpr b:
+                CollectLengthHints(b.Left, prologVars, hint);
+                CollectLengthHints(b.Right, prologVars, hint);
+                break;
+            case CAddrOfExpr a: CollectLengthHints(a.Operand, prologVars, hint); break;
+            case CDerefExpr d: CollectLengthHints(d.Operand, prologVars, hint); break;
         }
     }
 

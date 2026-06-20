@@ -5,6 +5,20 @@ using Shumway.Compiler.NativeC;
 
 namespace Shumway.Embedding;
 
+/// <summary>ADR-022 — a faulty embedded native block, carrying the source position
+/// (the block's line) so the compiler / consult error points at it instead of
+/// reporting line 0. The message names the predicate the block is in.</summary>
+internal sealed class NativeBlockCompileException : System.InvalidOperationException
+{
+    public int Line { get; }
+    public int Column { get; }
+    public NativeBlockCompileException(string message, int line, int column) : base(message)
+    {
+        Line = line;
+        Column = column;
+    }
+}
+
 /// <summary>ADR-022 — the consult-time wiring. Rewrites each captured native
 /// block <c>'$native_goal'(RawText)</c> body goal into a call to a per-block
 /// synthesized foreign builtin (the block's Prolog variables as arguments),
@@ -37,10 +51,24 @@ internal static class NativeTransform
         foreach (var clause in clauses)
         {
             if (!Mentions(clause.Term, "$native_goal")) { result.Add(clause); continue; }
-            result.Add(Clause.From(Rewrite(clause.Term, clause.Term, cDecls,
-                resolveInterop, registerBlock, namePrefix, ref index)));
+            result.Add(Clause.From(Rewrite(clause.Term, clause.Term, PredLabel(clause.Term),
+                clause.Position, cDecls, resolveInterop, registerBlock, namePrefix, ref index)));
         }
         return result;
+    }
+
+    /// <summary>The predicate indicator (<c>name/arity</c>) of a clause's head, for
+    /// error messages that point at the predicate carrying a faulty native block.</summary>
+    private static string PredLabel(Term clauseTerm)
+    {
+        Term head = clauseTerm is CompoundTerm { Functor: ":-", Args.Length: 2 } rule
+            ? rule.Args[0] : clauseTerm;
+        return head switch
+        {
+            CompoundTerm h => $"{h.Functor}/{h.Args.Length}",
+            AtomTerm a => $"{a.Name}/0",
+            _ => "?",
+        };
     }
 
     /// <summary>Returns true if any clause carries a native block — so the caller
@@ -49,26 +77,36 @@ internal static class NativeTransform
         => clauses.Any(c => Mentions(c.Term, "$native_goal"));
 
     // Rewrite occurrences of $native_goal(StringTerm) in `t`. `clauseTerm` is the
-    // WHOLE clause (kept intact for guard-based inference).
-    private static Term Rewrite(Term t, Term clauseTerm, List<CDecl> cDecls,
+    // WHOLE clause (kept intact for guard-based inference); `predLabel` / `clausePos`
+    // locate it for error messages.
+    private static Term Rewrite(Term t, Term clauseTerm, string predLabel,
+        Shumway.Compiler.Lexer.SourcePosition clausePos, List<CDecl> cDecls,
         Func<string, System.Reflection.MethodInfo?>? resolve,
         Action<string, NativeVar[], CStmt[], string> registerBlock, string namePrefix, ref int index)
     {
         if (t is not CompoundTerm c) return t;
         if (c.Functor == "$native_goal" && c.Args.Length == 1 && c.Args[0] is StringTerm s)
-            return TransformBlock(s.Content, clauseTerm, cDecls, resolve,
+        {
+            // Prefer the block's own captured position; fall back to the clause head.
+            var pos = c.Position.Line > 0 ? c.Position : clausePos;
+            return TransformBlock(s.Content, clauseTerm, predLabel, pos, cDecls, resolve,
                 registerBlock, namePrefix + (index++));
+        }
         var args = new Term[c.Args.Length];
         for (int i = 0; i < c.Args.Length; i++)
-            args[i] = Rewrite(c.Args[i], clauseTerm, cDecls, resolve,
+            args[i] = Rewrite(c.Args[i], clauseTerm, predLabel, clausePos, cDecls, resolve,
                 registerBlock, namePrefix, ref index);
         return new CompoundTerm(c.Functor, args) { Position = c.Position };
     }
 
-    private static Term TransformBlock(string text, Term clauseTerm, List<CDecl> cDecls,
+    private static Term TransformBlock(string text, Term clauseTerm, string predLabel,
+        Shumway.Compiler.Lexer.SourcePosition pos, List<CDecl> cDecls,
         Func<string, System.Reflection.MethodInfo?>? resolve,
         Action<string, NativeVar[], CStmt[], string> registerBlock, string name)
     {
+        NativeBlockCompileException Error(string detail) => new(
+            $"embedded native block in {predLabel} (line {pos.Line}): {detail}", pos.Line, pos.Column);
+
         List<CStmt> stmts;
         try
         {
@@ -109,8 +147,6 @@ internal static class NativeTransform
         return new CompoundTerm("$native_run", callArgs);
     }
 
-    private static System.InvalidOperationException Error(string detail)
-        => new($"embedded native block: {detail}");
 
     /// <summary>The names of the non-intrinsic C functions a block calls — the
     /// ones that must resolve to Shumway.Native.Interop methods (MakeCString /
