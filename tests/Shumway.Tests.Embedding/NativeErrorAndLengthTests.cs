@@ -13,6 +13,23 @@ public sealed class NativeErrorAndLengthTests
     private static class LenInterop
     {
         public static int strlen(string s) => s.Length;
+        public static int getcode(int x) => x * 10;
+    }
+
+    [Fact]
+    public void VariableAssignedFromTypedVariable_InheritsType()
+    {
+        // i_mdlinf.pl's i_product_revision pattern: Ret is typed from a prototype's
+        // return type ('getcode' → int), then `RetCode is Ret` must inherit that
+        // type — a variable assigned from another, already-typed, Prolog variable.
+        var e = new PrologEngine();
+        e.UseNativeInterop(typeof(LenInterop));
+        e.ConsultString(
+            ":- set_prolog_flag(arity_compat, true).\n" +
+            ":- c.\nint getcode(int);\n:- prolog.\n" +
+            "p(In, RetCode) :- integer(In), " +
+            "{ Ret is 'getcode'(In); RetCode is Ret }, integer(RetCode).\n");
+        Assert.Equal(50L, e.Query("p(5, R).").Get<long>("R"));
     }
 
     [Fact]

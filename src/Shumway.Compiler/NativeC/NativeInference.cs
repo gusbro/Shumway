@@ -73,18 +73,33 @@ public static class NativeInference
         var globalsUsed = new HashSet<string>();
         var lengthHint = new Dictionary<string, NativeKind>();  // MakeCString length arg → Int
 
+        // Kinds of Prolog variables already determined as the statements are
+        // scanned (seeded from the clause's type guards). A later `Var is …` whose
+        // right side reads such a variable (e.g. `RetCode is Ret`, after
+        // `Ret is 'i_product_revision'(buffer)` typed Ret from the prototype's
+        // return type) picks the type up from here.
+        var prologVarKind = new Dictionary<string, NativeKind>(typeGuard);
+
         foreach (var st in block)
         {
             switch (st)
             {
                 case CVarDeclStmt v:
-                    if (prologVars.Contains(v.Var)) declHint[v.Var] = v.Type;
+                    if (prologVars.Contains(v.Var))
+                    {
+                        declHint[v.Var] = v.Type;
+                        if (MapType(v.Type, typedefs) is { } dk) prologVarKind[v.Var] = dk;
+                    }
                     else localType[v.Var] = v.Type;
                     break;
                 case CBindStmt b:
                     outputs.Add(b.Var);
-                    if (InferExprKind(b.Value, localType, globalType, protoReturn, typedefs) is { } k)
+                    if (InferExprKind(b.Value, localType, globalType, protoReturn, typedefs,
+                            prologVarKind) is { } k)
+                    {
                         rhsKind[b.Var] = k;
+                        prologVarKind[b.Var] = k;   // visible to later statements
+                    }
                     WalkExpr(b.Value, prologVars, referenced, globalType.Keys, globalsUsed,
                         intrinsicIn, intrinsicOut);
                     CollectLengthHints(b.Value, prologVars, lengthHint);
@@ -221,19 +236,24 @@ public static class NativeInference
 
     private static NativeKind? InferExprKind(CExpr e,
         Dictionary<string, CType> localType, Dictionary<string, CType> globalType,
-        Dictionary<string, CType> protoReturn, Dictionary<string, CType> typedefs)
+        Dictionary<string, CType> protoReturn, Dictionary<string, CType> typedefs,
+        Dictionary<string, NativeKind> prologVarKind)
         => e switch
         {
             CIntExpr => NativeKind.Int,
             CStringExpr => NativeKind.String,
+            // A block-local C temp, a `:- c` global, or — for a Prolog variable
+            // (e.g. `RetCode is Ret`) — a Prolog variable already typed earlier in
+            // the block (from the prototype return type, a guard, or a Var:type).
             CIdentExpr id =>
                 localType.TryGetValue(id.Name, out var lt) ? MapType(lt, typedefs)
                 : globalType.TryGetValue(id.Name, out var gt) ? MapType(gt, typedefs)
+                : prologVarKind.TryGetValue(id.Name, out var pk) ? pk
                 : null,
             CCallExpr c when protoReturn.TryGetValue(c.Name, out var rt) => MapType(rt, typedefs),
             CBinaryExpr b => CombineKind(
-                InferExprKind(b.Left, localType, globalType, protoReturn, typedefs),
-                InferExprKind(b.Right, localType, globalType, protoReturn, typedefs)),
+                InferExprKind(b.Left, localType, globalType, protoReturn, typedefs, prologVarKind),
+                InferExprKind(b.Right, localType, globalType, protoReturn, typedefs, prologVarKind)),
             _ => null,
         };
 
