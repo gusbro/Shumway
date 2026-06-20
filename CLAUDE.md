@@ -1016,6 +1016,7 @@ When proposing changes:
 | Inline nested compound build — non-last (reserve-upfront + write-pointer stack) | ADR-020 |
 | Register allocator — REJECTED with survey data (Class-B ceiling 1.5% on real code, unsound) | ADR-021 |
 | Embedded native C blocks (`:- c` / `{...}`) — IL lowering to a foreign interop class | ADR-022 (proposed) |
+| Dynamic predicates in Tier-1 IL — snapshot + evict-on-mutation | ADR-023 (proposed) |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | Builtins catalog | docs/design/builtins-catalog.md |
