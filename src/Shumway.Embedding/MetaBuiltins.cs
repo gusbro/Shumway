@@ -86,6 +86,16 @@ public static class MetaBuiltins
         for (int arity = 1; arity <= 33; arity++)
             BuiltinsRegistry.Register("$native_run", arity, NativeRun);
 
+        // ADR-024 — generic-term interop (the reftype tier). A reftype/preftype is
+        // a zero-copy cursor (a TermSlot wrapped as a Foreign cell) over a real
+        // Prolog term. These intrinsics replace the prlg_ifce.pl definitions
+        // (recognized by name at consult); the .NET interop side reads/builds the
+        // term through ReftypeApi / TermSlot.
+        BuiltinsRegistry.Register("$new_reftype_slot", 1, NewReftypeSlot);
+        BuiltinsRegistry.Register("fill_par", 2, FillPar);
+        BuiltinsRegistry.Register("reftype_term", 2, ReftypeTerm);
+        BuiltinsRegistry.Register("preftype", 1, Preftype);
+
         BuiltinsRegistry.Register("assertz", 1, Assertz,
             Database, "assertz(+Clause)", "Adds a clause to the end of its dynamic predicate.");
         BuiltinsRegistry.Register("asserta", 1, Asserta,
@@ -2760,6 +2770,51 @@ public static class MetaBuiltins
             ? block.Compiled(engine)
             : NativeBlockRunner.RunBlock(engine, block.Vars, block.Stmts, regOffset: 1);
     }
+
+    // ----- ADR-024 generic-term interop (reftype tier) -----------------------
+
+    /// <summary>Extracts the <see cref="TermSlot"/> a register holds (a Foreign
+    /// cell, surfaced as <c>'$foreign'(Id)</c> when read as a term), or null.</summary>
+    private static TermSlot? ReadSlot(Engine engine, int reg)
+    {
+        var t = RegisterMarshalling.ReadRegisterAsTerm(engine, reg);
+        if (t is CompoundTerm { Functor: "$foreign", Args.Length: 1 } ct
+            && ct.Args[0] is IntTerm id)
+            return engine.AsForeign<TermSlot>(Shumway.Core.Cell.Foreign((int)id.Value));
+        return null;
+    }
+
+    /// <summary>ADR-024 — creates a fresh empty term slot and binds it (as a
+    /// Foreign cell) to argument 0. Used to obtain a reftype where a `:- c`
+    /// region's <c>reftype</c> global isn't available (tests, and any predicate
+    /// that needs an ad-hoc slot).</summary>
+    public static bool NewReftypeSlot(Engine engine)
+        => engine.UnifyRegisterWithCell(0, engine.MakeForeign(new TermSlot()));
+
+    /// <summary>ADR-024 — <c>fill_par(Term, RefType)</c>: store the Prolog term in
+    /// the slot (term → cursor). Zero-copy at the AST level — the term is read as
+    /// it currently stands.</summary>
+    public static bool FillPar(Engine engine)
+    {
+        var slot = ReadSlot(engine, 1);
+        if (slot is null) return false;
+        slot.SetValue(RegisterMarshalling.ReadRegisterAsTerm(engine, 0));
+        return true;
+    }
+
+    /// <summary>ADR-024 — <c>reftype_term(Term, RefType)</c>: materialize the
+    /// slot's cursor to a Prolog term and unify it with argument 0 (cursor →
+    /// term).</summary>
+    public static bool ReftypeTerm(Engine engine)
+    {
+        var slot = ReadSlot(engine, 1);
+        if (slot is null) return false;
+        return RegisterMarshalling.UnifyRegisterWithTerm(engine, 0, slot.Materialize());
+    }
+
+    /// <summary>ADR-024 — <c>preftype(RefType)</c>: succeeds when argument 0 is a
+    /// valid reftype slot.</summary>
+    public static bool Preftype(Engine engine) => ReadSlot(engine, 0) is not null;
 
     private static void ArmRepeat(Engine engine, int returnPc)
     {

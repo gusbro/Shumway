@@ -1,0 +1,121 @@
+using Shumway.Embedding;
+using Xunit;
+
+namespace Shumway.Tests.Embedding;
+
+// ADR-024 — the generic-term interop (reftype tier), primary layer. A reftype is a
+// zero-copy cursor (TermSlot wrapped as a Foreign cell) over a real Prolog term.
+public sealed class NativeReftypeTests
+{
+    private static PrologEngine Eng()
+    {
+        var e = new PrologEngine();
+        return e;
+    }
+
+    // ---- Prolog round-trip: fill_par (term → slot) then reftype_term (slot → term).
+
+    private static bool RoundTrips(string termText)
+    {
+        var e = Eng();
+        return e.Query(
+            $"'$new_reftype_slot'(R), fill_par({termText}, R), reftype_term(T, R), T == {termText}."
+        ).Success;
+    }
+
+    [Theory]
+    [InlineData("42")]
+    [InlineData("-7")]
+    [InlineData("3.5")]
+    [InlineData("hello")]
+    [InlineData("[]")]
+    [InlineData("foo(1, bar, 2.5)")]
+    [InlineData("a(b(c), d(1, 2))")]
+    [InlineData("[1, 2, 3]")]
+    [InlineData("[a, [b, c], 4]")]
+    public void RoundTrip_PreservesTerm(string term) => Assert.True(RoundTrips(term));
+
+    [Fact]
+    public void RoundTrip_Variable_StaysUnbound()
+    {
+        var e = Eng();
+        Assert.True(e.Query(
+            "'$new_reftype_slot'(R), fill_par(X, R), reftype_term(T, R), var(T).").Success);
+    }
+
+    [Fact]
+    public void Preftype_SucceedsOnSlot_FailsOnNonSlot()
+    {
+        var e = Eng();
+        Assert.True(e.Query("'$new_reftype_slot'(R), preftype(R).").Success);
+        Assert.False(e.Query("preftype(foo).").Success);
+    }
+
+    // ---- The C# accessor API (ReftypeApi / TermSlot) — what interop code uses.
+
+    [Fact]
+    public void Api_BuildsCompound()
+    {
+        var s = new TermSlot();
+        ReftypeApi.putfunctor_c("point", 2, s);
+        Assert.True(ReftypeApi.getfuncarg_c(s, 1, out var a1));
+        ReftypeApi.putint_c(7, a1);
+        Assert.True(ReftypeApi.getfuncarg_c(s, 2, out var a2));
+        ReftypeApi.putatm_c("origin", a2);
+
+        Assert.Equal(TermSlot.Functor, ReftypeApi.findtype_c(s));
+        Assert.True(ReftypeApi.getfunctor_c(s, out var name, out var arity));
+        Assert.Equal("point", name);
+        Assert.Equal(2, arity);
+        Assert.Equal("point(7, origin)", s.Materialize().ToString());
+    }
+
+    [Fact]
+    public void Api_ReadsScalars()
+    {
+        var i = new TermSlot(); i.PutInt(99);
+        Assert.Equal(TermSlot.Integer, ReftypeApi.findtype_c(i));
+        Assert.True(ReftypeApi.getint_c(i, out var iv));
+        Assert.Equal(99, iv);
+
+        var f = new TermSlot(); f.PutFloat(2.5);
+        Assert.Equal(TermSlot.Floating, ReftypeApi.findtype_c(f));
+        Assert.True(ReftypeApi.getflt_c(f, out var fv));
+        Assert.Equal(2.5, fv);
+
+        var a = new TermSlot(); a.PutAtom("hi");
+        Assert.Equal(TermSlot.String, ReftypeApi.findtype_c(a));   // atom reads as STRING(4)
+        Assert.True(ReftypeApi.gettxt_c(a, out var av));
+        Assert.Equal("hi", av);
+    }
+
+    [Fact]
+    public void Api_ReadsCompoundArgs()
+    {
+        // build f(10, g(20)) then read it back through the accessor API.
+        var s = new TermSlot();
+        ReftypeApi.putfunctor_c("f", 2, s);
+        ReftypeApi.getfuncarg_c(s, 1, out var a1); ReftypeApi.putint_c(10, a1);
+        ReftypeApi.getfuncarg_c(s, 2, out var a2); ReftypeApi.putfunctor_c("g", 1, a2);
+        ReftypeApi.getfuncarg_c(a2, 1, out var b1); ReftypeApi.putint_c(20, b1);
+
+        Assert.True(ReftypeApi.getfuncarg_c(s, 2, out var read2));
+        Assert.Equal(TermSlot.Functor, ReftypeApi.findtype_c(read2));
+        Assert.True(ReftypeApi.getfunctor_c(read2, out var gn, out var ga));
+        Assert.Equal("g", gn);
+        Assert.Equal(1, ga);
+        Assert.True(ReftypeApi.getfuncarg_c(read2, 1, out var read21));
+        Assert.True(ReftypeApi.getint_c(read21, out var v));
+        Assert.Equal(20, v);
+    }
+
+    [Fact]
+    public void Api_Equrefs()
+    {
+        var a = new TermSlot(); a.PutInt(5);
+        var b = new TermSlot(); b.PutInt(5);
+        var c = new TermSlot(); c.PutInt(6);
+        Assert.True(ReftypeApi.equrefs_c(a, b));
+        Assert.False(ReftypeApi.equrefs_c(a, c));
+    }
+}
