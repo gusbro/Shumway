@@ -4143,6 +4143,19 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     internal TermSlot? ReftypeSlot(string name)
         => _reftypeSlots.TryGetValue(name, out var s) ? s : null;
 
+    /// <summary>The term slot for a `reftype` global, created on first reference.
+    /// Used by the native-block runner when a block takes the address of a reftype
+    /// global (<c>&amp;name</c>) or passes one to an interop function expecting a
+    /// <see cref="TermSlot"/> — so a slot exists even when the `:- c` declarations
+    /// didn't travel (a source-stripped bundle: the declarations are compile-time;
+    /// the block runs in the interpreter and creates its slots here).</summary>
+    internal TermSlot GetOrCreateReftypeSlot(string name)
+    {
+        if (!_reftypeSlots.TryGetValue(name, out var s))
+            _reftypeSlots[name] = s = new TermSlot();
+        return s;
+    }
+
     private void RegisterReftypeGlobals(IReadOnlyList<Shumway.Compiler.NativeC.CDecl> decls)
     {
         foreach (var d in decls)

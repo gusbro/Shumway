@@ -100,6 +100,7 @@ public static class MetaBuiltins
         // that call them directly; the builtin ignores the tag.
         BuiltinsRegistry.Register("reftype_term", 3, ReftypeTerm3);
         BuiltinsRegistry.Register("fill_reftype", 3, FillReftype3);
+        BuiltinsRegistry.Register("quote_str", 2, QuoteStr);
 
         BuiltinsRegistry.Register("assertz", 1, Assertz,
             Database, "assertz(+Clause)", "Adds a clause to the end of its dynamic predicate.");
@@ -2838,6 +2839,18 @@ public static class MetaBuiltins
         if (slot is null) return false;
         slot.SetValue(RegisterMarshalling.ReadRegisterAsTerm(engine, 0));
         return true;
+    }
+
+    /// <summary>ADR-024 — <c>quote_str(X, XR)</c>: XR is X rendered in writeq
+    /// (quoted) form, as an atom. (prlg_ifce.pl does this through C string buffers;
+    /// the cursor model renders directly.)</summary>
+    public static bool QuoteStr(Engine engine)
+    {
+        using var sw = new System.IO.StringWriter();
+        Shumway.Builtins.TermRenderer.Render(engine, engine.GetRegister(0), sw,
+            new Shumway.Builtins.TermRenderOptions { Operators = engine.Operators, Quoted = true });
+        int id = AtomTable.Intern(sw.ToString(), permanent: false).Id;
+        return engine.UnifyRegisterWithCell(1, Shumway.Core.Cell.Atom(id));
     }
 
     private static void ArmRepeat(Engine engine, int returnPc)

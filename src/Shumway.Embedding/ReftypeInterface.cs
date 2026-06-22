@@ -21,6 +21,10 @@ internal static class ReftypeInterface
         ["fill_reftype"] = new() { 3 },
         ["fill_args"] = new() { 4 },
         ["preftype"] = new() { 1 },
+        // quote_str(X, XR): prlg_ifce.pl quotes a string through C buffers
+        // (ppchar / malloc / *deref — the unsupported tier). The builtin does the
+        // quoting directly (render X writeq-style → XR). Used only inside prlg_ifce.
+        ["quote_str"] = new() { 2 },
     };
 
     public static bool IsInterfacePredicate(string name, int arity)

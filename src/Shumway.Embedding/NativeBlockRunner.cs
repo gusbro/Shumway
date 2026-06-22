@@ -150,11 +150,13 @@ public static class NativeBlockRunner
         {
             case CIntExpr n: return n.Value;
             case CStringExpr s: return s.Value;
-            // ADR-024 — `&name` where name is a reftype global is that global's slot
-            // cursor (the `&` is vestigial in the cursor model — `name` and `&name`
-            // both resolve to the same slot).
-            case CAddrOfExpr { Operand: CIdentExpr g } when host.ReftypeSlot(g.Name) is { } s1:
-                return s1;
+            // ADR-024 — `&name` is that reftype global's slot cursor (the `&` is
+            // vestigial in the cursor model — `name` and `&name` resolve to the same
+            // slot). Created on first reference so it works in a bundle too. (A
+            // `&Var` for a string intrinsic is handled in the intrinsic cases above,
+            // so a bare `&ident` here is a reftype global.)
+            case CAddrOfExpr { Operand: CIdentExpr g }:
+                return host.GetOrCreateReftypeSlot(g.Name);
             case CIdentExpr id:
                 if (env.TryGetValue(id.Name, out var val)) return val;
                 if (outputs.TryGetValue(id.Name, out var ov)) return ov;
@@ -186,6 +188,16 @@ public static class NativeBlockRunner
         }
     }
 
+    /// <summary>The reftype-global name an interop argument names — a bare
+    /// identifier (<c>par1ref</c>) or its address (<c>&amp;par1ref</c>), or null
+    /// when the argument is not a plain global reference.</summary>
+    private static string? ReftypeName(CExpr e) => e switch
+    {
+        CIdentExpr id => id.Name,
+        CAddrOfExpr { Operand: CIdentExpr id } => id.Name,
+        _ => null,
+    };
+
     /// <summary>The name of the Prolog variable an intrinsic marshals — its
     /// <c>&amp;Var</c> argument.</summary>
     private static string? StrArg(CCallExpr c)
@@ -203,6 +215,16 @@ public static class NativeBlockRunner
         var args = new object?[c.Args.Count];
         for (int i = 0; i < c.Args.Count; i++)
         {
+            // ADR-024 — an interop parameter of type TermSlot receives a reftype
+            // global directly (a `reftype` argument, e.g. `'i_form_exp'(.., par1ref)`):
+            // resolve the name to its slot (creating it on first reference) rather
+            // than marshalling a value.
+            if (i < ps.Length && ps[i].ParameterType == typeof(TermSlot)
+                && ReftypeName(c.Args[i]) is { } rn)
+            {
+                args[i] = host.GetOrCreateReftypeSlot(rn);
+                continue;
+            }
             object? v = Eval(c.Args[i], host, env, outputs, resolve);
             args[i] = i < ps.Length ? ConvertArg(v, ps[i].ParameterType) : v;
         }

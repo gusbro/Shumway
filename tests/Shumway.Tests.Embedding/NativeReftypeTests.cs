@@ -171,4 +171,54 @@ public sealed class NativeReftypeTests
         // In=10 → C reads 10, builds result(11) into the slot → Out = result(11).
         Assert.True(e.Query("go(10, Out), Out == result(11).").Success);
     }
+
+    private const string FlowProgram =
+        ":- set_prolog_flag(arity_compat, true).\n" +
+        ":- public go/2.\n" +
+        ":- c.\nreftype par1ref;\nint bump(reftype);\n:- prolog.\n" +
+        "go(In, Out) :-\n" +
+        "  { Ptr: preftype; Ptr is &par1ref },\n" +
+        "  fill_par(In, Ptr),\n" +
+        "  { ret: int; ret = 'bump'(par1ref); Ret is ret },\n" +
+        "  Ret =:= 1,\n" +
+        "  reftype_term(Out, Ptr).\n";
+
+    [Fact]
+    public void BundleFlow_ReftypeGlobal_SlotsCreatedAtLoad()
+    {
+        // A source-stripped Release bundle: the `:- c` declarations don't travel,
+        // but the reftype block runs in the interpreter and creates its slot
+        // on-demand (GetOrCreateReftypeSlot). The interop class is registered before
+        // load, as for any native bundle.
+        var bytes = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { ShmoCompiler.CompileSource(FlowProgram, "prog", ShmoBuildMode.Release) },
+            EntryPoints = new[] { new PredicateRef("go", 2) },
+            StripSource = true,
+            BakePrelude = true,
+        }).Bytes!;
+        var e = new PrologEngine();
+        e.UseNativeInterop(typeof(TermInterop));
+        e.LoadBundle(BundleReader.FromBytes(bytes));
+        Assert.True(e.Query("go(10, Out), Out == result(11).").Success);
+    }
+
+    // ---- Validation against the real Arity sources (the generic-term interface
+    // and two users of it). Compiled when the corpus is present; a no-op otherwise
+    // (the corpus lives outside the repo).
+
+    [Theory]
+    [InlineData("prlg_ifce.pl")]   // the interface definition
+    [InlineData("i_form_e.pl")]    // a user (fill_par → call C → reftype_term)
+    [InlineData("i_gxprg.pl")]     // a user (multiple reftype globals)
+    public void RealAritySource_CompilesCleanly(string file)
+    {
+        string path = System.IO.Path.Combine(@"C:\temp\test", file);
+        if (!System.IO.File.Exists(path)) return;   // corpus not present — skip
+        string src = System.IO.File.ReadAllText(path);
+        var result = ShmoCompiler.TryCompileSource(src, "m", ShmoBuildMode.Release,
+            arityCompat: true);
+        Assert.True(result.Success,
+            result.Errors.Count > 0 ? result.Errors[0].Message : "compile failed");
+    }
 }
