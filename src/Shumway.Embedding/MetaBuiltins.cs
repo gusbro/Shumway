@@ -95,6 +95,11 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("fill_par", 2, FillPar);
         BuiltinsRegistry.Register("reftype_term", 2, ReftypeTerm);
         BuiltinsRegistry.Register("preftype", 1, Preftype);
+        // The /3 forms carry an extra type-tag argument (arg 1) that the cursor
+        // model doesn't need — the slot knows its own shape. Provided for sources
+        // that call them directly; the builtin ignores the tag.
+        BuiltinsRegistry.Register("reftype_term", 3, ReftypeTerm3);
+        BuiltinsRegistry.Register("fill_reftype", 3, FillReftype3);
 
         BuiltinsRegistry.Register("assertz", 1, Assertz,
             Database, "assertz(+Clause)", "Adds a clause to the end of its dynamic predicate.");
@@ -2815,6 +2820,25 @@ public static class MetaBuiltins
     /// <summary>ADR-024 — <c>preftype(RefType)</c>: succeeds when argument 0 is a
     /// valid reftype slot.</summary>
     public static bool Preftype(Engine engine) => ReadSlot(engine, 0) is not null;
+
+    /// <summary>ADR-024 — <c>reftype_term(Term, Type, RefType)</c>: the /2 form with
+    /// an extra type-tag argument (ignored; the slot knows its own shape).</summary>
+    public static bool ReftypeTerm3(Engine engine)
+    {
+        var slot = ReadSlot(engine, 2);
+        if (slot is null) return false;
+        return RegisterMarshalling.UnifyRegisterWithTerm(engine, 0, slot.Materialize());
+    }
+
+    /// <summary>ADR-024 — <c>fill_reftype(Term, Type, RefType)</c>: store the Prolog
+    /// term in the slot (the type-tag argument is ignored).</summary>
+    public static bool FillReftype3(Engine engine)
+    {
+        var slot = ReadSlot(engine, 2);
+        if (slot is null) return false;
+        slot.SetValue(RegisterMarshalling.ReadRegisterAsTerm(engine, 0));
+        return true;
+    }
 
     private static void ArmRepeat(Engine engine, int returnPc)
     {

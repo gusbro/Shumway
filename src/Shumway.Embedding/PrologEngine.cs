@@ -5028,6 +5028,16 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // "closed" (another functor's clauses started after them),
         // and throw if a closed functor is revisited without a
         // discontiguous declaration.
+        // ADR-024 — generic-term interop. The Arity term-interface predicates
+        // (reftype_term, fill_par, …) are recognized by name and provided as
+        // builtins; their prlg_ifce.pl source clauses (which use the reftype-struct
+        // tier — `->`, `..`, getargp, newreftype — that we deliberately do NOT
+        // compile) are dropped here, BEFORE the native transform sees their blocks.
+        // Gated on arity_compat so a non-Arity program defining one of these names
+        // is unaffected.
+        if (_flags.ArityCompat)
+            clauses = ReftypeInterface.DropInterfaceClauses(clauses);
+
         ValidateContiguity(clauses, pendingDiscontiguous);
 
         // ADR-022 — embedded native-code wiring. Rewrite each captured

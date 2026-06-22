@@ -109,6 +109,25 @@ public sealed class NativeReftypeTests
         Assert.Equal(20, v);
     }
 
+    // ---- Stage 2 part 1: the term-interface predicates are recognized by name;
+    // their prlg_ifce.pl source clauses (reftype-struct tier, which we never
+    // compile) are dropped under arity_compat, and the builtins provide them.
+
+    [Fact]
+    public void InterfaceClausesDropped_BuiltinsProvideThem()
+    {
+        var e = new PrologEngine();
+        // These clauses carry reftype-struct-tier native blocks that would NOT
+        // compile (`(*Ref)->ntype`). Under arity_compat they are dropped and the
+        // builtins take over — consult succeeds and the predicates work.
+        e.ConsultString(
+            ":- set_prolog_flag(arity_compat, true).\n" +
+            "reftype_term(_, R) :- { Ref: preftype; Ref is R; T is ((*Ref)->ntype) }, fail.\n" +
+            "fill_par(_, R) :- { Ref: preftype; Ref is R; 'freepar'(Ref) }, fail.\n" +
+            "use(In, Out) :- '$new_reftype_slot'(S), fill_par(In, S), reftype_term(Out, S).\n");
+        Assert.True(e.Query("use(foo(1, 2), T), T == foo(1, 2).").Success);
+    }
+
     [Fact]
     public void Api_Equrefs()
     {
