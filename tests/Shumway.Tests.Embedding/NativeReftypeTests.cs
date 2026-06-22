@@ -207,6 +207,40 @@ public sealed class NativeReftypeTests
     // and two users of it). Compiled when the corpus is present; a no-op otherwise
     // (the corpus lives outside the repo).
 
+    // The worked example from docs/generic-term-interop.md — keeps the doc honest.
+    private static class DocInterop
+    {
+        public static int swap_pair(TermSlot r)
+        {
+            if (ReftypeApi.findtype_c(r) != 5) return 0;
+            ReftypeApi.getfunctor_c(r, out var name, out var arity);
+            if (name != "pair" || arity != 2) return 0;
+            ReftypeApi.getfuncarg_c(r, 1, out var a); ReftypeApi.getint_c(a, out var av);
+            ReftypeApi.getfuncarg_c(r, 2, out var b); ReftypeApi.getint_c(b, out var bv);
+            ReftypeApi.putfunctor_c("pair", 2, r);
+            ReftypeApi.getfuncarg_c(r, 1, out var n1); ReftypeApi.putint_c(bv, n1);
+            ReftypeApi.getfuncarg_c(r, 2, out var n2); ReftypeApi.putint_c(av, n2);
+            return 1;
+        }
+    }
+
+    [Fact]
+    public void DocExample_SwapPair_Works()
+    {
+        var e = new PrologEngine();
+        e.UseNativeInterop(typeof(DocInterop));
+        e.ConsultString(
+            ":- set_prolog_flag(arity_compat, true).\n" +
+            ":- c.\nreftype buf;\nint swap_pair(reftype);\n:- prolog.\n" +
+            "swap(P, Q) :-\n" +
+            "  { Ptr: preftype; Ptr is &buf },\n" +
+            "  fill_par(P, Ptr),\n" +
+            "  { ret: int; ret = 'swap_pair'(buf); Ret is ret },\n" +
+            "  Ret =:= 1,\n" +
+            "  reftype_term(Q, Ptr).\n");
+        Assert.True(e.Query("swap(pair(1, 2), Q), Q == pair(2, 1).").Success);
+    }
+
     [Theory]
     [InlineData("prlg_ifce.pl")]   // the interface definition
     [InlineData("i_form_e.pl")]    // a user (fill_par → call C → reftype_term)

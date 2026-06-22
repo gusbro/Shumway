@@ -195,13 +195,12 @@ be bolted on without reworking the cursor. **Not implemented now.**
 
 ## Documentation (required at implementation close)
 
-When the primary tier ships, the programmer-facing usage MUST be documented in the
-reference docs (alongside `docs/embedded-native-c.md`, or a sibling page) so a user
-who wants whole-term interop knows how to do it: declaring `reftype` term slots
-(including their own, §2), the `fill_par` / `reftype_term` flow, both accessor APIs
-(native Shumway + the `*_c` compatibility layer) with a worked C# example each, the
-ntype codes, and the build-cursor pattern (`putfunctor_c` + `getfuncarg_c`). This
-is part of "done", not an afterthought.
+Done — the programmer-facing guide is [`docs/generic-term-interop.md`](../../generic-term-interop.md):
+declaring `reftype` term slots (including one's own), the `fill_par` /
+`reftype_term` flow, both accessor APIs (native Shumway + the `*_c` compatibility
+layer) with a worked C# example each, the ntype codes, and the build-cursor
+pattern. The worked example (`swap_pair`) is kept honest by a test
+(`NativeReftypeTests.DocExample_SwapPair_Works`).
 
 ## Consequences
 

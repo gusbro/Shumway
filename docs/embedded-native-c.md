@@ -302,10 +302,14 @@ inert). Put native blocks in static predicates.
     generator handles and for Native AOT (no run-time IL generation).
 
   None of this changes the surface you write.
-- **int / float / string tier.** Whole-term marshalling (Arity's `reftype` /
-  `preftype` machinery, `fill_par` / `reftype_term`, `->` and `..`) and C control
-  flow are not supported yet; a source using them raises a consult error (§7)
-  rather than running incorrectly.
+- **Whole-term interop is a separate page.** This page is the int / float / string
+  *value* tier. Passing whole Prolog terms (compounds, lists, nested structures)
+  via Arity's `reftype` / `preftype` machinery (`fill_par` / `reftype_term`) is the
+  **reftype tier** — see [generic-term interop](generic-term-interop.md).
+- **C control flow** (`if` / `while` / `->` member access / `..`) inside a block is
+  not supported; a source using it raises a consult error (§7) rather than running
+  incorrectly.
 
 See `docs/architecture/adr/022-embedded-native-c-blocks.md` for the design and
-rationale.
+rationale, and `docs/architecture/adr/024-generic-term-interop.md` for the reftype
+tier.
