@@ -193,6 +193,16 @@ replacement. The current design must not block it; the ntype-code table (§ ntyp
 codes) is the shared contract, and the `Reftype` field layout is reserved so it can
 be bolted on without reworking the cursor. **Not implemented now.**
 
+## Documentation (required at implementation close)
+
+When the primary tier ships, the programmer-facing usage MUST be documented in the
+reference docs (alongside `docs/embedded-native-c.md`, or a sibling page) so a user
+who wants whole-term interop knows how to do it: declaring `reftype` term slots
+(including their own, §2), the `fill_par` / `reftype_term` flow, both accessor APIs
+(native Shumway + the `*_c` compatibility layer) with a worked C# example each, the
+ntype codes, and the build-cursor pattern (`putfunctor_c` + `getfuncarg_c`). This
+is part of "done", not an afterthought.
+
 ## Consequences
 
 - Whole-term interop is zero-copy: a .NET interop function reads and builds the
