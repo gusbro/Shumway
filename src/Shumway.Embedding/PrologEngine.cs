@@ -4131,6 +4131,27 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     internal NativeBlockEntry? NativeBlock(string name)
         => _nativeBlocks.TryGetValue(name, out var b) ? b : null;
 
+    // ADR-024 — per-engine term slots for `reftype` globals declared in `:- c`
+    // regions (par1ref… and the program's own). Persist across queries (an Arity
+    // global buffer is reused between calls; fill_par overwrites it). The slot
+    // holds an AST term, self-contained and heap-independent, so it survives query
+    // teardown. `&name` / `name` in a native block resolves to the slot.
+    private readonly Dictionary<string, TermSlot> _reftypeSlots = new();
+
+    /// <summary>The term slot for a `reftype` global, or null if the name isn't a
+    /// registered reftype global.</summary>
+    internal TermSlot? ReftypeSlot(string name)
+        => _reftypeSlots.TryGetValue(name, out var s) ? s : null;
+
+    private void RegisterReftypeGlobals(IReadOnlyList<Shumway.Compiler.NativeC.CDecl> decls)
+    {
+        foreach (var d in decls)
+            if (d is Shumway.Compiler.NativeC.CGlobalVar g
+                && g.Type.Name is "reftype" or "preftype" or "t_reftype"
+                && !_reftypeSlots.ContainsKey(g.Name))
+                _reftypeSlots[g.Name] = new TermSlot();
+    }
+
     private Shumway.Compiler.NativeC.NativeInlineContext? _nativeInlineContext;
 
     /// <summary>ADR-022 item 2 — the context the IL compiler uses to inline this
@@ -5056,6 +5077,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             var cDecls = nativeDecls is null
                 ? new List<Shumway.Compiler.NativeC.CDecl>()
                 : Shumway.Compiler.NativeC.CParser.ParseDeclarations(nativeDecls.ToString());
+            // ADR-024 — register a term slot for every `reftype` global in the
+            // `:- c` regions (par1ref…, or the program's own). `&name` / `name` in a
+            // native block resolves to this slot's cursor.
+            RegisterReftypeGlobals(cDecls);
             string prefix = "$nb$" + (_nativeBlockConsultSeq++) + "$";
             clauses = NativeTransform.Apply(clauses, cDecls, ResolveNativeInterop,
                 (name, vars, stmts, _) => AddNativeBlock(name, vars, stmts), prefix);

@@ -137,4 +137,38 @@ public sealed class NativeReftypeTests
         Assert.True(ReftypeApi.equrefs_c(a, b));
         Assert.False(ReftypeApi.equrefs_c(a, c));
     }
+
+    // ---- Stage 2 parts 2-3: the full Arity flow — a reftype global as a slot,
+    // &name in a native block, a C interop function manipulating the TermSlot.
+
+    private static class TermInterop
+    {
+        // reads an int from the slot, writes back a compound result(int+1).
+        public static int bump(TermSlot r)
+        {
+            if (!ReftypeApi.getint_c(r, out var v)) return 0;
+            ReftypeApi.putfunctor_c("result", 1, r);
+            ReftypeApi.getfuncarg_c(r, 1, out var a1);
+            ReftypeApi.putint_c(v + 1, a1);
+            return 1;
+        }
+    }
+
+    [Fact]
+    public void FullFlow_GlobalSlot_NativeBlock_InteropManipulatesTerm()
+    {
+        var e = new PrologEngine();
+        e.UseNativeInterop(typeof(TermInterop));
+        e.ConsultString(
+            ":- set_prolog_flag(arity_compat, true).\n" +
+            ":- c.\nreftype par1ref;\nint bump(reftype);\n:- prolog.\n" +
+            "go(In, Out) :-\n" +
+            "  { Ptr: preftype; Ptr is &par1ref },\n" +
+            "  fill_par(In, Ptr),\n" +
+            "  { ret: int; ret = 'bump'(par1ref); Ret is ret },\n" +
+            "  Ret =:= 1,\n" +
+            "  reftype_term(Out, Ptr).\n");
+        // In=10 → C reads 10, builds result(11) into the slot → Out = result(11).
+        Assert.True(e.Query("go(10, Out), Out == result(11).").Success);
+    }
 }

@@ -4,7 +4,7 @@ namespace Shumway.Compiler.NativeC;
 
 /// <summary>The .NET-mapped type of a marshalled Prolog variable (ADR-022, the
 /// int/float/string tier). <see cref="Term"/> is the deferred whole-term tier.</summary>
-public enum NativeKind { Int, Long, Float, Double, String, Term }
+public enum NativeKind { Int, Long, Float, Double, String, Term, Reftype }
 
 /// <summary>The direction a native block uses a Prolog variable: read on entry
 /// (<see cref="Input"/>) or unified on exit (<see cref="Output"/>).</summary>
@@ -274,6 +274,11 @@ public static class NativeInference
     private static NativeKind? MapType(CType t, Dictionary<string, CType> typedefs)
     {
         t = ResolveTypedef(t, typedefs);
+        // ADR-024 — the Arity generic-term struct, in any pointer form, is a
+        // reftype cursor (a TermSlot handle). reftype = struct t_reftype*,
+        // preftype = reftype* — all map to the same handle in the cursor model.
+        if (t.Name is "reftype" or "preftype" or "t_reftype")
+            return NativeKind.Reftype;
         if (t.PointerDepth >= 1)
             return t.Name == "char" ? NativeKind.String : null;   // char* → string; others deferred
         return t.Name switch

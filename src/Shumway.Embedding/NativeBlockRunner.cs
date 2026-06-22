@@ -63,11 +63,21 @@ public static class NativeBlockRunner
 
         var outputs = new Dictionary<string, object?>();
         foreach (var st in stmts)
-            ExecStmt(st, env, outputs, index, resolveInterop);
+            ExecStmt(st, host, env, outputs, index, resolveInterop);
 
         foreach (var (name, value) in outputs)
         {
             if (!index.TryGetValue(name, out int i)) continue;   // not a register var
+            // ADR-024 — a reftype output is the slot cursor; bind the register to
+            // the slot's Foreign cell so fill_par / reftype_term / a later block
+            // recover it.
+            if (vars[i].Kind == NativeKind.Reftype)
+            {
+                if (!engine.UnifyRegisterWithCell(regOffset + i,
+                        engine.MakeForeign((TermSlot)value!)))
+                    return false;
+                continue;
+            }
             var term = ToTerm(host, vars[i].Kind, value);
             if (!RegisterMarshalling.UnifyRegisterWithTerm(engine, regOffset + i, term))
                 return false;
@@ -85,6 +95,12 @@ public static class NativeBlockRunner
             NativeKind.Int or NativeKind.Long => host.FromTerm<long>(term),
             NativeKind.Float or NativeKind.Double => host.FromTerm<double>(term),
             NativeKind.String => host.FromTerm<string>(term),
+            // ADR-024 — a reftype input is a slot handle (a Foreign cell): unwrap
+            // the TermSlot so the block / interop can read or build through it.
+            NativeKind.Reftype => term is Shumway.Compiler.Ast.CompoundTerm { Functor: "$foreign", Args.Length: 1 } ct
+                && ct.Args[0] is Shumway.Compiler.Ast.IntTerm id
+                ? engine.AsForeign<TermSlot>(Shumway.Core.Cell.Foreign((int)id.Value))
+                : null,
             _ => throw new System.NotSupportedException($"native input kind {kind}"),
         };
     }
@@ -100,7 +116,7 @@ public static class NativeBlockRunner
             _ => throw new System.NotSupportedException($"native output kind {kind}"),
         };
 
-    private static void ExecStmt(CStmt st, Dictionary<string, object?> env,
+    private static void ExecStmt(CStmt st, PrologEngine host, Dictionary<string, object?> env,
         Dictionary<string, object?> outputs, Dictionary<string, int> prologVars,
         Func<string, MethodInfo?> resolve)
     {
@@ -114,29 +130,36 @@ public static class NativeBlockRunner
                 // block-local intermediate (e.g. `T is sum(A,B)` where T is read
                 // by a later statement); that goes to the local environment.
                 (prologVars.ContainsKey(b.Var) ? outputs : env)[b.Var] =
-                    Eval(b.Value, env, outputs, resolve);
+                    Eval(b.Value, host, env, outputs, resolve);
                 break;
             case CAssignStmt { Target: CIdentExpr id } a:
-                env[id.Name] = Eval(a.Value, env, outputs, resolve);
+                env[id.Name] = Eval(a.Value, host, env, outputs, resolve);
                 break;
             case CCallStmt c:
-                Eval(c.Call, env, outputs, resolve);   // side effect (an interop call / intrinsic)
+                Eval(c.Call, host, env, outputs, resolve);   // side effect (an interop call / intrinsic)
                 break;
             default:
                 throw new System.NotSupportedException($"native statement {st.GetType().Name}");
         }
     }
 
-    private static object? Eval(CExpr e, Dictionary<string, object?> env,
+    private static object? Eval(CExpr e, PrologEngine host, Dictionary<string, object?> env,
         Dictionary<string, object?> outputs, Func<string, MethodInfo?> resolve)
     {
         switch (e)
         {
             case CIntExpr n: return n.Value;
             case CStringExpr s: return s.Value;
+            // ADR-024 — `&name` where name is a reftype global is that global's slot
+            // cursor (the `&` is vestigial in the cursor model — `name` and `&name`
+            // both resolve to the same slot).
+            case CAddrOfExpr { Operand: CIdentExpr g } when host.ReftypeSlot(g.Name) is { } s1:
+                return s1;
             case CIdentExpr id:
-                return env.TryGetValue(id.Name, out var val) ? val
-                    : outputs.TryGetValue(id.Name, out var ov) ? ov : null;
+                if (env.TryGetValue(id.Name, out var val)) return val;
+                if (outputs.TryGetValue(id.Name, out var ov)) return ov;
+                if (host.ReftypeSlot(id.Name) is { } s2) return s2;   // a reftype global
+                return null;
             case CCallExpr { Name: "MakeCString" } mk:
                 // buf := the input Prolog string named by `&Str`.
                 {
@@ -150,14 +173,14 @@ public static class NativeBlockRunner
                 {
                     var src = mp.Args.FirstOrDefault(a => a is not CAddrOfExpr);
                     string? outVar = StrArg(mp);
-                    if (outVar is not null) outputs[outVar] = src is null ? null : Eval(src, env, outputs, resolve);
+                    if (outVar is not null) outputs[outVar] = src is null ? null : Eval(src, host, env, outputs, resolve);
                     return null;
                 }
             case CBinaryExpr b:
                 return EvalBinary(b.Op,
-                    Eval(b.Left, env, outputs, resolve), Eval(b.Right, env, outputs, resolve));
+                    Eval(b.Left, host, env, outputs, resolve), Eval(b.Right, host, env, outputs, resolve));
             case CCallExpr c:
-                return CallInterop(c, env, outputs, resolve);
+                return CallInterop(c, host, env, outputs, resolve);
             default:
                 throw new System.NotSupportedException($"native expression {e.GetType().Name}");
         }
@@ -170,7 +193,7 @@ public static class NativeBlockRunner
             .Select(a => (a.Operand as CIdentExpr)?.Name)
             .FirstOrDefault(n => n is not null);
 
-    private static object? CallInterop(CCallExpr c, Dictionary<string, object?> env,
+    private static object? CallInterop(CCallExpr c, PrologEngine host, Dictionary<string, object?> env,
         Dictionary<string, object?> outputs, Func<string, MethodInfo?> resolve)
     {
         var m = resolve(c.Name)
@@ -180,7 +203,7 @@ public static class NativeBlockRunner
         var args = new object?[c.Args.Count];
         for (int i = 0; i < c.Args.Count; i++)
         {
-            object? v = Eval(c.Args[i], env, outputs, resolve);
+            object? v = Eval(c.Args[i], host, env, outputs, resolve);
             args[i] = i < ps.Length ? ConvertArg(v, ps[i].ParameterType) : v;
         }
         return InvokerFor(m)(args);
