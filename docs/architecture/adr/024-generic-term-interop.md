@@ -91,13 +91,35 @@ small per-engine slot table; no managed object graph, no copy). A slot holds a
 single heap cell (the term's root, or — during construction — an argument
 position to be filled).
 
-### 2. The `par1ref … parNref` globals are runtime slots
+### 2. Any `reftype` global is a runtime term slot
 
-The `extern reftype parNref` globals (a fixed, small set — up to `par10ref` in the
-corpus) are recognized as **runtime-owned term slots**, not fields of the user's
-interop class. `&parNref` resolves to slot N's `TermRef`. There is no manual
-memory management: the heap GC owns the cells; `freepar` / `newreftype` become slot
-operations.
+A global declared with type `reftype` / `t_reftype` in a `:- c` region is a
+**runtime-owned term slot** — NOT a field of the user's interop class, and NOT a
+fixed hard-coded list. Recognition is **by type, not by name**: at consult / load
+the runtime creates one slot per such global and maps `name → slot`; `&name`
+resolves to that slot's `TermRef`.
+
+The `par1ref … par10ref` globals are simply the ones declared in `prlg_ifce.pl`
+(`extern reftype par1ref;` …) — the library's buffers, captured by the general
+rule like any other. A program declares its **own** extra slots the same way:
+
+```prolog
+:- c.
+reftype my_buffer;        % a term slot of one's own
+:- prolog.
+m(T, R) :-
+    { Ptr: preftype; Ptr is &my_buffer },
+    fill_par(T, Ptr), { R is 'my_c_fn'(my_buffer) }, reftype_term(T2, Ptr).
+```
+
+**Scope** follows C global linkage (ADR-022): the owning module declares
+`reftype my_buffer;`, another module references it with `extern reftype
+my_buffer;`, and there is one shared slot per name (as for `par1ref`). There is no
+separate module-private slot — Arity's C globals have none either; a unique name
+per module suffices.
+
+There is no manual memory management: the heap GC owns the cells; `freepar` /
+`newreftype` become slot operations.
 
 ### 3. The interface predicates are intrinsics (recognized by name)
 
