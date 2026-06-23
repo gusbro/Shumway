@@ -22,32 +22,49 @@ public sealed class NativeBlockBailException : Exception { }
 public sealed class NativeBlockTyping
 {
     /// <summary>Model CLR type (long/double/string) of each Prolog variable and
-    /// block-local, by name.</summary>
+    /// block-local, by name. A <c>reftype</c> variable is NOT here — it is in
+    /// <see cref="ReftypeVars"/> instead, because its CLR type (<c>TermSlot</c>)
+    /// lives in Shumway.Embedding, which this assembly can't name; each code
+    /// generator supplies the concrete type.</summary>
     public Dictionary<string, Type> Types { get; } = new();
 
     /// <summary>Prolog variables that the block assigns and must therefore unify
     /// back to their register on exit.</summary>
     public HashSet<string> ToUnify { get; } = new();
 
+    /// <summary>ADR-024 — the variables / block-locals of reftype kind (a
+    /// <c>TermSlot</c> cursor). Each backend declares these with its own
+    /// <c>TermSlot</c> type.</summary>
+    public HashSet<string> ReftypeVars { get; } = new();
+
     public static NativeBlockTyping Compute(IReadOnlyList<NativeVar> vars,
         IReadOnlyList<CStmt> stmts, Func<string, MethodInfo?> resolve)
     {
         var t = new NativeBlockTyping();
         var varNames = new HashSet<string>(vars.Select(v => v.Name));
-        foreach (var v in vars) t.Types[v.Name] = ModelType(v.Kind);
+        foreach (var v in vars)
+        {
+            if (v.Kind == NativeKind.Reftype) t.ReftypeVars.Add(v.Name);
+            else t.Types[v.Name] = ModelType(v.Kind);
+        }
         foreach (var st in stmts)
         {
             switch (st)
             {
                 case CVarDeclStmt d:
-                    t.Types[d.Var] = ModelType(d.Type);
+                    if (IsReftypeCType(d.Type)) t.ReftypeVars.Add(d.Var);
+                    else t.Types[d.Var] = ModelType(d.Type);
                     break;
                 case CBindStmt b:
                     if (varNames.Contains(b.Var)) t.ToUnify.Add(b.Var);
-                    if (!t.Types.ContainsKey(b.Var)) t.Types[b.Var] = t.TypeOfExpr(b.Value, resolve);
+                    // A reftype target (e.g. `Ptr is &buf`) is already classified;
+                    // don't type its value as a scalar.
+                    if (!t.ReftypeVars.Contains(b.Var) && !t.Types.ContainsKey(b.Var))
+                        t.Types[b.Var] = t.TypeOfExpr(b.Value, resolve);
                     break;
                 case CAssignStmt { Target: CIdentExpr id } a:
-                    if (!t.Types.ContainsKey(id.Name)) t.Types[id.Name] = t.TypeOfExpr(a.Value, resolve);
+                    if (!t.ReftypeVars.Contains(id.Name) && !t.Types.ContainsKey(id.Name))
+                        t.Types[id.Name] = t.TypeOfExpr(a.Value, resolve);
                     break;
                 case CCallStmt { Call: CCallExpr call }:
                     t.TypeIntrinsic(call, varNames, resolve);
@@ -110,6 +127,11 @@ public sealed class NativeBlockTyping
 
     public static bool IsIntrinsic(string name) =>
         name is "MakeCString" or "MakePrologString" or "MakePrologStringEx";
+
+    /// <summary>ADR-024 — true for the Arity generic-term struct type in any
+    /// pointer form (reftype / preftype / t_reftype), a TermSlot cursor.</summary>
+    public static bool IsReftypeCType(CType t) =>
+        t.Name is "reftype" or "preftype" or "t_reftype";
 
     public static string? StrArg(CCallExpr c) =>
         c.Args.OfType<CAddrOfExpr>()

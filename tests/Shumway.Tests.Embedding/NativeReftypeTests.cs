@@ -155,6 +155,29 @@ public sealed class NativeReftypeTests
     }
 
     [Fact]
+    public void ReftypeBlock_CompilesToDelegate_NotInterpreter()
+    {
+        // ADR-024 IL path: a reftype block now compiles to a delegate (no per-call
+        // dicts / boxing / tree-walk), for hot loops where the C# method is cheap
+        // but called millions of times.
+        int before = NativeBlockCompiler.CompiledCount;
+        var e = new PrologEngine();
+        e.UseNativeInterop(typeof(TermInterop));
+        e.ConsultString(
+            ":- set_prolog_flag(arity_compat, true).\n" +
+            ":- c.\nreftype par1ref;\nint bump(reftype);\n:- prolog.\n" +
+            "go(In, Out) :-\n" +
+            "  { Ptr: preftype; Ptr is &par1ref },\n" +
+            "  fill_par(In, Ptr),\n" +
+            "  { ret: int; ret = 'bump'(par1ref); Ret is ret },\n" +
+            "  Ret =:= 1,\n" +
+            "  reftype_term(Out, Ptr).\n");
+        Assert.True(e.Query("go(10, Out), Out == result(11).").Success);
+        // both reftype blocks compiled to delegates (didn't fall back).
+        Assert.True(NativeBlockCompiler.CompiledCount >= before + 2);
+    }
+
+    [Fact]
     public void FullFlow_GlobalSlot_NativeBlock_InteropManipulatesTerm()
     {
         var e = new PrologEngine();

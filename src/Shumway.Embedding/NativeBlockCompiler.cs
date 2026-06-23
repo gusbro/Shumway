@@ -34,12 +34,38 @@ public static class NativeBlockCompiler
         typeof(Engine).GetProperty(nameof(Engine.Host))!;
     private static readonly ConstructorInfo AtomTermCtor =
         typeof(AtomTerm).GetConstructor(new[] { typeof(string) })!;
+    // ADR-024 reftype tier:
+    private static readonly MethodInfo GetOrCreateSlot =
+        typeof(PrologEngine).GetMethod(nameof(PrologEngine.GetOrCreateReftypeSlot),
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+    private static readonly MethodInfo MakeForeignM =
+        typeof(Engine).GetMethod(nameof(Engine.MakeForeign))!;
+    private static readonly MethodInfo UnifyRegCell =
+        typeof(Engine).GetMethod(nameof(Engine.UnifyRegisterWithCell))!;
+    private static readonly MethodInfo ReadSlotM =
+        typeof(NativeBlockCompiler).GetMethod(nameof(ReadReftypeSlot))!;
+
+    /// <summary>ADR-024 — the <see cref="TermSlot"/> a register holds (a Foreign
+    /// cell, read as <c>'$foreign'(Id)</c>), or null. Shared by the
+    /// Expression-compiled blocks (called from emitted IL).</summary>
+    public static TermSlot? ReadReftypeSlot(Engine engine, int reg)
+    {
+        var t = RegisterMarshalling.ReadRegisterAsTerm(engine, reg);
+        return t is CompoundTerm { Functor: "$foreign", Args.Length: 1 } ct
+            && ct.Args[0] is IntTerm id
+            ? engine.AsForeign<TermSlot>(Shumway.Core.Cell.Foreign((int)id.Value))
+            : null;
+    }
 
     /// <summary>Compiles the block to a <c>Func&lt;Engine,bool&gt;</c> whose Prolog
     /// variables live in argument registers <paramref name="regOffset"/>.. (in
     /// <paramref name="vars"/> order). Returns null — fall back to the interpreter
     /// — when the block uses an unsupported construct or runtime IL generation is
     /// unavailable.</summary>
+    /// <summary>Number of native blocks compiled to a delegate (vs fell back to the
+    /// interpreter). Test/diagnostic observability.</summary>
+    public static int CompiledCount;
+
     public static Func<Engine, bool>? TryCompile(IReadOnlyList<NativeVar> vars,
         IReadOnlyList<CStmt> stmts, int regOffset, Func<string, MethodInfo?> resolve)
     {
@@ -47,7 +73,9 @@ public static class NativeBlockCompiler
             return null;
         try
         {
-            return new Builder(vars, stmts, regOffset, resolve).Compile();
+            var del = new Builder(vars, stmts, regOffset, resolve).Compile();
+            System.Threading.Interlocked.Increment(ref CompiledCount);
+            return del;
         }
         catch (NativeBlockBailException)
         {
@@ -65,6 +93,7 @@ public static class NativeBlockCompiler
         private readonly Dictionary<string, ParameterExpression> _locals = new();
         private Dictionary<string, Type> _types = null!;
         private HashSet<string> _toUnify = null!;
+        private HashSet<string> _reftypeVars = null!;
         private ParameterExpression _engine = null!;
         private ParameterExpression _host = null!;
         private LabelTarget _ret = null!;
@@ -81,6 +110,7 @@ public static class NativeBlockCompiler
             var typing = NativeBlockTyping.Compute(_vars, _stmts, _resolve);
             _types = typing.Types;
             _toUnify = typing.ToUnify;
+            _reftypeVars = typing.ReftypeVars;
 
             _engine = Expression.Parameter(typeof(Engine), "engine");
             _host = Expression.Variable(typeof(PrologEngine), "host");
@@ -96,6 +126,13 @@ public static class NativeBlockCompiler
             foreach (var (name, type) in _types)
             {
                 var local = Expression.Variable(type, name);
+                _locals[name] = local;
+                locals.Add(local);
+            }
+            // ADR-024 — reftype locals are TermSlot cursors.
+            foreach (var name in _reftypeVars)
+            {
+                var local = Expression.Variable(typeof(TermSlot), name);
                 _locals[name] = local;
                 locals.Add(local);
             }
@@ -182,12 +219,18 @@ public static class NativeBlockCompiler
         {
             CIntExpr n => Expression.Constant(n.Value),
             CStringExpr s => Expression.Constant(s.Value, typeof(string)),
+            // ADR-024 — `&name` is the reftype global's slot cursor.
+            CAddrOfExpr { Operand: CIdentExpr g } => EmitGetSlot(g.Name),
             CIdentExpr id => _locals.TryGetValue(id.Name, out var l) ? l : throw new NativeBlockBailException(),
             CBinaryExpr b => EmitBinary(b.Op, EmitExpr(b.Left), EmitExpr(b.Right)),
             CCallExpr c when !NativeBlockTyping.IsIntrinsic(c.Name) =>
                 NormalizeToModel(EmitInteropCall(c), NativeBlockTyping.ResolveOrBail(_resolve, c.Name).ReturnType),
             _ => throw new NativeBlockBailException(),
         };
+
+        // host.GetOrCreateReftypeSlot(name) — the slot for a reftype global.
+        private Expression EmitGetSlot(string name)
+            => Expression.Call(_host, GetOrCreateSlot, Expression.Constant(name));
 
         private Expression EmitBinary(char op, Expression l, Expression r)
         {
@@ -211,7 +254,22 @@ public static class NativeBlockCompiler
             if (c.Args.Count != ps.Length) throw new NativeBlockBailException();
             var args = new Expression[ps.Length];
             for (int i = 0; i < ps.Length; i++)
+            {
+                // ADR-024 — a TermSlot parameter receives a reftype global
+                // (`'fn'(par1ref)` → its slot) or a reftype variable (a TermSlot
+                // local).
+                if (ps[i].ParameterType == typeof(TermSlot))
+                {
+                    if (c.Args[i] is CIdentExpr cid && _locals.TryGetValue(cid.Name, out var rl))
+                        args[i] = rl;
+                    else if (ReftypeArgName(c.Args[i]) is { } rn)
+                        args[i] = EmitGetSlot(rn);
+                    else
+                        throw new NativeBlockBailException();
+                    continue;
+                }
                 args[i] = Coerce(EmitExpr(c.Args[i]), ps[i].ParameterType);
+            }
             return Expression.Call(m, args);
         }
 
@@ -220,6 +278,9 @@ public static class NativeBlockCompiler
         private Expression ReadInput(NativeVar v)
         {
             int reg = _regOffset + _varIndex[v.Name];
+            // ADR-024 — a reftype input is the slot handle (a Foreign cell).
+            if (v.Kind == NativeKind.Reftype)
+                return Expression.Call(ReadSlotM, _engine, Expression.Constant(reg));
             var term = Expression.Call(ReadReg, _engine, Expression.Constant(reg));
             return Expression.Call(_host,
                 FromTermGeneric.MakeGenericMethod(NativeBlockTyping.ModelType(v.Kind)), term);
@@ -229,6 +290,16 @@ public static class NativeBlockCompiler
         {
             int reg = _regOffset + _varIndex[v.Name];
             var local = _locals[v.Name];
+            // ADR-024 — a reftype output binds the register to the slot's Foreign
+            // cell: engine.UnifyRegisterWithCell(reg, engine.MakeForeign(slot)).
+            if (v.Kind == NativeKind.Reftype)
+            {
+                var foreign = Expression.Call(_engine, MakeForeignM,
+                    Expression.Convert(local, typeof(object)));
+                var unifyCell = Expression.Call(_engine, UnifyRegCell, Expression.Constant(reg), foreign);
+                return Expression.IfThen(Expression.Not(unifyCell),
+                    Expression.Return(_ret, Expression.Constant(false)));
+            }
             Expression term = v.Kind == NativeKind.String
                 ? Expression.New(AtomTermCtor, Coerce(local, typeof(string)))
                 : Expression.Call(_host, ToTermGeneric.MakeGenericMethod(NativeBlockTyping.ModelType(v.Kind)),
@@ -237,6 +308,15 @@ public static class NativeBlockCompiler
             return Expression.IfThen(Expression.Not(unify),
                 Expression.Return(_ret, Expression.Constant(false)));
         }
+
+        /// <summary>The reftype-global name an interop argument names (`par1ref` or
+        /// `&amp;par1ref`), or null.</summary>
+        private static string? ReftypeArgName(CExpr e) => e switch
+        {
+            CIdentExpr id => id.Name,
+            CAddrOfExpr { Operand: CIdentExpr id } => id.Name,
+            _ => null,
+        };
 
         /// <summary>Coerce a model-typed expression (long/double/string) to a
         /// target CLR type (a local's type or an interop parameter type).</summary>
