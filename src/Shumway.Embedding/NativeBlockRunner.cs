@@ -54,7 +54,8 @@ public static class NativeBlockRunner
         var host = (PrologEngine)engine.Host!;
         Func<string, MethodInfo?> resolveInterop = host.ResolveNativeInterop;
         var index = new Dictionary<string, int>();
-        for (int i = 0; i < vars.Count; i++) index[vars[i].Name] = i;
+        var kindOf = new Dictionary<string, NativeKind>();
+        for (int i = 0; i < vars.Count; i++) { index[vars[i].Name] = i; kindOf[vars[i].Name] = vars[i].Kind; }
 
         var env = new Dictionary<string, object?>();
         foreach (var v in vars)
@@ -63,7 +64,7 @@ public static class NativeBlockRunner
 
         var outputs = new Dictionary<string, object?>();
         foreach (var st in stmts)
-            ExecStmt(st, host, env, outputs, index, resolveInterop);
+            ExecStmt(st, host, env, outputs, index, kindOf, resolveInterop);
 
         foreach (var (name, value) in outputs)
         {
@@ -118,12 +119,20 @@ public static class NativeBlockRunner
 
     private static void ExecStmt(CStmt st, PrologEngine host, Dictionary<string, object?> env,
         Dictionary<string, object?> outputs, Dictionary<string, int> prologVars,
-        Func<string, MethodInfo?> resolve)
+        Dictionary<string, NativeKind> kindOf, Func<string, MethodInfo?> resolve)
     {
         switch (st)
         {
             case CVarDeclStmt:
                 break;   // a local declaration — storage materialises on first assignment
+            // ADR-024 — `Par1 is par1str` where Par1 is a holder (the inference
+            // typed it Reftype, from a holder global): Par1 = the global's slot
+            // cursor, created on first reference (works in a bundle too).
+            case CBindStmt { Value: CIdentExpr g } b
+                when kindOf.TryGetValue(b.Var, out var bk) && bk == NativeKind.Reftype:
+                (prologVars.ContainsKey(b.Var) ? outputs : env)[b.Var] =
+                    host.GetOrCreateReftypeSlot(g.Name);
+                break;
             case CBindStmt b:
                 // `Var is e` binds an OUTPUT Prolog variable (goes to `outputs`,
                 // unified at the end) — but the same `is` form also binds a

@@ -173,6 +173,14 @@ public static class NativeBlockCompiler
                 case CBindStmt b:
                 {
                     var local = _locals[b.Var];
+                    // ADR-024 — `H is buf` where H is a holder var and buf is a
+                    // holder global: H = the global's slot.
+                    if (_reftypeVars.Contains(b.Var) && b.Value is CIdentExpr hg
+                        && !_locals.ContainsKey(hg.Name))
+                    {
+                        body.Add(Expression.Assign(local, EmitGetSlot(hg.Name)));
+                        break;
+                    }
                     body.Add(Expression.Assign(local, Coerce(EmitExpr(b.Value), local.Type)));
                     break;
                 }

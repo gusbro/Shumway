@@ -62,6 +62,19 @@ public static class NativeInference
                 case CPrototype p: protoReturn[p.Name] = p.ReturnType; break;
             }
         }
+        // ADR-024 — global C buffers (a `char*` / `char[]` or a reftype global) are
+        // reusable HOLDERS (slots): a variable assigned from one (`Par1 is par1str`)
+        // is a holder cursor, not a string value. (Resolved through typedefs, so
+        // `pchar par1str` counts.)
+        var holderGlobals = new HashSet<string>();
+        foreach (var d in cDecls)
+            if (d is CGlobalVar g)
+            {
+                var rt = ResolveTypedef(g.Type, typedefs);
+                if ((rt.Name == "char" && (rt.PointerDepth >= 1 || g.ArrayLength is not null))
+                    || rt.Name is "reftype" or "preftype" or "t_reftype")
+                    holderGlobals.Add(g.Name);
+            }
 
         // ----- block scan -----
         var localType = new Dictionary<string, CType>();   // block-local C temps
@@ -73,6 +86,7 @@ public static class NativeInference
         var referenced = new HashSet<string>();            // any Prolog var the block reads
         var globalsUsed = new HashSet<string>();
         var lengthHint = new Dictionary<string, NativeKind>();  // MakeCString length arg → Int
+        var holderVars = new HashSet<string>();            // Prolog var assigned from a holder global
 
         // Kinds of Prolog variables already determined as the statements are
         // scanned (seeded from the clause's type guards). A later `Var is …` whose
@@ -95,6 +109,10 @@ public static class NativeInference
                     break;
                 case CBindStmt b:
                     outputs.Add(b.Var);
+                    // `Par1 is par1str` where par1str is a holder global → Par1 is a
+                    // holder cursor (a slot), not a string value.
+                    if (b.Value is CIdentExpr rhsId && holderGlobals.Contains(rhsId.Name))
+                        holderVars.Add(b.Var);
                     if (InferExprKind(b.Value, localType, globalType, protoReturn, typedefs,
                             prologVarKind) is { } k)
                     {
@@ -141,7 +159,10 @@ public static class NativeInference
 
             // type — most specific first
             NativeKind? kind = null;
-            if (declHint.TryGetValue(name, out var dh)) kind = MapType(dh, typedefs);
+            // A variable assigned from a holder global is a holder cursor; this
+            // wins over its `: pchar` declaration (a holder, not a string value).
+            if (holderVars.Contains(name)) kind = NativeKind.Reftype;
+            if (kind is null && declHint.TryGetValue(name, out var dh)) kind = MapType(dh, typedefs);
             if (kind is null && rhsKind.TryGetValue(name, out var rk)) kind = rk;
             // A `Var: type` declaration in ANOTHER block of the same clause: a
             // variable declared in one block (e.g. `Par1: pchar`) and used in

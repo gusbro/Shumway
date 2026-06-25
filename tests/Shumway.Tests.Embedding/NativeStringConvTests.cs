@@ -28,6 +28,56 @@ public sealed class NativeStringConvTests
     }
 
     [Fact]
+    public void HolderMode_FillThenRead_RoundTrips()
+    {
+        // i_start_rpt pattern: a char* global is a reusable holder. `H is buf` gives
+        // the holder slot; make_c_string sets it, make_prolog_string reads it.
+        var e = new PrologEngine();
+        e.ConsultString(
+            ":- set_prolog_flag(arity_compat, true).\n" +
+            ":- c.\nchar* buf;\n:- prolog.\n" +
+            "p(In, Out) :-\n" +
+            "  { H: pchar; H is buf },\n" +
+            "  make_c_string(H, 100, In, _),\n" +
+            "  make_prolog_string(H, Out).\n");
+        Assert.True(e.Query("p(hello, Out), Out == hello.").Success);
+    }
+
+    [Fact]
+    public void HolderMode_RunsUnderTier1Il()
+    {
+        // The holder flow also compiles to IL (delegate / Tier-1 inline).
+        var e = new PrologEngine();
+        e.IlPromotion.Threshold = 1;
+        e.ConsultString(
+            ":- set_prolog_flag(arity_compat, true).\n" +
+            ":- public p/2.\n" +
+            ":- c.\nchar* buf;\n:- prolog.\n" +
+            "p(In, Out) :-\n" +
+            "  { H: pchar; H is buf },\n" +
+            "  make_c_string(H, 100, In, _),\n" +
+            "  make_prolog_string(H, Out).\n");
+        for (int i = 0; i < 6; i++)
+            Assert.True(e.Query("p(hello, Out), Out == hello.").Success);
+    }
+
+    [Fact]
+    public void HolderMode_ReusedHolder_NoAliasing()
+    {
+        // The key reason for holders over identity: filling the same buffer twice
+        // must NOT alias the two Prolog values.
+        var e = new PrologEngine();
+        e.ConsultString(
+            ":- set_prolog_flag(arity_compat, true).\n" +
+            ":- c.\nchar* buf;\n:- prolog.\n" +
+            "q(A, B, OA, OB) :-\n" +
+            "  { H: pchar; H is buf },\n" +
+            "  make_c_string(H, 100, A, _), make_prolog_string(H, OA),\n" +
+            "  make_c_string(H, 100, B, _), make_prolog_string(H, OB).\n");
+        Assert.True(e.Query("q(x, y, OA, OB), OA == x, OB == y.").Success);
+    }
+
+    [Fact]
     public void BuiltinRedefinition_DroppedUnderArityCompat()
     {
         // A program that redefines a Shumway builtin (atom_length/2) under

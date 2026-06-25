@@ -52,6 +52,10 @@ public sealed class NativeBlockTyping
             switch (st)
             {
                 case CVarDeclStmt d:
+                    // A holder var (already classified Reftype from the vars list,
+                    // e.g. `H: pchar` where H is assigned a holder global) keeps that
+                    // classification — don't also type its `: pchar` as a string.
+                    if (t.ReftypeVars.Contains(d.Var)) break;
                     if (IsReftypeCType(d.Type)) t.ReftypeVars.Add(d.Var);
                     else t.Types[d.Var] = ModelType(d.Type);
                     break;

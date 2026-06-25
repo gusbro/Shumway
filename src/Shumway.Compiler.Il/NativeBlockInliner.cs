@@ -223,6 +223,15 @@ internal static class NativeBlockInliner
         {
             Type targetType = _typing.ReftypeVars.Contains(target)
                 ? _ctx.TermSlotType! : _typing.Types[target];
+            // ADR-024 — `H is buf` where H is a holder var and buf a holder global:
+            // H = the global's slot.
+            if (_typing.ReftypeVars.Contains(target) && value is CIdentExpr hg
+                && !_typing.ReftypeVars.Contains(hg.Name) && !_typing.Types.ContainsKey(hg.Name))
+            {
+                EmitGetSlot(hg.Name);
+                _emit?.StoreLocal(_locals[target]);
+                return;
+            }
             var srcType = EmitExpr(value);
             Coerce(srcType, targetType);
             _emit?.StoreLocal(_locals[target]);
