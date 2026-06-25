@@ -127,8 +127,8 @@ internal static class Program
                         $"[y-survey]   {pred,-40} perms={v.PermTotal,3} classB={v.ClassB,3}");
                 Shumway.Compiler.Wam.ClauseCompiler.YSurvey = null;
             }
-            if (!string.IsNullOrEmpty(opts.DumpWamPath) || !string.IsNullOrEmpty(opts.DumpIlPath))
-                DumpArtifacts(obj, input, opts);
+            if (opts.DumpWam || opts.DumpIl)
+                DumpArtifacts(obj, input, output, opts);
             if (opts.PruneReport)
                 PruneReport(obj, input);
             if (verbose)
@@ -192,14 +192,24 @@ internal static class Program
     /// compilation — when --regions is set — sees the local closure). Both append, with
     /// per-predicate headers; the IL dump reuses the IL compiler's own FinishEmit dump
     /// hook (<see cref="IlPredicateCompiler.IlDumpPath"/>).</summary>
-    private static void DumpArtifacts(ShmoObject obj, string input, Options opts)
+    private static void DumpArtifacts(ShmoObject obj, string input, string output, Options opts)
     {
         var module = CompiledModuleCodec.Decode(obj.Bytecode);
         var preds = module.Predicates;
         var calleeMap = preds.ToDictionary(p => p.FunctorId);
 
-        if (!string.IsNullOrEmpty(opts.DumpWamPath))
+        // The dump goes next to the .shmo output, named after the source —
+        // <source>.wam / <source>.il — so it works with wildcards / multi-file
+        // compiles (each source gets its own dump). One file per source: overwrite.
+        string DumpPath(string ext)
         {
+            string dir = Path.GetDirectoryName(output) ?? "";
+            return Path.Combine(dir, Path.GetFileNameWithoutExtension(input) + ext);
+        }
+
+        if (opts.DumpWam)
+        {
+            string wamPath = DumpPath(".wam");
             var sb = new StringBuilder();
             sb.Append($";;; ===== WAM dump: {input} (module {obj.ModuleName}, {preds.Count} predicates) =====\n");
             foreach (var p in preds)
@@ -208,15 +218,16 @@ internal static class Program
                 foreach (var ins in Disassembler.Iterate(p.Bytecode, 0, p.Bytecode.Length))
                     sb.Append($"    {ins}\n");
             }
-            File.AppendAllText(opts.DumpWamPath, sb.ToString());
-            Console.Error.WriteLine($"  WAM dump -> {opts.DumpWamPath} ({preds.Count} predicates)");
+            File.WriteAllText(wamPath, sb.ToString());
+            Console.Error.WriteLine($"  WAM dump -> {wamPath} ({preds.Count} predicates)");
         }
 
-        if (!string.IsNullOrEmpty(opts.DumpIlPath))
+        if (opts.DumpIl)
         {
-            IlPredicateCompiler.IlDumpPath = opts.DumpIlPath;
+            string ilPath = DumpPath(".il");
+            IlPredicateCompiler.IlDumpPath = ilPath;
             IlPredicateCompiler.RegionCompile = opts.Regions;
-            File.AppendAllText(opts.DumpIlPath,
+            File.WriteAllText(ilPath,   // truncate first; the IL compiler appends below
                 $";;; ===== IL dump: {input} (module {obj.ModuleName}, regions={opts.Regions}) =====\n");
             int ok = 0, skipped = 0;
             foreach (var p in preds)
@@ -226,14 +237,14 @@ internal static class Program
                 try { ic.Compile(p, calleeMap); ok++; }          // FinishEmit appends the IL
                 catch (Exception ex)
                 {
-                    File.AppendAllText(opts.DumpIlPath,
+                    File.AppendAllText(ilPath,
                         $";;; (IL compile failed for {PredName(p.FunctorId)}/{p.Arity}: {ex.Message})\n");
                     skipped++;
                 }
             }
             IlPredicateCompiler.IlDumpPath = null;               // don't leak into later files
             Console.Error.WriteLine(
-                $"  IL dump -> {opts.DumpIlPath} ({ok} compiled, {skipped} skipped"
+                $"  IL dump -> {ilPath} ({ok} compiled, {skipped} skipped"
                 + (opts.Regions ? ", regions on)" : ")"));
         }
     }
@@ -301,8 +312,8 @@ internal static class Program
         public string OutputPath { get; set; } = "";
         public bool Verbose { get; set; }
         public ShmoBuildMode BuildMode { get; set; } = ShmoBuildMode.Release;
-        public string DumpWamPath { get; set; } = "";
-        public string DumpIlPath { get; set; } = "";
+        public bool DumpWam { get; set; }
+        public bool DumpIl { get; set; }
         public bool Regions { get; set; }
         public bool PruneReport { get; set; }
         public bool ArityCompat { get; set; }
@@ -349,13 +360,11 @@ internal static class Program
                     break;
 
                 case "--dump-wam":
-                    if (++i >= args.Length) { ReportMissing(arg); return null; }
-                    opts.DumpWamPath = args[i];
+                    opts.DumpWam = true;   // dumps to <source>.wam
                     break;
 
                 case "--dump-il":
-                    if (++i >= args.Length) { ReportMissing(arg); return null; }
-                    opts.DumpIlPath = args[i];
+                    opts.DumpIl = true;    // dumps to <source>.il
                     break;
 
                 case "--arity":
@@ -457,11 +466,11 @@ internal static class Program
             + "                       the linked program.\n"
             + "  -v, --verbose        Verbose progress to stderr (lists every exported\n"
             + "                       and dynamic predicate per file).\n"
-            + "      --dump-wam <f>   Append a human-readable disassembly of each\n"
-            + "                       predicate's compiled bytecode to file <f>, for\n"
-            + "                       inspection.\n"
-            + "      --dump-il <f>    Append the .NET IL the engine compiles for each\n"
-            + "                       predicate to file <f>, for inspection. Add\n"
+            + "      --dump-wam       Write a human-readable disassembly of each\n"
+            + "                       predicate's compiled bytecode to <source>.wam\n"
+            + "                       (next to the .shmo output), for inspection.\n"
+            + "      --dump-il        Write the .NET IL the engine compiles for each\n"
+            + "                       predicate to <source>.il, for inspection. Add\n"
             + "                       --regions to show related predicates compiled\n"
             + "                       together into shared methods, as an optimized\n"
             + "                       bundle lays them out.\n"
