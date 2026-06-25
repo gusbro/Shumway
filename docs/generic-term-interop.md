@@ -244,7 +244,37 @@ System.Console.WriteLine(engine.Query("swap(pair(1, 2), Q).")["Q"]); // pair(2, 
 
 ---
 
-## 8. Notes and limitations
+## 8. String holders (Arity buffers)
+
+Arity programs pass C **strings** through reusable global buffers (`char par1str[]`,
+`char* buf`) using `make_c_string` / `make_prolog_string`. Shumway models a buffer
+global as a **string holder** — the same slot machinery, holding a string:
+
+```prolog
+:- c.
+char* buf;          % a reusable string holder (a slot)
+:- prolog.
+fmt(In, Out) :-
+    { H: pchar; H is buf },          % H = the holder slot
+    make_c_string(H, 100, In, _),    % holder := In        (set, a copy)
+    make_prolog_string(H, Out).      % Out = the holder    (read)
+```
+
+- A global declared `char*` / `char[]` in a `:- c` region is a holder slot; a
+  variable assigned from it (`H is buf`) is a holder cursor.
+- **`make_c_string(Holder, _, Value, _)`** stores `Value` into the holder (a copy —
+  successive fills of the same buffer do **not** alias their Prolog values).
+- **`make_prolog_string(Holder, Var)`** reads the holder's current value into `Var`.
+- When the first argument is a plain **atom** (a value, not a holder — e.g. a
+  predicate parameter that already holds a string), both degrade to identity
+  (`make_prolog_string(CStr, Var)` unifies `Var = CStr`). So both the buffer pattern
+  and direct value conversions work.
+
+(The max-length / actual-length arguments of `make_c_string` are vestigial in .NET.)
+
+---
+
+## 9. Notes and limitations
 
 - **Set up your interop class before consulting / loading.** As for the value
   tier, an interop function is resolved at run time; a block that calls a function
