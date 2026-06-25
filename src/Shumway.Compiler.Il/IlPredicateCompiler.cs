@@ -3274,6 +3274,24 @@ public sealed class IlPredicateCompiler
                     continue;
                 }
 
+                // ADR-024 fusion — emit fill_par/2 and reftype_term/2 inline (the
+                // term ↔ slot marshalling) instead of dispatching them as builtins,
+                // so the whole reftype flow is one IL sequence (no per-call dispatch).
+                if (_nativeInline is not null && builtinArity == 2
+                    && builtinEntry.Name == "fill_par"
+                    && NativeBlockInliner.TryEmitFillPar(emit, _nativeInline))
+                {
+                    pc += OpcodeTable.Get(op).Size;
+                    continue;
+                }
+                if (_nativeInline is not null && builtinArity == 2
+                    && builtinEntry.Name == "reftype_term"
+                    && NativeBlockInliner.TryEmitReftypeTerm(emit, _nativeInline, failLabel))
+                {
+                    pc += OpcodeTable.Get(op).Size;
+                    continue;
+                }
+
                 if (builtinEntry.IsCall || builtinEntry.IsDollarCall)
                 {
                     // Phase 19 — meta-call dispatch. Three outcomes from

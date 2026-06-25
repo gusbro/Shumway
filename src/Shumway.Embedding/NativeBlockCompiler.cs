@@ -66,9 +66,14 @@ public static class NativeBlockCompiler
     /// interpreter). Test/diagnostic observability.</summary>
     public static int CompiledCount;
 
+    /// <summary>Bench/diagnostic only: when true, never compile — force the
+    /// interpreter fallback. Lets a microbench compare the two paths.</summary>
+    public static bool ForceInterpreter;
+
     public static Func<Engine, bool>? TryCompile(IReadOnlyList<NativeVar> vars,
         IReadOnlyList<CStmt> stmts, int regOffset, Func<string, MethodInfo?> resolve)
     {
+        if (ForceInterpreter) return null;
         if (!System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported)
             return null;
         try

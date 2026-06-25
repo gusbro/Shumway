@@ -4203,6 +4203,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             ToTermDouble = toTerm.MakeGenericMethod(typeof(double)),
             AtomTermCtor = typeof(Shumway.Compiler.Ast.AtomTerm)
                 .GetConstructor(new[] { typeof(string) })!,
+            // ADR-024 reftype tier handles.
+            TermSlotType = typeof(TermSlot),
+            GetOrCreateReftypeSlot = typeof(PrologEngine).GetMethod(
+                nameof(GetOrCreateReftypeSlot),
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!,
+            MakeForeign = typeof(Engine).GetMethod(nameof(Engine.MakeForeign))!,
+            UnifyRegisterWithCell = typeof(Engine).GetMethod(nameof(Engine.UnifyRegisterWithCell))!,
+            ReadReftypeSlot = typeof(NativeBlockCompiler).GetMethod(
+                nameof(NativeBlockCompiler.ReadReftypeSlot))!,
+            SlotSetValue = typeof(TermSlot).GetMethod(nameof(TermSlot.SetValue))!,
+            SlotMaterialize = typeof(TermSlot).GetMethod(nameof(TermSlot.Materialize))!,
         };
     }
 

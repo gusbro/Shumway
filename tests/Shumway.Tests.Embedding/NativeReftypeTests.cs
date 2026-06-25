@@ -178,6 +178,31 @@ public sealed class NativeReftypeTests
     }
 
     [Fact]
+    public void Tier1Inline_ReftypeBlock_InlinesIntoIl()
+    {
+        // ADR-024 stage C: when go/2 promotes to Tier-1 IL, its reftype blocks are
+        // emitted INLINE into the predicate's IL (no $native_run dispatch).
+        int before = Shumway.Compiler.Il.IlPredicateCompiler.NativeBlocksInlined;
+        var e = new PrologEngine();
+        e.UseNativeInterop(typeof(TermInterop));
+        e.IlPromotion.Threshold = 1;
+        e.ConsultString(
+            ":- set_prolog_flag(arity_compat, true).\n" +
+            ":- public go/2.\n" +
+            ":- c.\nreftype par1ref;\nint bump(reftype);\n:- prolog.\n" +
+            "go(In, Out) :-\n" +
+            "  { Ptr: preftype; Ptr is &par1ref },\n" +
+            "  fill_par(In, Ptr),\n" +
+            "  { ret: int; ret = 'bump'(par1ref); Ret is ret },\n" +
+            "  Ret =:= 1,\n" +
+            "  reftype_term(Out, Ptr).\n");
+        for (int i = 0; i < 6; i++)
+            Assert.True(e.Query("go(10, Out), Out == result(11).").Success);
+        // both reftype blocks inlined into the predicate's IL.
+        Assert.True(Shumway.Compiler.Il.IlPredicateCompiler.NativeBlocksInlined > before);
+    }
+
+    [Fact]
     public void FullFlow_GlobalSlot_NativeBlock_InteropManipulatesTerm()
     {
         var e = new PrologEngine();

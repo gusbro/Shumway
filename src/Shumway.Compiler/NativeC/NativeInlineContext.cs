@@ -49,6 +49,20 @@ public sealed class NativeInlineContext
     public required MethodInfo ToTermDouble { get; init; }
     public required ConstructorInfo AtomTermCtor { get; init; }     // new AtomTerm(string)
 
+    // ADR-024 reftype tier — the handles for emitting reftype operations inline
+    // (the TermSlot type and the engine/host methods Compiler.Il can't name).
+    public Type? TermSlotType { get; init; }                        // typeof(TermSlot)
+    public MethodInfo? GetOrCreateReftypeSlot { get; init; }        // host.GetOrCreateReftypeSlot(string) -> TermSlot
+    public MethodInfo? MakeForeign { get; init; }                   // engine.MakeForeign(object) -> Cell
+    public MethodInfo? UnifyRegisterWithCell { get; init; }         // engine.UnifyRegisterWithCell(int, Cell) -> bool
+    public MethodInfo? ReadReftypeSlot { get; init; }               // (Engine, int) -> TermSlot
+    public MethodInfo? SlotSetValue { get; init; }                  // slot.SetValue(Term)   [fill_par]
+    public MethodInfo? SlotMaterialize { get; init; }               // slot.Materialize() -> Term  [reftype_term]
+
+    /// <summary>True when the reftype handles are present (the host supplied them);
+    /// reftype inlining is possible.</summary>
+    public bool HasReftype => TermSlotType is not null;
+
     public MethodInfo FromTermFor(Type model) =>
         model == typeof(string) ? FromTermString
         : model == typeof(double) ? FromTermDouble

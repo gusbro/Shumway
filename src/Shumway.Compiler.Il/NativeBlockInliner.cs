@@ -48,6 +48,41 @@ internal static class NativeBlockInliner
         return true;
     }
 
+    /// <summary>ADR-024 fusion — <c>fill_par(Term, RefType)</c> inline: the slot is
+    /// in register 1 (a Foreign cell), the term in register 0. Emits
+    /// <c>ReadReftypeSlot(engine, 1).SetValue(ReadRegisterAsTerm(engine, 0))</c>.
+    /// Returns false (decline) when the reftype handles aren't present.</summary>
+    public static bool TryEmitFillPar(Sigil.Emit<PredicateDelegate> emit, NativeInlineContext ctx)
+    {
+        if (!ctx.HasReftype) return false;
+        emit.LoadArgument(0);
+        emit.LoadConstant(1);
+        emit.Call(ctx.ReadReftypeSlot!);            // slot
+        emit.LoadArgument(0);
+        emit.LoadConstant(0);
+        emit.Call(ctx.ReadRegisterAsTerm);          // term
+        emit.Call(ctx.SlotSetValue!);               // slot.SetValue(term)
+        return true;
+    }
+
+    /// <summary>ADR-024 fusion — <c>reftype_term(Term, RefType)</c> inline: emits
+    /// <c>UnifyRegisterWithTerm(engine, 0, ReadReftypeSlot(engine, 1).Materialize())</c>,
+    /// branching to <paramref name="failLabel"/> on a failed unify.</summary>
+    public static bool TryEmitReftypeTerm(Sigil.Emit<PredicateDelegate> emit,
+        NativeInlineContext ctx, Sigil.Label failLabel)
+    {
+        if (!ctx.HasReftype) return false;
+        emit.LoadArgument(0);                       // engine (for Unify)
+        emit.LoadConstant(0);                       // reg 0
+        emit.LoadArgument(0);
+        emit.LoadConstant(1);
+        emit.Call(ctx.ReadReftypeSlot!);            // slot
+        emit.Call(ctx.SlotMaterialize!);            // slot.Materialize() -> Term
+        emit.Call(ctx.UnifyRegisterWithTerm);       // -> bool
+        emit.BranchIfFalse(failLabel);
+        return true;
+    }
+
     private sealed class Emitter
     {
         private readonly Sigil.Emit<PredicateDelegate>? _emit;   // null = validate-only
@@ -72,9 +107,18 @@ internal static class NativeBlockInliner
 
         public void Run()
         {
+            // ADR-024 — reftype inlining needs the host-supplied handles; without
+            // them, decline (the block runs via the delegate/interpreter).
+            if (_typing.ReftypeVars.Count > 0 && !_ctx.HasReftype)
+                throw new NativeBlockBailException();
+
             if (_emit is not null)
+            {
                 foreach (var (n, t) in _typing.Types)
                     _locals[n] = _emit.DeclareLocal(t, $"nb_{Sanitize(n)}_{_salt}");
+                foreach (var n in _typing.ReftypeVars)
+                    _locals[n] = _emit.DeclareLocal(_ctx.TermSlotType!, $"nb_{Sanitize(n)}_{_salt}");
+            }
 
             foreach (var v in _block.Vars)
                 if (v.Mode == NativeMode.Input)
@@ -93,6 +137,15 @@ internal static class NativeBlockInliner
         private void EmitReadInput(NativeVar v)
         {
             if (_emit is null) return;
+            // ADR-024 — a reftype input is the slot handle (a Foreign cell).
+            if (v.Kind == NativeKind.Reftype)
+            {
+                _emit.LoadArgument(0);
+                _emit.LoadConstant(Reg(v.Name));
+                _emit.Call(_ctx.ReadReftypeSlot!);
+                _emit.StoreLocal(_locals[v.Name]);
+                return;
+            }
             var model = NativeBlockTyping.ModelType(v.Kind);
             // host = (PrologEngine)engine.Host
             _emit.LoadArgument(0);
@@ -109,8 +162,21 @@ internal static class NativeBlockInliner
 
         private void EmitUnifyOutput(NativeVar v)
         {
-            var model = NativeBlockTyping.ModelType(v.Kind);
             if (_emit is null) return;
+            // ADR-024 — a reftype output binds the register to the slot's Foreign
+            // cell: engine.UnifyRegisterWithCell(reg, engine.MakeForeign(slot)).
+            if (v.Kind == NativeKind.Reftype)
+            {
+                _emit.LoadArgument(0);                       // engine (for Unify)
+                _emit.LoadConstant(Reg(v.Name));
+                _emit.LoadArgument(0);                       // engine (for MakeForeign)
+                _emit.LoadLocal(_locals[v.Name]);            // slot (a TermSlot, an object)
+                _emit.Call(_ctx.MakeForeign!);               // -> Cell
+                _emit.Call(_ctx.UnifyRegisterWithCell!);     // -> bool
+                _emit.BranchIfFalse(_fail);
+                return;
+            }
+            var model = NativeBlockTyping.ModelType(v.Kind);
             // engine, reg, <term>  ->  RegisterMarshalling.UnifyRegisterWithTerm
             _emit.LoadArgument(0);
             _emit.LoadConstant(Reg(v.Name));
@@ -155,11 +221,30 @@ internal static class NativeBlockInliner
 
         private void EmitAssign(string target, CExpr value)
         {
-            var targetType = _typing.Types[target];
+            Type targetType = _typing.ReftypeVars.Contains(target)
+                ? _ctx.TermSlotType! : _typing.Types[target];
             var srcType = EmitExpr(value);
             Coerce(srcType, targetType);
             _emit?.StoreLocal(_locals[target]);
         }
+
+        // host.GetOrCreateReftypeSlot(name) — leaves a TermSlot on the stack.
+        private void EmitGetSlot(string name)
+        {
+            if (_emit is null) return;
+            _emit.LoadArgument(0);
+            _emit.Call(_ctx.HostGetter);
+            _emit.CastClass(_ctx.HostType);
+            _emit.LoadConstant(name);
+            _emit.Call(_ctx.GetOrCreateReftypeSlot!);
+        }
+
+        private static string? ReftypeArgName(CExpr e) => e switch
+        {
+            CIdentExpr id => id.Name,
+            CAddrOfExpr { Operand: CIdentExpr id } => id.Name,
+            _ => null,
+        };
 
         private void EmitCallStmt(CCallExpr call)
         {
@@ -212,6 +297,13 @@ internal static class NativeBlockInliner
                 case CStringExpr s:
                     _emit?.LoadConstant(s.Value);
                     return typeof(string);
+                // ADR-024 — `&name` is the reftype global's slot cursor.
+                case CAddrOfExpr { Operand: CIdentExpr g }:
+                    EmitGetSlot(g.Name);
+                    return _ctx.TermSlotType!;
+                case CIdentExpr id when _typing.ReftypeVars.Contains(id.Name):
+                    _emit?.LoadLocal(_locals[id.Name]);
+                    return _ctx.TermSlotType!;
                 case CIdentExpr id:
                     if (!_typing.Types.TryGetValue(id.Name, out var t)) throw new NativeBlockBailException();
                     _emit?.LoadLocal(_locals[id.Name]);
@@ -262,7 +354,21 @@ internal static class NativeBlockInliner
             var ps = m.GetParameters();
             if (c.Args.Count != ps.Length) throw new NativeBlockBailException();
             for (int i = 0; i < ps.Length; i++)
+            {
+                // ADR-024 — a TermSlot parameter receives a reftype variable (a
+                // local) or a reftype global (resolved to its slot).
+                if (_ctx.TermSlotType is not null && ps[i].ParameterType == _ctx.TermSlotType)
+                {
+                    if (c.Args[i] is CIdentExpr cid && _typing.ReftypeVars.Contains(cid.Name))
+                        _emit?.LoadLocal(_locals[cid.Name]);
+                    else if (ReftypeArgName(c.Args[i]) is { } rn)
+                        EmitGetSlot(rn);
+                    else
+                        throw new NativeBlockBailException();
+                    continue;
+                }
                 Coerce(EmitExpr(c.Args[i]), ps[i].ParameterType);
+            }
             _emit?.Call(m);
             return m.ReturnType;
         }
