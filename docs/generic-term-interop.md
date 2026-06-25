@@ -253,10 +253,13 @@ System.Console.WriteLine(engine.Query("swap(pair(1, 2), Q).")["Q"]); // pair(2, 
   like any native predicate; the block's slots are created on first reference at
   run time, so a source-stripped release bundle (and the generated `--exe`) run it
   identically — no `:- c` declarations need to ship.
-- **Reftype blocks run in the interpreter.** Unlike the value tier (which inlines
-  into Tier-1 IL), a block that touches a reftype runs through the small
-  interpreter. The interop call itself is a direct, cached delegate — the term
-  operations are the work, not the dispatch.
+- **Reftype blocks compile to IL.** On first execution a reftype block compiles to
+  a delegate (no per-call dictionaries / boxing / tree-walk); and when a reftype
+  predicate promotes to Tier-1 IL, the whole flow becomes one IL method — the
+  blocks are inlined and `fill_par` / `reftype_term` are fused in, so there is no
+  per-call dispatch. A hot loop runs the reftype flow at full IL speed. (The small
+  interpreter remains only as a fallback for constructs the code generators don't
+  handle and for Native AOT.)
 - **Calling native C through a trampoline.** The cursor is for logic *in C#*. If
   your C# only forwards to a native C function (P/Invoke), that C cannot touch the
   Shumway heap — a future *materializer* tier (not yet implemented) will copy a

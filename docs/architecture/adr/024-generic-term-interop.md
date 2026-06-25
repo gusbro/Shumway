@@ -202,6 +202,19 @@ layer) with a worked C# example each, the ntype codes, and the build-cursor
 pattern. The worked example (`swap_pair`) is kept honest by a test
 (`NativeReftypeTests.DocExample_SwapPair_Works`).
 
+## Performance (the IL path)
+
+A reftype block is not tree-walked on a hot path. On first execution it compiles
+to a delegate (Expression → JIT IL); and when a reftype predicate promotes to
+Tier-1 IL the whole flow becomes one IL method — the blocks are inlined and
+`fill_par` / `reftype_term` are fused in (the term ↔ slot marshalling emitted
+inline), so there is no per-call `$native_run` / builtin dispatch. Measured on a
+3M-iteration warm loop with a trivial interop method (the mechanism dominates):
+interpreter 2180 ns/iter, compiled delegate 1225 ns/iter (1.78×), Tier-1 inline +
+fusion 481 ns/iter (4.53× over the interpreter, 2.55× over the delegate). As one
+IL method the JIT optimizes the slot operations, marshalling and calls together,
+well beyond removing the dispatch hops alone.
+
 ## Consequences
 
 - Whole-term interop is zero-copy: a .NET interop function reads and builds the
