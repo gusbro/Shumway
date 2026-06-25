@@ -312,6 +312,17 @@ public sealed class Lexer
         _offset++;
     }
 
+    /// <summary>True when the current offset is the first non-blank character of
+    /// its line — only spaces / tabs (or nothing) precede it back to the previous
+    /// newline. A C-preprocessor <c>#line</c> marker is recognized at the line start
+    /// regardless of leading indentation (the generated .i files indent them).</summary>
+    private bool AtLineStart()
+    {
+        int i = _offset - 1;
+        while (i >= 0 && (_source[i] == ' ' || _source[i] == '\t')) i--;
+        return i < 0 || _source[i] == '\n';
+    }
+
     private void SkipWhitespaceAndComments()
     {
         while (_offset < _source.Length)
@@ -338,7 +349,7 @@ public sealed class Lexer
                     Advance();
                 }
             }
-            else if (ArityCompat && c == '#' && _column == 1
+            else if (ArityCompat && c == '#' && AtLineStart()
                      && string.CompareOrdinal(_source, _offset, "#line", 0, 5) == 0)
             {
                 // Phase 30 — C-preprocessor line marker: `#line N "file"`.

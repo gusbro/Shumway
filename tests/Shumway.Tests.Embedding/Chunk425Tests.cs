@@ -57,6 +57,24 @@ public class Chunk425Tests
     }
 
     [Fact]
+    public void HashLine_RecognizedWithLeadingIndent()
+    {
+        // Generated .i files indent `#line` markers (testGen/debug.pl). They must be
+        // recognized at the line start regardless of leading spaces/tabs.
+        var ok = ShmoCompiler.TryCompileSource(
+            "p(1).\n    #line 50 \"x.h\"\n\t#line 60 \"y.h\"\nq(2).\n",
+            arityCompat: true);
+        Assert.True(ok.Success);
+        // the indented marker still drives positions: an error after it reports the
+        // marker's line, not the physical one.
+        var err = ShmoCompiler.TryCompileSource(
+            "ok.\n   #line 800 \"orig.pl\"\nfoo(X) :- bar(X.\n",
+            arityCompat: true);
+        Assert.False(err.Success);
+        Assert.Equal(800, err.Errors[0].Line);
+    }
+
+    [Fact]
     public void AnnotatedDirectives_AcceptedAndIgnored()
     {
         var r = ShmoCompiler.TryCompileSource(
