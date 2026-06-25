@@ -170,31 +170,31 @@ public sealed class NativeBundleTests
         Assert.True(e.Query("cmp(abc, abc, R), R == 0.").Success);
     }
 
-    // A `:- dynamic` / `:- visible` predicate whose source clauses use native code
-    // (a real Arity pattern — debug.pl's debug_msg/1). Declaring it dynamic is
-    // about assert/retract, not about whether the source clauses can compile; the
-    // native block must work, not be rejected.
-    private const string DynamicNativeProgram =
+    // A `:- visible` predicate whose source clauses use native code (a real Arity
+    // pattern — debug.pl's debug_msg/1). `:- visible` is Arity's EXPORT spelling, so
+    // the predicate compiles as a normal STATIC public predicate — its clauses (and
+    // the native block) must reach WAM/IL, not be peeled into the dynamic store.
+    private const string VisibleNativeProgram =
         ":- set_prolog_flag(arity_compat, true).\n" +
         ":- visible cmp/3.\n" +
         ":- c.\nint strcmp(const char*, const char*);\n:- prolog.\n" +
         "cmp(A, B, R) :- atom(A), atom(B), { R is 'strcmp'(A, B) }, integer(R).\n";
 
     [Fact]
-    public void DynamicPredicate_NativeBlock_Consult_Runs()
+    public void VisiblePredicate_NativeBlock_Consult_Runs()
     {
         var e = new PrologEngine();
         e.UseNativeInterop(typeof(Interop));
-        e.ConsultString(DynamicNativeProgram);
+        e.ConsultString(VisibleNativeProgram);
         Assert.True(e.Query("cmp(abc, abd, R), R == -1.").Success);
     }
 
     [Fact]
-    public void DynamicPredicate_NativeBlock_Bundle_Runs()
+    public void VisiblePredicate_NativeBlock_Bundle_Runs()
     {
         var bytes = ShmoLinker.Link(new LinkConfig
         {
-            Objects = new[] { ShmoCompiler.CompileSource(DynamicNativeProgram, "prog", ShmoBuildMode.Release) },
+            Objects = new[] { ShmoCompiler.CompileSource(VisibleNativeProgram, "prog", ShmoBuildMode.Release) },
             EntryPoints = new[] { new PredicateRef("cmp", 3) },
             StripSource = true,
             BakePrelude = true,

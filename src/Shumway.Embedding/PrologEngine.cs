@@ -5619,11 +5619,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         Term body, out List<(string Name, int Arity)> specs)
     {
         specs = new List<(string, int)>();
-        // `visible` is the Arity-Prolog spelling of `dynamic` — same
-        // semantics, accepted as an alias so Arity sources compile
-        // unchanged (chunk 265).
+        // `visible` is NOT a dynamic alias — it is Arity's export declaration
+        // (handled by TryReadPublicDirective). Only `dynamic` declares a
+        // mutable predicate here.
         if (body is not CompoundTerm c
-            || (c.Functor != "dynamic" && c.Functor != "visible")
+            || c.Functor != "dynamic"
             || c.Args.Length != 1)
             return false;
 
@@ -5647,7 +5647,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         Term body, out List<(string Name, int Arity)> publics)
     {
         publics = new List<(string, int)>();
-        if (body is not CompoundTerm c || c.Functor != "public" || c.Args.Length != 1)
+        // `visible` is the Arity-Prolog spelling of `public` — it adds the
+        // predicate to Arity's "visible table" (exported / looked up by
+        // call/2), i.e. an export declaration, NOT a mutability one. So a
+        // `:- visible foo/N.` predicate that has clauses compiles as a normal
+        // static public predicate (chunk 265 originally mis-aliased it to
+        // `dynamic`, which peeled such predicates into the dynamic store and
+        // kept them out of WAM/IL). A `:- visible foo/N.` with no clauses that
+        // is later assertz'd still works: implicit_dynamic auto-promotes it.
+        if (body is not CompoundTerm c
+            || (c.Functor != "public" && c.Functor != "visible")
+            || c.Args.Length != 1)
             return false;
 
         // A single Name/Arity term, a list of them, or a comma-

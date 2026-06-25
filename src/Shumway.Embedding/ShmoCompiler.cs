@@ -668,16 +668,21 @@ public static class ShmoCompiler
             moduleName = a.Name;
             return true;
         }
-        if (body is CompoundTerm pub && pub.Functor == "public" && pub.Args.Length == 1)
+        // `public` and its Arity-Prolog spelling `visible` — both EXPORT the
+        // predicate (Arity's "visible table"). A `:- visible` predicate with
+        // clauses is a normal static public predicate and must compile to
+        // WAM/IL; it is not dynamic. (Chunk 265 originally mis-aliased
+        // `visible` to `dynamic`, which peeled such predicates into the
+        // dynamic-seed store and produced 0 static predicates — no WAM, no IL.)
+        if (body is CompoundTerm pub
+            && (pub.Functor == "public" || pub.Functor == "visible")
+            && pub.Args.Length == 1)
         {
-            foreach (var spec in ReadFunctorSpecs(pub.Args[0], "public"))
+            foreach (var spec in ReadFunctorSpecs(pub.Args[0], pub.Functor))
                 publicSet.Add(spec);
             return false;
         }
-        // `dynamic` and its Arity-Prolog alias `visible` (chunk 265).
-        if (body is CompoundTerm dyn
-            && (dyn.Functor == "dynamic" || dyn.Functor == "visible")
-            && dyn.Args.Length == 1)
+        if (body is CompoundTerm dyn && dyn.Functor == "dynamic" && dyn.Args.Length == 1)
         {
             foreach (var spec in ReadFunctorSpecs(dyn.Args[0], dyn.Functor))
                 dynamicSet.Add(spec);

@@ -10,8 +10,8 @@ namespace Shumway.Tests.Embedding;
 /// linker computes for the dead-region prune (<see cref="ShmoLinker.ComputeExternallyReachableSeeds"/>).
 /// The seeds are the reached predicates that must keep a standalone form because they
 /// are callable BY NAME from outside a region's br-absorption: entry / ensure_linked
-/// roots + every reached public + every reached dynamic (which includes <c>:- visible</c>,
-/// recorded as Dynamic). A purely-local, internally-called predicate is NOT a seed.
+/// roots + every reached public (which includes <c>:- visible</c>, Arity's export spelling)
+/// + every reached dynamic. A purely-local, internally-called predicate is NOT a seed.
 /// </summary>
 public class Chunk389Tests
 {
@@ -30,7 +30,7 @@ public class Chunk389Tests
         var defined = Defined("m",
             (P("main", 0), PredicateVisibility.Local),     // entry (local, promoted)
             (P("pub", 1), PredicateVisibility.Public),
-            (P("dyn", 0), PredicateVisibility.Dynamic),    // also the :- visible case
+            (P("dyn", 0), PredicateVisibility.Dynamic),
             (P("loc", 2), PredicateVisibility.Local));     // internal helper
         var reached = new[]
         {
@@ -61,10 +61,11 @@ public class Chunk389Tests
     }
 
     [Fact]
-    public void VisibleRecordedAsDynamic_IsSeed()
+    public void DynamicReached_IsSeed()
     {
-        // `:- visible foo/N` is recorded as PredicateVisibility.Dynamic (chunk 265),
-        // so it lands in the seed set via the dynamic rule — the user-flagged case.
+        // A reached dynamic predicate lands in the seed set via the dynamic rule.
+        // (`:- visible` is now recorded as Public, Arity's export spelling — covered
+        // by the public rule in PublicAndDynamicReached_AreSeeds_LocalIsNot.)
         var defined = Defined("m", (P("vis", 2), PredicateVisibility.Dynamic));
         var reached = new[] { ("m", P("vis", 2)) };
         var seeds = ShmoLinker.ComputeExternallyReachableSeeds(
