@@ -5078,10 +5078,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // builtins; their prlg_ifce.pl source clauses (which use the reftype-struct
         // tier — `->`, `..`, getargp, newreftype — that we deliberately do NOT
         // compile) are dropped here, BEFORE the native transform sees their blocks.
-        // Gated on arity_compat so a non-Arity program defining one of these names
-        // is unaffected.
+        // Also drops any redefinition of a Shumway builtin (e.g. make_c_string/4),
+        // with a warning. Gated on arity_compat so a non-Arity program defining one
+        // of these names is unaffected.
         if (_flags.ArityCompat)
-            clauses = ReftypeInterface.DropInterfaceClauses(clauses);
+        {
+            var droppedBuiltins = new List<(string Name, int Arity)>();
+            clauses = ReftypeInterface.DropInterfaceClauses(clauses, droppedBuiltins);
+            foreach (var (name, arity) in droppedBuiltins)
+                Console.Error.WriteLine(
+                    $"warning: redefinition of builtin {name}/{arity} ignored (arity_compat)");
+        }
 
         ValidateContiguity(clauses, pendingDiscontiguous);
 

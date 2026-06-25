@@ -101,6 +101,14 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("reftype_term", 3, ReftypeTerm3);
         BuiltinsRegistry.Register("fill_reftype", 3, FillReftype3);
         BuiltinsRegistry.Register("quote_str", 2, QuoteStr);
+        // ADR-024 — Arity string-conversion predicates. In Shumway an Arity
+        // "string" is an atom and there are no C buffers, so these are the
+        // identities the user gave:
+        //   make_prolog_string(String, String)  :- atom(String), !.
+        //   make_c_string(String, _, String, _) :- atom(String), !.
+        BuiltinsRegistry.Register("make_prolog_string", 2, MakePrologString2);
+        BuiltinsRegistry.Register("make_prolog_string_c", 2, MakePrologString2);
+        BuiltinsRegistry.Register("make_c_string", 4, MakeCString4);
 
         BuiltinsRegistry.Register("assertz", 1, Assertz,
             Database, "assertz(+Clause)", "Adds a clause to the end of its dynamic predicate.");
@@ -2839,6 +2847,48 @@ public static class MetaBuiltins
         if (slot is null) return false;
         slot.SetValue(RegisterMarshalling.ReadRegisterAsTerm(engine, 0));
         return true;
+    }
+
+    /// <summary>ADR-024 — <c>make_c_string(Holder, _, Value, _)</c>: store Value
+    /// into the holder slot (a reusable buffer — set, not unify, so successive
+    /// fills don't alias their Prolog values). When the first argument is a plain
+    /// atom (a value, not a holder), it degrades to identity <c>arg0 = arg2</c>.
+    /// The max-length / actual-length arguments are vestigial in .NET.</summary>
+    public static bool MakeCString4(Engine engine) => CStringMove(engine, holderReg: 0, valueReg: 2);
+
+    /// <summary>ADR-024 — <c>make_prolog_string(Source, Var)</c> /
+    /// <c>make_prolog_string_c</c>: read the source into the Prolog variable. When
+    /// Source is a holder slot, Var gets the holder's current value; when Source is
+    /// a plain atom (value), it is identity <c>arg0 = arg1</c>.</summary>
+    public static bool MakePrologString2(Engine engine) => PrologStringMove(engine, sourceReg: 0, varReg: 1);
+
+    // Holder → a TermSlot wrapped as a Foreign cell; an atom → a value.
+    private static bool CStringMove(Engine engine, int holderReg, int valueReg)
+    {
+        var holder = ReadSlot(engine, holderReg);
+        var value = RegisterMarshalling.ReadRegisterAsTerm(engine, valueReg);
+        if (holder is not null) { holder.SetValue(value); return true; }
+        // value mode: identity arg0 = arg2 (one must be an atom).
+        return UnifyAtomPair(engine, holderReg, valueReg);
+    }
+
+    private static bool PrologStringMove(Engine engine, int sourceReg, int varReg)
+    {
+        var holder = ReadSlot(engine, sourceReg);
+        if (holder is not null)
+            return RegisterMarshalling.UnifyRegisterWithTerm(engine, varReg, holder.Materialize());
+        return UnifyAtomPair(engine, sourceReg, varReg);
+    }
+
+    /// <summary>The value-mode identity: unify the two registers, requiring the
+    /// shared value to be an atom (the body of <c>p(S, S) :- atom(S)</c>).</summary>
+    private static bool UnifyAtomPair(Engine engine, int r0, int r1)
+    {
+        var t0 = RegisterMarshalling.ReadRegisterAsTerm(engine, r0);
+        var t1 = RegisterMarshalling.ReadRegisterAsTerm(engine, r1);
+        if (t0 is AtomTerm) return RegisterMarshalling.UnifyRegisterWithTerm(engine, r1, t0);
+        if (t1 is AtomTerm) return RegisterMarshalling.UnifyRegisterWithTerm(engine, r0, t1);
+        return false;
     }
 
     /// <summary>ADR-024 — <c>quote_str(X, XR)</c>: XR is X rendered in writeq

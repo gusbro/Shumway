@@ -286,10 +286,17 @@ public static class ShmoCompiler
         // a separate `$catchgoal_N/M` clause, etc.) end up in the
         // static set — they're synthetic, never dynamic.
         // ADR-024 — drop the Arity term-interface predicates' source clauses (the
-        // builtins provide them); their reftype-struct-tier native blocks are never
-        // compiled. Must run BEFORE the native transform below. Gated on arity_compat.
+        // builtins provide them) and any redefinition of a Shumway builtin (e.g.
+        // make_c_string/4); their native blocks are never compiled. Must run BEFORE
+        // the native transform below. Gated on arity_compat.
         if (arityCompat)
-            rawClauses = ReftypeInterface.DropInterfaceClauses(rawClauses);
+        {
+            var droppedBuiltins = new List<(string Name, int Arity)>();
+            rawClauses = ReftypeInterface.DropInterfaceClauses(rawClauses, droppedBuiltins);
+            foreach (var (name, arity) in droppedBuiltins)
+                (warnings ??= new List<ShmoCompileError>()).Add(new ShmoCompileError(
+                    $"redefinition of builtin {name}/{arity} ignored (arity_compat)", 0, 0));
+        }
 
         // ADR-022 — embedded native blocks. Rewrite each `$native_goal(Text)` to
         // the portable `'$native_run'('$nb$mod$i', Vars)` dispatch and collect the
