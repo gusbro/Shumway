@@ -51,10 +51,43 @@ internal static class NativeTransform
         foreach (var clause in clauses)
         {
             if (!Mentions(clause.Term, "$native_goal")) { result.Add(clause); continue; }
+            // Pre-pass: collect `Var: type` declarations from EVERY block of the
+            // clause, so a variable declared in one block and used in another keeps
+            // its type (Arity declares e.g. `Par1: pchar` in the first block, uses
+            // Par1 in a later one).
+            var clauseHints = CollectClauseDeclHints(clause.Term);
             result.Add(Clause.From(Rewrite(clause.Term, clause.Term, PredLabel(clause.Term),
-                clause.Position, cDecls, resolveInterop, registerBlock, namePrefix, ref index)));
+                clause.Position, cDecls, resolveInterop, registerBlock, namePrefix,
+                ref index, clauseHints)));
         }
         return result;
+    }
+
+    /// <summary>The <c>Var: type</c> declarations across all of a clause's native
+    /// blocks (a block-local type that a later block may reference). Unparseable
+    /// blocks are skipped here — their own error surfaces when they are
+    /// transformed.</summary>
+    private static Dictionary<string, CType> CollectClauseDeclHints(Term t)
+    {
+        var hints = new Dictionary<string, CType>();
+        Walk(t);
+        return hints;
+
+        void Walk(Term term)
+        {
+            if (term is not CompoundTerm c) return;
+            if (c.Functor == "$native_goal" && c.Args.Length == 1 && c.Args[0] is StringTerm s)
+            {
+                try
+                {
+                    foreach (var st in CParser.ParseStatements(s.Content))
+                        if (st is CVarDeclStmt d) hints[d.Var] = d.Type;
+                }
+                catch (CParseException) { }
+                return;
+            }
+            foreach (var a in c.Args) Walk(a);
+        }
     }
 
     /// <summary>The predicate indicator (<c>name/arity</c>) of a clause's head, for
@@ -82,7 +115,8 @@ internal static class NativeTransform
     private static Term Rewrite(Term t, Term clauseTerm, string predLabel,
         Shumway.Compiler.Lexer.SourcePosition clausePos, List<CDecl> cDecls,
         Func<string, System.Reflection.MethodInfo?>? resolve,
-        Action<string, NativeVar[], CStmt[], string> registerBlock, string namePrefix, ref int index)
+        Action<string, NativeVar[], CStmt[], string> registerBlock, string namePrefix, ref int index,
+        Dictionary<string, CType> clauseHints)
     {
         if (t is not CompoundTerm c) return t;
         if (c.Functor == "$native_goal" && c.Args.Length == 1 && c.Args[0] is StringTerm s)
@@ -90,19 +124,20 @@ internal static class NativeTransform
             // Prefer the block's own captured position; fall back to the clause head.
             var pos = c.Position.Line > 0 ? c.Position : clausePos;
             return TransformBlock(s.Content, clauseTerm, predLabel, pos, cDecls, resolve,
-                registerBlock, namePrefix + (index++));
+                registerBlock, namePrefix + (index++), clauseHints);
         }
         var args = new Term[c.Args.Length];
         for (int i = 0; i < c.Args.Length; i++)
             args[i] = Rewrite(c.Args[i], clauseTerm, predLabel, clausePos, cDecls, resolve,
-                registerBlock, namePrefix, ref index);
+                registerBlock, namePrefix, ref index, clauseHints);
         return new CompoundTerm(c.Functor, args) { Position = c.Position };
     }
 
     private static Term TransformBlock(string text, Term clauseTerm, string predLabel,
         Shumway.Compiler.Lexer.SourcePosition pos, List<CDecl> cDecls,
         Func<string, System.Reflection.MethodInfo?>? resolve,
-        Action<string, NativeVar[], CStmt[], string> registerBlock, string name)
+        Action<string, NativeVar[], CStmt[], string> registerBlock, string name,
+        Dictionary<string, CType> clauseHints)
     {
         NativeBlockCompileException Error(string detail) => new(
             $"embedded native block in {predLabel} (line {pos.Line}): {detail}", pos.Line, pos.Column);
@@ -118,7 +153,7 @@ internal static class NativeTransform
                 + "C control flow and the term/reftype tier are not compilable yet.");
         }
 
-        var info = NativeInference.Analyze(clauseTerm, stmts, cDecls);
+        var info = NativeInference.Analyze(clauseTerm, stmts, cDecls, clauseHints);
         if (info.Diagnostics.Count > 0)
             throw Error(info.Diagnostics[0]);
 

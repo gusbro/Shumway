@@ -38,7 +38,8 @@ public static class NativeInference
         new() { "integer", "float", "atom", "string", "term" };
 
     public static NativeBlockInfo Analyze(
-        Term clauseTerm, IReadOnlyList<CStmt> block, IReadOnlyList<CDecl> cDecls)
+        Term clauseTerm, IReadOnlyList<CStmt> block, IReadOnlyList<CDecl> cDecls,
+        IReadOnlyDictionary<string, CType>? clauseDeclHints = null)
     {
         // ----- clause context: Prolog variable names + the mode/type guards -----
         var prologVars = new HashSet<string>();
@@ -142,6 +143,12 @@ public static class NativeInference
             NativeKind? kind = null;
             if (declHint.TryGetValue(name, out var dh)) kind = MapType(dh, typedefs);
             if (kind is null && rhsKind.TryGetValue(name, out var rk)) kind = rk;
+            // A `Var: type` declaration in ANOTHER block of the same clause: a
+            // variable declared in one block (e.g. `Par1: pchar`) and used in
+            // another keeps that type.
+            if (kind is null && clauseDeclHints is not null
+                && clauseDeclHints.TryGetValue(name, out var ch))
+                kind = MapType(ch, typedefs);
             // MakeCString(buffer, length, &Var): the length argument is an integer.
             // The intrinsic itself discards it, but when the same variable is used
             // elsewhere in the block (e.g. `buffer_len = Len - 1`) its type is known.

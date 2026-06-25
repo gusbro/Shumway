@@ -17,6 +17,26 @@ public sealed class NativeErrorAndLengthTests
     }
 
     [Fact]
+    public void VariableDeclaredInOneBlock_UsedInAnother_KeepsType()
+    {
+        // i_pfglrp.pl's i_start_rpt pattern: a variable declared `Par1: pchar` in
+        // the first block is used in a later block (passed to a C function). The
+        // declaration must carry across blocks of the same clause.
+        var e = new PrologEngine();
+        e.UseNativeInterop(typeof(LenInterop));
+        e.ConsultString(
+            ":- set_prolog_flag(arity_compat, true).\n" +
+            ":- c.\ntypedef char *pchar;\nint strlen(const char*);\n:- prolog.\n" +
+            "seen(_).\n" +
+            "p(S, R) :- atom(S),\n" +
+            "  { P: pchar; P is S },\n" +        // P declared here
+            "  seen(P),\n" +                     // P in a Prolog goal (a clause var, no type guard)
+            "  { R is 'strlen'(P) },\n" +        // P used here with no local decl → cross-block type
+            "  integer(R).\n");
+        Assert.Equal(5L, e.Query("p(hello, R).").Get<long>("R"));
+    }
+
+    [Fact]
     public void VariableAssignedFromTypedVariable_InheritsType()
     {
         // i_mdlinf.pl's i_product_revision pattern: Ret is typed from a prototype's
