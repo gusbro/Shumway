@@ -1720,6 +1720,32 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 enableIndexing: true, isDynamic: false, failStubAddr: 0);
     }
 
+    /// <summary>ADR-023 build-time persist (for <c>--with-compiled-il</c> / <c>--exe</c>
+    /// bundles) — like <see cref="BuildDynamicSnapshot"/>, but returns null when the
+    /// snapshot references a string / float / bigint literal that is NOT already in
+    /// this engine's (bundle-loaded) literal pools. Those literals are referenced by
+    /// pool INDEX, and the persisted IL bakes the index. A runtime process that loads
+    /// the bundle populates its pools from the bundle bytecode only — it never compiles
+    /// the snapshot — so a snapshot-only literal would not be present at that index and
+    /// the baked IL would read the wrong value. Atoms and functors are patched by NAME
+    /// at load (<see cref="IlPatchKind"/>), so they are always safe; only the three
+    /// index-addressed pools constrain persistability. A predicate that fails this test
+    /// is simply not baked — it stays Tier-0 and (in a JIT process) runtime-promotes
+    /// normally. Returns null exactly when not safe to persist.</summary>
+    internal Shumway.Compiler.Wam.CompiledPredicate? BuildPersistableDynamicSnapshot(int fid)
+    {
+        int s0 = _literalPools.Strings.Count;
+        int f0 = _literalPools.Floats.Count;
+        int b0 = _literalPools.BigInts.Count;
+        var snap = BuildDynamicSnapshot(fid);
+        if (snap is null) return null;
+        if (_literalPools.Strings.Count != s0
+            || _literalPools.Floats.Count != f0
+            || _literalPools.BigInts.Count != b0)
+            return null;   // references a snapshot-only literal — unsafe to bake
+        return snap;
+    }
+
     /// <summary>True iff the given functor was declared
     /// <c>:- dynamic</c>. Exposed to <c>MetaBuiltins.Retract</c> /
     /// <c>Abolish</c> so they can raise the ISO

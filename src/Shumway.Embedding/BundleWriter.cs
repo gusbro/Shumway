@@ -286,6 +286,39 @@ public static class BundleWriter
             predicates[fid] = pred;
         foreach (var (fid, pred) in engine.PrecompiledStaticPredicates)
             predicates[fid] = pred;
+
+        // ADR-023 — bake the persisted IL for `:- dynamic`/`:- visible`
+        // predicates that ship WITH clauses. Replace each one's enter_dynamic
+        // chain (which the IL compiler can't emit, and which would be a
+        // non-evictable snapshot if it could) with its static-style SNAPSHOT —
+        // exactly what BuildDynamicSnapshot produces at runtime; the
+        // Query("true.") warm-up above already populated _dynamicRewriteCache.
+        // At load the snapshot delegate is registered into IlPromotion._delegates
+        // [fid] (RegisterBoundDelegate) — the same slot a runtime-built snapshot
+        // uses — so the predicate runs as IL from the FIRST call with NO runtime
+        // promotion (the --exe / AOT win), and the first assert/retract evicts it
+        // (EvictDelegate) and the live dynamic chain takes over. A dynamic
+        // predicate with no clauses (runtime-assert-only) has no snapshot and
+        // stays Tier-0 — drop its enter_dynamic body so it is never persisted.
+        var dynamicSnapshotFids = new HashSet<int>();
+        foreach (var fid in new List<int>(engine.DynamicPredicateCache.Keys))
+        {
+            // BuildPersistableDynamicSnapshot returns null when the snapshot has
+            // no clauses OR references a string/float/bigint literal not already in
+            // the bundle's pools (those are index-addressed and would mis-read at
+            // runtime). When it returns a snapshot, REPLACE the enter_dynamic body
+            // with it so the IL compiler bakes it. When null, leave the original
+            // entry exactly as it was before this pass — it is the enter_dynamic
+            // form the IL compiler already declines (so it is never baked), and
+            // removing it would shrink the calleeMap other predicates compile
+            // against.
+            var snap = engine.BuildPersistableDynamicSnapshot(fid);
+            if (snap is not null)
+            {
+                predicates[fid] = snap;
+                dynamicSnapshotFids.Add(fid);
+            }
+        }
         // Stage 9b-3 / 9c / 9d: compute the dead-region prune set HERE, over the EXACT
         // calleeMap the IL compile is about to use (`predicates` — the warm-up engine's
         // FULL set: user module + prelude + every reached callee). The linker's per-module
@@ -317,6 +350,11 @@ public static class BundleWriter
                 (f, ex) => ic.RegionMemberFids(predicates[f], predicates, ex),
                 f => predicates.TryGetValue(f, out var p) ? p.Bytecode.Length : 0,
                 minSaving);
+            // A dynamic snapshot must be a standalone region method so its
+            // delegate lands at IlPromotion._delegates[fid] for OnDispatch +
+            // eviction; never let it be absorbed into a caller's region (that
+            // would bypass the live dynamic dispatch / mutability).
+            forcedRoots.UnionWith(dynamicSnapshotFids);
             var regionReachable = Shumway.Compiler.Il.RegionReachability.TrampolineReachable(
                 predicates, seedFids,
                 fid => ic.RegionMemberFids(predicates[fid], predicates, forcedRoots));
@@ -410,7 +448,10 @@ public static class BundleWriter
         // first call, so it keeps its body.
         var stripFids = new HashSet<int>(persistedEntries.Count);
         foreach (var pe in persistedEntries)
-            if (pe.Strippable)
+            // ADR-023 — never strip a dynamic predicate's WAM: its enter_dynamic
+            // chain (rebuilt from the rehydrated clauses) is the mutable truth the
+            // engine evicts back to on the first assert/retract.
+            if (pe.Strippable && !dynamicSnapshotFids.Contains(pe.FunctorId))
                 stripFids.Add(pe.FunctorId);
         _lastIlFunctorIds = stripFids;
         return dllBytes;
