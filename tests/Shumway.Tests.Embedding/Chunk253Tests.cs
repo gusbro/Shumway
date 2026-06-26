@@ -4,96 +4,79 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// Chunk 253: REPL line-editor horizontal scroll. Tests the
-/// pure window-computation helper that drives Redraw — the
-/// interactive painting itself is exercised by manual smoke
-/// testing.
+/// REPL line-editor wrapping. Chunk 253 originally kept a long line
+/// on one terminal row via a horizontal-scroll window
+/// (<c>ComputeVisibleWindow</c>); Phase 31 replaced that with real
+/// multi-row wrapping driven by <see cref="LineEditor.CellRowCol"/>.
+/// These tests pin the pure layout helper — the interactive painting
+/// itself is exercised by manual smoke testing.
 /// </summary>
 public class Chunk253Tests
 {
     [Fact]
-    public void BufferFits_WindowCoversAll()
+    public void FirstRow_IndexMapsToColumnDirectly()
     {
-        // Buffer fits in the visible columns → no scrolling, whole
-        // buffer is the window.
-        var (start, end) = LineEditor.ComputeVisibleWindow(
-            bufferLength: 30, cursor: 15, visibleCols: 80);
-        Assert.Equal(0, start);
-        Assert.Equal(30, end);
+        var (row, col) = LineEditor.CellRowCol(15, 80);
+        Assert.Equal(0, row);
+        Assert.Equal(15, col);
     }
 
     [Fact]
-    public void EmptyBuffer_WindowIsEmpty()
+    public void ExactWidth_WrapsToStartOfNextRow()
     {
-        var (start, end) = LineEditor.ComputeVisibleWindow(0, 0, 80);
-        Assert.Equal(0, start);
-        Assert.Equal(0, end);
+        // Cell at linear index == width is the first cell of row 1.
+        var (row, col) = LineEditor.CellRowCol(80, 80);
+        Assert.Equal(1, row);
+        Assert.Equal(0, col);
     }
 
     [Fact]
-    public void LongBuffer_CursorNearStart_AnchorsAtZero()
+    public void PastSeveralRows_ComputesRowAndColumn()
     {
-        // Cursor at column 10 of a 200-char buffer in an 80-col
-        // window → window stays anchored at 0.
-        var (start, end) = LineEditor.ComputeVisibleWindow(
-            bufferLength: 200, cursor: 10, visibleCols: 80);
-        Assert.Equal(0, start);
-        Assert.Equal(80, end);
+        // 200 cells in an 80-col terminal → row 2, col 40.
+        var (row, col) = LineEditor.CellRowCol(200, 80);
+        Assert.Equal(2, row);
+        Assert.Equal(40, col);
     }
 
     [Fact]
-    public void LongBuffer_CursorAtRightEdgeOfWindow_StaysAnchored()
+    public void LastColumnOfARow_StaysOnThatRow()
     {
-        // Cursor exactly at visibleCols - 1 → still anchored at 0.
-        var (start, end) = LineEditor.ComputeVisibleWindow(
-            bufferLength: 200, cursor: 79, visibleCols: 80);
-        Assert.Equal(0, start);
-        Assert.Equal(80, end);
+        var (row, col) = LineEditor.CellRowCol(79, 80);
+        Assert.Equal(0, row);
+        Assert.Equal(79, col);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(-5)]   // negative index is clamped, never throws / negative
+    [InlineData(80)]
+    public void WidthAndIndexGuards_NeverThrowAndStayInRange(int width)
+    {
+        // width < 1 is coerced to 1; negative index coerced to 0. The
+        // returned column must always be a valid 0..width-1 coordinate.
+        int w = width < 1 ? 1 : width;
+        for (int idx = -3; idx <= 250; idx += 13)
+        {
+            var (row, col) = LineEditor.CellRowCol(idx, width);
+            Assert.True(row >= 0, $"row<0 for idx={idx}, width={width}");
+            Assert.True(col >= 0 && col < w,
+                $"col {col} out of [0,{w}) for idx={idx}, width={width}");
+        }
     }
 
     [Fact]
-    public void LongBuffer_CursorPastWindow_SlidesRight()
+    public void RowMajorOrder_ConsecutiveIndicesAdvanceColumnThenRow()
     {
-        // Cursor at column 100 of 200-char buffer → window slides
-        // so the cursor is the last column visible.
-        var (start, end) = LineEditor.ComputeVisibleWindow(
-            bufferLength: 200, cursor: 100, visibleCols: 80);
-        Assert.Equal(21, start);   // 101 - 80
-        Assert.Equal(101, end);    // cursor + 1
-        Assert.Equal(80, end - start);
-    }
-
-    [Fact]
-    public void LongBuffer_CursorAtEnd_WindowEndsAtBuffer()
-    {
-        var (start, end) = LineEditor.ComputeVisibleWindow(
-            bufferLength: 200, cursor: 200, visibleCols: 80);
-        Assert.Equal(120, start);
-        Assert.Equal(200, end);
-    }
-
-    [Fact]
-    public void CursorAlwaysVisible_PropertyTest()
-    {
-        // For every combination of buffer length and cursor
-        // position, the cursor must be inside (or at the right
-        // edge of) the returned window — otherwise the user
-        // can't see what they're typing.
-        for (int buf = 0; buf <= 300; buf += 17)
-            for (int cur = 0; cur <= buf; cur += 7)
-                foreach (int cols in new[] { 1, 5, 40, 80, 200 })
-                {
-                    var (s, e) = LineEditor.ComputeVisibleWindow(buf, cur, cols);
-                    Assert.True(s >= 0,
-                        $"start < 0 for (buf={buf}, cur={cur}, cols={cols})");
-                    Assert.True(e <= buf,
-                        $"end > buf for (buf={buf}, cur={cur}, cols={cols})");
-                    Assert.True(cur >= s && cur <= e,
-                        $"cursor {cur} not in window [{s},{e}] for "
-                        + $"(buf={buf}, cols={cols})");
-                    Assert.True(e - s <= cols,
-                        $"window width {e - s} > visibleCols {cols} for "
-                        + $"(buf={buf}, cur={cur})");
-                }
+        // Walking linear indices 0..2W-1 must visit row 0 cols 0..W-1
+        // then row 1 cols 0..W-1 — the invariant the renderer relies on.
+        const int w = 10;
+        for (int i = 0; i < 2 * w; i++)
+        {
+            var (row, col) = LineEditor.CellRowCol(i, w);
+            Assert.Equal(i / w, row);
+            Assert.Equal(i % w, col);
+        }
     }
 }

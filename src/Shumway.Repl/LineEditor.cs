@@ -3,7 +3,7 @@ using System.Text;
 namespace Shumway.Repl;
 
 /// <summary>
-/// Chunk 249 — interactive line editor for the REPL. Built on
+/// Interactive line editor for the REPL. Built on
 /// <see cref="Console.ReadKey"/> so it works cross-platform without
 /// pulling in a heavyweight terminal library. Supports the
 /// expected baseline:
@@ -26,11 +26,16 @@ namespace Shumway.Repl;
 /// <see cref="Console.ReadLine"/> so the REPL stays scriptable
 /// — keystroke handling depends on a real terminal.</para>
 ///
-/// <para>Line wrap: the editor assumes the line fits in the
-/// terminal width. Long input that wraps still works
-/// semantically, but visual feedback may be off until the next
-/// redraw. Improving this needs explicit cursor row tracking;
-/// out of scope for v1.</para>
+/// <para>Line wrap (Phase 31): input wider than the terminal wraps
+/// onto further rows like a normal shell. <see cref="LineView"/>
+/// repaints the whole <c>prompt + buffer</c> from a captured origin
+/// row on every edit, letting the console wrap naturally, then
+/// positions the hardware cursor at the logical edit position —
+/// across rows. It detects terminal scroll (when the painted line
+/// reaches the bottom of the window and pushes the origin up) and
+/// shifts the origin so cursor placement stays aligned. This
+/// replaces the chunk-253 horizontal-scroll window, which kept the
+/// line on a single row and hid its start while editing the end.</para>
 /// </summary>
 public sealed class LineEditor
 {
@@ -63,7 +68,14 @@ public sealed class LineEditor
             return raw;
         }
 
+        // Capture the origin row *before* writing the prompt so the
+        // view can repaint from the line's true start on every edit.
+        int originRow;
+        try { originRow = Console.CursorTop; }
+        catch { originRow = 0; }
         Console.Write(prompt);
+        var view = new LineView(prompt, originRow);
+
         var buffer = new StringBuilder();
         int cursor = 0;
         int historyIndex = _history.Entries.Count;  // points past the end
@@ -89,6 +101,10 @@ public sealed class LineEditor
             switch (key.Key)
             {
                 case ConsoleKey.Enter:
+                    // Drop below the whole (possibly multi-row) line
+                    // before the newline so following output starts
+                    // clean.
+                    view.MoveToEnd(buffer.Length);
                     Console.WriteLine();
                     string line = buffer.ToString();
                     _history.Add(line);
@@ -99,7 +115,7 @@ public sealed class LineEditor
                     {
                         buffer.Remove(cursor - 1, 1);
                         cursor--;
-                        Redraw(prompt, buffer, cursor);
+                        view.Render(buffer, cursor);
                     }
                     break;
 
@@ -107,27 +123,24 @@ public sealed class LineEditor
                     if (cursor < buffer.Length)
                     {
                         buffer.Remove(cursor, 1);
-                        Redraw(prompt, buffer, cursor);
+                        view.Render(buffer, cursor);
                     }
                     break;
 
                 case ConsoleKey.LeftArrow:
-                    // Chunk 253: always Redraw on cursor moves so
-                    // the horizontal-scroll window slides correctly
-                    // when the cursor crosses the visible boundary.
-                    if (cursor > 0) { cursor--; Redraw(prompt, buffer, cursor); }
+                    if (cursor > 0) { cursor--; view.Render(buffer, cursor); }
                     break;
 
                 case ConsoleKey.RightArrow:
-                    if (cursor < buffer.Length) { cursor++; Redraw(prompt, buffer, cursor); }
+                    if (cursor < buffer.Length) { cursor++; view.Render(buffer, cursor); }
                     break;
 
                 case ConsoleKey.Home:
-                    cursor = 0; Redraw(prompt, buffer, cursor);
+                    cursor = 0; view.Render(buffer, cursor);
                     break;
 
                 case ConsoleKey.End:
-                    cursor = buffer.Length; Redraw(prompt, buffer, cursor);
+                    cursor = buffer.Length; view.Render(buffer, cursor);
                     break;
 
                 case ConsoleKey.UpArrow:
@@ -142,7 +155,7 @@ public sealed class LineEditor
                         buffer.Clear();
                         buffer.Append(_history.Entries[historyIndex]);
                         cursor = buffer.Length;
-                        Redraw(prompt, buffer, cursor);
+                        view.Render(buffer, cursor);
                     }
                     break;
 
@@ -155,7 +168,7 @@ public sealed class LineEditor
                             ? draft
                             : _history.Entries[historyIndex]);
                         cursor = buffer.Length;
-                        Redraw(prompt, buffer, cursor);
+                        view.Render(buffer, cursor);
                     }
                     break;
 
@@ -178,7 +191,7 @@ public sealed class LineEditor
                                 buffer.Remove(wordStart, wordLen);
                                 buffer.Insert(wordStart, completion);
                                 cursor = wordStart + completion.Length;
-                                Redraw(prompt, buffer, cursor);
+                                view.Render(buffer, cursor);
                             }
                             else if (candidates.Count > 1)
                             {
@@ -192,13 +205,14 @@ public sealed class LineEditor
                                     buffer.Insert(wordStart, common);
                                     cursor = wordStart + common.Length;
                                 }
+                                // Move below the line, list candidates,
+                                // then re-anchor the view at the fresh
+                                // row and repaint prompt + buffer there.
+                                view.MoveToEnd(buffer.Length);
                                 Console.WriteLine();
                                 PrintCandidates(candidates);
-                                // The candidate list pushed the
-                                // prompt up; Redraw re-emits it +
-                                // the buffer + cursor at the
-                                // fresh row's column 0.
-                                Redraw(prompt, buffer, cursor);
+                                view.ResetOriginToCursor();
+                                view.Render(buffer, cursor);
                             }
                             // No matches → silent (no annoying bell).
                         }
@@ -221,17 +235,17 @@ public sealed class LineEditor
                     // Ctrl-A / Ctrl-E — Emacs-style line jumps.
                     if (key.Key == ConsoleKey.A
                         && (key.Modifiers & ConsoleModifiers.Control) != 0)
-                    { cursor = 0; Redraw(prompt, buffer, cursor); break; }
+                    { cursor = 0; view.Render(buffer, cursor); break; }
                     if (key.Key == ConsoleKey.E
                         && (key.Modifiers & ConsoleModifiers.Control) != 0)
-                    { cursor = buffer.Length; Redraw(prompt, buffer, cursor); break; }
+                    { cursor = buffer.Length; view.Render(buffer, cursor); break; }
                     // Ctrl-U — kill to start of line (Emacs / readline standard).
                     if (key.Key == ConsoleKey.U
                         && (key.Modifiers & ConsoleModifiers.Control) != 0)
                     {
                         buffer.Remove(0, cursor);
                         cursor = 0;
-                        Redraw(prompt, buffer, cursor);
+                        view.Render(buffer, cursor);
                         break;
                     }
                     // Ctrl-K — kill to end of line.
@@ -239,7 +253,7 @@ public sealed class LineEditor
                         && (key.Modifiers & ConsoleModifiers.Control) != 0)
                     {
                         buffer.Remove(cursor, buffer.Length - cursor);
-                        Redraw(prompt, buffer, cursor);
+                        view.Render(buffer, cursor);
                         break;
                     }
                     // Plain printable character (includes non-ASCII
@@ -248,61 +262,110 @@ public sealed class LineEditor
                     {
                         buffer.Insert(cursor, key.KeyChar);
                         cursor++;
-                        Redraw(prompt, buffer, cursor);
+                        view.Render(buffer, cursor);
                     }
                     break;
             }
         }
     }
 
-    /// <summary>Chunk 253 — repaints the line using a horizontal-
-    /// scroll window over the buffer. The cursor stays on a single
-    /// terminal row regardless of buffer length: when the buffer
-    /// would overflow the row, the visible window slides so the
-    /// cursor remains in view.
-    ///
-    /// <para>Why scroll rather than wrap-and-redraw: the previous
-    /// implementation wrote the whole buffer on every keystroke
-    /// and reset only <see cref="Console.CursorLeft"/> (the x
-    /// coordinate) before the next paint. For a buffer that
-    /// wrapped to a second terminal row, the reset landed on the
-    /// last visible row only — the wrapped-up portion stayed
-    /// painted, and the new render piled on top, leaving stale
-    /// fragments of prior typing across multiple rows.</para>
-    ///
-    /// <para>Trade-off: the user can't see the start of a long
-    /// line while editing the end. Acceptable for an interactive
-    /// REPL where deeply-edited inputs are rare; the alternative
-    /// (multi-row tracking with ANSI clear-to-end-of-screen) is
-    /// heavier and still has terminal-portability issues.</para></summary>
-    private static void Redraw(string prompt, StringBuilder buffer, int cursor)
+    /// <summary>Repaints a single logical input line that may wrap onto
+    /// several terminal rows, keeping the hardware cursor aligned with
+    /// the logical edit position across rows. One instance per
+    /// <see cref="ReadLine"/> call; it owns the origin row and the
+    /// high-water painted length.</summary>
+    private sealed class LineView
     {
-        int width = TerminalWidthOrDefault();
-        int visibleCols = Math.Max(1, width - prompt.Length - 1);
-        var (visStart, visEnd) = ComputeVisibleWindow(
-            bufferLength: buffer.Length, cursor: cursor, visibleCols: visibleCols);
+        private readonly string _prompt;
+        private int _originRow;   // console row where prompt char 0 sits
+        private int _dirty;       // max cells ever painted — drives erase
 
-        try { Console.CursorLeft = 0; }
-        catch (System.IO.IOException) { return; }
-        Console.Write(prompt);
-        if (visEnd > visStart)
-            Console.Write(buffer.ToString(visStart, visEnd - visStart));
+        public LineView(string prompt, int originRow)
+        {
+            _prompt = prompt;
+            _originRow = originRow;
+        }
 
-        // Pad with spaces to overwrite any leftover from a longer
-        // previous render. Width-1 keeps the cursor inside the row
-        // so writing the last column doesn't force a wrap.
-        int painted = prompt.Length + (visEnd - visStart);
-        int padding = Math.Max(0, width - 1 - painted);
-        if (padding > 0) Console.Write(new string(' ', padding));
+        /// <summary>Re-anchor the view at the current cursor row (col 0)
+        /// after something else (e.g. a candidate listing) wrote below
+        /// the line. The next <see cref="Render"/> repaints there.</summary>
+        public void ResetOriginToCursor()
+        {
+            try { _originRow = Console.CursorTop; }
+            catch { /* keep previous origin */ }
+            _dirty = 0;
+        }
 
-        SetCursor(prompt.Length + (cursor - visStart));
+        public void Render(StringBuilder buffer, int cursor)
+        {
+            int w = TerminalWidthOrDefault();
+            int contentLen = _prompt.Length + buffer.Length;
+            // Paint up to the high-water mark so any longer previous
+            // render is fully blanked; bump the mark.
+            int paintLen = Math.Max(contentLen, _dirty);
+            _dirty = Math.Max(_dirty, contentLen);
+
+            if (!TrySetCursor(0, _originRow)) return;
+
+            // Single write: prompt + buffer + trailing blanks. One call
+            // minimizes flicker and lets the console do all wrapping.
+            var sb = new StringBuilder(paintLen);
+            sb.Append(_prompt).Append(buffer);
+            if (paintLen > contentLen) sb.Append(' ', paintLen - contentLen);
+            Console.Write(sb.ToString());
+
+            AdjustOriginForScroll(paintLen, w);
+
+            // Position the hardware cursor at the logical edit point.
+            var (row, col) = CellRowCol(_prompt.Length + cursor, w);
+            TrySetCursor(col, _originRow + row);
+        }
+
+        /// <summary>Park the cursor just past the last painted cell (end
+        /// of the wrapped line), used before emitting a newline.</summary>
+        public void MoveToEnd(int bufferLength)
+        {
+            int w = TerminalWidthOrDefault();
+            var (row, col) = CellRowCol(_prompt.Length + bufferLength, w);
+            TrySetCursor(col, _originRow + row);
+        }
+
+        /// <summary>After painting <paramref name="paintLen"/> cells from
+        /// the origin, the line ends on row <c>origin + paintLen/w</c>. If
+        /// that exceeds the buffer's last row the terminal scrolled the
+        /// region up; shift the origin by the overflow so later cursor
+        /// math stays aligned. Computing the end row from the paint length
+        /// (not the post-write <c>CursorTop</c>) sidesteps the deferred-wrap
+        /// "phantom column" ambiguity at exact-width boundaries.</summary>
+        private void AdjustOriginForScroll(int paintLen, int w)
+        {
+            int endRow = _originRow + paintLen / w;
+            int bottom;
+            try { bottom = Console.BufferHeight - 1; }
+            catch { return; }
+            if (endRow > bottom) _originRow -= (endRow - bottom);
+        }
     }
 
-    private static void SetCursor(int column)
+    /// <summary>Pure helper: the (row, col) of the cell at linear
+    /// <paramref name="linearIndex"/> in a region that starts at column 0
+    /// and wraps every <paramref name="width"/> columns. Row is relative to
+    /// the region's first row. Drives cursor placement and scroll
+    /// detection; unit-tested in lieu of the interactive paint.</summary>
+    public static (int Row, int Col) CellRowCol(int linearIndex, int width)
     {
-        try { Console.CursorLeft = column; }
-        catch (System.IO.IOException) { /* not interactive */ }
-        catch (ArgumentOutOfRangeException) { /* cursor past edge */ }
+        if (width < 1) width = 1;
+        if (linearIndex < 0) linearIndex = 0;
+        return (linearIndex / width, linearIndex % width);
+    }
+
+    private static bool TrySetCursor(int column, int row)
+    {
+        if (column < 0) column = 0;
+        if (row < 0) row = 0;
+        try { Console.SetCursorPosition(column, row); return true; }
+        catch (System.IO.IOException) { return false; }      // not interactive
+        catch (ArgumentOutOfRangeException) { return false; } // past the edge
     }
 
     private static int TerminalWidthOrDefault()
@@ -313,33 +376,6 @@ public sealed class LineEditor
             return w < 20 ? 80 : w;
         }
         catch { return 80; }
-    }
-
-    /// <summary>Chunk 253 — pure helper computing the
-    /// horizontal-scroll window over the buffer. Returns
-    /// <c>[visStart, visEnd)</c> such that <c>cursor</c> is
-    /// inside it and the window fits in
-    /// <paramref name="visibleCols"/> columns.
-    ///
-    /// <para>Rules:</para>
-    /// <list type="bullet">
-    /// <item>Buffer that fits → window covers all of it.</item>
-    /// <item>Buffer longer than the window but cursor near the
-    ///   start → anchor window at 0.</item>
-    /// <item>Otherwise → end window one cell past cursor (so the
-    ///   cursor is the last visible column) and back-fill
-    ///   visibleCols chars to the left.</item>
-    /// </list></summary>
-    public static (int Start, int End) ComputeVisibleWindow(
-        int bufferLength, int cursor, int visibleCols)
-    {
-        if (bufferLength <= visibleCols)
-            return (0, bufferLength);
-        if (cursor < visibleCols)
-            return (0, visibleCols);
-        int end = Math.Min(bufferLength, cursor + 1);
-        int start = Math.Max(0, end - visibleCols);
-        return (start, end);
     }
 
     /// <summary>Chunk 250 — walks back from <paramref name="cursor"/>
