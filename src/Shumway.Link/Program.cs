@@ -102,7 +102,8 @@ internal static class Program
             // --with-compiled-il / --strip-wam the baked prelude is itself
             // IL-compiled (its static predicates), so an IL --exe starts with a
             // fully precompiled prelude — no parse, no compile.
-            BakePrelude = opts.BakePrelude || !string.IsNullOrEmpty(opts.ExePath),
+            BakePrelude = opts.BakePrelude || !string.IsNullOrEmpty(opts.ExePath)
+                || !string.IsNullOrEmpty(opts.DllPath),
             VerboseOut = opts.Verbose ? Console.Error : null,
             StripSource = opts.StripSource,
             IncludeCompiledIl = opts.IncludeCompiledIl,
@@ -216,6 +217,26 @@ internal static class Program
             if (!opts.Verbose)
                 Console.Error.WriteLine($"shumway-link: wrote {exeResult.OutputPath}.");
         }
+
+        if (!string.IsNullOrEmpty(opts.DllPath))
+        {
+            var dllResult = LibraryEmitter.Emit(
+                bundleBytes: result.Bytes!,
+                outputPath: opts.DllPath,
+                namespaceName: opts.DllNamespace,
+                className: opts.DllClass,
+                verboseOut: opts.Verbose ? Console.Error : null,
+                foreignDllPaths: opts.ForeignDlls);
+            foreach (var d in dllResult.Diagnostics)
+            {
+                var stream = d.Severity == LinkSeverity.Error ? Console.Error : Console.Out;
+                stream.WriteLine($"shumway-link: {d.Severity.ToString().ToLowerInvariant()}: {d.Message}");
+            }
+            if (!dllResult.Success) return ExitLinkError;
+            Console.Error.WriteLine(
+                $"shumway-link: wrote {dllResult.OutputPath} "
+                + $"(factory {dllResult.FactoryTypeName}.CreateEngine()).");
+        }
         return ExitOk;
     }
 
@@ -242,6 +263,13 @@ internal static class Program
         public string ExePath { get; set; } = "";
         public string Goal { get; set; } = "";
         public bool SelfContained { get; set; }
+        // Phase 31 — --dll: emit a .NET class library embedding the bundle, with a
+        // generated factory (Namespace.Class.CreateEngine()) a host app calls. No
+        // Prolog goal entry point. Namespace defaults to the inferred DLL file name,
+        // class to "Bundle".
+        public string DllPath { get; set; } = "";
+        public string? DllNamespace { get; set; }
+        public string? DllClass { get; set; }
         // Chunk 247: foreign-DLL paths (each carrying
         // [PrologPredicate]-decorated static methods). The linker
         // reflects each, registers the discovered name/arity
@@ -348,6 +376,22 @@ internal static class Program
                     opts.SelfContained = true;
                     break;
 
+                case "--dll":
+                case "-d":
+                    if (++i >= args.Length) { ReportMissing(arg); return null; }
+                    opts.DllPath = args[i];
+                    break;
+
+                case "--dll-namespace":
+                    if (++i >= args.Length) { ReportMissing(arg); return null; }
+                    opts.DllNamespace = args[i];
+                    break;
+
+                case "--dll-class":
+                    if (++i >= args.Length) { ReportMissing(arg); return null; }
+                    opts.DllClass = args[i];
+                    break;
+
                 case "--verbose":
                 case "-v":
                     opts.Verbose = true;
@@ -384,10 +428,11 @@ internal static class Program
             }
         }
 
-        if (string.IsNullOrEmpty(opts.OutputPath) && string.IsNullOrEmpty(opts.ExePath))
+        if (string.IsNullOrEmpty(opts.OutputPath) && string.IsNullOrEmpty(opts.ExePath)
+            && string.IsNullOrEmpty(opts.DllPath))
         {
             Console.Error.WriteLine(
-                "shumway-link: --output (or --exe) is required.");
+                "shumway-link: --output (or --exe / --dll) is required.");
             return null;
         }
         if (opts.InputPaths.Count == 0)
@@ -414,6 +459,20 @@ internal static class Program
         {
             Console.Error.WriteLine(
                 "shumway-link: --self-contained only makes sense with --exe.");
+            return null;
+        }
+        if (!string.IsNullOrEmpty(opts.ExePath) && !string.IsNullOrEmpty(opts.DllPath))
+        {
+            Console.Error.WriteLine(
+                "shumway-link: --exe and --dll are mutually exclusive (an executable runs a "
+                + "goal at startup; a library is loaded by a host app).");
+            return null;
+        }
+        if ((opts.DllNamespace is not null || opts.DllClass is not null)
+            && string.IsNullOrEmpty(opts.DllPath))
+        {
+            Console.Error.WriteLine(
+                "shumway-link: --dll-namespace / --dll-class only make sense with --dll.");
             return null;
         }
         return opts;
@@ -576,6 +635,15 @@ internal static class Program
             + "                           executable (~70 MB, runs on a machine with\n"
             + "                           nothing installed). Default is framework-\n"
             + "                           dependent (~5-10 MB, needs the .NET runtime).\n"
+            + "  -d, --dll <path>         Produce a .NET class library (.dll) embedding the\n"
+            + "                           bundle, with a generated factory a host app calls:\n"
+            + "                           `var e = Ns.Class.CreateEngine();`. No Prolog goal —\n"
+            + "                           the host picks the goals. The Shumway engine DLLs\n"
+            + "                           are copied next to the output. Needs --entry for\n"
+            + "                           reachability (no --goal). Mutually exclusive w/ --exe.\n"
+            + "      --dll-namespace <ns> Namespace for the generated factory (default: inferred\n"
+            + "                           from the .dll file name, e.g. myprog.dll -> MyProg).\n"
+            + "      --dll-class <name>   Class name for the generated factory (default: Bundle).\n"
             + "  -v, --verbose            Verbose progress + diagnostics to stderr.\n"
             + "  -h, --help               Show this message.");
     }

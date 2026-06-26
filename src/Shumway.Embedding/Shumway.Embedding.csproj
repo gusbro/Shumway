@@ -8,6 +8,10 @@
     <ProjectReference Include="..\Shumway.Builtins\Shumway.Builtins.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Shumway.Tests.Embedding" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>

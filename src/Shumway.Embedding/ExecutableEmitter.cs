@@ -373,7 +373,7 @@ internal static class Program
 ";
     }
 
-    private static IEnumerable<string> EnumerateRequiredAssemblies(string dir)
+    internal static IEnumerable<string> EnumerateRequiredAssemblies(string dir)
     {
         // Every Shumway.*.dll and Sigil.dll alongside the linker is a
         // candidate engine dependency. The publish step's reference
@@ -424,7 +424,7 @@ internal static class Program
             ? path : path + ".exe";
     }
 
-    private static string SanitiseAssemblyName(string name)
+    internal static string SanitiseAssemblyName(string name)
     {
         var sb = new StringBuilder(name.Length);
         foreach (char c in name)

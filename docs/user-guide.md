@@ -355,6 +355,9 @@ shumway-link -o app.shum \
 | `-e, --exe <path>` | Emit a single-file native executable. See [step 3a](#step-3a--producing-a-runnable-executable). |
 | `-g, --goal Term` | The goal the `--exe` runs at startup. Trailing `.` optional. |
 | `--self-contained` | Used with `--exe`: bake the .NET runtime into the binary (~70 MB exe, runs on machines without .NET). Default is framework-dependent (~5-10 MB exe, requires .NET 10 runtime on the target). |
+| `-d, --dll <path>` | Emit a loadable .NET class library embedding the bundle, with a factory that hands back a ready engine. See [step 3b](#step-3b--producing-a-loadable-net-class-library---dll). Mutually exclusive with `--exe`. |
+| `--dll-namespace <ns>` | Namespace of the `--dll` factory class. Default: inferred from the DLL filename. |
+| `--dll-class <name>` | Class name of the `--dll` factory. Default `Bundle`. |
 | `-v, --verbose` | Stream diagnostics to stderr as the linker runs. |
 
 The linker performs three checks:
@@ -457,6 +460,63 @@ The build host must have the .NET 10 SDK (which it does, since
 `shumway-link` is itself a .NET tool). Cross-targeting other
 platforms isn't supported yet — the produced binary matches the
 current platform.
+
+### Step 3b — Producing a loadable .NET class library (`--dll`)
+
+`--exe` is for "the whole program *is* a Prolog goal". When instead you
+have a **.NET application** that wants to call into Shumway for certain
+goals, use `--dll`. It emits a .NET class library that embeds the bundle
+and exposes a small factory you call to get a ready-to-query engine:
+
+```bash
+shumway-link greet.shmo \
+  --dll ./Greeter.dll \
+  --entry greet/1
+```
+
+`--dll` needs a reachability root just like a normal link — pass
+`--entry` (or `--goal`). Unlike `--exe` there is no startup goal: the
+DLL never runs anything on its own; it just makes the bundle available.
+
+This produces `Greeter.dll` plus the Shumway runtime DLLs it depends on
+(all written next to the output). Your application references `Greeter.dll`
+and calls the generated factory:
+
+```csharp
+// The factory type is <Namespace>.<Class> — default Greeter.Bundle here
+// (namespace inferred from the DLL filename, class defaults to "Bundle").
+var engine = Greeter.Bundle.CreateEngine();
+
+foreach (var sol in engine.QueryAll("greet(X)."))
+    Console.WriteLine(sol["X"]);     // hello, world
+```
+
+`CreateEngine()` returns a fresh `Shumway.Embedding.PrologEngine` with the
+bundle already loaded (it calls `PrologEngine.FromBundle` internally, so the
+baked prelude warms the runtime). Call it once per engine you want — engines
+are single-threaded, so use one per thread (or an `EnginePool`). The bundle
+itself is parsed once and cached; `GetBundle()` exposes that shared
+`Shumway.Embedding.Bundle` if you want to load it into engines yourself.
+
+**Naming the factory.** By default the namespace is inferred from the DLL
+filename (`Greeter.dll` → namespace `Greeter`) and the class is `Bundle`.
+Override either with:
+
+| Flag | Effect |
+|------|--------|
+| `--dll-namespace <ns>` | The namespace of the generated factory class. |
+| `--dll-class <name>` | The factory class name (default `Bundle`). |
+
+So `--dll ./acme.dll --dll-namespace Acme.Rules --dll-class Engine` gives
+`Acme.Rules.Engine.CreateEngine()`.
+
+Foreign-predicate DLLs passed with `--foreign-dll` are copied next to the
+output and auto-loaded by the engine at `CreateEngine()` time, exactly as
+with `--exe`.
+
+`--dll` and `--exe` are mutually exclusive (one bundle, one output shape).
+The same `LibraryEmitter.Emit(...)` is available as a plain .NET API for
+callers that drive the linker in-process.
 
 ### In-process (no CLI)
 

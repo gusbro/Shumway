@@ -657,6 +657,34 @@ questions from Phase 11's deferred list:
   `retract` / `assertz` — and avoids redundant `TryDescribe*`
   attempts that were already rejecting the shape.
 
+**Phase 31 — REPL line-editing + `--dll` loadable class library** — 🚧 **In flight.**
+
+Two themes the user named: (1) the REPL line editing/input doesn't work well —
+cursor/history/arrows/backspace/paste/special-char handling in
+`src/Shumway.Repl/LineEditor.cs`; (2) a linker `--dll` option, the embed-in-a-
+.NET-app counterpart to `--exe`.
+
+- **`--dll` — loadable .NET class library (done, pending commit).** `shumway-link
+  --dll <path>` emits a .NET class-library DLL embedding the `.shum` bundle plus a
+  generated factory (`<Namespace>.<Class>.CreateEngine()`) returning a
+  ready-to-query `PrologEngine` (via `PrologEngine.FromBundle`, baked-prelude warm
+  path). For a .NET app that *uses* Shumway to evaluate goals, not an `--exe` whose
+  whole point is one startup goal. `Shumway.Embedding.LibraryEmitter.Emit(...)` is
+  the API the CLI wraps: writes a temp classlib project (csproj refs the Shumway
+  runtime DLLs, embeds `bundle.shum` as manifest resource `shumway.bundle`),
+  `dotnet build -c Release`, copies the DLL + every Shumway dependency DLL (+
+  foreign DLLs) next to the output. Namespace defaults to the sanitised DLL
+  filename (`Greeter.dll` → `Greeter`), class defaults to `Bundle`; both
+  overridable with `--dll-namespace` / `--dll-class`. `--dll` and `--exe` are
+  mutually exclusive; `--dll` needs a reachability root (`--entry`/`--goal`) like
+  any link. Verified end-to-end: a consumer .NET app referenced the generated
+  `Greeter.dll`, called `Greeter.Bundle.CreateEngine()`, ran `greet(X)`, got
+  `hello`/`world`. Documented in `docs/user-guide.md` step 3b. 16 LibraryEmitterTests
+  (namespace/identifier inference — the full build path is manually verified, too
+  heavy for the unit suite, matching the `--exe` precedent). Gate Embedding 2558.
+
+- **REPL line editing — not started.**
+
 **Phase 30 — Arity/Prolog32 compatibility, round 2** — ✅ **Complete** (tagged `phase-30`; closure summary in [`docs/phase-30-closure.md`](docs/phase-30-closure.md)).
 
 Widened the Phase-24 Arity source-compat work, driven by the reference material
