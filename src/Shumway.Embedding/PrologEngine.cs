@@ -3043,22 +3043,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         foreach (var entry in effectiveEntries)
         {
             if (entry.CompiledBytecode is null) continue;
-            // Source-less entries already decoded above.
+            // Source-less entries already decoded above (via LoadEntryFromBytecode).
             if (_precompiledModules.ContainsKey(entry.ModuleName)
                 && string.IsNullOrEmpty(entry.Source)) continue;
-            var module = CompiledModuleCodec.Decode(entry.CompiledBytecode);
-            _precompiledModules[entry.ModuleName] = module;
-            // Warm IL eagerly only when the host has opted in via the
-            // IlPromotion threshold (>0). Warming under the default
-            // threshold=0 setting would silently force Sigil over every
-            // eligible predicate at LoadBundle time — a) wastes work
-            // when the user wanted Tier-0, b) hits chunk-189/190 IL
-            // emit corner cases that the runtime promotion path avoids
-            // because RecordInvocation never reaches them under
-            // threshold=0.
-            if (IlPromotion.Threshold > 0)
-                foreach (var pred in module.Predicates)
-                    IlPromotion.Warm(pred.FunctorId, pred);
+            // Source-bearing: the source consult is the truth, so the bytecode is an
+            // IL-warm / skip-compile cache only — don't register static predicates.
+            // (The shared helper also remaps literals, which fixes float value-baking
+            // for a warmed-from-bytecode source-bearing predicate under Threshold>0.)
+            DecodeAndRegisterPrecompiledModule(entry, registerStaticPredicates: false);
         }
         // A bundle's predicates join the static program — drop the
         // ADR-015 cached static linked region so the next query rebuilds it.
@@ -3331,6 +3323,44 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// the source-bearing path. The bytecode is byte-identical to
     /// what <see cref="SetupQueryFromTerm"/> would have produced
     /// (chunk 176's ModuleRewrite parity).</summary>
+    /// <summary>Decodes a bundle entry's <see cref="BundleEntry.CompiledBytecode"/>,
+    /// remaps its module-local literal ids into the engine's shared pools (see
+    /// <see cref="RemapPrecompiledLiterals"/>), records the module, and warms its IL
+    /// when Tier 1 is enabled. The single decode path shared by the source-less
+    /// <see cref="LoadEntryFromBytecode"/> and the source-bearing
+    /// <see cref="LoadBundleCore"/> loop.
+    ///
+    /// <para><paramref name="registerStaticPredicates"/> — true only for the
+    /// source-less path: there the bytecode IS the definition, so each predicate
+    /// goes into <see cref="_precompiledStaticPredicates"/>. For a source-bearing
+    /// entry the source consult is the truth and the bytecode is only an IL-warm /
+    /// skip-compile cache, so it is NOT registered there.</para></summary>
+    private Shumway.Compiler.Wam.CompiledModule DecodeAndRegisterPrecompiledModule(
+        BundleEntry entry, bool registerStaticPredicates)
+    {
+        var module = CompiledModuleCodec.Decode(entry.CompiledBytecode!);
+        // Remap COMPILE-TIME, module-local float/string/bigint literal ids into the
+        // engine's ONE shared _literalPools (mutating the freshly-decoded bytecode in
+        // place) — else a static literal reads whatever value sits at that id in the
+        // merged pool (the two-float bug). Afterward every id indexes the live pool,
+        // so IL float value-baking reads _literalPools.Floats directly.
+        RemapPrecompiledLiterals(module);
+        _precompiledModules[entry.ModuleName] = module;
+        // Warm IL only when the host opted into Tier 1 (Threshold > 0). Warming under
+        // the default threshold=0 would force Sigil over every eligible predicate at
+        // load — wasteful when the user wanted Tier 0, and it hits chunk-189/190 IL
+        // corner cases the runtime promotion path avoids under threshold 0.
+        bool warmIl = IlPromotion.Threshold > 0;
+        foreach (var pred in module.Predicates)
+        {
+            if (registerStaticPredicates)
+                _precompiledStaticPredicates[pred.FunctorId] = pred;
+            if (warmIl)
+                IlPromotion.Warm(pred.FunctorId, pred);
+        }
+        return module;
+    }
+
     private void LoadEntryFromBytecode(BundleEntry entry)
     {
         if (entry.CompiledBytecode is null)
@@ -3422,34 +3452,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             AddNativeBlock(nb.Name, nb.Vars.ToArray(), stmts.ToArray());
         }
 
-        var module = CompiledModuleCodec.Decode(entry.CompiledBytecode);
-        // A source-less precompiled module's bytecode carries COMPILE-TIME,
-        // module-local float/string/bigint literal ids. At run time every module
-        // (+ the dynamic clauses) resolves against this engine's ONE shared
-        // _literalPools, so the ids must be remapped into that pool at load — else
-        // a static `X =:= 2.5` reads whatever float happens to sit at that id in
-        // the merged pool (the two-float bug). Mutates the freshly-decoded
-        // bytecode in place; afterward its ids index the live pool, so the IL
-        // compiler's value-baking uses _literalPools.Floats directly (no
-        // per-module override needed).
-        RemapPrecompiledLiterals(module);
-        _precompiledModules[entry.ModuleName] = module;
-        // Warm IL only when the host opted into Tier 1 (Threshold > 0),
-        // mirroring the source-bearing LoadBundle path. IlPromotion.Warm
-        // ignores the threshold and compiles eagerly, so calling it
-        // unconditionally (the chunk-209 mistake) forced every stripped-
-        // bundle predicate onto Tier-1 even in a default Tier-0 run —
-        // and Tier-1 dispatch pays a per-call locked delegate lookup
-        // (IndexedDelegateHolder), which profiling showed dominating a
-        // Blint run (~40% of wall time blocked on that lock). At
-        // Threshold == 0 the bundle now runs as pure bytecode.
-        bool warmIl = IlPromotion.Threshold > 0;
-        foreach (var pred in module.Predicates)
-        {
-            _precompiledStaticPredicates[pred.FunctorId] = pred;
-            if (warmIl)
-                IlPromotion.Warm(pred.FunctorId, pred);
-        }
+        // Decode + literal-remap + record + warm IL (the bytecode IS the definition
+        // here, so register the static predicates).
+        DecodeAndRegisterPrecompiledModule(entry, registerStaticPredicates: true);
 
         // The static program just changed shape — drop the cached
         // static link region so the next query rebuild picks up the
