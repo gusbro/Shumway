@@ -1439,11 +1439,71 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     }
 
     /// <summary>The float-literal pool predicate <paramref name="fid"/>'s bytecode
-    /// indexes — wired into <see cref="IlPromotionStore.FloatPoolProvider"/>.</summary>
+    /// indexes — wired into <see cref="IlPromotionStore.FloatPoolProvider"/>. After
+    /// <see cref="RemapPrecompiledLiterals"/> every predicate's float ids index the
+    /// engine's live pool, so this is just the live pool.</summary>
     internal IReadOnlyList<double> FloatPoolForFid(int fid)
         => _precompiledFloatPool.TryGetValue(fid, out var pool)
             ? pool
             : _literalPools.Floats.Items;
+
+    /// <summary>Remaps a source-less precompiled module's float / string / bigint
+    /// literal ids from its module-local pools into this engine's shared
+    /// <see cref="_literalPools"/>, rewriting the bytecode operands in place. See the
+    /// call site in <c>LoadEntryFromBytecode</c> for why.</summary>
+    private void RemapPrecompiledLiterals(Shumway.Compiler.Wam.CompiledModule module)
+    {
+        var floats = module.FloatLiterals;
+        var strings = module.StringLiterals;
+        var bigints = module.BigIntLiterals;
+        if (floats.Count == 0 && strings.Count == 0 && bigints.Count == 0) return;
+        foreach (var pred in module.Predicates)
+        {
+            byte[] code = pred.Bytecode;
+            int pc = 0;
+            while (pc < code.Length)
+            {
+                var info = Shumway.Core.OpcodeTable.Get(code[pc]);
+                if (!info.IsDefined || info.Size == 0) break;   // corrupt — stop walking
+                switch ((Shumway.Core.Opcode)code[pc])
+                {
+                    case Shumway.Core.Opcode.GetFloat:
+                    case Shumway.Core.Opcode.PutFloat:
+                    case Shumway.Core.Opcode.UnifyFloat:
+                        RemapLit(code, pc + 1, floats, _literalPools.Floats);
+                        break;
+                    case Shumway.Core.Opcode.GetBigInt:
+                    case Shumway.Core.Opcode.PutBigInt:
+                    case Shumway.Core.Opcode.UnifyBigInt:
+                        RemapLit(code, pc + 1, bigints, _literalPools.BigInts);
+                        break;
+                    case Shumway.Core.Opcode.GetPstr:
+                    case Shumway.Core.Opcode.PutPstr:
+                        RemapLit(code, pc + 1, strings, _literalPools.Strings);
+                        break;
+                    case Shumway.Core.Opcode.AEvalPush:
+                    {
+                        // <kind:4> <operand:4>; kind 1 = bigint lit, 2 = float lit.
+                        int kind = Shumway.Core.BytecodeIO.ReadInt32(code, pc + 1);
+                        if (kind == 2) RemapLit(code, pc + 5, floats, _literalPools.Floats);
+                        else if (kind == 1) RemapLit(code, pc + 5, bigints, _literalPools.BigInts);
+                        break;
+                    }
+                }
+                pc += info.Size;
+            }
+        }
+    }
+
+    private static void RemapLit<T>(byte[] code, int off,
+        IReadOnlyList<T> srcPool, Shumway.Compiler.Wam.LiteralPool<T> dstPool)
+        where T : notnull
+    {
+        int oldId = Shumway.Core.BytecodeIO.ReadInt32(code, off);
+        if ((uint)oldId >= (uint)srcPool.Count) return;   // defensive
+        int newId = dstPool.Intern(srcPool[oldId]);
+        if (newId != oldId) Shumway.Core.BytecodeIO.WriteInt32(code, off, newId);
+    }
 
     // Phase 20: most-recent query's functor→address map, for the
     // profiler's address→name resolution. Null until the first query
@@ -3363,13 +3423,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
 
         var module = CompiledModuleCodec.Decode(entry.CompiledBytecode);
+        // A source-less precompiled module's bytecode carries COMPILE-TIME,
+        // module-local float/string/bigint literal ids. At run time every module
+        // (+ the dynamic clauses) resolves against this engine's ONE shared
+        // _literalPools, so the ids must be remapped into that pool at load — else
+        // a static `X =:= 2.5` reads whatever float happens to sit at that id in
+        // the merged pool (the two-float bug). Mutates the freshly-decoded
+        // bytecode in place; afterward its ids index the live pool, so the IL
+        // compiler's value-baking uses _literalPools.Floats directly (no
+        // per-module override needed).
+        RemapPrecompiledLiterals(module);
         _precompiledModules[entry.ModuleName] = module;
-        // Float-literal support: a precompiled predicate's get_float/put_float
-        // index THIS module's float pool (not the engine's live pool), so record
-        // it per fid for the IL compiler's value-baking resolver.
-        if (module.FloatLiterals.Count > 0)
-            foreach (var pred in module.Predicates)
-                _precompiledFloatPool[pred.FunctorId] = module.FloatLiterals;
         // Warm IL only when the host opted into Tier 1 (Threshold > 0),
         // mirroring the source-bearing LoadBundle path. IlPromotion.Warm
         // ignores the threshold and compiles eagerly, so calling it
