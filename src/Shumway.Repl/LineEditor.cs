@@ -305,20 +305,31 @@ public sealed class LineEditor
             int paintLen = Math.Max(contentLen, _dirty);
             _dirty = Math.Max(_dirty, contentLen);
 
-            if (!TrySetCursor(0, _originRow)) return;
+            // Hide the cursor across the repaint. Without this the cursor
+            // is visible jumping to column 0 (the origin) and back to the
+            // edit point on every keystroke — a distracting flicker.
+            bool hidden = TryHideCursor();
+            try
+            {
+                if (!TrySetCursor(0, _originRow)) return;
 
-            // Single write: prompt + buffer + trailing blanks. One call
-            // minimizes flicker and lets the console do all wrapping.
-            var sb = new StringBuilder(paintLen);
-            sb.Append(_prompt).Append(buffer);
-            if (paintLen > contentLen) sb.Append(' ', paintLen - contentLen);
-            Console.Write(sb.ToString());
+                // Single write: prompt + buffer + trailing blanks. One call
+                // minimizes flicker and lets the console do all wrapping.
+                var sb = new StringBuilder(paintLen);
+                sb.Append(_prompt).Append(buffer);
+                if (paintLen > contentLen) sb.Append(' ', paintLen - contentLen);
+                Console.Write(sb.ToString());
 
-            AdjustOriginForScroll(paintLen, w);
+                AdjustOriginForScroll(paintLen, w);
 
-            // Position the hardware cursor at the logical edit point.
-            var (row, col) = CellRowCol(_prompt.Length + cursor, w);
-            TrySetCursor(col, _originRow + row);
+                // Position the hardware cursor at the logical edit point.
+                var (row, col) = CellRowCol(_prompt.Length + cursor, w);
+                TrySetCursor(col, _originRow + row);
+            }
+            finally
+            {
+                if (hidden) TryShowCursor();
+            }
         }
 
         /// <summary>Park the cursor just past the last painted cell (end
@@ -366,6 +377,21 @@ public sealed class LineEditor
         try { Console.SetCursorPosition(column, row); return true; }
         catch (System.IO.IOException) { return false; }      // not interactive
         catch (ArgumentOutOfRangeException) { return false; } // past the edge
+    }
+
+    /// <summary>Hide the cursor for the duration of a repaint so its
+    /// transit to column 0 and back isn't visible. Returns whether the
+    /// host honoured it (so we only re-show when we hid).</summary>
+    private static bool TryHideCursor()
+    {
+        try { Console.CursorVisible = false; return true; }
+        catch { return false; }
+    }
+
+    private static void TryShowCursor()
+    {
+        try { Console.CursorVisible = true; }
+        catch { /* host doesn't support cursor visibility */ }
     }
 
     private static int TerminalWidthOrDefault()
