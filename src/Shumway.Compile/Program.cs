@@ -259,7 +259,40 @@ internal static class Program
             void DumpIl(Shumway.Compiler.Wam.CompiledPredicate p)
             {
                 var ic = new IlPredicateCompiler();
-                if (!ic.CanCompile(p, calleeMap)) { skipped++; return; }
+                if (!ic.CanCompile(p, calleeMap))
+                {
+                    // Print WHY. The most common reason in a single-file dump is
+                    // `call->unresolved`: the predicate makes a NON-TAIL call to a
+                    // predicate that isn't defined in THIS module (a prelude /
+                    // cross-module / dynamic-store callee). The dump compiles one
+                    // .shmo in isolation, so its calleeMap holds only this module's
+                    // own predicates; the real --with-compiled-il / --exe link
+                    // compiles against the FULL linked program and resolves them.
+                    // (A TAIL call to an unknown callee compiles fine — it dispatches
+                    // by fid at runtime; only a non-tail call needs the callee known
+                    // to emit its continuation.)
+                    string reason = ic.DescribeRejection(p, calleeMap);
+                    string detail = "";
+                    if (reason == "call->unresolved")
+                    {
+                        var names = p.CallSites
+                            .Where(cs => !cs.IsExecute && cs.CalleeFunctorId >= 0
+                                         && !calleeMap.ContainsKey(cs.CalleeFunctorId))
+                            .Select(cs =>
+                            {
+                                var (_, ar) = Shumway.Core.FunctorTable.Lookup(cs.CalleeFunctorId);
+                                return $"{PredName(cs.CalleeFunctorId)}/{ar}";
+                            })
+                            .Distinct();
+                        string joined = string.Join(", ", names);
+                        if (joined.Length > 0)
+                            detail = $" — non-tail call(s) to [{joined}] not defined in this module";
+                    }
+                    File.AppendAllText(ilPath,
+                        $";;; (skipped {PredName(p.FunctorId)}/{p.Arity}: {reason}{detail})\n");
+                    skipped++;
+                    return;
+                }
                 try { ic.Compile(p, calleeMap); ok++; }          // FinishEmit appends the IL
                 catch (Exception ex)
                 {
