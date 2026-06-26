@@ -210,6 +210,37 @@ internal static class Program
         foreach (var p in preds) calleeMap[p.FunctorId] = p;
         foreach (var p in snapPreds) calleeMap.TryAdd(p.FunctorId, p);
 
+        // Emit IL for EVERY predicate, even one whose body makes a NON-TAIL call
+        // to a predicate defined in ANOTHER module / the prelude / the dynamic
+        // store. The IL emitter dispatches such a call BY FUNCTOR ID at runtime
+        // (EncodeResumeMarker), exactly like the WAM `call` does — it needs only
+        // the fid, not the callee's body. The single-file dump's calleeMap can't
+        // resolve those, so without help CanCompile rejects the whole predicate
+        // ("call->unresolved") and the dump is silent for it — useless. So for
+        // each externally-defined callee fid we install a STUB: it lets the gate
+        // pass; with regions OFF and InlineRules2 OFF (the dump's settings) the
+        // stub is never inlined or inspected, so the emitted code is the real
+        // threaded fid-dispatch. (The real --with-compiled-il / --exe link
+        // resolves these against the full program.) The stub's enter_dynamic
+        // first byte keeps every inliner from ever pulling it in.
+        var stubBytecode = new byte[] { (byte)Opcode.EnterDynamic };
+        var stubbedExternals = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var p in preds.Concat(snapPreds))
+            foreach (var cs in p.CallSites)
+            {
+                if (cs.IsExecute || cs.CalleeFunctorId < 0
+                    || calleeMap.ContainsKey(cs.CalleeFunctorId)) continue;
+                var (_, ar) = FunctorTable.Lookup(cs.CalleeFunctorId);
+                calleeMap[cs.CalleeFunctorId] = new Shumway.Compiler.Wam.CompiledPredicate(
+                    stubBytecode, cs.CalleeFunctorId, ar, clauseCount: 0,
+                    callSites: System.Array.Empty<CallSite>(),
+                    dispatchSites: System.Array.Empty<int>(),
+                    switchTables: System.Array.Empty<SwitchTable>(),
+                    switchTableIdSites: System.Array.Empty<int>(),
+                    sourcePosition: default);
+                stubbedExternals.Add($"{PredName(cs.CalleeFunctorId)}/{ar}");
+            }
+
         // The dump goes next to the .shmo output, named after the source —
         // <source>.wam / <source>.il — so it works with wildcards / multi-file
         // compiles (each source gets its own dump). One file per source: overwrite.
@@ -255,6 +286,11 @@ internal static class Program
             IlPredicateCompiler.RegionCompile = opts.Regions;
             File.WriteAllText(ilPath,   // truncate first; the IL compiler appends below
                 $";;; ===== IL dump: {input} (module {obj.ModuleName}, regions={opts.Regions}) =====\n");
+            if (stubbedExternals.Count > 0)
+                File.AppendAllText(ilPath,
+                    ";;; calls to predicates defined OUTSIDE this module are emitted as\n"
+                    + ";;; runtime functor-id dispatch (resolved at link); they are: "
+                    + string.Join(", ", stubbedExternals) + "\n");
             int ok = 0, skipped = 0;
             void DumpIl(Shumway.Compiler.Wam.CompiledPredicate p)
             {
