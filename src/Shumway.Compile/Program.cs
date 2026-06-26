@@ -202,9 +202,10 @@ internal static class Program
         // ShmoCompiler also compiled a static-style WAM snapshot of them (the
         // form the engine runs from the first call, evicted on the first
         // assert/retract); surface it here so the dump isn't silently empty.
-        var snapPreds = obj.DynamicSnapshotBytecode is not null
-            ? CompiledModuleCodec.Decode(obj.DynamicSnapshotBytecode).Predicates
-            : (IReadOnlyList<Shumway.Compiler.Wam.CompiledPredicate>)
+        var snapModule = obj.DynamicSnapshotBytecode is not null
+            ? CompiledModuleCodec.Decode(obj.DynamicSnapshotBytecode) : null;
+        var snapPreds = snapModule?.Predicates
+            ?? (IReadOnlyList<Shumway.Compiler.Wam.CompiledPredicate>)
                   System.Array.Empty<Shumway.Compiler.Wam.CompiledPredicate>();
         var calleeMap = new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>();
         foreach (var p in preds) calleeMap[p.FunctorId] = p;
@@ -337,15 +338,21 @@ internal static class Program
                     skipped++;
                 }
             }
+            // Each module's predicates index that module's OWN float pool;
+            // set it so get_float/put_float can bake their values (§ floats).
+            var prevPool = IlPredicateCompiler.BeginFloatPool(module.FloatLiterals);
             foreach (var p in preds)
                 DumpIl(p);
+            IlPredicateCompiler.EndFloatPool(prevPool);
             if (snapPreds.Count > 0)
             {
                 File.AppendAllText(ilPath,
                     $";;; --- dynamic/visible snapshot: {snapPreds.Count} predicate(s) "
                     + "(evicted to Tier-0 on the first assert/retract) ---\n");
+                var prevSnapPool = IlPredicateCompiler.BeginFloatPool(snapModule!.FloatLiterals);
                 foreach (var p in snapPreds)
                     DumpIl(p);
+                IlPredicateCompiler.EndFloatPool(prevSnapPool);
             }
             IlPredicateCompiler.IlDumpPath = null;               // don't leak into later files
             Console.Error.WriteLine(

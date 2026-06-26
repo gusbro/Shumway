@@ -192,9 +192,17 @@ public sealed class ModuleCompiler
             if (!info.IsDefined || info.Size == 0) return false;
             if (info.OperandKinds is not null)
             {
+                // A FLOAT literal id is stable across queries: the float pool is
+                // append-only (interned), so the value at a given id never moves,
+                // and the IL compiler value-bakes it anyway — so a float-only
+                // predicate IS reusable / cacheable. String and bigint literals
+                // stay pool-specific (conservatively excluded).
+                bool floatOp = opByte == (byte)Opcode.GetFloat
+                            || opByte == (byte)Opcode.PutFloat
+                            || opByte == (byte)Opcode.UnifyFloat;
                 for (int i = 0; i < info.OperandKinds.Length; i++)
                 {
-                    if (info.OperandKinds[i] == OperandKind.LiteralId)
+                    if (info.OperandKinds[i] == OperandKind.LiteralId && !floatOp)
                         return false;
                 }
             }

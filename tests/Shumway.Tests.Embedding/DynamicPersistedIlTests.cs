@@ -60,15 +60,15 @@ public class DynamicPersistedIlTests
     }
 
     [Fact]
-    public void FloatLiteralDynamic_NotBaked_ButStillCorrect()
+    public void FloatLiteralDynamic_BakedToPersistedIl()
     {
-        // The snapshot of f/1 references a float literal that is NOT in the bundle's
-        // pools (its clause is a dynamic seed, not static bytecode), so it is index-
-        // addressed and cannot be baked safely — it is left Tier-0 and runs correctly.
+        // Float literals are now value-baked into the IL (ldc.r8), so a float-bearing
+        // dynamic snapshot bakes too (the old index-addressed limitation is gone).
         var e = LoadWithPersistedIl(":- dynamic f/1.\nf(1.5).\n");
         int fid = Fid("f", 1);
-        Assert.False(e.IlPromotion.IsPromoted(fid));   // not baked (would mis-read at runtime)
-        Assert.True(e.Query("f(1.5).").Success);        // but correct via Tier-0
+        Assert.True(e.IlPromotion.IsPromoted(fid));
+        Assert.True(e.Query("f(1.5).").Success);
+        Assert.True(e.Query("f(X), X =:= 1.5.").Success);
     }
 
     [Fact]

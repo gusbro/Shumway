@@ -89,7 +89,8 @@ public static class PersistedIlBuilder
         IReadOnlyList<IlPatchSite> Patches) Build(
         string assemblyName,
         IReadOnlyDictionary<int, CompiledPredicate> predicates,
-        IReadOnlySet<int>? prunableFids = null)
+        IReadOnlySet<int>? prunableFids = null,
+        Func<int, IReadOnlyList<double>?>? floatPoolProvider = null)
     {
         var psab = new PersistedAssemblyBuilder(
             new AssemblyName(assemblyName), typeof(object).Assembly);
@@ -110,7 +111,13 @@ public static class PersistedIlBuilder
             // body lives in the region methods that absorb it (it stays in the callee
             // map so they still find it). It keeps its WAM as a Tier-0 fallback.
             if (prunableFids?.Contains(functorId) == true) continue;
-            if (CanPersist(pred, probeCalleeMap)) eligible.Add((functorId, pred));
+            // Float-literal support: set the predicate's own float pool so
+            // get_float/put_float are accepted (and later value-baked).
+            var prevPool = IlPredicateCompiler.BeginFloatPool(floatPoolProvider?.Invoke(functorId));
+            bool persistable;
+            try { persistable = CanPersist(pred, probeCalleeMap); }
+            finally { IlPredicateCompiler.EndFloatPool(prevPool); }
+            if (persistable) eligible.Add((functorId, pred));
         }
 
         // Static field _delegates: PredicateDelegate[] populated at load
@@ -165,6 +172,10 @@ public static class PersistedIlBuilder
             // mid-emit failure (otherwise the post-Save scan would look
             // for sentinels that never landed in any method body).
             int patchesBeforeThisPred = patches.Count;
+            // Float-literal support: this predicate's get_float/put_float bake
+            // values from its own float pool. Set on this (emit) thread for the
+            // whole per-predicate emit; restored in the finally below.
+            var emitPrevPool = IlPredicateCompiler.BeginFloatPool(floatPoolProvider?.Invoke(functorId));
             try
             {
                 ic.EmitPersistedMethod(
@@ -177,6 +188,7 @@ public static class PersistedIlBuilder
                 when (ex is NotSupportedException
                       || ex.GetType().Namespace?.StartsWith("Sigil") == true)
             {
+                IlPredicateCompiler.EndFloatPool(emitPrevPool);
                 // CanPersist accepted this predicate (CanCompile was happy)
                 // but the emit blew up. Most often this is Sigil's verifier
                 // flagging dead-code or stack-mismatch issues in a generated
@@ -217,6 +229,7 @@ public static class PersistedIlBuilder
                 // keeps its WAM (the delegate would still read it).
                 Strippable = !indexed || indexGraph is not null,
             });
+            IlPredicateCompiler.EndFloatPool(emitPrevPool);
         }
 
         typeBuilder.CreateType();

@@ -1419,6 +1419,31 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     public IReadOnlyDictionary<string, Shumway.Compiler.Wam.CompiledModule> PrecompiledModules
         => _precompiledModules;
     private readonly Dictionary<string, Shumway.Compiler.Wam.CompiledModule> _precompiledModules = new();
+    /// <summary>Float-literal support — for a precompiled (bundle) predicate, the
+    /// float pool its bytecode's <c>get_float</c>/<c>put_float</c> literalIds index
+    /// (its own module's <c>FloatLiterals</c>). The IL compiler bakes the value, so
+    /// it needs the right pool per fid. Everything else (runtime-compiled clauses,
+    /// dynamic snapshots) indexes the engine's live <c>_literalPools.Floats</c>.</summary>
+    private readonly Dictionary<int, IReadOnlyList<double>> _precompiledFloatPool = new();
+
+    /// <summary>Every dynamic functor that currently has clauses. Used by the
+    /// persisted-IL build to snapshot dynamic predicates — including ones the
+    /// per-query caches deliberately skip because their bytecode references a
+    /// pool literal (float / string / bigint), which is exactly the float case the
+    /// IL compiler now value-bakes.</summary>
+    internal IEnumerable<int> DynamicFunctorsWithClauses()
+    {
+        foreach (var fid in _dynamicFunctors)
+            if (_dynamicClauses.TryGetValue(fid, out var cs) && cs.Count > 0)
+                yield return fid;
+    }
+
+    /// <summary>The float-literal pool predicate <paramref name="fid"/>'s bytecode
+    /// indexes — wired into <see cref="IlPromotionStore.FloatPoolProvider"/>.</summary>
+    internal IReadOnlyList<double> FloatPoolForFid(int fid)
+        => _precompiledFloatPool.TryGetValue(fid, out var pool)
+            ? pool
+            : _literalPools.Floats.Items;
 
     // Phase 20: most-recent query's functor→address map, for the
     // profiler's address→name resolution. Null until the first query
@@ -1550,6 +1575,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // ADR-023 — let a read-hot, mutation-cold `:- dynamic` predicate run as
         // Tier-1 IL (a snapshot of its visible clauses), evicted on any mutation.
         IlPromotion.DynamicSnapshotProvider = BuildDynamicSnapshot;
+        IlPromotion.FloatPoolProvider = FloatPoolForFid;
 
         // Consult the internal prelude — Prolog-level definitions of
         // multi-solution predicates (member/2, clause/2, current_predicate/1)
@@ -1735,14 +1761,15 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     internal Shumway.Compiler.Wam.CompiledPredicate? BuildPersistableDynamicSnapshot(int fid)
     {
         int s0 = _literalPools.Strings.Count;
-        int f0 = _literalPools.Floats.Count;
         int b0 = _literalPools.BigInts.Count;
         var snap = BuildDynamicSnapshot(fid);
         if (snap is null) return null;
+        // Float literals are value-baked into the IL (ldc.r8), so a snapshot-only
+        // float is fine. Strings / bigints are still index-addressed and would
+        // mis-read at runtime, so a snapshot that introduces one stays Tier-0.
         if (_literalPools.Strings.Count != s0
-            || _literalPools.Floats.Count != f0
             || _literalPools.BigInts.Count != b0)
-            return null;   // references a snapshot-only literal — unsafe to bake
+            return null;
         return snap;
     }
 
@@ -3337,6 +3364,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
         var module = CompiledModuleCodec.Decode(entry.CompiledBytecode);
         _precompiledModules[entry.ModuleName] = module;
+        // Float-literal support: a precompiled predicate's get_float/put_float
+        // index THIS module's float pool (not the engine's live pool), so record
+        // it per fid for the IL compiler's value-baking resolver.
+        if (module.FloatLiterals.Count > 0)
+            foreach (var pred in module.Predicates)
+                _precompiledFloatPool[pred.FunctorId] = module.FloatLiterals;
         // Warm IL only when the host opted into Tier 1 (Threshold > 0),
         // mirroring the source-bearing LoadBundle path. IlPromotion.Warm
         // ignores the threshold and compiles eagerly, so calling it

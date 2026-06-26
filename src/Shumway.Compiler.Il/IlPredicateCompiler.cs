@@ -199,6 +199,13 @@ public sealed class IlPredicateCompiler
         typeof(Cell).GetProperty(nameof(Cell.TagId))!.GetGetMethod()!;
     private static readonly MethodInfo EngineSetRegisterMethod =
         typeof(Engine).GetMethod(nameof(Engine.SetRegister), new[] { typeof(int), typeof(Cell) })!;
+    // Float literals (get_float / put_float). MakeFloat allocates the 2-cell
+    // heap float and returns the header index; Cell.Ref wraps it so the value
+    // unifies / binds exactly like the interpreter's float path. The float VALUE
+    // is baked as an ldc.r8 constant (resolved from the predicate's pool at emit
+    // time), so it is process-independent — no Phase-17 patch needed for persist.
+    private static readonly MethodInfo EngineMakeFloatMethod =
+        typeof(Engine).GetMethod(nameof(Engine.MakeFloat), new[] { typeof(double) })!;
     // ADR-018 — arithmetic instruction set runtime helpers (Shumway.Builtins.
     // ArithEvalStack). The Tier-1 emit calls these statics directly, so the
     // a_eval_* opcodes run the same eval-stack code as the Tier-0 interpreter.
@@ -1794,6 +1801,9 @@ public sealed class IlPredicateCompiler
     {
         Opcode.GetAtom => true,
         Opcode.GetInteger => true,
+        // get_float: supported only when the driver supplied the float pool to
+        // resolve the literal value from (else the predicate stays Tier-0).
+        Opcode.GetFloat => _ilFloatPool is not null,
         Opcode.GetNil => true,
         Opcode.GetValueX => true,
         Opcode.GetVariableX => true,
@@ -1823,6 +1833,11 @@ public sealed class IlPredicateCompiler
         Opcode.GetVariableX => true,
         Opcode.GetVariableY => true,
         Opcode.GetValueY => true,
+        // Float literals — only when the driver supplied the float pool (the
+        // value is baked as an ldc.r8 constant, so persisted bundles need no
+        // patch). Without a pool the predicate stays Tier-0.
+        Opcode.GetFloat => _ilFloatPool is not null,
+        Opcode.PutFloat => _ilFloatPool is not null,
         // Body argument setup.
         Opcode.PutAtom => true,
         Opcode.PutInteger => true,
@@ -2716,6 +2731,40 @@ public sealed class IlPredicateCompiler
     public static void EndNativeInline(Shumway.Compiler.NativeC.NativeInlineContext? restore)
         => _nativeInline = restore;
 
+    /// <summary>The float-literal pool the predicate currently being compiled
+    /// indexes (its own module's <c>FloatLiterals</c>), set by the driver before
+    /// compiling. <c>get_float</c>/<c>put_float</c> resolve their <c>literalId</c>
+    /// against this and bake the VALUE as an <c>ldc.r8</c> constant — so the IL is
+    /// process-independent (no patch needed for persisted bundles). When null,
+    /// the float opcodes report as unsupported and the predicate stays Tier-0
+    /// (safe fallback). Thread-static: set on whichever thread runs the emit.</summary>
+    [System.ThreadStaticAttribute]
+    private static System.Collections.Generic.IReadOnlyList<double>? _ilFloatPool;
+
+    /// <summary>Set the float-literal pool for subsequent compiles on this thread
+    /// (see <see cref="_ilFloatPool"/>). Returns the previous pool to restore.</summary>
+    public static System.Collections.Generic.IReadOnlyList<double>? BeginFloatPool(
+        System.Collections.Generic.IReadOnlyList<double>? pool)
+    {
+        var prev = _ilFloatPool;
+        _ilFloatPool = pool;
+        return prev;
+    }
+
+    public static void EndFloatPool(System.Collections.Generic.IReadOnlyList<double>? restore)
+        => _ilFloatPool = restore;
+
+    /// <summary>True iff a <c>get_float</c>/<c>put_float</c> at <paramref name="pc"/>
+    /// can be resolved against the current <see cref="_ilFloatPool"/> — the gate the
+    /// opcode-support switches consult so the float opcodes are accepted only when
+    /// the value can actually be baked.</summary>
+    private static bool FloatLiteralResolvable(byte[] code, int pc)
+    {
+        if (_ilFloatPool is null) return false;
+        int literalId = BytecodeIO.ReadInt32(code, pc + 1);
+        return (uint)literalId < (uint)_ilFloatPool.Count;
+    }
+
     /// <summary>ADR-022 item 2 — total native blocks inlined into IL across all
     /// compiles on this process (test/diagnostic observability: distinguishes a
     /// real inline from a fall-back to builtin dispatch, which is otherwise
@@ -2877,6 +2926,24 @@ public sealed class IlPredicateCompiler
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
+            if (op == Opcode.GetFloat)
+            {
+                // unify reg with Cell.Ref(MakeFloat(value)) — the value baked as
+                // an ldc.r8 constant (resolved from the predicate's pool), so the
+                // emitted IL is process-independent.
+                int literalId = BytecodeIO.ReadInt32(code, pc + 1);
+                int regIdx = BytecodeIO.ReadInt32(code, pc + 5);
+                emit.LoadArgument(0);
+                emit.LoadConstant(regIdx);
+                emit.LoadArgument(0);
+                emit.LoadConstant(_ilFloatPool![literalId]);
+                emit.Call(EngineMakeFloatMethod);
+                emit.Call(CellRefMethod);
+                emit.Call(EngineUnifyMethod);
+                emit.BranchIfFalse(failLabel);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
             if (op == Opcode.GetNil)
             {
                 int regIdx = BytecodeIO.ReadInt32(code, pc + 1);
@@ -2987,6 +3054,21 @@ public sealed class IlPredicateCompiler
                 emit.LoadConstant(arg);
                 emit.LoadConstant((long)value);
                 emit.Call(CellIntMethod);
+                emit.Call(EngineSetRegisterMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.PutFloat)
+            {
+                // reg := Cell.Ref(MakeFloat(value)); value baked as ldc.r8.
+                int literalId = BytecodeIO.ReadInt32(code, pc + 1);
+                int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                emit.LoadArgument(0);
+                emit.LoadConstant(arg);
+                emit.LoadArgument(0);
+                emit.LoadConstant(_ilFloatPool![literalId]);
+                emit.Call(EngineMakeFloatMethod);
+                emit.Call(CellRefMethod);
                 emit.Call(EngineSetRegisterMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;

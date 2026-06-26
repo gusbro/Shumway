@@ -21,5 +21,8 @@ public sealed class LiteralPool<T> where T : notnull
     }
 
     public IReadOnlyList<T> Snapshot() => _byId.ToArray();
+    /// <summary>A live, copy-free view of the interned values (the pool only
+    /// grows by append, so existing indices stay stable).</summary>
+    public IReadOnlyList<T> Items => _byId;
     public int Count => _byId.Count;
 }

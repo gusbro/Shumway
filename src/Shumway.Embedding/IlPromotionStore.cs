@@ -69,6 +69,21 @@ public sealed class IlPromotionStore
         finally { IlPredicateCompiler.EndNativeInline(prev); }
     }
 
+    /// <summary>Float-literal support — supplies the pool the predicate at a given
+    /// fid indexes (the engine sets this). get_float/put_float resolve their value
+    /// against it and bake an ldc.r8 constant. Null → the float opcodes report as
+    /// unsupported, so a float-bearing predicate just stays Tier-0.</summary>
+    public Func<int, System.Collections.Generic.IReadOnlyList<double>?>? FloatPoolProvider { get; set; }
+
+    /// <summary>Runs <paramref name="compile"/> with the float pool for
+    /// <paramref name="functorId"/> established on the current (IL-compile) thread.</summary>
+    private T WithFloatPool<T>(int functorId, Func<T> compile)
+    {
+        var prev = IlPredicateCompiler.BeginFloatPool(FloatPoolProvider?.Invoke(functorId));
+        try { return compile(); }
+        finally { IlPredicateCompiler.EndFloatPool(prev); }
+    }
+
     /// <summary>ADR-023 — builds a static-style snapshot <see cref="CompiledPredicate"/>
     /// of a dynamic predicate's currently-visible clauses (set by the engine).
     /// Returns null when the predicate has no visible clauses or its rewrite cache
@@ -252,9 +267,21 @@ public sealed class IlPromotionStore
             return null;
         }
 
-        if (!Compiler.CanCompile(target, calleeMap))
+        // CanCompile / DescribeRejection consult the float pool (get_float /
+        // put_float are accepted only when it is set), so establish it here too —
+        // this runs on the CALLING thread, the worker-thread emit sets its own.
+        var prevFloatPool = IlPredicateCompiler.BeginFloatPool(FloatPoolProvider?.Invoke(functorId));
+        bool canCompile;
+        string? rejection = null;
+        try
         {
-            MarkUnpromotable(functorId, "cannot-compile:" + Compiler.DescribeRejection(target, calleeMap));
+            canCompile = Compiler.CanCompile(target, calleeMap);
+            if (!canCompile) rejection = Compiler.DescribeRejection(target, calleeMap);
+        }
+        finally { IlPredicateCompiler.EndFloatPool(prevFloatPool); }
+        if (!canCompile)
+        {
+            MarkUnpromotable(functorId, "cannot-compile:" + rejection);
             return null;
         }
 
@@ -267,7 +294,8 @@ public sealed class IlPromotionStore
         // StackOverflowException is uncatchable, so prevention is the
         // only option.
         var result = RunOnLargeStack(() =>
-            WithNativeInline(() => Compiler.CompileInstrumented(target, calleeMap)));
+            WithFloatPool(functorId, () =>
+                WithNativeInline(() => Compiler.CompileInstrumented(target, calleeMap))));
         _delegates[functorId] = result.Delegate;
         if (result.ProfileKey >= 0)
             _pgoProfileKeys[functorId] = result.ProfileKey;
@@ -299,7 +327,8 @@ public sealed class IlPromotionStore
             if (!predicateLookup.TryGetValue(functorId, out var predicate))
                 continue;   // predicate not in this query's program — retry later
             var optimized = RunOnLargeStack(
-                () => WithNativeInline(() => Compiler.CompileOptimized(predicate, profileKey, calleeMap)));
+                () => WithFloatPool(functorId, () =>
+                    WithNativeInline(() => Compiler.CompileOptimized(predicate, profileKey, calleeMap))));
             _delegates[functorId] = optimized;
             _pgoProfileKeys.Remove(functorId);
             _pgoOptimized.Add(functorId);
@@ -374,12 +403,17 @@ public sealed class IlPromotionStore
             _unpromotable.Add(functorId);
             return null;
         }
-        if (!Compiler.CanCompile(predicate, calleeMap))
+        var warmPrevPool = IlPredicateCompiler.BeginFloatPool(FloatPoolProvider?.Invoke(functorId));
+        bool warmCanCompile;
+        try { warmCanCompile = Compiler.CanCompile(predicate, calleeMap); }
+        finally { IlPredicateCompiler.EndFloatPool(warmPrevPool); }
+        if (!warmCanCompile)
         {
             _unpromotable.Add(functorId);
             return null;
         }
-        var del = RunOnLargeStack(() => WithNativeInline(() => Compiler.Compile(predicate, calleeMap)));
+        var del = RunOnLargeStack(() =>
+            WithFloatPool(functorId, () => WithNativeInline(() => Compiler.Compile(predicate, calleeMap))));
         _delegates[functorId] = del;
         return del;
     }

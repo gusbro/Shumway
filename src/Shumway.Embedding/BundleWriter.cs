@@ -301,7 +301,12 @@ public static class BundleWriter
         // predicate with no clauses (runtime-assert-only) has no snapshot and
         // stays Tier-0 — drop its enter_dynamic body so it is never persisted.
         var dynamicSnapshotFids = new HashSet<int>();
-        foreach (var fid in new List<int>(engine.DynamicPredicateCache.Keys))
+        // Every dynamic predicate that has clauses — NOT just DynamicPredicateCache,
+        // which skips pool-literal (float) predicates. Snapshotting straight from
+        // the dynamic store covers float-bearing dynamics too.
+        var dynFids = new HashSet<int>(engine.DynamicPredicateCache.Keys);
+        foreach (var f in engine.DynamicFunctorsWithClauses()) dynFids.Add(f);
+        foreach (var fid in dynFids)
         {
             // BuildPersistableDynamicSnapshot returns null when the snapshot has
             // no clauses OR references a string/float/bigint literal not already in
@@ -407,7 +412,11 @@ public static class BundleWriter
         {
             (dllBytes, persistedEntries, patches) = Shumway.Compiler.Il.PersistedIlBuilder.Build(
                 "ShumwayCompiledIl_" + SanitiseModuleName(entry.ModuleName),
-                predicates, prunableFids);
+                predicates, prunableFids,
+                // Float-literal value-baking: each predicate resolves its float
+                // literals against its own module's pool (precompiled static) or
+                // the build engine's live pool (dynamic snapshots).
+                engine.FloatPoolForFid);
         }
         finally
         {
