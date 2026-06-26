@@ -657,13 +657,20 @@ questions from Phase 11's deferred list:
   `retract` / `assertz` — and avoids redundant `TryDescribe*`
   attempts that were already rejecting the shape.
 
-**Phase 30 — Arity/Prolog32 compatibility, round 2** — 🚧 **In flight.**
+**Phase 30 — Arity/Prolog32 compatibility, round 2** — ✅ **Complete** (tagged `phase-30`; closure summary in [`docs/phase-30-closure.md`](docs/phase-30-closure.md)).
 
-Widens the Phase-24 Arity source-compat work, driven by the reference material
-at `C:\Arity` (doc/ARITY.HLP.txt predicate listing, demo programs, the C
-embedding API headers) and real Arity programs. Scope being surveyed: diff the
-Arity predicate listing against the current builtin/prelude surface; run the
-demo `.ARI` programs; close the gaps real programs hit.
+Widened the Phase-24 Arity source-compat work, driven by the reference material
+at `C:\Arity` and real Arity programs (`C:\temp\test` 245, `testGen` 311,
+`testProcDotNet` 31). Grew past that into an efficiency audit, the `shumway-lib`
+librarian (4th CLI), three ADRs delivered end-to-end — **022** embedded native C
+(`:- c`/`{…}` → IL, runtime + persisted), **023** dynamic predicates in Tier-1 IL
+(snapshot + evict + prime + persisted bake), **024** generic term interop (reftype
+cursor + Arity `*_c` layer + string holders, full IL) — and a runtime-correctness
+arc the real-program validation surfaced: float literals in IL across all paths,
+source-less-bundle literal remapping, the two decode sites unified, and the PSTR
+`==` infinite-recursion fix. The `:- visible` directive was corrected to
+exported-mutable (not static). Chunks 425–444 plus the native-C / reftype / float /
+literal arcs. Gate at close: Embedding 2542 / Compiler 302 / Core 432 / ISO 277.
 
 - **Chunk 442 — `shumway-lib` librarian (new CLI)**. A fourth CLI tool
   (`src/Shumway.Lib/`, assembly `shumway-lib`) that packages chosen `.shmo`
