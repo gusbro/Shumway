@@ -695,7 +695,22 @@ cursor/history/arrows/backspace/paste/special-char handling in
   aligned. All console ops guarded → non-interactive host degrades cleanly. Pure
   `CellRowCol` helper replaces `ComputeVisibleWindow`; Chunk253Tests retargeted (6).
   Interactive path is manual-smoke-only (headless input takes the `ReadLine`
-  fallback); REPL verified to still run end-to-end.
+  fallback); REPL verified to still run end-to-end. Follow-up: per-keystroke
+  flicker (cursor visibly jumping to column 0 during repaint) killed by hiding
+  the cursor across the repaint (`Console.CursorVisible=false`/`true`, guarded).
+
+- **REPL ESC-cancel of a long query (done, pending commit).** Like SWI: press
+  `Esc` and a long search aborts. A background watcher thread polls the console
+  while the query runs on the main thread; ESC fires a `CancellationTokenSource`
+  the engine observes at its next safe point (checked at *every* safe point —
+  `Engine.MaybeCollectHeap` — so even heap-light loops cancel) and throws
+  `OperationCanceledException`, caught in `RunQuery` → `% Execution aborted.`. New
+  `PrologEngine.QueryAll(Term, CancellationToken)` overload (mirrors the existing
+  string one) because the REPL wraps the parsed goal in `copy_term/3`. Each query
+  builds a fresh `Engine`, so the never-cleared `_cancelRequested` flag isn't
+  sticky. Watcher drops non-ESC keys and is joined before the main thread reads
+  keys again; redirected input skips watching. 2 Term-overload cancellation tests;
+  gate Embedding 2562.
 
 **Phase 30 — Arity/Prolog32 compatibility, round 2** — ✅ **Complete** (tagged `phase-30`; closure summary in [`docs/phase-30-closure.md`](docs/phase-30-closure.md)).
 
