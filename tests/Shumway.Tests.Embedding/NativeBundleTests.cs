@@ -171,9 +171,10 @@ public sealed class NativeBundleTests
     }
 
     // A `:- visible` predicate whose source clauses use native code (a real Arity
-    // pattern — debug.pl's debug_msg/1). `:- visible` is Arity's EXPORT spelling, so
-    // the predicate compiles as a normal STATIC public predicate — its clauses (and
-    // the native block) must reach WAM/IL, not be peeled into the dynamic store.
+    // pattern — debug.pl's debug_msg/1). `:- visible` is dynamic (ISO-mutable), so
+    // its clauses live in the dynamic store; the native block must still compile and
+    // run — through both consult and a source-stripped bundle — as the predicate's
+    // primed/evictable snapshot (ADR-023), not be rejected.
     private const string VisibleNativeProgram =
         ":- set_prolog_flag(arity_compat, true).\n" +
         ":- visible cmp/3.\n" +

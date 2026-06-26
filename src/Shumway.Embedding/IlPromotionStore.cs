@@ -100,6 +100,24 @@ public sealed class IlPromotionStore
         _evictions[functorId] = e + 1;
     }
 
+    /// <summary>ADR-023 priming — a `:- dynamic` / `:- visible` predicate that
+    /// is DECLARED WITH CLAUSES (source facts/rules, not a runtime-only assert
+    /// target) is read-hot and mutation-cold: it should run as its Tier-1 IL
+    /// snapshot from the FIRST call, not after the usual warm-up. Marking it
+    /// here drops its promotion threshold to 1, so the first dispatch builds and
+    /// installs the snapshot. It stays fully evictable: the first assert/retract
+    /// runs <see cref="EvictDelegate"/> and the live dynamic chain (ADR-015
+    /// logical-update view) takes over — and the churn guard still pins a
+    /// genuinely mutation-hot predicate to Tier 0 after
+    /// <see cref="EvictionChurnLimit"/> evictions.</summary>
+    private readonly HashSet<int> _primeImmediately = new();
+
+    /// <summary>Marks <paramref name="functorId"/> for promote-on-first-call (see
+    /// <see cref="_primeImmediately"/>). Idempotent; a no-op under AOT (where no
+    /// IL is generated) since <see cref="RecordInvocation"/> bails on
+    /// <c>!DynamicCodeSupported</c> regardless.</summary>
+    public void MarkPrime(int functorId) => _primeImmediately.Add(functorId);
+
     /// <summary>Stack size for the worker thread that drives every
     /// Sigil-emitted IL compile. Defensive belt — the size
     /// threshold (<see cref="MaxIlPromotionBytecodeBytes"/>) keeps
@@ -210,7 +228,11 @@ public sealed class IlPromotionStore
         count++;
         _counters[functorId] = count;
 
-        if (count < Threshold) return null;
+        // ADR-023 priming — a declared-with-clauses dynamic/visible predicate
+        // promotes on its first call (threshold 1); everything else warms up
+        // normally.
+        int effectiveThreshold = _primeImmediately.Contains(functorId) ? 1 : Threshold;
+        if (count < effectiveThreshold) return null;
 
         // For a dynamic predicate, compile a static-style snapshot of its visible
         // clauses instead of the enter_dynamic chain. A null snapshot (no visible

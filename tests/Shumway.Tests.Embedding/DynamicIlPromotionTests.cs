@@ -89,6 +89,53 @@ public sealed class DynamicIlPromotionTests
     }
 
     [Fact]
+    public void DeclaredDynamicWithClauses_PrimesOnFirstCall()
+    {
+        // ADR-023 priming — a `:- dynamic` (or `:- visible`) predicate declared
+        // WITH clauses promotes to its IL snapshot on the FIRST call, even under a
+        // far-away warm-up threshold (other predicates would need `threshold`
+        // calls). It stays fully mutable + evictable.
+        var e = new PrologEngine();
+        e.IlPromotion.Threshold = 1000;   // promotion ON, normal warm-up far away
+        e.ConsultString(":- dynamic color/1.\ncolor(red).\ncolor(green).\ncolor(blue).\n");
+        int fid = Fid("color", 1);
+        Assert.False(e.IlPromotion.IsPromoted(fid));
+        Assert.True(e.Query("color(green).").Success);   // ONE call
+        Assert.True(e.IlPromotion.IsPromoted(fid));       // primed → already IL
+        // unchanged mutability: a mutation evicts the snapshot, new state is live.
+        Assert.True(e.Query("assertz(color(yellow)).").Success);
+        Assert.False(e.IlPromotion.IsPromoted(fid));
+        Assert.True(e.Query("color(yellow).").Success);
+    }
+
+    [Fact]
+    public void RuntimeOnlyDynamic_NotPrimed_WarmsNormally()
+    {
+        // A dynamic predicate with NO source clauses (populated only by runtime
+        // assertz) is NOT primed — under a high threshold one call won't promote it.
+        var e = new PrologEngine();
+        e.IlPromotion.Threshold = 1000;
+        e.ConsultString(":- dynamic t/1.\n");
+        Assert.True(e.Query("assertz(t(1)).").Success);
+        int fid = Fid("t", 1);
+        Assert.True(e.Query("t(1).").Success);
+        Assert.False(e.IlPromotion.IsPromoted(fid));
+    }
+
+    [Fact]
+    public void DynamicWithClauses_GetsBuildTimeSnapshotModule()
+    {
+        // ShmoCompiler bakes a static-style WAM snapshot of a dynamic predicate's
+        // clauses so --dump-wam / --dump-il can show them (their clauses live in
+        // DynamicSeeds, leaving the static module empty for them).
+        var obj = ShmoCompiler.CompileSource(
+            ":- dynamic d/1.\nd(1).\nd(2).\n", "m", ShmoBuildMode.Debug);
+        Assert.NotNull(obj.DynamicSnapshotBytecode);
+        var snap = CompiledModuleCodec.Decode(obj.DynamicSnapshotBytecode!);
+        Assert.Contains(snap.Predicates, p => p.Arity == 1);   // d/1 snapshot present
+    }
+
+    [Fact]
     public void LogicalUpdateView_HoldsThroughIlSnapshot()
     {
         // d/1 is IL-promoted; a goal that backtracks over d/1 and asserts a new

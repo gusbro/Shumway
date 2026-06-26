@@ -336,6 +336,12 @@ public static class ShmoCompiler
         }
 
         var dynamicSeedAccum = new Dictionary<PredicateRef, List<byte[]>>();
+        // ADR-023 priming — the raw clauses of each `:- dynamic`/`:- visible`
+        // predicate, kept as terms so a static-style WAM/IL SNAPSHOT can be
+        // compiled for them (dumped via --dump-wam/--dump-il, IL-bakeable). The
+        // seeds above stay the mutable truth; the snapshot is the from-the-first-
+        // call form the engine evicts on the first mutation.
+        var dynamicClauseAccum = new Dictionary<PredicateRef, List<Clause>>();
         var staticInput = new List<Clause>(rawClauses.Count);
         foreach (var clause in rawClauses)
         {
@@ -346,8 +352,10 @@ public static class ShmoCompiler
                 {
                     seedList = new List<byte[]>();
                     dynamicSeedAccum[head.Value] = seedList;
+                    dynamicClauseAccum[head.Value] = new List<Clause>();
                 }
                 seedList.Add(TermCodec.EncodeClause(clause));
+                dynamicClauseAccum[head.Value].Add(clause);
             }
             else
             {
@@ -584,6 +592,29 @@ public static class ShmoCompiler
         var module = moduleCompiler.Compile(rewritten);
         byte[] bytecode = CompiledModuleCodec.Encode(module);
 
+        // ADR-023 priming — compile a static-style WAM snapshot of each
+        // `:- dynamic`/`:- visible` predicate's clauses (the same ClausePipeline
+        // transform + ModuleRewrite a static predicate gets, then compiled as an
+        // ordinary try_me_else chain). This is the from-the-first-call form the
+        // engine runs and evicts on the first mutation. In-memory only — NOT
+        // serialized into the .shmo (the runtime rebuilds its own snapshot from
+        // the live clauses); it exists so --dump-wam / --dump-il can show the
+        // WAM/IL these predicates actually run, which the empty static module
+        // (their clauses live in DynamicSeeds) otherwise hides.
+        byte[]? dynamicSnapshotBytecode = null;
+        if (dynamicClauseAccum.Count > 0)
+        {
+            var snapInput = new List<Clause>();
+            foreach (var kv in dynamicClauseAccum)
+                snapInput.AddRange(
+                    ClausePipeline.Apply(kv.Value, new Shumway.Compiler.Modes.ModeTable()));
+            var snapRewritten = new List<Clause>(snapInput.Count);
+            foreach (var c in snapInput)
+                snapRewritten.Add(ModuleRewrite.Rewrite(c, rewriteCtx));
+            dynamicSnapshotBytecode =
+                CompiledModuleCodec.Encode(moduleCompiler.Compile(snapRewritten));
+        }
+
         // Chunk 177: Release also drops the Source string from the
         // .shmo. Combined with the bytecode-side DbgInfo strip above,
         // the Release artifact contains no recoverable Prolog source —
@@ -632,6 +663,7 @@ public static class ShmoCompiler
             clauseTerms: clauseTerms,
             arityCompat: arityCompat,
             nativeBlocks: nativeBlocks);
+        obj.DynamicSnapshotBytecode = dynamicSnapshotBytecode;
         return new ShmoCompileResult(obj, errors, warnings);
     }
 
@@ -668,21 +700,19 @@ public static class ShmoCompiler
             moduleName = a.Name;
             return true;
         }
-        // `public` and its Arity-Prolog spelling `visible` — both EXPORT the
-        // predicate (Arity's "visible table"). A `:- visible` predicate with
-        // clauses is a normal static public predicate and must compile to
-        // WAM/IL; it is not dynamic. (Chunk 265 originally mis-aliased
-        // `visible` to `dynamic`, which peeled such predicates into the
-        // dynamic-seed store and produced 0 static predicates — no WAM, no IL.)
-        if (body is CompoundTerm pub
-            && (pub.Functor == "public" || pub.Functor == "visible")
-            && pub.Args.Length == 1)
+        if (body is CompoundTerm pub && pub.Functor == "public" && pub.Args.Length == 1)
         {
-            foreach (var spec in ReadFunctorSpecs(pub.Args[0], pub.Functor))
+            foreach (var spec in ReadFunctorSpecs(pub.Args[0], "public"))
                 publicSet.Add(spec);
             return false;
         }
-        if (body is CompoundTerm dyn && dyn.Functor == "dynamic" && dyn.Args.Length == 1)
+        // `dynamic` and its Arity-Prolog spelling `visible` — both declare a
+        // mutable predicate. A visible/dynamic predicate WITH clauses still gets
+        // a build-time WAM/IL snapshot (dumped, IL-bakeable) that runs from the
+        // first call and is evicted on the first assert/retract (ADR-023).
+        if (body is CompoundTerm dyn
+            && (dyn.Functor == "dynamic" || dyn.Functor == "visible")
+            && dyn.Args.Length == 1)
         {
             foreach (var spec in ReadFunctorSpecs(dyn.Args[0], dyn.Functor))
                 dynamicSet.Add(spec);

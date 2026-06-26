@@ -196,7 +196,19 @@ internal static class Program
     {
         var module = CompiledModuleCodec.Decode(obj.Bytecode);
         var preds = module.Predicates;
-        var calleeMap = preds.ToDictionary(p => p.FunctorId);
+
+        // ADR-023 priming — the `:- dynamic`/`:- visible` predicates' clauses
+        // live in DynamicSeeds, so the static module above is empty for them.
+        // ShmoCompiler also compiled a static-style WAM snapshot of them (the
+        // form the engine runs from the first call, evicted on the first
+        // assert/retract); surface it here so the dump isn't silently empty.
+        var snapPreds = obj.DynamicSnapshotBytecode is not null
+            ? CompiledModuleCodec.Decode(obj.DynamicSnapshotBytecode).Predicates
+            : (IReadOnlyList<Shumway.Compiler.Wam.CompiledPredicate>)
+                  System.Array.Empty<Shumway.Compiler.Wam.CompiledPredicate>();
+        var calleeMap = new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>();
+        foreach (var p in preds) calleeMap[p.FunctorId] = p;
+        foreach (var p in snapPreds) calleeMap.TryAdd(p.FunctorId, p);
 
         // The dump goes next to the .shmo output, named after the source —
         // <source>.wam / <source>.il — so it works with wildcards / multi-file
@@ -207,19 +219,33 @@ internal static class Program
             return Path.Combine(dir, Path.GetFileNameWithoutExtension(input) + ext);
         }
 
+        void DumpPred(StringBuilder sb, Shumway.Compiler.Wam.CompiledPredicate p)
+        {
+            sb.Append($"\n;;; {PredName(p.FunctorId)}/{p.Arity} clauses={p.ClauseCount} bytes={p.Bytecode.Length}\n");
+            foreach (var ins in Disassembler.Iterate(p.Bytecode, 0, p.Bytecode.Length))
+                sb.Append($"    {ins}\n");
+        }
+
         if (opts.DumpWam)
         {
             string wamPath = DumpPath(".wam");
             var sb = new StringBuilder();
             sb.Append($";;; ===== WAM dump: {input} (module {obj.ModuleName}, {preds.Count} predicates) =====\n");
             foreach (var p in preds)
+                DumpPred(sb, p);
+            if (snapPreds.Count > 0)
             {
-                sb.Append($"\n;;; {PredName(p.FunctorId)}/{p.Arity} clauses={p.ClauseCount} bytes={p.Bytecode.Length}\n");
-                foreach (var ins in Disassembler.Iterate(p.Bytecode, 0, p.Bytecode.Length))
-                    sb.Append($"    {ins}\n");
+                sb.Append($"\n;;; --- dynamic/visible snapshot: {snapPreds.Count} predicate(s) "
+                    + "(run as this WAM/IL from the first call; evicted to the live "
+                    + "dynamic chain on the first assert/retract) ---\n");
+                foreach (var p in snapPreds)
+                    DumpPred(sb, p);
             }
             File.WriteAllText(wamPath, sb.ToString());
-            Console.Error.WriteLine($"  WAM dump -> {wamPath} ({preds.Count} predicates)");
+            Console.Error.WriteLine(
+                $"  WAM dump -> {wamPath} ({preds.Count} static"
+                + (snapPreds.Count > 0 ? $" + {snapPreds.Count} dyn-snapshot" : "")
+                + " predicates)");
         }
 
         if (opts.DumpIl)
@@ -230,10 +256,10 @@ internal static class Program
             File.WriteAllText(ilPath,   // truncate first; the IL compiler appends below
                 $";;; ===== IL dump: {input} (module {obj.ModuleName}, regions={opts.Regions}) =====\n");
             int ok = 0, skipped = 0;
-            foreach (var p in preds)
+            void DumpIl(Shumway.Compiler.Wam.CompiledPredicate p)
             {
                 var ic = new IlPredicateCompiler();
-                if (!ic.CanCompile(p, calleeMap)) { skipped++; continue; }
+                if (!ic.CanCompile(p, calleeMap)) { skipped++; return; }
                 try { ic.Compile(p, calleeMap); ok++; }          // FinishEmit appends the IL
                 catch (Exception ex)
                 {
@@ -241,6 +267,16 @@ internal static class Program
                         $";;; (IL compile failed for {PredName(p.FunctorId)}/{p.Arity}: {ex.Message})\n");
                     skipped++;
                 }
+            }
+            foreach (var p in preds)
+                DumpIl(p);
+            if (snapPreds.Count > 0)
+            {
+                File.AppendAllText(ilPath,
+                    $";;; --- dynamic/visible snapshot: {snapPreds.Count} predicate(s) "
+                    + "(evicted to Tier-0 on the first assert/retract) ---\n");
+                foreach (var p in snapPreds)
+                    DumpIl(p);
             }
             IlPredicateCompiler.IlDumpPath = null;               // don't leak into later files
             Console.Error.WriteLine(

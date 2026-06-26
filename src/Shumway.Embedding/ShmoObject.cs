@@ -170,6 +170,18 @@ public sealed class ShmoObject
     /// table from these. Empty for a module with no native blocks.</summary>
     public IReadOnlyList<ShmoNativeBlock> NativeBlocks { get; }
 
+    /// <summary>ADR-023 priming — an in-memory, NON-serialized static-style WAM
+    /// snapshot module (a <see cref="CompiledModuleCodec"/>-encoded blob) of this
+    /// object's <c>:- dynamic</c>/<c>:- visible</c> predicates' clauses. Populated
+    /// by <see cref="ShmoCompiler"/> at compile time so <c>--dump-wam</c> /
+    /// <c>--dump-il</c> can show the WAM/IL those predicates run from the first
+    /// call (their clauses live in <see cref="DynamicSeeds"/>, so the static
+    /// <see cref="Bytecode"/> module is empty for them). Not written to the
+    /// <c>.shmo</c>: the runtime rebuilds its own snapshot from the live clauses,
+    /// so this is a build-time dump aid only. Null when there are no such
+    /// predicates or the object was read back from disk.</summary>
+    public byte[]? DynamicSnapshotBytecode { get; set; }
+
     public ShmoObject(
         string moduleName,
         string source,
