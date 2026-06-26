@@ -83,6 +83,33 @@ public class QueryAsyncTests
         Assert.Equal(new[] { 1L, 2L }, xs);
     }
 
+    // The REPL's ESC-cancel uses the Term overload (it wraps the parsed goal in
+    // copy_term/3 before running) — so cover that path directly.
+    [Fact]
+    public void QueryAll_TermWithToken_Cancellation_AbortsLongSearch()
+    {
+        var e = WithCounter();
+        var (goal, _) = e.ParseGoal("count(2000000000).");
+        using var cts = new CancellationTokenSource(80);
+        Assert.ThrowsAny<OperationCanceledException>(() =>
+        {
+            foreach (var _ in e.QueryAll(goal, cts.Token))
+            {
+            }
+        });
+    }
+
+    [Fact]
+    public void QueryAll_TermWithToken_UncancelledRunsNormally()
+    {
+        var e = new PrologEngine();
+        e.ConsultString("ok(1). ok(2).");
+        var (goal, _) = e.ParseGoal("ok(X).");
+        var xs = e.QueryAll(goal, CancellationToken.None)
+            .Select(s => s.Get<long>("X")).ToList();
+        Assert.Equal(new[] { 1L, 2L }, xs);
+    }
+
     [Fact]
     public async Task QueryAsync_AlreadyCancelledToken_DoesNotEnumerate()
     {

@@ -3891,6 +3891,19 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             setup.Engine, setup.Interp);
     }
 
+    /// <summary>As <see cref="QueryAll(Term)"/> but the supplied
+    /// <paramref name="cancellationToken"/> aborts a long-running search at the
+    /// next safe point — the engine throws <see cref="OperationCanceledException"/>
+    /// (it bubbles past any surrounding <c>catch/3</c>). Runs on the calling
+    /// thread; fire the token from another thread (e.g. a key watcher).</summary>
+    public IEnumerable<Solution> QueryAll(Term goal, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(goal);
+        LastHaltExitCode = null;
+        var setup = SetupQueryFromTerm(goal);
+        return RunIterationCancellable(setup, cancellationToken);
+    }
+
     /// <summary>Translates each address in <paramref name="addresses"/>
     /// to the <c>Name/Arity</c> of the predicate that *contains* it
     /// (the largest predicate-entry address ≤ the given address) via

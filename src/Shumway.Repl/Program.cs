@@ -1,3 +1,4 @@
+using System.Threading;
 using Shumway.Compiler.Ast;
 using Shumway.Core;
 using Shumway.Embedding;
@@ -430,11 +431,15 @@ internal static class Program
             return;
         }
 
-        using var solutions = engine.QueryAll(wrapped).GetEnumerator();
-        if (!solutions.MoveNext())
+        // The search runs on this thread; an ESC keypress (watched on a
+        // background thread) aborts a long-running query at the next engine
+        // safe point. Not instantaneous, but responsive.
+        using var cts = new CancellationTokenSource();
+        using var solutions = engine.QueryAll(wrapped, cts.Token).GetEnumerator();
+        if (!MoveNextWatched(solutions, cts, out bool aborted))
         {
-            if (engine.LastHaltExitCode is null)
-                Console.WriteLine("false.");
+            if (aborted) Console.WriteLine("% Execution aborted.");
+            else if (engine.LastHaltExitCode is null) Console.WriteLine("false.");
             return;
         }
         while (true)
@@ -456,11 +461,83 @@ internal static class Program
                 return;
             }
             Console.WriteLine(" ;");
-            if (!solutions.MoveNext())
+            if (!MoveNextWatched(solutions, cts, out aborted))
             {
-                if (engine.LastHaltExitCode is null)
-                    Console.WriteLine("false.");
+                if (aborted) Console.WriteLine("% Execution aborted.");
+                else if (engine.LastHaltExitCode is null) Console.WriteLine("false.");
                 return;
+            }
+        }
+    }
+
+    /// <summary>Advances <paramref name="solutions"/> by one solution while a
+    /// background thread watches for <c>ESC</c>; pressing it fires
+    /// <paramref name="cts"/>, which the engine observes at its next safe point
+    /// and throws <see cref="OperationCanceledException"/>. Returns the
+    /// <c>MoveNext</c> result; sets <paramref name="aborted"/> when ESC stopped
+    /// the search. With redirected input there is no key to watch, so it just
+    /// advances.</summary>
+    private static bool MoveNextWatched(
+        IEnumerator<Solution> solutions, CancellationTokenSource cts, out bool aborted)
+    {
+        aborted = false;
+        if (Console.IsInputRedirected)
+            return solutions.MoveNext();
+
+        using var stop = new ManualResetEventSlim(false);
+        var watcher = new Thread(() => WatchForEsc(cts, stop))
+        {
+            IsBackground = true,
+            Name = "repl-esc-watch",
+        };
+        watcher.Start();
+        try
+        {
+            return solutions.MoveNext();
+        }
+        catch (OperationCanceledException)
+        {
+            aborted = true;
+            return false;
+        }
+        finally
+        {
+            // Stop the watcher and let it release the console before the main
+            // thread reads keys again (e.g. the ';' prompt).
+            stop.Set();
+            watcher.Join(500);
+        }
+    }
+
+    /// <summary>Polls the console for keystrokes while a query runs. ESC fires
+    /// the cancellation source; any other key typed mid-search is dropped (the
+    /// REPL doesn't queue type-ahead). Exits when <paramref name="stop"/> is
+    /// signalled or the console becomes unavailable.</summary>
+    private static void WatchForEsc(CancellationTokenSource cts, ManualResetEventSlim stop)
+    {
+        while (!stop.IsSet)
+        {
+            try
+            {
+                if (Console.KeyAvailable)
+                {
+                    ConsoleKeyInfo k = Console.ReadKey(intercept: true);
+                    if (k.Key == ConsoleKey.Escape)
+                    {
+                        cts.Cancel();
+                        return;
+                    }
+                    // Non-ESC key during execution → ignore.
+                }
+                else
+                {
+                    // Sleep until the next poll or until told to stop — no busy-spin.
+                    stop.Wait(25);
+                }
+            }
+            catch
+            {
+                return; // console not interactive / disposed
             }
         }
     }
