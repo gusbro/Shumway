@@ -683,7 +683,19 @@ cursor/history/arrows/backspace/paste/special-char handling in
   (namespace/identifier inference — the full build path is manually verified, too
   heavy for the unit suite, matching the `--exe` precedent). Gate Embedding 2558.
 
-- **REPL line editing — not started.**
+- **REPL line editing — long-line wrapping (done, pending commit).** User
+  confirmed the pain is **líneas largas**: a query wider than the terminal
+  horizontally-scrolled on one row (chunk-253 `ComputeVisibleWindow`), hiding the
+  line's start while editing its end. Replaced with real multi-row wrapping: a
+  per-`ReadLine` `LineView` repaints `prompt + buffer` from a captured origin row
+  on every edit, lets the console wrap naturally, then positions the hardware
+  cursor at the logical edit point *across rows*. Scroll detected via
+  `Console.BufferHeight` (not post-write `CursorTop` — sidesteps the deferred-wrap
+  phantom-column ambiguity); origin shifted by the overflow so cursor math stays
+  aligned. All console ops guarded → non-interactive host degrades cleanly. Pure
+  `CellRowCol` helper replaces `ComputeVisibleWindow`; Chunk253Tests retargeted (6).
+  Interactive path is manual-smoke-only (headless input takes the `ReadLine`
+  fallback); REPL verified to still run end-to-end.
 
 **Phase 30 — Arity/Prolog32 compatibility, round 2** — ✅ **Complete** (tagged `phase-30`; closure summary in [`docs/phase-30-closure.md`](docs/phase-30-closure.md)).
 
