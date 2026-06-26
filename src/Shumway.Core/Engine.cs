@@ -3807,10 +3807,12 @@ public sealed partial class Engine
             // String literal: value equality.
             Tag.String => string.Equals(
                 _stringTable[a.AsStringId], _stringTable[b.AsStringId]),
-            // PSTR: delegate to the unification-style comparator; for
-            // structural equality two PSTRs match iff their character
-            // sequences and tails do.
-            Tag.Pstr => AreStrStructurallyEqual(a.AsHeapIndex, b.AsHeapIndex),
+            // PSTR (partial string): a packed char-code sequence + a tail —
+            // NOT a functor+args structure, so it must NOT go through
+            // AreStrStructurallyEqual (which read a.AsHeapIndex — the Pstr cell's
+            // buffer payload, not a functor index — and recursed forever). Two
+            // PSTRs match iff their character sequences and final tails do.
+            Tag.Pstr => ArePstrStructurallyEqual(a, b),
             _ => throw new NotSupportedException(
                 $"AreStructurallyEqual: tag {a.Tag} is not yet supported."),
         };
@@ -3840,6 +3842,41 @@ public sealed partial class Engine
             if (!AreStructurallyEqual(_heap[aFunctorIdx + i], _heap[bFunctorIdx + i]))
                 return false;
         return true;
+    }
+
+    /// <summary>Structural equality of two PSTRs (<see cref="Tag.Pstr"/>). A PSTR is
+    /// a packed (possibly partial) char-code sequence with a tail; <see
+    /// cref="AppendPstrChain"/> walks the full Pstr chain (incl. chunk-70 lazy-concat
+    /// continuation segments) and stops at the first non-Pstr tail. So two PSTRs are
+    /// equal iff their materialized leading code units are equal AND their final
+    /// tails are structurally equal (closed strings end in <c>[]</c>; a partial
+    /// string ends in a variable). Cell-based — <see cref="AppendPstrChain"/> /
+    /// <see cref="ComputePstrTailIndex"/> read the cell, not a header index.</summary>
+    private bool ArePstrStructurallyEqual(Cell a, Cell b)
+    {
+        var sbA = new System.Text.StringBuilder(a.AsPstrLength);
+        var sbB = new System.Text.StringBuilder(b.AsPstrLength);
+        AppendPstrChain(sbA, a);
+        AppendPstrChain(sbB, b);
+        if (sbA.Length != sbB.Length) return false;
+        for (int i = 0; i < sbA.Length; i++)
+            if (sbA[i] != sbB[i]) return false;
+        return AreStructurallyEqual(PstrFinalTailCell(a), PstrFinalTailCell(b));
+    }
+
+    /// <summary>The first non-<see cref="Tag.Pstr"/> tail cell of a PSTR chain
+    /// (mirrors the tail-following loop in <see cref="AppendPstrChain"/>).</summary>
+    private Cell PstrFinalTailCell(Cell header)
+    {
+        while (header.Tag == Tag.Pstr)
+        {
+            int tailIdx = ComputePstrTailIndex(header);
+            Cell tail = _heap[tailIdx];
+            if (tail.Tag == Tag.Ref)
+                tail = _heap[Deref(tail.AsHeapIndex)];
+            header = tail;
+        }
+        return header;
     }
 
     private bool AreLisStructurallyEqual(int aHeadIdx, int bHeadIdx)
