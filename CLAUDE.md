@@ -719,9 +719,12 @@ cursor/history/arrows/backspace/paste/special-char handling in
   builtins take via `PushBuiltinChoicePoint`). Clause-backtracking loops re-satisfy
   via `Call` and were already cancellable at the call-boundary safe point, so they
   never reach this and pay nothing — back-to-back Van Roy: zebra 0.6% (within
-  noise), queens faster. Now both abort in ~100ms. (Pre-existing: 7 stale
-  Interpreter opcode tests fail on baseline too — ADR-017 cell-tag/atom-id
-  expectations — unrelated.)
+  noise), queens faster. Now both abort in ~100ms. (Also fixed 7 long-stale
+  Interpreter tests this surfaced — 6 ADR-017 inline STR/LIS-in-register, 1
+  Phase-28 deallocate frame reclaim — that had been failing on baseline since
+  Phase 25/28 because the Interpreter suite was omitted from the routine gate.
+  Full 5-project gate now green: Core 432 / Interpreter 105 / Embedding 2564 /
+  Compiler 302 / ISO 277.)
 
 **Phase 30 — Arity/Prolog32 compatibility, round 2** — ✅ **Complete** (tagged `phase-30`; closure summary in [`docs/phase-30-closure.md`](docs/phase-30-closure.md)).
 
