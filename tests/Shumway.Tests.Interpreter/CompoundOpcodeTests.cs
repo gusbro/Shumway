@@ -39,20 +39,19 @@ public class CompoundOpcodeTests
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
 
+        // ADR-017 phase 2: the STR tag rides inline in the register, pointing
+        // straight at the FUNCTOR cell (a structure is functor + n args, with no
+        // separate on-heap STR header).
         Cell x0 = engine.GetRegister(0);
-        Assert.Equal(Tag.Ref, x0.Tag);
+        Assert.Equal(Tag.Str, x0.Tag);
 
-        int strIdx = x0.AsHeapIndex;
-        Cell strCell = engine.GetHeap(strIdx);
-        Assert.Equal(Tag.Str, strCell.Tag);
-        Assert.Equal(strIdx + 1, strCell.AsHeapIndex);
-
-        Cell functorCell = engine.GetHeap(strIdx + 1);
+        int functorIdx = x0.AsHeapIndex;
+        Cell functorCell = engine.GetHeap(functorIdx);
         Assert.Equal(Tag.Functor, functorCell.Tag);
         Assert.Equal(fooFunctor, functorCell.AsFunctorId);
 
         Assert.True(engine.WriteMode);
-        Assert.Equal(strIdx + 2, engine.UnifyPointer);
+        Assert.Equal(functorIdx + 1, engine.UnifyPointer);
     }
 
     [Fact]
@@ -71,10 +70,12 @@ public class CompoundOpcodeTests
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
 
+        // ADR-017: x0 is the inline STR pointing at the FUNCTOR cell; the two
+        // args sit immediately after it.
         Cell x0 = engine.GetRegister(0);
-        int strIdx = x0.AsHeapIndex;
-        Assert.Equal(Cell.Atom(100), engine.GetHeap(strIdx + 2));
-        Assert.Equal(Cell.Atom(101), engine.GetHeap(strIdx + 3));
+        int functorIdx = x0.AsHeapIndex;
+        Assert.Equal(Cell.Atom(100), engine.GetHeap(functorIdx + 1));
+        Assert.Equal(Cell.Atom(101), engine.GetHeap(functorIdx + 2));
     }
 
     // ---------- get_structure ----------
@@ -131,11 +132,12 @@ public class CompoundOpcodeTests
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
 
         Assert.True(engine.WriteMode);              // unbound → write mode
-        // The unbound var was bound to a freshly allocated STR cell.
-        int derefedAddr = engine.Deref(heapIdx);
-        Assert.Equal(Tag.Ref, engine.GetHeap(heapIdx).Tag);   // var now points to STR
-        Cell strCell = engine.GetHeap(engine.GetHeap(heapIdx).AsHeapIndex);
-        Assert.Equal(Tag.Str, strCell.Tag);
+        // ADR-017: the unbound var is bound directly to an inline STR cell that
+        // points at the freshly allocated FUNCTOR cell — no on-heap STR header.
+        Cell bound = engine.GetHeap(heapIdx);
+        Assert.Equal(Tag.Str, bound.Tag);
+        Cell functorCell = engine.GetHeap(bound.AsHeapIndex);
+        Assert.Equal(Tag.Functor, functorCell.Tag);
     }
 
     // ---------- put_list and get_list ----------
@@ -148,16 +150,15 @@ public class CompoundOpcodeTests
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
 
+        // ADR-017: the LIS tag rides inline in the register, pointing at the
+        // 2-cell [head, tail] pair the following unify_* opcodes will write.
+        // put_list itself writes no heap cell; it just positions the pointer.
         Cell x0 = engine.GetRegister(0);
-        Assert.Equal(Tag.Ref, x0.Tag);
+        Assert.Equal(Tag.Lis, x0.Tag);
 
-        int lisIdx = x0.AsHeapIndex;
-        Cell lisCell = engine.GetHeap(lisIdx);
-        Assert.Equal(Tag.Lis, lisCell.Tag);
-        Assert.Equal(lisIdx + 1, lisCell.AsHeapIndex);
-
+        int pair = x0.AsHeapIndex;
         Assert.True(engine.WriteMode);
-        Assert.Equal(lisIdx + 1, engine.UnifyPointer);
+        Assert.Equal(pair, engine.UnifyPointer);
     }
 
     [Fact]
@@ -270,8 +271,10 @@ public class CompoundOpcodeTests
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
 
-        int strIdx = engine.GetRegister(0).AsHeapIndex;
-        Assert.Equal(Cell.Atom(99), engine.GetHeap(strIdx + 2));
+        // ADR-017: register holds the inline STR pointing at the FUNCTOR cell;
+        // the single arg sits immediately after it.
+        int functorIdx = engine.GetRegister(0).AsHeapIndex;
+        Assert.Equal(Cell.Atom(99), engine.GetHeap(functorIdx + 1));
     }
 
     [Fact]
@@ -327,8 +330,9 @@ public class CompoundOpcodeTests
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
 
-        // PutStructure allocated 2 cells (STR + FUNCTOR), UnifyVoid 3 allocated 3 more = 5 total.
-        Assert.Equal(heapBefore + 5, engine.HeapTop);
+        // ADR-017: put_structure allocates 1 cell (FUNCTOR; the STR tag rides
+        // inline in the register), unify_void 3 allocates 3 more = 4 total.
+        Assert.Equal(heapBefore + 4, engine.HeapTop);
     }
 
     [Fact]

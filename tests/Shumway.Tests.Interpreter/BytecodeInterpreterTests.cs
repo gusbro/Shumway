@@ -173,9 +173,11 @@ public class BytecodeInterpreterTests
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
         Assert.Equal(-1, engine.E);              // env was popped
         Assert.Equal(0x42, engine.Cp);           // CP restored from the frame
-        // The dropped frame's slots remain on the stack per the WAM convention; reclamation
-        // is the responsibility of subsequent ops (trust_me, etc.).
-        Assert.Equal(5, engine.StackTop);          // EnvSize(2) = 3 control + 2 Y (ADR-016)
+        // Phase 28 env-frame trimming: with no choice point protecting the
+        // just-popped frame (fresh engine, B = -1 < E = 0), deallocate reclaims
+        // its EnvSize(2) = 5 slots, so the stack returns to empty. (Previously the
+        // dropped slots lingered until a later op overwrote them.)
+        Assert.Equal(0, engine.StackTop);
     }
 
     [Fact]
