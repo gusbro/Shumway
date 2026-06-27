@@ -120,8 +120,9 @@ false.
   commits to the current answer and prompts again.
 - Press `Esc` to abort a long-running query. Cancellation is cooperative
   — the engine stops at its next safe point (not instantaneous, but
-  responsive) and prints `% Execution aborted.`. A heap-bounded tight loop
-  (e.g. `repeat, fail`) is uncancellable by design.
+  responsive) and prints `% Execution aborted.`. This covers the usual
+  runaways, including failure-driven builtin loops like
+  `between(0, BIG, X), fail` and `repeat, fail`.
 - A query wider than the terminal wraps across rows; the cursor tracks
   the edit position. `↑`/`↓` walk history, `Tab` completes predicate
   names, and the usual Home/End/Ctrl-A/E/U/K editing keys work.

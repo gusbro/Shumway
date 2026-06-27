@@ -112,6 +112,32 @@ public sealed partial class Engine
     /// not yet cleared.</summary>
     public bool IsCancellationRequested => _cancelRequested;
 
+    // Backtrack-path cancellation throttle. A backtrackable-BUILTIN loop
+    // (`between(_,_,_), fail` / `repeat, fail`) re-satisfies through a builtin
+    // choice point and never crosses a call-boundary MaybeCollectHeap, so it
+    // would be uncancellable. TryBacktrack calls BacktrackSafePoint when popping
+    // such a choice point — but it only reads the (volatile) cancel flag once
+    // every BacktrackCancelInterval pops. The per-pop cost is a single
+    // non-volatile decrement + a predicted-not-taken branch, so it is negligible;
+    // cancellation latency is bounded to a few thousand pops (microseconds).
+    // Clause-backtracking loops re-satisfy via Call and are already cancellable
+    // there, so they never reach this and pay nothing.
+    private const int BacktrackCancelInterval = 4096;
+    private int _backtrackCancelCountdown = BacktrackCancelInterval;
+
+    /// <summary>Cheap cancellation poll for the backtrackable-builtin resume
+    /// path — see <see cref="RequestCancellation"/>. Throttled by a counter so
+    /// the volatile flag is read only periodically; throws
+    /// <see cref="OperationCanceledException"/> when a cancellation is pending.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    public void BacktrackSafePoint()
+    {
+        if (--_backtrackCancelCountdown > 0) return;
+        _backtrackCancelCountdown = BacktrackCancelInterval;
+        if (_cancelRequested) ThrowQueryCancelled();
+    }
+
     // Chunk 428 — hot/cold split. The guard is AggressiveInlining so each
     // safe-point call site inlines to: a volatile _cancelRequested read +
     // one compare (the diag flag and the watermark, fused into a single

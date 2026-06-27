@@ -2936,6 +2936,15 @@ public sealed class BytecodeInterpreter
         {
             if (_engine.TopChoicePointIsIl)
             {
+                // Cancellation safe point for backtrackable-BUILTIN loops
+                // (between/fail, repeat/fail) — they re-satisfy via a builtin
+                // choice point (PushBuiltinChoicePoint → an IL CP) without ever
+                // crossing a call-boundary MaybeCollectHeap, so this is the only
+                // place the REPL's ESC can reach them. Clause-backtracking loops
+                // re-satisfy through Call and are already cancellable there, so
+                // they pay nothing here. Counter-throttled → negligible per-pop
+                // cost even for Tier-1 IL clause backtracking.
+                _engine.BacktrackSafePoint();
                 var (del, cursor) = _engine.PopIlChoicePointAndRestore();
                 if (del(_engine, cursor))
                 {

@@ -110,6 +110,34 @@ public class QueryAsyncTests
         Assert.Equal(new[] { 1L, 2L }, xs);
     }
 
+    // A failure-driven loop (between/fail, repeat/fail) makes progress by
+    // backtracking and never crosses a call-boundary heap safe point, so without
+    // the TryBacktrack safe point it would be UNCANCELLABLE. These cover the
+    // REPL's ESC-abort of exactly that shape. The huge / unbounded loops only
+    // terminate because cancellation works — a tight timeout here surfaces a
+    // regression as a fast failure rather than a multi-minute grind.
+    [Fact]
+    public void QueryAll_BetweenFailLoop_IsCancellable()
+    {
+        var e = new PrologEngine();
+        using var cts = new CancellationTokenSource(100);
+        Assert.ThrowsAny<OperationCanceledException>(() =>
+        {
+            foreach (var _ in e.QueryAll("between(0, 1000000000000, X), fail.", cts.Token)) { }
+        });
+    }
+
+    [Fact]
+    public void QueryAll_RepeatFailLoop_IsCancellable()
+    {
+        var e = new PrologEngine();
+        using var cts = new CancellationTokenSource(100);
+        Assert.ThrowsAny<OperationCanceledException>(() =>
+        {
+            foreach (var _ in e.QueryAll("repeat, fail.", cts.Token)) { }
+        });
+    }
+
     [Fact]
     public async Task QueryAsync_AlreadyCancelledToken_DoesNotEnumerate()
     {
