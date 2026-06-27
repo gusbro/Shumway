@@ -710,7 +710,18 @@ cursor/history/arrows/backspace/paste/special-char handling in
   builds a fresh `Engine`, so the never-cleared `_cancelRequested` flag isn't
   sticky. Watcher drops non-ESC keys and is joined before the main thread reads
   keys again; redirected input skips watching. 2 Term-overload cancellation tests;
-  gate Embedding 2562.
+  gate Embedding 2562. **Follow-up — backtrackable-builtin loops.** `between(0,
+  BIG, X), fail` / `repeat, fail` re-satisfy through a builtin choice point and
+  never cross a call-boundary `MaybeCollectHeap`, so ESC couldn't reach them. Added
+  `Engine.BacktrackSafePoint()` — a counter-throttled cancel poll (non-volatile
+  decrement + predicted-not-taken branch; volatile flag read every 4096 calls) —
+  called in `TryBacktrack`'s **IL-choice-point branch** (the resume path those
+  builtins take via `PushBuiltinChoicePoint`). Clause-backtracking loops re-satisfy
+  via `Call` and were already cancellable at the call-boundary safe point, so they
+  never reach this and pay nothing — back-to-back Van Roy: zebra 0.6% (within
+  noise), queens faster. Now both abort in ~100ms. (Pre-existing: 7 stale
+  Interpreter opcode tests fail on baseline too — ADR-017 cell-tag/atom-id
+  expectations — unrelated.)
 
 **Phase 30 — Arity/Prolog32 compatibility, round 2** — ✅ **Complete** (tagged `phase-30`; closure summary in [`docs/phase-30-closure.md`](docs/phase-30-closure.md)).
 
