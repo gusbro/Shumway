@@ -657,14 +657,21 @@ questions from Phase 11's deferred list:
   `retract` / `assertz` — and avoids redundant `TryDescribe*`
   attempts that were already rejecting the shape.
 
-**Phase 31 — REPL line-editing + `--dll` loadable class library** — 🚧 **In flight.**
+**Phase 31 — REPL line-editing + `--dll` + native-interop correctness** — ✅ **Complete** (tagged `phase-31`; closure summary in [`docs/phase-31-closure.md`](docs/phase-31-closure.md)).
 
-Two themes the user named: (1) the REPL line editing/input doesn't work well —
-cursor/history/arrows/backspace/paste/special-char handling in
-`src/Shumway.Repl/LineEditor.cs`; (2) a linker `--dll` option, the embed-in-a-
-.NET-app counterpart to `--exe`.
+Opened with two user-named themes (REPL line editing; a linker `--dll`) and grew,
+through review, into a native-interop correctness arc plus a test-discipline fix.
+Highlights: `--dll` loadable class library (factory `<Ns>.<Class>.CreateEngine()`);
+REPL multi-row wrapping + flicker fix + ESC-cancel (reaching `between/fail` /
+`repeat/fail` via a counter-throttled `TryBacktrack` IL-CP safe point); fixed 7
+long-stale Interpreter tests (ADR-017 / Phase-28) and recorded the **five-project
+gate** discipline; a four-item `embedded-native-c.md` stale-doc audit; **persistent
+scalar `:- c` globals** (Arity static-storage, all three native backends + bundle +
+`--exe`, write-through) with **undeclared-global → consult error** and `extern` as
+the cross-module declaration. Full gate at close: Embedding 2572 / Compiler 302 /
+Core 432 / Interpreter 105 / ISO 277.
 
-- **`--dll` — loadable .NET class library (done, pending commit).** `shumway-link
+- **`--dll` — loadable .NET class library.** `shumway-link
   --dll <path>` emits a .NET class-library DLL embedding the `.shum` bundle plus a
   generated factory (`<Namespace>.<Class>.CreateEngine()`) returning a
   ready-to-query `PrologEngine` (via `PrologEngine.FromBundle`, baked-prelude warm
