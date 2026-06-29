@@ -60,10 +60,17 @@ typedef char *pchar;                       % a typedef
 
 - **Function prototypes** give the parameter and return **types** used to infer the
   variables a block marshals, and the **C# signature** you must implement.
-- **Globals / buffers** — a `char*` / `char[]` buffer, or a `reftype` / `preftype`
-  global, is a reusable **holder**: a slot the engine manages (not a field you
-  declare on the interop class), used by the reftype tier — see
-  [generic-term interop](generic-term-interop.md).
+- **Globals / buffers**:
+  - a `char*` / `char[]` buffer, or a `reftype` / `preftype` global, is a reusable
+    **holder** — a slot the engine manages (not a field you declare on the interop
+    class), used by the reftype tier; see
+    [generic-term interop](generic-term-interop.md);
+  - a plain **scalar** global (e.g. `int counter;`) is **not** persistent storage.
+    It compiles to a zero-initialised local scoped to a single block execution:
+    reads see `0`, and a write does **not** survive the block or carry across calls
+    (so `{ counter = counter + 1 }` evaluates to `1` *every* call). Arity's
+    static-storage scalar globals are not modelled — use a `:- dynamic` fact
+    (`assertz`/`retract`) for state that must persist across calls.
 - **Typedefs** resolve type names (`pchar` → `char*` → a .NET `string`).
 
 A declared global is global to the whole program (C linkage): a region in one

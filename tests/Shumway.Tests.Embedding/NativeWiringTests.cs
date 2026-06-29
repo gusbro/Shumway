@@ -57,6 +57,27 @@ public sealed class NativeWiringTests
     }
 
     [Fact]
+    public void PlainScalarGlobal_IsZeroInitPerCallLocal_NotPersistent()
+    {
+        // A plain scalar `:- c` global is NOT Arity static storage — it compiles to
+        // a zero-initialised local scoped to one block execution: reads see 0 and
+        // writes don't carry across calls. Pins the behavior documented in
+        // embedded-native-c.md §2.
+        var e = new PrologEngine();
+        e.UseNativeInterop(typeof(Interop));
+        e.ConsultString(
+            ":- set_prolog_flag(arity_compat, true).\n" +
+            ":- c.\nint counter;\n:- prolog.\n" +
+            "incr(X) :- { counter = counter + 1; X is counter }, integer(X).\n" +
+            "readc(X) :- { X is counter }, integer(X).\n");
+
+        Assert.Equal(0L, e.Query("readc(X).").Get<long>("X"));   // uninitialised → 0
+        Assert.Equal(1L, e.Query("incr(X).").Get<long>("X"));
+        Assert.Equal(1L, e.Query("incr(X).").Get<long>("X"));    // not 2 — no persistence
+        Assert.Equal(0L, e.Query("readc(X).").Get<long>("X"));   // writes never persisted
+    }
+
+    [Fact]
     public void ConsultedNativeBlock_IntegerInputsAndArithmetic()
     {
         var e = new PrologEngine();
