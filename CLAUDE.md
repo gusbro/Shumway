@@ -705,9 +705,25 @@ GXPROLOG`, C under `#else`): the uniform pattern is `fill_par(Term,&parNref)` �
   `NativeBlockRunner.CallInterop` (the interpreter; the delegate/IL backends bail to
   it on a `Reftype` param). 3 end-to-end tests: `go(10,Out)` → `result(11)` via
   fill_par → materialize → C# mutates the snapshot → dematerialize → reftype_term.
-- **Next:** the P/Invoke backend (native `t_reftype` at the `:- native` call site +
-  binding via `--native-dll` / `engine.UseNativeLibrary`); delegate/IL emit for the
-  snapshot path (currently interpreter-only).
+- **P/Invoke backend (done).** A `:- native` function that does **not** resolve to a
+  C# interop method is a real native C function exported by a registered library
+  (`engine.UseNativeLibrary(path)`). Resolution is **cached per functor** (C# method
+  vs native export → `NativeResolution`), so a call resolves once and dispatches
+  directly thereafter. `NativeCall` derives the marshalling signature from the
+  `:- c` prototype (reftype → native `t_reftype*`; int/short/long/double by value)
+  and invokes by pointer via a cached **cdecl `calli`** (`DynamicMethod`, JIT-only).
+  At the call: each reftype arg is materialized to native memory (`NativeReftype`),
+  passed, then dematerialized back into its slot and freed. First cut: the native
+  function may modify the struct's scalar fields **in place** (allocating sub-nodes
+  needs a shared allocator — follow-up); char*/out-scalar pointer params deferred
+  (loud error). The consult-time block validation exempts `:- native` names
+  (`IsNativeFunctionName`). Tests: 4 mechanism (signature + calli over a native
+  `t_reftype` via a C# fn-pointer, CI-safe) + 1 real-DLL end-to-end (compiles via
+  `$SHUMWAY_NATIVE_CC` or a PATH compiler `cl`/`cc`/`gcc`/`clang` — no hardcoded
+  paths, cross-platform; warns + skips with no toolchain).
+- **Next:** delegate/IL emit for the snapshot + P/Invoke paths (currently
+  interpreter-only); the corpus "C builds a list" case (shared allocator); char* /
+  out-scalar pointer params; a `--native-dll` CLI flag.
 
 **Phase 31 — REPL line-editing + `--dll` + native-interop correctness** — ✅ **Complete** (tagged `phase-31`; closure summary in [`docs/phase-31-closure.md`](docs/phase-31-closure.md)).
 

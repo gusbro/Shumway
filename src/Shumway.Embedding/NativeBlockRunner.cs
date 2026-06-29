@@ -241,17 +241,29 @@ public static class NativeBlockRunner
     private static object? CallInterop(CCallExpr c, PrologEngine host, Dictionary<string, object?> env,
         Dictionary<string, object?> outputs, Func<string, MethodInfo?> resolve)
     {
-        var m = resolve(c.Name)
-            ?? throw new System.InvalidOperationException(
-                $"native function '{c.Name}' is not a public static method of the interop class.");
+        // ADR-024 — a `:- native` function uses the materializer tier. Its resolution
+        // (a C# interop method → managed snapshot, or a native library export →
+        // P/Invoke) is decided once and cached, so subsequent calls dispatch directly.
+        bool isNative = host.IsNativeFunction(c.Name, c.Args.Count);
+        MethodInfo m;
+        if (isNative)
+        {
+            var res = host.ResolveNativeCall(c.Name, c.Args.Count);
+            if (res.CsMethod is null)
+                return PInvokeCall(res, c, host, env, outputs, resolve);   // native C, P/Invoke
+            m = res.CsMethod;
+        }
+        else
+        {
+            m = resolve(c.Name)
+                ?? throw new System.InvalidOperationException(
+                    $"native function '{c.Name}' is not a public static method of the interop class.");
+        }
         var ps = m.GetParameters();
         var args = new object?[c.Args.Count];
-        // ADR-024 — a `:- native` function using the materializer tier: a Reftype
-        // parameter receives a MANAGED SNAPSHOT of the reftype global's term
-        // (materialized), and the (possibly mutated) snapshot is written back to the
-        // slot after the call. (The P/Invoke backend materializes to native memory
-        // instead; the directive is the same.)
-        bool isNative = host.IsNativeFunction(c.Name, c.Args.Count);
+        // A Reftype parameter receives a MANAGED SNAPSHOT of the reftype global's
+        // term (materialized); the (possibly mutated) snapshot is written back to the
+        // slot after the call.
         System.Collections.Generic.List<(TermSlot Slot, Reftype Snapshot)>? writebacks = null;
         for (int i = 0; i < c.Args.Count; i++)
         {
@@ -284,6 +296,43 @@ public static class NativeBlockRunner
             foreach (var (slot, snap) in writebacks)
                 slot.SetValue(Reftype.Dematerialize(snap));
         return result;
+    }
+
+    /// <summary>ADR-024 — the P/Invoke path: a `:- native` function exported by a
+    /// registered native library. Each reftype argument is materialized to native
+    /// <c>t_reftype</c> memory; the function is invoked by pointer (cdecl calli);
+    /// then the reftype structs are dematerialized back into their slots and freed.
+    /// (First cut: scalar + reftype params; the native function may modify the
+    /// struct's scalar fields in place.)</summary>
+    private static object? PInvokeCall(PrologEngine.NativeResolution res, CCallExpr c, PrologEngine host,
+        Dictionary<string, object?> env, Dictionary<string, object?> outputs, Func<string, MethodInfo?> resolve)
+    {
+        var sig = res.Signature!;
+        var enc = host.NativeTextEncoding;
+        var args = new object?[c.Args.Count];
+        System.Collections.Generic.List<(TermSlot Slot, IntPtr Native)>? reftypes = null;
+        for (int i = 0; i < c.Args.Count; i++)
+        {
+            if (i < sig.ParamIsReftype.Length && sig.ParamIsReftype[i]
+                && ReftypeName(c.Args[i]) is { } rn)
+            {
+                var slot = host.GetOrCreateReftypeSlot(rn);
+                IntPtr p = NativeReftype.Materialize(slot.Materialize(), enc);
+                args[i] = p;
+                (reftypes ??= new()).Add((slot, p));
+                continue;
+            }
+            object? v = Eval(c.Args[i], host, env, outputs, resolve);
+            args[i] = ConvertArg(v, i < sig.ParamClrTypes.Length ? sig.ParamClrTypes[i] : typeof(IntPtr));
+        }
+        object? ret = sig.Invoker(res.NativeFn, args);
+        if (reftypes is not null)
+            foreach (var (slot, p) in reftypes)
+            {
+                slot.SetValue(NativeReftype.Dematerialize(p, enc));
+                NativeReftype.Free(p);
+            }
+        return ret;
     }
 
     // Quick-win over the interpreted path: invoke each interop method through a

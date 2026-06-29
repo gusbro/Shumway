@@ -4293,12 +4293,99 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     // materializer protocol (P/Invoke or a managed Reftype snapshot) rather than a
     // plain .NET interop method.
     private readonly HashSet<int> _nativeFunctions = new();
+    private readonly HashSet<string> _nativeFunctionNames = new();
 
     /// <summary>True if <paramref name="name"/>/<paramref name="arity"/> was declared
     /// <c>:- native</c>.</summary>
     internal bool IsNativeFunction(string name, int arity)
         => _nativeFunctions.Count > 0
            && _nativeFunctions.Contains(FunctorTable.Intern(AtomTable.Intern(name).Id, arity));
+
+    /// <summary>True if any <c>:- native</c> declaration uses <paramref name="name"/>
+    /// (at any arity) — so the consult-time block validation does not require it to
+    /// be a C# interop method (a native function resolves at run time).</summary>
+    internal bool IsNativeFunctionName(string name) => _nativeFunctionNames.Contains(name);
+
+    // ADR-024 — registered native libraries (handles) for `:- native` functions
+    // resolved by P/Invoke; the `:- c` prototypes (signature) and typedefs collected
+    // at consult; and the per-function resolution cache so a call resolves once
+    // (C# interop method vs native export) and reuses the decision thereafter.
+    private readonly System.Collections.Generic.List<IntPtr> _nativeLibraries = new();
+    private System.Collections.Generic.Dictionary<string, Shumway.Compiler.NativeC.CPrototype>? _nativePrototypes;
+    private System.Collections.Generic.Dictionary<string, Shumway.Compiler.NativeC.CType>? _nativeTypedefs;
+    private readonly System.Collections.Generic.Dictionary<int, NativeResolution> _nativeCallCache = new();
+
+    /// <summary>ADR-024 — registers a native library (a C DLL/.so/.dylib) whose
+    /// exported functions back <c>:- native</c> declarations resolved by P/Invoke.
+    /// Call before querying; later registrations invalidate the resolution cache.</summary>
+    public void UseNativeLibrary(string path)
+    {
+        System.ArgumentNullException.ThrowIfNull(path);
+        _nativeLibraries.Add(System.Runtime.InteropServices.NativeLibrary.Load(path));
+        _nativeCallCache.Clear();
+    }
+
+    /// <summary>Collects the <c>:- c</c> prototypes + typedefs so a P/Invoke
+    /// <c>:- native</c> call can derive its marshalling signature. Called at consult
+    /// once the C symbol table is parsed.</summary>
+    internal void RegisterNativePrototypes(System.Collections.Generic.IReadOnlyList<Shumway.Compiler.NativeC.CDecl> cDecls)
+    {
+        foreach (var d in cDecls)
+            switch (d)
+            {
+                case Shumway.Compiler.NativeC.CPrototype p:
+                    (_nativePrototypes ??= new())[p.Name] = p;
+                    break;
+                case Shumway.Compiler.NativeC.CTypedef td:
+                    (_nativeTypedefs ??= new())[td.Alias] = td.Underlying;
+                    break;
+            }
+        _nativeCallCache.Clear();
+    }
+
+    /// <summary>The cached resolution of a <c>:- native</c> call — a C# interop
+    /// method (managed snapshot) or a native export (P/Invoke). Resolved once per
+    /// functor and reused.</summary>
+    internal sealed class NativeResolution
+    {
+        public System.Reflection.MethodInfo? CsMethod;     // non-null → managed path
+        public IntPtr NativeFn;                            // P/Invoke target
+        public NativeCall.Signature? Signature;            // P/Invoke marshalling
+    }
+
+    internal NativeResolution ResolveNativeCall(string name, int arity)
+    {
+        int fid = FunctorTable.Intern(AtomTable.Intern(name).Id, arity);
+        if (_nativeCallCache.TryGetValue(fid, out var cached)) return cached;
+        var r = BuildNativeResolution(name, arity);
+        _nativeCallCache[fid] = r;
+        return r;
+    }
+
+    private NativeResolution BuildNativeResolution(string name, int arity)
+    {
+        // 1. A C# interop method → managed (snapshot) path.
+        var m = ResolveNativeInterop(name);
+        if (m is not null) return new NativeResolution { CsMethod = m };
+
+        // 2. A native export from a registered library → P/Invoke path.
+        IntPtr fn = IntPtr.Zero;
+        foreach (var lib in _nativeLibraries)
+            if (System.Runtime.InteropServices.NativeLibrary.TryGetExport(lib, name, out fn))
+                break;
+        if (fn != IntPtr.Zero)
+        {
+            if (_nativePrototypes is null || !_nativePrototypes.TryGetValue(name, out var proto))
+                throw new System.InvalidOperationException(
+                    $":- native '{name}': no ':- c' prototype found to derive its native signature.");
+            var sig = NativeCall.FromPrototype(proto,
+                _nativeTypedefs ?? new System.Collections.Generic.Dictionary<string, Shumway.Compiler.NativeC.CType>());
+            return new NativeResolution { NativeFn = fn, Signature = sig };
+        }
+        throw new System.InvalidOperationException(
+            $":- native '{name}/{arity}': not a public static method of the interop class and not exported "
+            + "by any registered native library (UseNativeLibrary).");
+    }
 
     // ADR-022 — per-engine persistent storage for SCALAR `:- c` globals (a plain
     // int/long/float/double global, as opposed to a char*/reftype holder). Like
@@ -5191,8 +5278,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 // method taking a managed Reftype snapshot) rather than a plain .NET
                 // interop method. The block call site materializes its reftype args.
                 foreach (var (n, a) in nativeSpecs)
+                {
                     _nativeFunctions.Add(FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a));
+                    _nativeFunctionNames.Add(n);
+                }
             }
             else if (TryReadFunctorIndicatorDirective(body, "discontiguous", out var discSpecs))
             {
@@ -5321,9 +5411,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // `:- c` regions (par1ref…, or the program's own). `&name` / `name` in a
             // native block resolves to this slot's cursor.
             RegisterReftypeGlobals(cDecls);
+            // ADR-024 — keep the prototypes/typedefs so a P/Invoke `:- native` call
+            // can derive its native marshalling signature at query time.
+            RegisterNativePrototypes(cDecls);
             string prefix = "$nb$" + (_nativeBlockConsultSeq++) + "$";
             clauses = NativeTransform.Apply(clauses, cDecls, ResolveNativeInterop,
-                (name, vars, stmts, scalars, _) => AddNativeBlock(name, vars, stmts, scalars), prefix);
+                (name, vars, stmts, scalars, _) => AddNativeBlock(name, vars, stmts, scalars), prefix,
+                IsNativeFunctionName);
         }
 
         // Source-declared clauses for dynamic predicates (chunk 68): route

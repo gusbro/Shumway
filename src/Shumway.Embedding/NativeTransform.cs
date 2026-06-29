@@ -44,7 +44,7 @@ internal static class NativeTransform
     public static List<Clause> Apply(IReadOnlyList<Clause> clauses, List<CDecl> cDecls,
         Func<string, System.Reflection.MethodInfo?>? resolveInterop,
         Action<string, NativeVar[], CStmt[], NativeScalarGlobal[], string> registerBlock,
-        string namePrefix)
+        string namePrefix, Func<string, bool>? isNative = null)
     {
         int index = 0;
         var result = new List<Clause>(clauses.Count);
@@ -58,7 +58,7 @@ internal static class NativeTransform
             var clauseHints = CollectClauseDeclHints(clause.Term);
             result.Add(Clause.From(Rewrite(clause.Term, clause.Term, PredLabel(clause.Term),
                 clause.Position, cDecls, resolveInterop, registerBlock, namePrefix,
-                ref index, clauseHints)));
+                ref index, clauseHints, isNative)));
         }
         return result;
     }
@@ -116,7 +116,7 @@ internal static class NativeTransform
         Shumway.Compiler.Lexer.SourcePosition clausePos, List<CDecl> cDecls,
         Func<string, System.Reflection.MethodInfo?>? resolve,
         Action<string, NativeVar[], CStmt[], NativeScalarGlobal[], string> registerBlock, string namePrefix, ref int index,
-        Dictionary<string, CType> clauseHints)
+        Dictionary<string, CType> clauseHints, Func<string, bool>? isNative)
     {
         if (t is not CompoundTerm c) return t;
         if (c.Functor == "$native_goal" && c.Args.Length == 1 && c.Args[0] is StringTerm s)
@@ -124,12 +124,12 @@ internal static class NativeTransform
             // Prefer the block's own captured position; fall back to the clause head.
             var pos = c.Position.Line > 0 ? c.Position : clausePos;
             return TransformBlock(s.Content, clauseTerm, predLabel, pos, cDecls, resolve,
-                registerBlock, namePrefix + (index++), clauseHints);
+                registerBlock, namePrefix + (index++), clauseHints, isNative);
         }
         var args = new Term[c.Args.Length];
         for (int i = 0; i < c.Args.Length; i++)
             args[i] = Rewrite(c.Args[i], clauseTerm, predLabel, clausePos, cDecls, resolve,
-                registerBlock, namePrefix, ref index, clauseHints);
+                registerBlock, namePrefix, ref index, clauseHints, isNative);
         return new CompoundTerm(c.Functor, args) { Position = c.Position };
     }
 
@@ -137,7 +137,7 @@ internal static class NativeTransform
         Shumway.Compiler.Lexer.SourcePosition pos, List<CDecl> cDecls,
         Func<string, System.Reflection.MethodInfo?>? resolve,
         Action<string, NativeVar[], CStmt[], NativeScalarGlobal[], string> registerBlock, string name,
-        Dictionary<string, CType> clauseHints)
+        Dictionary<string, CType> clauseHints, Func<string, bool>? isNative)
     {
         NativeBlockCompileException Error(string detail) => new(
             $"embedded native block in {predLabel} (line {pos.Line}): {detail}", pos.Line, pos.Column);
@@ -164,9 +164,11 @@ internal static class NativeTransform
         // enforced at run time when the block executes, and at link by
         // --foreign-dll. Either way an unresolved call is a hard error, never a
         // silent no-op.)
+        // A `:- native` function is exempt — it resolves at run time from a native
+        // library (P/Invoke), not from the C# interop class.
         if (resolve is not null)
             foreach (var fn in CollectCallNames(stmts))
-                if (resolve(fn) is null)
+                if (resolve(fn) is null && !(isNative?.Invoke(fn) ?? false))
                     throw Error($"calls '{fn}', which is not a public static method of the interop "
                         + "class. Register the class with PrologEngine.UseNativeInterop(typeof(...)) "
                         + "(or name it Shumway.Native.Interop for auto-discovery) and implement the method.");
