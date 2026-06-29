@@ -73,7 +73,12 @@ typedef char *pchar;                       % a typedef
     and floating kinds are both supported, and the persistence survives a
     source-stripped Release bundle / `--exe` (the scalar-global metadata travels in
     the bundle even though the `:- c` declarations themselves do not). Writes are
-    write-through — a later goal that fails does not roll back an earlier write.
+    write-through — a later goal that fails does not roll back an earlier write. A
+    scalar name used in a block that is **not** declared (as a `:- c` global or a
+    block-local) is a consult error (§7), not a silent zero-init local. To reference
+    a global **defined in another module**, declare it `extern int g;` — `extern`
+    counts as declared, and the per-engine storage is shared by name with the
+    defining module (C-linkage).
 - **Typedefs** resolve type names (`pchar` → `char*` → a .NET `string`).
 
 A declared global is global to the whole program (C linkage): a region in one
@@ -228,7 +233,10 @@ the problem. This happens when:
   member-access syntax (`->`, `..`, `preftype`) inside a value block (whole-term /
   reftype interop is done through its own intrinsics — see
   [generic-term interop](generic-term-interop.md));
-- a **variable's type or mode cannot be inferred** (add a guard, §4); or
+- a **variable's type or mode cannot be inferred** (add a guard, §4);
+- it **references an undeclared native global** — a scalar name that is not a Prolog
+  variable, a block-local, or a `:- c`-declared global (declare it, or `extern` it if
+  it lives in another module); or
 - it **calls a native function your interop class does not provide** (the message
   names the function; register the class with `UseNativeInterop` and implement the
   method).

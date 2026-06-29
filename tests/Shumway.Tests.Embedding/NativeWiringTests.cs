@@ -79,6 +79,58 @@ public sealed class NativeWiringTests
     }
 
     [Fact]
+    public void UndeclaredScalarGlobal_IsAConsultError()
+    {
+        // A name used as a scalar that is neither a Prolog var, a block-local, nor a
+        // declared `:- c` global is a typo / missing declaration — a hard consult
+        // error, never a silently zero-initialised local.
+        var e = new PrologEngine();
+        e.UseNativeInterop(typeof(Interop));
+        var ex = Assert.ThrowsAny<InvalidOperationException>(() => e.ConsultString(
+            ":- set_prolog_flag(arity_compat, true).\n" +
+            "bump(X) :- { counter = counter + 1; X is counter }, integer(X).\n"));
+        Assert.Contains("undeclared native global", ex.Message);
+        Assert.Contains("counter", ex.Message);
+    }
+
+    [Fact]
+    public void ExternScalarGlobal_IsDeclared_AndPersists()
+    {
+        // `extern` counts as declared (CParser folds it into a normal global), so it
+        // is not the undeclared-error case; it uses the shared per-engine storage.
+        var e = new PrologEngine();
+        e.UseNativeInterop(typeof(Interop));
+        e.ConsultString(
+            ":- set_prolog_flag(arity_compat, true).\n" +
+            ":- c.\nextern int counter;\n:- prolog.\n" +
+            "bump(X) :- { counter = counter + 1; X is counter }, integer(X).\n");
+        Assert.Equal(1L, e.Query("bump(X).").Get<long>("X"));
+        Assert.Equal(2L, e.Query("bump(X).").Get<long>("X"));
+    }
+
+    [Fact]
+    public void ExternScalarGlobal_SharesStorageAcrossModules()
+    {
+        // Module a DEFINES counter; module b references it via `extern`. Native
+        // global storage is keyed by the bare C name engine-wide, so b sees a's
+        // writes — the cross-module C-linkage model.
+        var e = new PrologEngine();
+        e.UseNativeInterop(typeof(Interop));
+        e.ConsultString(
+            ":- module(a).\n:- set_prolog_flag(arity_compat, true).\n:- public bump_a/0.\n" +
+            ":- c.\nint counter;\n:- prolog.\n" +
+            "bump_a :- { counter = counter + 1 }.\n");
+        e.ConsultString(
+            ":- module(b).\n:- set_prolog_flag(arity_compat, true).\n:- public read_b/1.\n" +
+            ":- c.\nextern int counter;\n:- prolog.\n" +
+            "read_b(X) :- { X is counter }, integer(X).\n");
+
+        Assert.True(e.Query("bump_a.").Success);
+        Assert.True(e.Query("bump_a.").Success);
+        Assert.Equal(2L, e.Query("read_b(X).").Get<long>("X"));   // b sees a's writes
+    }
+
+    [Fact]
     public void FloatScalarGlobal_PersistsAcrossCalls()
     {
         var e = new PrologEngine();

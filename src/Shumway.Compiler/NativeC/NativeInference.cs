@@ -96,6 +96,8 @@ public static class NativeInference
         var globalsUsed = new HashSet<string>();
         var lengthHint = new Dictionary<string, NativeKind>();  // MakeCString length arg → Int
         var holderVars = new HashSet<string>();            // Prolog var assigned from a holder global
+        var unknownNames = new HashSet<string>();          // identifiers neither prolog-var nor declared global
+        var bindIntermediates = new HashSet<string>();     // `Var is …` targets that are block-locals
 
         // Kinds of Prolog variables already determined as the statements are
         // scanned (seeded from the clause's type guards). A later `Var is …` whose
@@ -118,6 +120,10 @@ public static class NativeInference
                     break;
                 case CBindStmt b:
                     outputs.Add(b.Var);
+                    // A `Var is …` target that is not a Prolog variable is a block-local
+                    // intermediate — it is introduced here, so it is not an undeclared
+                    // global even if a later statement reads it.
+                    if (!prologVars.Contains(b.Var)) bindIntermediates.Add(b.Var);
                     // `Par1 is par1str` where par1str is a holder global → Par1 is a
                     // holder cursor (a slot), not a string value.
                     if (b.Value is CIdentExpr rhsId && holderGlobals.Contains(rhsId.Name))
@@ -129,20 +135,20 @@ public static class NativeInference
                         prologVarKind[b.Var] = k;   // visible to later statements
                     }
                     WalkExpr(b.Value, prologVars, referenced, globalType.Keys, globalsUsed,
-                        intrinsicIn, intrinsicOut);
+                        intrinsicIn, intrinsicOut, unknownNames);
                     CollectLengthHints(b.Value, prologVars, lengthHint);
                     break;
                 case CAssignStmt a:
                     WalkExpr(a.Target, prologVars, referenced, globalType.Keys, globalsUsed,
-                        intrinsicIn, intrinsicOut);
+                        intrinsicIn, intrinsicOut, unknownNames);
                     WalkExpr(a.Value, prologVars, referenced, globalType.Keys, globalsUsed,
-                        intrinsicIn, intrinsicOut);
+                        intrinsicIn, intrinsicOut, unknownNames);
                     CollectLengthHints(a.Target, prologVars, lengthHint);
                     CollectLengthHints(a.Value, prologVars, lengthHint);
                     break;
                 case CCallStmt c:
                     WalkExpr(c.Call, prologVars, referenced, globalType.Keys, globalsUsed,
-                        intrinsicIn, intrinsicOut);
+                        intrinsicIn, intrinsicOut, unknownNames);
                     CollectLengthHints(c.Call, prologVars, lengthHint);
                     break;
             }
@@ -194,6 +200,19 @@ public static class NativeInference
                 vars.Add(new NativeVar(name, kind.Value, mode));
         }
 
+        // Undeclared scalar globals: a lowercase identifier used in the block that
+        // is neither a Prolog variable, a block-local (`Var: type` declaration or an
+        // `is`-introduced intermediate), nor a declared `:- c` global is a typo or a
+        // missing declaration — a consult error, never a silently zero-initialised
+        // local. An `extern` declaration counts as declared (CParser folds `extern`
+        // into a normal global), so a cross-module global is referenced by declaring
+        // it `extern`; its per-engine storage is shared by name with the module that
+        // defines it.
+        foreach (var name in unknownNames.OrderBy(s => s))
+            if (!localType.ContainsKey(name) && !bindIntermediates.Contains(name))
+                diags.Add($"references undeclared native global '{name}' — declare it in a "
+                    + "':- c' region (or as 'extern' if it is defined in another module)");
+
         // Scalar globals: a referenced `:- c` global that is NOT a holder
         // (char*/char[]/reftype) — a plain int/float scalar. Mapped to persistent
         // per-engine storage with Arity static-storage semantics.
@@ -217,19 +236,25 @@ public static class NativeInference
 
     private static void WalkExpr(CExpr e, HashSet<string> prologVars,
         HashSet<string> referenced, IEnumerable<string> globalNames,
-        HashSet<string> globalsUsed, HashSet<string> intrinsicIn, HashSet<string> intrinsicOut)
+        HashSet<string> globalsUsed, HashSet<string> intrinsicIn, HashSet<string> intrinsicOut,
+        HashSet<string> unknownNames)
     {
         switch (e)
         {
             case CIdentExpr id:
                 if (prologVars.Contains(id.Name)) referenced.Add(id.Name);
                 else if (globalNames.Contains(id.Name)) globalsUsed.Add(id.Name);
+                // A name that is neither a Prolog variable nor a declared `:- c`
+                // global is a candidate undeclared global — flagged unless it turns
+                // out to be a block-local (a `Var: type` decl or an `is`-introduced
+                // intermediate), resolved by the caller.
+                else unknownNames.Add(id.Name);
                 break;
-            case CAddrOfExpr a: WalkExpr(a.Operand, prologVars, referenced, globalNames, globalsUsed, intrinsicIn, intrinsicOut); break;
-            case CDerefExpr d: WalkExpr(d.Operand, prologVars, referenced, globalNames, globalsUsed, intrinsicIn, intrinsicOut); break;
+            case CAddrOfExpr a: WalkExpr(a.Operand, prologVars, referenced, globalNames, globalsUsed, intrinsicIn, intrinsicOut, unknownNames); break;
+            case CDerefExpr d: WalkExpr(d.Operand, prologVars, referenced, globalNames, globalsUsed, intrinsicIn, intrinsicOut, unknownNames); break;
             case CBinaryExpr bin:
-                WalkExpr(bin.Left, prologVars, referenced, globalNames, globalsUsed, intrinsicIn, intrinsicOut);
-                WalkExpr(bin.Right, prologVars, referenced, globalNames, globalsUsed, intrinsicIn, intrinsicOut);
+                WalkExpr(bin.Left, prologVars, referenced, globalNames, globalsUsed, intrinsicIn, intrinsicOut, unknownNames);
+                WalkExpr(bin.Right, prologVars, referenced, globalNames, globalsUsed, intrinsicIn, intrinsicOut, unknownNames);
                 break;
             case CCallExpr c:
                 bool inStr = c.Name == "MakeCString";
@@ -252,7 +277,7 @@ public static class NativeInference
                     return;
                 }
                 foreach (var arg in c.Args)
-                    WalkExpr(arg, prologVars, referenced, globalNames, globalsUsed, intrinsicIn, intrinsicOut);
+                    WalkExpr(arg, prologVars, referenced, globalNames, globalsUsed, intrinsicIn, intrinsicOut, unknownNames);
                 break;
         }
     }
