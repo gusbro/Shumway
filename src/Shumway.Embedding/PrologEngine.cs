@@ -4321,9 +4321,20 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     public void UseNativeLibrary(string path)
     {
         System.ArgumentNullException.ThrowIfNull(path);
-        _nativeLibraries.Add(System.Runtime.InteropServices.NativeLibrary.Load(path));
+        IntPtr h = System.Runtime.InteropServices.NativeLibrary.Load(path);
+        _nativeLibraries.Add(h);
+        // ADR-024 — if the library provides the reftype allocator API
+        // (newreftype/freepar/…), use it so a native function that builds sub-nodes
+        // and the materializer share one heap (freepar can release the mixed graph).
+        _nativeAllocator ??= NativeReftypeAllocator.TryResolve(h);
         _nativeCallCache.Clear();
     }
+
+    private NativeReftypeAllocator? _nativeAllocator;
+
+    /// <summary>The native library's reftype allocator, if one is registered — used
+    /// to materialize/free reftype graphs through the library's own heap (ADR-024).</summary>
+    internal NativeReftypeAllocator? NativeAllocator => _nativeAllocator;
 
     /// <summary>Collects the <c>:- c</c> prototypes + typedefs so a P/Invoke
     /// <c>:- native</c> call can derive its marshalling signature. Called at consult

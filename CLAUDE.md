@@ -721,9 +721,17 @@ GXPROLOG`, C under `#else`): the uniform pattern is `fill_par(Term,&parNref)` �
   `t_reftype` via a C# fn-pointer, CI-safe) + 1 real-DLL end-to-end (compiles via
   `$SHUMWAY_NATIVE_CC` or a PATH compiler `cl`/`cc`/`gcc`/`clang` — no hardcoded
   paths, cross-platform; warns + skips with no toolchain).
+- **"C builds a list" — native-allocator mode (done).** A native function that
+  **allocates** sub-nodes (builds a list/term into the struct) can't have its graph
+  freed by `FreeHGlobal` (mixed allocators). Fix, as in Arity: when the native
+  library exports the reftype allocator API (`newreftype`/`freepar`/`getargp`/
+  `setcflt`), Shumway materializes and frees **through it** (`NativeReftypeAllocator`)
+  so the whole graph lives in the library's heap. `UseNativeLibrary` auto-detects it;
+  `PInvokeCall` uses it when present (else the HGlobal in-place path). Dematerialize
+  reads the C-built graph unchanged. Test (real DLL): `build_list` allocates a cons
+  list via `newreftype`, Shumway dematerializes `[1,2,3]` and `freepar`s it.
 - **Next:** delegate/IL emit for the snapshot + P/Invoke paths (currently
-  interpreter-only); the corpus "C builds a list" case (shared allocator); char* /
-  out-scalar pointer params; a `--native-dll` CLI flag.
+  interpreter-only); char* / out-scalar pointer params; a `--native-dll` CLI flag.
 
 **Phase 31 — REPL line-editing + `--dll` + native-interop correctness** — ✅ **Complete** (tagged `phase-31`; closure summary in [`docs/phase-31-closure.md`](docs/phase-31-closure.md)).
 

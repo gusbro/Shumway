@@ -147,6 +147,85 @@ public class NativePInvokeTests
         Assert.True(e.Query("go(10, Out), Out == 11.").Success);
         Assert.True(e.Query("go(41, Out), Out == 42.").Success);   // cached resolution on the 2nd call
     }
+
+    // ---- "C builds a list": the native function ALLOCATES sub-nodes. Materialize
+    //      and free go through the library's own reftype allocator (newreftype /
+    //      freepar), so the mixed graph is freed safely. ----
+
+    private const string ListCSource = """
+        #include <stdlib.h>
+        #include <string.h>
+        #ifdef _MSC_VER
+        #define EXPORT __declspec(dllexport)
+        #else
+        #define EXPORT __attribute__((visibility("default")))
+        #endif
+        typedef struct t_reftype {
+            long long ntype; long long nelem; struct t_reftype** pars;
+            union { char* cstr; int cint; double cflt; } crep;
+        } t_reftype;
+        EXPORT void newreftype(int u, int nelem, t_reftype** ref, int ntype, int val) {
+            (void)u;
+            t_reftype* r = (t_reftype*)calloc(1, sizeof(t_reftype));
+            r->ntype = ntype;
+            if (ntype == 1) r->crep.cint = val;
+            else if (ntype == 5) { r->nelem = nelem; r->pars = (t_reftype**)calloc(nelem, sizeof(t_reftype*)); r->crep.cstr = (char*)calloc(val,1); }
+            else if (ntype == 3 || ntype == 4) { r->nelem = val; r->crep.cstr = (char*)calloc(val,1); }
+            *ref = r;
+        }
+        EXPORT void freepar(t_reftype** ref) {
+            t_reftype* r = *ref; if (!r) return;
+            if (r->ntype == 3 || r->ntype == 4 || r->ntype == 5) free(r->crep.cstr);
+            if (r->ntype == 5) { long long i; for (i=0;i<r->nelem;i++){ t_reftype* c=r->pars[i]; freepar(&c);} free(r->pars); }
+            free(r); *ref = 0;
+        }
+        EXPORT t_reftype** getargp(int n, t_reftype** ref) { return &((*ref)->pars[n-1]); }
+        EXPORT int build_list(t_reftype* r, int n) {
+            t_reftype* tail = (t_reftype*)calloc(1,sizeof(t_reftype));
+            tail->ntype = 4; tail->nelem = 3; tail->crep.cstr = (char*)calloc(3,1); strcpy(tail->crep.cstr,"[]");
+            int i;
+            for (i=n;i>=1;i--){
+                t_reftype* cons=(t_reftype*)calloc(1,sizeof(t_reftype));
+                cons->ntype=5; cons->nelem=2; cons->crep.cstr=(char*)calloc(2,1); strcpy(cons->crep.cstr,".");
+                cons->pars=(t_reftype**)calloc(2,sizeof(t_reftype*));
+                t_reftype* head=(t_reftype*)calloc(1,sizeof(t_reftype)); head->ntype=1; head->crep.cint=i;
+                cons->pars[0]=head; cons->pars[1]=tail; tail=cons;
+            }
+            *r = *tail; free(tail); return 1;
+        }
+        """;
+
+    private const string ListProgram =
+        ":- set_prolog_flag(arity_compat, true).\n" +
+        ":- native build_list/2.\n" +
+        ":- c.\nreftype par1ref;\nint build_list(reftype, int);\n:- prolog.\n" +
+        "go(N, L) :-\n" +
+        "  integer(N),\n" +
+        "  { Ptr: preftype; Ptr is &par1ref },\n" +
+        "  fill_par(_, Ptr),\n" +
+        "  { ret: int; ret = 'build_list'(par1ref, N); Ret is ret },\n" +
+        "  Ret =:= 1,\n" +
+        "  reftype_term(L, Ptr).\n";
+
+    [Fact]
+    public void EndToEnd_NativeDll_BuildsAList_ViaLibraryAllocator()
+    {
+        string? dll = NativeTestDll.TryBuild(ListCSource, "buildlist", out string note);
+        if (dll is null)
+        {
+            _output.WriteLine("SKIPPED build-a-list P/Invoke test: " + note
+                + " — set SHUMWAY_NATIVE_CC to a C compiler to run it.");
+            return;
+        }
+        var e = new PrologEngine();
+        e.UseNativeLibrary(dll);   // exports newreftype/freepar → library-allocator mode
+        e.ConsultString(ListProgram);
+        // build_list (real C) allocates a cons list into par1ref via newreftype;
+        // Shumway dematerializes the C-built graph and freepar's it.
+        Assert.True(e.Query("go(3, L), L == [1,2,3].").Success);
+        Assert.True(e.Query("go(1, L), L == [1].").Success);
+        Assert.True(e.Query("go(5, L), length(L, 5), L = [1|_].").Success);
+    }
 }
 
 // Compiles a small C source to a shared library for the integration test. The

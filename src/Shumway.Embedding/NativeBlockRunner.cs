@@ -309,17 +309,31 @@ public static class NativeBlockRunner
     {
         var sig = res.Signature!;
         var enc = host.NativeTextEncoding;
+        var alloc = host.NativeAllocator;   // null → HGlobal in-place path
         var args = new object?[c.Args.Count];
-        System.Collections.Generic.List<(TermSlot Slot, IntPtr Native)>? reftypes = null;
+        // Handle = the allocator cell (alloc mode) or the HGlobal struct pointer.
+        System.Collections.Generic.List<(TermSlot Slot, IntPtr Handle)>? reftypes = null;
         for (int i = 0; i < c.Args.Count; i++)
         {
             if (i < sig.ParamIsReftype.Length && sig.ParamIsReftype[i]
                 && ReftypeName(c.Args[i]) is { } rn)
             {
                 var slot = host.GetOrCreateReftypeSlot(rn);
-                IntPtr p = NativeReftype.Materialize(slot.Materialize(), enc);
-                args[i] = p;
-                (reftypes ??= new()).Add((slot, p));
+                IntPtr handle, structPtr;
+                if (alloc is not null)
+                {
+                    // Library-allocated: the native function may build sub-nodes; the
+                    // whole graph (and ours) is freed by freepar.
+                    handle = alloc.Materialize(slot.Materialize(), enc);
+                    structPtr = NativeReftypeAllocator.StructPointer(handle);
+                }
+                else
+                {
+                    handle = NativeReftype.Materialize(slot.Materialize(), enc);
+                    structPtr = handle;
+                }
+                args[i] = structPtr;
+                (reftypes ??= new()).Add((slot, handle));
                 continue;
             }
             object? v = Eval(c.Args[i], host, env, outputs, resolve);
@@ -327,10 +341,12 @@ public static class NativeBlockRunner
         }
         object? ret = sig.Invoker(res.NativeFn, args);
         if (reftypes is not null)
-            foreach (var (slot, p) in reftypes)
+            foreach (var (slot, handle) in reftypes)
             {
-                slot.SetValue(NativeReftype.Dematerialize(p, enc));
-                NativeReftype.Free(p);
+                IntPtr structPtr = alloc is not null
+                    ? NativeReftypeAllocator.StructPointer(handle) : handle;
+                slot.SetValue(NativeReftype.Dematerialize(structPtr, enc));
+                if (alloc is not null) alloc.Free(handle); else NativeReftype.Free(handle);
             }
         return ret;
     }
