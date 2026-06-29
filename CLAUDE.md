@@ -657,6 +657,38 @@ questions from Phase 11's deferred list:
   `retract` / `assertz` — and avoids redundant `TryDescribe*`
   attempts that were already rejecting the shape.
 
+**Phase 32 — ADR-024 materializer ↔ dematerializer tier** — 🚧 **In flight.**
+
+Attacks ADR-024's deferred TODO: whole-term interop for the case the cursor tier
+doesn't cover — when C# is only a **trampoline to a native C function** (P/Invoke,
+can't touch the Shumway heap) or a .NET method that wants a struct **snapshot**.
+Driven by the GX `testProc` corpus (`C:\temp\testProc\*.c`, Prolog under `#ifdef
+GXPROLOG`, C under `#else`): the uniform pattern is `fill_par(Term,&parNref)` →
+`ret='native_fn'(...,parNref)` → `reftype_term(Term,&parNref)`.
+
+**Settled design (with the user):**
+- A **`:- native fn/N`** directive marks a function as native C (P/Invoke) vs .NET —
+  the call site picks the mechanism. Materialize/Dematerialize **wrap the `:- native`
+  call**; `fill_par`/`reftype_term` stay the cursor builtins (Phase 30). At the call,
+  each `:- c`-prototyped `reftype` arg is materialized to a blittable native
+  `t_reftype`, the pointer passed, then dematerialized back (native C may build/modify
+  it — e.g. `i_nextinfo`→`menu_to_list` builds a list).
+- The native DLL is named by engine config / a CLI flag (`--native-dll` /
+  `engine.UseNativeLibrary(...)`); `fn` resolves by name.
+- The **managed snapshot** path is the same core to a managed `Reftype`, triggered by
+  a .NET interop method whose parameter is `Reftype`/`ref Reftype` (not `TermSlot`).
+- `t_reftype` layout fixed **identical to Arity** (`int64 ntype; int64 nelem;
+  t_reftype** pars; union crep`), blittable; ntype 3 (atom) and 4 (string) both →
+  atom on dematerialize.
+
+- **Núcleo (done, pending commit).** `Shumway.Embedding.Reftype` — the managed
+  snapshot + `Reftype.Codes` ntype contract; `Materialize(Term)→Reftype` (recursive
+  over functor args) and `Dematerialize(Reftype)→Term` (atom/string→atom, undef→fresh
+  var). 10 round-trip tests over every ntype incl. nested functor and a "native C
+  built the struct" case. The use-case-independent core both backends build on; the
+  blittable native-memory form + the `:- native` call site + the managed-snapshot
+  trigger go on top next.
+
 **Phase 31 — REPL line-editing + `--dll` + native-interop correctness** — ✅ **Complete** (tagged `phase-31`; closure summary in [`docs/phase-31-closure.md`](docs/phase-31-closure.md)).
 
 Opened with two user-named themes (REPL line editing; a linker `--dll`) and grew,
