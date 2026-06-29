@@ -11,11 +11,14 @@ is compiled into code that marshals values between Prolog and .NET and calls
 `Shumway.Native.Interop`. The embedded C is, in effect, a small DSL for calling
 into your .NET interop layer with Prolog↔.NET marshalling generated for you.
 
-> **Status.** This page describes the int / float / string tier, working both
-> in-process (via `ConsultString`) and through the separate-compilation / bundle
-> pipeline (`shumway-compile` → `shumway-link`, including source-stripped Release
-> bundles and the generated `--exe`). The term/reftype tier and IL emission are in
-> progress — see *Limitations*.
+> **Status.** This page describes the int / float / string **value tier**, working
+> both in-process (via `ConsultString`) and through the separate-compilation /
+> bundle pipeline (`shumway-compile` → `shumway-link`, including source-stripped
+> Release bundles and the generated `--exe`). Native blocks are **compiled to IL** —
+> inlined into the predicate's Tier-1 method, both at runtime promotion and in
+> persisted bundles (see §10). Passing whole Prolog terms (the **reftype tier**) is
+> a separate mechanism documented in
+> [generic-term interop](generic-term-interop.md).
 
 ---
 
@@ -57,8 +60,10 @@ typedef char *pchar;                       % a typedef
 
 - **Function prototypes** give the parameter and return **types** used to infer the
   variables a block marshals, and the **C# signature** you must implement.
-- **Globals / buffers** become `static` fields of the interop class (you provide
-  them).
+- **Globals / buffers** — a `char*` / `char[]` buffer, or a `reftype` / `preftype`
+  global, is a reusable **holder**: a slot the engine manages (not a field you
+  declare on the interop class), used by the reftype tier — see
+  [generic-term interop](generic-term-interop.md).
 - **Typedefs** resolve type names (`pchar` → `char*` → a .NET `string`).
 
 A declared global is global to the whole program (C linkage): a region in one
@@ -166,8 +171,11 @@ public static class Interop
 }
 ```
 
-A C global declared in the `:- c` region (e.g. `char par2str[10240];`) is a
-`static` field of this same class, so your methods can read and write it directly.
+A C `char` buffer / reftype global declared in the `:- c` region (e.g.
+`char par2str[10240];`) is **not** a static field — Shumway manages it as a reusable
+holder slot, the reftype tier (see
+[generic-term interop](generic-term-interop.md)); a value block referencing it gets
+a holder cursor, not a directly-read field.
 
 ---
 
@@ -206,8 +214,10 @@ never silently turned into a no-op. A no-op'd block would make the program
 misbehave without you noticing, so consulting fails instead, with a message naming
 the problem. This happens when:
 
-- the block uses **unsupported syntax** — C control flow, or the deferred
-  term/reftype tier (`->`, `..`, `preftype`);
+- the block uses **unsupported syntax** — C control flow, or C struct
+  member-access syntax (`->`, `..`, `preftype`) inside a value block (whole-term /
+  reftype interop is done through its own intrinsics — see
+  [generic-term interop](generic-term-interop.md));
 - a **variable's type or mode cannot be inferred** (add a guard, §4); or
 - it **calls a native function your interop class does not provide** (the message
   names the function; register the class with `UseNativeInterop` and implement the
