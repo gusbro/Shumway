@@ -695,9 +695,19 @@ GXPROLOG`, C under `#else`): the uniform pattern is `fill_par(Term,&parNref)` �
   oriented). 14 tests: round-trips, the Arity field-offset layout, native-
   modification-in-place, deep-graph free, and the encoding (byte-level UTF-8 vs
   Latin1, engine default + config).
-- **Next:** the `:- native` directive + call-site materialization + P/Invoke binding
-  (`--native-dll` / `engine.UseNativeLibrary`), and the managed-snapshot trigger (a
-  `Reftype`-typed .NET interop param).
+- **`:- native` directive + managed-snapshot backend (done).** `:- native fn/N`
+  (a new `fx 1150` prefix operator) marks fn as a materializer-protocol function;
+  registered in `PrologEngine._nativeFunctions` (`IsNativeFunction`). At a block
+  interop call to a `:- native` fn, a `Reftype` parameter receives a **materialized
+  managed snapshot** of the reftype global's term (`slot.Materialize()` →
+  `Reftype.Materialize`), and the mutated snapshot is dematerialized back into the
+  slot after the call (`slot.SetValue(Reftype.Dematerialize(...))`) — wired in
+  `NativeBlockRunner.CallInterop` (the interpreter; the delegate/IL backends bail to
+  it on a `Reftype` param). 3 end-to-end tests: `go(10,Out)` → `result(11)` via
+  fill_par → materialize → C# mutates the snapshot → dematerialize → reftype_term.
+- **Next:** the P/Invoke backend (native `t_reftype` at the `:- native` call site +
+  binding via `--native-dll` / `engine.UseNativeLibrary`); delegate/IL emit for the
+  snapshot path (currently interpreter-only).
 
 **Phase 31 — REPL line-editing + `--dll` + native-interop correctness** — ✅ **Complete** (tagged `phase-31`; closure summary in [`docs/phase-31-closure.md`](docs/phase-31-closure.md)).
 

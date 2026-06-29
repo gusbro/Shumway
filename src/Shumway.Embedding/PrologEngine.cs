@@ -4289,6 +4289,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         set => _nativeTextEncoding = value ?? throw new System.ArgumentNullException(nameof(value));
     }
 
+    // ADR-024 — functor ids declared `:- native fn/N`: a native function using the
+    // materializer protocol (P/Invoke or a managed Reftype snapshot) rather than a
+    // plain .NET interop method.
+    private readonly HashSet<int> _nativeFunctions = new();
+
+    /// <summary>True if <paramref name="name"/>/<paramref name="arity"/> was declared
+    /// <c>:- native</c>.</summary>
+    internal bool IsNativeFunction(string name, int arity)
+        => _nativeFunctions.Count > 0
+           && _nativeFunctions.Contains(FunctorTable.Intern(AtomTable.Intern(name).Id, arity));
+
     // ADR-022 — per-engine persistent storage for SCALAR `:- c` globals (a plain
     // int/long/float/double global, as opposed to a char*/reftype holder). Like
     // _reftypeSlots these persist across calls/queries — Arity static-storage
@@ -5172,6 +5183,16 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     if (!_dynamicClauses.ContainsKey(fid))
                         _dynamicClauses[fid] = new List<Clause>();
                 }
+            }
+            else if (TryReadFunctorIndicatorDirective(body, "native", out var nativeSpecs))
+            {
+                // ADR-024 — `:- native fn/N` marks fn as a native function using the
+                // materializer protocol (a native C function via P/Invoke, or a .NET
+                // method taking a managed Reftype snapshot) rather than a plain .NET
+                // interop method. The block call site materializes its reftype args.
+                foreach (var (n, a) in nativeSpecs)
+                    _nativeFunctions.Add(FunctorTable.Intern(
+                        AtomTable.Intern(n, permanent: true).Id, a));
             }
             else if (TryReadFunctorIndicatorDirective(body, "discontiguous", out var discSpecs))
             {

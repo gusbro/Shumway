@@ -246,8 +246,24 @@ public static class NativeBlockRunner
                 $"native function '{c.Name}' is not a public static method of the interop class.");
         var ps = m.GetParameters();
         var args = new object?[c.Args.Count];
+        // ADR-024 — a `:- native` function using the materializer tier: a Reftype
+        // parameter receives a MANAGED SNAPSHOT of the reftype global's term
+        // (materialized), and the (possibly mutated) snapshot is written back to the
+        // slot after the call. (The P/Invoke backend materializes to native memory
+        // instead; the directive is the same.)
+        bool isNative = host.IsNativeFunction(c.Name, c.Args.Count);
+        System.Collections.Generic.List<(TermSlot Slot, Reftype Snapshot)>? writebacks = null;
         for (int i = 0; i < c.Args.Count; i++)
         {
+            if (isNative && i < ps.Length && ps[i].ParameterType == typeof(Reftype)
+                && ReftypeName(c.Args[i]) is { } nrn)
+            {
+                var slot = host.GetOrCreateReftypeSlot(nrn);
+                var snap = Reftype.Materialize(slot.Materialize());
+                args[i] = snap;
+                (writebacks ??= new()).Add((slot, snap));
+                continue;
+            }
             // ADR-024 — an interop parameter of type TermSlot receives a reftype
             // global directly (a `reftype` argument, e.g. `'i_form_exp'(.., par1ref)`):
             // resolve the name to its slot (creating it on first reference) rather
@@ -261,7 +277,13 @@ public static class NativeBlockRunner
             object? v = Eval(c.Args[i], host, env, outputs, resolve);
             args[i] = i < ps.Length ? ConvertArg(v, ps[i].ParameterType) : v;
         }
-        return InvokerFor(m)(args);
+        object? result = InvokerFor(m)(args);
+        // Dematerialize each snapshot back into its slot so a following
+        // reftype_term sees what the native function built / modified.
+        if (writebacks is not null)
+            foreach (var (slot, snap) in writebacks)
+                slot.SetValue(Reftype.Dematerialize(snap));
+        return result;
     }
 
     // Quick-win over the interpreted path: invoke each interop method through a

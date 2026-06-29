@@ -137,6 +137,7 @@ public sealed class OperatorTable
         t.Define("table", 1150, OperatorType.Fx);
         t.Define("mode", 1150, OperatorType.Fx);
         t.Define("ensure_linked", 1150, OperatorType.Fx);
+        t.Define("native", 1150, OperatorType.Fx);   // ADR-024 — `:- native fn/N`
 
         // Control
         t.Define(";", 1100, OperatorType.Xfy);
