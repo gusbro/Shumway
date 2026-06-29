@@ -272,9 +272,15 @@ it produces) runs the blocks. There is one rule to remember:
   engine's interop class does not provide raises a hard error when it executes
   (§7) — never a silent no-op.
 
-A native block inside a `:- dynamic` predicate is rejected at compile time (its
-clauses are rehydrated without the native transform, so the block would be
-inert). Put native blocks in static predicates.
+A native block inside a `:- dynamic` (or `:- visible`) predicate **works** — both
+when consulted and through the `.shmo`/`.shum` pipeline. The native transform runs
+*before* a clause is routed to the runtime store, so the rewritten clause (carrying
+the portable `$native_run` dispatch — a normal builtin) is what becomes the dynamic
+clause / bundle seed; calling the predicate runs the block exactly as a static
+clause does. Declaring a predicate dynamic is about `assert`/`retract`, not about
+whether its source clauses can compile. (Earlier this was a limitation — dynamic
+clauses were rehydrated without the transform, leaving the block inert; that is no
+longer the case.)
 
 > **Interop resolution is checked at run time, not at link time — by design.** The
 > linker cannot know which interop class the running engine will register (you may

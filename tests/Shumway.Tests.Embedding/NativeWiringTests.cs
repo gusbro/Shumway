@@ -33,6 +33,30 @@ public sealed class NativeWiringTests
     }
 
     [Fact]
+    public void NativeBlockInDynamicPredicate_Runs()
+    {
+        // The native transform runs BEFORE the dynamic-clause routing, so a
+        // `:- dynamic` predicate whose source clause uses a native block has the
+        // block rewritten too; the rewritten clause (carrying $native_run) goes to
+        // the runtime store and runs the block exactly as a static clause would.
+        var e = new PrologEngine();
+        e.UseNativeInterop(typeof(Interop));
+        e.ConsultString(
+            ":- set_prolog_flag(arity_compat, true).\n" +
+            ":- dynamic cmp/3.\n" +
+            ":- c.\nint strcmp(const char*, const char*);\n:- prolog.\n" +
+            "cmp(A, B, R) :- atom(A), atom(B), { R is 'strcmp'(A, B) }, integer(R).\n");
+
+        Assert.True(e.Query("cmp(abc, abc, R), R == 0.").Success);
+        Assert.True(e.Query("cmp(abd, abc, R), R == 1.").Success);
+
+        // Genuinely dynamic: retract the seeded clause and the predicate stops
+        // matching — proving the native-bearing clause lives in the runtime store.
+        Assert.True(e.Query("retract((cmp(_,_,_) :- _)).").Success);
+        Assert.False(e.Query("cmp(abc, abc, _).").Success);
+    }
+
+    [Fact]
     public void ConsultedNativeBlock_IntegerInputsAndArithmetic()
     {
         var e = new PrologEngine();
