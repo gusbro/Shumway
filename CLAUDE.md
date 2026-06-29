@@ -681,13 +681,19 @@ GXPROLOG`, C under `#else`): the uniform pattern is `fill_par(Term,&parNref)` �
   t_reftype** pars; union crep`), blittable; ntype 3 (atom) and 4 (string) both →
   atom on dematerialize.
 
-- **Núcleo (done, pending commit).** `Shumway.Embedding.Reftype` — the managed
+- **Núcleo — managed snapshot (done).** `Shumway.Embedding.Reftype` — the managed
   snapshot + `Reftype.Codes` ntype contract; `Materialize(Term)→Reftype` (recursive
   over functor args) and `Dematerialize(Reftype)→Term` (atom/string→atom, undef→fresh
   var). 10 round-trip tests over every ntype incl. nested functor and a "native C
-  built the struct" case. The use-case-independent core both backends build on; the
-  blittable native-memory form + the `:- native` call site + the managed-snapshot
-  trigger go on top next.
+  built the struct" case.
+- **Blittable native-memory form (done).** `Shumway.Embedding.NativeReftype` —
+  `Materialize(Term)→IntPtr` builds the real 32-byte `t_reftype` graph
+  (`AllocHGlobal`; cstr ANSI; cint 32-bit; pars = `t_reftype*` array),
+  `Dematerialize(IntPtr)→Term`, and `Free` walks + releases it (Arity `freepar`).
+  10 tests: round-trips, the Arity field-offset layout (ntype/nelem/pars/crep),
+  a native-modification-in-place case, and deep-graph free. Next: the `:- native`
+  directive + call-site materialization + P/Invoke binding (`--native-dll`), and the
+  managed-snapshot trigger (a `Reftype`-typed .NET interop param).
 
 **Phase 31 — REPL line-editing + `--dll` + native-interop correctness** — ✅ **Complete** (tagged `phase-31`; closure summary in [`docs/phase-31-closure.md`](docs/phase-31-closure.md)).
 
