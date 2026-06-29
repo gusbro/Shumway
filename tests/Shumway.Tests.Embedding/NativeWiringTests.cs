@@ -57,12 +57,12 @@ public sealed class NativeWiringTests
     }
 
     [Fact]
-    public void PlainScalarGlobal_IsZeroInitPerCallLocal_NotPersistent()
+    public void PlainScalarGlobal_PersistsAcrossCalls_ArityStaticStorage()
     {
-        // A plain scalar `:- c` global is NOT Arity static storage — it compiles to
-        // a zero-initialised local scoped to one block execution: reads see 0 and
-        // writes don't carry across calls. Pins the behavior documented in
-        // embedded-native-c.md §2.
+        // ADR-022 — a scalar `:- c` global has Arity static-storage semantics: it
+        // is per-engine persistent. A block seeds it from storage on entry and
+        // writes it through on every assignment, so increments accumulate across
+        // calls and are visible to other blocks. (embedded-native-c.md §2.)
         var e = new PrologEngine();
         e.UseNativeInterop(typeof(Interop));
         e.ConsultString(
@@ -73,8 +73,23 @@ public sealed class NativeWiringTests
 
         Assert.Equal(0L, e.Query("readc(X).").Get<long>("X"));   // uninitialised → 0
         Assert.Equal(1L, e.Query("incr(X).").Get<long>("X"));
-        Assert.Equal(1L, e.Query("incr(X).").Get<long>("X"));    // not 2 — no persistence
-        Assert.Equal(0L, e.Query("readc(X).").Get<long>("X"));   // writes never persisted
+        Assert.Equal(2L, e.Query("incr(X).").Get<long>("X"));    // persists across calls
+        Assert.Equal(3L, e.Query("incr(X).").Get<long>("X"));
+        Assert.Equal(3L, e.Query("readc(X).").Get<long>("X"));   // visible to another block
+    }
+
+    [Fact]
+    public void FloatScalarGlobal_PersistsAcrossCalls()
+    {
+        var e = new PrologEngine();
+        e.UseNativeInterop(typeof(Interop));
+        e.ConsultString(
+            ":- set_prolog_flag(arity_compat, true).\n" +
+            ":- c.\ndouble acc;\n:- prolog.\n" +
+            "add(D, X) :- float(D), { acc = acc + D; X is acc }, float(X).\n");
+
+        Assert.Equal(1.5, e.Query("add(1.5, X).").Get<double>("X"));
+        Assert.Equal(4.0, e.Query("add(2.5, X).").Get<double>("X"));   // 1.5 + 2.5 persisted
     }
 
     [Fact]

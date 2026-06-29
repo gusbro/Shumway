@@ -18,9 +18,13 @@ public sealed class NativeBlockEntry
 {
     public NativeVar[] Vars { get; }
     public CStmt[] Stmts { get; }
+    /// <summary>ADR-022 — the scalar `:- c` globals this block reads/writes, mapped
+    /// to per-engine persistent storage (Arity static-storage semantics).</summary>
+    public NativeScalarGlobal[] ScalarGlobals { get; }
     internal Func<Engine, bool>? Compiled;
     internal bool CompileTried;
-    public NativeBlockEntry(NativeVar[] vars, CStmt[] stmts) { Vars = vars; Stmts = stmts; }
+    public NativeBlockEntry(NativeVar[] vars, CStmt[] stmts, NativeScalarGlobal[] scalarGlobals)
+    { Vars = vars; Stmts = stmts; ScalarGlobals = scalarGlobals; }
 }
 
 /// <summary>ADR-022 step 4 (first cut) — turns an analysed native block into a
@@ -41,7 +45,8 @@ public static class NativeBlockRunner
     public static BuiltinImpl Build(
         IReadOnlyList<NativeVar> vars,
         IReadOnlyList<CStmt> stmts)
-        => engine => RunBlock(engine, vars, stmts, regOffset: 0);
+        => engine => RunBlock(engine, vars, stmts,
+            System.Array.Empty<NativeScalarGlobal>(), regOffset: 0);
 
     /// <summary>Runs a native block against the engine: the block's Prolog
     /// variables are in argument registers <paramref name="regOffset"/> ..
@@ -49,7 +54,7 @@ public static class NativeBlockRunner
     /// by <see cref="Build"/> (offset 0, a per-block builtin) and by the
     /// <c>'$native_run'</c> dispatch (offset 1, after the block-name argument).</summary>
     public static bool RunBlock(Engine engine, IReadOnlyList<NativeVar> vars,
-        IReadOnlyList<CStmt> stmts, int regOffset)
+        IReadOnlyList<CStmt> stmts, IReadOnlyList<NativeScalarGlobal> scalarGlobals, int regOffset)
     {
         var host = (PrologEngine)engine.Host!;
         Func<string, MethodInfo?> resolveInterop = host.ResolveNativeInterop;
@@ -62,9 +67,21 @@ public static class NativeBlockRunner
             if (v.Mode == NativeMode.Input)
                 env[v.Name] = ReadInput(host, engine, regOffset + index[v.Name], v.Kind);
 
+        // ADR-022 — seed each scalar `:- c` global from per-engine persistent
+        // storage (Arity static-storage). Writes are flushed back through
+        // ExecStmt (write-through), so a later failure doesn't revert them.
+        var scalarFloat = new Dictionary<string, bool>();
+        foreach (var g in scalarGlobals)
+        {
+            scalarFloat[g.Name] = g.IsFloat;
+            env[g.Name] = g.IsFloat
+                ? host.GetNativeGlobalFloat(g.Name)
+                : (object)host.GetNativeGlobalInt(g.Name);
+        }
+
         var outputs = new Dictionary<string, object?>();
         foreach (var st in stmts)
-            ExecStmt(st, host, env, outputs, index, kindOf, resolveInterop);
+            ExecStmt(st, host, env, outputs, index, kindOf, scalarFloat, resolveInterop);
 
         foreach (var (name, value) in outputs)
         {
@@ -119,7 +136,8 @@ public static class NativeBlockRunner
 
     private static void ExecStmt(CStmt st, PrologEngine host, Dictionary<string, object?> env,
         Dictionary<string, object?> outputs, Dictionary<string, int> prologVars,
-        Dictionary<string, NativeKind> kindOf, Func<string, MethodInfo?> resolve)
+        Dictionary<string, NativeKind> kindOf, Dictionary<string, bool> scalarFloat,
+        Func<string, MethodInfo?> resolve)
     {
         switch (st)
         {
@@ -143,6 +161,12 @@ public static class NativeBlockRunner
                 break;
             case CAssignStmt { Target: CIdentExpr id } a:
                 env[id.Name] = Eval(a.Value, host, env, outputs, resolve);
+                // ADR-022 — write-through to persistent storage for a scalar global.
+                if (scalarFloat.TryGetValue(id.Name, out bool isFloat))
+                {
+                    if (isFloat) host.SetNativeGlobalFloat(id.Name, System.Convert.ToDouble(env[id.Name]));
+                    else host.SetNativeGlobalInt(id.Name, System.Convert.ToInt64(env[id.Name]));
+                }
                 break;
             case CCallStmt c:
                 Eval(c.Call, host, env, outputs, resolve);   // side effect (an interop call / intrinsic)

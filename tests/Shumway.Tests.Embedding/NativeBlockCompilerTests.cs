@@ -36,7 +36,7 @@ public sealed class NativeBlockCompilerTests
             new CBindStmt("R", new CCallExpr("strcmp",
                 new CExpr[] { new CIdentExpr("A"), new CIdentExpr("B") })),
         };
-        Assert.NotNull(NativeBlockCompiler.TryCompile(vars, stmts, 0, Resolver));
+        Assert.NotNull(NativeBlockCompiler.TryCompile(vars, stmts, System.Array.Empty<Shumway.Compiler.NativeC.NativeScalarGlobal>(), 0, Resolver));
     }
 
     [Fact]
@@ -55,7 +55,7 @@ public sealed class NativeBlockCompilerTests
                 new CExpr[] { new CIdentExpr("A"), new CIdentExpr("B") })),
             new CBindStmt("R", new CBinaryExpr('*', new CIdentExpr("T"), new CIntExpr(2))),
         };
-        Assert.NotNull(NativeBlockCompiler.TryCompile(vars, stmts, 0, Resolver));
+        Assert.NotNull(NativeBlockCompiler.TryCompile(vars, stmts, System.Array.Empty<Shumway.Compiler.NativeC.NativeScalarGlobal>(), 0, Resolver));
     }
 
     [Fact]
@@ -67,7 +67,7 @@ public sealed class NativeBlockCompilerTests
         {
             new CBindStmt("R", new CDerefExpr(new CIdentExpr("R"))),
         };
-        Assert.Null(NativeBlockCompiler.TryCompile(vars, stmts, 0, Resolver));
+        Assert.Null(NativeBlockCompiler.TryCompile(vars, stmts, System.Array.Empty<Shumway.Compiler.NativeC.NativeScalarGlobal>(), 0, Resolver));
     }
 
     [Fact]
@@ -83,7 +83,7 @@ public sealed class NativeBlockCompilerTests
             new CBindStmt("R", new CCallExpr("does_not_exist",
                 new CExpr[] { new CIdentExpr("A") })),
         };
-        Assert.Null(NativeBlockCompiler.TryCompile(vars, stmts, 0, Resolver));
+        Assert.Null(NativeBlockCompiler.TryCompile(vars, stmts, System.Array.Empty<Shumway.Compiler.NativeC.NativeScalarGlobal>(), 0, Resolver));
     }
 
     [Fact]

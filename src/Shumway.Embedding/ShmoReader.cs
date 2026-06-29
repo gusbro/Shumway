@@ -170,7 +170,15 @@ public static class ShmoReader
                 var vMode = (Shumway.Compiler.NativeC.NativeMode)br.ReadByte();
                 vars[j] = new Shumway.Compiler.NativeC.NativeVar(vName, vKind, vMode);
             }
-            nativeBlocks[i] = new ShmoNativeBlock(nbName, rawText, vars);
+            uint sgCount = br.ReadUInt32();
+            var scalarGlobals = new Shumway.Compiler.NativeC.NativeScalarGlobal[sgCount];
+            for (uint j = 0; j < sgCount; j++)
+            {
+                string gName = ReadLengthPrefixedUtf8(br);
+                bool isFloat = br.ReadBoolean();
+                scalarGlobals[j] = new Shumway.Compiler.NativeC.NativeScalarGlobal(gName, isFloat);
+            }
+            nativeBlocks[i] = new ShmoNativeBlock(nbName, rawText, vars, scalarGlobals);
         }
 
         return new ShmoObject(moduleName, source, bytecode,

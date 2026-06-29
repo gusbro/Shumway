@@ -32,6 +32,15 @@ public static class NativeBlockCompiler
         typeof(PrologEngine).GetMethod(nameof(PrologEngine.ToTerm))!;
     private static readonly PropertyInfo HostProp =
         typeof(Engine).GetProperty(nameof(Engine.Host))!;
+    // ADR-022 — persistent scalar `:- c` global accessors.
+    private static readonly MethodInfo GetGlobalIntM =
+        typeof(PrologEngine).GetMethod(nameof(PrologEngine.GetNativeGlobalInt))!;
+    private static readonly MethodInfo SetGlobalIntM =
+        typeof(PrologEngine).GetMethod(nameof(PrologEngine.SetNativeGlobalInt))!;
+    private static readonly MethodInfo GetGlobalFloatM =
+        typeof(PrologEngine).GetMethod(nameof(PrologEngine.GetNativeGlobalFloat))!;
+    private static readonly MethodInfo SetGlobalFloatM =
+        typeof(PrologEngine).GetMethod(nameof(PrologEngine.SetNativeGlobalFloat))!;
     private static readonly ConstructorInfo AtomTermCtor =
         typeof(AtomTerm).GetConstructor(new[] { typeof(string) })!;
     // ADR-024 reftype tier:
@@ -71,14 +80,15 @@ public static class NativeBlockCompiler
     public static bool ForceInterpreter;
 
     public static Func<Engine, bool>? TryCompile(IReadOnlyList<NativeVar> vars,
-        IReadOnlyList<CStmt> stmts, int regOffset, Func<string, MethodInfo?> resolve)
+        IReadOnlyList<CStmt> stmts, IReadOnlyList<NativeScalarGlobal> scalarGlobals,
+        int regOffset, Func<string, MethodInfo?> resolve)
     {
         if (ForceInterpreter) return null;
         if (!System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported)
             return null;
         try
         {
-            var del = new Builder(vars, stmts, regOffset, resolve).Compile();
+            var del = new Builder(vars, stmts, scalarGlobals, regOffset, resolve).Compile();
             System.Threading.Interlocked.Increment(ref CompiledCount);
             return del;
         }
@@ -92,6 +102,8 @@ public static class NativeBlockCompiler
     {
         private readonly IReadOnlyList<NativeVar> _vars;
         private readonly IReadOnlyList<CStmt> _stmts;
+        private readonly IReadOnlyList<NativeScalarGlobal> _scalarGlobals;
+        private readonly Dictionary<string, bool> _scalarFloat = new();
         private readonly int _regOffset;
         private readonly Func<string, MethodInfo?> _resolve;
         private readonly Dictionary<string, int> _varIndex = new();
@@ -104,10 +116,13 @@ public static class NativeBlockCompiler
         private LabelTarget _ret = null!;
 
         public Builder(IReadOnlyList<NativeVar> vars, IReadOnlyList<CStmt> stmts,
+            IReadOnlyList<NativeScalarGlobal> scalarGlobals,
             int regOffset, Func<string, MethodInfo?> resolve)
         {
-            _vars = vars; _stmts = stmts; _regOffset = regOffset; _resolve = resolve;
+            _vars = vars; _stmts = stmts; _scalarGlobals = scalarGlobals;
+            _regOffset = regOffset; _resolve = resolve;
             for (int i = 0; i < vars.Count; i++) _varIndex[vars[i].Name] = i;
+            foreach (var g in scalarGlobals) _scalarFloat[g.Name] = g.IsFloat;
         }
 
         public Func<Engine, bool> Compile()
@@ -116,6 +131,11 @@ public static class NativeBlockCompiler
             _types = typing.Types;
             _toUnify = typing.ToUnify;
             _reftypeVars = typing.ReftypeVars;
+            // ADR-022 — a scalar `:- c` global's local is typed from its declared C
+            // kind (long/double), overriding the block-local guess, so seed/flush
+            // and the persistent storage agree.
+            foreach (var g in _scalarGlobals)
+                _types[g.Name] = g.IsFloat ? typeof(double) : typeof(long);
 
             _engine = Expression.Parameter(typeof(Engine), "engine");
             _host = Expression.Variable(typeof(PrologEngine), "host");
@@ -146,6 +166,12 @@ public static class NativeBlockCompiler
             foreach (var v in _vars)
                 if (v.Mode == NativeMode.Input)
                     body.Add(Expression.Assign(_locals[v.Name], ReadInput(v)));
+
+            // ADR-022 — seed each scalar global from per-engine persistent storage.
+            foreach (var g in _scalarGlobals)
+                body.Add(Expression.Assign(_locals[g.Name],
+                    Expression.Call(_host, g.IsFloat ? GetGlobalFloatM : GetGlobalIntM,
+                        Expression.Constant(g.Name))));
 
             // Run the statements.
             foreach (var st in _stmts)
@@ -188,6 +214,10 @@ public static class NativeBlockCompiler
                 {
                     var local = _locals[id.Name];
                     body.Add(Expression.Assign(local, Coerce(EmitExpr(a.Value), local.Type)));
+                    // ADR-022 — write-through to persistent storage for a scalar global.
+                    if (_scalarFloat.TryGetValue(id.Name, out bool isFloat))
+                        body.Add(Expression.Call(_host, isFloat ? SetGlobalFloatM : SetGlobalIntM,
+                            Expression.Constant(id.Name), local));
                     break;
                 }
                 case CCallStmt { Call: CCallExpr call }:

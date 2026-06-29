@@ -65,12 +65,15 @@ typedef char *pchar;                       % a typedef
     **holder** — a slot the engine manages (not a field you declare on the interop
     class), used by the reftype tier; see
     [generic-term interop](generic-term-interop.md);
-  - a plain **scalar** global (e.g. `int counter;`) is **not** persistent storage.
-    It compiles to a zero-initialised local scoped to a single block execution:
-    reads see `0`, and a write does **not** survive the block or carry across calls
-    (so `{ counter = counter + 1 }` evaluates to `1` *every* call). Arity's
-    static-storage scalar globals are not modelled — use a `:- dynamic` fact
-    (`assertz`/`retract`) for state that must persist across calls.
+  - a plain **scalar** global (e.g. `int counter;`, `double acc;`) has Arity
+    **static-storage** semantics: it is per-engine **persistent**. A block seeds it
+    from storage on entry and writes it through on every assignment, so
+    `{ counter = counter + 1 }` accumulates across calls (1, 2, 3, …) and the value
+    is visible to other blocks. It is zero-initialised until first written, integer
+    and floating kinds are both supported, and the persistence survives a
+    source-stripped Release bundle / `--exe` (the scalar-global metadata travels in
+    the bundle even though the `:- c` declarations themselves do not). Writes are
+    write-through — a later goal that fails does not roll back an earlier write.
 - **Typedefs** resolve type names (`pchar` → `char*` → a .NET `string`).
 
 A declared global is global to the whole program (C linkage): a region in one

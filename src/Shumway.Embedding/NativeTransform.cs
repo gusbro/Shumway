@@ -43,7 +43,7 @@ internal static class NativeTransform
     /// block by name and must match the table populated at load).</summary>
     public static List<Clause> Apply(IReadOnlyList<Clause> clauses, List<CDecl> cDecls,
         Func<string, System.Reflection.MethodInfo?>? resolveInterop,
-        Action<string, NativeVar[], CStmt[], string> registerBlock,
+        Action<string, NativeVar[], CStmt[], NativeScalarGlobal[], string> registerBlock,
         string namePrefix)
     {
         int index = 0;
@@ -115,7 +115,7 @@ internal static class NativeTransform
     private static Term Rewrite(Term t, Term clauseTerm, string predLabel,
         Shumway.Compiler.Lexer.SourcePosition clausePos, List<CDecl> cDecls,
         Func<string, System.Reflection.MethodInfo?>? resolve,
-        Action<string, NativeVar[], CStmt[], string> registerBlock, string namePrefix, ref int index,
+        Action<string, NativeVar[], CStmt[], NativeScalarGlobal[], string> registerBlock, string namePrefix, ref int index,
         Dictionary<string, CType> clauseHints)
     {
         if (t is not CompoundTerm c) return t;
@@ -136,7 +136,7 @@ internal static class NativeTransform
     private static Term TransformBlock(string text, Term clauseTerm, string predLabel,
         Shumway.Compiler.Lexer.SourcePosition pos, List<CDecl> cDecls,
         Func<string, System.Reflection.MethodInfo?>? resolve,
-        Action<string, NativeVar[], CStmt[], string> registerBlock, string name,
+        Action<string, NativeVar[], CStmt[], NativeScalarGlobal[], string> registerBlock, string name,
         Dictionary<string, CType> clauseHints)
     {
         NativeBlockCompileException Error(string detail) => new(
@@ -174,7 +174,7 @@ internal static class NativeTransform
         // Hand the analysed block to the sink (engine table or bundle table), and
         // emit the portable dispatch `'$native_run'('$nb$…', V1..Vk)`.
         var vars = info.PrologVars.ToArray();
-        registerBlock(name, vars, stmts.ToArray(), text);
+        registerBlock(name, vars, stmts.ToArray(), info.ScalarGlobals.ToArray(), text);
         var callArgs = new Term[vars.Length + 1];
         callArgs[0] = new AtomTerm(name);
         for (int i = 0; i < vars.Length; i++)

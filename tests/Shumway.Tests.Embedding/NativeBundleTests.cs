@@ -206,6 +206,47 @@ public sealed class NativeBundleTests
         Assert.True(e.Query("cmp(abc, abd, R), R == -1.").Success);
     }
 
+    // ADR-022 — a scalar `:- c` global (`int counter;`) with Arity static-storage
+    // semantics. The scalar-global metadata travels in the bundle (the `:- c`
+    // declarations themselves do not), so persistence survives a source-stripped
+    // bundle and the Tier-0 → Tier-1 IL transition.
+    private const string CounterProgram =
+        ":- set_prolog_flag(arity_compat, true).\n" +
+        ":- public incr/1.\n" +
+        ":- c.\nint counter;\n:- prolog.\n" +
+        "incr(X) :- { counter = counter + 1; X is counter }, integer(X).\n";
+
+    [Fact]
+    public void ReleaseBundle_ScalarGlobal_PersistsAcrossCalls()
+    {
+        var bytes = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { ShmoCompiler.CompileSource(CounterProgram, "prog", ShmoBuildMode.Release) },
+            EntryPoints = new[] { new PredicateRef("incr", 1) },
+            StripSource = true,
+            BakePrelude = true,
+        }).Bytes!;
+        var e = new PrologEngine();
+        e.LoadBundle(BundleReader.FromBytes(bytes));
+        Assert.Equal(1L, e.Query("incr(X).").Get<long>("X"));
+        Assert.Equal(2L, e.Query("incr(X).").Get<long>("X"));   // persisted in the loaded bundle
+        Assert.Equal(3L, e.Query("incr(X).").Get<long>("X"));
+    }
+
+    [Fact]
+    public void Tier1Inline_ScalarGlobal_PersistsAcrossPromotion()
+    {
+        // The global must keep accumulating once the predicate promotes to Tier-1
+        // IL (the inlined block seeds from / writes through the same per-engine
+        // storage) — so the i-th call returns i across the Tier-0→Tier-1 boundary.
+        var e = new PrologEngine();
+        e.UseNativeInterop(typeof(Interop));
+        e.IlPromotion.Threshold = 1;
+        e.ConsultString(CounterProgram);
+        for (long i = 1; i <= 8; i++)
+            Assert.Equal(i, e.Query("incr(X).").Get<long>("X"));
+    }
+
     [Fact]
     public void ReleaseBundle_MissingInterop_ThrowsAtRun()
     {

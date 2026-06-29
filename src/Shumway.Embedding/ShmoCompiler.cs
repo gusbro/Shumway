@@ -319,8 +319,8 @@ public static class ShmoCompiler
             {
                 rawClauses = NativeTransform.Apply(rawClauses, cDecls,
                     resolveInterop: null,
-                    (name, vars, _, rawText) =>
-                        nativeBlocks.Add(new ShmoNativeBlock(name, rawText, vars)),
+                    (name, vars, _, scalars, rawText) =>
+                        nativeBlocks.Add(new ShmoNativeBlock(name, rawText, vars, scalars)),
                     "$nb$" + moduleName + "$");
             }
             catch (NativeBlockCompileException ex)

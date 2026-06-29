@@ -214,7 +214,15 @@ public static class BundleReader
                 var mode = (Shumway.Compiler.NativeC.NativeMode)br.ReadByte();
                 vars[k] = new Shumway.Compiler.NativeC.NativeVar(vName, kind, mode);
             }
-            blocks.Add(new ShmoNativeBlock(nbName, rawText, vars));
+            uint sgCount = br.ReadUInt32();
+            var scalarGlobals = new Shumway.Compiler.NativeC.NativeScalarGlobal[sgCount];
+            for (uint k = 0; k < sgCount; k++)
+            {
+                string gName = ReadLengthPrefixedUtf8(br);
+                bool isFloat = br.ReadBoolean();
+                scalarGlobals[k] = new Shumway.Compiler.NativeC.NativeScalarGlobal(gName, isFloat);
+            }
+            blocks.Add(new ShmoNativeBlock(nbName, rawText, vars, scalarGlobals));
         }
         return blocks;
     }

@@ -2777,12 +2777,12 @@ public static class MetaBuiltins
         if (!block.CompileTried)
         {
             block.Compiled = NativeBlockCompiler.TryCompile(
-                block.Vars, block.Stmts, regOffset: 1, host.ResolveNativeInterop);
+                block.Vars, block.Stmts, block.ScalarGlobals, regOffset: 1, host.ResolveNativeInterop);
             block.CompileTried = true;
         }
         return block.Compiled is not null
             ? block.Compiled(engine)
-            : NativeBlockRunner.RunBlock(engine, block.Vars, block.Stmts, regOffset: 1);
+            : NativeBlockRunner.RunBlock(engine, block.Vars, block.Stmts, block.ScalarGlobals, regOffset: 1);
     }
 
     // ----- ADR-024 generic-term interop (reftype tier) -----------------------

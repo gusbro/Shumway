@@ -3449,7 +3449,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         foreach (var nb in entry.NativeBlocks)
         {
             var stmts = Shumway.Compiler.NativeC.CParser.ParseStatements(nb.RawText);
-            AddNativeBlock(nb.Name, nb.Vars.ToArray(), stmts.ToArray());
+            AddNativeBlock(nb.Name, nb.Vars.ToArray(), stmts.ToArray(), nb.ScalarGlobals.ToArray());
         }
 
         // Decode + literal-remap + record + warm IL (the bytecode IS the definition
@@ -4271,8 +4271,31 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private int _nativeBlockConsultSeq;
 
     internal void AddNativeBlock(string name,
-        Shumway.Compiler.NativeC.NativeVar[] vars, Shumway.Compiler.NativeC.CStmt[] stmts)
-        => _nativeBlocks[name] = new NativeBlockEntry(vars, stmts);
+        Shumway.Compiler.NativeC.NativeVar[] vars, Shumway.Compiler.NativeC.CStmt[] stmts,
+        Shumway.Compiler.NativeC.NativeScalarGlobal[] scalarGlobals)
+        => _nativeBlocks[name] = new NativeBlockEntry(vars, stmts, scalarGlobals);
+
+    // ADR-022 — per-engine persistent storage for SCALAR `:- c` globals (a plain
+    // int/long/float/double global, as opposed to a char*/reftype holder). Like
+    // _reftypeSlots these persist across calls/queries — Arity static-storage
+    // semantics. A native block seeds its value on entry and writes it through on
+    // every assignment. Plain CLR values, heap-independent, so they survive query
+    // teardown.
+    private readonly Dictionary<string, long> _nativeGlobalInt = new();
+    private readonly Dictionary<string, double> _nativeGlobalFloat = new();
+
+    /// <summary>Reads an integer scalar `:- c` native global's persistent value
+    /// (0 if never written). Public so runtime Expression / Tier-1 IL native-block
+    /// codegen can emit a direct call.</summary>
+    public long GetNativeGlobalInt(string name)
+        => _nativeGlobalInt.TryGetValue(name, out var v) ? v : 0L;
+    /// <summary>Writes an integer scalar `:- c` native global's persistent value.</summary>
+    public void SetNativeGlobalInt(string name, long v) => _nativeGlobalInt[name] = v;
+    /// <summary>Reads a float scalar `:- c` native global's persistent value.</summary>
+    public double GetNativeGlobalFloat(string name)
+        => _nativeGlobalFloat.TryGetValue(name, out var v) ? v : 0.0;
+    /// <summary>Writes a float scalar `:- c` native global's persistent value.</summary>
+    public void SetNativeGlobalFloat(string name, double v) => _nativeGlobalFloat[name] = v;
 
     internal NativeBlockEntry? NativeBlock(string name)
         => _nativeBlocks.TryGetValue(name, out var b) ? b : null;
@@ -4333,7 +4356,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             {
                 var e = NativeBlock(n);
                 return e is null ? null
-                    : new Shumway.Compiler.NativeC.NativeBlockBody(e.Vars, e.Stmts);
+                    : new Shumway.Compiler.NativeC.NativeBlockBody(e.Vars, e.Stmts, e.ScalarGlobals);
             },
             InteropResolver = ResolveNativeInterop,
             ReadRegisterAsTerm = typeof(RegisterMarshalling)
@@ -4349,6 +4372,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             ToTermDouble = toTerm.MakeGenericMethod(typeof(double)),
             AtomTermCtor = typeof(Shumway.Compiler.Ast.AtomTerm)
                 .GetConstructor(new[] { typeof(string) })!,
+            // ADR-022 persistent scalar-global accessors.
+            GetNativeGlobalInt = typeof(PrologEngine).GetMethod(nameof(GetNativeGlobalInt))!,
+            SetNativeGlobalInt = typeof(PrologEngine).GetMethod(nameof(SetNativeGlobalInt))!,
+            GetNativeGlobalFloat = typeof(PrologEngine).GetMethod(nameof(GetNativeGlobalFloat))!,
+            SetNativeGlobalFloat = typeof(PrologEngine).GetMethod(nameof(SetNativeGlobalFloat))!,
             // ADR-024 reftype tier handles.
             TermSlotType = typeof(TermSlot),
             GetOrCreateReftypeSlot = typeof(PrologEngine).GetMethod(
@@ -5260,7 +5288,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             RegisterReftypeGlobals(cDecls);
             string prefix = "$nb$" + (_nativeBlockConsultSeq++) + "$";
             clauses = NativeTransform.Apply(clauses, cDecls, ResolveNativeInterop,
-                (name, vars, stmts, _) => AddNativeBlock(name, vars, stmts), prefix);
+                (name, vars, stmts, scalars, _) => AddNativeBlock(name, vars, stmts, scalars), prefix);
         }
 
         // Source-declared clauses for dynamic predicates (chunk 68): route

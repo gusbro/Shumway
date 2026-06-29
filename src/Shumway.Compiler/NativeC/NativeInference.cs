@@ -13,6 +13,14 @@ public enum NativeMode { Input, Output }
 /// <summary>An inferred binding for one Prolog variable named in a native block.</summary>
 public sealed record NativeVar(string Name, NativeKind Kind, NativeMode Mode);
 
+/// <summary>ADR-022 — a SCALAR <c>:- c</c> global referenced by a block (a plain
+/// <c>int</c> / <c>long</c> / <c>float</c> / <c>double</c> global, as opposed to a
+/// <c>char*</c>/<c>reftype</c> holder). It maps to per-engine persistent storage
+/// (Arity static-storage semantics) — the block seeds its value on entry and writes
+/// it through on every assignment. <see cref="IsFloat"/> picks the storage /
+/// CLR-local type (<c>double</c> vs <c>long</c>).</summary>
+public sealed record NativeScalarGlobal(string Name, bool IsFloat);
+
 /// <summary>The result of analysing one <c>{ … }</c> block against its enclosing
 /// clause and the <c>:- c</c> symbol table: the marshalled Prolog variables (with
 /// inferred type+mode), the block-local C temporaries, the referenced
@@ -22,7 +30,8 @@ public sealed record NativeBlockInfo(
     IReadOnlyList<NativeVar> PrologVars,
     IReadOnlyList<string> Locals,
     IReadOnlyList<string> Globals,
-    IReadOnlyList<string> Diagnostics);
+    IReadOnlyList<string> Diagnostics,
+    IReadOnlyList<NativeScalarGlobal> ScalarGlobals);
 
 /// <summary>ADR-022 step 3 — infers the type and mode of each Prolog variable a
 /// native block marshals. Sources, most specific first: a block-local
@@ -185,10 +194,23 @@ public static class NativeInference
                 vars.Add(new NativeVar(name, kind.Value, mode));
         }
 
+        // Scalar globals: a referenced `:- c` global that is NOT a holder
+        // (char*/char[]/reftype) — a plain int/float scalar. Mapped to persistent
+        // per-engine storage with Arity static-storage semantics.
+        var scalarGlobals = new List<NativeScalarGlobal>();
+        foreach (var name in globalsUsed.OrderBy(s => s))
+        {
+            if (holderGlobals.Contains(name)) continue;
+            if (!globalType.TryGetValue(name, out var gt)) continue;   // undeclared → not a global
+            var rt = ResolveTypedef(gt, typedefs);
+            scalarGlobals.Add(new NativeScalarGlobal(name, rt.Name is "float" or "double"));
+        }
+
         return new NativeBlockInfo(vars,
             localType.Keys.OrderBy(s => s).ToList(),
             globalsUsed.OrderBy(s => s).ToList(),
-            diags);
+            diags,
+            scalarGlobals);
     }
 
     // -----------------------------------------------------------------------

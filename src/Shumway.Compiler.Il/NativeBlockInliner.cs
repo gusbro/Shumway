@@ -93,12 +93,14 @@ internal static class NativeBlockInliner
         private readonly int _salt;
         private readonly Dictionary<string, int> _varIndex = new();
         private readonly Dictionary<string, Sigil.Local> _locals = new();
+        private readonly Dictionary<string, bool> _scalarFloat = new();   // ADR-022 scalar globals
 
         public Emitter(Sigil.Emit<PredicateDelegate>? emit, NativeInlineContext ctx,
             NativeBlockTyping typing, NativeBlockBody block, Sigil.Label fail, int salt)
         {
             _emit = emit; _ctx = ctx; _typing = typing; _block = block; _fail = fail; _salt = salt;
             for (int i = 0; i < block.Vars.Length; i++) _varIndex[block.Vars[i].Name] = i;
+            foreach (var g in block.ScalarGlobals) _scalarFloat[g.Name] = g.IsFloat;
         }
 
         // Prolog variable i is in argument register 1 + i (register 0 held the
@@ -112,6 +114,11 @@ internal static class NativeBlockInliner
             if (_typing.ReftypeVars.Count > 0 && !_ctx.HasReftype)
                 throw new NativeBlockBailException();
 
+            // ADR-022 — a scalar `:- c` global's local is typed from its declared C
+            // kind, so seed/flush and the persistent storage agree.
+            foreach (var g in _block.ScalarGlobals)
+                _typing.Types[g.Name] = g.IsFloat ? typeof(double) : typeof(long);
+
             if (_emit is not null)
             {
                 foreach (var (n, t) in _typing.Types)
@@ -123,6 +130,10 @@ internal static class NativeBlockInliner
             foreach (var v in _block.Vars)
                 if (v.Mode == NativeMode.Input)
                     EmitReadInput(v);
+
+            // ADR-022 — seed each scalar global from per-engine persistent storage.
+            foreach (var g in _block.ScalarGlobals)
+                EmitSeedScalarGlobal(g);
 
             foreach (var st in _block.Stmts)
                 EmitStmt(st);
@@ -235,6 +246,28 @@ internal static class NativeBlockInliner
             var srcType = EmitExpr(value);
             Coerce(srcType, targetType);
             _emit?.StoreLocal(_locals[target]);
+            // ADR-022 — write-through to persistent storage for a scalar global.
+            if (_scalarFloat.TryGetValue(target, out bool isFloat) && _emit is not null)
+            {
+                _emit.LoadArgument(0);
+                _emit.Call(_ctx.HostGetter);
+                _emit.CastClass(_ctx.HostType);
+                _emit.LoadConstant(target);
+                _emit.LoadLocal(_locals[target]);
+                _emit.Call(isFloat ? _ctx.SetNativeGlobalFloat : _ctx.SetNativeGlobalInt);
+            }
+        }
+
+        // ADR-022 — local = host.GetNativeGlobal{Int,Float}(name).
+        private void EmitSeedScalarGlobal(NativeScalarGlobal g)
+        {
+            if (_emit is null) return;
+            _emit.LoadArgument(0);
+            _emit.Call(_ctx.HostGetter);
+            _emit.CastClass(_ctx.HostType);
+            _emit.LoadConstant(g.Name);
+            _emit.Call(g.IsFloat ? _ctx.GetNativeGlobalFloat : _ctx.GetNativeGlobalInt);
+            _emit.StoreLocal(_locals[g.Name]);
         }
 
         // host.GetOrCreateReftypeSlot(name) — leaves a TermSlot on the stack.

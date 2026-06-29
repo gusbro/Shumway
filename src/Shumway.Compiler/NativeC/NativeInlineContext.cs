@@ -8,7 +8,7 @@ namespace Shumway.Compiler.NativeC;
 /// emitter lives in <c>Shumway.Compiler.Il</c>, which can reference
 /// <c>Shumway.Compiler.NativeC</c> but not <c>Shumway.Embedding</c>, so the block
 /// travels as these Compiler-level types.</summary>
-public sealed record NativeBlockBody(NativeVar[] Vars, CStmt[] Stmts);
+public sealed record NativeBlockBody(NativeVar[] Vars, CStmt[] Stmts, NativeScalarGlobal[] ScalarGlobals);
 
 /// <summary>ADR-022 item 2 — the context the IL compiler needs to inline a
 /// <c>'$native_run'('$nb$…', regs)</c> call directly into a predicate's IL,
@@ -48,6 +48,12 @@ public sealed class NativeInlineContext
     public required MethodInfo ToTermLong { get; init; }            // host.ToTerm<long>(long)
     public required MethodInfo ToTermDouble { get; init; }
     public required ConstructorInfo AtomTermCtor { get; init; }     // new AtomTerm(string)
+
+    // ADR-022 — persistent scalar `:- c` global accessors (host = PrologEngine).
+    public required MethodInfo GetNativeGlobalInt { get; init; }    // host.GetNativeGlobalInt(string) -> long
+    public required MethodInfo SetNativeGlobalInt { get; init; }    // host.SetNativeGlobalInt(string, long)
+    public required MethodInfo GetNativeGlobalFloat { get; init; }  // host.GetNativeGlobalFloat(string) -> double
+    public required MethodInfo SetNativeGlobalFloat { get; init; }  // host.SetNativeGlobalFloat(string, double)
 
     // ADR-024 reftype tier — the handles for emitting reftype operations inline
     // (the TermSlot type and the engine/host methods Compiler.Il can't name).

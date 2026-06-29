@@ -104,6 +104,13 @@ public static class ShmoWriter
                 bw.Write((byte)v.Kind);
                 bw.Write((byte)v.Mode);
             }
+            // ADR-022 — scalar `:- c` globals (name + is-float).
+            bw.Write((uint)nb.ScalarGlobals.Count);
+            foreach (var g in nb.ScalarGlobals)
+            {
+                WriteLengthPrefixedUtf8(bw, g.Name);
+                bw.Write(g.IsFloat);
+            }
         }
 
         bw.Flush();

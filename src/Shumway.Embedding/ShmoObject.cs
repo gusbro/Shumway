@@ -223,12 +223,18 @@ public sealed class ShmoNativeBlock
     public string Name { get; }
     public string RawText { get; }
     public IReadOnlyList<Shumway.Compiler.NativeC.NativeVar> Vars { get; }
+    /// <summary>ADR-022 — the scalar `:- c` globals the block reads/writes (mapped
+    /// to per-engine persistent storage at load). Carried because the `:- c`
+    /// declarations themselves do not travel in the bundle.</summary>
+    public IReadOnlyList<Shumway.Compiler.NativeC.NativeScalarGlobal> ScalarGlobals { get; }
     public ShmoNativeBlock(string name, string rawText,
-        IReadOnlyList<Shumway.Compiler.NativeC.NativeVar> vars)
+        IReadOnlyList<Shumway.Compiler.NativeC.NativeVar> vars,
+        IReadOnlyList<Shumway.Compiler.NativeC.NativeScalarGlobal> scalarGlobals)
     {
         Name = name;
         RawText = rawText;
         Vars = vars;
+        ScalarGlobals = scalarGlobals;
     }
 }
 
