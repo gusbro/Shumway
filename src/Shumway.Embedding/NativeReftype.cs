@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 using Shumway.Compiler.Ast;
 
 namespace Shumway.Embedding;
@@ -23,8 +24,10 @@ namespace Shumway.Embedding;
 /// <see cref="Reftype.Codes"/> ntype contract; this one allocates with
 /// <see cref="Marshal.AllocHGlobal(int)"/> and must be released with
 /// <see cref="Free"/> (the equivalent of Arity's <c>freepar</c>), which walks the
-/// graph. <c>char*</c> text is ANSI (matching C <c>char*</c>); the integer is a
-/// 32-bit <c>cint</c> as in Arity.</para>
+/// graph. <c>char*</c> text is encoded with a caller-supplied
+/// <see cref="System.Text.Encoding"/> (default UTF-8; configurable per engine via
+/// <see cref="PrologEngine.NativeTextEncoding"/>); the integer is a 32-bit
+/// <c>cint</c> as in Arity.</para>
 /// </summary>
 public static class NativeReftype
 {
@@ -35,10 +38,17 @@ public static class NativeReftype
     private const int OffCrep = 24;
     internal const int StructSize = 32;
 
+    /// <summary>The default <c>char*</c> text encoding when none is supplied — UTF-8
+    /// (no BOM). Configurable per engine via <see cref="PrologEngine.NativeTextEncoding"/>.</summary>
+    public static readonly Encoding DefaultEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+
     /// <summary>Copies a term into a freshly allocated native <c>t_reftype</c> graph
-    /// and returns the pointer. Release it with <see cref="Free"/>.</summary>
-    public static IntPtr Materialize(Term term)
+    /// and returns the pointer. <paramref name="encoding"/> (default UTF-8) governs
+    /// <c>char*</c> text — atom/string content and a functor's name. Release the
+    /// graph with <see cref="Free"/>.</summary>
+    public static IntPtr Materialize(Term term, Encoding? encoding = null)
     {
+        Encoding enc = encoding ?? DefaultEncoding;
         IntPtr p = Marshal.AllocHGlobal(StructSize);
         // Zero the whole struct first so unused fields (pars/crep high bytes) are
         // deterministic.
@@ -66,21 +76,21 @@ public static class NativeReftype
                 break;
             case AtomTerm a:
                 Marshal.WriteInt64(p, OffNtype, Reftype.Codes.Atom);
-                Marshal.WriteInt64(p, OffNelem, a.Name.Length);
-                Marshal.WriteIntPtr(p, OffCrep, Marshal.StringToHGlobalAnsi(a.Name));      // cstr
+                Marshal.WriteInt64(p, OffNelem, enc.GetByteCount(a.Name));
+                Marshal.WriteIntPtr(p, OffCrep, AllocString(a.Name, enc));                 // cstr
                 break;
             case StringTerm s:
                 Marshal.WriteInt64(p, OffNtype, Reftype.Codes.String);
-                Marshal.WriteInt64(p, OffNelem, s.Content.Length);
-                Marshal.WriteIntPtr(p, OffCrep, Marshal.StringToHGlobalAnsi(s.Content));
+                Marshal.WriteInt64(p, OffNelem, enc.GetByteCount(s.Content));
+                Marshal.WriteIntPtr(p, OffCrep, AllocString(s.Content, enc));
                 break;
             case CompoundTerm c:
                 Marshal.WriteInt64(p, OffNtype, Reftype.Codes.Functor);
                 Marshal.WriteInt64(p, OffNelem, c.Args.Length);
-                Marshal.WriteIntPtr(p, OffCrep, Marshal.StringToHGlobalAnsi(c.Functor));   // functor name in cstr
+                Marshal.WriteIntPtr(p, OffCrep, AllocString(c.Functor, enc));              // functor name in cstr
                 IntPtr pars = Marshal.AllocHGlobal(checked(c.Args.Length * IntPtr.Size));
                 for (int k = 0; k < c.Args.Length; k++)
-                    Marshal.WriteIntPtr(pars, k * IntPtr.Size, Materialize(c.Args[k]));
+                    Marshal.WriteIntPtr(pars, k * IntPtr.Size, Materialize(c.Args[k], enc));
                 Marshal.WriteIntPtr(p, OffPars, pars);
                 break;
             // default: leaves Nontype.
@@ -92,9 +102,10 @@ public static class NativeReftype
     /// counterpart of <see cref="Materialize"/>, also used after a native C function
     /// has built / modified the struct. Atom and string both become an atom;
     /// undef/nontype become a fresh unbound variable.</summary>
-    public static Term Dematerialize(IntPtr p)
+    public static Term Dematerialize(IntPtr p, Encoding? encoding = null)
     {
         if (p == IntPtr.Zero) return new VarTerm("_");
+        Encoding enc = encoding ?? DefaultEncoding;
         long ntype = Marshal.ReadInt64(p, OffNtype);
         switch (ntype)
         {
@@ -104,20 +115,44 @@ public static class NativeReftype
                 return new FloatTerm(BitConverter.Int64BitsToDouble(Marshal.ReadInt64(p, OffCrep)));
             case Reftype.Codes.Atom:
             case Reftype.Codes.String:
-                return new AtomTerm(Marshal.PtrToStringAnsi(Marshal.ReadIntPtr(p, OffCrep)) ?? string.Empty);
+                return new AtomTerm(ReadString(Marshal.ReadIntPtr(p, OffCrep), enc));
             case Reftype.Codes.Functor:
             {
-                string name = Marshal.PtrToStringAnsi(Marshal.ReadIntPtr(p, OffCrep)) ?? string.Empty;
+                string name = ReadString(Marshal.ReadIntPtr(p, OffCrep), enc);
                 int arity = checked((int)Marshal.ReadInt64(p, OffNelem));
                 IntPtr pars = Marshal.ReadIntPtr(p, OffPars);
                 var args = new Term[arity];
                 for (int k = 0; k < arity; k++)
-                    args[k] = Dematerialize(Marshal.ReadIntPtr(pars, k * IntPtr.Size));
+                    args[k] = Dematerialize(Marshal.ReadIntPtr(pars, k * IntPtr.Size), enc);
                 return new CompoundTerm(name, args);
             }
             default:   // Undef, Nontype, or any unknown code
                 return new VarTerm("_");
         }
+    }
+
+    // Allocates a NUL-terminated native byte buffer (HGlobal) holding `s` encoded
+    // with `enc` — a C `char*`. Byte-oriented encodings only (UTF-8 / ASCII /
+    // Latin1 / a codepage), where a single 0 byte terminates the string.
+    private static IntPtr AllocString(string s, Encoding enc)
+    {
+        byte[] bytes = enc.GetBytes(s);
+        IntPtr p = Marshal.AllocHGlobal(bytes.Length + 1);
+        if (bytes.Length > 0) Marshal.Copy(bytes, 0, p, bytes.Length);
+        Marshal.WriteByte(p, bytes.Length, 0);   // NUL terminator
+        return p;
+    }
+
+    // Reads a NUL-terminated native `char*` and decodes it with `enc`.
+    private static string ReadString(IntPtr p, Encoding enc)
+    {
+        if (p == IntPtr.Zero) return string.Empty;
+        int len = 0;
+        while (Marshal.ReadByte(p, len) != 0) len++;
+        if (len == 0) return string.Empty;
+        byte[] bytes = new byte[len];
+        Marshal.Copy(p, bytes, 0, len);
+        return enc.GetString(bytes);
     }
 
     /// <summary>Recursively frees a native graph from <see cref="Materialize"/> (or

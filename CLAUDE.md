@@ -687,13 +687,17 @@ GXPROLOG`, C under `#else`): the uniform pattern is `fill_par(Term,&parNref)` �
   var). 10 round-trip tests over every ntype incl. nested functor and a "native C
   built the struct" case.
 - **Blittable native-memory form (done).** `Shumway.Embedding.NativeReftype` —
-  `Materialize(Term)→IntPtr` builds the real 32-byte `t_reftype` graph
-  (`AllocHGlobal`; cstr ANSI; cint 32-bit; pars = `t_reftype*` array),
-  `Dematerialize(IntPtr)→Term`, and `Free` walks + releases it (Arity `freepar`).
-  10 tests: round-trips, the Arity field-offset layout (ntype/nelem/pars/crep),
-  a native-modification-in-place case, and deep-graph free. Next: the `:- native`
-  directive + call-site materialization + P/Invoke binding (`--native-dll`), and the
-  managed-snapshot trigger (a `Reftype`-typed .NET interop param).
+  `Materialize(Term, Encoding?)→IntPtr` builds the real 32-byte `t_reftype` graph
+  (`AllocHGlobal`; cint 32-bit; pars = `t_reftype*` array),
+  `Dematerialize(IntPtr, Encoding?)→Term`, and `Free` walks + releases it (Arity
+  `freepar`). `char*` text uses a configurable `Encoding` — default **UTF-8**, set
+  per engine via `PrologEngine.NativeTextEncoding` (UTF-8/Latin1/codepage; byte-
+  oriented). 14 tests: round-trips, the Arity field-offset layout, native-
+  modification-in-place, deep-graph free, and the encoding (byte-level UTF-8 vs
+  Latin1, engine default + config).
+- **Next:** the `:- native` directive + call-site materialization + P/Invoke binding
+  (`--native-dll` / `engine.UseNativeLibrary`), and the managed-snapshot trigger (a
+  `Reftype`-typed .NET interop param).
 
 **Phase 31 — REPL line-editing + `--dll` + native-interop correctness** — ✅ **Complete** (tagged `phase-31`; closure summary in [`docs/phase-31-closure.md`](docs/phase-31-closure.md)).
 

@@ -4275,6 +4275,20 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         Shumway.Compiler.NativeC.NativeScalarGlobal[] scalarGlobals)
         => _nativeBlocks[name] = new NativeBlockEntry(vars, stmts, scalarGlobals);
 
+    // ADR-024 — the text encoding for char* marshalling to/from native t_reftype
+    // structs (atom/string content + functor names), used by the materializer tier.
+    // Default UTF-8 (the common native-C convention); set to Latin1 / a codepage to
+    // match a particular native library. Must be a byte-oriented encoding.
+    private System.Text.Encoding _nativeTextEncoding = NativeReftype.DefaultEncoding;
+
+    /// <summary>The <c>char*</c> text encoding for the native materializer tier
+    /// (ADR-024). Defaults to UTF-8; set it to match the native library you call.</summary>
+    public System.Text.Encoding NativeTextEncoding
+    {
+        get => _nativeTextEncoding;
+        set => _nativeTextEncoding = value ?? throw new System.ArgumentNullException(nameof(value));
+    }
+
     // ADR-022 — per-engine persistent storage for SCALAR `:- c` globals (a plain
     // int/long/float/double global, as opposed to a char*/reftype holder). Like
     // _reftypeSlots these persist across calls/queries — Arity static-storage

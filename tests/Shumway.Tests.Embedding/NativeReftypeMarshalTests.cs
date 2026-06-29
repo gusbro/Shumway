@@ -82,6 +82,46 @@ public class NativeReftypeMarshalTests
     }
 
     [Fact]
+    public void NonAscii_RoundTrips_UnderUtf8Default()
+        => Assert.Equal(new AtomTerm("café"), RoundTrip(new AtomTerm("café")));
+
+    [Fact]
+    public void Encoding_Configurable_RoundTripsUnderLatin1()
+    {
+        var enc = System.Text.Encoding.Latin1;
+        IntPtr p = NativeReftype.Materialize(new AtomTerm("ñoño"), enc);
+        try { Assert.Equal(new AtomTerm("ñoño"), NativeReftype.Dematerialize(p, enc)); }
+        finally { NativeReftype.Free(p); }
+    }
+
+    [Fact]
+    public void Encoding_ActuallyApplied_Utf8VsLatin1DifferInBytes()
+    {
+        // 'ñ' is 2 bytes in UTF-8 (0xC3 0xB1) but 1 byte in Latin1 (0xF1): nelem and
+        // the cstr bytes differ, proving the encoding is really applied (not ANSI).
+        IntPtr u = NativeReftype.Materialize(new AtomTerm("ñ"), System.Text.Encoding.UTF8);
+        IntPtr l = NativeReftype.Materialize(new AtomTerm("ñ"), System.Text.Encoding.Latin1);
+        try
+        {
+            Assert.Equal(2L, Marshal.ReadInt64(u, 8));   // nelem = byte count
+            Assert.Equal(1L, Marshal.ReadInt64(l, 8));
+            Assert.Equal((byte)0xC3, Marshal.ReadByte(Marshal.ReadIntPtr(u, 24), 0));
+            Assert.Equal((byte)0xF1, Marshal.ReadByte(Marshal.ReadIntPtr(l, 24), 0));
+        }
+        finally { NativeReftype.Free(u); NativeReftype.Free(l); }
+    }
+
+    [Fact]
+    public void PrologEngine_NativeTextEncoding_DefaultsToUtf8_AndIsConfigurable()
+    {
+        var e = new PrologEngine();
+        Assert.Equal("utf-8", e.NativeTextEncoding.WebName);
+        e.NativeTextEncoding = System.Text.Encoding.Latin1;
+        Assert.Equal("iso-8859-1", e.NativeTextEncoding.WebName);
+        Assert.Throws<System.ArgumentNullException>(() => e.NativeTextEncoding = null!);
+    }
+
+    [Fact]
     public void Free_OfDeepGraph_DoesNotThrow()
     {
         var deep = new CompoundTerm("a", new Term[]
