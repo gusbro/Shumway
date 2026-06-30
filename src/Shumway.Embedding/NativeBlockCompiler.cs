@@ -319,24 +319,62 @@ public static class NativeBlockCompiler
             var argExprs = new Expression[c.Args.Count];
             var kinds = new byte[c.Args.Count];
             var names = new string?[c.Args.Count];
+            // OutScalar params: (index, the block-local to write back, the read-back
+            // model type). Seeded from the local; restored after the call.
+            List<(int Index, ParameterExpression Local, Type Model)>? outLocals = null;
             for (int i = 0; i < c.Args.Count; i++)
             {
                 var k = sig.ParamKinds[i];
-                if (k == NativeCall.Kind.OutScalar) throw new NativeBlockBailException();
                 kinds[i] = (byte)k;
                 if (k == NativeCall.Kind.Reftype)
                 {
                     names[i] = ReftypeArgName(c.Args[i]) ?? throw new NativeBlockBailException();
                     argExprs[i] = Expression.Constant(null, typeof(object));
                 }
+                else if (k == NativeCall.Kind.OutScalar)
+                {
+                    string ln = ReftypeArgName(c.Args[i]) ?? throw new NativeBlockBailException();   // &local
+                    if (!_locals.TryGetValue(ln, out var local)) throw new NativeBlockBailException();
+                    argExprs[i] = Expression.Convert(local, typeof(object));   // seed (box current value)
+                    Type elem = sig.ParamElemTypes[i];
+                    Type model = elem == typeof(float) || elem == typeof(double) ? typeof(double) : typeof(long);
+                    (outLocals ??= new()).Add((i, local, model));
+                }
+                else if (k == NativeCall.Kind.OutString)
+                {
+                    string ln = ReftypeArgName(c.Args[i]) ?? throw new NativeBlockBailException();   // &local
+                    if (!_locals.TryGetValue(ln, out var local)) throw new NativeBlockBailException();
+                    argExprs[i] = Expression.Constant(null, typeof(object));   // no seed (out-only)
+                    (outLocals ??= new()).Add((i, local, typeof(string)));
+                }
                 else
                 {
                     argExprs[i] = Expression.Convert(EmitExpr(c.Args[i]), typeof(object));   // box
                 }
             }
-            return Expression.Call(PInvokeFromIlM, _host, Expression.Constant(res),
-                Expression.NewArrayInit(typeof(object), argExprs),
-                Expression.Constant(kinds), Expression.Constant(names, typeof(string[])));
+            var argsArr = Expression.NewArrayInit(typeof(object), argExprs);
+            var kindsC = Expression.Constant(kinds);
+            var namesC = Expression.Constant(names, typeof(string[]));
+            if (outLocals is null)
+                return Expression.Call(PInvokeFromIlM, _host, Expression.Constant(res),
+                    argsArr, kindsC, namesC, Expression.Constant(null, typeof(object[])));
+            // With out-scalars: allocate the read-back box, call, store each result
+            // into its block-local, then yield the call result.
+            var outBox = Expression.Variable(typeof(object[]), "outbox");
+            var resultVar = Expression.Variable(typeof(object), "ncres");
+            var seq = new List<Expression>
+            {
+                Expression.Assign(outBox,
+                    Expression.NewArrayBounds(typeof(object), Expression.Constant(c.Args.Count))),
+                Expression.Assign(resultVar, Expression.Call(PInvokeFromIlM, _host,
+                    Expression.Constant(res), argsArr, kindsC, namesC, outBox)),
+            };
+            foreach (var (idx, local, model) in outLocals)
+                seq.Add(Expression.Assign(local, Coerce(
+                    Expression.Convert(Expression.ArrayIndex(outBox, Expression.Constant(idx)), model),
+                    local.Type)));
+            seq.Add(resultVar);
+            return Expression.Block(new[] { outBox, resultVar }, seq);
         }
 
         /// <summary>Unboxes the boxed-long / boxed-double result of a native P/Invoke

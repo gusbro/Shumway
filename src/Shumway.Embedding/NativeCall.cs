@@ -30,6 +30,9 @@ internal static class NativeCall
                     // pass the pointer, read the scalar back into the block-local.
         StringIn,   // a `char*` input — a Prolog string materialized to native memory,
                     // passed, then freed.
+        OutString,  // a `char**` output — pass a pointer to a char* cell; the native
+                    // function writes a (borrowed) char* into it; read + decode the
+                    // string into the block-local, free the cell (not the string).
     }
 
     /// <summary>The resolved, cached marshalling signature of a native prototype:
@@ -89,12 +92,14 @@ internal static class NativeCall
             return (Kind.Reftype, typeof(IntPtr), typeof(IntPtr));   // materialized t_reftype*
         if (t.PointerDepth == 1 && t.Name is "char" or "uchar" or "schar")
             return (Kind.StringIn, typeof(IntPtr), typeof(IntPtr));   // `char*` input string
+        if (t.PointerDepth == 2 && t.Name is "char" or "uchar" or "schar")
+            return (Kind.OutString, typeof(IntPtr), typeof(string));  // `char**` out-string
         if (t.PointerDepth == 1 && TryScalar(t.Name, out var elem))
             return (Kind.OutScalar, typeof(IntPtr), elem);           // `&local` out-scalar (short*/int*/…)
         if (t.PointerDepth > 0)
             throw new InvalidOperationException(
-                $":- native '{fn}': unsupported pointer parameter '{raw}' (pointer-to-pointer "
-                + "params are a follow-up; reftype, char*, by-value scalars and scalar out-pointers are supported).");
+                $":- native '{fn}': unsupported pointer parameter '{raw}' (reftype, char*, char**, "
+                + "by-value scalars and scalar out-pointers are supported; deeper pointers are a follow-up).");
         if (TryScalar(t.Name, out var st))
             return (Kind.Scalar, st, st);
         throw new InvalidOperationException(

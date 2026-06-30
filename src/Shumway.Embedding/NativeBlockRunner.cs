@@ -317,9 +317,19 @@ public static class NativeBlockRunner
         System.Collections.Generic.List<(string Local, IntPtr Ptr, Type Elem)>? outScalars = null;
         // StringIn: native char* buffers we allocated and must free after the call.
         System.Collections.Generic.List<IntPtr>? cstrings = null;
+        // OutString: a `char**` cell the native function writes a (borrowed) char* into.
+        System.Collections.Generic.List<(string Local, IntPtr Cell)>? outStrings = null;
         for (int i = 0; i < c.Args.Count; i++)
         {
             var kind = i < sig.ParamKinds.Length ? sig.ParamKinds[i] : NativeCall.Kind.Scalar;
+            if (kind == NativeCall.Kind.OutString && AddrOfLocal(c.Args[i]) is { } slocal)
+            {
+                IntPtr cell = System.Runtime.InteropServices.Marshal.AllocHGlobal(System.IntPtr.Size);
+                System.Runtime.InteropServices.Marshal.WriteIntPtr(cell, System.IntPtr.Zero);
+                args[i] = cell;
+                (outStrings ??= new()).Add((slocal, cell));
+                continue;
+            }
             if (kind == NativeCall.Kind.StringIn)
             {
                 // A char* input: render the Prolog argument to a string and copy it
@@ -378,6 +388,15 @@ public static class NativeBlockRunner
                 env[local] = ReadScalar(ptr, elem);   // the native function wrote it
                 System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
             }
+        if (outStrings is not null)
+            foreach (var (local, cell) in outStrings)
+            {
+                // The native function wrote a borrowed char* into the cell: decode the
+                // string, free the CELL (not the string — native-owned).
+                IntPtr sp = System.Runtime.InteropServices.Marshal.ReadIntPtr(cell);
+                env[local] = NativeReftype.ReadString(sp, enc);
+                System.Runtime.InteropServices.Marshal.FreeHGlobal(cell);
+            }
         if (cstrings is not null)
             foreach (var ptr in cstrings)
                 System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
@@ -419,7 +438,7 @@ public static class NativeBlockRunner
     /// result is normalized to a boxed <c>long</c> (integer / pointer) or
     /// <c>double</c> (floating) so the emitted IL unboxes one model type.</summary>
     internal static object? PInvokeFromIl(PrologEngine host, PrologEngine.NativeResolution res,
-        object?[] args, byte[] kinds, string?[] reftypeNames)
+        object?[] args, byte[] kinds, string?[] reftypeNames, object?[]? outScalars = null)
     {
         var sig = res.Signature!;
         var enc = host.NativeTextEncoding;
@@ -427,10 +446,32 @@ public static class NativeBlockRunner
         var callArgs = new object?[args.Length];
         System.Collections.Generic.List<(TermSlot Slot, IntPtr Handle)>? reftypes = null;
         System.Collections.Generic.List<IntPtr>? cstrings = null;
+        // OutScalar: (param index, native ptr, element type) — read back into
+        // outScalars[index] after the call, for the emitted IL to store to its local.
+        System.Collections.Generic.List<(int Index, IntPtr Ptr, Type Elem)>? outs = null;
+        // OutString: (param index, char** cell) — decode into outScalars[index].
+        System.Collections.Generic.List<(int Index, IntPtr Cell)>? outStrs = null;
         for (int i = 0; i < args.Length; i++)
         {
             switch ((NativeCall.Kind)kinds[i])
             {
+                case NativeCall.Kind.OutString:
+                {
+                    IntPtr cell = System.Runtime.InteropServices.Marshal.AllocHGlobal(System.IntPtr.Size);
+                    System.Runtime.InteropServices.Marshal.WriteIntPtr(cell, System.IntPtr.Zero);
+                    callArgs[i] = cell;
+                    (outStrs ??= new()).Add((i, cell));
+                    break;
+                }
+                case NativeCall.Kind.OutScalar:
+                {
+                    Type elem = sig.ParamElemTypes[i];
+                    IntPtr ptr = System.Runtime.InteropServices.Marshal.AllocHGlobal(SizeOf(elem));
+                    WriteScalar(ptr, elem, args[i]);   // seed from the block-local value (in/out)
+                    callArgs[i] = ptr;
+                    (outs ??= new()).Add((i, ptr, elem));
+                    break;
+                }
                 case NativeCall.Kind.Reftype:
                 {
                     var slot = host.GetOrCreateReftypeSlot(reftypeNames[i]!);
@@ -470,6 +511,19 @@ public static class NativeBlockRunner
         if (cstrings is not null)
             foreach (var ptr in cstrings)
                 System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
+        if (outs is not null)
+            foreach (var (idx, ptr, elem) in outs)
+            {
+                if (outScalars is not null) outScalars[idx] = ReadScalar(ptr, elem);
+                System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
+            }
+        if (outStrs is not null)
+            foreach (var (idx, cell) in outStrs)
+            {
+                IntPtr sp = System.Runtime.InteropServices.Marshal.ReadIntPtr(cell);
+                if (outScalars is not null) outScalars[idx] = NativeReftype.ReadString(sp, enc);
+                System.Runtime.InteropServices.Marshal.FreeHGlobal(cell);   // free cell, not the borrowed string
+            }
         if (sig.ReturnType == typeof(void)) return null;
         if (sig.ReturnType == typeof(double) || sig.ReturnType == typeof(float))
             return System.Convert.ToDouble(ret);

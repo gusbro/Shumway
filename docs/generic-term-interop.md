@@ -336,6 +336,7 @@ with no source.
 | `reftype` / `preftype` | in/out | materialized to a `t_reftype*`; modified struct written back |
 | `char*` | **in** | the Prolog string → NUL-terminated native bytes (engine encoding) |
 | `char*` | **return** | a raw pointer integer; read with `make_prolog_string(Ptr, X)` |
+| `char**` (`&local`) | out | the native side writes a (borrowed) `char*`; decoded into the block-local string, marshalled out with `MakePrologString` |
 | `short*` / `int*` / `long*` / `double*` (`&local`) | out | scalar written through the pointer, read back into the block-local |
 
 `char*` text uses the engine's `NativeTextEncoding` (default **UTF-8**; set per
@@ -360,7 +361,7 @@ This is the contract. Read it before passing pointers.
 | **`reftype` materialized for the call** | **Shumway** — freed after dematerializing (`FreeHGlobal`, or the library's `freepar` when the library allocated sub-nodes). | The single call. |
 | **out-scalar slot** (`&local`) | **Shumway** — allocated, passed, read back, freed. | The single call. |
 | **`char*` *return* value** | **The native side — borrowed.** Shumway **copies** the bytes into a Prolog atom and **never frees** the pointer. | Owned by the callee. |
-| **`char**` out-string** *(planned)* | **Split:** Shumway owns the pointer *cell* (allocated and freed around the call); the `char*` written into it is **borrowed** (native-owned), copied out, never freed. | Cell: the call. String: the callee. |
+| **`char**` out-string** | **Split:** Shumway owns the pointer *cell* (allocated and freed around the call); the `char*` written into it is **borrowed** (native-owned), copied out, never freed. | Cell: the call. String: the callee. |
 
 The **borrowed** rule for returned strings matches Arity: functions like `tbl_name`
 / `mdl_name` / `searchcfg` return pointers into **static buffers or internal tables**
@@ -381,9 +382,9 @@ internal / pooled on the native side).
 Both backends compile to IL rather than the interpreter. A managed-snapshot
 (`Reftype`-param) call emits inline (materialize → call → write-back). A P/Invoke
 call dispatches through the cached cdecl `calli` invoker over pre-evaluated args, so
-scalar work *around* the native call runs as IL too. A native call with an
-**out-scalar** parameter still runs through the interpreter (its write-back targets a
-block-local) — correct, just not yet IL.
+scalar work *around* the native call runs as IL too. Out-scalar and `char**`
+out-string write-backs (which target a block-local) are threaded through a read-back
+array the emitted IL stores from, so those calls compile to IL as well.
 
 See `docs/architecture/adr/024-generic-term-interop.md` for the design and
 rationale.

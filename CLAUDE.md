@@ -771,10 +771,19 @@ GXPROLOG`, C under `#else`): the uniform pattern is `fill_par(Term,&parNref)` �
   `NativeBlockRunner.PInvokeFromIl` — the same marshalling over pre-evaluated boxed
   args, returning a boxed long/double the emitted IL unboxes; `EmitNativeCall` boxes
   scalar/string args, names reftype globals, and invokes it. The win is structural —
-  scalar work *around* a native call now runs as IL. Out-scalar params (write back to
-  a block-local) still bail to the interpreter. Both proven via `CompiledCount`.
-- **Next:** out-scalar params under IL; `char**` / out-string params; full `--exe`
-  native run-through.
+  scalar work *around* a native call now runs as IL. Both proven via `CompiledCount`.
+- **out-scalar + `char**` out-string (done).** An out-scalar (`short*`/`int*`/…
+  `&local`) and a `char**` out-string (`&local`, the native side writes a borrowed
+  `char*`) both marshal in the interpreter *and* under IL — the IL emit threads the
+  read-back values through an array the emitted method stores into its block-locals
+  (`PInvokeFromIl`'s `outScalars` channel), so a native call with these params
+  compiles instead of bailing. Memory ownership documented in
+  [generic-term-interop §10](docs/generic-term-interop.md): Shumway owns + frees the
+  out-scalar slot and the `char**` cell (call-scoped); the pointed-to / returned
+  `char*` is **borrowed** (native-owned, copied out, never freed) — a `malloc`'d
+  return would leak, by design (caller-owns would need an explicit paired-free
+  annotation).
+- **Next:** full `--exe` native run-through (last item before closing the phase).
 
 **Phase 31 — REPL line-editing + `--dll` + native-interop correctness** — ✅ **Complete** (tagged `phase-31`; closure summary in [`docs/phase-31-closure.md`](docs/phase-31-closure.md)).
 

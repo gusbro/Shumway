@@ -116,10 +116,10 @@ public class NativePInvokeTests
     [Fact]
     public void FromPrototype_RejectsUnsupportedPointerParam()
     {
-        // char** (pointer-to-pointer) is still deferred — char* (depth 1) is now
-        // a supported StringIn, but deeper pointer params are not.
+        // char* (StringIn), char** (OutString), short*/int*/... (OutScalar) are all
+        // supported now; a non-char pointer-to-pointer (int**) is still deferred.
         var proto = new CPrototype("fn", new CType("int"),
-            new[] { new CParam(new CType("char", 2), "s") });   // char** — deferred
+            new[] { new CParam(new CType("int", 2), "p") });   // int** — deferred
         Assert.Throws<InvalidOperationException>(
             () => NativeCall.FromPrototype(proto, new Dictionary<string, CType>()));
     }
@@ -294,6 +294,7 @@ public class NativePInvokeTests
                 + " — set SHUMWAY_NATIVE_CC to a C compiler to run it.");
             return;
         }
+        int before = Shumway.Embedding.NativeBlockCompiler.CompiledCount;
         var e = new PrologEngine();
         e.UseNativeLibrary(dll);
         e.ConsultString(OutProgram);
@@ -301,6 +302,9 @@ public class NativePInvokeTests
         // Shumway reads them back into the block-locals oi/os.
         Assert.True(e.Query("calc(5, Ri, Rs), Ri == 50, Rs == 6.").Success);
         Assert.True(e.Query("calc(0, Ri, Rs), Ri == 0, Rs == 1.").Success);
+        // The out-scalar block now compiles to IL (read-back boxed through PInvokeFromIl
+        // into the block-locals) instead of falling back to the interpreter.
+        Assert.True(Shumway.Embedding.NativeBlockCompiler.CompiledCount >= before + 1);
     }
 
     // ---- char* input params: a Prolog string is materialized into NUL-terminated
@@ -399,6 +403,57 @@ public class NativePInvokeTests
         // The returned pointer is non-null (Ptr =\= 0 succeeded above).
         // A NULL return surfaces as the integer 0 — the null-check catches it.
         Assert.True(e.Query("nn(hello).").Success);
+    }
+
+    // ---- char** out-string: the native function writes a (borrowed) char* into a
+    //      char** cell; Shumway decodes it into a block-local, frees the cell (not the
+    //      string), and the block marshals it out with MakePrologString. ----
+
+    private const string OutStrCSource = """
+        #ifdef _MSC_VER
+        #define EXPORT __declspec(dllexport)
+        #else
+        #define EXPORT __attribute__((visibility("default")))
+        #endif
+        EXPORT int get_name(int id, char** out) {
+            if (id == 1) { *out = "alpha"; return 1; }
+            if (id == 2) { *out = "beta";  return 1; }
+            *out = 0; return 0;
+        }
+        """;
+
+    private const string OutStrProgram =
+        ":- set_prolog_flag(arity_compat, true).\n" +
+        ":- native get_name/2.\n" +
+        ":- c.\nint get_name(int, char**);\n:- prolog.\n" +
+        "gn(Id, Name) :-\n" +
+        "  integer(Id),\n" +
+        "  { s: pchar; ret: int;\n" +
+        "    ret = 'get_name'(Id, &s);\n" +
+        "    MakePrologString(&Name, s);\n" +
+        "    Ret is ret },\n" +
+        "  Ret =:= 1.\n";
+
+    [Fact]
+    public void EndToEnd_NativeDll_OutStringDoublePointer()
+    {
+        string? dll = NativeTestDll.TryBuild(OutStrCSource, "outstring", out string note);
+        if (dll is null)
+        {
+            _output.WriteLine("SKIPPED char** out-string P/Invoke test: " + note
+                + " — set SHUMWAY_NATIVE_CC to a C compiler to run it.");
+            return;
+        }
+        int before = Shumway.Embedding.NativeBlockCompiler.CompiledCount;
+        var e = new PrologEngine();
+        e.UseNativeLibrary(dll);
+        e.ConsultString(OutStrProgram);
+        // get_name writes a borrowed char* into the cell; Shumway decodes it into s
+        // and MakePrologString marshals it to the Prolog var Name.
+        Assert.True(e.Query("gn(1, N), N == alpha.").Success);
+        Assert.True(e.Query("gn(2, N), N == beta.").Success);
+        Assert.False(e.Query("gn(3, _).").Success);   // *out = 0 → ret 0 → fails
+        Assert.True(Shumway.Embedding.NativeBlockCompiler.CompiledCount >= before + 1);
     }
 
     // ---- --native-dll: the linker records native libraries in the bundle, and the
