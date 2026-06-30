@@ -315,9 +315,21 @@ public static class NativeBlockRunner
         System.Collections.Generic.List<(TermSlot Slot, IntPtr Handle)>? reftypes = null;
         // OutScalar: a `&local` pointer the native function writes through.
         System.Collections.Generic.List<(string Local, IntPtr Ptr, Type Elem)>? outScalars = null;
+        // StringIn: native char* buffers we allocated and must free after the call.
+        System.Collections.Generic.List<IntPtr>? cstrings = null;
         for (int i = 0; i < c.Args.Count; i++)
         {
             var kind = i < sig.ParamKinds.Length ? sig.ParamKinds[i] : NativeCall.Kind.Scalar;
+            if (kind == NativeCall.Kind.StringIn)
+            {
+                // A char* input: render the Prolog argument to a string and copy it
+                // into freshly-allocated, NUL-terminated native memory.
+                string s = AsNativeString(Eval(c.Args[i], host, env, outputs, resolve), host);
+                IntPtr ptr = AllocCString(s, enc);
+                args[i] = ptr;
+                (cstrings ??= new()).Add(ptr);
+                continue;
+            }
             if (kind == NativeCall.Kind.Reftype && ReftypeName(c.Args[i]) is { } rn)
             {
                 var slot = host.GetOrCreateReftypeSlot(rn);
@@ -366,7 +378,32 @@ public static class NativeBlockRunner
                 env[local] = ReadScalar(ptr, elem);   // the native function wrote it
                 System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
             }
+        if (cstrings is not null)
+            foreach (var ptr in cstrings)
+                System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
         return ret;
+    }
+
+    /// <summary>Renders a native-call argument value to the string passed as a
+    /// <c>char*</c>. Atoms / strings use their text; numbers their decimal form.</summary>
+    private static string AsNativeString(object? v, PrologEngine host) => v switch
+    {
+        null => string.Empty,
+        string s => s,
+        Shumway.Compiler.Ast.AtomTerm a => a.Name,
+        Shumway.Compiler.Ast.StringTerm st => st.Content,
+        _ => System.Convert.ToString(v, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
+    };
+
+    /// <summary>Allocates a NUL-terminated native copy of <paramref name="s"/> using
+    /// the engine's text encoding. The caller frees it with <c>FreeHGlobal</c>.</summary>
+    private static IntPtr AllocCString(string s, System.Text.Encoding enc)
+    {
+        byte[] bytes = enc.GetBytes(s);
+        IntPtr p = System.Runtime.InteropServices.Marshal.AllocHGlobal(bytes.Length + 1);
+        System.Runtime.InteropServices.Marshal.Copy(bytes, 0, p, bytes.Length);
+        System.Runtime.InteropServices.Marshal.WriteByte(p, bytes.Length, 0);
+        return p;
     }
 
     /// <summary>The block-local name an out-scalar argument addresses — <c>&amp;id</c>

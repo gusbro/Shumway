@@ -116,8 +116,10 @@ public class NativePInvokeTests
     [Fact]
     public void FromPrototype_RejectsUnsupportedPointerParam()
     {
+        // char** (pointer-to-pointer) is still deferred — char* (depth 1) is now
+        // a supported StringIn, but deeper pointer params are not.
         var proto = new CPrototype("fn", new CType("int"),
-            new[] { new CParam(new CType("char", 1), "s") });   // char* — deferred
+            new[] { new CParam(new CType("char", 2), "s") });   // char** — deferred
         Assert.Throws<InvalidOperationException>(
             () => NativeCall.FromPrototype(proto, new Dictionary<string, CType>()));
     }
@@ -295,6 +297,46 @@ public class NativePInvokeTests
         // Shumway reads them back into the block-locals oi/os.
         Assert.True(e.Query("calc(5, Ri, Rs), Ri == 50, Rs == 6.").Success);
         Assert.True(e.Query("calc(0, Ri, Rs), Ri == 0, Rs == 1.").Success);
+    }
+
+    // ---- char* input params: a Prolog string is materialized into NUL-terminated
+    //      native memory (via the engine encoding), passed, then freed. ----
+
+    private const string StrCSource = """
+        #ifdef _MSC_VER
+        #define EXPORT __declspec(dllexport)
+        #else
+        #define EXPORT __attribute__((visibility("default")))
+        #endif
+        EXPORT int slen(char* s) { int n = 0; while (s[n]) n++; return n; }
+        """;
+
+    private const string StrProgram =
+        ":- set_prolog_flag(arity_compat, true).\n" +
+        ":- native slen/1.\n" +
+        ":- c.\nint slen(char*);\n:- prolog.\n" +
+        "n(In, N) :-\n" +
+        "  atom(In),\n" +
+        "  { ret: int; ret = 'slen'(In); N is ret }.\n";
+
+    [Fact]
+    public void EndToEnd_NativeDll_CharStarInput()
+    {
+        string? dll = NativeTestDll.TryBuild(StrCSource, "charstarin", out string note);
+        if (dll is null)
+        {
+            _output.WriteLine("SKIPPED char* P/Invoke test: " + note
+                + " — set SHUMWAY_NATIVE_CC to a C compiler to run it.");
+            return;
+        }
+        var e = new PrologEngine();
+        e.UseNativeLibrary(dll);
+        e.ConsultString(StrProgram);
+        // slen returns the byte length of the NUL-terminated copy we pass.
+        Assert.True(e.Query("n(hello, N), N == 5.").Success);
+        Assert.True(e.Query("n('', N), N == 0.").Success);
+        // Default encoding is UTF-8: 'héllo' is 6 bytes (é → 2 bytes).
+        Assert.True(e.Query("n('héllo', N), N == 6.").Success);
     }
 
     // ---- --native-dll: the linker records native libraries in the bundle, and the
