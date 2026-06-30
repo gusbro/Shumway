@@ -730,8 +730,17 @@ GXPROLOG`, C under `#else`): the uniform pattern is `fill_par(Term,&parNref)` �
   `PInvokeCall` uses it when present (else the HGlobal in-place path). Dematerialize
   reads the C-built graph unchanged. Test (real DLL): `build_list` allocates a cons
   list via `newreftype`, Shumway dematerializes `[1,2,3]` and `freepar`s it.
+- **Out-scalar pointer params (done).** `fn(..., &local)` — a native function writes
+  a scalar through a pointer (the corpus `i_form_exp(.., &type, ..)` /
+  `i_obj_id_native(.., &id)` pattern). `NativeCall.Kind` now distinguishes
+  `Scalar`/`Reftype`/`OutScalar`; a `short*`/`int*`/`long*`/`double*` param (incl.
+  via typedef like `pshort`) maps to `OutScalar` with its element type. At the call,
+  `PInvokeCall` allocates a native scalar (seeded from the block-local), passes the
+  pointer, then reads it back into the local — so a following `X is local` sees what
+  the function wrote. Test (real DLL): `set_out(In, &oi, &os)` → `calc(5,Ri,Rs)` →
+  `Ri==50, Rs==6` (int* + short*).
 - **Next:** delegate/IL emit for the snapshot + P/Invoke paths (currently
-  interpreter-only); char* / out-scalar pointer params; a `--native-dll` CLI flag.
+  interpreter-only); char* string params; a `--native-dll` CLI flag.
 
 **Phase 31 — REPL line-editing + `--dll` + native-interop correctness** — ✅ **Complete** (tagged `phase-31`; closure summary in [`docs/phase-31-closure.md`](docs/phase-31-closure.md)).
 

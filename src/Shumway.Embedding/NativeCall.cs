@@ -21,35 +21,49 @@ namespace Shumway.Embedding;
 /// Native AOT).</para></summary>
 internal static class NativeCall
 {
+    /// <summary>How a native parameter is marshalled.</summary>
+    internal enum Kind
+    {
+        Scalar,     // by value (int/short/long/double/float)
+        Reftype,    // a materialized t_reftype* (IntPtr)
+        OutScalar,  // a pointer to a scalar (`&local`, e.g. `short* ptype`) — allocate,
+                    // pass the pointer, read the scalar back into the block-local.
+    }
+
     /// <summary>The resolved, cached marshalling signature of a native prototype:
-    /// the CLR types <c>calli</c> uses, and which parameters are reftype (so the
-    /// call site materializes them).</summary>
+    /// the CLR types <c>calli</c> uses (a pointer for reftype / out-scalar), each
+    /// parameter's <see cref="Kind"/>, and — for an out-scalar — its element type.</summary>
     internal sealed class Signature
     {
         public required Type ReturnType { get; init; }
-        public required Type[] ParamClrTypes { get; init; }
-        public required bool[] ParamIsReftype { get; init; }
+        public required Type[] ParamClrTypes { get; init; }   // calli types
+        public required Kind[] ParamKinds { get; init; }
+        public required Type[] ParamElemTypes { get; init; }  // OutScalar: the scalar's CLR type
         public required Func<IntPtr, object?[], object?> Invoker { get; init; }
     }
 
     /// <summary>Builds a marshalling signature from a parsed <c>:- c</c> prototype
-    /// (typedefs resolved). Throws if a type is outside the first-cut set.</summary>
+    /// (typedefs resolved). Throws if a type is outside the supported set.</summary>
     public static Signature FromPrototype(CPrototype proto, IReadOnlyDictionary<string, CType> typedefs)
     {
         Type ret = MapReturn(Resolve(proto.ReturnType, typedefs));
-        var clr = new Type[proto.Params.Count];
-        var isRef = new bool[proto.Params.Count];
-        for (int i = 0; i < proto.Params.Count; i++)
+        int n = proto.Params.Count;
+        var clr = new Type[n];
+        var kinds = new Kind[n];
+        var elems = new Type[n];
+        for (int i = 0; i < n; i++)
         {
-            var (reftype, t) = MapParam(Resolve(proto.Params[i].Type, typedefs), proto.Name, proto.Params[i].Type);
-            clr[i] = t;
-            isRef[i] = reftype;
+            var (kind, calli, elem) = MapParam(Resolve(proto.Params[i].Type, typedefs), proto.Name, proto.Params[i].Type);
+            clr[i] = calli;
+            kinds[i] = kind;
+            elems[i] = elem;
         }
         return new Signature
         {
             ReturnType = ret,
             ParamClrTypes = clr,
-            ParamIsReftype = isRef,
+            ParamKinds = kinds,
+            ParamElemTypes = elems,
             Invoker = BuildInvoker(ret, clr),
         };
     }
@@ -67,25 +81,35 @@ internal static class NativeCall
         return new CType(name, depth);
     }
 
-    private static (bool IsReftype, Type Clr) MapParam(CType t, string fn, CType raw)
+    private static (Kind Kind, Type Calli, Type Elem) MapParam(CType t, string fn, CType raw)
     {
         if (t.Name is "reftype" or "t_reftype" or "preftype")
-            return (true, typeof(IntPtr));               // the materialized t_reftype* pointer
+            return (Kind.Reftype, typeof(IntPtr), typeof(IntPtr));   // materialized t_reftype*
+        if (t.PointerDepth == 1 && TryScalar(t.Name, out var elem))
+            return (Kind.OutScalar, typeof(IntPtr), elem);           // `&local` out-scalar (short*/int*/…)
         if (t.PointerDepth > 0)
             throw new InvalidOperationException(
-                $":- native '{fn}': unsupported pointer parameter '{raw}' (char* and out-scalar "
-                + "pointer params are a follow-up; reftype and by-value scalars are supported).");
-        return (false, t.Name switch
+                $":- native '{fn}': unsupported pointer parameter '{raw}' (char* and pointer-to-pointer "
+                + "params are a follow-up; reftype, by-value scalars and scalar out-pointers are supported).");
+        if (TryScalar(t.Name, out var st))
+            return (Kind.Scalar, st, st);
+        throw new InvalidOperationException(
+            $":- native '{fn}': unsupported parameter type '{raw}' (supported: int/short/long/double/float, "
+            + "reftype, and scalar out-pointers).");
+    }
+
+    private static bool TryScalar(string name, out Type clr)
+    {
+        clr = name switch
         {
             "int" or "signed" or "unsigned" => typeof(int),
             "short" => typeof(short),
             "long" or "int64_t" or "int64" => typeof(long),
             "double" => typeof(double),
             "float" => typeof(float),
-            _ => throw new InvalidOperationException(
-                $":- native '{fn}': unsupported parameter type '{raw}' (first-cut native interop supports "
-                + "int/short/long/double/float and reftype)."),
-        });
+            _ => typeof(void),
+        };
+        return clr != typeof(void);
     }
 
     private static Type MapReturn(CType t)

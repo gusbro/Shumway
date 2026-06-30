@@ -313,10 +313,12 @@ public static class NativeBlockRunner
         var args = new object?[c.Args.Count];
         // Handle = the allocator cell (alloc mode) or the HGlobal struct pointer.
         System.Collections.Generic.List<(TermSlot Slot, IntPtr Handle)>? reftypes = null;
+        // OutScalar: a `&local` pointer the native function writes through.
+        System.Collections.Generic.List<(string Local, IntPtr Ptr, Type Elem)>? outScalars = null;
         for (int i = 0; i < c.Args.Count; i++)
         {
-            if (i < sig.ParamIsReftype.Length && sig.ParamIsReftype[i]
-                && ReftypeName(c.Args[i]) is { } rn)
+            var kind = i < sig.ParamKinds.Length ? sig.ParamKinds[i] : NativeCall.Kind.Scalar;
+            if (kind == NativeCall.Kind.Reftype && ReftypeName(c.Args[i]) is { } rn)
             {
                 var slot = host.GetOrCreateReftypeSlot(rn);
                 IntPtr handle, structPtr;
@@ -336,6 +338,16 @@ public static class NativeBlockRunner
                 (reftypes ??= new()).Add((slot, handle));
                 continue;
             }
+            if (kind == NativeCall.Kind.OutScalar && AddrOfLocal(c.Args[i]) is { } local)
+            {
+                Type elem = sig.ParamElemTypes[i];
+                IntPtr ptr = System.Runtime.InteropServices.Marshal.AllocHGlobal(SizeOf(elem));
+                // Seed from the local's current value (in/out), or zero.
+                WriteScalar(ptr, elem, env.TryGetValue(local, out var cur) ? cur : null);
+                args[i] = ptr;
+                (outScalars ??= new()).Add((local, ptr, elem));
+                continue;
+            }
             object? v = Eval(c.Args[i], host, env, outputs, resolve);
             args[i] = ConvertArg(v, i < sig.ParamClrTypes.Length ? sig.ParamClrTypes[i] : typeof(IntPtr));
         }
@@ -348,8 +360,42 @@ public static class NativeBlockRunner
                 slot.SetValue(NativeReftype.Dematerialize(structPtr, enc));
                 if (alloc is not null) alloc.Free(handle); else NativeReftype.Free(handle);
             }
+        if (outScalars is not null)
+            foreach (var (local, ptr, elem) in outScalars)
+            {
+                env[local] = ReadScalar(ptr, elem);   // the native function wrote it
+                System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
+            }
         return ret;
     }
+
+    /// <summary>The block-local name an out-scalar argument addresses — <c>&amp;id</c>
+    /// (or a bare <c>id</c>); null if the argument is not a plain local reference.</summary>
+    private static string? AddrOfLocal(CExpr e) => e switch
+    {
+        CAddrOfExpr { Operand: CIdentExpr id } => id.Name,
+        CIdentExpr id => id.Name,
+        _ => null,
+    };
+
+    private static int SizeOf(Type t) =>
+        t == typeof(short) ? 2 : t == typeof(int) || t == typeof(float) ? 4 : 8;
+
+    private static void WriteScalar(IntPtr p, Type t, object? v)
+    {
+        if (t == typeof(short)) System.Runtime.InteropServices.Marshal.WriteInt16(p, v is null ? (short)0 : System.Convert.ToInt16(v));
+        else if (t == typeof(int)) System.Runtime.InteropServices.Marshal.WriteInt32(p, v is null ? 0 : System.Convert.ToInt32(v));
+        else if (t == typeof(long)) System.Runtime.InteropServices.Marshal.WriteInt64(p, v is null ? 0L : System.Convert.ToInt64(v));
+        else if (t == typeof(float)) System.Runtime.InteropServices.Marshal.WriteInt32(p, BitConverter.SingleToInt32Bits(v is null ? 0f : System.Convert.ToSingle(v)));
+        else System.Runtime.InteropServices.Marshal.WriteInt64(p, BitConverter.DoubleToInt64Bits(v is null ? 0.0 : System.Convert.ToDouble(v)));
+    }
+
+    private static object ReadScalar(IntPtr p, Type t) =>
+        t == typeof(short) ? (long)System.Runtime.InteropServices.Marshal.ReadInt16(p)
+        : t == typeof(int) ? (long)System.Runtime.InteropServices.Marshal.ReadInt32(p)
+        : t == typeof(long) ? System.Runtime.InteropServices.Marshal.ReadInt64(p)
+        : t == typeof(float) ? (double)BitConverter.Int32BitsToSingle(System.Runtime.InteropServices.Marshal.ReadInt32(p))
+        : BitConverter.Int64BitsToDouble(System.Runtime.InteropServices.Marshal.ReadInt64(p));
 
     // Quick-win over the interpreted path: invoke each interop method through a
     // compiled thunk (a `(object?[]) => method(...)` delegate) cached per method,

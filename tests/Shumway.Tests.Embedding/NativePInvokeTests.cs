@@ -37,9 +37,9 @@ public class NativePInvokeTests
         var proto = new CPrototype("bump", new CType("int"),
             new[] { new CParam(new CType("reftype"), "r") });
         var sig = NativeCall.FromPrototype(proto, new Dictionary<string, CType>());
-        Assert.Single(sig.ParamIsReftype);
-        Assert.True(sig.ParamIsReftype[0]);                 // reftype param
-        Assert.Equal(typeof(IntPtr), sig.ParamClrTypes[0]); // passed as the struct pointer
+        Assert.Single(sig.ParamKinds);
+        Assert.Equal(NativeCall.Kind.Reftype, sig.ParamKinds[0]);   // reftype param
+        Assert.Equal(typeof(IntPtr), sig.ParamClrTypes[0]);         // passed as the struct pointer
         Assert.Equal(typeof(int), sig.ReturnType);
 
         IntPtr p = NativeReftype.Materialize(new IntTerm(10));
@@ -71,7 +71,31 @@ public class NativePInvokeTests
         var sig = NativeCall.FromPrototype(proto, new Dictionary<string, CType>());
         Assert.Equal(new[] { typeof(int), typeof(short), typeof(long), typeof(double), typeof(IntPtr) },
             sig.ParamClrTypes);
-        Assert.Equal(new[] { false, false, false, false, true }, sig.ParamIsReftype);
+        Assert.Equal(
+            new[] { NativeCall.Kind.Scalar, NativeCall.Kind.Scalar, NativeCall.Kind.Scalar,
+                    NativeCall.Kind.Scalar, NativeCall.Kind.Reftype },
+            sig.ParamKinds);
+    }
+
+    [Fact]
+    public void FromPrototype_MapsOutScalarPointers()
+    {
+        // short* / int* (incl. via a typedef) are out-scalars — passed as a pointer,
+        // the element type recorded for read-back.
+        var typedefs = new Dictionary<string, CType> { ["pshort"] = new CType("short", 1) };
+        var proto = new CPrototype("fn", new CType("int"), new[]
+        {
+            new CParam(new CType("int"), "v"),
+            new CParam(new CType("pshort"), "a"),
+            new CParam(new CType("int", 1), "b"),
+        });
+        var sig = NativeCall.FromPrototype(proto, typedefs);
+        Assert.Equal(
+            new[] { NativeCall.Kind.Scalar, NativeCall.Kind.OutScalar, NativeCall.Kind.OutScalar },
+            sig.ParamKinds);
+        Assert.Equal(typeof(short), sig.ParamElemTypes[1]);
+        Assert.Equal(typeof(int), sig.ParamElemTypes[2]);
+        Assert.Equal(new[] { typeof(int), typeof(IntPtr), typeof(IntPtr) }, sig.ParamClrTypes);
     }
 
     [Fact]
@@ -85,7 +109,7 @@ public class NativePInvokeTests
             new CParam(new CType("myref"), "q"),
         });
         var sig = NativeCall.FromPrototype(proto, typedefs);
-        Assert.Equal(new[] { true, true }, sig.ParamIsReftype);
+        Assert.Equal(new[] { NativeCall.Kind.Reftype, NativeCall.Kind.Reftype }, sig.ParamKinds);
         Assert.Equal(typeof(void), sig.ReturnType);
     }
 
@@ -225,6 +249,52 @@ public class NativePInvokeTests
         Assert.True(e.Query("go(3, L), L == [1,2,3].").Success);
         Assert.True(e.Query("go(1, L), L == [1].").Success);
         Assert.True(e.Query("go(5, L), length(L, 5), L = [1|_].").Success);
+    }
+
+    // ---- Out-scalar parameters: `fn(..., &local)` — a native function writes a
+    //      scalar through a pointer, read back into the block-local. ----
+
+    private const string OutCSource = """
+        #ifdef _MSC_VER
+        #define EXPORT __declspec(dllexport)
+        #else
+        #define EXPORT __attribute__((visibility("default")))
+        #endif
+        EXPORT int set_out(int v, int* out_i, short* out_s) {
+            *out_i = v * 10;
+            *out_s = (short)(v + 1);
+            return 1;
+        }
+        """;
+
+    private const string OutProgram =
+        ":- set_prolog_flag(arity_compat, true).\n" +
+        ":- native set_out/3.\n" +
+        ":- c.\nint set_out(int, int*, short*);\n:- prolog.\n" +
+        "calc(In, Ri, Rs) :-\n" +
+        "  integer(In),\n" +
+        "  { ret: int; oi: int; os: short;\n" +
+        "    ret = 'set_out'(In, &oi, &os);\n" +
+        "    Ri is oi; Rs is os; Ret is ret },\n" +
+        "  Ret =:= 1.\n";
+
+    [Fact]
+    public void EndToEnd_NativeDll_OutScalarPointers()
+    {
+        string? dll = NativeTestDll.TryBuild(OutCSource, "outscalar", out string note);
+        if (dll is null)
+        {
+            _output.WriteLine("SKIPPED out-scalar P/Invoke test: " + note
+                + " — set SHUMWAY_NATIVE_CC to a C compiler to run it.");
+            return;
+        }
+        var e = new PrologEngine();
+        e.UseNativeLibrary(dll);
+        e.ConsultString(OutProgram);
+        // set_out writes *out_i = In*10 and *out_s = In+1 through the pointers;
+        // Shumway reads them back into the block-locals oi/os.
+        Assert.True(e.Query("calc(5, Ri, Rs), Ri == 50, Rs == 6.").Success);
+        Assert.True(e.Query("calc(0, Ri, Rs), Ri == 0, Rs == 1.").Success);
     }
 }
 
