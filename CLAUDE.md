@@ -755,8 +755,26 @@ GXPROLOG`, C under `#else`): the uniform pattern is `fill_par(Term,&parNref)` �
   resolves `:- native` (managed snapshot *and* P/Invoke) with no source — verified
   by a stripped-bundle P/Invoke test. (NB: a format change → rebuild the CLI + the
   Release REPL the cross-process tests use.)
-- **Next:** delegate/IL emit for the snapshot + P/Invoke paths (interpreter-only);
-  char* string params; full `--exe` native run-through.
+- **char\* params (done).** A `:- native` function's `char*` parameter marshals a
+  Prolog string into NUL-terminated native memory (via the engine's
+  `NativeTextEncoding`, default UTF-8), passed and freed (`NativeCall.Kind.StringIn`).
+  A `char*` **return** flows to the block as a raw pointer integer (the inference types
+  a char*-returning call as a pointer, not a string), so the corpus pattern
+  `{ Ptr is 'tbl_name'(M,T) }, Ptr \= 0, make_prolog_string(Ptr, Name)` works:
+  `make_prolog_string` reads the NUL-terminated native string from an integer source.
+  Tested over a real DLL incl. byte-exact UTF-8. (`char**` / out-string still deferred.)
+- **IL emit for the materializer tier (done).** Both `:- native` backends now compile
+  to IL instead of bailing the block to the interpreter. The **managed snapshot**
+  (Reftype-param) path emits inline — materialize → call → write-back — as an
+  `Expression.Block` keyed off the `Reftype` parameter type. The **P/Invoke** path
+  (Option 1, since Expression trees can't emit cdecl `calli`) routes through
+  `NativeBlockRunner.PInvokeFromIl` — the same marshalling over pre-evaluated boxed
+  args, returning a boxed long/double the emitted IL unboxes; `EmitNativeCall` boxes
+  scalar/string args, names reftype globals, and invokes it. The win is structural —
+  scalar work *around* a native call now runs as IL. Out-scalar params (write back to
+  a block-local) still bail to the interpreter. Both proven via `CompiledCount`.
+- **Next:** out-scalar params under IL; `char**` / out-string params; full `--exe`
+  native run-through.
 
 **Phase 31 — REPL line-editing + `--dll` + native-interop correctness** — ✅ **Complete** (tagged `phase-31`; closure summary in [`docs/phase-31-closure.md`](docs/phase-31-closure.md)).
 
