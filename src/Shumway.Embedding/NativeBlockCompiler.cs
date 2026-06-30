@@ -53,6 +53,15 @@ public static class NativeBlockCompiler
         typeof(Engine).GetMethod(nameof(Engine.UnifyRegisterWithCell))!;
     private static readonly MethodInfo ReadSlotM =
         typeof(NativeBlockCompiler).GetMethod(nameof(ReadReftypeSlot))!;
+    // ADR-024 managed-snapshot helpers (the `:- native` Reftype-param path).
+    private static readonly MethodInfo MaterializeReftypeM =
+        typeof(Reftype).GetMethod(nameof(Reftype.Materialize), new[] { typeof(Term) })!;
+    private static readonly MethodInfo DematerializeReftypeM =
+        typeof(Reftype).GetMethod(nameof(Reftype.Dematerialize), new[] { typeof(Reftype) })!;
+    private static readonly MethodInfo SlotMaterializeM =
+        typeof(TermSlot).GetMethod(nameof(TermSlot.Materialize), Type.EmptyTypes)!;
+    private static readonly MethodInfo SlotSetValueM =
+        typeof(TermSlot).GetMethod(nameof(TermSlot.SetValue))!;
 
     /// <summary>ADR-024 — the <see cref="TermSlot"/> a register holds (a Foreign
     /// cell, read as <c>'$foreign'(Id)</c>), or null. Shared by the
@@ -296,8 +305,32 @@ public static class NativeBlockCompiler
             var ps = m.GetParameters();
             if (c.Args.Count != ps.Length) throw new NativeBlockBailException();
             var args = new Expression[ps.Length];
+            // ADR-024 managed-snapshot writebacks: temps + the pre/post statements
+            // that materialize each reftype global to a Reftype and write the mutated
+            // snapshot back. Built only when a Reftype parameter is present.
+            List<ParameterExpression>? temps = null;
+            List<Expression>? pre = null;
+            List<Expression>? writebacks = null;
             for (int i = 0; i < ps.Length; i++)
             {
+                // ADR-024 — a Reftype parameter (the `:- native` materializer tier):
+                // snapshot the reftype global's term, pass the managed Reftype, and
+                // write the (possibly mutated) snapshot back after the call — mirrors
+                // NativeBlockRunner.CallInterop.
+                if (ps[i].ParameterType == typeof(Reftype) && ReftypeArgName(c.Args[i]) is { } sn)
+                {
+                    var slotVar = Expression.Variable(typeof(TermSlot), "snapslot" + i);
+                    var snap = Expression.Variable(typeof(Reftype), "snap" + i);
+                    (temps ??= new()).Add(slotVar);
+                    temps.Add(snap);
+                    (pre ??= new()).Add(Expression.Assign(slotVar, EmitGetSlot(sn)));
+                    pre.Add(Expression.Assign(snap, Expression.Call(MaterializeReftypeM,
+                        Expression.Call(slotVar, SlotMaterializeM))));
+                    (writebacks ??= new()).Add(Expression.Call(slotVar, SlotSetValueM,
+                        Expression.Call(DematerializeReftypeM, snap)));
+                    args[i] = snap;
+                    continue;
+                }
                 // ADR-024 — a TermSlot parameter receives a reftype global
                 // (`'fn'(par1ref)` → its slot) or a reftype variable (a TermSlot
                 // local).
@@ -313,7 +346,23 @@ public static class NativeBlockCompiler
                 }
                 args[i] = Coerce(EmitExpr(c.Args[i]), ps[i].ParameterType);
             }
-            return Expression.Call(m, args);
+            Expression call = Expression.Call(m, args);
+            if (writebacks is null) return call;
+            // Sequence: materialize snapshots, call (capturing the result),
+            // write each snapshot back, yield the result.
+            var seq = new List<Expression>(pre!);
+            if (call.Type == typeof(void))
+            {
+                seq.Add(call);
+                seq.AddRange(writebacks);
+                return Expression.Block(temps!, seq);
+            }
+            var resultVar = Expression.Variable(call.Type, "ncresult");
+            temps!.Add(resultVar);
+            seq.Add(Expression.Assign(resultVar, call));
+            seq.AddRange(writebacks);
+            seq.Add(resultVar);
+            return Expression.Block(temps!, seq);
         }
 
         // ----- marshalling -------------------------------------------------

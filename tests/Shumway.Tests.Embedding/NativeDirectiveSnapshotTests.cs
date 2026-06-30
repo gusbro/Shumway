@@ -59,6 +59,20 @@ public class NativeDirectiveSnapshotTests
     }
 
     [Fact]
+    public void NativeDirective_ManagedSnapshot_CompilesToIl_NotInterpreter()
+    {
+        // The snapshot reftype-param path now emits inline IL (materialize → call →
+        // write back) instead of bailing to the interpreter. Both blocks compile:
+        // the `Ptr is &par1ref` cursor block and the `bump_snap(par1ref)` snapshot.
+        int before = Shumway.Embedding.NativeBlockCompiler.CompiledCount;
+        var e = new PrologEngine();
+        e.UseNativeInterop(typeof(SnapInterop));
+        e.ConsultString(Program);
+        Assert.True(e.Query("go(7, Out), Out == result(8).").Success);
+        Assert.True(Shumway.Embedding.NativeBlockCompiler.CompiledCount >= before + 2);
+    }
+
+    [Fact]
     public void NativeDirective_IsAcceptedAndParsedAsOperator()
     {
         // `:- native foo/2.` (operator form) consults without error and does not
