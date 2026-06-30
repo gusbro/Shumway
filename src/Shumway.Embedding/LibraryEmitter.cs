@@ -62,7 +62,8 @@ public static class LibraryEmitter
         string? namespaceName = null,
         string? className = null,
         TextWriter? verboseOut = null,
-        IReadOnlyList<string>? foreignDllPaths = null)
+        IReadOnlyList<string>? foreignDllPaths = null,
+        IReadOnlyList<string>? nativeDllPaths = null)
     {
         ArgumentNullException.ThrowIfNull(bundleBytes);
         ArgumentNullException.ThrowIfNull(outputPath);
@@ -134,6 +135,18 @@ public static class LibraryEmitter
                     string dst = Path.Combine(outputDir, Path.GetFileName(src));
                     if (Path.GetFullPath(src) != Path.GetFullPath(dst))
                         File.Copy(src, dst, overwrite: true);
+                }
+
+            // ADR-024 native DLLs: LoadBundle (called by the generated CreateEngine)
+            // auto-loads Bundle.NativeLibraries, probing AppContext.BaseDirectory — so
+            // the native lib must sit next to the generated DLL, like a foreign one.
+            if (nativeDllPaths is not null)
+                foreach (var src in nativeDllPaths)
+                {
+                    string dst = Path.Combine(outputDir, Path.GetFileName(src));
+                    if (Path.GetFullPath(src) != Path.GetFullPath(dst))
+                        File.Copy(src, dst, overwrite: true);
+                    verboseOut?.WriteLine($"shumway-dll: copied native dll '{Path.GetFileName(src)}'");
                 }
 
             verboseOut?.WriteLine($"shumway-dll: wrote {finalPath} ({new FileInfo(finalPath).Length:N0} bytes), "

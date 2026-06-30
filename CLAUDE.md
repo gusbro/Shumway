@@ -783,7 +783,19 @@ GXPROLOG`, C under `#else`): the uniform pattern is `fill_par(Term,&parNref)` �
   `char*` is **borrowed** (native-owned, copied out, never freed) — a `malloc`'d
   return would leak, by design (caller-owns would need an explicit paired-free
   annotation).
-- **Next:** full `--exe` native run-through (last item before closing the phase).
+- **`--exe` + `--dll` native run-through (done).** Validated the whole chain in a
+  shipped binary: a source-stripped Release bundle with `:- native bump_native/1`
+  over a real `nrt.dll`, linked `shumway-link --native-dll nrt.dll`. The native lib
+  is copied next to the output for **both** emitters — `ExecutableEmitter` already
+  did it; `LibraryEmitter` was missing it (the `--dll` path dropped native DLLs) and
+  now copies them too (CLI passes `nativeDllPaths`). Verified: `--exe` →
+  `app.exe` prints `42` (P/Invoke bump 41→42, no source, DLL auto-loaded), exit 0;
+  `--dll` → a consumer app calling `Bundle.CreateEngine()` runs `go(41,Out)` → `42`
+  with `nrt.dll` copied to a separate output dir and auto-loaded by `LoadBundle`.
+- **Phase 32 ready to close** — the materializer tier is functionally complete
+  (scalar / reftype / char\* in / char\* return / out-scalar / char\*\* out-string,
+  interpreter + IL) with the ownership model documented and the deployment chain
+  (`--native-dll` → `--exe` / `--dll`) verified end-to-end.
 
 **Phase 31 — REPL line-editing + `--dll` + native-interop correctness** — ✅ **Complete** (tagged `phase-31`; closure summary in [`docs/phase-31-closure.md`](docs/phase-31-closure.md)).
 

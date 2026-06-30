@@ -324,9 +324,12 @@ Shumway decides, **once and caches**, whether it resolves to a registered C# int
 method (→ managed `Reftype` snapshot) or to an export of a native library (→
 P/Invoke). Register the library with `engine.UseNativeLibrary("mylib.dll")`, or at
 link time with `shumway-link --native-dll mylib.dll` (recorded in the bundle and
-auto-loaded by `LoadBundle` / `--exe`). The `:- native` indicators and `:- c`
-prototypes travel in the bundle, so a source-stripped release bundle resolves them
-with no source.
+auto-loaded by `LoadBundle`). The native library is copied next to the output for
+both `--exe` (the published executable) and `--dll` (the generated class library, so
+a consumer that calls the factory's `CreateEngine()` finds it). The `:- native`
+indicators and `:- c` prototypes travel in the bundle, so a source-stripped release
+bundle resolves them with no source — verified end-to-end through both a native
+`--exe` and a `--dll` consumer.
 
 ### 10b. Parameter and return marshalling
 

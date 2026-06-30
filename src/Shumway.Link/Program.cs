@@ -228,7 +228,8 @@ internal static class Program
                 namespaceName: opts.DllNamespace,
                 className: opts.DllClass,
                 verboseOut: opts.Verbose ? Console.Error : null,
-                foreignDllPaths: opts.ForeignDlls);
+                foreignDllPaths: opts.ForeignDlls,
+                nativeDllPaths: opts.NativeDlls);
             foreach (var d in dllResult.Diagnostics)
             {
                 var stream = d.Severity == LinkSeverity.Error ? Console.Error : Console.Out;
