@@ -168,6 +168,10 @@ public static class BundleWriter
         bw.Write((uint)bundle.ForeignAssemblies.Count);
         foreach (var name in bundle.ForeignAssemblies)
             WriteLengthPrefixedUtf8(bw, name);
+        // ADR-024 native-libraries trailer (--native-dll).
+        bw.Write((uint)bundle.NativeLibraries.Count);
+        foreach (var name in bundle.NativeLibraries)
+            WriteLengthPrefixedUtf8(bw, name);
         // Save-state snapshot trailer (chunk 264). A
         // regular shumway-link / shumway-compile bundle writes
         // snapshotPresent=0 (one byte) and stops; PrologEngine.SaveState

@@ -739,8 +739,19 @@ GXPROLOG`, C under `#else`): the uniform pattern is `fill_par(Term,&parNref)` �
   pointer, then reads it back into the local — so a following `X is local` sees what
   the function wrote. Test (real DLL): `set_out(In, &oi, &os)` → `calc(5,Ri,Rs)` →
   `Ri==50, Rs==6` (int* + short*).
-- **Next:** delegate/IL emit for the snapshot + P/Invoke paths (currently
-  interpreter-only); char* string params; a `--native-dll` CLI flag.
+- **`--native-dll` CLI flag (done).** `shumway-link --native-dll <path>` records a
+  native C library (DLL/.so/.dylib) in the bundle (`Bundle.NativeLibraries`,
+  serialized in both .shum writers + reader); `LoadBundle` auto-loads each via
+  `UseNativeLibrary` (probed next to the bundle / executable), and `--exe` copies
+  them alongside — mirrors `--foreign-dll`, no reflection (native functions are
+  declared via `:- native` + `:- c`). Tests: serialization round-trip (CI-safe) + a
+  Debug-bundle auto-load end-to-end (no `UseNativeLibrary` call). **Limitation:** a
+  **source-stripped** Release bundle does not yet restore the `:- native` indicators
+  + `:- c` prototypes (they're only re-applied by a Debug bundle's re-consult) — a
+  separate follow-up affecting all `:- native` bundles, not just `--native-dll`.
+- **Next:** serialize `:- native` indicators + prototypes for source-stripped /
+  `--exe` bundles; delegate/IL emit for the snapshot + P/Invoke paths
+  (interpreter-only); char* string params.
 
 **Phase 31 — REPL line-editing + `--dll` + native-interop correctness** — ✅ **Complete** (tagged `phase-31`; closure summary in [`docs/phase-31-closure.md`](docs/phase-31-closure.md)).
 

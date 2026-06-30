@@ -128,6 +128,11 @@ public static class BundleReader
         var foreignAssemblies = new List<string>((int)asmCount);
         for (uint i = 0; i < asmCount; i++)
             foreignAssemblies.Add(ReadLengthPrefixedUtf8(br));
+        // ADR-024 native-libraries trailer (--native-dll).
+        uint nativeCount = br.ReadUInt32();
+        var nativeLibraries = new List<string>((int)nativeCount);
+        for (uint i = 0; i < nativeCount; i++)
+            nativeLibraries.Add(ReadLengthPrefixedUtf8(br));
         // Save-state snapshot trailer (chunk 264): one presence byte, then the
         // payload when a PrologEngine.SaveState bundle carries a snapshot.
         BundleSnapshot? snapshot = null;
@@ -181,7 +186,7 @@ public static class BundleReader
                     + $"{shmoLength} bytes, got {shmoBytes.Length}).");
             archiveMembers.Add(new BundleArchiveMember(fileName, shmoBytes));
         }
-        return new Bundle(entries, foreignAssemblies, snapshot, archiveMembers);
+        return new Bundle(entries, foreignAssemblies, snapshot, archiveMembers, nativeLibraries);
     }
 
     private static string ReadLengthPrefixedUtf8(BinaryReader br)

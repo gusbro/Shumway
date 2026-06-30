@@ -296,6 +296,64 @@ public class NativePInvokeTests
         Assert.True(e.Query("calc(5, Ri, Rs), Ri == 50, Rs == 6.").Success);
         Assert.True(e.Query("calc(0, Ri, Rs), Ri == 0, Rs == 1.").Success);
     }
+
+    // ---- --native-dll: the linker records native libraries in the bundle, and the
+    //      runtime auto-loads them at LoadBundle (no UseNativeLibrary by hand). ----
+
+    [Fact]
+    public void NativeDll_RecordedInBundle_AndRoundTrips()
+    {
+        // CI-safe: the LinkConfig → Bundle.NativeLibraries → serialize → read chain.
+        var bytes = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { ShmoCompiler.CompileSource(
+                ":- set_prolog_flag(arity_compat, true).\n:- public p/0.\np.\n", "prog", ShmoBuildMode.Release) },
+            EntryPoints = new[] { new PredicateRef("p", 0) },
+            NativeLibraries = new[] { System.IO.Path.Combine("some", "dir", "genexus.dll") },
+            BakePrelude = true,
+        }).Bytes!;
+        var bundle = BundleReader.FromBytes(bytes);
+        Assert.Contains("genexus.dll", bundle.NativeLibraries);   // file name recorded + round-tripped
+    }
+
+    private const string BundleProgram =
+        ":- set_prolog_flag(arity_compat, true).\n" +
+        ":- native bump_native/1.\n" +
+        ":- public go/2.\n" +
+        ":- c.\nreftype par1ref;\nint bump_native(reftype);\n:- prolog.\n" +
+        "go(In, Out) :-\n" +
+        "  { Ptr: preftype; Ptr is &par1ref },\n" +
+        "  fill_par(In, Ptr),\n" +
+        "  { ret: int; ret = 'bump_native'(par1ref); Ret is ret },\n" +
+        "  Ret =:= 1,\n" +
+        "  reftype_term(Out, Ptr).\n";
+
+    [Fact]
+    public void EndToEnd_NativeDll_AutoLoadedFromBundle()
+    {
+        string? dll = NativeTestDll.TryBuild(CSource, "bumpnative_bundle", out string note);
+        if (dll is null) { _output.WriteLine("SKIPPED: " + note); return; }
+        // Put the DLL where LoadBundle's probe (AppContext.BaseDirectory) finds it by
+        // the recorded file name.
+        string sideDll = System.IO.Path.Combine(AppContext.BaseDirectory, System.IO.Path.GetFileName(dll));
+        System.IO.File.Copy(dll, sideDll, overwrite: true);
+
+        // Debug bundle (source kept): LoadBundle re-consults — which re-applies the
+        // `:- native` directive + `:- c` prototypes — and auto-loads the native
+        // library recorded by --native-dll. (Source-stripped bundles need the
+        // `:- native` indicators + prototypes serialized — a separate follow-up.)
+        var bytes = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { ShmoCompiler.CompileSource(BundleProgram, "prog", ShmoBuildMode.Debug) },
+            EntryPoints = new[] { new PredicateRef("go", 2) },
+            NativeLibraries = new[] { dll },
+            BakePrelude = true,
+        }).Bytes!;
+
+        var e = new PrologEngine();
+        e.LoadBundle(BundleReader.FromBytes(bytes));   // NO UseNativeLibrary — auto-loaded from the bundle
+        Assert.True(e.Query("go(10, Out), Out == 11.").Success);
+    }
 }
 
 // Compiles a small C source to a shared library for the integration test. The

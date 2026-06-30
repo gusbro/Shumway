@@ -131,7 +131,8 @@ public static class ExecutableEmitter
         string outputPath,
         ExecutableDeploymentMode mode = ExecutableDeploymentMode.FrameworkDependent,
         TextWriter? verboseOut = null,
-        IReadOnlyList<string>? foreignDllPaths = null)
+        IReadOnlyList<string>? foreignDllPaths = null,
+        IReadOnlyList<string>? nativeDllPaths = null)
     {
         ArgumentNullException.ThrowIfNull(bundleBytes);
         ArgumentNullException.ThrowIfNull(goal);
@@ -227,6 +228,23 @@ public static class ExecutableEmitter
                     {
                         File.Copy(src, dst, overwrite: true);
                         verboseOut?.WriteLine($"shumway-exe: copied foreign dll '{Path.GetFileName(src)}'");
+                    }
+                }
+            }
+            // ADR-024: copy each --native-dll next to the executable too, so the
+            // LoadBundle native-library auto-load (Bundle.NativeLibraries) finds them
+            // in the executable's directory.
+            if (nativeDllPaths is not null && nativeDllPaths.Count > 0)
+            {
+                string sideDir = string.IsNullOrEmpty(outputDir)
+                    ? Directory.GetCurrentDirectory() : outputDir;
+                foreach (var src in nativeDllPaths)
+                {
+                    string dst = Path.Combine(sideDir, Path.GetFileName(src));
+                    if (Path.GetFullPath(src) != Path.GetFullPath(dst))
+                    {
+                        File.Copy(src, dst, overwrite: true);
+                        verboseOut?.WriteLine($"shumway-exe: copied native dll '{Path.GetFileName(src)}'");
                     }
                 }
             }

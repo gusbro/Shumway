@@ -21,6 +21,14 @@ public sealed class Bundle
     /// <c>--foreign-dll</c>.</summary>
     public IReadOnlyList<string> ForeignAssemblies { get; }
 
+    /// <summary>ADR-024 — native C libraries (DLL/.so/.dylib) recorded by the
+    /// linker's <c>--native-dll</c>. The runtime
+    /// <see cref="PrologEngine.LoadBundle(Bundle)"/> path auto-loads each via
+    /// <see cref="PrologEngine.UseNativeLibrary"/> so a <c>:- native</c> function
+    /// resolves by P/Invoke without the embedder calling it by hand. Empty for
+    /// bundles linked without <c>--native-dll</c>.</summary>
+    public IReadOnlyList<string> NativeLibraries { get; }
+
     /// <summary>Save-state chunk 264 — non-null when this bundle was
     /// produced by <see cref="PrologEngine.SaveState"/> rather than
     /// the regular shumway-link path. Carries consult history +
@@ -57,12 +65,14 @@ public sealed class Bundle
         IReadOnlyList<BundleEntry> entries,
         IReadOnlyList<string>? foreignAssemblies,
         BundleSnapshot? snapshot,
-        IReadOnlyList<BundleArchiveMember>? archiveMembers = null)
+        IReadOnlyList<BundleArchiveMember>? archiveMembers = null,
+        IReadOnlyList<string>? nativeLibraries = null)
     {
         Entries = entries;
         ForeignAssemblies = foreignAssemblies ?? Array.Empty<string>();
         Snapshot = snapshot;
         ArchiveMembers = archiveMembers ?? Array.Empty<BundleArchiveMember>();
+        NativeLibraries = nativeLibraries ?? Array.Empty<string>();
     }
 }
 

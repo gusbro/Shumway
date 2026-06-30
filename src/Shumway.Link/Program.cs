@@ -113,6 +113,7 @@ internal static class Program
             DumpWamPath = opts.DumpWamPath,
             DumpIlPath = opts.DumpIlPath,
             ForeignAssemblies = opts.ForeignDlls,
+            NativeLibraries = opts.NativeDlls,
         };
 
         LinkResult result;
@@ -206,7 +207,8 @@ internal static class Program
                 outputPath: opts.ExePath,
                 mode: mode,
                 verboseOut: opts.Verbose ? Console.Error : null,
-                foreignDllPaths: opts.ForeignDlls);
+                foreignDllPaths: opts.ForeignDlls,
+                nativeDllPaths: opts.NativeDlls);
             foreach (var d in exeResult.Diagnostics)
             {
                 var stream = d.Severity == LinkSeverity.Error
@@ -277,6 +279,9 @@ internal static class Program
         // the assembly filenames in the bundle so the runtime
         // auto-loads them.
         public List<string> ForeignDlls { get; } = new();
+        // --native-dll: native C libraries (DLL/.so/.dylib) backing :- native
+        // functions; recorded in the bundle so the runtime auto-loads them.
+        public List<string> NativeDlls { get; } = new();
     }
 
     private static Options? ParseArgs(string[] args)
@@ -407,6 +412,18 @@ internal static class Program
                         return null;
                     }
                     opts.ForeignDlls.Add(System.IO.Path.GetFullPath(args[i]));
+                    break;
+
+                case "--native-dll":
+                case "-n":
+                    if (++i >= args.Length) { ReportMissing(arg); return null; }
+                    if (!System.IO.File.Exists(args[i]))
+                    {
+                        Console.Error.WriteLine(
+                            $"shumway-link: --native-dll '{args[i]}' not found.");
+                        return null;
+                    }
+                    opts.NativeDlls.Add(System.IO.Path.GetFullPath(args[i]));
                     break;
 
                 default:
@@ -609,6 +626,11 @@ internal static class Program
             + "                           loads it automatically at runtime. Repeatable.\n"
             + "                           --exe copies each foreign DLL next to the\n"
             + "                           produced executable.\n"
+            + "  -n, --native-dll <path>  A native C library (DLL/.so/.dylib) backing\n"
+            + "                           ':- native' functions (resolved by P/Invoke). The\n"
+            + "                           bundle records its name so the engine loads it\n"
+            + "                           automatically at runtime. Repeatable. --exe copies\n"
+            + "                           each next to the produced executable.\n"
             + "  -m, --map <path>         Write a human-readable report of what was linked:\n"
             + "                           per-module sizes, exported / dynamic predicates,\n"
             + "                           dropped modules, totals.\n"

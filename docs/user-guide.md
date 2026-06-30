@@ -364,6 +364,7 @@ shumway-link -o app.shum \
 | `-g, --goal Term` | The goal the `--exe` runs at startup. Trailing `.` optional. |
 | `--self-contained` | Used with `--exe`: bake the .NET runtime into the binary (~70 MB exe, runs on machines without .NET). Default is framework-dependent (~5-10 MB exe, requires .NET 10 runtime on the target). |
 | `-d, --dll <path>` | Emit a loadable .NET class library embedding the bundle, with a factory that hands back a ready engine. See [step 3b](#step-3b--producing-a-loadable-net-class-library---dll). Mutually exclusive with `--exe`. |
+| `-n, --native-dll <path>` | A native C library (DLL/.so/.dylib) backing `:- native` functions (resolved by P/Invoke). The bundle records its name so the engine auto-loads it at runtime; `--exe` copies each next to the executable. Repeatable. |
 | `--dll-namespace <ns>` | Namespace of the `--dll` factory class. Default: inferred from the DLL filename. |
 | `--dll-class <name>` | Class name of the `--dll` factory. Default `Bundle`. |
 | `-v, --verbose` | Stream diagnostics to stderr as the linker runs. |

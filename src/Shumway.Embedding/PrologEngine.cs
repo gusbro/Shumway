@@ -2841,6 +2841,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     asmName);
             RegisterForeignAssembly(resolved);
         }
+        // ADR-024 — native C libraries (--native-dll): load each so a `:- native`
+        // function resolves by P/Invoke. Probed like a foreign assembly (next to
+        // the bundle / executable), then the OS loader's default search.
+        foreach (var libName in bundle.NativeLibraries)
+        {
+            string probe = ResolveForeignAssemblyPath(libName, bundleDir) ?? libName;
+            UseNativeLibrary(probe);
+        }
         // A shumway-lib librarian archive stores its modules as verbatim
         // .shmo objects (bundle.ArchiveMembers) rather than post-link
         // Entries. Derive a runnable entry from each — exactly the fields a

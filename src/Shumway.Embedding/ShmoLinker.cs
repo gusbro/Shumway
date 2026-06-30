@@ -156,6 +156,15 @@ public sealed class LinkConfig
     /// those.</para></summary>
     public IReadOnlyList<string> ForeignAssemblies { get; init; } = Array.Empty<string>();
 
+    /// <summary>ADR-024 — native C libraries (DLL/.so/.dylib) backing
+    /// <c>:- native</c> functions, from <c>--native-dll</c>. Their filenames are
+    /// recorded in <see cref="Bundle.NativeLibraries"/>; the runtime
+    /// <see cref="PrologEngine.LoadBundle"/> auto-loads each via
+    /// <see cref="PrologEngine.UseNativeLibrary"/> (probing adjacent to the bundle /
+    /// executable). No reflection — native functions are declared in the source via
+    /// <c>:- native</c> + the <c>:- c</c> prototype.</summary>
+    public IReadOnlyList<string> NativeLibraries { get; init; } = Array.Empty<string>();
+
     /// <summary>Library inputs (C-archive semantics). Each entry is a
     /// <c>.shum</c> librarian archive (built by <c>shumway-lib</c>) broken
     /// out into its member <c>.shmo</c> objects. Unlike
@@ -981,7 +990,10 @@ public static class ShmoLinker
             // Chunk 179: the chunk-172 "stripped_bundle" warning is gone —
             // stripped bundles now dispatch correctly via chunk 178's
             // source-less LoadBundle path.
-            bundle = new Bundle(entries, foreignAssemblyNames);
+            var nativeLibNames = config.NativeLibraries
+                .Select(System.IO.Path.GetFileName).ToList();
+            bundle = new Bundle(entries, foreignAssemblyNames, snapshot: null,
+                archiveMembers: null, nativeLibraries: nativeLibNames);
             // Chunk 192: --with-compiled-il routes the bundle through
             // BundleWriter.ToBytes, which (under includeCompiledIl=true)
             // runs PersistedIlBuilder per entry to materialise IL for
@@ -1750,6 +1762,11 @@ public static class ShmoLinker
         bw.Write((uint)bundle.ForeignAssemblies.Count);
         foreach (var asmName in bundle.ForeignAssemblies)
             WriteString(bw, asmName);
+        // ADR-024 native-libraries trailer (--native-dll). Mirrors
+        // BundleWriter.ToBytes exactly so either writer round-trips identically.
+        bw.Write((uint)bundle.NativeLibraries.Count);
+        foreach (var libName in bundle.NativeLibraries)
+            WriteString(bw, libName);
         // Snapshot presence byte (chunk 264) — part of the single supported
         // layout (chunk 413 froze the format: every section unconditional).
         // A linker-produced bundle never carries a save-state snapshot.
