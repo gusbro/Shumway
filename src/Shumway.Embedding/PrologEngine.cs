@@ -4336,14 +4336,40 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private System.Collections.Generic.Dictionary<string, Shumway.Compiler.NativeC.CType>? _nativeTypedefs;
     private readonly System.Collections.Generic.Dictionary<int, NativeResolution> _nativeCallCache = new();
 
+    // ADR-024 — native libraries are loaded ONCE PER PATH for the process lifetime,
+    // not once per engine. The OS maps a module once (LoadLibrary/dlopen refcounts),
+    // so a per-engine Load would leak one refcount per engine under churn; this
+    // process-global table makes the shared mapping explicit and deduplicates the
+    // load. The handle is never freed — the mapping lives until the process exits.
+    // (A global table guarded by a lock, like the atom / functor tables.)
+    private static readonly System.Collections.Generic.Dictionary<string, IntPtr> _loadedNativeLibraries = new();
+    private static readonly object _loadedNativeLibrariesLock = new();
+    /// <summary>Test/diagnostic: the number of real <c>NativeLibrary.Load</c> calls
+    /// (a distinct path is loaded once for the whole process).</summary>
+    internal static int NativeLibraryLoadCount;
+
     /// <summary>ADR-024 — registers a native library (a C DLL/.so/.dylib) whose
     /// exported functions back <c>:- native</c> declarations resolved by P/Invoke.
-    /// Call before querying; later registrations invalidate the resolution cache.</summary>
+    /// Call before querying; later registrations invalidate the resolution cache.
+    /// The library is loaded once per path for the whole process and shared across
+    /// engines (see the <c>_loadedNativeLibraries</c> note).</summary>
     public void UseNativeLibrary(string path)
     {
         System.ArgumentNullException.ThrowIfNull(path);
-        IntPtr h = System.Runtime.InteropServices.NativeLibrary.Load(path);
-        _nativeLibraries.Add(h);
+        // Key by full path when it names an existing file (the --native-dll /
+        // LoadBundle case); otherwise by the raw string (an OS-searched bare name).
+        string key = System.IO.File.Exists(path) ? System.IO.Path.GetFullPath(path) : path;
+        IntPtr h;
+        lock (_loadedNativeLibrariesLock)
+        {
+            if (!_loadedNativeLibraries.TryGetValue(key, out h))
+            {
+                h = System.Runtime.InteropServices.NativeLibrary.Load(key);
+                _loadedNativeLibraries[key] = h;
+                System.Threading.Interlocked.Increment(ref NativeLibraryLoadCount);
+            }
+        }
+        if (!_nativeLibraries.Contains(h)) _nativeLibraries.Add(h);
         // ADR-024 — if the library provides the reftype allocator API
         // (newreftype/freepar/…), use it so a native function that builds sub-nodes
         // and the materializer share one heap (freepar can release the mixed graph).

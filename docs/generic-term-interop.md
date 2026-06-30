@@ -389,5 +389,35 @@ scalar work *around* the native call runs as IL too. Out-scalar and `char**`
 out-string write-backs (which target a block-local) are threaded through a read-back
 array the emitted IL stores from, so those calls compile to IL as well.
 
+### 10e. Native-library lifetime and thread-safety — read this
+
+A registered native library (`UseNativeLibrary` / `--native-dll`) is **loaded once
+per path for the whole process** and **shared across all engines** — the OS maps the
+module once, and Shumway deduplicates the load, so creating many engines that use the
+same library costs one mapping, not one per engine. The mapping is **never unloaded**;
+it lives until the process exits (there is no `Free` / `Dispose` hook).
+
+Two consequences follow from "one shared native module", and they are **your**
+responsibility, not the engine's:
+
+- **`:- native` calls are not serialized.** Shumway's "one engine, one thread at a
+  time" rule governs *engine* state; it does **not** extend into the native library.
+  If two engines on two threads call the same native function concurrently, the C
+  runs concurrently. That is safe only if the **library is reentrant / thread-safe**.
+  In particular a **borrowed static-buffer return** (a `char*` into a reused internal
+  buffer — the Arity `tbl_name` / `mdl_name` / `searchcfg` style) is **not** safe
+  under parallel calls: two threads race on the one buffer. Either keep such calls on
+  a single engine/thread, or ensure the native side is thread-safe.
+
+- **Native global state is process-global and shared between engines.** Shumway's
+  per-engine isolation (including the per-engine `:- c` *scalar globals*) does **not**
+  reach inside the library: a C `static` / global the native code mutates persists
+  across engines and is **not** reset when you move from one engine to the next in the
+  same process. If a library accumulates state, a fresh `PrologEngine` inherits it.
+
+So: for parallel multi-engine use, the native library must be thread-safe and
+preferably stateless; for sequential engine-after-engine use in one process, expect
+native global state to carry over.
+
 See `docs/architecture/adr/024-generic-term-interop.md` for the design and
 rationale.

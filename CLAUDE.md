@@ -792,10 +792,20 @@ GXPROLOG`, C under `#else`): the uniform pattern is `fill_par(Term,&parNref)` �
   `app.exe` prints `42` (P/Invoke bump 41→42, no source, DLL auto-loaded), exit 0;
   `--dll` → a consumer app calling `Bundle.CreateEngine()` runs `go(41,Out)` → `42`
   with `nrt.dll` copied to a separate output dir and auto-loaded by `LoadBundle`.
+- **Native-library lifetime + thread-safety (done).** A native library is now loaded
+  **once per path for the process** (a static `_loadedNativeLibraries` table guarded
+  by a lock) and shared across engines, instead of one `NativeLibrary.Load` per engine
+  — the old per-engine load leaked an OS refcount per engine under churn. The mapping
+  is never freed (lives to process exit). Documented the contract in
+  [generic-term-interop §10e](docs/generic-term-interop.md): `:- native` calls are
+  **not serialized** (a parallel multi-engine caller needs a reentrant library;
+  borrowed static-buffer returns race), and native global state is process-global and
+  **not** reset between engines. Test: two engines loading the same path trigger one
+  real load and both resolve + call.
 - **Phase 32 ready to close** — the materializer tier is functionally complete
   (scalar / reftype / char\* in / char\* return / out-scalar / char\*\* out-string,
-  interpreter + IL) with the ownership model documented and the deployment chain
-  (`--native-dll` → `--exe` / `--dll`) verified end-to-end.
+  interpreter + IL) with the ownership + lifetime/thread-safety model documented and
+  the deployment chain (`--native-dll` → `--exe` / `--dll`) verified end-to-end.
 
 **Phase 31 — REPL line-editing + `--dll` + native-interop correctness** — ✅ **Complete** (tagged `phase-31`; closure summary in [`docs/phase-31-closure.md`](docs/phase-31-closure.md)).
 

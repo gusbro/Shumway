@@ -456,6 +456,39 @@ public class NativePInvokeTests
         Assert.True(Shumway.Embedding.NativeBlockCompiler.CompiledCount >= before + 1);
     }
 
+    // ---- Native-library lifetime: a path is loaded ONCE for the process and shared
+    //      across engines (no per-engine refcount leak); both engines resolve + call. ----
+
+    [Fact]
+    public void NativeLibrary_LoadedOncePerPath_SharedAcrossEngines()
+    {
+        string? dll = NativeTestDll.TryBuild(CSource, "shareonce", out string note);
+        if (dll is null)
+        {
+            _output.WriteLine("SKIPPED native-library lifetime test: " + note);
+            return;
+        }
+        // Pre-load once so the process-global table already has this path (TryBuild
+        // produces a unique name per call, so the first load here is the only one).
+        var warm = new PrologEngine();
+        warm.UseNativeLibrary(dll);
+        int loadsBefore = Shumway.Embedding.PrologEngine.NativeLibraryLoadCount;
+
+        // Two more engines loading the SAME path must not trigger another real Load —
+        // the OS mapping is shared and deduplicated.
+        var e1 = new PrologEngine();
+        e1.UseNativeLibrary(dll);
+        e1.ConsultString(Program);
+        var e2 = new PrologEngine();
+        e2.UseNativeLibrary(dll);
+        e2.ConsultString(Program);
+
+        Assert.Equal(loadsBefore, Shumway.Embedding.PrologEngine.NativeLibraryLoadCount);  // no extra Load
+        // Both engines still resolve the export and call it correctly.
+        Assert.True(e1.Query("go(10, Out), Out == 11.").Success);
+        Assert.True(e2.Query("go(41, Out), Out == 42.").Success);
+    }
+
     // ---- --native-dll: the linker records native libraries in the bundle, and the
     //      runtime auto-loads them at LoadBundle (no UseNativeLibrary by hand). ----
 
