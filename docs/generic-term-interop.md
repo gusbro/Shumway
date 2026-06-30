@@ -292,9 +292,98 @@ fmt(In, Out) :-
   handle and for Native AOT.)
 - **Calling native C through a trampoline.** The cursor is for logic *in C#*. If
   your C# only forwards to a native C function (P/Invoke), that C cannot touch the
-  Shumway heap — a future *materializer* tier (not yet implemented) will copy a
-  term to and from a physical `Reftype` struct for that case. See
+  Shumway heap — the **materializer tier** (§10) copies a term to and from a
+  physical `Reftype` struct for that case. See
   [ADR-024](architecture/adr/024-generic-term-interop.md).
+
+---
+
+## 10. The materializer tier — calling real native C (`:- native`)
+
+The cursor (§1–§9) is for interop logic written *in C#*. When the work is a real
+**native C function** — a P/Invoke target in a `.dll` / `.so` / `.dylib` that cannot
+touch the Shumway heap — Shumway **materializes** each whole-term argument into a
+physical Arity `t_reftype` struct in native memory, calls the function by pointer,
+then **dematerializes** the (possibly modified) struct back into the term. A managed
+.NET method that wants a struct *snapshot* (a `Reftype` parameter) uses the same
+machinery without leaving managed memory.
+
+### 10a. Declaring a native function
+
+Mark the function `:- native` and give it a `:- c` prototype:
+
+```prolog
+:- native tbl_name/2.
+:- c.
+char* tbl_name(short, short);     % a real native export
+:- prolog.
+```
+
+`:- native fn/N` says *fn is a materializer-protocol function* — at the call site
+Shumway decides, **once and caches**, whether it resolves to a registered C# interop
+method (→ managed `Reftype` snapshot) or to an export of a native library (→
+P/Invoke). Register the library with `engine.UseNativeLibrary("mylib.dll")`, or at
+link time with `shumway-link --native-dll mylib.dll` (recorded in the bundle and
+auto-loaded by `LoadBundle` / `--exe`). The `:- native` indicators and `:- c`
+prototypes travel in the bundle, so a source-stripped release bundle resolves them
+with no source.
+
+### 10b. Parameter and return marshalling
+
+| `:- c` type | Direction | Marshalling |
+|---|---|---|
+| `int` / `short` / `long` / `double` | in | by value |
+| `reftype` / `preftype` | in/out | materialized to a `t_reftype*`; modified struct written back |
+| `char*` | **in** | the Prolog string → NUL-terminated native bytes (engine encoding) |
+| `char*` | **return** | a raw pointer integer; read with `make_prolog_string(Ptr, X)` |
+| `short*` / `int*` / `long*` / `double*` (`&local`) | out | scalar written through the pointer, read back into the block-local |
+
+`char*` text uses the engine's `NativeTextEncoding` (default **UTF-8**; set per
+engine). A `char*`-returning function yields a raw pointer, so the corpus pattern
+works directly:
+
+```prolog
+full_name(Mod, T, Name) :-
+    integer(Mod), integer(T),
+    { Ptr is 'tbl_name'(Mod, T) },   % Ptr is the returned char* (a pointer)
+    Ptr =\= 0,                       % NULL check
+    make_prolog_string(Ptr, Name).   % copy the native string into an atom
+```
+
+### 10c. Memory ownership — who frees what
+
+This is the contract. Read it before passing pointers.
+
+| Memory | Owner / who frees | Lifetime |
+|---|---|---|
+| **`char*` input arg** | **Shumway** — allocated for the call, freed right after. | The single call. |
+| **`reftype` materialized for the call** | **Shumway** — freed after dematerializing (`FreeHGlobal`, or the library's `freepar` when the library allocated sub-nodes). | The single call. |
+| **out-scalar slot** (`&local`) | **Shumway** — allocated, passed, read back, freed. | The single call. |
+| **`char*` *return* value** | **The native side — borrowed.** Shumway **copies** the bytes into a Prolog atom and **never frees** the pointer. | Owned by the callee. |
+| **`char**` out-string** *(planned)* | **Split:** Shumway owns the pointer *cell* (allocated and freed around the call); the `char*` written into it is **borrowed** (native-owned), copied out, never freed. | Cell: the call. String: the callee. |
+
+The **borrowed** rule for returned strings matches Arity: functions like `tbl_name`
+/ `mdl_name` / `searchcfg` return pointers into **static buffers or internal tables**
+the library owns and reuses — Shumway must *not* free them (doing so would be a
+double-free or corrupt the library's state), and must copy the bytes before the next
+call can overwrite the buffer (which `make_prolog_string` does immediately).
+
+**Consequence — a `malloc`'d return leaks.** If a native function returns memory it
+expects the *caller* to free (a "caller-owns" convention), Shumway has no hook to
+free it and the block leaks. There is deliberately no automatic free for return
+strings — supporting caller-owns returns would need an explicit paired-free
+annotation (e.g. a `:- native_free fn/1` naming the deallocator), not added until a
+real case requires it. For now: **return strings must be borrowed** (static /
+internal / pooled on the native side).
+
+### 10d. IL emit
+
+Both backends compile to IL rather than the interpreter. A managed-snapshot
+(`Reftype`-param) call emits inline (materialize → call → write-back). A P/Invoke
+call dispatches through the cached cdecl `calli` invoker over pre-evaluated args, so
+scalar work *around* the native call runs as IL too. A native call with an
+**out-scalar** parameter still runs through the interpreter (its write-back targets a
+block-local) — correct, just not yet IL.
 
 See `docs/architecture/adr/024-generic-term-interop.md` for the design and
 rationale.
