@@ -161,6 +161,7 @@ public static class BundleWriter
             }
             // Native-blocks trailer (ADR-022).
             WriteNativeBlocks(bw, entry.NativeBlocks);
+            WriteNativeInterop(bw, entry.NativeFunctions, entry.NativeDecls);
         }
         // Foreign-assemblies trailer (chunk 247) after the
         // per-entry payloads. Pre-V5 readers stop after the last
@@ -270,7 +271,9 @@ public static class BundleWriter
                 compiledIl: null, defined: entry.Defined,
                 compiledIlPatches: null, compiledIlEntries: null,
                 dynamicSeeds: entry.DynamicSeeds,
-                nativeBlocks: entry.NativeBlocks);
+                nativeBlocks: entry.NativeBlocks,
+                nativeFunctions: entry.NativeFunctions,
+                nativeDecls: entry.NativeDecls);
             engine.LoadBundle(new Bundle(new[] { bareEntry }));
         }
         else if (!string.IsNullOrEmpty(entry.Source))
@@ -582,6 +585,22 @@ public static class BundleWriter
     /// writer and <see cref="ShmoLinker"/>'s in-line bundle serialiser so a bundle
     /// round-trips identically through either; mirrored by
     /// <see cref="BundleReader"/>.</summary>
+    /// <summary>ADR-024 — serialise one entry's native-interop metadata: the
+    /// <c>:- native</c> indicators and the raw <c>:- c</c> declaration text, so a
+    /// source-stripped bundle restores them at load. Mirrored by
+    /// <see cref="BundleReader"/> and by <see cref="ShmoLinker"/>'s in-line writer.</summary>
+    internal static void WriteNativeInterop(BinaryWriter bw,
+        IReadOnlyList<PredicateRef> nativeFunctions, string? nativeDecls)
+    {
+        bw.Write((uint)nativeFunctions.Count);
+        foreach (var pr in nativeFunctions)
+        {
+            WriteLengthPrefixedUtf8(bw, pr.Name);
+            bw.Write((uint)pr.Arity);
+        }
+        WriteLengthPrefixedUtf8(bw, nativeDecls ?? string.Empty);
+    }
+
     internal static void WriteNativeBlocks(BinaryWriter bw,
         IReadOnlyList<ShmoNativeBlock> blocks)
     {

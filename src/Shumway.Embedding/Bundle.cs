@@ -184,7 +184,9 @@ public sealed class BundleEntry
         byte[]? compiledIlPatches = null,
         byte[]? compiledIlEntries = null,
         IReadOnlyList<ShmoDynamicSeed>? dynamicSeeds = null,
-        IReadOnlyList<ShmoNativeBlock>? nativeBlocks = null)
+        IReadOnlyList<ShmoNativeBlock>? nativeBlocks = null,
+        IReadOnlyList<PredicateRef>? nativeFunctions = null,
+        string? nativeDecls = null)
     {
         ModuleName = moduleName;
         Source = source;
@@ -195,5 +197,15 @@ public sealed class BundleEntry
         Defined = defined ?? Array.Empty<ShmoDefinedPredicate>();
         DynamicSeeds = dynamicSeeds ?? Array.Empty<ShmoDynamicSeed>();
         NativeBlocks = nativeBlocks ?? Array.Empty<ShmoNativeBlock>();
+        NativeFunctions = nativeFunctions ?? Array.Empty<PredicateRef>();
+        NativeDecls = nativeDecls;
     }
+
+    /// <summary>ADR-024 — the module's <c>:- native</c> indicators (see
+    /// <see cref="ShmoObject.NativeFunctions"/>).</summary>
+    public IReadOnlyList<PredicateRef> NativeFunctions { get; }
+
+    /// <summary>ADR-024 — the module's raw <c>:- c</c> declaration text (see
+    /// <see cref="ShmoObject.NativeDecls"/>).</summary>
+    public string? NativeDecls { get; }
 }

@@ -47,7 +47,7 @@ public static class ShmoCompiler
     {
         "module", "public", "dynamic", "visible", "ensure_linked",
         "op", "set_prolog_flag", "char_conversion",
-        "discontiguous", "multifile", "table", "mode",
+        "discontiguous", "multifile", "table", "mode", "native",
         "c", "prolog",
         // Phase 30 (ADR-022) step 1 — the synthetic directive the ClauseReader
         // emits to carry a captured `:- c` region's raw declaration text. An
@@ -190,6 +190,7 @@ public static class ShmoCompiler
             : moduleNameFallback;
         var publicSet = new HashSet<PredicateRef>();
         var dynamicSet = new HashSet<PredicateRef>();
+        var nativeSet = new HashSet<PredicateRef>();
         var ensureLinked = new List<PredicateRef>();
         var tabledSet = new HashSet<PredicateRef>();
         var qualifiedRefs = new List<QualifiedPredicateRef>();
@@ -214,7 +215,7 @@ public static class ShmoCompiler
                 try
                 {
                     ProcessDirective(d.Args[0], ref moduleName,
-                        publicSet, dynamicSet, ensureLinked, tabledSet);
+                        publicSet, dynamicSet, ensureLinked, tabledSet, nativeSet);
                 }
                 catch (InvalidOperationException ex)
                 {
@@ -252,7 +253,7 @@ public static class ShmoCompiler
             moduleName,
             source, rawClauses, publicSet, dynamicSet, ensureLinked,
             qualifiedRefs, buildMode, errors, warnings, arityEverOn, tabledSet,
-            nativeDecls.Length > 0 ? nativeDecls.ToString() : null);
+            nativeDecls.Length > 0 ? nativeDecls.ToString() : null, nativeSet);
     }
 
     /// <summary>Chunk 411 — the compile back-half, shared by
@@ -277,7 +278,8 @@ public static class ShmoCompiler
         List<ShmoCompileError>? warnings = null,
         bool arityCompat = false,
         HashSet<PredicateRef>? tabledSet = null,
-        string? nativeDecls = null)
+        string? nativeDecls = null,
+        HashSet<PredicateRef>? nativeSet = null)
     {
         // Partition raw clauses: dynamic-head ones become DynamicSeeds
         // (RAW), the rest go through the same DcgTransform +
@@ -662,7 +664,9 @@ public static class ShmoCompiler
             dynamicSeeds: dynamicSeeds,
             clauseTerms: clauseTerms,
             arityCompat: arityCompat,
-            nativeBlocks: nativeBlocks);
+            nativeBlocks: nativeBlocks,
+            nativeFunctions: nativeSet?.ToList(),
+            nativeDecls: nativeDecls);
         obj.DynamicSnapshotBytecode = dynamicSnapshotBytecode;
         return new ShmoCompileResult(obj, errors, warnings);
     }
@@ -692,8 +696,17 @@ public static class ShmoCompiler
         HashSet<PredicateRef> publicSet,
         HashSet<PredicateRef> dynamicSet,
         List<PredicateRef> ensureLinked,
-        HashSet<PredicateRef> tabledSet)
+        HashSet<PredicateRef> tabledSet,
+        HashSet<PredicateRef> nativeSet)
     {
+        // ADR-024 — `:- native fn/N` marks a native (P/Invoke / managed-snapshot)
+        // function. Recorded so a source-stripped bundle restores it at load.
+        if (body is CompoundTerm nat && nat.Functor == "native" && nat.Args.Length == 1)
+        {
+            foreach (var spec in ReadFunctorSpecs(nat.Args[0], "native"))
+                nativeSet.Add(spec);
+            return false;
+        }
         if (body is CompoundTerm m && m.Functor == "module" && m.Args.Length == 1
             && m.Args[0] is AtomTerm a)
         {

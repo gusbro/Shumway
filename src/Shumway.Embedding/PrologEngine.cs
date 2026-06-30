@@ -3460,6 +3460,19 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             AddNativeBlock(nb.Name, nb.Vars.ToArray(), stmts.ToArray(), nb.ScalarGlobals.ToArray());
         }
 
+        // ADR-024 — restore the `:- native` indicators + `:- c` prototypes so a
+        // source-stripped bundle resolves native calls (the directive/prototypes
+        // are not re-applied without re-consulting the source).
+        foreach (var pr in entry.NativeFunctions)
+        {
+            _nativeFunctions.Add(FunctorTable.Intern(
+                AtomTable.Intern(pr.Name, permanent: true).Id, pr.Arity));
+            _nativeFunctionNames.Add(pr.Name);
+        }
+        if (!string.IsNullOrEmpty(entry.NativeDecls))
+            RegisterNativePrototypes(
+                Shumway.Compiler.NativeC.CParser.ParseDeclarations(entry.NativeDecls));
+
         // Decode + literal-remap + record + warm IL (the bytecode IS the definition
         // here, so register the static predicates).
         DecodeAndRegisterPrecompiledModule(entry, registerStaticPredicates: true);

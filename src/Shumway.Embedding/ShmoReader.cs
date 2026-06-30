@@ -181,9 +181,21 @@ public static class ShmoReader
             nativeBlocks[i] = new ShmoNativeBlock(nbName, rawText, vars, scalarGlobals);
         }
 
+        // ADR-024 — native-interop trailer: :- native indicators + :- c decls.
+        uint nfCount = br.ReadUInt32();
+        var nativeFunctions = new PredicateRef[nfCount];
+        for (uint i = 0; i < nfCount; i++)
+        {
+            string nfName = ReadLengthPrefixedUtf8(br);
+            int nfArity = (int)br.ReadUInt32();
+            nativeFunctions[i] = new PredicateRef(nfName, nfArity);
+        }
+        string nd = ReadLengthPrefixedUtf8(br);
+        string? nativeDecls = nd.Length == 0 ? null : nd;
+
         return new ShmoObject(moduleName, source, bytecode,
             defined, ensureLinked, callGraph, qrefs, buildMode, dynamicSeeds,
-            clauseTerms, arityCompat, nativeBlocks);
+            clauseTerms, arityCompat, nativeBlocks, nativeFunctions, nativeDecls);
     }
 
     private static string ReadLengthPrefixedUtf8(BinaryReader br)

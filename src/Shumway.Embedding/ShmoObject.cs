@@ -194,7 +194,9 @@ public sealed class ShmoObject
         IReadOnlyList<ShmoDynamicSeed>? dynamicSeeds = null,
         IReadOnlyList<byte[]>? clauseTerms = null,
         bool arityCompat = false,
-        IReadOnlyList<ShmoNativeBlock>? nativeBlocks = null)
+        IReadOnlyList<ShmoNativeBlock>? nativeBlocks = null,
+        IReadOnlyList<PredicateRef>? nativeFunctions = null,
+        string? nativeDecls = null)
     {
         ModuleName = moduleName;
         Source = source;
@@ -208,7 +210,19 @@ public sealed class ShmoObject
         ClauseTerms = clauseTerms ?? System.Array.Empty<byte[]>();
         ArityCompat = arityCompat;
         NativeBlocks = nativeBlocks ?? System.Array.Empty<ShmoNativeBlock>();
+        NativeFunctions = nativeFunctions ?? System.Array.Empty<PredicateRef>();
+        NativeDecls = nativeDecls;
     }
+
+    /// <summary>ADR-024 — the <c>:- native fn/N</c> indicators in this module, so a
+    /// source-stripped bundle restores them at load (a native function resolves via
+    /// the materializer protocol — P/Invoke or a managed snapshot).</summary>
+    public IReadOnlyList<PredicateRef> NativeFunctions { get; }
+
+    /// <summary>ADR-024 — the raw <c>:- c</c> declaration text (prototypes + typedefs)
+    /// of this module, re-parsed at load to derive native-call signatures. Null when
+    /// the module has no <c>:- c</c> region.</summary>
+    public string? NativeDecls { get; }
 }
 
 /// <summary>ADR-022 — one embedded native block's marshalling data, carried

@@ -113,6 +113,15 @@ public static class ShmoWriter
             }
         }
 
+        // ADR-024 — native-interop trailer: :- native indicators + :- c decls.
+        bw.Write((uint)obj.NativeFunctions.Count);
+        foreach (var pr in obj.NativeFunctions)
+        {
+            WriteLengthPrefixedUtf8(bw, pr.Name);
+            bw.Write((uint)pr.Arity);
+        }
+        WriteLengthPrefixedUtf8(bw, obj.NativeDecls ?? string.Empty);
+
         bw.Flush();
         return ms.ToArray();
     }

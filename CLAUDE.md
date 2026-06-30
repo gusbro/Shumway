@@ -745,13 +745,18 @@ GXPROLOG`, C under `#else`): the uniform pattern is `fill_par(Term,&parNref)` �
   `UseNativeLibrary` (probed next to the bundle / executable), and `--exe` copies
   them alongside — mirrors `--foreign-dll`, no reflection (native functions are
   declared via `:- native` + `:- c`). Tests: serialization round-trip (CI-safe) + a
-  Debug-bundle auto-load end-to-end (no `UseNativeLibrary` call). **Limitation:** a
-  **source-stripped** Release bundle does not yet restore the `:- native` indicators
-  + `:- c` prototypes (they're only re-applied by a Debug bundle's re-consult) — a
-  separate follow-up affecting all `:- native` bundles, not just `--native-dll`.
-- **Next:** serialize `:- native` indicators + prototypes for source-stripped /
-  `--exe` bundles; delegate/IL emit for the snapshot + P/Invoke paths
-  (interpreter-only); char* string params.
+  source-stripped-bundle auto-load end-to-end (no `UseNativeLibrary` call).
+- **`:- native` + prototypes serialized for source-stripped bundles (done).** The
+  `:- native fn/N` indicators and the raw `:- c` declaration text now travel in the
+  `.shmo` (`ShmoObject.NativeFunctions`/`NativeDecls`) and `.shum`
+  (`BundleEntry`, both writers + reader, via `BundleWriter.WriteNativeInterop`), and
+  `LoadBundle` restores `_nativeFunctions` + re-parses the prototypes
+  (`RegisterNativePrototypes`). So a source-stripped Release bundle / `--exe`
+  resolves `:- native` (managed snapshot *and* P/Invoke) with no source — verified
+  by a stripped-bundle P/Invoke test. (NB: a format change → rebuild the CLI + the
+  Release REPL the cross-process tests use.)
+- **Next:** delegate/IL emit for the snapshot + P/Invoke paths (interpreter-only);
+  char* string params; full `--exe` native run-through.
 
 **Phase 31 — REPL line-editing + `--dll` + native-interop correctness** — ✅ **Complete** (tagged `phase-31`; closure summary in [`docs/phase-31-closure.md`](docs/phase-31-closure.md)).
 

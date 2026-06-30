@@ -338,21 +338,23 @@ public class NativePInvokeTests
         string sideDll = System.IO.Path.Combine(AppContext.BaseDirectory, System.IO.Path.GetFileName(dll));
         System.IO.File.Copy(dll, sideDll, overwrite: true);
 
-        // Debug bundle (source kept): LoadBundle re-consults — which re-applies the
-        // `:- native` directive + `:- c` prototypes — and auto-loads the native
-        // library recorded by --native-dll. (Source-stripped bundles need the
-        // `:- native` indicators + prototypes serialized — a separate follow-up.)
+        // Source-stripped Release bundle: the `:- native` indicators + `:- c`
+        // prototypes are serialized and restored at load, and the native library
+        // recorded by --native-dll is auto-loaded — so go/2 resolves bump_native by
+        // P/Invoke with no source and no UseNativeLibrary call.
         var bytes = ShmoLinker.Link(new LinkConfig
         {
-            Objects = new[] { ShmoCompiler.CompileSource(BundleProgram, "prog", ShmoBuildMode.Debug) },
+            Objects = new[] { ShmoCompiler.CompileSource(BundleProgram, "prog", ShmoBuildMode.Release) },
             EntryPoints = new[] { new PredicateRef("go", 2) },
             NativeLibraries = new[] { dll },
+            StripSource = true,
             BakePrelude = true,
         }).Bytes!;
 
         var e = new PrologEngine();
         e.LoadBundle(BundleReader.FromBytes(bytes));   // NO UseNativeLibrary — auto-loaded from the bundle
         Assert.True(e.Query("go(10, Out), Out == 11.").Success);
+        Assert.True(e.Query("go(41, Out), Out == 42.").Success);
     }
 }
 

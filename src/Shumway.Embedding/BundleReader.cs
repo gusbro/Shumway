@@ -120,8 +120,20 @@ public static class BundleReader
             }
             // Native-blocks trailer (ADR-022).
             var nativeBlocks = ReadNativeBlocks(br);
+            // Native-interop trailer (ADR-024): :- native indicators + :- c decls.
+            uint nfCount = br.ReadUInt32();
+            var nativeFunctions = new List<PredicateRef>((int)nfCount);
+            for (uint j = 0; j < nfCount; j++)
+            {
+                string nfName = ReadLengthPrefixedUtf8(br);
+                int nfArity = (int)br.ReadUInt32();
+                nativeFunctions.Add(new PredicateRef(nfName, nfArity));
+            }
+            string nd = ReadLengthPrefixedUtf8(br);
+            string? nativeDecls = nd.Length == 0 ? null : nd;
             entries[i] = new BundleEntry(name, source, compiled, compiledIl, defined,
-                compiledIlPatches, compiledIlEntries, dynamicSeeds, nativeBlocks);
+                compiledIlPatches, compiledIlEntries, dynamicSeeds, nativeBlocks,
+                nativeFunctions, nativeDecls);
         }
         // Foreign-assemblies trailer (chunk 247).
         uint asmCount = br.ReadUInt32();
