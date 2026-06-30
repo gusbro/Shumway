@@ -2877,6 +2877,16 @@ public static class MetaBuiltins
         var holder = ReadSlot(engine, sourceReg);
         if (holder is not null)
             return RegisterMarshalling.UnifyRegisterWithTerm(engine, varReg, holder.Materialize());
+        // ADR-024 char* return: the source is a native `char*` pointer (an integer
+        // from a `:- native` P/Invoke function whose `:- c` return type is char*).
+        // Read the NUL-terminated native string with the engine's text encoding.
+        var src = RegisterMarshalling.ReadRegisterAsTerm(engine, sourceReg);
+        if (src is IntTerm ptr)
+        {
+            var enc = (engine.Host as PrologEngine)?.NativeTextEncoding ?? NativeReftype.DefaultEncoding;
+            string s = NativeReftype.ReadString((System.IntPtr)ptr.Value, enc);
+            return RegisterMarshalling.UnifyRegisterWithTerm(engine, varReg, new AtomTerm(s));
+        }
         return UnifyAtomPair(engine, sourceReg, varReg);
     }
 

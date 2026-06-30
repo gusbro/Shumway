@@ -339,6 +339,64 @@ public class NativePInvokeTests
         Assert.True(e.Query("n('héllo', N), N == 6.").Success);
     }
 
+    // ---- char* return: a native function returns a char*; the block gets it as a
+    //      raw pointer (Ptr \= 0 null-check), then make_prolog_string reads the
+    //      NUL-terminated native string with the engine encoding. ----
+
+    private const string RetCSource = """
+        #ifdef _MSC_VER
+        #define EXPORT __declspec(dllexport)
+        #else
+        #define EXPORT __attribute__((visibility("default")))
+        #endif
+        static char gbuf[256];
+        EXPORT char* upcase(char* s) {
+            int i; for (i = 0; s[i] && i < 255; i++) {
+                char ch = s[i];
+                gbuf[i] = (ch >= 'a' && ch <= 'z') ? (char)(ch - 32) : ch;
+            }
+            gbuf[i] = 0;
+            return gbuf;
+        }
+        EXPORT char* nullret(char* s) { (void)s; return 0; }
+        """;
+
+    private const string RetProgram =
+        ":- set_prolog_flag(arity_compat, true).\n" +
+        ":- native upcase/1.\n" +
+        ":- native nullret/1.\n" +
+        ":- c.\nchar* upcase(char*);\nchar* nullret(char*);\n:- prolog.\n" +
+        "up(In, Out) :-\n" +
+        "  atom(In),\n" +
+        "  { Ptr is 'upcase'(In) },\n" +
+        "  Ptr =\\= 0,\n" +
+        "  make_prolog_string(Ptr, Out).\n" +
+        "nn(In) :-\n" +
+        "  atom(In),\n" +
+        "  { Ptr is 'nullret'(In) },\n" +
+        "  Ptr =:= 0.\n";
+
+    [Fact]
+    public void EndToEnd_NativeDll_CharStarReturn()
+    {
+        string? dll = NativeTestDll.TryBuild(RetCSource, "charstarret", out string note);
+        if (dll is null)
+        {
+            _output.WriteLine("SKIPPED char* return P/Invoke test: " + note
+                + " — set SHUMWAY_NATIVE_CC to a C compiler to run it.");
+            return;
+        }
+        var e = new PrologEngine();
+        e.UseNativeLibrary(dll);
+        e.ConsultString(RetProgram);
+        // upcase returns a char* into a static buffer; make_prolog_string reads it.
+        Assert.True(e.Query("up(hello, Out), Out == 'HELLO'.").Success);
+        Assert.True(e.Query("up('AbC', Out), Out == 'ABC'.").Success);
+        // The returned pointer is non-null (Ptr =\= 0 succeeded above).
+        // A NULL return surfaces as the integer 0 — the null-check catches it.
+        Assert.True(e.Query("nn(hello).").Success);
+    }
+
     // ---- --native-dll: the linker records native libraries in the bundle, and the
     //      runtime auto-loads them at LoadBundle (no UseNativeLibrary by hand). ----
 

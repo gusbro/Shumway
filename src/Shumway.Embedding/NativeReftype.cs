@@ -144,7 +144,7 @@ public static class NativeReftype
     }
 
     // Reads a NUL-terminated native `char*` and decodes it with `enc`.
-    private static string ReadString(IntPtr p, Encoding enc)
+    internal static string ReadString(IntPtr p, Encoding enc)
     {
         if (p == IntPtr.Zero) return string.Empty;
         int len = 0;

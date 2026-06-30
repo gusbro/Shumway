@@ -325,7 +325,11 @@ public static class NativeInference
                 : globalType.TryGetValue(id.Name, out var gt) ? MapType(gt, typedefs)
                 : prologVarKind.TryGetValue(id.Name, out var pk) ? pk
                 : null,
-            CCallExpr c when protoReturn.TryGetValue(c.Name, out var rt) => MapType(rt, typedefs),
+            // ADR-024 — a char*-returning native function yields a raw pointer (the
+            // block checks `Ptr \= 0` and converts via make_prolog_string), so the
+            // result is a pointer integer, not the string content of a char* param.
+            CCallExpr c when protoReturn.TryGetValue(c.Name, out var rt) =>
+                IsCharPointer(rt, typedefs) ? NativeKind.Long : MapType(rt, typedefs),
             CBinaryExpr b => CombineKind(
                 InferExprKind(b.Left, localType, globalType, protoReturn, typedefs, prologVarKind),
                 InferExprKind(b.Right, localType, globalType, protoReturn, typedefs, prologVarKind)),
@@ -346,6 +350,14 @@ public static class NativeInference
     /// <summary>Maps a (typedef-resolved) C type to a <see cref="NativeKind"/>, or
     /// null when it is outside the int/float/string tier (e.g. a reftype pointer —
     /// the deferred whole-term tier).</summary>
+    /// <summary>True if <paramref name="t"/> (typedefs resolved) is <c>char*</c> —
+    /// a pointer to char, as opposed to a by-value scalar.</summary>
+    private static bool IsCharPointer(CType t, Dictionary<string, CType> typedefs)
+    {
+        t = ResolveTypedef(t, typedefs);
+        return t.Name == "char" && t.PointerDepth >= 1;
+    }
+
     private static NativeKind? MapType(CType t, Dictionary<string, CType> typedefs)
     {
         t = ResolveTypedef(t, typedefs);

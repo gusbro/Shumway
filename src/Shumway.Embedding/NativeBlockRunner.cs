@@ -381,6 +381,10 @@ public static class NativeBlockRunner
         if (cstrings is not null)
             foreach (var ptr in cstrings)
                 System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
+        // ADR-024 char* return: a pointer return (char* / reftype*) comes back as an
+        // IntPtr; surface it to the block as a raw pointer integer (a long) so a
+        // following `Ptr \= 0` / make_prolog_string(Ptr, X) can use it.
+        if (ret is IntPtr ip) return ip.ToInt64();
         return ret;
     }
 
