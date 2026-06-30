@@ -62,6 +62,11 @@ public static class NativeBlockCompiler
         typeof(TermSlot).GetMethod(nameof(TermSlot.Materialize), Type.EmptyTypes)!;
     private static readonly MethodInfo SlotSetValueM =
         typeof(TermSlot).GetMethod(nameof(TermSlot.SetValue))!;
+    // ADR-024 — the IL-path P/Invoke entry (Option 1: invoke the resolved native
+    // function through the cached calli invoker with pre-evaluated, boxed args).
+    private static readonly MethodInfo PInvokeFromIlM =
+        typeof(NativeBlockRunner).GetMethod(nameof(NativeBlockRunner.PInvokeFromIl),
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
 
     /// <summary>ADR-024 — the <see cref="TermSlot"/> a register holds (a Foreign
     /// cell, read as <c>'$foreign'(Id)</c>), or null. Shared by the
@@ -90,14 +95,14 @@ public static class NativeBlockCompiler
 
     public static Func<Engine, bool>? TryCompile(IReadOnlyList<NativeVar> vars,
         IReadOnlyList<CStmt> stmts, IReadOnlyList<NativeScalarGlobal> scalarGlobals,
-        int regOffset, Func<string, MethodInfo?> resolve)
+        int regOffset, Func<string, MethodInfo?> resolve, PrologEngine? host = null)
     {
         if (ForceInterpreter) return null;
         if (!System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported)
             return null;
         try
         {
-            var del = new Builder(vars, stmts, scalarGlobals, regOffset, resolve).Compile();
+            var del = new Builder(vars, stmts, scalarGlobals, regOffset, resolve, host).Compile();
             System.Threading.Interlocked.Increment(ref CompiledCount);
             return del;
         }
@@ -115,6 +120,7 @@ public static class NativeBlockCompiler
         private readonly Dictionary<string, bool> _scalarFloat = new();
         private readonly int _regOffset;
         private readonly Func<string, MethodInfo?> _resolve;
+        private readonly PrologEngine? _hostInstance;
         private readonly Dictionary<string, int> _varIndex = new();
         private readonly Dictionary<string, ParameterExpression> _locals = new();
         private Dictionary<string, Type> _types = null!;
@@ -126,10 +132,10 @@ public static class NativeBlockCompiler
 
         public Builder(IReadOnlyList<NativeVar> vars, IReadOnlyList<CStmt> stmts,
             IReadOnlyList<NativeScalarGlobal> scalarGlobals,
-            int regOffset, Func<string, MethodInfo?> resolve)
+            int regOffset, Func<string, MethodInfo?> resolve, PrologEngine? host = null)
         {
             _vars = vars; _stmts = stmts; _scalarGlobals = scalarGlobals;
-            _regOffset = regOffset; _resolve = resolve;
+            _regOffset = regOffset; _resolve = resolve; _hostInstance = host;
             for (int i = 0; i < vars.Count; i++) _varIndex[vars[i].Name] = i;
             foreach (var g in scalarGlobals) _scalarFloat[g.Name] = g.IsFloat;
         }
@@ -239,6 +245,13 @@ public static class NativeBlockCompiler
 
         private void EmitCallStmt(CCallExpr call, List<Expression> body)
         {
+            // ADR-024 — a `:- native` P/Invoke call as a statement: its result is
+            // discarded but its side effects (reftype write-back) still run.
+            if (IsNativePInvoke(call, out var nres))
+            {
+                body.Add(EmitNativeCall(call, nres));
+                return;
+            }
             switch (call.Name)
             {
                 case "MakeCString":
@@ -275,10 +288,66 @@ public static class NativeBlockCompiler
             CAddrOfExpr { Operand: CIdentExpr g } => EmitGetSlot(g.Name),
             CIdentExpr id => _locals.TryGetValue(id.Name, out var l) ? l : throw new NativeBlockBailException(),
             CBinaryExpr b => EmitBinary(b.Op, EmitExpr(b.Left), EmitExpr(b.Right)),
+            // ADR-024 — a `:- native` P/Invoke call used as a value (Option 1).
+            CCallExpr nc when IsNativePInvoke(nc, out var nres) =>
+                UnboxNativeResult(EmitNativeCall(nc, nres), nres.Signature!.ReturnType),
             CCallExpr c when !NativeBlockTyping.IsIntrinsic(c.Name) =>
                 NormalizeToModel(EmitInteropCall(c), NativeBlockTyping.ResolveOrBail(_resolve, c.Name).ReturnType),
             _ => throw new NativeBlockBailException(),
         };
+
+        /// <summary>True if <paramref name="c"/> is a `:- native` function that
+        /// resolves to a P/Invoke target (a native library export, not a C# interop
+        /// method — those go through <see cref="EmitInteropCall"/>'s snapshot path).</summary>
+        private bool IsNativePInvoke(CCallExpr c, out PrologEngine.NativeResolution res)
+        {
+            res = null!;
+            if (_hostInstance is null || !_hostInstance.IsNativeFunction(c.Name, c.Args.Count)) return false;
+            res = _hostInstance.ResolveNativeCall(c.Name, c.Args.Count);
+            return res.CsMethod is null && res.Signature is not null;
+        }
+
+        /// <summary>Emits the Option-1 P/Invoke call: box each non-reftype argument,
+        /// name each reftype global, and invoke <see cref="NativeBlockRunner.PInvokeFromIl"/>
+        /// (which materializes / marshals / writes back). Bails a block whose native
+        /// call uses an out-scalar parameter — those write back to a block-local and
+        /// stay on the interpreter.</summary>
+        private Expression EmitNativeCall(CCallExpr c, PrologEngine.NativeResolution res)
+        {
+            var sig = res.Signature!;
+            if (c.Args.Count != sig.ParamKinds.Length) throw new NativeBlockBailException();
+            var argExprs = new Expression[c.Args.Count];
+            var kinds = new byte[c.Args.Count];
+            var names = new string?[c.Args.Count];
+            for (int i = 0; i < c.Args.Count; i++)
+            {
+                var k = sig.ParamKinds[i];
+                if (k == NativeCall.Kind.OutScalar) throw new NativeBlockBailException();
+                kinds[i] = (byte)k;
+                if (k == NativeCall.Kind.Reftype)
+                {
+                    names[i] = ReftypeArgName(c.Args[i]) ?? throw new NativeBlockBailException();
+                    argExprs[i] = Expression.Constant(null, typeof(object));
+                }
+                else
+                {
+                    argExprs[i] = Expression.Convert(EmitExpr(c.Args[i]), typeof(object));   // box
+                }
+            }
+            return Expression.Call(PInvokeFromIlM, _host, Expression.Constant(res),
+                Expression.NewArrayInit(typeof(object), argExprs),
+                Expression.Constant(kinds), Expression.Constant(names, typeof(string[])));
+        }
+
+        /// <summary>Unboxes the boxed-long / boxed-double result of a native P/Invoke
+        /// call to its model type (void as a value is a bail).</summary>
+        private static Expression UnboxNativeResult(Expression call, Type returnType)
+        {
+            if (returnType == typeof(void)) throw new NativeBlockBailException();
+            Type model = returnType == typeof(double) || returnType == typeof(float)
+                ? typeof(double) : typeof(long);
+            return Expression.Convert(call, model);
+        }
 
         // host.GetOrCreateReftypeSlot(name) — the slot for a reftype global.
         private Expression EmitGetSlot(string name)

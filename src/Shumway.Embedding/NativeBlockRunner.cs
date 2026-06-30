@@ -410,6 +410,73 @@ public static class NativeBlockRunner
         return p;
     }
 
+    /// <summary>ADR-024 — the IL-path P/Invoke entry. Same marshalling as
+    /// <see cref="PInvokeCall"/> but over <b>pre-evaluated</b> argument values (the
+    /// emitted block passes them as a boxed array), so there is no AST walk / env
+    /// dictionary on the hot path. Reftype args are named by their reftype global;
+    /// scalar / string-in args are boxed values. Out-scalar params are not supported
+    /// here — the IL compiler bails a block that has any to the interpreter. The
+    /// result is normalized to a boxed <c>long</c> (integer / pointer) or
+    /// <c>double</c> (floating) so the emitted IL unboxes one model type.</summary>
+    internal static object? PInvokeFromIl(PrologEngine host, PrologEngine.NativeResolution res,
+        object?[] args, byte[] kinds, string?[] reftypeNames)
+    {
+        var sig = res.Signature!;
+        var enc = host.NativeTextEncoding;
+        var alloc = host.NativeAllocator;
+        var callArgs = new object?[args.Length];
+        System.Collections.Generic.List<(TermSlot Slot, IntPtr Handle)>? reftypes = null;
+        System.Collections.Generic.List<IntPtr>? cstrings = null;
+        for (int i = 0; i < args.Length; i++)
+        {
+            switch ((NativeCall.Kind)kinds[i])
+            {
+                case NativeCall.Kind.Reftype:
+                {
+                    var slot = host.GetOrCreateReftypeSlot(reftypeNames[i]!);
+                    IntPtr handle, structPtr;
+                    if (alloc is not null)
+                    {
+                        handle = alloc.Materialize(slot.Materialize(), enc);
+                        structPtr = NativeReftypeAllocator.StructPointer(handle);
+                    }
+                    else { handle = NativeReftype.Materialize(slot.Materialize(), enc); structPtr = handle; }
+                    callArgs[i] = structPtr;
+                    (reftypes ??= new()).Add((slot, handle));
+                    break;
+                }
+                case NativeCall.Kind.StringIn:
+                {
+                    IntPtr ptr = AllocCString(AsNativeString(args[i], host), enc);
+                    callArgs[i] = ptr;
+                    (cstrings ??= new()).Add(ptr);
+                    break;
+                }
+                default:   // Scalar
+                    callArgs[i] = ConvertArg(args[i],
+                        i < sig.ParamClrTypes.Length ? sig.ParamClrTypes[i] : typeof(IntPtr));
+                    break;
+            }
+        }
+        object? ret = sig.Invoker(res.NativeFn, callArgs);
+        if (reftypes is not null)
+            foreach (var (slot, handle) in reftypes)
+            {
+                IntPtr structPtr = alloc is not null
+                    ? NativeReftypeAllocator.StructPointer(handle) : handle;
+                slot.SetValue(NativeReftype.Dematerialize(structPtr, enc));
+                if (alloc is not null) alloc.Free(handle); else NativeReftype.Free(handle);
+            }
+        if (cstrings is not null)
+            foreach (var ptr in cstrings)
+                System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
+        if (sig.ReturnType == typeof(void)) return null;
+        if (sig.ReturnType == typeof(double) || sig.ReturnType == typeof(float))
+            return System.Convert.ToDouble(ret);
+        if (ret is IntPtr ip) return ip.ToInt64();
+        return System.Convert.ToInt64(ret);
+    }
+
     /// <summary>The block-local name an out-scalar argument addresses — <c>&amp;id</c>
     /// (or a bare <c>id</c>); null if the argument is not a plain local reference.</summary>
     private static string? AddrOfLocal(CExpr e) => e switch

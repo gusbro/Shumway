@@ -2777,7 +2777,7 @@ public static class MetaBuiltins
         if (!block.CompileTried)
         {
             block.Compiled = NativeBlockCompiler.TryCompile(
-                block.Vars, block.Stmts, block.ScalarGlobals, regOffset: 1, host.ResolveNativeInterop);
+                block.Vars, block.Stmts, block.ScalarGlobals, regOffset: 1, host.ResolveNativeInterop, host);
             block.CompileTried = true;
         }
         return block.Compiled is not null

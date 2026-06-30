@@ -165,6 +165,7 @@ public class NativePInvokeTests
             return;
         }
 
+        int before = Shumway.Embedding.NativeBlockCompiler.CompiledCount;
         var e = new PrologEngine();
         e.UseNativeLibrary(dll);
         e.ConsultString(Program);
@@ -172,6 +173,9 @@ public class NativePInvokeTests
         // P/Invoke) bumps crep.cint in place; reftype_term dematerializes it back.
         Assert.True(e.Query("go(10, Out), Out == 11.").Success);
         Assert.True(e.Query("go(41, Out), Out == 42.").Success);   // cached resolution on the 2nd call
+        // The P/Invoke block compiled to IL (Option 1: invoke through PInvokeFromIl)
+        // instead of falling back to the interpreter — both blocks compile.
+        Assert.True(Shumway.Embedding.NativeBlockCompiler.CompiledCount >= before + 2);
     }
 
     // ---- "C builds a list": the native function ALLOCATES sub-nodes. Materialize
