@@ -657,7 +657,7 @@ questions from Phase 11's deferred list:
   `retract` / `assertz` — and avoids redundant `TryDescribe*`
   attempts that were already rejecting the shape.
 
-**Phase 32 — ADR-024 materializer ↔ dematerializer tier** — 🚧 **In flight.**
+**Phase 32 — ADR-024 materializer ↔ dematerializer tier** — ✅ **Complete** (tagged `phase-32`; closure summary in [`docs/phase-32-closure.md`](docs/phase-32-closure.md)).
 
 Attacks ADR-024's deferred TODO: whole-term interop for the case the cursor tier
 doesn't cover — when C# is only a **trampoline to a native C function** (P/Invoke,
