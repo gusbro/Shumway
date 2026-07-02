@@ -147,20 +147,43 @@ Legend: 🔴 high · 🟡 medium · ⚪ low. `[x]` done · `[-]` rejected/not-a-
 
 ## Wave 3 — WAM codegen (Arity shapes)
 
-- [ ] **W1** 🔴 `MetaTransform.cs` — `once/1`+`ignore/1` not rewritten (snips
+- [x] **W1** 🔴 `MetaTransform.cs` — `once/1`+`ignore/1` not rewritten (snips
       `[! G !]` = once): heap goal build + runtime meta-dispatch per snip.
-      Rewrite to `'$once_N'(Vars) :- G, !.` helper (negation-helper pattern).
-- [ ] **W2** 🔴 `ClauseCompiler.cs:122-130` — `!` preceded only by inline goals
-      (`=`, `is`, comparisons) still classified deep cut → frame + get_level +
-      Y-slot instead of frameless neck_cut.
-- [ ] **W3** 🔴 assert path — full 4-pass ClausePipeline + fresh pools/emitter +
-      3 pool snapshots per assertz (24µs/4.3KB). Fact fast-path + reuse.
+      *Fixed: callable-goal once/ignore rewrite to synthesized helpers
+      (`'$once_N'(Vars) :- G, !.`; ignore adds a bare-fact clause) — G compiles
+      as inline WAM, `!` inside G correctly scoped to the helper (= once's
+      barrier), bindings flow via the head. Var/non-callable goals still take
+      the runtime path (ISO errors). PreludeIlDifferentialTests' once/ignore
+      cases retargeted to variable goals so they keep exercising the prelude
+      fallback (same precedent as forall/catch). 9 semantic tests incl. snips.*
+- [x] **W2** 🔴 `ClauseCompiler.cs:122-130` — `!` preceded only by inline goals
+      still classified deep cut. *Fixed: a `!` whose preceding goals are all
+      `IsInlineBodyGoal` (arith guards, earlier cuts — no calls, no CPs, `_b0`
+      intact) is a frameless neck_cut; only a `!` after a real call keeps the
+      get_level + Y-slot machinery. Deliberately does NOT extend the
+      chunk-model transparency / scheduler targeting (the failed Phase-25 arc).
+      Note: `=/2` is not in IsInlineBodyGoal, so `X = foo, !` stays deep —
+      widening that classification is a separate, riskier change (W9 candidate).*
+- [-] **W3** 🔴 assert path pipeline cost — **already fixed by chunks 427-431**
+      (the audit quoted the pre-427 efficiency doc): facts without mode info
+      skip ClausePipeline entirely (`CompileRuntimeAssertClause` fast path), the
+      ClauseCompiler instance is reused (`_assertClauseCompiler`), and the three
+      pool snapshots are skipped when pool counts are unchanged
+      (`RefreshLiteralPoolsIfGrown`). The residual — RULES still run the
+      pipeline — is semantically required (control constructs must lower).
 - [ ] **W4** 🟡 Tier-0 `;`/`->` lowering is helper-predicate + Call + CP even for
       deterministic ITE (Phase-29 fixed IL only). Inline shallow ITE.
 - [ ] **W5** 🟡 `DcgTransform.cs:139-168` — 2 redundant `=/2` state-reconciliation
       goals per DCG disjunction branch. Substitute the out-var into branches.
 - [ ] **W6** 🟡 missing fused `execute_builtin` (last-goal builtin =
-      call_builtin + deallocate_proceed, 2 dispatches).
+      call_builtin + deallocate_proceed, 2 dispatches). **Deferred with
+      reasoning**: `Opcode.ExecuteBuiltin` already exists (chunk 248, linker
+      rewrite for foreigns) BUT the IL compiler REJECTS it in clause bodies
+      (`IlPredicateCompiler.cs:909` "tail builtin — needs CallBuiltin
+      machinery") — if the WAM compiler emitted it, those predicates would
+      lose Tier-1 promotion, a far bigger regression than one saved Tier-0
+      dispatch (frameless case only; with a frame it's 2 ops either way).
+      Prerequisite: IL-side ExecuteBuiltin body support first.
 - [ ] **W7** 🟡 `ModuleCompiler.ComputePoolFree` — string/bigint literals exclude
       a predicate from cross-query cache (only floats stable). Make those pools
       append-only-stable and exempt.

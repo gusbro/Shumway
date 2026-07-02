@@ -115,14 +115,20 @@ public sealed class ClauseCompiler
         // see DiagYSurvey. Stripped from normal builds (chunk 414).
         DiagYSurvey(name, headArgs, goals, permanents);
 
-        // Cut analysis: a `!` after position 0 in the goal list is a deep cut
-        // and needs an extra Y slot to hold the cut barrier (captured by
-        // get_level at body start). A `!` at position 0 is a neck cut and
-        // uses the engine's _b0 register directly — no slot required.
+        // Cut analysis: a `!` is a NECK cut — reading the engine's _b0 register
+        // directly, no barrier slot — when every goal before it is inline
+        // (Phase 33 W2). Inline goals (`is`/comparisons → a_int_*/a_eval_*, and
+        // earlier cuts) never CALL and never push choice points, so _b0 is
+        // still the predicate-entry barrier when the cut runs; the pervasive
+        // Arity guard shape `p(X) :- X > 0, !, Body.` is thus frameless.
+        // Only a `!` after a real call needs the get_level + Y-slot deep cut.
+        int inlinePrefixLen = 0;
+        while (inlinePrefixLen < goals.Count && IsInlineBodyGoal(goals[inlinePrefixLen]))
+            inlinePrefixLen++;
         bool needsDeepCut = false;
         for (int i = 1; i < goals.Count; i++)
         {
-            if (goals[i] is AtomTerm { Name: "!" })
+            if (goals[i] is AtomTerm { Name: "!" } && i >= inlinePrefixLen)
             {
                 needsDeepCut = true;
                 break;
@@ -210,10 +216,11 @@ public sealed class ClauseCompiler
 
                 if (goal is AtomTerm { Name: "!" })
                 {
-                    // Cut emission. Neck cut at position 0 reads _b0 directly;
-                    // deep cut anywhere else reads the saved barrier from
+                    // Cut emission. Neck cut — position 0, or preceded only by
+                    // inline goals (Phase 33 W2) — reads _b0 directly; a deep
+                    // cut (after a real call) reads the saved barrier from
                     // Y[cutSlot].
-                    if (i == 0)
+                    if (i < inlinePrefixLen || i == 0)
                         state.Emitter.EmitNeckCut();
                     else
                         state.Emitter.EmitCut(cutSlot);

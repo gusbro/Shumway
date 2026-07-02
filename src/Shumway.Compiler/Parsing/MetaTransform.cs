@@ -182,6 +182,27 @@ public static class MetaTransform
             return TransformGoal(rewritten, ref counter, helpers);
         }
 
+        // Phase 33 W1 — once(G) / ignore(G) with a syntactically-callable G.
+        // Snips `[! G !]` desugar to once/1 (chunk 263), so this is the hot
+        // Arity construct: without the rewrite every snip built G as a heap
+        // term and meta-dispatched through the prelude's once/1 + call/1 at
+        // runtime. Rewrite to the negation-helper shape instead:
+        //   '$once_N'(Vars) :- G, !.            (once)
+        //   '$ign_N'(Vars)  :- G, !.  '$ign_N'(Vars).   (ignore)
+        // G compiles as real inline WAM inside the helper; a `!` inside G cuts
+        // to the helper's clause — exactly once/1's opaque cut barrier; and
+        // bindings flow out through the helper head's shared variables. A
+        // non-callable G (var, integer, …) falls through to the runtime
+        // builtin for the proper ISO error.
+        if (goal is CompoundTerm onceCt
+            && (onceCt.Functor == "once" || onceCt.Functor == "ignore")
+            && onceCt.Args.Length == 1
+            && (onceCt.Args[0] is AtomTerm || onceCt.Args[0] is CompoundTerm))
+        {
+            return SynthesizeOnceHelper(
+                onceCt.Args[0], ref counter, helpers, ignoreMode: onceCt.Functor == "ignore");
+        }
+
         // findall(Template, Goal, List) with a syntactically-callable
         // Goal — rewrite to an in-engine collect loop (chunk 83):
         //   ( '$findall_push', Goal, '$findall_record'(Template), fail
@@ -513,6 +534,48 @@ public static class MetaTransform
             ClauseKind.Rule,
             new CompoundTerm(":-", new[] { BuildHelperHead(), recursedRight }),
             right.Position));
+        return BuildHelperHead();
+    }
+
+    /// <summary>Phase 33 W1 — synthesizes the once/ignore helper (see the
+    /// TransformGoal case): <c>'$once_N'(V..) :- G, !.</c>, plus a bare-fact
+    /// second clause for ignore. Mirrors <see cref="SynthesizeNegationHelper"/>:
+    /// the free named variables flow through the helper head, so bindings G
+    /// makes are visible to the caller after the commit.</summary>
+    private static Term SynthesizeOnceHelper(
+        Term innerGoal, ref int counter, List<Clause> helpers, bool ignoreMode)
+    {
+        counter++;
+        string helperName = ignoreMode ? $"$ign_{counter}" : $"$once_{counter}";
+
+        var freeVars = new List<string>();
+        var seen = new HashSet<string>();
+        CollectNamedVars(innerGoal, freeVars, seen);
+
+        // Recurse into the inner goal — nested control constructs inside the
+        // once'd goal are transformed before becoming the helper's body. No
+        // cutK: once/1 is an opaque cut barrier.
+        innerGoal = TransformGoal(innerGoal, ref counter, helpers);
+
+        Term BuildHelperHead() => freeVars.Count == 0
+            ? (Term)new AtomTerm(helperName)
+            : new CompoundTerm(helperName, freeVars.Select(n => (Term)new VarTerm(n)).ToArray());
+
+        // Clause 1: '$once_N'(V1..) :- G, !.
+        Term clause1Body = new CompoundTerm(",", new[]
+        {
+            innerGoal,
+            (Term)new AtomTerm("!"),
+        });
+        helpers.Add(new Clause(
+            ClauseKind.Rule,
+            new CompoundTerm(":-", new[] { BuildHelperHead(), clause1Body }),
+            innerGoal.Position));
+
+        // ignore/1 also succeeds when G fails: a bare-fact second clause.
+        if (ignoreMode)
+            helpers.Add(new Clause(ClauseKind.Fact, BuildHelperHead(), innerGoal.Position));
+
         return BuildHelperHead();
     }
 

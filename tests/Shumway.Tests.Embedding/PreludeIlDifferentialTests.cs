@@ -88,8 +88,12 @@ public sealed class PreludeIlDifferentialTests
         new("char_type/2", "char_type(a, alnum)"),
 
         // ---- control ----
-        new("once/1", "once(member(X, [a, b, c]))"),
-        new("ignore/1", "ignore(fail)"),
+        // Variable goal so the Phase-33 W1 MetaTransform rewrite does NOT apply —
+        // exercises the prelude once/1 / ignore/1 (the runtime fallback path).
+        // (A literal once(G)/ignore(G) is compiled inline via the '$once_N'
+        // helper and never reaches the prelude predicate.)
+        new("once/1", "G = member(X, [a, b, c]), once(G)"),
+        new("ignore/1", "G = fail, ignore(G)"),
         new("apply/2", "apply(inc, [5, X])"),
         // Variable goal so MetaTransform does NOT rewrite inline — exercises
         // the prelude forall/2 + catch/3 predicates (the runtime fallback path).
