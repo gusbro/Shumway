@@ -298,6 +298,16 @@ public sealed class LinkResult
 /// </summary>
 public static class ShmoLinker
 {
+    // Phase 33 T7 — the prelude source is a process constant, so its compiled
+    // ShmoObject is too (atom interning is process-global and the linker only
+    // READS the object: publics, call graph, bytecode, dynamic seeds). It used
+    // to be compiled twice per link (main walk + the library pull pre-pass),
+    // times every link in the process.
+    private static readonly Lazy<ShmoObject> _preludeObject = new(
+        () => ShmoCompiler.CompileSource(Prelude.Source),
+        System.Threading.LazyThreadSafetyMode.ExecutionAndPublication);
+    internal static ShmoObject PreludeObject => _preludeObject.Value;
+
     public static LinkResult Link(LinkConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
@@ -422,7 +432,7 @@ public static class ShmoLinker
         // The prelude is always loaded at engine startup, so its
         // public predicates should resolve without the user supplying
         // a prelude.shmo on the linker command line.
-        var preludeObj = ShmoCompiler.CompileSource(Prelude.Source);
+        var preludeObj = PreludeObject;
         var preludePublics = new HashSet<PredicateRef>(
             preludeObj.Defined
                 .Where(d => d.Visibility == PredicateVisibility.Public)
@@ -1290,24 +1300,26 @@ public static class ShmoLinker
                 definedHere.Add((d.Indicator.Name, d.Indicator.Arity));
             var visiblePublics = publicReg.Restrict((n, a) => !definedHere.Contains((n, a)));
             var full = own.MergeOver(visiblePublics);
-            var localOnly = Shumway.Compiler.Parsing.MetaWrapperUnfold.Apply(raw, own);
-            var fullRewrite = Shumway.Compiler.Parsing.MetaWrapperUnfold.Apply(raw, full);
-            bool crossContributed = false;
-            if (!ReferenceEquals(fullRewrite, raw))
-            {
-                for (int i = 0; i < raw.Count; i++)
-                {
-                    bool fullChanged = !ReferenceEquals(fullRewrite[i], raw[i]);
-                    bool localChanged = !ReferenceEquals(
-                        ReferenceEquals(localOnly, raw) ? raw[i] : localOnly[i], raw[i]);
-                    if (fullChanged && !localChanged) { crossContributed = true; break; }
-                }
-            }
-            if (!crossContributed)
+            // Phase 33 T8 — cross-contribution detection in ONE pass. `own` and
+            // `visiblePublics` have DISJOINT domains (the latter excludes every
+            // indicator this module defines), so "the cross-module registry
+            // contributed" ⟺ the publics-only rewrite changes something. The
+            // previous shape ran TWO full rewrites per module (a local-only
+            // baseline + the merged pass) plus a per-clause diff — and its
+            // "full changed where local didn't" test MISSED a clause carrying
+            // both a local and a cross wrapper site (both passes changed it),
+            // silently dropping that clause's cross unfold. This detection
+            // catches it.
+            var crossOnly = Shumway.Compiler.Parsing.MetaWrapperUnfold.Apply(raw, visiblePublics);
+            if (ReferenceEquals(crossOnly, raw))
             {
                 result.Add(obj);
                 continue;
             }
+            // Recompile input: the MERGED rewrite (local templates unfold too —
+            // CompileFromParts would re-apply the local unfold anyway; doing it
+            // here keeps the cascade behaviour identical to the previous code).
+            var fullRewrite = Shumway.Compiler.Parsing.MetaWrapperUnfold.Apply(raw, full);
 
             // Recompile from the rewritten clauses + the module's own metadata.
             var publicSet = new HashSet<PredicateRef>();
@@ -1654,7 +1666,7 @@ public static class ShmoLinker
         available.Add(new PredicateRef("true", 0));
         available.Add(new PredicateRef("fail", 0));
         available.Add(new PredicateRef("false", 0));
-        foreach (var d in ShmoCompiler.CompileSource(Prelude.Source).Defined)
+        foreach (var d in PreludeObject.Defined)
             if (d.Visibility == PredicateVisibility.Public)
                 available.Add(d.Indicator);
         // Foreign predicates (from --foreign-dll) resolve too — never pull a

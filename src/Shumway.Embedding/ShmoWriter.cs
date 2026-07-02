@@ -23,6 +23,12 @@ public static class ShmoWriter
         using var ms = new MemoryStream();
         using var bw = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true);
 
+        // Phase 33 T6 — the body after magic+version is finalized through the
+        // same raw-or-Brotli framing as the .shum (BundleFormat.FinalizeImage;
+        // one flag byte at offset 8). The big .shmo sections — bytecode and
+        // the ClauseTerms LTO trailer (measured 43.7% + 37.7% of real-corpus
+        // objects) — compress well, and .shmo files are only ever read by our
+        // own tools.
         bw.Write(ShmoFormat.Magic);
         bw.Write((uint)ShmoFormat.CurrentVersion);
         WriteLengthPrefixedUtf8(bw, obj.ModuleName);
@@ -123,7 +129,7 @@ public static class ShmoWriter
         WriteLengthPrefixedUtf8(bw, obj.NativeDecls ?? string.Empty);
 
         bw.Flush();
-        return ms.ToArray();
+        return BundleFormat.FinalizeImage(ms.ToArray());   // Phase 33 T6
     }
 
     private static void WriteLengthPrefixedUtf8(BinaryWriter bw, string s)

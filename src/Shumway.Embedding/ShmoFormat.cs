@@ -18,7 +18,11 @@ namespace Shumway.Embedding;
 /// <code>
 ///   [0..3]    Magic 'S','H','M','O'
 ///   [4..7]    Format version (uint32, = 2)
-///   [8..]     V2 payload:
+///   [8]       Compression flag (Phase 33 T6): 0 = raw body, 1 = the whole
+///             body below is ONE Brotli stream — the same framing as the
+///             .shum (see BundleFormat.FinalizeImage / OpenBody; bodies
+///             &lt; 4 KB stay raw)
+///   [9..]     Body (raw or decompressed):
 ///                 moduleName       : len-prefixed UTF-8
 ///                 source           : len-prefixed UTF-8 (may be empty)
 ///                 bytecodeLength   : uint32

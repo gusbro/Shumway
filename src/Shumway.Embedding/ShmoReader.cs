@@ -20,14 +20,14 @@ public static class ShmoReader
     {
         ArgumentNullException.ThrowIfNull(data);
         using var ms = new MemoryStream(data);
-        using var br = new BinaryReader(ms, Encoding.UTF8, leaveOpen: true);
+        using var headerReader = new BinaryReader(ms, Encoding.UTF8, leaveOpen: true);
 
-        byte[] magic = br.ReadBytes(4);
+        byte[] magic = headerReader.ReadBytes(4);
         if (magic.Length != 4 || !magic.AsSpan().SequenceEqual(ShmoFormat.Magic))
             throw new InvalidDataException(
                 ".shmo: magic bytes don't match 'SHMO' — not a Shumway object file.");
 
-        uint version = br.ReadUInt32();
+        uint version = headerReader.ReadUInt32();
         // Pre-release format policy (see ShmoFormat): exactly ONE supported
         // layout, frozen version number, no backward compatibility — a stale
         // .shmo (older layout under the same number) fails on a truncated
@@ -37,6 +37,11 @@ public static class ShmoReader
                 $".shmo: format version {version} is not supported by this linker "
                 + $"(requires {ShmoFormat.CurrentVersion}; pre-release formats are "
                 + "not backward compatible — recompile the source).");
+
+        // Phase 33 T6 — the byte after the version selects the body encoding
+        // (raw / Brotli), sharing the .shum framing; see BundleFormat.
+        byte compression = headerReader.ReadByte();
+        using var br = BundleFormat.OpenBody(compression, ms);
 
         string moduleName = ReadLengthPrefixedUtf8(br);
         string source = ReadLengthPrefixedUtf8(br);

@@ -397,16 +397,79 @@ A deferral is a TODO with a prerequisite, not a closure.
       round: with all link caches hot, first query still ~100 ms on 18k preds
       (not the link) — profile SetupQueryFromTerm's remaining per-first-query
       work (cacheable-functor set, module rewrite, validate, IL warm).*
-- [ ] **L4** 🟡 baked prelude ships `compiledIl: null` — prelude runs Tier-0
+- [x] **L4** 🟡 baked prelude ships `compiledIl: null` — prelude runs Tier-0
       until per-predicate re-promotion.
-- [ ] **T5** 🟡 cross-module unfold = 3 meta-wrapper templates only; no general
+      *RESOLVED BY COMPOSITION. `--with-compiled-il` + `BakePrelude` IL-compiles
+      the $prelude entry like any other (BundleWriter ToBytes path), LoadBundle
+      binds its delegates (shared process-wide by T3), and the T7 strip-wam
+      test PROVES prelude-as-IL end-to-end (msort's WAM stripped → the query
+      can only succeed through the prelude entry's IL). The default no-IL link
+      staying Tier-0 is the user's choice, not a gap. The old deferral reasons
+      (consistency + strip-wam soundness, [[prelude-startup-precompile]]) were
+      retired by chunk 402 + the differential suite. NEW follow-up recorded:
+      bare `new PrologEngine()` still re-Sigils hot prelude predicates PER
+      ENGINE (IlPromotionStore is per-engine; delegates are engine-agnostic) —
+      a process-wide runtime-promotion cache keyed by bytecode content would
+      close it for engine pools that don't use IL bundles.*
+- [-] **T5** 🟡 cross-module unfold = 3 meta-wrapper templates only; no general
       partial deduction; skips findall/call goal args; publics only.
-- [ ] **T6** 🟡 triple representation per entry (source+WAM+IL) by default;
+      *REJECTED with corpus census (4 dirs, 585 modules): a widened rule
+      (single-clause publics, distinct-var heads, no cut, bodies of direct
+      goals — the sound widening; wrapper-module-local callees must stay out,
+      they'd mis-resolve in the caller) finds 87 cross-module sites in test /
+      219 in testGen / 0 in testProc(DotNet), plus 55/69 more candidates
+      needing alpha-renaming machinery. The decisive point: those sites are
+      already DIRECT calls — the meta-dispatch elimination that made the
+      3-template unfold pay (Blint −90 K dispatches) does not apply; unfolding
+      saves one call frame per execution. "Skips findall/call goal args" is by
+      design (goal args are DATA — rewriting is observable); "publics only" is
+      structural (locals are invisible cross-module). Revisit only if a real
+      workload profiles hot on such a wrapper.*
+- [x] **T6** 🟡 triple representation per entry (source+WAM+IL) by default;
       ClauseTerms doubles `.shmo` size.
-- [ ] **T7** 🟡 prelude compiled twice per link; ValidateOrThrow full consult per
+      *DONE (re-scoped on evidence). "Triple" was stale: release .shmo strips
+      source already (corpus: 0% source). Real composition over 310 testGen
+      modules: bytecode 43.7% + ClauseTerms 37.7% + metadata 18.6%. FILTERING
+      ClauseTerms is unsound — it is not just the unfold channel: source-
+      stripped entry-point promotion and the unfold's caller recompile both
+      rebuild whole modules from it. Fix: the .shmo body now goes through the
+      SAME raw-or-Brotli framing as the .shum (flag byte at offset 8, shared
+      BundleFormat.FinalizeImage/OpenBody). Corpus: 24.5 → 4.8 MB (5.1×).
+      Librarian archives store the (now compressed) images verbatim — extract
+      stays byte-for-byte. 2 tests.*
+- [x] **T7** 🟡 prelude compiled twice per link; ValidateOrThrow full consult per
       entry; CompileEntryToIl full engine per entry.
-- [ ] **T8** ⚪ Minor batch: dead-arg elim / const-prop absent; unfold runs 2×
+      *DONE, three fixes. (1) The prelude ShmoObject is a process constant —
+      now compiled ONCE (static Lazy, read-only in the linker); it was 2× per
+      library link + 1× per plain link. No-IL 2-module link: 189 → 4 ms.
+      (2) ValidateOrThrow skips entries carrying compiled bytecode (their
+      ground truth was already compiled + diagnosed; the full re-consult per
+      entry only ever helped hand-built source-only bundles, which keep it).
+      (3) The big one: CompileEntryToIl included the warm engine's ENTIRE
+      static cache in every entry's IL — a multi-module --with-compiled-il
+      link Sigil-compiled and serialised the ~180-method prelude ONCE PER
+      ENTRY (~107 KB each). With a baked $prelude entry, user entries now
+      exclude prelude-owned predicates BY NAME ("$prelude$…" locals incl. the
+      E12 fresh-id helpers, bare publics/dynamics from the compiled prelude
+      object); calls dispatch by fid to the $prelude entry's delegates — the
+      mechanism every cross-module call already uses. 2-module IL link:
+      3732 → ~950 ms; user entries 108 KB/181 methods → 3 KB/1 method. The
+      per-entry full engine itself stays (correctness isolation; its static
+      link is now a T4 shared-cache hit anyway). 2 tests incl. strip-wam
+      (execution forced through the deduplicated IL).*
+- [x] **T8** ⚪ Minor batch: dead-arg elim / const-prop absent; unfold runs 2×
       per module; over-conservative roots.
+      *Unfold-2× FIXED: cross-contribution is now detected with ONE publics-
+      only rewrite (own/visiblePublics registries have disjoint domains), not
+      a local-baseline pass + merged pass + per-clause diff; the old "full
+      changed where local didn't" test also silently MISSED a clause carrying
+      both a local and a cross wrapper site — the new detection catches it
+      (strictly more unfolding, semantics-preserving). Dead-arg elim /
+      const-prop: REJECTED as "minors" — those are real compiler passes, not
+      batch items; no corpus evidence of need yet (ADR-021's Class-B lesson:
+      quantify before building). Over-conservative roots: REJECTED — public
+      wrappers must stay callable by runtime-constructed goals; dropping them
+      is the T1 prune's opt-in contract, not a default.*
 
 ## Later rounds (not yet waved)
 

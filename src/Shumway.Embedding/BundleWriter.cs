@@ -73,7 +73,17 @@ public static class BundleWriter
                     _lastEntriesTableBytes = null;
                     _lastIlFunctorIds = null;
                     _lastPrunableFids = null;
-                    compiledIl = CompileEntryToIl(effective[i], regionPruneSeeds);
+                    // Phase 33 T7 — when the bundle bakes the prelude as its own
+                    // entry, user entries exclude the prelude's predicates from
+                    // their IL: they used to re-Sigil-compile and re-serialise
+                    // the ENTIRE prelude per entry (~180 methods / ~107 KB each).
+                    // Calls into the prelude dispatch by functor id at runtime
+                    // and resolve to the $prelude entry's delegates — the same
+                    // mechanism any cross-module call already uses.
+                    bool excludePrelude =
+                        effective[i].ModuleName != Prelude.ModuleName
+                        && bundle.Entries.Any(e => e.ModuleName == Prelude.ModuleName);
+                    compiledIl = CompileEntryToIl(effective[i], regionPruneSeeds, excludePrelude);
                     compiledIlPatches = _lastPatchTableBytes;
                     compiledIlEntries = _lastEntriesTableBytes;
                     // --strip-wam: drop the redundant WAM bodies. Two sets, both now safe
@@ -226,7 +236,8 @@ public static class BundleWriter
     /// load path uses them to bind <c>PredicateDelegate</c>s without
     /// re-running the Sigil pipeline at consult time.</summary>
     private static byte[] CompileEntryToIl(BundleEntry entry,
-        IReadOnlyCollection<(string Module, PredicateRef Pred)>? regionPruneSeeds = null)
+        IReadOnlyCollection<(string Module, PredicateRef Pred)>? regionPruneSeeds = null,
+        bool excludePrelude = false)
     {
         Shumway.Builtins.StandardBuiltins.EnsureRegistered();
         // Run through a full PrologEngine warm-up so the module
@@ -294,6 +305,31 @@ public static class BundleWriter
             predicates[fid] = pred;
         foreach (var (fid, pred) in engine.PrecompiledStaticPredicates)
             predicates[fid] = pred;
+        // Phase 33 T7 — drop the prelude predicates (they ship, once, in the
+        // baked $prelude entry's own IL; see the ToBytes call site). By NAME,
+        // not by fid snapshot: the prelude's synthesized control-construct
+        // helpers ($prelude$$disj_N / $neg_N …) get FRESH ids on every
+        // recompile (the E12 engine-seq), so a fid set taken from another
+        // compile pass would miss them. A prelude local (incl. every helper)
+        // is module-mangled "$prelude$…"; publics/dynamics match the compiled
+        // prelude object's bare indicator set.
+        Func<int, bool>? isPreludeOwned = null;
+        if (excludePrelude)
+        {
+            var preludeBare = new HashSet<(string, int)>();
+            foreach (var d in ShmoLinker.PreludeObject.Defined)
+                if (d.Visibility != PredicateVisibility.Local)
+                    preludeBare.Add((d.Indicator.Name, d.Indicator.Arity));
+            isPreludeOwned = fid =>
+            {
+                var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(fid);
+                string name = Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "";
+                return name.StartsWith(Prelude.ModuleName + "$", StringComparison.Ordinal)
+                    || preludeBare.Contains((name, arity));
+            };
+            foreach (int f in predicates.Keys.Where(isPreludeOwned).ToList())
+                predicates.Remove(f);
+        }
 
         // ADR-023 — bake the persisted IL for `:- dynamic`/`:- visible`
         // predicates that ship WITH clauses. Replace each one's enter_dynamic
@@ -314,6 +350,7 @@ public static class BundleWriter
         // the dynamic store covers float-bearing dynamics too.
         var dynFids = new HashSet<int>(engine.DynamicPredicateCache.Keys);
         foreach (var f in engine.DynamicFunctorsWithClauses()) dynFids.Add(f);
+        if (isPreludeOwned is not null) dynFids.RemoveWhere(f => isPreludeOwned(f));   // T7
         foreach (var fid in dynFids)
         {
             // BuildPersistableDynamicSnapshot returns null when the snapshot has
@@ -539,18 +576,29 @@ public static class BundleWriter
         return sb.ToString();
     }
 
-    /// <summary>Compiles every entry through a fresh engine and runs a tiny
-    /// dummy query so any unresolved-call or duplicate-public error fires.
-    /// Throws on the first failure so callers (CLI / API) can surface a
-    /// useful error message.</summary>
+    /// <summary>Compiles every source-only entry through a fresh engine and
+    /// runs a tiny dummy query so any unresolved-call or duplicate-public
+    /// error fires. Throws on the first failure so callers (CLI / API) can
+    /// surface a useful error message.
+    /// Phase 33 T7 — entries that already carry compiled bytecode are skipped:
+    /// their ground truth IS the bytecode (compiled + diagnosed by
+    /// ShmoCompiler / the linker, which also did the cross-entry
+    /// public-uniqueness check); re-consulting their source here re-ran the
+    /// whole parse + compile pipeline per entry for nothing. Hand-built
+    /// source-only bundles (the case this validation exists for) still get
+    /// the full consult.</summary>
     private static void ValidateOrThrow(Bundle bundle)
     {
-        var engine = new PrologEngine();
+        PrologEngine? engine = null;
         foreach (var entry in bundle.Entries)
+        {
+            if (entry.CompiledBytecode is not null) continue;
+            engine ??= new PrologEngine();
             engine.ConsultString(entry.Source);
+        }
         // Tickle the compile-once-per-query path so unresolved references
         // and public-uniqueness collisions surface now.
-        engine.Query("true.");
+        engine?.Query("true.");
     }
 
     /// <summary>Parses one module's source, compiles its clauses, and

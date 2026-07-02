@@ -174,14 +174,15 @@ public class Chunk160Tests
         byte[] bytes = ShmoWriter.ToBytes(obj);
         // Find and corrupt the visibility byte. V2 layout:
         //  4 magic + 4 version
+        //  + 1 compression flag (Phase 33 T6; 0 = raw for this tiny body)
         //  + 4 moduleNameLen + 1 ('m')
         //  + 4 sourceLen
         //  + 4 bytecodeLen
         //  + 1 buildMode                                 ← V2 addition
         //  + 1 arityCompat                               ← chunk 441
         //  + 4 definedCount + 4 nameLen + 1 ('p') + 4 arity + 1 visibility
-        // visibility byte is at offset 4+4 + 4+1 + 4 + 4 + 1 + 1 + 4 + 4+1 + 4 = 36.
-        bytes[36] = 99;
+        // visibility byte is at offset 4+4+1 + 4+1 + 4 + 4 + 1 + 1 + 4 + 4+1 + 4 = 37.
+        bytes[37] = 99;
         var ex = Assert.Throws<InvalidDataException>(() => ShmoReader.FromBytes(bytes));
         Assert.Contains("visibility", ex.Message);
     }

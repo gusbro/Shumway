@@ -240,6 +240,111 @@ public class Phase33Wave5Tests
         Assert.True(e2.Query($"{pred}(a, X), X == 1.").Success);
     }
 
+    // ---- T6: .shmo whole-body compression (same framing as the .shum) ----
+
+    [Fact]
+    public void T6_ShmoCompression_RoundTrips_AndLinks()
+    {
+        // Big enough to cross the 4 KB threshold (many clauses → bytecode +
+        // ClauseTerms LTO trailer dominate, the sections T6 targets).
+        var src = new System.Text.StringBuilder(":- public big/2.\n");
+        for (int i = 0; i < 300; i++)
+            src.Append($"big(k{i}, v{i}).\n");
+        var obj = ShmoCompiler.CompileSource(src.ToString(), moduleNameFallback: "t6big");
+        byte[] bytes = ShmoWriter.ToBytes(obj);
+        Assert.Equal(BundleFormat.CompressionBrotli, bytes[8]);
+
+        var back = ShmoReader.FromBytes(bytes);
+        Assert.Equal(obj.ModuleName, back.ModuleName);
+        Assert.Equal(obj.Bytecode.Length, back.Bytecode.Length);
+        Assert.Equal(obj.ClauseTerms.Count, back.ClauseTerms.Count);
+        Assert.Equal(obj.Defined.Count, back.Defined.Count);
+
+        // The round-tripped object links and runs.
+        var result = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { back },
+            EntryPoints = new[] { new PredicateRef("big", 2) },
+        });
+        Assert.True(result.Success);
+        var e = new PrologEngine();
+        e.LoadBundle(BundleReader.FromBytes(result.Bytes!));
+        Assert.True(e.Query("big(k42, V), V == v42.").Success);
+    }
+
+    [Fact]
+    public void T6_TinyShmo_StaysRaw()
+    {
+        var obj = ShmoCompiler.CompileSource(":- public s/0.\ns.\n", moduleNameFallback: "t6tiny");
+        byte[] bytes = ShmoWriter.ToBytes(obj);
+        Assert.Equal(BundleFormat.CompressionNone, bytes[8]);
+        Assert.Equal("t6tiny", ShmoReader.FromBytes(bytes).ModuleName);
+    }
+
+    // ---- T7: link-time cost — prelude IL deduplication across entries ----
+
+    [Fact]
+    public void T7_BakedPreludeIl_NotDuplicatedIntoUserEntries()
+    {
+        var objA = ShmoCompiler.CompileSource(
+            ":- public pa/1.\npa(X) :- msort([c,b,a], [X|_]).\n", moduleNameFallback: "t7moda");
+        var objB = ShmoCompiler.CompileSource(
+            ":- public pb/1.\npb(X) :- length([q,w,e], X).\n", moduleNameFallback: "t7modb");
+        var result = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { objA, objB },
+            EntryPoints = new[] { new PredicateRef("pa", 1), new PredicateRef("pb", 1) },
+            BakePrelude = true,
+            IncludeCompiledIl = true,
+        });
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics.Select(d => d.Message)));
+        var bundle = BundleReader.FromBytes(result.Bytes!);
+
+        // User entries carry ONLY their own predicates' IL; the prelude's
+        // ~180 methods live once, in the $prelude entry.
+        foreach (var en in bundle.Entries.Where(e => e.ModuleName != Prelude.ModuleName))
+        {
+            var methods = Shumway.Compiler.Il.IlPersistedEntryCodec
+                .Decode(en.CompiledIlEntries!).Select(pe => pe.Name).ToList();
+            Assert.DoesNotContain(methods, m => m.StartsWith("$prelude$"));
+            Assert.DoesNotContain("msort", methods);
+            Assert.DoesNotContain("length", methods);
+        }
+        var preludeEntry = bundle.Entries.First(e => e.ModuleName == Prelude.ModuleName);
+        Assert.True(preludeEntry.CompiledIl is { Length: > 0 });
+
+        // And the bundle RUNS: user IL reaches the prelude's IL cross-entry
+        // (by-fid dispatch against the $prelude entry's delegates).
+        var e = PrologEngine.FromBundle(bundle);
+        Assert.True(e.Query("pa(X), X == a.").Success);
+        Assert.True(e.Query("pb(N), N == 3.").Success);
+    }
+
+    [Fact]
+    public void T7_PreludeDedup_UnderStripWam_StillRuns()
+    {
+        // --strip-wam drops the IL-covered WAM bodies, so execution HAS to
+        // flow through the deduplicated IL — user entry → $prelude entry.
+        var obj = ShmoCompiler.CompileSource(
+            ":- public go/1.\ngo(X) :- msort([f,e,d], L), L = [X|_].\n", moduleNameFallback: "t7strip");
+        var result = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { obj },
+            EntryPoints = new[] { new PredicateRef("go", 1) },
+            BakePrelude = true,
+            IncludeCompiledIl = true,
+            StripWam = true,
+        });
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics.Select(d => d.Message)));
+        var bundle = BundleReader.FromBytes(result.Bytes!);
+        var userEntry = bundle.Entries.First(en => en.ModuleName == "t7strip");
+        var methods = Shumway.Compiler.Il.IlPersistedEntryCodec
+            .Decode(userEntry.CompiledIlEntries!).Select(pe => pe.Name).ToList();
+        Assert.DoesNotContain(methods, m => m.StartsWith("$prelude$"));
+        var e = PrologEngine.FromBundle(bundle);
+        Assert.True(e.Query("go(X), X == d.").Success);
+    }
+
     [Fact]
     public void T1_WithoutPrune_FullPreludeStillWorks()
     {
