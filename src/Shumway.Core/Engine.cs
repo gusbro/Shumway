@@ -2052,38 +2052,74 @@ public sealed partial class Engine
     // RunSubroutine. When the callee Proceeds (Pc = Cp), the bytecode
     // interpreter's main loop sees the marker, decodes it back to
     // (functorId, cursor), looks up the IL delegate via the active
-    // Tier1Dispatcher, and invokes it at the right cursor. The marker
-    // encoding lives entirely in the int address — no side table — so
-    // saving / restoring Cp around frames just works.
+    // Tier1Dispatcher, and invokes it at the right cursor. A marker is an
+    // opaque int, so saving / restoring Cp around frames just works.
     //
-    // Encoding:
-    //   marker = ResumeMarkerBase + functorId * ResumeMarkerCursorStride + cursor
+    // Phase 33 B1 — encoding. The original arithmetic encoding
+    // (Base + functorId * 4096 + cursor) capped the functor id at ~262 143
+    // before markers overflowed int — a LIVE ceiling: the full test suite's
+    // functor table crosses it (proven when a naming experiment minted fresh
+    // helper atoms per query and marker users started failing mid-suite).
+    // Markers are now DENSE IDS into a process-global side table of
+    // (functorId, cursor) pairs:
+    //   marker = ResumeMarkerBase + denseId
+    // The table is process-global because markers are baked as constants into
+    // IL delegates that are shared across engines; entries are interned
+    // (one id per distinct pair) and never removed — capacity is
+    // int.MaxValue - Base ≈ 1.07 B distinct pairs, effectively unbounded.
+    // Same lock-free-read / locked-intern discipline as the atom/functor
+    // tables (chunk 428).
     //
     // ResumeMarkerBase is set high enough that no plausible bytecode
     // address collides (the per-query overlay lives at
     // PersistentToQueryGap which is ~64 MB — markers start at 1 GB).
-    // ResumeMarkerCursorStride caps a single predicate at 4096 forward-
-    // resume cursors, which is *vastly* more than the number of Call
-    // sites a real predicate has (Blint's parse_args is the busiest at
-    // ~60).
+    // ResumeMarkerCursorStride is no longer part of the encoding; it
+    // survives only as the IL emitters' per-predicate cursor-count BUDGET
+    // (an emit-shape policy, not a correctness cap).
     public const int ResumeMarkerBase = 0x4000_0000;
     public const int ResumeMarkerCursorStride = 4096;
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<long, int>
+        _resumeMarkerByPair = new();
+    private static (int Fid, int Cursor)[] _resumeMarkerPairs = new (int, int)[4096];
+    private static int _resumeMarkerCount;
+    private static readonly object _resumeMarkerLock = new();
 
     public static bool IsResumeMarker(int address) => address >= ResumeMarkerBase;
 
     public static int EncodeResumeMarker(int functorId, int cursor)
     {
-        if (cursor < 0 || cursor >= ResumeMarkerCursorStride)
-            throw new ArgumentOutOfRangeException(nameof(cursor),
-                $"cursor must be in [0, {ResumeMarkerCursorStride}); got {cursor}.");
-        return ResumeMarkerBase + functorId * ResumeMarkerCursorStride + cursor;
+        if (cursor < 0)
+            throw new ArgumentOutOfRangeException(nameof(cursor), $"cursor must be ≥ 0; got {cursor}.");
+        long key = ((long)functorId << 32) | (uint)cursor;
+        // Fast path: already interned (lock-free dictionary read).
+        if (_resumeMarkerByPair.TryGetValue(key, out int id))
+            return ResumeMarkerBase + id;
+        lock (_resumeMarkerLock)
+        {
+            if (_resumeMarkerByPair.TryGetValue(key, out id))
+                return ResumeMarkerBase + id;
+            id = _resumeMarkerCount;
+            var pairs = _resumeMarkerPairs;
+            if (id >= pairs.Length)
+            {
+                var grown = new (int, int)[pairs.Length * 2];
+                Array.Copy(pairs, grown, pairs.Length);
+                System.Threading.Volatile.Write(ref _resumeMarkerPairs, grown);
+                pairs = grown;
+            }
+            pairs[id] = (functorId, cursor);
+            _resumeMarkerCount = id + 1;
+            // Publish LAST: a reader that finds the id in the dictionary is
+            // guaranteed to see the pair write (the dictionary write has
+            // release semantics).
+            _resumeMarkerByPair[key] = id;
+            return ResumeMarkerBase + id;
+        }
     }
 
     public static (int FunctorId, int Cursor) DecodeResumeMarker(int address)
-    {
-        int slot = address - ResumeMarkerBase;
-        return (slot / ResumeMarkerCursorStride, slot % ResumeMarkerCursorStride);
-    }
+        => System.Threading.Volatile.Read(ref _resumeMarkerPairs)[address - ResumeMarkerBase];
 
     /// <summary>Phase 29 region compilation — at a region member's proceed, decode
     /// the continuation (<see cref="Cp"/>): if it is a resume marker INTO this

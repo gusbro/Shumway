@@ -336,7 +336,7 @@ Interpreter core:
       _unifyPointer local threading; FlushPendingWakeupsSlow pooled scratch.
 
 WAM↔IL boundary:
-- [ ] **B1** 🔴 (raised from 🟡 — E12 proved the suite runs NEAR the cap) resume-marker encoding caps (functor id ~262K, 4096 cursors): replace the arithmetic encoding with a dense side-table of (fid, cursor) pairs.
+- [x] **B1** 🔴 resume-marker encoding caps. *Fixed: markers are now dense ids into a process-global interned side table of (fid, cursor) pairs (`marker = Base + denseId`) — no functor-id or cursor cap (capacity ≈1.07B distinct pairs); lock-free decode / locked intern, same discipline as the atom/functor tables. Process-global because markers bake into IL delegates shared across engines. `ResumeMarkerCursorStride` survives only as the IL emitters per-predicate cursor-count BUDGET (emit-shape policy). 4 tests incl. round-trip beyond both old caps + growth stability.*
 - [ ] **B2** 🟡 MaybeCollectHeap unconditional per marker resume.
 - [ ] **B3** ⚪ double closure per promoted predicate; per-query dispatch cache
       rebuild.
