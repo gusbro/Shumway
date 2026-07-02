@@ -212,7 +212,7 @@ A deferral is a TODO with a prerequisite, not a closure.
       (unique per transform — capture-safe rename); the explicit `=` remains
       only for a branch that consumed nothing (endpoint still sIn), which
       cannot be renamed. Matches the SWI/GProlog expander shape.*
-- [ ] **W6** 🟡 missing fused `execute_builtin` (last-goal builtin =
+- [x] **W6** 🟡 missing fused `execute_builtin` (last-goal builtin =
       call_builtin + deallocate_proceed, 2 dispatches). **Deferred with
       reasoning**: `Opcode.ExecuteBuiltin` already exists (chunk 248, linker
       rewrite for foreigns) BUT the IL compiler REJECTS it in clause bodies
@@ -221,6 +221,27 @@ A deferral is a TODO with a prerequisite, not a closure.
       lose Tier-1 promotion, a far bigger regression than one saved Tier-0
       dispatch (frameless case only; with a frame it's 2 ops either way).
       Prerequisite: IL-side ExecuteBuiltin body support first.
+      *CLOSED (2026-07-03, deferred-item review). PREREQUISITE LIFTED: the IL
+      compiler now accepts non-meta ExecuteBuiltin in bodies — eligibility
+      (IsClauseBodyOpcode + CanCompileSingleClause terminator) + emit
+      (dispatch, BuiltinReturnPc = engine.Cp for backtrackables — the
+      caller-continuation tail contract — then proceed-return); META tail
+      forms stay Tier-0 with an honest "ExecuteBuiltin(meta)" rejection.
+      3 tests (Phase33W6Tests, hand-assembled bytecode through a bundle:
+      interpreter + Warm-promoted IL, incl. tail between/3 full enumeration).
+      THE FUSION ITSELF: REJECTED on census — 1 252 (test) / 1 353 (testGen)
+      fusable static sites (CallBuiltin;Proceed frameless tails, ~11-13% of
+      CallBuiltin sites), each saving ONE Tier-0 dispatch per execution; hot
+      code promotes to Tier-1 where the fusion buys nothing, and the emission
+      change ripples through every body-shape consumer (peepholes, chain
+      patchers, describers). Revisit trigger: a Native-AOT (Tier-0-only)
+      workload profiling hot on builtin-tailed frameless clauses. Facts
+      pinned along the way: ExecuteBuiltin NEVER appears in
+      CompiledPredicate.Bytecode today (the chunk-248 rewrite targets the
+      linked program buffer, so Tier-1 promotion never saw it — the "bundles
+      with foreign tails are Tier-0-locked" worry was unfounded); the
+      interpreter's ExecuteBuiltin case doesn't route meta dispatch (loud
+      dead-fallback guard, unreachable from the toolchain).*
 - [x] **W7** 🟡 `ModuleCompiler.ComputePoolFree` — string/bigint literals exclude
       a predicate from cross-query cache (only floats stable). *Fixed after
       auditing the invariant: all three pools are per-engine `LiteralPool<T>`

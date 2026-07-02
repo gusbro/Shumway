@@ -316,6 +316,10 @@ public sealed class IlPredicateCompiler
             null, new[] { typeof(int) }, null)!;
     private static readonly MethodInfo EngineBGetter =
         typeof(Engine).GetProperty(nameof(Engine.B))!.GetGetMethod()!;
+    // Phase 33 W6 — ExecuteBuiltin's tail-return contract reads the caller's
+    // continuation (Cp) for BuiltinReturnPc.
+    private static readonly MethodInfo EngineCpGetter =
+        typeof(Engine).GetProperty(nameof(Engine.Cp))!.GetGetMethod()!;
 #if DEBUG
     private static readonly MethodInfo EngineEGetter =
         typeof(Engine).GetProperty(nameof(Engine.E))!.GetGetMethod()!;
@@ -573,6 +577,14 @@ public sealed class IlPredicateCompiler
                 if (!IsSupportedAEval(code, pc))
                     unsupported.Add($"{op}(lit)");
             }
+            else if (op == Opcode.ExecuteBuiltin)
+            {
+                // Phase 33 W6 — only a META tail builtin blocks.
+                var e = Shumway.Builtins.BuiltinsRegistry.GetById(
+                    BytecodeIO.ReadInt32(code, pc + 1));
+                if (e.IsCall || e.IsDollarCall)
+                    unsupported.Add("ExecuteBuiltin(meta)");
+            }
             else if (!IsSupportedOpcode(op) && !IsHeadMatchingOpcode(op)
                      && !IsStructuralDispatchOpcode(op))
             {
@@ -805,6 +817,19 @@ public sealed class IlPredicateCompiler
                 // checked BEFORE IsSupportedOpcode (which also accepts it but does
                 // not record the terminator). Without this, e.g. `p(X):-a(X),!.`
                 // was wrongly rejected as cannot-compile.
+                sawTerminator = true;
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.ExecuteBuiltin)
+            {
+                // Phase 33 W6 — fused tail builtin (chunk 248): dispatch +
+                // proceed in one opcode, a body terminator. Non-meta only
+                // (IsClauseBodyOpcode has the same gate for the multi-clause
+                // describers).
+                var entry = Shumway.Builtins.BuiltinsRegistry.GetById(
+                    BytecodeIO.ReadInt32(code, pc + 1));
+                if (entry.IsCall || entry.IsDollarCall) return false;
                 sawTerminator = true;
                 pc += OpcodeTable.Get(op).Size;
                 continue;
@@ -3591,6 +3616,47 @@ public sealed class IlPredicateCompiler
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
+            if (op == Opcode.ExecuteBuiltin)
+            {
+                // Phase 33 W6 — the chunk-248 fused tail builtin: dispatch the
+                // builtin, then Proceed. Reaches the IL only for bundle-decoded
+                // predicates (the linker's Execute→ExecuteBuiltin rewrite for
+                // foreigns / late-resolved builtins); non-meta entries only
+                // (IsClauseBodyOpcode gates the meta forms to Tier-0). The
+                // inline / region-member detectors reject this opcode, so a
+                // proceed-suppressed emit site can't legitimately see it.
+                if (suppressProceedReturn)
+                    throw new NotSupportedException(
+                        "ExecuteBuiltin at a proceed-suppressed IL emit site.");
+                int tailBuiltinId = BytecodeIO.ReadInt32(code, pc + 1);
+                var tailEntry = Shumway.Builtins.BuiltinsRegistry.GetById(tailBuiltinId);
+                if (tailEntry.IsBacktrackable)
+                {
+                    // Tail-return contract (mirrors the interpreter): a
+                    // backtrackable builtin's ResumeAtReturnPc must land at
+                    // the CALLER's continuation — the engine's current Cp —
+                    // not at a cursor in this method (which would loop).
+                    // A preceding Deallocate emit already restored Cp.
+                    emit.LoadArgument(0);
+                    emit.LoadArgument(0);
+                    emit.Call(EngineCpGetter);
+                    emit.Call(EngineBuiltinReturnPcSetter);
+                }
+                emit.LoadConstant(tailBuiltinId);
+                emit.Call(BuiltinsRegistryGetByIdMethod);
+                emit.Call(BuiltinEntryImplGetter);
+                emit.LoadArgument(0);
+                emit.Call(BuiltinImplInvokeMethod);
+                emit.BranchIfFalse(failLabel);
+                // Proceed. A builtin that itself threaded a tail dispatch set
+                // IlTailCallPending + Pc; returning true defers to the outer
+                // dispatch loop either way (it honours pending, else runs the
+                // caller's continuation).
+                emit.LoadConstant(true);
+                emit.Return();
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
             if (op == Opcode.GetStructure)
             {
                 int functorId = BytecodeIO.ReadInt32(code, pc + 1);
@@ -4364,6 +4430,19 @@ public sealed class IlPredicateCompiler
             // Phase 19: call/N and '$call'/2 are IL-eligible via
             // IlMetaCallHelper.Dispatch — no longer rejected.
             return true;
+        }
+        if (op == Opcode.ExecuteBuiltin)
+        {
+            // Phase 33 W6 — the chunk-248 fused tail builtin (the linker's
+            // Execute→ExecuteBuiltin rewrite for foreign / late-resolved
+            // builtins in bundles). Deterministic and backtrackable entries
+            // emit; a META goal in tail position (call/N, '$call'/2) would
+            // need the meta-dispatch threading with proceed-on-sync-success —
+            // left Tier-0 (rare: only a tail Execute that RESOLVED to a meta
+            // builtin at link time takes this form).
+            var entry = Shumway.Builtins.BuiltinsRegistry.GetById(
+                BytecodeIO.ReadInt32(predicate.Bytecode, pc + 1));
+            return !entry.IsCall && !entry.IsDollarCall;
         }
         if (IsAEvalOpcode(op))   // ADR-018 — gate operand kind (bigint/float lit)
             return IsSupportedAEval(predicate.Bytecode, pc);
