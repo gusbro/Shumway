@@ -1073,7 +1073,7 @@ public static class ShmoLinker
             // stripped bundles now dispatch correctly via chunk 178's
             // source-less LoadBundle path.
             var nativeLibNames = config.NativeLibraries
-                .Select(System.IO.Path.GetFileName).ToList();
+                .Select(p => System.IO.Path.GetFileName(p)).ToList();
             bundle = new Bundle(entries, foreignAssemblyNames, snapshot: null,
                 archiveMembers: null, nativeLibraries: nativeLibNames);
             // Chunk 192: --with-compiled-il routes the bundle through

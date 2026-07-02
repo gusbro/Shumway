@@ -154,6 +154,54 @@ public class Phase33Wave5Tests
         Assert.True(e2.Query("findall(X, fact(X), L), length(L, N), N == 300.").Success);
     }
 
+    // ---- T3: process-wide persisted-IL assembly/delegate cache ----
+
+    [Fact]
+    public void T3_PersistedIl_LoadsOncePerContent_AcrossEngines()
+    {
+        // Unique predicate name per run so the bundle content is guaranteed
+        // NOT already in the process-wide cache when the test starts.
+        string pred = "t3p" + Guid.NewGuid().ToString("N")[..12];
+        string src =
+            $":- public {pred}/2.\n" +
+            $"{pred}(0, base).\n" +
+            $"{pred}(N, s(R)) :- N > 0, M is N - 1, {pred}(M, R).\n";
+        var obj = ShmoCompiler.CompileSource(src);
+        var result = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { obj },
+            EntryPoints = new[] { new PredicateRef(pred, 2) },
+            IncludeCompiledIl = true,
+            // Strip the WAM bodies: execution HAS to go through the persisted
+            // IL delegates, so a broken cached binding cannot hide behind a
+            // bytecode fallback.
+            StripWam = true,
+        });
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics.Select(d => d.Message)));
+        var bundle = BundleReader.FromBytes(result.Bytes!);
+        var ilEntry = bundle.Entries.First(en => en.CompiledIl is { Length: > 0 });
+
+        Assert.False(PrologEngine.IsPersistedIlCached(ilEntry));
+        int loadsBefore = PrologEngine.PersistedIlLoadCount;
+
+        var e1 = new PrologEngine();
+        e1.LoadBundle(bundle);
+        Assert.True(PrologEngine.IsPersistedIlCached(ilEntry));
+        int loadsAfterFirst = PrologEngine.PersistedIlLoadCount;
+        Assert.True(loadsAfterFirst > loadsBefore, "first LoadBundle must really load");
+
+        // Two more engines on the SAME bundle: the cache serves the loaded
+        // assembly + bound delegates — and both engines run the stripped
+        // (IL-only) predicate correctly.
+        var e2 = new PrologEngine();
+        e2.LoadBundle(bundle);
+        var e3 = new PrologEngine();
+        e3.LoadBundle(BundleReader.FromBytes(result.Bytes!));  // re-parsed copy, same content
+        Assert.True(e1.Query($"{pred}(3, R), R == s(s(s(base))).").Success);
+        Assert.True(e2.Query($"{pred}(2, R), R == s(s(base)).").Success);
+        Assert.True(e3.Query($"{pred}(0, R), R == base.").Success);
+    }
+
     [Fact]
     public void T1_WithoutPrune_FullPreludeStillWorks()
     {

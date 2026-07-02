@@ -361,8 +361,17 @@ A deferral is a TODO with a prerequisite, not a closure.
       FromBytes incl. decompress 34 ms avg (one-time at load; ZERO runtime
       cost — in-memory structures identical). 3 tests (round-trip + runs,
       tiny-stays-raw, save_state snapshot round-trip).*
-- [ ] **T3** 🔴 persisted-IL `Assembly.Load`+patch+delegates per engine — needs a
+- [x] **T3** 🔴 persisted-IL `Assembly.Load`+patch+delegates per engine — needs a
       process-wide cache keyed like `_loadedNativeLibraries`.
+      *DONE. `GetOrLoadPersistedIl` — static table keyed by SHA-256 of
+      (CompiledIl + patches + entries); sound because patches resolve by NAME
+      through the process-global atom/functor tables and the output (delegates,
+      fids, resume markers) is engine-agnostic. On hit the engine only replays
+      per-engine registrations (RegisterBoundDelegate, index graphs, region
+      aliases). MEASURED (testGen `aggregat`, 219 KB IL): load #1 142 ms,
+      loads #2+ **0.5 ms** (~280×), 1 real Assembly.Load across 11 engines —
+      the EnginePool scenario. Test: T3 in Phase33Wave5Tests (strip-wam bundle
+      so execution can't hide behind a bytecode fallback).*
 - [ ] **T4** 🔴 WAM link (addresses, switch tables, `Call→CallBuiltin` rewrite)
       recomputed per query — bake into source-stripped bundles.
 - [ ] **L4** 🟡 baked prelude ships `compiledIl: null` — prelude runs Tier-0

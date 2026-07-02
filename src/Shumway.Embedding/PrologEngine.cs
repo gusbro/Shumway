@@ -2939,113 +2939,28 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 || !System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported)
                 continue;
 
-            // Phase 17 — overwrite each baked build-time atom/functor
-            // id sentinel with the runtime-process id BEFORE handing
-            // the bytes to Assembly.Load. Once the assembly is loaded
-            // its IL is read-only mapped, so the patch must happen on
-            // the byte buffer (a copy is fine — Assembly.Load takes
-            // ownership of its own copy).
-            byte[] ilBytes = entry.CompiledIl;
-            if (entry.CompiledIlPatches is not null && entry.CompiledIlPatches.Length > 0)
-            {
-                // Copy so we don't mutate the caller's BundleEntry — the
-                // Bundle is meant to be reusable.
-                ilBytes = (byte[])entry.CompiledIl.Clone();
-                ApplyIlPatches(ilBytes, entry.CompiledIlPatches);
-            }
-            var asm = System.Reflection.Assembly.Load(ilBytes);
-            var type = asm.GetType(Shumway.Compiler.Il.PersistedIlBuilder.TypeName);
-            if (type is null) continue;
-
-            // Method-name layout from PersistedIlBuilder:
-            //   P_{slot}_{functorId}_{sanitisedName}
-            // Phase 17 — when CompiledIlEntries is present (V3+
-            // bundles), use the per-method (name, arity) table to
-            // intern the name in THIS process and register the delegate
-            // under the runtime functor id. Falls back to parsing the
-            // build-time functor id from the method name only for
-            // pre-V3 bundles (which never run cross-process correctly
-            // anyway).
-            Dictionary<string, (string Name, int Arity, int Slot)>? methodInfo = null;
-            Dictionary<string, byte[]>? graphByMethod = null;
-            Dictionary<string, IReadOnlyList<(string Name, int Arity, int Cursor)>>?
-                regionMembersByMethod = null;
-            if (entry.CompiledIlEntries is not null && entry.CompiledIlEntries.Length > 0)
-            {
-                methodInfo = new Dictionary<string, (string, int, int)>();
-                foreach (var pe in Shumway.Compiler.Il.IlPersistedEntryCodec.Decode(
-                    entry.CompiledIlEntries))
-                {
-                    methodInfo[pe.MethodName] = (pe.Name, pe.Arity, pe.Slot);
-                    if (pe.IndexGraph is { Length: > 0 } g)
-                        (graphByMethod ??= new Dictionary<string, byte[]>())[pe.MethodName] = g;
-                    if (pe.RegionMembers is { Count: > 0 } rm)
-                        (regionMembersByMethod ??= new())[pe.MethodName] = rm;
-                }
-            }
-            var bound = new List<(int Slot, int FunctorId,
-                Shumway.Compiler.Il.PredicateDelegate Delegate)>();
-            foreach (var method in type.GetMethods(
-                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static))
-            {
-                if (!method.Name.StartsWith("P_")) continue;
-                int slot;
-                int functorId;
-                if (methodInfo is not null && methodInfo.TryGetValue(method.Name, out var info))
-                {
-                    int aid = Shumway.Core.AtomTable.Intern(info.Name).Id;
-                    functorId = Shumway.Core.FunctorTable.Intern(aid, info.Arity);
-                    slot = info.Slot;
-                }
-                else
-                {
-                    int u1 = method.Name.IndexOf('_');
-                    int u2 = method.Name.IndexOf('_', u1 + 1);
-                    int u3 = method.Name.IndexOf('_', u2 + 1);
-                    if (u1 < 0 || u2 < 0 || u3 < 0) continue;
-                    if (!int.TryParse(method.Name.AsSpan(u1 + 1, u2 - u1 - 1), out slot)) continue;
-                    if (!int.TryParse(method.Name.AsSpan(u2 + 1, u3 - u2 - 1), out functorId)) continue;
-                }
-                var del = method.CreateDelegate<Shumway.Compiler.Il.PredicateDelegate>();
-                bound.Add((slot, functorId, del));
+            // Phase 33 T3 — clone + patch + Assembly.Load + delegate binding
+            // happen ONCE per IL content for the whole process
+            // (GetOrLoadPersistedIl, mirroring _loadedNativeLibraries); this
+            // engine only replays the per-engine registrations from the cache.
+            var module = GetOrLoadPersistedIl(entry);
+            if (module is null) continue;
+            foreach (var (_, functorId, del) in module.Bound)
                 IlPromotion.RegisterBoundDelegate(functorId, del);
-                // A stripped indexed predicate carries its dispatch graph in the
-                // bundle. Stash it by runtime functor id; each query's fresh
-                // engine gets it registered at setup (the engine is per-query, so
-                // we can't register here). Without a WAM body the delegate would
-                // otherwise have nothing to rebuild the switch model from.
-                if (graphByMethod is not null
-                    && graphByMethod.TryGetValue(method.Name, out var graphBytes))
-                    _persistedIndexGraphs[functorId] = graphBytes;
-                // Chunk 402: a region method publishes its members' entry cursors.
-                // functorId here is the region ROOT's runtime fid; alias each member's
-                // runtime fid to a marker that dispatches the region delegate at the
-                // member's entry. Consumed (lowest priority) by the query address map.
-                if (regionMembersByMethod is not null
-                    && regionMembersByMethod.TryGetValue(method.Name, out var rMembers))
-                {
-                    foreach (var (mName, mArity, mCursor) in rMembers)
-                    {
-                        int mAid = Shumway.Core.AtomTable.Intern(mName, permanent: true).Id;
-                        int mFid = Shumway.Core.FunctorTable.Intern(mAid, mArity);
-                        _regionMemberAliases[mFid] =
-                            Engine.EncodeResumeMarker(functorId, mCursor);
-                    }
-                }
-            }
-
-            // Populate the static delegates array (chunk 71 multi-clause
-            // self-reference).
-            var dF = type.GetField(
-                Shumway.Compiler.Il.PersistedIlBuilder.DelegatesFieldName,
-                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-            if (dF is not null && bound.Count > 0)
-            {
-                int size = bound.Max(b => b.Slot) + 1;
-                var arr = new Shumway.Compiler.Il.PredicateDelegate[size];
-                foreach (var (slot, _, del) in bound) arr[slot] = del;
-                dF.SetValue(null, arr);
-            }
+            // A stripped indexed predicate carries its dispatch graph in the
+            // bundle. Stash it by runtime functor id; each query's fresh
+            // engine gets it registered at setup (the engine is per-query, so
+            // we can't register here). Without a WAM body the delegate would
+            // otherwise have nothing to rebuild the switch model from.
+            if (module.IndexGraphs is not null)
+                foreach (var kv in module.IndexGraphs)
+                    _persistedIndexGraphs[kv.Key] = kv.Value;
+            // Chunk 402: a region method publishes its members' entry cursors.
+            // The alias marker dispatches the region delegate at the member's
+            // entry. Consumed (lowest priority) by the query address map.
+            if (module.RegionAliases is not null)
+                foreach (var kv in module.RegionAliases)
+                    _regionMemberAliases[kv.Key] = kv.Value;
         }
 
         foreach (var entry in effectiveEntries)
@@ -3334,6 +3249,188 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private static bool IsDynamicPredicate(Shumway.Compiler.Wam.CompiledPredicate pred)
         => pred.Bytecode.Length > 0
             && pred.Bytecode[0] == (byte)Shumway.Core.Opcode.EnterDynamic;
+
+    // ---- Phase 33 T3 — process-wide persisted-IL cache ---------------------
+    // Loading a bundle entry's persisted IL means: clone + patch the assembly
+    // image, Assembly.Load, reflect the P_* methods, CreateDelegate each. All
+    // of that output is engine-agnostic — compiled IL takes Engine as a
+    // parameter (the ADR-011 invariant), functor ids come from the process-
+    // global atom/functor tables, and resume markers are process-global dense
+    // ids — and the patch application itself is deterministic within a process
+    // (each sentinel resolves by NAME through the global tables). So the load
+    // is done ONCE per IL content for the process lifetime and shared across
+    // engines, mirroring the _loadedNativeLibraries table. Without this, an
+    // EnginePool loading the same bundle N times paid N Assembly.Loads and N
+    // JITs of identical code. Entries never evict — like a loaded native
+    // library, a loaded assembly can't be unloaded anyway (no collectible
+    // AssemblyLoadContext here by design: the delegates are cached globally).
+    private sealed class PersistedIlModule
+    {
+        public required List<(int Slot, int FunctorId,
+            Shumway.Compiler.Il.PredicateDelegate Delegate)> Bound;
+        public Dictionary<int, byte[]>? IndexGraphs;   // runtime fid → dispatch graph
+        public Dictionary<int, int>? RegionAliases;    // member fid → resume marker
+    }
+
+    private static readonly Dictionary<string, PersistedIlModule?> _loadedPersistedIl = new();
+    private static readonly object _loadedPersistedIlLock = new();
+
+    /// <summary>Test/diagnostic: the number of real <c>Assembly.Load</c> calls
+    /// for persisted IL (distinct content loads once for the whole process).</summary>
+    internal static int PersistedIlLoadCount;
+
+    /// <summary>Test/diagnostic: whether this entry's persisted IL is already
+    /// in the process-wide cache (a later LoadBundle of the same content
+    /// reuses the loaded assembly + delegates instead of re-loading).</summary>
+    internal static bool IsPersistedIlCached(BundleEntry entry)
+    {
+        lock (_loadedPersistedIlLock)
+            return _loadedPersistedIl.ContainsKey(PersistedIlCacheKey(entry));
+    }
+
+    /// <summary>Content key over everything that determines the loaded module:
+    /// the IL image plus its patch and entries tables. Same bytes ⇒ same
+    /// patched assembly within this process (patches resolve by name against
+    /// the global tables), so a hash of the inputs is a sound identity.</summary>
+    private static string PersistedIlCacheKey(BundleEntry entry)
+    {
+        using var sha = System.Security.Cryptography.IncrementalHash.CreateHash(
+            System.Security.Cryptography.HashAlgorithmName.SHA256);
+        var len = new byte[4];
+        void Add(byte[]? b)
+        {
+            System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(len, b?.Length ?? -1);
+            sha.AppendData(len);
+            if (b is not null) sha.AppendData(b);
+        }
+        Add(entry.CompiledIl);
+        Add(entry.CompiledIlPatches);
+        Add(entry.CompiledIlEntries);
+        return Convert.ToHexString(sha.GetHashAndReset());
+    }
+
+    private static PersistedIlModule? GetOrLoadPersistedIl(BundleEntry entry)
+    {
+        string key = PersistedIlCacheKey(entry);
+        // The lock is held across Assembly.Load on purpose (same discipline as
+        // UseNativeLibrary): the guarantee is load-ONCE, and a racing second
+        // loader would otherwise produce a duplicate assembly + JIT.
+        lock (_loadedPersistedIlLock)
+        {
+            if (_loadedPersistedIl.TryGetValue(key, out var cached)) return cached;
+            var module = LoadPersistedIl(entry);
+            _loadedPersistedIl[key] = module;
+            return module;
+        }
+    }
+
+    private static PersistedIlModule? LoadPersistedIl(BundleEntry entry)
+    {
+        // Phase 17 — overwrite each baked build-time atom/functor id sentinel
+        // with the runtime-process id BEFORE handing the bytes to
+        // Assembly.Load. Once the assembly is loaded its IL is read-only
+        // mapped, so the patch must happen on the byte buffer (a copy so we
+        // don't mutate the caller's reusable BundleEntry).
+        byte[] ilBytes = entry.CompiledIl!;
+        if (entry.CompiledIlPatches is not null && entry.CompiledIlPatches.Length > 0)
+        {
+            ilBytes = (byte[])entry.CompiledIl!.Clone();
+            ApplyIlPatches(ilBytes, entry.CompiledIlPatches);
+        }
+        var asm = System.Reflection.Assembly.Load(ilBytes);
+        System.Threading.Interlocked.Increment(ref PersistedIlLoadCount);
+        var type = asm.GetType(Shumway.Compiler.Il.PersistedIlBuilder.TypeName);
+        if (type is null) return null;
+
+        // Method-name layout from PersistedIlBuilder:
+        //   P_{slot}_{functorId}_{sanitisedName}
+        // Phase 17 — when CompiledIlEntries is present (V3+ bundles), use the
+        // per-method (name, arity) table to intern the name in THIS process
+        // and bind the delegate under the runtime functor id. Falls back to
+        // parsing the build-time functor id from the method name only for
+        // pre-V3 bundles (which never run cross-process correctly anyway).
+        Dictionary<string, (string Name, int Arity, int Slot)>? methodInfo = null;
+        Dictionary<string, byte[]>? graphByMethod = null;
+        Dictionary<string, IReadOnlyList<(string Name, int Arity, int Cursor)>>?
+            regionMembersByMethod = null;
+        if (entry.CompiledIlEntries is not null && entry.CompiledIlEntries.Length > 0)
+        {
+            methodInfo = new Dictionary<string, (string, int, int)>();
+            foreach (var pe in Shumway.Compiler.Il.IlPersistedEntryCodec.Decode(
+                entry.CompiledIlEntries))
+            {
+                methodInfo[pe.MethodName] = (pe.Name, pe.Arity, pe.Slot);
+                if (pe.IndexGraph is { Length: > 0 } g)
+                    (graphByMethod ??= new Dictionary<string, byte[]>())[pe.MethodName] = g;
+                if (pe.RegionMembers is { Count: > 0 } rm)
+                    (regionMembersByMethod ??= new())[pe.MethodName] = rm;
+            }
+        }
+        var bound = new List<(int Slot, int FunctorId,
+            Shumway.Compiler.Il.PredicateDelegate Delegate)>();
+        Dictionary<int, byte[]>? indexGraphs = null;
+        Dictionary<int, int>? regionAliases = null;
+        foreach (var method in type.GetMethods(
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static))
+        {
+            if (!method.Name.StartsWith("P_")) continue;
+            int slot;
+            int functorId;
+            if (methodInfo is not null && methodInfo.TryGetValue(method.Name, out var info))
+            {
+                int aid = Shumway.Core.AtomTable.Intern(info.Name).Id;
+                functorId = Shumway.Core.FunctorTable.Intern(aid, info.Arity);
+                slot = info.Slot;
+            }
+            else
+            {
+                int u1 = method.Name.IndexOf('_');
+                int u2 = method.Name.IndexOf('_', u1 + 1);
+                int u3 = method.Name.IndexOf('_', u2 + 1);
+                if (u1 < 0 || u2 < 0 || u3 < 0) continue;
+                if (!int.TryParse(method.Name.AsSpan(u1 + 1, u2 - u1 - 1), out slot)) continue;
+                if (!int.TryParse(method.Name.AsSpan(u2 + 1, u3 - u2 - 1), out functorId)) continue;
+            }
+            var del = method.CreateDelegate<Shumway.Compiler.Il.PredicateDelegate>();
+            bound.Add((slot, functorId, del));
+            if (graphByMethod is not null
+                && graphByMethod.TryGetValue(method.Name, out var graphBytes))
+                (indexGraphs ??= new())[functorId] = graphBytes;
+            // Chunk 402: functorId here is the region ROOT's runtime fid; each
+            // member's runtime fid maps to a marker at the member's entry cursor.
+            if (regionMembersByMethod is not null
+                && regionMembersByMethod.TryGetValue(method.Name, out var rMembers))
+            {
+                foreach (var (mName, mArity, mCursor) in rMembers)
+                {
+                    int mAid = Shumway.Core.AtomTable.Intern(mName, permanent: true).Id;
+                    int mFid = Shumway.Core.FunctorTable.Intern(mAid, mArity);
+                    (regionAliases ??= new())[mFid] =
+                        Engine.EncodeResumeMarker(functorId, mCursor);
+                }
+            }
+        }
+
+        // Populate the static delegates array (chunk 71 multi-clause
+        // self-reference). Once per loaded assembly — the field lives on the
+        // loaded type, shared by every engine using this module.
+        var dF = type.GetField(
+            Shumway.Compiler.Il.PersistedIlBuilder.DelegatesFieldName,
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+        if (dF is not null && bound.Count > 0)
+        {
+            int size = bound.Max(b => b.Slot) + 1;
+            var arr = new Shumway.Compiler.Il.PredicateDelegate[size];
+            foreach (var (slot, _, del) in bound) arr[slot] = del;
+            dF.SetValue(null, arr);
+        }
+        return new PersistedIlModule
+        {
+            Bound = bound,
+            IndexGraphs = indexGraphs,
+            RegionAliases = regionAliases,
+        };
+    }
 
     private static void ApplyIlPatches(byte[] ilBytes, byte[] patchTable)
     {
