@@ -120,6 +120,16 @@ public sealed class IlPredicateCompiler
     /// <c>EncodeResumeMarker(rootFid, entryCursor)</c>.</summary>
     internal List<(string Name, int Arity, int Cursor)>? LastRegionMemberCursors;
 
+    // Phase 33 (corpus evidence) — Sigil label names must be unique per METHOD,
+    // but a REGION method emits several member bodies with body-local pcs, so a
+    // pc-keyed label name can collide across members (seen on the Arity corpus:
+    // two members with a meta-call at the same body pc → "Label with name
+    // 'metaCallThread_pc50' already exists"). A monotonic global sequence
+    // suffixes every such label (uniqueness only needs to hold within one
+    // method; Interlocked because compiles run on the worker + engine threads).
+    private static int _labelSeq;
+    private static int NextLabelSeq() => System.Threading.Interlocked.Increment(ref _labelSeq);
+
     /// <summary>Finalize an emit into a delegate, dumping its IL first when
     /// <c>SHUMWAY_IL_DUMP</c> is set. Call instead of <c>emit.CreateDelegate</c> at
     /// every compile site so the dump covers them all.</summary>
@@ -2221,13 +2231,14 @@ public sealed class IlPredicateCompiler
                 {
                     int k = ranges.Count;
                     if (cursor + (k - 1) >= Engine.ResumeMarkerCursorStride) break; // budget
+                    int seq = NextLabelSeq();
                     var alt = new Sigil.Label[k - 1];
                     for (int j = 0; j < k - 1; j++)
-                        alt[j] = emit.DefineLabel($"inl_{pc}_alt{j}");
+                        alt[j] = emit.DefineLabel($"inl_{pc}_{seq}_alt{j}");
                     sites[pc] = new InlineSite
                     {
                         Fact = callee, ClauseRanges = ranges, BaseCursor = cursor,
-                        AltLabels = alt, Continuation = emit.DefineLabel($"inl_{pc}_cont"),
+                        AltLabels = alt, Continuation = emit.DefineLabel($"inl_{pc}_{seq}_cont"),
                     };
                     cursor += k - 1;
                 }
@@ -3470,7 +3481,7 @@ public sealed class IlPredicateCompiler
                     emit.BranchIfEqual(failLabel);
 
                     // target == -2 → fall through (sync success)
-                    var threadedLabel = emit.DefineLabel($"metaCallThread_pc{pc}");
+                    var threadedLabel = emit.DefineLabel($"metaCallThread_pc{pc}_{NextLabelSeq()}");
                     emit.LoadLocal(target);
                     emit.LoadConstant(IlMetaCallHelper.SyncSuccess);
                     emit.UnsignedBranchIfNotEqual(threadedLabel);

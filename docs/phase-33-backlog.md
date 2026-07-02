@@ -290,13 +290,13 @@ A deferral is a TODO with a prerequisite, not a closure.
       InsertInstruction) remains the recorded follow-up. Test: a ~24 KB
       1200-fact predicate — excluded in sync mode, promoted + correct in
       background.*
-- [ ] **L6** 🟡 `RegionMemberOk` rejects some multi-clause members. **Deferred
-      pending evidence**: the gate ALREADY admits try_me_else chains AND
-      TryDescribeIndexed shapes (with per-clause body validation) — only shapes
-      failing BOTH describers are refused — and Phase 29 measured ZERO
-      region-skips on the flagship corpus (Blint). Widening the member set is
-      speculative until a real program reports skips; wire the region-skip
-      diagnostic over a corpus first.
+- [-] **L6** 🟡 `RegionMemberOk` rejects some multi-clause members — **REJECTED
+      with corpus evidence** (2026-07-02 harness: SHUMWAY_DIAG build, the real
+      IL compiler run over EVERY predicate of the Arity corpora
+      `C:\temp\test` (10 244 preds) + `testGen` (18 445) + `testProcDotNet`
+      (230)): region-emit = **7 510 regions with 49 040 members**, region-skips
+      = **ZERO** across all three corpora. The member gate refuses nothing on
+      real Arity code; widening it has no demonstrated payoff.
 - [ ] **L7** 🟡 `AIntBin/AIntCmp` — compile-time-constant kinds passed as runtime
       args. **Deferred pending a benchmark**: FusedBin/FusedCmp + TryReadInt +
       Deliver are all `AggressiveInlining` and the kinds arrive as CONSTANTS at
@@ -304,13 +304,32 @@ A deferral is a TODO with a prerequisite, not a closure.
       branches away in the common case — hand-specializing at emit is likely
       redundant. Verify with a disasm/interleaved benchmark before building it.
 - [ ] **L8** 🟡 chunk-216 indexed dispatch keeps WAM-backed lazy model.
-      **Deferred — scope shrank on inspection**: the `--strip-wam` half was
-      ALREADY solved in Phase 27 (IlIndexGraph is persisted via IndexGraphCodec
-      and rebuilt WAM-independently at bundle load); the residual is only the
-      IN-PROCESS promotion path's one-time first-dispatch model build. Baking
-      the graph as an IL jump table (like the inline index-resolve the region
-      path uses) removes a one-time cost — low yield; revisit with startup
-      profiling evidence.
+      **Deferred — scope shrank on inspection, magnitude now quantified**: the
+      `--strip-wam` half was ALREADY solved in Phase 27 (IlIndexGraph persisted
+      via IndexGraphCodec); the residual is the IN-PROCESS promotion path's
+      one-time first-dispatch model build. Corpus census (2026-07-02):
+      **6 627 indexed-dispatch predicates totalling 4.25 MB** across
+      test/testGen/testProcDotNet — a real population, but the build is lazy
+      per predicate and one-time. Revisit with startup profiling. NOTE the
+      outliers the census surfaced: `control_has_property/3` at 33.6 KB and
+      `pty_name_l/3` at **101.6 KB** exceed BOTH promotion caps (16 KB sync /
+      64 KB background) — those giant fact tables never promote at all, which
+      strengthens L3's recorded true-fix (linear-validation emitter) as the
+      real unlock.
+- [ ] **L10** 🟡 **NEW (corpus evidence, 2026-07-02): multi-arg indexed shapes
+      (`switch_on_*_arg`) are NOT IL-describable** — the describers
+      (TryDescribeIndexed / IndexedAtom / TryMeElseChain / SwitchedChain)
+      reject every predicate whose dispatch uses the chunk-67 multi-arg
+      opcodes: **~1 100 predicates in `test` and ~1 500 in `testGen`**
+      (SwitchOnAtomArg alone: 410 + 656; plus Atom/Integer/Structure + Arg
+      combos) are permanently Tier-0. This is the REAL Tier-1 coverage gap on
+      the Arity corpus (≈10 % of resolvable predicates) — far more valuable
+      than L6/L8 were. Teach the IL describer + emitter the `switch_on_arg`
+      cascade (the single-arg jump-table machinery generalizes).
+      ("shape" rejections in the census ≈ dynamic predicates — those promote
+      via the ADR-023 snapshot in the real engine, not a gap; and
+      `call->unresolved` reflects consult failures on files needing the GX
+      interop class, an evidence artifact.)
 - [ ] **L9** ⚪ Minor batch: region self-delegate CSE gate ≥3→≥2;
       MaybeCollectHeap on non-allocating self-tail loops; ground-fact
       unify-with-constant fast path.
