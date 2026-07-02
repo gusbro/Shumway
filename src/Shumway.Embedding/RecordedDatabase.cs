@@ -22,9 +22,9 @@ namespace Shumway.Embedding;
 /// </summary>
 public sealed class RecordedDatabase
 {
-    private int _nextRef = 1;
+    private long _nextRef = 1;
     private readonly Dictionary<Term, LinkedList<RecordEntry>> _byKey = new();
-    private readonly Dictionary<int, RecordEntry> _byRef = new();
+    private readonly Dictionary<long, RecordEntry> _byRef = new();
 
     internal RecordedDatabase() { }
 
@@ -33,12 +33,12 @@ public sealed class RecordedDatabase
     /// can splice it out / around in O(1).</summary>
     public sealed class RecordEntry
     {
-        public int Ref { get; }
+        public long Ref { get; }
         public Term Key { get; }
         public Term Term { get; internal set; }
         internal LinkedListNode<RecordEntry>? Node;
 
-        internal RecordEntry(int @ref, Term key, Term term)
+        internal RecordEntry(long @ref, Term key, Term term)
         {
             Ref = @ref;
             Key = key;
@@ -49,16 +49,16 @@ public sealed class RecordedDatabase
     /// <summary>Adds <paramref name="term"/> to the start of the chain
     /// of records under <paramref name="key"/>. Returns the fresh
     /// reference.</summary>
-    public int Recorda(Term key, Term term) => AddInternal(key, term, atFront: true);
+    public long Recorda(Term key, Term term) => AddInternal(key, term, atFront: true);
 
     /// <summary>Adds <paramref name="term"/> to the end of the chain
     /// of records under <paramref name="key"/>. Returns the fresh
     /// reference.</summary>
-    public int Recordz(Term key, Term term) => AddInternal(key, term, atFront: false);
+    public long Recordz(Term key, Term term) => AddInternal(key, term, atFront: false);
 
-    private int AddInternal(Term key, Term term, bool atFront)
+    private long AddInternal(Term key, Term term, bool atFront)
     {
-        int @ref = _nextRef++;
+        long @ref = _nextRef++;
         if (!_byKey.TryGetValue(key, out var list))
             _byKey[key] = list = new LinkedList<RecordEntry>();
         var entry = new RecordEntry(@ref, key, term);
@@ -69,7 +69,7 @@ public sealed class RecordedDatabase
 
     /// <summary>Removes the entry with reference <paramref name="ref"/>.
     /// Returns false when no such entry exists (e.g. already erased).</summary>
-    public bool Erase(int @ref)
+    public bool Erase(long @ref)
     {
         if (!_byRef.TryGetValue(@ref, out var entry)) return false;
         var list = entry.Node!.List!;
@@ -89,18 +89,18 @@ public sealed class RecordedDatabase
 
     /// <summary>Returns the term stored under <paramref name="ref"/>, or
     /// <c>null</c> when no such entry exists.</summary>
-    public Term? Instance(int @ref)
+    public Term? Instance(long @ref)
         => _byRef.TryGetValue(@ref, out var e) ? e.Term : null;
 
     /// <summary>Returns the key the entry with this ref was recorded
     /// under, or <c>null</c> if the ref doesn't exist.</summary>
-    public Term? KeyOf(int @ref)
+    public Term? KeyOf(long @ref)
         => _byRef.TryGetValue(@ref, out var e) ? e.Key : null;
 
     /// <summary>Replaces the term in the entry with reference
     /// <paramref name="ref"/>. Returns false on an unknown ref. The
     /// list position and the ref itself are preserved.</summary>
-    public bool Replace(int @ref, Term newTerm)
+    public bool Replace(long @ref, Term newTerm)
     {
         if (!_byRef.TryGetValue(@ref, out var entry)) return false;
         entry.Term = newTerm;
@@ -109,7 +109,7 @@ public sealed class RecordedDatabase
 
     /// <summary>Returns the (ref, term) pairs currently stored under
     /// <paramref name="key"/>, in chain order.</summary>
-    public IEnumerable<(int Ref, Term Term)> Recorded(Term key)
+    public IEnumerable<(long Ref, Term Term)> Recorded(Term key)
     {
         if (!_byKey.TryGetValue(key, out var list)) yield break;
         foreach (var e in list) yield return (e.Ref, e.Term);
@@ -124,16 +124,16 @@ public sealed class RecordedDatabase
 
     /// <summary>Whether <paramref name="ref"/> currently refers to a
     /// live entry. Used by <c>ref/1</c>.</summary>
-    public bool ContainsRef(int @ref) => _byRef.ContainsKey(@ref);
+    public bool ContainsRef(long @ref) => _byRef.ContainsKey(@ref);
 
     /// <summary>Lookup an entry by ref. Used by <c>nref/2</c> / <c>pref/2</c>
     /// for chain traversal.</summary>
-    public RecordEntry? GetEntry(int @ref)
+    public RecordEntry? GetEntry(long @ref)
         => _byRef.TryGetValue(@ref, out var e) ? e : null;
 
     /// <summary>The next entry in the same key's chain after the one
     /// with <paramref name="ref"/>. Used by <c>nref/2</c>.</summary>
-    public int? NextRef(int @ref)
+    public long? NextRef(long @ref)
     {
         if (!_byRef.TryGetValue(@ref, out var e) || e.Node!.Next is null)
             return null;
@@ -142,7 +142,7 @@ public sealed class RecordedDatabase
 
     /// <summary>The previous entry in the same key's chain. Used by
     /// <c>pref/2</c>.</summary>
-    public int? PrevRef(int @ref)
+    public long? PrevRef(long @ref)
     {
         if (!_byRef.TryGetValue(@ref, out var e) || e.Node!.Previous is null)
             return null;
@@ -153,10 +153,10 @@ public sealed class RecordedDatabase
     /// <paramref name="afterRef"/>. Used by <c>record_after/3</c>.
     /// Returns the new ref, or null when <paramref name="afterRef"/>
     /// doesn't exist.</summary>
-    public int? RecordAfter(int afterRef, Term term)
+    public long? RecordAfter(long afterRef, Term term)
     {
         if (!_byRef.TryGetValue(afterRef, out var anchor)) return null;
-        int @ref = _nextRef++;
+        long @ref = _nextRef++;
         var entry = new RecordEntry(@ref, anchor.Key, term);
         entry.Node = anchor.Node!.List!.AddAfter(anchor.Node, entry);
         _byRef[@ref] = entry;
@@ -165,10 +165,10 @@ public sealed class RecordedDatabase
 
     /// <summary>Inserts a term immediately before
     /// <paramref name="beforeRef"/>. Used by <c>record_before/3</c>.</summary>
-    public int? RecordBefore(int beforeRef, Term term)
+    public long? RecordBefore(long beforeRef, Term term)
     {
         if (!_byRef.TryGetValue(beforeRef, out var anchor)) return null;
-        int @ref = _nextRef++;
+        long @ref = _nextRef++;
         var entry = new RecordEntry(@ref, anchor.Key, term);
         entry.Node = anchor.Node!.List!.AddBefore(anchor.Node, entry);
         _byRef[@ref] = entry;

@@ -475,6 +475,10 @@ public static class MetaBuiltins
             "Searches Atom for the substring SubAtom; on success unifies "
             + "Location with the 0-based starting offset. Backtrackable: "
             + "produces every occurrence in left-to-right order.");
+        BuiltinsRegistry.Register("string_search", 4, StringSearch4,
+            Term, "string_search(+Case, +SubAtom, +Atom, ?Location)",
+            "Arity string_search/4: like string_search/3 with a leading case "
+            + "flag — 0 searches case-sensitively, 1 case-insensitively.");
 
         // Phase 24 chunk 271 — Arity-Prolog file-system operations on
         // top of System.IO. chdir/1 is a 1-arg alias of
@@ -4234,7 +4238,7 @@ public static class MetaBuiltins
         PrologEngine host = RequireHost(engine, atFront ? "recorda/3" : "recordz/3");
         Term key = RequireGroundKey(engine, register: 0, builtin: atFront ? "recorda/3" : "recordz/3");
         Term term = MaterializeRegister(engine, 1);
-        int @ref = atFront
+        long @ref = atFront
             ? host.Records.Recorda(key, term)
             : host.Records.Recordz(key, term);
         return engine.UnifyRegisterWithCell(2, Cell.Int(@ref));
@@ -4252,7 +4256,7 @@ public static class MetaBuiltins
     }
 
     private static bool RecordedUnify(
-        Engine engine, List<(int Ref, Term Term)> entries, int index)
+        Engine engine, List<(long Ref, Term Term)> entries, int index)
     {
         var (refVal, termVal) = entries[index];
         Cell termCell = Materializer.MaterializeAsCell(engine, termVal);
@@ -4264,7 +4268,7 @@ public static class MetaBuiltins
     public static bool Erase1(Engine engine)
     {
         PrologEngine host = RequireHost(engine, "erase/1");
-        int @ref = RequireIntRef(engine, register: 0, builtin: "erase/1");
+        long @ref = RequireIntRef(engine, register: 0, builtin: "erase/1");
         return host.Records.Erase(@ref);
     }
 
@@ -4279,7 +4283,7 @@ public static class MetaBuiltins
     public static bool Instance2(Engine engine)
     {
         PrologEngine host = RequireHost(engine, "instance/2");
-        int @ref = RequireIntRef(engine, register: 0, builtin: "instance/2");
+        long @ref = RequireIntRef(engine, register: 0, builtin: "instance/2");
         Term? stored = host.Records.Instance(@ref);
         if (stored is null) return false;
         Cell c = Materializer.MaterializeAsCell(engine, stored);
@@ -4322,13 +4326,13 @@ public static class MetaBuiltins
     {
         PrologEngine host = RequireHost(engine, "ref/1");
         Cell cell = MaterializeRegisterAsCell(engine, 0);
-        return cell.Tag == Tag.Int && host.Records.ContainsRef((int)cell.AsInt);
+        return cell.Tag == Tag.Int && host.Records.ContainsRef(cell.AsInt);
     }
 
     public static bool Replace2(Engine engine)
     {
         PrologEngine host = RequireHost(engine, "replace/2");
-        int @ref = RequireIntRef(engine, register: 0, builtin: "replace/2");
+        long @ref = RequireIntRef(engine, register: 0, builtin: "replace/2");
         Term newTerm = MaterializeRegister(engine, 1);
         return host.Records.Replace(@ref, newTerm);
     }
@@ -4336,8 +4340,8 @@ public static class MetaBuiltins
     public static bool Nref2(Engine engine)
     {
         PrologEngine host = RequireHost(engine, "nref/2");
-        int @ref = RequireIntRef(engine, register: 0, builtin: "nref/2");
-        int? next = host.Records.NextRef(@ref);
+        long @ref = RequireIntRef(engine, register: 0, builtin: "nref/2");
+        long? next = host.Records.NextRef(@ref);
         if (next is null) return false;
         return engine.UnifyRegisterWithCell(1, Cell.Int(next.Value));
     }
@@ -4345,8 +4349,8 @@ public static class MetaBuiltins
     public static bool Pref2(Engine engine)
     {
         PrologEngine host = RequireHost(engine, "pref/2");
-        int @ref = RequireIntRef(engine, register: 0, builtin: "pref/2");
-        int? prev = host.Records.PrevRef(@ref);
+        long @ref = RequireIntRef(engine, register: 0, builtin: "pref/2");
+        long? prev = host.Records.PrevRef(@ref);
         if (prev is null) return false;
         return engine.UnifyRegisterWithCell(1, Cell.Int(prev.Value));
     }
@@ -4354,9 +4358,9 @@ public static class MetaBuiltins
     public static bool RecordAfter3(Engine engine)
     {
         PrologEngine host = RequireHost(engine, "record_after/3");
-        int @ref = RequireIntRef(engine, register: 0, builtin: "record_after/3");
+        long @ref = RequireIntRef(engine, register: 0, builtin: "record_after/3");
         Term term = MaterializeRegister(engine, 1);
-        int? newRef = host.Records.RecordAfter(@ref, term);
+        long? newRef = host.Records.RecordAfter(@ref, term);
         if (newRef is null) return false;
         return engine.UnifyRegisterWithCell(2, Cell.Int(newRef.Value));
     }
@@ -4364,9 +4368,9 @@ public static class MetaBuiltins
     public static bool RecordBefore3(Engine engine)
     {
         PrologEngine host = RequireHost(engine, "record_before/3");
-        int @ref = RequireIntRef(engine, register: 0, builtin: "record_before/3");
+        long @ref = RequireIntRef(engine, register: 0, builtin: "record_before/3");
         Term term = MaterializeRegister(engine, 1);
-        int? newRef = host.Records.RecordBefore(@ref, term);
+        long? newRef = host.Records.RecordBefore(@ref, term);
         if (newRef is null) return false;
         return engine.UnifyRegisterWithCell(2, Cell.Int(newRef.Value));
     }
@@ -4412,15 +4416,14 @@ public static class MetaBuiltins
         return true;
     }
 
-    private static int RequireIntRef(Engine engine, int register, string builtin)
+    private static long RequireIntRef(Engine engine, int register, string builtin)
     {
         Cell cell = MaterializeRegisterAsCell(engine, register);
         if (cell.Tag == Tag.Ref || cell.Tag == Tag.AttVar)
             throw new Shumway.Core.PrologRuntimeException("instantiation_error");
         if (cell.Tag != Tag.Int)
-            throw new Shumway.Core.PrologRuntimeException(
-                $"type_error(db_reference, _) /* {builtin} */");
-        return (int)cell.AsInt;
+            throw new Shumway.Core.PrologRuntimeException("type_error", "db_reference");
+        return cell.AsInt;
     }
 
     // ============================================================================
@@ -4706,19 +4709,39 @@ public static class MetaBuiltins
     }
 
     public static bool StringSearch3(Engine engine)
+        => StringSearchImpl(engine, subReg: 0, hayReg: 1, locReg: 2, arity: 3,
+            StringComparison.Ordinal);
+
+    /// <summary>Arity <c>string_search(+Case, +SubString, +String, -Location)</c>:
+    /// Case = 0 → case-sensitive, Case = 1 → case-insensitive. Locations are
+    /// 0-based (per ARITY.HLP) and enumerate on backtracking.</summary>
+    public static bool StringSearch4(Engine engine)
     {
-        Cell subCell = MaterializeRegisterAsCell(engine, 0);
-        Cell haystackCell = MaterializeRegisterAsCell(engine, 1);
+        Cell caseCell = MaterializeRegisterAsCell(engine, 0);
+        if (caseCell.Tag == Tag.Ref || caseCell.Tag == Tag.AttVar)
+            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+        if (caseCell.Tag != Tag.Int || caseCell.AsInt is not (0 or 1))
+            throw new Shumway.Core.PrologRuntimeException("domain_error", "case_flag");
+        var cmp = caseCell.AsInt == 1
+            ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        return StringSearchImpl(engine, subReg: 1, hayReg: 2, locReg: 3, arity: 4, cmp);
+    }
+
+    private static bool StringSearchImpl(Engine engine, int subReg, int hayReg,
+        int locReg, int arity, StringComparison cmp)
+    {
+        Cell subCell = MaterializeRegisterAsCell(engine, subReg);
+        Cell haystackCell = MaterializeRegisterAsCell(engine, hayReg);
         if (subCell.Tag == Tag.Ref || subCell.Tag == Tag.AttVar
             || haystackCell.Tag == Tag.Ref || haystackCell.Tag == Tag.AttVar)
             throw new Shumway.Core.PrologRuntimeException("instantiation_error");
         if (subCell.Tag != Tag.Atom)
-            throw new Shumway.Core.PrologRuntimeException("type_error(atom, _)");
+            throw new Shumway.Core.PrologRuntimeException("type_error", "atom");
         if (haystackCell.Tag != Tag.Atom)
-            throw new Shumway.Core.PrologRuntimeException("type_error(atom, _)");
+            throw new Shumway.Core.PrologRuntimeException("type_error", "atom");
         string sub = AtomTable.GetById(subCell.AsAtomId)?.Name ?? "";
         string hay = AtomTable.GetById(haystackCell.AsAtomId)?.Name ?? "";
-        if (sub.Length == 0) return engine.UnifyRegisterWithCell(2, Cell.Int(0));
+        if (sub.Length == 0) return engine.UnifyRegisterWithCell(locReg, Cell.Int(0));
 
         // Walk the haystack collecting every match position so we can
         // backtrack through them via PushBuiltinChoicePoint.
@@ -4726,15 +4749,15 @@ public static class MetaBuiltins
         int start = 0;
         while (start <= hay.Length - sub.Length)
         {
-            int idx = hay.IndexOf(sub, start, StringComparison.Ordinal);
+            int idx = hay.IndexOf(sub, start, cmp);
             if (idx < 0) break;
             positions.Add(idx);
             start = idx + 1;
         }
         if (positions.Count == 0) return false;
         int returnPc = engine.BuiltinReturnPc;
-        return IndexEnumCursor.Start(engine, positions.Count, 3, returnPc,  // arity 3 (string_search/3)
-            (e, i) => engine.UnifyRegisterWithCell(2, Cell.Int(positions[i])));
+        return IndexEnumCursor.Start(engine, positions.Count, arity, returnPc,
+            (e, i) => engine.UnifyRegisterWithCell(locReg, Cell.Int(positions[i])));
     }
 
     // ============================================================================

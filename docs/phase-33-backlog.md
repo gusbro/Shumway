@@ -30,8 +30,11 @@ Legend: 🔴 high · 🟡 medium · ⚪ low. `[x]` done · `[-]` rejected/not-a-
 - [x] **E4** 🟡 `NativeReftype.cs:67,71,113` — silent 32-bit truncation of 64-bit
       integers into `cint`. *Fixed: catchable `representation_error(native_cint_32)`
       on materialize when outside int32 (IntTerm + BigIntTerm).*
-- [ ] **E5** 🟡 `NativeReftype.cs:79,84` — `nelem` for atom/string is the UTF-8
-      byte count, not the char count. Decide vs Arity semantics and fix/document.
+- [x] **E5** 🟡 `NativeReftype.cs:79,84` — `nelem` for atom/string is the UTF-8
+      byte count, not the char count. *Resolved as by-design: the invariant native
+      C relies on is `nelem == strlen(crep.cstr)` (byte length); under Arity's
+      single-byte encodings byte==char count. Documented in code +
+      generic-term-interop §10b.*
 - [x] **E6** 🟡 `PrologEngine.NativeTextEncoding` — a non-byte-oriented encoding
       (UTF-16/32) silently corrupts NUL-terminated marshalling. *Fixed: setter
       rejects encodings where ASCII 'A' isn't a single non-zero byte.*
@@ -52,10 +55,22 @@ Legend: 🔴 high · 🟡 medium · ⚪ low. `[x]` done · `[-]` rejected/not-a-
       success: `'$native_goal'/1` now throws a loud system_error if it survives to
       execution. The CLP(R)-vs-arity_compat `{}` routing is inherent to the flag
       (the two can't share an engine anyway) — documented trade-off retained.*
-- [ ] **E11** ⚪ Minor batch: `string_search` 0- vs 1-based check vs Arity;
-      `MapReturn` silent default to int; `NativeTransform.cs:86` swallowed
-      CParseException; `RecordedDatabase._nextRef` int32 overflow;
-      `AddrOfLocal` accepts a bare ident as out-pointer.
+- [x] **E11** ⚪ Minor batch, all resolved:
+      *(a) `string_search` 0-based VERIFIED CORRECT against ARITY.HLP ("Location is
+      offset from 0"); bonus: added Arity's `string_search/4` (case flag).
+      (b) `MapReturn` unknown scalar return now throws (a wrong calli signature can
+      corrupt the stack) instead of silently defaulting to int; `char` return added.
+      (c) `NativeTransform.cs:86` swallow is NOT a bug — it's the best-effort hint
+      pre-pass; the real parse at TransformBlock throws a proper consult error on
+      the same text.
+      (d) `RecordedDatabase` refs widened int→long throughout (+ MetaBuiltins call
+      sites) — no int32 overflow; refs live in 60-bit int cells anyway.
+      (e) `AddrOfLocal` bare-ident acceptance is deliberate (runs only for
+      prototype-typed pointer params where by-value is meaningless; corpus passes
+      pointer-typed locals without `&`) — documented at the helper.
+      Also fixed en passant: malformed PrologRuntimeException kinds in the
+      recorded/string region ("type_error(atom, _)" as an ATOM kind → proper
+      ("type_error","atom") kind/detail split, the chunk-323 bug pattern).*
 
 ## Wave 2 — Interop hot path
 

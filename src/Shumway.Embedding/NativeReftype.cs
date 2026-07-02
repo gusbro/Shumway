@@ -98,6 +98,10 @@ public static class NativeReftype
                 break;
             case AtomTerm a:
                 Marshal.WriteInt64(p, OffNtype, Reftype.Codes.Atom);
+                // nelem for text is the ENCODED BYTE length — the invariant native C
+                // relies on is `nelem == strlen(crep.cstr)`. Under Arity's original
+                // single-byte encodings byte count and char count coincide; under
+                // UTF-8 (Shumway's default) nelem stays the strlen, by design.
                 Marshal.WriteInt64(p, OffNelem, enc.GetByteCount(a.Name));
                 Marshal.WriteIntPtr(p, OffCrep, AllocString(a.Name, enc, allocations));    // cstr
                 break;

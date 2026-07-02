@@ -189,6 +189,40 @@ public class Phase33Wave1Tests
             Assert.True(lease.Engine.Query("fact(9).").Success);   // documented carry-over
     }
 
+    // ---- E11b: an unknown scalar return type in a ':- c' prototype fails loudly at
+    //      signature resolution instead of silently marshalling as int. ----
+
+    [Fact]
+    public void E11b_UnknownReturnType_ThrowsAtResolution()
+    {
+        var proto = new Shumway.Compiler.NativeC.CPrototype("fn",
+            new Shumway.Compiler.NativeC.CType("mystery"),
+            new[] { new Shumway.Compiler.NativeC.CParam(new Shumway.Compiler.NativeC.CType("int"), "x") });
+        Assert.Throws<InvalidOperationException>(
+            () => Shumway.Embedding.NativeCall.FromPrototype(
+                proto, new System.Collections.Generic.Dictionary<string, Shumway.Compiler.NativeC.CType>()));
+    }
+
+    // ---- E11 bonus: Arity string_search/4 (leading case flag; 0-based, per
+    //      ARITY.HLP "Location is offset from 0" — the /3 form was verified 0-based). ----
+
+    [Fact]
+    public void E11_StringSearch4_CaseFlag()
+    {
+        var e = new Shumway.Embedding.PrologEngine();
+        e.ConsultString(":- set_prolog_flag(arity_compat, true).\np.\n");
+        // Case-sensitive (0): 'AB' is not in 'xxabyy'.
+        Assert.False(e.Query("string_search(0, 'AB', xxabyy, _).").Success);
+        // Case-insensitive (1): found at offset 2 (0-based).
+        Assert.True(e.Query("string_search(1, 'AB', xxabyy, L), L == 2.").Success);
+        // Backtracks over every occurrence.
+        Assert.True(e.Query(
+            "findall(L, string_search(1, ab, 'ABxab', L), Ls), Ls == [0, 3].").Success);
+        // Bad case flag is a domain error.
+        Assert.True(e.Query(
+            "catch(string_search(2, a, b, _), error(domain_error(_, _), _), R = caught), R == caught.").Success);
+    }
+
     // ---- E10: a '$native_goal' that survives to execution (native transform never
     //      ran / runtime-constructed) is a loud error, not silent success. ----
 

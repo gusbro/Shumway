@@ -127,11 +127,16 @@ internal static class NativeCall
         if (t.PointerDepth > 0) return typeof(IntPtr);
         return t.Name switch
         {
-            "int" or "short" or "signed" or "unsigned" => typeof(int),
+            "int" or "short" or "signed" or "unsigned" or "char" => typeof(int),
             "long" or "int64_t" or "int64" => typeof(long),
             "double" => typeof(double),
             "float" => typeof(float),
-            _ => typeof(int),   // default
+            // A mistyped `:- c` return prototype must fail loudly at resolution,
+            // not silently marshal as a 32-bit int (a wrong calli signature can
+            // corrupt the stack on some ABIs).
+            _ => throw new InvalidOperationException(
+                $":- native: unsupported return type '{t}' in the ':- c' prototype "
+                + "(supported: void, int/short/char, long, float, double, and pointers)."),
         };
     }
 

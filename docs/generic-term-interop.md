@@ -343,7 +343,11 @@ bundle resolves them with no source — verified end-to-end through both a nativ
 | `short*` / `int*` / `long*` / `double*` (`&local`) | out | scalar written through the pointer, read back into the block-local |
 
 `char*` text uses the engine's `NativeTextEncoding` (default **UTF-8**; set per
-engine). A `char*`-returning function yields a raw pointer, so the corpus pattern
+engine — must be byte-oriented; UTF-16/32 are rejected). For a text node the
+struct's `nelem` is the **encoded byte length** — the invariant native C can rely
+on is `nelem == strlen(crep.cstr)`. Under single-byte encodings (Arity's
+original world) that equals the character count; under UTF-8 it stays the
+`strlen`, by design. A `char*`-returning function yields a raw pointer, so the corpus pattern
 works directly:
 
 ```prolog

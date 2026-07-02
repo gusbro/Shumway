@@ -580,7 +580,11 @@ public static class NativeBlockRunner
     }
 
     /// <summary>The block-local name an out-scalar argument addresses — <c>&amp;id</c>
-    /// (or a bare <c>id</c>); null if the argument is not a plain local reference.</summary>
+    /// (or a bare <c>id</c>); null if the argument is not a plain local reference.
+    /// The bare-ident form is deliberate: this helper only runs for a parameter the
+    /// `:- c` prototype already types as a POINTER (out-scalar / out-string), where
+    /// a by-value reading of the same local is meaningless — corpus blocks pass
+    /// pointer-typed locals (e.g. a `pshort` declared local) without `&amp;`.</summary>
     private static string? AddrOfLocal(CExpr e) => e switch
     {
         CAddrOfExpr { Operand: CIdentExpr id } => id.Name,
