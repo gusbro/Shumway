@@ -3432,6 +3432,100 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         };
     }
 
+    // ---- Phase 33 T4 — process-wide static-region link cache ---------------
+    // The static region links once per ENGINE (chunk 151b caches it in
+    // _staticLink), but an EnginePool loading the same bundle N times still
+    // ran N identical full-program links on each engine's first query. The
+    // link is a pure function of the ordered predicate list (bytecode +
+    // switch tables + call sites — all immutable) and the load offset, so
+    // the result is shared process-wide, keyed by a content hash. The hash
+    // covers the post-literal-remap bytecode bytes, so an engine whose
+    // literal pools were populated in a different order simply misses and
+    // links fresh — never a wrong hit. LinkResult is read-only downstream:
+    // its bytecode is COPIED into each engine's persistent buffer (per-engine
+    // Call→CallIl patches land in the copy), and static switch tables are
+    // never mutated (chunk-155 in-place mutation applies to dynamics only).
+    private static readonly Dictionary<string, Shumway.Compiler.Wam.Linker.LinkResult>
+        _sharedStaticLinks = new();
+    private static readonly object _sharedStaticLinksLock = new();
+
+    // Crude growth bound: a long-lived process churning DISTINCT static
+    // programs (a test suite, a REPL consulting repeatedly) would otherwise
+    // accumulate full program images forever. The pool scenario this cache
+    // exists for uses a handful of distinct programs, so wholesale reset on
+    // overflow is simpler than LRU and costs one relink per evicted program.
+    private const int SharedStaticLinkCapacity = 64;
+
+    /// <summary>Test/diagnostic: the number of real static-region link runs
+    /// (identical static programs link once for the whole process).</summary>
+    internal static int StaticLinkBuildCount;
+
+    /// <summary>Test/diagnostic (per-engine, so parallel tests can't perturb
+    /// it): whether this engine's most recent static-region link came from
+    /// the process-wide shared cache instead of a fresh link run.</summary>
+    internal bool LastStaticLinkWasSharedHit;
+
+    private Shumway.Compiler.Wam.Linker.LinkResult GetOrLinkStatic(
+        List<Shumway.Compiler.Wam.CompiledPredicate> staticPreds, int loadOffset)
+    {
+        string key = StaticLinkKey(staticPreds, loadOffset);
+        lock (_sharedStaticLinksLock)
+        {
+            if (_sharedStaticLinks.TryGetValue(key, out var hit))
+            {
+                LastStaticLinkWasSharedHit = true;
+                return hit;
+            }
+            LastStaticLinkWasSharedHit = false;
+            if (_sharedStaticLinks.Count >= SharedStaticLinkCapacity)
+                _sharedStaticLinks.Clear();
+            var link = new Shumway.Compiler.Wam.Linker().Link(staticPreds, loadOffset: loadOffset);
+            System.Threading.Interlocked.Increment(ref StaticLinkBuildCount);
+            _sharedStaticLinks[key] = link;
+            return link;
+        }
+    }
+
+    /// <summary>Content fingerprint of the static link inputs: load offset
+    /// plus, per predicate in order, functor id, bytecode bytes, and the
+    /// switch-table content (keys/values/default live OUTSIDE the bytecode)
+    /// and call-site table (drives the linker's resolution).</summary>
+    private static string StaticLinkKey(
+        List<Shumway.Compiler.Wam.CompiledPredicate> staticPreds, int loadOffset)
+    {
+        using var sha = System.Security.Cryptography.IncrementalHash.CreateHash(
+            System.Security.Cryptography.HashAlgorithmName.SHA256);
+        var word = new byte[4];
+        void AddInt(int v)
+        {
+            System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(word, v);
+            sha.AppendData(word);
+        }
+        AddInt(loadOffset);
+        AddInt(staticPreds.Count);
+        foreach (var p in staticPreds)
+        {
+            AddInt(p.FunctorId);
+            AddInt(p.Bytecode.Length);
+            sha.AppendData(p.Bytecode);
+            AddInt(p.SwitchTables.Count);
+            foreach (var t in p.SwitchTables)
+            {
+                AddInt(t.DefaultAddress);
+                AddInt(t.Count);
+                for (int i = 0; i < t.Count; i++) { AddInt(t.Keys[i]); AddInt(t.Values[i]); }
+            }
+            AddInt(p.CallSites.Count);
+            foreach (var c in p.CallSites)
+            {
+                AddInt(c.OpcodeOffset);
+                AddInt(c.CalleeFunctorId);
+                AddInt(c.IsExecute ? 1 : 0);
+            }
+        }
+        return Convert.ToHexString(sha.GetHashAndReset());
+    }
+
     private static void ApplyIlPatches(byte[] ilBytes, byte[] patchTable)
     {
         var sites = Shumway.Compiler.Il.IlPatchSiteCodec.Decode(patchTable);
@@ -6998,7 +7092,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // length never varies) and is reused until the static program
         // changes — ConsultString / a bundle load null _staticLink.
         var staticLink = _staticLink
-            ?? (_staticLink = new Linker().Link(staticPreds, loadOffset: prefix.Length));
+            ?? (_staticLink = GetOrLinkStatic(staticPreds, prefix.Length));
 
         // Dynamic region: linked once into the persistent buffer.
         // Mid-query assertz extends in place; only a change to the

@@ -202,6 +202,44 @@ public class Phase33Wave5Tests
         Assert.True(e3.Query($"{pred}(0, R), R == base.").Success);
     }
 
+    // ---- T4: process-wide static-region link cache ----
+
+    [Fact]
+    public void T4_StaticLink_SharedAcrossEngines_OnSameBundle()
+    {
+        // Unique content so the first engine is guaranteed a cache MISS and
+        // the second a HIT on exactly this program (parallel tests caching
+        // their own programs can't perturb the per-engine flag).
+        string pred = "t4p" + Guid.NewGuid().ToString("N")[..12];
+        string src =
+            $":- public {pred}/2.\n" +
+            $"{pred}(a, 1).\n{pred}(b, 2).\n{pred}(c, 3).\n";
+        var obj = ShmoCompiler.CompileSource(src);
+        var result = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { obj },
+            EntryPoints = new[] { new PredicateRef(pred, 2) },
+            BakePrelude = true,
+        });
+        Assert.True(result.Success);
+        var bundle = BundleReader.FromBytes(result.Bytes!);
+
+        var e1 = PrologEngine.FromBundle(bundle);
+        Assert.True(e1.Query($"{pred}(b, X), X == 2.").Success);
+        Assert.False(e1.LastStaticLinkWasSharedHit);   // first engine links fresh
+
+        var e2 = PrologEngine.FromBundle(bundle);
+        Assert.True(e2.Query($"{pred}(c, X), X == 3.").Success);
+        Assert.True(e2.LastStaticLinkWasSharedHit);    // second engine reuses it
+
+        // The shared LinkResult must behave identically: full solutions,
+        // backtracking, and a further consult invalidates cleanly.
+        Assert.Equal(3, e2.QueryAll($"{pred}(_, _).").Count());
+        e2.ConsultString($":- public extra9/1.\nextra9(x).\n");
+        Assert.True(e2.Query("extra9(x).").Success);   // relinked static program
+        Assert.True(e2.Query($"{pred}(a, X), X == 1.").Success);
+    }
+
     [Fact]
     public void T1_WithoutPrune_FullPreludeStillWorks()
     {

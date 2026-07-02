@@ -372,8 +372,31 @@ A deferral is a TODO with a prerequisite, not a closure.
       loads #2+ **0.5 ms** (~280×), 1 real Assembly.Load across 11 engines —
       the EnginePool scenario. Test: T3 in Phase33Wave5Tests (strip-wam bundle
       so execution can't hide behind a bytecode fallback).*
-- [ ] **T4** 🔴 WAM link (addresses, switch tables, `Call→CallBuiltin` rewrite)
+- [x] **T4** 🔴 WAM link (addresses, switch tables, `Call→CallBuiltin` rewrite)
       recomputed per query — bake into source-stripped bundles.
+      *DONE (re-scoped on evidence). The per-QUERY claim was stale — ADR-015's
+      persistent code space + chunk 430's merged-map caches already killed it
+      (only the tiny query overlay links per query). What remained was the
+      per-ENGINE relink: every pool engine's first query re-linked the full
+      static program. Now shared process-wide: `GetOrLinkStatic`, keyed by
+      SHA-256 over (loadOffset, per-pred fid + post-remap bytecode + switch
+      tables + call sites) — literal-pool divergence changes the bytes, so a
+      differently-populated engine MISSES, never wrongly hits. Capacity 64,
+      wholesale clear on overflow. Deterministic interleaved A/B (118-module
+      testGen archive, 1.15 MB, ~18k preds): first query miss 115.6 ms /
+      22.4 MB alloc vs hit 101.8 ms / 14.7 MB — the link was ~14 ms + 7.7 MB
+      GC pressure per engine. Test: T4 in Phase33Wave5Tests (per-engine
+      `LastStaticLinkWasSharedHit` flag, parallel-safe; consult-invalidation
+      covered). CROSS-PROCESS bake into the bundle: REJECTED — atom/functor/
+      literal ids are process-specific, so a baked linked image would need a
+      full remap pass ≈ the link it replaces; poor ROI for the format work.
+      Deferred remainder (reviewable): warm `FromBundle` still ~100-150 ms on
+      the 118-module archive — per-entry decode + literal remap is per-engine
+      because remapped ids point into the ENGINE's literal pools; sharing
+      needs deterministic/global literal ids first. NEW finding for a later
+      round: with all link caches hot, first query still ~100 ms on 18k preds
+      (not the link) — profile SetupQueryFromTerm's remaining per-first-query
+      work (cacheable-functor set, module rewrite, validate, IL warm).*
 - [ ] **L4** 🟡 baked prelude ships `compiledIl: null` — prelude runs Tier-0
       until per-predicate re-promotion.
 - [ ] **T5** 🟡 cross-module unfold = 3 meta-wrapper templates only; no general
