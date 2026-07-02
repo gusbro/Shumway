@@ -23,6 +23,31 @@ public sealed class NativeBlockEntry
     public NativeScalarGlobal[] ScalarGlobals { get; }
     internal Func<Engine, bool>? Compiled;
     internal bool CompileTried;
+
+    // Phase 33 A1 — the block-invariant lookup maps the interpreter fallback used
+    // to rebuild on EVERY call (three dictionaries + fill loops per dispatch).
+    // Built once, lazily, on first interpreted run.
+    internal Dictionary<string, int>? IndexMap;
+    internal Dictionary<string, NativeKind>? KindMap;
+    internal Dictionary<string, bool>? ScalarFloatMap;
+
+    internal void EnsureMaps()
+    {
+        if (IndexMap is not null) return;
+        var index = new Dictionary<string, int>(Vars.Length);
+        var kind = new Dictionary<string, NativeKind>(Vars.Length);
+        for (int i = 0; i < Vars.Length; i++)
+        {
+            index[Vars[i].Name] = i;
+            kind[Vars[i].Name] = Vars[i].Kind;
+        }
+        var sf = new Dictionary<string, bool>(ScalarGlobals.Length);
+        foreach (var g in ScalarGlobals) sf[g.Name] = g.IsFloat;
+        ScalarFloatMap = sf;
+        KindMap = kind;
+        IndexMap = index;   // published last — the maps above are complete
+    }
+
     public NativeBlockEntry(NativeVar[] vars, CStmt[] stmts, NativeScalarGlobal[] scalarGlobals)
     { Vars = vars; Stmts = stmts; ScalarGlobals = scalarGlobals; }
 }
@@ -56,11 +81,32 @@ public static class NativeBlockRunner
     public static bool RunBlock(Engine engine, IReadOnlyList<NativeVar> vars,
         IReadOnlyList<CStmt> stmts, IReadOnlyList<NativeScalarGlobal> scalarGlobals, int regOffset)
     {
-        var host = (PrologEngine)engine.Host!;
-        Func<string, MethodInfo?> resolveInterop = host.ResolveNativeInterop;
+        // Standalone form (tests / ad-hoc callers): builds the lookup maps fresh.
         var index = new Dictionary<string, int>();
         var kindOf = new Dictionary<string, NativeKind>();
         for (int i = 0; i < vars.Count; i++) { index[vars[i].Name] = i; kindOf[vars[i].Name] = vars[i].Kind; }
+        var scalarFloat = new Dictionary<string, bool>();
+        foreach (var g in scalarGlobals) scalarFloat[g.Name] = g.IsFloat;
+        return RunBlockCore(engine, vars, stmts, scalarGlobals, regOffset, index, kindOf, scalarFloat);
+    }
+
+    /// <summary>Phase 33 A1 — the '$native_run' dispatch entry: reuses the entry's
+    /// lazily-built block-invariant maps instead of rebuilding three dictionaries
+    /// per call.</summary>
+    internal static bool RunBlock(Engine engine, NativeBlockEntry entry, int regOffset)
+    {
+        entry.EnsureMaps();
+        return RunBlockCore(engine, entry.Vars, entry.Stmts, entry.ScalarGlobals, regOffset,
+            entry.IndexMap!, entry.KindMap!, entry.ScalarFloatMap!);
+    }
+
+    private static bool RunBlockCore(Engine engine, IReadOnlyList<NativeVar> vars,
+        IReadOnlyList<CStmt> stmts, IReadOnlyList<NativeScalarGlobal> scalarGlobals, int regOffset,
+        Dictionary<string, int> index, Dictionary<string, NativeKind> kindOf,
+        Dictionary<string, bool> scalarFloat)
+    {
+        var host = (PrologEngine)engine.Host!;
+        Func<string, MethodInfo?> resolveInterop = host.ResolveNativeInterop;
 
         var env = new Dictionary<string, object?>();
         foreach (var v in vars)
@@ -70,10 +116,8 @@ public static class NativeBlockRunner
         // ADR-022 — seed each scalar `:- c` global from per-engine persistent
         // storage (Arity static-storage). Writes are flushed back through
         // ExecStmt (write-through), so a later failure doesn't revert them.
-        var scalarFloat = new Dictionary<string, bool>();
         foreach (var g in scalarGlobals)
         {
-            scalarFloat[g.Name] = g.IsFloat;
             env[g.Name] = g.IsFloat
                 ? host.GetNativeGlobalFloat(g.Name)
                 : (object)host.GetNativeGlobalInt(g.Name);
@@ -107,18 +151,19 @@ public static class NativeBlockRunner
 
     private static object? ReadInput(PrologEngine host, Engine engine, int reg, NativeKind kind)
     {
+        // ADR-024 — a reftype input is a slot handle (a Foreign cell). Phase 33
+        // A3: unwrap it straight from the dereferenced cell — no Term walk.
+        if (kind == NativeKind.Reftype)
+        {
+            var c = RegisterMarshalling.DerefRegisterCell(engine, reg);
+            return c.Tag == Shumway.Core.Tag.Foreign ? engine.AsForeign<TermSlot>(c) : null;
+        }
         var term = RegisterMarshalling.ReadRegisterAsTerm(engine, reg);
         return kind switch
         {
             NativeKind.Int or NativeKind.Long => host.FromTerm<long>(term),
             NativeKind.Float or NativeKind.Double => host.FromTerm<double>(term),
             NativeKind.String => host.FromTerm<string>(term),
-            // ADR-024 — a reftype input is a slot handle (a Foreign cell): unwrap
-            // the TermSlot so the block / interop can read or build through it.
-            NativeKind.Reftype => term is Shumway.Compiler.Ast.CompoundTerm { Functor: "$foreign", Args.Length: 1 } ct
-                && ct.Args[0] is Shumway.Compiler.Ast.IntTerm id
-                ? engine.AsForeign<TermSlot>(Shumway.Core.Cell.Foreign((int)id.Value))
-                : null,
             _ => throw new System.NotSupportedException($"native input kind {kind}"),
         };
     }
@@ -324,6 +369,10 @@ public static class NativeBlockRunner
         System.Collections.Generic.List<IntPtr>? cstrings = null;
         // OutString: a `char**` cell the native function writes a (borrowed) char* into.
         System.Collections.Generic.List<(string Local, IntPtr Cell)>? outStrings = null;
+        // Phase 33 D4 — out cells come from the engine's bump scratch when it has
+        // room; only overflow cells are HGlobal (tracked here for the finally).
+        int scratchMark = host.NativeScratchMark;
+        System.Collections.Generic.List<IntPtr>? outCellHGlobals = null;
         // All native memory is released in the finally: an exception anywhere in
         // marshalling, the native invoke, or the read-back must not leak buffers.
         try
@@ -333,7 +382,7 @@ public static class NativeBlockRunner
                 var kind = i < sig.ParamKinds.Length ? sig.ParamKinds[i] : NativeCall.Kind.Scalar;
                 if (kind == NativeCall.Kind.OutString && AddrOfLocal(c.Args[i]) is { } slocal)
                 {
-                    IntPtr cell = System.Runtime.InteropServices.Marshal.AllocHGlobal(System.IntPtr.Size);
+                    IntPtr cell = RentOutCell(host, ref outCellHGlobals);
                     (outStrings ??= new()).Add((slocal, cell));
                     System.Runtime.InteropServices.Marshal.WriteIntPtr(cell, System.IntPtr.Zero);
                     args[i] = cell;
@@ -372,7 +421,7 @@ public static class NativeBlockRunner
                 if (kind == NativeCall.Kind.OutScalar && AddrOfLocal(c.Args[i]) is { } local)
                 {
                     Type elem = sig.ParamElemTypes[i];
-                    IntPtr ptr = System.Runtime.InteropServices.Marshal.AllocHGlobal(SizeOf(elem));
+                    IntPtr ptr = RentOutCell(host, ref outCellHGlobals);
                     (outScalars ??= new()).Add((local, ptr, elem));
                     // Seed from the local's current value (in/out), or zero.
                     WriteScalar(ptr, elem, env.TryGetValue(local, out var cur) ? cur : null);
@@ -416,16 +465,28 @@ public static class NativeBlockRunner
                     alloc.Free(handle);
             if (hglobalAllocs is not null)
                 NativeReftype.FreeRecorded(hglobalAllocs);
-            if (outScalars is not null)
-                foreach (var (_, ptr, _) in outScalars)
+            // Out cells: pop the scratch mark (bump allocator) and free only the
+            // HGlobal overflow cells.
+            host.NativeScratchRelease(scratchMark);
+            if (outCellHGlobals is not null)
+                foreach (var ptr in outCellHGlobals)
                     System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
-            if (outStrings is not null)
-                foreach (var (_, cell) in outStrings)
-                    System.Runtime.InteropServices.Marshal.FreeHGlobal(cell);
             if (cstrings is not null)
                 foreach (var ptr in cstrings)
                     System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
         }
+    }
+
+    /// <summary>Phase 33 D4 — one 8-byte out-parameter cell: engine scratch when
+    /// available, HGlobal (tracked in <paramref name="hglobals"/>) on overflow.</summary>
+    private static IntPtr RentOutCell(PrologEngine host,
+        ref System.Collections.Generic.List<IntPtr>? hglobals)
+    {
+        IntPtr p = host.TryRentNativeScratchSlot();
+        if (p != IntPtr.Zero) return p;
+        p = System.Runtime.InteropServices.Marshal.AllocHGlobal(8);
+        (hglobals ??= new()).Add(p);
+        return p;
     }
 
     /// <summary>Renders a native-call argument value to the string passed as a
@@ -443,17 +504,10 @@ public static class NativeBlockRunner
     /// the engine's text encoding. The caller frees it with <c>FreeHGlobal</c>;
     /// when <paramref name="track"/> is given the pointer is recorded there
     /// immediately after allocation, so an exception later in marshalling still
-    /// releases it.</summary>
+    /// releases it. Phase 33 D3 — delegates to the pooled-buffer encoder.</summary>
     private static IntPtr AllocCString(string s, System.Text.Encoding enc,
         System.Collections.Generic.List<IntPtr>? track = null)
-    {
-        byte[] bytes = enc.GetBytes(s);
-        IntPtr p = System.Runtime.InteropServices.Marshal.AllocHGlobal(bytes.Length + 1);
-        track?.Add(p);
-        System.Runtime.InteropServices.Marshal.Copy(bytes, 0, p, bytes.Length);
-        System.Runtime.InteropServices.Marshal.WriteByte(p, bytes.Length, 0);
-        return p;
-    }
+        => NativeReftype.AllocString(s, enc, track);
 
     /// <summary>ADR-024 — the IL-path P/Invoke entry. Same marshalling as
     /// <see cref="PInvokeCall"/> but over <b>pre-evaluated</b> argument values (the
@@ -480,6 +534,9 @@ public static class NativeBlockRunner
         System.Collections.Generic.List<(int Index, IntPtr Ptr, Type Elem)>? outs = null;
         // OutString: (param index, char** cell) — decode into outScalars[index].
         System.Collections.Generic.List<(int Index, IntPtr Cell)>? outStrs = null;
+        // Phase 33 D4 — out cells from the engine's bump scratch (see PInvokeCall).
+        int scratchMark = host.NativeScratchMark;
+        System.Collections.Generic.List<IntPtr>? outCellHGlobals = null;
         // All native memory is released in the finally — no leak on an exception
         // in marshalling, the native invoke, or the read-back.
         try
@@ -490,7 +547,7 @@ public static class NativeBlockRunner
                 {
                     case NativeCall.Kind.OutString:
                     {
-                        IntPtr cell = System.Runtime.InteropServices.Marshal.AllocHGlobal(System.IntPtr.Size);
+                        IntPtr cell = RentOutCell(host, ref outCellHGlobals);
                         (outStrs ??= new()).Add((i, cell));
                         System.Runtime.InteropServices.Marshal.WriteIntPtr(cell, System.IntPtr.Zero);
                         callArgs[i] = cell;
@@ -499,7 +556,7 @@ public static class NativeBlockRunner
                     case NativeCall.Kind.OutScalar:
                     {
                         Type elem = sig.ParamElemTypes[i];
-                        IntPtr ptr = System.Runtime.InteropServices.Marshal.AllocHGlobal(SizeOf(elem));
+                        IntPtr ptr = RentOutCell(host, ref outCellHGlobals);
                         (outs ??= new()).Add((i, ptr, elem));
                         WriteScalar(ptr, elem, args[i]);   // seed from the block-local value (in/out)
                         callArgs[i] = ptr;
@@ -570,12 +627,11 @@ public static class NativeBlockRunner
             if (cstrings is not null)
                 foreach (var ptr in cstrings)
                     System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
-            if (outs is not null)
-                foreach (var (_, ptr, _) in outs)
+            // Out cells: pop the scratch mark; free only the HGlobal overflow.
+            host.NativeScratchRelease(scratchMark);
+            if (outCellHGlobals is not null)
+                foreach (var ptr in outCellHGlobals)
                     System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
-            if (outStrs is not null)
-                foreach (var (_, cell) in outStrs)
-                    System.Runtime.InteropServices.Marshal.FreeHGlobal(cell);
         }
     }
 

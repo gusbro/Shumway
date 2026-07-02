@@ -2767,12 +2767,15 @@ public static class MetaBuiltins
     {
         if (engine.Host is not PrologEngine host)
             throw new System.InvalidOperationException("'$native_run' requires a PrologEngine host.");
-        var nameTerm = RegisterMarshalling.ReadRegisterAsTerm(engine, 0);
-        if (nameTerm is not AtomTerm at)
+        // Phase 33 A4 — read the block name as a raw atom cell and resolve through
+        // the host's atom-id cache: no Term materialization, no string hashing on
+        // the per-dispatch path.
+        Cell nameCell = RegisterMarshalling.DerefRegisterCell(engine, 0);
+        if (nameCell.Tag != Tag.Atom)
             throw new System.InvalidOperationException("'$native_run': block name must be an atom.");
-        var block = host.NativeBlock(at.Name)
+        var block = host.NativeBlockByAtomId(nameCell.AsAtomId)
             ?? throw new System.InvalidOperationException(
-                $"'$native_run': native block '{at.Name}' is not registered.");
+                $"'$native_run': native block '{AtomTable.GetById(nameCell.AsAtomId)?.Name}' is not registered.");
         // Compile the block to a delegate on first execution (in engine context,
         // so interop resolves to concrete methods); cache it, with the interpreter
         // as the fallback when compilation isn't possible (an unsupported
@@ -2786,20 +2789,22 @@ public static class MetaBuiltins
         }
         return block.Compiled is not null
             ? block.Compiled(engine)
-            : NativeBlockRunner.RunBlock(engine, block.Vars, block.Stmts, block.ScalarGlobals, regOffset: 1);
+            // Phase 33 A1 — the entry-based overload reuses the block's cached
+            // invariant maps instead of rebuilding them per dispatch.
+            : NativeBlockRunner.RunBlock(engine, block, regOffset: 1);
     }
 
     // ----- ADR-024 generic-term interop (reftype tier) -----------------------
 
     /// <summary>Extracts the <see cref="TermSlot"/> a register holds (a Foreign
-    /// cell, surfaced as <c>'$foreign'(Id)</c> when read as a term), or null.</summary>
+    /// cell), or null. Phase 33 A3 — reads the dereferenced cell directly; the old
+    /// path materialized a <c>'$foreign'(Id)</c> CompoundTerm+IntTerm per call just
+    /// to extract the id, on the hottest cursor builtins (fill_par/reftype_term/
+    /// make_c_string/make_prolog_string).</summary>
     private static TermSlot? ReadSlot(Engine engine, int reg)
     {
-        var t = RegisterMarshalling.ReadRegisterAsTerm(engine, reg);
-        if (t is CompoundTerm { Functor: "$foreign", Args.Length: 1 } ct
-            && ct.Args[0] is IntTerm id)
-            return engine.AsForeign<TermSlot>(Shumway.Core.Cell.Foreign((int)id.Value));
-        return null;
+        Cell c = RegisterMarshalling.DerefRegisterCell(engine, reg);
+        return c.Tag == Tag.Foreign ? engine.AsForeign<TermSlot>(c) : null;
     }
 
     /// <summary>ADR-024 — creates a fresh empty term slot and binds it (as a

@@ -69,15 +69,13 @@ public static class NativeBlockCompiler
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
 
     /// <summary>ADR-024 — the <see cref="TermSlot"/> a register holds (a Foreign
-    /// cell, read as <c>'$foreign'(Id)</c>), or null. Shared by the
-    /// Expression-compiled blocks (called from emitted IL).</summary>
+    /// cell), or null. Shared by the Expression-compiled blocks (called from
+    /// emitted IL). Phase 33 A3 — reads the dereferenced cell directly instead of
+    /// materializing a '$foreign'(Id) term per call.</summary>
     public static TermSlot? ReadReftypeSlot(Engine engine, int reg)
     {
-        var t = RegisterMarshalling.ReadRegisterAsTerm(engine, reg);
-        return t is CompoundTerm { Functor: "$foreign", Args.Length: 1 } ct
-            && ct.Args[0] is IntTerm id
-            ? engine.AsForeign<TermSlot>(Shumway.Core.Cell.Foreign((int)id.Value))
-            : null;
+        var c = RegisterMarshalling.DerefRegisterCell(engine, reg);
+        return c.Tag == Shumway.Core.Tag.Foreign ? engine.AsForeign<TermSlot>(c) : null;
     }
 
     /// <summary>Compiles the block to a <c>Func&lt;Engine,bool&gt;</c> whose Prolog

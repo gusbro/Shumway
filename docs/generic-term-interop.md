@@ -384,6 +384,18 @@ annotation (e.g. a `:- native_free fn/1` naming the deallocator), not added unti
 real case requires it. For now: **return strings must be borrowed** (static /
 internal / pooled on the native side).
 
+### 10c-bis. Snapshot vs borrow — choosing the parameter type
+
+A `:- native` C# interop method chooses its access mode by its **parameter type**:
+
+- **`TermSlot`** — the *borrow* path: the live cursor over the actual term, zero
+  copy in either direction. Use it for **read-only** methods (or ones that build
+  through the cursor). Nothing is materialized and nothing is written back.
+- **`Reftype`** — the *snapshot* path: the whole term is materialized to a managed
+  snapshot before the call and dematerialized back after, by contract. Use it when
+  the method mutates the struct the Arity way. A read-only method taking `Reftype`
+  pays a full copy both ways it doesn't need — take `TermSlot` instead.
+
 ### 10d. IL emit
 
 Both backends compile to IL rather than the interpreter. A managed-snapshot

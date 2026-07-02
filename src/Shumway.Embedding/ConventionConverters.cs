@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Reflection;
 using Shumway.Compiler.Ast;
+using static System.Linq.Expressions.Expression;
 
 namespace Shumway.Embedding;
 
@@ -50,6 +51,13 @@ internal static class ConventionConverters
 
     private static ConvertersEntry BuildEntry(Type type)
     {
+        // Phase 33 C2 — the resolved MethodInfos are COMPILED to delegates here,
+        // once per type, instead of MethodInfo.Invoke (+ a fresh object[]) per
+        // conversion (~100× a direct call). Expression.Compile falls back to its
+        // interpreter under Native AOT, so this stays AOT-correct. A direct
+        // delegate also throws the user's exception unwrapped — no
+        // TargetInvocationException translation needed.
+
         // Encoder: T.ToPrologTerm(PrologEngine) returning Term.
         Func<PrologEngine, object, Term>? toTerm = null;
         var toMethod = type.GetMethod(
@@ -59,20 +67,12 @@ internal static class ConventionConverters
             types: new[] { typeof(PrologEngine) },
             modifiers: null);
         if (toMethod is not null && toMethod.ReturnType == typeof(Term))
-            toTerm = (engine, value) =>
-            {
-                try { return (Term)toMethod.Invoke(value, new object?[] { engine })!; }
-                catch (TargetInvocationException tex) when (tex.InnerException is not null)
-                {
-                    // Surface the user's exception directly — the
-                    // TargetInvocationException wrapper would obscure
-                    // tests / catch clauses that expect the concrete
-                    // type (InvalidCastException etc).
-                    System.Runtime.ExceptionServices.ExceptionDispatchInfo
-                        .Capture(tex.InnerException).Throw();
-                    throw;  // unreachable
-                }
-            };
+        {
+            var engP = Parameter(typeof(PrologEngine), "engine");
+            var valP = Parameter(typeof(object), "value");
+            toTerm = Lambda<Func<PrologEngine, object, Term>>(
+                Call(Convert(valP, type), toMethod, engP), engP, valP).Compile();
+        }
 
         // Decoder, preferred: static T FromPrologTerm(PrologEngine, Term).
         Func<PrologEngine, Term, object?>? fromTerm = null;
@@ -83,16 +83,12 @@ internal static class ConventionConverters
             types: new[] { typeof(PrologEngine), typeof(Term) },
             modifiers: null);
         if (fromMethod2 is not null && fromMethod2.ReturnType == type)
-            fromTerm = (engine, term) =>
-            {
-                try { return fromMethod2.Invoke(null, new object?[] { engine, term }); }
-                catch (TargetInvocationException tex) when (tex.InnerException is not null)
-                {
-                    System.Runtime.ExceptionServices.ExceptionDispatchInfo
-                        .Capture(tex.InnerException).Throw();
-                    throw;
-                }
-            };
+        {
+            var engP = Parameter(typeof(PrologEngine), "engine");
+            var termP = Parameter(typeof(Term), "term");
+            fromTerm = Lambda<Func<PrologEngine, Term, object?>>(
+                Convert(Call(fromMethod2, engP, termP), typeof(object)), engP, termP).Compile();
+        }
 
         // Fallback decoder: static T FromPrologTerm(Term) — fine for
         // nullary or engine-free shapes (the generator emits this
@@ -106,16 +102,12 @@ internal static class ConventionConverters
                 types: new[] { typeof(Term) },
                 modifiers: null);
             if (fromMethod1 is not null && fromMethod1.ReturnType == type)
-                fromTerm = (_, term) =>
-                {
-                    try { return fromMethod1.Invoke(null, new object?[] { term }); }
-                    catch (TargetInvocationException tex) when (tex.InnerException is not null)
-                    {
-                        System.Runtime.ExceptionServices.ExceptionDispatchInfo
-                            .Capture(tex.InnerException).Throw();
-                        throw;
-                    }
-                };
+            {
+                var engP = Parameter(typeof(PrologEngine), "engine");
+                var termP = Parameter(typeof(Term), "term");
+                fromTerm = Lambda<Func<PrologEngine, Term, object?>>(
+                    Convert(Call(fromMethod1, termP), typeof(object)), engP, termP).Compile();
+            }
         }
 
         return new ConvertersEntry(toTerm, fromTerm);

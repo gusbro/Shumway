@@ -74,37 +74,76 @@ Legend: 🔴 high · 🟡 medium · ⚪ low. `[x]` done · `[-]` rejected/not-a-
 
 ## Wave 2 — Interop hot path
 
-- [ ] **A2** 🔴 `RegisterMarshalling.ReadRegisterAsTerm` — heap cell + full AST
-      walk per argument on every native/foreign call. Scalar fast path reading the
-      register cell directly (benefits every boundary).
-- [ ] **A3** 🔴 `MetaBuiltins.ReadSlot` / `NativeBlockCompiler.ReadReftypeSlot` —
-      allocates `CompoundTerm("$foreign",[IntTerm])` to extract an int id. Read the
-      cell tag directly (`fill_par`/`reftype_term` hot path).
-- [ ] **C1** 🔴 `TermConverters.cs` — scalar `ToTerm<T>`/`FromTerm<T>` box via
-      `(object)` despite `typeof(T)` dispatch. Unboxed bridges.
-- [ ] **C2** 🔴 `ConventionConverters.cs:64,88,111` — `MethodInfo.Invoke` +
-      fresh `object[]` per conversion. Compile to delegates once (InvokerFor
-      precedent).
+- [x] **A2** 🔴 `RegisterMarshalling.ReadRegisterAsTerm` — heap cell + full AST
+      walk per argument on every native/foreign call. *Fixed: a REF register
+      materializes from its heap home directly (no throwaway cell); immediate
+      Int/Atom become their Term with zero heap traffic (atom-id cache seeded);
+      only immediate non-scalars stage through a temp cell. Plus the new
+      zero-allocation `DerefRegisterCell` primitive.*
+- [x] **A3** 🔴 `MetaBuiltins.ReadSlot` / `NativeBlockCompiler.ReadReftypeSlot` —
+      allocates `CompoundTerm("$foreign",[IntTerm])` to extract an int id.
+      *Fixed: both (plus `NativeBlockRunner.ReadInput`'s reftype branch) read the
+      dereferenced cell and check `Tag.Foreign` directly — zero allocation on
+      fill_par/reftype_term.*
+- [-] **C1** 🔴 `TermConverters.cs` scalar boxing — **REFUTED by measurement**:
+      the guarded `(T)(object)value` pattern under `typeof(T) == typeof(int)` is
+      the standard BCL idiom and RyuJIT eliminates the box/unbox pair in the
+      specialized value-type instantiations. Verified empirically on .NET 10:
+      0 bytes allocated over 100k calls. The file's "no boxing" comment is correct.
+- [x] **C2** 🔴 `ConventionConverters.cs` — `MethodInfo.Invoke` + fresh `object[]`
+      per conversion. *Fixed: BuildEntry compiles the resolved MethodInfos to
+      delegates via Expression.Lambda (once per type; interpreter fallback keeps
+      AOT correct); user exceptions now surface unwrapped (no
+      TargetInvocationException translation needed).*
 - [ ] **D2** 🔴 `NativeCall.BuildInvoker` — boxed `object[]` per call +
-      `Unbox_Any`. Strongly-typed per-signature invoker.
-- [ ] **D3** 🔴 `NativeReftype.AllocString`/`AllocCString` — `GetBytes` byte[] +
-      HGlobal per string per call. Pooled/stackalloc + `GetBytes(Span)`.
-- [ ] **D4** 🟡 out-scalar/out-string HGlobal cells per call → stackalloc/pinned
-      reusable.
-- [ ] **A1** 🔴 `NativeBlockRunner.RunBlock` — five dictionaries per call +
-      invariant index/kind maps rebuilt. Precompiled per-block plan.
-- [ ] **A4** 🟡 `MetaBuiltins.NativeRun` — block name materialized + dict lookup
-      per dispatch. Cache by atom id.
-- [ ] **C3** 🟡 generated `[PrologPredicate]` bridges: 2 allocs + 2 boxes per
-      scalar call; composite converters reflect per element.
-- [ ] **C4** 🟡 `Solution.Get<T>` re-resolves converter per access; per-solution
-      dictionary.
-- [ ] **C5** 🟡 Reftype snapshot copies whole term both ways even for read-only
-      interop methods → `[In]`/borrow convention.
+      `Unbox_Any`. **Deferred to a later round with reasoning**: both callers
+      (interpreter env, IL boxed-args channel) traffic in `object` today, so a
+      typed invoker needs per-signature delegate types + a typed IL-emit channel;
+      the box/unbox pair is nanoseconds against the materialize + calli + demat
+      that dominate the same call. Revisit with a corpus benchmark.
+- [x] **D3** 🔴 `NativeReftype.AllocString`/`AllocCString`/`ReadString` — `GetBytes`
+      byte[] per string per call. *Fixed: pooled buffers (`ArrayPool<byte>`) for
+      encode and decode; only the result string allocates.*
+- [x] **D4** 🟡 out-scalar/out-string HGlobal cells per call. *Fixed: per-engine
+      16-slot native scratch block, bump-allocated with mark/restore (nested calls
+      compose; engine single-threaded); HGlobal only on overflow. Both P/Invoke
+      paths.*
+- [x] **A1** 🔴 `NativeBlockRunner.RunBlock` — invariant index/kind/scalarFloat
+      maps rebuilt per call. *Fixed: cached lazily on `NativeBlockEntry`
+      (EnsureMaps); the '$native_run' dispatch uses the entry-based overload. The
+      env/outputs dictionaries remain (the tree-walk interpreter is keyed by name
+      throughout and is the fallback/AOT path only — the compiled-delegate path
+      bypasses it entirely).*
+- [x] **A4** 🟡 `MetaBuiltins.NativeRun` — block name materialized + string-keyed
+      dict per dispatch. *Fixed: reads the raw atom cell and resolves through a
+      per-host atom-id→entry cache (invalidated on block registration).*
+- [x] **C3** 🟡 composite converters reflect per element. *Fixed the dynamic
+      bridges: `ToTermDynamic`/`FromTermDynamic` cached delegates now COMPILED
+      (engine.ToTerm<T>((T)v)) instead of wrapping MethodInfo.Invoke + object[]
+      per element. The [PrologPredicate] bridge scalar path already benefits from
+      A2 (no heap cell); emitting cell-direct reads in the source generator is
+      deferred to a later round (small residual: one AST node per scalar arg).*
+- [-] **C4** 🟡 `Solution.Get<T>` — **largely not actionable**: the converter
+      tiers already cache per type (user dict probe + JIT-specialized scalar
+      chain), and the per-solution Bindings dictionary is inherent to the
+      Solution API contract (each solution owns different bindings). A streaming
+      typed-cursor API is a feature idea, not a fix — rejected for now.
+- [x] **C5** 🟡 Reftype snapshot for read-only methods. *Resolved by design: the
+      `TermSlot` parameter IS the borrow path (zero copy, no writeback);
+      `Reftype` means snapshot+writeback by contract. Documented in
+      generic-term-interop §10c-bis so users pick correctly.*
 - [ ] **D1** 🔴 `NativeReftype.Materialize/Free` — full AllocHGlobal graph per
-      call → pool 32-byte nodes / cache+diff per TermSlot.
-- [ ] **D5** 🟡 `NativeReftypeAllocator.Fill` — one marshalled delegate call per
-      node.
+      call. **Deferred to a later round with reasoning**: a cache/diff per
+      TermSlot is unsound without knowing what the native side read or wrote
+      (it may mutate the graph, so the cache is dirty after every call), and
+      node pooling saves only the AllocHGlobal (~100ns/node) against the field
+      writes + string encodes + dematerialize Term allocations that dominate the
+      same walk. Revisit with a corpus benchmark showing materialize as a real
+      bottleneck.
+- [-] **D5** 🟡 `NativeReftypeAllocator.Fill` per-node delegate calls — **inherent
+      to the contract**: every node must be created by the LIBRARY's `newreftype`
+      so its heap owns the graph (that is the point of allocator mode); Arity's
+      API has no batch form. Rejected.
 
 ## Wave 3 — WAM codegen (Arity shapes)
 

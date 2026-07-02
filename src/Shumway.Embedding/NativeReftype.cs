@@ -167,13 +167,16 @@ public static class NativeReftype
     // Allocates a NUL-terminated native byte buffer (HGlobal) holding `s` encoded
     // with `enc` — a C `char*`. Byte-oriented encodings only (UTF-8 / ASCII /
     // Latin1 / a codepage), where a single 0 byte terminates the string.
-    private static IntPtr AllocString(string s, Encoding enc, System.Collections.Generic.List<IntPtr>? allocations = null)
+    // Phase 33 D3 — encodes through a POOLED buffer: no per-call byte[] garbage.
+    internal static IntPtr AllocString(string s, Encoding enc, System.Collections.Generic.List<IntPtr>? allocations = null)
     {
-        byte[] bytes = enc.GetBytes(s);
-        IntPtr p = Marshal.AllocHGlobal(bytes.Length + 1);
+        byte[] buf = System.Buffers.ArrayPool<byte>.Shared.Rent(enc.GetMaxByteCount(s.Length));
+        int len = enc.GetBytes(s, 0, s.Length, buf, 0);
+        IntPtr p = Marshal.AllocHGlobal(len + 1);
         allocations?.Add(p);
-        if (bytes.Length > 0) Marshal.Copy(bytes, 0, p, bytes.Length);
-        Marshal.WriteByte(p, bytes.Length, 0);   // NUL terminator
+        if (len > 0) Marshal.Copy(buf, 0, p, len);
+        Marshal.WriteByte(p, len, 0);   // NUL terminator
+        System.Buffers.ArrayPool<byte>.Shared.Return(buf);
         return p;
     }
 
@@ -189,15 +192,18 @@ public static class NativeReftype
     }
 
     // Reads a NUL-terminated native `char*` and decodes it with `enc`.
+    // Phase 33 D3 — decodes through a POOLED buffer; only the string allocates.
     internal static string ReadString(IntPtr p, Encoding enc)
     {
         if (p == IntPtr.Zero) return string.Empty;
         int len = 0;
         while (Marshal.ReadByte(p, len) != 0) len++;
         if (len == 0) return string.Empty;
-        byte[] bytes = new byte[len];
-        Marshal.Copy(p, bytes, 0, len);
-        return enc.GetString(bytes);
+        byte[] buf = System.Buffers.ArrayPool<byte>.Shared.Rent(len);
+        Marshal.Copy(p, buf, 0, len);
+        string result = enc.GetString(buf, 0, len);
+        System.Buffers.ArrayPool<byte>.Shared.Return(buf);
+        return result;
     }
 
     /// <summary>Recursively frees a native graph from <see cref="Materialize"/> (or

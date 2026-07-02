@@ -4291,10 +4291,52 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
     private int _nativeBlockConsultSeq;
 
+    // Phase 33 D4 — a small per-engine native scratch block for out-scalar /
+    // out-string cells (8 bytes each): avoids an AllocHGlobal/FreeHGlobal round
+    // trip per out-parameter per native call. Bump-allocated with mark/restore so
+    // nested native calls (an arg expression that itself calls a native fn)
+    // compose; the engine is single-threaded so no synchronization is needed.
+    // Lazily allocated, lives for the engine's lifetime (128 bytes).
+    private IntPtr _nativeScratchBlock;
+    private int _nativeScratchTop;
+    private const int NativeScratchSlots = 16;
+
+    internal int NativeScratchMark => _nativeScratchTop;
+    internal void NativeScratchRelease(int mark) => _nativeScratchTop = mark;
+
+    /// <summary>Rents one 8-byte scratch slot, or <see cref="IntPtr.Zero"/> when
+    /// the block is exhausted (caller falls back to AllocHGlobal).</summary>
+    internal IntPtr TryRentNativeScratchSlot()
+    {
+        if (_nativeScratchTop >= NativeScratchSlots) return IntPtr.Zero;
+        if (_nativeScratchBlock == IntPtr.Zero)
+            _nativeScratchBlock = System.Runtime.InteropServices.Marshal.AllocHGlobal(NativeScratchSlots * 8);
+        IntPtr p = _nativeScratchBlock + _nativeScratchTop * 8;
+        _nativeScratchTop++;
+        return p;
+    }
+
+    // Phase 33 A4 — the per-dispatch block lookup keyed by ATOM ID: '$native_run'
+    // reads the block-name register as a raw atom cell (no Term materialization)
+    // and probes this int-keyed cache instead of hashing the name string per call.
+    // Populated lazily; cleared whenever a block is (re)registered.
+    private readonly Dictionary<int, NativeBlockEntry> _nativeBlocksByAtomId = new();
+
+    internal NativeBlockEntry? NativeBlockByAtomId(int atomId)
+    {
+        if (_nativeBlocksByAtomId.TryGetValue(atomId, out var hit)) return hit;
+        var entry = NativeBlock(Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "");
+        if (entry is not null) _nativeBlocksByAtomId[atomId] = entry;
+        return entry;
+    }
+
     internal void AddNativeBlock(string name,
         Shumway.Compiler.NativeC.NativeVar[] vars, Shumway.Compiler.NativeC.CStmt[] stmts,
         Shumway.Compiler.NativeC.NativeScalarGlobal[] scalarGlobals)
-        => _nativeBlocks[name] = new NativeBlockEntry(vars, stmts, scalarGlobals);
+    {
+        _nativeBlocks[name] = new NativeBlockEntry(vars, stmts, scalarGlobals);
+        _nativeBlocksByAtomId.Clear();   // re-registration invalidates the id cache
+    }
 
     // ADR-024 — the text encoding for char* marshalling to/from native t_reftype
     // structs (atom/string content + functor names), used by the materializer tier.
@@ -4966,15 +5008,21 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// delegate invoke.</summary>
     internal Term ToTermDynamic(Type type, object? value)
     {
+        // Phase 33 C3 — the cached delegate is now COMPILED (engine.ToTerm<T>((T)v))
+        // instead of a wrapper that re-ran MethodInfo.Invoke + a fresh object[] per
+        // ELEMENT of every converted collection. Expression.Compile interprets
+        // under Native AOT, so this stays AOT-correct.
         var del = _toTermDynamicCache.GetOrAdd(type, static t =>
         {
             var m = typeof(PrologEngine)
                 .GetMethod(nameof(ToTerm))!
                 .MakeGenericMethod(t);
-            // Build a (PrologEngine, object) -> Term delegate that
-            // unboxes to the right T and forwards. Reflection cost
-            // pays once per type.
-            return (engine, v) => (Term)m.Invoke(engine, new[] { v })!;
+            var engP = System.Linq.Expressions.Expression.Parameter(typeof(PrologEngine), "engine");
+            var valP = System.Linq.Expressions.Expression.Parameter(typeof(object), "value");
+            return System.Linq.Expressions.Expression.Lambda<Func<PrologEngine, object?, Term>>(
+                System.Linq.Expressions.Expression.Call(engP, m,
+                    System.Linq.Expressions.Expression.Convert(valP, t)),
+                engP, valP).Compile();
         });
         return del(this, value);
     }
@@ -4989,7 +5037,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             var m = typeof(PrologEngine)
                 .GetMethod(nameof(FromTerm))!
                 .MakeGenericMethod(t);
-            return (engine, tm) => m.Invoke(engine, new object[] { tm });
+            var engP = System.Linq.Expressions.Expression.Parameter(typeof(PrologEngine), "engine");
+            var termP = System.Linq.Expressions.Expression.Parameter(typeof(Term), "term");
+            return System.Linq.Expressions.Expression.Lambda<Func<PrologEngine, Term, object?>>(
+                System.Linq.Expressions.Expression.Convert(
+                    System.Linq.Expressions.Expression.Call(engP, m, termP), typeof(object)),
+                engP, termP).Compile();
         });
         return del(this, term);
     }

@@ -15,15 +15,42 @@ namespace Shumway.Embedding;
 public static class RegisterMarshalling
 {
     /// <summary>Reads register <paramref name="regIdx"/> as a Prolog
-    /// <see cref="Term"/>. Internally allocates one throwaway heap
-    /// cell so <see cref="TermReader.Materialize"/> can do its
-    /// REF-chasing work uniformly — the cost is one inlinable cell
-    /// allocation regardless of the register's shape.</summary>
+    /// <see cref="Term"/>. Phase 33 A2 — the hot interop read: a REF register
+    /// materializes from its heap home directly (no throwaway cell), and an
+    /// immediate integer / atom becomes its Term with zero heap traffic. Only an
+    /// immediate NON-scalar in the register (an ADR-017 inline Str/Lis, a Float /
+    /// BigInt / String / Foreign / Pstr id cell) still stages through one
+    /// throwaway heap cell so <see cref="TermReader.Materialize"/> can walk it
+    /// uniformly.</summary>
     public static Term ReadRegisterAsTerm(Engine engine, int regIdx)
     {
+        Cell c = engine.GetRegister(regIdx);
+        switch (c.Tag)
+        {
+            case Tag.Ref:
+                // Materialize derefs itself — walk from the heap home, no alloc.
+                return TermReader.Materialize(engine, c.AsHeapIndex);
+            case Tag.Int:
+                return new IntTerm(c.AsInt);
+            case Tag.Atom:
+                // Seed the chunk-431 atom-id cache — we have the id in hand.
+                return new AtomTerm(AtomTable.GetById(c.AsAtomId)?.Name ?? "", c.AsAtomId);
+        }
         int slot = engine.AllocateHeap(1);
-        engine.SetHeap(slot, engine.GetRegister(regIdx));
+        engine.SetHeap(slot, c);
         return TermReader.Materialize(engine, slot);
+    }
+
+    /// <summary>Phase 33 A2/A3 — the dereferenced cell a register holds, without
+    /// materializing a Term: an unbound register comes back as its self-REF cell.
+    /// The zero-allocation primitive for interop call sites that only need a
+    /// scalar / Foreign payload.</summary>
+    public static Cell DerefRegisterCell(Engine engine, int regIdx)
+    {
+        Cell c = engine.GetRegister(regIdx);
+        if (c.Tag == Tag.Ref)
+            return engine.GetHeap(engine.Deref(c.AsHeapIndex));
+        return c;
     }
 
     /// <summary>Materialises <paramref name="term"/> onto the
