@@ -8,6 +8,14 @@ rejected with a reason recorded here).
 
 Legend: 🔴 high · 🟡 medium · ⚪ low. `[x]` done · `[-]` rejected/not-a-bug (with note).
 
+**Standing directive (user, 2026-07-02): every DEFERRED item gets a review pass
+in a later round to see whether its blocking restriction can be LIFTED** — e.g.
+W6 is deferred because the IL compiler rejects `ExecuteBuiltin` in bodies: study
+teaching IL that shape with good performance instead of accepting the deferral.
+Same for D1/D2 (benchmark the materialize/invoker costs), L7 (verify the JIT
+constant-folding assumption with a disasm), W9(a-d), C3-remainder, B-series.
+A deferral is a TODO with a prerequisite, not a closure.
+
 ---
 
 ## Wave 1 — Correctness critical (E-series)
@@ -172,11 +180,12 @@ Legend: 🔴 high · 🟡 medium · ⚪ low. `[x]` done · `[-]` rejected/not-a-
       (`RefreshLiteralPoolsIfGrown`). The residual — RULES still run the
       pipeline — is semantically required (control constructs must lower).
 - [ ] **W4** 🟡 Tier-0 `;`/`->` lowering is helper-predicate + Call + CP even for
-      deterministic ITE (Phase-29 fixed IL only). **Blocked on an ADR**: the
-      classical inline lowering (get_level; cond; cut; then; JUMP end / else:)
-      needs an intra-clause body jump opcode, and "adding a new top-level
-      opcode" is a stop-and-propose-an-ADR decision per CLAUDE.md. Propose
-      ADR-025 (body branch opcode) to the user before implementing.
+      deterministic ITE (Phase-29 fixed IL only). **ADR-025 WRITTEN**
+      (docs/architecture/adr/025-body-jump-inline-ite.md): one `jump` opcode,
+      inline lowering with arity-0 try_me_else CP + Y-classified branch vars,
+      IL describe/emit REQUIRED before the compiler flips on (else body-ITE
+      predicates lose Tier-1). Awaiting user approval; then implement per the
+      rollout order in the ADR.
 - [x] **W5** 🟡 `DcgTransform.cs:139-168` — 2 redundant `=/2` state-reconciliation
       goals per DCG disjunction branch. *Fixed: the shared endpoint is
       SUBSTITUTED into a branch whose own endpoint is a fresh `$Sn` variable
@@ -218,11 +227,30 @@ Legend: 🔴 high · 🟡 medium · ⚪ low. `[x]` done · `[-]` rejected/not-a-
 
 ## Wave 4 — IL dispatch & promotion
 
-- [ ] **L1** 🔴 Stage B.4 — runtime `Call→CallIl` rewrite after promotion (no
-      bundle path pays OnDispatch interface+dict+closure forever).
-- [ ] **L2** 🔴 `IlPromotionStore.RunOnLargeStack` — synchronous 16MB
-      thread-create + Join per compile on the query thread. Background compile
-      queue with a persistent worker.
+- [x] **L1** 🔴 Stage B.4 — runtime `Call→CallIl` rewrite after promotion.
+      *Fixed (scoped): InstallCallIlRewrites now records every still-generic
+      Call/Execute site by callee fid (persistent buffer only — the query
+      overlay is rebuilt next setup and its array may be replaced mid-query;
+      dynamic callees skipped to keep feeding JitIndexProfile). The
+      `OnPromotionInstalled` hook (fired on the engine thread by both the
+      sync promoting call and the async drain) publishes the delegate in
+      `interp.IlByFunctorId` and patches the sites to CallIl/ExecuteIl —
+      the REST OF THE RUNNING QUERY dispatches directly (previously the
+      OnDispatch tax lasted until the next query setup = the whole run for a
+      single-goal `--exe`). Clarified scope: the audit's "pays forever" was
+      overstated — setup already rewrote; the gap was in-query.*
+- [x] **L2** 🔴 synchronous 16MB thread-create + Join per compile. *Fixed in two
+      parts: (1) ALL compiles (promotion, PGO phase-2, bundle) now run on ONE
+      persistent process-wide large-stack worker (`IlCompileWorker`; re-entrant
+      submits run inline) — the per-compile thread create/commit/Join is gone
+      in every mode; (2) opt-in `BackgroundCompilation` queues the compile and
+      keeps the predicate Tier-0 until the delegate drains in at a later
+      dispatch (never stalls the query thread), with a per-fid mutation stamp
+      so a dynamic snapshot mutated while in flight is DISCARDED at drain
+      (logical-update-view safe), and `WaitForPendingPromotions` as the
+      barrier. Default stays synchronous — 79 IsPromoted assertions across the
+      suite rely on deterministic promotion timing; flipping the default is a
+      recorded follow-up (needs that test churn scheduled).*
 - [x] **L5** 🟡 `EvictionChurnLimit=3` permanent Tier-0 banishment. *Fixed: the
       churn pin no longer goes through the permanent `_unpromotable` set — it
       re-arms after `ChurnRearmCalls` (default 4096) mutation-free invocations

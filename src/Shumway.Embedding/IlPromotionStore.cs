@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using Shumway.Compiler.Il;
 using Shumway.Compiler.Wam;
@@ -121,6 +122,10 @@ public sealed class IlPromotionStore
         // Phase 33 L5 — any mutation breaks a churn-pinned predicate's
         // mutation-free streak, whether or not a delegate was present.
         _churnQuietCalls.Remove(functorId);
+        // Phase 33 L2 — and invalidates any background compile in flight (its
+        // snapshot predates this mutation; the drain discards a stale stamp).
+        _mutationStamp.TryGetValue(functorId, out int stamp);
+        _mutationStamp[functorId] = stamp + 1;
         if (!_delegates.Remove(functorId)) return;
         _counters.Remove(functorId);
         _pgoProfileKeys.Remove(functorId);
@@ -182,24 +187,81 @@ public sealed class IlPromotionStore
     /// <c>InsertInstruction</c>) would let this be removed.</para></summary>
     public int MaxIlPromotionBytecodeBytes { get; set; } = 16384;
 
-    /// <summary>Runs <paramref name="work"/> on a worker thread with
-    /// an enlarged stack so Sigil's recursive validation has room.
-    /// Propagates any exception back to the caller.</summary>
-    private static T RunOnLargeStack<T>(Func<T> work)
+    /// <summary>Runs <paramref name="work"/> on the shared persistent large-stack
+    /// compile worker so Sigil's recursive validation has room, and waits for the
+    /// result. Phase 33 L2 — previously this created (and joined) a fresh 16 MB
+    /// thread PER COMPILE on the query thread; the worker pays the stack once for
+    /// the process. Propagates any exception back to the caller.</summary>
+    private static T RunOnLargeStack<T>(Func<T> work) => IlCompileWorker.RunSync(work);
+
+    // ---- Phase 33 L2 — opt-in background compilation --------------------------
+
+    /// <summary>When <c>true</c>, a threshold-crossing predicate's IL compile is
+    /// queued to the shared worker and the predicate STAYS ON TIER-0 until the
+    /// delegate is ready (installed at the next dispatch through
+    /// <see cref="RecordInvocation"/>, which drains completed compiles) — the
+    /// query thread never stalls for a Sigil emit. Default <c>false</c>: the
+    /// promoting call waits (deterministic promotion timing — the contract the
+    /// test suite and existing embedders rely on), but on the persistent worker,
+    /// so the per-compile thread cost is gone either way.</summary>
+    public bool BackgroundCompilation { get; set; }
+
+    /// <summary>Phase 33 L1 — invoked on the ENGINE thread whenever a freshly
+    /// compiled delegate is installed (synchronously at the promoting call, or at
+    /// the drain of a background compile). The engine uses it to patch remaining
+    /// generic <c>Call</c>/<c>Execute</c> sites targeting the callee to
+    /// <c>CallIl</c>/<c>ExecuteIl</c> and to update the interpreter's direct
+    /// dispatch table — so the REST OF THE RUNNING QUERY dispatches directly
+    /// instead of paying OnDispatch until the next query setup.</summary>
+    public Action<int, PredicateDelegate>? OnPromotionInstalled { get; set; }
+
+    // In-flight background compiles (engine thread only) and their results
+    // (worker → engine thread hand-off).
+    private readonly HashSet<int> _pendingCompiles = new();
+    private readonly ConcurrentQueue<CompletedCompile> _completedCompiles = new();
+    private sealed record CompletedCompile(
+        int Fid, IlPredicateCompiler.PgoCompileResult? Result, int Stamp, string? Error);
+
+    // Per-fid mutation stamp: bumped by EvictDelegate on EVERY mutation, whether
+    // or not a delegate was present, so a background compile of a dynamic
+    // SNAPSHOT that was mutated while in flight is discarded at drain (installing
+    // it would violate the logical-update view with stale clauses).
+    private readonly Dictionary<int, int> _mutationStamp = new();
+
+    private void DrainCompletedCompiles()
     {
-        T? result = default;
-        Exception? error = null;
-        var t = new System.Threading.Thread(() =>
+        while (_completedCompiles.TryDequeue(out var c))
         {
-            try { result = work(); }
-            catch (Exception ex) { error = ex; }
-        }, IlCompileStackBytes);
-        t.IsBackground = true;
-        t.Start();
-        t.Join();
-        if (error is not null)
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
-        return result!;
+            _pendingCompiles.Remove(c.Fid);
+            if (c.Error is not null)
+            {
+                MarkUnpromotable(c.Fid, "compile-failed:" + c.Error);
+                continue;
+            }
+            _mutationStamp.TryGetValue(c.Fid, out int now);
+            if (now != c.Stamp) continue;   // mutated mid-compile: stale snapshot, re-warm
+            _delegates[c.Fid] = c.Result!.Value.Delegate;
+            if (c.Result.Value.ProfileKey >= 0) _pgoProfileKeys[c.Fid] = c.Result.Value.ProfileKey;
+            OnPromotionInstalled?.Invoke(c.Fid, c.Result.Value.Delegate);
+        }
+    }
+
+    /// <summary>True while any background compile is in flight (diagnostics/tests).</summary>
+    public bool HasPendingPromotions => _pendingCompiles.Count > 0;
+
+    /// <summary>Waits (engine thread) until every in-flight background compile has
+    /// completed AND been installed. Returns false on timeout. Test/embedding
+    /// barrier for the async mode.</summary>
+    public bool WaitForPendingPromotions(int timeoutMs = 10_000)
+    {
+        var deadline = System.Diagnostics.Stopwatch.StartNew();
+        while (true)
+        {
+            DrainCompletedCompiles();
+            if (_pendingCompiles.Count == 0) return true;
+            if (deadline.ElapsedMilliseconds > timeoutMs) return false;
+            System.Threading.Thread.Sleep(1);
+        }
     }
 
     // Chunk 76 — PGO. A promoted predicate whose shape supports
@@ -238,8 +300,12 @@ public sealed class IlPromotionStore
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
         if (Threshold <= 0 || !DynamicCodeSupported) return null;
+        // Phase 33 L2 — install any background compiles that finished since the
+        // last dispatch (cheap: one IsEmpty check on the steady state).
+        if (!_completedCompiles.IsEmpty) DrainCompletedCompiles();
         if (_delegates.ContainsKey(functorId)) return _delegates[functorId];
         if (_unpromotable.Contains(functorId)) return null;
+        if (_pendingCompiles.Contains(functorId)) return null;   // compile in flight → stay Tier-0
         if (IsExcludedFromPromotion(functorId)) { MarkUnpromotable(functorId, "query"); return null; }
 
         // ADR-023 — a `:- dynamic` predicate (bytecode opens with enter_dynamic) is
@@ -317,16 +383,53 @@ public sealed class IlPromotionStore
         // plain compile (profile key -1) and no phase 2 will fire.
         // Sigil's recursive ReturnTracer can overflow the default 1 MB
         // stack on large predicates (200+ clauses, e.g. Blint.pl's
-        // parse_args/2). Run on an expanded-stack worker thread —
-        // StackOverflowException is uncatchable, so prevention is the
-        // only option.
-        var result = RunOnLargeStack(() =>
+        // parse_args/2), so every compile runs on the shared expanded-stack
+        // worker — StackOverflowException is uncatchable, so prevention is
+        // the only option.
+        if (BackgroundCompilation)
+        {
+            // Phase 33 L2 — queue the compile; the predicate stays Tier-0 until
+            // the delegate is drained in. The engine-state-reading providers
+            // (float pool, native-inline context) are invoked HERE on the engine
+            // thread and their values captured — the worker must not touch
+            // engine state (the pools are append-only lists, but List<T> reads
+            // racing an Add are not safe).
+            var floatPool = FloatPoolProvider?.Invoke(functorId);
+            var nativeCtx = NativeInlineProvider?.Invoke();
+            _mutationStamp.TryGetValue(functorId, out int stamp);
+            var capturedTarget = target;
+            var capturedCallees = calleeMap;
+            _pendingCompiles.Add(functorId);
+            IlCompileWorker.RunAsync(
+                () =>
+                {
+                    var prevF = IlPredicateCompiler.BeginFloatPool(floatPool);
+                    var prevN = IlPredicateCompiler.BeginNativeInline(nativeCtx);
+                    try { return Compiler.CompileInstrumented(capturedTarget, capturedCallees); }
+                    finally
+                    {
+                        IlPredicateCompiler.EndNativeInline(prevN);
+                        IlPredicateCompiler.EndFloatPool(prevF);
+                    }
+                },
+                (result, error) => _completedCompiles.Enqueue(new CompletedCompile(
+                    functorId,
+                    (IlPredicateCompiler.PgoCompileResult?)result,
+                    stamp,
+                    error?.Message)));
+            return null;
+        }
+
+        var syncResult = RunOnLargeStack(() =>
             WithFloatPool(functorId, () =>
                 WithNativeInline(() => Compiler.CompileInstrumented(target, calleeMap))));
-        _delegates[functorId] = result.Delegate;
-        if (result.ProfileKey >= 0)
-            _pgoProfileKeys[functorId] = result.ProfileKey;
-        return result.Delegate;
+        _delegates[functorId] = syncResult.Delegate;
+        if (syncResult.ProfileKey >= 0)
+            _pgoProfileKeys[functorId] = syncResult.ProfileKey;
+        // Phase 33 L1 — let the engine patch this callee's remaining generic call
+        // sites to CallIl/ExecuteIl for the rest of the running query.
+        OnPromotionInstalled?.Invoke(functorId, syncResult.Delegate);
+        return syncResult.Delegate;
     }
 
     /// <summary>Chunk 76 — phase-2 PGO pass. For every promoted,

@@ -1281,6 +1281,7 @@ When proposing changes:
 | Embedded native C blocks (`:- c` / `{...}`) — IL lowering to a foreign interop class | ADR-022 (proposed) |
 | Dynamic predicates in Tier-1 IL — snapshot + evict-on-mutation | ADR-023 (proposed) |
 | Generic Prolog-term interop (reftype tier) — zero-copy TermRef cursor + named intrinsics | ADR-024 (proposed) |
+| Body `jump` opcode + inline deterministic if-then-else at Tier-0 | ADR-025 (proposed) |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | Builtins catalog | docs/design/builtins-catalog.md |

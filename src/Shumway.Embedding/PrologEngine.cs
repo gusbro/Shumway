@@ -3110,6 +3110,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         byte[] queryBytes)
     {
         _diagCallIlCount = 0;
+        // Phase 33 L1 — fresh per-query mid-run rewrite state, and the hook the
+        // promotion store fires when a delegate installs (sync or drained async).
+        _promotableCallSites?.Clear();
+        _rewriteInterp = interp;
+        IlPromotion.OnPromotionInstalled = OnCalleePromoted;
         // Snapshot every currently-promoted IL delegate, indexed by
         // functor id. The PredicateDelegate -> Func<Engine,int,bool>
         // bridge allocates one wrapper per IL predicate, here at link
@@ -3223,10 +3228,78 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                         ? (byte)Shumway.Core.Opcode.ExecuteBytecode
                         : (byte)Shumway.Core.Opcode.CallBytecode;
                     // Operand stays as the absolute target address.
+                    continue;
+                }
+
+                // Phase 33 L1 (Stage B.4) — the site stays a generic Call/Execute
+                // because the callee may still earn IL mid-query. Record it (by
+                // callee fid) so the moment the callee's delegate installs, the
+                // site is patched to CallIl/ExecuteIl for the rest of the query.
+                // Persistent-buffer sites only: the query overlay is rebuilt at
+                // the next setup anyway, and its buffer may be replaced mid-query.
+                // Skip dynamic callees — their dispatch must keep feeding the
+                // JitIndexProfile counter inside OnDispatch (chunk 227).
+                if (absAddr < _querySplit
+                    && (calleePred is null || !IsDynamicPredicate(calleePred)))
+                {
+                    (_promotableCallSites ??= new()).TryGetValue(calleeFid, out var list);
+                    if (list is null) _promotableCallSites[calleeFid] = list = new();
+                    list.Add((absAddr, site.IsExecute));
                 }
             }
         }
         DiagIlRewriteTotal();
+    }
+
+    // Phase 33 L1 — generic Call/Execute sites whose callee may promote later,
+    // indexed by callee fid, in the PERSISTENT buffer. Rebuilt every query setup
+    // (see InstallCallIlRewrites); consumed by OnCalleePromoted.
+    private Dictionary<int, List<(int AbsAddr, bool IsExecute)>>? _promotableCallSites;
+    private Shumway.Interpreter.BytecodeInterpreter? _rewriteInterp;
+
+    /// <summary>Phase 33 L1 — Stage B.4: called (on the engine thread, from
+    /// <see cref="IlPromotionStore.OnPromotionInstalled"/>) when a delegate is
+    /// installed mid-query. Publishes the delegate in the interpreter's direct
+    /// <c>IlByFunctorId</c> table and patches the callee's recorded generic call
+    /// sites to <c>CallIl</c>/<c>ExecuteIl</c> — the rest of the running query
+    /// dispatches directly instead of paying the OnDispatch interface + dict +
+    /// wrapper per call (previously that tax lasted until the next query setup,
+    /// i.e. the whole run for a single-goal <c>--exe</c>).</summary>
+    private void OnCalleePromoted(int calleeFid, Shumway.Compiler.Il.PredicateDelegate del)
+    {
+        var interp = _rewriteInterp;
+        if (interp is null) return;
+        // 1. Direct dispatch table (grow if needed; engine thread — no races).
+        var table = interp.IlByFunctorId;
+        if (table is null || calleeFid >= table.Length)
+        {
+            var grown = new Func<Shumway.Core.Engine, int, bool>?[calleeFid + 1];
+            table?.CopyTo(grown, 0);
+            interp.IlByFunctorId = table = grown;
+        }
+        table[calleeFid] = del.Invoke;
+        // 2. Patch the recorded persistent-buffer sites.
+        if (_promotableCallSites is null
+            || !_promotableCallSites.TryGetValue(calleeFid, out var sites)) return;
+        var buf = _persistentProgram;
+        if (buf is not null)
+        {
+            foreach (var (absAddr, isExecute) in sites)
+            {
+                int width = isExecute ? 5 : 9;
+                if (absAddr + width > buf.Length) continue;
+                byte expected = isExecute
+                    ? (byte)Shumway.Core.Opcode.Execute
+                    : (byte)Shumway.Core.Opcode.Call;
+                if (buf[absAddr] != expected) continue;   // already rewritten / stale
+                DiagCountCallIlRewrite();
+                buf[absAddr] = isExecute
+                    ? (byte)Shumway.Core.Opcode.ExecuteIl
+                    : (byte)Shumway.Core.Opcode.CallIl;
+                Shumway.Core.BytecodeIO.WriteInt32(buf, absAddr + 1, calleeFid);
+            }
+        }
+        _promotableCallSites.Remove(calleeFid);
     }
 
     /// <summary>Chunk 414 — diag-build-only (<c>-p:ShumwayDiag=true</c> +
