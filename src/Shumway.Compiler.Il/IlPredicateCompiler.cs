@@ -596,6 +596,17 @@ public sealed class IlPredicateCompiler
         Opcode.TryMeElse or Opcode.RetryMeElse or Opcode.TrustMe => true,
         Opcode.Try or Opcode.Retry or Opcode.Trust => true,
         Opcode.SwitchOnTerm or Opcode.SwitchOnArg => true,
+        // Phase 33 L10 — the typed switch tables are dispatch skeleton too.
+        // Leaving them out made DescribeRejection list "SwitchOnAtomArg" etc.
+        // for EVERY indexed predicate rejected for an unrelated reason (an
+        // unresolved Call, a poolless float literal), which mis-drove a whole
+        // audit finding: the corpus census read 1 666 such rejects as "multi-
+        // arg shapes not IL-describable" when 1 663 were masked
+        // call->unresolved and 3 were a missing float pool. Multi-arg
+        // switch_on_*_arg shapes describe + compile fine (IlIndexedDispatch).
+        Opcode.SwitchOnAtom or Opcode.SwitchOnInteger or Opcode.SwitchOnStructure => true,
+        Opcode.SwitchOnAtomArg or Opcode.SwitchOnIntegerArg
+            or Opcode.SwitchOnStructureArg => true,
         Opcode.Proceed or Opcode.Execute or Opcode.Call or Opcode.CallBuiltin => true,
         Opcode.EnterDynamic or Opcode.CheckVisible => true,
         _ => false,

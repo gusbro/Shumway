@@ -316,20 +316,30 @@ A deferral is a TODO with a prerequisite, not a closure.
       64 KB background) — those giant fact tables never promote at all, which
       strengthens L3's recorded true-fix (linear-validation emitter) as the
       real unlock.
-- [ ] **L10** 🟡 **NEW (corpus evidence, 2026-07-02): multi-arg indexed shapes
+- [-] **L10** 🟡 **NEW (corpus evidence, 2026-07-02): multi-arg indexed shapes
       (`switch_on_*_arg`) are NOT IL-describable** — the describers
       (TryDescribeIndexed / IndexedAtom / TryMeElseChain / SwitchedChain)
       reject every predicate whose dispatch uses the chunk-67 multi-arg
-      opcodes: **~1 100 predicates in `test` and ~1 500 in `testGen`**
-      (SwitchOnAtomArg alone: 410 + 656; plus Atom/Integer/Structure + Arg
-      combos) are permanently Tier-0. This is the REAL Tier-1 coverage gap on
-      the Arity corpus (≈10 % of resolvable predicates) — far more valuable
-      than L6/L8 were. Teach the IL describer + emitter the `switch_on_arg`
-      cascade (the single-arg jump-table machinery generalizes).
-      ("shape" rejections in the census ≈ dynamic predicates — those promote
-      via the ADR-023 snapshot in the real engine, not a gap; and
-      `call->unresolved` reflects consult failures on files needing the GX
-      interop class, an evidence artifact.)
+      opcodes: **~1 100 predicates in `test` and ~1 500 in `testGen`**.
+      **REFUTED (2026-07-03) — the finding was an artifact of a
+      DescribeRejection classifier bug.** The typed switch opcodes
+      (SwitchOn{Atom,Integer,Structure}[Arg]) were missing from
+      IsStructuralDispatchOpcode, so they landed in the "unsupported opcode"
+      report for EVERY indexed predicate rejected for ANY reason, masking the
+      true cause. Re-census with the real promotion-path setup (float pool
+      set, per-fid): of testGen's 3 344 typed-switch predicates, 1 681 are
+      IL-ok and ALL 1 663 rejects are `call->unresolved` — the census's own
+      consult-failure artifact (callees on files needing the GX interop
+      class); the residual 3 were the harness not setting the float pool.
+      A synthetic multi-arg cascade (switch_on_term → switch_on_arg ×2 with
+      SwitchOnAtomArg/SwitchOnIntegerArg tables) describes, compiles AND runs
+      promoted. Fixed the classifier (typed switches are dispatch skeleton →
+      excluded from the unsupported report; the true cause surfaces).
+      3 regression tests (Phase33L10Tests): shape compiles, runs under
+      promotion incl. bucket backtracking, and an unresolved-call reject now
+      reports `call->unresolved` — not switch names. (Bonus fact pinned:
+      Execute sites never consult the calleeMap — only non-last Calls gate
+      on it.)
 - [ ] **L9** ⚪ Minor batch: region self-delegate CSE gate ≥3→≥2;
       MaybeCollectHeap on non-allocating self-tail loops; ground-fact
       unify-with-constant fast path.
