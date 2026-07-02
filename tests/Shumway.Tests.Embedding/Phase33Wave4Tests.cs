@@ -87,6 +87,40 @@ public class Phase33Wave4Tests
         Assert.True(e.Query("findall(X, d(X), L), L == [1, 2].").Success);
     }
 
+    // ---- L3: the 16KB Sigil size cap relaxes to 64KB under background
+    //      compilation (a long emit is latency off-thread, not a query stall). ----
+
+    [Fact]
+    public void L3_BackgroundMode_RaisesSizeCap()
+    {
+        // ~1200 atom facts ≈ 24 KB bytecode: above the 16 KB sync cap, below
+        // the 64 KB background cap.
+        var sb = new System.Text.StringBuilder(":- public big/1.\n");
+        for (int i = 0; i < 1200; i++) sb.Append("big(a").Append(i).Append(").\n");
+        string program = sb.ToString();
+
+        // Synchronous mode: excluded by size — stays Tier-0, still correct.
+        var sync = new PrologEngine();
+        sync.IlPromotion.Threshold = 1;
+        sync.ConsultString(program);
+        int fidSync = Fid("big", 1);
+        Assert.True(sync.Query("big(a5).").Success);
+        Assert.False(sync.IlPromotion.IsPromoted(fidSync));
+
+        // Background mode: allowed — compiles off-thread, promotes, stays correct.
+        var bg = new PrologEngine();
+        bg.IlPromotion.Threshold = 1;
+        bg.IlPromotion.BackgroundCompilation = true;
+        bg.ConsultString(program);
+        int fid = Fid("big", 1);
+        Assert.True(bg.Query("big(a5).").Success);
+        Assert.True(bg.IlPromotion.WaitForPendingPromotions(120_000),
+            "background compile of the large predicate timed out");
+        Assert.True(bg.IlPromotion.IsPromoted(fid));
+        Assert.True(bg.Query("big(a1199).").Success);
+        Assert.False(bg.Query("big(zzz).").Success);
+    }
+
     // ---- L1 (Stage B.4): a promotion that happens MID-QUERY patches the
     //      remaining generic call sites; the rest of the query stays correct. ----
 

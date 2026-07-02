@@ -280,18 +280,37 @@ A deferral is a TODO with a prerequisite, not a closure.
       early-returns when no delegate is present, so a pure bulk load counts
       ONE eviction; only real promote→evict cycles count. 2 tests (pin
       preserved + re-arm on read-hot).*
-- [ ] **L3** 🔴 16KB bytecode cap (Sigil O(n²)) — big fact tables permanently
-      Tier-0. Lift via linear emitter or sub-range splitting.
-- [ ] **L6** 🟡 `RegionMemberOk` rejects switched-chain/indexed-atom multi-clause
-      members → region fragmentation.
+- [x] **L3** 🔴 16KB bytecode cap (Sigil O(n²)) — big fact tables permanently
+      Tier-0. *Fixed (L2-leveraged): under `BackgroundCompilation` the cap
+      relaxes to `MaxIlPromotionBytecodeBytesBackground` (64 KB) — a long Sigil
+      emit off the query thread is latency, not a stall, so large Arity fact
+      tables earn IL in background mode. The 16 KB sync cap stays (the
+      synchronous promoting call would stall ~5 s at 27 KB). The TRUE fix (a
+      linear-validation emitter / vendored Sigil with patched
+      InsertInstruction) remains the recorded follow-up. Test: a ~24 KB
+      1200-fact predicate — excluded in sync mode, promoted + correct in
+      background.*
+- [ ] **L6** 🟡 `RegionMemberOk` rejects some multi-clause members. **Deferred
+      pending evidence**: the gate ALREADY admits try_me_else chains AND
+      TryDescribeIndexed shapes (with per-clause body validation) — only shapes
+      failing BOTH describers are refused — and Phase 29 measured ZERO
+      region-skips on the flagship corpus (Blint). Widening the member set is
+      speculative until a real program reports skips; wire the region-skip
+      diagnostic over a corpus first.
 - [ ] **L7** 🟡 `AIntBin/AIntCmp` — compile-time-constant kinds passed as runtime
       args. **Deferred pending a benchmark**: FusedBin/FusedCmp + TryReadInt +
       Deliver are all `AggressiveInlining` and the kinds arrive as CONSTANTS at
       the emitted call site, so RyuJIT inlines and constant-folds the kind
       branches away in the common case — hand-specializing at emit is likely
       redundant. Verify with a disasm/interleaved benchmark before building it.
-- [ ] **L8** 🟡 chunk-216 indexed dispatch keeps WAM-backed lazy model (no
-      strip-wam, first-call build). Bake IlIndexGraph as an IL jump table.
+- [ ] **L8** 🟡 chunk-216 indexed dispatch keeps WAM-backed lazy model.
+      **Deferred — scope shrank on inspection**: the `--strip-wam` half was
+      ALREADY solved in Phase 27 (IlIndexGraph is persisted via IndexGraphCodec
+      and rebuilt WAM-independently at bundle load); the residual is only the
+      IN-PROCESS promotion path's one-time first-dispatch model build. Baking
+      the graph as an IL jump table (like the inline index-resolve the region
+      path uses) removes a one-time cost — low yield; revisit with startup
+      profiling evidence.
 - [ ] **L9** ⚪ Minor batch: region self-delegate CSE gate ≥3→≥2;
       MaybeCollectHeap on non-allocating self-tail loops; ground-fact
       unify-with-constant fast path.

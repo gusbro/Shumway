@@ -514,7 +514,25 @@ public sealed class IlPromotionStore
     /// therefore parked on Tier 0 forever. See the property's
     /// docs for the why.</summary>
     private bool IsExcludedBySize(CompiledPredicate predicate)
-        => predicate.Bytecode.Length > MaxIlPromotionBytecodeBytes;
+        => predicate.Bytecode.Length > EffectiveMaxBytecodeBytes;
+
+    /// <summary>Phase 33 L3 — the size cap that actually applies. The 16 KB
+    /// default exists because Sigil's emit is O(N²) in bytecode size and the
+    /// SYNCHRONOUS promoting call stalls the query thread for the whole emit
+    /// (~5 s at 27 KB, chunk 171). Under <see cref="BackgroundCompilation"/> the
+    /// emit runs on the worker and the predicate keeps executing on Tier-0 in
+    /// the meantime — a long compile is latency, not a stall — so the cap
+    /// relaxes to <see cref="MaxIlPromotionBytecodeBytesBackground"/>. Large
+    /// Arity fact tables (the classic 16 KB+ victims) earn IL that way.</summary>
+    private int EffectiveMaxBytecodeBytes
+        => BackgroundCompilation ? MaxIlPromotionBytecodeBytesBackground : MaxIlPromotionBytecodeBytes;
+
+    /// <summary>Phase 33 L3 — the size cap when <see cref="BackgroundCompilation"/>
+    /// is on (see <see cref="EffectiveMaxBytecodeBytes"/>). 64 KB ≈ a ~20 s
+    /// worst-case background emit under Sigil's O(N²) — late, but off the query
+    /// thread. The true fix (a linear-validation emitter or a vendored Sigil)
+    /// remains the recorded follow-up.</summary>
+    public int MaxIlPromotionBytecodeBytesBackground { get; set; } = 65536;
 
     /// <summary>Eagerly promotes <paramref name="predicate"/> without
     /// going through the counter, returning the resulting delegate on
