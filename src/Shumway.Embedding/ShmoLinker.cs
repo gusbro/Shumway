@@ -1867,7 +1867,8 @@ public static class ShmoLinker
             bw.Write(member.ShmoBytes);
         }
         bw.Flush();
-        return ms.ToArray();
+        // Phase 33 T2 — compress the body (everything after magic+version).
+        return BundleFormat.FinalizeImage(ms.ToArray());
     }
 
     private static void WriteString(BinaryWriter bw, string s)

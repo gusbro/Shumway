@@ -214,7 +214,8 @@ public static class BundleWriter
             bw.Write(member.ShmoBytes);
         }
         bw.Flush();
-        return ms.ToArray();
+        // Phase 33 T2 — compress the body (everything after magic+version).
+        return BundleFormat.FinalizeImage(ms.ToArray());
     }
 
     /// <summary>Compiles <paramref name="entry"/>'s source through the WAM

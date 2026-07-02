@@ -88,6 +88,72 @@ public class Phase33Wave5Tests
         Assert.True(e.Query("main(L), L == 15.").Success);
     }
 
+    // ---- T2: whole-body Brotli compression of the .shum stream ----
+
+    [Fact]
+    public void T2_CompressedBundle_RoundTrips_AndShrinks()
+    {
+        // A bundle big enough to cross the compression threshold (the baked
+        // full prelude guarantees it). The flag byte sits after magic+version.
+        var obj = ShmoCompiler.CompileSource(Program);
+        var result = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { obj },
+            EntryPoints = new[] { new PredicateRef("main", 1) },
+            BakePrelude = true,
+        });
+        Assert.True(result.Success);
+        byte[] bytes = result.Bytes!;
+        Assert.Equal(BundleFormat.CompressionBrotli, bytes[8]);
+
+        var bundle = BundleReader.FromBytes(bytes);
+        var e = PrologEngine.FromBundle(bundle);
+        Assert.True(e.Query("main(L), L == 15.").Success);
+
+        // Honest size check: recompute the raw body via the reader-visible
+        // content proxy — compare against an uncompressed-equivalent length
+        // (prelude bytecode alone is ~53 KB; the compressed bundle must be
+        // well under half of the raw image).
+        long rawApprox = bundle.Entries.Sum(en =>
+            (en.CompiledBytecode?.Length ?? 0) + (en.Source?.Length ?? 0));
+        _output.WriteLine($"compressed file: {bytes.Length:N0} B; raw payload approx: {rawApprox:N0} B");
+        Assert.True(bytes.Length < rawApprox / 2,
+            $"expected <50% of raw payload, got {bytes.Length} vs {rawApprox}");
+    }
+
+    [Fact]
+    public void T2_TinyBundle_StaysRaw()
+    {
+        // Below the 4 KB threshold: flag 0, body verbatim.
+        var obj = ShmoCompiler.CompileSource(":- public p/0.\np.\n");
+        var result = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { obj },
+            EntryPoints = new[] { new PredicateRef("p", 0) },
+        });
+        Assert.True(result.Success);
+        Assert.Equal(BundleFormat.CompressionNone, result.Bytes![8]);
+        var e = new PrologEngine();
+        e.LoadBundle(BundleReader.FromBytes(result.Bytes!));
+        Assert.True(e.Query("p.").Success);
+    }
+
+    [Fact]
+    public void T2_SaveState_RoundTripsCompressed()
+    {
+        // save_state goes through BundleWriter.ToBytes — same framing.
+        var e = new PrologEngine();
+        e.ConsultString(":- dynamic fact/1.\n");
+        for (int i = 0; i < 300; i++)
+            Assert.True(e.Query($"assertz(fact(v{i})).").Success);
+        byte[] snap = e.SaveStateToBytes();
+        var e2 = new PrologEngine();
+        e2.RestoreStateFromBytes(snap);
+        Assert.True(e2.Query("fact(v0).").Success);
+        Assert.True(e2.Query("fact(v299).").Success);
+        Assert.True(e2.Query("findall(X, fact(X), L), length(L, N), N == 300.").Success);
+    }
+
     [Fact]
     public void T1_WithoutPrune_FullPreludeStillWorks()
     {

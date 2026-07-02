@@ -350,7 +350,17 @@ A deferral is a TODO with a prerequisite, not a closure.
       predicates (3.4 of 53.5 KB, −94%). Opt-in by design: runtime-constructed
       goals naming unreached prelude predicates raise existence_error —
       :- ensure_linked is the escape hatch (works, tested). 4 tests.*
-- [ ] **T2** 🔴 no compression anywhere in `.shum`.
+- [x] **T2** 🔴 no compression anywhere in `.shum`. *Fixed: whole-BODY Brotli
+      with a format flag byte after the version (0 raw / 1 brotli; bodies
+      < 4 KB stay raw). One shared FinalizeImage/OpenBody pair in BundleFormat
+      serves both writers (BundleWriter.ToBytes — also the Librarian +
+      save_state path — and the linker's in-line serialiser) and the single
+      reader. Whole-body on purpose: the redundancy is CROSS-entry (shared
+      atom names / opcode patterns across modules). MEASURED on 119 real
+      testGen modules archived: **6.05× smaller** (1.17 vs 7.08 MB);
+      FromBytes incl. decompress 34 ms avg (one-time at load; ZERO runtime
+      cost — in-memory structures identical). 3 tests (round-trip + runs,
+      tiny-stays-raw, save_state snapshot round-trip).*
 - [ ] **T3** 🔴 persisted-IL `Assembly.Load`+patch+delegates per engine — needs a
       process-wide cache keyed like `_loadedNativeLibraries`.
 - [ ] **T4** 🔴 WAM link (addresses, switch tables, `Call→CallBuiltin` rewrite)

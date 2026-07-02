@@ -19,14 +19,14 @@ public static class BundleReader
     {
         ArgumentNullException.ThrowIfNull(data);
         using var ms = new MemoryStream(data);
-        using var br = new BinaryReader(ms, Encoding.UTF8, leaveOpen: true);
+        using var headerReader = new BinaryReader(ms, Encoding.UTF8, leaveOpen: true);
 
-        byte[] magic = br.ReadBytes(4);
+        byte[] magic = headerReader.ReadBytes(4);
         if (magic.Length != 4 || !magic.AsSpan().SequenceEqual(BundleFormat.Magic))
             throw new InvalidDataException(
                 "Bundle: magic bytes don't match 'SHUM' — not a Shumway bundle.");
 
-        uint version = br.ReadUInt32();
+        uint version = headerReader.ReadUInt32();
         // Pre-release format policy (see BundleFormat): exactly ONE supported
         // layout, frozen version number, no backward compatibility — a stale
         // bundle fails here (or on a truncated section); rebuild it by
@@ -36,6 +36,11 @@ public static class BundleReader
                 $"Bundle: format version {version} is not supported by this runtime "
                 + $"(requires {BundleFormat.CurrentVersion}; pre-release formats are "
                 + "not backward compatible — rebuild the bundle).");
+
+        // Phase 33 T2 — the byte after the version selects the body encoding
+        // (raw / Brotli); everything below reads from the decoded body.
+        byte compression = headerReader.ReadByte();
+        using var br = BundleFormat.OpenBody(compression, ms);
 
         uint moduleCount = br.ReadUInt32();
         var entries = new BundleEntry[moduleCount];
