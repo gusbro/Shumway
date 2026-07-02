@@ -2465,7 +2465,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // (DCG / Meta / Phrase / mode-spec), same ModuleRewrite, same
         // PredicateCompiler with isDynamic=true so the result IS a
         // trampoline.
-        var transformed = ClausePipeline.Apply(new[] { stubClause }, Modes);
+        var transformed = ClausePipeline.Apply(new[] { stubClause }, Modes, helperPrefix: "$q");
         var dynCtx = new ModuleRewrite.Context(
             DefaultModuleName, new HashSet<int>(), _dynamicFunctors);
         var rewritten = transformed.Select(c => ModuleRewrite.Rewrite(c, dynCtx)).ToList();
@@ -4363,6 +4363,25 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private readonly Dictionary<string, NativeBlockEntry> _nativeBlocks = new();
 
     private int _nativeBlockConsultSeq;
+    // Phase 33 — the engine's monotonic synthesized-helper sequence: every
+    // consult/assert transform on this engine draws unique helper ids, so a
+    // second consult's `$disj_N` can never collide with the first's in the same
+    // module. Per-engine (not global) so the atom space stays bounded across
+    // engines/processes; the query stub uses the reserved `$q` prefix instead.
+    private int _metaHelperSeq;
+    private int NextMetaHelperId() => ++_metaHelperSeq;
+
+
+    /// <summary>ADR-025 — enables the inline if-then-else lowering: an eligible
+    /// plain-goal <c>(C -&gt; T ; E)</c> / <c>(A ; B)</c> compiles INSIDE the host
+    /// clause (get_level; try_me_else; cut; jump) instead of a synthesized
+    /// 2-clause helper reached by a Call. STATIC consult paths only — the
+    /// runtime assert path always uses the helper form. Default OFF (stage (c)
+    /// of the ADR-025 rollout): a predicate with an inline ITE is not yet
+    /// Tier-1-promotable (the IL compiler rejects the shape gracefully and it
+    /// stays on Tier-0), so flipping this on trades Tier-1 eligibility for the
+    /// Tier-0 win until the ADR's stage (b) lands. Set before consulting.</summary>
+    public bool EnableInlineIte { get; set; }
 
     // Phase 33 D4 — a small per-engine native scratch block for out-scalar /
     // out-string cells (8 bytes each): avoids an AllocHGlobal/FreeHGlobal round
@@ -6544,7 +6563,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 // STATIC clause set (dynamic-head clauses were routed to
                 // _dynamicClauses), so a detected wrapper is immutable by invariant.
                 var unfolded = MetaWrapperUnfold.Apply(manifest.Clauses);
-                var transformed = ClausePipeline.Apply(unfolded, modeTable);
+                var transformed = ClausePipeline.Apply(unfolded, modeTable, inlineIte: EnableInlineIte, helperIdProvider: NextMetaHelperId);
 
                 var locals = ComputeLocalFunctors(transformed, manifest.PublicFunctors);
                 // Chunk 209: fold in the bare local fids contributed by a
@@ -6635,7 +6654,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                             namedDynCtx[seedModule] = fidCtx;
                         }
                     }
-                    var transformed = ClausePipeline.Apply(clauses, modeTable);
+                    var transformed = ClausePipeline.Apply(clauses, modeTable, inlineIte: EnableInlineIte, helperIdProvider: NextMetaHelperId);
                     var rewritten = new List<Clause>(transformed.Count);
                     foreach (var clause in transformed)
                         rewritten.Add(ModuleRewrite.Rewrite(clause, fidCtx));
@@ -6675,11 +6694,26 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
         // Synthetic query clause — rewrite in the user module's context, but
         // with userLocalsCache (which doesn't include __query__) so the
-        // head functor remains bare.
+        // head functor remains bare. Phase 33 — the stub's synthesized helpers
+        // use the reserved `$q` namespace: they are rewritten under the SAME
+        // user-module mangling as the consulted clauses' helpers, so without
+        // the prefix a stub `$disj_1` collides with a consulted `$disj_1`
+        // (the helper-name-collision latent bug). `$q` names are reused
+        // query-to-query, keeping the atom space bounded.
         {
-            var queryTransformed = PhraseTransform.Apply(
-                MetaTransform.Apply(
-                    DcgTransform.Apply(new[] { syntheticClause })));
+            var prevPrefix = Shumway.Compiler.Parsing.MetaTransform.HelperPrefix;
+            Shumway.Compiler.Parsing.MetaTransform.HelperPrefix = "$q";
+            List<Clause> queryTransformed;
+            try
+            {
+                queryTransformed = PhraseTransform.Apply(
+                    MetaTransform.Apply(
+                        DcgTransform.Apply(new[] { syntheticClause })));
+            }
+            finally
+            {
+                Shumway.Compiler.Parsing.MetaTransform.HelperPrefix = prevPrefix;
+            }
             var ctx = new ModuleRewrite.Context(
                 DefaultModuleName,
                 userLocalsCache ?? new HashSet<int>(),
@@ -7358,7 +7392,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // clauses share a flat module rewrite context. Only the first
             // transformed clause is compiled (any MetaTransform helpers
             // follow it in the list) — same as the pre-427 per-site code.
-            var transformed = ClausePipeline.Apply(new[] { newClause }, Modes);
+            var transformed = ClausePipeline.Apply(new[] { newClause }, Modes, helperIdProvider: NextMetaHelperId);
             if (transformed.Count == 0) return null;
             _assertDynCtx ??= new ModuleRewrite.Context(
                 DefaultModuleName, new HashSet<int>(), _dynamicFunctors);

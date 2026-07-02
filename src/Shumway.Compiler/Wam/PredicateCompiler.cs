@@ -126,6 +126,9 @@ public sealed class PredicateCompiler
                 em.EmitCheckVisible(born: 0L, died: long.MaxValue);
                 int clauseStart = em.Position;
                 em.AppendBytes(compiledClauses[0].Bytecode);
+                // ADR-025 — rebase any intra-clause branch operands past the
+                // trampoline + check_visible prefix.
+                MergeClauseDispatchSites(em, compiledClauses[0], clauseStart, dispatch);
                 var shiftedCallSites = compiledClauses[0].CallSites
                     .Select(s => new CallSite(
                         clauseStart + s.OpcodeOffset, s.CalleeFunctorId, s.IsExecute))
@@ -148,7 +151,10 @@ public sealed class PredicateCompiler
                 arity,
                 clauseCount: 1,
                 callSites: compiledClauses[0].CallSites,
-                dispatchSites: Array.Empty<int>(),
+                // ADR-025 — the clause bytes ARE the predicate bytes here (no
+                // prefix), so the clause's intra-clause branch operands are
+                // already predicate-local: pass them straight through.
+                dispatchSites: compiledClauses[0].DispatchSites,
                 switchTables: Array.Empty<SwitchTable>(),
                 switchTableIdSites: Array.Empty<int>(),
                 sourcePosition: clauses[0].Position,
@@ -313,6 +319,7 @@ public sealed class PredicateCompiler
             foreach (var site in compiledClauses[i].CallSites)
                 callSites.Add(new CallSite(
                     clauseStart + site.OpcodeOffset, site.CalleeFunctorId, site.IsExecute));
+            MergeClauseDispatchSites(emitter, compiledClauses[i], clauseStart, dispatchSites);
         }
 
         return new CompiledPredicate(
@@ -327,6 +334,22 @@ public sealed class PredicateCompiler
             : clauseIndex == totalClauses - 1 && !dynamicChain
                 ? 1                                      // trust_me
                 : 5;                                     // retry_me_else: opcode + addr
+
+    /// <summary>ADR-025 — folds a clause's intra-clause branch operands (the
+    /// inline-ITE <c>try_me_else</c>/<c>jump</c> targets) into the predicate's
+    /// dispatch sites: each site offset shifts by the clause's placement, and the
+    /// operand VALUE is rebased from clause-local to predicate-local (the linker
+    /// then shifts it to program-absolute like any other dispatch site).</summary>
+    private static void MergeClauseDispatchSites(
+        BytecodeEmitter emitter, CompiledClause clause, int clauseStart, List<int> dispatchSites)
+    {
+        foreach (int site in clause.DispatchSites)
+        {
+            int local = Shumway.Core.BytecodeIO.ReadInt32(clause.Bytecode, site);
+            emitter.PatchInt32(clauseStart + site, clauseStart + local);
+            dispatchSites.Add(clauseStart + site);
+        }
+    }
 
     // ============================================================================
     // Indexing (ADR-007 first-arg + chunk 67 multi-arg fallback)
@@ -774,6 +797,7 @@ public sealed class PredicateCompiler
             foreach (var site in compiledClauses[i].CallSites)
                 callSites.Add(new CallSite(
                     clauseStart + site.OpcodeOffset, site.CalleeFunctorId, site.IsExecute));
+            MergeClauseDispatchSites(emitter, compiledClauses[i], clauseStart, dispatchSites);
         }
 
         return new CompiledPredicate(
@@ -1165,6 +1189,7 @@ public sealed class PredicateCompiler
             foreach (var site in compiledClauses[i].CallSites)
                 callSites.Add(new CallSite(
                     clauseStart + site.OpcodeOffset, site.CalleeFunctorId, site.IsExecute));
+            MergeClauseDispatchSites(emitter, compiledClauses[i], clauseStart, dispatchSites);
         }
 
         return new CompiledPredicate(

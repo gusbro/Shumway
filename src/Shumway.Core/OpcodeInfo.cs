@@ -126,6 +126,8 @@ public static class OpcodeTable
         Set(Opcode.TryMeElse, 9, "try_me_else", OperandKind.Address, OperandKind.Count);
         Set(Opcode.RetryMeElse, 5, "retry_me_else", OperandKind.Address);
         Set(Opcode.TrustMe, 1, "trust_me");
+        // ADR-025 — unconditional intra-predicate branch (inline if-then-else).
+        Set(Opcode.Jump, 5, "jump", OperandKind.Address);
         // ADR-015 chunk C — generation-filtered dynamic dispatch.
         Set(Opcode.EnterDynamic, 1, "enter_dynamic");
         Set(Opcode.CheckVisible, 17, "check_visible",

@@ -135,11 +135,31 @@ public sealed class ClauseCompiler
             }
         }
 
+        // ADR-025 — inline if-then-else goals surviving MetaTransform. Every
+        // named variable inside one is forced PERMANENT (the else-branch resume
+        // restores no X registers — the try_me_else CP is arity-0 — so branch
+        // state must live in Y slots, exactly what the helper-call form implied),
+        // and each `->` construct gets one extra Y slot for its commit barrier.
+        var inlineItes = new List<int>();   // goal indices
+        for (int i = 0; i < goals.Count; i++)
+            if (goals[i] is CompoundTerm { Functor: ";", Args.Length: 2 } d
+                && Shumway.Compiler.InlineIte.IsEligible(d))
+                inlineItes.Add(i);
+        if (inlineItes.Count > 0)
+            ForceIteVarsPermanent(goals, inlineItes, permanents);
+
         int cutSlot = needsDeepCut ? permanents.Count : -1;
+        int iteBarrierBase = permanents.Count + (needsDeepCut ? 1 : 0);
+        int iteBarrierCount = 0;
+        var iteBarrierSlot = new Dictionary<int, int>();   // goal index → Y slot
+        foreach (int gi in inlineItes)
+            if (((CompoundTerm)goals[gi]).Args[0] is CompoundTerm { Functor: "->", Args.Length: 2 })
+                iteBarrierSlot[gi] = iteBarrierBase + iteBarrierCount++;
+
         var state = new CompileState(
             headArgs.Length,
             permanents,
-            extraPermanentSlots: needsDeepCut ? 1 : 0);
+            extraPermanentSlots: (needsDeepCut ? 1 : 0) + iteBarrierCount);
 
         // Frame is required to (a) host permanent Y slots / the cut-barrier
         // slot, or (b) preserve the caller's CP across a non-tail CALL. An
@@ -149,7 +169,11 @@ public sealed class ClauseCompiler
         // before the single recursive call no longer forces an empty
         // `allocate [0]`, matching GProlog.) A real call BEFORE the last goal
         // does need the frame, since it overwrites CP and we must still return.
-        bool needFrame = permanents.Count > 0 || needsDeepCut;
+        bool needFrame = permanents.Count > 0 || needsDeepCut
+            // ADR-025 — an inline ITE always needs a frame: its inner goals are
+            // non-tail calls (control flows to END, then proceed), so the
+            // continuation must be protected even when the ITE is the last goal.
+            || inlineItes.Count > 0;
         if (!needFrame)
             for (int i = 0; i < goals.Count - 1; i++)
                 if (!IsInlineBodyGoal(goals[i])) { needFrame = true; break; }
@@ -236,6 +260,13 @@ public sealed class ClauseCompiler
                             state.Emitter.EmitProceed();
                     }
                 }
+                else if (goal is CompoundTerm { Functor: ";", Args.Length: 2 } iteGoal
+                         && inlineItes.Contains(i))
+                {
+                    // ADR-025 — inline if-then-else / disjunction in the host clause.
+                    CompileInlineIte(state, iteGoal, isLast, needFrame,
+                        iteBarrierSlot.TryGetValue(i, out int slot) ? slot : -1);
+                }
                 else
                 {
                     int[]? thisOrder =
@@ -252,7 +283,91 @@ public sealed class ClauseCompiler
             headArgs.Length,
             state.Xs.RegisterCount,
             state.PermanentCount,
-            state.CallSites);
+            state.CallSites,
+            state.DispatchSites.Count == 0 ? null : state.DispatchSites);
+    }
+
+    /// <summary>ADR-025 — adds every named variable occurring inside an inline
+    /// ITE goal to <paramref name="permanents"/> (first-occurrence order kept).</summary>
+    private static void ForceIteVarsPermanent(
+        List<Term> goals, List<int> inlineItes, List<string> permanents)
+    {
+        var have = new HashSet<string>(permanents);
+        void Walk(Term t)
+        {
+            switch (t)
+            {
+                case VarTerm v when v.Name != "_" && have.Add(v.Name):
+                    permanents.Add(v.Name);
+                    break;
+                case CompoundTerm c:
+                    foreach (var a in c.Args) Walk(a);
+                    break;
+            }
+        }
+        foreach (int gi in inlineItes) Walk(goals[gi]);
+    }
+
+    /// <summary>ADR-025 — emits an eligible <c>(C -&gt; T ; E)</c> /
+    /// <c>(A ; B)</c> inline:
+    /// <code>
+    /// [get_level Yb]           ; if-then-else only
+    /// try_me_else ELSE (arity 0)
+    /// C…  [cut Yb]  T…
+    /// jump END
+    /// ELSE: trust_me
+    /// E…
+    /// END:
+    /// </code>
+    /// Inner goals compile as ordinary NON-last body goals with no Y trimming
+    /// (every branch variable is already a permanent — see
+    /// <see cref="ForceIteVarsPermanent"/>). Both address operands are
+    /// clause-local and recorded as dispatch sites for the predicate/link
+    /// shifts.</summary>
+    private void CompileInlineIte(
+        CompileState s, CompoundTerm disj, bool isLast, bool hasFrame, int barrierSlot)
+    {
+        bool isIte = disj.Args[0] is CompoundTerm { Functor: "->", Args.Length: 2 };
+        Term? condPart = isIte ? ((CompoundTerm)disj.Args[0]).Args[0] : null;
+        Term thenPart = isIte ? ((CompoundTerm)disj.Args[0]).Args[1] : disj.Args[0];
+        Term elsePart = disj.Args[1];
+
+        if (isIte) s.Emitter.EmitGetLevel(barrierSlot);
+        int tryPos = s.Emitter.Position;
+        s.Emitter.EmitTryMeElse(0, arity: 0);   // ELSE target patched below
+        s.DispatchSites.Add(tryPos + 1);
+        // The emitter's Y-initialization tracking is per-EMISSION-ORDER, but at
+        // runtime only ONE branch executes: the else branch must be emitted as if
+        // starting from the try-point state (else a variable first bound in the
+        // then branch would be read as "already initialized" on the else path —
+        // an uninitialized-slot read), and after the join only variables
+        // initialized on BOTH paths may be assumed initialized.
+        var initAtTry = new HashSet<string>(s.YsInitialized);
+        if (isIte)
+        {
+            foreach (var g in FlattenConjunction(condPart!))
+                CompileBodyGoal(s, g, isLast: false, hasFrame, s.PermanentCount);
+            s.Emitter.EmitCut(barrierSlot);   // commit: pop the ITE CP (+ Cond's CPs)
+        }
+        foreach (var g in FlattenConjunction(thenPart))
+            CompileBodyGoal(s, g, isLast: false, hasFrame, s.PermanentCount);
+        var initAfterThen = new HashSet<string>(s.YsInitialized);
+        int jumpPos = s.Emitter.Position;
+        s.Emitter.EmitJump(0);                  // END target patched below
+        s.DispatchSites.Add(jumpPos + 1);
+        s.Emitter.PatchInt32(tryPos + 1, s.Emitter.Position);   // ELSE:
+        s.Emitter.EmitTrustMe();
+        s.YsInitialized.Clear();
+        s.YsInitialized.UnionWith(initAtTry);   // else path starts at the try point
+        foreach (var g in FlattenConjunction(elsePart))
+            CompileBodyGoal(s, g, isLast: false, hasFrame, s.PermanentCount);
+        s.Emitter.PatchInt32(jumpPos + 1, s.Emitter.Position);  // END:
+        s.YsInitialized.IntersectWith(initAfterThen);   // join: both-paths only
+        if (isLast)
+        {
+            if (hasFrame) s.Emitter.EmitDeallocateProceed();
+            else s.Emitter.EmitProceed();
+        }
     }
 
     // ============================================================================
@@ -1857,6 +1972,10 @@ public sealed class ClauseCompiler
         public int PermanentCount { get; }
         public Queue<(int Slot, CompoundTerm Compound)> Pending { get; } = new();
         public List<CallSite> CallSites { get; } = new();
+
+        /// <summary>ADR-025 — clause-local address-operand offsets from the
+        /// inline if-then-else lowering (see CompiledClause.DispatchSites).</summary>
+        public List<int> DispatchSites { get; } = new();
 
         /// <summary>Clause arity — the argument-register range [0, Arity).</summary>
         public int Arity { get; }

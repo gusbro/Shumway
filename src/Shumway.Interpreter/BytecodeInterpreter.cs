@@ -745,6 +745,16 @@ public sealed class BytecodeInterpreter
                     break;
                 }
 
+                // ADR-025 — unconditional intra-predicate branch (inline
+                // if-then-else: the then branch jumps over the else). The
+                // operand was made program-absolute by the linker's
+                // dispatch-site shift.
+                case Opcode.Jump:
+                {
+                    _engine.SetPc(ReadI32(code, codeArr, pc + 1));
+                    break;
+                }
+
                 // ADR-015 chunk C — generation-filtered dynamic dispatch.
                 // Sample the dynamic-database generation into CurrentViewGen
                 // so the surrounding try_me_else captures it into the CP and

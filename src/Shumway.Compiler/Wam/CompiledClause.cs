@@ -35,13 +35,23 @@ public sealed class CompiledClause
     /// address.</summary>
     public IReadOnlyList<CallSite> CallSites { get; }
 
+    /// <summary>ADR-025 — CLAUSE-LOCAL address operands emitted by the inline
+    /// if-then-else lowering (the <c>try_me_else</c> else-target and the
+    /// <c>jump</c> end-target). Each entry is the byte offset of a 4-byte
+    /// operand whose VALUE is a clause-local address; PredicateCompiler shifts
+    /// both the site and the value by the clause's placement offset and folds
+    /// them into the predicate's dispatch sites, which the linker then makes
+    /// program-absolute. Empty for clauses without inline control flow.</summary>
+    public IReadOnlyList<int> DispatchSites { get; }
+
     public CompiledClause(
         byte[] bytecode,
         int functorId,
         int arity,
         int registerCount,
         int permanentCount,
-        IReadOnlyList<CallSite> callSites)
+        IReadOnlyList<CallSite> callSites,
+        IReadOnlyList<int>? dispatchSites = null)
     {
         Bytecode = bytecode;
         FunctorId = functorId;
@@ -49,6 +59,7 @@ public sealed class CompiledClause
         RegisterCount = registerCount;
         PermanentCount = permanentCount;
         CallSites = callSites;
+        DispatchSites = dispatchSites ?? Array.Empty<int>();
     }
 }
 

@@ -1,6 +1,14 @@
 # ADR-025: Body `jump` opcode + inline deterministic if-then-else (Tier-0)
 
-**Status:** Proposed (Phase 33, audit item W4).
+**Status:** Accepted — stages (a) + (c) implemented (Phase 33): `jump` opcode,
+interpreter dispatch, dispatch-site relocation through PredicateCompiler/Linker,
+and the ClauseCompiler inline lowering behind `PrologEngine.EnableInlineIte`
+(default OFF). Stage (b) — IL describe/emit for the shape — is the prerequisite
+for flipping the default (today a predicate with an inline ITE is gracefully
+rejected by the IL compiler and stays Tier-0). Bring-up findings: the emitter's
+Y-initialization tracking needed branch-aware snapshot/restore/intersect (only
+one branch executes at runtime), and validation surfaced the pre-existing
+HELPER-NAME COLLISION latent bug (see the Phase 33 backlog), fixed alongside.
 
 ## Context
 

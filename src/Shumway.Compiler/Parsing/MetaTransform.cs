@@ -339,15 +339,80 @@ public static class MetaTransform
             }
         }
 
-        // Disjunction (A ; B) and if-then-else (A -> B ; C) — both compile
-        // to a two-clause helper that the standard try_me_else / trust_me
-        // dispatch then handles.
+        // Disjunction (A ; B) and if-then-else (A -> B ; C).
         if (goal is CompoundTerm disj && disj.Functor == ";" && disj.Args.Length == 2)
         {
+            // ADR-025 — when the inline lowering is enabled and every part is a
+            // plain conjunction (no cuts / nested control / meta-goals), LEAVE
+            // the construct intact: ClauseCompiler emits it in the host clause
+            // (get_level; try_me_else ELSE; C; cut; T; jump END; ELSE: trust_me;
+            // E) instead of a synthesized 2-clause helper reached by a Call.
+            // Parts are plain by eligibility, so there is nothing to transform
+            // inside them.
+            if (InlineIteEnabled && Shumway.Compiler.InlineIte.IsEligible(disj))
+                return disj;
+
+            // Otherwise: a two-clause helper that the standard try_me_else /
+            // trust_me dispatch then handles.
             return SynthesizeDisjunctionHelper(disj.Args[0], disj.Args[1], ref counter, helpers, cutK);
         }
 
         return goal;
+    }
+
+    /// <summary>Phase 33 — synthesized-helper NAMING context. The old per-Apply
+    /// counter restarted at zero on every transform run, so a QUERY stub's
+    /// synthesized <c>$disj_1</c> (e.g. a findall collect loop) could collide —
+    /// same module mangling, same arity — with a CONSULTED clause's
+    /// <c>$disj_1</c>: the query-region definition shadowed the consulted helper
+    /// and the caller executed the WRONG body (surfaced as an
+    /// instantiation_error inside <c>findall</c> over an if-then-else predicate;
+    /// latent at least since phase-32).
+    ///
+    /// <para>The fix is SCOPED naming, not a process-global sequence (that was
+    /// tried first and mints unbounded fresh atoms — one per helper per query —
+    /// growing the functor table past the resume-marker fid cap mid-suite):
+    /// <list type="bullet">
+    /// <item><see cref="HelperIdProvider"/> — consult/assert paths pass the
+    /// ENGINE's monotonic sequence, so two consults into the same module never
+    /// reuse a name; different engines may reuse names (their programs are
+    /// separate), keeping the atom space bounded.</item>
+    /// <item><see cref="HelperPrefix"/> — the query-stub path passes a reserved
+    /// <c>$q</c> prefix with the per-Apply counter: query helper names are
+    /// REUSED query-to-query (bounded atoms) and can never collide with
+    /// consult-time names.</item>
+    /// </list>
+    /// Both default to the old per-Apply behavior for standalone tooling
+    /// (disassembler, ShmoCompiler — where module mangling isolates names).</para></summary>
+    [ThreadStatic] private static Func<int>? _helperIdProvider;
+    [ThreadStatic] private static string? _helperPrefix;
+    public static Func<int>? HelperIdProvider
+    {
+        get => _helperIdProvider;
+        set => _helperIdProvider = value;
+    }
+    public static string? HelperPrefix
+    {
+        get => _helperPrefix;
+        set => _helperPrefix = value;
+    }
+
+    private static string HelperName(string kind, ref int counter)
+    {
+        int id = _helperIdProvider is { } p ? p() : ++counter;
+        return $"{_helperPrefix}${kind}_{id}";
+    }
+
+    /// <summary>ADR-025 — per-thread toggle for the inline if-then-else lowering.
+    /// [ThreadStatic] rather than a parameter because TransformGoal recursion has
+    /// ~15 sites; a consult runs synchronously on one thread, and concurrent
+    /// consults on other engines each see their own slot. Set (and restored) by
+    /// <see cref="ClausePipeline.Apply"/>.</summary>
+    [ThreadStatic] private static bool _inlineIteEnabled;
+    public static bool InlineIteEnabled
+    {
+        get => _inlineIteEnabled;
+        set => _inlineIteEnabled = value;
     }
 
     /// <summary>Chunk 408 — does <paramref name="body"/> contain a <c>!</c> in a
@@ -463,8 +528,7 @@ public static class MetaTransform
         Term left, Term right, ref int counter, List<Clause> helpers,
         string? cutK = null)
     {
-        counter++;
-        string helperName = $"$disj_{counter}";
+        string helperName = HelperName("disj", ref counter);
 
         // Chunk 408 — branch cuts become '$call'(!, K) BEFORE free-variable
         // collection, so the captured-barrier variable K rides into the
@@ -545,8 +609,7 @@ public static class MetaTransform
     private static Term SynthesizeOnceHelper(
         Term innerGoal, ref int counter, List<Clause> helpers, bool ignoreMode)
     {
-        counter++;
-        string helperName = ignoreMode ? $"$ign_{counter}" : $"$once_{counter}";
+        string helperName = HelperName(ignoreMode ? "ign" : "once", ref counter);
 
         var freeVars = new List<string>();
         var seen = new HashSet<string>();
@@ -582,8 +645,7 @@ public static class MetaTransform
     private static Term SynthesizeNegationHelper(
         Term innerGoal, ref int counter, List<Clause> helpers)
     {
-        counter++;
-        string helperName = $"$neg_{counter}";
+        string helperName = HelperName("neg", ref counter);
 
         var freeVars = new List<string>();
         var seen = new HashSet<string>();
@@ -755,9 +817,9 @@ public static class MetaTransform
     private static Term RewriteCatch(
         Term goal, Term catcher, Term recovery, ref int counter, List<Clause> helpers)
     {
-        counter++;
-        string goalName = $"$catchgoal_{counter}";
-        string recName = $"$catchrec_{counter}";
+        // catchgoal/catchrec share one id.
+        string goalName = HelperName("catchgoal", ref counter);
+        string recName = goalName.Replace("$catchgoal_", "$catchrec_");
 
         var allVars = new List<string>();
         var allSeen = new HashSet<string>();

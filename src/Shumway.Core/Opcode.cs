@@ -16,13 +16,13 @@ namespace Shumway.Core;
 /// <list type="bullet">
 ///   <item>0x00: <see cref="ReservedInvalid"/> — catches PC corruption when dispatched.
 ///     Must stay 0x00 (zeroed memory dispatches as corruption).</item>
-///   <item>0x01..0x5A: every opcode the interpreter dispatches, grouped by category
+///   <item>0x01..0x5B: every opcode the interpreter dispatches, grouped by category
 ///     (get, put, unify, control, choice points, indexing, cut, builtin call,
 ///     consolidated/fused, PSTR, arithmetic), ending with <see cref="Meta"/> — the
 ///     dense jump-table block.</item>
-///   <item>0x5B: <see cref="ReservedExtension"/> — escape mechanism for a
+///   <item>0x5C: <see cref="ReservedExtension"/> — escape mechanism for a
 ///     hypothetical extended encoding (no dispatch case).</item>
-///   <item>0x5C..0x65: reserved specialised-builtin opcodes (never emitted, no
+///   <item>0x5D..0x66: reserved specialised-builtin opcodes (never emitted, no
 ///     dispatch case).</item>
 /// </list>
 /// </summary>
@@ -232,26 +232,34 @@ public enum Opcode : byte
     AIntBin = 0x58,     // 17 bytes (compact encoding, chunk 311)
     AIntCmp = 0x59,     // 13 bytes (compact encoding, chunk 311)
 
+    // ADR-025 — unconditional intra-predicate branch: Pc = <target>. Emitted by
+    // the inline if-then-else / disjunction lowering (jump over the else branch
+    // after the then branch completes). The operand is an Address, so the
+    // linker's dispatch-site shift makes it program-absolute like a
+    // try_me_else target.
+    //   Jump <target:int32>
+    Jump = 0x5A,        // 5 bytes
+
     // Meta — last member of the dense dispatched block (chunk 429).
-    Meta = 0x5A,
+    Meta = 0x5B,
 
     // Extension escape — reserved, never dispatched.
-    ReservedExtension = 0x5B,
+    ReservedExtension = 0x5C,
 
     // Reserved specialised-builtin opcodes. Defined in OpcodeTable but
     // never emitted by the compiler and never dispatched by the
     // interpreter; parked after ReservedExtension so the dispatched
-    // block 0x00..0x5A stays hole-free (chunk 429).
-    UnifyEq = 0x5C,
-    IsOp = 0x5D,
-    LessThan = 0x5E,
-    GreaterThan = 0x5F,
-    LessEq = 0x60,
-    GreaterEq = 0x61,
-    ArithEq = 0x62,
-    ArithNotEq = 0x63,
-    StructEq = 0x64,
-    StructNotEq = 0x65,
+    // block stays hole-free (chunk 429).
+    UnifyEq = 0x5D,
+    IsOp = 0x5E,
+    LessThan = 0x5F,
+    GreaterThan = 0x60,
+    LessEq = 0x61,
+    GreaterEq = 0x62,
+    ArithEq = 0x63,
+    ArithNotEq = 0x64,
+    StructEq = 0x65,
+    StructNotEq = 0x66,
 }
 
 /// <summary>Sub-opcodes for <see cref="Opcode.Meta"/>. Only <see cref="DbgInfo"/> exists in v1.</summary>

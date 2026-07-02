@@ -97,6 +97,26 @@ public sealed class BytecodeEmitter
 
     public void EmitTrustMe() => _bytes.Add((byte)Opcode.TrustMe);
 
+    /// <summary>ADR-025 — unconditional intra-predicate branch. The target is a
+    /// clause-local address at emit time; PredicateCompiler shifts it to
+    /// predicate-local and the linker to program-absolute (dispatch site).</summary>
+    public void EmitJump(int targetAddress)
+    {
+        _bytes.Add((byte)Opcode.Jump);
+        EmitInt(targetAddress);
+    }
+
+    /// <summary>Overwrites the 4 bytes at <paramref name="position"/> with
+    /// <paramref name="value"/> — back-patching a forward branch target
+    /// (ADR-025 inline if-then-else).</summary>
+    public void PatchInt32(int position, int value)
+    {
+        _bytes[position] = (byte)value;
+        _bytes[position + 1] = (byte)(value >> 8);
+        _bytes[position + 2] = (byte)(value >> 16);
+        _bytes[position + 3] = (byte)(value >> 24);
+    }
+
     /// <summary>1-byte no-op (ADR-015 chunk C step 4) — padding bytes for
     /// asserta's in-place rewrite of a clause's chain instruction.</summary>
     public void EmitNop() => _bytes.Add((byte)Opcode.Nop);

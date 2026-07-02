@@ -179,13 +179,33 @@ A deferral is a TODO with a prerequisite, not a closure.
       pool snapshots are skipped when pool counts are unchanged
       (`RefreshLiteralPoolsIfGrown`). The residual — RULES still run the
       pipeline — is semantically required (control constructs must lower).
-- [ ] **W4** 🟡 Tier-0 `;`/`->` lowering is helper-predicate + Call + CP even for
-      deterministic ITE (Phase-29 fixed IL only). **ADR-025 WRITTEN**
-      (docs/architecture/adr/025-body-jump-inline-ite.md): one `jump` opcode,
-      inline lowering with arity-0 try_me_else CP + Y-classified branch vars,
-      IL describe/emit REQUIRED before the compiler flips on (else body-ITE
-      predicates lose Tier-1). Awaiting user approval; then implement per the
-      rollout order in the ADR.
+- [x] **W4** 🟡 Tier-0 `;`/`->` inline lowering — **ADR-025 APPROVED +
+      IMPLEMENTED (stages a+c)**: `jump` opcode (dense block, tail renumbered),
+      interpreter case, clause-local branch operands relocated via
+      CompiledClause.DispatchSites → PredicateCompiler merge (all 5 assembly
+      paths) → linker dispatch-site shift; ClauseCompiler emits eligible
+      plain-goal ITE/disjunction inline (get_level; arity-0 try_me_else; cut;
+      jump; trust_me) with branch vars forced permanent and BRANCH-AWARE
+      Y-initialization tracking (snapshot/restore/intersect — the else path
+      must not trust then-path inits). Gated by `PrologEngine.EnableInlineIte`
+      (default OFF). **Remaining: stage (b) IL describe/emit, then flip the
+      default** — today the IL compiler gracefully rejects the shape (Tier-0).
+      14 semantic tests + differential vs the helper form.
+- [x] **E12** 🔴 **HELPER-NAME COLLISION (latent, ≥ phase-32; found validating
+      ADR-025)**: MetaTransform's synthesized-helper counter restarted per
+      transform run, so the QUERY stub's `$disj_1` (findall collect loop, same
+      user-module mangling + arity) collided with a consulted clause's
+      `$disj_1` — the query-region definition shadowed the consulted helper and
+      callers executed the WRONG body (`findall(R, classify(5,R), L)` over an
+      if-then-else predicate threw instantiation_error; REPL-reproducible with
+      a 1-line program). *Fixed with SCOPED naming: consult/assert transforms
+      draw from the ENGINE's monotonic sequence (unique across consults;
+      bounded atoms — a process-GLOBAL sequence was tried first and grew the
+      functor table past the resume-marker fid cap mid-suite, breaking marker
+      users); the query stub (the direct MetaTransform.Apply site in
+      SetupQueryFromTerm) uses the reserved `$q` prefix, reused
+      query-to-query. 8-test regression suite. NOTE: this RECONFIRMED B1 (the
+      resume-marker ~262K fid cap) as a live ceiling — raise B1's priority.*
 - [x] **W5** 🟡 `DcgTransform.cs:139-168` — 2 redundant `=/2` state-reconciliation
       goals per DCG disjunction branch. *Fixed: the shared endpoint is
       SUBSTITUTED into a branch whose own endpoint is a fresh `$Sn` variable
@@ -316,7 +336,7 @@ Interpreter core:
       _unifyPointer local threading; FlushPendingWakeupsSlow pooled scratch.
 
 WAM↔IL boundary:
-- [ ] **B1** 🟡 resume-marker encoding caps (functor id ~262K, 4096 cursors).
+- [ ] **B1** 🔴 (raised from 🟡 — E12 proved the suite runs NEAR the cap) resume-marker encoding caps (functor id ~262K, 4096 cursors): replace the arithmetic encoding with a dense side-table of (fid, cursor) pairs.
 - [ ] **B2** 🟡 MaybeCollectHeap unconditional per marker resume.
 - [ ] **B3** ⚪ double closure per promoted predicate; per-query dispatch cache
       rebuild.
