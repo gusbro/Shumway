@@ -90,10 +90,11 @@ public static class ShmoCompiler
     /// string for "<c>user</c>" — Shumway's default.</summary>
     public static ShmoObject CompileSource(string source,
         string moduleNameFallback = "user",
-        ShmoBuildMode buildMode = ShmoBuildMode.Release)
+        ShmoBuildMode buildMode = ShmoBuildMode.Release,
+        Func<PredicateRef, bool>? clauseFilter = null)
     {
         var result = TryCompileSource(source, moduleNameFallback, buildMode,
-            maxErrors: 100);
+            maxErrors: 100, clauseFilter: clauseFilter);
         if (result.Errors.Count > 0)
         {
             var first = result.Errors[0];
@@ -111,11 +112,16 @@ public static class ShmoCompiler
     /// captured. The result carries every error AND — only when zero
     /// errors fired — the resulting <see cref="ShmoObject"/>. Stops
     /// after <paramref name="maxErrors"/> errors (default 100).</summary>
+    /// <param name="clauseFilter">Phase 33 T1 (prelude pruning) — when non-null,
+    /// only clauses whose HEAD indicator satisfies the filter are compiled;
+    /// directives are unaffected. Used by the linker to bake a reachability-
+    /// reduced prelude.</param>
     public static ShmoCompileResult TryCompileSource(string source,
         string moduleNameFallback = "user",
         ShmoBuildMode buildMode = ShmoBuildMode.Release,
         int maxErrors = 100,
-        bool arityCompat = false)
+        bool arityCompat = false,
+        Func<PredicateRef, bool>? clauseFilter = null)
     {
         ArgumentNullException.ThrowIfNull(source);
         Shumway.Builtins.StandardBuiltins.EnsureRegistered();
@@ -244,6 +250,12 @@ public static class ShmoCompiler
                 }
                 continue;
             }
+            // Phase 33 T1 — prelude pruning: drop clauses whose head the
+            // filter rejects (directives were handled above and always run).
+            if (clauseFilter is not null
+                && TryExtractHead(clause) is { } head
+                && !clauseFilter(head))
+                continue;
             rawClauses.Add(clause);
         }
         if (errors.Count > 0)

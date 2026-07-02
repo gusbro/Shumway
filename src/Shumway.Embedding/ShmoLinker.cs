@@ -190,6 +190,18 @@ public sealed class LinkConfig
     /// <c>.shum</c> bundles aren't bloated with the prelude they re-consult
     /// anyway).</summary>
     public bool BakePrelude { get; init; }
+
+    /// <summary>Phase 33 T1 — with <see cref="BakePrelude"/>, bake only the
+    /// prelude predicates the linked program can REACH (the indicators the
+    /// reachability walk resolved against the prelude, closed over the
+    /// prelude's own call graph) instead of the whole ~780-line prelude.
+    /// Off by default and OPT-IN on purpose: a runtime-constructed meta-call
+    /// (<c>call(Atom)</c>, a goal read at runtime) can name a prelude
+    /// predicate the static walk never saw — same contract as user-code
+    /// pruning, and same escape hatch (<c>:- ensure_linked</c> the predicates
+    /// you conjure dynamically). Interactive/REPL-style consumers that accept
+    /// arbitrary queries should keep the full prelude.</summary>
+    public bool PrunePrelude { get; init; }
 }
 
 /// <summary>One library input to <see cref="ShmoLinker.Link"/>: a
@@ -415,6 +427,9 @@ public static class ShmoLinker
             preludeObj.Defined
                 .Where(d => d.Visibility == PredicateVisibility.Public)
                 .Select(d => d.Indicator));
+        // Phase 33 T1 — every prelude indicator the walk resolves against, for
+        // --prune-prelude's reduced bake.
+        var preludeUsed = new HashSet<PredicateRef>();
 
         // ----- 4. Snapshot the builtin set -----
         var builtinPredicates = new HashSet<PredicateRef>();
@@ -474,7 +489,15 @@ public static class ShmoLinker
                 string? mod = ResolveDefiningModule(el, globalPublic, globalDynamic);
                 if (mod is null)
                 {
-                    if (preludePublics.Contains(el) || builtinPredicates.Contains(el))
+                    if (preludePublics.Contains(el))
+                    {
+                        // Phase 33 T1 — an ensure_linked naming a prelude
+                        // predicate is exactly the escape hatch for
+                        // runtime-constructed meta-calls under --prune-prelude.
+                        preludeUsed.Add(el);
+                        continue;
+                    }
+                    if (builtinPredicates.Contains(el))
                         continue;  // already-available — silently ignore.
                     Emit(config.AllowUndefined ? LinkSeverity.Warning : LinkSeverity.Error,
                         "ensure_linked_unresolved",
@@ -588,8 +611,9 @@ public static class ShmoLinker
                 }
                 // 4) Builtin? Always resolves.
                 if (builtinPredicates.Contains(edge)) continue;
-                // 5) Prelude public? Always resolves.
-                if (preludePublics.Contains(edge)) continue;
+                // 5) Prelude public? Always resolves. Phase 33 T1 — record the
+                //    indicator so --prune-prelude can bake only the reached set.
+                if (preludePublics.Contains(edge)) { preludeUsed.Add(edge); continue; }
                 // 6) Chunk 441 — a META-marked edge from an Arity-
                 //    compiled module: defer the decision. If by the end
                 //    of the walk the target collected ONLY such
@@ -978,13 +1002,69 @@ public static class ShmoLinker
             // already has the prelude drops this entry on load.
             if (config.BakePrelude)
             {
+                var bakedPrelude = preludeObj;
+                if (config.PrunePrelude)
+                {
+                    // Phase 33 T1 — close the used set over the prelude's own
+                    // call graph (helpers and prelude-internal callees are
+                    // traversed; the clause filter naturally keeps only
+                    // source-level heads — synthesized helpers regenerate in
+                    // the reduced compile). Dynamic-seed heads are always kept:
+                    // asserted-at-runtime prelude state must stay available.
+                    var keep = new HashSet<PredicateRef>(preludeUsed);
+                    foreach (var seed in preludeObj.DynamicSeeds)
+                        keep.Add(seed.Indicator);
+                    // ENGINE-INFRASTRUCTURE prelude predicates are always kept:
+                    // the engine dispatches them BY NAME at runtime with no
+                    // static reference the walk could see — the chunk-88
+                    // runtime meta-call helpers ('$call_conj'/'$call_disj'/
+                    // '$call_arrow'/'$call_neg', conjured by DispatchCall and
+                    // the IL meta-call helper for runtime compound goals) and
+                    // the variable-goal fallbacks of the control builtins,
+                    // which any QUERY may need regardless of the linked
+                    // program (catch(G, ...) with G bound at runtime resolves
+                    // to the prelude catch/3). '$catch_run'/1 is referenced by
+                    // catch/3 as DATA ONLY (a constructed recovery goal — the
+                    // reason it is :- public), so the call-graph closure cannot
+                    // see it: kept explicitly. Statically-referenced
+                    // infrastructure (the '$tbl_*' tabling driver a ':- table'
+                    // transform emits calls to) is already covered by the
+                    // reachability walk.
+                    keep.Add(new PredicateRef("$call_conj", 3));
+                    keep.Add(new PredicateRef("$call_disj", 3));
+                    keep.Add(new PredicateRef("$call_arrow", 3));
+                    keep.Add(new PredicateRef("$call_neg", 1));
+                    keep.Add(new PredicateRef("$catch_run", 1));
+                    keep.Add(new PredicateRef("catch", 3));
+                    keep.Add(new PredicateRef("forall", 2));
+                    keep.Add(new PredicateRef("once", 1));
+                    keep.Add(new PredicateRef("ignore", 1));
+                    var work = new Queue<PredicateRef>(keep);
+                    while (work.Count > 0)
+                    {
+                        var cur = work.Dequeue();
+                        if (!preludeObj.CallGraph.TryGetValue(cur, out var edges)) continue;
+                        foreach (var edgeRef in edges)
+                            if (keep.Add(edgeRef.Target))
+                                work.Enqueue(edgeRef.Target);
+                    }
+                    bakedPrelude = ShmoCompiler.CompileSource(
+                        Prelude.Source, clauseFilter: keep.Contains);
+                    Emit(LinkSeverity.Info, "prelude_pruned",
+                        $"pruned the baked prelude to {bakedPrelude.Defined.Count} of "
+                        + $"{preludeObj.Defined.Count} predicates "
+                        + $"({bakedPrelude.Bytecode.Length:N0} of {preludeObj.Bytecode.Length:N0} "
+                        + "bytecode bytes). Runtime-constructed goals naming unreached "
+                        + "prelude predicates raise existence_error — declare them "
+                        + ":- ensure_linked to keep them.");
+                }
                 entries.Add(new BundleEntry(
-                    moduleName: preludeObj.ModuleName,
+                    moduleName: bakedPrelude.ModuleName,
                     source: "",
-                    compiledBytecode: preludeObj.Bytecode,
+                    compiledBytecode: bakedPrelude.Bytecode,
                     compiledIl: null,
-                    defined: preludeObj.Defined,
-                    dynamicSeeds: preludeObj.DynamicSeeds));
+                    defined: bakedPrelude.Defined,
+                    dynamicSeeds: bakedPrelude.DynamicSeeds));
                 Emit(LinkSeverity.Info, "prelude_baked",
                     "baked the precompiled prelude into the bundle "
                     + "(bare-load startup skips prelude compilation).");

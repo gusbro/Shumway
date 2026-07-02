@@ -104,6 +104,7 @@ internal static class Program
             // fully precompiled prelude — no parse, no compile.
             BakePrelude = opts.BakePrelude || !string.IsNullOrEmpty(opts.ExePath)
                 || !string.IsNullOrEmpty(opts.DllPath),
+            PrunePrelude = opts.PrunePrelude,
             VerboseOut = opts.Verbose ? Console.Error : null,
             StripSource = opts.StripSource,
             IncludeCompiledIl = opts.IncludeCompiledIl,
@@ -260,6 +261,7 @@ internal static class Program
         public bool RegionPruneReport { get; set; }
         public bool RegionPrune { get; set; } = true;   // default since chunk 418
         public bool BakePrelude { get; set; }
+        public bool PrunePrelude { get; set; }
         public string? DumpWamPath { get; set; }
         public string? DumpIlPath { get; set; }
         public string MapPath { get; set; } = "";
@@ -342,6 +344,14 @@ internal static class Program
 
                 case "--stdlib":
                     opts.BakePrelude = true;
+                    break;
+
+                // Phase 33 T1 — bake only the REACHED prelude predicates
+                // (closure over the prelude call graph). Opt-in: runtime-
+                // constructed goals naming unreached prelude predicates raise
+                // existence_error (declare them :- ensure_linked to keep them).
+                case "--prune-prelude":
+                    opts.PrunePrelude = true;
                     break;
 
                 case "--no-region-prune":
@@ -615,6 +625,13 @@ internal static class Program
             + "                           Automatic with --exe. Larger bundle, faster start;\n"
             + "                           load via PrologEngine.FromBundle (a plain\n"
             + "                           new PrologEngine()+LoadBundle ignores it).\n"
+            + "      --prune-prelude      With --stdlib/--exe: bake only the prelude\n"
+            + "                           predicates the program can reach (closure over\n"
+            + "                           the prelude call graph) instead of the whole\n"
+            + "                           library. Runtime-constructed goals naming an\n"
+            + "                           unreached prelude predicate raise\n"
+            + "                           existence_error; declare such predicates\n"
+            + "                           :- ensure_linked to keep them.\n"
             + "      --strip-wam          Implies --with-compiled-il, and additionally\n"
             + "                           drops the portable bytecode of every predicate\n"
             + "                           that has compiled IL. Smaller bundles. The result\n"

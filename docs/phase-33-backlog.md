@@ -336,8 +336,20 @@ A deferral is a TODO with a prerequisite, not a closure.
 
 ## Wave 5 — LTO / startup / size
 
-- [ ] **T1** 🔴 prelude baked whole (~780 lines + IL), never reach-pruned against
-      the program.
+- [x] **T1** 🔴 prelude baked whole, never reach-pruned. *Fixed (opt-in
+      `--prune-prelude` / `LinkConfig.PrunePrelude`): the reachability walk
+      records every indicator resolved against the prelude; at bake the set is
+      closed over the prelude's own call graph and the prelude recompiles with
+      a clause filter (helpers regenerate). An ENGINE-INFRASTRUCTURE set is
+      always kept — the chunk-88 runtime meta-call helpers ($call_conj/disj/
+      arrow/neg), $catch_run/1 (DATA-ONLY ref from catch/3 — invisible to the
+      call graph, the reason it was made :- public), and the variable-goal
+      fallbacks catch/3+forall/2+once/1+ignore/1 any QUERY may need; dynamic
+      seeds always kept; statically-referenced infrastructure ($tbl_*) comes
+      via the walk. Measured: a 2-predicate program bakes 30 of 192 prelude
+      predicates (3.4 of 53.5 KB, −94%). Opt-in by design: runtime-constructed
+      goals naming unreached prelude predicates raise existence_error —
+      :- ensure_linked is the escape hatch (works, tested). 4 tests.*
 - [ ] **T2** 🔴 no compression anywhere in `.shum`.
 - [ ] **T3** 🔴 persisted-IL `Assembly.Load`+patch+delegates per engine — needs a
       process-wide cache keyed like `_loadedNativeLibraries`.
