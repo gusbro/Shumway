@@ -178,9 +178,11 @@ public class Chunk39Tests
         // Chunk 66 made non-leaf callees IL-eligible, chunk 215 made deep cut
         // eligible, and ADR-023 made dynamic predicates eligible (snapshot +
         // evict-on-mutation) — all shapes this test previously relied on now
-        // promote. A predicate that is *marked unpromotable via the dispatch path
-        // and never retried* now is a mutation-hot dynamic: past the churn limit
-        // (ADR-023) it is pinned to Tier 0 for good.
+        // promote. A mutation-hot dynamic past the churn limit (ADR-023) is
+        // pinned to Tier 0 — since Phase 33 L5 the pin is expressed by the
+        // eviction count (re-armable after a ChurnRearmCalls mutation-free
+        // stretch) rather than the permanent unpromotable set, so while the
+        // mutation phase continues the predicate stays on Tier 0.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
         engine.ConsultString(":- dynamic foo/1.\nfoo(a).\n");
@@ -191,8 +193,7 @@ public class Chunk39Tests
             engine.Query("assertz(foo(a)).");                       // mutate → evict
         }
         for (int i = 0; i < 5; i++) engine.Query("foo(_).");
-        Assert.True(engine.IlPromotion.IsUnpromotable(fid));
-        Assert.False(engine.IlPromotion.IsPromoted(fid));
+        Assert.False(engine.IlPromotion.IsPromoted(fid));   // still pinned (streak < ChurnRearmCalls)
     }
 
     // ============================================================================

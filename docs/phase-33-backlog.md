@@ -172,9 +172,17 @@ Legend: 🔴 high · 🟡 medium · ⚪ low. `[x]` done · `[-]` rejected/not-a-
       (`RefreshLiteralPoolsIfGrown`). The residual — RULES still run the
       pipeline — is semantically required (control constructs must lower).
 - [ ] **W4** 🟡 Tier-0 `;`/`->` lowering is helper-predicate + Call + CP even for
-      deterministic ITE (Phase-29 fixed IL only). Inline shallow ITE.
-- [ ] **W5** 🟡 `DcgTransform.cs:139-168` — 2 redundant `=/2` state-reconciliation
-      goals per DCG disjunction branch. Substitute the out-var into branches.
+      deterministic ITE (Phase-29 fixed IL only). **Blocked on an ADR**: the
+      classical inline lowering (get_level; cond; cut; then; JUMP end / else:)
+      needs an intra-clause body jump opcode, and "adding a new top-level
+      opcode" is a stop-and-propose-an-ADR decision per CLAUDE.md. Propose
+      ADR-025 (body branch opcode) to the user before implementing.
+- [x] **W5** 🟡 `DcgTransform.cs:139-168` — 2 redundant `=/2` state-reconciliation
+      goals per DCG disjunction branch. *Fixed: the shared endpoint is
+      SUBSTITUTED into a branch whose own endpoint is a fresh `$Sn` variable
+      (unique per transform — capture-safe rename); the explicit `=` remains
+      only for a branch that consumed nothing (endpoint still sIn), which
+      cannot be renamed. Matches the SWI/GProlog expander shape.*
 - [ ] **W6** 🟡 missing fused `execute_builtin` (last-goal builtin =
       call_builtin + deallocate_proceed, 2 dispatches). **Deferred with
       reasoning**: `Opcode.ExecuteBuiltin` already exists (chunk 248, linker
@@ -184,14 +192,29 @@ Legend: 🔴 high · 🟡 medium · ⚪ low. `[x]` done · `[-]` rejected/not-a-
       lose Tier-1 promotion, a far bigger regression than one saved Tier-0
       dispatch (frameless case only; with a frame it's 2 ops either way).
       Prerequisite: IL-side ExecuteBuiltin body support first.
-- [ ] **W7** 🟡 `ModuleCompiler.ComputePoolFree` — string/bigint literals exclude
-      a predicate from cross-query cache (only floats stable). Make those pools
-      append-only-stable and exempt.
-- [ ] **W8** 🟡 `$get_cut_barrier` forces Y-slot + frame on clauses with a branch
-      cut. Register-thread the barrier.
-- [ ] **W9** ⚪ Minor batch: a_int fast-lane float/bigint literal kinds;
-      var-clause duplication per bucket (keys×varClauses); body-local CSE;
-      helper dedup by structural key.
+- [x] **W7** 🟡 `ModuleCompiler.ComputePoolFree` — string/bigint literals exclude
+      a predicate from cross-query cache (only floats stable). *Fixed after
+      auditing the invariant: all three pools are per-engine `LiteralPool<T>`
+      (append-only + deduplicating, "existing indices stay stable" documented),
+      and the ONLY flow consulting the caches (query setup) always compiles
+      against the engine's persistent `_literalPools`. Exempted GetBigInt/
+      PutBigInt/UnifyBigInt + GetPstr/PutPstr alongside the float ops; the
+      guard remains for any future LiteralId carrier outside the audited set.*
+- [-] **W8** 🟡 `$get_cut_barrier` Y-slot + frame — **already conditional +
+      remainder is by design**: chunk 408 gates the capture on
+      `HasTransparentBranchCut(body)` (a cut-free body pays nothing — the
+      audit's own suggested fix), and when a branch `!` exists the barrier
+      variable crosses the helper call boundary, so a Y slot is REQUIRED by
+      the chunk model — the register alternative is the ADR-021-rejected
+      register allocator.
+- [ ] **W9** ⚪ Minor batch → moved to later rounds:
+      (a) a_int fast-lane float/bigint literal kinds — real, needs encoding +
+      both tiers; (b) var-clause duplication per bucket — interacts with the
+      chunk-155x in-place chain machinery, risky; (c) body-local CSE — a new
+      pass; (d) control-helper dedup by structural key — feasible (name-scoped
+      canonical render). Also: widening `IsInlineBodyGoal` with `=/2` would
+      extend the W2 neck-cut prefix to `X = foo, !` shapes (verify CP-safety
+      of every =/2 emission form first).
 
 ## Wave 4 — IL dispatch & promotion
 
@@ -200,15 +223,25 @@ Legend: 🔴 high · 🟡 medium · ⚪ low. `[x]` done · `[-]` rejected/not-a-
 - [ ] **L2** 🔴 `IlPromotionStore.RunOnLargeStack` — synchronous 16MB
       thread-create + Join per compile on the query thread. Background compile
       queue with a persistent worker.
-- [ ] **L5** 🟡 `EvictionChurnLimit=3` permanent Tier-0 banishment — bulk assertz
-      of 3 clauses kills IL forever. Coalesce mutations / re-arm after stable
-      reads.
+- [x] **L5** 🟡 `EvictionChurnLimit=3` permanent Tier-0 banishment. *Fixed: the
+      churn pin no longer goes through the permanent `_unpromotable` set — it
+      re-arms after `ChurnRearmCalls` (default 4096) mutation-free invocations
+      (eviction count resets to limit−1, so one more promote→evict cycle
+      re-pins quickly). Any mutation resets the streak. The audit's "bulk
+      assertz of 3 clauses = 3 evictions" claim was REFUTED: EvictDelegate
+      early-returns when no delegate is present, so a pure bulk load counts
+      ONE eviction; only real promote→evict cycles count. 2 tests (pin
+      preserved + re-arm on read-hot).*
 - [ ] **L3** 🔴 16KB bytecode cap (Sigil O(n²)) — big fact tables permanently
       Tier-0. Lift via linear emitter or sub-range splitting.
 - [ ] **L6** 🟡 `RegionMemberOk` rejects switched-chain/indexed-atom multi-clause
       members → region fragmentation.
 - [ ] **L7** 🟡 `AIntBin/AIntCmp` — compile-time-constant kinds passed as runtime
-      args re-branch per call. Specialize at emit.
+      args. **Deferred pending a benchmark**: FusedBin/FusedCmp + TryReadInt +
+      Deliver are all `AggressiveInlining` and the kinds arrive as CONSTANTS at
+      the emitted call site, so RyuJIT inlines and constant-folds the kind
+      branches away in the common case — hand-specializing at emit is likely
+      redundant. Verify with a disasm/interleaved benchmark before building it.
 - [ ] **L8** 🟡 chunk-216 indexed dispatch keeps WAM-backed lazy model (no
       strip-wam, first-call build). Bake IlIndexGraph as an IL jump table.
 - [ ] **L9** ⚪ Minor batch: region self-delegate CSE gate ≥3→≥2;

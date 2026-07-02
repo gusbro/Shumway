@@ -96,8 +96,19 @@ public sealed class IlPromotionStore
     private readonly Dictionary<int, int> _evictions = new();
 
     /// <summary>ADR-023 — a dynamic predicate evicted this many times is mutation-
-    /// hot; stop the promote→evict churn and keep it on Tier 0 for good.</summary>
+    /// hot; stop the promote→evict churn and keep it on Tier 0. Phase 33 L5 — the
+    /// pin re-arms after <see cref="ChurnRearmCalls"/> mutation-free invocations
+    /// (see RecordInvocation), so a load-then-read predicate isn't banished from
+    /// IL forever by its startup mutation phase.</summary>
     public int EvictionChurnLimit { get; set; } = 3;
+
+    /// <summary>Phase 33 L5 — invocations a churn-pinned dynamic predicate must run
+    /// WITHOUT any further mutation before the pin re-arms (one more promotion is
+    /// allowed). A mutation resets the streak (see <see cref="EvictDelegate"/>).</summary>
+    public int ChurnRearmCalls { get; set; } = 4096;
+
+    // Per-functor mutation-free invocation streak for churn-pinned predicates.
+    private readonly Dictionary<int, int> _churnQuietCalls = new();
 
     /// <summary>ADR-023 — drops a dynamic predicate's cached IL snapshot after a
     /// mutation (assert/retract/abolish), so the next call falls back to the
@@ -107,6 +118,9 @@ public sealed class IlPromotionStore
     /// A no-op for a predicate that was never promoted.</summary>
     public void EvictDelegate(int functorId)
     {
+        // Phase 33 L5 — any mutation breaks a churn-pinned predicate's
+        // mutation-free streak, whether or not a delegate was present.
+        _churnQuietCalls.Remove(functorId);
         if (!_delegates.Remove(functorId)) return;
         _counters.Remove(functorId);
         _pgoProfileKeys.Remove(functorId);
@@ -232,11 +246,24 @@ public sealed class IlPromotionStore
         // promoted as a SNAPSHOT of its currently-visible clauses, not the mutable
         // chain; a later mutation evicts it (EvictDelegate). A predicate that has
         // proven mutation-hot (≥ EvictionChurnLimit evictions) is pinned to Tier 0.
+        // Phase 33 L5 — the pin RE-ARMS: a churn-pinned predicate that then runs
+        // ChurnRearmCalls invocations without a single further mutation has gone
+        // read-hot (the Arity load-mutate-then-read-forever profile); its eviction
+        // count resets to one-below-limit so it may promote again (and one more
+        // promote→evict cycle re-pins it quickly if the mutation phase returns).
         bool isDynamic = IsExcludedByLayout(predicate);
         if (isDynamic && _evictions.TryGetValue(functorId, out int ev) && ev >= EvictionChurnLimit)
         {
-            MarkUnpromotable(functorId, "dynamic-churn");
-            return null;
+            _churnQuietCalls.TryGetValue(functorId, out int quiet);
+            quiet++;
+            if (quiet < ChurnRearmCalls)
+            {
+                _churnQuietCalls[functorId] = quiet;
+                return null;   // stays pinned (not via _unpromotable — re-armable)
+            }
+            // Read-hot with no mutations for a long stretch: re-arm.
+            _churnQuietCalls.Remove(functorId);
+            _evictions[functorId] = EvictionChurnLimit - 1;
         }
 
         _counters.TryGetValue(functorId, out int count);

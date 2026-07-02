@@ -77,7 +77,10 @@ public sealed class DynamicIlPromotionTests
         var e = Engine(":- dynamic d/1.\nd(0).\n");
         int fid = Fid("d", 1);
         // each round: warm to promotion, then mutate to evict. Past the churn
-        // limit (3) the predicate stays on Tier 0 even when hot.
+        // limit (3) the predicate stays on Tier 0 even when hot. (Phase 33 L5:
+        // the pin is expressed by the eviction count — re-armable — rather than
+        // the permanent _unpromotable set; keep the read stretch below
+        // ChurnRearmCalls so it stays pinned here.)
         for (int round = 0; round < 6; round++)
         {
             for (int i = 0; i < 5; i++) Assert.True(e.Query("d(0).").Success);
@@ -85,7 +88,32 @@ public sealed class DynamicIlPromotionTests
         }
         for (int i = 0; i < 10; i++) Assert.True(e.Query("d(0).").Success);
         Assert.False(e.IlPromotion.IsPromoted(fid));               // pinned to Tier 0
-        Assert.True(e.IlPromotion.IsUnpromotable(fid));
+    }
+
+    [Fact]
+    public void ChurnGuard_RearmsAfterMutationFreeStretch()
+    {
+        // Phase 33 L5 — the Arity load-mutate-then-read-forever profile: a
+        // predicate churn-pinned during its startup mutation phase re-arms after
+        // a long mutation-free read stretch and earns IL again.
+        var e = Engine(":- dynamic d/1.\nd(0).\n");
+        e.IlPromotion.ChurnRearmCalls = 20;   // short streak for the test
+        int fid = Fid("d", 1);
+        for (int round = 0; round < 6; round++)
+        {
+            for (int i = 0; i < 5; i++) Assert.True(e.Query("d(0).").Success);
+            Assert.True(e.Query("assertz(d(0)).").Success);
+        }
+        Assert.False(e.IlPromotion.IsPromoted(fid));   // pinned by churn
+        // Mutation-free reads: pin re-arms after ChurnRearmCalls, then the
+        // (primed) predicate re-promotes; results stay correct throughout.
+        for (int i = 0; i < 60; i++) Assert.True(e.Query("d(0).").Success);
+        Assert.True(e.IlPromotion.IsPromoted(fid));
+        Assert.True(e.Query("findall(X, d(X), L), length(L, N), N == 7.").Success);
+        // A returning mutation phase evicts + one more churn re-pins quickly.
+        Assert.True(e.Query("assertz(d(9)).").Success);
+        Assert.False(e.IlPromotion.IsPromoted(fid));
+        Assert.True(e.Query("d(9).").Success);
     }
 
     [Fact]

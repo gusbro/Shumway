@@ -192,17 +192,25 @@ public sealed class ModuleCompiler
             if (!info.IsDefined || info.Size == 0) return false;
             if (info.OperandKinds is not null)
             {
-                // A FLOAT literal id is stable across queries: the float pool is
-                // append-only (interned), so the value at a given id never moves,
-                // and the IL compiler value-bakes it anyway — so a float-only
-                // predicate IS reusable / cacheable. String and bigint literals
-                // stay pool-specific (conservatively excluded).
-                bool floatOp = opByte == (byte)Opcode.GetFloat
-                            || opByte == (byte)Opcode.PutFloat
-                            || opByte == (byte)Opcode.UnifyFloat;
+                // Phase 33 W7 — every literal pool (float, bigint, string/PSTR)
+                // is a per-engine LiteralPool<T>: append-only and deduplicating,
+                // so the value at a given id NEVER moves, and the only flow that
+                // consults the cross-query caches (query setup) always compiles
+                // against the engine's persistent `_literalPools` instances.
+                // A literal id is therefore as stable as an atom/functor id
+                // within its engine, and predicates carrying float, bigint or
+                // string literals are all cache-reusable. (Floats were exempted
+                // first — Phase 30; bigint + PSTR audited and exempted here.)
+                // The guard remains for any FUTURE LiteralId carrier outside
+                // this audited set.
+                bool stableLiteralOp = opByte is (byte)Opcode.GetFloat
+                    or (byte)Opcode.PutFloat or (byte)Opcode.UnifyFloat
+                    or (byte)Opcode.GetBigInt or (byte)Opcode.PutBigInt
+                    or (byte)Opcode.UnifyBigInt
+                    or (byte)Opcode.GetPstr or (byte)Opcode.PutPstr;
                 for (int i = 0; i < info.OperandKinds.Length; i++)
                 {
-                    if (info.OperandKinds[i] == OperandKind.LiteralId && !floatOp)
+                    if (info.OperandKinds[i] == OperandKind.LiteralId && !stableLiteralOp)
                         return false;
                 }
             }

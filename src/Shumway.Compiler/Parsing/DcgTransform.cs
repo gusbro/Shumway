@@ -123,9 +123,14 @@ public static class DcgTransform
         if (body is AtomTerm { Name: "!" })
             return (body, sIn);
 
-        // Disjunction: each branch consumes the same input range. We unify
-        // the two branches' outputs with a fresh shared sOut so callers see
-        // one diff-list endpoint regardless of which branch fired.
+        // Disjunction: each branch consumes the same input range and must end
+        // at ONE shared diff-list endpoint. Phase 33 W5 — a branch whose
+        // endpoint is a FRESH state variable (the common case: it consumed
+        // something) gets the shared endpoint SUBSTITUTED into its body
+        // directly, like SWI/GProlog's expander; only a branch whose endpoint
+        // is still sIn (consumed nothing: `{G}`, `!`, `[]`) keeps an explicit
+        // `SShared = SIn` reconciliation goal. This drops the two per-branch
+        // `=/2` goals (→ get_variable/unify pairs) the old form always paid.
         if (body is CompoundTerm { Functor: ";" } disj && disj.Args.Length == 2)
         {
             // If-then-else: (A -> B ; C). A and B share an intermediate
@@ -137,14 +142,8 @@ public static class DcgTransform
                 var (then, sOutA) = TransformBody(itc.Args[1], sMid, ref counter);
                 var (elseBody, sOutB) = TransformBody(disj.Args[1], sIn, ref counter);
                 var sOutMerged = FreshState(ref counter);
-                Term thenWithMerge = new CompoundTerm(",", new[] {
-                    then,
-                    new CompoundTerm("=", new[] { (Term)sOutMerged, sOutA })
-                });
-                Term elseWithMerge = new CompoundTerm(",", new[] {
-                    elseBody,
-                    new CompoundTerm("=", new[] { (Term)sOutMerged, sOutB })
-                });
+                Term thenWithMerge = MergeBranchEndpoint(then, sOutA, sOutMerged, sIn);
+                Term elseWithMerge = MergeBranchEndpoint(elseBody, sOutB, sOutMerged, sIn);
                 Term newIte = new CompoundTerm(";", new[] {
                     new CompoundTerm("->", new[] { cond, thenWithMerge }),
                     elseWithMerge
@@ -157,14 +156,8 @@ public static class DcgTransform
             var (left2, sOutL) = TransformBody(disj.Args[0], sIn, ref counter);
             var (right2, sOutR) = TransformBody(disj.Args[1], sIn, ref counter);
             var sOutShared = FreshState(ref counter);
-            Term leftMerged = new CompoundTerm(",", new[] {
-                left2,
-                new CompoundTerm("=", new[] { (Term)sOutShared, sOutL })
-            });
-            Term rightMerged = new CompoundTerm(",", new[] {
-                right2,
-                new CompoundTerm("=", new[] { (Term)sOutShared, sOutR })
-            });
+            Term leftMerged = MergeBranchEndpoint(left2, sOutL, sOutShared, sIn);
+            Term rightMerged = MergeBranchEndpoint(right2, sOutR, sOutShared, sIn);
             return (new CompoundTerm(";", new[] { leftMerged, rightMerged }), sOutShared);
         }
 
@@ -245,6 +238,51 @@ public static class DcgTransform
     {
         counter++;
         return new VarTerm($"$S{counter}");
+    }
+
+    /// <summary>Phase 33 W5 — makes a disjunction branch end at the shared
+    /// endpoint. When the branch's own endpoint is a FRESH `$Sn` variable
+    /// (it consumed input), the shared variable is substituted for it in the
+    /// branch body — no reconciliation goal. When the endpoint is still
+    /// <paramref name="sIn"/> (nothing consumed), an explicit
+    /// <c>Shared = SIn</c> goal remains, since sIn is used outside the branch
+    /// and cannot be renamed.</summary>
+    private static Term MergeBranchEndpoint(Term branch, Term branchOut, VarTerm shared, Term sIn)
+    {
+        if (branchOut is VarTerm bv
+            && (sIn is not VarTerm siv || bv.Name != siv.Name))
+            return RenameVar(branch, bv.Name, shared);
+        return new CompoundTerm(",", new[]
+        {
+            branch,
+            new CompoundTerm("=", new[] { (Term)shared, branchOut }),
+        });
+    }
+
+    // Replaces every occurrence of the variable named `from` with `to`.
+    // Fresh `$Sn` names are unique per transform, so a name-based rename of a
+    // branch-local endpoint cannot capture anything else.
+    private static Term RenameVar(Term t, string from, VarTerm to) => t switch
+    {
+        VarTerm v when v.Name == from => to,
+        CompoundTerm c => RenameVarInCompound(c, from, to),
+        _ => t,
+    };
+
+    private static Term RenameVarInCompound(CompoundTerm c, string from, VarTerm to)
+    {
+        Term[]? newArgs = null;
+        for (int i = 0; i < c.Args.Length; i++)
+        {
+            Term renamed = RenameVar(c.Args[i], from, to);
+            if (!ReferenceEquals(renamed, c.Args[i]))
+            {
+                newArgs ??= (Term[])c.Args.Clone();
+                newArgs[i] = renamed;
+            }
+        }
+        return newArgs is null ? c
+            : new CompoundTerm(c.Functor, newArgs) { Position = c.Position };
     }
 
     /// <summary>Builds <c>[l1, l2, …, ln | tail]</c> for a list term
