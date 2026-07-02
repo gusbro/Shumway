@@ -2,6 +2,23 @@ using System.Collections.Concurrent;
 
 namespace Shumway.Embedding;
 
+/// <summary>How <see cref="EnginePool"/> treats an engine returned by a lease.</summary>
+public enum PoolReusePolicy
+{
+    /// <summary>The returned engine goes back to the idle set <b>with its state
+    /// intact</b>: clauses asserted, recorded-database entries, global variables and
+    /// native scalar globals from one rental are visible to the next renter. Fastest
+    /// (no re-consult), correct only when rentals don't mutate engine state or when
+    /// cross-rental state is intended.</summary>
+    ReuseState,
+
+    /// <summary>The returned engine is discarded; the next rental builds a fresh one
+    /// via the factory. Every renter sees exactly the factory's post-consult state —
+    /// no leakage of asserts / recorded entries / globals between rentals — at the
+    /// cost of re-running the factory per rental.</summary>
+    FreshEngine,
+}
+
 /// <summary>
 /// A bounded pool of <see cref="PrologEngine"/> instances for concurrent
 /// embedding scenarios (e.g. a server answering many requests at once).
@@ -13,9 +30,13 @@ namespace Shumway.Embedding;
 /// engine.</para>
 ///
 /// <para>Each engine is produced (and consulted) by the caller-supplied
-/// <c>factory</c>, lazily on first need and then reused. The global atom /
-/// functor / code-cache tables are thread-safe and shared across engines, so
-/// concurrent factory calls and concurrent queries are safe.</para>
+/// <c>factory</c>, lazily on first need. Under the default
+/// <see cref="PoolReusePolicy.ReuseState"/> the engine is then <b>reused as-is</b> —
+/// state a rental mutates (assertz, recorda, global variables) carries over to the
+/// next rental. Workloads that mutate per request should use
+/// <see cref="PoolReusePolicy.FreshEngine"/>. The global atom / functor /
+/// code-cache tables are thread-safe and shared across engines, so concurrent
+/// factory calls and concurrent queries are safe.</para>
 ///
 /// <example><code>
 /// using var pool = EnginePool.FromSource("ancestor(X, Y) :- parent(X, Y). ...", maxSize: 8);
@@ -29,25 +50,32 @@ public sealed class EnginePool : IDisposable
     private readonly Func<PrologEngine> _factory;
     private readonly SemaphoreSlim _gate;
     private readonly ConcurrentBag<PrologEngine> _idle = new();
+    private readonly PoolReusePolicy _reusePolicy;
     private int _created;
     private int _disposed;
 
     /// <summary>Creates a pool that builds each engine with
     /// <paramref name="factory"/> (typically <c>new PrologEngine()</c> plus
     /// whatever <c>ConsultString</c> / <c>LoadBundle</c> / <c>UseClpfd</c> the
-    /// workload needs) and lends at most <paramref name="maxSize"/> at once.</summary>
-    public EnginePool(Func<PrologEngine> factory, int maxSize)
+    /// workload needs) and lends at most <paramref name="maxSize"/> at once.
+    /// <paramref name="reusePolicy"/> chooses whether a returned engine is reused
+    /// with its state intact (default) or discarded so every rental starts from
+    /// the factory's clean state.</summary>
+    public EnginePool(Func<PrologEngine> factory, int maxSize,
+        PoolReusePolicy reusePolicy = PoolReusePolicy.ReuseState)
     {
         _factory = factory ?? throw new ArgumentNullException(nameof(factory));
         if (maxSize < 1)
             throw new ArgumentOutOfRangeException(nameof(maxSize), maxSize, "Pool size must be at least 1.");
         MaxSize = maxSize;
+        _reusePolicy = reusePolicy;
         _gate = new SemaphoreSlim(maxSize, maxSize);
     }
 
     /// <summary>Convenience: a pool whose every engine is a fresh
     /// <see cref="PrologEngine"/> consulted with <paramref name="program"/>.</summary>
-    public static EnginePool FromSource(string program, int maxSize)
+    public static EnginePool FromSource(string program, int maxSize,
+        PoolReusePolicy reusePolicy = PoolReusePolicy.ReuseState)
     {
         ArgumentNullException.ThrowIfNull(program);
         return new EnginePool(() =>
@@ -55,7 +83,7 @@ public sealed class EnginePool : IDisposable
             var e = new PrologEngine();
             e.ConsultString(program);
             return e;
-        }, maxSize);
+        }, maxSize, reusePolicy);
     }
 
     /// <summary>The maximum number of engines lent simultaneously.</summary>
@@ -106,7 +134,10 @@ public sealed class EnginePool : IDisposable
 
     private void Return(PrologEngine engine)
     {
-        _idle.Add(engine);
+        // FreshEngine: drop the used engine — the next Acquire builds a clean one
+        // via the factory, so no rental sees a previous rental's mutations.
+        if (_reusePolicy == PoolReusePolicy.ReuseState)
+            _idle.Add(engine);
         _gate.Release();
     }
 

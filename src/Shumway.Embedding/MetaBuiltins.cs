@@ -4383,7 +4383,33 @@ public static class MetaBuiltins
         Cell cell = MaterializeRegisterAsCell(engine, register);
         if (cell.Tag == Tag.Ref || cell.Tag == Tag.AttVar)
             throw new Shumway.Core.PrologRuntimeException("instantiation_error");
-        return MaterializeRegister(engine, register);
+        Term key = MaterializeRegister(engine, register);
+        // The recorded DB keys a dictionary on structural term equality, and a
+        // VarTerm compares by its generated name — so a key with an INNER unbound
+        // variable (e.g. foo(X)) would store under a never-again-equal key and
+        // silently fail every recorded/3 lookup. Loud instantiation_error instead.
+        if (!IsDeepGround(key))
+            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+        return key;
+    }
+
+    // Iterative deep-groundness walk (no recursion — keys can be long lists).
+    private static bool IsDeepGround(Term t)
+    {
+        var stack = new Stack<Term>();
+        stack.Push(t);
+        while (stack.Count > 0)
+        {
+            switch (stack.Pop())
+            {
+                case VarTerm:
+                    return false;
+                case CompoundTerm ct:
+                    foreach (var a in ct.Args) stack.Push(a);
+                    break;
+            }
+        }
+        return true;
     }
 
     private static int RequireIntRef(Engine engine, int register, string builtin)
@@ -4643,10 +4669,24 @@ public static class MetaBuiltins
             string text = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
             string source = text.TrimEnd().EndsWith(".", StringComparison.Ordinal)
                 ? text : text + ".";
-            var parser = new Shumway.Compiler.Parsing.Parser(
-                new Shumway.Compiler.Lexer.Lexer(source),
-                Shumway.Compiler.Parsing.OperatorTable.Default());
-            Term parsed = parser.ReadClauseTerm();
+            // Parse with the engine's LIVE operator table so `:- op/3`-defined
+            // operators read back exactly as the term->atom direction writes them
+            // (parsing with the default table made string_term/2 not an inverse).
+            var ops = (engine.Host as PrologEngine)?.Operators
+                ?? Shumway.Compiler.Parsing.OperatorTable.Default();
+            Term parsed;
+            try
+            {
+                var parser = new Shumway.Compiler.Parsing.Parser(
+                    new Shumway.Compiler.Lexer.Lexer(source), ops);
+                parsed = parser.ReadClauseTerm();
+            }
+            catch (Exception ex) when (ex is Shumway.Compiler.Parsing.ParseException
+                                        or Shumway.Compiler.Lexer.LexerException)
+            {
+                // Malformed text is a catchable ISO syntax error, not a .NET crash.
+                throw new Shumway.Core.PrologRuntimeException("syntax_error", ex.Message);
+            }
             Cell newCell = Materializer.MaterializeAsCell(engine, parsed);
             return engine.UnifyRegisterWithCell(1, newCell);
         }

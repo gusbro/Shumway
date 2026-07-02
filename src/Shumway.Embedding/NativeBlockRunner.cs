@@ -313,98 +313,119 @@ public static class NativeBlockRunner
         var args = new object?[c.Args.Count];
         // Handle = the allocator cell (alloc mode) or the HGlobal struct pointer.
         System.Collections.Generic.List<(TermSlot Slot, IntPtr Handle)>? reftypes = null;
+        // HGlobal path: the exact set of pointers Shumway allocated for the reftype
+        // graphs. Freed with FreeRecorded — never by walking the graph, which the
+        // native function may have restructured with its own allocator (freeing a
+        // foreign pointer corrupts the heap).
+        System.Collections.Generic.List<IntPtr>? hglobalAllocs = null;
         // OutScalar: a `&local` pointer the native function writes through.
         System.Collections.Generic.List<(string Local, IntPtr Ptr, Type Elem)>? outScalars = null;
         // StringIn: native char* buffers we allocated and must free after the call.
         System.Collections.Generic.List<IntPtr>? cstrings = null;
         // OutString: a `char**` cell the native function writes a (borrowed) char* into.
         System.Collections.Generic.List<(string Local, IntPtr Cell)>? outStrings = null;
-        for (int i = 0; i < c.Args.Count; i++)
+        // All native memory is released in the finally: an exception anywhere in
+        // marshalling, the native invoke, or the read-back must not leak buffers.
+        try
         {
-            var kind = i < sig.ParamKinds.Length ? sig.ParamKinds[i] : NativeCall.Kind.Scalar;
-            if (kind == NativeCall.Kind.OutString && AddrOfLocal(c.Args[i]) is { } slocal)
+            for (int i = 0; i < c.Args.Count; i++)
             {
-                IntPtr cell = System.Runtime.InteropServices.Marshal.AllocHGlobal(System.IntPtr.Size);
-                System.Runtime.InteropServices.Marshal.WriteIntPtr(cell, System.IntPtr.Zero);
-                args[i] = cell;
-                (outStrings ??= new()).Add((slocal, cell));
-                continue;
-            }
-            if (kind == NativeCall.Kind.StringIn)
-            {
-                // A char* input: render the Prolog argument to a string and copy it
-                // into freshly-allocated, NUL-terminated native memory.
-                string s = AsNativeString(Eval(c.Args[i], host, env, outputs, resolve), host);
-                IntPtr ptr = AllocCString(s, enc);
-                args[i] = ptr;
-                (cstrings ??= new()).Add(ptr);
-                continue;
-            }
-            if (kind == NativeCall.Kind.Reftype && ReftypeName(c.Args[i]) is { } rn)
-            {
-                var slot = host.GetOrCreateReftypeSlot(rn);
-                IntPtr handle, structPtr;
-                if (alloc is not null)
+                var kind = i < sig.ParamKinds.Length ? sig.ParamKinds[i] : NativeCall.Kind.Scalar;
+                if (kind == NativeCall.Kind.OutString && AddrOfLocal(c.Args[i]) is { } slocal)
                 {
-                    // Library-allocated: the native function may build sub-nodes; the
-                    // whole graph (and ours) is freed by freepar.
-                    handle = alloc.Materialize(slot.Materialize(), enc);
-                    structPtr = NativeReftypeAllocator.StructPointer(handle);
+                    IntPtr cell = System.Runtime.InteropServices.Marshal.AllocHGlobal(System.IntPtr.Size);
+                    (outStrings ??= new()).Add((slocal, cell));
+                    System.Runtime.InteropServices.Marshal.WriteIntPtr(cell, System.IntPtr.Zero);
+                    args[i] = cell;
+                    continue;
                 }
-                else
+                if (kind == NativeCall.Kind.StringIn)
                 {
-                    handle = NativeReftype.Materialize(slot.Materialize(), enc);
-                    structPtr = handle;
+                    // A char* input: render the Prolog argument to a string and copy it
+                    // into freshly-allocated, NUL-terminated native memory.
+                    string s = AsNativeString(Eval(c.Args[i], host, env, outputs, resolve), host);
+                    IntPtr ptr = AllocCString(s, enc, cstrings ??= new());
+                    args[i] = ptr;
+                    continue;
                 }
-                args[i] = structPtr;
-                (reftypes ??= new()).Add((slot, handle));
-                continue;
+                if (kind == NativeCall.Kind.Reftype && ReftypeName(c.Args[i]) is { } rn)
+                {
+                    var slot = host.GetOrCreateReftypeSlot(rn);
+                    IntPtr handle, structPtr;
+                    if (alloc is not null)
+                    {
+                        // Library-allocated: the native function may build sub-nodes; the
+                        // whole graph (and ours) is freed by freepar.
+                        handle = alloc.Materialize(slot.Materialize(), enc);
+                        structPtr = NativeReftypeAllocator.StructPointer(handle);
+                    }
+                    else
+                    {
+                        handle = NativeReftype.Materialize(slot.Materialize(), enc,
+                            hglobalAllocs ??= new());
+                        structPtr = handle;
+                    }
+                    args[i] = structPtr;
+                    (reftypes ??= new()).Add((slot, handle));
+                    continue;
+                }
+                if (kind == NativeCall.Kind.OutScalar && AddrOfLocal(c.Args[i]) is { } local)
+                {
+                    Type elem = sig.ParamElemTypes[i];
+                    IntPtr ptr = System.Runtime.InteropServices.Marshal.AllocHGlobal(SizeOf(elem));
+                    (outScalars ??= new()).Add((local, ptr, elem));
+                    // Seed from the local's current value (in/out), or zero.
+                    WriteScalar(ptr, elem, env.TryGetValue(local, out var cur) ? cur : null);
+                    args[i] = ptr;
+                    continue;
+                }
+                object? v = Eval(c.Args[i], host, env, outputs, resolve);
+                args[i] = ConvertArg(v, i < sig.ParamClrTypes.Length ? sig.ParamClrTypes[i] : typeof(IntPtr));
             }
-            if (kind == NativeCall.Kind.OutScalar && AddrOfLocal(c.Args[i]) is { } local)
-            {
-                Type elem = sig.ParamElemTypes[i];
-                IntPtr ptr = System.Runtime.InteropServices.Marshal.AllocHGlobal(SizeOf(elem));
-                // Seed from the local's current value (in/out), or zero.
-                WriteScalar(ptr, elem, env.TryGetValue(local, out var cur) ? cur : null);
-                args[i] = ptr;
-                (outScalars ??= new()).Add((local, ptr, elem));
-                continue;
-            }
-            object? v = Eval(c.Args[i], host, env, outputs, resolve);
-            args[i] = ConvertArg(v, i < sig.ParamClrTypes.Length ? sig.ParamClrTypes[i] : typeof(IntPtr));
+            object? ret = sig.Invoker(res.NativeFn, args);
+            // Read-backs run only on a successful native call.
+            if (reftypes is not null)
+                foreach (var (slot, handle) in reftypes)
+                {
+                    IntPtr structPtr = alloc is not null
+                        ? NativeReftypeAllocator.StructPointer(handle) : handle;
+                    slot.SetValue(NativeReftype.Dematerialize(structPtr, enc));
+                }
+            if (outScalars is not null)
+                foreach (var (local, ptr, elem) in outScalars)
+                    env[local] = ReadScalar(ptr, elem);   // the native function wrote it
+            if (outStrings is not null)
+                foreach (var (local, cell) in outStrings)
+                {
+                    // The native function wrote a borrowed char* into the cell: decode
+                    // the string (the cell itself is freed in the finally; the string
+                    // is native-owned and never freed).
+                    IntPtr sp = System.Runtime.InteropServices.Marshal.ReadIntPtr(cell);
+                    env[local] = NativeReftype.ReadString(sp, enc);
+                }
+            // ADR-024 char* return: a pointer return (char* / reftype*) comes back as
+            // an IntPtr; surface it to the block as a raw pointer integer (a long) so
+            // a following `Ptr \= 0` / make_prolog_string(Ptr, X) can use it.
+            if (ret is IntPtr ip) return ip.ToInt64();
+            return ret;
         }
-        object? ret = sig.Invoker(res.NativeFn, args);
-        if (reftypes is not null)
-            foreach (var (slot, handle) in reftypes)
-            {
-                IntPtr structPtr = alloc is not null
-                    ? NativeReftypeAllocator.StructPointer(handle) : handle;
-                slot.SetValue(NativeReftype.Dematerialize(structPtr, enc));
-                if (alloc is not null) alloc.Free(handle); else NativeReftype.Free(handle);
-            }
-        if (outScalars is not null)
-            foreach (var (local, ptr, elem) in outScalars)
-            {
-                env[local] = ReadScalar(ptr, elem);   // the native function wrote it
-                System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
-            }
-        if (outStrings is not null)
-            foreach (var (local, cell) in outStrings)
-            {
-                // The native function wrote a borrowed char* into the cell: decode the
-                // string, free the CELL (not the string — native-owned).
-                IntPtr sp = System.Runtime.InteropServices.Marshal.ReadIntPtr(cell);
-                env[local] = NativeReftype.ReadString(sp, enc);
-                System.Runtime.InteropServices.Marshal.FreeHGlobal(cell);
-            }
-        if (cstrings is not null)
-            foreach (var ptr in cstrings)
-                System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
-        // ADR-024 char* return: a pointer return (char* / reftype*) comes back as an
-        // IntPtr; surface it to the block as a raw pointer integer (a long) so a
-        // following `Ptr \= 0` / make_prolog_string(Ptr, X) can use it.
-        if (ret is IntPtr ip) return ip.ToInt64();
-        return ret;
+        finally
+        {
+            if (reftypes is not null && alloc is not null)
+                foreach (var (_, handle) in reftypes)
+                    alloc.Free(handle);
+            if (hglobalAllocs is not null)
+                NativeReftype.FreeRecorded(hglobalAllocs);
+            if (outScalars is not null)
+                foreach (var (_, ptr, _) in outScalars)
+                    System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
+            if (outStrings is not null)
+                foreach (var (_, cell) in outStrings)
+                    System.Runtime.InteropServices.Marshal.FreeHGlobal(cell);
+            if (cstrings is not null)
+                foreach (var ptr in cstrings)
+                    System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
+        }
     }
 
     /// <summary>Renders a native-call argument value to the string passed as a
@@ -419,11 +440,16 @@ public static class NativeBlockRunner
     };
 
     /// <summary>Allocates a NUL-terminated native copy of <paramref name="s"/> using
-    /// the engine's text encoding. The caller frees it with <c>FreeHGlobal</c>.</summary>
-    private static IntPtr AllocCString(string s, System.Text.Encoding enc)
+    /// the engine's text encoding. The caller frees it with <c>FreeHGlobal</c>;
+    /// when <paramref name="track"/> is given the pointer is recorded there
+    /// immediately after allocation, so an exception later in marshalling still
+    /// releases it.</summary>
+    private static IntPtr AllocCString(string s, System.Text.Encoding enc,
+        System.Collections.Generic.List<IntPtr>? track = null)
     {
         byte[] bytes = enc.GetBytes(s);
         IntPtr p = System.Runtime.InteropServices.Marshal.AllocHGlobal(bytes.Length + 1);
+        track?.Add(p);
         System.Runtime.InteropServices.Marshal.Copy(bytes, 0, p, bytes.Length);
         System.Runtime.InteropServices.Marshal.WriteByte(p, bytes.Length, 0);
         return p;
@@ -445,90 +471,112 @@ public static class NativeBlockRunner
         var alloc = host.NativeAllocator;
         var callArgs = new object?[args.Length];
         System.Collections.Generic.List<(TermSlot Slot, IntPtr Handle)>? reftypes = null;
+        // HGlobal path: recorded allocations — freed as an exact set, never by
+        // walking the (possibly native-restructured) graph. See PInvokeCall.
+        System.Collections.Generic.List<IntPtr>? hglobalAllocs = null;
         System.Collections.Generic.List<IntPtr>? cstrings = null;
         // OutScalar: (param index, native ptr, element type) — read back into
         // outScalars[index] after the call, for the emitted IL to store to its local.
         System.Collections.Generic.List<(int Index, IntPtr Ptr, Type Elem)>? outs = null;
         // OutString: (param index, char** cell) — decode into outScalars[index].
         System.Collections.Generic.List<(int Index, IntPtr Cell)>? outStrs = null;
-        for (int i = 0; i < args.Length; i++)
+        // All native memory is released in the finally — no leak on an exception
+        // in marshalling, the native invoke, or the read-back.
+        try
         {
-            switch ((NativeCall.Kind)kinds[i])
+            for (int i = 0; i < args.Length; i++)
             {
-                case NativeCall.Kind.OutString:
+                switch ((NativeCall.Kind)kinds[i])
                 {
-                    IntPtr cell = System.Runtime.InteropServices.Marshal.AllocHGlobal(System.IntPtr.Size);
-                    System.Runtime.InteropServices.Marshal.WriteIntPtr(cell, System.IntPtr.Zero);
-                    callArgs[i] = cell;
-                    (outStrs ??= new()).Add((i, cell));
-                    break;
-                }
-                case NativeCall.Kind.OutScalar:
-                {
-                    Type elem = sig.ParamElemTypes[i];
-                    IntPtr ptr = System.Runtime.InteropServices.Marshal.AllocHGlobal(SizeOf(elem));
-                    WriteScalar(ptr, elem, args[i]);   // seed from the block-local value (in/out)
-                    callArgs[i] = ptr;
-                    (outs ??= new()).Add((i, ptr, elem));
-                    break;
-                }
-                case NativeCall.Kind.Reftype:
-                {
-                    var slot = host.GetOrCreateReftypeSlot(reftypeNames[i]!);
-                    IntPtr handle, structPtr;
-                    if (alloc is not null)
+                    case NativeCall.Kind.OutString:
                     {
-                        handle = alloc.Materialize(slot.Materialize(), enc);
-                        structPtr = NativeReftypeAllocator.StructPointer(handle);
+                        IntPtr cell = System.Runtime.InteropServices.Marshal.AllocHGlobal(System.IntPtr.Size);
+                        (outStrs ??= new()).Add((i, cell));
+                        System.Runtime.InteropServices.Marshal.WriteIntPtr(cell, System.IntPtr.Zero);
+                        callArgs[i] = cell;
+                        break;
                     }
-                    else { handle = NativeReftype.Materialize(slot.Materialize(), enc); structPtr = handle; }
-                    callArgs[i] = structPtr;
-                    (reftypes ??= new()).Add((slot, handle));
-                    break;
+                    case NativeCall.Kind.OutScalar:
+                    {
+                        Type elem = sig.ParamElemTypes[i];
+                        IntPtr ptr = System.Runtime.InteropServices.Marshal.AllocHGlobal(SizeOf(elem));
+                        (outs ??= new()).Add((i, ptr, elem));
+                        WriteScalar(ptr, elem, args[i]);   // seed from the block-local value (in/out)
+                        callArgs[i] = ptr;
+                        break;
+                    }
+                    case NativeCall.Kind.Reftype:
+                    {
+                        var slot = host.GetOrCreateReftypeSlot(reftypeNames[i]!);
+                        IntPtr handle, structPtr;
+                        if (alloc is not null)
+                        {
+                            handle = alloc.Materialize(slot.Materialize(), enc);
+                            structPtr = NativeReftypeAllocator.StructPointer(handle);
+                        }
+                        else
+                        {
+                            handle = NativeReftype.Materialize(slot.Materialize(), enc,
+                                hglobalAllocs ??= new());
+                            structPtr = handle;
+                        }
+                        callArgs[i] = structPtr;
+                        (reftypes ??= new()).Add((slot, handle));
+                        break;
+                    }
+                    case NativeCall.Kind.StringIn:
+                    {
+                        IntPtr ptr = AllocCString(AsNativeString(args[i], host), enc, cstrings ??= new());
+                        callArgs[i] = ptr;
+                        break;
+                    }
+                    default:   // Scalar
+                        callArgs[i] = ConvertArg(args[i],
+                            i < sig.ParamClrTypes.Length ? sig.ParamClrTypes[i] : typeof(IntPtr));
+                        break;
                 }
-                case NativeCall.Kind.StringIn:
+            }
+            object? ret = sig.Invoker(res.NativeFn, callArgs);
+            // Read-backs run only on a successful native call.
+            if (reftypes is not null)
+                foreach (var (slot, handle) in reftypes)
                 {
-                    IntPtr ptr = AllocCString(AsNativeString(args[i], host), enc);
-                    callArgs[i] = ptr;
-                    (cstrings ??= new()).Add(ptr);
-                    break;
+                    IntPtr structPtr = alloc is not null
+                        ? NativeReftypeAllocator.StructPointer(handle) : handle;
+                    slot.SetValue(NativeReftype.Dematerialize(structPtr, enc));
                 }
-                default:   // Scalar
-                    callArgs[i] = ConvertArg(args[i],
-                        i < sig.ParamClrTypes.Length ? sig.ParamClrTypes[i] : typeof(IntPtr));
-                    break;
-            }
+            if (outs is not null)
+                foreach (var (idx, ptr, elem) in outs)
+                    if (outScalars is not null) outScalars[idx] = ReadScalar(ptr, elem);
+            if (outStrs is not null)
+                foreach (var (idx, cell) in outStrs)
+                {
+                    IntPtr sp = System.Runtime.InteropServices.Marshal.ReadIntPtr(cell);
+                    if (outScalars is not null) outScalars[idx] = NativeReftype.ReadString(sp, enc);
+                }
+            if (sig.ReturnType == typeof(void)) return null;
+            if (sig.ReturnType == typeof(double) || sig.ReturnType == typeof(float))
+                return System.Convert.ToDouble(ret);
+            if (ret is IntPtr ip) return ip.ToInt64();
+            return System.Convert.ToInt64(ret);
         }
-        object? ret = sig.Invoker(res.NativeFn, callArgs);
-        if (reftypes is not null)
-            foreach (var (slot, handle) in reftypes)
-            {
-                IntPtr structPtr = alloc is not null
-                    ? NativeReftypeAllocator.StructPointer(handle) : handle;
-                slot.SetValue(NativeReftype.Dematerialize(structPtr, enc));
-                if (alloc is not null) alloc.Free(handle); else NativeReftype.Free(handle);
-            }
-        if (cstrings is not null)
-            foreach (var ptr in cstrings)
-                System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
-        if (outs is not null)
-            foreach (var (idx, ptr, elem) in outs)
-            {
-                if (outScalars is not null) outScalars[idx] = ReadScalar(ptr, elem);
-                System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
-            }
-        if (outStrs is not null)
-            foreach (var (idx, cell) in outStrs)
-            {
-                IntPtr sp = System.Runtime.InteropServices.Marshal.ReadIntPtr(cell);
-                if (outScalars is not null) outScalars[idx] = NativeReftype.ReadString(sp, enc);
-                System.Runtime.InteropServices.Marshal.FreeHGlobal(cell);   // free cell, not the borrowed string
-            }
-        if (sig.ReturnType == typeof(void)) return null;
-        if (sig.ReturnType == typeof(double) || sig.ReturnType == typeof(float))
-            return System.Convert.ToDouble(ret);
-        if (ret is IntPtr ip) return ip.ToInt64();
-        return System.Convert.ToInt64(ret);
+        finally
+        {
+            if (reftypes is not null && alloc is not null)
+                foreach (var (_, handle) in reftypes)
+                    alloc.Free(handle);
+            if (hglobalAllocs is not null)
+                NativeReftype.FreeRecorded(hglobalAllocs);
+            if (cstrings is not null)
+                foreach (var ptr in cstrings)
+                    System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
+            if (outs is not null)
+                foreach (var (_, ptr, _) in outs)
+                    System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
+            if (outStrs is not null)
+                foreach (var (_, cell) in outStrs)
+                    System.Runtime.InteropServices.Marshal.FreeHGlobal(cell);
+        }
     }
 
     /// <summary>The block-local name an out-scalar argument addresses — <c>&amp;id</c>

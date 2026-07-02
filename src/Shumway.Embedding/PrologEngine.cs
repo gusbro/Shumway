@@ -4303,11 +4303,29 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private System.Text.Encoding _nativeTextEncoding = NativeReftype.DefaultEncoding;
 
     /// <summary>The <c>char*</c> text encoding for the native materializer tier
-    /// (ADR-024). Defaults to UTF-8; set it to match the native library you call.</summary>
+    /// (ADR-024). Defaults to UTF-8; set it to match the native library you call.
+    /// Must be byte-oriented (UTF-8 / ASCII / Latin1 / a codepage): native strings
+    /// are NUL-terminated byte sequences, so an encoding that emits interior zero
+    /// bytes for ordinary characters (UTF-16/32) would silently truncate every
+    /// marshalled string — rejected here rather than corrupting at the call.</summary>
     public System.Text.Encoding NativeTextEncoding
     {
         get => _nativeTextEncoding;
-        set => _nativeTextEncoding = value ?? throw new System.ArgumentNullException(nameof(value));
+        set
+        {
+            if (value is null) throw new System.ArgumentNullException(nameof(value));
+            // Byte-oriented check: a plain ASCII character must encode to exactly
+            // one byte with no embedded NUL. UTF-16 gives "A\0" (2 bytes), UTF-32
+            // four — both would break single-NUL-terminated char* marshalling.
+            byte[] probe = value.GetBytes("A");
+            if (probe.Length != 1 || probe[0] == 0)
+                throw new System.ArgumentException(
+                    $"NativeTextEncoding must be a byte-oriented encoding (UTF-8, ASCII, "
+                    + $"Latin1, or a single/multi-byte codepage); '{value.WebName}' encodes "
+                    + "ASCII characters to multiple bytes and cannot represent NUL-terminated "
+                    + "native char* strings.", nameof(value));
+            _nativeTextEncoding = value;
+        }
     }
 
     // ADR-024 — functor ids declared `:- native fn/N`: a native function using the

@@ -47,9 +47,23 @@ public static class NativeReftype
     /// <c>char*</c> text — atom/string content and a functor's name. Release the
     /// graph with <see cref="Free"/>.</summary>
     public static IntPtr Materialize(Term term, Encoding? encoding = null)
+        => Materialize(term, encoding, allocations: null);
+
+    /// <summary>Like <see cref="Materialize(Term, Encoding?)"/>, but records every
+    /// native pointer this call allocates (nodes, strings, pars arrays) into
+    /// <paramref name="allocations"/>. A caller handing the graph to a native C
+    /// function frees with <see cref="FreeRecorded"/> — which releases exactly the
+    /// recorded set — instead of walking the graph with <see cref="Free"/>: if the
+    /// native function replaced a <c>cstr</c> or grew <c>pars</c> with its own
+    /// allocator, a graph walk would <c>FreeHGlobal</c> a foreign pointer (heap
+    /// corruption). Recorded-free never frees foreign memory (a native-swapped node
+    /// is treated as borrowed) and never leaks ours (an unlinked buffer is still on
+    /// the list).</summary>
+    internal static IntPtr Materialize(Term term, Encoding? encoding, System.Collections.Generic.List<IntPtr>? allocations)
     {
         Encoding enc = encoding ?? DefaultEncoding;
         IntPtr p = Marshal.AllocHGlobal(StructSize);
+        allocations?.Add(p);
         // Zero the whole struct first so unused fields (pars/crep high bytes) are
         // deterministic.
         Marshal.WriteInt64(p, OffNtype, Reftype.Codes.Nontype);
@@ -63,12 +77,20 @@ public static class NativeReftype
                 Marshal.WriteInt64(p, OffNtype, Reftype.Codes.Undef);
                 break;
             case IntTerm i:
+                // Arity's cint is 32-bit; a wider value cannot round-trip. Raise a
+                // catchable ISO error instead of silently truncating (wrong answers).
+                if (i.Value is > int.MaxValue or < int.MinValue)
+                    throw new Shumway.Core.PrologRuntimeException(
+                        "representation_error", "native_cint_32");
                 Marshal.WriteInt64(p, OffNtype, Reftype.Codes.Integer);
-                Marshal.WriteInt32(p, OffCrep, unchecked((int)i.Value));   // cint (32-bit)
+                Marshal.WriteInt32(p, OffCrep, (int)i.Value);   // cint (32-bit)
                 break;
             case BigIntTerm b:
+                if (b.Value > int.MaxValue || b.Value < int.MinValue)
+                    throw new Shumway.Core.PrologRuntimeException(
+                        "representation_error", "native_cint_32");
                 Marshal.WriteInt64(p, OffNtype, Reftype.Codes.Integer);
-                Marshal.WriteInt32(p, OffCrep, unchecked((int)(long)(b.Value & ulong.MaxValue)));
+                Marshal.WriteInt32(p, OffCrep, (int)b.Value);
                 break;
             case FloatTerm f:
                 Marshal.WriteInt64(p, OffNtype, Reftype.Codes.Floating);
@@ -77,21 +99,28 @@ public static class NativeReftype
             case AtomTerm a:
                 Marshal.WriteInt64(p, OffNtype, Reftype.Codes.Atom);
                 Marshal.WriteInt64(p, OffNelem, enc.GetByteCount(a.Name));
-                Marshal.WriteIntPtr(p, OffCrep, AllocString(a.Name, enc));                 // cstr
+                Marshal.WriteIntPtr(p, OffCrep, AllocString(a.Name, enc, allocations));    // cstr
                 break;
             case StringTerm s:
                 Marshal.WriteInt64(p, OffNtype, Reftype.Codes.String);
                 Marshal.WriteInt64(p, OffNelem, enc.GetByteCount(s.Content));
-                Marshal.WriteIntPtr(p, OffCrep, AllocString(s.Content, enc));
+                Marshal.WriteIntPtr(p, OffCrep, AllocString(s.Content, enc, allocations));
                 break;
             case CompoundTerm c:
                 Marshal.WriteInt64(p, OffNtype, Reftype.Codes.Functor);
                 Marshal.WriteInt64(p, OffNelem, c.Args.Length);
-                Marshal.WriteIntPtr(p, OffCrep, AllocString(c.Functor, enc));              // functor name in cstr
+                Marshal.WriteIntPtr(p, OffCrep, AllocString(c.Functor, enc, allocations)); // functor name in cstr
                 IntPtr pars = Marshal.AllocHGlobal(checked(c.Args.Length * IntPtr.Size));
-                for (int k = 0; k < c.Args.Length; k++)
-                    Marshal.WriteIntPtr(pars, k * IntPtr.Size, Materialize(c.Args[k], enc));
+                allocations?.Add(pars);
+                // Link pars into the node BEFORE filling children: if a child's
+                // materialization throws (e.g. cint range), the recorded-free path
+                // still releases everything allocated so far, and the walking Free
+                // sees a consistent (zeroed) tail.
                 Marshal.WriteIntPtr(p, OffPars, pars);
+                for (int k = 0; k < c.Args.Length; k++)
+                    Marshal.WriteIntPtr(pars, k * IntPtr.Size, IntPtr.Zero);
+                for (int k = 0; k < c.Args.Length; k++)
+                    Marshal.WriteIntPtr(pars, k * IntPtr.Size, Materialize(c.Args[k], enc, allocations));
                 break;
             // default: leaves Nontype.
         }
@@ -134,13 +163,25 @@ public static class NativeReftype
     // Allocates a NUL-terminated native byte buffer (HGlobal) holding `s` encoded
     // with `enc` — a C `char*`. Byte-oriented encodings only (UTF-8 / ASCII /
     // Latin1 / a codepage), where a single 0 byte terminates the string.
-    private static IntPtr AllocString(string s, Encoding enc)
+    private static IntPtr AllocString(string s, Encoding enc, System.Collections.Generic.List<IntPtr>? allocations = null)
     {
         byte[] bytes = enc.GetBytes(s);
         IntPtr p = Marshal.AllocHGlobal(bytes.Length + 1);
+        allocations?.Add(p);
         if (bytes.Length > 0) Marshal.Copy(bytes, 0, p, bytes.Length);
         Marshal.WriteByte(p, bytes.Length, 0);   // NUL terminator
         return p;
+    }
+
+    /// <summary>Frees exactly the pointers recorded by the allocation-tracking
+    /// <see cref="Materialize(Term, Encoding?, System.Collections.Generic.List{IntPtr})"/>
+    /// overload — the safe release after the graph was handed to a native C function
+    /// (see that overload's doc for why a graph walk would be unsafe).</summary>
+    internal static void FreeRecorded(System.Collections.Generic.List<IntPtr> allocations)
+    {
+        for (int i = allocations.Count - 1; i >= 0; i--)
+            Marshal.FreeHGlobal(allocations[i]);
+        allocations.Clear();
     }
 
     // Reads a NUL-terminated native `char*` and decodes it with `enc`.

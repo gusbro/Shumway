@@ -238,12 +238,20 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("$sub_atom_enum",            5, MultiSolutionHelpers.SubAtomEnum);
         // Chunk 408 — branch-cut barrier capture (MetaTransform cut transparency).
         BuiltinsRegistry.Register("$get_cut_barrier",          1, MultiSolutionHelpers.GetCutBarrier);
-        // Phase 30 (ADR-022) step 1 — Arity embedded native goal placeholder.
-        // The parser now emits '$native_goal'(RawCText) for a `{ ... }` block
-        // (capturing the raw span instead of dropping it). Until the native
-        // codegen lands (step 4) it is a no-op that succeeds — same runtime
-        // behaviour as the previous `true` substitution.
-        BuiltinsRegistry.Register("$native_goal",              1, ControlBuiltins.True);
+        // Phase 30 (ADR-022) — Arity embedded native goal placeholder. The parser
+        // emits '$native_goal'(RawCText) for a `{ ... }` block; consult-time
+        // NativeTransform rewrites every occurrence to a real '$native_run' call.
+        // A '$native_goal' that survives to run means the source was consulted
+        // through a path without native-block support (or {…} was constructed at
+        // runtime) — with codegen shipped, silently succeeding would swallow the
+        // block's entire effect, so it is a loud error (Phase 33 E10; it was a
+        // bootstrap-era no-op before the ADR-022 codegen landed).
+        BuiltinsRegistry.Register("$native_goal",              1, static engine =>
+            throw new Shumway.Core.PrologRuntimeException(
+                "system_error",
+                "embedded native block was not compiled: '$native_goal'/1 reached "
+                + "execution. The consult path did not run the native-block transform "
+                + "(or the {...} goal was constructed at runtime, which is not supported)."));
 
         // String-oriented builtins (chunk 40).
         BuiltinsRegistry.Register("string_length", 2, StringBuiltins.StringLength,
