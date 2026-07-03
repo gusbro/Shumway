@@ -2834,7 +2834,16 @@ public sealed class IlPredicateCompiler
     /// belongs to. Set by the public Compile/CompileInstrumented
     /// entry points and the persisted-assembly path.
     /// Phase 16 chunk 182: also used by threaded non-tail Call sites
-    /// to encode the resume marker (functorId, cursor).</summary>
+    /// to encode the resume marker (functorId, cursor).
+    /// THREAD-STATIC on purpose: compiles run concurrently on the shared
+    /// IlCompileWorker AND on engine threads (bundle / persisted builds —
+    /// see _labelSeq's note), and this was the one piece of mutable emit
+    /// state left plain-static. A concurrent compile clobbering it bakes
+    /// ANOTHER predicate's fid into this delegate's resume markers, so a
+    /// post-backtrack resume re-enters the WRONG delegate at an arbitrary
+    /// cursor — rare, arbitrary corruption far from the cause. Set and read
+    /// strictly within one synchronous emit, so thread-static is exact.</summary>
+    [System.ThreadStatic]
     private static int _emitOwnerFid;
 
     /// <summary>Phase 17 — when non-null, the emit pipeline is building

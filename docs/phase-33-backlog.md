@@ -662,8 +662,24 @@ A deferral is a TODO with a prerequisite, not a closure.
       concurrently (4/4 green). Predates the ITE work; first observed after
       D1 but D1's arena never crosses a chunk boundary in this test
       (16 B/call, mark-restored), so the arena-boundary theory is weak.
-      Next: run the full suite with `DOTNET_DbgEnableMiniDump=1` and analyze
-      the faulting address (native write target vs fn pointer).
+      **Investigation (2026-07-05):** 6 more dump-armed full-suite runs on a
+      warm build all passed — BOTH real crashes were the FIRST run after a
+      rebuild (max overlap of cold compiles). Sequence files show identical
+      within-class order and disjoint cross-class neighbors → timing, not a
+      specific test interaction. **Found and fixed a real concurrent-compile
+      race with exactly this profile**: `_emitOwnerFid` was the one piece of
+      mutable IL-emit state left plain-static while compiles run
+      concurrently on the shared IlCompileWorker AND engine threads (bundle
+      / persisted builds) — a clobber bakes another predicate's fid into a
+      delegate's resume markers, so a post-backtrack resume re-enters the
+      WRONG delegate at an arbitrary cursor. Now `[ThreadStatic]` like the
+      rest (_persistPatches/_ilFloatPool/_nativeInline). Causality for THIS
+      AV is plausible-not-proven (the PInvoke test engine itself has
+      Threshold 0; the path would be indirect via process-wide persisted-IL
+      caches). Crash capture (DOTNET_DbgEnableMiniDump, full type) is now
+      baked into the standard Embedding gate script — any recurrence
+      auto-produces an analyzable dump. GCStress=3 run on the two P/Invoke
+      tests as a GC-hole probe.
 
 ## Later rounds (not yet waved)
 
