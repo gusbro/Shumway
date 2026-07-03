@@ -176,6 +176,11 @@ internal static class NativeTransform
         // Hand the analysed block to the sink (engine table or bundle table), and
         // emit the portable dispatch `'$native_run'('$nb$…', V1..Vk)`.
         var vars = info.PrologVars.ToArray();
+        // The dispatch builtin is registered for arities 1..65 (name + V1..V64);
+        // a block past that would otherwise surface as a bewildering runtime
+        // existence_error($native_run/N). Fail loudly at consult instead.
+        if (vars.Length > 64)
+            throw Error($"uses {vars.Length} Prolog variables; a native block supports at most 64.");
         registerBlock(name, vars, stmts.ToArray(), info.ScalarGlobals.ToArray(), text);
         var callArgs = new Term[vars.Length + 1];
         callArgs[0] = new AtomTerm(name);

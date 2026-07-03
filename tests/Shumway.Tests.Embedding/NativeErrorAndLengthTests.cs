@@ -107,4 +107,48 @@ public sealed class NativeErrorAndLengthTests
         Assert.False(result.Success);
         Assert.Contains(result.Errors, err => err.Message.Contains("foo/1") && err.Line == 3);
     }
+
+    // ---- Phase 33 D6 — the '$native_run' variable ceiling. 40 variables (past
+    //      the old 32 cap) work; past 64 the consult fails with a clear message,
+    //      never a runtime existence_error($native_run/N). ----
+
+    private static string BigBlockProgram(int n)
+    {
+        // f(X1..Xn) :- integer(X1), ..., { S is X1 + X2 + ... + Xn }, integer(S)... via
+        // head vars all used in one block. Guards give every var an integer type.
+        var head = new System.Text.StringBuilder("f(");
+        for (int i = 1; i <= n; i++) head.Append(i > 1 ? ", X" : "X").Append(i);
+        head.Append(", S)");
+        var guards = new System.Text.StringBuilder();
+        for (int i = 1; i <= n; i++) guards.Append("integer(X").Append(i).Append("), ");
+        var sum = new System.Text.StringBuilder("{ S is X1");
+        for (int i = 2; i <= n; i++) sum.Append(" + X").Append(i);
+        sum.Append(" }");
+        return ":- set_prolog_flag(arity_compat, true).\n"
+            + head + " :- " + guards + sum + ".\n";
+    }
+
+    private static string CallWithOnes(int n)
+    {
+        var q = new System.Text.StringBuilder("f(");
+        for (int i = 0; i < n; i++) q.Append("1, ");
+        q.Append("S).");
+        return q.ToString();
+    }
+
+    [Fact]
+    public void NativeBlock_40Variables_RunsPastTheOld32Cap()
+    {
+        var e = new PrologEngine();
+        e.ConsultString(BigBlockProgram(40));
+        Assert.Equal(40L, e.Query(CallWithOnes(40)).Get<long>("S"));
+    }
+
+    [Fact]
+    public void NativeBlock_Past64Variables_FailsLoudlyAtConsult()
+    {
+        var e = new PrologEngine();
+        var ex = Assert.ThrowsAny<Exception>(() => e.ConsultString(BigBlockProgram(70)));
+        Assert.Contains("at most 64", ex.Message);
+    }
 }

@@ -83,7 +83,11 @@ public static class MetaBuiltins
         // builtin) keeps the bytecode reference portable cross-process — the
         // CompiledModuleCodec round-trips the name, and there is no per-block id to
         // keep consistent between compile and load.
-        for (int arity = 1; arity <= 33; arity++)
+        // Arity 1..65 → up to 64 Prolog variables per block (name + V1..V64).
+        // NativeTransform raises a clear consult-time error above 64, so a
+        // too-big block can never surface as a bewildering runtime
+        // existence_error($native_run/N). Corpus max is well under 32.
+        for (int arity = 1; arity <= 65; arity++)
             BuiltinsRegistry.Register("$native_run", arity, NativeRun);
 
         // ADR-024 — generic-term interop (the reftype tier). A reftype/preftype is

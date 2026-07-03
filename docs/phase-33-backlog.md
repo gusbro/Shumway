@@ -676,6 +676,26 @@ WAM↔IL boundary:
       everything is already promoted or rejected.*
 
 Functional interop gaps:
-- [ ] **D6** 🟡 `int**`/struct-by-value/array params rejected; allocator without
-      setcflt/getargp throws instead of per-node fallback; IL compiler bails on
-      reftype args that aren't globals; `$native_run` 32-var ceiling.
+- [x] **D6** 🟡 four sub-items, resolved by evidence (2026-07-03):
+      - `int**`/struct-by-value/array params — **rejected on corpus census**:
+        the 63 GXPROLOG-side prototypes across testProc contain ZERO
+        occurrences (all params are scalars, char*, char**, scalar
+        out-pointers, reftype; the one array param `ltosp(.., TEXT *vec[], ..)`
+        is in the C-side `#else` branch, never crossed from Prolog).
+        Quantify-before-building: no demand, loud unsupported-type errors
+        already in place.
+      - allocator without setcflt/getargp per-node fallback — **rejected as
+        unsound**: allocator mode exists precisely so the WHOLE graph lives in
+        the library's heap (freepar frees it); falling back to HGlobal for
+        some nodes recreates the mixed-allocator graph the mode prevents.
+        The current loud throw on the missing export is the correct behavior.
+      - IL bails on non-global reftype args — **kept as designed**: the
+        interpreter fallback handles them correctly; the corpus convention is
+        always the `parNref` reftype global (fill_par pattern), so the IL
+        path's global-name channel covers 100% of real blocks.
+      - `$native_run` 32-var ceiling — **fixed**: registration raised to
+        arity 65 (64 Prolog vars), and NativeTransform now raises a clear
+        consult-time error ("uses N Prolog variables; a native block supports
+        at most 64") instead of a bewildering runtime
+        existence_error($native_run/N). Tests: 40-var block runs past the old
+        cap; 70-var block errors at consult.
