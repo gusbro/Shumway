@@ -38,7 +38,8 @@ public sealed class NativeBlockTyping
     public HashSet<string> ReftypeVars { get; } = new();
 
     public static NativeBlockTyping Compute(IReadOnlyList<NativeVar> vars,
-        IReadOnlyList<CStmt> stmts, Func<string, MethodInfo?> resolve)
+        IReadOnlyList<CStmt> stmts, Func<string, MethodInfo?> resolve,
+        IReadOnlyDictionary<string, CType>? typedefs = null)
     {
         var t = new NativeBlockTyping();
         var varNames = new HashSet<string>(vars.Select(v => v.Name));
@@ -56,8 +57,13 @@ public sealed class NativeBlockTyping
                     // e.g. `H: pchar` where H is assigned a holder global) keeps that
                     // classification — don't also type its `: pchar` as a string.
                     if (t.ReftypeVars.Contains(d.Var)) break;
-                    if (IsReftypeCType(d.Type)) t.ReftypeVars.Add(d.Var);
-                    else t.Types[d.Var] = ModelType(d.Type);
+                    // Resolve `:- c` region typedefs first: `s: pchar` under
+                    // `typedef char *pchar;` is a char* (string model), not an
+                    // unknown scalar. Without this the compiled path mistyped
+                    // such locals as long and bailed on every use as a string.
+                    var declType = ResolveTypedef(d.Type, typedefs);
+                    if (IsReftypeCType(declType)) t.ReftypeVars.Add(d.Var);
+                    else t.Types[d.Var] = ModelType(declType);
                     break;
                 case CBindStmt b:
                     if (varNames.Contains(b.Var)) t.ToUnify.Add(b.Var);
@@ -152,10 +158,29 @@ public sealed class NativeBlockTyping
 
     public static Type ModelType(CType t)
     {
-        if (t.PointerDepth > 0) return typeof(string);      // char* etc.
+        if (t.PointerDepth > 0)
+            return t.Name is "char" or "uchar" or "schar" ? typeof(string)   // char* text
+                : t.Name is "float" or "double" ? typeof(double)   // out-scalar cell value
+                : typeof(long);                                    // out-scalar cell value
         if (t.Name is "float" or "double") return typeof(double);
         if (t.Name is "void") throw new NativeBlockBailException();
         return typeof(long);                                 // scalar integer (C ints)
+    }
+
+    /// <summary>Follows a <c>:- c</c> region typedef chain (bounded), accumulating
+    /// pointer depth — <c>pchar</c> under <c>typedef char *pchar;</c> resolves to
+    /// <c>char*</c>. With no table the type is returned unchanged.</summary>
+    public static CType ResolveTypedef(CType t, IReadOnlyDictionary<string, CType>? typedefs)
+    {
+        if (typedefs is null) return t;
+        int depth = t.PointerDepth;
+        string name = t.Name;
+        for (int guard = 0; guard < 16 && typedefs.TryGetValue(name, out var u); guard++)
+        {
+            depth += u.PointerDepth;
+            name = u.Name;
+        }
+        return new CType(name, depth);
     }
 
     public static Type ModelOf(Type t)

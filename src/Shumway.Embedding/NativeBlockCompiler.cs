@@ -104,8 +104,10 @@ public static class NativeBlockCompiler
             System.Threading.Interlocked.Increment(ref CompiledCount);
             return del;
         }
-        catch (NativeBlockBailException)
+        catch (NativeBlockBailException ex)
         {
+            if (System.Environment.GetEnvironmentVariable("SHUMWAY_NATIVE_TRACE") == "1")
+                System.Console.WriteLine("[NativeBlockCompiler] BAIL at:\n" + ex.StackTrace);
             return null;
         }
     }
@@ -140,7 +142,8 @@ public static class NativeBlockCompiler
 
         public Func<Engine, bool> Compile()
         {
-            var typing = NativeBlockTyping.Compute(_vars, _stmts, _resolve);
+            var typing = NativeBlockTyping.Compute(_vars, _stmts, _resolve,
+                _hostInstance?.NativeTypedefsView);
             _types = typing.Types;
             _toUnify = typing.ToUnify;
             _reftypeVars = typing.ReftypeVars;

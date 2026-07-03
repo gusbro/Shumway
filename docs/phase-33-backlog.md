@@ -103,19 +103,20 @@ A deferral is a TODO with a prerequisite, not a closure.
       delegates via Expression.Lambda (once per type; interpreter fallback keeps
       AOT correct); user exceptions now surface unwrapped (no
       TargetInvocationException translation needed).*
-- [ ] **D2** 🔴 `NativeCall.BuildInvoker` — boxed `object[]` per call +
-      `Unbox_Any`. **Deferred to a later round with reasoning**: both callers
-      (interpreter env, IL boxed-args channel) traffic in `object` today, so a
-      typed invoker needs per-signature delegate types + a typed IL-emit channel;
-      the box/unbox pair is nanoseconds against the materialize + calli + demat
-      that dominate the same call. Revisit with a corpus benchmark.
+- [-] **D2** 🔴 `NativeCall.BuildInvoker` — boxed `object[]` per call +
+      `Unbox_Any`. **Rejected with measurement** (the deferral's revisit): a
+      scalar `:- native` call is 2.02 µs / 327 B end-to-end in-query
+      (failure-driven loop, baseline subtracted) — the box/unbox pair is noise
+      inside that; a typed invoker needs per-signature delegate types + a typed
+      IL channel for nanoseconds. The real cost was D1 (see below).
 - [x] **D3** 🔴 `NativeReftype.AllocString`/`AllocCString`/`ReadString` — `GetBytes`
       byte[] per string per call. *Fixed: pooled buffers (`ArrayPool<byte>`) for
       encode and decode; only the result string allocates.*
 - [x] **D4** 🟡 out-scalar/out-string HGlobal cells per call. *Fixed: per-engine
-      16-slot native scratch block, bump-allocated with mark/restore (nested calls
-      compose; engine single-threaded); HGlobal only on overflow. Both P/Invoke
-      paths.*
+      native scratch, bump-allocated with mark/restore (nested calls compose;
+      engine single-threaded). Originally a 16-slot block; SUPERSEDED by the D1
+      chunked arena — out cells now come from the same arena as the reftype
+      graphs, one mark restore frees everything. Both P/Invoke paths.*
 - [x] **A1** 🔴 `NativeBlockRunner.RunBlock` — invariant index/kind/scalarFloat
       maps rebuilt per call. *Fixed: cached lazily on `NativeBlockEntry`
       (EnsureMaps); the '$native_run' dispatch uses the entry-based overload. The
@@ -140,18 +141,37 @@ A deferral is a TODO with a prerequisite, not a closure.
       `TermSlot` parameter IS the borrow path (zero copy, no writeback);
       `Reftype` means snapshot+writeback by contract. Documented in
       generic-term-interop §10c-bis so users pick correctly.*
-- [ ] **D1** 🔴 `NativeReftype.Materialize/Free` — full AllocHGlobal graph per
-      call. **Deferred to a later round with reasoning**: a cache/diff per
-      TermSlot is unsound without knowing what the native side read or wrote
-      (it may mutate the graph, so the cache is dirty after every call), and
-      node pooling saves only the AllocHGlobal (~100ns/node) against the field
-      writes + string encodes + dematerialize Term allocations that dominate the
-      same walk. Revisit with a corpus benchmark showing materialize as a real
-      bottleneck.
+- [x] **D1** 🔴 `NativeReftype.Materialize/Free` — full AllocHGlobal graph per
+      call. *Fixed: per-engine chunked (64 KB) native ARENA, bump-allocated with
+      a long mark (chunk<<32|offset) restored once in the finally — nodes, pars
+      arrays, char* buffers and out cells all call-scoped, no graph-walking
+      free. The deferral's "~100ns/node" estimate was REFUTED by the corpus
+      benchmark it asked for: mat+free was 92.95 µs of a 96.67 µs 50-element-
+      list marshal (96%) — AllocHGlobal/FreeHGlobal per node dominated
+      everything. With the arena the end-to-end in-query list50 call dropped
+      53–107 µs → 15.65 µs (~3.4–6.8×); small (2-node) 3.96 → 3.90 µs (graph
+      too small to matter). Safety contract unchanged from the recorded-free
+      mode it replaces (foreign pointers never touched); allocator mode
+      (library heap) is untouched. The public `Materialize(Term)` API keeps
+      HGlobal + walking `Free` for external callers.*
 - [-] **D5** 🟡 `NativeReftypeAllocator.Fill` per-node delegate calls — **inherent
       to the contract**: every node must be created by the LIBRARY's `newreftype`
       so its heap owns the graph (that is the point of allocator mode); Arity's
       API has no batch form. Rejected.
+- [x] **D-bonus** two latent phase-32 native-interop bugs the D1 gate exposed
+      (they predate this wave — the tag-time gate must have run without a C
+      compiler, so the P/Invoke end-to-end tests skipped silently):
+      (1) `NativeBlockRunner.ReadScalar`'s single `?:`-chain typed the whole
+      expression `double` (branches' best common type), so every integer
+      out-scalar read boxed a Double and the compiled block's unbox-to-long
+      threw InvalidCastException — rewritten as if/return so each branch boxes
+      its own type. (2) `NativeBlockTyping` never resolved `:- c` typedefs for
+      block-local declarations, so `s: pchar` typed as long and the compiled
+      path bailed on every string use — typedefs now thread from the engine
+      into both code generators (runtime delegate + build-time IL), and
+      `ModelType` types non-char pointers as their out-scalar cell value
+      instead of string. Plus an env-gated (`SHUMWAY_NATIVE_TRACE=1`) bail
+      trace in `NativeBlockCompiler` for diagnosing future bails.
 
 ## Wave 3 — WAM codegen (Arity shapes)
 

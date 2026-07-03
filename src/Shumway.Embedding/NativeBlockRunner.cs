@@ -356,23 +356,20 @@ public static class NativeBlockRunner
         var enc = host.NativeTextEncoding;
         var alloc = host.NativeAllocator;   // null → HGlobal in-place path
         var args = new object?[c.Args.Count];
-        // Handle = the allocator cell (alloc mode) or the HGlobal struct pointer.
+        // Handle = the allocator cell (alloc mode) or the arena struct pointer.
         System.Collections.Generic.List<(TermSlot Slot, IntPtr Handle)>? reftypes = null;
-        // HGlobal path: the exact set of pointers Shumway allocated for the reftype
-        // graphs. Freed with FreeRecorded — never by walking the graph, which the
-        // native function may have restructured with its own allocator (freeing a
-        // foreign pointer corrupts the heap).
-        System.Collections.Generic.List<IntPtr>? hglobalAllocs = null;
         // OutScalar: a `&local` pointer the native function writes through.
         System.Collections.Generic.List<(string Local, IntPtr Ptr, Type Elem)>? outScalars = null;
-        // StringIn: native char* buffers we allocated and must free after the call.
-        System.Collections.Generic.List<IntPtr>? cstrings = null;
         // OutString: a `char**` cell the native function writes a (borrowed) char* into.
         System.Collections.Generic.List<(string Local, IntPtr Cell)>? outStrings = null;
-        // Phase 33 D4 — out cells come from the engine's bump scratch when it has
-        // room; only overflow cells are HGlobal (tracked here for the finally).
-        int scratchMark = host.NativeScratchMark;
-        System.Collections.Generic.List<IntPtr>? outCellHGlobals = null;
+        // Phase 33 D4 → D1 — EVERY call-scoped native buffer (out cells, char*
+        // inputs, and the whole t_reftype graph) bump-allocates from the
+        // engine's chunked native arena; the finally releases them all with
+        // one mark restore. No AllocHGlobal, no graph-walking free — measured
+        // 96% of the reftype marshal cost. Safety unchanged from the
+        // recorded-allocations mode this replaces: the restore frees exactly
+        // OUR blocks; a foreign pointer the native fn linked in is untouched.
+        long scratchMark = host.NativeScratchMark;
         // All native memory is released in the finally: an exception anywhere in
         // marshalling, the native invoke, or the read-back must not leak buffers.
         try
@@ -382,7 +379,7 @@ public static class NativeBlockRunner
                 var kind = i < sig.ParamKinds.Length ? sig.ParamKinds[i] : NativeCall.Kind.Scalar;
                 if (kind == NativeCall.Kind.OutString && AddrOfLocal(c.Args[i]) is { } slocal)
                 {
-                    IntPtr cell = RentOutCell(host, ref outCellHGlobals);
+                    IntPtr cell = host.NativeArenaAlloc(8);
                     (outStrings ??= new()).Add((slocal, cell));
                     System.Runtime.InteropServices.Marshal.WriteIntPtr(cell, System.IntPtr.Zero);
                     args[i] = cell;
@@ -391,10 +388,9 @@ public static class NativeBlockRunner
                 if (kind == NativeCall.Kind.StringIn)
                 {
                     // A char* input: render the Prolog argument to a string and copy it
-                    // into freshly-allocated, NUL-terminated native memory.
+                    // into NUL-terminated arena memory (call-scoped).
                     string s = AsNativeString(Eval(c.Args[i], host, env, outputs, resolve), host);
-                    IntPtr ptr = AllocCString(s, enc, cstrings ??= new());
-                    args[i] = ptr;
+                    args[i] = NativeReftype.AllocString(s, enc, arena: host);
                     continue;
                 }
                 if (kind == NativeCall.Kind.Reftype && ReftypeName(c.Args[i]) is { } rn)
@@ -410,8 +406,7 @@ public static class NativeBlockRunner
                     }
                     else
                     {
-                        handle = NativeReftype.Materialize(slot.Materialize(), enc,
-                            hglobalAllocs ??= new());
+                        handle = NativeReftype.Materialize(slot.Materialize(), enc, arena: host);
                         structPtr = handle;
                     }
                     args[i] = structPtr;
@@ -421,7 +416,7 @@ public static class NativeBlockRunner
                 if (kind == NativeCall.Kind.OutScalar && AddrOfLocal(c.Args[i]) is { } local)
                 {
                     Type elem = sig.ParamElemTypes[i];
-                    IntPtr ptr = RentOutCell(host, ref outCellHGlobals);
+                    IntPtr ptr = host.NativeArenaAlloc(8);
                     (outScalars ??= new()).Add((local, ptr, elem));
                     // Seed from the local's current value (in/out), or zero.
                     WriteScalar(ptr, elem, env.TryGetValue(local, out var cur) ? cur : null);
@@ -463,30 +458,10 @@ public static class NativeBlockRunner
             if (reftypes is not null && alloc is not null)
                 foreach (var (_, handle) in reftypes)
                     alloc.Free(handle);
-            if (hglobalAllocs is not null)
-                NativeReftype.FreeRecorded(hglobalAllocs);
-            // Out cells: pop the scratch mark (bump allocator) and free only the
-            // HGlobal overflow cells.
+            // Phase 33 D1 — one mark restore releases every call-scoped arena
+            // buffer: reftype graphs, pars arrays, char* inputs, out cells.
             host.NativeScratchRelease(scratchMark);
-            if (outCellHGlobals is not null)
-                foreach (var ptr in outCellHGlobals)
-                    System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
-            if (cstrings is not null)
-                foreach (var ptr in cstrings)
-                    System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
         }
-    }
-
-    /// <summary>Phase 33 D4 — one 8-byte out-parameter cell: engine scratch when
-    /// available, HGlobal (tracked in <paramref name="hglobals"/>) on overflow.</summary>
-    private static IntPtr RentOutCell(PrologEngine host,
-        ref System.Collections.Generic.List<IntPtr>? hglobals)
-    {
-        IntPtr p = host.TryRentNativeScratchSlot();
-        if (p != IntPtr.Zero) return p;
-        p = System.Runtime.InteropServices.Marshal.AllocHGlobal(8);
-        (hglobals ??= new()).Add(p);
-        return p;
     }
 
     /// <summary>Renders a native-call argument value to the string passed as a
@@ -500,14 +475,6 @@ public static class NativeBlockRunner
         _ => System.Convert.ToString(v, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
     };
 
-    /// <summary>Allocates a NUL-terminated native copy of <paramref name="s"/> using
-    /// the engine's text encoding. The caller frees it with <c>FreeHGlobal</c>;
-    /// when <paramref name="track"/> is given the pointer is recorded there
-    /// immediately after allocation, so an exception later in marshalling still
-    /// releases it. Phase 33 D3 — delegates to the pooled-buffer encoder.</summary>
-    private static IntPtr AllocCString(string s, System.Text.Encoding enc,
-        System.Collections.Generic.List<IntPtr>? track = null)
-        => NativeReftype.AllocString(s, enc, track);
 
     /// <summary>ADR-024 — the IL-path P/Invoke entry. Same marshalling as
     /// <see cref="PInvokeCall"/> but over <b>pre-evaluated</b> argument values (the
@@ -525,18 +492,14 @@ public static class NativeBlockRunner
         var alloc = host.NativeAllocator;
         var callArgs = new object?[args.Length];
         System.Collections.Generic.List<(TermSlot Slot, IntPtr Handle)>? reftypes = null;
-        // HGlobal path: recorded allocations — freed as an exact set, never by
-        // walking the (possibly native-restructured) graph. See PInvokeCall.
-        System.Collections.Generic.List<IntPtr>? hglobalAllocs = null;
-        System.Collections.Generic.List<IntPtr>? cstrings = null;
         // OutScalar: (param index, native ptr, element type) — read back into
         // outScalars[index] after the call, for the emitted IL to store to its local.
         System.Collections.Generic.List<(int Index, IntPtr Ptr, Type Elem)>? outs = null;
         // OutString: (param index, char** cell) — decode into outScalars[index].
         System.Collections.Generic.List<(int Index, IntPtr Cell)>? outStrs = null;
-        // Phase 33 D4 — out cells from the engine's bump scratch (see PInvokeCall).
-        int scratchMark = host.NativeScratchMark;
-        System.Collections.Generic.List<IntPtr>? outCellHGlobals = null;
+        // Phase 33 D4 → D1 — all call-scoped native buffers from the engine's
+        // chunked arena; released wholesale by the mark restore (see PInvokeCall).
+        long scratchMark = host.NativeScratchMark;
         // All native memory is released in the finally — no leak on an exception
         // in marshalling, the native invoke, or the read-back.
         try
@@ -547,7 +510,7 @@ public static class NativeBlockRunner
                 {
                     case NativeCall.Kind.OutString:
                     {
-                        IntPtr cell = RentOutCell(host, ref outCellHGlobals);
+                        IntPtr cell = host.NativeArenaAlloc(8);
                         (outStrs ??= new()).Add((i, cell));
                         System.Runtime.InteropServices.Marshal.WriteIntPtr(cell, System.IntPtr.Zero);
                         callArgs[i] = cell;
@@ -556,7 +519,7 @@ public static class NativeBlockRunner
                     case NativeCall.Kind.OutScalar:
                     {
                         Type elem = sig.ParamElemTypes[i];
-                        IntPtr ptr = RentOutCell(host, ref outCellHGlobals);
+                        IntPtr ptr = host.NativeArenaAlloc(8);
                         (outs ??= new()).Add((i, ptr, elem));
                         WriteScalar(ptr, elem, args[i]);   // seed from the block-local value (in/out)
                         callArgs[i] = ptr;
@@ -573,8 +536,7 @@ public static class NativeBlockRunner
                         }
                         else
                         {
-                            handle = NativeReftype.Materialize(slot.Materialize(), enc,
-                                hglobalAllocs ??= new());
+                            handle = NativeReftype.Materialize(slot.Materialize(), enc, arena: host);
                             structPtr = handle;
                         }
                         callArgs[i] = structPtr;
@@ -583,8 +545,8 @@ public static class NativeBlockRunner
                     }
                     case NativeCall.Kind.StringIn:
                     {
-                        IntPtr ptr = AllocCString(AsNativeString(args[i], host), enc, cstrings ??= new());
-                        callArgs[i] = ptr;
+                        callArgs[i] = NativeReftype.AllocString(
+                            AsNativeString(args[i], host), enc, arena: host);
                         break;
                     }
                     default:   // Scalar
@@ -622,16 +584,9 @@ public static class NativeBlockRunner
             if (reftypes is not null && alloc is not null)
                 foreach (var (_, handle) in reftypes)
                     alloc.Free(handle);
-            if (hglobalAllocs is not null)
-                NativeReftype.FreeRecorded(hglobalAllocs);
-            if (cstrings is not null)
-                foreach (var ptr in cstrings)
-                    System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
-            // Out cells: pop the scratch mark; free only the HGlobal overflow.
+            // Phase 33 D1 — one mark restore releases every call-scoped arena
+            // buffer (reftype graphs, char* inputs, out cells).
             host.NativeScratchRelease(scratchMark);
-            if (outCellHGlobals is not null)
-                foreach (var ptr in outCellHGlobals)
-                    System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
         }
     }
 
@@ -660,12 +615,18 @@ public static class NativeBlockRunner
         else System.Runtime.InteropServices.Marshal.WriteInt64(p, BitConverter.DoubleToInt64Bits(v is null ? 0.0 : System.Convert.ToDouble(v)));
     }
 
-    private static object ReadScalar(IntPtr p, Type t) =>
-        t == typeof(short) ? (long)System.Runtime.InteropServices.Marshal.ReadInt16(p)
-        : t == typeof(int) ? (long)System.Runtime.InteropServices.Marshal.ReadInt32(p)
-        : t == typeof(long) ? System.Runtime.InteropServices.Marshal.ReadInt64(p)
-        : t == typeof(float) ? (double)BitConverter.Int32BitsToSingle(System.Runtime.InteropServices.Marshal.ReadInt32(p))
-        : BitConverter.Int64BitsToDouble(System.Runtime.InteropServices.Marshal.ReadInt64(p));
+    // If/return on purpose: a single ?:-chain here types the WHOLE expression as
+    // double (the branches' best common type — long converts to double, never
+    // back), so every integer read was silently boxed as a Double and the emitted
+    // IL's unbox-to-long threw InvalidCastException. Each return boxes its own type.
+    private static object ReadScalar(IntPtr p, Type t)
+    {
+        if (t == typeof(short)) return (long)System.Runtime.InteropServices.Marshal.ReadInt16(p);
+        if (t == typeof(int)) return (long)System.Runtime.InteropServices.Marshal.ReadInt32(p);
+        if (t == typeof(long)) return System.Runtime.InteropServices.Marshal.ReadInt64(p);
+        if (t == typeof(float)) return (double)BitConverter.Int32BitsToSingle(System.Runtime.InteropServices.Marshal.ReadInt32(p));
+        return BitConverter.Int64BitsToDouble(System.Runtime.InteropServices.Marshal.ReadInt64(p));
+    }
 
     // Quick-win over the interpreted path: invoke each interop method through a
     // compiled thunk (a `(object?[]) => method(...)` delegate) cached per method,

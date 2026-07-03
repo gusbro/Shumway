@@ -47,23 +47,25 @@ public static class NativeReftype
     /// <c>char*</c> text — atom/string content and a functor's name. Release the
     /// graph with <see cref="Free"/>.</summary>
     public static IntPtr Materialize(Term term, Encoding? encoding = null)
-        => Materialize(term, encoding, allocations: null);
+        => Materialize(term, encoding, arena: null);
 
-    /// <summary>Like <see cref="Materialize(Term, Encoding?)"/>, but records every
-    /// native pointer this call allocates (nodes, strings, pars arrays) into
-    /// <paramref name="allocations"/>. A caller handing the graph to a native C
-    /// function frees with <see cref="FreeRecorded"/> — which releases exactly the
-    /// recorded set — instead of walking the graph with <see cref="Free"/>: if the
-    /// native function replaced a <c>cstr</c> or grew <c>pars</c> with its own
-    /// allocator, a graph walk would <c>FreeHGlobal</c> a foreign pointer (heap
-    /// corruption). Recorded-free never frees foreign memory (a native-swapped node
-    /// is treated as borrowed) and never leaks ours (an unlinked buffer is still on
-    /// the list).</summary>
-    internal static IntPtr Materialize(Term term, Encoding? encoding, System.Collections.Generic.List<IntPtr>? allocations)
+    /// <summary>Phase 33 D1 — when <paramref name="arena"/> is non-null, every
+    /// allocation (nodes, pars arrays, char* buffers) bump-allocates from the
+    /// engine's native arena instead of <c>AllocHGlobal</c>; the caller
+    /// releases the WHOLE graph by restoring its arena mark taken at call
+    /// entry (no walk, no per-node free — alloc+free measured as 96% of the
+    /// marshal cost of a 50-element list). Same safety contract as the
+    /// recorded-allocations mode this superseded: the release covers exactly
+    /// the memory WE allocated — a native function that swapped a
+    /// <c>cstr</c>/<c>pars</c> with its own allocator leaves our (unlinked)
+    /// block to die with the mark, and its foreign pointer is never touched
+    /// (a graph-walking free would corrupt the foreign heap).</summary>
+    internal static IntPtr Materialize(Term term, Encoding? encoding, PrologEngine? arena)
     {
         Encoding enc = encoding ?? DefaultEncoding;
-        IntPtr p = Marshal.AllocHGlobal(StructSize);
-        allocations?.Add(p);
+        IntPtr p = arena is not null
+            ? arena.NativeArenaAlloc(StructSize)
+            : Marshal.AllocHGlobal(StructSize);
         // Zero the whole struct first so unused fields (pars/crep high bytes) are
         // deterministic.
         Marshal.WriteInt64(p, OffNtype, Reftype.Codes.Nontype);
@@ -103,19 +105,20 @@ public static class NativeReftype
                 // single-byte encodings byte count and char count coincide; under
                 // UTF-8 (Shumway's default) nelem stays the strlen, by design.
                 Marshal.WriteInt64(p, OffNelem, enc.GetByteCount(a.Name));
-                Marshal.WriteIntPtr(p, OffCrep, AllocString(a.Name, enc, allocations));    // cstr
+                Marshal.WriteIntPtr(p, OffCrep, AllocString(a.Name, enc, arena));    // cstr
                 break;
             case StringTerm s:
                 Marshal.WriteInt64(p, OffNtype, Reftype.Codes.String);
                 Marshal.WriteInt64(p, OffNelem, enc.GetByteCount(s.Content));
-                Marshal.WriteIntPtr(p, OffCrep, AllocString(s.Content, enc, allocations));
+                Marshal.WriteIntPtr(p, OffCrep, AllocString(s.Content, enc, arena));
                 break;
             case CompoundTerm c:
                 Marshal.WriteInt64(p, OffNtype, Reftype.Codes.Functor);
                 Marshal.WriteInt64(p, OffNelem, c.Args.Length);
-                Marshal.WriteIntPtr(p, OffCrep, AllocString(c.Functor, enc, allocations)); // functor name in cstr
-                IntPtr pars = Marshal.AllocHGlobal(checked(c.Args.Length * IntPtr.Size));
-                allocations?.Add(pars);
+                Marshal.WriteIntPtr(p, OffCrep, AllocString(c.Functor, enc, arena)); // functor name in cstr
+                IntPtr pars = arena is not null
+                    ? arena.NativeArenaAlloc(checked(c.Args.Length * IntPtr.Size))
+                    : Marshal.AllocHGlobal(checked(c.Args.Length * IntPtr.Size));
                 // Link pars into the node BEFORE filling children: if a child's
                 // materialization throws (e.g. cint range), the recorded-free path
                 // still releases everything allocated so far, and the walking Free
@@ -124,7 +127,7 @@ public static class NativeReftype
                 for (int k = 0; k < c.Args.Length; k++)
                     Marshal.WriteIntPtr(pars, k * IntPtr.Size, IntPtr.Zero);
                 for (int k = 0; k < c.Args.Length; k++)
-                    Marshal.WriteIntPtr(pars, k * IntPtr.Size, Materialize(c.Args[k], enc, allocations));
+                    Marshal.WriteIntPtr(pars, k * IntPtr.Size, Materialize(c.Args[k], enc, arena));
                 break;
             // default: leaves Nontype.
         }
@@ -164,31 +167,24 @@ public static class NativeReftype
         }
     }
 
-    // Allocates a NUL-terminated native byte buffer (HGlobal) holding `s` encoded
-    // with `enc` — a C `char*`. Byte-oriented encodings only (UTF-8 / ASCII /
+    // Allocates a NUL-terminated native byte buffer holding `s` encoded with
+    // `enc` — a C `char*`. Byte-oriented encodings only (UTF-8 / ASCII /
     // Latin1 / a codepage), where a single 0 byte terminates the string.
-    // Phase 33 D3 — encodes through a POOLED buffer: no per-call byte[] garbage.
-    internal static IntPtr AllocString(string s, Encoding enc, System.Collections.Generic.List<IntPtr>? allocations = null)
+    // Phase 33 D3 — encodes through a POOLED buffer: no per-call byte[]
+    // garbage. Phase 33 D1 — with an `arena` the buffer is call-scoped
+    // (released by the caller's mark restore); otherwise HGlobal, freed by
+    // the graph walk / the caller.</summary>
+    internal static IntPtr AllocString(string s, Encoding enc, PrologEngine? arena = null)
     {
         byte[] buf = System.Buffers.ArrayPool<byte>.Shared.Rent(enc.GetMaxByteCount(s.Length));
         int len = enc.GetBytes(s, 0, s.Length, buf, 0);
-        IntPtr p = Marshal.AllocHGlobal(len + 1);
-        allocations?.Add(p);
+        IntPtr p = arena is not null
+            ? arena.NativeArenaAlloc(len + 1)
+            : Marshal.AllocHGlobal(len + 1);
         if (len > 0) Marshal.Copy(buf, 0, p, len);
         Marshal.WriteByte(p, len, 0);   // NUL terminator
         System.Buffers.ArrayPool<byte>.Shared.Return(buf);
         return p;
-    }
-
-    /// <summary>Frees exactly the pointers recorded by the allocation-tracking
-    /// <see cref="Materialize(Term, Encoding?, System.Collections.Generic.List{IntPtr})"/>
-    /// overload — the safe release after the graph was handed to a native C function
-    /// (see that overload's doc for why a graph walk would be unsafe).</summary>
-    internal static void FreeRecorded(System.Collections.Generic.List<IntPtr> allocations)
-    {
-        for (int i = allocations.Count - 1; i >= 0; i--)
-            Marshal.FreeHGlobal(allocations[i]);
-        allocations.Clear();
     }
 
     // Reads a NUL-terminated native `char*` and decodes it with `enc`.

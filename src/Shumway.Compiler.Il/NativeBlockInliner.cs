@@ -35,7 +35,8 @@ internal static class NativeBlockInliner
         NativeBlockTyping typing;
         try
         {
-            typing = NativeBlockTyping.Compute(block.Vars, block.Stmts, ctx.InteropResolver);
+            typing = NativeBlockTyping.Compute(block.Vars, block.Stmts, ctx.InteropResolver,
+                ctx.TypedefsProvider?.Invoke());
             new Emitter(null, ctx, typing, block, failLabel, 0).Run();   // validate (no emit)
         }
         catch (NativeBlockBailException)

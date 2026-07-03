@@ -425,7 +425,7 @@ public class NativePInvokeTests
     private const string OutStrProgram =
         ":- set_prolog_flag(arity_compat, true).\n" +
         ":- native get_name/2.\n" +
-        ":- c.\nint get_name(int, char**);\n:- prolog.\n" +
+        ":- c.\ntypedef char *pchar;\nint get_name(int, char**);\n:- prolog.\n" +
         "gn(Id, Name) :-\n" +
         "  integer(Id),\n" +
         "  { s: pchar; ret: int;\n" +

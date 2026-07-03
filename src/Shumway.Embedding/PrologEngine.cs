@@ -4574,29 +4574,59 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// Tier-0 win until the ADR's stage (b) lands. Set before consulting.</summary>
     public bool EnableInlineIte { get; set; }
 
-    // Phase 33 D4 — a small per-engine native scratch block for out-scalar /
-    // out-string cells (8 bytes each): avoids an AllocHGlobal/FreeHGlobal round
-    // trip per out-parameter per native call. Bump-allocated with mark/restore so
-    // nested native calls (an arg expression that itself calls a native fn)
-    // compose; the engine is single-threaded so no synchronization is needed.
-    // Lazily allocated, lives for the engine's lifetime (128 bytes).
-    private IntPtr _nativeScratchBlock;
-    private int _nativeScratchTop;
-    private const int NativeScratchSlots = 16;
+    // Phase 33 D4 → D1 — the per-engine NATIVE ARENA: a chunked unmanaged bump
+    // allocator with mark/restore, serving every call-scoped native buffer a
+    // `:- native` P/Invoke needs — out-scalar/out-string cells (D4), and now
+    // (D1) the whole t_reftype graph: nodes, pars arrays and char* buffers.
+    // The D1 measurement showed AllocHGlobal/FreeHGlobal was 96% of the
+    // reftype marshal cost on a 50-element list (mat+free 92.9 of 96.7 µs
+    // roundtrip); with the arena, Materialize bump-allocates and the entire
+    // release is a mark restore — no graph walk, no per-node free.
+    //
+    // Safety contract (same as the recorded-allocations mode this replaces):
+    // release frees exactly the memory WE allocated for the call — a native
+    // function that swapped a cstr/pars with its own allocator leaves our
+    // (now unlinked) block to die with the mark and its foreign pointer is
+    // never touched. Nested native calls compose via mark/restore; the
+    // engine is single-threaded. Chunks are engine-lifetime (high-watermark
+    // retention, like the WAM heap); an oversize request gets its own chunk.
+    private readonly System.Collections.Generic.List<IntPtr> _nativeArenaChunks = new();
+    private readonly System.Collections.Generic.List<int> _nativeArenaSizes = new();
+    private int _nativeArenaChunk;
+    private int _nativeArenaOffset;
+    private const int NativeArenaChunkSize = 64 * 1024;
 
-    internal int NativeScratchMark => _nativeScratchTop;
-    internal void NativeScratchRelease(int mark) => _nativeScratchTop = mark;
+    internal long NativeScratchMark => ((long)_nativeArenaChunk << 32) | (uint)_nativeArenaOffset;
 
-    /// <summary>Rents one 8-byte scratch slot, or <see cref="IntPtr.Zero"/> when
-    /// the block is exhausted (caller falls back to AllocHGlobal).</summary>
-    internal IntPtr TryRentNativeScratchSlot()
+    internal void NativeScratchRelease(long mark)
     {
-        if (_nativeScratchTop >= NativeScratchSlots) return IntPtr.Zero;
-        if (_nativeScratchBlock == IntPtr.Zero)
-            _nativeScratchBlock = System.Runtime.InteropServices.Marshal.AllocHGlobal(NativeScratchSlots * 8);
-        IntPtr p = _nativeScratchBlock + _nativeScratchTop * 8;
-        _nativeScratchTop++;
-        return p;
+        _nativeArenaChunk = (int)(mark >> 32);
+        _nativeArenaOffset = (int)(uint)mark;
+    }
+
+    /// <summary>Bump-allocates <paramref name="bytes"/> (8-byte aligned) of
+    /// call-scoped native memory. Released wholesale by
+    /// <see cref="NativeScratchRelease"/> with the mark taken at call entry.</summary>
+    internal IntPtr NativeArenaAlloc(int bytes)
+    {
+        int aligned = (bytes + 7) & ~7;
+        while (true)
+        {
+            if (_nativeArenaChunk == _nativeArenaChunks.Count)
+            {
+                int size = System.Math.Max(NativeArenaChunkSize, aligned);
+                _nativeArenaChunks.Add(System.Runtime.InteropServices.Marshal.AllocHGlobal(size));
+                _nativeArenaSizes.Add(size);
+            }
+            if (_nativeArenaOffset + aligned <= _nativeArenaSizes[_nativeArenaChunk])
+            {
+                IntPtr p = _nativeArenaChunks[_nativeArenaChunk] + _nativeArenaOffset;
+                _nativeArenaOffset += aligned;
+                return p;
+            }
+            _nativeArenaChunk++;
+            _nativeArenaOffset = 0;
+        }
     }
 
     // Phase 33 A4 — the per-dispatch block lookup keyed by ATOM ID: '$native_run'
@@ -4678,6 +4708,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private System.Collections.Generic.Dictionary<string, Shumway.Compiler.NativeC.CPrototype>? _nativePrototypes;
     private System.Collections.Generic.Dictionary<string, Shumway.Compiler.NativeC.CType>? _nativeTypedefs;
     private readonly System.Collections.Generic.Dictionary<int, NativeResolution> _nativeCallCache = new();
+
+    /// <summary>The consulted <c>:- c</c> typedef table, for the native-block code
+    /// generators — a block-local declared via a typedef (`s: pchar`) must type as
+    /// the resolved C type (char* → string model), matching the interpreter.</summary>
+    internal System.Collections.Generic.IReadOnlyDictionary<string, Shumway.Compiler.NativeC.CType>? NativeTypedefsView
+        => _nativeTypedefs;
 
     // ADR-024 — native libraries are loaded ONCE PER PATH for the process lifetime,
     // not once per engine. The OS maps a module once (LoadLibrary/dlopen refcounts),
@@ -4872,6 +4908,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     : new Shumway.Compiler.NativeC.NativeBlockBody(e.Vars, e.Stmts, e.ScalarGlobals);
             },
             InteropResolver = ResolveNativeInterop,
+            TypedefsProvider = () => _nativeTypedefs,
             ReadRegisterAsTerm = typeof(RegisterMarshalling)
                 .GetMethod(nameof(RegisterMarshalling.ReadRegisterAsTerm))!,
             UnifyRegisterWithTerm = typeof(RegisterMarshalling)

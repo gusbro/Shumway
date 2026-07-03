@@ -38,6 +38,13 @@ public sealed class NativeInlineContext
     public required Func<string, NativeBlockBody?> BlockProvider { get; init; }
     public required Func<string, MethodInfo?> InteropResolver { get; init; }
 
+    /// <summary>The engine's consulted <c>:- c</c> typedef table (a provider — the
+    /// context is built once, the table can grow with later consults). The typing
+    /// pass resolves block-local declarations through it, so an `s: pchar` local
+    /// under `typedef char *pchar;` types as char* (string model) at build-time IL
+    /// emit exactly as in the runtime delegate compiler.</summary>
+    public Func<System.Collections.Generic.IReadOnlyDictionary<string, CType>?>? TypedefsProvider { get; init; }
+
     public required MethodInfo ReadRegisterAsTerm { get; init; }   // (Engine, int) -> Term
     public required MethodInfo UnifyRegisterWithTerm { get; init; } // (Engine, int, Term) -> bool
     public required MethodInfo HostGetter { get; init; }            // Engine.Host -> object
