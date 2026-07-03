@@ -361,6 +361,31 @@ A deferral is a TODO with a prerequisite, not a closure.
       reports `call->unresolved` — not switch names. (Bonus fact pinned:
       Execute sites never consult the calleeMap — only non-last Calls gate
       on it.)
+      **FOLLOW-UP (user's correct re-test methodology, 2026-07-04) — the REAL
+      coverage gap found and fixed: the per-entry calleeMap in the bundle IL
+      build.** Re-measured through the real toolchain (compile → link
+      `--with-compiled-il`, one bundle per corpus dir): only **26.1%** of user
+      predicates got IL (6.8% among cross-module callers) because
+      `CompileEntryToIl` warmed a SINGLE-entry engine — every cross-module
+      callee was call->unresolved, so the CALLER was rejected. Fix:
+      (1) `BuildWarmEngine` — ONE shared warm engine loads the WHOLE bundle
+      (exactly what the runtime LoadBundle does); (2) `PersistedIlBuilder.Build`
+      gains `emitOnly` — resolve against the full map, emit only the entry's
+      own predicates (each predicate ships IL once, in its defining entry; the
+      T7 prelude dedup falls out); (3) region membership scoped to the entry
+      via `RegionMemberScopeFids` (ThreadStatic — bundle builds must not scope
+      concurrent background promotions), set for BOTH the prune analysis and
+      the Build emit (the chunk-401 analysis↔compile consistency rule).
+      Also fixed en route: the Phase-17 sentinel PE scan was a sliding byte
+      window that false-positived inside `switch` jump tables (two adjacent
+      targets 0x320/0x17E lay out as `20 03 00 00 7E` = `ldc.i4 0x7E000003`) —
+      now a PROPER CIL instruction walk (operand table from
+      System.Reflection.Emit.OpCodes, switch tables skipped), making the
+      exactly-once check sound. Full testGen through the real pipeline
+      (309 modules, 17 085 user predicates, links in 106 s, runs):
+      **76.9% IL coverage; cross-module callers 6.8% → 71.0%; typed-switch
+      68.5%**. Cross-module strip-wam regression test (execution forced
+      IL→IL across entries). Gate: all five projects green.
 - [ ] **L9** ⚪ Minor batch: region self-delegate CSE gate ≥3→≥2;
       MaybeCollectHeap on non-allocating self-tail loops; ground-fact
       unify-with-constant fast path.

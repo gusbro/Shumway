@@ -1113,6 +1113,16 @@ public sealed class IlPredicateCompiler
     /// the bundle build (save/restore) before a pruned-IL build; null = none.</summary>
     public static IReadOnlySet<int>? RegionForcedRootFids { get; set; }
 
+    /// <summary>Phase 33 (bundle-wide calleeMap) — when non-null, region
+    /// membership is restricted to these functor ids (the bundle entry's own
+    /// predicates). The persisted build sets it (save/restore) so an entry
+    /// compiled against the whole bundle's predicate map never absorbs a
+    /// cross-module callee; null = no scope (the runtime promotion path).
+    /// ThreadStatic on purpose: a bundle build on the caller thread must not
+    /// scope background promotions running on the IlCompileWorker.</summary>
+    [System.ThreadStatic]
+    public static IReadOnlySet<int>? RegionMemberScopeFids;
+
     /// <summary>The labels + cursor map threaded into <see cref="EmitClauseBody"/>
     /// while emitting a region member's block.</summary>
     private sealed class RegionEmitContext
@@ -1292,6 +1302,14 @@ public sealed class IlPredicateCompiler
     private bool IsRegionMemberEligible(CompiledPredicate p,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
     {
+        // Phase 33 (bundle-wide calleeMap) — when the persisted build compiles
+        // an entry against the WHOLE bundle's predicate map, region membership
+        // stays scoped to the entry's OWN predicates: absorbing a cross-module
+        // callee would duplicate its body into this entry's region method
+        // (semantically sound — static predicates are immutable — but it
+        // changes region shapes and bloats the entry for no dispatch win; the
+        // member's standalone IL lives in its own entry).
+        if (RegionMemberScopeFids?.Contains(p.FunctorId) == false) return false;
         // Stage 9c: forced root. Checked LIVE (not cached) — the bundle build
         // mutates the RegionForcedRootFids static between the root-selector
         // probe phase and the compile phase.

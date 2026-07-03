@@ -90,6 +90,60 @@ public class Phase33L10Tests
         }
     }
 
+    // ---- Bundle-wide calleeMap (the REAL coverage gap the user's correct
+    // re-test methodology exposed): CompileEntryToIl used to warm a
+    // SINGLE-entry engine, so every cross-module Call rejected its caller
+    // as call->unresolved — 26% IL coverage on a real multi-module corpus
+    // bundle (6.8% among cross-module callers). With the shared whole-bundle
+    // warm engine + per-entry emitOnly: 76.9% / 71.0% (full testGen). ----
+
+    [Fact]
+    public void CrossModuleCalls_GetIl_InMultiEntryBundle()
+    {
+        // pb is called NON-last from pa (a real Call site, the shape that was
+        // rejected); two clauses everywhere so no unfold erases the calls.
+        var objA = ShmoCompiler.CompileSource(
+            ":- public pa/2.\n"
+            + "pa(0, 0).\n"
+            + "pa(N, R) :- N > 0, pb(N, R0), R is R0 + 1.\n",
+            moduleNameFallback: "l10moda");
+        var objB = ShmoCompiler.CompileSource(
+            ":- public pb/2.\n"
+            + "pb(0, 0).\n"
+            + "pb(N, R) :- N > 0, R is N * 2.\n",
+            moduleNameFallback: "l10modb");
+        var result = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { objA, objB },
+            EntryPoints = new[] { new PredicateRef("pa", 2) },
+            BakePrelude = true,
+            IncludeCompiledIl = true,
+            // Strip the WAM: execution is FORCED through the IL, cross-entry
+            // (pa's IL in modA dispatches pb by fid into modB's IL).
+            StripWam = true,
+        });
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics.Select(d => d.Message)));
+        var bundle = BundleReader.FromBytes(result.Bytes!);
+
+        var aMethods = Shumway.Compiler.Il.IlPersistedEntryCodec.Decode(
+            bundle.Entries.First(en => en.ModuleName == "l10moda").CompiledIlEntries!)
+            .Select(pe => (pe.Name, pe.Arity)).ToHashSet();
+        var bMethods = Shumway.Compiler.Il.IlPersistedEntryCodec.Decode(
+            bundle.Entries.First(en => en.ModuleName == "l10modb").CompiledIlEntries!)
+            .Select(pe => (pe.Name, pe.Arity)).ToHashSet();
+        // The cross-module CALLER got IL (the pre-fix rejection), each
+        // predicate ships exactly once, in its own entry.
+        Assert.Contains(("pa", 2), aMethods);
+        Assert.DoesNotContain(("pb", 2), aMethods);
+        Assert.Contains(("pb", 2), bMethods);
+        Assert.DoesNotContain(("pa", 2), bMethods);
+
+        var e = PrologEngine.FromBundle(bundle);
+        Assert.True(e.Query("pa(3, R), R == 7.").Success);
+        Assert.True(e.Query("pa(0, R), R == 0.").Success);
+        Assert.False(e.Query("pa(-1, _).").Success);
+    }
+
     [Fact]
     public void DescribeRejection_ReportsUnresolvedCall_NotSwitchOpcodes()
     {

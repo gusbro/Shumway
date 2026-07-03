@@ -51,6 +51,16 @@ public static class BundleWriter
         BundleEntry[] effective = bundle.Entries.ToArray();
         if (includeCompiledBytecode || includeCompiledIl)
         {
+            // Phase 33 (bundle-wide calleeMap) — ONE warm engine over the WHOLE
+            // bundle, shared by every entry's IL compile. Loading all entries
+            // (exactly what the runtime LoadBundle will do) makes cross-module
+            // callees resolvable: the previous per-entry engine saw only that
+            // module + the prelude, so every cross-module Call rejected its
+            // caller as "call->unresolved" — measured 26% IL coverage (6.8%
+            // among cross-module callers) on a real 39-module corpus bundle.
+            PrologEngine? warmEngine = null;
+            if (includeCompiledIl && effective.Any(en => en.CompiledIl is null))
+                warmEngine = BuildWarmEngine(effective);
             for (int i = 0; i < effective.Length; i++)
             {
                 byte[]? compiledBytecode = effective[i].CompiledBytecode;
@@ -73,17 +83,11 @@ public static class BundleWriter
                     _lastEntriesTableBytes = null;
                     _lastIlFunctorIds = null;
                     _lastPrunableFids = null;
-                    // Phase 33 T7 — when the bundle bakes the prelude as its own
-                    // entry, user entries exclude the prelude's predicates from
-                    // their IL: they used to re-Sigil-compile and re-serialise
-                    // the ENTIRE prelude per entry (~180 methods / ~107 KB each).
-                    // Calls into the prelude dispatch by functor id at runtime
-                    // and resolve to the $prelude entry's delegates — the same
-                    // mechanism any cross-module call already uses.
-                    bool excludePrelude =
-                        effective[i].ModuleName != Prelude.ModuleName
-                        && bundle.Entries.Any(e => e.ModuleName == Prelude.ModuleName);
-                    compiledIl = CompileEntryToIl(effective[i], regionPruneSeeds, excludePrelude);
+                    // Each entry emits ONLY its own predicates (T7 dedup: the
+                    // prelude ships once, in the $prelude entry; user modules
+                    // once each, in theirs) while resolving calls against the
+                    // shared warm engine's whole-bundle map.
+                    compiledIl = CompileEntryToIl(effective[i], regionPruneSeeds, warmEngine!);
                     compiledIlPatches = _lastPatchTableBytes;
                     compiledIlEntries = _lastEntriesTableBytes;
                     // --strip-wam: drop the redundant WAM bodies. Two sets, both now safe
@@ -235,69 +239,52 @@ public static class BundleWriter
     /// predicate. The resulting .dll bytes embed into the bundle and the
     /// load path uses them to bind <c>PredicateDelegate</c>s without
     /// re-running the Sigil pipeline at consult time.</summary>
-    private static byte[] CompileEntryToIl(BundleEntry entry,
-        IReadOnlyCollection<(string Module, PredicateRef Pred)>? regionPruneSeeds = null,
-        bool excludePrelude = false)
+    /// <summary>Phase 33 (bundle-wide calleeMap) — builds the SHARED warm
+    /// engine every entry's IL compile resolves against: all bytecode-backed
+    /// entries load exactly as the runtime <c>LoadBundle</c> would; legacy
+    /// source-only entries (hand-built test bundles) are consulted. The
+    /// per-entry engine this replaces saw only that module + the prelude, so
+    /// every cross-module <c>Call</c> rejected its caller as
+    /// call-&gt;unresolved.</summary>
+    private static Shumway.Embedding.PrologEngine BuildWarmEngine(BundleEntry[] entries)
     {
         Shumway.Builtins.StandardBuiltins.EnsureRegistered();
-        // Run through a full PrologEngine warm-up so the module
-        // rewriter, dynamic-functor routing, prelude, and per-query
-        // synthetic launcher all agree on which functor ids end up
-        // representing each predicate. PersistedIlBuilder then sees
-        // the same CompiledPredicate the runtime path would compile.
-        //
-        // Chunk 230 — handle source-less entries too. shumway-compile
-        // defaults to release mode which strips Source from the .shmo
-        // (so the only ground truth is CompiledBytecode), and
-        // shumway-link passes that through unchanged. Pre-chunk-230
-        // CompileEntryToIl unconditionally called ConsultString,
-        // which on an empty source produced an engine with ONLY the
-        // prelude in its caches — so IL was compiled for prelude
-        // helpers but never for any user predicate from the bundle.
-        // For Blint that meant 159 prelude methods in the IL bundle
-        // and zero user methods, leaving every user Call dispatching
-        // through Tier-0 WAM (with the chunk-225/226/227 fast paths
-        // bypassing OnDispatch only for the prelude callers). With
-        // this fix the source-less path routes through
-        // engine.LoadBundle on a single-entry bundle, which populates
-        // PrecompiledStaticPredicates from CompiledBytecode.
         var engine = new Shumway.Embedding.PrologEngine();
-        // Prefer the COMPILED BYTECODE (the .shmo) over re-consulting the source: it is
-        // the ground truth that (a) ships in the bundle, (b) the runtime LoadBundle
-        // dispatches against, and (c) the linker's dead-region ANALYSIS decodes. Compiling
-        // the IL from a fresh re-consult of the source instead would re-run a different
-        // pipeline and could disagree on which predicates a region absorbs — the Stage-9d
-        // analysis↔compile inconsistency that broke the WAM strip. (You asked for embedded
-        // IL → the bundle is self-contained from its bytecode; the source re-consult is a
-        // fallback only for entries that carry no compiled bytecode, e.g. hand-built
-        // test bundles.)
-        if (entry.CompiledBytecode is not null && entry.Defined.Count > 0)
+        var bare = new List<BundleEntry>();
+        var sources = new List<string>();
+        foreach (var e in entries)
         {
-            // Construct a single-entry bundle whose CompiledIl is null
-            // so LoadBundle takes the source-less LoadEntryFromBytecode
-            // path (which populates PrecompiledStaticPredicates) and
-            // skips its own IL setup (we're about to do it ourselves
-            // through PersistedIlBuilder.Build).
-            var bareEntry = new BundleEntry(
-                entry.ModuleName, source: "", compiledBytecode: entry.CompiledBytecode,
-                compiledIl: null, defined: entry.Defined,
-                compiledIlPatches: null, compiledIlEntries: null,
-                dynamicSeeds: entry.DynamicSeeds,
-                nativeBlocks: entry.NativeBlocks,
-                nativeFunctions: entry.NativeFunctions,
-                nativeDecls: entry.NativeDecls);
-            engine.LoadBundle(new Bundle(new[] { bareEntry }));
+            // Prefer the COMPILED BYTECODE (the .shmo) over re-consulting the
+            // source: it is the ground truth that (a) ships in the bundle,
+            // (b) the runtime LoadBundle dispatches against, and (c) the
+            // linker's dead-region ANALYSIS decodes (the Stage-9d lesson).
+            if (e.CompiledBytecode is not null && e.Defined.Count > 0)
+                bare.Add(new BundleEntry(
+                    e.ModuleName, source: "", compiledBytecode: e.CompiledBytecode,
+                    compiledIl: null, defined: e.Defined,
+                    compiledIlPatches: null, compiledIlEntries: null,
+                    dynamicSeeds: e.DynamicSeeds,
+                    nativeBlocks: e.NativeBlocks,
+                    nativeFunctions: e.NativeFunctions,
+                    nativeDecls: e.NativeDecls));
+            else if (!string.IsNullOrEmpty(e.Source))
+                sources.Add(e.Source);
         }
-        else if (!string.IsNullOrEmpty(entry.Source))
-        {
-            engine.ConsultString(entry.Source);
-        }
+        if (bare.Count > 0) engine.LoadBundle(new Bundle(bare));
+        foreach (var s in sources) engine.ConsultString(s);
         engine.Query("true.");
-        // Pull every IL-eligible predicate the warm-up populated.
-        // Static (chunk 82) covers immutable user clauses from
-        // ConsultString; dynamic (chunk 68) covers `:- dynamic`-
-        // declared ones; precompiled (chunk 178) covers user clauses
-        // loaded from a source-less bundle entry.
+        return engine;
+    }
+
+    private static byte[] CompileEntryToIl(BundleEntry entry,
+        IReadOnlyCollection<(string Module, PredicateRef Pred)>? regionPruneSeeds,
+        Shumway.Embedding.PrologEngine engine)
+    {
+        // `engine` is the shared whole-bundle warm engine (BuildWarmEngine).
+        // Pull every predicate it knows: static (chunk 82, consulted source),
+        // dynamic (chunk 68), precompiled (chunk 178, bytecode entries). This
+        // is the CALLEE MAP — cross-module calls resolve against it; the
+        // entry's own predicates (emitOnly below) are what actually emits.
         var predicates = new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>();
         foreach (var (fid, pred) in engine.StaticPredicateCache)
             predicates[fid] = pred;
@@ -305,30 +292,49 @@ public static class BundleWriter
             predicates[fid] = pred;
         foreach (var (fid, pred) in engine.PrecompiledStaticPredicates)
             predicates[fid] = pred;
-        // Phase 33 T7 — drop the prelude predicates (they ship, once, in the
-        // baked $prelude entry's own IL; see the ToBytes call site). By NAME,
-        // not by fid snapshot: the prelude's synthesized control-construct
-        // helpers ($prelude$$disj_N / $neg_N …) get FRESH ids on every
-        // recompile (the E12 engine-seq), so a fid set taken from another
-        // compile pass would miss them. A prelude local (incl. every helper)
-        // is module-mangled "$prelude$…"; publics/dynamics match the compiled
-        // prelude object's bare indicator set.
-        Func<int, bool>? isPreludeOwned = null;
-        if (excludePrelude)
+
+        // The EMIT set — this entry's own predicates (each predicate ships IL
+        // exactly once, in its defining entry; the T7 prelude dedup falls out
+        // of this too). Three cases:
+        //  * the $prelude entry emits the prelude-owned set BY NAME — its
+        //    synthesized control helpers ($prelude$$disj_N / $neg_N) get
+        //    fresh E12 ids on every recompile, so the engine's fids are the
+        //    only valid identity (a "$prelude$…" name, or a bare indicator
+        //    from the compiled prelude object's public/dynamic set);
+        //  * a bytecode-backed entry emits its decoded fids plus its dynamic
+        //    seeds' fids;
+        //  * a legacy source-only entry (hand-built test bundles) emits
+        //    everything except the prelude-owned set.
+        var emitOnly = new HashSet<int>();
+        var preludeBare = new HashSet<(string, int)>();
+        foreach (var d in ShmoLinker.PreludeObject.Defined)
+            if (d.Visibility != PredicateVisibility.Local)
+                preludeBare.Add((d.Indicator.Name, d.Indicator.Arity));
+        bool IsPreludeOwned(int fid)
         {
-            var preludeBare = new HashSet<(string, int)>();
-            foreach (var d in ShmoLinker.PreludeObject.Defined)
-                if (d.Visibility != PredicateVisibility.Local)
-                    preludeBare.Add((d.Indicator.Name, d.Indicator.Arity));
-            isPreludeOwned = fid =>
-            {
-                var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(fid);
-                string name = Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "";
-                return name.StartsWith(Prelude.ModuleName + "$", StringComparison.Ordinal)
-                    || preludeBare.Contains((name, arity));
-            };
-            foreach (int f in predicates.Keys.Where(isPreludeOwned).ToList())
-                predicates.Remove(f);
+            var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(fid);
+            string name = Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "";
+            return name.StartsWith(Prelude.ModuleName + "$", StringComparison.Ordinal)
+                || preludeBare.Contains((name, arity));
+        }
+        if (entry.ModuleName == Prelude.ModuleName)
+        {
+            foreach (int f in predicates.Keys)
+                if (IsPreludeOwned(f)) emitOnly.Add(f);
+        }
+        else if (entry.CompiledBytecode is not null && entry.Defined.Count > 0)
+        {
+            foreach (var p in CompiledModuleCodec.Decode(entry.CompiledBytecode).Predicates)
+                emitOnly.Add(p.FunctorId);
+            foreach (var seed in entry.DynamicSeeds)
+                emitOnly.Add(Shumway.Core.FunctorTable.Intern(
+                    Shumway.Core.AtomTable.Intern(seed.Indicator.Name, permanent: true).Id,
+                    seed.Indicator.Arity));
+        }
+        else
+        {
+            foreach (int f in predicates.Keys)
+                if (!IsPreludeOwned(f)) emitOnly.Add(f);
         }
 
         // ADR-023 — bake the persisted IL for `:- dynamic`/`:- visible`
@@ -350,7 +356,6 @@ public static class BundleWriter
         // the dynamic store covers float-bearing dynamics too.
         var dynFids = new HashSet<int>(engine.DynamicPredicateCache.Keys);
         foreach (var f in engine.DynamicFunctorsWithClauses()) dynFids.Add(f);
-        if (isPreludeOwned is not null) dynFids.RemoveWhere(f => isPreludeOwned(f));   // T7
         foreach (var fid in dynFids)
         {
             // BuildPersistableDynamicSnapshot returns null when the snapshot has
@@ -382,6 +387,14 @@ public static class BundleWriter
         // functor table.
         HashSet<int>? prunableFids = null;
         var savedForcedRoots = Shumway.Compiler.Il.IlPredicateCompiler.RegionForcedRootFids;
+        // Phase 33 (bundle-wide calleeMap) — region membership stays scoped to
+        // this entry's own predicates: with the whole bundle in the map, a
+        // region could otherwise absorb a cross-module callee's body into
+        // this entry. Set for BOTH the prune analysis below and the Build
+        // emit, so the two see identical region membership (the chunk-401 /
+        // Stage-9d analysis↔compile consistency requirement).
+        var savedScope = Shumway.Compiler.Il.IlPredicateCompiler.RegionMemberScopeFids;
+        Shumway.Compiler.Il.IlPredicateCompiler.RegionMemberScopeFids = emitOnly;
         if (regionPruneSeeds is not null && predicates.Count > 0)
         {
             var byName = new Dictionary<(string, int), int>();
@@ -461,12 +474,14 @@ public static class BundleWriter
                 // Float-literal value-baking: each predicate resolves its float
                 // literals against its own module's pool (precompiled static) or
                 // the build engine's live pool (dynamic snapshots).
-                engine.FloatPoolForFid);
+                engine.FloatPoolForFid,
+                emitOnly: emitOnly);
         }
         finally
         {
             Shumway.Compiler.Il.IlPredicateCompiler.RegionCompile = savedRegionCompile;
             Shumway.Compiler.Il.IlPredicateCompiler.RegionForcedRootFids = savedForcedRoots;
+            Shumway.Compiler.Il.IlPredicateCompiler.RegionMemberScopeFids = savedScope;
             Shumway.Compiler.Il.IlPredicateCompiler.EndNativeInline(prevInline);
         }
         // Phase 17 stash: the patch table the LoadBundle path needs to

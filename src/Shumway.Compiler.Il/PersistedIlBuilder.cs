@@ -85,12 +85,19 @@ public static class PersistedIlBuilder
     /// REMAIN in <paramref name="predicates"/> (the callee map) so those region methods
     /// can still absorb their bodies, and they keep their Tier-0 WAM as a safety fallback
     /// (a later step may strip it). Null = no prune.</param>
+    /// <param name="emitOnly">Phase 33 (bundle-wide calleeMap) — when non-null,
+    /// only these functor ids get standalone IL methods; everything else in
+    /// <paramref name="predicates"/> serves purely as the CALLEE MAP for
+    /// resolution. This is how a multi-entry bundle compiles each entry's IL
+    /// against the WHOLE program (cross-module calls resolve) while emitting
+    /// each predicate exactly once, in its own entry.</param>
     public static (byte[] DllBytes, IReadOnlyList<Entry> Entries,
         IReadOnlyList<IlPatchSite> Patches) Build(
         string assemblyName,
         IReadOnlyDictionary<int, CompiledPredicate> predicates,
         IReadOnlySet<int>? prunableFids = null,
-        Func<int, IReadOnlyList<double>?>? floatPoolProvider = null)
+        Func<int, IReadOnlyList<double>?>? floatPoolProvider = null,
+        IReadOnlySet<int>? emitOnly = null)
     {
         var psab = new PersistedAssemblyBuilder(
             new AssemblyName(assemblyName), typeof(object).Assembly);
@@ -107,6 +114,7 @@ public static class PersistedIlBuilder
         var eligible = new List<(int FunctorId, CompiledPredicate Pred)>();
         foreach (var (functorId, pred) in predicates)
         {
+            if (emitOnly is not null && !emitOnly.Contains(functorId)) continue;
             // Stage 9b-3: an absorbed-only predicate gets no standalone IL method — its
             // body lives in the region methods that absorb it (it stays in the callee
             // map so they still find it). It keeps its WAM as a Tier-0 fallback.
@@ -274,9 +282,11 @@ public static class PersistedIlBuilder
         using var peReader = new System.Reflection.PortableExecutable.PEReader(ms);
         var mdReader = peReader.GetMetadataReader();
 
+        var siteMethod = new Dictionary<IlPatchSite, string>();
         foreach (var methodHandle in mdReader.MethodDefinitions)
         {
             var methodDef = mdReader.GetMethodDefinition(methodHandle);
+            string methodName = mdReader.GetString(methodDef.Name);
             int rva = methodDef.RelativeVirtualAddress;
             if (rva == 0) continue; // abstract / external / no body
             int fileOffset = RvaToFileOffset(peReader.PEHeaders, rva);
@@ -302,29 +312,73 @@ public static class PersistedIlBuilder
             }
             int ilStart = fileOffset + headerSize;
             int ilEnd = ilStart + ilLength;
-            // 4-byte sliding window — every position whose preceding
-            // byte is the <c>ldc.i4</c> opcode (0x20) is a candidate
-            // patch site. Restricting the scan to ldc.i4 operands
-            // avoids matching sentinel-value-shaped bytes that
-            // happen to appear inside operands of other opcodes (e.g.
-            // an inline switch table or a metadata token offset that
-            // coincidentally lands in our sentinel range).
-            for (int p = ilStart + 1; p + 4 <= ilEnd; p++)
+            // Phase 33 — a PROPER opcode walk, not a sliding byte window.
+            // The old heuristic ("any int preceded by byte 0x20") matched
+            // sentinel-shaped bytes inside a `switch` instruction's jump
+            // table: two adjacent 4-byte branch targets like 0x320 / 0x17E
+            // lay out as … 20 03 00 00 7E … — indistinguishable from
+            // `ldc.i4 0x7E000003` to the window. Surfaced by the Phase-33
+            // bundle-wide calleeMap (more resolvable call sites → more resume
+            // cursors → bigger cursor-switch tables). Walking real
+            // instruction boundaries makes the exactly-once check sound.
+            int q = ilStart;
+            while (q < ilEnd)
             {
-                if (peBytes[p - 1] != 0x20) continue;
-                int v = peBytes[p]
-                    | (peBytes[p + 1] << 8)
-                    | (peBytes[p + 2] << 16)
-                    | (peBytes[p + 3] << 24);
-                if (bySentinel.TryGetValue(v, out var site))
+                byte b = peBytes[q];
+                short opVal = b == 0xFE && q + 1 < ilEnd
+                    ? (short)(0xFE00 | peBytes[q + 1]) : b;
+                int opLen = b == 0xFE ? 2 : 1;
+                if (!_ilOperandKind.TryGetValue(opVal, out var kind))
+                    throw new InvalidOperationException(
+                        $"Persisted-IL scan: unknown CIL opcode 0x{opVal:X4} at "
+                        + $"0x{q:X8} in {methodName}.");
+                int operandSize;
+                switch (kind)
                 {
-                    if (site.AbsoluteByteOffset != 0)
-                        throw new InvalidOperationException(
-                            $"Persisted-IL sentinel 0x{v:X8} found more than once "
-                            + $"(first at 0x{site.AbsoluteByteOffset:X8}, again at 0x{p:X8}). "
-                            + $"Bump IlPatchSiteCodec.SentinelBase.");
-                    site.AbsoluteByteOffset = p;
+                    case System.Reflection.Emit.OperandType.InlineNone:
+                        operandSize = 0; break;
+                    case System.Reflection.Emit.OperandType.ShortInlineVar:
+                    case System.Reflection.Emit.OperandType.ShortInlineI:
+                    case System.Reflection.Emit.OperandType.ShortInlineBrTarget:
+                        operandSize = 1; break;
+                    case System.Reflection.Emit.OperandType.InlineVar:
+                        operandSize = 2; break;
+                    case System.Reflection.Emit.OperandType.InlineI8:
+                    case System.Reflection.Emit.OperandType.InlineR:
+                        operandSize = 8; break;
+                    case System.Reflection.Emit.OperandType.InlineSwitch:
+                    {
+                        int n = peBytes[q + opLen]
+                            | (peBytes[q + opLen + 1] << 8)
+                            | (peBytes[q + opLen + 2] << 16)
+                            | (peBytes[q + opLen + 3] << 24);
+                        operandSize = 4 + 4 * n;
+                        break;
+                    }
+                    default:   // InlineI, tokens, br targets, ShortInlineR — 4 bytes
+                        operandSize = 4; break;
                 }
+                if (opVal == 0x20 && q + opLen + 4 <= ilEnd)   // ldc.i4
+                {
+                    int p = q + opLen;
+                    int v = peBytes[p]
+                        | (peBytes[p + 1] << 8)
+                        | (peBytes[p + 2] << 16)
+                        | (peBytes[p + 3] << 24);
+                    if (bySentinel.TryGetValue(v, out var site))
+                    {
+                        if (site.AbsoluteByteOffset != 0)
+                            throw new InvalidOperationException(
+                                $"Persisted-IL sentinel 0x{v:X8} found more than once "
+                                + $"(first at 0x{site.AbsoluteByteOffset:X8} in "
+                                + $"{siteMethod.GetValueOrDefault(site, "?")}, again at "
+                                + $"0x{p:X8} in {methodName}); site kind={site.Kind} "
+                                + $"name={site.Name}/{site.Arity}.");
+                        site.AbsoluteByteOffset = p;
+                        siteMethod[site] = methodName;
+                    }
+                }
+                q += opLen + operandSize;
             }
         }
 
@@ -337,6 +391,25 @@ public static class PersistedIlBuilder
                     + $"in any method body — Sigil may have compacted the "
                     + $"ldc.i4 or emitted no IL for this site.");
         }
+    }
+
+    /// <summary>CIL opcode value → operand kind, built from
+    /// <see cref="System.Reflection.Emit.OpCodes"/> via reflection (covers
+    /// every one-byte and 0xFE-prefixed two-byte opcode). Drives the
+    /// instruction walk in <see cref="LocatePatchSites"/>.</summary>
+    private static readonly Dictionary<short, System.Reflection.Emit.OperandType>
+        _ilOperandKind = BuildIlOperandTable();
+
+    private static Dictionary<short, System.Reflection.Emit.OperandType> BuildIlOperandTable()
+    {
+        var map = new Dictionary<short, System.Reflection.Emit.OperandType>();
+        foreach (var f in typeof(System.Reflection.Emit.OpCodes).GetFields(
+            BindingFlags.Public | BindingFlags.Static))
+        {
+            if (f.GetValue(null) is System.Reflection.Emit.OpCode op)
+                map[op.Value] = op.OperandType;
+        }
+        return map;
     }
 
     private static int RvaToFileOffset(
