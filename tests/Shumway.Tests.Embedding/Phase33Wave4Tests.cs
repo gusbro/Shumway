@@ -124,6 +124,28 @@ public class Phase33Wave4Tests
         Assert.False(bg.Query("big(zzz).").Success);
     }
 
+    [Fact]
+    public void L3_CorpusScaleFactTable_PromotesUnderDefaultBackground()
+    {
+        // ~4200 facts ≈ 100 KB bytecode — the corpus's worst real predicate
+        // (pty_name_l/3, 101.6 KB) was above the old 64 KB background cap and
+        // stayed Tier-0. The re-measured LINEAR Sigil curve justified raising
+        // the default cap to 256 KB; this pins that a corpus-scale table
+        // promotes out of the box (default engine, background default).
+        var sb = new System.Text.StringBuilder(":- public big/1.\n");
+        for (int i = 0; i < 4200; i++) sb.Append("big(a").Append(i).Append(").\n");
+        var e = new PrologEngine();
+        e.IlPromotion.Threshold = 1;
+        e.ConsultString(sb.ToString());
+        int fid = Fid("big", 1);
+        Assert.True(e.Query("big(a5).").Success);
+        Assert.True(e.Query("big(a6).").Success);
+        Assert.True(e.IlPromotion.IsPromoted(fid),
+            "a ~100 KB fact table must promote under the default background cap");
+        Assert.True(e.Query("big(a4199).").Success);
+        Assert.False(e.Query("big(zzz).").Success);
+    }
+
     // ---- L1 (Stage B.4): a promotion that happens MID-QUERY patches the
     //      remaining generic call sites; the rest of the query stays correct. ----
 

@@ -521,22 +521,31 @@ public sealed class IlPromotionStore
         => predicate.Bytecode.Length > EffectiveMaxBytecodeBytes;
 
     /// <summary>Phase 33 L3 — the size cap that actually applies. The 16 KB
-    /// default exists because Sigil's emit is O(N²) in bytecode size and the
-    /// SYNCHRONOUS promoting call stalls the query thread for the whole emit
-    /// (~5 s at 27 KB, chunk 171). Under <see cref="BackgroundCompilation"/> the
-    /// emit runs on the worker and the predicate keeps executing on Tier-0 in
-    /// the meantime — a long compile is latency, not a stall — so the cap
-    /// relaxes to <see cref="MaxIlPromotionBytecodeBytesBackground"/>. Large
-    /// Arity fact tables (the classic 16 KB+ victims) earn IL that way.</summary>
+    /// sync default bounds how long an explicitly-synchronous promoting call
+    /// may stall the query thread (the historical O(N²)-Sigil stall — ~5 s at
+    /// 27 KB, chunk 171 — no longer reproduces against today's emit shapes,
+    /// but sync callers opted into bounded latency, so the cap stays). Under
+    /// <see cref="BackgroundCompilation"/> (the default) the emit runs on the
+    /// worker and the predicate keeps executing on Tier-0 in the meantime —
+    /// a long compile is latency, not a stall — so the cap relaxes to
+    /// <see cref="MaxIlPromotionBytecodeBytesBackground"/>. Large Arity fact
+    /// tables (the classic 16 KB+ victims) earn IL that way.</summary>
     private int EffectiveMaxBytecodeBytes
         => BackgroundCompilation ? MaxIlPromotionBytecodeBytesBackground : MaxIlPromotionBytecodeBytes;
 
     /// <summary>Phase 33 L3 — the size cap when <see cref="BackgroundCompilation"/>
-    /// is on (see <see cref="EffectiveMaxBytecodeBytes"/>). 64 KB ≈ a ~20 s
-    /// worst-case background emit under Sigil's O(N²) — late, but off the query
-    /// thread. The true fix (a linear-validation emitter or a vendored Sigil)
-    /// remains the recorded follow-up.</summary>
-    public int MaxIlPromotionBytecodeBytesBackground { get; set; } = 65536;
+    /// is on (see <see cref="EffectiveMaxBytecodeBytes"/>). The O(N²)-Sigil
+    /// premise behind the old 64 KB value was RE-MEASURED and REFUTED against
+    /// the current emitter: the chunk-363 O(1) jump tables and chunk-216
+    /// model-based indexed dispatch removed the long compare/branch chains
+    /// that triggered Sigil's quadratic branch validation. Measured curve
+    /// (fact tables, the only corpus shapes this size): 6 KB→0.2 s,
+    /// 48 KB→0.6 s, 96 KB→1.0 s, 192 KB→1.6 s, 384 KB→3.6 s, 768 KB→5.3 s —
+    /// linear. 256 KB covers the corpus's largest predicate (pty_name_l/3,
+    /// 101.6 KB) with headroom at ~2 s of one-time worker latency; the true
+    /// -fix follow-up (linear-validation emitter / vendored Sigil) is
+    /// CLOSED as unnecessary.</summary>
+    public int MaxIlPromotionBytecodeBytesBackground { get; set; } = 262144;
 
     /// <summary>Eagerly promotes <paramref name="predicate"/> without
     /// going through the counter, returning the resulting delegate on

@@ -358,6 +358,17 @@ A deferral is a TODO with a prerequisite, not a closure.
       InsertInstruction) remains the recorded follow-up. Test: a ~24 KB
       1200-fact predicate — excluded in sync mode, promoted + correct in
       background.*
+      *TRUE-FIX CLOSED AS UNNECESSARY (2026-07-05) — the O(N²) premise was
+      RE-MEASURED and REFUTED against the current emitter: the chunk-363 O(1)
+      jump tables + chunk-216 model-based indexed dispatch removed the long
+      compare/branch chains that triggered Sigil's quadratic validation.
+      Measured curve on fact tables (the only >64 KB corpus shapes): 6 KB →
+      0.2 s, 96 KB → 1.0 s, 192 KB → 1.6 s, 384 KB → 3.6 s, 768 KB → 5.3 s —
+      LINEAR. Background cap default raised 64 KB → 256 KB: the corpus's
+      largest predicate (pty_name_l/3, 101.6 KB) now promotes out of the box
+      (with L2's background default) at ~1 s of one-time worker latency.
+      Sync cap 16 KB kept (explicit-sync callers opted into bounded stalls).
+      Test: ~100 KB 4200-fact table promotes on a default engine.*
 - [-] **L6** 🟡 `RegionMemberOk` rejects some multi-clause members — **REJECTED
       with corpus evidence** (2026-07-02 harness: SHUMWAY_DIAG build, the real
       IL compiler run over EVERY predicate of the Arity corpora
