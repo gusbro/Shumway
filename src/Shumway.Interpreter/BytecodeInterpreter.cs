@@ -702,6 +702,10 @@ public sealed class BytecodeInterpreter
                 {
                     int nextClause = ReadI32(code, codeArr, pc + 1);   // chunk 429
                     int arity = ReadI32(code, codeArr, pc + 5);
+                    // ADR-025 — a body try_me_else (inline ITE/disjunction)
+                    // carries the InlineIteCpArity sentinel; its CP saves no
+                    // argument registers (branch state lives in Y slots).
+                    if (arity < 0) arity = 0;
                     _engine.PushChoicePoint(arity, nextClause);
                     // Chunk 221 peephole fusion: in dynamic chains the
                     // very next opcode is CheckVisible. Inline its

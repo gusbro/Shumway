@@ -338,7 +338,12 @@ public sealed class ClauseCompiler
         // B at the try point: the cut pops exactly the ITE CP + Cond's CPs.
         if (isIte) s.Emitter.EmitGetLevelB(barrierSlot);
         int tryPos = s.Emitter.Position;
-        s.Emitter.EmitTryMeElse(0, arity: 0);   // ELSE target patched below
+        // ELSE target patched below. The arity operand is the body-CP
+        // SENTINEL (not 0): it marks this try_me_else as an inline ITE for
+        // every whole-bytecode scan (cursor budget, shape guards) — a
+        // dispatch-chain try_me_else always carries a real arity >= 0. The
+        // interpreter saves 0 argument registers for it either way.
+        s.Emitter.EmitTryMeElse(0, arity: OpcodeTable.InlineIteCpArity);
         s.DispatchSites.Add(tryPos + 1);
         // The emitter's Y-initialization tracking is per-EMISSION-ORDER, but at
         // runtime only ONE branch executes: the else branch must be emitted as if
@@ -353,24 +358,40 @@ public sealed class ClauseCompiler
                 CompileBodyGoal(s, g, isLast: false, hasFrame, s.PermanentCount);
             s.Emitter.EmitCut(barrierSlot);   // commit: pop the ITE CP (+ Cond's CPs)
         }
-        foreach (var g in FlattenConjunction(thenPart))
-            CompileBodyGoal(s, g, isLast: false, hasFrame, s.PermanentCount);
+        // Branch-tail LCO (ADR-025 follow-up): when the ITE is the clause's
+        // LAST goal, each branch's last goal compiles as a last goal —
+        // `deallocate; execute` for a user call, `call_builtin;
+        // deallocate_proceed` otherwise — exactly what the helper lowering
+        // gave it. The old shape compiled every branch goal as non-last and
+        // joined at END + one shared epilogue, so a tail-recursive call
+        // through a branch lost LCO: O(depth) frames (a stack-robustness
+        // regression vs the helper form) and a call/return round trip per
+        // iteration (the dominant share of boyer's Tier-1 inline-ITE cost).
+        // Each branch then self-terminates: no `jump`, no join, no epilogue.
+        var thenGoals = FlattenConjunction(thenPart);
+        for (int i = 0; i < thenGoals.Count; i++)
+            CompileBodyGoal(s, thenGoals[i], isLast && i == thenGoals.Count - 1,
+                hasFrame, s.PermanentCount);
         var initAfterThen = new HashSet<string>(s.YsInitialized);
-        int jumpPos = s.Emitter.Position;
-        s.Emitter.EmitJump(0);                  // END target patched below
-        s.DispatchSites.Add(jumpPos + 1);
+        int jumpPos = -1;
+        if (!isLast)
+        {
+            jumpPos = s.Emitter.Position;
+            s.Emitter.EmitJump(0);              // END target patched below
+            s.DispatchSites.Add(jumpPos + 1);
+        }
         s.Emitter.PatchInt32(tryPos + 1, s.Emitter.Position);   // ELSE:
         s.Emitter.EmitTrustMe();
         s.YsInitialized.Clear();
         s.YsInitialized.UnionWith(initAtTry);   // else path starts at the try point
-        foreach (var g in FlattenConjunction(elsePart))
-            CompileBodyGoal(s, g, isLast: false, hasFrame, s.PermanentCount);
-        s.Emitter.PatchInt32(jumpPos + 1, s.Emitter.Position);  // END:
-        s.YsInitialized.IntersectWith(initAfterThen);   // join: both-paths only
-        if (isLast)
+        var elseGoals = FlattenConjunction(elsePart);
+        for (int i = 0; i < elseGoals.Count; i++)
+            CompileBodyGoal(s, elseGoals[i], isLast && i == elseGoals.Count - 1,
+                hasFrame, s.PermanentCount);
+        if (!isLast)
         {
-            if (hasFrame) s.Emitter.EmitDeallocateProceed();
-            else s.Emitter.EmitProceed();
+            s.Emitter.PatchInt32(jumpPos + 1, s.Emitter.Position);  // END:
+            s.YsInitialized.IntersectWith(initAfterThen);   // join: both-paths only
         }
     }
 

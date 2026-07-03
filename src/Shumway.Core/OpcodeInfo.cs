@@ -32,6 +32,16 @@ public readonly struct OpcodeInfo
 /// </summary>
 public static class OpcodeTable
 {
+    /// <summary>ADR-025 — the arity operand value marking a BODY
+    /// <c>try_me_else</c> (an inline if-then-else / disjunction choice point)
+    /// as opposed to a clause-dispatch one. Dispatch chains always carry the
+    /// real predicate arity (&gt;= 0), so this sentinel distinguishes the two
+    /// forms everywhere a whole-bytecode scan needs to (the IL cursor-budget
+    /// counter, the legacy-recogniser guards). The interpreter pushes the CP
+    /// with arity 0 — the ITE variable discipline keeps branch state in Y
+    /// slots, so no argument registers are saved.</summary>
+    public const int InlineIteCpArity = -1;
+
     private static readonly OpcodeInfo[] _entries = new OpcodeInfo[256];
 
     static OpcodeTable()

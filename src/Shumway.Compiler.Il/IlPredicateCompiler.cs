@@ -842,10 +842,10 @@ public sealed class IlPredicateCompiler
             }
             if (op == Opcode.TryMeElse)
             {
-                // ADR-025 stage (b) — inline ITE (arity 0). A single-clause
-                // predicate has no dispatch chain, so any try_me_else here is
-                // the ITE form.
-                if (BytecodeIO.ReadInt32(code, pc + 5) != 0) return false;
+                // ADR-025 stage (b) — inline ITE (the body-CP arity sentinel).
+                // A single-clause predicate has no dispatch chain, so any
+                // try_me_else here must be the ITE form.
+                if (BytecodeIO.ReadInt32(code, pc + 5) != OpcodeTable.InlineIteCpArity) return false;
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }
@@ -1257,11 +1257,17 @@ public sealed class IlPredicateCompiler
                 // ADR-025 — an inline ITE body needs an ELSE resume cursor the
                 // region planner doesn't allocate; the member stays a
                 // cross-region trampoline (still compiles standalone). Gated
-                // on `jump` (present in every inline ITE, never in a chain
-                // member's dispatch skeleton — a dispatch try_me_else must
-                // stay accepted here).
+                // on the body-CP arity SENTINEL (present in every inline
+                // ITE's try_me_else — a chain member's dispatch try_me_else
+                // carries a real arity and must stay accepted here). The old
+                // `jump` gate missed the branch-tail-LCO shape, which emits
+                // no jump for a last-goal ITE.
                 case Opcode.Jump:
                     reason = $"inline ITE (jump @{pc}) — no region cursor";
+                    return false;
+                case Opcode.TryMeElse
+                    when BytecodeIO.ReadInt32(code, pc + 5) == OpcodeTable.InlineIteCpArity:
+                    reason = $"inline ITE (try_me_else @{pc}) — no region cursor";
                     return false;
                 // Chunk 424: backtrackable / meta CallBuiltin sites are now
                 // region-emittable — the planner allocates each a
@@ -2741,17 +2747,22 @@ public sealed class IlPredicateCompiler
     /// <summary>Counts non-tail <c>Call</c> opcodes in a clause's
     /// bytecode (Opcode.Call only — Opcode.Execute is the tail-call
     /// form and doesn't need a meta-CP).</summary>
-    /// <summary>ADR-025 — true when the bytecode contains a `jump` opcode
-    /// (present in every inline ITE/disjunction, never in dispatch skeletons).
-    /// Cheap pre-filter for the legacy recognisers whose linear me-else
-    /// boundary scans would mis-parse the inline shape.</summary>
-    private static bool ContainsJumpOpcode(byte[] code)
+    /// <summary>ADR-025 — true when the bytecode contains an inline
+    /// ITE/disjunction, recognised by a try_me_else carrying the body-CP
+    /// arity sentinel (never emitted by dispatch skeletons). Cheap pre-filter
+    /// for the legacy recognisers whose linear me-else boundary scans would
+    /// mis-parse the inline shape. (Previously keyed on the `jump` opcode,
+    /// which the branch-tail-LCO shape no longer emits for a last-goal ITE.)</summary>
+    private static bool ContainsInlineIteOpcode(byte[] code)
     {
         int pc = 0;
         while (pc < code.Length)
         {
             var op = (Opcode)code[pc];
-            if (op == Opcode.Jump) return true;
+            if (op == Opcode.TryMeElse
+                && pc + 9 <= code.Length
+                && BytecodeIO.ReadInt32(code, pc + 5) == OpcodeTable.InlineIteCpArity)
+                return true;
             int size = op == Opcode.Meta ? 6 : OpcodeTable.Get((byte)op).Size;
             if (size <= 0) return false;
             pc += size;
@@ -2770,11 +2781,14 @@ public sealed class IlPredicateCompiler
         {
             byte b = bytecode[pc];
             if (b == (byte)Opcode.Call) count++;
-            // ADR-025 stage (b) — each inline ITE consumes ONE resume cursor
-            // (the ELSE entry). Counted via its `jump` opcode, which appears
-            // exactly once per inline ITE/disjunction and NEVER in the clause
-            // dispatch skeleton (a dispatch try_me_else would over-count).
-            else if (b == (byte)Opcode.Jump) count++;
+            // ADR-025 — each inline ITE consumes ONE resume cursor (the ELSE
+            // entry). Counted via its try_me_else's body-CP arity SENTINEL,
+            // which a dispatch-chain try_me_else never carries. (It used to be
+            // counted via the `jump` opcode, but the branch-tail-LCO shape
+            // emits no jump when the ITE is the clause's last goal.)
+            else if (b == (byte)Opcode.TryMeElse
+                     && BytecodeIO.ReadInt32(bytecode, pc + 5) == OpcodeTable.InlineIteCpArity)
+                count++;
             // Phase 19: CallBuiltin call/N and CallBuiltin '$call'/2 are
             // also non-tail Calls — they thread through
             // IlMetaCallHelper.Dispatch and need a resume-cursor slot.
@@ -3456,10 +3470,27 @@ public sealed class IlPredicateCompiler
                 int iteSiteIdx = callSiteIndexCounter();
                 int elseCursor = cursorBase + iteSiteIdx - 1;
                 (iteElseLabels ??= new())[elseAddr] = resumeLabels[iteSiteIdx - 1];
-                // engine.PushIlChoicePoint(IlIteHelper.Resume, marker, arity: 0)
                 emit.LoadArgument(0);
-                emit.LoadField(IlIteHelperResumeField);
-                EmitResumeMarker(emit, _emitOwnerFid, elseCursor);
+                if (emitSelfDelegate is not null)
+                {
+                    // Direct re-entry (ADR-025 follow-up): the CP carries this
+                    // predicate's OWN delegate + the ELSE cursor — a failed
+                    // condition re-enters the method straight at the cursor
+                    // switch, the same contract as a clause-alt chain CP. The
+                    // marker form below instead pays Resume → Pc=marker →
+                    // dispatch loop → decode → delegate lookup → re-invoke per
+                    // failed condition — measured +40% on boyer (a call-cond
+                    // ITE per rewrite/2 entry) head-to-head without regions.
+                    emitSelfDelegate(emit);
+                    emit.LoadConstant(elseCursor);
+                }
+                else
+                {
+                    // Fallback: engine.PushIlChoicePoint(IlIteHelper.Resume,
+                    // marker, 0) — resume via the dispatch loop.
+                    emit.LoadField(IlIteHelperResumeField);
+                    EmitResumeMarker(emit, _emitOwnerFid, elseCursor);
+                }
                 emit.LoadConstant(0);
                 emit.Call(EnginePushIlCpMethod);
                 pc += OpcodeTable.Get(op).Size;
@@ -4623,10 +4654,11 @@ public sealed class IlPredicateCompiler
         if (op == Opcode.TryMeElse)
         {
             // ADR-025 stage (b) — a MID-BODY try_me_else is the inline-ITE
-            // choice point, always arity 0 (the variable discipline keeps
-            // branch state in Y slots). A dispatch-chain try_me_else never
-            // reaches this filter (the describers walk clause BODY ranges).
-            return BytecodeIO.ReadInt32(predicate.Bytecode, pc + 5) == 0;
+            // choice point, carrying the body-CP arity sentinel (the variable
+            // discipline keeps branch state in Y slots). A dispatch-chain
+            // try_me_else never reaches this filter (the describers walk
+            // clause BODY ranges).
+            return BytecodeIO.ReadInt32(predicate.Bytecode, pc + 5) == OpcodeTable.InlineIteCpArity;
         }
         if (IsAEvalOpcode(op))   // ADR-018 — gate operand kind (bigint/float lit)
             return IsSupportedAEval(predicate.Bytecode, pc);
@@ -4700,7 +4732,7 @@ public sealed class IlPredicateCompiler
         // linear scan; an inline ITE (always carrying a `jump`) would be
         // MIS-parsed as a clause boundary, so reject the shape outright (the
         // operand-following TryMeElseChain / full indexed describers cover it).
-        if (ContainsJumpOpcode(code)) return false;
+        if (ContainsInlineIteOpcode(code)) return false;
 
         // Skip past the switch_on_term + switch_on_arg cascade.
         int pc = 0;
@@ -5288,7 +5320,7 @@ public sealed class IlPredicateCompiler
         if (code.Length < 17) return false;
         if ((Opcode)code[0] != Opcode.SwitchOnTerm) return false;
         // ADR-025 — same linear-scan caveat as TryDescribeSwitchedChain.
-        if (ContainsJumpOpcode(code)) return false;
+        if (ContainsInlineIteOpcode(code)) return false;
 
         // VarLbl, ConstLbl, ListLbl, StructLbl operand offsets.
         int varLbl = BytecodeIO.ReadInt32(code, 1);
