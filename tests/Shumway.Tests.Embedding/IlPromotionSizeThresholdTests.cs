@@ -118,6 +118,10 @@ big(80).
         var e = new PrologEngine();
         e.IlPromotion.Threshold = 1;     // promote eagerly
         e.IlPromotion.MaxIlPromotionBytecodeBytes = 256;  // tiny — every realistic preds exceeds this
+        // Phase 33 L2 — background promotion (now the default) uses its own
+        // higher cap (L3); pin that one down too so the size GATE is what's
+        // under test, not the mode.
+        e.IlPromotion.MaxIlPromotionBytecodeBytesBackground = 256;
 
         e.ConsultString(LargePredicateSource);
         // Drive it hot enough to cross the IL threshold; the size

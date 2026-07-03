@@ -56,7 +56,8 @@ public class Chunk39Tests
     [Fact]
     public void Store_AtThreshold_CompilesAndCaches()
     {
-        var store = new IlPromotionStore { Threshold = 3 };
+        // Synchronous mode: the crossing call itself returns the delegate.
+        var store = new IlPromotionStore { Threshold = 3, BackgroundCompilation = false };
         var pred = CompileSinglePredicate("greet(world).");
         Assert.Null(store.RecordInvocation(pred.FunctorId, pred));   // 1
         Assert.Null(store.RecordInvocation(pred.FunctorId, pred));   // 2
@@ -66,6 +67,22 @@ public class Chunk39Tests
         // Subsequent calls return the same cached delegate.
         var cached = store.TryGet(pred.FunctorId);
         Assert.Same(del, cached);
+    }
+
+    [Fact]
+    public void Store_AtThreshold_BackgroundMode_QueuesThenInstalls()
+    {
+        // Phase 33 L2 (the default) — the crossing call QUEUES the compile
+        // and stays Tier-0 (null); IsPromoted settles the in-flight compile;
+        // the installed delegate serves subsequent dispatches.
+        var store = new IlPromotionStore { Threshold = 3 };   // background default
+        var pred = CompileSinglePredicate("greet(world).");
+        Assert.Null(store.RecordInvocation(pred.FunctorId, pred));   // 1
+        Assert.Null(store.RecordInvocation(pred.FunctorId, pred));   // 2
+        Assert.Null(store.RecordInvocation(pred.FunctorId, pred));   // 3 → queued
+        Assert.True(store.IsPromoted(pred.FunctorId));               // settles → true
+        Assert.NotNull(store.TryGet(pred.FunctorId));
+        Assert.NotNull(store.RecordInvocation(pred.FunctorId, pred));
     }
 
     [Fact]

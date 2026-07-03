@@ -100,8 +100,11 @@ public class Phase33Wave4Tests
         string program = sb.ToString();
 
         // Synchronous mode: excluded by size — stays Tier-0, still correct.
+        // (Phase 33 L2 flipped the default to background; this test's whole
+        // point is the sync-vs-background cap difference, so pin it.)
         var sync = new PrologEngine();
         sync.IlPromotion.Threshold = 1;
+        sync.IlPromotion.BackgroundCompilation = false;
         sync.ConsultString(program);
         int fidSync = Fid("big", 1);
         Assert.True(sync.Query("big(a5).").Success);

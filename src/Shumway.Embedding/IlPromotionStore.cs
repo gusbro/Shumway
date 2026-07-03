@@ -194,17 +194,21 @@ public sealed class IlPromotionStore
     /// the process. Propagates any exception back to the caller.</summary>
     private static T RunOnLargeStack<T>(Func<T> work) => IlCompileWorker.RunSync(work);
 
-    // ---- Phase 33 L2 — opt-in background compilation --------------------------
+    // ---- Phase 33 L2 — background compilation (default ON) --------------------
 
     /// <summary>When <c>true</c>, a threshold-crossing predicate's IL compile is
     /// queued to the shared worker and the predicate STAYS ON TIER-0 until the
     /// delegate is ready (installed at the next dispatch through
     /// <see cref="RecordInvocation"/>, which drains completed compiles) — the
-    /// query thread never stalls for a Sigil emit. Default <c>false</c>: the
-    /// promoting call waits (deterministic promotion timing — the contract the
-    /// test suite and existing embedders rely on), but on the persistent worker,
-    /// so the per-compile thread cost is gone either way.</summary>
-    public bool BackgroundCompilation { get; set; }
+    /// query thread never stalls for a Sigil emit. Phase 33 L2 default-flip:
+    /// default <c>true</c>, realizing the day-one architecture contract
+    /// ("promotion happens in a background thread; the swap is atomic").
+    /// Deterministic timing for tests/diagnostics comes from
+    /// <see cref="IsPromoted"/> settling an in-flight compile of the queried
+    /// functor and from <see cref="WaitForPendingPromotions"/>; set
+    /// <c>false</c> to make the promoting call itself wait (still on the
+    /// persistent worker, so no per-compile thread cost either way).</summary>
+    public bool BackgroundCompilation { get; set; } = true;
 
     /// <summary>Phase 33 L1 — invoked on the ENGINE thread whenever a freshly
     /// compiled delegate is installed (synchronously at the promoting call, or at
@@ -581,8 +585,18 @@ public sealed class IlPromotionStore
     public int TrackedCount => _counters.Count;
 
     /// <summary>True when <paramref name="functorId"/> has been bound to
-    /// an IL delegate. Diagnostic surface for tests.</summary>
-    public bool IsPromoted(int functorId) => _delegates.ContainsKey(functorId);
+    /// an IL delegate. Diagnostic surface for tests. Phase 33 L2 — under
+    /// background compilation the answer stays DETERMINISTIC: an in-flight
+    /// compile of this functor settles (bounded wait + drain) before
+    /// answering, so the suite-wide "N warm queries → promoted" assertions
+    /// hold regardless of worker latency. Engine-thread only, like every
+    /// promotion API.</summary>
+    public bool IsPromoted(int functorId)
+    {
+        if (_pendingCompiles.Contains(functorId)) WaitForPendingPromotions();
+        else if (!_completedCompiles.IsEmpty) DrainCompletedCompiles();
+        return _delegates.ContainsKey(functorId);
+    }
 
 
     /// <summary>Binds a pre-built <see cref="PredicateDelegate"/>

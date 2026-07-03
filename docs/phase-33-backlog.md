@@ -306,6 +306,19 @@ A deferral is a TODO with a prerequisite, not a closure.
       barrier. Default stays synchronous — 79 IsPromoted assertions across the
       suite rely on deterministic promotion timing; flipping the default is a
       recorded follow-up (needs that test churn scheduled).*
+      *DEFAULT FLIPPED (2026-07-05): `BackgroundCompilation = true` — realizes
+      the day-one CLAUDE.md contract ("promotion happens in a background
+      thread"). The feared 86-assertion churn collapsed to a ONE-LINE settle:
+      `IsPromoted(fid)` now waits out an in-flight compile of that functor
+      (it is a diagnostic API — answering deterministically IS its contract),
+      which made ~all suite assertions hold unchanged. Only 6 tests needed
+      touching, each pinning a genuinely SYNC-specific contract: 3 PGO
+      phase-mechanics tests (samples only accumulate in instrumented IL —
+      count-deterministic only under sync), the store-level at-threshold test
+      (crossing call returns the delegate — sync semantics; a background-mode
+      sibling test added), the 256-byte size-gate test (now pins the
+      background cap too), and L3's sync-vs-background cap comparison (pins
+      sync explicitly). Full five-project gate green.*
 - [x] **L5** 🟡 `EvictionChurnLimit=3` permanent Tier-0 banishment. *Fixed: the
       churn pin no longer goes through the permanent `_unpromotable` set — it
       re-arms after `ChurnRearmCalls` (default 4096) mutation-free invocations
