@@ -678,8 +678,14 @@ A deferral is a TODO with a prerequisite, not a closure.
       Threshold 0; the path would be indirect via process-wide persisted-IL
       caches). Crash capture (DOTNET_DbgEnableMiniDump, full type) is now
       baked into the standard Embedding gate script — any recurrence
-      auto-produces an analyzable dump. GCStress=3 run on the two P/Invoke
-      tests as a GC-hole probe.
+      auto-produces an analyzable dump. GCStress=3 probe on the two P/Invoke
+      tests was too slow to complete (inconclusive, killed).
+      **Post-fix validation (2026-07-05): 4 consecutive rebuild-then-full-
+      suite runs (the exact trigger condition, 3 with a real timestamp-touch
+      rebuild) all clean, dumps armed, zero dumps.** Status: WATCH — the
+      race fix (commit e88097e) is the probable cause; the permanent dump
+      capture decides it: a recurrence produces an analyzable dump, a
+      sustained quiet stretch closes the item.
 
 ## Later rounds (not yet waved)
 
