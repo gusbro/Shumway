@@ -1,11 +1,23 @@
 # ADR-025: Body `jump` opcode + inline deterministic if-then-else (Tier-0)
 
-**Status:** Accepted — stages (a) + (c) implemented (Phase 33): `jump` opcode,
-interpreter dispatch, dispatch-site relocation through PredicateCompiler/Linker,
-and the ClauseCompiler inline lowering behind `PrologEngine.EnableInlineIte`
-(default OFF). Stage (b) — IL describe/emit for the shape — is the prerequisite
-for flipping the default (today a predicate with an inline ITE is gracefully
-rejected by the IL compiler and stays Tier-0). Bring-up findings: the emitter's
+**Status:** Accepted — stages (a) + (c) + (b) implemented (Phase 33): `jump`
+opcode, interpreter dispatch, dispatch-site relocation, the ClauseCompiler
+inline lowering behind `PrologEngine.EnableInlineIte` (default OFF), and the
+Tier-1 IL describe/emit for the shape. Stage (b) specifics: the mid-body
+`try_me_else` becomes an arity-0 IL choice point pushed with
+`IlIteHelper.Resume` as its callback and the ELSE resume MARKER in the cursor
+slot — on backtrack the engine invokes the callback, which parks the marker as
+the PC (`ResumeAtReturnPc`) so the dispatch loop re-enters the delegate at the
+ELSE label (the chunk-218 protocol; sentinel-patched in persisted bundles);
+`trust_me` marks the ELSE label (the CP pop happened at backtrack time);
+`jump` is an unconditional `br`. Each ITE consumes ONE resume cursor, counted
+via its `jump` opcode (exactly one per ITE, never present in dispatch
+skeletons). The try_me_else-chain describer now derives clause boundaries by
+FOLLOWING dispatch operands (the old linear me-else scan would mis-read an
+inner ITE as clause boundaries); the legacy SwitchedChain / IndexedAtom
+recognisers and the region/inline detectors reject `jump`-bearing bodies
+(such predicates still compile through the main shapes). Remaining: stage (d)
+A/B measurement, then (e) default ON. Bring-up findings: the emitter's
 Y-initialization tracking needed branch-aware snapshot/restore/intersect (only
 one branch executes at runtime), and validation surfaced the pre-existing
 HELPER-NAME COLLISION latent bug (see the Phase 33 backlog), fixed alongside.

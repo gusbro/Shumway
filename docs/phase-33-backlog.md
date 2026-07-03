@@ -191,6 +191,20 @@ A deferral is a TODO with a prerequisite, not a closure.
       (default OFF). **Remaining: stage (b) IL describe/emit, then flip the
       default** — today the IL compiler gracefully rejects the shape (Tier-0).
       14 semantic tests + differential vs the helper form.
+      *STAGE (b) DONE (2026-07-04): the shape compiles to Tier-1 IL. Mid-body
+      try_me_else → an arity-0 IL choice point pushed with `IlIteHelper.Resume`
+      + the ELSE resume MARKER in the cursor slot (backtrack parks the marker
+      as PC via ResumeAtReturnPc → the dispatch loop re-enters the delegate at
+      the ELSE label — the chunk-218 protocol, persisted-patchable); trust_me
+      marks the ELSE label; jump → unconditional br. One resume cursor per ITE,
+      counted via its `jump` (never present in dispatch skeletons — the
+      over-count-proof trick). The try_me_else-chain describer now FOLLOWS
+      dispatch operands for clause boundaries (the linear me-else scan would
+      mis-read inner ITEs); legacy SwitchedChain/IndexedAtom recognisers and
+      the region/inline detectors reject jump-bearing bodies (still compiled
+      by the main shapes). 8 promoted tests (Adr025StageBTests) incl.
+      backtrack-into-ELSE, two-ITE bodies, multi-clause hosts, 4-config
+      differential. Remaining: stage (d) A/B measurement → (e) default ON.*
 - [x] **E12** 🔴 **HELPER-NAME COLLISION (latent, ≥ phase-32; found validating
       ADR-025)**: MetaTransform's synthesized-helper counter restarted per
       transform run, so the QUERY stub's `$disj_1` (findall collect loop, same

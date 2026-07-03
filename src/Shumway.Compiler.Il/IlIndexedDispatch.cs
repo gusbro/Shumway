@@ -257,7 +257,10 @@ public static class IlIndexedDispatch
         int n = 0, pc = start;
         while (pc < end)
         {
-            if ((Opcode)code[pc] == Opcode.Call) n++;
+            var op = (Opcode)code[pc];
+            // ADR-025 — each inline ITE takes one ELSE resume cursor; counted
+            // via its `jump` (exactly one per ITE, never in dispatch).
+            if (op == Opcode.Call || op == Opcode.Jump) n++;
             int size = OpcodeSize(code, pc);
             if (size <= 0) break;
             pc += size;
