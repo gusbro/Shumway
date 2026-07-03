@@ -198,6 +198,10 @@ public sealed class NativeReftypeTests
             "  reftype_term(Out, Ptr).\n");
         for (int i = 0; i < 6; i++)
             Assert.True(e.Query("go(10, Out), Out == result(11).").Success);
+        // Phase 33 L2 — promotion is background by default; settle the
+        // in-flight compile before reading its side-effect counter.
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(),
+            "background promotion of go/2 timed out");
         // both reftype blocks inlined into the predicate's IL.
         Assert.True(Shumway.Compiler.Il.IlPredicateCompiler.NativeBlocksInlined > before);
     }

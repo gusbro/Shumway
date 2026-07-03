@@ -125,4 +125,37 @@ public class Phase33Wave3Tests
         Assert.True(e.Query("band(500, B), B == high.").Success);
         Assert.True(e.Query("findall(B, band(50, B), L), L == [mid].").Success);
     }
+
+    // ---- W9(e): `=/2` widens the neck-cut prefix (both `=/2` lowerings —
+    // the inline get_*/unify_* form AND the call_builtin fallback for
+    // Y-var/both-nonvar shapes — leave Cp, B0 and the CP stack untouched) ----
+
+    [Fact]
+    public void W9e_CutAfterUnifyGuard_CommitsLikeANeckCut()
+    {
+        var e = new PrologEngine();
+        e.ConsultString(
+            "kind(X, atomic) :- X = a, !.\n" +
+            "kind(X, pair)   :- X = f(_, _), !.\n" +
+            "kind(_, other).\n");
+        Assert.True(e.Query("kind(a, K), K == atomic.").Success);
+        Assert.True(e.Query("kind(f(1, 2), K), K == pair.").Success);
+        Assert.True(e.Query("kind(zzz, K), K == other.").Success);
+        // The cut really pruned the later clauses.
+        Assert.True(e.Query("findall(K, kind(a, K), L), L == [atomic].").Success);
+        Assert.True(e.Query("findall(K, kind(f(x, y), K), L), L == [pair].").Success);
+    }
+
+    [Fact]
+    public void W9e_UnifyGuard_PermanentVarFallback_StillCommits()
+    {
+        // Y-var `=` lowers to the call_builtin fallback; the `!` after it must
+        // still commit correctly (and the pre-cut binding must hold after).
+        var e = new PrologEngine();
+        e.ConsultString(
+            "tagit(X, R) :- T = tag(X), !, R = T.\n" +
+            "tagit(_, none).\n");
+        Assert.True(e.Query("tagit(7, R), R == tag(7).").Success);
+        Assert.True(e.Query("findall(R, tagit(7, R), L), L == [tag(7)].").Success);
+    }
 }

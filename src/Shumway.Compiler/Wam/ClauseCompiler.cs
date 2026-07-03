@@ -629,14 +629,24 @@ public sealed class ClauseCompiler
     /// first goal of chunk 0. A neck cut (position 0) is chunk-transparent (see
     /// <see cref="ClassifyPermanents"/>), so the call sits at index 1; otherwise
     /// index 0.</summary>
-    /// <summary>A body goal that compiles to inline opcodes which never clobber
-    /// the continuation pointer: the cut (<c>!</c>) and arithmetic (<c>is/2</c>
-    /// and the six comparisons → <c>a_int_*</c> / <c>a_eval_*</c>). Such a goal
-    /// needs no environment frame to survive it.</summary>
+    /// <summary>A body goal whose compiled form never clobbers the continuation
+    /// pointer, never updates <c>B0</c>, and never pushes a choice point: the
+    /// cut (<c>!</c>), arithmetic (<c>is/2</c> and the six comparisons →
+    /// <c>a_int_*</c> / <c>a_eval_*</c>), and — Phase 33 W9 — <c>=/2</c>.
+    /// Such a goal needs no environment frame to survive it, and a <c>!</c>
+    /// after a prefix of them is still a NECK cut.
+    /// <para><c>=/2</c> CP-safety across BOTH its lowerings: the inline form
+    /// (Phase 26 get_*/unify_* head-style matching) is plain unification; the
+    /// fallback is a <c>call_builtin</c> of the non-backtrackable <c>=/2</c>,
+    /// which runs inline in the dispatch loop — Cp untouched, B0 untouched
+    /// (only Call/Execute update it), no choice point. An attvar unification
+    /// schedules wakeups, which the neck-cut/cut dispatch flushes before
+    /// committing — same as after arithmetic.</para></summary>
     private static bool IsInlineBodyGoal(Term goal) => goal switch
     {
         AtomTerm { Name: "!" } => true,
         CompoundTerm { Functor: "is", Args.Length: 2 } => true,
+        CompoundTerm { Functor: "=", Args.Length: 2 } => true,
         CompoundTerm { Args.Length: 2 } c
             when Shumway.Builtins.ArithmeticEvaluator.TryRelOp(c.Functor, out _) => true,
         _ => false,

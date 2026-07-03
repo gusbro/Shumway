@@ -271,7 +271,7 @@ A deferral is a TODO with a prerequisite, not a closure.
       variable crosses the helper call boundary, so a Y slot is REQUIRED by
       the chunk model — the register alternative is the ADR-021-rejected
       register allocator.
-- [ ] **W9** ⚪ Minor batch → moved to later rounds:
+- [x] **W9** ⚪ Minor batch → moved to later rounds:
       (a) a_int fast-lane float/bigint literal kinds — real, needs encoding +
       both tiers; (b) var-clause duplication per bucket — interacts with the
       chunk-155x in-place chain machinery, risky; (c) body-local CSE — a new
@@ -279,6 +279,26 @@ A deferral is a TODO with a prerequisite, not a closure.
       canonical render). Also: widening `IsInlineBodyGoal` with `=/2` would
       extend the W2 neck-cut prefix to `X = foo, !` shapes (verify CP-safety
       of every =/2 emission form first).
+      *CLOSED (2026-07-05) with one implementation and four evidence-based
+      rejections. (e) `=/2` in IsInlineBodyGoal: IMPLEMENTED — CP-safety
+      audited across BOTH lowerings (the Phase-26 inline get_*/unify_* form is
+      plain unification; the call_builtin fallback for Y-var/both-nonvar
+      shapes runs inline in the dispatch loop — Cp untouched, B0 untouched,
+      no CP; attvar wakeups flushed by the cut dispatch as with arithmetic).
+      Verified by disasm: `X = foo, !` now emits NeckCut where it emitted
+      AllocateGetLevel+Cut; 2 regression tests incl. the Y-var fallback.
+      (a) REJECTED by census: 1,081 arithmetic sites across test+testGen —
+      exactly ONE has a float literal leaf, ZERO bigint. (d) REJECTED by
+      census: 5,831 synthesized $disj/$neg helpers, 18-19% structural dupes
+      (canonical-render census through the real ClausePipeline) ≈ ~100 KB
+      pre-compression corpus-wide — post-T2/T6-Brotli the shipped delta is
+      negligible; revisit only if a real workload's helper count explodes.
+      (b) REJECTED: var-clause-per-bucket duplication is the standard WAM
+      indexing design; sharing chain tails would entangle the chunk-155/156
+      in-place mutation machinery for a size-only win. (c) REJECTED: a
+      body-local CSE is a real compiler pass, not a minor — no corpus
+      evidence of hot repeated subexpressions (ADR-021 discipline: quantify
+      before building).*
 
 ## Wave 4 — IL dispatch & promotion
 
