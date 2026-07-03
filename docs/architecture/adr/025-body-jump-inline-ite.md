@@ -16,11 +16,39 @@ skeletons). The try_me_else-chain describer now derives clause boundaries by
 FOLLOWING dispatch operands (the old linear me-else scan would mis-read an
 inner ITE as clause boundaries); the legacy SwitchedChain / IndexedAtom
 recognisers and the region/inline detectors reject `jump`-bearing bodies
-(such predicates still compile through the main shapes). Remaining: stage (d)
-A/B measurement, then (e) default ON. Bring-up findings: the emitter's
-Y-initialization tracking needed branch-aware snapshot/restore/intersect (only
-one branch executes at runtime), and validation surfaced the pre-existing
-HELPER-NAME COLLISION latent bug (see the Phase 33 backlog), fixed alongside.
+(such predicates still compile through the main shapes). Bring-up findings:
+the emitter's Y-initialization tracking needed branch-aware
+snapshot/restore/intersect (only one branch executes at runtime), and
+validation surfaced the pre-existing HELPER-NAME COLLISION latent bug (see
+the Phase 33 backlog), fixed alongside.
+
+**Stage (d) — measured (boyer surfaced two more bring-up bugs first, both
+fixed):** (1) the barrier was captured with `get_level` (B0) — any pre-ITE
+body call RESETS B0, so the commit cut pruned a preceding generator's choice
+points (lost solutions); fixed with the second opcode **`get_level_b`**
+(`Y[slot] := RawInt(B)` — CURRENT choice-point top at the try point; the
+helper form never saw this because the helper CALL re-establishes B0 at its
+own entry). (2) the ITE barrier Y slot sits above the named permanents and
+the live-Y trim analysis didn't count it — a pre-ITE call's env trim let the
+condition's callee overwrite the slot (garbage barrier → CompactTrails
+crash); fixed like the pre-existing deep-cut-slot rule.
+**Results (deterministic SHUMWAY_PROFILE dispatch counts; heap cells and
+CP/backtrack counts identical between forms):** Tier-0 opcodes
+boyer **−5.8%**, ite-recursion **−13.5%**, disjunction+findall **−2.9%** —
+the saved helper Call + head unification, as predicted. **Tier-1 (promoted):
+boyer +17% min wall-clock (3 consistent interleaved-ABBA runs)** — the
+region lowering of the HELPER form is already CP-free for the deterministic
+commit, while the inline form pays a real `PushIlChoicePoint` + `Cut` per
+execution; ite-recursion is parity. **Stage (e) verdict: default stays OFF.**
+The flag is a documented win for Tier-0-only contexts (Native AOT, threshold
+0); flipping it globally would regress promoted real programs. Follow-up:
+teach the IL emit to skip the ITE CP when the condition is guard-only
+(fail-label redirection to ELSE), which would make the inline form dominate
+at both tiers — revisit the flip then. Measurement lesson (harness, not
+engine): `Profiler.Reset()` is `[Conditional("SHUMWAY_PROFILE")]` — a
+harness built WITHOUT the constant has its Reset calls silently stripped and
+accumulates across runs (the first read was +194%/3× until a dispatch trace
+showed ~52 clean opcodes; define the constant in the MEASURING project too).
 
 ## Context
 

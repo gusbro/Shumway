@@ -375,6 +375,21 @@ A deferral is a TODO with a prerequisite, not a closure.
       reports `call->unresolved` — not switch names. (Bonus fact pinned:
       Execute sites never consult the calleeMap — only non-last Calls gate
       on it.)
+      *ADR-025 STAGES (d)+(e) CLOSED (2026-07-05): measurement first crashed
+      boyer — two more bring-up bugs fixed (get_level_b opcode: the barrier
+      must capture CURRENT B, not B0, which pre-ITE calls reset → over-cut a
+      preceding generator; and the barrier Y slot folded into the live-Y trim
+      analysis like the deep-cut slot — a pre-ITE call's trim let the cond's
+      callee overwrite it). VERDICT (deterministic dispatch counts, identical
+      CPs/backtracks/cells): Tier-0 inline WINS (boyer −5.8%, ite-rec −13.5%,
+      disj −2.9% opcodes); Tier-1 promoted LOSES on boyer (+17% min ×3
+      ABBA runs — the region-lowered helper is CP-free for the det commit;
+      inline pays PushIlChoicePoint+Cut). DEFAULT STAYS OFF; EnableInlineIte
+      documented as the Tier-0/AOT win. Follow-up: IL emit skipping the ITE
+      CP for guard-only conds (fail-label→ELSE redirect) → revisit flip.
+      Measurement lesson: Profiler.Reset is [Conditional] — the harness must
+      ALSO define SHUMWAY_PROFILE or its Reset calls strip silently and
+      counters accumulate (first read was a bogus 3×).*
       **FOLLOW-UP (user's correct re-test methodology, 2026-07-04) — the REAL
       coverage gap found and fixed: the per-entry calleeMap in the bundle IL
       build.** Re-measured through the real toolchain (compile → link

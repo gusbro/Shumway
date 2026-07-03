@@ -22,6 +22,10 @@ namespace Shumway.Interpreter;
 public sealed class BytecodeInterpreter
 {
     private readonly Engine _engine;
+#if SHUMWAY_PROFILE
+    private static readonly bool _dispatchTrace =
+        System.Environment.GetEnvironmentVariable("ITE_TRACE") == "1";
+#endif
     // Not readonly: ADR-015 chunk C recompiles a dynamic predicate
     // mid-query, which may intern new literals into the persistent pools;
     // RefreshLiteralPools swaps in the grown snapshots.
@@ -358,6 +362,14 @@ public sealed class BytecodeInterpreter
             // per-tick Split branch entirely.
             byte opByte = code.Overflow is null ? codeArr[pc] : code[pc];
             Shumway.Core.Profiler.Opcode(opByte);
+#if SHUMWAY_PROFILE
+            // Dispatch trace (profile builds only, ITE_TRACE=1): one line per
+            // dispatched opcode with pc / B / Cp. Added for the ADR-025
+            // bring-up; generally useful for control-flow forensics.
+            if (_dispatchTrace)
+                System.Console.Error.WriteLine(
+                    $"[t] pc={pc,7} {(Opcode)opByte,-18} b={_engine.B} cp={_engine.Cp}");
+#endif
             switch ((Opcode)opByte)
             {
                 case Opcode.ReservedInvalid:
