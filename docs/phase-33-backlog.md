@@ -345,12 +345,24 @@ A deferral is a TODO with a prerequisite, not a closure.
       (230)): region-emit = **7 510 regions with 49 040 members**, region-skips
       = **ZERO** across all three corpora. The member gate refuses nothing on
       real Arity code; widening it has no demonstrated payoff.
-- [ ] **L7** 🟡 `AIntBin/AIntCmp` — compile-time-constant kinds passed as runtime
+- [x] **L7** 🟡 `AIntBin/AIntCmp` — compile-time-constant kinds passed as runtime
       args. **Deferred pending a benchmark**: FusedBin/FusedCmp + TryReadInt +
       Deliver are all `AggressiveInlining` and the kinds arrive as CONSTANTS at
       the emitted call site, so RyuJIT inlines and constant-folds the kind
       branches away in the common case — hand-specializing at emit is likely
       redundant. Verify with a disasm/interleaved benchmark before building it.
+      *VERIFIED WITH DISASM (2026-07-05, DOTNET_JitDisasm=ShumwayIl_* on the
+      promoted delegate of an `M is N-1` self-loop, FullOpts): FusedBin /
+      FusedCmp / TryReadInt / Deliver are fully inlined (63 inlinees; only the
+      intentional FusedBinSlow/FusedCmpSlow cold calls remain), and the
+      constant kinds folded completely — the hot path is deref → untag →
+      `dec` (the literal folded into a single decrement) → range check, with
+      the kind constants materialized ONLY on the cold path. Hand-specializing
+      at emit is REJECTED: it could not beat this code. One real improvement
+      found and applied: `Fits60` (the 60-bit range check) lacked
+      AggressiveInlining and survived as a CALL in the integer hot loop (the
+      JIT's inline budget was exhausted in the big delegate) — attributed,
+      re-disasmed, call gone: the Tier-1 integer hot path is now call-free.*
 - [ ] **L8** 🟡 chunk-216 indexed dispatch keeps WAM-backed lazy model.
       **Deferred — scope shrank on inspection, magnitude now quantified**: the
       `--strip-wam` half was ALREADY solved in Phase 27 (IlIndexGraph persisted

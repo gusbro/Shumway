@@ -353,6 +353,11 @@ public static class ArithEvalStack
 
     // ---- raw-long fast paths (mirror ArithmeticEvaluator's int semantics) ----
 
+    // Phase 33 L7 — AggressiveInlining matters here: inside a big Tier-1
+    // delegate the JIT's inline budget is exhausted by the time it reaches
+    // this leaf, and the disasm showed it surviving as a CALL in the integer
+    // hot loop (deref → untag → dec → call Fits60). Two compares beat a call.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool Fits60(long v) => v >= Cell.MinInt60 && v <= Cell.MaxInt60;
 
     /// <summary>Integer-closed binary ops on 60-bit longs. Returns false (→
