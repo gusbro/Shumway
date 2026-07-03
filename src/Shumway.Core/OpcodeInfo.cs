@@ -128,6 +128,10 @@ public static class OpcodeTable
         Set(Opcode.TrustMe, 1, "trust_me");
         // ADR-025 — unconditional intra-predicate branch (inline if-then-else).
         Set(Opcode.Jump, 5, "jump", OperandKind.Address);
+        // ADR-025 — capture CURRENT B (not B0) as the inline-ITE commit
+        // barrier (get_level's B0 is reset by any pre-ITE body call, which
+        // made the ITE cut prune a preceding generator's choice points).
+        Set(Opcode.GetLevelB, 5, "get_level_b", OperandKind.Perm);
         // ADR-015 chunk C — generation-filtered dynamic dispatch.
         Set(Opcode.EnterDynamic, 1, "enter_dynamic");
         Set(Opcode.CheckVisible, 17, "check_visible",

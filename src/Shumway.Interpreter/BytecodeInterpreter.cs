@@ -1015,6 +1015,15 @@ public sealed class BytecodeInterpreter
                     break;
                 }
 
+                case Opcode.GetLevelB:
+                {
+                    // ADR-025 — capture CURRENT B as the inline-ITE barrier.
+                    int slot = ReadI32(code, codeArr, pc + 1);
+                    _engine.GetLevelB(slot);
+                    _engine.SetPc(pc + 5);
+                    break;
+                }
+
                 case Opcode.Cut:
                 {
                     // See NeckCut: flush pending attribute wakeups before the

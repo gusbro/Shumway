@@ -225,7 +225,7 @@ public sealed class ClauseCompiler
         // subsequent CPs / sub-frames pack tightly. The vector is
         // indexed by goal position.
         int[] liveAfter = ComputeLivePermsAfterEachGoal(
-            goals, state.Ys, cutSlot, state.PermanentCount);
+            goals, state.Ys, cutSlot, state.PermanentCount, iteBarrierSlot);
         if (goals.Count == 0)
         {
             // Pure fact / trivial-body rule.
@@ -332,7 +332,11 @@ public sealed class ClauseCompiler
         Term thenPart = isIte ? ((CompoundTerm)disj.Args[0]).Args[1] : disj.Args[0];
         Term elsePart = disj.Args[1];
 
-        if (isIte) s.Emitter.EmitGetLevel(barrierSlot);
+        // ADR-025 bring-up fix: capture CURRENT B, not B0 — a pre-ITE body
+        // call resets B0, so cutting to it pruned a preceding generator's
+        // choice points (boyer lost solutions / crashed). get_level_b takes
+        // B at the try point: the cut pops exactly the ITE CP + Cond's CPs.
+        if (isIte) s.Emitter.EmitGetLevelB(barrierSlot);
         int tryPos = s.Emitter.Position;
         s.Emitter.EmitTryMeElse(0, arity: 0);   // ELSE target patched below
         s.DispatchSites.Add(tryPos + 1);
@@ -1530,7 +1534,8 @@ public sealed class ClauseCompiler
     /// no deep cut.</para></summary>
     private static int[] ComputeLivePermsAfterEachGoal(
         List<Term> goals, IReadOnlyDictionary<string, int> ys,
-        int cutSlot, int totalPerms)
+        int cutSlot, int totalPerms,
+        IReadOnlyDictionary<int, int>? iteBarrierSlot = null)
     {
         int n = goals.Count;
         var result = new int[n];
@@ -1550,6 +1555,17 @@ public sealed class ClauseCompiler
             }
             else
             {
+                // ADR-025 bring-up fix — an inline ITE reads its barrier
+                // Y slot (get_level_b … cut), which sits ABOVE the named
+                // permanents; goals BEFORE the ITE must keep the frame at
+                // least that big, exactly like the deep-cut slot above.
+                // Without this, a pre-ITE call's env trim let the cond's
+                // callee overwrite the slot → a garbage cut barrier
+                // (boyer's CompactTrails crash).
+                if (iteBarrierSlot is not null
+                    && iteBarrierSlot.TryGetValue(i, out int bSlot)
+                    && bSlot > maxLiveYIdx)
+                    maxLiveYIdx = bSlot;
                 UpdateMaxLiveYIdxFromTerm(goals[i], ys, ref maxLiveYIdx);
             }
         }

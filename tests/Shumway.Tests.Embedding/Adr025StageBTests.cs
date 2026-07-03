@@ -133,6 +133,87 @@ public class Adr025StageBTests
         Assert.True(e.Query("G = sign(-5, R), call(G), R == 0.").Success);
     }
 
+    // ---- Bring-up regressions found by the stage-(d) measurement (boyer) ----
+
+    [Fact]
+    public void PreIteGenerator_ChoicePointsSurviveTheIteCut()
+    {
+        // get_level captured B0 — which the pre-ITE call to g/1 had reset to
+        // the value BEFORE g's choice point — so the ITE's commit cut pruned
+        // the generator's CP (lost solutions / crashed). get_level_b captures
+        // CURRENT B at the try point: the cut pops exactly the ITE CP + the
+        // condition's CPs.
+        const string program =
+            ":- public g/1.\ng(1).\ng(2).\ng(3).\n" +
+            ":- public p/2.\n" +
+            "p(X, R) :- g(X), (X > 1 -> R = big ; R = small).\n";
+        foreach (int threshold in new[] { 0, 1 })
+        {
+            var e = new PrologEngine { EnableInlineIte = true };
+            e.IlPromotion.Threshold = threshold;
+            e.ConsultString(program);
+            for (int i = 0; i < 2; i++)
+            {
+                var xs = e.QueryAll("p(X, R).")
+                    .Select(s => $"{s["X"]}-{s["R"]}").ToList();
+                Assert.Equal(new[] { "1-small", "2-big", "3-big" }, xs);
+            }
+        }
+    }
+
+    [Fact]
+    public void PreIteCall_EnvTrim_KeepsTheBarrierSlotAlive()
+    {
+        // The ITE barrier Y slot sits ABOVE the named permanents; a call
+        // BEFORE the ITE used to trim the frame below it, letting the
+        // condition's callee overwrite the slot — a garbage cut barrier
+        // (boyer's Cut→CompactTrails IndexOutOfRange). The liveness analysis
+        // now folds the barrier slot in, like the deep-cut slot.
+        const string program =
+            ":- public ax/2.\nax(f(X), X).\n" +
+            ":- public step/2.\n" +
+            ":- public rw/2.\n" +
+            "step([], []).\n" +
+            "step([H|T], [H|T2]) :- step(T, T2).\n" +
+            "rw(T, R) :- step([1,2,3], _L), (ax(T, N) -> rw(N, R) ; R = T).\n";
+        foreach (int threshold in new[] { 0, 1 })
+        {
+            var e = new PrologEngine { EnableInlineIte = true };
+            e.IlPromotion.Threshold = threshold;
+            e.ConsultString(program);
+            for (int i = 0; i < 2; i++)
+            {
+                Assert.True(e.Query("rw(f(f(f(done))), R), R == done.").Success);
+                Assert.True(e.Query("rw(plain, R), R == plain.").Success);
+            }
+        }
+    }
+
+    [Fact]
+    public void Boyer_InlineMatchesHelper_BothTiers()
+    {
+        // The real program that surfaced both bring-up bugs.
+        string src = System.IO.File.ReadAllText(
+            System.IO.Path.Combine(FindRepoRoot(), "benchmarks", "vanroy", "boyer.pl"));
+        foreach (bool inline in new[] { false, true })
+            foreach (int threshold in new[] { 0, 1 })
+            {
+                var e = new PrologEngine { EnableInlineIte = inline };
+                e.IlPromotion.Threshold = threshold;
+                e.ConsultString(src);
+                Assert.True(e.Query("bench(10).").Success,
+                    $"boyer bench(10) inline={inline} t={threshold}");
+            }
+    }
+
+    private static string FindRepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "CLAUDE.md")))
+            dir = dir.Parent!;
+        return dir!.FullName;
+    }
+
     [Fact]
     public void Differential_InlineIlVsHelperTier0()
     {

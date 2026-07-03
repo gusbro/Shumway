@@ -785,6 +785,13 @@ public sealed partial class Engine
     // (int)Data cast.
     public void GetLevel(int slot) => SetY(slot, Cell.RawInt(_b0));
 
+    /// <summary>ADR-025 — <c>Y[slot] := RawInt(B)</c>: capture the CURRENT
+    /// choice-point top as the inline-ITE commit barrier. <see cref="GetLevel"/>
+    /// captures <c>B0</c>, which any pre-ITE body call resets — cutting to it
+    /// pruned a preceding generator's choice points (the helper form never saw
+    /// this because the helper CALL re-established B0 at its own entry).</summary>
+    public void GetLevelB(int slot) => SetY(slot, Cell.RawInt(_b));
+
     /// <summary>
     /// Cut back to <see cref="B0"/> — the value of <c>B</c> recorded at the most recent
     /// procedure entry. This is the implicit barrier used by the WAM <c>neck_cut</c>

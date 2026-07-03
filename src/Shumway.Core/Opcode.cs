@@ -240,26 +240,34 @@ public enum Opcode : byte
     //   Jump <target:int32>
     Jump = 0x5A,        // 5 bytes
 
+    // ADR-025 — Y[slot] := RawInt(B): capture the CURRENT choice-point top as
+    // the inline-ITE commit barrier. Distinct from get_level, which captures
+    // B0 (the procedure-entry snapshot a pre-ITE body call resets — using it
+    // over-cut a preceding generator's choice points; the helper form never
+    // saw this because the helper CALL re-established B0 at its own entry).
+    //   GetLevelB <slot:int32>
+    GetLevelB = 0x5B,   // 5 bytes
+
     // Meta — last member of the dense dispatched block (chunk 429).
-    Meta = 0x5B,
+    Meta = 0x5C,
 
     // Extension escape — reserved, never dispatched.
-    ReservedExtension = 0x5C,
+    ReservedExtension = 0x5D,
 
     // Reserved specialised-builtin opcodes. Defined in OpcodeTable but
     // never emitted by the compiler and never dispatched by the
     // interpreter; parked after ReservedExtension so the dispatched
     // block stays hole-free (chunk 429).
-    UnifyEq = 0x5D,
-    IsOp = 0x5E,
-    LessThan = 0x5F,
-    GreaterThan = 0x60,
-    LessEq = 0x61,
-    GreaterEq = 0x62,
-    ArithEq = 0x63,
-    ArithNotEq = 0x64,
-    StructEq = 0x65,
-    StructNotEq = 0x66,
+    UnifyEq = 0x5E,
+    IsOp = 0x5F,
+    LessThan = 0x60,
+    GreaterThan = 0x61,
+    LessEq = 0x62,
+    GreaterEq = 0x63,
+    ArithEq = 0x64,
+    ArithNotEq = 0x65,
+    StructEq = 0x66,
+    StructNotEq = 0x67,
 }
 
 /// <summary>Sub-opcodes for <see cref="Opcode.Meta"/>. Only <see cref="DbgInfo"/> exists in v1.</summary>

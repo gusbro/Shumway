@@ -323,6 +323,9 @@ public sealed class IlPredicateCompiler
     // ADR-025 stage (b) — the inline-ITE choice point's resume callback.
     private static readonly FieldInfo IlIteHelperResumeField =
         typeof(IlIteHelper).GetField(nameof(IlIteHelper.Resume))!;
+    // ADR-025 — capture CURRENT B (the inline-ITE barrier; see Opcode.GetLevelB).
+    private static readonly MethodInfo EngineGetLevelBMethod =
+        typeof(Engine).GetMethod(nameof(Engine.GetLevelB), new[] { typeof(int) })!;
 #if DEBUG
     private static readonly MethodInfo EngineEGetter =
         typeof(Engine).GetProperty(nameof(Engine.E))!.GetGetMethod()!;
@@ -1982,9 +1985,10 @@ public sealed class IlPredicateCompiler
         // ADR-025 stage (b) — inline if-then-else / disjunction. The mid-body
         // try_me_else is operand-gated in IsClauseBodyOpcode (arity 0 only);
         // trust_me marks the ELSE entry (the CP pop happened at backtrack);
-        // jump is a plain unconditional br.
+        // jump is a plain unconditional br; get_level_b captures current B.
         Opcode.TrustMe => true,
         Opcode.Jump => true,
+        Opcode.GetLevelB => true,
         // PSTR + Call (chunk 50).
         Opcode.GetPstr => true,
         Opcode.PutPstr => true,
@@ -3509,6 +3513,16 @@ public sealed class IlPredicateCompiler
                 emit.LoadArgument(0);
                 emit.LoadConstant(slot);
                 emit.Call(EngineGetLevelMethod);
+                pc += OpcodeTable.Get(op).Size;
+                continue;
+            }
+            if (op == Opcode.GetLevelB)
+            {
+                // ADR-025 — Y[slot] := RawInt(B): the inline-ITE commit barrier.
+                int slot = BytecodeIO.ReadInt32(code, pc + 1);
+                emit.LoadArgument(0);
+                emit.LoadConstant(slot);
+                emit.Call(EngineGetLevelBMethod);
                 pc += OpcodeTable.Get(op).Size;
                 continue;
             }

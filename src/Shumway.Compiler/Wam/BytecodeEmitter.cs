@@ -235,6 +235,14 @@ public sealed class BytecodeEmitter
         EmitInt(permSlot);
     }
 
+    /// <summary>ADR-025 — capture CURRENT B (not B0) as the inline-ITE
+    /// commit barrier.</summary>
+    public void EmitGetLevelB(int permSlot)
+    {
+        _bytes.Add((byte)Opcode.GetLevelB);
+        EmitInt(permSlot);
+    }
+
     public void EmitCut(int permSlot)
     {
         _bytes.Add((byte)Opcode.Cut);
