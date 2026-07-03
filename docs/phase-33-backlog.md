@@ -414,19 +414,21 @@ A deferral is a TODO with a prerequisite, not a closure.
       AggressiveInlining and survived as a CALL in the integer hot loop (the
       JIT's inline budget was exhausted in the big delegate) — attributed,
       re-disasmed, call gone: the Tier-1 integer hot path is now call-free.*
-- [ ] **L8** 🟡 chunk-216 indexed dispatch keeps WAM-backed lazy model.
-      **Deferred — scope shrank on inspection, magnitude now quantified**: the
+- [-] **L8** 🟡 chunk-216 indexed dispatch keeps WAM-backed lazy model.
+      **Closed — bounded structurally, no action (2026-07-03)**: the
       `--strip-wam` half was ALREADY solved in Phase 27 (IlIndexGraph persisted
-      via IndexGraphCodec); the residual is the IN-PROCESS promotion path's
-      one-time first-dispatch model build. Corpus census (2026-07-02):
-      **6 627 indexed-dispatch predicates totalling 4.25 MB** across
-      test/testGen/testProcDotNet — a real population, but the build is lazy
-      per predicate and one-time. Revisit with startup profiling. NOTE the
-      outliers the census surfaced: `control_has_property/3` at 33.6 KB and
-      `pty_name_l/3` at **101.6 KB** exceed BOTH promotion caps (16 KB sync /
-      64 KB background) — those giant fact tables never promote at all, which
-      strengthens L3's recorded true-fix (linear-validation emitter) as the
-      real unlock.
+      via IndexGraphCodec); the residual in-process cost is the one-time
+      first-dispatch `IlIndexGraph.Build` — inspected: a DFS over the SWITCH
+      NODES only (not the clause bodies), O(switch nodes + table entries),
+      strictly smaller than one linear pass of the predicate's bytecode. It is
+      paid lazily per promoted predicate, alongside that predicate's Sigil
+      compile, which L3's measured curve puts at ~33 ms/KB — orders of
+      magnitude above a memory walk of the same bytes. Even the corpus-wide
+      worst case (every one of the census's 6 627 indexed predicates promoted:
+      4.25 MB of switch-table walks) is milliseconds total against minutes of
+      the compiles that would accompany it. The census outliers
+      (`pty_name_l/3` 101.6 KB) were unlocked by L3's cap raise (256 KB) and
+      now promote. Startup profiling would measure compile time, not this.
 - [-] **L10** 🟡 **NEW (corpus evidence, 2026-07-02): multi-arg indexed shapes
       (`switch_on_*_arg`) are NOT IL-describable** — the describers
       (TryDescribeIndexed / IndexedAtom / TryMeElseChain / SwitchedChain)
