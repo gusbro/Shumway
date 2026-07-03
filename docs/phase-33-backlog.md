@@ -653,9 +653,27 @@ Interpreter core:
 
 WAM↔IL boundary:
 - [x] **B1** 🔴 resume-marker encoding caps. *Fixed: markers are now dense ids into a process-global interned side table of (fid, cursor) pairs (`marker = Base + denseId`) — no functor-id or cursor cap (capacity ≈1.07B distinct pairs); lock-free decode / locked intern, same discipline as the atom/functor tables. Process-global because markers bake into IL delegates shared across engines. `ResumeMarkerCursorStride` survives only as the IL emitters per-predicate cursor-count BUDGET (emit-shape policy). 4 tests incl. round-trip beyond both old caps + growth stability.*
-- [ ] **B2** 🟡 MaybeCollectHeap unconditional per marker resume.
-- [ ] **B3** ⚪ double closure per promoted predicate; per-query dispatch cache
-      rebuild.
+- [-] **B2** 🟡 MaybeCollectHeap unconditional per marker resume. **Rejected —
+      already resolved by chunk 428's hot/cold split**: the call inlines to a
+      volatile `_cancelRequested` read + one fused compare (predicted
+      not-taken) — ~2 instructions against the marker decode + array index +
+      indirect delegate invoke on the same path. Removing it would also open
+      a safe-point gap: it is the cancellation/GC check on the IL-callee
+      RETURN path (a heavily-allocating leaf callee's next check is otherwise
+      its caller's next call boundary). Cost unmeasurable, removal risky —
+      keep it.
+- [x] **B3** ⚪ double closure per promoted predicate; per-query dispatch cache
+      rebuild. *Fixed: the dispatch (`engine => del(engine,0)`) and resume
+      (`(engine,cursor) => del(engine,cursor)`) wrappers now live on
+      IlPromotionStore for the ENGINE lifetime (created once per delegate
+      install; every install/replace/evict — drain, sync promote, PGO swap,
+      Warm, RegisterBoundDelegate, EvictDelegate — drops the cached pair so a
+      swapped delegate is never shadowed). The per-query
+      Tier1DispatcherAdapter allocates no closures, and its functor-keyed
+      calleeMap (previously built EAGERLY per query — O(predicates) dict
+      inserts per SetupQueryFromTerm) is now lazy: built only when a dispatch
+      reaches a compile decision, i.e. never in the warm steady state where
+      everything is already promoted or rejected.*
 
 Functional interop gaps:
 - [ ] **D6** 🟡 `int**`/struct-by-value/array params rejected; allocator without

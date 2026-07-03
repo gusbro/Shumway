@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using Shumway.Compiler.Il;
 using Shumway.Compiler.Wam;
+using Shumway.Core;
 
 namespace Shumway.Embedding;
 
@@ -30,6 +31,46 @@ public sealed class IlPromotionStore
     private readonly Dictionary<int, int> _counters = new();
     private readonly Dictionary<int, PredicateDelegate> _delegates = new();
     private readonly HashSet<int> _unpromotable = new();
+
+    // Phase 33 B3 — the dispatch/resume wrapper closures the per-query
+    // Tier1DispatcherAdapter used to allocate PER PROMOTED PREDICATE PER QUERY,
+    // cached here for the engine's lifetime instead (a delegate's identity is
+    // stable between installs). Every install / replace / remove goes through
+    // InstallDelegate / the evict path, which drop the cached pair — so a
+    // swapped delegate (PGO phase-2, churn re-promote, evict) is never
+    // shadowed by a stale wrapper across queries.
+    private readonly Dictionary<int, Func<Engine, bool>> _dispatchWrappers = new();
+    private readonly Dictionary<int, Func<Engine, int, bool>> _resumeWrappers = new();
+
+    private void InstallDelegate(int functorId, PredicateDelegate del)
+    {
+        _delegates[functorId] = del;
+        _dispatchWrappers.Remove(functorId);
+        _resumeWrappers.Remove(functorId);
+    }
+
+    /// <summary>The cached `engine => del(engine, 0)` dispatch wrapper for a
+    /// promoted predicate (null when not promoted). Engine-lifetime — the
+    /// per-query adapter probes this instead of allocating its own.</summary>
+    internal Func<Engine, bool>? TryGetDispatchWrapper(int functorId)
+    {
+        if (_dispatchWrappers.TryGetValue(functorId, out var w)) return w;
+        if (!_delegates.TryGetValue(functorId, out var del)) return null;
+        Func<Engine, bool> wrapper = engine => del(engine, 0);
+        _dispatchWrappers[functorId] = wrapper;
+        return wrapper;
+    }
+
+    /// <summary>The cached `(engine, cursor) => del(engine, cursor)` resume
+    /// wrapper for a promoted predicate (null when not promoted). Engine-lifetime.</summary>
+    internal Func<Engine, int, bool>? TryGetResumeWrapper(int functorId)
+    {
+        if (_resumeWrappers.TryGetValue(functorId, out var w)) return w;
+        if (!_delegates.TryGetValue(functorId, out var del)) return null;
+        Func<Engine, int, bool> wrapper = (engine, cursor) => del(engine, cursor);
+        _resumeWrappers[functorId] = wrapper;
+        return wrapper;
+    }
     // Diagnostic: why each unpromotable predicate was rejected
     // ("dynamic" / "size" / "cannot-compile" / "query"). Populated
     // alongside _unpromotable; surfaced by UnpromotableEntries for the
@@ -127,6 +168,8 @@ public sealed class IlPromotionStore
         _mutationStamp.TryGetValue(functorId, out int stamp);
         _mutationStamp[functorId] = stamp + 1;
         if (!_delegates.Remove(functorId)) return;
+        _dispatchWrappers.Remove(functorId);
+        _resumeWrappers.Remove(functorId);
         _counters.Remove(functorId);
         _pgoProfileKeys.Remove(functorId);
         _pgoOptimized.Remove(functorId);
@@ -244,7 +287,7 @@ public sealed class IlPromotionStore
             }
             _mutationStamp.TryGetValue(c.Fid, out int now);
             if (now != c.Stamp) continue;   // mutated mid-compile: stale snapshot, re-warm
-            _delegates[c.Fid] = c.Result!.Value.Delegate;
+            InstallDelegate(c.Fid, c.Result!.Value.Delegate);
             if (c.Result.Value.ProfileKey >= 0) _pgoProfileKeys[c.Fid] = c.Result.Value.ProfileKey;
             OnPromotionInstalled?.Invoke(c.Fid, c.Result.Value.Delegate);
         }
@@ -427,7 +470,7 @@ public sealed class IlPromotionStore
         var syncResult = RunOnLargeStack(() =>
             WithFloatPool(functorId, () =>
                 WithNativeInline(() => Compiler.CompileInstrumented(target, calleeMap))));
-        _delegates[functorId] = syncResult.Delegate;
+        InstallDelegate(functorId, syncResult.Delegate);
         if (syncResult.ProfileKey >= 0)
             _pgoProfileKeys[functorId] = syncResult.ProfileKey;
         // Phase 33 L1 — let the engine patch this callee's remaining generic call
@@ -463,7 +506,7 @@ public sealed class IlPromotionStore
             var optimized = RunOnLargeStack(
                 () => WithFloatPool(functorId, () =>
                     WithNativeInline(() => Compiler.CompileOptimized(predicate, profileKey, calleeMap))));
-            _delegates[functorId] = optimized;
+            InstallDelegate(functorId, optimized);
             _pgoProfileKeys.Remove(functorId);
             _pgoOptimized.Add(functorId);
         }
@@ -575,7 +618,7 @@ public sealed class IlPromotionStore
         }
         var del = RunOnLargeStack(() =>
             WithFloatPool(functorId, () => WithNativeInline(() => Compiler.Compile(predicate, calleeMap))));
-        _delegates[functorId] = del;
+        InstallDelegate(functorId, del);
         return del;
     }
 
@@ -619,7 +662,7 @@ public sealed class IlPromotionStore
     {
         if (_delegates.ContainsKey(functorId)) return;
         if (_unpromotable.Contains(functorId)) _unpromotable.Remove(functorId);
-        _delegates[functorId] = del;
+        InstallDelegate(functorId, del);
     }
 
     /// <summary>True when <paramref name="functorId"/> has been examined
