@@ -463,8 +463,26 @@ A deferral is a TODO with a prerequisite, not a closure.
       disj −2.9% opcodes); Tier-1 promoted LOSES on boyer (+17% min ×3
       ABBA runs — the region-lowered helper is CP-free for the det commit;
       inline pays PushIlChoicePoint+Cut). DEFAULT STAYS OFF; EnableInlineIte
-      documented as the Tier-0/AOT win. Follow-up: IL emit skipping the ITE
-      CP for guard-only conds (fail-label→ELSE redirect) → revisit flip.
+      documented as the Tier-0/AOT win.
+      *FOLLOW-UP RESOLVED (2026-07-05, commit e76e26a) — the "guard-only CP
+      skip" idea was REFUTED by boyer's actual shape (its cond is the
+      axiom/2 CALL, not a guard). A 2×2 attribution ({regions}×{inline ITE},
+      stable 20k-rep runs) decomposed the regression: (1) LOST BRANCH-TAIL
+      LCO — CompileInlineIte compiled every branch goal as non-last (call +
+      jump + shared epilogue, O(depth) frames); (2) the ELSE resume
+      trampoline (IlIteHelper.Resume + marker → dispatch-loop round trip per
+      failed cond vs a chain CP's direct delegate invoke); (3) region
+      exclusion (~17% on boyer). Fixed (1)+(2): branch last goals compile as
+      LAST goals when the ITE is last (branches self-terminate); the ITE
+      try_me_else carries the body-CP arity sentinel
+      (OpcodeTable.InlineIteCpArity −1) which the cursor counter, recogniser
+      guards and RegionBodyOpcodesOk key on (the old jump-only region gate
+      let the new shape crash the region emit); the IL CP pushes the OWN
+      delegate + ELSE cursor. Head-to-head standalone: +40% → +13.6%.
+      REMAINING before the flip: the ~14% residual (correlated with an
+      unattributed +185KB managed alloc/query on boyer) and ITE-in-regions
+      (wire the ELSE cursor through the region plan — the machinery exists
+      as BuiltinResume cursors).*
       Measurement lesson: Profiler.Reset is [Conditional] — the harness must
       ALSO define SHUMWAY_PROFILE or its Reset calls strip silently and
       counters accumulate (first read was a bogus 3×).*
@@ -633,6 +651,19 @@ A deferral is a TODO with a prerequisite, not a closure.
       quantify before building). Over-conservative roots: REJECTED — public
       wrappers must stay callable by runtime-constructed goals; dropping them
       is the T1 prune's opt-in contract, not a default.*
+
+## OPEN — intermittent native AV (needs a minidump session)
+
+- [ ] **0xC0000005 in `shumway_native_calli`** during
+      `EndToEnd_NativeDll_OutScalarPointers`, ONLY under the full parallel
+      Embedding suite (~50% of full runs; seen 3× on 2026-07-03/05). NOT
+      reproducible sequentially (60 000 compiled out-scalar calls clean,
+      fresh engine per round) nor with all Native* classes running
+      concurrently (4/4 green). Predates the ITE work; first observed after
+      D1 but D1's arena never crosses a chunk boundary in this test
+      (16 B/call, mark-restored), so the arena-boundary theory is weak.
+      Next: run the full suite with `DOTNET_DbgEnableMiniDump=1` and analyze
+      the faulting address (native write target vs fn pointer).
 
 ## Later rounds (not yet waved)
 
