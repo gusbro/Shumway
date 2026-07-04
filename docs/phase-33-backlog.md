@@ -732,6 +732,16 @@ A deferral is a TODO with a prerequisite, not a closure.
 
 ## Later rounds (not yet waved)
 
+Region runtime:
+- [ ] **R1** 🟡 boyer's REGION allocates +53% managed vs the same predicates
+      standalone (66.8 vs 43.8 MB per 20k-rep query — intra-run
+      deterministic, measured identically pre/post the ITE wiring, i.e.
+      PRE-EXISTING). ~1.1 KB/rep of extra GC pressure somewhere in the
+      region dispatch/return path (RegionReturnCursor? cursor re-entry?).
+      Wall-clock still favors regions, so this is headroom, not a
+      regression — attribute with a targeted alloc microbench like the
+      ITE one (which read 0 B/op for the inline protocol itself).
+
 Interpreter core:
 - [ ] **I1** 🔴 PC lives in an engine field — store+reload per dispatched opcode.
       Thread a local `pc` through the switch, write back at goal boundaries.
