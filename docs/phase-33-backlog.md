@@ -988,16 +988,35 @@ Interpreter core:
       the output to `bin/x64/Release/` but the run script kept invoking the old
       `bin/Release/` binary, so fixes appeared to have no effect; always confirm
       the artifact path after a config change.
-- [ ] **I13** 🟡 `TermReader.MaterializeCompoundAt` (Embedding) recurses per
-      compound level, so materialising a deeply-nested **non-list** term from the
-      heap — `assertz` of a 100 000-deep `s(s(…))` / a long left-associative
-      `a+b+c+…` expression — overflows the host uncatchably at materialize time
-      (before compile). Chunk 111 made the LIST spine iterative but left general
-      compound nesting recursive; the I12 compile-side walks now handle any shape,
-      so this materialize step is the remaining wall for non-list deep terms.
-      Generalise the materialiser to an explicit-stack post-order tree walk
-      (preserving the chunk-432 cycle set and paired-cell handling), or bound it
-      → catchable `resource_error`. Same class as I9/I11/I12. Own change + tests.
+- [x] **I13** 🟡 `TermReader` (Embedding) recursed one C# frame per compound
+      level, so materialising a deeply-nested **non-list** heap term — `assertz`
+      of a 100 000-deep `s(s(…))` / a long left-associative `a+b+c+…` — overflowed
+      the host uncatchably at materialize time (during `assertz`, or when a query's
+      deep binding was read back into a .NET `Term`). Chunk 111 had made only the
+      LIST *spine* iterative. **DONE.** The three mutually-recursive helpers
+      (`Materialize` / `MaterializeCompoundAt` / `MaterializeLis`) are replaced by a
+      single **explicit-stack post-order tree walk**: an Expand frame derefs a heap
+      index and, for a compound/cons, pushes an assemble frame plus one Expand per
+      child (in reverse, so the leftmost child is built first and lands deepest on
+      the result stack); the assemble frame pops its children and constructs the
+      `CompoundTerm`. C# stack depth is now O(1) for any shape or depth. Cycle
+      detection is meaning-preserved — the active set holds exactly the addresses
+      on the current root→node path, added on Expand and removed on assemble
+      (matching the old recursive try/finally scoping), so a shared-but-acyclic
+      sub-term (a DAG) still materialises twice rather than being mistaken for a
+      cycle, and `X = f(X)` still terminates with the synthetic `_C` marker. The
+      work/result stacks and cycle set moved to a per-thread scratch pool inside
+      `TermReader` (transient scratch, not engine state — thread-agility preserved;
+      re-entrancy guarded by a busy flag), so the now-dead `Engine.TermWalkScratchSet`
+      / `TermWalkDepth` fields were removed. 7 Phase33I13 tests (deep `s`-nest as a
+      query binding / deep left-assoc expr / deep-nest assertz+readback / cyclic
+      `f(X)` → marker no overflow / shared-acyclic DAG materialises twice / shallow
+      mixed regression / deep-list regression). Verified on the default stack:
+      `s(s(…))` nesting to **100 000** survives (iteattr probe). Alloc A/B on the
+      findall hot path (list-of-compounds + scalar bindings, min-of-5): 2192776 →
+      2187176 B/iter — marginally **lower** than the old spine walk, i.e. at parity.
+      Full 5-project gate green (Core 436 / Interpreter 105 / Compiler 302 /
+      ISO 277 / Embedding 2762), no dump with the AV trap armed.
 
 WAM↔IL boundary:
 - [x] **B1** 🔴 resume-marker encoding caps. *Fixed: markers are now dense ids into a process-global interned side table of (fid, cursor) pairs (`marker = Base + denseId`) — no functor-id or cursor cap (capacity ≈1.07B distinct pairs); lock-free decode / locked intern, same discipline as the atom/functor tables. Process-global because markers bake into IL delegates shared across engines. `ResumeMarkerCursorStride` survives only as the IL emitters per-predicate cursor-count BUDGET (emit-shape policy). 4 tests incl. round-trip beyond both old caps + growth stability.*

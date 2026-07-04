@@ -87,14 +87,17 @@ public sealed partial class Engine
     private readonly List<CatchFrame> _catchFrames = new();
 
     // ----- chunk 432: pooled scratch for the embedding layer's term
-    // walkers (TermReader / Materializer — findall runs both once per
-    // solution). Cleared on use rather than allocated per call. The depth
-    // counters guard re-entrancy: only the OUTERMOST walk uses the pooled
-    // instance; a nested walk (e.g. a findall nested inside another
-    // findall's collect) allocates a fresh one. Engines are single-
-    // threaded internally, so no synchronisation is needed.
-    public HashSet<int>? TermWalkScratchSet;
-    public int TermWalkDepth;
+    // walkers (Materializer — findall runs it once per solution). Cleared on
+    // use rather than allocated per call. The depth counter guards
+    // re-entrancy: only the OUTERMOST walk uses the pooled instance; a nested
+    // walk (e.g. a findall nested inside another findall's collect) allocates
+    // a fresh one. Engines are single-threaded internally, so no
+    // synchronisation is needed.
+    //
+    // Phase 33 I13: TermReader's own scratch (its work / result stacks and
+    // cycle set) moved to a per-thread pool inside TermReader when its walk
+    // was made fully iterative, so the former TermWalkScratchSet /
+    // TermWalkDepth fields are gone.
     public Dictionary<string, int>? MaterializeScratchMap;
     public int MaterializeDepth;
     // Phase 33 I2 — pooled scratch for the heap-to-heap copy_term/2
