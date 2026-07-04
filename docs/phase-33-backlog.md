@@ -794,15 +794,16 @@ Interpreter core:
       delegated one-node-at-a-time to the proven AST path (fresh side-table
       entry, identical semantics). Measured: ground `f/5`+list **1296→584
       B/op (−55%)**, shared-var `p/5` **1240→712 B/op (−43%)**, both faster.
-      11 dedicated tests (ground / fresh+shared vars / shared tail / float+
-      bigint / string / 100k list no-overflow / nested / cyclic-terminates /
-      copy independence); 5-project gate green under the AV trap (Embedding
-      2713). *(A finding along the way: `==/2` — `AreStructurallyEqual` — has no
-      cycle detection and overflows on a cyclic term; pre-existing, unrelated,
-      noted for a future item.)* **Residual: the two identity dictionaries +
-      the spine list are now the dominant per-call cost — poolable on the
-      engine (clear-on-use, depth-guarded, the chunk-432 pattern) as a measured
-      follow-up.**
+      Then the two identity maps were **pooled on the engine** (clear-on-use,
+      depth-guarded — the chunk-432 pattern): **1296→72 B/op (−94%)** ground and
+      **1240→72 B/op (−94%)** shared-var. 11 dedicated tests (ground / fresh+
+      shared vars / shared tail / float+bigint / string / 100k list no-overflow
+      / nested / cyclic-terminates / copy independence); 5-project gate green
+      under the AV trap (Embedding 2713) — twice (base + pooling). *(A finding
+      along the way: `==/2` — `AreStructurallyEqual` — has no cycle detection
+      and overflows on a cyclic term; pre-existing, unrelated, noted for a
+      future item.)* Remaining ~72 B is the `CopyLis` spine list — eliminable
+      with incremental cons linking (no scratch list) as a further refinement.
       **Part (b) — findall record→collect — still open.** Needs a
       backtrack-surviving heap-copy destination (today the managed AST survives
       heap truncation for free via GC); a design question (protected heap

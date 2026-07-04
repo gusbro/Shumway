@@ -97,6 +97,13 @@ public sealed partial class Engine
     public int TermWalkDepth;
     public Dictionary<string, int>? MaterializeScratchMap;
     public int MaterializeDepth;
+    // Phase 33 I2 — pooled scratch for the heap-to-heap copy_term/2
+    // (HeapTermCopy): the source-var→copy-var and source-struct→copy-cell
+    // identity maps, cleared on use. Same clear-on-use + depth-guard discipline
+    // as the walkers above.
+    public Dictionary<int, Cell>? CopyVarScratch;
+    public Dictionary<int, Cell>? CopyStructScratch;
+    public int CopyTermDepth;
 
     private int _stackTop;
     private int _extraTrailTop;

@@ -39,9 +39,32 @@ internal static class HeapTermCopy
     /// fresh heap cells and returns the copied value cell.</summary>
     public static Cell CopyRegister(Engine engine, int regIdx)
     {
-        var varMap = new Dictionary<int, Cell>();
-        var structMap = new Dictionary<int, Cell>();
-        return CopyRegisterValue(engine, engine.GetRegister(regIdx), varMap, structMap);
+        // Pool the two identity maps on the engine (clear-on-use), the
+        // chunk-432 pattern: the depth guard means only the outermost copy uses
+        // the pooled instances; a nested copy (none happens today — copy_term/2
+        // does not re-enter itself — but future callers might) allocates fresh.
+        engine.CopyTermDepth++;
+        try
+        {
+            Dictionary<int, Cell> varMap, structMap;
+            if (engine.CopyTermDepth == 1)
+            {
+                varMap = engine.CopyVarScratch ??= new Dictionary<int, Cell>();
+                varMap.Clear();
+                structMap = engine.CopyStructScratch ??= new Dictionary<int, Cell>();
+                structMap.Clear();
+            }
+            else
+            {
+                varMap = new Dictionary<int, Cell>();
+                structMap = new Dictionary<int, Cell>();
+            }
+            return CopyRegisterValue(engine, engine.GetRegister(regIdx), varMap, structMap);
+        }
+        finally
+        {
+            engine.CopyTermDepth--;
+        }
     }
 
     private static Cell CopyRegisterValue(Engine engine, Cell rc,
