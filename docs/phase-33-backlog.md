@@ -733,7 +733,21 @@ A deferral is a TODO with a prerequisite, not a closure.
 ## Later rounds (not yet waved)
 
 Region runtime:
-- [ ] **R1** 🟡 boyer's REGION allocates +53% managed vs the same predicates
+- [-] **R1** 🟡 **CLOSED — attributed benign (2026-07-06).** Type-level
+      AllocationTick tracing (dotnet-trace gc-verbose + a TraceEvent
+      histogram, scratchpad allocrpt) on real boyer under BOTH configs:
+      99.9% of all managed allocation in both is `Shumway.Core.Cell[]` —
+      the engine's own WAM heap/stack arrays re-allocating via
+      growth-doubling (~16 GB sampled in 35 s each config; every other
+      type is megabytes). The boyer "+53%" and the microbench "24 B/op
+      standalone" were BOTH this: transient array-growth amortization
+      whose peak pattern differs slightly per config (one doubling more or
+      fewer per query), not per-op dispatch objects — GC.GetAllocatedBytes
+      cannot distinguish. No lever: wall-clock already favors regions and
+      array growth is watermark-governed and transient. (Residual noted:
+      Dictionary<int,List<Clause>> bucket churn is per-QUERY setup, known.)
+      Original text follows for the measurement trail.
+- [x] ~~**R1** 🟡~~ boyer's REGION allocates +53% managed vs the same predicates
       standalone (66.8 vs 43.8 MB per 20k-rep query — intra-run
       deterministic, measured identically pre/post the ITE wiring, i.e.
       PRE-EXISTING). Wall-clock still favors regions: headroom, not a
