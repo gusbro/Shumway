@@ -104,6 +104,14 @@ public sealed partial class Engine
     public Dictionary<int, Cell>? CopyVarScratch;
     public Dictionary<int, Cell>? CopyStructScratch;
     public int CopyTermDepth;
+    // Phase 33 I9 — pooled scratch for the iterative structural-compare walk
+    // (==/2, \==/2). The work-stack holds cell pairs still to compare; the
+    // visited set holds (aAddr,bAddr) structure-pairs already in progress so a
+    // cyclic term terminates co-inductively instead of overflowing the C# stack
+    // (an uncatchable crash). Cleared on use; the walk is self-contained (never
+    // recurses back into AreStructurallyEqual) so no depth guard is needed.
+    private List<Cell>? _structEqStack;
+    private HashSet<long>? _structEqVisited;
 
     private int _stackTop;
     private int _extraTrailTop;
@@ -3847,35 +3855,200 @@ public sealed partial class Engine
         b = ResolveForStructuralCompare(b);
 
         if (a.Tag != b.Tag) return false;
-        return a.Tag switch
+        switch (a.Tag)
         {
-            Tag.Ref => a.AsHeapIndex == b.AsHeapIndex,
-            Tag.Atom => a.AsAtomId == b.AsAtomId,
-            Tag.Int => a.AsInt == b.AsInt,
-            Tag.Float => Cell.DecodeFloat(a, _heap[a.FloatPairedIndex])
-                      == Cell.DecodeFloat(b, _heap[b.FloatPairedIndex]),
-            Tag.Functor => a.AsFunctorId == b.AsFunctorId,
-            Tag.Str => AreStrStructurallyEqual(a.AsHeapIndex, b.AsHeapIndex),
-            Tag.Lis => AreLisStructurallyEqual(a.AsHeapIndex, b.AsHeapIndex),
-            // Foreign cells (chunk 140): identity via the underlying
-            // .NET reference. Two foreign cells are == iff their
-            // boxed payloads are reference-equal.
-            Tag.Foreign => ReferenceEquals(
-                _foreignTable[a.AsForeignId], _foreignTable[b.AsForeignId]),
-            // BigInt: value equality.
-            Tag.BigInt => _bigIntTable[a.AsBigIntId].Equals(_bigIntTable[b.AsBigIntId]),
-            // String literal: value equality.
-            Tag.String => string.Equals(
-                _stringTable[a.AsStringId], _stringTable[b.AsStringId]),
-            // PSTR (partial string): a packed char-code sequence + a tail —
-            // NOT a functor+args structure, so it must NOT go through
-            // AreStrStructurallyEqual (which read a.AsHeapIndex — the Pstr cell's
-            // buffer payload, not a functor index — and recursed forever). Two
-            // PSTRs match iff their character sequences and final tails do.
-            Tag.Pstr => ArePstrStructurallyEqual(a, b),
-            _ => throw new NotSupportedException(
-                $"AreStructurallyEqual: tag {a.Tag} is not yet supported."),
-        };
+            // Leaves: compared inline, no descent. This is the common == case
+            // (two vars, two atoms, two ints) and pays nothing for the
+            // iterative machinery below.
+            case Tag.Ref: return a.AsHeapIndex == b.AsHeapIndex;
+            case Tag.Atom: return a.AsAtomId == b.AsAtomId;
+            case Tag.Int: return a.AsInt == b.AsInt;
+            case Tag.Float:
+                return Cell.DecodeFloat(a, _heap[a.FloatPairedIndex])
+                    == Cell.DecodeFloat(b, _heap[b.FloatPairedIndex]);
+            case Tag.Functor: return a.AsFunctorId == b.AsFunctorId;
+            // Foreign cells (chunk 140): identity via the underlying .NET
+            // reference. Two foreign cells are == iff their boxed payloads are
+            // reference-equal.
+            case Tag.Foreign:
+                return ReferenceEquals(
+                    _foreignTable[a.AsForeignId], _foreignTable[b.AsForeignId]);
+            case Tag.BigInt:
+                return _bigIntTable[a.AsBigIntId].Equals(_bigIntTable[b.AsBigIntId]);
+            case Tag.String:
+                return string.Equals(_stringTable[a.AsStringId], _stringTable[b.AsStringId]);
+            // Compounds and PSTR descend: use an explicit work-stack (O(1) C#
+            // stack, no per-element recursion) with a visited-pair set so a
+            // cyclic / rational term (X=f(X), Y=f(Y), X==Y) terminates
+            // co-inductively instead of overflowing the C# stack — an
+            // uncatchable crash (Phase 33 I9).
+            case Tag.Str:
+            case Tag.Lis:
+            case Tag.Pstr:
+                return StructuralCompareIterative(a, b);
+            default:
+                throw new NotSupportedException(
+                    $"AreStructurallyEqual: tag {a.Tag} is not yet supported.");
+        }
+    }
+
+    /// <summary>Beyond this many descent steps in a single comparison the walk
+    /// assumes it may be inside a cycle and switches on the visited-pair set
+    /// (see <see cref="StructuralCompareIterative"/>). Chosen well above any
+    /// realistic acyclic term so the common case never allocates / probes the
+    /// set — a comparison of two 65 000-node terms stays on the fast path — yet
+    /// low enough that a cyclic term terminates in well under a millisecond.</summary>
+    private const int StructEqCycleThreshold = 1 << 16;
+
+    /// <summary>Iterative structural comparison of two compound / PSTR cells.
+    /// Replaces the former mutually-recursive <c>AreStrStructurallyEqual</c> /
+    /// <c>AreLisStructurallyEqual</c> descent, which used one C# frame per node
+    /// and so overflowed the (guard-less) C# stack on a cyclic term — an
+    /// uncatchable process crash (Phase 33 I9). The explicit work-stack keeps
+    /// C# stack use O(1) regardless of term depth.
+    ///
+    /// <para>Cycle handling is <em>lazy</em>: for the first
+    /// <see cref="StructEqCycleThreshold"/> descent steps the walk runs without
+    /// any bookkeeping — this is the hot path, and a proper acyclic term
+    /// finishes here at the same cost as the old spine-loop code (leaves are
+    /// compared inline; a list-of-primitives never touches the work-stack).
+    /// Only if the step budget is exceeded — which an acyclic term of realistic
+    /// size never does, but a cyclic/rational term does immediately — does it
+    /// engage a visited set of <c>(aAddr,bAddr)</c> structure-pairs. From then
+    /// on, re-encountering a pair already in progress means "equal so far", the
+    /// greatest-fixpoint (co-inductive) reading of <c>==</c> that SWI-Prolog
+    /// also gives, and the walk terminates. Both scratch collections are pooled
+    /// on the engine and cleared on entry; the walk never re-enters
+    /// <see cref="AreStructurallyEqual"/>, so no re-entrancy guard is
+    /// needed.</para></summary>
+    private bool StructuralCompareIterative(Cell topA, Cell topB)
+    {
+        List<Cell> stack = _structEqStack ??= new List<Cell>(64);
+        stack.Clear();
+        HashSet<long>? visited = null;   // engaged lazily past the step budget
+        int steps = 0;
+        // Each pending pair is two consecutive entries (a then b).
+        stack.Add(topA); stack.Add(topB);
+        while (stack.Count > 0)
+        {
+            Cell b = stack[stack.Count - 1];
+            Cell a = stack[stack.Count - 2];
+            stack.RemoveRange(stack.Count - 2, 2);
+            a = ResolveForStructuralCompare(a);
+            b = ResolveForStructuralCompare(b);
+
+            if (TryCompareLeafPair(a, b, out bool leafEqual))
+            {
+                if (!leafEqual) return false;
+                continue;
+            }
+            // a and b are same-tag compounds/PSTR (TryCompareLeafPair returns
+            // false only when both share a descending tag). Count the descent
+            // and, once over budget, start tracking visited structure-pairs.
+            if (++steps == StructEqCycleThreshold)
+                (visited = _structEqVisited ??= new HashSet<long>()).Clear();
+
+            switch (a.Tag)
+            {
+                case Tag.Pstr:
+                    // PSTR (partial string): a packed char-code sequence + a
+                    // tail — NOT a functor+args structure, so it must NOT be
+                    // read as one. Match the leading code units, then push the
+                    // final (non-PSTR) tails as an ordinary pending pair.
+                    if (!ArePstrCodesEqual(a, b)) return false;
+                    stack.Add(PstrFinalTailCell(a));
+                    stack.Add(PstrFinalTailCell(b));
+                    break;
+                case Tag.Str:
+                {
+                    int aIdx = a.AsHeapIndex, bIdx = b.AsHeapIndex;
+                    if (visited != null && !visited.Add(((long)aIdx << 32) | (uint)bIdx))
+                        break;   // cycle: equal so far
+                    int aFid = _heap[aIdx].AsFunctorId, bFid = _heap[bIdx].AsFunctorId;
+                    if (aFid != bFid) return false;
+                    var (_, arity) = FunctorTable.Lookup(aFid);
+                    for (int i = 1; i <= arity; i++)
+                    {
+                        stack.Add(_heap[aIdx + i]);
+                        stack.Add(_heap[bIdx + i]);
+                    }
+                    break;
+                }
+                case Tag.Lis:
+                {
+                    // Walk the spine inline (chunk 428): compare each head-pair
+                    // in place (only a compound head is pushed for descent), so
+                    // a proper list of primitives runs at spine-loop speed with
+                    // no work-stack traffic. Past the budget, every visited cons
+                    // is recorded so a cyclic spine (X=[1|X]) terminates.
+                    int aIdx = a.AsHeapIndex, bIdx = b.AsHeapIndex;
+                    while (true)
+                    {
+                        if (visited != null && !visited.Add(((long)aIdx << 32) | (uint)bIdx))
+                            break;   // cyclic spine — equal so far
+                        Cell ha = ResolveForStructuralCompare(_heap[aIdx]);
+                        Cell hb = ResolveForStructuralCompare(_heap[bIdx]);
+                        if (TryCompareLeafPair(ha, hb, out bool headEqual))
+                        {
+                            if (!headEqual) return false;
+                        }
+                        else { stack.Add(ha); stack.Add(hb); }   // compound head
+
+                        Cell ta = ResolveForStructuralCompare(_heap[aIdx + 1]);
+                        Cell tb = ResolveForStructuralCompare(_heap[bIdx + 1]);
+                        if (ta.Tag == Tag.Lis && tb.Tag == Tag.Lis)
+                        {
+                            if (++steps == StructEqCycleThreshold)
+                                (visited = _structEqVisited ??= new HashSet<long>()).Clear();
+                            aIdx = ta.AsHeapIndex; bIdx = tb.AsHeapIndex;
+                            continue;
+                        }
+                        stack.Add(ta); stack.Add(tb);   // final tail pair
+                        break;
+                    }
+                    break;
+                }
+                default:
+                    throw new NotSupportedException(
+                        $"AreStructurallyEqual: tag {a.Tag} is not yet supported.");
+            }
+        }
+        return true;
+    }
+
+    /// <summary>Compares two already-resolved cells when at least one side is a
+    /// leaf. Returns <c>true</c> and sets <paramref name="equal"/> when the pair
+    /// is fully decided here (mismatched tags, or both leaves); returns
+    /// <c>false</c> when both are the same descending tag (Str / Lis / Pstr) and
+    /// the caller must recurse into their contents.</summary>
+    private bool TryCompareLeafPair(Cell a, Cell b, out bool equal)
+    {
+        if (a.Tag != b.Tag) { equal = false; return true; }
+        switch (a.Tag)
+        {
+            case Tag.Ref: equal = a.AsHeapIndex == b.AsHeapIndex; return true;
+            case Tag.Atom: equal = a.AsAtomId == b.AsAtomId; return true;
+            case Tag.Int: equal = a.AsInt == b.AsInt; return true;
+            case Tag.Float:
+                equal = Cell.DecodeFloat(a, _heap[a.FloatPairedIndex])
+                     == Cell.DecodeFloat(b, _heap[b.FloatPairedIndex]);
+                return true;
+            case Tag.Functor: equal = a.AsFunctorId == b.AsFunctorId; return true;
+            case Tag.Foreign:
+                equal = ReferenceEquals(_foreignTable[a.AsForeignId],
+                                        _foreignTable[b.AsForeignId]);
+                return true;
+            case Tag.BigInt:
+                equal = _bigIntTable[a.AsBigIntId].Equals(_bigIntTable[b.AsBigIntId]);
+                return true;
+            case Tag.String:
+                equal = string.Equals(_stringTable[a.AsStringId], _stringTable[b.AsStringId]);
+                return true;
+            default:
+                // Str / Lis / Pstr — a descending tag; not decided here.
+                equal = false;
+                return false;
+        }
     }
 
     private Cell ResolveForStructuralCompare(Cell c)
@@ -3892,27 +4065,16 @@ public sealed partial class Engine
         return target.Tag is Tag.Ref or Tag.AttVar ? Cell.Ref(addr) : target;
     }
 
-    private bool AreStrStructurallyEqual(int aFunctorIdx, int bFunctorIdx)
-    {
-        int aFunctorId = _heap[aFunctorIdx].AsFunctorId;
-        int bFunctorId = _heap[bFunctorIdx].AsFunctorId;
-        if (aFunctorId != bFunctorId) return false;
-        var (_, arity) = FunctorTable.Lookup(aFunctorId);
-        for (int i = 1; i <= arity; i++)
-            if (!AreStructurallyEqual(_heap[aFunctorIdx + i], _heap[bFunctorIdx + i]))
-                return false;
-        return true;
-    }
-
-    /// <summary>Structural equality of two PSTRs (<see cref="Tag.Pstr"/>). A PSTR is
-    /// a packed (possibly partial) char-code sequence with a tail; <see
-    /// cref="AppendPstrChain"/> walks the full Pstr chain (incl. chunk-70 lazy-concat
-    /// continuation segments) and stops at the first non-Pstr tail. So two PSTRs are
-    /// equal iff their materialized leading code units are equal AND their final
-    /// tails are structurally equal (closed strings end in <c>[]</c>; a partial
-    /// string ends in a variable). Cell-based — <see cref="AppendPstrChain"/> /
-    /// <see cref="ComputePstrTailIndex"/> read the cell, not a header index.</summary>
-    private bool ArePstrStructurallyEqual(Cell a, Cell b)
+    /// <summary>Compares the leading code units of two PSTRs (<see cref="Tag.Pstr"/>)
+    /// — the packed (possibly partial) char-code sequence, NOT the tail. A PSTR is
+    /// a code sequence with a tail; <see cref="AppendPstrChain"/> walks the full Pstr
+    /// chain (incl. chunk-70 lazy-concat continuation segments) and stops at the first
+    /// non-Pstr tail. Two PSTRs are equal iff their materialized leading code units
+    /// are equal AND their final tails are structurally equal; the caller
+    /// (<see cref="StructuralCompareIterative"/>) compares the tails as an ordinary
+    /// pending pair, so this returns only the code-sequence verdict. Cell-based —
+    /// <see cref="AppendPstrChain"/> reads the cell, not a header index.</summary>
+    private bool ArePstrCodesEqual(Cell a, Cell b)
     {
         var sbA = new System.Text.StringBuilder(a.AsPstrLength);
         var sbB = new System.Text.StringBuilder(b.AsPstrLength);
@@ -3921,7 +4083,7 @@ public sealed partial class Engine
         if (sbA.Length != sbB.Length) return false;
         for (int i = 0; i < sbA.Length; i++)
             if (sbA[i] != sbB[i]) return false;
-        return AreStructurallyEqual(PstrFinalTailCell(a), PstrFinalTailCell(b));
+        return true;
     }
 
     /// <summary>The first non-<see cref="Tag.Pstr"/> tail cell of a PSTR chain
@@ -3937,27 +4099,6 @@ public sealed partial class Engine
             header = tail;
         }
         return header;
-    }
-
-    private bool AreLisStructurallyEqual(int aHeadIdx, int bHeadIdx)
-    {
-        // Chunk 428: loop the spine (mirrors UnifyLis) so ==/2 over a long
-        // list does not recurse one C# frame per element. Resolving a tail
-        // is idempotent, so handing a non-cons pair to AreStructurallyEqual
-        // (which resolves again) is exact.
-        while (true)
-        {
-            if (!AreStructurallyEqual(_heap[aHeadIdx], _heap[bHeadIdx])) return false;
-            Cell ta = ResolveForStructuralCompare(_heap[aHeadIdx + 1]);
-            Cell tb = ResolveForStructuralCompare(_heap[bHeadIdx + 1]);
-            if (ta.Tag == Tag.Lis && tb.Tag == Tag.Lis)
-            {
-                aHeadIdx = ta.AsHeapIndex;
-                bHeadIdx = tb.AsHeapIndex;
-                continue;
-            }
-            return AreStructurallyEqual(ta, tb);
-        }
     }
 
     /// <summary>Sets <c>CP</c> directly. The interpreter uses this from the <c>call</c>

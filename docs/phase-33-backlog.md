@@ -900,16 +900,38 @@ Interpreter core:
         Safe pooling needs a depth-indexed free-list in the delicate attr
         path — a focused change with its own attr/CLP stress, not a minor.
       - *_unifyPointer local threading* — micro; deferred with the rest.
-- [ ] **I9** 🟡 `==/2` (`Engine.AreStructurallyEqual` / `AreStrStructurallyEqual`)
-      has **no cycle detection** and stack-overflows on a cyclic (rational) term
-      — an UNCATCHABLE `StackOverflowException` that kills the process, not a
+- [x] **I9** 🟡 `==/2` / `\==/2` stack-overflowed on a cyclic (rational) term
+      — an UNCATCHABLE `StackOverflowException` that killed the process, not a
       Prolog error. Found via the AV trap during I2 (a test compared a cyclic
       copy with `==`; the dump was 2265 frames of `AreStructurallyEqual`).
       Cyclic terms arise from occurs-check-off `=/2` (`X = f(X)`), so it is
-      reachable from user code. `TermReader` (chunk 148) and `HeapTermCopy`
-      (I2) are cycle-safe; `==/2`, `compare/3`, `@</2` … likely share the gap.
-      Fix: bound the recursion (depth cap → catchable `resource_error`) or make
-      it a proper bisimulation with a visited-pair set. Own change + tests.
+      reachable from user code. **DONE.** `AreStructurallyEqual` no longer
+      recurses: the former mutually-recursive `AreStrStructurallyEqual` /
+      `AreLisStructurallyEqual` descent is now a single iterative walk
+      (`StructuralCompareIterative`) over an explicit pooled work-stack, so C#
+      stack use is O(1) at any term depth (fixes deep-but-acyclic terms too,
+      which also overflowed). Cycle handling is **lazy**: leaves compare inline
+      and a list-of-primitives never touches the work-stack, so for the first
+      2^16 descent steps there is zero bookkeeping — the hot path runs at
+      spine-loop speed. Only a term that exceeds that budget (a cyclic/rational
+      term does immediately; no realistic acyclic term does) engages a
+      visited-pair set, after which re-encountering a pair in progress means
+      "equal so far" — the greatest-fixpoint (co-inductive) reading SWI also
+      gives — and the walk terminates. Measured on `L == L` over a 2000-element
+      list (2000×, min-of-20 ABBA): I9 51.6 ms vs baseline 51.2 / 59.5 ms — at
+      parity (a naive always-on visited set was 12× slower; the lazy design
+      recovers it). 12 Phase33I9 tests (distinct cyclic terms equal / unequal /
+      self / deeper-unrolling / cyclic lists / long acyclic no-false-cycle /
+      value-leaf args); no dump under the trap. Full 5-project gate green.
+- [ ] **I11** 🟡 `StandardOrderComparator.Compare` (`compare/3`, `@<` `@>`
+      `@=<` `@>=`, and thus `sort/2` `msort/2` `keysort/2` `predsort/3`) shares
+      I9's defect: `CompareCompounds` recurses per arg with no cycle guard, so a
+      cyclic term stack-overflows the host uncatchably. Unlike `==`, the
+      standard order of two *infinite* terms is not well-defined, so the fix is
+      not co-inductive: guard the recursion (explicit stack + a
+      `RuntimeHelpers.EnsureSufficientExecutionStack` / depth cap) and raise a
+      catchable `resource_error` when a cyclic term is detected. Own change +
+      tests.
 
 WAM↔IL boundary:
 - [x] **B1** 🔴 resume-marker encoding caps. *Fixed: markers are now dense ids into a process-global interned side table of (fid, cursor) pairs (`marker = Base + denseId`) — no functor-id or cursor cap (capacity ≈1.07B distinct pairs); lock-free decode / locked intern, same discipline as the atom/functor tables. Process-global because markers bake into IL delegates shared across engines. `ResumeMarkerCursorStride` survives only as the IL emitters per-predicate cursor-count BUDGET (emit-shape policy). 4 tests incl. round-trip beyond both old caps + growth stability.*

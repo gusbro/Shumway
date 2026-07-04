@@ -15,7 +15,7 @@ public static class FunctorTable
 
     // Chunk 428 — dense lock-free by-id fast path for Lookup/TryLookup.
     // Lookup is paid on every compound-compound unification (UnifyStr,
-    // OccursIn, AreStrStructurallyEqual) and per live Str cell in the heap
+    // OccursIn, StructuralCompareIterative) and per live Str cell in the heap
     // GC mark, so the ConcurrentDictionary probe was hot-path cost. Functor
     // ids are dense (Interlocked.Increment above), so a flat array indexed
     // by id — grown copy-on-write, the AtomTable._permanentByIdArray
