@@ -120,6 +120,13 @@ public sealed partial class Engine
     // recurses back into AreStructurallyEqual) so no depth guard is needed.
     private List<Cell>? _structEqStack;
     private HashSet<long>? _structEqVisited;
+    // Phase 33 I11 — the same, for the ordered standard-order comparison
+    // (compare/3, @</2 …, sort/2, keysort/2). Public so the Builtins-assembly
+    // StandardOrderComparator can pool them; a separate pair from the ==/2 one
+    // so a comparator callback and an ==/2 can't alias, and the ordered walk
+    // keeps its own step budget.
+    public List<Cell>? CompareStack;
+    public HashSet<long>? CompareVisited;
 
     private int _stackTop;
     private int _extraTrailTop;

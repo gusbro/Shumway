@@ -941,15 +941,39 @@ Interpreter core:
       recovers it). 12 Phase33I9 tests (distinct cyclic terms equal / unequal /
       self / deeper-unrolling / cyclic lists / long acyclic no-false-cycle /
       value-leaf args); no dump under the trap. Full 5-project gate green.
-- [ ] **I11** 🟡 `StandardOrderComparator.Compare` (`compare/3`, `@<` `@>`
-      `@=<` `@>=`, and thus `sort/2` `msort/2` `keysort/2` `predsort/3`) shares
-      I9's defect: `CompareCompounds` recurses per arg with no cycle guard, so a
-      cyclic term stack-overflows the host uncatchably. Unlike `==`, the
-      standard order of two *infinite* terms is not well-defined, so the fix is
-      not co-inductive: guard the recursion (explicit stack + a
-      `RuntimeHelpers.EnsureSufficientExecutionStack` / depth cap) and raise a
-      catchable `resource_error` when a cyclic term is detected. Own change +
-      tests.
+- [x] **I11** 🟡 `StandardOrderComparator.Compare` (`compare/3`, `@<` `@>`
+      `@=<` `@>=`, and thus `sort/2` `msort/2` `keysort/2` `predsort/3`) shared
+      I9's defect: `CompareCompounds` recursed per arg AND per list element with
+      no guard, so it stack-overflowed the host uncatchably on **both** a cyclic
+      (rational) term and a **long acyclic list** (no spine loop). **DONE — via
+      a hybrid that keeps the sort hot path fast.** A first cut made the whole
+      comparison iterative (explicit work-stack) — correct and crash-safe, but
+      it spun up the stack for *every* compound comparison and regressed sort of
+      small compounds. The shipped design threads a C#-recursion `depth`: shallow
+      terms (the hot path — pairs, small compounds) stay on the fast recursive
+      descent and pay only a depth check, and only past `RecursionLimit` (512,
+      well below the ~6800-frame overflow point) does a sub-term escalate to the
+      iterative walk, which handles arbitrary depth (O(1) C# stack) and engages
+      a lazy visited-pair set past 2^16 steps so a cycle terminates
+      co-inductively (consistent with `==`; the standard order of two infinite
+      terms is taken as their bisimulation). Measured comparator-isolated (build
+      once, sort 500×, min-of-15 ABBA): keysort 624-662 vs baseline 585-635 ms,
+      msort-of-compounds 932-950 vs baseline 854-995 ms — **at parity** (fully
+      overlapping ranges). 13 Phase33I11 tests (type order, compare/3 result
+      atom, arity/name/arg ordering, leftmost-difference, sort/msort/keysort,
+      lists-of-lists, 40000-element list compare no-overflow, cyclic-term /
+      cyclic-list compares terminate). Full 5-project gate green (Embedding
+      2752), no dump under the AV trap.
+- [ ] **I12** 🟡 `ClauseCompiler.ClassifyPermanents` recurses per term node
+      (a local `Visit` closure), so `assertz/1` (and any clause compile) of a
+      clause with a **deeply-nested argument** — e.g. an 8000-element list —
+      stack-overflows the host uncatchably (surfaced while building an I11
+      benchmark: asserting an 8000-pair list crashed at ~6841 `Visit` frames).
+      Real programs that `assertz` a large ground list hit this. Same class as
+      I9/I11: make the permanent-variable classification walk iterative
+      (explicit stack), or bound it → catchable `resource_error`. Likely other
+      per-node recursions in the clause compiler (arg scheduling, body walk)
+      share the exposure — worth a sweep. Own change + tests.
 
 WAM↔IL boundary:
 - [x] **B1** 🔴 resume-marker encoding caps. *Fixed: markers are now dense ids into a process-global interned side table of (fid, cursor) pairs (`marker = Base + denseId`) — no functor-id or cursor cap (capacity ≈1.07B distinct pairs); lock-free decode / locked intern, same discipline as the atom/functor tables. Process-global because markers bake into IL delegates shared across engines. `ResumeMarkerCursorStride` survives only as the IL emitters per-predicate cursor-count BUDGET (emit-shape policy). 4 tests incl. round-trip beyond both old caps + growth stability.*
