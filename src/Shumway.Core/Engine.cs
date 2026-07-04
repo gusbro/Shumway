@@ -104,6 +104,14 @@ public sealed partial class Engine
     public Dictionary<int, Cell>? CopyVarScratch;
     public Dictionary<int, Cell>? CopyStructScratch;
     public int CopyTermDepth;
+    // Phase 33 I2b — pooled scratch for the findall solution snapshot
+    // (FindallSnapshot): the working cell image and the var / struct identity
+    // maps, cleared on use. Snapshots never nest (a findall's records run
+    // sequentially, and a snapshot never re-enters snapshotting), so no depth
+    // guard is needed. Only the detached ToArray() per solution allocates.
+    public List<Cell>? FindallSnapCells;
+    public Dictionary<int, int>? FindallSnapVarMap;
+    public Dictionary<int, int>? FindallSnapStructMap;
     // Phase 33 I9 — pooled scratch for the iterative structural-compare walk
     // (==/2, \==/2). The work-stack holds cell pairs still to compare; the
     // visited set holds (aAddr,bAddr) structure-pairs already in progress so a

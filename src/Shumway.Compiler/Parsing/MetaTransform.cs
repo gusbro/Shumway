@@ -229,7 +229,7 @@ public static class MetaTransform
                     fa.Args[1],
                     new CompoundTerm(",", new[]
                     {
-                        (Term)new CompoundTerm("$findall_record", new[] { fa.Args[0] }),
+                        (Term)new CompoundTerm("$findall_record_s", new[] { fa.Args[0] }),
                         new AtomTerm("fail"),
                     }),
                 }),

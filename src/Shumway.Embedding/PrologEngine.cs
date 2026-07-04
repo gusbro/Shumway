@@ -4092,14 +4092,20 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// goal sequence driven by the <c>'$findall_*'</c> builtins, which run
     /// in this engine: <c>'$findall_push'</c> pushes a frame here,
     /// <c>'$findall_record'</c> appends a template copy to the top frame,
-    /// <c>'$findall_collect'</c> pops it. Solutions live as AST terms off
-    /// the WAM heap, so the <c>fail</c>-driven backtracking that
-    /// enumerates the goal doesn't unwind them. A stack so nested findall
-    /// calls each get their own frame.</summary>
-    private readonly List<List<Term>> _findallStack = new();
+    /// <c>'$findall_collect'</c> pops it. Solutions must survive the
+    /// <c>fail</c>-driven backtracking that enumerates the goal, so they are
+    /// held off the WAM heap. Each frame entry is one of two backtrack-safe
+    /// forms: a <see cref="Cell"/>[] cell image (Phase 33 I2b — the fast
+    /// findall path, no per-node managed object) or a managed <see cref="Term"/>
+    /// AST (bagof/setof, which inspect the terms for witness grouping, and the
+    /// findall value-leaf fallback). A stack so nested findall calls each get
+    /// their own frame.</summary>
+    private readonly List<List<object>> _findallStack = new();
 
-    internal void PushFindallFrame() => _findallStack.Add(new List<Term>());
+    internal void PushFindallFrame() => _findallStack.Add(new List<object>());
 
+    /// <summary>Records a solution as a managed AST term (bagof/setof, and the
+    /// findall value-leaf fallback).</summary>
     internal void RecordFindallSolution(Term solution)
     {
         if (_findallStack.Count == 0)
@@ -4108,7 +4114,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         _findallStack[^1].Add(solution);
     }
 
-    internal List<Term> PopFindallFrame()
+    /// <summary>Records a solution as a backtrack-safe cell image (Phase 33 I2b,
+    /// the fast findall path).</summary>
+    internal void RecordFindallSnapshot(Cell[] snapshot)
+    {
+        if (_findallStack.Count == 0)
+            throw new InvalidOperationException(
+                "'$findall_record' invoked with no active findall frame.");
+        _findallStack[^1].Add(snapshot);
+    }
+
+    internal List<object> PopFindallFrame()
     {
         if (_findallStack.Count == 0)
             throw new InvalidOperationException(

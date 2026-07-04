@@ -34,6 +34,7 @@ public static class MetaBuiltins
         // findall/3 with a callable goal into a goal sequence using these.
         BuiltinsRegistry.Register("$findall_push",    0, FindallPush);
         BuiltinsRegistry.Register("$findall_record",  1, FindallRecord);
+        BuiltinsRegistry.Register("$findall_record_s", 1, FindallRecordSnapshot);
         BuiltinsRegistry.Register("$findall_collect", 1, FindallCollect);
         // In-engine bagof/setof plumbing (chunk 84) — reuse the findall
         // frame stack ('$findall_push' / '$findall_record'); only the
@@ -3775,6 +3776,24 @@ public static class MetaBuiltins
         return true;
     }
 
+    /// <summary><c>'$findall_record_s'(Template)</c> (Phase 33 I2b) — the
+    /// findall/3 record path. Snapshots the solution straight into a
+    /// backtrack-safe <see cref="Cell"/> image (no per-node managed AST). A
+    /// value-leaf template (float / bigint / string / pstr / foreign) can't be
+    /// imaged flatly, so <see cref="FindallSnapshot.TrySnapshotRegister"/>
+    /// returns null and we fall back to the AST path. bagof/setof keep the
+    /// AST-only <see cref="FindallRecord"/> because they inspect the recorded
+    /// terms for witness grouping.</summary>
+    public static bool FindallRecordSnapshot(Engine engine)
+    {
+        Cell[]? snap = FindallSnapshot.TrySnapshotRegister(engine, 0);
+        if (snap != null)
+            FindallHost(engine).RecordFindallSnapshot(snap);
+        else
+            FindallHost(engine).RecordFindallSolution(MaterializeRegister(engine, 0));
+        return true;
+    }
+
     /// <summary><c>'$findall_collect'(List)</c> (chunk 83) — closes the
     /// open findall buffer and unifies <c>List</c> with its collected
     /// solutions. Each solution is materialised with its own variable map
@@ -3785,7 +3804,11 @@ public static class MetaBuiltins
         Cell list = Cell.Atom(AtomTable.EmptyListId);
         for (int i = frame.Count - 1; i >= 0; i--)
         {
-            Cell elem = Materializer.MaterializeAsCell(engine, frame[i]);
+            // Each entry is a cell image (Phase 33 I2b fast path) or an AST term
+            // (value-leaf fallback); re-emit it onto the heap either way.
+            Cell elem = frame[i] is Cell[] snap
+                ? FindallSnapshot.EmitSnapshot(engine, snap)
+                : Materializer.MaterializeAsCell(engine, (Term)frame[i]);
             int cons = engine.AllocateHeap(2);
             engine.SetHeap(cons, elem);
             engine.SetHeap(cons + 1, list);
@@ -3844,12 +3867,14 @@ public static class MetaBuiltins
     /// stays shared across the whole bag. Bag elements keep generation order
     /// (<paramref name="sortBags"/> false, bagof/3) or are sorted and
     /// de-duplicated (<paramref name="sortBags"/> true, setof/3).</para></summary>
-    private static Term BuildWitnessGroups(List<Term> pairs, bool sortBags)
+    private static Term BuildWitnessGroups(List<object> pairs, bool sortBags)
     {
+        // bagof/setof always record AST terms (they inspect witnesses for
+        // grouping), so every entry here is a Term — never an I2b cell image.
         var groups = new List<WitnessGroup>();
-        foreach (Term pair in pairs)
+        foreach (object pairObj in pairs)
         {
-            var cons = (CompoundTerm)pair;          // '-'(Witness, Template)
+            var cons = (CompoundTerm)pairObj;       // '-'(Witness, Template)
             Term witness = cons.Args[0];
             Term canonical = CanonicalizeVars(witness, new Dictionary<string, string>());
 

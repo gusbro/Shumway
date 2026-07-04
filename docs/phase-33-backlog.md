@@ -803,7 +803,7 @@ Interpreter core:
       baseline, independent of I1). Make it deterministic (drive promotion
       synchronously / disable background compile in the test) or relax the
       assertion.
-- [~] **I2** 🔴 findall/bagof/setof/copy_term round-trip through managed AST.
+- [x] **I2** 🔴 findall/bagof/setof/copy_term round-trip through managed AST.
       **Part (a) — `copy_term/2` — DONE.** New `HeapTermCopy` does a direct
       heap→heap copy (no intermediate AST tree): Ref/AttVar→fresh plain var
       (variable sharing via a var map), Str/Lis→fresh slab (structure sharing +
@@ -823,10 +823,28 @@ Interpreter core:
       and overflows on a cyclic term; pre-existing, unrelated, noted for a
       future item.)* Remaining ~72 B is the `CopyLis` spine list — eliminable
       with incremental cons linking (no scratch list) as a further refinement.
-      **Part (b) — findall record→collect — still open.** Needs a
-      backtrack-surviving heap-copy destination (today the managed AST survives
-      heap truncation for free via GC); a design question (protected heap
-      segment vs `TermCodec` side-buffer). Deferred.
+      **Part (b) — findall record→collect — DONE (I2b).** `findall/3,4` records
+      each solution as a backtrack-safe `Cell[]` cell image (`FindallSnapshot`,
+      a relative heap image mirroring `HeapTermCopy`'s layout: fresh vars,
+      DAG/cycle sharing, iterative list spine) instead of a managed AST, then
+      re-emits it at collect by a block copy with one additive shift. A
+      value-leaf template (float / bigint / string / pstr / foreign) can't be
+      imaged flatly, so it falls back to the AST path per solution. The
+      backtrack-safe destination question resolved by the cell image itself (a
+      detached `Cell[]`, GC-owned like the AST it replaces, but with NO per-node
+      managed object — the three scratch collections are pooled clear-on-use on
+      the engine, so only the per-solution `ToArray` allocates). `bagof/setof`
+      stay on the AST path (they inspect witnesses for grouping); findall got
+      its own `$findall_record_s` record builtin so the shared `$findall_record`
+      keeps producing Terms for them. Measured on `findall(f(X,g(X),h(X,X)),
+      between(1,N,X), L)` (min-of-20 ABBA back-to-back): WALL 9.75/11.45 ms vs
+      baseline 12.93/13.87 ms (I2b worst beats baseline best) — **~15-25%
+      faster**; marginal alloc **440→144 B/solution (−67%)**. 14 Phase33I2b
+      tests (int/compound/list/nested-compound templates, fresh-var-per-solution,
+      shared partial-list tail, value-leaf float/bigint fallback, mixed
+      fast+fallback in one frame, nested findall, findall/4, 3000-deep list,
+      bagof/setof unaffected). Full 5-project gate green (Embedding 2739), no
+      dump under the AV trap.
 - [-] **I3** 🟡 retract materializes each shape-matching candidate per trial.
       **Largely mitigated (chunk 421 + 431)**: `FindRetractMatch` runs
       `DefiniteMismatch` — a depth-4 structural pre-filter (distinct atoms /
