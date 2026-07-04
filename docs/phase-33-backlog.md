@@ -776,14 +776,22 @@ Region runtime:
 Interpreter core:
 - [ ] **I1** 🔴 PC lives in an engine field — store+reload per dispatched opcode.
       Thread a local `pc` through the switch, write back at goal boundaries.
-      **Scoped, deferred to a focused pass**: 30+ `Pc` reads/writes across the
-      dispatch loop are cross-cutting — CP save/restore, marker resume, builtin
-      dispatch, and every jump/call all read or write `Engine.P`. Threading a
-      local `pc` needs a write-back at EVERY goal boundary + builtin call + CP
-      op; one missed sync corrupts control flow (the exact class of bug that
-      can surface as an AV). High value but high risk — wants its own change
-      with the full 5-project gate + a deep-recursion/backtracking stress pass,
-      not a batched edit mid-AV-hunt.
+      **Scoped, deferred to a focused pass.** Concrete mechanism (measured
+      against the code): the main dispatch loop reads `_engine.P` into a local
+      `pc` at the top of EVERY iteration (BytecodeInterpreter.cs:268) and each
+      opcode writes the field back via `_engine.SetPc(pc + N)` / `SetPc(target)`
+      — **~40 SetPc sites**, i.e. exactly the store+reload per opcode. Threading
+      `pc` across iterations means every straight-line opcode becomes `pc += N;
+      continue;` and `_engine.P` is synced ONLY at the boundaries external code
+      reads it: CallBuiltin (`BuiltinReturnPc`), Call/Execute/Proceed, every CP
+      push/restore (P is saved), DispatchCall / meta-call, and the IL
+      transitions. A single missed sync leaves the field stale when a builtin or
+      CP reads it → control-flow corruption (the class of bug that surfaces as
+      an AV). The specialized region runner at :2302 already threads `pc`
+      locally (`pc += 5`), proving the pattern — but converting the MAIN loop is
+      a high-blast-radius rewrite of the hottest code. Wants its own change with
+      the full 5-project gate + a deep-recursion/backtracking/CP-heavy stress
+      pass, not a batched edit mid-AV-hunt.
 - [~] **I2** 🔴 findall/bagof/setof/copy_term round-trip through managed AST.
       **Part (a) — `copy_term/2` — DONE.** New `HeapTermCopy` does a direct
       heap→heap copy (no intermediate AST tree): Ref/AttVar→fresh plain var
@@ -875,6 +883,16 @@ Interpreter core:
         Safe pooling needs a depth-indexed free-list in the delicate attr
         path — a focused change with its own attr/CLP stress, not a minor.
       - *_unifyPointer local threading* — micro; deferred with the rest.
+- [ ] **I9** 🟡 `==/2` (`Engine.AreStructurallyEqual` / `AreStrStructurallyEqual`)
+      has **no cycle detection** and stack-overflows on a cyclic (rational) term
+      — an UNCATCHABLE `StackOverflowException` that kills the process, not a
+      Prolog error. Found via the AV trap during I2 (a test compared a cyclic
+      copy with `==`; the dump was 2265 frames of `AreStructurallyEqual`).
+      Cyclic terms arise from occurs-check-off `=/2` (`X = f(X)`), so it is
+      reachable from user code. `TermReader` (chunk 148) and `HeapTermCopy`
+      (I2) are cycle-safe; `==/2`, `compare/3`, `@</2` … likely share the gap.
+      Fix: bound the recursion (depth cap → catchable `resource_error`) or make
+      it a proper bisimulation with a visited-pair set. Own change + tests.
 
 WAM↔IL boundary:
 - [x] **B1** 🔴 resume-marker encoding caps. *Fixed: markers are now dense ids into a process-global interned side table of (fid, cursor) pairs (`marker = Base + denseId`) — no functor-id or cursor cap (capacity ≈1.07B distinct pairs); lock-free decode / locked intern, same discipline as the atom/functor tables. Process-global because markers bake into IL delegates shared across engines. `ResumeMarkerCursorStride` survives only as the IL emitters per-predicate cursor-count BUDGET (emit-shape policy). 4 tests incl. round-trip beyond both old caps + growth stability.*
