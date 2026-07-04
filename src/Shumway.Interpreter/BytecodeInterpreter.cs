@@ -252,8 +252,20 @@ public sealed class BytecodeInterpreter
         bool engineDriven = _engine.CurrentProgram is not null;
         byte[] codeArr = code.IsSingleBuffer ? code.Primary : System.Array.Empty<byte>();
         int codeLen = code.Length;
+        bool inClause = false;   // I1: set by a straight-line op so the next
+                                 // iteration skips the gen/marker/bounds checks.
         while (true)
         {
+            int pc = _engine.P;
+            // I1 (Phase 33): a straight-line opcode advances pc by a fixed amount
+            // within the current clause — it cannot change the program, land on a
+            // resume marker, or exceed the code bounds, so it sets inClause to
+            // skip these three per-iteration checks. Every control transfer
+            // (Call/Execute/Proceed/backtrack/IL/marker) leaves inClause false so
+            // the next iteration re-checks; _engine.P is always written, so it is
+            // never stale for code that reads it (builtins, meta-calls, GC).
+            if (!inClause)
+            {
             if (engineDriven)
             {
                 int gen = _engine.ProgramGeneration;
@@ -265,7 +277,6 @@ public sealed class BytecodeInterpreter
                     cachedGen = gen;
                 }
             }
-            int pc = _engine.P;
             // Negative PC indicates "returned past the top" — the same
             // semantics as proceed's Cp<0 early-return. Used by
             // RunSubroutine (chunk 63): when an IL subroutine call
@@ -353,6 +364,8 @@ public sealed class BytecodeInterpreter
             if (pc >= codeLen)
                 throw new InvalidOperationException(
                     $"Program counter 0x{pc:X} is outside code range [0, 0x{codeLen:X}).");
+            }
+            inClause = false;
 
             // Chunk 170: when the view is split (Overflow != null) we
             // fall back to the indexer for both the opcode byte and
@@ -384,7 +397,7 @@ public sealed class BytecodeInterpreter
                     // in-place demotion of try_me_else (9 bytes) to
                     // retry_me_else (5 bytes); the trailing 4 arity-
                     // operand bytes become nops.
-                    _engine.SetPc(pc + 1);   // chunk 429
+                    _engine.SetPc(pc + 1); inClause = true;   // chunk 429
                     break;
 
                 case Opcode.Proceed:
@@ -662,7 +675,7 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.Deallocate:
                     _engine.Deallocate();
-                    _engine.SetPc(pc + 1);   // deallocate is 1 byte (chunk 429)
+                    _engine.SetPc(pc + 1); inClause = true;   // deallocate is 1 byte (chunk 429)
                     break;
 
                 // ---------- Chunk 220 — fused opcodes (peephole) ----------
@@ -791,7 +804,7 @@ public sealed class BytecodeInterpreter
                         var provider = _engine.DbGenerationProvider;
                         _engine.CurrentViewGen = provider is null ? 0L : provider();
                     }
-                    _engine.SetPc(pc + 1);   // chunk 429
+                    _engine.SetPc(pc + 1); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -809,7 +822,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.SetPc(pc + 17);   // chunk 429
+                    _engine.SetPc(pc + 17); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1020,14 +1033,14 @@ public sealed class BytecodeInterpreter
                         break;
                     }
                     _engine.NeckCut();
-                    _engine.SetPc(pc + 1);   // chunk 429
+                    _engine.SetPc(pc + 1); inClause = true;   // chunk 429
                     break;
 
                 case Opcode.GetLevel:
                 {
                     int slot = ReadI32(code, codeArr, pc + 1);   // chunk 429
                     _engine.GetLevel(slot);
-                    _engine.SetPc(pc + 5);   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1036,7 +1049,7 @@ public sealed class BytecodeInterpreter
                     // ADR-025 — capture CURRENT B as the inline-ITE barrier.
                     int slot = ReadI32(code, codeArr, pc + 1);
                     _engine.GetLevelB(slot);
-                    _engine.SetPc(pc + 5);
+                    _engine.SetPc(pc + 5); inClause = true;
                     break;
                 }
 
@@ -1053,7 +1066,7 @@ public sealed class BytecodeInterpreter
                     int slot = ReadI32(code, codeArr, pc + 1);   // chunk 429
                     int barrier = (int)_engine.GetY(slot).Data;
                     _engine.Cut(barrier);
-                    _engine.SetPc(pc + 5);   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1080,7 +1093,7 @@ public sealed class BytecodeInterpreter
                     int functorId = ReadI32(code, codeArr, pc + 1);   // chunk 429
                     int arg = ReadI32(code, codeArr, pc + 5);
                     _engine.PutStructure(functorId, arg);
-                    _engine.SetPc(pc + 9);   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1089,7 +1102,7 @@ public sealed class BytecodeInterpreter
                     int functorId = ReadI32(code, codeArr, pc + 1);   // chunk 429
                     int packed = ReadI32(code, codeArr, pc + 5);
                     _engine.PutStructureReserved(functorId, packed & 0xFFFFFF, packed >> 24);
-                    _engine.SetPc(pc + 9);   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1097,7 +1110,7 @@ public sealed class BytecodeInterpreter
                 {
                     int arg = ReadI32(code, codeArr, pc + 1);   // chunk 429
                     _engine.PutListReserved(arg);
-                    _engine.SetPc(pc + 5);   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1121,7 +1134,7 @@ public sealed class BytecodeInterpreter
                 {
                     int arg = ReadI32(code, codeArr, pc + 1);   // chunk 429
                     _engine.PutList(arg);
-                    _engine.SetPc(pc + 5);   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1455,7 +1468,7 @@ public sealed class BytecodeInterpreter
                     int dest = ReadI32(code, codeArr, pc + 1);   // chunk 429
                     int arg = ReadI32(code, codeArr, pc + 5);
                     _engine.SetRegister(dest, _engine.GetRegister(arg));
-                    _engine.SetPc(pc + 9);   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1477,7 +1490,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.SetPc(pc + 9);   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1490,7 +1503,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.SetPc(pc + 9);   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1504,7 +1517,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.SetPc(pc + 9);   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1517,7 +1530,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.SetPc(pc + 9);   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1529,7 +1542,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.SetPc(pc + 5);   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1543,7 +1556,7 @@ public sealed class BytecodeInterpreter
                     Cell refCell = Cell.Ref(heapIdx);
                     _engine.SetRegister(dest, refCell);
                     _engine.SetRegister(arg, refCell);
-                    _engine.SetPc(pc + 9);   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1555,7 +1568,7 @@ public sealed class BytecodeInterpreter
                     Cell refCell = Cell.Ref(heapIdx);
                     _engine.SetY(dest, refCell);
                     _engine.SetRegister(arg, refCell);
-                    _engine.SetPc(pc + 9);   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1564,7 +1577,7 @@ public sealed class BytecodeInterpreter
                     int src = ReadI32(code, codeArr, pc + 1);   // chunk 429
                     int arg = ReadI32(code, codeArr, pc + 5);
                     _engine.SetRegister(arg, _engine.GetRegister(src));
-                    _engine.SetPc(pc + 9);   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1583,7 +1596,7 @@ public sealed class BytecodeInterpreter
                     int atomId = ReadI32(code, codeArr, pc + 1);   // chunk 429
                     int arg = ReadI32(code, codeArr, pc + 5);
                     _engine.SetRegister(arg, Cell.Atom(atomId));
-                    _engine.SetPc(pc + 9);   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1592,7 +1605,7 @@ public sealed class BytecodeInterpreter
                     int value = ReadI32(code, codeArr, pc + 1);   // chunk 429
                     int arg = ReadI32(code, codeArr, pc + 5);
                     _engine.SetRegister(arg, Cell.Int(value));
-                    _engine.SetPc(pc + 9);   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1600,7 +1613,7 @@ public sealed class BytecodeInterpreter
                 {
                     int arg = ReadI32(code, codeArr, pc + 1);   // chunk 429
                     _engine.SetRegister(arg, Cell.Atom(AtomTable.EmptyListId));
-                    _engine.SetPc(pc + 5);   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1614,7 +1627,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.SetPc(pc + 5);   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1626,7 +1639,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.SetPc(pc + 5);   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1634,7 +1647,7 @@ public sealed class BytecodeInterpreter
                 {
                     int atomId = ReadI32(code, codeArr, pc + 1);   // chunk 429
                     _engine.SetRegister(0, Cell.Atom(atomId));
-                    _engine.SetPc(pc + 5);   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1642,7 +1655,7 @@ public sealed class BytecodeInterpreter
                 {
                     int atomId = ReadI32(code, codeArr, pc + 1);   // chunk 429
                     _engine.SetRegister(1, Cell.Atom(atomId));
-                    _engine.SetPc(pc + 5);   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1751,7 +1764,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.SetPc(pc + 9);   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1761,7 +1774,7 @@ public sealed class BytecodeInterpreter
                     int arg = BytecodeIO.ReadInt32(code, pc + 5);
                     int headerIdx = _engine.MakePstr(ResolveLiteral(literalId));
                     _engine.SetRegister(arg, Cell.Ref(headerIdx));
-                    _engine.SetPc(pc + 9);   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1777,7 +1790,7 @@ public sealed class BytecodeInterpreter
                     // The cursor stays put: heap[UnifyPointer] now holds either the
                     // advanced PSTR header (still iterable) or the PSTR's tail value
                     // (so subsequent unify_nil / unify_value can match against it).
-                    _engine.SetPc(pc + 5);   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1793,7 +1806,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.SetPc(pc + 9);   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1803,7 +1816,7 @@ public sealed class BytecodeInterpreter
                     int arg = BytecodeIO.ReadInt32(code, pc + 5);
                     int headerIdx = _engine.MakeFloat(ResolveFloatLiteral(literalId));
                     _engine.SetRegister(arg, Cell.Ref(headerIdx));
-                    _engine.SetPc(pc + 9);   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1831,7 +1844,7 @@ public sealed class BytecodeInterpreter
                         break;
                     }
                     _engine.SetUnifyPointer(ptr + 1);
-                    _engine.SetPc(pc + 5);   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1847,7 +1860,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.SetPc(pc + 9);   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1856,7 +1869,7 @@ public sealed class BytecodeInterpreter
                     int literalId = BytecodeIO.ReadInt32(code, pc + 1);
                     int arg = BytecodeIO.ReadInt32(code, pc + 5);
                     _engine.SetRegister(arg, _engine.MakeBigInt(ResolveBigIntLiteral(literalId)));
-                    _engine.SetPc(pc + 9);   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1879,7 +1892,7 @@ public sealed class BytecodeInterpreter
                         }
                     }
                     _engine.SetUnifyPointer(ptr + 1);
-                    _engine.SetPc(pc + 5);   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1904,18 +1917,18 @@ public sealed class BytecodeInterpreter
                         case 4: Shumway.Builtins.ArithEvalStack.PushY(_engine, operand); break;
                         default: throw new InvalidOperationException($"Bad a_eval_push kind {kind}.");
                     }
-                    _engine.SetPc(pc + 9);   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
                     break;
                 }
 
                 case Opcode.AEvalBin:
                     Shumway.Builtins.ArithEvalStack.Bin(BytecodeIO.ReadInt32(code, pc + 1));
-                    _engine.SetPc(pc + 5);   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
                     break;
 
                 case Opcode.AEvalUn:
                     Shumway.Builtins.ArithEvalStack.Un(BytecodeIO.ReadInt32(code, pc + 1));
-                    _engine.SetPc(pc + 5);   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
                     break;
 
                 case Opcode.AEvalIs:
@@ -1934,7 +1947,7 @@ public sealed class BytecodeInterpreter
                         default: ok = Shumway.Builtins.ArithEvalStack.IsReg(_engine, target); break;
                     }
                     if (!ok) { if (!TryBacktrack()) return InterpreterResult.Failed; break; }
-                    _engine.SetPc(pc + 9);   // chunk 429
+                    _engine.SetPc(pc + 9); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1944,7 +1957,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.SetPc(pc + 5);   // chunk 429
+                    _engine.SetPc(pc + 5); inClause = true;   // chunk 429
                     break;
 
                 case Opcode.AIntBin:
@@ -1960,7 +1973,7 @@ public sealed class BytecodeInterpreter
                         (packed >> 16) & 0xFF,                  // tKind
                         BytecodeIO.ReadInt32(code, pc + 13));   // tVal
                     if (!ok) { if (!TryBacktrack()) return InterpreterResult.Failed; break; }
-                    _engine.SetPc(pc + 17);   // chunk 429
+                    _engine.SetPc(pc + 17); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1978,7 +1991,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.SetPc(pc + 13);   // chunk 429
+                    _engine.SetPc(pc + 13); inClause = true;   // chunk 429
                     break;
                 }
 
@@ -1995,7 +2008,7 @@ public sealed class BytecodeInterpreter
                         _ => throw new InvalidOperationException(
                             $"Unknown meta sub-opcode 0x{(byte)sub:X2} at PC=0x{pc:X4}."),
                     };
-                    _engine.SetPc(pc + metaSize);   // chunk 429
+                    _engine.SetPc(pc + metaSize); inClause = true;   // chunk 429
                     break;
                 }
 

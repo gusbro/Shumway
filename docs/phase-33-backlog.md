@@ -774,24 +774,35 @@ Region runtime:
       per-shape loop technique ready.
 
 Interpreter core:
-- [ ] **I1** 🔴 PC lives in an engine field — store+reload per dispatched opcode.
-      Thread a local `pc` through the switch, write back at goal boundaries.
-      **Scoped, deferred to a focused pass.** Concrete mechanism (measured
-      against the code): the main dispatch loop reads `_engine.P` into a local
-      `pc` at the top of EVERY iteration (BytecodeInterpreter.cs:268) and each
-      opcode writes the field back via `_engine.SetPc(pc + N)` / `SetPc(target)`
-      — **~40 SetPc sites**, i.e. exactly the store+reload per opcode. Threading
-      `pc` across iterations means every straight-line opcode becomes `pc += N;
-      continue;` and `_engine.P` is synced ONLY at the boundaries external code
-      reads it: CallBuiltin (`BuiltinReturnPc`), Call/Execute/Proceed, every CP
-      push/restore (P is saved), DispatchCall / meta-call, and the IL
-      transitions. A single missed sync leaves the field stale when a builtin or
-      CP reads it → control-flow corruption (the class of bug that surfaces as
-      an AV). The specialized region runner at :2302 already threads `pc`
-      locally (`pc += 5`), proving the pattern — but converting the MAIN loop is
-      a high-blast-radius rewrite of the hottest code. Wants its own change with
-      the full 5-project gate + a deep-recursion/backtracking/CP-heavy stress
-      pass, not a batched edit mid-AV-hunt.
+- [x] **I1** 🔴 PC store+reload / redundant loop-top checks per dispatched opcode.
+      **DONE — via a lower-risk framing than "thread pc off the field".** Rather
+      than eliminate the store+reload (which the CPU already store-forwards) and
+      risk a stale `_engine.P`, the win was the three PER-ITERATION loop-top
+      checks — the `ProgramGeneration` read + code-view reload, the resume-marker
+      test, and the code-bounds test — that ran before EVERY opcode. A
+      straight-line opcode (a fixed in-clause `pc` advance) provably cannot
+      change the program, land on a resume marker, or exceed the bounds, so it
+      now sets an `inClause` flag that makes the next iteration skip all three.
+      Default-false = fail-safe: every control transfer (Call/Execute/Proceed,
+      backtrack, IL, marker, and crucially CallBuiltin/ExecuteBuiltin which use
+      `AdvancePc` — NOT `SetPc(pc+N)` — because a builtin may `assertz` and bump
+      the generation) leaves the flag false, so it re-checks; and `_engine.P` is
+      still written by every op, so it is never stale. The 45 straight-line
+      `SetPc(pc + N)` sites (unification / arithmetic / cut / structure-build —
+      verified none run a builtin) opt in. Measured on nrev(300) (list-unify
+      heavy, min-of-20, ABBA back-to-back): I1 ~1113–1245 ms vs baseline
+      ~1328–1348 ms — I1's WORST run beats baseline's BEST, **~8–16% faster** on
+      dispatch-bound code. 5-project gate green (the lone Embedding failure,
+      `Chunk39.Engine_UnpromotablePredicate_StaysOnTier0Forever`, is a
+      PRE-EXISTING parallel-suite flaky — it fails identically on baseline with
+      I1 stashed; recorded as I10).
+- [ ] **I10** ⚪ `Chunk39Tests.Engine_UnpromotablePredicate_StaysOnTier0Forever`
+      is flaky under class/suite parallelism — the promotion churn/re-arm
+      (ADR-023 / L5) assertion is timing-dependent on the background
+      `IlCompileWorker`. Passes solo, fails when siblings run (confirmed on
+      baseline, independent of I1). Make it deterministic (drive promotion
+      synchronously / disable background compile in the test) or relax the
+      assertion.
 - [~] **I2** 🔴 findall/bagof/setof/copy_term round-trip through managed AST.
       **Part (a) — `copy_term/2` — DONE.** New `HeapTermCopy` does a direct
       heap→heap copy (no intermediate AST tree): Ref/AttVar→fresh plain var
