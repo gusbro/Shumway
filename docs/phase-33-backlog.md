@@ -812,7 +812,12 @@ Interpreter core:
       feature, not a fix.
 - [ ] **I4** 🟡 dynamics below the JIT-index threshold walk linear chains with
       tombstone dispatch (indexing exists post-threshold; tune threshold /
-      tombstone cost).
+      tombstone cost). **Measurement-gated**: this is a threshold *tuning* knob,
+      not a structural fix — indexing already exists post-threshold. Lowering
+      the threshold trades earlier index-build cost against linear-scan cost;
+      the right value needs a benchmark sweep over realistic dynamic-predicate
+      clause counts + call/mutation ratios. A tuning change without that sweep
+      is a guess. Deferred to a measured pass.
 - [x] **I5** 🟡 `Cut`→`CompactTrails` O(n) with no early-out when tops equal.
       *Fixed: an early `return` when `parentBindingTop == _bindingTrailTop &&
       parentExtraTop == _extraTrailTop`. When nothing was trailed since the
@@ -822,6 +827,14 @@ Interpreter core:
       that ran on EVERY cut) is a proven no-op. Deterministic cuts under deep
       catch nesting no longer pay O(catch frames) for nothing.*
 - [ ] **I6** 🟡 CP saves 10 control words incl. ViewGen for static predicates.
+      **Deferred — touches a core invariant (ADR-005).** A variable-width CP
+      (drop ViewGen for static callees) changes the choice-point frame layout
+      the whole engine and the conservative heap-GC scan depend on: the GC reads
+      CP control words by fixed offset and distinguishes them from heap refs via
+      `Tag.RawInt` tagging (Phase 20 chunk 213). A per-CP-kind width would need
+      every CpXxxOffset, UnwindTrails, and the GC stack scan to branch on the
+      kind. High-blast-radius for one saved word; wants an ADR + the full gate,
+      not a batched edit. Deferred to a focused pass.
 - [-] **I7** 🟡 ProgramGeneration property read per dispatch tick.
       **Deferred pending a benchmark** (measure-before-touch, per the C1/L7/B2
       precedent): the per-tick check is already a single field read + compare +
@@ -831,9 +844,28 @@ Interpreter core:
       every program-mutating opcode — a correctness hazard (miss one → stale
       code view → wrong answer / crash) for a ~2-instruction saving with no
       measured cost. Not touching hot dispatch on speculation.
-- [ ] **I8** ⚪ Minor batch: Overflow branch per fetch; HasPendingWakeups cached
-      bool; dbg_info out-of-band; CallBuiltin name/arity stamping deferral;
-      _unifyPointer local threading; FlushPendingWakeupsSlow pooled scratch.
+- [-] **I8** ⚪ Minor batch. **Assessed — each is already-done, marginal, or
+      risk-outweighs-win; none slammed in mid-AV-hunt:**
+      - *Overflow branch per fetch* — already peeled: chunk 170 hoists the
+        single-buffer `code.Primary` into `codeArr`, so the steady-state fetch
+        is a direct `byte[]` index with no per-tick Split branch.
+      - *dbg_info out-of-band* — already effective: release `compile_mode`
+        (ADR-018 / Phase 25) omits the per-clause `meta dbg_info` opcodes.
+      - *HasPendingWakeups cached bool* — already a `List.Count` field read;
+        a cached bool saves ~1 op but adds a missed-wakeup invariant hazard
+        (attvar/CLP correctness). Not worth it.
+      - *CallBuiltin name/arity stamping deferral* — the eager
+        `CurrentBuiltinName`/`Arity` writes feed `IsoError.X(engine)` thrown
+        INSIDE a builtin impl (before the catch), so they can't move to the
+        cold catch without mis-attributing direct-throw errors. ~2 field
+        writes; regression risk in error tests. Left as is.
+      - *FlushPendingWakeupsSlow pooled scratch* — the `savedRegs` array is
+        genuinely per-wakeup garbage, but the method is RE-ENTRANT (a wakeup
+        goal runs via MetaCallInEngine → dispatch → another flush at its
+        boundaries); a single pooled buffer would clobber the outer save.
+        Safe pooling needs a depth-indexed free-list in the delicate attr
+        path — a focused change with its own attr/CLP stress, not a minor.
+      - *_unifyPointer local threading* — micro; deferred with the rest.
 
 WAM↔IL boundary:
 - [x] **B1** 🔴 resume-marker encoding caps. *Fixed: markers are now dense ids into a process-global interned side table of (fid, cursor) pairs (`marker = Base + denseId`) — no functor-id or cursor cap (capacity ≈1.07B distinct pairs); lock-free decode / locked intern, same discipline as the atom/functor tables. Process-global because markers bake into IL delegates shared across engines. `ResumeMarkerCursorStride` survives only as the IL emitters per-predicate cursor-count BUDGET (emit-shape policy). 4 tests incl. round-trip beyond both old caps + growth stability.*
