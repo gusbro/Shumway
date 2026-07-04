@@ -818,6 +818,16 @@ public sealed partial class Engine
     /// </summary>
     private void CompactTrails(int parentBindingTop, int parentExtraTop, int parentHeapTop)
     {
+        // I5 (Phase 33) — fast no-op cut: when nothing was trailed since the
+        // parent CP both tops already equal the parent's, so both compaction
+        // walks are empty and — since the trail only grows between CPs — no
+        // catch-frame snapshot can sit above the (unchanged) top. The whole
+        // body is a no-op, INCLUDING the O(_catchFrames) snapshot-clip loop
+        // that otherwise runs on every cut (deep catch nesting made every
+        // deterministic cut pay O(catch frames) for nothing).
+        if (parentBindingTop == _bindingTrailTop && parentExtraTop == _extraTrailTop)
+            return;
+
         int bindingRead = parentBindingTop;
         int bindingWrite = parentBindingTop;
         int extraRead = parentExtraTop;

@@ -776,16 +776,61 @@ Region runtime:
 Interpreter core:
 - [ ] **I1** 🔴 PC lives in an engine field — store+reload per dispatched opcode.
       Thread a local `pc` through the switch, write back at goal boundaries.
+      **Scoped, deferred to a focused pass**: 30+ `Pc` reads/writes across the
+      dispatch loop are cross-cutting — CP save/restore, marker resume, builtin
+      dispatch, and every jump/call all read or write `Engine.P`. Threading a
+      local `pc` needs a write-back at EVERY goal boundary + builtin call + CP
+      op; one missed sync corrupts control flow (the exact class of bug that
+      can surface as an AV). High value but high risk — wants its own change
+      with the full 5-project gate + a deep-recursion/backtracking stress pass,
+      not a batched edit mid-AV-hunt.
 - [ ] **I2** 🔴 findall/bagof/setof/copy_term round-trip through managed AST
-      (2 deep copies per solution). Direct heap-to-heap copy.
-- [ ] **I3** 🟡 retract materializes each shape-matching candidate per trial.
-      Assert-time heap template or indexed candidate list.
+      (2 deep copies per solution). Direct heap-to-heap copy. **Scoped,
+      deferred to a focused pass.** Two distinct pieces: (a) `copy_term/2` is
+      `MaterializeRegister` (heap→AST) + `MaterializeAsCell` (AST→heap) — a
+      direct heap→heap copy skips the AST garbage, but a correct one must handle
+      every reference tag (Ref/AttVar→fresh plain var with sharing, Str/Lis
+      recursive slab copy, **Float's 2-cell paired representation**, **Pstr
+      buffers**) plus the BigInt/String/Foreign side-table id cells, and stay
+      cyclic-safe — core heap surgery, the highest-risk area. (b) findall's
+      record→collect additionally needs a **backtrack-surviving heap-copy
+      destination** (today the managed AST survives heap truncation for free via
+      GC) — a design question (protected heap segment vs `TermCodec` binary
+      side-buffer). Measure the copy cost first (a findall/copy_term alloc
+      microbench), then implement with dedicated all-tags + cyclic + attvar
+      tests. Not slammed in during the AV investigation.
+- [-] **I3** 🟡 retract materializes each shape-matching candidate per trial.
+      **Largely mitigated (chunk 421 + 431)**: `FindRetractMatch` runs
+      `DefiniteMismatch` — a depth-4 structural pre-filter (distinct atoms /
+      ints / principal functors / atomic-vs-compound, incl. first-argument
+      discrimination) that SKIPS materialize-and-unify for any candidate that
+      provably cannot unify; the snapshot copy is pooled + shared across the
+      enumeration (alloc −70%). Residual: candidates that share the top functor
+      to depth 4 still materialize per trial. Closing that needs a real
+      first-argument index over the candidate list — a feature of uncertain ROI
+      (retract is not a steady-state hot path once alloc is cut). Deferred as a
+      feature, not a fix.
 - [ ] **I4** 🟡 dynamics below the JIT-index threshold walk linear chains with
       tombstone dispatch (indexing exists post-threshold; tune threshold /
       tombstone cost).
-- [ ] **I5** 🟡 `Cut`→`CompactTrails` O(n) with no early-out when tops equal.
+- [x] **I5** 🟡 `Cut`→`CompactTrails` O(n) with no early-out when tops equal.
+      *Fixed: an early `return` when `parentBindingTop == _bindingTrailTop &&
+      parentExtraTop == _extraTrailTop`. When nothing was trailed since the
+      parent CP both compaction walks are empty AND — since the trail only
+      grows between CPs — no catch-frame snapshot can sit above the unchanged
+      top, so the whole body (including the O(_catchFrames) snapshot-clip loop
+      that ran on EVERY cut) is a proven no-op. Deterministic cuts under deep
+      catch nesting no longer pay O(catch frames) for nothing.*
 - [ ] **I6** 🟡 CP saves 10 control words incl. ViewGen for static predicates.
-- [ ] **I7** 🟡 ProgramGeneration property read per dispatch tick.
+- [-] **I7** 🟡 ProgramGeneration property read per dispatch tick.
+      **Deferred pending a benchmark** (measure-before-touch, per the C1/L7/B2
+      precedent): the per-tick check is already a single field read + compare +
+      predicted-not-taken branch (`gen != cachedGen`), and it is the ONLY thing
+      that lets the loop notice a mid-dispatch `assert`/`retract` re-linking the
+      code view. Moving it off the hot path means scattering the re-check across
+      every program-mutating opcode — a correctness hazard (miss one → stale
+      code view → wrong answer / crash) for a ~2-instruction saving with no
+      measured cost. Not touching hot dispatch on speculation.
 - [ ] **I8** ⚪ Minor batch: Overflow branch per fetch; HasPendingWakeups cached
       bool; dbg_info out-of-band; CallBuiltin name/arity stamping deferral;
       _unifyPointer local threading; FlushPendingWakeupsSlow pooled scratch.
