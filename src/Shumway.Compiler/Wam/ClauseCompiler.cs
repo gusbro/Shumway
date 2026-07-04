@@ -368,10 +368,24 @@ public sealed class ClauseCompiler
         // regression vs the helper form) and a call/return round trip per
         // iteration (the dominant share of boyer's Tier-1 inline-ITE cost).
         // Each branch then self-terminates: no `jump`, no join, no epilogue.
-        var thenGoals = FlattenConjunction(thenPart);
-        for (int i = 0; i < thenGoals.Count; i++)
-            CompileBodyGoal(s, thenGoals[i], isLast && i == thenGoals.Count - 1,
-                hasFrame, s.PermanentCount);
+        // A branch's goal list can be EMPTY (FlattenConjunction elides `true`,
+        // so `-> true` / `; true` flatten to nothing). Under isLast such a
+        // branch must still CLOSE the clause explicitly — without it the flow
+        // would fall through into the ELSE block (or off the clause end).
+        void EmitBranch(List<Term> branchGoals)
+        {
+            if (isLast && branchGoals.Count == 0)
+            {
+                if (hasFrame) s.Emitter.EmitDeallocateProceed();
+                else s.Emitter.EmitProceed();
+                return;
+            }
+            for (int i = 0; i < branchGoals.Count; i++)
+                CompileBodyGoal(s, branchGoals[i], isLast && i == branchGoals.Count - 1,
+                    hasFrame, s.PermanentCount);
+        }
+
+        EmitBranch(FlattenConjunction(thenPart));
         var initAfterThen = new HashSet<string>(s.YsInitialized);
         int jumpPos = -1;
         if (!isLast)
@@ -384,10 +398,7 @@ public sealed class ClauseCompiler
         s.Emitter.EmitTrustMe();
         s.YsInitialized.Clear();
         s.YsInitialized.UnionWith(initAtTry);   // else path starts at the try point
-        var elseGoals = FlattenConjunction(elsePart);
-        for (int i = 0; i < elseGoals.Count; i++)
-            CompileBodyGoal(s, elseGoals[i], isLast && i == elseGoals.Count - 1,
-                hasFrame, s.PermanentCount);
+        EmitBranch(FlattenConjunction(elsePart));
         if (!isLast)
         {
             s.Emitter.PatchInt32(jumpPos + 1, s.Emitter.Position);  // END:

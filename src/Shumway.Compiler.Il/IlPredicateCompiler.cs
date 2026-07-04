@@ -1254,21 +1254,13 @@ public sealed class IlPredicateCompiler
                     if (FindCallSiteFunctorId(callSites, pc) < 0)
                     { reason = $"{op} @{pc} has no call-site metadata"; return false; }
                     break;
-                // ADR-025 — an inline ITE body needs an ELSE resume cursor the
-                // region planner doesn't allocate; the member stays a
-                // cross-region trampoline (still compiles standalone). Gated
-                // on the body-CP arity SENTINEL (present in every inline
-                // ITE's try_me_else — a chain member's dispatch try_me_else
-                // carries a real arity and must stay accepted here). The old
-                // `jump` gate missed the branch-tail-LCO shape, which emits
-                // no jump for a last-goal ITE.
-                case Opcode.Jump:
-                    reason = $"inline ITE (jump @{pc}) — no region cursor";
-                    return false;
-                case Opcode.TryMeElse
-                    when BytecodeIO.ReadInt32(code, pc + 5) == OpcodeTable.InlineIteCpArity:
-                    reason = $"inline ITE (try_me_else @{pc}) — no region cursor";
-                    return false;
+                // ADR-025 (ITE in regions) — an inline ITE/disjunction body is
+                // now region-emittable: the planner gives its try_me_else pc
+                // an ELSE re-entry cursor (via CollectBuiltinResumePcs) and
+                // the emit pushes the region delegate + that cursor; TrustMe
+                // marks the label; Jump is a local forward branch. A
+                // dispatch-chain try_me_else (real arity >= 0) stays accepted
+                // as before — it is the member's own clause dispatch.
                 // Chunk 424: backtrackable / meta CallBuiltin sites are now
                 // region-emittable — the planner allocates each a
                 // BuiltinResume cursor and the emit threads the chunk-218 /
@@ -1319,6 +1311,18 @@ public sealed class IlPredicateCompiler
                 // chunk 433 — precomputed flag instead of the name switch.
                 if (e.IsCall || e.IsDollarCall || e.IsBacktrackable)
                     pcs.Add(pc);
+            }
+            // ADR-025 (ITE in regions) — an inline ITE/disjunction's body
+            // try_me_else (the arity sentinel) needs an ELSE re-entry cursor:
+            // the CP carries the REGION delegate + this cursor, and a failed
+            // condition re-enters the region method at the TrustMe-marked
+            // label. Rides the BuiltinResume site kind — the planner merges
+            // pcs in order and the emit resolves by (member, pc), so no new
+            // plumbing; nothing else consults the site's Kind for body sites.
+            else if (op == Opcode.TryMeElse
+                     && BytecodeIO.ReadInt32(code, pc + 5) == OpcodeTable.InlineIteCpArity)
+            {
+                pcs.Add(pc);
             }
             int size = op == Opcode.Meta ? 6 : OpcodeTable.Get((byte)op).Size;
             if (size <= 0) return;
@@ -1539,7 +1543,8 @@ public sealed class IlPredicateCompiler
             emit.MarkLabel(memberEntry[member.FunctorId]);   // clause 0 / single-clause entry
             if (member.ClauseCount == 1)
                 EmitClauseBody(emit, member.Bytecode, 0, member.Bytecode.Length,
-                    failLabel, member.CallSites, calleeMap: calleeMap, regionCtx: ctx);
+                    failLabel, member.CallSites, emitSelfDelegate: effectiveSelf,
+                    calleeMap: calleeMap, regionCtx: ctx);
             else if (TryDescribeIndexed(member, calleeMap, out var idxInfo))
                 EmitRegionIndexedMember(emit, member, mi, idxInfo!, ctx, effectiveSelf, calleeMap);
             else
@@ -1592,7 +1597,8 @@ public sealed class IlPredicateCompiler
                 emit.Call(EnginePushIlCpMethod);
             }
             EmitClauseBody(emit, member.Bytecode, clauses[i].Start, clauses[i].End,
-                ctx.FailLabel, member.CallSites, calleeMap: calleeMap, regionCtx: ctx);
+                ctx.FailLabel, member.CallSites, emitSelfDelegate: emitSelf,
+                calleeMap: calleeMap, regionCtx: ctx);
         }
     }
 
@@ -1666,7 +1672,8 @@ public sealed class IlPredicateCompiler
         {
             emit.MarkLabel(bodyLabels[i]);
             EmitClauseBody(emit, member.Bytecode, info.Clauses[i].Start, info.Clauses[i].End,
-                ctx.FailLabel, member.CallSites, calleeMap: calleeMap, regionCtx: ctx);
+                ctx.FailLabel, member.CallSites, emitSelfDelegate: emitSelf,
+                calleeMap: calleeMap, regionCtx: ctx);
         }
     }
 
@@ -3462,23 +3469,33 @@ public sealed class IlPredicateCompiler
             }
             if (op == Opcode.TryMeElse)
             {
-                // ADR-025 stage (b) — the inline-ITE choice point (arity 0;
-                // the eligibility filters guarantee no dispatch-chain
-                // try_me_else reaches a body emit). Push a CP whose resume
-                // callback (IlIteHelper.Resume) parks the ELSE resume marker
-                // as the PC — the dispatch loop decodes it and re-enters this
-                // delegate at the ELSE cursor, exactly the chunk-218 protocol.
-                if (regionCtx is not null)
-                    throw new NotSupportedException(
-                        "inline ITE inside a region member (excluded by RegionBodyOpcodesOk).");
-                if (callSiteIndexCounter is null || resumeLabels is null)
-                    throw new InvalidOperationException(
-                        "Inline ITE requires callSiteIndexCounter + resumeLabels "
-                        + "for the ELSE resume cursor.");
+                // ADR-025 — the inline-ITE choice point (body-CP arity
+                // sentinel; the eligibility filters guarantee no
+                // dispatch-chain try_me_else reaches a body emit). The CP's
+                // cursor is the ELSE re-entry point, marked at TrustMe.
                 int elseAddr = BytecodeIO.ReadInt32(code, pc + 1);
-                int iteSiteIdx = callSiteIndexCounter();
-                int elseCursor = cursorBase + iteSiteIdx - 1;
-                (iteElseLabels ??= new())[elseAddr] = resumeLabels[iteSiteIdx - 1];
+                int elseCursor;
+                Sigil.Label elseResumeLabel;
+                if (regionCtx is not null)
+                {
+                    // ITE in a REGION member: the plan gave this try_me_else
+                    // pc a cursor (it rides the BuiltinResume site kind); the
+                    // CP carries the REGION delegate + that cursor.
+                    elseCursor = regionCtx.CursorBySite[
+                        (regionCtx.CurrentMemberIndex, pc)];
+                    elseResumeLabel = regionCtx.CursorLabels[elseCursor];
+                }
+                else
+                {
+                    if (callSiteIndexCounter is null || resumeLabels is null)
+                        throw new InvalidOperationException(
+                            "Inline ITE requires callSiteIndexCounter + resumeLabels "
+                            + "for the ELSE resume cursor.");
+                    int iteSiteIdx = callSiteIndexCounter();
+                    elseCursor = cursorBase + iteSiteIdx - 1;
+                    elseResumeLabel = resumeLabels[iteSiteIdx - 1];
+                }
+                (iteElseLabels ??= new())[elseAddr] = elseResumeLabel;
                 emit.LoadArgument(0);
                 if (emitSelfDelegate is not null)
                 {

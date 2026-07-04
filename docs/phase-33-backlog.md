@@ -483,6 +483,30 @@ A deferral is a TODO with a prerequisite, not a closure.
       unattributed +185KB managed alloc/query on boyer) and ITE-in-regions
       (wire the ELSE cursor through the region plan — the machinery exists
       as BuiltinResume cursors).*
+      *ITE-IN-REGIONS DONE + residual attributed (2026-07-05/06): the ELSE
+      cursor rides the BuiltinResume site kind (CollectBuiltinResumePcs also
+      collects sentinel try_me_else pcs → the plan assigns cursors in pc
+      order with zero planner changes); the emit's TryMeElse case resolves
+      region cursors via CursorBySite and pushes the REGION delegate; the
+      member emits now thread emitSelfDelegate; RegionBodyOpcodesOk accepts
+      the ITE opcodes. Structural confirmation: boyer's rewrite/2 with
+      inline ITE now allocates cells+managed EXACTLY like the helper region
+      (was: like a standalone). Along the way the LCO change's EMPTY-BRANCH
+      bug was found and fixed (FlattenConjunction elides `true`, so a last
+      `-> true` branch emitted nothing and fell into ELSE / off the clause —
+      a hang): an empty last branch now closes the clause explicitly.
+      Alloc attribution: a targeted microbench shows the inline protocol
+      allocates 0 B/op on BOTH paths — the boyer +185KB was another
+      region-exclusion artifact, gone with the wiring. The residual is now
+      pure Tier-1 code shape: regON inline vs regON helper +12.6% wall on
+      boyer (one interleaved run; HEAD baseline same session +17.4%).
+      3 new Adr025StageBTests (call-cond all paths / backtrack across
+      commit / 200k-deep branch-tail LCO in a region). FLIP still not
+      justified for Tier-1; EnableInlineIte is now REGION-SAFE (previously
+      it silently cost the whole region). Found pre-existing, now-visible:
+      boyer's region allocates 66.8 vs 43.8 MB managed per 20k-rep query vs
+      standalone (+53%, intra-run deterministic, exists at HEAD) — a future
+      region-alloc item.*
       Measurement lesson: Profiler.Reset is [Conditional] — the harness must
       ALSO define SHUMWAY_PROFILE or its Reset calls strip silently and
       counters accumulate (first read was a bogus 3×).*
@@ -686,6 +710,16 @@ A deferral is a TODO with a prerequisite, not a closure.
       race fix (commit e88097e) is the probable cause; the permanent dump
       capture decides it: a recurrence produces an analyzable dump, a
       sustained quiet stretch closes the item.
+      **RECURRED post-race-fix (2026-07-06)** — same test, again the first
+      run after a rebuild → the _emitOwnerFid race was NOT the cause. AND
+      the dump did not fire: createdump handles a MANAGED AV (validated
+      end-to-end with a synthetic Marshal.WriteInt32 crash under the same
+      wrapper — dump written) but not this fatal-native-frame path
+      (0xC0000005 inside the calli target). Gate scripts now also set
+      DOTNET_CreateDumpDiagnostics/VerboseDiagnostics/EnableCrashReport for
+      the next occurrence; WER LocalDumps needs admin (denied). Also seen
+      once under full-suite load: ChurnGuard_PinsToTier0AfterRepeatedMutation
+      failed (4/4 green alone — background-compile interleaving flake).
 
 ## Later rounds (not yet waved)
 

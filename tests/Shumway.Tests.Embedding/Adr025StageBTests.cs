@@ -237,4 +237,58 @@ public class Adr025StageBTests
                 }
             }
     }
+
+    // ---- ADR-025 (ITE in regions) — a local member containing an inline ITE
+    //      now stays IN the region: the planner gives its try_me_else pc an
+    //      ELSE re-entry cursor, the CP carries the REGION delegate + cursor,
+    //      TrustMe marks the label. These run with regions at their default
+    //      (ON) and a PUBLIC root over LOCAL members so a region forms. ----
+
+    [Fact]
+    public void RegionMember_CallCondIte_AllPaths()
+    {
+        // step/2's cond is a CALL (axiom-style, can bind + leave bucket CPs);
+        // then-branch tail-recurses (branch-tail LCO inside the region).
+        var (e, _) = Promoted(
+            ":- public go/2.\n" +
+            "go(X, R) :- prep(X, Y), step(Y, R).\n" +
+            "step(Y, R) :- ( tbl(Y, Z) -> step(Z, R) ; R = Y ).\n" +
+            "prep(X, Y) :- Y is X + 1.\n" +
+            "tbl(1, 10).\ntbl(10, 20).\ntbl(2, 30).\n",
+            "go", 2, "go(0, R), R == 20.");
+        Assert.True(e.Query("go(0, R), R == 20.").Success);   // then-chain
+        Assert.True(e.Query("go(3, R), R == 4.").Success);    // else at once
+        Assert.True(e.Query("go(1, R), R == 30.").Success);   // else mid-chain
+        Assert.True(e.Query("findall(R, go(0, R), L), L == [20].").Success);
+    }
+
+    [Fact]
+    public void RegionMember_Ite_BacktracksAcrossCommit()
+    {
+        // A generator BEFORE the ITE member: each solution re-enters pick/2,
+        // whose ITE commits per-solution without pruning gen/1's CPs.
+        var (e, _) = Promoted(
+            ":- public multi/1.\n" +
+            "multi(R) :- gen(X), pick(X, R).\n" +
+            "pick(X, R) :- ( X > 1 -> R = big(X) ; R = small(X) ).\n" +
+            "gen(1).\ngen(2).\ngen(3).\n",
+            "multi", 1, "multi(_).");
+        var all = e.QueryAll("multi(R).")
+            .Select(s => s["R"]!.ToString()).ToList();
+        Assert.Equal(new[] { "small(1)", "big(2)", "big(3)" }, all);
+    }
+
+    [Fact]
+    public void RegionMember_Ite_DeepTailRecursion_ConstantStack()
+    {
+        // Branch-tail LCO through the then-branch inside a region: 200k
+        // iterations must run in constant control stack (the pre-LCO shape
+        // was O(depth) frames — a stack-robustness regression).
+        var (e, _) = Promoted(
+            ":- public down/2.\n" +
+            "down(N, R) :- dstep(N, R).\n" +
+            "dstep(N, R) :- ( N > 0 -> N1 is N - 1, dstep(N1, R) ; R = done ).\n",
+            "down", 2, "down(5, R), R == done.");
+        Assert.True(e.Query("down(200000, R), R == done.").Success);
+    }
 }
