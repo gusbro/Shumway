@@ -720,6 +720,15 @@ A deferral is a TODO with a prerequisite, not a closure.
       the next occurrence; WER LocalDumps needs admin (denied). Also seen
       once under full-suite load: ChurnGuard_PinsToTier0AfterRepeatedMutation
       failed (4/4 green alone — background-compile interleaving flake).
+      **Standing trap (2026-07-06):** procdump64 (downloaded to
+      %TEMP%\claude\procdump) is now armed by the standard Embedding gate
+      script — `-ma -e -w testhost.exe` waits for the testhost and writes a
+      full dump to %TEMP%\claude\avdumps on ANY unhandled SEH (covers the
+      fatal-native path createdump misses; createdump itself validated
+      end-to-end for managed AVs). dotnet-dump installed globally for
+      analysis. 4 more armed trigger rounds (touch-rebuild → full suite)
+      all clean — 0/8 recurrences since the _emitOwnerFid fix; the trap
+      decides the item without further dedicated hunting.
 
 ## Later rounds (not yet waved)
 
