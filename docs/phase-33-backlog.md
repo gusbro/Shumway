@@ -784,21 +784,29 @@ Interpreter core:
       can surface as an AV). High value but high risk — wants its own change
       with the full 5-project gate + a deep-recursion/backtracking stress pass,
       not a batched edit mid-AV-hunt.
-- [ ] **I2** 🔴 findall/bagof/setof/copy_term round-trip through managed AST
-      (2 deep copies per solution). Direct heap-to-heap copy. **Scoped,
-      deferred to a focused pass.** Two distinct pieces: (a) `copy_term/2` is
-      `MaterializeRegister` (heap→AST) + `MaterializeAsCell` (AST→heap) — a
-      direct heap→heap copy skips the AST garbage, but a correct one must handle
-      every reference tag (Ref/AttVar→fresh plain var with sharing, Str/Lis
-      recursive slab copy, **Float's 2-cell paired representation**, **Pstr
-      buffers**) plus the BigInt/String/Foreign side-table id cells, and stay
-      cyclic-safe — core heap surgery, the highest-risk area. (b) findall's
-      record→collect additionally needs a **backtrack-surviving heap-copy
-      destination** (today the managed AST survives heap truncation for free via
-      GC) — a design question (protected heap segment vs `TermCodec` binary
-      side-buffer). Measure the copy cost first (a findall/copy_term alloc
-      microbench), then implement with dedicated all-tags + cyclic + attvar
-      tests. Not slammed in during the AV investigation.
+- [~] **I2** 🔴 findall/bagof/setof/copy_term round-trip through managed AST.
+      **Part (a) — `copy_term/2` — DONE.** New `HeapTermCopy` does a direct
+      heap→heap copy (no intermediate AST tree): Ref/AttVar→fresh plain var
+      (variable sharing via a var map), Str/Lis→fresh slab (structure sharing +
+      cycles preserved and made to terminate by register-before-recurse), the
+      list spine walked iteratively (chunk-111 no-overflow), Atom/Int/Foreign
+      verbatim, and the side-table leaves (Float 2-cell / BigInt / Pstr)
+      delegated one-node-at-a-time to the proven AST path (fresh side-table
+      entry, identical semantics). Measured: ground `f/5`+list **1296→584
+      B/op (−55%)**, shared-var `p/5` **1240→712 B/op (−43%)**, both faster.
+      11 dedicated tests (ground / fresh+shared vars / shared tail / float+
+      bigint / string / 100k list no-overflow / nested / cyclic-terminates /
+      copy independence); 5-project gate green under the AV trap (Embedding
+      2713). *(A finding along the way: `==/2` — `AreStructurallyEqual` — has no
+      cycle detection and overflows on a cyclic term; pre-existing, unrelated,
+      noted for a future item.)* **Residual: the two identity dictionaries +
+      the spine list are now the dominant per-call cost — poolable on the
+      engine (clear-on-use, depth-guarded, the chunk-432 pattern) as a measured
+      follow-up.**
+      **Part (b) — findall record→collect — still open.** Needs a
+      backtrack-surviving heap-copy destination (today the managed AST survives
+      heap truncation for free via GC); a design question (protected heap
+      segment vs `TermCodec` side-buffer). Deferred.
 - [-] **I3** 🟡 retract materializes each shape-matching candidate per trial.
       **Largely mitigated (chunk 421 + 431)**: `FindRetractMatch` runs
       `DefiniteMismatch` — a depth-4 structural pre-filter (distinct atoms /

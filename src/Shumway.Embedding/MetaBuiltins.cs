@@ -3640,8 +3640,9 @@ public static class MetaBuiltins
     /// unbound — and shared occurrences in the AST keep sharing.</para></summary>
     public static bool CopyTerm(Engine engine)
     {
-        Term original = MaterializeRegister(engine, 0);
-        Cell copyCell = Materializer.MaterializeAsCell(engine, original);
+        // Phase 33 I2: heap-to-heap copy — no intermediate managed AST tree
+        // (was MaterializeRegister + MaterializeAsCell, ~1.3 KB garbage/call).
+        Cell copyCell = HeapTermCopy.CopyRegister(engine, 0);
         return engine.UnifyRegisterWithCell(1, copyCell);
     }
 
