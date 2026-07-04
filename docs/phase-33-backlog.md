@@ -736,11 +736,23 @@ Region runtime:
 - [ ] **R1** 🟡 boyer's REGION allocates +53% managed vs the same predicates
       standalone (66.8 vs 43.8 MB per 20k-rep query — intra-run
       deterministic, measured identically pre/post the ITE wiring, i.e.
-      PRE-EXISTING). ~1.1 KB/rep of extra GC pressure somewhere in the
-      region dispatch/return path (RegionReturnCursor? cursor re-entry?).
-      Wall-clock still favors regions, so this is headroom, not a
-      regression — attribute with a targeted alloc microbench like the
-      ITE one (which read 0 B/op for the inline protocol itself).
+      PRE-EXISTING). Wall-clock still favors regions: headroom, not a
+      regression.
+      **First attribution pass (2026-07-06) INVERTED the expectation**: in
+      every isolated shape the REGION path allocates 0 B/op and the
+      STANDALONE path pays 24–96 B/op (in-query loops, baseline-subtracted,
+      min-of-5): det-chain 0 vs 24, chain-bt 0 vs 24, indexed 0 vs 24,
+      builtin-resume 0 vs 24, univ 0 vs 24, mini-boyer 0 vs 96; leaf
+      (no local member) 0 vs 0 and listrec (self-recursive 2-clause member)
+      0 vs 0. So (a) boyer's +53% under regions is NOT a generic region
+      tax — it does not reproduce in any isolated shape and needs
+      TYPE-LEVEL allocation tracing (dotnet-trace AllocationTick /
+      PerfView) on real boyer to attribute; and (b) NEW: the standalone
+      path allocates ~24 B per local-member call in most shapes (0 under
+      regions; absent for leaf/self-recursive shapes) — a small distinct
+      hunt, likely in the threaded-resume or dispatch path. dotnet-trace
+      is installed globally; the iteattr scratchpad harness has the
+      per-shape loop technique ready.
 
 Interpreter core:
 - [ ] **I1** 🔴 PC lives in an engine field — store+reload per dispatched opcode.
