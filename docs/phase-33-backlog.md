@@ -827,14 +827,20 @@ Interpreter core:
       first-argument index over the candidate list — a feature of uncertain ROI
       (retract is not a steady-state hot path once alloc is cut). Deferred as a
       feature, not a fix.
-- [ ] **I4** 🟡 dynamics below the JIT-index threshold walk linear chains with
-      tombstone dispatch (indexing exists post-threshold; tune threshold /
-      tombstone cost). **Measurement-gated**: this is a threshold *tuning* knob,
-      not a structural fix — indexing already exists post-threshold. Lowering
-      the threshold trades earlier index-build cost against linear-scan cost;
-      the right value needs a benchmark sweep over realistic dynamic-predicate
-      clause counts + call/mutation ratios. A tuning change without that sweep
-      is a guess. Deferred to a measured pass.
+- [-] **I4** 🟡 dynamics below the JIT-index threshold walk linear chains with
+      tombstone dispatch. **Measured — no change warranted.** The threshold
+      (`JitIndexing.Threshold`, default 16) gates ONLY the first `Threshold`
+      calls; after that the predicate is indexed. Benchmark (30-clause dynamic
+      `d/2`, bound-key dispatch, 200k-call loop, min-of-5): indexed **0.38
+      µs/call** vs never-indexed linear scan **2.66 µs/call** — the index is
+      worth **7×**, and it already exists + works. But the THRESHOLD's own
+      impact is bounded by `Threshold × (linear − indexed)` = a **one-time
+      ~36 µs** warmup for this shape — fully amortized for any hot predicate,
+      trivially bounded for a cold one. Lowering it would shave a few µs of
+      warmup for predicates called 5–15× with many clauses, at the cost of
+      building an index for predicates called a handful of times then abandoned
+      (wasted switch-table build). 16 is a sound balance; tuning it is
+      noise-level. Structural + measured closure.
 - [x] **I5** 🟡 `Cut`→`CompactTrails` O(n) with no early-out when tops equal.
       *Fixed: an early `return` when `parentBindingTop == _bindingTrailTop &&
       parentExtraTop == _extraTrailTop`. When nothing was trailed since the
