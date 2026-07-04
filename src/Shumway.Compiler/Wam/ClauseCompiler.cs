@@ -455,18 +455,31 @@ public sealed class ClauseCompiler
         Term[] headArgs, List<Term> goals)
     {
         var occurs = new Dictionary<string, HashSet<int>>();
-        void Visit(Term t, int chunk)
+        var stack = new Stack<Term>();
+        // Iterative walk (Phase 33 I12): a recursive descent used one C# frame
+        // per node, so a deeply-nested argument (e.g. a long list) overflowed
+        // the stack. The explicit work-stack keeps C# stack use O(1).
+        void Visit(Term root, int chunk)
         {
-            switch (t)
+            stack.Push(root);
+            while (stack.Count > 0)
             {
-                case VarTerm v when v.Name != "_":
-                    if (!occurs.TryGetValue(v.Name, out var s))
-                        occurs[v.Name] = s = new HashSet<int>();
-                    s.Add(chunk);
-                    break;
-                case CompoundTerm c:
-                    foreach (Term arg in c.Args) Visit(arg, chunk);
-                    break;
+                Term t = stack.Pop();
+                switch (t)
+                {
+                    case VarTerm v when v.Name != "_":
+                        if (!occurs.TryGetValue(v.Name, out var s))
+                            occurs[v.Name] = s = new HashSet<int>();
+                        s.Add(chunk);
+                        break;
+                    case CompoundTerm c:
+                        // Push in reverse so args pop left-to-right — identical
+                        // pre-order DFS to the former recursion, so the
+                        // first-occurrence variable order (which drives Y-slot
+                        // assignment) is unchanged.
+                        for (int i = c.Args.Length - 1; i >= 0; i--) stack.Push(c.Args[i]);
+                        break;
+                }
             }
         }
         static bool IsInlineGoal(Term g) => g switch
@@ -493,22 +506,34 @@ public sealed class ClauseCompiler
     {
         var occurs = new Dictionary<string, HashSet<int>>();
         var order = new List<string>();
+        var stack = new Stack<Term>();
 
-        void Visit(Term t, int chunk)
+        // Iterative walk (Phase 33 I12): see ClassifyPermanentsInlineTransparent
+        // — a recursive descent overflowed on a deeply-nested argument.
+        void Visit(Term root, int chunk)
         {
-            switch (t)
+            stack.Push(root);
+            while (stack.Count > 0)
             {
-                case VarTerm v when v.Name != "_":
-                    if (!occurs.TryGetValue(v.Name, out var s))
-                    {
-                        occurs[v.Name] = s = new HashSet<int>();
-                        order.Add(v.Name);
-                    }
-                    s.Add(chunk);
-                    break;
-                case CompoundTerm c:
-                    foreach (Term arg in c.Args) Visit(arg, chunk);
-                    break;
+                Term t = stack.Pop();
+                switch (t)
+                {
+                    case VarTerm v when v.Name != "_":
+                        if (!occurs.TryGetValue(v.Name, out var s))
+                        {
+                            occurs[v.Name] = s = new HashSet<int>();
+                            order.Add(v.Name);
+                        }
+                        s.Add(chunk);
+                        break;
+                    case CompoundTerm c:
+                        // Push in reverse so args pop left-to-right — identical
+                        // pre-order DFS to the former recursion, so the
+                        // first-occurrence variable order (which drives Y-slot
+                        // assignment) is unchanged.
+                        for (int i = c.Args.Length - 1; i >= 0; i--) stack.Push(c.Args[i]);
+                        break;
+                }
             }
         }
 
@@ -595,16 +620,23 @@ public sealed class ClauseCompiler
         }
     }
 
-    private static void CountVarOccurrences(Term t, Dictionary<string, int> counts)
+    private static void CountVarOccurrences(Term root, Dictionary<string, int> counts)
     {
-        switch (t)
+        // Iterative (Phase 33 I12): a recursive descent overflowed on a
+        // deeply-nested argument (e.g. a long list).
+        var stack = new Stack<Term>();
+        stack.Push(root);
+        while (stack.Count > 0)
         {
-            case VarTerm v when v.Name != "_":
-                counts[v.Name] = counts.GetValueOrDefault(v.Name) + 1;
-                break;
-            case CompoundTerm c:
-                foreach (Term a in c.Args) CountVarOccurrences(a, counts);
-                break;
+            switch (stack.Pop())
+            {
+                case VarTerm v when v.Name != "_":
+                    counts[v.Name] = counts.GetValueOrDefault(v.Name) + 1;
+                    break;
+                case CompoundTerm c:
+                    foreach (Term a in c.Args) stack.Push(a);
+                    break;
+            }
         }
     }
 
@@ -727,7 +759,7 @@ public sealed class ClauseCompiler
         // === Step 1: Forced saves for depth-≥2 reads (drained compounds). ===
         var forced = new HashSet<string>();
         for (int i = 0; i < N; i++)
-            CollectForcedSaves(gArgs[i], depth: 0, s, N, forced);
+            CollectForcedSaves(gArgs[i], rootDepth: 0, s, N, forced);
         // chunk 433 — in-place sort instead of LINQ OrderBy. The Seq component
         // reproduces OrderBy's stability over the set's enumeration order
         // exactly (two names CAN share a slot via head-arg aliasing).
@@ -823,19 +855,26 @@ public sealed class ClauseCompiler
     /// top-level compound (read during the arg's own emission); depth 2+
     /// requires upfront preservation.</summary>
     private static void CollectForcedSaves(
-        Term t, int depth, CompileState s, int N, HashSet<string> sink)
+        Term root, int rootDepth, CompileState s, int N, HashSet<string> sink)
     {
-        if (t is CompoundTerm c)
+        // Iterative (Phase 33 I12): a recursive descent overflowed on a
+        // deeply-nested body argument (e.g. a long list literal in a goal).
+        var stack = new Stack<(Term Term, int Depth)>();
+        stack.Push((root, rootDepth));
+        while (stack.Count > 0)
         {
-            foreach (Term sub in c.Args)
-                CollectForcedSaves(sub, depth + 1, s, N, sink);
-        }
-        else if (t is VarTerm v && v.Name != "_" && depth >= 2)
-        {
-            if (s.Ys.ContainsKey(v.Name)) return;
-            if (s.Xs.IsNewName(v.Name)) return;
-            int home = s.Xs.GetSlot(v.Name);
-            if (home < N) sink.Add(v.Name);
+            var (t, depth) = stack.Pop();
+            if (t is CompoundTerm c)
+            {
+                foreach (Term sub in c.Args) stack.Push((sub, depth + 1));
+            }
+            else if (t is VarTerm v && v.Name != "_" && depth >= 2)
+            {
+                if (s.Ys.ContainsKey(v.Name)) continue;
+                if (s.Xs.IsNewName(v.Name)) continue;
+                int home = s.Xs.GetSlot(v.Name);
+                if (home < N) sink.Add(v.Name);
+            }
         }
     }
 
@@ -954,16 +993,23 @@ public sealed class ClauseCompiler
         return result;
     }
 
-    private static void CollectVarNames(Term t, HashSet<string> sink)
+    private static void CollectVarNames(Term root, HashSet<string> sink)
     {
-        switch (t)
+        // Iterative (Phase 33 I12): called on each head argument, so a recursive
+        // descent overflowed on a deeply-nested head term (e.g. a long list).
+        var stack = new Stack<Term>();
+        stack.Push(root);
+        while (stack.Count > 0)
         {
-            case VarTerm v when v.Name != "_":
-                sink.Add(v.Name);
-                break;
-            case CompoundTerm c:
-                foreach (var arg in c.Args) CollectVarNames(arg, sink);
-                break;
+            switch (stack.Pop())
+            {
+                case VarTerm v when v.Name != "_":
+                    sink.Add(v.Name);
+                    break;
+                case CompoundTerm c:
+                    foreach (var arg in c.Args) stack.Push(arg);
+                    break;
+            }
         }
     }
 
@@ -1154,7 +1200,16 @@ public sealed class ClauseCompiler
     /// arity, atoms / integers and variable NAMES. Returns null for a term that
     /// can't be safely shared: one containing an anonymous variable (each <c>_</c>
     /// is a distinct fresh variable) or a multi-cell literal (float / string).</summary>
-    private static string? StructuralKey(Term t)
+    private static string? StructuralKey(Term t) => StructuralKey(t, 0);
+
+    /// <summary>Depth past which CSE keying is abandoned (returns null, so the
+    /// term is not shared). CSE of a large / deep head sub-term is pointless —
+    /// the key would be an O(size) string and, before Phase 33 I12, the recursion
+    /// overflowed the C# stack on a long list. A shallow bound keeps the useful
+    /// small-compound CSE while sidestepping both costs.</summary>
+    private const int StructuralKeyMaxDepth = 64;
+
+    private static string? StructuralKey(Term t, int depth)
     {
         switch (t)
         {
@@ -1164,11 +1219,12 @@ public sealed class ClauseCompiler
             case IntTerm n: return "#" + n.Value;
             case BigIntTerm b: return "#" + b.Value;
             case CompoundTerm c:
+                if (depth >= StructuralKeyMaxDepth) return null;   // too deep to CSE
                 var sb = new System.Text.StringBuilder();
                 sb.Append(c.Functor).Append('/').Append(c.Args.Length).Append('(');
                 foreach (Term a in c.Args)
                 {
-                    if (StructuralKey(a) is not string k) return null;
+                    if (StructuralKey(a, depth + 1) is not string k) return null;
                     sb.Append(k).Append(',');
                 }
                 return sb.Append(')').ToString();
@@ -1196,20 +1252,34 @@ public sealed class ClauseCompiler
 
     private void CompileUnifyArgInline(CompileState s, CompoundTerm c)
     {
-        if (TryEmitCse(s, c)) return;
-        bool isList = c.Functor == "." && c.Args.Length == 2;
-        if (isList)
-            s.Emitter.EmitUnifyList();
-        else
-            s.Emitter.EmitUnifyStructure(InternFunctor(c.Functor, c.Args.Length));
-
-        for (int i = 0; i < c.Args.Length; i++)
+        // The inline build recurses only into the LAST argument, so the chain
+        // is linear — walk it as a loop rather than one C# frame per level.
+        // Phase 33 I12: the former recursion overflowed on a long list (whose
+        // tail is always the last argument), crashing the host at compile time.
+        // The emission order is identical.
+        while (true)
         {
-            if (i == c.Args.Length - 1 && c.Args[i] is CompoundTerm last
-                && CanInlineCompound(last))
-                CompileUnifyArgInline(s, last);
+            if (TryEmitCse(s, c)) return;
+            bool isList = c.Functor == "." && c.Args.Length == 2;
+            if (isList)
+                s.Emitter.EmitUnifyList();
             else
+                s.Emitter.EmitUnifyStructure(InternFunctor(c.Functor, c.Args.Length));
+
+            int n = c.Args.Length;
+            for (int i = 0; i < n - 1; i++)
                 CompileUnifyArg(s, c.Args[i]);
+
+            // Last argument: continue the inline chain iteratively when it is a
+            // further inlinable compound, else emit it and stop.
+            if (n > 0 && c.Args[n - 1] is CompoundTerm last && CanInlineCompound(last))
+            {
+                c = last;
+                continue;
+            }
+            if (n > 0)
+                CompileUnifyArg(s, c.Args[n - 1]);
+            return;
         }
     }
 
@@ -1235,13 +1305,21 @@ public sealed class ClauseCompiler
     /// for. Only such trees benefit from the reserve-upfront path.</summary>
     private static bool HasNonLastNestedCompound(Term t)
     {
-        if (t is not CompoundTerm c) return false;
-        for (int i = 0; i < c.Args.Length; i++)
+        // Iterative (Phase 33 I12): a recursive descent overflowed on a deeply
+        // nested term (e.g. a long list) even though the answer for a flat list
+        // is just false.
+        if (t is not CompoundTerm) return false;
+        var stack = new Stack<Term>();
+        stack.Push(t);
+        while (stack.Count > 0)
         {
-            bool last = i == c.Args.Length - 1;
-            if (!last && c.Args[i] is CompoundTerm) return true;
-            if (c.Args[i] is CompoundTerm inner && HasNonLastNestedCompound(inner))
-                return true;
+            if (stack.Pop() is not CompoundTerm c) continue;
+            for (int i = 0; i < c.Args.Length; i++)
+            {
+                bool last = i == c.Args.Length - 1;
+                if (!last && c.Args[i] is CompoundTerm) return true;
+                if (c.Args[i] is CompoundTerm inner) stack.Push(inner);
+            }
         }
         return false;
     }
@@ -1254,13 +1332,20 @@ public sealed class ClauseCompiler
     /// the root header).</summary>
     private static bool AllNestedCompoundsInlinable(Term t)
     {
-        if (t is not CompoundTerm c) return true;
-        foreach (Term a in c.Args)
-            if (a is CompoundTerm inner)
-            {
-                if (!CanInlineCompound(inner)) return false;
-                if (!AllNestedCompoundsInlinable(inner)) return false;
-            }
+        // Iterative (Phase 33 I12): see HasNonLastNestedCompound.
+        if (t is not CompoundTerm) return true;
+        var stack = new Stack<Term>();
+        stack.Push(t);
+        while (stack.Count > 0)
+        {
+            if (stack.Pop() is not CompoundTerm c) continue;
+            foreach (Term a in c.Args)
+                if (a is CompoundTerm inner)
+                {
+                    if (!CanInlineCompound(inner)) return false;
+                    stack.Push(inner);
+                }
+        }
         return true;
     }
 
@@ -1615,18 +1700,24 @@ public sealed class ClauseCompiler
     }
 
     private static void UpdateMaxLiveYIdxFromTerm(
-        Term t, IReadOnlyDictionary<string, int> ys, ref int maxYIdx)
+        Term root, IReadOnlyDictionary<string, int> ys, ref int maxYIdx)
     {
-        switch (t)
+        // Iterative (Phase 33 I12): a recursive descent overflowed on a deeply
+        // nested body argument (e.g. a long list).
+        var stack = new Stack<Term>();
+        stack.Push(root);
+        while (stack.Count > 0)
         {
-            case VarTerm v:
-                if (ys.TryGetValue(v.Name, out int idx) && idx > maxYIdx)
-                    maxYIdx = idx;
-                break;
-            case CompoundTerm c:
-                foreach (Term arg in c.Args)
-                    UpdateMaxLiveYIdxFromTerm(arg, ys, ref maxYIdx);
-                break;
+            switch (stack.Pop())
+            {
+                case VarTerm v:
+                    if (ys.TryGetValue(v.Name, out int idx) && idx > maxYIdx)
+                        maxYIdx = idx;
+                    break;
+                case CompoundTerm c:
+                    foreach (Term arg in c.Args) stack.Push(arg);
+                    break;
+            }
         }
     }
 

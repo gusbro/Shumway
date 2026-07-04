@@ -964,16 +964,40 @@ Interpreter core:
       lists-of-lists, 40000-element list compare no-overflow, cyclic-term /
       cyclic-list compares terminate). Full 5-project gate green (Embedding
       2752), no dump under the AV trap.
-- [ ] **I12** 🟡 `ClauseCompiler.ClassifyPermanents` recurses per term node
-      (a local `Visit` closure), so `assertz/1` (and any clause compile) of a
-      clause with a **deeply-nested argument** — e.g. an 8000-element list —
-      stack-overflows the host uncatchably (surfaced while building an I11
-      benchmark: asserting an 8000-pair list crashed at ~6841 `Visit` frames).
-      Real programs that `assertz` a large ground list hit this. Same class as
-      I9/I11: make the permanent-variable classification walk iterative
-      (explicit stack), or bound it → catchable `resource_error`. Likely other
-      per-node recursions in the clause compiler (arg scheduling, body walk)
-      share the exposure — worth a sweep. Own change + tests.
+- [x] **I12** 🟡 Compiling a clause with a **deeply-nested argument** (a long
+      list) stack-overflowed the host uncatchably — `assertz/1` of a large ground
+      list crashed at compile time. **DONE — for the list case, comprehensively.**
+      The exposure was NOT one method but a **sweep of per-term-node recursions**
+      across `ClauseCompiler`, each fixed to an explicit-stack iterative walk
+      (found one at a time by binary-searching the crash depth and reading the
+      captured stack): `ClassifyPermanents` / `ClassifyPermanentsInlineTransparent`
+      (permanent classification — reverse-push preserves the first-occurrence
+      order that drives Y-slot assignment), `CountVarOccurrences`,
+      `CollectVarNames` (head-var collection), `CompileUnifyArgInline` (the ADR-019
+      last-arg inline build — the list-spine loop), the argument scheduler's
+      `CollectForcedSaves` and `UpdateMaxLiveYIdxFromTerm`, and the ADR-020
+      reserve-build eligibility checks `HasNonLastNestedCompound` /
+      `AllNestedCompoundsInlinable`; plus `StructuralKey` (CSE keying) bounded to
+      depth 64 (CSE of a huge sub-term is pointless and was building an O(size)
+      key string). Verified end-to-end on the default stack: `assertz` of a
+      **100 000**-element list as a fact head AND as a body-goal argument both
+      compile and dispatch (readback length correct). 3 Phase33I12 tests
+      (deep-list fact / deep-list rule body / shallow regression). Full 5-project
+      gate green (Embedding 2755), no dump. **A measurement lesson:** the hunt was
+      derailed for many iterations by a stale `iteattr.exe` — a clean build moved
+      the output to `bin/x64/Release/` but the run script kept invoking the old
+      `bin/Release/` binary, so fixes appeared to have no effect; always confirm
+      the artifact path after a config change.
+- [ ] **I13** 🟡 `TermReader.MaterializeCompoundAt` (Embedding) recurses per
+      compound level, so materialising a deeply-nested **non-list** term from the
+      heap — `assertz` of a 100 000-deep `s(s(…))` / a long left-associative
+      `a+b+c+…` expression — overflows the host uncatchably at materialize time
+      (before compile). Chunk 111 made the LIST spine iterative but left general
+      compound nesting recursive; the I12 compile-side walks now handle any shape,
+      so this materialize step is the remaining wall for non-list deep terms.
+      Generalise the materialiser to an explicit-stack post-order tree walk
+      (preserving the chunk-432 cycle set and paired-cell handling), or bound it
+      → catchable `resource_error`. Same class as I9/I11/I12. Own change + tests.
 
 WAM↔IL boundary:
 - [x] **B1** 🔴 resume-marker encoding caps. *Fixed: markers are now dense ids into a process-global interned side table of (fid, cursor) pairs (`marker = Base + denseId`) — no functor-id or cursor cap (capacity ≈1.07B distinct pairs); lock-free decode / locked intern, same discipline as the atom/functor tables. Process-global because markers bake into IL delegates shared across engines. `ResumeMarkerCursorStride` survives only as the IL emitters per-predicate cursor-count BUDGET (emit-shape policy). 4 tests incl. round-trip beyond both old caps + growth stability.*
