@@ -13,7 +13,7 @@ in a later round to see whether its blocking restriction can be LIFTED** — e.g
 W6 is deferred because the IL compiler rejects `ExecuteBuiltin` in bodies: study
 teaching IL that shape with good performance instead of accepting the deferral.
 Same for D1/D2 (benchmark the materialize/invoker costs), L7 (verify the JIT
-constant-folding assumption with a disasm), W9(a-d), C3-remainder, B-series.
+constant-folding assumption with a disasm), W9(a-d), B-series.
 A deferral is a TODO with a prerequisite, not a closure.
 
 ---
@@ -130,8 +130,13 @@ A deferral is a TODO with a prerequisite, not a closure.
       bridges: `ToTermDynamic`/`FromTermDynamic` cached delegates now COMPILED
       (engine.ToTerm<T>((T)v)) instead of wrapping MethodInfo.Invoke + object[]
       per element. The [PrologPredicate] bridge scalar path already benefits from
-      A2 (no heap cell); emitting cell-direct reads in the source generator is
-      deferred to a later round (small residual: one AST node per scalar arg).*
+      A2 (no heap cell). **C3-remainder now done**: the source generator emits
+      `RegisterMarshalling.ReadInt64Register` / `ReadInt32Register` for `+`-mode
+      `long`/`int` params — a cell-direct read (Int cell → payload, zero alloc;
+      Ref → instantiation_error; anything else falls back to `FromTerm<T>` for
+      exact semantics). Measured on a 3-arg scalar foreign in a failure-driven
+      loop: `padd/3` 120 B/call → **0.00 B/call**. Embedding gate 2702/0/3 green
+      under the testhost AV trap.*
 - [-] **C4** 🟡 `Solution.Get<T>` — **largely not actionable**: the converter
       tiers already cache per type (user dict probe + JIT-specialized scalar
       chain), and the per-solution Bindings dictionary is inherent to the

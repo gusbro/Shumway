@@ -313,6 +313,25 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
             switch (p.Mode)
             {
                 case ParamMode.Input:
+                    // Phase 33 C3 — integer scalars read the register CELL
+                    // directly (zero allocation; the Term path allocated one
+                    // IntTerm per scalar arg per call). The helper raises the
+                    // same instantiation_error on an unbound register and
+                    // falls back to FromTerm<T> for BigInt / type errors.
+                    if (p.TypeName is "long" or "System.Int64" or "global::System.Int64")
+                    {
+                        sb.Append(indent).Append("    var __arg").Append(i)
+                          .Append(" = global::Shumway.Embedding.RegisterMarshalling.ReadInt64Register(engine, host, ")
+                          .Append(i).AppendLine(");");
+                        break;
+                    }
+                    if (p.TypeName is "int" or "System.Int32" or "global::System.Int32")
+                    {
+                        sb.Append(indent).Append("    var __arg").Append(i)
+                          .Append(" = global::Shumway.Embedding.RegisterMarshalling.ReadInt32Register(engine, host, ")
+                          .Append(i).AppendLine(");");
+                        break;
+                    }
                     // Chunk 246 — explicit instantiation_error for
                     // + mode lets the user see an ISO-shaped Prolog
                     // error rather than the InvalidCastException
