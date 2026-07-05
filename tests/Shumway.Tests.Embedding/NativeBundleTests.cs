@@ -113,16 +113,16 @@ public sealed class NativeBundleTests
         var e = new PrologEngine();
         e.UseNativeInterop(typeof(Interop));
         e.IlPromotion.Threshold = 1;
-        // Phase 33 I10 — sync promotion so the inline is guaranteed done before the
-        // count assertion below (see Tier1Inline_ArithmeticWithLocal_Runs for the
-        // full rationale — the shared background IL worker races under suite
-        // parallelism and the `> before` check would flake).
-        e.IlPromotion.BackgroundCompilation = false;
         e.ConsultString(CmpProgram);
         for (int i = 0; i < 5; i++)
             Assert.True(e.Query("cmp(abc, abd, R), R == -1.").Success);
         Assert.True(e.Query("cmp(abc, abc, R), R == 0.").Success);
         Assert.True(e.Query("cmp(xyz, abc, R), R == 1.").Success);
+        // Phase 33 I10 — wait for the background IL compile (which performs the
+        // inline) to install before the count assertion (see
+        // Tier1Inline_ArithmeticWithLocal_Runs for the full rationale — the shared
+        // worker races under suite parallelism and `> before` would flake).
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(), "IL promotion did not complete");
         // confirm the block was actually inlined into IL (not run via dispatch).
         Assert.True(Shumway.Compiler.Il.IlPredicateCompiler.NativeBlocksInlined > before);
     }
@@ -142,19 +142,17 @@ public sealed class NativeBundleTests
         var e = new PrologEngine();
         e.UseNativeInterop(typeof(Interop));
         e.IlPromotion.Threshold = 1;
-        // Phase 33 I10 — compile synchronously so the IL promotion (which performs
-        // the native-block inline) is guaranteed to have run before we assert the
-        // inline count. Under the default background mode the compile is queued on
-        // the shared IL worker and, under suite parallelism, frequently hasn't
-        // landed within these few queries — the queries still succeed on Tier-0
-        // `$native_run` dispatch, but NativeBlocksInlined never bumps and the
-        // `> before` check fails intermittently. The inline correctness this test
-        // verifies is mode-independent; sync mode just removes the worker-timing race.
-        e.IlPromotion.BackgroundCompilation = false;
         e.ConsultString(program);
         for (int i = 0; i < 5; i++)
             Assert.Equal(14L, e.Query("calc(3, 4, R).").Get<long>("R"));
         Assert.Equal(-2L, e.Query("calc(2, -3, R).").Get<long>("R"));
+        // Phase 33 I10 — the inline happens inside the background IL compile
+        // (the default path). Wait for it to install before asserting the counter:
+        // otherwise, under suite parallelism, the queries above succeed on Tier-0
+        // `$native_run` dispatch while the compile is still queued on the shared
+        // worker, so NativeBlocksInlined hasn't bumped yet and `> before` flakes.
+        // The results themselves are already verified above on whichever tier ran.
+        Assert.True(e.IlPromotion.WaitForPendingPromotions(), "IL promotion did not complete");
         Assert.True(Shumway.Compiler.Il.IlPredicateCompiler.NativeBlocksInlined > before);
     }
 

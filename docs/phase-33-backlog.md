@@ -809,23 +809,31 @@ Interpreter core:
       before the mutation → evict is a no-op → the churn pin is never reached →
       the final calls re-promote → `IsPromoted` true → fail. The churn-pin logic
       itself lives in `RecordInvocation` ahead of the background/sync branch and
-      is mode-independent, so the fix is to drive promotion **synchronously**
-      (`engine.IlPromotion.BackgroundCompilation = false`) — `RunSync` blocks the
-      promoting call on the worker until the delegate is installed, so every
-      promote→evict cycle is real and the pin is reached deterministically
-      regardless of load. A **5×-repeat run under parallel load surfaced a second,
+      is mode-independent, so the fix keeps the DEFAULT background path and just
+      adds the completion barrier the engine already exposes for exactly this:
+      `engine.IlPromotion.WaitForPendingPromotions()` after each round's warm
+      queries (before the mutation) drains the in-flight compile and installs the
+      delegate, so every promote→evict cycle is real and the pin is reached
+      deterministically regardless of load — no product behaviour is disabled or
+      hidden; the async promotion still runs, it is only synchronised. (An earlier
+      cut used `BackgroundCompilation = false`; switched to the barrier so the test
+      still exercises the real default mode.) A **5×-repeat run under parallel load
+      surfaced a second,
       independent instance of the same family**: `NativeBundleTests.Tier1Inline_
       ArithmeticWithLocal_Runs` (and its latent sibling `Tier1Inline_Cmp_Runs`),
       which assert the static `IlPredicateCompiler.NativeBlocksInlined` counter
       incremented — the inline happens during the queued IL compile, so under load
       the queries succeed on Tier-0 `$native_run` dispatch but the counter never
-      bumps → `> before` fails. Same one-line sync-mode fix. (The rest of the
-      family was already hardened: `Chunk76Tests` PGO uses sync mode in its shared
-      `NewColorEngine`; `NativeReftypeTests` gates its inline-count assertion
-      behind `WaitForPendingPromotions()`.) Test-only change, no product code.
-      Verified: Chunk39 12/12 solo; full Embedding suite **5/5 green under parallel
-      load** (2762 passed), no dump with the AV trap armed — where the pre-fix
-      suite failed in roughly half of runs.
+      bumps → `> before` fails. Fixed with the same `WaitForPendingPromotions()`
+      barrier before the count assertion (not by disabling background mode). (The
+      rest of the family was already hardened: `Chunk76Tests` PGO uses sync mode in
+      its shared `NewColorEngine`; `NativeReftypeTests` already gates its inline-count
+      assertion behind `WaitForPendingPromotions()` — the same barrier reused here.)
+      Test-only change, no product code — the engine's query results were correct
+      throughout; only the timing-dependent optimisation side-effect assertions were
+      unsynchronised. Verified: Chunk39 12/12 solo; full Embedding suite **green under
+      repeated parallel-load runs** (2762 passed), no dump with the AV trap armed —
+      where the pre-fix suite failed in roughly half of runs.
 - [x] **I2** 🔴 findall/bagof/setof/copy_term round-trip through managed AST.
       **Part (a) — `copy_term/2` — DONE.** New `HeapTermCopy` does a direct
       heap→heap copy (no intermediate AST tree): Ref/AttVar→fresh plain var
