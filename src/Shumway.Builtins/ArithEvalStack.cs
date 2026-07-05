@@ -71,7 +71,28 @@ public static class ArithEvalStack
         System.Array.Resize(ref _b, cap);
     }
 
+    // Phase 33 IL round 2 — the L7 lesson again, one leaf deeper: PushReg /
+    // PushY / Bin are AggressiveInlining, but the PushIntLane they delegate to
+    // was NOT, and the profiler showed it surviving as a real CALL from the
+    // Tier-1 delegates (~3% exclusive on the mixed vanroy probe — one call per
+    // integer operand pushed). Inlining it also lets the JIT CSE the
+    // [ThreadStatic] base address across the caller's inlined fast lane
+    // instead of re-resolving TLS inside a callee. The init/grow check
+    // collapses to one predicted-not-taken branch (EnsureInit is subsumed:
+    // a null _i can't equal _top unless uninitialised — see PushSlow).
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void PushIntLane(long v)
+    {
+        long[]? ia = _i;
+        int top = _top;
+        if (ia is null || top == ia.Length) { PushIntSlow(v); return; }
+        ia[top] = v;
+        _b![top] = false;
+        _top = top + 1;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void PushIntSlow(long v)
     {
         EnsureInit();
         if (_top == _i!.Length) Grow();
@@ -91,6 +112,7 @@ public static class ArithEvalStack
 
     /// <summary>Pushes an already-evaluated number; an integer-kind one drops
     /// into the fast lane, a float / bigint stays boxed.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void Push(Number num)
     {
         if (num.IsInt) PushIntLane(num.IntValue);
@@ -98,6 +120,7 @@ public static class ArithEvalStack
     }
 
     /// <summary>Pushes a 32-bit integer literal operand (a_eval_push kind 0).</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void PushInt(long value) => PushIntLane(value);
 
     // Chunk 355: the integer fast lane (a register/Y slot holding an inline Int)
@@ -189,37 +212,60 @@ public static class ArithEvalStack
 
     /// <summary>Pops the result and unifies it with the X-register
     /// (a_eval_is kind 3). Returns the unification outcome.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static bool IsReg(Engine engine, int reg) => engine.UnifyRegisterWithCell(reg, PopCell(engine));
 
     /// <summary>Pops the result and unifies it with the permanent (Y) slot
     /// (a_eval_is kind 4). Returns the unification outcome.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static bool IsPerm(Engine engine, int slot) => engine.UnifyPermanentWithCell(slot, PopCell(engine));
 
     /// <summary>Pops the result and stores it directly into the X-register
     /// (a_eval_is kind 5) — a first-occurrence target variable, bound by a plain
     /// store rather than unification (no unbound heap cell, no trail entry).</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void SetReg(Engine engine, int reg) => engine.SetRegister(reg, PopCell(engine));
 
     /// <summary>Pops the result and stores it directly into the permanent (Y)
     /// slot (a_eval_is kind 6) — first-occurrence permanent target.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void SetPerm(Engine engine, int slot) => engine.SetY(slot, PopCell(engine));
 
+    // Phase 33 IL round 2 — PopCell carried a try/catch, which makes a method
+    // UNINLINEABLE outright, and it runs once per a_eval_is (every compiled
+    // is/2). Chunk-354/355 pattern: the int-lane pop (no Prolog error possible)
+    // is the inlineable fast path; only the boxed Number.ToCell (bigint alloc /
+    // float pair — can raise) keeps the try/catch, in the cold NoInlining half.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static Cell PopCell(Engine engine)
     {
         int ai = --_top;
         if (!_b![ai]) return Cell.Int(_i![ai]);   // int lane always fits Cell.Int by invariant
+        return PopCellBoxed(engine, ai);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static Cell PopCellBoxed(Engine engine, int ai)
+    {
         try { return _n![ai].ToCell(engine); }
         catch (PrologRuntimeException re) { re.StampBuiltin("is", 2); throw; }
     }
 
     /// <summary>Pops the top two entries and applies an arithmetic comparison
     /// (a_eval_cmp). Returns whether the relation holds.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static bool Cmp(int rel)
     {
         int ai = _top - 2, bi = _top - 1;
         _top -= 2;
         if (!_b![ai] && !_b[bi])
             return FastCmp(rel, _i![ai], _i[bi]);
+        return CmpBoxed(rel, ai, bi);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool CmpBoxed(int rel, int ai, int bi)
+    {
         Escalate(ai);
         Escalate(bi);
         return ArithmeticEvaluator.ApplyRel((ArithmeticEvaluator.RelOp)rel, _n![ai], _n[bi]);
