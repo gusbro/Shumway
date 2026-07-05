@@ -149,8 +149,11 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `reconsult(+File)` | Like consult/1 but first abolishes every predicate whose indicator appears in File (in the target module), so an edit-reload cycle replaces the file's predicates rather than duplicating clauses. Predicates not mentioned in File are left untouched (classical GProlog / SICStus semantics). |
 | `record_after(+Ref, ?Term, -NewRef)` | Inserts Term immediately after the entry with reference Ref in the same key's chain. |
 | `record_before(+Ref, ?Term, -NewRef)` | Inserts Term immediately before the entry with reference Ref in the same key's chain. |
+| `recorda(+Key, +Term)` | SWI 2-arg form of recorda/3 (reference discarded). |
 | `recorda(+Key, ?Term, -Ref)` | Adds Term at the start of the chain stored under Key in the recorded database, returning a fresh reference. The recorded DB is separate from dynamic predicates: keys are arbitrary terms (not functor/arity). |
+| `recorded(+Key, ?Term)` | SWI 2-arg form of recorded/3 (reference discarded); backtracks over matches. |
 | `recorded(+Key, ?Term, -Ref)` | Enumerates on backtracking the (Term, Ref) pairs stored under Key. |
+| `recordz(+Key, +Term)` | SWI 2-arg form of recordz/3 (reference discarded). |
 | `recordz(+Key, ?Term, -Ref)` | Like recorda/3 but appends Term at the end of the chain under Key. |
 | `ref(?X)` | Succeeds when X is a live recorded-database reference (an integer previously returned by recorda/3 or recordz/3 and not yet erased). |
 | `replace(+Ref, +Term)` | Replaces the term in the entry with reference Ref. The chain position and the reference itself are preserved. |
@@ -166,6 +169,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 
 | Predicate | Description |
 | --- | --- |
+| `append(+ListOfLists, -List)` | Concatenates a list of lists (SWI library form). |
 | `append(?List1, ?List2, ?List)` | Concatenates List1 and List2 into List; backtracks over splits of List. |
 | `delete(+List, +Elem, -Rest)` | Rest is List with every element that unifies with Elem removed. |
 | `exclude(:Goal, +List, -Excluded)` | Excluded holds the elements of List for which Goal fails. |
@@ -252,6 +256,8 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `current_stream(?Filename, ?Mode, ?Stream)` | Enumerates open streams (ISO §8.11.8.1). |
 | `delete(+File)` | Deletes the file File. Raises existence_error if absent, permission_error if locked / read-only. |
 | `directory(+Path, -Name, -Mode, -Time, -Date, -Size)` | Backtracks over the entries in Path, binding Name (atom), Mode (Arity-style bitfield: 1=read-only, 2=hidden, 4=system, 16=directory, 32=archive), Time (HH:MM:SS atom), Date (YYYY-MM-DD atom) and Size (bytes; 0 for directories). |
+| `display(+Term)` | Edinburgh display/1: writes Term to current output ignoring operator definitions, unquoted. |
+| `display(+Stream, +Term)` | Edinburgh display/2: writes Term to Stream ignoring operator definitions, unquoted. |
 | `exists_directory(+Path)` | Succeeds when Path exists and is a directory. |
 | `exists_file(+File)` | Succeeds when File exists and is a regular file. |
 | `file_name_extension(?Base, ?Ext, ?Full)` | Relates a file name to its base and extension. With Full bound, splits at the last '.'; with Base and Ext bound, composes Base + '.' + Ext (or just Base when Ext is empty). SWI / SICStus compatible. |
@@ -271,6 +277,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `get_char(+Stream, -Char)` | Reads and consumes one character from a stream. |
 | `get_code(-Code)` | Reads one character code from the current input stream (ISO §8.12.4). |
 | `get_code(+Stream, -Code)` | Reads one character code from a stream (ISO §8.12.4). |
+| `getenv(+Name, -Value)` | Unifies Value with the environment variable Name's contents as an atom; fails (does not raise) when Name is unset — SWI-compatible, so `(getenv(X,V) ; V = Default)` works. |
 | `mkdir(+Path)` | Creates the directory Path (and any missing parents). Succeeds silently when the directory already exists. |
 | `nl` | Writes a newline to the current output stream. |
 | `nl(+Stream)` | Writes a newline to the given stream. |

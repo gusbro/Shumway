@@ -49,6 +49,9 @@ public static class ShmoCompiler
         "op", "set_prolog_flag", "char_conversion",
         "discontiguous", "multifile", "table", "mode", "native",
         "c", "prolog",
+        // ISO include/1 (expanded before this pass) + initialization/1
+        // (collected by the consult path; carried as an entry goal here).
+        "include", "initialization",
         // Phase 30 (ADR-022) step 1 — the synthetic directive the ClauseReader
         // emits to carry a captured `:- c` region's raw declaration text. An
         // ignored directive until the C-subset parser consumes it (step 2).
@@ -79,7 +82,15 @@ public static class ShmoCompiler
         ArgumentNullException.ThrowIfNull(path);
         string source = File.ReadAllText(path);
         string fallback = Path.GetFileNameWithoutExtension(path);
-        return CompileSource(source, fallback, buildMode);
+        var result = TryCompileSource(source, fallback, buildMode,
+            includeBaseDir: Path.GetDirectoryName(Path.GetFullPath(path)));
+        if (result.Errors.Count > 0)
+        {
+            var first = result.Errors[0];
+            throw new InvalidOperationException(
+                $"{first.Line}:{first.Column}: {first.Message}");
+        }
+        return result.Object!;
     }
 
     /// <summary>Compiles <paramref name="source"/> in memory.
@@ -121,7 +132,8 @@ public static class ShmoCompiler
         ShmoBuildMode buildMode = ShmoBuildMode.Release,
         int maxErrors = 100,
         bool arityCompat = false,
-        Func<PredicateRef, bool>? clauseFilter = null)
+        Func<PredicateRef, bool>? clauseFilter = null,
+        string? includeBaseDir = null)
     {
         ArgumentNullException.ThrowIfNull(source);
         Shumway.Builtins.StandardBuiltins.EnsureRegistered();
@@ -150,8 +162,9 @@ public static class ShmoCompiler
         // call semantics (undeclared predicate → implicit empty
         // dynamic) to this module's unresolved references.
         bool arityEverOn = arityCompat;
+        var operatorTable = OperatorTable.Default();
         foreach (var entry in new ClauseReader(new Lexer(source),
-                     OperatorTable.Default(), readerFlags)
+                     operatorTable, readerFlags)
                  .ReadAllCollectingErrors(maxErrors))
         {
             arityEverOn |= readerFlags.ArityCompat;
@@ -164,6 +177,27 @@ public static class ShmoCompiler
         arityEverOn |= readerFlags.ArityCompat;
         if (errors.Count >= maxErrors)
             return new ShmoCompileResult(null, errors, warnings);
+
+        // ISO `:- include(File)` — textual inclusion (IncludeExpander), so
+        // `shumway-compile loader.pl` compiles the whole included tree into
+        // one object. Included files parse against the SAME operator table
+        // (an :- op/3 in an earlier include is live for later siblings).
+        // Errors inside an included file surface as a compile error naming
+        // that file (no per-included-file recovery in this first cut).
+        if (Shumway.Compiler.Parsing.IncludeExpander.HasInclude(allClauses))
+        {
+            try
+            {
+                allClauses = Shumway.Compiler.Parsing.IncludeExpander.Expand(
+                    allClauses, includeBaseDir, operatorTable, readerFlags);
+            }
+            catch (Exception ex) when (ex is Shumway.Compiler.Parsing.ParseException
+                                       or FileNotFoundException or InvalidOperationException)
+            {
+                errors.Add(new ShmoCompileError(ex.Message, 0, 0));
+                return new ShmoCompileResult(null, errors, warnings);
+            }
+        }
         // First pass: walk RAW (untransformed) clauses to read
         // directives (so we know which predicates are dynamic) and
         // collect the raw bodies. We need the raw bodies for two
@@ -694,7 +728,8 @@ public static class ShmoCompiler
         ArgumentNullException.ThrowIfNull(path);
         string source = File.ReadAllText(path);
         string fallback = Path.GetFileNameWithoutExtension(path);
-        return TryCompileSource(source, fallback, buildMode, maxErrors, arityCompat);
+        return TryCompileSource(source, fallback, buildMode, maxErrors, arityCompat,
+            includeBaseDir: Path.GetDirectoryName(Path.GetFullPath(path)));
     }
 
     // ------------------------------------------------------------------------

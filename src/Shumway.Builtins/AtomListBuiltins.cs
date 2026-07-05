@@ -146,9 +146,18 @@ public static class AtomListBuiltins
             cursor = Resolve(engine, engine.GetHeap(headIdx + 1));
         }
         if (cursor.Tag == Tag.Ref)
-            // L3 is a partial list while L1 is var — neither side is
-            // sufficiently instantiated to drive the split. Chunk 131c.
-            throw new PrologRuntimeException("instantiation_error");
+            // L3 is a partial list while L1 is open too — nothing closed to
+            // drive the split off. Phase 33 (PrologToC corpus): this used to
+            // raise instantiation_error (chunk 131c), but the PURE append/3
+            // never raises — it enumerates solutions by unification, and the
+            // classic difference-list idiom `append(Open, [], Open)` (closing
+            // an open list's tail hole, e.g. the DEC-10 rdtok tokenizer's
+            // dictionary) must succeed at the first solution. Enumerate k =
+            // 0, 1, 2, …: L1 unifies with a k-element fresh-var list and L3
+            // with those same vars prefixed onto L2 — unification against the
+            // callers' partial lists prunes each attempt. Unbounded on
+            // backtracking, exactly like SWI's append(X, Y, Z).
+            return new AppendOpenCursor(returnPc).Start(engine);
 
         // `cursor` is L3's final tail: [] for a proper list, or some other
         // term (atom / compound) for an improper list. ISO append/3 splits an
@@ -206,6 +215,71 @@ public static class AtomListBuiltins
             int l2Heap = BuildListFromCells(engine, _elems, splitIdx, n, _suffixTail);
             if (!engine.UnifyRegisterWithHeapAt(0, l1Heap)) return false;
             if (!engine.UnifyRegisterWithHeapAt(1, l2Heap)) return false;
+            if (isResume) engine.ResumeAtReturnPc(_returnPc);
+            return true;
+        }
+    }
+
+    /// <summary>Resume state for the fully-open <c>append/3</c> mode (both L1
+    /// and L3 have unbound tails — see the call site in
+    /// <see cref="AppendSplit"/>). Attempt k unifies L1 with a k-element
+    /// fresh-var list and L3 with those same k vars prefixed onto L2; the
+    /// engine's builtin-CP trail unwind resets the bindings between attempts.
+    /// The enumeration is unbounded (pure-append semantics — SWI behaves the
+    /// same on <c>append(X, Y, Z)</c>); callers commit with a cut.</summary>
+    private sealed class AppendOpenCursor
+    {
+        private readonly int _returnPc;
+        private int _k;
+        public readonly Func<Engine, int, bool> Resume;
+
+        public AppendOpenCursor(int returnPc)
+        {
+            _returnPc = returnPc;
+            _k = 0;
+            Resume = (e, _) => Attempt(e, isResume: true);
+        }
+
+        public bool Start(Engine engine) => Attempt(engine, isResume: false);
+
+        private bool Attempt(Engine engine, bool isResume)
+        {
+            int k = _k;
+            // Always re-arm for k+1 — the solution set is unbounded.
+            _k = k + 1;
+            engine.PushBuiltinChoicePoint(Resume, arity: 3);
+
+            // L1 = [V1..Vk] (fresh vars, closed). Unify FIRST so the shared
+            // var cells pick up L1's actual elements before L3 sees them.
+            int l1Heap = BuildFreshVarList(engine, k);
+            if (!engine.UnifyRegisterWithHeapAt(0, l1Heap)) return false;
+
+            // L3 = [V1..Vk | L2] — the SAME var cells (now possibly bound),
+            // tail = L2's current cell.
+            Cell l2 = engine.GetRegister(1);
+            int l3Heap;
+            if (k == 0)
+            {
+                l3Heap = engine.AllocateHeap(1);
+                engine.SetHeap(l3Heap, l2);
+            }
+            else
+            {
+                // Mirror BuildFreshVarList's layout: pair i's LIS at base+2i
+                // points at its head (a Ref to L1's var cell); the slot after
+                // the last pair carries the tail.
+                l3Heap = engine.AllocateHeap(2 * k + 1);
+                for (int i = 0; i < k; i++)
+                {
+                    int lisIdx = l3Heap + 2 * i;
+                    int headIdx = lisIdx + 1;
+                    engine.SetHeap(lisIdx, Cell.Lis(headIdx));
+                    // L1's list layout: element i's head cell at l1Heap + 2i + 1.
+                    engine.SetHeap(headIdx, Cell.Ref(l1Heap + 2 * i + 1));
+                }
+                engine.SetHeap(l3Heap + 2 * k, l2);
+            }
+            if (!engine.UnifyRegisterWithHeapAt(2, l3Heap)) return false;
             if (isResume) engine.ResumeAtReturnPc(_returnPc);
             return true;
         }

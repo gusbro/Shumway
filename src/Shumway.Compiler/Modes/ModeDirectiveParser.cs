@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Shumway.Compiler.Ast;
 using Shumway.Core;
 
@@ -42,7 +43,56 @@ public static class ModeDirectiveParser
             return false;   // not a mode directive — caller moves on
         }
 
-        Term inner = mode.Args[0];
+        ParseSpecCore(mode.Args[0], out declaration, out error);
+        return true;
+    }
+
+    /// <summary>Chain-aware variant (Phase 33, PrologToC corpus): the classic
+    /// DEC-10 / Quintus style packs MANY specs into ONE directive as a
+    /// ','-chain — <c>:- mode f(+,-), g(+), h(?,-).</c> parses as
+    /// <c>mode(','(f(+,-), ','(g(+), h(?,-))))</c>. Splits the chain and
+    /// parses each element with the single-spec core. Same contract as
+    /// <see cref="TryParse"/>: false = not a mode directive at all; true with
+    /// <paramref name="error"/> = malformed; true with
+    /// <paramref name="declarations"/> = success.</summary>
+    public static bool TryParseAll(
+        Term directiveBody,
+        out List<ModeDeclaration>? declarations,
+        out string? error)
+    {
+        declarations = null;
+        error = null;
+
+        if (directiveBody is not CompoundTerm mode
+            || mode.Functor != "mode" || mode.Args.Length != 1)
+        {
+            return false;   // not a mode directive — caller moves on
+        }
+
+        var decls = new List<ModeDeclaration>();
+        Term rest = mode.Args[0];
+        while (rest is CompoundTerm { Functor: ",", Args.Length: 2 } conj)
+        {
+            ParseSpecCore(conj.Args[0], out var d, out error);
+            if (error is not null) return true;
+            decls.Add(d!);
+            rest = conj.Args[1];
+        }
+        ParseSpecCore(rest, out var last, out error);
+        if (error is not null) return true;
+        decls.Add(last!);
+        declarations = decls;
+        return true;
+    }
+
+    /// <summary>Single-spec core shared by <see cref="TryParse"/> and
+    /// <see cref="TryParseAll"/>: parses <c>foo(+,-)</c> or
+    /// <c>is(foo(+,-), det)</c>.</summary>
+    private static void ParseSpecCore(Term inner,
+        out ModeDeclaration? declaration, out string? error)
+    {
+        declaration = null;
+        error = null;
         Term specTerm;
         Determinism determinism;
 
@@ -54,13 +104,13 @@ public static class ModeDirectiveParser
             {
                 error = "malformed :- mode directive: the determinism after 'is' "
                     + "must be one of det, semidet, multi, nondet.";
-                return true;
+                return;
             }
             if (!TryParseDeterminism(detAtom.Name, out determinism))
             {
                 error = $"malformed :- mode directive: unknown determinism '{detAtom.Name}' "
                     + "(expected det, semidet, multi, or nondet).";
-                return true;
+                return;
             }
         }
         else
@@ -73,7 +123,7 @@ public static class ModeDirectiveParser
         {
             error = "malformed :- mode directive: the predicate spec must be a "
                 + "compound term like foo(+, -).";
-            return true;
+            return;
         }
 
         var argModes = new ModeIndicator[spec.Args.Length];
@@ -84,14 +134,13 @@ public static class ModeDirectiveParser
             {
                 error = $"malformed :- mode directive: argument {i + 1} must be "
                     + "one of +, -, ?.";
-                return true;
+                return;
             }
         }
 
         int functorId = FunctorTable.Intern(
             AtomTable.Intern(spec.Functor, permanent: true).Id, spec.Args.Length);
         declaration = new ModeDeclaration(functorId, argModes, determinism);
-        return true;
     }
 
     private static bool TryParseIndicator(string atom, out ModeIndicator indicator)

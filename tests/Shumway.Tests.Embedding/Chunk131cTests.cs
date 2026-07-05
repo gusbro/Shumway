@@ -28,12 +28,23 @@ public class Chunk131cTests
     // ---------- append/3 ----------
 
     [Fact]
-    public void Append_AllUnbound_RaisesInstantiationError()
+    public void Append_AllUnbound_EnumeratesLikePureAppend()
     {
+        // Phase 33 (PrologToC corpus) — the chunk-131c instantiation_error
+        // here was WRONG: pure append/3 never raises. All-unbound append
+        // enumerates k-element splits (first solution L1 = [], L2 = L3),
+        // and the open-list "hole closing" idiom append(Open, [], Open)
+        // must succeed binding the tail hole to [] — the DEC-10 rdtok
+        // tokenizer's dictionary trick.
         var e = new PrologEngine();
-        var sol = e.Query("catch(append(_L1, _L2, _L3), error(E, _), true).");
-        Assert.True(sol.Success);
-        Assert.Equal(Atom("instantiation_error"), sol["E"]);
+        Assert.True(e.Query("append(L1, L2, L3), L1 == [], L2 == L3.").Success);
+        // Backtracking reaches the k=1 split: L1 = [X], L3 = [X | L2].
+        // (Cut — the enumeration is unbounded, exactly like SWI's.)
+        Assert.True(e.Query("append(A, B, C), A = [x], !, C == [x | B].").Success);
+        // The hole-closing idiom.
+        Assert.True(e.Query(
+            "D = [a = 1, b = 2 | _Hole], append(D, [], D), "
+            + "D == [a = 1, b = 2].").Success);
     }
 
     // ---------- atom_codes/2 ----------

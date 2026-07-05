@@ -5116,10 +5116,30 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     {
         ArgumentNullException.ThrowIfNull(path);
         if (path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase))
+        {
             LoadBundle(path);
-        else
+            return;
+        }
+        // ISO include/1 — `:- include('lib/x.pl')` resolves relative to the
+        // INCLUDING file's directory, so consulting a file records its
+        // directory for the duration of the consult (restored after: a
+        // nested ConsultFile from an initialization goal must not leak).
+        string? prevBase = _consultBaseDir;
+        _consultBaseDir = Path.GetDirectoryName(Path.GetFullPath(path));
+        try
+        {
             ConsultString(File.ReadAllText(path));
+        }
+        finally
+        {
+            _consultBaseDir = prevBase;
+        }
     }
+
+    /// <summary>Directory of the file currently being consulted (null for a
+    /// raw <see cref="ConsultString"/>) — the base `:- include/1` paths
+    /// resolve against.</summary>
+    private string? _consultBaseDir;
 
     /// <summary>Chunk 236 — classical <c>reconsult/1</c> semantics: for
     /// every <c>Name/Arity</c> the file defines in its target module,
@@ -5675,6 +5695,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 System.Threading.Volatile.Write(ref s_preludeClauses, rawClauses);
         }
 
+        // ISO 7.4.2.7 `:- include(File)` — textual inclusion (semantics in
+        // IncludeExpander). Paths resolve against the consulting file's
+        // directory (ConsultFile), else the process CWD. Returns the same
+        // list when nothing expands, keeping the cached prelude parse shared.
+        rawClauses = Shumway.Compiler.Parsing.IncludeExpander.Expand(
+            rawClauses, _consultBaseDir, _operators, _flags);
+
         // Chunk 440 — a source-bearing bundle entry consults under the
         // entry's module name (the per-file fallback ShmoCompiler resolved
         // at compile time), so two module-less files keep their own local
@@ -5690,6 +5717,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         HashSet<int>? pendingMultifile = null;
         HashSet<int>? tabledFunctors = null;
         Dictionary<int, List<Shumway.Compiler.Modes.ModeDeclaration>>? pendingModes = null;
+        List<Term>? initializationGoals = null;
         // ADR-022 — accumulated raw text of this consult's `:- c` regions (the
         // captured `$native_decls` directives), parsed into the C symbol table
         // for the embedded native-block transform below.
@@ -5779,6 +5807,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 // (in source order) for the symbol table the block transform uses.
                 (nativeDecls ??= new System.Text.StringBuilder()).Append(cText.Content).Append('\n');
             }
+            else if (body is CompoundTerm { Functor: "initialization", Args.Length: 1 } initDir)
+            {
+                // ISO/SWI `:- initialization(Goal)` (the fx 1150 operator also
+                // admits the paren-less `:- initialization main.`). The goal
+                // runs AFTER this consult commits — SWI load-time semantics —
+                // see the execution loop at the end of this method.
+                (initializationGoals ??= new List<Term>()).Add(initDir.Args[0]);
+            }
             else if (body is CompoundTerm spf
                      && spf.Functor == "set_prolog_flag"
                      && spf.Args.Length == 2
@@ -5794,18 +5830,23 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 // CollectImplicitDynamics pre-scan).
                 ApplyConsultSetPrologFlag(spfFlag.Name, spfValue.Name);
             }
-            else if (Shumway.Compiler.Modes.ModeDirectiveParser.TryParse(
-                body, out var modeDecl, out string? modeError))
+            else if (Shumway.Compiler.Modes.ModeDirectiveParser.TryParseAll(
+                body, out var modeDecls, out string? modeError))
             {
+                // TryParseAll accepts both the single-spec form and the
+                // classic DEC-10/Quintus ','-chain (`:- mode f(+,-), g(+).`).
                 if (modeError is not null)
                     throw new InvalidOperationException(modeError);
                 pendingModes ??= new Dictionary<int, List<Shumway.Compiler.Modes.ModeDeclaration>>();
-                if (!pendingModes.TryGetValue(modeDecl!.FunctorId, out var declList))
+                foreach (var modeDecl in modeDecls!)
                 {
-                    declList = new List<Shumway.Compiler.Modes.ModeDeclaration>();
-                    pendingModes[modeDecl.FunctorId] = declList;
+                    if (!pendingModes.TryGetValue(modeDecl.FunctorId, out var declList))
+                    {
+                        declList = new List<Shumway.Compiler.Modes.ModeDeclaration>();
+                        pendingModes[modeDecl.FunctorId] = declList;
+                    }
+                    declList.Add(modeDecl);
                 }
-                declList.Add(modeDecl);
             }
             // op/3 already processed in-place by ClauseReader. Other
             // unrecognised directives pass through silently — they may be
@@ -5990,6 +6031,32 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // updated clause set. Consult is one-shot at engine setup in the
         // common case, so this is amortised away.
         _dynamicPredicateCache.Clear();
+
+        // `:- initialization(Goal)` goals run now, after the consult has
+        // committed, in source order (SWI load-time semantics). A goal that
+        // fails or raises prints a warning and loading continues — matching
+        // SWI. halt/0-1 (PrologHaltException) propagates: halting from an
+        // initialization goal ends the load, exactly as under SWI.
+        if (initializationGoals is not null)
+        {
+            foreach (var g in initializationGoals)
+            {
+                try
+                {
+                    bool ok = false;
+                    foreach (var sol in QueryAll(g)) { ok = sol.Success; break; }
+                    if (!ok)
+                        Console.Error.WriteLine(
+                            $"Warning: initialization goal failed: {g}");
+                }
+                catch (PrologHaltException) { throw; }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine(
+                        $"Warning: initialization goal raised: {g}: {ex.Message}");
+                }
+            }
+        }
     }
 
     /// <summary>Enforces the contiguity rule for clauses inside a single

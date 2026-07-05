@@ -147,10 +147,14 @@ public class EdinburghIoTests
     }
 
     [Fact]
-    public void Tell_Twice_ClosesPreviousFile()
+    public void Tell_Twice_KeepsPreviousOpen_AndRetellResumes()
     {
-        // Calling tell again should close the first file and open
-        // the second.
+        // Phase 33 (PrologToC corpus) — real Edinburgh semantics: tell/1 on
+        // a second file leaves the first OPEN (only told/0 closes), and
+        // tell/1 back to the first file RESUMES it, appending where it left
+        // off. The classic multi-output juggle (`tell(a), telling(SP),
+        // tell(b), … tell(SP), told`) depends on exactly this; the previous
+        // behaviour (close-on-switch) broke it.
         string path1 = Path.Combine(Path.GetTempPath(),
             "shumway_edin_tt1_" + Guid.NewGuid().ToString("N") + ".txt");
         string path2 = Path.Combine(Path.GetTempPath(),
@@ -161,8 +165,9 @@ public class EdinburghIoTests
             var p1 = path1.Replace('\\', '/');
             var p2 = path2.Replace('\\', '/');
             engine.Query(
-                $"tell('{p1}'), write(one), tell('{p2}'), write(two), told.");
-            Assert.Equal("one", File.ReadAllText(path1));
+                $"tell('{p1}'), write(one), tell('{p2}'), write(two), told, "
+                + $"tell('{p1}'), write(more), told.");
+            Assert.Equal("onemore", File.ReadAllText(path1));
             Assert.Equal("two", File.ReadAllText(path2));
         }
         finally

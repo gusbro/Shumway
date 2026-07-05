@@ -138,6 +138,9 @@ public sealed class OperatorTable
         t.Define("mode", 1150, OperatorType.Fx);
         t.Define("ensure_linked", 1150, OperatorType.Fx);
         t.Define("native", 1150, OperatorType.Fx);   // ADR-024 — `:- native fn/N`
+        // SWI/ISO-style load-time goal directive: `:- initialization main.`
+        // parses without parens (SWI declares the same fx 1150 operator).
+        t.Define("initialization", 1150, OperatorType.Fx);
 
         // Control
         t.Define(";", 1100, OperatorType.Xfy);

@@ -67,6 +67,12 @@ internal static class Prelude
         :- public once/1.
         :- public ignore/1.
         :- public chdir/1.
+        :- public append/2.
+        :- public display/1.
+        :- public display/2.
+        :- public recorda/2.
+        :- public recordz/2.
+        :- public recorded/2.
         :- public tab/1.
         :- public apply/2.
         :- public findall/4.
@@ -478,6 +484,22 @@ internal static class Prelude
         %! chdir(?Path) | Input / output | Arity-Prolog 1-arg form of working_directory/2. With Path unbound, returns the current directory; with Path bound, changes to it.
         chdir(Path) :- var(Path), !, working_directory(Path, Path).
         chdir(Path) :- working_directory(_, Path).
+
+        %! append(+ListOfLists, -List) | Lists | Concatenates a list of lists (SWI library form).
+        append([], []).
+        append([L|Ls], As) :- append(L, Ws, As), append(Ls, Ws).
+
+        %! display(+Term) | Input / output | Edinburgh display/1: writes Term to current output ignoring operator definitions, unquoted.
+        display(X) :- write_term(X, [ignore_ops(true)]).
+        %! display(+Stream, +Term) | Input / output | Edinburgh display/2: writes Term to Stream ignoring operator definitions, unquoted.
+        display(S, X) :- write_term(S, X, [ignore_ops(true)]).
+
+        %! recorda(+Key, +Term) | Database | SWI 2-arg form of recorda/3 (reference discarded).
+        recorda(K, V) :- recorda(K, V, _).
+        %! recordz(+Key, +Term) | Database | SWI 2-arg form of recordz/3 (reference discarded).
+        recordz(K, V) :- recordz(K, V, _).
+        %! recorded(+Key, ?Term) | Database | SWI 2-arg form of recorded/3 (reference discarded); backtracks over matches.
+        recorded(K, V) :- recorded(K, V, _).
 
         %! apply(:Goal, +ExtraArgs) | Control | Calls Goal with the list of extra arguments appended.
         apply(Goal, Extra) :-

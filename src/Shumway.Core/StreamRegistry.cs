@@ -44,6 +44,13 @@ public sealed class StreamRegistry
     /// writer starts as the engine's <see cref="Engine.Out"/>.</summary>
     public StreamHandle UserOutput { get; }
 
+    /// <summary>The handle representing <c>user_error</c> — the ISO
+    /// standard-error writer (Phase 33, PrologToC corpus: `write(user_error,
+    /// …)` / `display(user_error, …)` are the conventional diagnostics
+    /// channel). Always registered; writes to
+    /// <see cref="System.Console.Error"/>.</summary>
+    public StreamHandle UserError { get; }
+
     public StreamRegistry(TextWriter defaultOut)
     {
         ArgumentNullException.ThrowIfNull(defaultOut);
@@ -57,6 +64,11 @@ public sealed class StreamRegistry
             id: AllocateId(), writer: defaultOut,
             mode: "write", filename: null, alias: "user_output");
         Register(UserOutput);
+
+        UserError = new StreamHandle(
+            id: AllocateId(), writer: System.Console.Error,
+            mode: "append", filename: null, alias: "user_error");
+        Register(UserError);
 
         CurrentInput = UserInput;
         CurrentOutput = UserOutput;

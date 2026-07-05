@@ -514,6 +514,11 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("exists_file", 1, ExistsFile1,
             Io, "exists_file(+File)",
             "Succeeds when File exists and is a regular file.");
+        BuiltinsRegistry.Register("getenv", 2, GetEnv2,
+            Io, "getenv(+Name, -Value)",
+            "Unifies Value with the environment variable Name's contents "
+            + "as an atom; fails (does not raise) when Name is unset — "
+            + "SWI-compatible, so `(getenv(X,V) ; V = Default)` works.");
         BuiltinsRegistry.Register("exists_directory", 1, ExistsDirectory1,
             Io, "exists_directory(+Path)",
             "Succeeds when Path exists and is a directory.");
@@ -765,37 +770,165 @@ public static class MetaBuiltins
         return h.Reader!;
     }
 
+    /// <summary>ISO graphic (symbol) chars — a run of these forms one symbol
+    /// atom token, so a '.' preceded by one is part of that token
+    /// (<c>=..</c>, <c>:-.</c>-less edge shapes) and never ends the clause.</summary>
+    private static bool IsGraphicChar(char c) => c is '#' or '$' or '&' or '*' or '+'
+        or '-' or '.' or '/' or ':' or '<' or '=' or '>' or '?' or '@' or '^' or '~' or '\\';
+
     private static bool ReadOneTermInto(Engine engine, System.IO.TextReader reader, int regOut)
     {
+        // Phase 33 (PrologToC corpus) — the old accumulation rule was "stop
+        // at any '.' followed by whitespace", which sliced `?X =.. ?Y` in
+        // half at univ's second dot (and would equally mis-split a dot
+        // inside a quoted atom, a string, or a comment). The end-of-clause
+        // token is a SOLO '.' followed by layout/EOF, so track just enough
+        // lexical state to recognise it: quoted contexts (' " `, with ''
+        // doubling and \-escapes), % line comments, /* */ block comments,
+        // 0'c char literals, and symbol runs (a '.' glued to a preceding
+        // graphic char is part of that symbol atom, not the terminator).
         var sb = new System.Text.StringBuilder();
-        bool sawAnyChar = false;
+        char quote = '\0';            // inside 'x' / "x" / `x` when non-zero
+        bool lineComment = false, blockComment = false;
+        char prev = '\0';             // previous char in Normal state
         while (true)
         {
-            int c = reader.Read();
-            if (c < 0)
+            int ci = reader.Read();
+            if (ci < 0)
             {
-                if (!sawAnyChar)
+                // end_of_file when nothing but layout/comments accumulated —
+                // a trailing-whitespace file must yield end_of_file, not a
+                // syntax error.
+                if (IsLayoutOnly(sb))
                 {
                     int eofId = AtomTable.Intern("end_of_file", permanent: true).Id;
                     return engine.UnifyRegisterWithCell(regOut, Cell.Atom(eofId));
                 }
                 break;
             }
-            sawAnyChar = true;
-            sb.Append((char)c);
-            if (c == '.')
+            char c = (char)ci;
+            sb.Append(c);
+
+            if (lineComment)
             {
-                int next = reader.Peek();
-                if (next < 0 || char.IsWhiteSpace((char)next)) break;
+                if (c == '\n') lineComment = false;
+                continue;
+            }
+            if (blockComment)
+            {
+                if (c == '/' && prev == '*') { blockComment = false; prev = '\0'; }
+                else prev = c;
+                continue;
+            }
+            if (quote != '\0')
+            {
+                if (c == '\\' && prev != '\\') { prev = c; continue; }
+                if (c == quote && prev != '\\')
+                {
+                    // '' doubling: peek — a second quote continues the token.
+                    if (reader.Peek() == quote) { sb.Append((char)reader.Read()); prev = '\0'; continue; }
+                    quote = '\0';
+                }
+                prev = c == '\\' && prev == '\\' ? '\0' : c;   // \\ consumes the escape
+                continue;
+            }
+
+            switch (c)
+            {
+                case '%':
+                    lineComment = true;
+                    prev = '\0';
+                    continue;
+                case '*' when prev == '/':
+                    blockComment = true;
+                    prev = '\0';
+                    continue;
+                case '\'':
+                    // 0'c char literal: consume the (possibly escaped) char raw.
+                    if (char.IsDigit(prev))
+                    {
+                        int lit = reader.Read();
+                        if (lit >= 0)
+                        {
+                            sb.Append((char)lit);
+                            if ((char)lit == '\\')
+                            {
+                                int esc = reader.Read();   // escape body head
+                                if (esc >= 0) sb.Append((char)esc);
+                            }
+                        }
+                        prev = '\0';
+                        continue;
+                    }
+                    quote = '\'';
+                    prev = '\0';
+                    continue;
+                case '"':
+                case '`':
+                    quote = c;
+                    prev = '\0';
+                    continue;
+                case '.':
+                    // Solo dot + following layout/EOF = end of clause.
+                    if (!IsGraphicChar(prev))
+                    {
+                        int next = reader.Peek();
+                        if (next < 0 || char.IsWhiteSpace((char)next) || next == '%')
+                            goto done;
+                    }
+                    prev = c;
+                    continue;
+                default:
+                    prev = c;
+                    continue;
             }
         }
+        done: ;
 
+        // Phase 33 (PrologToC corpus) — parse with the engine's LIVE operator
+        // table, not the static default: a runtime `op/3` (e.g. the classic
+        // `op(200, fy, ['#', '?'])` before reading a spec file) must be in
+        // force for read/1,2, exactly as it already is for consult and
+        // string_term/2 (the E3 fix).
         var parser = new Shumway.Compiler.Parsing.Parser(
             new Shumway.Compiler.Lexer.Lexer(sb.ToString()),
-            Shumway.Compiler.Parsing.OperatorTable.Default());
+            LiveOperators(engine));
         Term parsed = parser.ReadClauseTerm();
         Cell cell = Materializer.MaterializeAsCell(engine, parsed);
         return engine.UnifyRegisterWithCell(regOut, cell);
+    }
+
+    /// <summary>The engine's live operator table (runtime `op/3` additions
+    /// included) — the table every term-READING builtin must parse with; the
+    /// static default only as the bare-Engine-test fallback.</summary>
+    private static Shumway.Compiler.Parsing.OperatorTable LiveOperators(Engine engine)
+        => (engine.Host as PrologEngine)?.Operators
+           ?? Shumway.Compiler.Parsing.OperatorTable.Default();
+
+    /// <summary>True when the accumulated read/1 text holds no term — only
+    /// whitespace, <c>%</c> line comments, and <c>/* */</c> block comments.</summary>
+    private static bool IsLayoutOnly(System.Text.StringBuilder sb)
+    {
+        int i = 0, n = sb.Length;
+        while (i < n)
+        {
+            char ch = sb[i];
+            if (char.IsWhiteSpace(ch)) { i++; continue; }
+            if (ch == '%')
+            {
+                while (i < n && sb[i] != '\n') i++;
+                continue;
+            }
+            if (ch == '/' && i + 1 < n && sb[i + 1] == '*')
+            {
+                i += 2;
+                while (i + 1 < n && !(sb[i] == '*' && sb[i + 1] == '/')) i++;
+                i = System.Math.Min(n, i + 2);
+                continue;
+            }
+            return false;
+        }
+        return true;
     }
 
     /// <summary><c>with_output_to(Sink, Goal)</c> — runs <c>Goal</c> with
@@ -875,7 +1008,7 @@ public static class MetaBuiltins
 
         var parser = new Shumway.Compiler.Parsing.Parser(
             new Shumway.Compiler.Lexer.Lexer(source),
-            Shumway.Compiler.Parsing.OperatorTable.Default());
+            LiveOperators(engine));
         Term parsed = parser.ReadClauseTerm();
 
         // Collect variable names from the parsed term in first-occurrence
@@ -1493,7 +1626,7 @@ public static class MetaBuiltins
             source += ".";
         var parser = new Shumway.Compiler.Parsing.Parser(
             new Shumway.Compiler.Lexer.Lexer(source),
-            Shumway.Compiler.Parsing.OperatorTable.Default());
+            LiveOperators(engine));
         Term parsed = parser.ReadClauseTerm();
         Cell parsedCell = Materializer.MaterializeAsCell(engine, parsed);
         return engine.UnifyRegisterWithCell(1, parsedCell);
@@ -1513,7 +1646,7 @@ public static class MetaBuiltins
             source += ".";
         var parser = new Shumway.Compiler.Parsing.Parser(
             new Shumway.Compiler.Lexer.Lexer(source),
-            Shumway.Compiler.Parsing.OperatorTable.Default());
+            LiveOperators(engine));
         Term parsed = parser.ReadClauseTerm();
         Cell parsedCell = Materializer.MaterializeAsCell(engine, parsed);
         return engine.UnifyRegisterWithCell(1, parsedCell);
@@ -1925,7 +2058,7 @@ public static class MetaBuiltins
                 : name + ".";
             var parser = new Shumway.Compiler.Parsing.Parser(
                 new Shumway.Compiler.Lexer.Lexer(source),
-                Shumway.Compiler.Parsing.OperatorTable.Default());
+                LiveOperators(engine));
             Term parsed = parser.ReadClauseTerm();
             Cell newCell = Materializer.MaterializeAsCell(engine, parsed);
             return engine.UnifyRegisterWithCell(0, newCell);
@@ -4473,9 +4606,23 @@ public static class MetaBuiltins
         PrologEngine host = RequireHost(engine, "see/1");
         string path = RequireAtomPath(engine, register: 0, builtin: "see/1");
         var streams = engine.Streams!;
-        // Close any previously-see'd file before switching.
-        if (!ReferenceEquals(streams.CurrentInput, streams.UserInput))
-            CloseAndForget(streams, streams.CurrentInput);
+        // Phase 33 (PrologToC corpus) — real Edinburgh see/1 semantics:
+        // several input files may be open at once, and see/1 on a file that
+        // is ALREADY open makes it current again, RESUMING at its position
+        // (only seen/0 closes). The previous behaviour (close the old file,
+        // reopen from scratch) broke the classic nested-include idiom —
+        // `seeing(F) … see(Inner) … seen, see(F)` restarted F from the top,
+        // so the outer file's clauses were read twice.
+        string full = System.IO.Path.GetFullPath(path);
+        foreach (var cand in streams.All())
+        {
+            if (cand.IsReader && !cand.Closed && cand.Filename is not null
+                && System.IO.Path.GetFullPath(cand.Filename) == full)
+            {
+                streams.SetCurrentInput(cand);
+                return true;
+            }
+        }
         StreamHandle h;
         try
         {
@@ -4521,8 +4668,22 @@ public static class MetaBuiltins
         PrologEngine host = RequireHost(engine, "tell/1");
         string path = RequireAtomPath(engine, register: 0, builtin: "tell/1");
         var streams = engine.Streams!;
-        if (!ReferenceEquals(streams.CurrentOutput, streams.UserOutput))
-            CloseAndForget(streams, streams.CurrentOutput);
+        // Phase 33 — Edinburgh tell/1 mirrors see/1 (see See1's note): several
+        // output files may be open at once; tell/1 on an already-open file
+        // makes it current again, APPENDING where it left off. Only told/0
+        // closes. The classic multi-output juggle depends on this:
+        // `tell(a), telling(SP), tell(b), … tell(SP), told`.
+        string full = System.IO.Path.GetFullPath(path);
+        foreach (var cand in streams.All())
+        {
+            if (!cand.IsReader && !cand.Closed && cand.Filename is not null
+                && cand.Writer is not null
+                && System.IO.Path.GetFullPath(cand.Filename) == full)
+            {
+                streams.SetCurrentOutput(cand);
+                return true;
+            }
+        }
         StreamHandle h;
         try
         {
@@ -4886,6 +5047,19 @@ public static class MetaBuiltins
     {
         string path = RequireAtomPath(engine, register: 0, builtin: "exists_file/1");
         return System.IO.File.Exists(path);
+    }
+
+    // Phase 33 (PrologToC corpus) — SWI-compatible getenv/2: unify Value with
+    // the environment variable's contents, or FAIL (not error) when unset —
+    // callers rely on the failure branch for defaults:
+    // `(getenv('X', V) ; V = default)`.
+    public static bool GetEnv2(Engine engine)
+    {
+        string name = RequireAtomPath(engine, register: 0, builtin: "getenv/2");
+        string? value = Environment.GetEnvironmentVariable(name);
+        if (value is null) return false;
+        Cell c = Materializer.MaterializeAsCell(engine, new AtomTerm(value));
+        return engine.UnifyRegisterWithCell(1, c);
     }
 
     public static bool ExistsDirectory1(Engine engine)
