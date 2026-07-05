@@ -767,6 +767,50 @@ A deferral is a TODO with a prerequisite, not a closure.
       all clean — 0/8 recurrences since the _emitOwnerFid fix; the trap
       decides the item without further dedicated hunting.
 
+## IL round 2 (2026-07-05, user-directed) — profile-driven Tier-1 pass
+
+A dedicated optimization round over the generated IL + the Tier-0↔Tier-1
+transition machinery, driven by dotnet-trace sampling of a Tier-1-heavy mixed
+vanroy probe (Threshold=1, promotions settled and verified, regions default).
+Method: profile → attack the top attributable frame → A/B (frozen SHA-distinct
+publishes, interleaved ABBA, min-of-7 in-process) → re-profile.
+
+- [x] **R2-1 — ArithEvalStack fast lanes actually inline** (commit 3ea5414).
+      `PushIntLane` was a REAL CALL from the Tier-1 delegates (~3% exclusive,
+      ~10% of engine-thread time — one call per integer operand the compiled
+      `a_eval_*` RPN pushes): the L7 lesson one leaf deeper — PushReg/PushY/Bin
+      are AggressiveInlining but the helper they all delegate to was not. Also:
+      `PopCell` carried a try/catch (= uninlineable outright) and runs per
+      compiled `is/2`; IsReg/IsPerm/SetReg/SetPerm/Cmp un-annotated. All fixed
+      with the chunk-354/355 fast-lane/cold-slow-half pattern. **Measured:
+      crypt ×300 A 496–524 ms vs B 378–399 ms — B's worst beats A's best,
+      −24%** on the arithmetic-RPN-bound workload; queens/qsort neutral as
+      expected structurally.
+- [x] **R2-2 — self-delegate holder dict → slot array** (commit 0df91a4).
+      Post-R2-1 profile showed `ConcurrentDictionary<int,Func>.TryGetValue`
+      called DIRECTLY from region IL (~3% of engine time): SelfFromHolder
+      emitted `call IndexedDelegateHolder.Get` — a hash+bucket probe per
+      multi-clause/indexed region invocation (chunk 232 had replaced a
+      contended lock with the CD; this removes the probe). Keys are sequential
+      ints under RegistrationLock → the store is now a growable slot ARRAY and
+      the emit is `ldsfld/ldc/ldelem.ref` (the SelfFromArrayField shape).
+      Grow-copies-then-Volatile.Write publication; safe because a delegate
+      only escapes through fenced channels after Register. **Evidence:
+      deterministic profile delta — the TryGetValue frame VANISHED from the
+      post-change top-20**; wall-clock directionally positive but within
+      thermal noise, claim rests on the structural argument (L9/ADR-021
+      discipline).
+
+Round observations (recorded, not actioned): the remaining per-hop transition
+cost is minimal (marker decode + array probe + delegate invoke; nothing
+dict/lock-shaped left on the dispatch path per the post-change profile).
+`AreStructurallyEqual` ~3% is boyer's real ==/\== work (I9 iterative walk).
+`SharedArrayPool<Char>.Trim` lock contention on the finalizer thread is an
+artifact of the R1-benign Cell[] Gen2 churn, not engine-thread time.
+`SetupQueryFromTerm` 2.45% inclusive per-query setup = the T4-residual
+already recorded. PushChoicePoint/RestoreCommon ~3% = the ADR-026-analyzed
+frame machinery, known tight.
+
 ## Later rounds (not yet waved)
 
 Region runtime:
