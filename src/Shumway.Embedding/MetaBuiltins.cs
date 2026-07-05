@@ -4412,25 +4412,144 @@ public static class MetaBuiltins
         return engine.UnifyRegisterWithCell(2, Cell.Int(@ref));
     }
 
+    // Phase 33 (PrologToC) — recorded/3 rewritten around the two chunk-421
+    // retract lessons. The old shape ToList-copied the key's WHOLE chain into
+    // (Ref, Term) tuples per call and materialised + unified EVERY candidate
+    // through a full CP cycle. The classic Edinburgh drain
+    // (`recorded(K, V, R), erase(R), …, !` once per item — the PrologToC
+    // assembler) made that O(n²) tuples over tens of thousands of records:
+    // dotnet-trace showed the enumerator's MoveNext alone at 38% exclusive
+    // plus the induced finalizer/GC storm. Now:
+    //   1. LAZY-FIRST — scan the LIVE chain and yield the first match with no
+    //      snapshot at all; the remaining entries are snapshotted only if a
+    //      RESUME actually happens (a cut after the first solution — the
+    //      drain — never pays it, making the drain O(1) per call).
+    //   2. PREFILTER — a candidate that DefiniteMismatch proves incompatible
+    //      with the V pattern is skipped with zero allocation; a non-refuted
+    //      candidate pays a rolled-back trial unify, and only the ACCEPTED
+    //      one is materialised for real. An unbound V (the drain) skips the
+    //      trial entirely.
+    // Semantics note: mutations between the first solution and the first
+    // resume are visible to the continuation (the lazy snapshot reads the
+    // live chain then) — the drain idiom RELIES on seeing its own erasures;
+    // the old eager snapshot hid them until the next fresh call.
     public static bool Recorded3(Engine engine)
     {
         PrologEngine host = RequireHost(engine, "recorded/3");
         Term key = RequireGroundKey(engine, register: 0, builtin: "recorded/3");
-        var entries = host.Records.Recorded(key).ToList();
-        if (entries.Count == 0) return false;
         int returnPc = engine.BuiltinReturnPc;
-        return IndexEnumCursor.Start(engine, entries.Count, 3, returnPc,  // arity 3 (recorded/3)
-            (e, i) => RecordedUnify(e, entries, i));
+        return new RecordedCursor(host, key, returnPc).Start(engine);
     }
 
-    private static bool RecordedUnify(
-        Engine engine, List<(long Ref, Term Term)> entries, int index)
+    private sealed class RecordedCursor
     {
-        var (refVal, termVal) = entries[index];
-        Cell termCell = Materializer.MaterializeAsCell(engine, termVal);
-        if (!engine.UnifyRegisterWithCell(1, termCell)) return false;
-        if (!engine.UnifyRegisterWithCell(2, Cell.Int(refVal))) return false;
-        return true;
+        private readonly PrologEngine _host;
+        private readonly Term _key;
+        private readonly int _returnPc;
+        // Built on the FIRST resume (lazy tail snapshot); null before that.
+        private List<(long Ref, Term Term)>? _snapshot;
+        private int _snapIdx;
+        private long _lastYieldedRef = -1;
+        public readonly Func<Engine, int, bool> Resume;
+
+        public RecordedCursor(PrologEngine host, Term key, int returnPc)
+        {
+            _host = host;
+            _key = key;
+            _returnPc = returnPc;
+            Resume = (e, _) => Attempt(e, isResume: true);
+        }
+
+        public bool Start(Engine engine) => Attempt(engine, isResume: false);
+
+        private bool Attempt(Engine engine, bool isResume)
+        {
+            if (isResume && _snapshot is null)
+            {
+                // Lazy tail snapshot: exactly one entry has been yielded so
+                // far. Capture the live chain AFTER it — or the whole current
+                // chain when the consumer erased it (the drain): the entries
+                // before the yielded one were already rejected against this
+                // same (CP-restored) pattern, so re-offering them is at worst
+                // a cheap re-rejection, never a wrong answer.
+                _snapshot = new List<(long, Term)>();
+                bool after = false, sawYielded = false;
+                foreach (var e2 in _host.Records.Recorded(_key))
+                {
+                    if (after) { _snapshot.Add(e2); continue; }
+                    if (e2.Ref == _lastYieldedRef) { after = true; sawYielded = true; }
+                }
+                if (!sawYielded)
+                {
+                    _snapshot.Clear();
+                    foreach (var e2 in _host.Records.Recorded(_key))
+                        _snapshot.Add(e2);
+                }
+                _snapIdx = 0;
+            }
+
+            // The V pattern: park register 1's cell in a heap slot so the
+            // prefilter/trial can walk it. An unbound V matches everything —
+            // skip the trial and go straight to the real unify.
+            int patSlot = engine.AllocateHeap(1);
+            engine.SetHeap(patSlot, engine.GetRegister(1));
+            int patDeref = engine.Deref(patSlot);
+            Cell patCell = engine.GetHeap(patDeref);
+            bool patIsVar = patCell.Tag == Tag.Ref || patCell.Tag == Tag.AttVar;
+
+            if (_snapshot is null)
+            {
+                foreach (var cand in _host.Records.Recorded(_key))
+                {
+                    if (!patIsVar && !TrialUnifies(engine, patSlot, cand.Term)) continue;
+                    _lastYieldedRef = cand.Ref;
+                    return YieldCandidate(engine, cand, isResume);
+                }
+                return false;
+            }
+
+            while (_snapIdx < _snapshot.Count)
+            {
+                var cand = _snapshot[_snapIdx++];
+                if (!patIsVar && !TrialUnifies(engine, patSlot, cand.Term)) continue;
+                return YieldCandidate(engine, cand, isResume);
+            }
+            return false;
+        }
+
+        /// <summary>Prefilter + rolled-back trial unify of the V pattern
+        /// against a stored term — the FindRetractMatch shape.</summary>
+        private static bool TrialUnifies(Engine engine, int patSlot, Term stored)
+        {
+            if (DefiniteMismatch(engine, patSlot, stored, depth: 6)) return false;
+            int savedHeapTop = engine.HeapTop;
+            int savedBindingTrail = engine.BindingTrailTop;
+            int savedExtraTrail = engine.ExtraTrailTop;
+            int savedHb = engine.Hb;
+            engine.SetHb(engine.HeapTop);
+            Cell candCell = Materializer.MaterializeAsCell(engine, stored);
+            int candSlot = engine.AllocateHeap(1);
+            engine.SetHeap(candSlot, candCell);
+            bool ok = engine.Unify(patSlot, candSlot);
+            engine.UnwindTrails(savedBindingTrail, savedExtraTrail);
+            engine.SetHeapTop(savedHeapTop);
+            engine.SetHb(savedHb);
+            return ok;
+        }
+
+        private bool YieldCandidate(
+            Engine engine, (long Ref, Term Term) cand, bool isResume)
+        {
+            // Push the re-satisfaction CP FIRST so the real bindings roll
+            // back cleanly on backtrack (arity 3 — the registers must be
+            // restored for the next attempt's pattern; the CP-arity lesson).
+            engine.PushBuiltinChoicePoint(Resume, arity: 3);
+            Cell termCell = Materializer.MaterializeAsCell(engine, cand.Term);
+            if (!engine.UnifyRegisterWithCell(1, termCell)) return false;
+            if (!engine.UnifyRegisterWithCell(2, Cell.Int(cand.Ref))) return false;
+            if (isResume) engine.ResumeAtReturnPc(_returnPc);
+            return true;
+        }
     }
 
     public static bool Erase1(Engine engine)

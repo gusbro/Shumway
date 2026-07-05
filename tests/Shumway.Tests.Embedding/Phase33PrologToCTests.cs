@@ -191,7 +191,6 @@ public class Phase33PrologToCTests : IDisposable
     [Fact]
     public void Read_UsesLiveOperatorTable()
     {
-        char bs = (char)92;
         string f = Slash(Write("ops2.pl", "spec(?X = ?Y).\n"));
         var e = new PrologEngine();
         e.Query("op(200, fy, '?').");
