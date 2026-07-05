@@ -113,6 +113,11 @@ public sealed class NativeBundleTests
         var e = new PrologEngine();
         e.UseNativeInterop(typeof(Interop));
         e.IlPromotion.Threshold = 1;
+        // Phase 33 I10 — sync promotion so the inline is guaranteed done before the
+        // count assertion below (see Tier1Inline_ArithmeticWithLocal_Runs for the
+        // full rationale — the shared background IL worker races under suite
+        // parallelism and the `> before` check would flake).
+        e.IlPromotion.BackgroundCompilation = false;
         e.ConsultString(CmpProgram);
         for (int i = 0; i < 5; i++)
             Assert.True(e.Query("cmp(abc, abd, R), R == -1.").Success);
@@ -137,6 +142,15 @@ public sealed class NativeBundleTests
         var e = new PrologEngine();
         e.UseNativeInterop(typeof(Interop));
         e.IlPromotion.Threshold = 1;
+        // Phase 33 I10 — compile synchronously so the IL promotion (which performs
+        // the native-block inline) is guaranteed to have run before we assert the
+        // inline count. Under the default background mode the compile is queued on
+        // the shared IL worker and, under suite parallelism, frequently hasn't
+        // landed within these few queries — the queries still succeed on Tier-0
+        // `$native_run` dispatch, but NativeBlocksInlined never bumps and the
+        // `> before` check fails intermittently. The inline correctness this test
+        // verifies is mode-independent; sync mode just removes the worker-timing race.
+        e.IlPromotion.BackgroundCompilation = false;
         e.ConsultString(program);
         for (int i = 0; i < 5; i++)
             Assert.Equal(14L, e.Query("calc(3, 4, R).").Get<long>("R"));

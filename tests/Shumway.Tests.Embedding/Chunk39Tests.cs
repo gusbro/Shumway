@@ -202,6 +202,23 @@ public class Chunk39Tests
         // mutation phase continues the predicate stays on Tier 0.
         var engine = new PrologEngine();
         engine.IlPromotion.Threshold = 1;
+        // Phase 33 I10 — drive promotion SYNCHRONOUSLY here. The behaviour under
+        // test is the churn pin (≥ EvictionChurnLimit evictions ⇒ stay Tier 0),
+        // which lives in RecordInvocation ahead of the background/sync branch and
+        // is identical in both modes. The DEFAULT background mode adds an
+        // orthogonal race: each round's snapshot compile is QUEUED (predicate
+        // stays Tier-0, null) and installs only on a later dispatch's drain, but
+        // the eviction only counts toward the churn limit when a delegate is
+        // actually present at assertz time. Under suite parallelism the shared IL
+        // worker is backed up, so the compile frequently hasn't installed before
+        // the mutation, the evict is a no-op, the churn count never reaches the
+        // limit, and the final calls re-promote — the historical flake (passed
+        // solo, failed alongside siblings). Sync mode blocks the promoting call on
+        // the (shared) worker until the delegate is installed, so every round is a
+        // real promote→evict cycle and the pin is reached deterministically.
+        // Background-mode timing itself is covered by
+        // Store_AtThreshold_BackgroundMode_QueuesThenInstalls.
+        engine.IlPromotion.BackgroundCompilation = false;
         engine.ConsultString(":- dynamic foo/1.\nfoo(a).\n");
         int fid = FunctorId("foo", 1);
         for (int round = 0; round < 6; round++)
