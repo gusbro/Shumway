@@ -540,9 +540,41 @@ A deferral is a TODO with a prerequisite, not a closure.
       **76.9% IL coverage; cross-module callers 6.8% → 71.0%; typed-switch
       68.5%**. Cross-module strip-wam regression test (execution forced
       IL→IL across entries). Gate: all five projects green.
-- [ ] **L9** ⚪ Minor batch: region self-delegate CSE gate ≥3→≥2;
-      MaybeCollectHeap on non-allocating self-tail loops; ground-fact
-      unify-with-constant fast path.
+- [x] **L9** ⚪ Minor batch — assessed each against the code (measure-before-touch,
+      per the I7/I8 precedent); one implemented, two are risk-outweighs-win /
+      already-done:
+      - *Region self-delegate CSE gate ≥3→≥2* — **DONE, refined by loader kind.**
+        The Stage-11 hoist in `EmitRegionInto` is shared by two paths with different
+        self-loaders: the persisted path uses `SelfFromArrayField` (3 cheap IL ops,
+        pure size play — hoist shrinks only at ≥3, `2·P−4>0`), the runtime-promotion
+        path uses `SelfFromHolder` (2 IL ops but each a `ConcurrentDictionary` lookup
+        at RUNTIME on the CP-push/backtracking path). The single `≥3` gate was tuned
+        for the array-field size break-even and missed a real runtime win for the
+        holder path — replacing a per-push dict probe with a hoisted local load, worth
+        the +1 IL op at P=2, exactly the call the chunk-426 inline-fact hoist already
+        makes for its holder-only pushes. Now gated by `selfDelType`: holder
+        (`Func<Engine,int,bool>`) at ≥2, array-field (`PredicateDelegate`) stays at ≥3,
+        so the persisted-bundle size discipline is untouched. Behaviour-identical
+        (internal codegen); justified structurally rather than by a wall-clock delta
+        (a fractional-dict-lookup change at P=2 is below this laptop's thermal noise),
+        mirroring how the inline-fact ≥2 gate was justified. Full 5-project gate green
+        (Embedding 2762), no dump.
+      - *MaybeCollectHeap on non-allocating self-tail loops* — **NOT DONE
+        (risk-outweighs-win).** `Engine.MaybeCollectHeap` is the cooperative
+        cancellation safe point, documented (chunk 428) as checked at EVERY safe point
+        precisely so heap-light loops stay ESC-cancellable (Phase 31 — lazy Y-slots
+        made many loops non-allocating, and a watermark-only check left them
+        uncancellable). Skipping it on a non-allocating self-tail loop would make that
+        loop uncancellable, regressing the Phase-31 ESC feature, for a ~1-op saving —
+        it is already an `AggressiveInlining` volatile read + predicted-not-taken
+        branch. Left as is.
+      - *Ground-fact unify-with-constant fast path* — **ALREADY DONE (chunk 170).**
+        `Engine.UnifyRegisterWithCell` (the target of every `get_atom`/`get_integer`/
+        `get_constant`/`get_nil` in Tier-0) already fast-paths the constant case: an
+        unbound register binds directly to the immediate (trailing only below HB, no
+        heap alloc, no general `Unify`); a bound-same-value register early-outs; the
+        `UnifyCells` fallback does no materialize for a bytecode literal. A ground
+        fact's constant args take the fast path today.
 
 ## Wave 5 — LTO / startup / size
 

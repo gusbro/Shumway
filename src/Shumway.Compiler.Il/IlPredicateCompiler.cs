@@ -1465,21 +1465,28 @@ public sealed class IlPredicateCompiler
         _emitOwnerFid = regionFid;
 
         // Stage 11 (IL-size / CSE): every multi-clause / indexed member's
-        // PushIlChoicePoint reloads the SAME region self-delegate — SelfFromArrayField is
-        // 3 IL ops (ldsfld/ldc.i4/ldelem) and SelfFromHolder is a per-push dictionary
-        // lookup. Hoist that load to ONE local here, ahead of the dispatch switch (which
-        // dominates every member / cursor label, so the store reaches every push site),
-        // and hand members a loader that just reads it: −2 IL ops per push site, and the
-        // holder lookup runs once per invocation instead of once per push. The hoist costs
-        // 4 IL ops once (load + store), so it only SHRINKS the method at ≥3 push sites
-        // (saving 2·P−4); below that it'd grow it, so gate on the exact push count — the
-        // plan's ClauseAlt + IndexNode cursors are one-per-emitSelf-push by construction.
+        // PushIlChoicePoint reloads the SAME region self-delegate. Hoist that load to ONE
+        // local here, ahead of the dispatch switch (which dominates every member / cursor
+        // label, so the store reaches every push site), and hand members a loader that
+        // just reads it. The break-even depends on which self-loader is in play, and the
+        // two paths that share this emit use different ones:
+        //   • Persisted path — SelfFromArrayField, 3 cheap IL ops (ldsfld/ldc.i4/ldelem),
+        //     no runtime cost beyond the array index. Pure IL-SIZE play: hoist costs 4 ops
+        //     once (load+store) and saves 2/push, so it only shrinks at ≥3 (saving 2·P−4).
+        //   • Runtime-promotion path — SelfFromHolder, 2 IL ops but each executes a
+        //     ConcurrentDictionary lookup at RUNTIME on the CP-push (backtracking) path.
+        //     Replacing that per-push dict probe with a hoisted local load is a runtime
+        //     win at ≥2 (worth the +1 IL op the size math costs at P=2) — the same call
+        //     the chunk-426 inline-fact hoist already makes for its holder-only pushes.
+        // So gate by the loader kind: selfDelType is PredicateDelegate on the persisted
+        // (array-field) path, Func<Engine,int,bool> on the runtime (holder) path.
         SelfDelegateEmitter effectiveSelf = emitSelf;
         int pushSites = 0;
         foreach (var s in plan.Sites)
             if (s.Kind == RegionCursorKind.ClauseAlt || s.Kind == RegionCursorKind.IndexNode)
                 pushSites++;
-        if (pushSites >= 3)
+        int hoistGate = selfDelType == typeof(PredicateDelegate) ? 3 : 2;
+        if (pushSites >= hoistGate)
         {
             var selfDelLoc = emit.DeclareLocal(selfDelType, "rselfdel");
             emitSelf(emit);
