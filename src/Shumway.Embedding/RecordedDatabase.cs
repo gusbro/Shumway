@@ -24,6 +24,13 @@ public sealed class RecordedDatabase
 {
     private long _nextRef = 1;
     private readonly Dictionary<Term, LinkedList<RecordEntry>> _byKey = new();
+    // Fast path for atom keys (the overwhelmingly common case: the PrologToC
+    // self-compile keys almost everything on atoms — source_file, defined,
+    // code, …). Keyed by the atom's INTEGER id read straight off the cell, so a
+    // recorded/3 read costs an integer-hash probe with no key-term
+    // materialisation and no string hashing — the two costs that dominated the
+    // profile. Compound keys still use the structural _byKey dictionary.
+    private readonly Dictionary<int, LinkedList<RecordEntry>> _byAtom = new();
     private readonly Dictionary<long, RecordEntry> _byRef = new();
 
     internal RecordedDatabase() { }
@@ -36,6 +43,10 @@ public sealed class RecordedDatabase
         public long Ref { get; }
         public Term Key { get; }
         public Term Term { get; internal set; }
+        // The atom-id this entry is keyed under (>= 0), or -1 when the entry
+        // lives in the structural (compound-key) store. Selects which
+        // dictionary <c>Erase</c> cleans up when the chain empties.
+        internal int AtomId = -1;
         internal LinkedListNode<RecordEntry>? Node;
 
         internal RecordEntry(long @ref, Term key, Term term)
@@ -48,20 +59,30 @@ public sealed class RecordedDatabase
 
     /// <summary>Adds <paramref name="term"/> to the start of the chain
     /// of records under <paramref name="key"/>. Returns the fresh
-    /// reference.</summary>
-    public long Recorda(Term key, Term term) => AddInternal(key, term, atFront: true);
+    /// reference. <paramref name="atomId"/> is the key atom's integer id
+    /// (>= 0) for the fast integer-keyed store, or -1 for a compound key
+    /// routed to the structural store.</summary>
+    public long Recorda(int atomId, Term key, Term term) => AddInternal(atomId, key, term, atFront: true);
 
     /// <summary>Adds <paramref name="term"/> to the end of the chain
     /// of records under <paramref name="key"/>. Returns the fresh
-    /// reference.</summary>
-    public long Recordz(Term key, Term term) => AddInternal(key, term, atFront: false);
+    /// reference. See <see cref="Recorda"/> for <paramref name="atomId"/>.</summary>
+    public long Recordz(int atomId, Term key, Term term) => AddInternal(atomId, key, term, atFront: false);
 
-    private long AddInternal(Term key, Term term, bool atFront)
+    private long AddInternal(int atomId, Term key, Term term, bool atFront)
     {
         long @ref = _nextRef++;
-        if (!_byKey.TryGetValue(key, out var list))
+        LinkedList<RecordEntry> list;
+        if (atomId >= 0)
+        {
+            if (!_byAtom.TryGetValue(atomId, out list!))
+                _byAtom[atomId] = list = new LinkedList<RecordEntry>();
+        }
+        else if (!_byKey.TryGetValue(key, out list!))
+        {
             _byKey[key] = list = new LinkedList<RecordEntry>();
-        var entry = new RecordEntry(@ref, key, term);
+        }
+        var entry = new RecordEntry(@ref, key, term) { AtomId = atomId };
         entry.Node = atFront ? list.AddFirst(entry) : list.AddLast(entry);
         _byRef[@ref] = entry;
         return @ref;
@@ -75,16 +96,28 @@ public sealed class RecordedDatabase
         var list = entry.Node!.List!;
         list.Remove(entry.Node);
         _byRef.Remove(@ref);
-        if (list.Count == 0) _byKey.Remove(entry.Key);
+        if (list.Count == 0)
+        {
+            if (entry.AtomId >= 0) _byAtom.Remove(entry.AtomId);
+            else _byKey.Remove(entry.Key);
+        }
         return true;
     }
 
-    /// <summary>Removes every entry under <paramref name="key"/>.</summary>
+    /// <summary>Removes every entry under the compound <paramref name="key"/>.</summary>
     public void EraseAll(Term key)
     {
         if (!_byKey.TryGetValue(key, out var list)) return;
         foreach (var e in list) _byRef.Remove(e.Ref);
         _byKey.Remove(key);
+    }
+
+    /// <summary>Removes every entry under the atom key <paramref name="atomId"/>.</summary>
+    public void EraseAllAtom(int atomId)
+    {
+        if (!_byAtom.TryGetValue(atomId, out var list)) return;
+        foreach (var e in list) _byRef.Remove(e.Ref);
+        _byAtom.Remove(atomId);
     }
 
     /// <summary>Returns the term stored under <paramref name="ref"/>, or
@@ -115,12 +148,40 @@ public sealed class RecordedDatabase
         foreach (var e in list) yield return (e.Ref, e.Term);
     }
 
-    /// <summary>Number of entries under <paramref name="key"/>.</summary>
+    /// <summary>The raw chain for <paramref name="key"/>, or null when the
+    /// key has no records. Lets a hot caller (recorded/3) walk the
+    /// <see cref="LinkedListNode{T}"/> spine directly — no iterator object,
+    /// no per-element state-machine MoveNext — and cache the single
+    /// dictionary lookup across a backtracking cursor's lifetime. The list
+    /// is live: a node erased mid-walk is spliced out (its <c>.List</c>
+    /// becomes null), so a caller that walks across mutations must detect
+    /// that and re-anchor (see RecordedCursor's snapshot-on-resume).</summary>
+    internal LinkedList<RecordEntry>? GetChain(Term key)
+        => _byKey.TryGetValue(key, out var list) ? list : null;
+
+    /// <summary>The raw chain for an atom key, by integer id. See
+    /// <see cref="GetChain(Term)"/>.</summary>
+    internal LinkedList<RecordEntry>? GetAtomChain(int atomId)
+        => _byAtom.TryGetValue(atomId, out var list) ? list : null;
+
+    /// <summary>Number of entries under the compound <paramref name="key"/>.</summary>
     public int KeyCount(Term key)
         => _byKey.TryGetValue(key, out var list) ? list.Count : 0;
 
-    /// <summary>Snapshot of every key currently in the database.</summary>
-    public IEnumerable<Term> AllKeys() => _byKey.Keys.ToArray();
+    /// <summary>Number of entries under the atom key <paramref name="atomId"/>.</summary>
+    public int KeyCountAtom(int atomId)
+        => _byAtom.TryGetValue(atomId, out var list) ? list.Count : 0;
+
+    /// <summary>Snapshot of every key currently in the database — the atom
+    /// keys (recovered as their stored key Term) and the compound keys.</summary>
+    public IEnumerable<Term> AllKeys()
+    {
+        var keys = new List<Term>(_byAtom.Count + _byKey.Count);
+        foreach (var list in _byAtom.Values)
+            if (list.First is { } node) keys.Add(node.Value.Key);
+        keys.AddRange(_byKey.Keys);
+        return keys;
+    }
 
     /// <summary>Whether <paramref name="ref"/> currently refers to a
     /// live entry. Used by <c>ref/1</c>.</summary>
@@ -157,7 +218,7 @@ public sealed class RecordedDatabase
     {
         if (!_byRef.TryGetValue(afterRef, out var anchor)) return null;
         long @ref = _nextRef++;
-        var entry = new RecordEntry(@ref, anchor.Key, term);
+        var entry = new RecordEntry(@ref, anchor.Key, term) { AtomId = anchor.AtomId };
         entry.Node = anchor.Node!.List!.AddAfter(anchor.Node, entry);
         _byRef[@ref] = entry;
         return @ref;
@@ -169,7 +230,7 @@ public sealed class RecordedDatabase
     {
         if (!_byRef.TryGetValue(beforeRef, out var anchor)) return null;
         long @ref = _nextRef++;
-        var entry = new RecordEntry(@ref, anchor.Key, term);
+        var entry = new RecordEntry(@ref, anchor.Key, term) { AtomId = anchor.AtomId };
         entry.Node = anchor.Node!.List!.AddBefore(anchor.Node, entry);
         _byRef[@ref] = entry;
         return @ref;
@@ -180,6 +241,7 @@ public sealed class RecordedDatabase
     public void Clear()
     {
         _byKey.Clear();
+        _byAtom.Clear();
         _byRef.Clear();
         // _nextRef is NOT reset — refs stay forever unique even across
         // clears, matching Arity's behaviour.

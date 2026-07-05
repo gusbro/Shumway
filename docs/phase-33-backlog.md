@@ -811,6 +811,38 @@ artifact of the R1-benign Cell[] Gen2 churn, not engine-thread time.
 already recorded. PushChoicePoint/RestoreCommon ~3% = the ADR-026-analyzed
 frame machinery, known tight.
 
+## PrologToC corpus — real-program compat + efficiency (2026-07-05, user-directed)
+
+Made the third-party PrologToC compiler (`C:\temp\PrologToC`, a real Prolog→C
+compiler) build and run under Shumway, then compared self-compile efficiency
+against SWI-Prolog. Compat work (12/12 benchmarks compile; ships as `pc.exe`
+via `--exe`, and `pc-il.exe` via `--with-compiled-il`) is committed in 29d01d6
+/ ac4a707. Then the efficiency arc:
+
+- [x] **recorded/3 atom-integer fast path + de-iterator.** The self-compile
+      (0006, `pc.exe pc.pl`) ran **~88 s vs SWI ~3.9 s (≈20–25× slower)**.
+      dotnet-trace: `RecordedDatabase.<Recorded>d__13.MoveNext` 42% exclusive
+      + a GC/finalizer storm (RunFinalizers 44% incl.) — the corpus keys its
+      central store on the recorded DB and hammers it. Root cause: the DB was
+      `Dictionary<Term, LinkedList<..>>` keyed on **structural (string) Term
+      hashing**, and every `recorded/3` call **materialised a fresh key
+      AtomTerm** and walked a `yield` iterator — per-call string-hash + alloc +
+      iterator object, ×millions. Fix (RecordedDatabase.cs + MetaBuiltins.cs):
+      a parallel `Dictionary<int, LinkedList<..>>` keyed on the key atom's
+      **integer id read straight off the cell** (no key AST, no string hash);
+      the 6 key-taking builtins route through one `ReadRecordedKey` helper
+      (atom→id fast path, compound→structural fallback — no split-brain, DB
+      only touched via these builtins); the cursor caches the chain lookup ONCE
+      and walks `LinkedListNode`s directly (no iterator alloc). Prefilter +
+      lazy-tail (d405322) kept. **Measured ABBA min-of-5: pc.exe 3.32 s vs SWI
+      3.91 s (0.85× — Shumway now ~15% FASTER than SWI)**; profile: recorded/3
+      53%→~10%, iterator + finalizer-storm frames gone; output byte-identical
+      (1,539,096 B pc.c). NB: the 88 s "baseline" was partly a stale-embed
+      artifact ([[x64-build-output-path]]) — the true pre-fix DB cost was still
+      the dominant term, but always benchmark `pc.exe` from an x64-path relink.
+      Residual top frames now Monitor.Enter/PollGC/TLS-trim (~46%, not
+      recorded-shaped) — diminishing returns for this corpus, left unactioned.
+
 ## Later rounds (not yet waved)
 
 Region runtime:

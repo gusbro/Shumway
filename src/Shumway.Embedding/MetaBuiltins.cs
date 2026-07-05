@@ -4404,11 +4404,14 @@ public static class MetaBuiltins
     private static bool RecordImpl(Engine engine, bool atFront)
     {
         PrologEngine host = RequireHost(engine, atFront ? "recorda/3" : "recordz/3");
-        Term key = RequireGroundKey(engine, register: 0, builtin: atFront ? "recorda/3" : "recordz/3");
+        var (atomId, keyTerm) = ReadRecordedKey(engine, 0, atFront ? "recorda/3" : "recordz/3");
+        // Atom key: materialise the AtomTerm once, here on the (cooler) write
+        // path, so the entry carries a Key for introspection (keys/1, KeyOf).
+        keyTerm ??= MaterializeRegister(engine, 0);
         Term term = MaterializeRegister(engine, 1);
         long @ref = atFront
-            ? host.Records.Recorda(key, term)
-            : host.Records.Recordz(key, term);
+            ? host.Records.Recorda(atomId, keyTerm, term)
+            : host.Records.Recordz(atomId, keyTerm, term);
         return engine.UnifyRegisterWithCell(2, Cell.Int(@ref));
     }
 
@@ -4436,28 +4439,46 @@ public static class MetaBuiltins
     public static bool Recorded3(Engine engine)
     {
         PrologEngine host = RequireHost(engine, "recorded/3");
-        Term key = RequireGroundKey(engine, register: 0, builtin: "recorded/3");
+        var (atomId, keyTerm) = ReadRecordedKey(engine, 0, "recorded/3");
         int returnPc = engine.BuiltinReturnPc;
-        return new RecordedCursor(host, key, returnPc).Start(engine);
+        return new RecordedCursor(host, atomId, keyTerm, returnPc).Start(engine);
     }
 
     private sealed class RecordedCursor
     {
         private readonly PrologEngine _host;
-        private readonly Term _key;
+        private readonly int _atomId;   // >= 0 => atom key (integer store); -1 => compound
+        private readonly Term? _key;    // set only for compound keys
         private readonly int _returnPc;
+        // The key's chain, looked up ONCE (lazily) and cached for the cursor's
+        // whole backtracking life — no repeated structural dictionary probe.
+        private LinkedList<RecordedDatabase.RecordEntry>? _chain;
+        private bool _chainResolved;
         // Built on the FIRST resume (lazy tail snapshot); null before that.
         private List<(long Ref, Term Term)>? _snapshot;
         private int _snapIdx;
         private long _lastYieldedRef = -1;
         public readonly Func<Engine, int, bool> Resume;
 
-        public RecordedCursor(PrologEngine host, Term key, int returnPc)
+        public RecordedCursor(PrologEngine host, int atomId, Term? key, int returnPc)
         {
             _host = host;
+            _atomId = atomId;
             _key = key;
             _returnPc = returnPc;
             Resume = (e, _) => Attempt(e, isResume: true);
+        }
+
+        private LinkedList<RecordedDatabase.RecordEntry>? Chain()
+        {
+            if (!_chainResolved)
+            {
+                _chain = _atomId >= 0
+                    ? _host.Records.GetAtomChain(_atomId)
+                    : _host.Records.GetChain(_key!);
+                _chainResolved = true;
+            }
+            return _chain;
         }
 
         public bool Start(Engine engine) => Attempt(engine, isResume: false);
@@ -4471,19 +4492,17 @@ public static class MetaBuiltins
                 // chain when the consumer erased it (the drain): the entries
                 // before the yielded one were already rejected against this
                 // same (CP-restored) pattern, so re-offering them is at worst
-                // a cheap re-rejection, never a wrong answer.
+                // a cheap re-rejection, never a wrong answer. Walk the node
+                // spine directly (no iterator allocation).
                 _snapshot = new List<(long, Term)>();
-                bool after = false, sawYielded = false;
-                foreach (var e2 in _host.Records.Recorded(_key))
+                var chain = Chain();
+                if (chain is not null)
                 {
-                    if (after) { _snapshot.Add(e2); continue; }
-                    if (e2.Ref == _lastYieldedRef) { after = true; sawYielded = true; }
-                }
-                if (!sawYielded)
-                {
-                    _snapshot.Clear();
-                    foreach (var e2 in _host.Records.Recorded(_key))
-                        _snapshot.Add(e2);
+                    var start = chain.First;
+                    for (var n = chain.First; n is not null; n = n.Next)
+                        if (n.Value.Ref == _lastYieldedRef) { start = n.Next; break; }
+                    for (var n = start; n is not null; n = n.Next)
+                        _snapshot.Add((n.Value.Ref, n.Value.Term));
                 }
                 _snapIdx = 0;
             }
@@ -4499,11 +4518,13 @@ public static class MetaBuiltins
 
             if (_snapshot is null)
             {
-                foreach (var cand in _host.Records.Recorded(_key))
+                var chain = Chain();
+                for (var n = chain?.First; n is not null; n = n.Next)
                 {
+                    var cand = n.Value;
                     if (!patIsVar && !TrialUnifies(engine, patSlot, cand.Term)) continue;
                     _lastYieldedRef = cand.Ref;
-                    return YieldCandidate(engine, cand, isResume);
+                    return YieldCandidate(engine, (cand.Ref, cand.Term), isResume);
                 }
                 return false;
             }
@@ -4562,8 +4583,9 @@ public static class MetaBuiltins
     public static bool EraseAll1(Engine engine)
     {
         PrologEngine host = RequireHost(engine, "eraseall/1");
-        Term key = RequireGroundKey(engine, register: 0, builtin: "eraseall/1");
-        host.Records.EraseAll(key);
+        var (atomId, keyTerm) = ReadRecordedKey(engine, 0, "eraseall/1");
+        if (atomId >= 0) host.Records.EraseAllAtom(atomId);
+        else host.Records.EraseAll(keyTerm!);
         return true;
     }
 
@@ -4580,8 +4602,10 @@ public static class MetaBuiltins
     public static bool KeyCount2(Engine engine)
     {
         PrologEngine host = RequireHost(engine, "key_count/2");
-        Term key = RequireGroundKey(engine, register: 0, builtin: "key_count/2");
-        int count = host.Records.KeyCount(key);
+        var (atomId, keyTerm) = ReadRecordedKey(engine, 0, "key_count/2");
+        int count = atomId >= 0
+            ? host.Records.KeyCountAtom(atomId)
+            : host.Records.KeyCount(keyTerm!);
         return engine.UnifyRegisterWithCell(1, Cell.Int(count));
     }
 
@@ -4592,6 +4616,8 @@ public static class MetaBuiltins
         if (keyCell.Tag != Tag.Ref && keyCell.Tag != Tag.AttVar)
         {
             // Ground (or partially bound): treat as membership test.
+            if (keyCell.Tag == Tag.Atom)
+                return host.Records.KeyCountAtom(keyCell.AsAtomId) > 0;
             Term k = MaterializeRegister(engine, 0);
             return host.Records.KeyCount(k) > 0;
         }
@@ -4669,19 +4695,27 @@ public static class MetaBuiltins
             ?? throw new InvalidOperationException(
                 $"{builtin} requires the engine to be hosted by a PrologEngine.");
 
-    private static Term RequireGroundKey(Engine engine, int register, string builtin)
+    /// <summary>Reads a recorded-DB key from register <paramref name="register"/>.
+    /// For an ATOM key returns its integer id (AtomId >= 0) and a null Term —
+    /// the hot read path (recorded/3) then keys the integer-indexed store with
+    /// NO key-AST materialisation and no structural string hashing (the two
+    /// costs the PrologToC self-compile profile was dominated by). For a ground
+    /// COMPOUND key returns AtomId = -1 and the materialised, validated Term.
+    /// A var / inner-var key raises <c>instantiation_error</c> — the recorded
+    /// DB keys on structural equality, and a VarTerm compares by its generated
+    /// name, so a non-ground key would store under a never-again-equal key and
+    /// silently fail every lookup.</summary>
+    private static (int AtomId, Term? Term) ReadRecordedKey(Engine engine, int register, string builtin)
     {
         Cell cell = MaterializeRegisterAsCell(engine, register);
         if (cell.Tag == Tag.Ref || cell.Tag == Tag.AttVar)
             throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+        if (cell.Tag == Tag.Atom)
+            return (cell.AsAtomId, null);
         Term key = MaterializeRegister(engine, register);
-        // The recorded DB keys a dictionary on structural term equality, and a
-        // VarTerm compares by its generated name — so a key with an INNER unbound
-        // variable (e.g. foo(X)) would store under a never-again-equal key and
-        // silently fail every recorded/3 lookup. Loud instantiation_error instead.
         if (!IsDeepGround(key))
             throw new Shumway.Core.PrologRuntimeException("instantiation_error");
-        return key;
+        return (-1, key);
     }
 
     // Iterative deep-groundness walk (no recursion — keys can be long lists).
