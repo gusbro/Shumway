@@ -198,9 +198,21 @@ public static class ShmoReader
         string nd = ReadLengthPrefixedUtf8(br);
         string? nativeDecls = nd.Length == 0 ? null : nd;
 
+        // Phase 33 (PrologToC) — operator trailer.
+        uint opCount = br.ReadUInt32();
+        var operators = new ShmoOperatorDef[opCount];
+        for (uint i = 0; i < opCount; i++)
+        {
+            int prio = br.ReadInt32();
+            string type = ReadLengthPrefixedUtf8(br);
+            string name = ReadLengthPrefixedUtf8(br);
+            operators[i] = new ShmoOperatorDef(prio, type, name);
+        }
+
         return new ShmoObject(moduleName, source, bytecode,
             defined, ensureLinked, callGraph, qrefs, buildMode, dynamicSeeds,
-            clauseTerms, arityCompat, nativeBlocks, nativeFunctions, nativeDecls);
+            clauseTerms, arityCompat, nativeBlocks, nativeFunctions, nativeDecls,
+            operators);
     }
 
     private static string ReadLengthPrefixedUtf8(BinaryReader br)

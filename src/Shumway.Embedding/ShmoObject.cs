@@ -67,6 +67,19 @@ public readonly record struct ShmoCallEdge(PredicateRef Target, bool IsMeta)
     public override string ToString() => IsMeta ? $"{Target}[meta]" : Target.ToString();
 }
 
+/// <summary>One <c>:- op/3</c> definition a module's source executed at
+/// compile time (Phase 33, PrologToC corpus). Carried through
+/// <c>.shmo</c> → <c>.shum</c> so <c>LoadBundle</c> can replay it into the
+/// runtime engine's operator table — a SOURCE-STRIPPED bundle otherwise
+/// loses the ops, and any runtime <c>read/1</c> / <c>string_term/2</c> of
+/// text using them mis-parses (the debug path never noticed: it re-consults
+/// the source, re-executing the directives). <see cref="Type"/> is the
+/// canonical specifier atom (<c>fx … yfx</c>).</summary>
+public readonly record struct ShmoOperatorDef(int Priority, string Type, string Name)
+{
+    public override string ToString() => $"op({Priority}, {Type}, {Name})";
+}
+
 /// <summary>One predicate defined inside a <c>.shmo</c>, together with
 /// its visibility.</summary>
 public sealed class ShmoDefinedPredicate
@@ -196,7 +209,8 @@ public sealed class ShmoObject
         bool arityCompat = false,
         IReadOnlyList<ShmoNativeBlock>? nativeBlocks = null,
         IReadOnlyList<PredicateRef>? nativeFunctions = null,
-        string? nativeDecls = null)
+        string? nativeDecls = null,
+        IReadOnlyList<ShmoOperatorDef>? operators = null)
     {
         ModuleName = moduleName;
         Source = source;
@@ -212,6 +226,7 @@ public sealed class ShmoObject
         NativeBlocks = nativeBlocks ?? System.Array.Empty<ShmoNativeBlock>();
         NativeFunctions = nativeFunctions ?? System.Array.Empty<PredicateRef>();
         NativeDecls = nativeDecls;
+        Operators = operators ?? System.Array.Empty<ShmoOperatorDef>();
     }
 
     /// <summary>ADR-024 — the <c>:- native fn/N</c> indicators in this module, so a
@@ -223,6 +238,13 @@ public sealed class ShmoObject
     /// of this module, re-parsed at load to derive native-call signatures. Null when
     /// the module has no <c>:- c</c> region.</summary>
     public string? NativeDecls { get; }
+
+    /// <summary>Phase 33 (PrologToC) — every <c>:- op/3</c> this module's source
+    /// executed at compile time, in source order (list-name forms expanded).
+    /// Replayed into the engine's operator table by <c>LoadBundle</c> so
+    /// runtime term reading in a source-stripped bundle parses with the same
+    /// operators the source declared.</summary>
+    public IReadOnlyList<ShmoOperatorDef> Operators { get; }
 }
 
 /// <summary>ADR-022 — one embedded native block's marshalling data, carried

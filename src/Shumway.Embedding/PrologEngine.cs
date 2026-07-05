@@ -2873,7 +2873,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     compiledIlPatches: null,
                     compiledIlEntries: null,
                     dynamicSeeds: shmo.DynamicSeeds,
-                    nativeBlocks: shmo.NativeBlocks));
+                    nativeBlocks: shmo.NativeBlocks,
+                    operators: shmo.Operators));   // Phase 33 (PrologToC)
             }
             effectiveEntries = combined;
         }
@@ -2890,6 +2891,27 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
         foreach (var entry in effectiveEntries)
         {
+            // Phase 33 (PrologToC) — replay the entry's `:- op/3` definitions
+            // into the runtime operator table BEFORE loading it. A
+            // source-stripped entry otherwise loses its ops entirely (the
+            // debug path re-executes them via ConsultString, for which this
+            // replay is an idempotent no-op) — and any runtime read/1 /
+            // string_term/2 of text using them would mis-parse.
+            foreach (var od in entry.Operators)
+            {
+                var opType = od.Type switch
+                {
+                    "fx" => Shumway.Compiler.Parsing.OperatorType.Fx,
+                    "fy" => Shumway.Compiler.Parsing.OperatorType.Fy,
+                    "xf" => Shumway.Compiler.Parsing.OperatorType.Xf,
+                    "yf" => Shumway.Compiler.Parsing.OperatorType.Yf,
+                    "xfx" => Shumway.Compiler.Parsing.OperatorType.Xfx,
+                    "xfy" => Shumway.Compiler.Parsing.OperatorType.Xfy,
+                    "yfx" => Shumway.Compiler.Parsing.OperatorType.Yfx,
+                    _ => (Shumway.Compiler.Parsing.OperatorType?)null,
+                } ;
+                if (opType is { } t) DefineOperator(od.Name, od.Priority, t);
+            }
             // Chunk 178: source-less load. When the bundle was built
             // with --strip (or compiled in Release with chunk 177's
             // source omission), Source is empty and we cannot

@@ -186,7 +186,8 @@ public sealed class BundleEntry
         IReadOnlyList<ShmoDynamicSeed>? dynamicSeeds = null,
         IReadOnlyList<ShmoNativeBlock>? nativeBlocks = null,
         IReadOnlyList<PredicateRef>? nativeFunctions = null,
-        string? nativeDecls = null)
+        string? nativeDecls = null,
+        IReadOnlyList<ShmoOperatorDef>? operators = null)
     {
         ModuleName = moduleName;
         Source = source;
@@ -199,6 +200,7 @@ public sealed class BundleEntry
         NativeBlocks = nativeBlocks ?? Array.Empty<ShmoNativeBlock>();
         NativeFunctions = nativeFunctions ?? Array.Empty<PredicateRef>();
         NativeDecls = nativeDecls;
+        Operators = operators ?? Array.Empty<ShmoOperatorDef>();
     }
 
     /// <summary>ADR-024 — the module's <c>:- native</c> indicators (see
@@ -208,4 +210,9 @@ public sealed class BundleEntry
     /// <summary>ADR-024 — the module's raw <c>:- c</c> declaration text (see
     /// <see cref="ShmoObject.NativeDecls"/>).</summary>
     public string? NativeDecls { get; }
+
+    /// <summary>Phase 33 (PrologToC) — the module's <c>:- op/3</c> definitions
+    /// (see <see cref="ShmoObject.Operators"/>), replayed into the engine's
+    /// operator table at <c>LoadBundle</c>.</summary>
+    public IReadOnlyList<ShmoOperatorDef> Operators { get; }
 }

@@ -128,6 +128,17 @@ public static class ShmoWriter
         }
         WriteLengthPrefixedUtf8(bw, obj.NativeDecls ?? string.Empty);
 
+        // Phase 33 (PrologToC) — operator trailer: the `:- op/3` definitions
+        // this module's source executed, replayed at LoadBundle so stripped
+        // bundles keep their runtime operator table.
+        bw.Write((uint)obj.Operators.Count);
+        foreach (var od in obj.Operators)
+        {
+            bw.Write(od.Priority);
+            WriteLengthPrefixedUtf8(bw, od.Type);
+            WriteLengthPrefixedUtf8(bw, od.Name);
+        }
+
         bw.Flush();
         return BundleFormat.FinalizeImage(ms.ToArray());   // Phase 33 T6
     }

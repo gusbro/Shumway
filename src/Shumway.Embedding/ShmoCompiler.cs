@@ -239,6 +239,12 @@ public static class ShmoCompiler
         // synthetic `'$native_decls'(Text)` directive) so CompileFromParts can
         // build the C symbol table for native-block type inference.
         var nativeDecls = new System.Text.StringBuilder();
+        // Phase 33 (PrologToC) — collect the `:- op/3` definitions this
+        // source executed (ClauseReader already applied them to the parse
+        // table in-place; here we RECORD them, in source order and with
+        // list-name forms expanded) so they travel .shmo → .shum and
+        // LoadBundle replays them into the runtime operator table.
+        var operatorDefs = new List<ShmoOperatorDef>();
 
         foreach (var clause in allClauses)
         {
@@ -250,6 +256,28 @@ public static class ShmoCompiler
                     && nd.Args.Length == 1 && nd.Args[0] is StringTerm ndText)
                 {
                     nativeDecls.Append(ndText.Content).Append('\n');
+                    continue;
+                }
+                if (d.Args[0] is CompoundTerm { Functor: "op", Args.Length: 3 } opDir
+                    && opDir.Args[0] is IntTerm opPrio
+                    && opDir.Args[1] is AtomTerm opType)
+                {
+                    // Single atom or the conventional list-of-names form.
+                    Term names = opDir.Args[2];
+                    if (names is AtomTerm single)
+                        operatorDefs.Add(new ShmoOperatorDef(
+                            (int)opPrio.Value, opType.Name, single.Name));
+                    else
+                        while (names is CompoundTerm { Functor: ".", Args.Length: 2 } cons)
+                        {
+                            if (cons.Args[0] is AtomTerm nm)
+                                operatorDefs.Add(new ShmoOperatorDef(
+                                    (int)opPrio.Value, opType.Name, nm.Name));
+                            names = cons.Args[1];
+                        }
+                    // Fall through to ProcessDirective/warning path? No —
+                    // op/3 is fully handled (parse-time by ClauseReader,
+                    // persistence here); nothing else to do.
                     continue;
                 }
                 try
@@ -299,7 +327,8 @@ public static class ShmoCompiler
             moduleName,
             source, rawClauses, publicSet, dynamicSet, ensureLinked,
             qualifiedRefs, buildMode, errors, warnings, arityEverOn, tabledSet,
-            nativeDecls.Length > 0 ? nativeDecls.ToString() : null, nativeSet);
+            nativeDecls.Length > 0 ? nativeDecls.ToString() : null, nativeSet,
+            operatorDefs);
     }
 
     /// <summary>Chunk 411 — the compile back-half, shared by
@@ -325,7 +354,8 @@ public static class ShmoCompiler
         bool arityCompat = false,
         HashSet<PredicateRef>? tabledSet = null,
         string? nativeDecls = null,
-        HashSet<PredicateRef>? nativeSet = null)
+        HashSet<PredicateRef>? nativeSet = null,
+        IReadOnlyList<ShmoOperatorDef>? operatorDefs = null)
     {
         // Partition raw clauses: dynamic-head ones become DynamicSeeds
         // (RAW), the rest go through the same DcgTransform +
@@ -712,7 +742,8 @@ public static class ShmoCompiler
             arityCompat: arityCompat,
             nativeBlocks: nativeBlocks,
             nativeFunctions: nativeSet?.ToList(),
-            nativeDecls: nativeDecls);
+            nativeDecls: nativeDecls,
+            operators: operatorDefs);
         obj.DynamicSnapshotBytecode = dynamicSnapshotBytecode;
         return new ShmoCompileResult(obj, errors, warnings);
     }

@@ -136,9 +136,19 @@ public static class BundleReader
             }
             string nd = ReadLengthPrefixedUtf8(br);
             string? nativeDecls = nd.Length == 0 ? null : nd;
+            // Operator trailer (Phase 33, PrologToC).
+            uint opCount = br.ReadUInt32();
+            var operators = new List<ShmoOperatorDef>((int)opCount);
+            for (uint j = 0; j < opCount; j++)
+            {
+                int opPrio = br.ReadInt32();
+                string opType = ReadLengthPrefixedUtf8(br);
+                string opName = ReadLengthPrefixedUtf8(br);
+                operators.Add(new ShmoOperatorDef(opPrio, opType, opName));
+            }
             entries[i] = new BundleEntry(name, source, compiled, compiledIl, defined,
                 compiledIlPatches, compiledIlEntries, dynamicSeeds, nativeBlocks,
-                nativeFunctions, nativeDecls);
+                nativeFunctions, nativeDecls, operators);
         }
         // Foreign-assemblies trailer (chunk 247).
         uint asmCount = br.ReadUInt32();

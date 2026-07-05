@@ -230,6 +230,44 @@ public class Phase33PrologToCTests : IDisposable
         Assert.True(s.Success);
     }
 
+    // ---------- op/3 persistence through .shmo → .shum → LoadBundle ----------
+
+    [Fact]
+    public void OperatorDefs_SurviveStrippedBundle_AndListNameForm()
+    {
+        // A module defining ops (single + list-name forms) is compiled,
+        // linked SOURCE-STRIPPED, and loaded into a fresh engine: the ops
+        // must be live in the runtime table (current_op) and usable by
+        // runtime term reading — a stripped bundle used to lose them (the
+        // debug path masked it by re-consulting source).
+        string src =
+            ":- op(700, xfx, ===>).\n"
+            + ":- op(200, fy, ['#', '?']).\n"
+            + ":- public go/0.\n"
+            + "go.\n";
+        var obj = ShmoCompiler.CompileSource(src, "opsmod");
+        // Round-trip the .shmo image (exercises ShmoWriter/ShmoReader).
+        var rt = ShmoReader.FromBytes(ShmoWriter.ToBytes(obj));
+        Assert.Equal(3, rt.Operators.Count);   // ===> + # + ? (list expanded)
+
+        var bytes = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { rt },
+            EntryPoints = new[] { new PredicateRef("go", 0) },
+            StripSource = true,
+            BakePrelude = true,
+        }).Bytes!;
+
+        var e = new PrologEngine();
+        e.LoadBundle(BundleReader.FromBytes(bytes));
+        Assert.True(e.Query("current_op(700, xfx, '===>').").Success);
+        Assert.True(e.Query("current_op(200, fy, '#').").Success);
+        Assert.True(e.Query("current_op(200, fy, '?').").Success);
+        // And runtime reading actually parses with them.
+        string f = Slash(Write("opuse.pl", "r(a ===> ?b).\n"));
+        Assert.True(e.Query($"see('{f}'), read(T), seen, T = r(_).").Success);
+    }
+
     // ---------- open-open append/3 ----------
 
     [Fact]

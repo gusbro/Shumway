@@ -933,7 +933,8 @@ public static class ShmoLinker
                         obj.ModuleName, "", rawAll, rPublic, rDynamic,
                         new List<PredicateRef>(obj.EnsureLinked),
                         new List<QualifiedPredicateRef>(), ShmoBuildMode.Release, perrs,
-                        arityCompat: obj.ArityCompat);
+                        arityCompat: obj.ArityCompat,
+                        operatorDefs: obj.Operators);   // Phase 33 — preserve op/3 defs
                     if (recompiled.Success && recompiled.Object is { } robj
                         && robj.Bytecode.Length > 0)
                     {
@@ -1002,7 +1003,8 @@ public static class ShmoLinker
                     dynamicSeeds: obj.DynamicSeeds,
                     nativeBlocks: obj.NativeBlocks,
                     nativeFunctions: obj.NativeFunctions,
-                    nativeDecls: obj.NativeDecls));
+                    nativeDecls: obj.NativeDecls,
+                    operators: obj.Operators));   // Phase 33 (PrologToC)
             }
             // Bake the precompiled prelude so a bare-loaded engine
             // (PrologEngine.FromBundle / the generated --exe) gets it without
@@ -1338,7 +1340,8 @@ public static class ShmoLinker
                 obj.ModuleName, obj.Source, rawAll, publicSet, dynamicSet,
                 new List<PredicateRef>(obj.EnsureLinked),
                 new List<QualifiedPredicateRef>(), obj.BuildMode, errors,
-                arityCompat: obj.ArityCompat);
+                arityCompat: obj.ArityCompat,
+                operatorDefs: obj.Operators);   // Phase 33 — preserve op/3 defs
             if (!res.Success || res.Object is null)
             {
                 emit(LinkSeverity.Warning, "lto_unfold_recompile_failed",
@@ -1851,6 +1854,8 @@ public static class ShmoLinker
             BundleWriter.WriteNativeBlocks(bw, e.NativeBlocks);
             // Native interop trailer (ADR-024): :- native indicators + :- c decls.
             BundleWriter.WriteNativeInterop(bw, e.NativeFunctions, e.NativeDecls);
+            // Operator trailer (Phase 33, PrologToC).
+            BundleWriter.WriteOperators(bw, e.Operators);
         }
         // Foreign-assemblies trailer (chunk 247). Must mirror
         // BundleWriter.ToBytes's section exactly so a bundle

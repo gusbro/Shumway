@@ -123,7 +123,13 @@ public static class BundleWriter
                     compiledIlPatches,
                     compiledIlEntries,
                     effective[i].DynamicSeeds,
-                    effective[i].NativeBlocks);
+                    effective[i].NativeBlocks,
+                    // Phase 33 (PrologToC) — this rebuild used to drop the
+                    // native-interop metadata AND the operator defs on the
+                    // --with-compiled-il path; carry everything through.
+                    effective[i].NativeFunctions,
+                    effective[i].NativeDecls,
+                    effective[i].Operators);
             }
         }
 
@@ -176,6 +182,7 @@ public static class BundleWriter
             // Native-blocks trailer (ADR-022).
             WriteNativeBlocks(bw, entry.NativeBlocks);
             WriteNativeInterop(bw, entry.NativeFunctions, entry.NativeDecls);
+            WriteOperators(bw, entry.Operators);   // Phase 33 (PrologToC)
         }
         // Foreign-assemblies trailer (chunk 247) after the
         // per-entry payloads. Pre-V5 readers stop after the last
@@ -266,7 +273,8 @@ public static class BundleWriter
                     dynamicSeeds: e.DynamicSeeds,
                     nativeBlocks: e.NativeBlocks,
                     nativeFunctions: e.NativeFunctions,
-                    nativeDecls: e.NativeDecls));
+                    nativeDecls: e.NativeDecls,
+                    operators: e.Operators));   // Phase 33 (PrologToC)
             else if (!string.IsNullOrEmpty(e.Source))
                 sources.Add(e.Source);
         }
@@ -663,6 +671,21 @@ public static class BundleWriter
             bw.Write((uint)pr.Arity);
         }
         WriteLengthPrefixedUtf8(bw, nativeDecls ?? string.Empty);
+    }
+
+    /// <summary>Phase 33 (PrologToC) — per-entry <c>:- op/3</c> definitions,
+    /// replayed into the runtime operator table at LoadBundle. Shared by
+    /// both .shum writers (this file and the linker's inline serializer).</summary>
+    internal static void WriteOperators(BinaryWriter bw,
+        IReadOnlyList<ShmoOperatorDef> operators)
+    {
+        bw.Write((uint)operators.Count);
+        foreach (var od in operators)
+        {
+            bw.Write(od.Priority);
+            WriteLengthPrefixedUtf8(bw, od.Type);
+            WriteLengthPrefixedUtf8(bw, od.Name);
+        }
     }
 
     internal static void WriteNativeBlocks(BinaryWriter bw,
