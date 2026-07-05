@@ -576,17 +576,21 @@ public sealed partial class Engine
     // ----- Choice-point frame layout (ADR-005) -----
     //
     // Layout: [arity | A1 .. Aarity | CE | CP | B | BP | BindingTrailTop |
-    //          ExtraTrailTop | HeapTop | Hb | ViewGen]
-    // Total size = 10 + arity cells.
+    //          ExtraTrailTop | HeapTop | Hb | ViewGen | B0]
+    // Total size = 11 + arity cells (CpSize).
     //
-    // ViewGen (ADR-015 chunk C, bytecode-level dispatch): the
-    // dynamic-database generation the calling query had captured when it
-    // entered this predicate — its "logical update view" timestamp. Pushed
-    // by try_me_else along with the rest of the engine state; restored on
-    // retry_me_else so a CheckVisible instruction in any of the
-    // backtrackable clauses reads the same view-gen the call started with.
-    // The field is uniform across CPs (zero for static predicates); the
-    // tiny per-CP cost buys a single uniform save/restore path.
+    // ViewGen (ADR-015 chunk C, bytecode-level dispatch): the live
+    // CurrentViewGen register at push time — the "logical update view"
+    // timestamp sampled by the innermost enter_dynamic. Restored on every
+    // CP restore so a CheckVisible in a dynamic chain, re-entered by
+    // backtracking, reads the same view-gen its activation started with.
+    // The slot is uniform across CPs even though only dynamic-chain CPs
+    // semantically need it (CheckVisible is CurrentViewGen's ONLY reader);
+    // ADR-026 analyzed splitting the frame into narrow (static) / wide
+    // (dynamic-chain) widths and REJECTED it — the measured ceiling on the
+    // most CP-intensive synthetic is 0.3-1% (below noise), against ~13
+    // frame-walker mask sites each a silent-corruption hazard. The tiny
+    // per-CP cost buys a single uniform save/restore path.
 
     public const int CpArityOffset = 0;
     public const int CpArg1Offset = 1;

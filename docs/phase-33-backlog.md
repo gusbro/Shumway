@@ -941,15 +941,33 @@ Interpreter core:
       top, so the whole body (including the O(_catchFrames) snapshot-clip loop
       that ran on EVERY cut) is a proven no-op. Deterministic cuts under deep
       catch nesting no longer pay O(catch frames) for nothing.*
-- [ ] **I6** 🟡 CP saves 10 control words incl. ViewGen for static predicates.
-      **Deferred — touches a core invariant (ADR-005).** A variable-width CP
-      (drop ViewGen for static callees) changes the choice-point frame layout
-      the whole engine and the conservative heap-GC scan depend on: the GC reads
-      CP control words by fixed offset and distinguishes them from heap refs via
-      `Tag.RawInt` tagging (Phase 20 chunk 213). A per-CP-kind width would need
-      every CpXxxOffset, UnwindTrails, and the GC stack scan to branch on the
-      kind. High-blast-radius for one saved word; wants an ADR + the full gate,
-      not a batched edit. Deferred to a focused pass.
+- [x] **I6** 🟡 CP saves 10 control words incl. ViewGen for static predicates.
+      **CLOSED — REJECTED via ADR-026 (measured ceiling below noise).** The
+      focused pass ran (2026-07-05): full soundness analysis + design blueprint
+      + ceiling measurement, recorded in
+      [ADR-026](architecture/adr/026-variable-width-choice-points.md).
+      Key findings: (a) `CurrentViewGen` has exactly ONE reader — `CheckVisible`
+      (plain handler + the `TryInlineCheckVisible` peel); `ViewGenOf` has zero
+      callers — so the slot is semantically needed only on CPs pushed inside
+      dynamic-chain dispatch (between `enter_dynamic` and the body `execute`);
+      every other CP restores it redundantly. (b) A sound two-width design
+      exists (width bit in the arity word + an `_inDynamicChain` engine flag
+      set by enter_dynamic / resynced on every CP restore / cleared on call
+      dispatch — opcode-peek and new-opcode discriminators rejected: adjacency
+      is not an invariant post-asserta-demotion, and a `TryMeElseDyn` family
+      would double every 155a-g chain-walker match site). (c) The MEASURED
+      ceiling: unsound narrow-frame hack, static-only CP-heavy workloads,
+      SHA-verified frozen A/B builds, interleaved A-B-B-A-A-B-B-A — queens
+      identical (39 vs 39 ms min), crypt overlapping ranges, and the purest
+      CP-churn synthetic (member-fail, ~6M push+restore pairs) had the WRONG
+      SIGN (baseline 1241 vs narrow 1286 ms min): noise. Arithmetic agrees:
+      12M saved memory ops ≈ 5-12 ms ≈ 0.3-1% on the most favourable synthetic
+      possible, ~0 on real code (regions/neck-cut already elide most CPs —
+      the ADR-021 Class-B lesson verbatim). Against: ~13 raw arity-word
+      reader mask sites, each a silent stack-corruption hazard (chunk-404
+      class), plus a hot-path flag store. Shipped from the ADR: the stale
+      Engine.cs CP-layout comment fixed (it omitted B0 and mis-stated the
+      ViewGen semantics). Revisit triggers recorded in the ADR.
 - [-] **I7** 🟡 ProgramGeneration property read per dispatch tick.
       **Deferred pending a benchmark** (measure-before-touch, per the C1/L7/B2
       precedent): the per-tick check is already a single field read + compare +

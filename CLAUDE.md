@@ -1282,6 +1282,7 @@ When proposing changes:
 | Dynamic predicates in Tier-1 IL — snapshot + evict-on-mutation | ADR-023 (proposed) |
 | Generic Prolog-term interop (reftype tier) — zero-copy TermRef cursor + named intrinsics | ADR-024 (proposed) |
 | Body `jump` opcode + inline deterministic if-then-else at Tier-0 | ADR-025 (proposed) |
+| Variable-width choice points — REJECTED with measured ceiling (≤1% on max-CP synthetic, below noise; soundness blueprint preserved) | ADR-026 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | Builtins catalog | docs/design/builtins-catalog.md |
