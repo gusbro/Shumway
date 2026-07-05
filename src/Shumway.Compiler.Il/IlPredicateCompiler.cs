@@ -5699,26 +5699,29 @@ public sealed class IlPredicateCompiler
     /// the dynamic method's delegate during emission, so we route through
     /// a static side table keyed by an integer.</summary>
     private static int _nextHolderKey = 1;
-    private static readonly MethodInfo IndexedDelegateHolderGet =
-        typeof(IndexedDelegateHolder).GetMethod(nameof(IndexedDelegateHolder.Get))!;
 
     /// <summary>Emits IL that leaves a <see cref="PredicateDelegate"/> on
     /// the evaluation stack — the running predicate's own delegate, used
     /// as the callback target for <c>engine.PushIlChoicePoint</c>. Two
-    /// implementations:
+    /// implementations, both a direct <c>ldsfld / ldc / ldelem.ref</c> slot
+    /// load (Phase 33 IL round 2 — the DynamicMethod path used to be
+    /// <c>call IndexedDelegateHolder.Get</c>, a ConcurrentDictionary probe
+    /// per multi-clause region invocation, ~3% of engine time on the Tier-1
+    /// profile):
     /// <list type="bullet">
-    /// <item>DynamicMethod: <c>LoadConstant(holderKey); Call(IndexedDelegateHolderGet)</c>,
-    /// resolved at runtime from a process-wide dictionary.</item>
-    /// <item>Persisted assembly: <c>LoadField(arrayField); LoadConstant(slot); LoadElement&lt;PredicateDelegate&gt;()</c>,
-    /// resolved at load time from a static array field on the emitted type.</item>
+    /// <item>DynamicMethod: the process-wide <see cref="IndexedDelegateHolder.Slots"/>
+    /// array, indexed by the registration key.</item>
+    /// <item>Persisted assembly: a static array field on the emitted type,
+    /// resolved at load time.</item>
     /// </list></summary>
     internal delegate void SelfDelegateEmitter(Sigil.Emit<PredicateDelegate> emit);
 
     internal static SelfDelegateEmitter SelfFromHolder(int holderKey) =>
         e =>
         {
+            e.LoadField(IndexedDelegateHolder.SlotsField);
             e.LoadConstant(holderKey);
-            e.Call(IndexedDelegateHolderGet);
+            e.LoadElement<Func<Engine, int, bool>>();
         };
 
     internal static SelfDelegateEmitter SelfFromArrayField(
@@ -5734,21 +5737,28 @@ public sealed class IlPredicateCompiler
     /// reference itself for the <c>PushIlChoicePoint</c> call without
     /// running into the chicken-and-egg of "the delegate must exist
     /// before we can name it in IL". The IL embeds an integer key; at
-    /// runtime <see cref="Get"/> resolves it to the stored delegate. The
-    /// table is process-wide but write-once-per-key, so there's no
-    /// thread-safety concern beyond the lock around the dictionary.</summary>
+    /// runtime the slot array resolves it to the stored delegate. The
+    /// table is process-wide but write-once-per-key.</summary>
     internal static class IndexedDelegateHolder
     {
-        // ConcurrentDictionary so Get — called from IL-emitted dispatch
-        // code on every multi-clause Tier-1 call — reads lock-free.
-        // Profiling Blint showed the previous `lock (_lock)` here
-        // dominating wall time (~40%, blocked on the global lock) once
-        // any predicate was promoted. The stored value is the already-
-        // wrapped Func, so Get no longer allocates a fresh delegate per
-        // call either (the old `new Func<...>(del)` was per-dispatch GC
-        // pressure on the hottest path).
-        private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, Func<Engine, int, bool>> _byKey = new();
+        // Phase 33 IL round 2 — the store is a plain slot ARRAY indexed by
+        // the (sequential, RegistrationLock-serialised) holder key, and
+        // SelfFromHolder emits a direct `ldsfld / ldc / ldelem.ref` instead
+        // of a call — the Tier-1 profile showed the previous
+        // ConcurrentDictionary.TryGetValue as ~3% of engine time, one
+        // hash+bucket probe per multi-clause region invocation (it had
+        // replaced a contended `lock` in chunk 232; this removes the probe
+        // altogether). Publication safety: Register runs under
+        // RegistrationLock; a grow copies the old entries and stores the
+        // new delegate into the NEW array BEFORE Volatile.Write publishes
+        // it, so any array version a reader can observe after delegate X
+        // escaped (always through a fenced channel — the compile-result
+        // queue or the promotion tables) already contains X's slot.
+        public static Func<Engine, int, bool>?[] Slots = new Func<Engine, int, bool>?[256];
         private static readonly object _lock = new();
+
+        internal static readonly System.Reflection.FieldInfo SlotsField =
+            typeof(IndexedDelegateHolder).GetField(nameof(Slots))!;
 
         /// <summary>The lock the IL emission takes around the
         /// emit-and-register sequence so two concurrent compiles don't
@@ -5756,9 +5766,26 @@ public sealed class IlPredicateCompiler
         public static object RegistrationLock => _lock;
 
         public static void Register(int key, PredicateDelegate del)
-            => _byKey[key] = new Func<Engine, int, bool>(del);
+        {
+            lock (_lock)
+            {
+                var wrapped = new Func<Engine, int, bool>(del);
+                var arr = Slots;
+                if (key >= arr.Length)
+                {
+                    var grown = new Func<Engine, int, bool>?[System.Math.Max(arr.Length * 2, key + 1)];
+                    System.Array.Copy(arr, grown, arr.Length);
+                    grown[key] = wrapped;
+                    System.Threading.Volatile.Write(ref Slots, grown);
+                }
+                else
+                {
+                    arr[key] = wrapped;
+                }
+            }
+        }
 
-        public static Func<Engine, int, bool> Get(int key) => _byKey[key];
+        public static Func<Engine, int, bool> Get(int key) => Slots[key]!;
     }
 
     /// <summary>Resolves a callee functor id to its current-query
