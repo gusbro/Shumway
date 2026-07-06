@@ -104,6 +104,23 @@ default chain over the wildcards — reusing `SwitchTable`, `EmitChain`, and the
 table jump with **no leftover choice point** (`action` 32 → ~1–4; `print_cmd` 41 →
 lookup; `tok` 4 → 1); with wildcard fallbacks it prunes to {matching ∪ wildcard}.
 
+The win is **determinism and instruction count, not heap cells.** For the realistic
+*ground* parser call — the argument is already built on the heap — head matching is
+read-mode, so the failed clause attempts a linear scan makes allocate **nothing**;
+the heap-cell count is identical with and without the index. What the index removes
+is the scan itself. Measured Tier-0 A/B (SHUMWAY_PROFILE, sub-index on vs off, hot
+call hitting the *last* key so the linear baseline tries every earlier clause):
+
+| predicate (call) | clauses | opcodes | backtracks | choice points | cells |
+|---|---|---|---|---|---|
+| `print_cmd([t(x,112,a,b)｜_],W)` — token stream, depth-2 int | 12 | 110 → **22** (−80%) | 11 → **0** | 1 → **0** | 8 → 8 |
+| `expression_operand(e(49,foo))` — struct sub-arg int | 7 | 31 → **13** (−58%) | 6 → **0** | 1 → **0** | 3 → 3 |
+
+Dispatched opcodes fall 58–80%, backtracking is eliminated, and the residual choice
+point is gone (the call is now deterministic). Heap cells are flat — the correct
+metric here is opcodes/CPs, not the `--alloc` cell count that measures the var-arg
+(write-mode, structure-building) case.
+
 ## Tier-1 (IL)
 
 The IL index re-encodes the WAM switch cascade. Both the runtime bytecode-walking
