@@ -133,6 +133,31 @@ emit is required — a sub-indexed predicate promotes to Tier-1 like any other. 
 was verified in-process and cross-process (both `--strip-wam` and full-WAM
 bundles).
 
+One emit subtlety was load-bearing: the **compiled inline resolver**
+(`TryEmitInlineIndexResolve`, the fast path both Tier-1 modes take) must walk the
+`Sub0`/`Sub1` path before keying — via `IlIndexedDispatch.WalkSubOrMiss`. Without it
+the resolver keyed on the *argument register's own cell*, so a list-headed call saw
+tag `Lis`, fell to the table default, and (with a wildcard present) ran only the
+default chain — dropping the bucket clause. The runtime graph walk
+(`IlIndexGraph.TargetFor`) always handled `Sub0`; the inline emit is the one that
+had to learn it.
+
+**Tier-1 win — measured.** Same A/B, but the predicate runs as baked Tier-1 IL (IL
+bundle + `LoadBundle`, `IsPromoted` asserted); the meaningful metric is IL choice
+points pushed (`PushIlChoicePoint` → `PushChoicePoint`), not WAM opcodes (the bodies
+run as IL, so the interpreter dispatches only query-setup opcodes):
+
+| predicate (call) | clauses | IL choice points | backtracks | cells |
+|---|---|---|---|---|
+| `print_cmd([t(x,112,a,b)｜_],W)` | 12 | 11 → **0** | 1 → 0 | 8 → 8 |
+| `expression_operand(e(49,foo))` | 7 | 6 → **0** | 1 → 0 | 3 → 3 |
+
+Under Tier-1 the linear scan pushes one IL choice point per clause boundary walked
+(each an `IlChoicePointEntry` + a CP-stack frame + a delegate reference) — 11 and 6
+for these last-key hits. The sub-index eliminates **all** of them: the call is fully
+deterministic (0 CPs, 0 backtracks). This is the Tier-1 counterpart of the Tier-0
+opcode drop, concentrated in CP-stack allocation / delegate-ref churn.
+
 ## Consequences
 
 - **Coverage v1**: atom / integer sub-keys, path depth ≤ 2. The interpreter hop is
