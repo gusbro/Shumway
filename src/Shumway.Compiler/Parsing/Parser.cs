@@ -153,17 +153,34 @@ public sealed class Parser
             if (tok.Kind == TokenKind.Atom)
             {
                 bool applied = false;
+                bool knownOp = false;
                 if (_operators.TryGetInfix(tok.Text, out int iPrec, out OperatorType iType))
+                {
+                    knownOp = true;
                     applied = TryApplyInfix(tok.Text, iPrec, iType, maxPrec, ref left, ref builtPrec);
+                }
                 if (!applied && _operators.TryGetPostfix(tok.Text, out int pPrec, out OperatorType pType))
+                {
+                    knownOp = true;
                     applied = TryApplyPostfix(tok.Text, pPrec, pType, maxPrec, ref left, ref builtPrec);
+                }
                 // Chunk 146: the lexer reads a maximal run of graphic
                 // chars, so '1+-2' tokenises as Int(1), Atom('+-'),
                 // Int(2). If '+-' isn't a registered infix, try
                 // splitting it into a known infix prefix + a known
                 // unary-prefix suffix (e.g. '+' as binary + '-' as
                 // unary -). Matches SWI's reader.
-                if (!applied && tok.Text.Length > 1
+                //
+                // BUT only when the whole token is NOT itself a registered
+                // infix/postfix operator: a known operator that failed only
+                // the precedence check is a precedence boundary, not a glued
+                // run. Splitting e.g. ':-' (a real xfx 1200 operator) into
+                // ':' (xfy 200) + '-' when it doesn't fit the current max
+                // priority would wrongly consume it — turning
+                // `H :- Body` read at a sub-1200 max (an operator-headed
+                // clause like `a = b :- c` or Logtalk's `X::Y :- Body`) into
+                // `=`/`::`-rooted garbage instead of stopping at the ':-'.
+                if (!applied && !knownOp && tok.Text.Length > 1
                     && TrySplitInfixUnary(tok, maxPrec, ref left, ref builtPrec))
                     applied = true;
                 if (applied) continue;
