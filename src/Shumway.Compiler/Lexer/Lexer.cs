@@ -561,6 +561,22 @@ public sealed class Lexer
         if (_offset >= _source.Length)
             throw new LexerException($"Unterminated escape sequence at {pos}.", pos);
         char c = _source[_offset];
+
+        // Hex escape (ISO / SWI / Scryer): `\x` followed by one or more hex
+        // digits and a terminating backslash, e.g. `\x1b\`. The terminator is
+        // mandatory — it disambiguates `"\x1b\["` (ESC then `[`).
+        if (c == 'x')
+        {
+            Advance();   // consume 'x'
+            return ReadNumericEscape(pos, radix: 16, name: "hexadecimal");
+        }
+        // Octal escape (ISO): `\` followed by octal digits and a terminating
+        // backslash, e.g. `\33\`. A bare `\0` (no digits, no terminator) is
+        // kept below as the NUL shorthand for backward compatibility, so the
+        // octal path only starts on 1–7.
+        if (c >= '1' && c <= '7')
+            return ReadNumericEscape(pos, radix: 8, name: "octal");
+
         Advance();
         return c switch
         {
@@ -581,6 +597,41 @@ public sealed class Lexer
                 $"Unknown escape sequence '\\{c}' at {pos}.", pos),
         };
     }
+
+    /// <summary>Reads the digits of a numeric character escape (hex after
+    /// <c>\x</c>, or octal after <c>\</c>) and its mandatory terminating
+    /// backslash. The offset is positioned at the first digit on entry.</summary>
+    private int ReadNumericEscape(SourcePosition pos, int radix, string name)
+    {
+        int start = _offset;
+        long value = 0;
+        while (_offset < _source.Length)
+        {
+            int d = DigitValue(_source[_offset]);
+            if (d < 0 || d >= radix) break;
+            value = value * radix + d;
+            if (value > 0x10FFFF)
+                throw new LexerException(
+                    $"{name} character escape out of range at {pos}.", pos);
+            Advance();
+        }
+        if (_offset == start)
+            throw new LexerException(
+                $"Empty {name} character escape at {pos}.", pos);
+        if (_offset >= _source.Length || _source[_offset] != '\\')
+            throw new LexerException(
+                $"{name} character escape must end with '\\' at {pos}.", pos);
+        Advance();   // consume the terminating backslash
+        return (int)value;
+    }
+
+    private static int DigitValue(char c) => c switch
+    {
+        >= '0' and <= '9' => c - '0',
+        >= 'a' and <= 'f' => c - 'a' + 10,
+        >= 'A' and <= 'F' => c - 'A' + 10,
+        _ => -1,
+    };
 
     // ---------- Quoted atom / string parsers ----------
 

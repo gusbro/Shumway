@@ -95,4 +95,32 @@ public class CompatLibrariesTests
             "ok.\n");
         Assert.True(engine.Query("ok.").Success);
     }
+
+    // ---------- Two-arg module directive (ISO / SWI / Scryer) ----------
+
+    [Fact]
+    public void ModuleDirective_TwoArg_ExportsArePublic_RestAreLocal()
+    {
+        // `:- module(Name, [Exports])` — the exported predicate is globally
+        // visible; a non-exported one stays module-local (invisible outside).
+        var engine = new PrologEngine();
+        engine.ConsultString(
+            ":- module(mymod, [pub/1]).\n" +
+            "pub(hello).\n" +
+            "priv(secret).\n");
+        Assert.True(engine.Query("pub(hello).").Success);
+        // priv/1 is module-local: an outside call raises existence_error.
+        Assert.False(engine.Query("catch(priv(_), _, fail).").Success);
+    }
+
+    [Fact]
+    public void ModuleDirective_TwoArg_SkipsNonIndicatorExports()
+    {
+        // op/3 and other non-PI export entries are ignored, not fatal.
+        var engine = new PrologEngine();
+        engine.ConsultString(
+            ":- module(m3, [g/1, op(700, xfx, ===)]).\n" +
+            "g(ok).\n");
+        Assert.True(engine.Query("g(ok).").Success);
+    }
 }

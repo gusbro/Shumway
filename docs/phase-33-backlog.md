@@ -913,9 +913,20 @@ Scryer/Trealla — heavy DCG, `double_quotes=chars`) build and run under Shumway
       is one line, `:- set_prolog_flag(double_quotes, chars)` (Scryer's default;
       Shumway defaults to `string`). Proper coroutining `dif/2` (attributed
       variables) and the heavier libraries (`lambda`/yall, real `pio` stream
-      I/O, `error` `must_be`) remain future work. Surfaced but not yet fixed: the
-      lexer rejects `\xHH\` hex string escapes (Scryer/SWI standard; testing.pl
-      uses `"\x1b\["`).
+      I/O, `error` `must_be`) remain future work.
+- [x] **Two-arg `:- module(Name, Exports)` directive + `\xHH\`/`\OOO\`
+      numeric escapes (commit pending).** Two standard-Prolog gaps Djota
+      surfaced, now fixed. (1) `TryReadModuleDirective` recognises the ISO/SWI/
+      Scryer two-arg form `:- module(Name, [p/N, ...])`: the module name is set
+      as before and every `Name/Arity` in the export list is registered public
+      (non-PI entries like `op/3` are skipped), so exported predicates go global
+      and the rest stay module-local — Djota now consults as a real `djota`
+      module (3 exports public, ~80 internals local) instead of dumping every
+      predicate into `user`. (2) The lexer decodes `\xHH\` hex and `\OOO\` octal
+      character escapes (`ReadNumericEscape`, mandatory terminating backslash per
+      ISO); bare `\0` keeps its NUL shorthand. 5 lexer tests + 2 module tests;
+      full five-project gate green (Core 436 / Interpreter 105 / Compiler 307 /
+      ISO 277 / Embedding 2797). Djota still 32/32.
 
 ## Later rounds (not yet waved)
 

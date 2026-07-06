@@ -5847,13 +5847,20 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             if (clause.Term is not CompoundTerm dWrap || dWrap.Args.Length != 1) continue;
             Term body = dWrap.Args[0];
 
-            if (TryReadModuleDirective(body, out string? name))
+            if (TryReadModuleDirective(body, out string? name, out var moduleExports))
             {
                 if (moduleDirectiveSeen)
                     throw new InvalidOperationException(
                         "Multiple :- module(...) directives in one ConsultString call.");
                 moduleName = name;
                 moduleDirectiveSeen = true;
+                // Standard two-arg `:- module(Name, [p/N, ...])` — the export
+                // list makes those predicates public (globally visible), the
+                // rest stay module-local.
+                if (moduleExports != null)
+                    foreach (var (n, a) in moduleExports)
+                        publics.Add(FunctorTable.Intern(
+                            AtomTable.Intern(n, permanent: true).Id, a));
             }
             else if (TryReadPublicDirective(body, out var publicSpecs))
             {
@@ -6573,13 +6580,43 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return MakeRule(head, body);
     }
 
-    private static bool TryReadModuleDirective(Term body, out string name)
+    private static bool TryReadModuleDirective(Term body, out string name) =>
+        TryReadModuleDirective(body, out name, out _);
+
+    /// <summary>Recognises <c>:- module(Name)</c> (Shumway's one-arg form) and
+    /// the standard ISO/SWI/Scryer two-arg <c>:- module(Name, ExportList)</c>.
+    /// For the two-arg form the export list (a list of <c>Name/Arity</c>
+    /// predicate indicators — any non-PI entries such as <c>op/3</c> exports are
+    /// skipped) is returned so the caller can register the exports as public,
+    /// exactly as if each appeared in a <c>:- public</c> directive.</summary>
+    private static bool TryReadModuleDirective(
+        Term body, out string name, out List<(string Name, int Arity)>? exports)
     {
-        if (body is CompoundTerm m && m.Functor == "module" && m.Args.Length == 1
-            && m.Args[0] is AtomTerm a)
+        exports = null;
+        if (body is CompoundTerm m && m.Functor == "module")
         {
-            name = a.Name;
-            return true;
+            if (m.Args.Length == 1 && m.Args[0] is AtomTerm a1)
+            {
+                name = a1.Name;
+                return true;
+            }
+            if (m.Args.Length == 2 && m.Args[0] is AtomTerm a2)
+            {
+                name = a2.Name;
+                // Parse the export list leniently: collect every Name/Arity
+                // indicator, skipping entries we don't understand (op/3, etc.).
+                var ex = new List<(string, int)>();
+                Term cursor = m.Args[1];
+                while (cursor is CompoundTerm cons && cons.Functor == "."
+                    && cons.Args.Length == 2)
+                {
+                    if (TryReadFunctorSpec(cons.Args[0], out var spec))
+                        ex.Add(spec);
+                    cursor = cons.Args[1];
+                }
+                if (ex.Count > 0) exports = ex;
+                return true;
+            }
         }
         name = "";
         return false;

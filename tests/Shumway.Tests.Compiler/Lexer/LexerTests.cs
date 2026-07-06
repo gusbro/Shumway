@@ -207,6 +207,47 @@ public class LexerTests
         Assert.Throws<LexerException>(() => Tokens("\"oops"));
     }
 
+    // ---------- Numeric character escapes (ISO \xHH\ and \OOO\) ----------
+
+    [Fact]
+    public void String_HexEscape_DecodesAndBackslashTerminated()
+    {
+        // "\x1b\[31m" — ESC then the literal characters [ 3 1 m.
+        Token t = First("\"\\x1b\\[31m\"");
+        Assert.Equal(TokenKind.String, t.Kind);
+        Assert.Equal("[31m", t.Text);
+    }
+
+    [Fact]
+    public void QuotedAtom_OctalEscape_DecodesAndBackslashTerminated()
+    {
+        // '\33\A' — octal 33 = 27 (ESC), then literal A.
+        Token t = First("'\\33\\A'");
+        Assert.Equal(TokenKind.Atom, t.Kind);
+        Assert.Equal("A", t.Text);
+    }
+
+    [Fact]
+    public void HexEscape_MissingTerminator_Throws()
+    {
+        // No terminating backslash before the closing quote.
+        Assert.Throws<LexerException>(() => Tokens("\"\\x1b\""));
+    }
+
+    [Fact]
+    public void HexEscape_Empty_Throws()
+    {
+        Assert.Throws<LexerException>(() => Tokens("\"\\x\\\""));
+    }
+
+    [Fact]
+    public void Escape_BareNul_StillDecodesToZero()
+    {
+        // \0 with no digits/terminator is the legacy NUL shorthand.
+        Token t = First("'\\0'");
+        Assert.Equal("\0", t.Text);
+    }
+
     // ---------- Punctuation ----------
 
     [Fact]
