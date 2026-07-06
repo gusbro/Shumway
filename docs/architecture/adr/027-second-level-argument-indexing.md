@@ -158,6 +158,28 @@ for these last-key hits. The sub-index eliminates **all** of them: the call is f
 deterministic (0 CPs, 0 backtracks). This is the Tier-1 counterpart of the Tier-0
 opcode drop, concentrated in CP-stack allocation / delegate-ref churn.
 
+**Wall-clock — where the tiers diverge sharply.** A hot failure-driven loop
+(`between(1,2e6,_), p(X,_), fail`, `X` built once, 2 M calls, min of 15 interleaved
+in-process A/B, Release):
+
+| loop | Tier-0 (WAM interp) | Tier-1 (compiled IL) |
+|---|---|---|
+| `print_cmd/2` (12 clauses) | 672 → 662 ms (**1.02×**) | 2438 → 372 ms (**6.55×**) |
+| `expression_operand/1` (7 clauses) | 506 → 481 ms (**1.05×**) | 1148 → 353 ms (**3.25×**) |
+
+The win is **modest in Tier-0, dramatic in Tier-1** — and for the same reason the
+CP counts predicted. In Tier-0 an avoided clause is a cheap `get_integer` compare +
+an in-place `retry_me_else` (~1 ns), so the ~5–13 ns/call saved is swamped by the
+`between`/`fail` loop control. In Tier-1 an avoided clause is an IL choice-point
+*push* — a heap `IlChoicePointEntry` + CP frame — at ~66–94 ns each; removing 11
+(resp. 6) per call across 2 M calls sheds ~22 M allocations of GC pressure. Note
+Tier-1-*on* (372 ms) beats Tier-0-*on* (662 ms) while Tier-1-*off* (2438 ms) is far
+slower than Tier-0-*off*: IL is fast when deterministic but pays heavily for choice
+points — exactly what the sub-index removes on the hot dispatch predicates. So the
+feature's real value lands on the Tier-1 bundles that ship a program, precisely
+where the Arity parser/compiler families (`print_cmd`, `action`, `expression_operand`)
+are hottest.
+
 ## Consequences
 
 - **Coverage v1**: atom / integer sub-keys, path depth ≤ 2. The interpreter hop is
