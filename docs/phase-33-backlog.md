@@ -877,24 +877,45 @@ Scryer/Trealla — heavy DCG, `double_quotes=chars`) build and run under Shumway
       Djota bench doc): 50,666 → 42,898 heap cells per render, −15.3%.** Full
       gate green + 8 new DcgStandardCompletenessTests. Wall-clock unusable here
       ([[wallclock-ab-must-be-back-to-back]] — thermal swamped a 15% delta).
-      Car/second-level indexing is NOT pursued for this corpus (recorded: it
-      would help multi-clause terminal-led parsers like `list_type//1`, which
-      are cold; the hot dispatcher can't use it).
+      Car/second-level indexing is NOT the lever for THIS corpus (the hot
+      dispatcher delegates; it would only help cold multi-clause terminal-led
+      parsers like `list_type//1`).
 
-- [ ] **DECISION — promote the `shumway_compat.pl` shim to first-class.** To run
-      Djota I hand-wrote a compat shim (`C:\temp\testDJOTA\shumway_compat.pl`)
-      supplying the Scryer stdlib bits Shumway lacks: `seq//1`, `...//0`,
-      `dif/2` (a three-way *optimistic* approximation — plain `\=` is unsound
-      for unbound args, the true coroutining dif is not implemented),
-      `format_//2` (a `~s`/`~d`/`~a` DCG-format subset). These recur across
-      Scryer/Trealla programs. Options to weigh: (a) add the safe/universal ones
-      as builtins/prelude (`seq//1`, `...//0` are standard DCG library preds;
-      `char_type` alias already done); (b) ship an **importable Shumway library**
-      (`:- use_module(library(dcgs))` / `library(dif)` / `library(format)`) so a
-      Scryer program consults unchanged — needs `use_module(library(X))` to stop
-      erroring on unknown libs and load a bundled `.pl`. `dif/2` proper needs
-      attributed-variable coroutining (real work, not a shim). Not yet actioned
-      — recorded for a compat-library round.
+- [ ] **Second-argument / deep (car) indexing — planned, general (not
+      Djota-specific).** User-confirmed to do later regardless: extend
+      indexing so that under arg 0's `var` branch a bound later argument (and,
+      for a list argument, its car) can discriminate clauses, instead of the
+      linear `try/retry/.../trust`. Broad value for multi-clause
+      terminal-/input-led predicates and output-first predicates generally.
+      Needs either a new `switch_on_car`-style opcode or a
+      `get_list`+`unify_variable`+`switch_on_atom` sequence emitted under the
+      list branch, plus the CompileIndexed layout work and (optionally) the
+      IL index-graph counterpart. Deferred.
+
+- [x] **Compat libraries — the shim promoted to first-class (option b).** The
+      Scryer/Trealla stdlib bits Djota needs are now built-in importable
+      libraries (`CompatLibraries.cs`), loaded on demand by
+      `use_module(library(Name))`: `dcgs` (`seq//1`, `...//0`), `format`
+      (`format_//2` — the `~s`/`~d`/`~a`/`~n`/`~~` DCG-format subset), `dif`
+      (`dif/2`, a non-coroutining optimistic approximation), plus prelude-covered
+      no-ops (`lists`, `charsio`, `error`, `iso_ext`, `between`, `apply`, `pio`,
+      `si`, `pairs`, `ordsets`, `assoc`, …). Loading is idempotent (a repeat
+      import doesn't re-consult / trip public uniqueness) and consulted with
+      `recordInHistory:false` so SaveState replays the importer's directive, not
+      the library body. **Required fix: Shumway silently dropped every
+      unrecognised `:- Goal` directive** (which is why the REPL took `--clpfd` on
+      the command line) — `ConsultString` now executes `use_module/1,2`
+      directives inline at consult time, so a program's imports load in order and
+      resolve for its later clauses. `use_module(File)` is idempotent (skips an
+      already-loaded module) and non-fatal (a failing import warns, doesn't abort
+      the importer). Result: **Djota consults unchanged** — its own six
+      `use_module(library(...))` directives resolve; the only remaining prelude
+      is one line, `:- set_prolog_flag(double_quotes, chars)` (Scryer's default;
+      Shumway defaults to `string`). Proper coroutining `dif/2` (attributed
+      variables) and the heavier libraries (`lambda`/yall, real `pio` stream
+      I/O, `error` `must_be`) remain future work. Surfaced but not yet fixed: the
+      lexer rejects `\xHH\` hex string escapes (Scryer/SWI standard; testing.pl
+      uses `"\x1b\["`).
 
 ## Later rounds (not yet waved)
 

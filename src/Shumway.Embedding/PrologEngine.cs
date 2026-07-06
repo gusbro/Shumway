@@ -4544,6 +4544,89 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// loaded into a given engine.</para></summary>
     public void UseClpr() => ConsultString(Clpr.Source);
 
+    // Compatibility libraries loaded on demand by use_module(library(Name)),
+    // tracked so a repeated import (or a program that imports the same library
+    // as one of its dependencies) does not re-consult and trip the
+    // public-predicate uniqueness check.
+    private readonly HashSet<string> _loadedCompatLibraries = new();
+
+    /// <summary>Loads a built-in Scryer/Trealla compatibility library by name
+    /// (see <see cref="CompatLibraries"/>), idempotently. Returns <c>true</c>
+    /// if <paramref name="name"/> is a known compatibility library (whether it
+    /// carries Prolog source or is a prelude-covered no-op), <c>false</c> for
+    /// an unknown library name.</summary>
+    internal bool UseCompatLibrary(string name)
+    {
+        if (!CompatLibraries.TryGet(name, out string source))
+            return false;
+        // recordInHistory:false — the importing program's own source (which
+        // carries the use_module directive) is what SaveState replays; the
+        // directive re-loads the library on restore, so recording the library
+        // body too would double-consult it (and trip public uniqueness).
+        if (_loadedCompatLibraries.Add(name) && source.Length > 0)
+            ConsultStringInner(source, recordInHistory: false);
+        return true;
+    }
+
+    /// <summary>Executes a <c>use_module/1</c> directive body at consult time.
+    /// <c>library(Name)</c> loads a constraint or compatibility library;
+    /// a plain atom names a file to consult. An unknown library is reported as
+    /// a warning and skipped (the program may only need predicates Shumway
+    /// already provides, or it will surface a clearer per-predicate
+    /// existence_error later) rather than aborting the whole consult.</summary>
+    private void ExecuteUseModuleDirective(Term spec)
+    {
+        if (spec is CompoundTerm { Functor: "library", Args: [AtomTerm lib] })
+        {
+            switch (lib.Name)
+            {
+                case "clpfd": UseClpfd(); return;
+                case "clpr":  UseClpr();  return;
+                default:
+                    if (UseCompatLibrary(lib.Name)) return;
+                    Console.Error.WriteLine(
+                        $"warning: unknown library '{lib.Name}' in use_module/1 — ignored");
+                    return;
+            }
+        }
+        if (spec is AtomTerm fileAtom)
+        {
+            // Already-loaded module (e.g. consulted directly on the command
+            // line, or imported earlier) — importing it again is a no-op.
+            if (_modules.ContainsKey(fileAtom.Name)) return;
+            string path = fileAtom.Name;
+            if (_consultBaseDir is not null && !System.IO.Path.IsPathRooted(path))
+                path = System.IO.Path.Combine(_consultBaseDir, path);
+            if (!System.IO.Path.HasExtension(path) && System.IO.File.Exists(path + ".pl"))
+                path += ".pl";
+            // Idempotent: a file already consulted (on the command line or via
+            // an earlier import) is not re-consulted — re-loading it would
+            // double its clauses.
+            try
+            {
+                if (System.IO.File.Exists(path)
+                    && _consultedPaths.Contains(System.IO.Path.GetFullPath(path)))
+                    return;
+            }
+            catch { /* fall through to the normal load */ }
+            if (!System.IO.File.Exists(path))
+            {
+                Console.Error.WriteLine(
+                    $"warning: use_module/1 target '{fileAtom.Name}' not found — ignored");
+                return;
+            }
+            // A failing import must not abort the importing consult — warn and
+            // continue; any predicate genuinely needed surfaces a clearer
+            // existence_error at the call site.
+            try { ConsultFile(path); }
+            catch (System.Exception ex)
+            {
+                Console.Error.WriteLine(
+                    $"warning: use_module('{fileAtom.Name}') failed: {ex.Message}");
+            }
+        }
+    }
+
     // ADR-022 — the interop class whose public static methods back the C
     // functions called from embedded native `{...}` blocks. Defaults to
     // auto-discovering `Shumway.Native.Interop` across the loaded assemblies;
@@ -5134,6 +5217,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// builtin — translate to ISO <c>existence_error(source_sink, _)</c>).
     /// Source-level parse / compile errors propagate as
     /// <see cref="PrologRuntimeException"/>.</para></summary>
+    // Full paths consulted via ConsultFile — so a use_module/1 import of an
+    // already-loaded file is a no-op instead of a re-consult (which would
+    // double the file's clauses).
+    private readonly HashSet<string> _consultedPaths = new(StringComparer.OrdinalIgnoreCase);
+
     public void ConsultFile(string path)
     {
         ArgumentNullException.ThrowIfNull(path);
@@ -5142,6 +5230,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             LoadBundle(path);
             return;
         }
+        try { _consultedPaths.Add(Path.GetFullPath(path)); }
+        catch { /* unresolvable path — idempotency simply won't apply */ }
         // ISO include/1 — `:- include('lib/x.pl')` resolves relative to the
         // INCLUDING file's directory, so consulting a file records its
         // directory for the duration of the consult (restored after: a
@@ -5869,6 +5959,24 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     }
                     declList.Add(modeDecl);
                 }
+            }
+            else if (body is CompoundTerm { Functor: "use_module", Args.Length: 1 } umDir)
+            {
+                // `:- use_module(library(Name))` / `:- use_module(File)` —
+                // executed inline at consult time so a library's predicates
+                // (and operators, already handled at parse time for the
+                // constraint libs) are available to the rest of this consult
+                // and to later queries. Scryer/Trealla programs import their
+                // stdlib this way; without this the directive was silently
+                // dropped and the imports never loaded.
+                ExecuteUseModuleDirective(umDir.Args[0]);
+            }
+            else if (body is CompoundTerm { Functor: "use_module", Args.Length: 2 } umDir2)
+            {
+                // `:- use_module(Spec, ImportList)` — the import list is
+                // advisory (Shumway's public predicates share a flat global
+                // namespace); load the module the same way.
+                ExecuteUseModuleDirective(umDir2.Args[0]);
             }
             // op/3 already processed in-place by ClauseReader. Other
             // unrecognised directives pass through silently — they may be

@@ -264,7 +264,11 @@ internal static class Program
             }
             else
             {
-                engine.ConsultString(File.ReadAllText(path));
+                // ConsultFile (not ConsultString-of-text) so the engine
+                // records the file's directory (for `:- include`) and its
+                // path (so a later `:- use_module` of the same file is a
+                // no-op instead of a clause-doubling re-consult).
+                engine.ConsultFile(path);
                 Console.WriteLine($"% consulted {path}");
             }
         }
