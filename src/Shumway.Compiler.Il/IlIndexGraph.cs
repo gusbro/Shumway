@@ -38,6 +38,12 @@ internal sealed class IndexNode
     /// <summary>The argument register this switch tests (0 for first-arg).</summary>
     public required int ArgIdx { get; init; }
 
+    // ADR-027 second-level indexing (Atom / Int nodes only). Sub0 = -1 means a
+    // plain argument lookup; Sub0 >= 0 walks a bounded path (Sub0, then Sub1 if
+    // >= 0) into the argument before keying the table.
+    public int Sub0 { get; init; } = -1;
+    public int Sub1 { get; init; } = -1;
+
     // Term node — one target per dereferenced argument tag.
     public IndexTarget VarTarget { get; init; }
     public IndexTarget ConstTarget { get; init; }
@@ -63,7 +69,8 @@ internal static class IlIndexGraph
     private static bool IsSwitch(Opcode op) => op is
         Opcode.SwitchOnTerm or Opcode.SwitchOnArg or
         Opcode.SwitchOnAtom or Opcode.SwitchOnInteger or Opcode.SwitchOnStructure or
-        Opcode.SwitchOnAtomArg or Opcode.SwitchOnIntegerArg or Opcode.SwitchOnStructureArg;
+        Opcode.SwitchOnAtomArg or Opcode.SwitchOnIntegerArg or Opcode.SwitchOnStructureArg or
+        Opcode.SwitchOnAtomSub or Opcode.SwitchOnIntegerSub;
 
     /// <summary>Converts the bytecode-walking <see cref="IlIndexedDispatchInfo"/>
     /// into a WAM-independent <see cref="IndexGraph"/>. Returns null if the entry
@@ -146,6 +153,14 @@ internal static class IlIndexGraph
                 yield return table.DefaultAddress;
                 break;
             }
+            case Opcode.SwitchOnAtomSub:
+            case Opcode.SwitchOnIntegerSub:
+            {
+                var table = tables[BytecodeIO.ReadInt32(code, pc + 13)];
+                foreach (int v in table.Values) yield return v;
+                yield return table.DefaultAddress;
+                break;
+            }
         }
     }
 
@@ -187,6 +202,14 @@ internal static class IlIndexGraph
             case Opcode.SwitchOnStructureArg:
                 return KeyedNode(IndexNodeKind.Struct, BytecodeIO.ReadInt32(code, pc + 1),
                     tables[BytecodeIO.ReadInt32(code, pc + 5)], toTarget);
+            case Opcode.SwitchOnAtomSub:
+                return KeyedNode(IndexNodeKind.Atom, BytecodeIO.ReadInt32(code, pc + 1),
+                    tables[BytecodeIO.ReadInt32(code, pc + 13)], toTarget,
+                    sub0: BytecodeIO.ReadInt32(code, pc + 5), sub1: BytecodeIO.ReadInt32(code, pc + 9));
+            case Opcode.SwitchOnIntegerSub:
+                return KeyedNode(IndexNodeKind.Int, BytecodeIO.ReadInt32(code, pc + 1),
+                    tables[BytecodeIO.ReadInt32(code, pc + 13)], toTarget,
+                    sub0: BytecodeIO.ReadInt32(code, pc + 5), sub1: BytecodeIO.ReadInt32(code, pc + 9));
             default:
                 throw new System.InvalidOperationException(
                     $"IlIndexGraph: address {pc} is not a switch opcode.");
@@ -194,7 +217,8 @@ internal static class IlIndexGraph
     }
 
     private static IndexNode KeyedNode(
-        IndexNodeKind kind, int argIdx, SwitchTable table, Func<int, IndexTarget> toTarget)
+        IndexNodeKind kind, int argIdx, SwitchTable table, Func<int, IndexTarget> toTarget,
+        int sub0 = -1, int sub1 = -1)
     {
         var keys = new int[table.Count];
         var targets = new IndexTarget[table.Count];
@@ -208,6 +232,7 @@ internal static class IlIndexGraph
             Kind = kind, ArgIdx = argIdx,
             Keys = keys, Targets = targets,
             DefaultTarget = toTarget(table.DefaultAddress),
+            Sub0 = sub0, Sub1 = sub1,
         };
     }
 
@@ -241,9 +266,23 @@ internal static class IlIndexGraph
                     _ => node.VarTarget,
                 };
             case IndexNodeKind.Atom:
+            {
+                // ADR-027: a sub-node walks a path into the argument first.
+                if (node.Sub0 >= 0)
+                    return TrySubCell(engine, a, node.Sub0, node.Sub1, out Cell s) && s.Tag == Tag.Atom
+                        ? Lookup(node, s.AsAtomId) : node.DefaultTarget;
                 return a.Tag == Tag.Atom ? Lookup(node, a.AsAtomId) : node.DefaultTarget;
+            }
             case IndexNodeKind.Int:
             {
+                if (node.Sub0 >= 0)
+                {
+                    if (!TrySubCell(engine, a, node.Sub0, node.Sub1, out Cell s) || s.Tag != Tag.Int)
+                        return node.DefaultTarget;
+                    long sv = s.AsInt;
+                    return sv >= int.MinValue && sv <= int.MaxValue
+                        ? Lookup(node, (int)sv) : node.DefaultTarget;
+                }
                 if (a.Tag != Tag.Int) return node.DefaultTarget;
                 long v = a.AsInt;
                 return v >= int.MinValue && v <= int.MaxValue
@@ -271,4 +310,36 @@ internal static class IlIndexGraph
         Cell c = engine.GetRegister(argIdx);
         return c.Tag == Tag.Ref ? engine.GetHeap(engine.Deref(c.AsHeapIndex)) : c;
     }
+
+    // ADR-027 — bounded sub-argument path walk (mirrors
+    // BytecodeInterpreter.TrySubCell / IlIndexedDispatch.TrySubCell).
+    private static bool TrySubCell(Engine engine, Cell cell, int sub0, int sub1, out Cell result)
+    {
+        if (!TryHop(engine, cell, sub0, out result)) return false;
+        if (sub1 >= 0 && !TryHop(engine, result, sub1, out result)) return false;
+        return true;
+    }
+
+    private static bool TryHop(Engine engine, Cell cell, int idx, out Cell next)
+    {
+        next = default;
+        if (cell.Tag == Tag.Lis)
+        {
+            if ((uint)idx > 1u) return false;
+            next = DerefCell(engine, engine.GetHeap(cell.AsHeapIndex + idx));
+            return true;
+        }
+        if (cell.Tag == Tag.Str)
+        {
+            int structIdx = cell.AsHeapIndex;
+            int arity = FunctorTable.Lookup(engine.GetHeap(structIdx).AsFunctorId).Arity;
+            if ((uint)idx >= (uint)arity) return false;
+            next = DerefCell(engine, engine.GetHeap(structIdx + 1 + idx));
+            return true;
+        }
+        return false;
+    }
+
+    private static Cell DerefCell(Engine engine, Cell c) =>
+        c.Tag == Tag.Ref ? engine.GetHeap(engine.Deref(c.AsHeapIndex)) : c;
 }

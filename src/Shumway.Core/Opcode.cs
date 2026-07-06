@@ -16,13 +16,13 @@ namespace Shumway.Core;
 /// <list type="bullet">
 ///   <item>0x00: <see cref="ReservedInvalid"/> — catches PC corruption when dispatched.
 ///     Must stay 0x00 (zeroed memory dispatches as corruption).</item>
-///   <item>0x01..0x5B: every opcode the interpreter dispatches, grouped by category
+///   <item>0x01..0x5E: every opcode the interpreter dispatches, grouped by category
 ///     (get, put, unify, control, choice points, indexing, cut, builtin call,
 ///     consolidated/fused, PSTR, arithmetic), ending with <see cref="Meta"/> — the
 ///     dense jump-table block.</item>
-///   <item>0x5C: <see cref="ReservedExtension"/> — escape mechanism for a
+///   <item>0x5F: <see cref="ReservedExtension"/> — escape mechanism for a
 ///     hypothetical extended encoding (no dispatch case).</item>
-///   <item>0x5D..0x66: reserved specialised-builtin opcodes (never emitted, no
+///   <item>0x60..0x69: reserved specialised-builtin opcodes (never emitted, no
 ///     dispatch case).</item>
 /// </list>
 /// </summary>
@@ -248,26 +248,40 @@ public enum Opcode : byte
     //   GetLevelB <slot:int32>
     GetLevelB = 0x5B,   // 5 bytes
 
+    // ADR-027 — second-level (sub-argument) indexing. Dispatch on a sub-term
+    // reached by a bounded path from an argument register, instead of on the
+    // argument itself. Covers list-head ("car") discrimination, compound
+    // sub-argument dispatch, and the Arity token-stream idiom
+    // `p([t(Sym,Code)|Tail], ...)` in one generic form.
+    //   switch_on_{atom,integer}_sub <argIdx:4> <sub0:4> <sub1:4> <tableId:4>
+    //     Walk from X[argIdx]: hop sub0, then (if sub1 >= 0) hop sub1; each hop
+    //     indexes into whatever compound sits there — a list cell (idx 0 = head,
+    //     1 = tail) or a struct (idx = arg position). Deref the final cell; an
+    //     atom/integer keys the table, anything else (incl. a missed hop) takes
+    //     the default. sub1 = -1 is the depth-1 sentinel. 17 bytes.
+    SwitchOnAtomSub = 0x5C,
+    SwitchOnIntegerSub = 0x5D,
+
     // Meta — last member of the dense dispatched block (chunk 429).
-    Meta = 0x5C,
+    Meta = 0x5E,
 
     // Extension escape — reserved, never dispatched.
-    ReservedExtension = 0x5D,
+    ReservedExtension = 0x5F,
 
     // Reserved specialised-builtin opcodes. Defined in OpcodeTable but
     // never emitted by the compiler and never dispatched by the
     // interpreter; parked after ReservedExtension so the dispatched
     // block stays hole-free (chunk 429).
-    UnifyEq = 0x5E,
-    IsOp = 0x5F,
-    LessThan = 0x60,
-    GreaterThan = 0x61,
-    LessEq = 0x62,
-    GreaterEq = 0x63,
-    ArithEq = 0x64,
-    ArithNotEq = 0x65,
-    StructEq = 0x66,
-    StructNotEq = 0x67,
+    UnifyEq = 0x60,
+    IsOp = 0x61,
+    LessThan = 0x62,
+    GreaterThan = 0x63,
+    LessEq = 0x64,
+    GreaterEq = 0x65,
+    ArithEq = 0x66,
+    ArithNotEq = 0x67,
+    StructEq = 0x68,
+    StructNotEq = 0x69,
 }
 
 /// <summary>Sub-opcodes for <see cref="Opcode.Meta"/>. Only <see cref="DbgInfo"/> exists in v1.</summary>

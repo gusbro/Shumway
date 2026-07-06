@@ -1016,6 +1016,39 @@ public sealed class BytecodeInterpreter
                     break;
                 }
 
+                // ---------- Second-level (sub-argument) indexing (ADR-027) ----------
+
+                case Opcode.SwitchOnAtomSub:
+                {
+                    int argIdx  = BytecodeIO.ReadInt32(code, pc + 1);
+                    int sub0    = BytecodeIO.ReadInt32(code, pc + 5);
+                    int sub1    = BytecodeIO.ReadInt32(code, pc + 9);
+                    int tableId = BytecodeIO.ReadInt32(code, pc + 13);
+                    var table = _switchTables[tableId];
+                    int target = TrySubCell(DerefArg(argIdx), sub0, sub1, out Cell sub) && sub.Tag == Tag.Atom
+                        ? table.Lookup(sub.AsAtomId)
+                        : table.DefaultAddress;
+                    _engine.SetPc(target);
+                    break;
+                }
+
+                case Opcode.SwitchOnIntegerSub:
+                {
+                    int argIdx  = BytecodeIO.ReadInt32(code, pc + 1);
+                    int sub0    = BytecodeIO.ReadInt32(code, pc + 5);
+                    int sub1    = BytecodeIO.ReadInt32(code, pc + 9);
+                    int tableId = BytecodeIO.ReadInt32(code, pc + 13);
+                    var table = _switchTables[tableId];
+                    int target = table.DefaultAddress;
+                    if (TrySubCell(DerefArg(argIdx), sub0, sub1, out Cell sub) && sub.Tag == Tag.Int)
+                    {
+                        long v = sub.AsInt;
+                        if (v >= int.MinValue && v <= int.MaxValue) target = table.Lookup((int)v);
+                    }
+                    _engine.SetPc(target);
+                    break;
+                }
+
                 // ---------- Cut opcodes ----------
 
                 case Opcode.NeckCut:
@@ -3034,6 +3067,42 @@ public sealed class BytecodeInterpreter
         if (c.Tag == Tag.Ref)
             return _engine.GetHeap(_engine.Deref(c.AsHeapIndex));
         return c;
+    }
+
+    /// <summary>ADR-027 — walks a bounded sub-argument path from a deref'd
+    /// argument <paramref name="cell"/>: hop <paramref name="sub0"/>, then (if
+    /// <paramref name="sub1"/> &gt;= 0) hop sub1. Returns the deref'd cell
+    /// reached, or false if any hop lands on a non-compound / out-of-range
+    /// position — the caller then takes the switch default.</summary>
+    private bool TrySubCell(Cell cell, int sub0, int sub1, out Cell result)
+    {
+        if (!TryHop(cell, sub0, out result)) return false;
+        if (sub1 >= 0 && !TryHop(result, sub1, out result)) return false;
+        return true;
+    }
+
+    /// <summary>One hop of a sub-argument path: indexes into a list cell
+    /// (0 = head, 1 = tail; ADR-017 inline cons) or a struct (idx = argument
+    /// position, bounds-checked against the functor arity). The result is
+    /// deref'd. Returns false for any other tag or an out-of-range index.</summary>
+    private bool TryHop(Cell cell, int idx, out Cell next)
+    {
+        next = default;
+        if (cell.Tag == Tag.Lis)
+        {
+            if ((uint)idx > 1u) return false;
+            next = DerefCell(_engine.GetHeap(cell.AsHeapIndex + idx));
+            return true;
+        }
+        if (cell.Tag == Tag.Str)
+        {
+            int structIdx = cell.AsHeapIndex;
+            int arity = FunctorTable.Lookup(_engine.GetHeap(structIdx).AsFunctorId).Arity;
+            if ((uint)idx >= (uint)arity) return false;
+            next = DerefCell(_engine.GetHeap(structIdx + 1 + idx));
+            return true;
+        }
+        return false;
     }
 
     private string ResolveLiteral(int literalId)

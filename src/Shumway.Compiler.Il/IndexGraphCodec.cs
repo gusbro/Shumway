@@ -32,6 +32,10 @@ internal static class IndexGraphCodec
             }
             else
             {
+                // ADR-027 second-level indexing: the sub-path (-1/-1 for a plain
+                // arg lookup). Struct nodes never carry a sub-path.
+                bw.Write(node.Sub0);
+                bw.Write(node.Sub1);
                 int[] keys = node.Keys!;
                 var targets = node.Targets!;
                 bw.Write((uint)keys.Length);
@@ -70,6 +74,8 @@ internal static class IndexGraphCodec
             }
             else
             {
+                int sub0 = br.ReadInt32();
+                int sub1 = br.ReadInt32();
                 int entries = (int)br.ReadUInt32();
                 var keys = new int[entries];
                 var targets = new IndexTarget[entries];
@@ -83,6 +89,7 @@ internal static class IndexGraphCodec
                     Kind = kind, ArgIdx = argIdx,
                     Keys = keys, Targets = targets,
                     DefaultTarget = ReadTarget(br),
+                    Sub0 = sub0, Sub1 = sub1,
                 };
             }
         }

@@ -170,6 +170,12 @@ public static class OpcodeTable
             OperandKind.Reg, OperandKind.TableId);
         Set(Opcode.SwitchOnStructureArg, 9, "switch_on_structure_arg",
             OperandKind.Reg, OperandKind.TableId);
+        // ADR-027 second-level (sub-argument) indexing: opcode + arg_idx +
+        // two path indices (sub0, sub1; sub1 = -1 = depth-1 sentinel) + table.
+        Set(Opcode.SwitchOnAtomSub, 17, "switch_on_atom_sub",
+            OperandKind.Reg, OperandKind.IntValue, OperandKind.IntValue, OperandKind.TableId);
+        Set(Opcode.SwitchOnIntegerSub, 17, "switch_on_integer_sub",
+            OperandKind.Reg, OperandKind.IntValue, OperandKind.IntValue, OperandKind.TableId);
 
         // Cut
         Set(Opcode.NeckCut, 1, "neck_cut");

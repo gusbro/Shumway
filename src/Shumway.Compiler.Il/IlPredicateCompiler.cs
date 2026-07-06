@@ -291,6 +291,9 @@ public sealed class IlPredicateCompiler
     // lazily from the engine's linked code on first call.
     private static readonly MethodInfo IlIndexedDispatchResolveByFidMethod =
         typeof(IlIndexedDispatch).GetMethod(nameof(IlIndexedDispatch.ResolveEntryByFunctorId))!;
+    // ADR-027 — inline sub-argument walk for the compiled index resolver.
+    private static readonly MethodInfo IlWalkSubOrMissMethod =
+        typeof(IlIndexedDispatch).GetMethod(nameof(IlIndexedDispatch.WalkSubOrMiss))!;
     // Chunk 218 — setter for engine.BuiltinReturnPc. The IL emit pre-sets
     // this to a resume marker before invoking a backtrackable builtin, so
     // the builtin's CP resume re-enters the IL caller correctly.
@@ -5072,6 +5075,20 @@ public sealed class IlPredicateCompiler
             emit.Call(EngineGetHeapMethod);
             emit.StoreLocal(cellLoc);
             emit.MarkLabel(notRef);
+
+            // ----- ADR-027: for a sub-argument node, walk the bounded path into
+            //       the argument (list head/tail, struct arg) before keying. A
+            //       miss returns a REF sentinel, so the tag test below routes it to
+            //       the table default — exactly IlIndexGraph.TargetFor's semantics. -----
+            if (node.Sub0 >= 0)
+            {
+                emit.LoadArgument(0);            // engine
+                emit.LoadLocal(cellLoc);        // cell (deref'd arg)
+                emit.LoadConstant(node.Sub0);
+                emit.LoadConstant(node.Sub1);
+                emit.Call(IlWalkSubOrMissMethod);
+                emit.StoreLocal(cellLoc);       // cell = terminal sub-cell (or miss)
+            }
 
             // ----- Load the (deref'd) tag once. -----
             emit.LoadLocalAddress(cellLoc);

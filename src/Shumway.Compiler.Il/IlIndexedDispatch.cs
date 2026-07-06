@@ -79,7 +79,8 @@ public static class IlIndexedDispatch
     private static bool IsDispatchSwitch(Opcode op) => op is
         Opcode.SwitchOnTerm or Opcode.SwitchOnArg
         or Opcode.SwitchOnAtom or Opcode.SwitchOnInteger or Opcode.SwitchOnStructure
-        or Opcode.SwitchOnAtomArg or Opcode.SwitchOnIntegerArg or Opcode.SwitchOnStructureArg;
+        or Opcode.SwitchOnAtomArg or Opcode.SwitchOnIntegerArg or Opcode.SwitchOnStructureArg
+        or Opcode.SwitchOnAtomSub or Opcode.SwitchOnIntegerSub;
 
     /// <summary>Tries to build the indexed-dispatch model for
     /// <paramref name="predicate"/>. Succeeds only for the WAM indexed
@@ -404,6 +405,13 @@ public static class IlIndexedDispatch
                     foreach (int t in TableTargets(tables, tableId)) yield return t;
                     break;
                 }
+                case Opcode.SwitchOnAtomSub:
+                case Opcode.SwitchOnIntegerSub:
+                {
+                    int tableId = BytecodeIO.ReadInt32(code, pc + 13);
+                    foreach (int t in TableTargets(tables, tableId)) yield return t;
+                    break;
+                }
             }
             pc += size;
         }
@@ -476,6 +484,16 @@ public static class IlIndexedDispatch
                     target = StructureTarget(engine, tables, BytecodeIO.ReadInt32(code, pc + 5),
                         BytecodeIO.ReadInt32(code, pc + 1));
                     break;
+                case Opcode.SwitchOnAtomSub:
+                    target = AtomSubTarget(engine, tables, BytecodeIO.ReadInt32(code, pc + 13),
+                        BytecodeIO.ReadInt32(code, pc + 1), BytecodeIO.ReadInt32(code, pc + 5),
+                        BytecodeIO.ReadInt32(code, pc + 9));
+                    break;
+                case Opcode.SwitchOnIntegerSub:
+                    target = IntegerSubTarget(engine, tables, BytecodeIO.ReadInt32(code, pc + 13),
+                        BytecodeIO.ReadInt32(code, pc + 1), BytecodeIO.ReadInt32(code, pc + 5),
+                        BytecodeIO.ReadInt32(code, pc + 9));
+                    break;
                 default:
                     // Not a switch: a chain head (try) or a clause body.
                     return info.AddrToEntryCursor[pc];
@@ -531,4 +549,73 @@ public static class IlIndexedDispatch
         int functorId = engine.GetHeap(a.AsHeapIndex).AsFunctorId;
         return table.Lookup(functorId);
     }
+
+    // ADR-027 — second-level (sub-argument) targets. Mirror the interpreter's
+    // SwitchOnAtomSub / SwitchOnIntegerSub: walk a bounded path from X[argIdx],
+    // then key the table on the atom / integer reached (default on a miss).
+    private static int AtomSubTarget(Engine engine, IReadOnlyList<SwitchTable> tables,
+        int tableId, int argIdx, int sub0, int sub1)
+    {
+        var table = tables[tableId];
+        return TrySubCell(engine, DerefArg(engine, argIdx), sub0, sub1, out Cell sub) && sub.Tag == Tag.Atom
+            ? table.Lookup(sub.AsAtomId)
+            : table.DefaultAddress;
+    }
+
+    private static int IntegerSubTarget(Engine engine, IReadOnlyList<SwitchTable> tables,
+        int tableId, int argIdx, int sub0, int sub1)
+    {
+        var table = tables[tableId];
+        if (TrySubCell(engine, DerefArg(engine, argIdx), sub0, sub1, out Cell sub) && sub.Tag == Tag.Int)
+        {
+            long v = sub.AsInt;
+            if (v >= int.MinValue && v <= int.MaxValue) return table.Lookup((int)v);
+        }
+        return table.DefaultAddress;
+    }
+
+    /// <summary>Walks a bounded sub-argument path (<paramref name="sub0"/>, then
+    /// <paramref name="sub1"/> if &gt;= 0) from a deref'd <paramref name="cell"/>;
+    /// returns the deref'd terminal, or false on a non-compound / out-of-range
+    /// hop. Mirrors <c>BytecodeInterpreter.TrySubCell</c>.</summary>
+    private static bool TrySubCell(Engine engine, Cell cell, int sub0, int sub1, out Cell result)
+    {
+        if (!TryHop(engine, cell, sub0, out result)) return false;
+        if (sub1 >= 0 && !TryHop(engine, result, sub1, out result)) return false;
+        return true;
+    }
+
+    /// <summary>Inline-resolver helper (ADR-027): walks the bounded sub-path
+    /// (<paramref name="sub0"/>, then <paramref name="sub1"/> if &gt;= 0) from
+    /// <paramref name="cell"/> and returns the deref'd terminal, or a REF sentinel
+    /// on a miss (a non-compound / out-of-range hop). The emitted inline resolver's
+    /// subsequent <c>tag == Atom/Int</c> test then routes a miss to the table
+    /// default — exactly the runtime walk's semantics. Public because the emitted
+    /// IL (loaded via <c>Assembly.Load</c> in a fresh process for a persisted
+    /// bundle) calls it directly.</summary>
+    public static Cell WalkSubOrMiss(Engine engine, Cell cell, int sub0, int sub1)
+        => TrySubCell(engine, cell, sub0, sub1, out Cell r) ? r : Cell.Ref(0);
+
+    private static bool TryHop(Engine engine, Cell cell, int idx, out Cell next)
+    {
+        next = default;
+        if (cell.Tag == Tag.Lis)
+        {
+            if ((uint)idx > 1u) return false;
+            next = Deref(engine, engine.GetHeap(cell.AsHeapIndex + idx));
+            return true;
+        }
+        if (cell.Tag == Tag.Str)
+        {
+            int structIdx = cell.AsHeapIndex;
+            int arity = FunctorTable.Lookup(engine.GetHeap(structIdx).AsFunctorId).Arity;
+            if ((uint)idx >= (uint)arity) return false;
+            next = Deref(engine, engine.GetHeap(structIdx + 1 + idx));
+            return true;
+        }
+        return false;
+    }
+
+    private static Cell Deref(Engine engine, Cell c) =>
+        c.Tag == Tag.Ref ? engine.GetHeap(engine.Deref(c.AsHeapIndex)) : c;
 }

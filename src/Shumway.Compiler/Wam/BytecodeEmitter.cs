@@ -225,6 +225,26 @@ public sealed class BytecodeEmitter
         EmitInt(tableId);
     }
 
+    // ADR-027 — second-level (sub-argument) indexing. Dispatch on a sub-term
+    // reached by a bounded path (sub0, then sub1 if >= 0) from X[argIdx].
+    public void EmitSwitchOnAtomSub(int argIdx, int sub0, int sub1, int tableId)
+    {
+        _bytes.Add((byte)Opcode.SwitchOnAtomSub);
+        EmitInt(argIdx);
+        EmitInt(sub0);
+        EmitInt(sub1);
+        EmitInt(tableId);
+    }
+
+    public void EmitSwitchOnIntegerSub(int argIdx, int sub0, int sub1, int tableId)
+    {
+        _bytes.Add((byte)Opcode.SwitchOnIntegerSub);
+        EmitInt(argIdx);
+        EmitInt(sub0);
+        EmitInt(sub1);
+        EmitInt(tableId);
+    }
+
     // ---------- Cut family ----------
 
     public void EmitNeckCut() => _bytes.Add((byte)Opcode.NeckCut);

@@ -1283,6 +1283,7 @@ When proposing changes:
 | Generic Prolog-term interop (reftype tier) — zero-copy TermRef cursor + named intrinsics | ADR-024 (proposed) |
 | Body `jump` opcode + inline deterministic if-then-else at Tier-0 | ADR-025 (proposed) |
 | Variable-width choice points — REJECTED with measured ceiling (≤1% on max-CP synthetic, below noise; soundness blueprint preserved) | ADR-026 |
+| Second-level (sub-argument) indexing — `switch_on_{atom,integer}_sub`, bounded 2-hop path (list head / struct sub-arg / token stream) | ADR-027 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | Builtins catalog | docs/design/builtins-catalog.md |

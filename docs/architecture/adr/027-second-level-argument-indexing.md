@@ -1,0 +1,139 @@
+# ADR-027: Second-level (sub-argument) argument indexing
+
+## Status
+
+**Accepted — implemented (Phase 33).** Tier-0 (WAM interpreter) and Tier-1 (IL,
+including `--strip-wam` persisted bundles). Two new opcodes, `switch_on_atom_sub`
+and `switch_on_integer_sub`.
+
+## Context
+
+Shumway indexes clauses by the **type/value of an argument register**: a
+`switch_on_term` on arg 0, chained to `switch_on_arg` on later positions, plus the
+typed value tables `switch_on_atom` / `switch_on_integer` / `switch_on_structure`
+(and their `_arg` multi-argument variants). This is first-/multi-*argument*
+indexing (ADR-007 + chunk 67).
+
+It does not index one level **deeper** — on a *sub-term* of an argument. When a
+group of clauses shares the same top-level shape at the indexed position but
+differs in the **head of a list** or the **argument of a compound**, the compiler
+falls back to a linear `try`/`retry`/`trust` scan and leaves a spurious choice
+point. Two shapes, disassembled:
+
+```
+% list head — djota DCG input, tokenizers
+tok([a|T],T). tok([b|T],T). tok([c|T],T). tok([d|T],T).
+   switch_on_term routes a list arg to ONE label -> linear try/retry/retry/trust
+
+% compound sub-argument — Arity SQL compiler evalsql.pl
+expression_operand(e(1,_)). expression_operand(e(29,_)). ...
+   switch_on_structure picks functor e/2 -> linear scan; the OpCode is NOT indexed
+```
+
+A three-corpus survey (djota; the Arity `C:\temp\test` and `C:\temp\testGen`
+generator sources) established that the highest-value shapes for the Arity-compat
+workload are:
+
+- **Compound sub-argument** — `expression_operand(e(OpCode,…))`, `sql_case/9`
+  (the recursive SQL expression/condition compiler), keyed on an integer/atom
+  sub-argument of a struct already selected by `switch_on_structure`.
+- **Token stream** — `pred([t(Sym,Code)|Tail], …)`, the characteristic Arity
+  parser idiom (166 predicates across the two corpora). The list head is a
+  compound `t/N`; the discriminator is a **sub-argument of the head** — a
+  *depth-2* path. The single largest genuine dispatch predicate in any corpus is
+  `action/32` (dispatch on the first token's symbol atom); the hottest is
+  `print_cmd/41` (dispatch on the token's **integer** code at sub-arg 1, with the
+  symbol written `_`).
+- **List head (car)** — `[Type|_]`, `[char|_]` (djota `list_type//1`, Arity
+  `bigger_type/4`). Modest but real.
+
+None of these are reachable by first-argument indexing: the list head is uniformly
+`[_|_]`, the token functor uniformly `t`, the struct functor uniformly `e`.
+
+## Decision
+
+Add a **bounded 2-hop sub-argument switch**. Both list-head and struct-sub-arg are
+the same operation — *index on sub-argument `j` of the compound in register `k`* —
+so one generic opcode family covers all three shapes, with a `<subIdx>` path that
+picks the best-discriminating position (crucially **not** hardwired to the token
+*symbol*: `print_cmd` keys on the integer at sub-arg 1).
+
+Two opcodes, added at the end of the dense dispatch block (before `Meta`;
+renumbered the tail — no released bundles, per the pre-release format policy):
+
+```
+switch_on_atom_sub    <argIdx:4> <sub0:4> <sub1:4> <tableId:4>   (17 bytes)
+switch_on_integer_sub <argIdx:4> <sub0:4> <sub1:4> <tableId:4>   (17 bytes)
+```
+
+**Semantics.** Walk a path from `X[argIdx]`: hop `sub0`, then (if `sub1 ≥ 0`) hop
+`sub1`; deref the terminal; an atom / integer keys the table, anything else — or a
+hop that lands on a non-compound / out-of-range position — takes the default.
+`sub1 = -1` is the depth-1 sentinel. Each hop `SubCell(cell, idx)`: a list cell
+exposes head (0) / tail (1) via the ADR-017 inline cons layout; a struct exposes
+`arg[idx]` (bounds-checked against the functor arity). One tag-dispatched hop
+covers both, so the three shapes map to:
+
+- `[atom|_]` → `sub0=0, sub1=-1` (list head).
+- `e(Op,_)`  → `sub0=j, sub1=-1` (struct arg `j`; the arg *is* the struct).
+- `[t(Sym,_)|_]` → `sub0=0, sub1=j` (list head → token's arg `j`).
+
+**When it fires.** In `PredicateCompiler.CompileIndexed`, two hooks each pick the
+shortest partitioning path:
+
+1. **List bucket** — probe path `(0,-1)` (head), then `(0,0)…(0,K)` (into the head
+   compound). Fires when the ground clauses partition into ≥ 2 distinct keys of a
+   single kind (all atoms → `atom_sub`, all integers → `integer_sub`).
+2. **Struct functor group** — probe `(0,-1)…(K,-1)` (each struct arg). Same
+   condition.
+
+A clause whose chosen sub-position is a **variable** — or whose path can't be
+followed at compile time (a differently-shaped head) — becomes a **wildcard**: it
+merges into every keyed bucket **and** forms the table's default chain. This is a
+sound over-approximation (it only ever adds tried-but-failing clauses; it never
+removes a valid clause or changes solutions), which is why no "all heads share a
+functor" precondition is needed. Mixed atom+integer keys at one position, a single
+distinct key, or no partitioning position → keep the plain chain (no regression).
+
+The sub-switch region is a structural copy of a top-level typed switch: the 17-byte
+switch, then a `try`/`retry`/`trust` group chain per key with ≥ 2 clauses, then a
+default chain over the wildcards — reusing `SwitchTable`, `EmitChain`, and the
+`switchTableIdSites` relocation.
+
+**Win.** A distinct-key call with no wildcard clause collapses an N-way scan to one
+table jump with **no leftover choice point** (`action` 32 → ~1–4; `print_cmd` 41 →
+lookup; `tok` 4 → 1); with wildcard fallbacks it prunes to {matching ∪ wildcard}.
+
+## Tier-1 (IL)
+
+The IL index re-encodes the WAM switch cascade. Both the runtime bytecode-walking
+resolver (`IlIndexedDispatch.ResolveEntryCursor`, used when WAM is present) and the
+WAM-independent `IlIndexGraph` (used by `--strip-wam` bundles, persisted via
+`IndexGraphCodec`) learn the two opcodes: an `Atom`/`Int` node gains `Sub0`/`Sub1`
+fields and walks the path before the table lookup. The sub-switch reuses
+`SwitchTable` and its targets are ordinary clause-body entry cursors, so no new IL
+emit is required — a sub-indexed predicate promotes to Tier-1 like any other. This
+was verified in-process and cross-process (both `--strip-wam` and full-WAM
+bundles).
+
+## Consequences
+
+- **Coverage v1**: atom / integer sub-keys, path depth ≤ 2. The interpreter hop is
+  generic (any depth), but the compiler probes and the opcode encoding cap the path
+  at 2 hops.
+- **Deferred** (symmetric follow-ups, recorded here): structure-*keyed* sub-arg
+  (a functor table on the sub-value — djota `ast_html_rows_//2`, Arity
+  `sql_q_pcondition/9` function-name dispatch); paths deeper than 2; mixed
+  atom+integer sub-keys at one position; and the second-token axis
+  (`[t(';'),t(')')|_]`), which `heading_line//2`'s all-`#` heads also need.
+- **Impact is narrow but hot**: a concentrated determinism/scan win on the Arity
+  parser/compiler families (`print_cmd`, `action`, `expression_operand`) and a
+  handful of djota rules; strictly no regression elsewhere.
+
+## Verification
+
+`SubArgIndexingTests` (Compiler: the right opcode + path operands appear and the
+plain chain is gone; all-same-head and mixed-kind cases correctly do **not** fire).
+`SubArgIndexingTests` (Embedding: correctness + determinism across list-head,
+token-stream and struct-sub-arg in **both** tiers, plus the wildcard-merge and
+cells-drop checks). djota 32/32; the Arity corpora produce identical output.
