@@ -88,6 +88,8 @@ public static class StandardBuiltins
             Types, "atomic(@Term)", "Succeeds if the argument is atomic (atom, number or string).");
         BuiltinsRegistry.Register("compound",1, TypeBuiltins.IsCompound,
             Types, "compound(@Term)", "Succeeds if the argument is a compound term.");
+        BuiltinsRegistry.Register("callable",1, TypeBuiltins.IsCallable,
+            Types, "callable(@Term)", "Succeeds if the argument is an atom or a compound term.");
         BuiltinsRegistry.Register("is_list", 1, TypeBuiltins.IsList,
             Types, "is_list(@Term)", "Succeeds if the argument is a proper list.");
         BuiltinsRegistry.Register("ground",  1, TypeBuiltins.IsGround,

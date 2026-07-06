@@ -200,6 +200,9 @@ public static class MetaBuiltins
 
         BuiltinsRegistry.Register("numbervars",        3, NumberVars,
             Term, "numbervars(+Term, +Start, -End)", "Binds the unbound variables of Term to '$VAR'(N) terms with consecutive N from Start.");
+        BuiltinsRegistry.Register("term_variables",    2, TermVariables,
+            Term, "term_variables(+Term, -Variables)",
+            "Unifies Variables with the list of distinct unbound variables of Term, in first-occurrence (depth-first, left-to-right) order (ISO §8.5.5).");
         BuiltinsRegistry.Register("term_to_atom",      2, TermToAtom,
             Term, "term_to_atom(?Term, ?Atom)", "Converts between a term and its textual atom representation.");
 
@@ -289,6 +292,14 @@ public static class MetaBuiltins
         // stream-aware reader so the builtin set covers both names.
         BuiltinsRegistry.Register("read_term", 2, ReadTermFromStream,
             Io, "read_term(+Stream, -Term)", "Reads one term from a read-mode stream.");
+        // ISO read_term/3 — read_term(+Stream, -Term, +Options). The read
+        // options (variable_names/1, singletons/1, syntax_error/1, ...) are
+        // currently ignored: the term is parsed with the runtime operator
+        // table and unified with arg 2. Enough for source loaders (Logtalk
+        // bring-up) that pass options only for diagnostics.
+        BuiltinsRegistry.Register("read_term", 3, ReadTermFromStream,
+            Io, "read_term(+Stream, -Term, +Options)",
+            "Reads one term from a read-mode stream; read options are currently ignored.");
         BuiltinsRegistry.Register("read",      1, Read1,
             Io, "read(-Term)", "Reads one term from current input (ISO §8.14.2).");
         BuiltinsRegistry.Register("read",      2, Read2,
@@ -2128,6 +2139,61 @@ public static class MetaBuiltins
         WalkAndNumber(engine, rootSlot, visited, ref counter);
 
         return engine.UnifyRegisterWithCell(2, Cell.Int(counter));
+    }
+
+    /// <summary><c>term_variables(+Term, -Variables)</c> — ISO §8.5.5. Unifies
+    /// arg 2 with the list of distinct unbound variables of arg 1, in
+    /// first-occurrence (depth-first, left-to-right) order. Shared and cyclic
+    /// subterms are visited once (a <c>visited</c> address set).</summary>
+    public static bool TermVariables(Engine engine)
+    {
+        int rootSlot = engine.AllocateHeap(1);
+        engine.SetHeap(rootSlot, engine.GetRegister(0));
+        var visited = new HashSet<int>();
+        var vars = new List<int>();
+        CollectVars(engine, rootSlot, visited, vars);
+        // Build [Ref(v0), ..., Ref(vn-1)] bottom-up (ADR-017 inline cons:
+        // Cell.Lis(b) => heap[b]=head, heap[b+1]=tail).
+        Cell tail = Cell.Atom(AtomTable.EmptyListId);
+        for (int i = vars.Count - 1; i >= 0; i--)
+        {
+            int b = engine.AllocateHeap(2);
+            engine.SetHeap(b, Cell.Ref(vars[i]));
+            engine.SetHeap(b + 1, tail);
+            tail = Cell.Lis(b);
+        }
+        return engine.UnifyRegisterWithCell(1, tail);
+    }
+
+    private static void CollectVars(
+        Engine engine, int heapIdx, HashSet<int> visited, List<int> vars)
+    {
+        int addr = engine.Deref(heapIdx);
+        if (!visited.Add(addr)) return;
+        Cell cell = engine.GetHeap(addr);
+        switch (cell.Tag)
+        {
+            case Tag.Ref:
+                vars.Add(addr);
+                break;
+            case Tag.Str:
+            {
+                int functorIdx = cell.AsHeapIndex;
+                var (_, arity) = FunctorTable.Lookup(
+                    engine.GetHeap(functorIdx).AsFunctorId);
+                for (int i = 0; i < arity; i++)
+                    CollectVars(engine, functorIdx + 1 + i, visited, vars);
+                break;
+            }
+            case Tag.Lis:
+            {
+                int headIdx = cell.AsHeapIndex;
+                CollectVars(engine, headIdx, visited, vars);
+                CollectVars(engine, headIdx + 1, visited, vars);
+                break;
+            }
+            // Atoms, ints, floats, strings, PSTRs: leaf, no variables.
+        }
     }
 
     private static void WalkAndNumber(

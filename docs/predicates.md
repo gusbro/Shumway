@@ -24,6 +24,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `atom(@Term)` | Succeeds if the argument is an atom. |
 | `atomic(@Term)` | Succeeds if the argument is atomic (atom, number or string). |
 | `attvar(@Term)` | Succeeds if the argument is an attributed variable. |
+| `callable(@Term)` | Succeeds if the argument is an atom or a compound term. |
 | `compound(@Term)` | Succeeds if the argument is a compound term. |
 | `float(@Term)` | Succeeds if the argument is a float. |
 | `ground(@Term)` | Succeeds if the argument contains no unbound variables. |
@@ -82,6 +83,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `string_term(?Atom, ?Term)` | Bidirectional: parses Atom as a Prolog term (binding Term), or renders Term using write/1 form (binding Atom). 'string' in Arity-Prolog terminology means atom — the textual representation is interned as an atom, not stored as a Shumway StringTerm. |
 | `string_termq(?Atom, ?Term)` | writeq-style variant of string_term/2: atoms / functors are quoted when needed so the rendered atom re-parses to the same term. Equivalent to term_to_atom/2. |
 | `term_to_atom(?Term, ?Atom)` | Converts between a term and its textual atom representation. |
+| `term_variables(+Term, -Variables)` | Unifies Variables with the list of distinct unbound variables of Term, in first-occurrence (depth-first, left-to-right) order (ISO §8.5.5). |
 
 ## Control
 
@@ -304,6 +306,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `read(-Term)` | Reads one term from current input (ISO §8.14.2). |
 | `read(+Stream, -Term)` | Reads one term from a stream (ISO §8.14.2). |
 | `read_term(+Stream, -Term)` | Reads one term from a read-mode stream. |
+| `read_term(+Stream, -Term, +Options)` | Reads one term from a read-mode stream; read options are currently ignored. |
 | `read_term_from_stream(+Stream, -Term)` | Reads one term from a read-mode stream. |
 | `rename(+From, +To)` | Renames / moves a file from From to To. Raises existence_error if From doesn't exist or permission_error if To already exists. |
 | `rmdir(+Path)` | Removes the directory Path. Fails when the directory is non-empty; raises existence_error if it doesn't exist. |

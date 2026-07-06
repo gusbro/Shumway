@@ -72,6 +72,14 @@ public static class TypeBuiltins
         return t is Tag.Str or Tag.Lis;
     }
 
+    /// <summary><c>callable(X)</c> — X is an atom or a compound term (ISO
+    /// §8.3.6). An unbound variable, number, string or PSTR is not callable.</summary>
+    public static bool IsCallable(Engine engine)
+    {
+        var t = Tag0(engine);
+        return t is Tag.Atom or Tag.Str or Tag.Lis;
+    }
+
     /// <summary><c>is_list(X)</c> — X is a proper list: a cons chain
     /// terminated by the empty-list atom. An unbound tail makes it a partial
     /// list — fails. An atom other than <c>[]</c> at the tail — fails.</summary>
