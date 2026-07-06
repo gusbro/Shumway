@@ -83,10 +83,121 @@ public static class DcgTransform
                 new CompoundTerm(":-", new[] { nHead, nBody }), position);
         }
 
-        (Term transformedBody, VarTerm sEnd) = TransformBody(body, sStart, ref counter);
-        Term newHead = AppendDiffListArgs(head, sStart, sEnd);
-        Term newRuleTerm = new CompoundTerm(":-", new[] { newHead, transformedBody });
+        // Fail-fast lowering for a terminal-led body (Djota/DCG parser
+        // hot path). A rule like
+        //     insert_ast_([insert(Str,Attrs)|Ast0]) --> "{+", seq(Str), ...
+        // normally expands so the head builds the [insert(..)|..] output
+        // structure *before* the body checks the input starts with "{+".
+        // When such a clause is one of many alternatives tried per input
+        // position (the inline-parser dispatch), every failed alternative
+        // wastefully builds its output structure and then fails.
+        //
+        // Two coordinated moves, applied ONLY when the body begins with a
+        // terminal (so there is an input test to fail on early):
+        //   (a) hoist the leading ground terminal(s) into the head's input
+        //       argument, so a non-matching input fails at head unification
+        //       (before the frame is even allocated); and
+        //   (b) defer construction of each COMPOUND head output argument
+        //       into the body (`Vi = Origi`), placed after the head match,
+        //       so the output structure is only built once the input has
+        //       matched.
+        // Render-direction rules (`ast_html_node_(paragraph(..)) --> {..}, ...`)
+        // begin with a `{ }` goal, NOT a terminal, so neither move fires and
+        // their first-argument indexing on the bound AST node is preserved.
+        (Term inputArg, Term residualBody, VarTerm residualStart, bool peeled) =
+            PeelLeadingTerminals(body, sStart, ref counter);
+
+        Term effectiveHead = head;
+        var deferGoals = new List<Term>();
+        if (peeled)
+            effectiveHead = DeferCompoundArgs(head, deferGoals, ref counter);
+
+        (Term transformedBody, VarTerm sEnd) = TransformBody(residualBody, residualStart, ref counter);
+        Term newHead = AppendDiffListArgs(effectiveHead, inputArg, sEnd);
+        Term finalBody = transformedBody;
+        for (int i = deferGoals.Count - 1; i >= 0; i--)
+            finalBody = new CompoundTerm(",", new[] { deferGoals[i], finalBody });
+        Term newRuleTerm = new CompoundTerm(":-", new[] { newHead, finalBody });
         return new Clause(ClauseKind.Rule, newRuleTerm, position);
+    }
+
+    /// <summary>Peels leading ground terminals off <paramref name="body"/>'s
+    /// conjunction spine into a single head-input list <c>[e… | residualStart]</c>.
+    /// Returns the term to place in the head's input argument (either the
+    /// original <paramref name="sStart"/> when nothing was peeled, or the cons
+    /// chain), the residual body with those terminals removed, the state
+    /// variable the residual threads from, and whether anything was peeled.</summary>
+    private static (Term inputArg, Term residualBody, VarTerm residualStart, bool peeled)
+        PeelLeadingTerminals(Term body, VarTerm sStart, ref int counter)
+    {
+        var elems = new List<Term>();
+        Term cur = body;
+        while (true)
+        {
+            Term first = cur is CompoundTerm { Functor: ",", Args.Length: 2 } c ? c.Args[0] : cur;
+            Term? rest = cur is CompoundTerm { Functor: ",", Args.Length: 2 } c2 ? c2.Args[1] : null;
+            if (TryTerminalElements(first, out var these))
+            {
+                elems.AddRange(these);
+                if (rest is null) { cur = new AtomTerm("true"); break; }
+                cur = rest;
+            }
+            else break;
+        }
+        if (elems.Count == 0)
+            return (sStart, body, sStart, false);
+        var sAfter = FreshState(ref counter);
+        Term inputArg = sAfter;
+        for (int i = elems.Count - 1; i >= 0; i--)
+            inputArg = new CompoundTerm(".", new[] { elems[i], inputArg });
+        return (inputArg, cur, sAfter, true);
+    }
+
+    /// <summary>Recognises a DCG terminal that consumes a fixed prefix of the
+    /// input: a proper cons list (its elements) or a non-empty double-quoted
+    /// string (its character codes). Returns false for the empty terminal,
+    /// improper lists, and non-terminals.</summary>
+    private static bool TryTerminalElements(Term term, out List<Term> elems)
+    {
+        elems = new List<Term>();
+        if (term is StringTerm s)
+        {
+            if (s.Content.Length == 0) return false;
+            foreach (char ch in s.Content) elems.Add(new IntTerm(ch));
+            return true;
+        }
+        // Proper cons list [e1, …, en].
+        Term t = term;
+        while (t is CompoundTerm { Functor: ".", Args.Length: 2 } cons)
+        {
+            elems.Add(cons.Args[0]);
+            t = cons.Args[1];
+        }
+        if (t is AtomTerm { Name: "[]" } && elems.Count > 0) return true;
+        elems.Clear();
+        return false;
+    }
+
+    /// <summary>Replaces each COMPOUND top-level head argument with a fresh
+    /// variable and records a <c>V = OrigArg</c> goal, so the output structure
+    /// is built in the body (after the head input match) rather than during
+    /// head unification. Atom / integer / variable head arguments are left in
+    /// place so first-argument indexing on a bound scalar still discriminates.</summary>
+    private static Term DeferCompoundArgs(Term head, List<Term> deferGoals, ref int counter)
+    {
+        if (head is not CompoundTerm hc) return head;
+        Term[]? newArgs = null;
+        for (int i = 0; i < hc.Args.Length; i++)
+        {
+            if (hc.Args[i] is CompoundTerm)
+            {
+                newArgs ??= (Term[])hc.Args.Clone();
+                var v = new VarTerm($"$O{counter++}");
+                newArgs[i] = v;
+                deferGoals.Add(new CompoundTerm("=", new[] { (Term)v, hc.Args[i] }));
+            }
+        }
+        return newArgs is null ? head : new CompoundTerm(hc.Functor, newArgs) { Position = hc.Position };
     }
 
     /// <summary>Builds "PushBack ++ Tail" as a cons chain, for a semicontext
@@ -118,6 +229,12 @@ public static class DcgTransform
         // Empty terminal [] — consume nothing, no goal emitted.
         if (body is AtomTerm { Name: "[]" })
             return (new AtomTerm("true"), sIn);
+
+        // Bare `true` — consumes nothing (the identity grammar step). This
+        // also covers the residual left when the whole body was peeled into
+        // the head input argument by the fail-fast lowering above.
+        if (body is AtomTerm { Name: "true" })
+            return (body, sIn);
 
         // Non-empty terminal list — emit "sIn = [..elements.. | sOut]".
         if (IsCons(body))

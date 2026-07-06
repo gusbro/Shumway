@@ -843,6 +843,59 @@ via `--exe`, and `pc-il.exe` via `--with-compiled-il`) is committed in 29d01d6
       Residual top frames now Monitor.Enter/PollGC/TLS-trim (~46%, not
       recorded-shaped) — diminishing returns for this corpus, left unactioned.
 
+## Djota corpus — real-program compat + DCG codegen (2026-07-05, user-directed)
+
+Made **Djota** (`C:\temp\testDJOTA`, a Djot→HTML markup library written for
+Scryer/Trealla — heavy DCG, `double_quotes=chars`) build and run under Shumway.
+**All 32 Djota tests pass.**
+
+- [x] **Standard-DCG completeness (commit 7ace9f8).** Six genuine engine gaps
+      the corpus surfaced: variable nonterminal body `--> V` (→ runtime
+      `phrase/3`); semicontext/pushback head `H,PB --> B`; `|/2` as DCG
+      disjunction (DcgTransform + PhraseTransform + runtime `$phrase`); runtime
+      `phrase/2,3` interpreter (prelude); runtime `:/2` module-transparent call;
+      `char_type(_,decimal_digit)`. Gate: Core 436 / Interpreter 105 /
+      Compiler 302 / ISO 277 / Embedding 2780.
+
+- [x] **DCG fail-fast lowering — the real lever (output-deferral, NOT
+      car-indexing).** Investigating "second-level input-argument indexing"
+      revealed that classic indexing can't help Djota's hot path: the top
+      dispatcher `inline_text_ast_//1` *delegates* to ~13 sub-parsers (its
+      clause bodies are single non-terminal calls — no head terminal to index),
+      and the sub-parsers are single-clause. So car/second-level indexing has
+      nothing to discriminate there. The actual cost was that each terminal-led
+      sub-parser (`insert_ast_([insert(Str,Attrs)|Ast0]) --> "{+", …`) BUILDS
+      its compound output during head unification *before* the body checks the
+      input — so every failed alternative wastefully built and discarded a
+      structure. Fix (DcgTransform, no new opcode, no indexing change): when a
+      rule body BEGINS with a terminal, (a) hoist the leading terminal(s) into
+      the head input argument (fail at head unification, before frame alloc),
+      and (b) defer each COMPOUND head-output argument into the body
+      (`V = Orig`, after the head match). Render-direction rules begin with a
+      `{ }` goal, not a terminal, so they are untouched and keep their bound
+      first-arg indexing. **Measured deterministically (LastQueryCellsAllocated,
+      Djota bench doc): 50,666 → 42,898 heap cells per render, −15.3%.** Full
+      gate green + 8 new DcgStandardCompletenessTests. Wall-clock unusable here
+      ([[wallclock-ab-must-be-back-to-back]] — thermal swamped a 15% delta).
+      Car/second-level indexing is NOT pursued for this corpus (recorded: it
+      would help multi-clause terminal-led parsers like `list_type//1`, which
+      are cold; the hot dispatcher can't use it).
+
+- [ ] **DECISION — promote the `shumway_compat.pl` shim to first-class.** To run
+      Djota I hand-wrote a compat shim (`C:\temp\testDJOTA\shumway_compat.pl`)
+      supplying the Scryer stdlib bits Shumway lacks: `seq//1`, `...//0`,
+      `dif/2` (a three-way *optimistic* approximation — plain `\=` is unsound
+      for unbound args, the true coroutining dif is not implemented),
+      `format_//2` (a `~s`/`~d`/`~a` DCG-format subset). These recur across
+      Scryer/Trealla programs. Options to weigh: (a) add the safe/universal ones
+      as builtins/prelude (`seq//1`, `...//0` are standard DCG library preds;
+      `char_type` alias already done); (b) ship an **importable Shumway library**
+      (`:- use_module(library(dcgs))` / `library(dif)` / `library(format)`) so a
+      Scryer program consults unchanged — needs `use_module(library(X))` to stop
+      erroring on unknown libs and load a bundled `.pl`. `dif/2` proper needs
+      attributed-variable coroutining (real work, not a shim). Not yet actioned
+      — recorded for a compat-library round.
+
 ## Later rounds (not yet waved)
 
 Region runtime:
