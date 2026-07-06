@@ -68,6 +68,9 @@ internal static class Prelude
         :- public ignore/1.
         :- public chdir/1.
         :- public append/2.
+        :- public ':'/2.
+        :- public phrase/2.
+        :- public phrase/3.
         :- public display/1.
         :- public display/2.
         :- public recorda/2.
@@ -446,6 +449,7 @@ internal static class Prelude
         '$char_type'(alpha, Code) :- '$ascii_alpha'(Code).
         '$char_type'(alnum, Code) :- ( '$ascii_alpha'(Code) -> true ; '$ascii_digit'(Code) ).
         '$char_type'(digit(W), Code) :- '$ascii_digit'(Code), W is Code - 48.
+        '$char_type'(decimal_digit, Code) :- '$ascii_digit'(Code).
         '$char_type'(space, Code) :- '$ascii_space'(Code).
         '$char_type'(white, Code) :- ( Code =:= 32 -> true ; Code =:= 9 ).
         '$char_type'(end_of_line, Code) :- ( Code =:= 10 -> true ; Code =:= 13 ).
@@ -488,6 +492,27 @@ internal static class Prelude
         %! append(+ListOfLists, -List) | Lists | Concatenates a list of lists (SWI library form).
         append([], []).
         append([L|Ls], As) :- append(L, Ws, As), append(Ls, Ws).
+
+        %! :(+Module, :Goal) | Control | Runtime module-qualified call. Shumway's public predicates share one flat global namespace, so a qualified call to an exported predicate is module-transparent — it simply calls Goal.
+        ':'(_Module, Goal) :- call(Goal).
+
+        %! phrase(:Body, ?List) | Grammar | phrase(Body, List, []) — succeeds when the DCG Body derives List.
+        phrase(Body, List) :- phrase(Body, List, []).
+        %! phrase(:Body, ?List, ?Rest) | Grammar | Runtime DCG driver: succeeds when Body derives the difference List/Rest. Statically-known bodies are expanded at compile time; this interpreter handles a variable/list Body and control constructs at runtime.
+        phrase(Body, S0, S) :- '$phrase'(Body, S0, S).
+
+        '$phrase'(V, _, _) :- var(V), !, throw(error(instantiation_error, phrase/3)).
+        '$phrase'([], S0, S) :- !, S0 = S.
+        '$phrase'([H|T], S0, S) :- !, append([H|T], S, S0).
+        '$phrase'(!, S0, S) :- !, S0 = S.
+        '$phrase'((A, B), S0, S) :- !, '$phrase'(A, S0, S1), '$phrase'(B, S1, S).
+        '$phrase'((A ; B), S0, S) :- !, ( '$phrase'(A, S0, S) ; '$phrase'(B, S0, S) ).
+        '$phrase'((A | B), S0, S) :- !, ( '$phrase'(A, S0, S) ; '$phrase'(B, S0, S) ).
+        '$phrase'((A -> B), S0, S) :- !, ( '$phrase'(A, S0, S1) -> '$phrase'(B, S1, S) ).
+        '$phrase'({G}, S0, S) :- !, call(G), S0 = S.
+        '$phrase'(\+ A, S0, S) :- !, \+ '$phrase'(A, S0, _), S0 = S.
+        '$phrase'(call(G), S0, S) :- !, call(G, S0, S).
+        '$phrase'(G, S0, S) :- call(G, S0, S).
 
         %! display(+Term) | Input / output | Edinburgh display/1: writes Term to current output ignoring operator definitions, unquoted.
         display(X) :- write_term(X, [ignore_ops(true)]).

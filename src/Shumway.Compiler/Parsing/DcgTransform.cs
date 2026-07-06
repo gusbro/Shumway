@@ -62,10 +62,46 @@ public static class DcgTransform
         int counter = 0;
         var sStart = new VarTerm("$S0");
 
+        // Semicontext (pushback) head: `Head, PushBack --> Body`. The
+        // pushback terminal list is "put back" onto the residue so the
+        // *next* non-terminal sees it. Standard DCG expansion:
+        //   Head(S0, S) :- Body(S0, S1), S = PushBack ++ S1.
+        // So after Body consumes S0→S1, S is the pushback list prepended
+        // to S1 (e.g. `nt, [t] --> [t].` gives `nt(S0,S):-S0=[T|S1],S=[T|S1]`,
+        // a pure lookahead).
+        if (head is CompoundTerm { Functor: ",", Args.Length: 2 } semi)
+        {
+            Term realHead = semi.Args[0];
+            Term pushBack = semi.Args[1];
+            var sFinal = FreshState(ref counter);
+            (Term tBody, VarTerm sMid) = TransformBody(body, sStart, ref counter);
+            Term consChain = BuildPushbackList(pushBack, sMid);
+            Term link = new CompoundTerm("=", new[] { (Term)sFinal, consChain });
+            Term nHead = AppendDiffListArgs(realHead, sStart, sFinal);
+            Term nBody = new CompoundTerm(",", new[] { tBody, link });
+            return new Clause(ClauseKind.Rule,
+                new CompoundTerm(":-", new[] { nHead, nBody }), position);
+        }
+
         (Term transformedBody, VarTerm sEnd) = TransformBody(body, sStart, ref counter);
         Term newHead = AppendDiffListArgs(head, sStart, sEnd);
         Term newRuleTerm = new CompoundTerm(":-", new[] { newHead, transformedBody });
         return new Clause(ClauseKind.Rule, newRuleTerm, position);
+    }
+
+    /// <summary>Builds "PushBack ++ Tail" as a cons chain, for a semicontext
+    /// head's pushback list. Accepts a cons list, <c>[]</c>, or a
+    /// double-quoted string terminal (expanded to a code list).</summary>
+    private static Term BuildPushbackList(Term pushBack, Term tail)
+    {
+        if (pushBack is StringTerm s)
+        {
+            Term acc = tail;
+            for (int i = s.Content.Length - 1; i >= 0; i--)
+                acc = new CompoundTerm(".", new Term[] { new IntTerm(s.Content[i]), acc });
+            return acc;
+        }
+        return BuildListWithTail(pushBack, tail);
     }
 
     private static (Term body, VarTerm sEnd) TransformBody(
@@ -131,7 +167,10 @@ public static class DcgTransform
         // is still sIn (consumed nothing: `{G}`, `!`, `[]`) keeps an explicit
         // `SShared = SIn` reconciliation goal. This drops the two per-branch
         // `=/2` goals (→ get_variable/unify pairs) the old form always paid.
-        if (body is CompoundTerm { Functor: ";" } disj && disj.Args.Length == 2)
+        // Disjunction — both `;/2` and the DCG-standard `|/2` alternative
+        // (Scryer / SWI accept `(A | B)` in grammar bodies).
+        if (body is CompoundTerm { Args.Length: 2 } disj
+            && (disj.Functor == ";" || disj.Functor == "|"))
         {
             // If-then-else: (A -> B ; C). A and B share an intermediate
             // sMid; C runs independently from sIn. Both end at the same
@@ -223,6 +262,17 @@ public static class DcgTransform
             var sOut = FreshState(ref counter);
             Term consChain = BuildConsChainEndingIn(pb.Args[0], sIn);
             Term goal = new CompoundTerm("=", new[] { (Term)sOut, consChain });
+            return (goal, sOut);
+        }
+
+        // Variable non-terminal — a body that is a variable expands to a
+        // runtime phrase/3 call (standard DCG: `--> V` means
+        // `phrase(V, S0, S)`). The prelude phrase/3 interpreter handles the
+        // list case (V bound to a terminal list) and the callable case.
+        if (body is VarTerm)
+        {
+            var sOut = FreshState(ref counter);
+            Term goal = new CompoundTerm("phrase", new[] { body, (Term)sIn, sOut });
             return (goal, sOut);
         }
 

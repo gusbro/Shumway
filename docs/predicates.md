@@ -87,6 +87,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 
 | Predicate | Description |
 | --- | --- |
+| `:(+Module, :Goal)` | Runtime module-qualified call. Shumway's public predicates share one flat global namespace, so a qualified call to an exported predicate is module-transparent — it simply calls Goal. |
 | `apply(:Goal, +ExtraArgs)` | Calls Goal with the list of extra arguments appended. |
 | `call(:Goal)` | Calls a goal. |
 | `call(:Goal, +Extra1)` | Calls a goal extended with one extra argument. |
@@ -397,6 +398,13 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `nb_current(?Key, ?Value)` | Enumerates global variables; fails for an unset Key (no throw). |
 | `nb_getval(+Key, -Value)` | Reads a non-backtrackable global variable; existence_error if unset. |
 | `nb_setval(+Key, +Value)` | Non-backtrackable global variable assignment. |
+
+## Grammar
+
+| Predicate | Description |
+| --- | --- |
+| `phrase(:Body, ?List)` | phrase(Body, List, []) — succeeds when the DCG Body derives List. |
+| `phrase(:Body, ?List, ?Rest)` | Runtime DCG driver: succeeds when Body derives the difference List/Rest. Statically-known bodies are expanded at compile time; this interpreter handles a variable/list Body and control constructs at runtime. |
 
 ## Reflection
 

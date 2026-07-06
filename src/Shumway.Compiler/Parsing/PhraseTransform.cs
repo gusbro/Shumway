@@ -98,6 +98,13 @@ public static class PhraseTransform
             case AtomTerm a when a.Name != "[]":
                 // phrase(a, L, R) → a(L, R).
                 return new CompoundTerm(a.Name, new[] { list, rest });
+            case CompoundTerm bc when IsBodyControlConstruct(bc):
+                // A control construct (`,` `;` `|` `->` `*->` `{}` `\+`) is not
+                // a plain non-terminal: threading the diff-list through its
+                // branches is not a matter of appending two args. Leave the
+                // phrase/2,3 call intact so the runtime '$phrase' interpreter
+                // (prelude) handles it correctly.
+                return null;
             case CompoundTerm bc when !(bc.Functor == "." && bc.Args.Length == 2):
                 // phrase(foo(X), L, R) → foo(X, L, R). List-shaped compounds
                 // (`./2`) and lookalikes are not callable goals — skip them.
@@ -110,6 +117,18 @@ public static class PhraseTransform
                 return null;
         }
     }
+
+    private static bool IsBodyControlConstruct(CompoundTerm c) => (c.Functor, c.Args.Length) switch
+    {
+        (",", 2) => true,
+        (";", 2) => true,
+        ("|", 2) => true,
+        ("->", 2) => true,
+        ("*->", 2) => true,
+        ("{}", 1) => true,
+        ("\\+", 1) => true,
+        _ => false,
+    };
 
     private static bool IsControlFlow(string functor, int arity) => (functor, arity) switch
     {
