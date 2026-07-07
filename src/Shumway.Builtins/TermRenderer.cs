@@ -56,7 +56,7 @@ public static class TermRenderer
             case Tag.Float:
             {
                 double v = Cell.DecodeFloat(cell, engine.GetHeap(cell.FloatPairedIndex));
-                output.Write(v.ToString("R", CultureInfo.InvariantCulture));
+                output.Write(Number.FormatPrologFloat(v));
                 break;
             }
             case Tag.Str:
@@ -250,7 +250,14 @@ public static class TermRenderer
     private static bool NeedsNoQuoting(string name)
     {
         if (name.Length == 0) return false;
-        if (name == "[]" || name == "{}" || name == "," || name == "!"
+        // ',' and '.' as solo atoms MUST be quoted by writeq / write_canonical:
+        // a bare ',' is the argument/list separator and a bare '.' is the
+        // end-of-clause token, so neither round-trips unquoted. (SWI / GProlog:
+        // writeq(',') => ','  and  writeq('.') => '.'.) Missing this made
+        // Logtalk's generated scratch files — e.g. is_punctuation(',') — write
+        // an unreadable bare ',' and fail to re-consult.
+        if (name == "," || name == ".") return false;
+        if (name == "[]" || name == "{}" || name == "!"
             || name == ";") return true;
         char first = name[0];
         if (char.IsLower(first))

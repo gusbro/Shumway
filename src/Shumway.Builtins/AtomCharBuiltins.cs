@@ -177,12 +177,9 @@ public static class AtomCharBuiltins
         if (numCell.Tag == Tag.Float)
         {
             double v = Cell.DecodeFloat(numCell, engine.GetHeap(numCell.FloatPairedIndex));
-            string s = v.ToString("R", CultureInfo.InvariantCulture);
-            // ISO mandates the printed form include a decimal point. "R" on
-            // round-number doubles can drop it ("3" instead of "3.0"); patch
-            // up the rare case so number_codes(3.0, X) round-trips through
-            // number_codes/2 in either direction.
-            if (!s.Contains('.') && !s.Contains('e') && !s.Contains('E')) s += ".0";
+            // Round-trippable ISO float form (decimal point + lowercase e) so
+            // number_codes/number_chars re-reads it in either direction.
+            string s = Number.FormatPrologFloat(v);
             int listIdx = asCodes
                 ? BuildIntCodesList(engine, s)
                 : BuildCharAtomList(engine, s);
@@ -295,9 +292,7 @@ public static class AtomCharBuiltins
         if (numCell.Tag == Tag.Float)
         {
             double v = Cell.DecodeFloat(numCell, engine.GetHeap(numCell.FloatPairedIndex));
-            string s = v.ToString("R", CultureInfo.InvariantCulture);
-            if (!s.Contains('.') && !s.Contains('e') && !s.Contains('E')) s += ".0";
-            return s;
+            return Number.FormatPrologFloat(v);
         }
         return null;
     }
