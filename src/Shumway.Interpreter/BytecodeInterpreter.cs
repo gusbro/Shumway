@@ -1909,8 +1909,22 @@ public sealed class BytecodeInterpreter
                 case Opcode.UnifyBigInt:
                 {
                     int literalId = BytecodeIO.ReadInt32(code, pc + 1);
-                    int ptr = _engine.UnifyPointer;
                     Cell value = _engine.MakeBigInt(ResolveBigIntLiteral(literalId));
+                    // ADR-020 (Phase 33 fix): inside a reserve-upfront inline
+                    // build the value must land in the RESERVED arg slot, not
+                    // at the heap top — a bigint cell is a single cell (the
+                    // payload is the aux-table id / an immediate), so it slots
+                    // in exactly like unify_integer. Without this branch the
+                    // reserved slot stayed unwritten (fresh heap: an
+                    // accidental unbound var; recycled heap: a stale cell —
+                    // the Logtalk random-library seed corruption).
+                    if (_engine.ReservedWrite)
+                    {
+                        _engine.UnifyArgCell(value);
+                        _engine.SetPc(pc + 5); inClause = true;
+                        break;
+                    }
+                    int ptr = _engine.UnifyPointer;
                     if (_engine.WriteMode)
                     {
                         int idx = _engine.AllocateHeap(1);

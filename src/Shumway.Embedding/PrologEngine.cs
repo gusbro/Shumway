@@ -194,22 +194,134 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         /// instead of extending the program buffer.</summary>
         public readonly List<(int Addr, int Length)> DeadChunks = new();
     }
-    private readonly Dictionary<int, DynChainState> _dynChains = new();
+    /// <summary>Phase 33 (Logtalk bring-up) — dynamic-chain metadata,
+    /// one table PER persistent buffer. Chain state records absolute byte
+    /// offsets into one specific buffer, but nested queries (a deferred
+    /// <c>:- initialization</c> goal running QueryAll from inside a
+    /// mid-query consult — Logtalk's loader files nest these many levels
+    /// deep) rebuild the persistent buffer while OUTER engines are still
+    /// executing on their older buffers. A single host-level table would
+    /// describe only the newest buffer — a resumed outer engine's assertz
+    /// would then patch new-buffer offsets into its old buffer (the
+    /// 0xCF / ArgumentOutOfRange corruption family), or, with the
+    /// staleness guards, skip the patch and lose same-query visibility of
+    /// its own assert (the Logtalk conditional-compilation failure). So
+    /// each Engine is associated at query setup with the table describing
+    /// ITS buffer, and every in-place mutation resolves chain state
+    /// through the engine performing it. The free-chunk list rides along
+    /// because its addresses are equally buffer-relative. SWI / GProlog
+    /// sidestep all of this with a single mutable code space; the
+    /// per-engine table is the equivalent alignment for our
+    /// snapshot-per-query model, with <see cref="_dynamicClauses"/> as
+    /// the authoritative store bridging buffer generations.</summary>
+    private sealed class DynChainTable
+    {
+        public readonly Dictionary<int, DynChainState> Chains = new();
 
-    /// <summary>Chunk-150 free-list of dead-clause bytecode regions.
-    /// <c>garbage_collect_clauses</c> moves a predicate's
-    /// <see cref="DynChainState.DeadChunks"/> here; the next
-    /// <c>assertz</c> / <c>asserta</c> scans for a fit (first-fit)
-    /// and reuses the bytes instead of extending the program buffer
-    /// via <c>engine.AppendCode</c>. Sorted only by insertion order;
-    /// the linear scan on append is cheap relative to the bytecode
-    /// emission itself.</summary>
+        /// <summary>Chunk-150 free-list of dead-clause bytecode regions
+        /// in THIS table's buffer. <c>garbage_collect_clauses</c> moves a
+        /// predicate's <see cref="DynChainState.DeadChunks"/> here; the
+        /// next <c>assertz</c> / <c>asserta</c> scans for a fit
+        /// (first-fit) and reuses the bytes instead of extending the
+        /// program buffer via <c>engine.AppendCode</c>.</summary>
+        public readonly List<(int Addr, int Length)> FreeChunks = new();
+    }
+
+    /// <summary>The table describing the host's CURRENT persistent buffer
+    /// (<see cref="_persistentProgram"/>). Reused across queries while the
+    /// buffer is (chunk 151b); replaced whenever the buffer is rebuilt or
+    /// invalidated.</summary>
+    private DynChainTable _dynChainTable = new();
+
+    /// <summary>Engine → the chain table for the buffer that engine runs
+    /// on. Registered at query setup; weak so a finished query's engine
+    /// (and, once unshared, its table) is collectable.</summary>
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<Engine, DynChainTable>
+        _engineChainTables = new();
+
+    private DynChainTable? GetChainTable(Engine engine)
+        => _engineChainTables.TryGetValue(engine, out var t) ? t : null;
+
+    private DynChainTable GetOrCreateChainTable(Engine engine)
+        => _engineChainTables.GetValue(engine, static _ => new DynChainTable());
+
+    /// <summary>Phase 33 — every engine born via SetupQueryFromTerm, weakly
+    /// held (in birth order). Backs the dynamic-mutation BROADCAST: with
+    /// nested queries (Logtalk's deferred <c>:- initialization</c> chains)
+    /// several engines are suspended mid-execution at once, each on its own
+    /// buffer; a mutation applied only to the mutating engine's buffer is
+    /// invisible to the others when they resume (a parent never sees a
+    /// child's <c>$lgt_loaded_file_</c> assert; a child baked a
+    /// <c>$lgt_file_loading_stack_</c> entry the parent later retracts).
+    /// SWI/GProlog get this for free from their single mutable code space;
+    /// broadcasting to every live engine's buffer is the equivalent for our
+    /// snapshot-per-query model. Collected engines are pruned as the list
+    /// is walked; finished-but-uncollected engines receive harmless writes
+    /// (and keep a to-be-reused buffer current).</summary>
+    private readonly List<WeakReference<Engine>> _liveEngines = new();
+
+    private void RegisterLiveEngine(Engine engine)
+    {
+        for (int i = _liveEngines.Count - 1; i >= 0; i--)
+            if (!_liveEngines[i].TryGetTarget(out _)) _liveEngines.RemoveAt(i);
+        _liveEngines.Add(new WeakReference<Engine>(engine));
+    }
+
+    /// <summary>Live engines OTHER than <paramref name="except"/>, at most
+    /// one per distinct chain table (two engines sharing a reused buffer
+    /// share its table — the mutation must be applied once). Newest first.
+    /// Returns null instead of an empty list on the common single-engine
+    /// path so callers skip broadcast work entirely.</summary>
+    private List<Engine>? OtherLiveEnginesByTable(Engine except)
+    {
+        List<Engine>? result = null;
+        var seen = new HashSet<DynChainTable>();
+        if (GetChainTable(except) is { } exceptTable) seen.Add(exceptTable);
+        for (int i = _liveEngines.Count - 1; i >= 0; i--)
+        {
+            if (!_liveEngines[i].TryGetTarget(out var e))
+            {
+                _liveEngines.RemoveAt(i);
+                continue;
+            }
+            if (ReferenceEquals(e, except)) continue;
+            if (GetChainTable(e) is not { } t || !seen.Add(t)) continue;
+            (result ??= new List<Engine>()).Add(e);
+        }
+        return result;
+    }
+
+    /// <summary>True when <paramref name="engine"/>'s program buffer IS
+    /// the host's current persistent buffer — i.e. no nested query rebuilt
+    /// it since this engine's setup. Capture BEFORE any
+    /// <c>engine.AppendCode</c> (growth reallocation changes the engine's
+    /// reference; for an owner the post-growth sync keeps host and engine
+    /// aligned). A mutation by a non-owner engine still patches the
+    /// engine's own buffer (self-visibility — the Logtalk compiler must
+    /// see its own asserts), but the host buffer misses it, so the caller
+    /// must invalidate instead of syncing.</summary>
+    private bool EngineOwnsHostBuffer(Engine engine)
+        => engine.CurrentProgram is not null
+           && ReferenceEquals(engine.CurrentProgram, _persistentProgram);
+
+    /// <summary>Post-mutation buffer bookkeeping: an owner engine's growth
+    /// is synced back to the host (chunk 151b); a non-owner (stale) engine
+    /// instead marks the host buffer for rebuild — the store already holds
+    /// the mutation, and the next setup re-derives dispatch from it.</summary>
+    private void SyncOrInvalidateAfterMutation(Engine engine, bool ownedHostBuffer)
+    {
+        if (ownedHostBuffer) SyncPersistentFromEngine(engine);
+        else InvalidatePersistent();
+    }
+
     /// <summary>Chunk 151b — synchronises <see cref="_persistentProgram"/>
     /// back from the running engine after a mid-query
     /// <see cref="Engine.AppendCode"/> may have reallocated and grown
     /// the buffer. PrologEngine holds its own reference to the buffer
     /// for the next query's two-buffer view; without this, that
     /// reference would be left pointing at the pre-grow stale buffer.
+    /// Only valid for an engine that owns the host buffer — non-owner
+    /// callers go through <see cref="SyncOrInvalidateAfterMutation"/>.
     /// </summary>
     private void SyncPersistentFromEngine(Engine engine)
     {
@@ -446,6 +558,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         Engine engine, int functorId, Shumway.Compiler.Ast.Clause newClause)
     {
         if (!IsExtensibleIndexedLayout(engine, functorId)) return false;
+        // Phase 33 — capture buffer ownership before any AppendCode.
+        bool ownsHost = EngineOwnsHostBuffer(engine);
         var addrMap = engine.CurrentFunctorAddresses!;
         var prog = engine.CurrentProgram!;
         int predAddr = addrMap[functorId];
@@ -588,8 +702,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
 
         // The new chunks may have grown the persistent buffer (chunk
-        // 151b) — keep PrologEngine's cached reference current.
-        SyncPersistentFromEngine(engine);
+        // 151b) — keep PrologEngine's cached reference current (owner),
+        // or mark the host buffer for rebuild (non-owner engine: its
+        // in-place extension is invisible to the newer buffer).
+        SyncOrInvalidateAfterMutation(engine, ownsHost);
 
         // Refresh interpreter pools — the clause may have interned new
         // literals (chunk 427: skipped when the pools didn't grow).
@@ -837,6 +953,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         Engine engine, int functorId, Shumway.Compiler.Ast.Clause newClause)
     {
         if (!IsExtensibleIndexedLayout(engine, functorId)) return false;
+        // Phase 33 — capture buffer ownership before any AppendCode.
+        bool ownsHost = EngineOwnsHostBuffer(engine);
         var addrMap = engine.CurrentFunctorAddresses!;
         var prog = engine.CurrentProgram!;
         int predAddr = addrMap[functorId];
@@ -976,7 +1094,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // and redirect any that match.
         RedirectChainHeads(engine, predAddr, redirectMap);
 
-        SyncPersistentFromEngine(engine);
+        SyncOrInvalidateAfterMutation(engine, ownsHost);
         // Chunk 427: refresh skipped when the pools didn't grow.
         RefreshLiteralPoolsIfGrown(engine);
         return true;
@@ -1334,27 +1452,25 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     }
 
     /// <summary>Chunk 150/151b — pulls the first free chunk whose
-
-    /// <summary>Chunk 150/151b — pulls the first free chunk whose
-    /// length is at least <paramref name="needed"/> off the engine's
-    /// persistent free-list (<see cref="_freeChunks"/>) and returns its
-    /// address; the chunk's tail (beyond <paramref name="needed"/> bytes)
-    /// goes back on the list. Returns -1 when no fit is available,
-    /// meaning the caller should fall back to <c>engine.AppendCode</c>.
-    /// Since the free-list now lives on <see cref="PrologEngine"/>,
-    /// chunks freed in one query are reusable by the next — but only
-    /// while the persistent buffer is still valid (a consult or abolish
-    /// invalidates both).</summary>
-    private int TryReuseFreeChunk(int needed)
+    /// length is at least <paramref name="needed"/> off the chain
+    /// table's free-list and returns its address; the chunk's tail
+    /// (beyond <paramref name="needed"/> bytes) goes back on the list.
+    /// Returns -1 when no fit is available, meaning the caller should
+    /// fall back to <c>engine.AppendCode</c>. The free-list lives on the
+    /// per-buffer <see cref="DynChainTable"/> (Phase 33 — its addresses
+    /// are buffer-relative), so chunks freed in one query are reusable
+    /// by the next while that buffer is reused.</summary>
+    private static int TryReuseFreeChunk(
+        List<(int Addr, int Length)> freeChunks, int needed)
     {
-        for (int i = 0; i < _freeChunks.Count; i++)
+        for (int i = 0; i < freeChunks.Count; i++)
         {
-            var (addr, length) = _freeChunks[i];
+            var (addr, length) = freeChunks[i];
             if (length < needed) continue;
-            _freeChunks.RemoveAt(i);
+            freeChunks.RemoveAt(i);
             int leftover = length - needed;
             if (leftover > 0)
-                _freeChunks.Add((addr + needed, leftover));
+                freeChunks.Add((addr + needed, leftover));
             return addr;
         }
         return -1;
@@ -1366,7 +1482,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// to verify <c>retract</c> patches the slot.</summary>
     internal int? PeekDiedAddr(int functorId, int clauseIndex)
     {
-        if (!_dynChains.TryGetValue(functorId, out var chain)) return null;
+        if (!_dynChainTable.Chains.TryGetValue(functorId, out var chain)) return null;
         if (clauseIndex < 0 || clauseIndex >= chain.Entries.Count) return null;
         return chain.Entries[clauseIndex].DiedOperandAddr;
     }
@@ -1378,7 +1494,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// in front of it.</summary>
     internal int? PeekNextAddr(int functorId, int clauseIndex)
     {
-        if (!_dynChains.TryGetValue(functorId, out var chain)) return null;
+        if (!_dynChainTable.Chains.TryGetValue(functorId, out var chain)) return null;
         if (clauseIndex < 0 || clauseIndex >= chain.Entries.Count) return null;
         return chain.Entries[clauseIndex].NextOperandAddr;
     }
@@ -1950,6 +2066,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             retiredBodyAddr = FindBodyAddrForClauseIndex(engine, functorId, idx);
         list.RemoveAt(idx);
         InvalidateDynamicCache(functorId);
+        // Phase 33 — a retract from a non-owner engine (a nested query
+        // rebuilt the host buffer since this engine's setup) patches only
+        // this engine's buffer; the host's newer buffer would keep the
+        // clause visible on cross-query reuse. Force a rebuild from the
+        // (already-updated) store. Owner engines pay nothing.
+        if (!EngineOwnsHostBuffer(engine)) InvalidatePersistent();
         // For the chunk-127 chain layout, PatchDiedFromChain walks
         // the predicate's single chain and patches entry[idx]'s
         // died slot. For the chunk-155a indexed layout, the chain
@@ -1971,6 +2093,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // dead clauses.
             TryReclaimDeadDynamicChain(engine, functorId);
         }
+        // Phase 33 — broadcast the retract to every other live engine's
+        // buffer (matched by clause identity — chain entries hold the same
+        // Clause objects the store held), so a suspended outer query's
+        // dispatch also stops seeing the clause when it resumes.
+        if (OtherLiveEnginesByTable(engine) is { } others)
+            foreach (var other in others)
+                PatchDiedFromChainByClause(other, functorId, clause);
         if (retiredBodyAddr > 0
             && TryPatchDiedInAllIndexedChains(engine, functorId, retiredBodyAddr))
             return true;
@@ -2024,7 +2153,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private void TryReclaimDeadDynamicChain(Engine engine, int functorId)
     {
         if (engine.CurrentProgram is null) return;
-        if (!_dynChains.TryGetValue(functorId, out var chain)) return;
+        if (GetChainTable(engine) is not { } tbl
+            || !tbl.Chains.TryGetValue(functorId, out var chain)) return;
         // Only the plain chunk-127 trampoline+chain layout. Indexed
         // dynamic predicates (chunk 155/156) use the rebuild-on-mutate
         // fallback and aren't handled here.
@@ -2082,12 +2212,24 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     internal void AbolishDynamic(Engine engine, int functorId)
     {
         AbolishDynamic(functorId);              // bumps _dbGeneration
+        AbolishDynamicInChain(engine, functorId);
+        // Phase 33 — broadcast: suspended engines' dispatch must also
+        // stop seeing the abolished clauses when they resume.
+        if (OtherLiveEnginesByTable(engine) is { } others)
+            foreach (var other in others)
+                AbolishDynamicInChain(other, functorId);
+    }
+
+    private void AbolishDynamicInChain(Engine engine, int functorId)
+    {
         if (engine.CurrentProgram is null) return;
-        if (!_dynChains.TryGetValue(functorId, out var chain)) return;
+        if (GetChainTable(engine) is not { } tbl
+            || !tbl.Chains.TryGetValue(functorId, out var chain)) return;
         var program = engine.CurrentProgram;
         foreach (var entry in chain.Entries)
         {
-            if (entry.DiedOperandAddr > 0)
+            if (entry.DiedOperandAddr > 0
+                && entry.DiedOperandAddr + sizeof(long) <= program.Length)
                 Shumway.Core.BytecodeIO.WriteInt64(
                     program, entry.DiedOperandAddr, _dbGeneration.Value);
             // Chunk 150: stage incremental chunks for GC reclamation.
@@ -2115,7 +2257,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// </summary>
     internal int GarbageCollectClauses(Engine engine, int functorId, bool reclaimChunks = true)
     {
-        if (!_dynChains.TryGetValue(functorId, out var chain)) return 0;
+        if (GetChainTable(engine) is not { } tbl
+            || !tbl.Chains.TryGetValue(functorId, out var chain)) return 0;
         if (engine.CurrentProgram is null) return 0;
         if (chain.HeadClauseAddr < 0) return 0;
         var program = engine.CurrentProgram;
@@ -2196,7 +2339,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         {
             foreach (var (addr, length) in chain.DeadChunks)
             {
-                _freeChunks.Add((addr, length));
+                tbl.FreeChunks.Add((addr, length));
                 reclaimed += length;
             }
         }
@@ -2517,6 +2660,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// </list></summary>
     private void MaterializeDynamicTrampoline(Engine engine, int fid)
     {
+        // Phase 33 — capture buffer ownership before AppendCode (growth
+        // reallocation changes the engine's reference).
+        bool ownsHost = EngineOwnsHostBuffer(engine);
         var (atomId, arity) = FunctorTable.Lookup(fid);
         string name = AtomTable.GetById(atomId)?.Name
             ?? throw new InvalidOperationException(
@@ -2614,12 +2760,15 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             HeadClauseAddr = trampolineAddr + 6,
             TailNextAddr = trampolineAddr + 7,
         };
-        _dynChains[fid] = chain;
+        // Phase 33 — record into THIS engine's chain table: the
+        // trampoline lives in this engine's buffer.
+        GetOrCreateChainTable(engine).Chains[fid] = chain;
 
         // Sync the host's persistent program reference — engine.AppendCode
-        // may have reallocated the buffer; without this, the next query's
-        // two-buffer view would point at the pre-grow stale array.
-        SyncPersistentFromEngine(engine);
+        // may have reallocated the buffer (owner engine); a non-owner
+        // engine's trampoline exists only in its own buffer, so force the
+        // next setup to rebuild from _dynamicFunctors/_dynamicClauses.
+        SyncOrInvalidateAfterMutation(engine, ownsHost);
     }
 
     /// <summary>
@@ -2662,6 +2811,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             return;
         if (!_modules.TryGetValue(moduleName, out var manifest))
             return;
+        // Phase 33 — capture buffer ownership before AppendCode below.
+        bool ownsHost = EngineOwnsHostBuffer(engine);
 
         // --- SAME transform pipeline as the setup static branch --------
         var unfolded = MetaWrapperUnfold.Apply(newStaticClauses);
@@ -2740,10 +2891,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
 
         // Sync PrologEngine's cached persistent reference (AppendCode may
-        // have reallocated), push any newly interned literals to the
-        // interpreter, and bump the program generation so the dispatch loop
-        // refreshes its cached view over the grown buffer.
-        SyncPersistentFromEngine(engine);
+        // have reallocated; owner engine only — a mid-query consult has
+        // typically already invalidated the host buffer, and a non-owner
+        // engine's live-link must not clobber a newer buffer reference),
+        // push any newly interned literals to the interpreter, and bump
+        // the program generation so the dispatch loop refreshes its
+        // cached view over the grown buffer.
+        SyncOrInvalidateAfterMutation(engine, ownsHost);
         RefreshLiteralPoolsIfGrown(engine);
         engine.BumpProgramGeneration();
     }
@@ -2786,12 +2940,16 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // The freshly-materialised trampolines are empty (a fail stub). Any
         // clauses this consult routed into their _dynamicClauses slot
         // no-op'd through AppendDynamicClauseIncremental (no trampoline then)
-        // — link them now that a trampoline exists.
+        // — link them now that a trampoline exists. Core (non-broadcast)
+        // on purpose: these clauses already exist in the store, so another
+        // live engine either baked them at its setup or received them via
+        // the broadcast when they were asserted — re-broadcasting here
+        // would duplicate them there.
         if (materialized is not null)
             foreach (int fid in materialized)
                 if (_dynamicClauses.TryGetValue(fid, out var cs))
                     foreach (var c in cs)
-                        AppendDynamicClauseIncremental(engine, fid, c);
+                        AppendDynamicClauseIncrementalCore(engine, fid, c);
     }
 
     /// <summary>Applies a <c>:- set_prolog_flag(Flag, Value)</c>
@@ -4284,17 +4442,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // they are rebuilt whenever the persistent buffer is
         // (builtPersistentNow), which this method forces.
         _derivationGen++;
-        // The free-list refers to offsets in the now-invalidated
-        // buffer; clear it so reused chunks in the rebuilt buffer
-        // start from a clean slate.
-        _freeChunks.Clear();
+        // Phase 33 — chain state + free-list describe offsets in the
+        // now-invalidated buffer; start a fresh table for the rebuild.
+        // Live engines still running on the old buffer keep their own
+        // table through _engineChainTables — invalidation never desyncs
+        // an in-flight query's in-place dispatch.
+        _dynChainTable = new DynChainTable();
     }
-
-    /// <summary>Chunk 151b — free-list of dead bytecode chunks reclaimed
-    /// by <c>garbage_collect_clauses</c>. Lives on the engine (not
-    /// per-query) so chunks freed in one query are reusable by the next
-    /// — possible only because the persistent buffer persists.</summary>
-    private readonly List<(int Addr, int Length)> _freeChunks = new();
 
     /// <summary>Phase 11 chunk 157 — user-facing entry point for
     /// persistent-buffer compaction. Invalidates the cached dynamic-
@@ -5403,7 +5557,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             _modules.Clear();
             _modules[DefaultModuleName] = new ModuleManifest(DefaultModuleName);
             _dynamicClauses.Clear();
-            _dynChains.Clear();
+            _dynChainTable = new DynChainTable();
             _staticPredicateCache.Clear();
             _dynamicPredicateCache.Clear();
             _skipCompileMergedCache = null;   // chunk 430 — both caches cleared
@@ -8124,7 +8278,22 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // maintain _dynChains directly — a contiguous walk from
         // predAddr can't see chunks appended elsewhere by AppendCode.
         if (builtPersistentNow)
+        {
+            // Phase 33 — a fresh buffer gets a fresh chain table. Older
+            // tables stay alive through _engineChainTables for any outer
+            // (nested-query) engines still running on their buffers.
+            _dynChainTable = new DynChainTable();
             PopulateDynChains(program, addressMap, mergedPredicatesByAddress);
+        }
+        // Phase 33 — associate this engine with the table describing the
+        // buffer it runs on: every in-place dynamic mutation this engine
+        // performs resolves chain state through this association, so a
+        // nested query's rebuild can never make it patch wrong offsets.
+        _engineChainTables.AddOrUpdate(engine, _dynChainTable);
+        // ... and track it for the dynamic-mutation broadcast (a mutation
+        // from a nested query must also reach the buffers of suspended
+        // outer engines — see _liveEngines).
+        RegisterLiveEngine(engine);
 
         // Tier-1 promotion: hook the interpreter up to this engine's
         // IlPromotionStore via an address-keyed adapter. The store itself
@@ -8270,8 +8439,23 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// O(predicate size). Falls back silently (no-op) when the predicate's
     /// chain isn't in the new structure (paso-3 trust_me tail or indexed
     /// dispatch); in those cases the chunk-C redirect handles the update.
-    /// </summary>
+    ///
+    /// <para>Phase 33 — BROADCAST entry point: applies the extension to the
+    /// mutating engine AND to every other live engine's buffer (each via
+    /// its own chain table), so suspended outer/nested queries observe the
+    /// assert when they resume — the single-code-space semantics SWI /
+    /// GProlog give natively. Single-engine callers pay nothing (the
+    /// other-engines list is null).</para></summary>
     internal void AppendDynamicClauseIncremental(
+        Engine engine, int functorId, Clause newClause)
+    {
+        AppendDynamicClauseIncrementalCore(engine, functorId, newClause);
+        if (OtherLiveEnginesByTable(engine) is { } others)
+            foreach (var other in others)
+                AppendDynamicClauseIncrementalCore(other, functorId, newClause);
+    }
+
+    private void AppendDynamicClauseIncrementalCore(
         Engine engine, int functorId, Clause newClause)
     {
         // Chunk 155b: try the new extensible-indexed in-place
@@ -8291,6 +8475,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // form of indexed dispatch that chunk-155b/c didn't handle
         // — for a hot predicate, request a persistent rebuild so the
         // next query sees the new clause through a fresh compile.
+        // Phase 33 — resolve chain state through THIS engine's table (the
+        // one describing its buffer; see DynChainTable) and capture buffer
+        // ownership before any AppendCode.
+        bool ownsHost = EngineOwnsHostBuffer(engine);
+        var chainTable = GetChainTable(engine);
         // Phase 19+ — mid-query trampoline materialisation. If the
         // predicate was auto-promoted mid-query via EnsureDynamic
         // (implicit_dynamic=true with a runtime-bound assertz head),
@@ -8299,15 +8488,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // SetupQueryFromTerm, and that ran before the auto-promote.
         // Build a fresh trampoline now so the chunk-127 extension
         // below has something to extend.
-        if (!_dynChains.ContainsKey(functorId)
+        if ((chainTable is null || !chainTable.Chains.ContainsKey(functorId))
             && _dynamicFunctors.Contains(functorId)
             && engine.CurrentProgram is not null
             && engine.DynamicFailStubAddr > 0)
         {
             MaterializeDynamicTrampoline(engine, functorId);
+            chainTable ??= GetChainTable(engine);
         }
 
-        if (!_dynChains.TryGetValue(functorId, out var chain)
+        if (chainTable is null
+            || !chainTable.Chains.TryGetValue(functorId, out var chain)
             || chain.TailNextAddr < 0
             || engine.CurrentProgram is null
             || engine.DynamicFailStubAddr <= 0)
@@ -8316,21 +8507,20 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             return;
         }
 
-        // Phase 33 — skip the in-place extend when the chain is stale relative
-        // to the live buffer (the tail-next patch below would splice into
-        // instruction interior → "reserved_invalid / Opcode 0xCF" corruption).
-        // Two checks: out-of-range offsets (DynChainAddressesStale) AND — for a
-        // stale-but-in-range tail — a structural check that TailNextAddr really
-        // is the <next> operand (offset +1) of a try_me_else / retry_me_else
-        // chain instruction. If not, _dynChains no longer describes the live
-        // bytecode. The clause is already in _dynamicClauses, so clause/2 sees
-        // it and the next query rebuilds dispatch. No InvalidatePersistent
-        // (would desync other live chains mid-load and break Logtalk's
-        // built-in-entity load).
+        // Phase 33 — last-line safety: skip the in-place extend when the
+        // chain is stale relative to the live buffer (the tail-next patch
+        // below would splice into instruction interior → "reserved_invalid
+        // / 0xCF" corruption). With per-engine chain tables this should
+        // never fire — a table only ever describes its own engine's
+        // buffer — but if it does, fall back to the store (authoritative)
+        // and force a rebuild so the clause isn't lost from dispatch.
         if (DynChainAddressesStale(
                 chain, engine.CurrentProgram.Length, engine.DynamicFailStubAddr)
             || !IsChainInstructionAt(engine.CurrentProgram, chain.TailNextAddr - 1))
+        {
+            InvalidatePersistent();
             return;
+        }
 
         // Apply the same transforms the setup path runs — dynamic clauses
         // share a flat module rewrite context (chunk 427 — shared helper
@@ -8353,7 +8543,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
         // Chunk 150: try the free-list (chunks reclaimed by a prior
         // GC) before extending the program buffer.
-        int chunkAddr = TryReuseFreeChunk(chunk.Length);
+        int chunkAddr = TryReuseFreeChunk(chainTable.FreeChunks, chunk.Length);
         if (chunkAddr >= 0)
             Array.Copy(chunk, 0, engine.CurrentProgram!, chunkAddr, chunk.Length);
         else
@@ -8386,9 +8576,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         chain.TailNextAddr = chunkAddr + NextOperandLocal;
 
         // Chunk 151b: AppendCode may have reallocated the buffer;
-        // refresh PrologEngine's reference so the next query sees
-        // the live buffer, not the pre-grow stale one.
-        SyncPersistentFromEngine(engine);
+        // refresh PrologEngine's reference so the next query sees the
+        // live buffer (owner engine) — or, when this engine's buffer is
+        // no longer the host's (a nested query rebuilt it), mark the
+        // host buffer for rebuild: the newer buffer did NOT get this
+        // in-place extension and would otherwise miss the clause on
+        // cross-query reuse.
+        SyncOrInvalidateAfterMutation(engine, ownsHost);
 
         // The clause may have interned new literals — refresh the
         // interpreter so check_visible isn't running against a stale
@@ -8402,7 +8596,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// state exists.</summary>
     internal int? PeekTailNextAddr(int functorId)
     {
-        if (!_dynChains.TryGetValue(functorId, out var chain)) return null;
+        if (!_dynChainTable.Chains.TryGetValue(functorId, out var chain)) return null;
         return chain.TailNextAddr;
     }
 
@@ -8411,7 +8605,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// next call.</summary>
     internal int? PeekHeadClauseAddr(int functorId)
     {
-        if (!_dynChains.TryGetValue(functorId, out var chain)) return null;
+        if (!_dynChainTable.Chains.TryGetValue(functorId, out var chain)) return null;
         return chain.HeadClauseAddr;
     }
 
@@ -8422,8 +8616,20 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// 9-byte footprint), and patches the trampoline's
     /// <c>execute &lt;chain-head&gt;</c> to the new chunk. Falls back
     /// silently when the chain doesn't have a trampoline (paso-3
-    /// emission or indexed dispatch).</summary>
+    /// emission or indexed dispatch).
+    ///
+    /// <para>Phase 33 — BROADCAST entry point (see
+    /// <see cref="AppendDynamicClauseIncremental"/>).</para></summary>
     internal void PrependDynamicClauseIncremental(
+        Engine engine, int functorId, Clause newClause)
+    {
+        PrependDynamicClauseIncrementalCore(engine, functorId, newClause);
+        if (OtherLiveEnginesByTable(engine) is { } others)
+            foreach (var other in others)
+                PrependDynamicClauseIncrementalCore(other, functorId, newClause);
+    }
+
+    private void PrependDynamicClauseIncrementalCore(
         Engine engine, int functorId, Clause newClause)
     {
         // Chunk 155f: try in-place asserta for chunk-155a layout.
@@ -8433,16 +8639,22 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // auto-promoted mid-query (no trampoline ever built), build
         // one now so the chain prepend below has a chain to prepend
         // to.
-        if (!_dynChains.ContainsKey(functorId)
+        // Phase 33 — resolve chain state through THIS engine's table and
+        // capture buffer ownership before any AppendCode.
+        bool ownsHost = EngineOwnsHostBuffer(engine);
+        var chainTable = GetChainTable(engine);
+        if ((chainTable is null || !chainTable.Chains.ContainsKey(functorId))
             && _dynamicFunctors.Contains(functorId)
             && engine.CurrentProgram is not null
             && engine.DynamicFailStubAddr > 0)
         {
             MaterializeDynamicTrampoline(engine, functorId);
+            chainTable ??= GetChainTable(engine);
         }
         // Fall back to chunk-128 chain prepend for chain layout, or
         // rebuild for indexed layouts we can't extend in place.
-        if (!_dynChains.TryGetValue(functorId, out var chain)
+        if (chainTable is null
+            || !chainTable.Chains.TryGetValue(functorId, out var chain)
             || chain.TrampolineExecuteOperandAddr < 0
             || engine.CurrentProgram is null)
         {
@@ -8451,18 +8663,20 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
         if (engine.DynamicFailStubAddr <= 0) return;
 
-        // Phase 33 — skip the in-place prepend when the chain is stale (the
-        // head-demotion / trampoline patch would write past the live buffer or
-        // into an unrelated instruction). The head-demotion rewrites the byte
-        // at HeadClauseAddr from try_me_else to retry_me_else, so it must be a
-        // chain instruction. Clause is already in _dynamicClauses; next-query
-        // rebuild reconciles.
+        // Phase 33 — last-line safety: skip the in-place prepend when the
+        // chain is stale (the head-demotion / trampoline patch would write
+        // past the live buffer or into an unrelated instruction). With
+        // per-engine chain tables this should never fire; if it does, fall
+        // back to the store and force a rebuild so the clause isn't lost.
         if (chain.TrampolineExecuteOperandAddr + sizeof(long) > engine.CurrentProgram.Length
             || DynChainAddressesStale(
                    chain, engine.CurrentProgram.Length, engine.DynamicFailStubAddr)
             || (chain.HeadClauseAddr >= 0
                 && !IsChainInstructionAt(engine.CurrentProgram, chain.HeadClauseAddr)))
+        {
+            InvalidatePersistent();
             return;
+        }
 
         var (_, arity) = FunctorTable.Lookup(functorId);
 
@@ -8488,7 +8702,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         byte[] chunk = emitter.ToBytes();
 
         // Chunk 150: try the free-list before extending the program.
-        int chunkAddr = TryReuseFreeChunk(chunk.Length);
+        int chunkAddr = TryReuseFreeChunk(chainTable.FreeChunks, chunk.Length);
         if (chunkAddr >= 0)
             Array.Copy(chunk, 0, engine.CurrentProgram!, chunkAddr, chunk.Length);
         else
@@ -8537,9 +8751,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         if (chain.TailNextAddr < 0)
             chain.TailNextAddr = chunkAddr + NextOperandLocal;
 
-        // Chunk 151b: keep the persistent-buffer reference in sync —
-        // AppendCode may have reallocated.
-        SyncPersistentFromEngine(engine);
+        // Chunk 151b: keep the persistent-buffer reference in sync
+        // (owner engine) — or mark the host buffer for rebuild when this
+        // engine's buffer is no longer the host's (Phase 33).
+        SyncOrInvalidateAfterMutation(engine, ownsHost);
 
         // Refresh interpreter pools — same reasoning as the assertz path
         // (chunk 427: skipped when the pools didn't grow).
@@ -8626,20 +8841,47 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return false;
     }
 
+    /// <summary>Phase 33 — broadcast counterpart of
+    /// <see cref="PatchDiedFromChain"/>: finds the target engine's chain
+    /// entries whose <see cref="DynChainEntry.Clause"/> IS the retracted
+    /// clause (reference identity — the store and every chain share the
+    /// same Clause objects) and patches each one's died slot in that
+    /// engine's buffer. By-reference matching (not by index) because a
+    /// suspended engine's chain may be missing entries the mutating
+    /// engine's has (an append it never received pre-registration), so
+    /// positions need not line up.</summary>
+    private void PatchDiedFromChainByClause(Engine engine, int functorId, Clause clause)
+    {
+        if (GetChainTable(engine) is not { } tbl
+            || !tbl.Chains.TryGetValue(functorId, out var chain)) return;
+        var program = engine.CurrentProgram;
+        for (int i = chain.Entries.Count - 1; i >= 0; i--)
+        {
+            var entry = chain.Entries[i];
+            if (!ReferenceEquals(entry.Clause, clause)) continue;
+            if (program is not null && entry.DiedOperandAddr > 0
+                && entry.DiedOperandAddr + sizeof(long) <= program.Length
+                && IsChainInstructionAt(program, entry.NextOperandAddr - 1))
+                BytecodeIO.WriteInt64(program, entry.DiedOperandAddr, _dbGeneration.Value);
+            if (entry.ChunkAddr >= 0)
+                chain.DeadChunks.Add((entry.ChunkAddr, entry.ChunkLength));
+            chain.Entries.RemoveAt(i);
+        }
+    }
+
     private void PatchDiedFromChain(Engine engine, int functorId, int clauseIndex)
     {
-        if (!_dynChains.TryGetValue(functorId, out var chain)) return;
+        // Phase 33 — the engine's own chain table (describes ITS buffer).
+        if (GetChainTable(engine) is not { } tbl
+            || !tbl.Chains.TryGetValue(functorId, out var chain)) return;
         if (clauseIndex < 0 || clauseIndex >= chain.Entries.Count) return;
         var entry = chain.Entries[clauseIndex];
         var program = engine.CurrentProgram;
-        // Phase 33 — skip the in-place died patch when the entry's cached slot
-        // is out of range OR the entry is structurally stale (its chain
-        // instruction is no longer where _dynChains records it, so the died
-        // slot would land in an unrelated instruction). The clause is already
-        // removed from _dynamicClauses by the caller, so clause/2 is correct;
-        // the chain rebuilds at the next query setup. No InvalidatePersistent
-        // here — forcing a mid-load rebuild would desync OTHER live chains and
-        // break Logtalk's built-in-entity load.
+        // Phase 33 — last-line safety: skip the in-place died patch when
+        // the entry's cached slot is out of range OR structurally stale
+        // (should never fire with per-engine tables). The clause is
+        // already removed from _dynamicClauses by the caller, so clause/2
+        // is correct; the chain rebuilds at the next query setup.
         if (program is not null && entry.DiedOperandAddr > 0
             && entry.DiedOperandAddr + sizeof(long) <= program.Length
             && IsChainInstructionAt(program, entry.NextOperandAddr - 1))
@@ -8665,7 +8907,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         IReadOnlyDictionary<int, int> addressMap,
         IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate> predicatesByAddress)
     {
-        _dynChains.Clear();
+        _dynChainTable.Chains.Clear();
         var seen = new HashSet<int>();
         foreach (int fid in _dynamicFunctors)
             if (seen.Add(fid))
@@ -8693,7 +8935,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private void PopulateDynChainFor(
         int fid, byte[] program, int predAddr, int predByteLength)
     {
-        _dynChains.Remove(fid);
+        _dynChainTable.Chains.Remove(fid);
         // Empty dynamic predicates still need chain state for incremental
         // assertz — the empty-stub clause's try_me_else <fail-stub> is the
         // first patch target. So default to an empty clause list rather
@@ -8779,7 +9021,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // predicates have the empty-stub clause as the patch target for
         // the first incremental assertz).
         if (chain.Entries.Count > 0 || tailNextOperand >= 0)
-            _dynChains[fid] = chain;
+            _dynChainTable.Chains[fid] = chain;
     }
 
     /// <summary>Adds a fail-only stub clause for every dynamic functor that

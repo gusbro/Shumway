@@ -1200,7 +1200,11 @@ public sealed class ClauseCompiler
     /// arity, atoms / integers and variable NAMES. Returns null for a term that
     /// can't be safely shared: one containing an anonymous variable (each <c>_</c>
     /// is a distinct fresh variable) or a multi-cell literal (float / string).</summary>
-    private static string? StructuralKey(Term t) => StructuralKey(t, 0);
+    private static string? StructuralKey(Term t)
+    {
+        var sb = new System.Text.StringBuilder();
+        return AppendStructuralKey(t, sb, 0) ? sb.ToString() : null;
+    }
 
     /// <summary>Depth past which CSE keying is abandoned (returns null, so the
     /// term is not shared). CSE of a large / deep head sub-term is pointless —
@@ -1209,26 +1213,37 @@ public sealed class ClauseCompiler
     /// small-compound CSE while sidestepping both costs.</summary>
     private const int StructuralKeyMaxDepth = 64;
 
-    private static string? StructuralKey(Term t, int depth)
+    /// <summary>Serialized-key length past which CSE keying is abandoned.
+    /// The depth bound alone does NOT bound the WORK: an AST that shares
+    /// subterms (a DAG — the runtime materializer preserves sharing, so an
+    /// asserted clause's head can carry one) serializes as its unshared TREE,
+    /// exponential in depth — observed as a multi-GB StringBuilder hanging a
+    /// Logtalk library load inside a runtime assertz (Phase 33). One shared
+    /// budget threaded through the walk bounds total work to O(this) per key,
+    /// and a key that long is useless for CSE anyway.</summary>
+    private const int StructuralKeyMaxLength = 256;
+
+    private static bool AppendStructuralKey(Term t, System.Text.StringBuilder sb, int depth)
     {
+        if (sb.Length > StructuralKeyMaxLength) return false;   // budget blown
         switch (t)
         {
-            case VarTerm { Name: "_" }: return null;
-            case VarTerm v: return "$" + v.Name;
-            case AtomTerm a: return "'" + a.Name;
-            case IntTerm n: return "#" + n.Value;
-            case BigIntTerm b: return "#" + b.Value;
+            case VarTerm { Name: "_" }: return false;
+            case VarTerm v: sb.Append('$').Append(v.Name); return true;
+            case AtomTerm a: sb.Append('\'').Append(a.Name); return true;
+            case IntTerm n: sb.Append('#').Append(n.Value); return true;
+            case BigIntTerm b: sb.Append('#').Append(b.Value); return true;
             case CompoundTerm c:
-                if (depth >= StructuralKeyMaxDepth) return null;   // too deep to CSE
-                var sb = new System.Text.StringBuilder();
+                if (depth >= StructuralKeyMaxDepth) return false;   // too deep to CSE
                 sb.Append(c.Functor).Append('/').Append(c.Args.Length).Append('(');
                 foreach (Term a in c.Args)
                 {
-                    if (StructuralKey(a, depth + 1) is not string k) return null;
-                    sb.Append(k).Append(',');
+                    if (!AppendStructuralKey(a, sb, depth + 1)) return false;
+                    sb.Append(',');
                 }
-                return sb.Append(')').ToString();
-            default: return null;   // float / string — don't CSE
+                sb.Append(')');
+                return true;
+            default: return false;   // float / string — don't CSE
         }
     }
 
