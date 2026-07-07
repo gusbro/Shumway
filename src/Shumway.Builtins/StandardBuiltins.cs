@@ -94,6 +94,8 @@ public static class StandardBuiltins
             Types, "is_list(@Term)", "Succeeds if the argument is a proper list.");
         BuiltinsRegistry.Register("ground",  1, TypeBuiltins.IsGround,
             Types, "ground(@Term)", "Succeeds if the argument contains no unbound variables.");
+        BuiltinsRegistry.Register("acyclic_term", 1, TypeBuiltins.AcyclicTerm,
+            Types, "acyclic_term(@Term)", "Succeeds if the argument is a finite (acyclic) term.");
         BuiltinsRegistry.Register("attvar",  1, TypeBuiltins.IsAttVar,
             Types, "attvar(@Term)", "Succeeds if the argument is an attributed variable.");
 

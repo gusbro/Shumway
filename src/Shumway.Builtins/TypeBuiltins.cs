@@ -143,6 +143,50 @@ public static class TypeBuiltins
         }
     }
 
+    /// <summary><c>acyclic_term(X)</c> — X contains no cycle (is a finite
+    /// tree, not a rational/cyclic term). Walks the heap term tracking the
+    /// set of compound anchors on the current DFS path; a reference back to
+    /// one of them is a cycle. Shared (DAG) subterms are fine — each anchor
+    /// is removed from the path set once its subtree is fully checked.</summary>
+    public static bool AcyclicTerm(Engine engine) =>
+        IsAcyclicCell(engine, engine.GetRegister(0), new HashSet<int>());
+
+    private static bool IsAcyclicCell(Engine engine, Cell cell, HashSet<int> onPath)
+    {
+        if (cell.Tag == Tag.Ref)
+        {
+            int addr = engine.Deref(cell.AsHeapIndex);
+            cell = engine.GetHeap(addr);
+            if (cell.Tag == Tag.Ref) return true;   // unbound var: acyclic
+        }
+        switch (cell.Tag)
+        {
+            case Tag.Str:
+            {
+                int functorIdx = cell.AsHeapIndex;
+                if (!onPath.Add(functorIdx)) return false;   // back-edge → cyclic
+                var (_, arity) = FunctorTable.Lookup(
+                    engine.GetHeap(functorIdx).AsFunctorId);
+                for (int i = 0; i < arity; i++)
+                    if (!IsAcyclicCell(engine, engine.GetHeap(functorIdx + 1 + i), onPath))
+                        return false;
+                onPath.Remove(functorIdx);
+                return true;
+            }
+            case Tag.Lis:
+            {
+                int headIdx = cell.AsHeapIndex;
+                if (!onPath.Add(headIdx)) return false;
+                bool ok = IsAcyclicCell(engine, engine.GetHeap(headIdx), onPath)
+                       && IsAcyclicCell(engine, engine.GetHeap(headIdx + 1), onPath);
+                onPath.Remove(headIdx);
+                return ok;
+            }
+            default:
+                return true;   // atomic
+        }
+    }
+
     private static Tag Tag0(Engine engine) => Resolve(engine, engine.GetRegister(0)).Tag;
 
     private static Cell Resolve(Engine engine, Cell cell)

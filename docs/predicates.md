@@ -21,6 +21,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 
 | Predicate | Description |
 | --- | --- |
+| `acyclic_term(@Term)` | Succeeds if the argument is a finite (acyclic) term. |
 | `atom(@Term)` | Succeeds if the argument is an atom. |
 | `atomic(@Term)` | Succeeds if the argument is atomic (atom, number or string). |
 | `attvar(@Term)` | Succeeds if the argument is an attributed variable. |
