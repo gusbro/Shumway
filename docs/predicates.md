@@ -261,11 +261,14 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `current_stream(?Filename, ?Mode, ?Stream)` | Enumerates open streams (ISO §8.11.8.1). |
 | `delete(+File)` | Deletes the file File. Raises existence_error if absent, permission_error if locked / read-only. |
 | `directory(+Path, -Name, -Mode, -Time, -Date, -Size)` | Backtracks over the entries in Path, binding Name (atom), Mode (Arity-style bitfield: 1=read-only, 2=hidden, 4=system, 16=directory, 32=archive), Time (HH:MM:SS atom), Date (YYYY-MM-DD atom) and Size (bytes; 0 for directories). |
+| `directory_files(+Directory, -Files)` | Unifies Files with the list of entry names (atoms) in Directory, including '.' and '..' — SWI-compatible. |
 | `display(+Term)` | Edinburgh display/1: writes Term to current output ignoring operator definitions, unquoted. |
 | `display(+Stream, +Term)` | Edinburgh display/2: writes Term to Stream ignoring operator definitions, unquoted. |
 | `exists_directory(+Path)` | Succeeds when Path exists and is a directory. |
 | `exists_file(+File)` | Succeeds when File exists and is a regular file. |
+| `file_modification_time(+File, -Time)` | Unifies Time with File's last-modification time as integer Unix-epoch seconds. Raises existence_error when absent. |
 | `file_name_extension(?Base, ?Ext, ?Full)` | Relates a file name to its base and extension. With Full bound, splits at the last '.'; with Base and Ext bound, composes Base + '.' + Ext (or just Base when Ext is empty). SWI / SICStus compatible. |
+| `file_size(+File, -Bytes)` | Unifies Bytes with File's size. Raises existence_error when File doesn't exist. |
 | `flush_output` | Flushes the current output stream (ISO §8.11.7). |
 | `flush_output(+Stream)` | Flushes the given stream (ISO §8.11.7). |
 | `format(+Format)` | Like format/2 with no arguments. |
@@ -294,6 +297,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `peek_char(+Stream, -Char)` | Peeks the next character of a stream without consuming it. |
 | `peek_code(-Code)` | Peeks one character code from current input (ISO §8.12.5). |
 | `peek_code(+Stream, -Code)` | Peeks one character code from a stream (ISO §8.12.5). |
+| `pid(-Pid)` | Unifies Pid with the current process id. |
 | `portray_clause(+Clause)` | Pretty-prints Clause to the current output as a Prolog clause: head + indented body goals, synthetic variable names renamed to A, B, C, ... |
 | `portray_clause(+Stream, +Clause)` | Like portray_clause/1 but writes to the given stream. |
 | `print(+Term)` | Writes a term using print conventions. |
@@ -318,8 +322,11 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `set_input(+Stream)` | Sets the current input stream (ISO §8.11.3). |
 | `set_output(+Stream)` | Sets the current output stream (ISO §8.11.4). |
 | `set_stream_position(+Stream, +Position)` | Seeks the stream to the given byte position (ISO §8.11.10). |
+| `shell(+Command)` | Runs Command through the platform shell (cmd.exe /C on Windows, /bin/sh -c elsewhere) and succeeds iff it exits 0. |
+| `shell(+Command, -Status)` | Runs Command through the platform shell and unifies Status with its exit code. |
 | `skip(+Code)` | Reads from the current input stream, discarding characters until the code Code is read. |
 | `skip(+Stream, +Code)` | Stream variant of skip/1. |
+| `sleep(+Seconds)` | Suspends execution for Seconds (integer or float). |
 | `stream_property(?Stream, ?Property)` | Enumerates (Stream, Property) pairs for every open stream (ISO §8.11.8.2). |
 | `tab(+N)` | Writes N spaces to the current output stream. |
 | `tab(+Stream, +N)` | Stream variant of tab/1 — writes N spaces to Stream. |

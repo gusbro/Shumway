@@ -539,6 +539,36 @@ public static class MetaBuiltins
             Io, "exists_directory(+Path)",
             "Succeeds when Path exists and is a directory.");
 
+        // Phase 33 (Logtalk os library backend) — process / file-metadata
+        // primitives backing the shumway dialect section of Logtalk's
+        // os.lgt (and generally useful for scripting).
+        BuiltinsRegistry.Register("shell", 1, Shell1,
+            Io, "shell(+Command)",
+            "Runs Command through the platform shell (cmd.exe /C on "
+            + "Windows, /bin/sh -c elsewhere) and succeeds iff it exits 0.");
+        BuiltinsRegistry.Register("shell", 2, Shell2,
+            Io, "shell(+Command, -Status)",
+            "Runs Command through the platform shell and unifies Status "
+            + "with its exit code.");
+        BuiltinsRegistry.Register("pid", 1, Pid1,
+            Io, "pid(-Pid)",
+            "Unifies Pid with the current process id.");
+        BuiltinsRegistry.Register("sleep", 1, Sleep1,
+            Io, "sleep(+Seconds)",
+            "Suspends execution for Seconds (integer or float).");
+        BuiltinsRegistry.Register("file_size", 2, FileSize2,
+            Io, "file_size(+File, -Bytes)",
+            "Unifies Bytes with File's size. Raises existence_error when "
+            + "File doesn't exist.");
+        BuiltinsRegistry.Register("file_modification_time", 2, FileModificationTime2,
+            Io, "file_modification_time(+File, -Time)",
+            "Unifies Time with File's last-modification time as integer "
+            + "Unix-epoch seconds. Raises existence_error when absent.");
+        BuiltinsRegistry.Register("directory_files", 2, DirectoryFiles2,
+            Io, "directory_files(+Directory, -Files)",
+            "Unifies Files with the list of entry names (atoms) in "
+            + "Directory, including '.' and '..' — SWI-compatible.");
+
         // Phase 24 chunk 272 — pseudo-random generation. Per-engine
         // System.Random seedable via randomize/1.
         BuiltinsRegistry.Register("randomize", 1, Randomize1,
@@ -5494,6 +5524,107 @@ public static class MetaBuiltins
     {
         string path = RequireAtomPath(engine, register: 0, builtin: "exists_directory/1");
         return System.IO.Directory.Exists(path);
+    }
+
+    // ============================================================================
+    // Phase 33 — process / file-metadata primitives (Logtalk os backend).
+    // ============================================================================
+
+    /// <summary>Runs <paramref name="command"/> through the platform shell
+    /// and returns its exit code. Blocking; stdout/stderr inherit the
+    /// process streams (matching SWI / GNU shell/1-2 behaviour).</summary>
+    private static int RunShell(string command)
+    {
+        var psi = OperatingSystem.IsWindows()
+            ? new System.Diagnostics.ProcessStartInfo("cmd.exe", "/C " + command)
+            : new System.Diagnostics.ProcessStartInfo("/bin/sh", "-c \"" + command.Replace("\"", "\\\"") + "\"");
+        psi.UseShellExecute = false;
+        try
+        {
+            using var proc = System.Diagnostics.Process.Start(psi);
+            if (proc is null)
+                throw new ShumwayPrologException(IsoError.SystemError(
+                    "shell: failed to start the platform shell."));
+            proc.WaitForExit();
+            return proc.ExitCode;
+        }
+        catch (System.ComponentModel.Win32Exception ex)
+        {
+            throw new ShumwayPrologException(IsoError.SystemError(
+                $"shell: {ex.Message}"));
+        }
+    }
+
+    public static bool Shell1(Engine engine)
+    {
+        string command = RequireAtomPath(engine, register: 0, builtin: "shell/1");
+        return RunShell(command) == 0;
+    }
+
+    public static bool Shell2(Engine engine)
+    {
+        string command = RequireAtomPath(engine, register: 0, builtin: "shell/2");
+        int status = RunShell(command);
+        return engine.UnifyRegisterWithCell(1, Cell.Int(status));
+    }
+
+    public static bool Pid1(Engine engine)
+        => engine.UnifyRegisterWithCell(
+            0, Cell.Int(Environment.ProcessId));
+
+    public static bool Sleep1(Engine engine)
+    {
+        Cell c = MaterializeRegisterAsCell(engine, 0);
+        double seconds = c.Tag switch
+        {
+            Tag.Int => c.AsInt,
+            Tag.Float => Cell.DecodeFloat(c, engine.GetHeap(c.FloatPairedIndex)),
+            Tag.Ref or Tag.AttVar => throw new ShumwayPrologException(IsoError.InstantiationError()),
+            _ => throw new ShumwayPrologException(IsoError.TypeError("number", new AtomTerm("sleep"))),
+        };
+        if (seconds > 0)
+            System.Threading.Thread.Sleep(TimeSpan.FromSeconds(seconds));
+        return true;
+    }
+
+    public static bool FileSize2(Engine engine)
+    {
+        string path = RequireAtomPath(engine, register: 0, builtin: "file_size/2");
+        var info = new System.IO.FileInfo(path);
+        if (!info.Exists)
+            throw new ShumwayPrologException(
+                IsoError.ExistenceError("source_sink", new AtomTerm(path)));
+        return engine.UnifyRegisterWithCell(1, Cell.Int(info.Length));
+    }
+
+    public static bool FileModificationTime2(Engine engine)
+    {
+        string path = RequireAtomPath(engine, register: 0, builtin: "file_modification_time/2");
+        var info = new System.IO.FileInfo(path);
+        if (!info.Exists)
+            throw new ShumwayPrologException(
+                IsoError.ExistenceError("source_sink", new AtomTerm(path)));
+        long epoch = new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeSeconds();
+        return engine.UnifyRegisterWithCell(1, Cell.Int(epoch));
+    }
+
+    public static bool DirectoryFiles2(Engine engine)
+    {
+        string path = RequireAtomPath(engine, register: 0, builtin: "directory_files/2");
+        if (!System.IO.Directory.Exists(path))
+            throw new ShumwayPrologException(
+                IsoError.ExistenceError("directory", new AtomTerm(path)));
+        Term list = new AtomTerm("[]");
+        var entries = System.IO.Directory.GetFileSystemEntries(path);
+        // Reverse source order so the cons chain lists them in order;
+        // prepend '..' and '.' last so they head the list (SWI shape).
+        for (int i = entries.Length - 1; i >= 0; i--)
+            list = new CompoundTerm(".", new[]
+                { (Term)new AtomTerm(System.IO.Path.GetFileName(entries[i])), list });
+        list = new CompoundTerm(".", new[] { (Term)new AtomTerm(".."), list });
+        list = new CompoundTerm(".", new[] { (Term)new AtomTerm("."), list });
+        Cell cell = Materializer.MaterializeAsCell(engine, list);
+        return engine.UnifyRegisterWithCell(1, cell);
     }
 
     // ============================================================================

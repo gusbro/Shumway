@@ -631,7 +631,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
         // Compile the new clause (transforms identical to the chain
         // path; chunk 427 — shared helper with a fact fast path).
-        var compiledClause = CompileRuntimeAssertClause(functorId, newClause);
+        var compiledClause = CompileRuntimeAssertClause(engine, functorId, newClause);
         if (compiledClause is null) return false;
 
         // Body chunk: [meta(dbg, 0)] + body bytes. Clause-source-position
@@ -1030,7 +1030,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
         // Compile the new clause's body (chunk 427 — shared helper with
         // a fact fast path).
-        var compiledClause = CompileRuntimeAssertClause(functorId, newClause);
+        var compiledClause = CompileRuntimeAssertClause(engine, functorId, newClause);
         if (compiledClause is null) return false;
 
         var bodyEmitter = new Shumway.Compiler.Wam.BytecodeEmitter();
@@ -8410,7 +8410,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// <c>null</c> when the transform produced nothing (the pre-427
     /// <c>rewritten.Count == 0</c> guard).</summary>
     private Shumway.Compiler.Wam.CompiledClause? CompileRuntimeAssertClause(
-        int functorId, Clause newClause)
+        Engine engine, int functorId, Clause newClause)
     {
         Clause toCompile;
         if (newClause.Kind == Shumway.Compiler.Ast.ClauseKind.Fact
@@ -8421,19 +8421,72 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         else
         {
             // Apply the same transforms the setup path runs — dynamic
-            // clauses share a flat module rewrite context. Only the first
-            // transformed clause is compiled (any MetaTransform helpers
-            // follow it in the list) — same as the pre-427 per-site code.
+            // clauses share a flat module rewrite context. The first
+            // transformed clause is the asserted one; any MetaTransform
+            // helper clauses (a body catch/3 → '$catchgoal_N'/'$catchrec_N',
+            // a nested control construct → '$disj_N', ...) follow it.
             var transformed = ClausePipeline.Apply(new[] { newClause }, Modes, helperIdProvider: NextMetaHelperId);
             if (transformed.Count == 0) return null;
             _assertDynCtx ??= new ModuleRewrite.Context(
                 DefaultModuleName, new HashSet<int>(), _dynamicFunctors);
             toCompile = ModuleRewrite.Rewrite(transformed[0], _assertDynCtx);
+            // Phase 33 — the helpers used to be DROPPED here, leaving the
+            // asserted clause's body calling a '$catchgoal_N' that nothing
+            // defines until the next query setup regenerates it from the
+            // store — an existence_error when the clause runs in the SAME
+            // query it was asserted in (Logtalk's hooked test-file aux
+            // registration). Link each helper into the live engine as a
+            // single-clause static predicate before the caller patches the
+            // asserted clause's call sites against the address map.
+            if (transformed.Count > 1)
+                LinkRuntimeAssertHelpers(engine, transformed);
         }
         _assertClauseCompiler ??= new Shumway.Compiler.Wam.ClauseCompiler();
         return _assertClauseCompiler.Compile(
             toCompile,
             _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts);
+    }
+
+    /// <summary>Phase 33 — compiles and live-links the MetaTransform helper
+    /// clauses generated while incrementally compiling a runtime-asserted
+    /// clause (<paramref name="transformed"/>[1..]). Each helper is a fresh
+    /// single-clause static predicate (unique '$'-name per
+    /// <see cref="NextMetaHelperId"/>), so its <see cref="CompiledClause"/>
+    /// bytecode IS the predicate: append it, register its address in the
+    /// engine's functor map, then patch call sites in a second pass (a
+    /// helper may call a later helper from the same transform). Helpers are
+    /// deliberately NOT added to the store — the next query setup
+    /// regenerates them from the original clause, exactly like the setup
+    /// path always has.</summary>
+    private void LinkRuntimeAssertHelpers(
+        Engine engine, IReadOnlyList<Clause> transformed)
+    {
+        if (engine.CurrentProgram is null
+            || engine.CurrentFunctorAddresses is not Dictionary<int, int> addrMap)
+            return;
+        _assertClauseCompiler ??= new Shumway.Compiler.Wam.ClauseCompiler();
+        List<(Shumway.Compiler.Wam.CompiledClause Compiled, int Addr)>? linked = null;
+        for (int i = 1; i < transformed.Count; i++)
+        {
+            var rewritten = ModuleRewrite.Rewrite(transformed[i], _assertDynCtx!);
+            var compiled = _assertClauseCompiler.Compile(
+                rewritten,
+                _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts);
+            int addr = engine.AppendCode(compiled.Bytecode);
+            addrMap[HeadFunctorIdOf(rewritten)] = addr;
+            (linked ??= new()).Add((compiled, addr));
+        }
+        if (linked is null) return;
+        var program = engine.CurrentProgram!;
+        foreach (var (compiled, addr) in linked)
+            foreach (var site in compiled.CallSites)
+            {
+                int operandPos = addr + site.OpcodeOffset + 1;
+                int target = addrMap.TryGetValue(site.CalleeFunctorId, out int a)
+                    ? a
+                    : Shumway.Core.CallTarget.ForUndefined(site.CalleeFunctorId);
+                Shumway.Core.BytecodeIO.WriteInt32(program, operandPos, target);
+            }
     }
 
     /// <summary>Chunk 427 — refreshes the interpreter's literal pools only
@@ -8555,7 +8608,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // Apply the same transforms the setup path runs — dynamic clauses
         // share a flat module rewrite context (chunk 427 — shared helper
         // with a fact fast path).
-        var compiledClause = CompileRuntimeAssertClause(functorId, newClause);
+        var compiledClause = CompileRuntimeAssertClause(engine, functorId, newClause);
         if (compiledClause is null) return;
 
         // Build the chunk:
@@ -8712,7 +8765,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
         // Same transform pipeline as the setup path (chunk 427 — shared
         // helper with a fact fast path).
-        var compiledClause = CompileRuntimeAssertClause(functorId, newClause);
+        var compiledClause = CompileRuntimeAssertClause(engine, functorId, newClause);
         if (compiledClause is null) return;
 
         // Chunk layout:
