@@ -8513,37 +8513,69 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
     /// <summary>Phase 33 — compiles and live-links the MetaTransform helper
     /// clauses generated while incrementally compiling a runtime-asserted
-    /// clause (<paramref name="transformed"/>[1..]). Each helper is a fresh
-    /// single-clause static predicate (unique '$'-name per
-    /// <see cref="NextMetaHelperId"/>), so its <see cref="CompiledClause"/>
-    /// bytecode IS the predicate: append it, register its address in the
-    /// engine's functor map, then patch call sites in a second pass (a
-    /// helper may call a later helper from the same transform). Helpers are
-    /// deliberately NOT added to the store — the next query setup
-    /// regenerates them from the original clause, exactly like the setup
-    /// path always has.</summary>
+    /// clause (<paramref name="transformed"/>[1..]). Helpers are grouped by
+    /// head functor and each group compiled as ONE multi-clause static
+    /// predicate via <see cref="Shumway.Compiler.Wam.PredicateCompiler"/> —
+    /// an if-then-else '$disj_N' has TWO clauses (the guarded then-branch
+    /// and the else-branch) and per-clause compilation registered only the
+    /// LAST one, so `(C -&gt; T ; E)` in a runtime-asserted clause ran the
+    /// else unconditionally (Logtalk's type::check "callable(X) failing on
+    /// an atom" mystery). Addresses are registered first, call sites
+    /// patched in a second pass (a helper may call a later helper from the
+    /// same transform). Helpers are deliberately NOT added to the store —
+    /// the next query setup regenerates them from the original clause,
+    /// exactly like the setup path always has.</summary>
     private void LinkRuntimeAssertHelpers(
         Engine engine, IReadOnlyList<Clause> transformed)
     {
         if (engine.CurrentProgram is null
             || engine.CurrentFunctorAddresses is not Dictionary<int, int> addrMap)
             return;
-        _assertClauseCompiler ??= new Shumway.Compiler.Wam.ClauseCompiler();
-        List<(Shumway.Compiler.Wam.CompiledClause Compiled, int Addr)>? linked = null;
+        // Group by head fid, preserving clause order within each group.
+        Dictionary<int, List<Clause>>? groups = null;
+        List<int>? order = null;
         for (int i = 1; i < transformed.Count; i++)
         {
             var rewritten = ModuleRewrite.Rewrite(transformed[i], _assertDynCtx!);
-            var compiled = _assertClauseCompiler.Compile(
-                rewritten,
-                _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts);
-            int addr = engine.AppendCode(compiled.Bytecode);
-            addrMap[HeadFunctorIdOf(rewritten)] = addr;
-            (linked ??= new()).Add((compiled, addr));
+            int fid = HeadFunctorIdOf(rewritten);
+            groups ??= new Dictionary<int, List<Clause>>();
+            order ??= new List<int>();
+            if (!groups.TryGetValue(fid, out var list))
+            {
+                groups[fid] = list = new List<Clause>();
+                order.Add(fid);
+            }
+            list.Add(rewritten);
         }
-        if (linked is null) return;
+        if (groups is null) return;
+        var linked = new List<(Shumway.Compiler.Wam.CompiledPredicate Pred, int Addr)>();
+        foreach (int fid in order!)
+        {
+            var pred = new Shumway.Compiler.Wam.PredicateCompiler
+                { EmitDebugInfo = _flags.EmitDebugInfo }.Compile(
+                groups[fid],
+                _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts,
+                enableIndexing: false,
+                isDynamic: false);
+            int addr = engine.AppendCode(pred.Bytecode);
+            // Relocate predicate-local dispatch targets (try_me_else /
+            // retry_me_else chain operands) to absolute addresses — the
+            // mid-query append bypasses ModuleCompiler's link step, same
+            // as MaterializeDynamicTrampoline.
+            foreach (int siteRel in pred.DispatchSites)
+            {
+                int operandAbsPos = addr + siteRel;
+                int predLocalTarget = Shumway.Core.BytecodeIO.ReadInt32(
+                    engine.CurrentProgram!, operandAbsPos);
+                Shumway.Core.BytecodeIO.WriteInt32(
+                    engine.CurrentProgram!, operandAbsPos, addr + predLocalTarget);
+            }
+            addrMap[fid] = addr;
+            linked.Add((pred, addr));
+        }
         var program = engine.CurrentProgram!;
-        foreach (var (compiled, addr) in linked)
-            foreach (var site in compiled.CallSites)
+        foreach (var (pred, addr) in linked)
+            foreach (var site in pred.CallSites)
             {
                 int operandPos = addr + site.OpcodeOffset + 1;
                 int target = addrMap.TryGetValue(site.CalleeFunctorId, out int a)
@@ -8625,50 +8657,30 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     {
         if (GetChainTable(engine) is not { } tbl) return;
         if (engine.CurrentProgram is null) return;
-        // Snapshot fids: the append path can materialize new trampolines,
+        // Snapshot fids: the rebuild path can materialize new trampolines,
         // mutating the dictionary while we walk.
         var fids = new List<int>(tbl.Chains.Keys);
-        List<Clause>? toAppend = null;
         foreach (int fid in fids)
         {
             if (!tbl.Chains.TryGetValue(fid, out var chain)) continue;
             var store = _dynamicClauses.TryGetValue(fid, out var cs)
                 ? cs : (IReadOnlyList<Clause>)Array.Empty<Clause>();
-            // Removal side — entries whose clause left the store.
-            if (chain.Entries.Count > 0)
+            // Set-compare by clause identity: equal → the view is exact.
+            bool diverged = store.Count != chain.Entries.Count;
+            if (!diverged)
             {
                 var storeSet = new HashSet<Clause>(store, ReferenceEqualityComparer.Instance);
-                var program = engine.CurrentProgram;
-                for (int i = chain.Entries.Count - 1; i >= 0; i--)
-                {
-                    var entry = chain.Entries[i];
-                    if (storeSet.Contains(entry.Clause)) continue;
-                    if (program is not null && entry.DiedOperandAddr > 0
-                        && entry.DiedOperandAddr + sizeof(long) <= program.Length
-                        && IsChainInstructionAt(program, entry.NextOperandAddr - 1))
-                        BytecodeIO.WriteInt64(program, entry.DiedOperandAddr, _dbGeneration.Value);
-                    if (entry.ChunkAddr >= 0)
-                        chain.DeadChunks.Add((entry.ChunkAddr, entry.ChunkLength));
-                    chain.Entries.RemoveAt(i);
-                }
+                foreach (var e in chain.Entries)
+                    if (!storeSet.Contains(e.Clause)) { diverged = true; break; }
             }
-            // Addition side — store clauses this chain never received.
-            if (store.Count != chain.Entries.Count)
-            {
-                var chainSet = new HashSet<Clause>(ReferenceEqualityComparer.Instance);
-                foreach (var e in chain.Entries) chainSet.Add(e.Clause);
-                toAppend ??= new List<Clause>();
-                toAppend.Clear();
-                foreach (var c in store)
-                    if (!chainSet.Contains(c)) toAppend.Add(c);
-                foreach (var c in toAppend)
-                    AppendDynamicClauseIncrementalCore(engine, fid, c);
-                // Still diverged after the diff? The view's layout isn't
-                // chain-table-describable (indexed) — rebuild it wholesale.
-                if (tbl.Chains.TryGetValue(fid, out var after)
-                    && after.Entries.Count != store.Count)
-                    RebuildEngineFidChainView(engine, fid);
-            }
+            if (!diverged) continue;
+            // Any divergence → rebuild wholesale. A fine-grained diff-append
+            // is unsound for a view whose real layout the chain table
+            // doesn't describe (indexed buckets — the appends would land in
+            // the buckets a SECOND time), and the rebuild is O(store)
+            // anyway. It also realigns the table so the next reconcile
+            // compares equal.
+            RebuildEngineFidChainView(engine, fid);
         }
     }
 
@@ -8688,8 +8700,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// (its clauses now carry dead/stale visibility, which only narrows
     /// what an old goal sees — the safe direction for bookkeeping
     /// predicates).</summary>
+    /// <summary>Re-entrancy guard for <see cref="RebuildEngineFidChainView"/>:
+    /// the rebuild re-links the store through
+    /// <see cref="AppendDynamicClauseIncrementalCore"/>, whose repair paths
+    /// call the rebuild — a fresh trampoline always accepts in-place
+    /// appends so recursion shouldn't arise, but a guard keeps a
+    /// pathological shape from looping. Single-threaded per host.</summary>
+    private bool _inFidViewRebuild;
+
     private void RebuildEngineFidChainView(Engine target, int functorId)
     {
+        if (_inFidViewRebuild) return;
         if (target.CurrentProgram is null
             || target.DynamicFailStubAddr <= 0
             || target.CurrentFunctorAddresses is not Dictionary<int, int> addrMap
@@ -8699,37 +8720,50 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             || oldAddr < 0
             || oldAddr + 5 > target.CurrentProgram.Length)
             return;
-        // Drop the stale chain record so MaterializeDynamicTrampoline
-        // builds fresh state, then re-link the current store.
-        GetOrCreateChainTable(target).Chains.Remove(functorId);
-        MaterializeDynamicTrampoline(target, functorId);
-        if (_dynamicClauses.TryGetValue(functorId, out var cs))
-            foreach (var c in cs)
-                AppendDynamicClauseIncrementalCore(target, functorId, c);
-        if (!addrMap.TryGetValue(functorId, out int newAddr) || newAddr == oldAddr)
-            return;
-        // Redirect the old entry point. Any dynamic layout starts with
-        // enter_dynamic (1 byte) + a dispatch opcode of ≥5 bytes, so a
-        // 5-byte execute always fits without clobbering a chain
-        // instruction a suspended CP could resume at.
-        var program = target.CurrentProgram!;
-        program[oldAddr] = (byte)Shumway.Core.Opcode.Execute;
-        Shumway.Core.BytecodeIO.WriteInt32(program, oldAddr + 1, newAddr);
+        _inFidViewRebuild = true;
+        try
+        {
+            // Drop the stale chain record so MaterializeDynamicTrampoline
+            // builds fresh state, then re-link the current store.
+            GetOrCreateChainTable(target).Chains.Remove(functorId);
+            MaterializeDynamicTrampoline(target, functorId);
+            if (_dynamicClauses.TryGetValue(functorId, out var cs))
+                foreach (var c in cs)
+                    AppendDynamicClauseIncrementalCore(target, functorId, c);
+            if (!addrMap.TryGetValue(functorId, out int newAddr) || newAddr == oldAddr)
+                return;
+            // Redirect the old entry point. Any dynamic layout starts with
+            // enter_dynamic (1 byte) + a dispatch opcode of ≥5 bytes, so a
+            // 5-byte execute always fits without clobbering a chain
+            // instruction a suspended CP could resume at.
+            var program = target.CurrentProgram!;
+            program[oldAddr] = (byte)Shumway.Core.Opcode.Execute;
+            Shumway.Core.BytecodeIO.WriteInt32(program, oldAddr + 1, newAddr);
+        }
+        finally { _inFidViewRebuild = false; }
     }
 
-    /// <summary>Diag (SHUMWAY_STACK_DIAG=1, read once) — traces the
-    /// mutation fan-out for Logtalk's '$lgt_file_loading_stack_'/2. The
-    /// diagnostic that pinned both the misaligned index-based retract
-    /// patch and the indexed-layout ghost views.</summary>
-    private static readonly bool StackDiagEnabled =
-        Environment.GetEnvironmentVariable("SHUMWAY_STACK_DIAG") == "1";
+    /// <summary>Diag (SHUMWAY_STACK_DIAG, read once) — traces the dynamic
+    /// mutation fan-out for one predicate: "1" traces Logtalk's
+    /// '$lgt_file_loading_stack_'/2 (the original target); any other
+    /// value names the functor to trace. The diagnostic that pinned both
+    /// the misaligned index-based retract patch and the indexed-layout
+    /// ghost views.</summary>
+    private static readonly string? StackDiagTarget =
+        Environment.GetEnvironmentVariable("SHUMWAY_STACK_DIAG") switch
+        {
+            null or "" or "0" => null,
+            "1" => "$lgt_file_loading_stack_",
+            var v => v,
+        };
+    private static readonly bool StackDiagEnabled = StackDiagTarget is not null;
 
     private void StackDiag(string op, Engine engine, int functorId)
     {
         if (!StackDiagEnabled) return;
         var (aid, ar) = FunctorTable.Lookup(functorId);
         string name = AtomTable.GetById(aid)?.Name ?? "?";
-        if (name != "$lgt_file_loading_stack_") return;
+        if (name != StackDiagTarget) return;
         var tbl = GetChainTable(engine);
         int entries = tbl is not null && tbl.Chains.TryGetValue(functorId, out var ch)
             ? ch.Entries.Count : -1;
@@ -8789,6 +8823,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             || engine.DynamicFailStubAddr <= 0)
         {
             if (_jitIndexProfile.IsHot(functorId)) InvalidatePersistent();
+            // Phase 33 — an unextendable chain record (a trust_me tail, or
+            // a contiguous walk over an indexed layout) means THIS engine's
+            // live view can't take the clause in place — without repair its
+            // dispatch silently diverges from the store forever (the
+            // '$lgt_current_object_' stuck-entries signature). Rebuild the
+            // fid's view wholesale; the rebuilt chain absorbs the whole
+            // store, new clause included.
+            RebuildEngineFidChainView(engine, functorId);
             return;
         }
 
@@ -8797,13 +8839,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // below would splice into instruction interior → "reserved_invalid
         // / 0xCF" corruption). With per-engine chain tables this should
         // never fire — a table only ever describes its own engine's
-        // buffer — but if it does, fall back to the store (authoritative)
-        // and force a rebuild so the clause isn't lost from dispatch.
+        // buffer — but if it does, fall back to the store (authoritative),
+        // force a host rebuild, and repair this engine's live view.
         if (DynChainAddressesStale(
                 chain, engine.CurrentProgram.Length, engine.DynamicFailStubAddr)
             || !IsChainInstructionAt(engine.CurrentProgram, chain.TailNextAddr - 1))
         {
             InvalidatePersistent();
+            RebuildEngineFidChainView(engine, functorId);
             return;
         }
 
@@ -8948,6 +8991,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             || engine.CurrentProgram is null)
         {
             if (_jitIndexProfile.IsHot(functorId)) InvalidatePersistent();
+            // Phase 33 — repair this engine's live view (see the assertz
+            // counterpart). The rebuild re-links the store in order, so
+            // the asserta'd clause (already prepended there) lands at the
+            // rebuilt chain's head.
+            RebuildEngineFidChainView(engine, functorId);
             return;
         }
         if (engine.DynamicFailStubAddr <= 0) return;
@@ -8956,7 +9004,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // chain is stale (the head-demotion / trampoline patch would write
         // past the live buffer or into an unrelated instruction). With
         // per-engine chain tables this should never fire; if it does, fall
-        // back to the store and force a rebuild so the clause isn't lost.
+        // back to the store, force a host rebuild, and repair the view.
         if (chain.TrampolineExecuteOperandAddr + sizeof(long) > engine.CurrentProgram.Length
             || DynChainAddressesStale(
                    chain, engine.CurrentProgram.Length, engine.DynamicFailStubAddr)
@@ -8964,6 +9012,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 && !IsChainInstructionAt(engine.CurrentProgram, chain.HeadClauseAddr)))
         {
             InvalidatePersistent();
+            RebuildEngineFidChainView(engine, functorId);
             return;
         }
 
