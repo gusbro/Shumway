@@ -6367,16 +6367,32 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                         // same way the module's static clauses do.
                         if (moduleName != DefaultModuleName)
                             _dynamicSeedModule[fid] = moduleName;
-                        // Mid-query consult (consult/1 from a live query): also
-                        // push the clause into the live dispatch so a later call
-                        // in the SAME query sees it. Without this the current
-                        // query keeps the trampoline it linked at setup (built
-                        // before this consult), so direct calls miss the new
-                        // clauses even though clause/2 — which reads the store —
-                        // sees them. AppendDynamicClauseIncremental self-guards
-                        // on CurrentProgram / fail-stub state.
-                        if (_liveConsultEngine is { } le)
-                            AppendDynamicClauseIncremental(le, fid, c);
+                        // Mid-query consult (consult/1 from a live query): the
+                        // clause is already in _dynamicClauses (above), so
+                        // clause/2 — which reads the live store — sees it in the
+                        // SAME query; direct-call dispatch picks it up on the
+                        // next query's clean recompile of the predicate.
+                        //
+                        // Phase 33 — do NOT patch the live dispatch in place at
+                        // this site. AppendDynamicClauseIncremental extends the
+                        // dynamic predicate's compiled chain, and for a predicate
+                        // whose dispatch lives in the *persistent* code region
+                        // (< _querySplit — the common case, since Logtalk's
+                        // internal `$lgt_*` tables are declared dynamic and
+                        // compiled into the persistent buffer) that means writing
+                        // into shared bytecode the running query is executing
+                        // from. Under a heavy multi-file consult (loading
+                        // Logtalk's `random` / `basic_types` libraries) the
+                        // resulting chain becomes inconsistent — a dispatch jumps
+                        // into the middle of an unrelated instruction ("reserved
+                        // invalid opcode / Opcode 0xCF — bytecode corruption").
+                        // Deferring to a clean next-query rebuild is both correct
+                        // (clause/2 gives same-query visibility; the store is the
+                        // source of truth) and the design mature engines use.
+                        // Runtime assertz/asserta (the tested in-place path) is a
+                        // different call site and is unaffected.
+                        if (_liveConsultEngine is not null)
+                            InvalidatePersistent();
                         continue;
                     }
                 }
