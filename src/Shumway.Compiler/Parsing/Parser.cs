@@ -605,7 +605,23 @@ public sealed class Parser
     {
         if (PeekToken().Kind == TokenKind.RBrace)
         {
-            NextToken();
+            Token rbrace = NextToken();
+            // ISO 6.3.3 — `{}` is an atom, and like any atom it heads a
+            // compound when immediately followed by '(' (no whitespace):
+            // `{}(X)` ≡ `{X}`. Logtalk's compiler emits the functional
+            // form in its generated code (lgtunit's with_output_to
+            // meta-argument), so both spellings must parse.
+            if (PeekToken().Kind == TokenKind.LParen
+                && IsAdjacent(rbrace, PeekToken()))
+            {
+                NextToken();   // consume '('
+                var args = ReadCommaSeparatedArgs(closing: TokenKind.RParen);
+                if (args.Count == 0)
+                    throw new ParseException(
+                        "Compound term '{}' requires at least one argument; "
+                        + "for the zero-arity case use the bare atom.", pos);
+                return new CompoundTerm("{}", args.ToArray()) { Position = pos };
+            }
             return new AtomTerm("{}") { Position = pos };
         }
         Term inner = ReadTermInternal(1200, out _);

@@ -48,13 +48,6 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     // the SAME query sees them — exactly as a runtime assertz would. Null during
     // startup/ctor consults, where the next query builds dispatch fresh.
     private Engine? _liveConsultEngine;
-    // Phase 33 (Logtalk bring-up) — live-linked static predicates' unresolved
-    // call sites (absolute operand position in the persistent buffer, callee
-    // fid), accumulated across the consult batches of ONE query so a forward
-    // reference (batch N calls a predicate a later batch M>N defines) is
-    // re-patched once M links. Cleared at each top-level query setup — the
-    // positions refer to the current query's persistent buffer generation.
-    private List<(int AbsPos, int FunctorId)>? _liveConsultUnresolved;
     private readonly OperatorTable _operators = OperatorTable.Default();
 
     /// <summary>Save-state chunk 264: chronological log of every source
@@ -225,6 +218,16 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         /// (first-fit) and reuses the bytes instead of extending the
         /// program buffer via <c>engine.AppendCode</c>.</summary>
         public readonly List<(int Addr, int Length)> FreeChunks = new();
+
+        /// <summary>Phase 33 (Logtalk bring-up) — live-linked static
+        /// predicates' unresolved call sites (absolute operand position in
+        /// THIS table's buffer, callee fid), accumulated across the consult
+        /// batches linked into it so a forward reference (batch N calls a
+        /// predicate a later batch M&gt;N defines) is re-patched once M
+        /// links. Per-buffer because the positions are buffer offsets —
+        /// with the consult broadcast, batches land in several engines'
+        /// buffers, each with its own positions.</summary>
+        public List<(int AbsPos, int FunctorId)>? LiveConsultUnresolved;
     }
 
     /// <summary>The table describing the host's CURRENT persistent buffer
@@ -2876,17 +2879,20 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // Forward references: record this batch's unresolved sites (baked
         // with the undefined sentinel), then re-patch every accumulated
         // site whose callee is now linked. Absolute operand position =
-        // loadOffset + Offset + 1 (skip the Call opcode byte).
-        _liveConsultUnresolved ??= new List<(int, int)>();
+        // loadOffset + Offset + 1 (skip the Call opcode byte). Phase 33:
+        // the list lives on the per-buffer chain table — its positions are
+        // offsets into THIS engine's buffer.
+        var unresolved = GetOrCreateChainTable(engine).LiveConsultUnresolved
+            ??= new List<(int, int)>();
         foreach (var (off, fid) in link.UnresolvedSites)
-            _liveConsultUnresolved.Add((loadOffset + off + 1, fid));
-        for (int i = _liveConsultUnresolved.Count - 1; i >= 0; i--)
+            unresolved.Add((loadOffset + off + 1, fid));
+        for (int i = unresolved.Count - 1; i >= 0; i--)
         {
-            var (absPos, fid) = _liveConsultUnresolved[i];
+            var (absPos, fid) = unresolved[i];
             if (addrMap.TryGetValue(fid, out int resolvedAddr))
             {
                 Shumway.Core.BytecodeIO.WriteInt32(prog, absPos, resolvedAddr);
-                _liveConsultUnresolved.RemoveAt(i);
+                unresolved.RemoveAt(i);
             }
         }
 
@@ -4370,9 +4376,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// these (not "did this one compile grow the pool") so a compile that
     /// interned a literal and then bailed to a fallback path can't leave a
     /// later same-literal compile thinking the interpreter is current.</summary>
-    private int _interpStringCount;
-    private int _interpFloatCount;
-    private int _interpBigIntCount;
+    /// <summary>Chunk 427 / Phase 33 — the literal-pool lengths each
+    /// engine's interpreter was built (or last refreshed) with, PER
+    /// ENGINE. Host-level counters broke under the mutation broadcast:
+    /// refreshing engine A updated them, so engine B's refresh compared
+    /// equal and skipped — leaving B's interpreter on a stale (possibly
+    /// empty) pool snapshot ("Float literal id N is out of range").</summary>
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<Engine, int[]>
+        _interpPoolCounts = new();
 
     /// <summary>The static program, linked once and reused across queries
     /// (ADR-015 chunk B). Null until the first query builds it; nulled
@@ -6670,7 +6681,21 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // Statics next — `clauses` here is the static-only set (the
             // dynamic-head clauses were routed into _dynamicClauses above).
             if (clauses.Count > 0)
+            {
                 LinkConsultedStaticPredicatesLive(liveEng, clauses, moduleName);
+                // Phase 33 — BROADCAST: a suspended outer engine (a nested
+                // deferred-init query consulted this file) must also reach
+                // the new predicates when it resumes — e.g. Logtalk's
+                // arbitrary.lgt compile (outer engine) statically binds to
+                // fast_random's tables consulted by an inner engine. Same
+                // single-code-space alignment as the dynamic broadcast.
+                if (OtherLiveEnginesByTable(liveEng) is { } others)
+                    foreach (var other in others)
+                    {
+                        EnsureLiveDynamicTrampolines(other);
+                        LinkConsultedStaticPredicatesLive(other, clauses, moduleName);
+                    }
+            }
         }
 
         // `:- initialization(Goal)` goals run now, after the consult has
@@ -7462,11 +7487,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         if (_persistentMutationsSinceCompact >= CompactWatermark)
             CompactDynamicCodeBuffer();
 
-        // Phase 33 — a fresh top-level query rebuilds the persistent buffer,
-        // so any live-linked-consult forward-reference sites recorded for a
-        // prior query (their absolute positions refer to that buffer
-        // generation) are stale. Drop them.
-        _liveConsultUnresolved = null;
+        // Phase 33 — live-linked-consult forward-reference sites now live on
+        // the per-buffer chain table, so they follow their buffer's lifetime
+        // automatically (a rebuilt buffer starts a fresh table).
 
         var varNames = new List<string>();
         var seen = new HashSet<string>();
@@ -8222,10 +8245,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // Chunk 427 — record the pool lengths the interpreter was built
         // with; RefreshLiteralPoolsIfGrown compares against these so the
         // per-assert refresh (three Snapshot() array copies) only runs
-        // when a compile actually interned a new literal.
-        _interpStringCount = module.StringLiterals.Count;
-        _interpFloatCount = module.FloatLiterals.Count;
-        _interpBigIntCount = module.BigIntLiterals.Count;
+        // when a compile actually interned a new literal. Phase 33: per
+        // engine (see _interpPoolCounts).
+        _interpPoolCounts.AddOrUpdate(engine, new[]
+        {
+            module.StringLiterals.Count,
+            module.FloatLiterals.Count,
+            module.BigIntLiterals.Count,
+        });
 
         // Chunk 144: lets a PrologRuntimeException thrown from a
         // builtin Impl carry the offending term in its error/2 value
@@ -8419,17 +8446,20 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// <c>next_char_i(42)</c> interns nothing.</summary>
     private void RefreshLiteralPoolsIfGrown(Engine engine)
     {
-        if (_literalPools.Strings.Count == _interpStringCount
-            && _literalPools.Floats.Count == _interpFloatCount
-            && _literalPools.BigInts.Count == _interpBigIntCount)
+        // Phase 33 — per-engine counters (an engine with no record refreshes
+        // unconditionally; refresh is idempotent).
+        var counts = _interpPoolCounts.GetValue(engine, static _ => new int[3]);
+        if (_literalPools.Strings.Count == counts[0]
+            && _literalPools.Floats.Count == counts[1]
+            && _literalPools.BigInts.Count == counts[2])
             return;
         engine.RefreshLiteralPoolsCallback?.Invoke(
             _literalPools.Strings.Snapshot(),
             _literalPools.Floats.Snapshot(),
             _literalPools.BigInts.Snapshot());
-        _interpStringCount = _literalPools.Strings.Count;
-        _interpFloatCount = _literalPools.Floats.Count;
-        _interpBigIntCount = _literalPools.BigInts.Count;
+        counts[0] = _literalPools.Strings.Count;
+        counts[1] = _literalPools.Floats.Count;
+        counts[2] = _literalPools.BigInts.Count;
     }
 
     /// <summary>ADR-015 chunk C step 4: incrementally compile and append a
