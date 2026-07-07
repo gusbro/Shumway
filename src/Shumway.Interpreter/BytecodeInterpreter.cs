@@ -2602,6 +2602,18 @@ public sealed class BytecodeInterpreter
                 && latest < prog.Length
                 && (Opcode)prog[latest] == Opcode.EnterDynamic)
                 return latest;
+            // Phase 33 — a mid-query consult (consult/1 from a live query)
+            // live-links STATIC predicates into the running query's code
+            // space; a call site compiled at THIS query's setup (before the
+            // consult) baked the undefined sentinel for them. The consult
+            // made these fids globally visible exactly as a top-level
+            // consult would, so resolving the sentinel to the live-linked
+            // static address is sound — the fid is on the explicit
+            // visibility set the live-link populated, not an accidental
+            // module-local collision.
+            if (_engine.LiveConsultVisibleFids is { } visible
+                && visible.Contains(fid))
+                return latest;
             // Chunk 402: a --strip-wam predicate has no WAM address; its map entry is
             // a resume MARKER (a standalone delegate's (fid, 0), or a region member's
             // (rootFid, memberEntryCursor) alias). Accept it — the Call/Execute handler

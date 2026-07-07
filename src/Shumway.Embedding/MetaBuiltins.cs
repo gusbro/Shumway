@@ -3401,7 +3401,9 @@ public static class MetaBuiltins
             throw new Shumway.Core.PrologRuntimeException(
                 $"existence_error(source_sink, '{path}')");
 
-        host.ConsultFile(path);
+        // Runtime consult: thread the live engine so source-declared dynamic
+        // clauses become visible to a later call in the same query.
+        host.ConsultFileLive(path, engine);
         return true;
     }
 

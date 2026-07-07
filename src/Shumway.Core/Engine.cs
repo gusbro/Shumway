@@ -1727,6 +1727,17 @@ public sealed partial class Engine
     // for one query's linked layout).
     public IReadOnlyDictionary<int, int>? CurrentFunctorAddresses { get; set; }
 
+    /// <summary>Phase 33 — functor ids that a mid-query <c>consult/1</c>
+    /// (from a live query, e.g. Logtalk's <c>'$lgt_load_prolog_code'</c>)
+    /// live-linked into the running query's code space and made globally
+    /// visible. A Call/Execute site compiled at THIS query's setup — before
+    /// the consult — baked the undefined-procedure sentinel for these; the
+    /// dispatcher resolves such a sentinel to the live-linked STATIC address
+    /// only when the fid is on this set, so ordinary module-local
+    /// invisibility is preserved for everything else. Null outside a
+    /// live-consult query.</summary>
+    public System.Collections.Generic.HashSet<int>? LiveConsultVisibleFids { get; set; }
+
     /// <summary>Chunk 417 — runtime action for a call to an undefined
     /// procedure (the ISO <c>unknown</c> prolog flag, wired through
     /// dispatch via <see cref="UnknownProcedure.Fails"/>). Set by the

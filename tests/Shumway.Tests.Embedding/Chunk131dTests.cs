@@ -30,7 +30,9 @@ public class Chunk131dTests
     public void Format_UnknownSpec_RaisesDomainError()
     {
         var e = new PrologEngine();
-        var sol = e.Query("catch(format('~q', [foo]), error(domain_error(D, _), _), true).");
+        // ~z is not a recognised directive (Phase 33 added ~q/~p/~i/~e/~f/
+        // ~g/~r/~R/~D, so the old ~q example is now valid).
+        var sol = e.Query("catch(format('~z', [foo]), error(domain_error(D, _), _), true).");
         Assert.True(sol.Success);
         Assert.Equal(Atom("format_spec"), sol["D"]);
     }

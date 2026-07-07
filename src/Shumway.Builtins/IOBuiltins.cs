@@ -304,6 +304,29 @@ public static class IOBuiltins
                     output.Write(AtomTable.GetById(deref.AsAtomId)?.Name ?? "");
                     break;
                 }
+                case 'q':
+                {
+                    // ~q — writeq: the term quoted where a re-read would
+                    // need it (operator form, quoting, numbervars).
+                    Cell arg = ConsumeArg(args, ref argIdx, name);
+                    TermRenderer.Render(engine, arg, output,
+                        new TermRenderOptions
+                        { Operators = engine.Operators, Quoted = true });
+                    break;
+                }
+                case 'p':
+                {
+                    // ~p — print/1. Shumway has no portray hook, so this is
+                    // ~w (unquoted, operator-form rendering).
+                    Cell arg = ConsumeArg(args, ref argIdx, name);
+                    TermRenderer.Render(engine, arg, output,
+                        new TermRenderOptions { Operators = engine.Operators });
+                    break;
+                }
+                case 'i':
+                    // ~i — consume and ignore the next argument (no output).
+                    ConsumeArg(args, ref argIdx, name);
+                    break;
                 case 'd':
                 {
                     Cell arg = ConsumeArg(args, ref argIdx, name);
@@ -331,6 +354,71 @@ public static class IOBuiltins
                         cur = Resolve(engine, engine.GetHeap(cur.AsHeapIndex + 1));
                     }
                     output.Write(sb.ToString());
+                    break;
+                }
+                case 'e':
+                case 'f':
+                case 'g':
+                {
+                    // ~Ne / ~Nf / ~Ng — the numeric argument as a float with
+                    // N fractional digits (default 6), C-printf style. An
+                    // integer argument is accepted and widened.
+                    Cell deref = Resolve(engine, ConsumeArg(args, ref argIdx, name));
+                    double d;
+                    if (deref.Tag == Tag.Float)
+                        d = Cell.DecodeFloat(deref, engine.GetHeap(deref.FloatPairedIndex));
+                    else if (deref.Tag == Tag.Int)
+                        d = deref.AsInt;
+                    else if (deref.Tag == Tag.BigInt)
+                        d = (double)engine.AsBigInt(deref);
+                    else if (deref.Tag == Tag.Ref)
+                        throw new PrologRuntimeException("instantiation_error");
+                    else
+                        throw new PrologRuntimeException("type_error", "number");
+                    int prec = num ?? 6;
+                    string netFmt = spec switch
+                    {
+                        'e' => "0." + new string('0', prec) + "e+00",
+                        'f' => "F" + prec,
+                        _   => "G" + (prec <= 0 ? 6 : prec),
+                    };
+                    output.Write(d.ToString(
+                        netFmt, System.Globalization.CultureInfo.InvariantCulture));
+                    break;
+                }
+                case 'r':
+                case 'R':
+                {
+                    // ~Nr / ~NR — the integer argument in radix N (2..36),
+                    // digits a-z (~r) or A-Z (~R).
+                    Cell deref = Resolve(engine, ConsumeArg(args, ref argIdx, name));
+                    if (deref.Tag == Tag.Ref)
+                        throw new PrologRuntimeException("instantiation_error");
+                    System.Numerics.BigInteger iv;
+                    if (deref.Tag == Tag.Int) iv = deref.AsInt;
+                    else if (deref.Tag == Tag.BigInt) iv = engine.AsBigInt(deref);
+                    else throw new PrologRuntimeException("type_error", "integer");
+                    int radix = num ?? 8;
+                    if (radix < 2 || radix > 36)
+                        throw new PrologRuntimeException("domain_error", "radix");
+                    string r = ToRadix(iv, radix);
+                    output.Write(spec == 'R' ? r.ToUpperInvariant() : r);
+                    break;
+                }
+                case 'D':
+                {
+                    // ~D — the integer argument with thousands separators.
+                    Cell deref = Resolve(engine, ConsumeArg(args, ref argIdx, name));
+                    if (deref.Tag == Tag.Ref)
+                        throw new PrologRuntimeException("instantiation_error");
+                    if (deref.Tag == Tag.Int)
+                        output.Write(deref.AsInt.ToString(
+                            "N0", System.Globalization.CultureInfo.InvariantCulture));
+                    else if (deref.Tag == Tag.BigInt)
+                        output.Write(engine.AsBigInt(deref).ToString(
+                            "N0", System.Globalization.CultureInfo.InvariantCulture));
+                    else
+                        throw new PrologRuntimeException("type_error", "integer");
                     break;
                 }
                 case 'c':
@@ -367,6 +455,24 @@ public static class IOBuiltins
     }
 
     // ---------- Helpers ----------
+
+    /// <summary>Renders a (possibly big) integer in the given radix
+    /// (2..36) with lowercase digits, matching SWI/SICStus <c>~r</c>.</summary>
+    private static string ToRadix(System.Numerics.BigInteger value, int radix)
+    {
+        if (value.IsZero) return "0";
+        bool neg = value.Sign < 0;
+        System.Numerics.BigInteger v = neg ? -value : value;
+        const string digits = "0123456789abcdefghijklmnopqrstuvwxyz";
+        var sb = new System.Text.StringBuilder();
+        while (v > 0)
+        {
+            sb.Insert(0, digits[(int)(v % radix)]);
+            v /= radix;
+        }
+        if (neg) sb.Insert(0, '-');
+        return sb.ToString();
+    }
 
     private static Cell ConsumeArg(List<Cell> args, ref int idx, string builtinName)
     {

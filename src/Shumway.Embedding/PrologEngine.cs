@@ -42,6 +42,19 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     // load); dynamic functors are checked live against _dynamicFunctors, so
     // assert/retract need not invalidate it.
     private HashSet<int>? _staticHeadFunctorsCache;
+    // Set for the duration of a RUNTIME consult (consult/1 called from within a
+    // live query). When set, source-declared dynamic clauses are also pushed
+    // into the live dispatch (AppendDynamicClauseIncremental) so a call later in
+    // the SAME query sees them — exactly as a runtime assertz would. Null during
+    // startup/ctor consults, where the next query builds dispatch fresh.
+    private Engine? _liveConsultEngine;
+    // Phase 33 (Logtalk bring-up) — live-linked static predicates' unresolved
+    // call sites (absolute operand position in the persistent buffer, callee
+    // fid), accumulated across the consult batches of ONE query so a forward
+    // reference (batch N calls a predicate a later batch M>N defines) is
+    // re-patched once M links. Cleared at each top-level query setup — the
+    // positions refer to the current query's persistent buffer generation.
+    private List<(int AbsPos, int FunctorId)>? _liveConsultUnresolved;
     private readonly OperatorTable _operators = OperatorTable.Default();
 
     /// <summary>Save-state chunk 264: chronological log of every source
@@ -2584,6 +2597,178 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // may have reallocated the buffer; without this, the next query's
         // two-buffer view would point at the pre-grow stale array.
         SyncPersistentFromEngine(engine);
+    }
+
+    /// <summary>
+    /// Phase 33 (Logtalk bring-up) — live-links a batch of newly consulted
+    /// STATIC predicates into the running query's code space so a later
+    /// goal in the SAME query can reach them. The static counterpart of
+    /// <see cref="AppendDynamicClauseIncremental"/>: a <c>consult/1</c>
+    /// issued from inside a live query (Logtalk's
+    /// <c>'$lgt_load_prolog_code'</c> during <c>'$lgt_runtime_initialization'</c>)
+    /// must make its predicates callable immediately, not only at the next
+    /// top-level query.
+    ///
+    /// <para>Crucially this reuses the SAME compilation pipeline as
+    /// <see cref="SetupQueryFromTerm"/>'s static branch —
+    /// <c>MetaWrapperUnfold → ClausePipeline → ModuleRewrite →
+    /// ModuleCompiler → Linker</c> — so there is ONE compilation scheme.
+    /// The persistent program is always rebuilt statically at the next
+    /// setup; this only appends a transient live-linked copy for the
+    /// current query. No second code path.</para>
+    ///
+    /// <para>The batch links at the live program's end (inside the reserved
+    /// persistent→query address gap), resolving external calls against the
+    /// live address map. New addresses — plus bare-name aliases, so runtime
+    /// meta-calls (<c>call/N</c> resolving through
+    /// <see cref="Engine.CurrentFunctorAddresses"/>) reach them — merge into
+    /// the map; switch tables append to <see cref="Engine.SwitchTables"/>;
+    /// forward references to predicates a later batch defines are re-patched
+    /// as those addresses become known.</para>
+    /// </summary>
+    private void LinkConsultedStaticPredicatesLive(
+        Engine engine, IReadOnlyList<Clause> newStaticClauses, string moduleName)
+    {
+        if (newStaticClauses.Count == 0) return;
+        // Only meaningful with a live query in flight: a program buffer, a
+        // mutable address map, and a mutable switch-table list. Absent any,
+        // the predicates link normally at the next setup.
+        if (engine.CurrentProgram is null
+            || engine.CurrentFunctorAddresses is not Dictionary<int, int> addrMap
+            || engine.SwitchTables is not { } switchTables)
+            return;
+        if (!_modules.TryGetValue(moduleName, out var manifest))
+            return;
+
+        // --- SAME transform pipeline as the setup static branch --------
+        var unfolded = MetaWrapperUnfold.Apply(newStaticClauses);
+        var transformed = ClausePipeline.Apply(
+            unfolded, Modes, inlineIte: EnableInlineIte,
+            helperIdProvider: NextMetaHelperId);
+        // Body-call mangling locals: the batch's own head functors. For a
+        // self-contained consulted file (a Logtalk entity's scratch code)
+        // these are exactly the predicates it defines; cross-batch calls
+        // resolve through the bare-name aliases merged below.
+        var locals = ComputeLocalFunctors(transformed, manifest.PublicFunctors);
+        if (_precompiledModuleLocals.TryGetValue(moduleName, out var bundleLocals))
+            locals.UnionWith(bundleLocals);
+        var ctx = new ModuleRewrite.Context(moduleName, locals, _dynamicFunctors);
+        var rewritten = new List<Clause>(transformed.Count);
+        foreach (var c in transformed)
+            rewritten.Add(ModuleRewrite.Rewrite(c, ctx));
+
+        // --- SAME ModuleCompiler + Linker as setup ---------------------
+        int failStubAddr =
+            OpcodeTable.Get(Opcode.Call).Size + OpcodeTable.Get(Opcode.Halt).Size;
+        int loadOffset = engine.ProgramLength;
+        Shumway.Compiler.Wam.Linker.LinkResult link;
+        try
+        {
+            var module = new Shumway.Compiler.Wam.ModuleCompiler
+                { EmitDebugInfo = _flags.EmitDebugInfo }.Compile(
+                rewritten, cache: null, unindexedFunctors: null,
+                _literalPools, dynamicFunctors: _dynamicFunctors,
+                failStubAddr: failStubAddr);
+            link = new Shumway.Compiler.Wam.Linker().Link(
+                module.Predicates, loadOffset,
+                externalSymbols: addrMap,
+                switchTableIdBase: switchTables.Count);
+        }
+        catch (InvalidOperationException)
+        {
+            // A structural issue (e.g. a duplicate head across the batch):
+            // never fail the consult — the next top-level setup links the
+            // whole module coherently.
+            return;
+        }
+
+        engine.AppendCode(link.Bytecode);
+        byte[] prog = engine.CurrentProgram!;
+
+        // Merge new addresses + bare-name aliases so both direct calls in
+        // later batches and runtime meta-calls resolve the new predicates.
+        var visible = engine.LiveConsultVisibleFids ??= new HashSet<int>();
+        foreach (var (fid, a) in link.Addresses)
+        {
+            addrMap[fid] = a;
+            visible.Add(fid);
+        }
+        // Bare-name aliases feed both the address map (so a bare call
+        // resolves) and the visibility set (so a setup-time-baked sentinel
+        // for the bare fid resolves to this static address).
+        AddBareLocalAliases(addrMap, link.Addresses, recordAdded: visible);
+        switchTables.AddRange(link.SwitchTables);
+
+        // Forward references: record this batch's unresolved sites (baked
+        // with the undefined sentinel), then re-patch every accumulated
+        // site whose callee is now linked. Absolute operand position =
+        // loadOffset + Offset + 1 (skip the Call opcode byte).
+        _liveConsultUnresolved ??= new List<(int, int)>();
+        foreach (var (off, fid) in link.UnresolvedSites)
+            _liveConsultUnresolved.Add((loadOffset + off + 1, fid));
+        for (int i = _liveConsultUnresolved.Count - 1; i >= 0; i--)
+        {
+            var (absPos, fid) = _liveConsultUnresolved[i];
+            if (addrMap.TryGetValue(fid, out int resolvedAddr))
+            {
+                Shumway.Core.BytecodeIO.WriteInt32(prog, absPos, resolvedAddr);
+                _liveConsultUnresolved.RemoveAt(i);
+            }
+        }
+
+        // Sync PrologEngine's cached persistent reference (AppendCode may
+        // have reallocated), push any newly interned literals to the
+        // interpreter, and bump the program generation so the dispatch loop
+        // refreshes its cached view over the grown buffer.
+        SyncPersistentFromEngine(engine);
+        RefreshLiteralPoolsIfGrown(engine);
+        engine.BumpProgramGeneration();
+    }
+
+    /// <summary>
+    /// Phase 33 (Logtalk bring-up) — ensures every dynamic functor that a
+    /// mid-query consult declared (<c>:- dynamic</c> / <c>:- multifile</c>)
+    /// has a live dynamic trampoline in the running query, materialising an
+    /// empty one for any that lacks it and linking its already-routed
+    /// clauses. Without this a hook predicate declared then called before
+    /// any clause is added (Logtalk's <c>message_hook/4</c>) raises
+    /// <c>existence_error</c> instead of failing. A trampoline starts with
+    /// <c>enter_dynamic</c>, which the dispatcher's
+    /// <c>ResolveTargetMaybeAutoPromoted</c> already resolves through — so
+    /// no separate visibility set is needed for dynamics.
+    /// </summary>
+    private void EnsureLiveDynamicTrampolines(Engine engine)
+    {
+        if (engine.CurrentFunctorAddresses is not Dictionary<int, int> addrMap)
+            return;
+        if (engine.CurrentProgram is null) return;
+
+        // A trampoline the setup (or an earlier mid-query materialise) built
+        // starts with enter_dynamic at its address. Anything else — an
+        // unresolved sentinel, or no entry at all — means this dynamic
+        // functor has no live home yet.
+        List<int>? materialized = null;
+        foreach (int fid in _dynamicFunctors)
+        {
+            bool hasTrampoline =
+                addrMap.TryGetValue(fid, out int addr)
+                && !Shumway.Core.CallTarget.IsUnresolved(addr)
+                && addr >= 0 && addr < engine.ProgramLength
+                && (Opcode)engine.CurrentProgram![addr] == Opcode.EnterDynamic;
+            if (hasTrampoline) continue;
+            MaterializeDynamicTrampoline(engine, fid);
+            (materialized ??= new List<int>()).Add(fid);
+        }
+
+        // The freshly-materialised trampolines are empty (a fail stub). Any
+        // clauses this consult routed into their _dynamicClauses slot
+        // no-op'd through AppendDynamicClauseIncremental (no trampoline then)
+        // — link them now that a trampoline exists.
+        if (materialized is not null)
+            foreach (int fid in materialized)
+                if (_dynamicClauses.TryGetValue(fid, out var cs))
+                    foreach (var c in cs)
+                        AppendDynamicClauseIncremental(engine, fid, c);
     }
 
     /// <summary>Applies a <c>:- set_prolog_flag(Flag, Value)</c>
@@ -5283,6 +5468,25 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
     }
 
+    /// <summary>Runtime <c>consult/1</c> — a consult invoked from a live query.
+    /// Same as <see cref="ConsultFile"/> but marks the consult as mid-query so
+    /// source-declared dynamic clauses land in the live dispatch too (a later
+    /// call in the same query sees them, matching a runtime <c>assertz</c> and
+    /// the ISO logical update view). Save/restore keeps nested consults sound.</summary>
+    internal void ConsultFileLive(string path, Engine liveEngine)
+    {
+        // A .shum bundle load has no runtime dynamic-clause routing to patch.
+        if (path.EndsWith(".shum", StringComparison.OrdinalIgnoreCase))
+        {
+            ConsultFile(path);
+            return;
+        }
+        var prev = _liveConsultEngine;
+        _liveConsultEngine = liveEngine;
+        try { ConsultFile(path); }
+        finally { _liveConsultEngine = prev; }
+    }
+
     /// <summary>Directory of the file currently being consulted (null for a
     /// raw <see cref="ConsultString"/>) — the base `:- include/1` paths
     /// resolve against.</summary>
@@ -6141,6 +6345,16 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                         // same way the module's static clauses do.
                         if (moduleName != DefaultModuleName)
                             _dynamicSeedModule[fid] = moduleName;
+                        // Mid-query consult (consult/1 from a live query): also
+                        // push the clause into the live dispatch so a later call
+                        // in the SAME query sees it. Without this the current
+                        // query keeps the trampoline it linked at setup (built
+                        // before this consult), so direct calls miss the new
+                        // clauses even though clause/2 — which reads the store —
+                        // sees them. AppendDynamicClauseIncremental self-guards
+                        // on CurrentProgram / fail-stub state.
+                        if (_liveConsultEngine is { } le)
+                            AppendDynamicClauseIncremental(le, fid, c);
                         continue;
                     }
                 }
@@ -6219,6 +6433,27 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // New static clauses just landed in _modules — drop the head-functor
         // cache so HasPredicate / predicate_property/2 sees them.
         _staticHeadFunctorsCache = null;
+
+        // Mid-query consult (consult/1 from a live query): live-link the
+        // just-added predicates into the running query's code space so a
+        // later goal — in particular a runtime meta-call — in this query
+        // can reach them. Startup consults (no live engine) skip this:
+        // their predicates link at the next query setup as always.
+        if (_liveConsultEngine is { } liveEng)
+        {
+            // Dynamics FIRST — a static clause's body may call one, and the
+            // static link resolves such calls against the address map the
+            // trampolines populate. A `:- dynamic`/`:- multifile` predicate
+            // declared in this consult (Logtalk's hook predicates, e.g.
+            // message_hook/4, declared then called before any clause is
+            // added) needs a live trampoline so the call FAILS rather than
+            // existence_errors.
+            EnsureLiveDynamicTrampolines(liveEng);
+            // Statics next — `clauses` here is the static-only set (the
+            // dynamic-head clauses were routed into _dynamicClauses above).
+            if (clauses.Count > 0)
+                LinkConsultedStaticPredicatesLive(liveEng, clauses, moduleName);
+        }
 
         // `:- initialization(Goal)` goals run now, after the consult has
         // committed, in source order (SWI load-time semantics). A goal that
@@ -7006,6 +7241,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // rebuild that follows below picks up the trim automatically.
         if (_persistentMutationsSinceCompact >= CompactWatermark)
             CompactDynamicCodeBuffer();
+
+        // Phase 33 — a fresh top-level query rebuilds the persistent buffer,
+        // so any live-linked-consult forward-reference sites recorded for a
+        // prior query (their absolute positions refer to that buffer
+        // generation) are stale. Drop them.
+        _liveConsultUnresolved = null;
 
         var varNames = new List<string>();
         var seen = new HashSet<string>();
@@ -8418,7 +8659,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// bare functor already resolves (a real definition or an earlier
     /// alias wins, preserving the original first-wins semantics).</summary>
     private void AddBareLocalAliases(
-        Dictionary<int, int> map, IReadOnlyDictionary<int, int> entries)
+        Dictionary<int, int> map, IReadOnlyDictionary<int, int> entries,
+        HashSet<int>? recordAdded = null)
     {
         foreach (var (mangledFunctorId, address) in entries)
         {
@@ -8431,7 +8673,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 AtomTable.Intern(mangledName.Substring(dollar + 1), permanent: true).Id,
                 arity);
             if (!map.ContainsKey(bareFunctorId))
+            {
                 map[bareFunctorId] = address;
+                recordAdded?.Add(bareFunctorId);
+            }
         }
     }
 
