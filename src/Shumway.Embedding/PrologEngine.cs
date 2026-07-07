@@ -1408,6 +1408,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// it to skip mangling dynamic functors.</summary>
     private readonly HashSet<int> _dynamicFunctors = new();
 
+    /// <summary>Head functor ids of every predicate defined by the auto-loaded
+    /// prelude (<see cref="Prelude.Source"/>). These are library predicates —
+    /// ISO / de-facto standards like <c>member/2</c>, <c>sub_atom/5</c>,
+    /// <c>msort/2</c>, <c>subsumes_term/2</c>, <c>maplist/N</c> — implemented
+    /// in Prolog rather than C#, so <see cref="Shumway.Builtins.BuiltinsRegistry"/>
+    /// doesn't know them. <c>predicate_property/2</c> nonetheless reports them
+    /// as <c>built_in</c> (they are not user-defined and cannot be modified),
+    /// which is what a client like Logtalk's linter checks to decide a call is
+    /// to a known system predicate rather than an undefined one.</summary>
+    private readonly HashSet<int> _preludeFunctors = new();
+
     /// <summary>The sink that I/O builtins (<c>write/1</c>, <c>nl/0</c>,
     /// <c>writeln/1</c>) write into. Defaults to <see cref="System.Console.Out"/>;
     /// swap in a <see cref="System.IO.StringWriter"/> to capture program
@@ -2374,7 +2385,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         var props = new List<int>();
         if (!HasPredicate(functorId)) return props;
         int kind;
-        if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out _))
+        if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out _)
+            || _preludeFunctors.Contains(functorId))
             kind = AtomTable.Intern("built_in", permanent: true).Id;
         else if (_dynamicFunctors.Contains(functorId))
             kind = AtomTable.Intern("dynamic", permanent: true).Id;
@@ -6045,6 +6057,16 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             if (ReferenceEquals(source, Prelude.Source))
                 System.Threading.Volatile.Write(ref s_preludeClauses, rawClauses);
         }
+
+        // Record the prelude's predicates so predicate_property/2 reports them
+        // as built_in (they are library predicates written in Prolog, not
+        // user-defined). Every engine consults the prelude once at
+        // construction; the head fids are the bare (unmangled) functor ids a
+        // caller uses. Directives contribute no head.
+        if (ReferenceEquals(source, Prelude.Source))
+            foreach (var c in rawClauses)
+                if (c.Kind != ClauseKind.Directive)
+                    _preludeFunctors.Add(HeadFunctorIdOf(c));
 
         // ISO 7.4.2.7 `:- include(File)` — textual inclusion (semantics in
         // IncludeExpander). Paths resolve against the consulting file's
