@@ -2121,6 +2121,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         var program = engine.CurrentProgram;
         int failStub = engine.DynamicFailStubAddr;
 
+        // Phase 33 — skip the reclaim when the chain's cached offsets are
+        // stale relative to the live buffer (bounds OR structural: re-threading
+        // through them would write past the array, or splice a wrong <next>
+        // into an unrelated instruction → heap corruption surfacing later as an
+        // out-of-range cell in a thrown ball). Dead-chunk reclamation is
+        // optional; the chain rebuilds cleanly at the next query setup. No
+        // InvalidatePersistent (would desync other live chains mid-load).
+        if (DynChainAddressesStale(chain, program.Length, failStub)
+            || DynChainStructurallyStale(program, chain))
+            return 0;
+
         // The trampoline always points at chain.HeadClauseAddr, which
         // is a try_me_else of stable 9-byte footprint — either the
         // empty stub emitted at consult-time, or an asserta'd clause
@@ -6391,8 +6402,23 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                         // source of truth) and the design mature engines use.
                         // Runtime assertz/asserta (the tested in-place path) is a
                         // different call site and is unaffected.
-                        if (_liveConsultEngine is not null)
-                            InvalidatePersistent();
+                        // Mid-query consult (consult/1 from a live query): push
+                        // the clause into the live dispatch so a later call in a
+                        // subsequent sub-query sees it. Logtalk's runtime init
+                        // depends on this — each built-in entity's compiled code
+                        // is CONSULTED (its `$lgt_current_protocol_` /
+                        // `$lgt_current_object_` registrations are generated
+                        // dynamic facts), and a later entity's compilation
+                        // direct-calls those registrations; without the in-place
+                        // extend they are invisible and the load fails
+                        // (core_messages: permission_error / unknown protocol).
+                        // AppendDynamicClauseIncremental self-guards against a
+                        // stale chain (Phase 33 — see DynChainAddressesStale) so
+                        // the heavy-load corruption that motivated skipping this
+                        // is prevented at the write sites, not by dropping the
+                        // extend.
+                        if (_liveConsultEngine is { } le)
+                            AppendDynamicClauseIncremental(le, fid, c);
                         continue;
                     }
                 }
@@ -6515,6 +6541,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 {
                     Console.Error.WriteLine(
                         $"Warning: initialization goal raised: {g}: {ex.Message}");
+                    if (Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_TRACE") == "1")
+                        Console.Error.WriteLine(ex.StackTrace);
                 }
             }
         }
@@ -8288,6 +8316,22 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             return;
         }
 
+        // Phase 33 — skip the in-place extend when the chain is stale relative
+        // to the live buffer (the tail-next patch below would splice into
+        // instruction interior → "reserved_invalid / Opcode 0xCF" corruption).
+        // Two checks: out-of-range offsets (DynChainAddressesStale) AND — for a
+        // stale-but-in-range tail — a structural check that TailNextAddr really
+        // is the <next> operand (offset +1) of a try_me_else / retry_me_else
+        // chain instruction. If not, _dynChains no longer describes the live
+        // bytecode. The clause is already in _dynamicClauses, so clause/2 sees
+        // it and the next query rebuilds dispatch. No InvalidatePersistent
+        // (would desync other live chains mid-load and break Logtalk's
+        // built-in-entity load).
+        if (DynChainAddressesStale(
+                chain, engine.CurrentProgram.Length, engine.DynamicFailStubAddr)
+            || !IsChainInstructionAt(engine.CurrentProgram, chain.TailNextAddr - 1))
+            return;
+
         // Apply the same transforms the setup path runs — dynamic clauses
         // share a flat module rewrite context (chunk 427 — shared helper
         // with a fact fast path).
@@ -8407,6 +8451,19 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
         if (engine.DynamicFailStubAddr <= 0) return;
 
+        // Phase 33 — skip the in-place prepend when the chain is stale (the
+        // head-demotion / trampoline patch would write past the live buffer or
+        // into an unrelated instruction). The head-demotion rewrites the byte
+        // at HeadClauseAddr from try_me_else to retry_me_else, so it must be a
+        // chain instruction. Clause is already in _dynamicClauses; next-query
+        // rebuild reconciles.
+        if (chain.TrampolineExecuteOperandAddr + sizeof(long) > engine.CurrentProgram.Length
+            || DynChainAddressesStale(
+                   chain, engine.CurrentProgram.Length, engine.DynamicFailStubAddr)
+            || (chain.HeadClauseAddr >= 0
+                && !IsChainInstructionAt(engine.CurrentProgram, chain.HeadClauseAddr)))
+            return;
+
         var (_, arity) = FunctorTable.Lookup(functorId);
 
         // Same transform pipeline as the setup path (chunk 427 — shared
@@ -8510,13 +8567,82 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// query whose captured view-gen is below it still sees the clause.
     /// After patching the slot, also drops the chain entry — the chain
     /// stays aligned with <see cref="_dynamicClauses"/>.</summary>
+    /// <summary>Phase 33 — true if any of a dynamic chain's cached byte
+    /// offsets fall outside the writable range of the live program buffer.
+    /// A stale chain entry (its <see cref="_dynChains"/> record indexing a
+    /// buffer since rebuilt smaller) would make an in-place died / next
+    /// patch write past the array; the callers skip that in-place patch and
+    /// fall back to the store (which is already authoritative) rather than
+    /// crash. An 8-byte tail margin covers both the int32 <c>next</c> and
+    /// int64 <c>died</c> operands with one check.</summary>
+    private static bool DynChainAddressesStale(
+        DynChainState chain, int programLength, int failStub)
+    {
+        static bool Bad(int addr, int len) => addr > 0 && addr + sizeof(long) > len;
+        if (Bad(chain.HeadClauseAddr, programLength)
+            || Bad(chain.TailNextAddr, programLength)
+            || Bad(failStub, programLength))
+            return true;
+        foreach (var e in chain.Entries)
+            if (Bad(e.NextOperandAddr, programLength) || Bad(e.DiedOperandAddr, programLength))
+                return true;
+        return false;
+    }
+
+    /// <summary>Phase 33 — O(1) structural staleness check: the byte at
+    /// <paramref name="opcodeAddr"/> must be a chain instruction
+    /// (<c>try_me_else</c> / <c>retry_me_else</c>). A dynamic chain's
+    /// <c>TailNextAddr</c> is the <c>&lt;next&gt;</c> operand at offset +1 of
+    /// such an instruction; if the opcode byte before it isn't one, the cached
+    /// chain no longer maps to the live bytecode (stale-but-in-range) and an
+    /// in-place patch there would corrupt an unrelated instruction. Cheaper
+    /// than re-walking every entry, so safe on the hot assertz path.</summary>
+    private static bool IsChainInstructionAt(byte[]? program, int opcodeAddr)
+    {
+        if (program is null || opcodeAddr < 0 || opcodeAddr >= program.Length)
+            return false;
+        byte op = program[opcodeAddr];
+        return op == (byte)Shumway.Core.Opcode.TryMeElse
+            || op == (byte)Shumway.Core.Opcode.RetryMeElse;
+    }
+
+    /// <summary>Phase 33 — full structural staleness check for a dynamic
+    /// chain: the head and every entry's <c>&lt;next&gt;</c> operand
+    /// (offset +1) must sit right after a chain instruction in the live
+    /// buffer. Catches a stale-but-in-range chain (its cached offsets point
+    /// inside the buffer but no longer at the actual chain instructions —
+    /// e.g. after the persistent buffer was rebuilt) that the bounds-only
+    /// <see cref="DynChainAddressesStale"/> misses. O(entries); used only on
+    /// the retract-family paths (dead-chain reclaim, died patch), not the
+    /// per-clause assertz fast path.</summary>
+    private static bool DynChainStructurallyStale(byte[]? program, DynChainState chain)
+    {
+        if (program is null) return true;
+        if (chain.HeadClauseAddr >= 0 && !IsChainInstructionAt(program, chain.HeadClauseAddr))
+            return true;
+        foreach (var e in chain.Entries)
+            if (!IsChainInstructionAt(program, e.NextOperandAddr - 1))
+                return true;
+        return false;
+    }
+
     private void PatchDiedFromChain(Engine engine, int functorId, int clauseIndex)
     {
         if (!_dynChains.TryGetValue(functorId, out var chain)) return;
         if (clauseIndex < 0 || clauseIndex >= chain.Entries.Count) return;
         var entry = chain.Entries[clauseIndex];
         var program = engine.CurrentProgram;
-        if (program is not null && entry.DiedOperandAddr > 0)
+        // Phase 33 — skip the in-place died patch when the entry's cached slot
+        // is out of range OR the entry is structurally stale (its chain
+        // instruction is no longer where _dynChains records it, so the died
+        // slot would land in an unrelated instruction). The clause is already
+        // removed from _dynamicClauses by the caller, so clause/2 is correct;
+        // the chain rebuilds at the next query setup. No InvalidatePersistent
+        // here — forcing a mid-load rebuild would desync OTHER live chains and
+        // break Logtalk's built-in-entity load.
+        if (program is not null && entry.DiedOperandAddr > 0
+            && entry.DiedOperandAddr + sizeof(long) <= program.Length
+            && IsChainInstructionAt(program, entry.NextOperandAddr - 1))
             BytecodeIO.WriteInt64(program, entry.DiedOperandAddr, _dbGeneration.Value);
         // Chunk 150: stage the chunk for free-list reuse on GC, but
         // only when it was an incrementally-allocated chunk (consult-
