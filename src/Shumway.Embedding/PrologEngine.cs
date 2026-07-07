@@ -2086,7 +2086,15 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // the multi-chain patching below.
         if (!isIndexed)
         {
-            PatchDiedFromChain(engine, functorId, idx);
+            // Phase 33 — patch by CLAUSE IDENTITY, not by store index. The
+            // index-based patch was sound when the single chain mirrored
+            // _dynamicClauses 1:1; with per-engine chain tables an engine's
+            // chain can lag the store (a broadcast skipped by a guard, or
+            // entries added while this engine didn't exist), so the store
+            // index lands on the WRONG entry — killing a live clause in
+            // this engine's own view while the retracted one stays visible
+            // (observed as Logtalk's loading-stack "ghost" entries).
+            PatchDiedFromChainByClause(engine, functorId, clause);
             // Phase 20: reclaim accumulated dead clauses from the chain
             // when it's safe (no in-progress enumeration of this
             // predicate). An assert+retract loop (e.g. next_char_i) would
@@ -2100,9 +2108,18 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // buffer (matched by clause identity — chain entries hold the same
         // Clause objects the store held), so a suspended outer query's
         // dispatch also stops seeing the clause when it resumes.
+        StackDiag("retract", engine, functorId);
         if (OtherLiveEnginesByTable(engine) is { } others)
             foreach (var other in others)
-                PatchDiedFromChainByClause(other, functorId, clause);
+            {
+                StackDiag("retract-bcast", other, functorId);
+                if (PatchDiedFromChainByClause(other, functorId, clause) == 0)
+                    // No chain record — the target's view may use the
+                    // indexed layout (its bucket entries the chain table
+                    // can't patch); rebuild that fid's view from the store
+                    // so the retracted clause doesn't survive there.
+                    RebuildEngineFidChainView(other, functorId);
+            }
         if (retiredBodyAddr > 0
             && TryPatchDiedInAllIndexedChains(engine, functorId, retiredBodyAddr))
             return true;
@@ -6725,6 +6742,15 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 }
             }
         }
+
+        // Phase 33 — RESUME-boundary reconciliation: this consult (and the
+        // nested queries its initialization goals spawned) may have mutated
+        // dynamic predicates through OTHER engines' views; before control
+        // returns to the suspended caller, diff its dispatch view against
+        // the store so no ghost clause (missed broadcast patch) survives
+        // into its continuation. See ReconcileEngineDynamicView.
+        if (_liveConsultEngine is { } resumeEng)
+            ReconcileEngineDynamicView(resumeEng);
     }
 
     /// <summary>Enforces the contiguity rule for clauses inside a single
@@ -8345,6 +8371,21 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // outer engines — see _liveEngines).
         RegisterLiveEngine(engine);
 
+        if (StackDiagEnabled)
+        {
+            int probeFid = FunctorTable.Intern(
+                AtomTable.Intern("$lgt_file_loading_stack_", permanent: true).Id, 2);
+            int chainEntries = _dynChainTable.Chains.TryGetValue(probeFid, out var pch)
+                ? pch.Entries.Count : -1;
+            int storeCount = _dynamicClauses.TryGetValue(probeFid, out var pcs) ? pcs.Count : -1;
+            Console.Error.WriteLine(
+                $"[STK-SETUP] eng={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(engine):X8}"
+                + $" builtNow={builtPersistentNow}"
+                + $" buf={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(program):X8}"
+                + $" tbl={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_dynChainTable):X8}"
+                + $" chainEntries={chainEntries} store={storeCount}");
+        }
+
         // Tier-1 promotion: hook the interpreter up to this engine's
         // IlPromotionStore via an address-keyed adapter. The store itself
         // is functor-keyed and persists across queries; the adapter holds
@@ -8555,10 +8596,148 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     internal void AppendDynamicClauseIncremental(
         Engine engine, int functorId, Clause newClause)
     {
+        StackDiag("append", engine, functorId);
         AppendDynamicClauseIncrementalCore(engine, functorId, newClause);
         if (OtherLiveEnginesByTable(engine) is { } others)
             foreach (var other in others)
+            {
+                StackDiag("append-bcast", other, functorId);
                 AppendDynamicClauseIncrementalCore(other, functorId, newClause);
+            }
+    }
+
+    /// <summary>Phase 33 — reconciles <paramref name="engine"/>'s dynamic
+    /// dispatch view with the authoritative store at a RESUME boundary
+    /// (a mid-query consult returning to its suspended caller). The
+    /// mutation broadcast keeps live views coherent when every in-place
+    /// patch lands, but a single silently-skipped patch (a guard bail, a
+    /// buffer realloc racing a suspended view) leaves a permanent ghost —
+    /// a clause visible in one engine's dispatch that the store no longer
+    /// holds (Logtalk's loading-stack "file is already loading" error) or
+    /// vice versa. Instead of trusting N incremental patches, diff each
+    /// chain against the store BY CLAUSE IDENTITY: dead entries get their
+    /// died slot patched in this engine's buffer; store clauses missing
+    /// from the chain are appended through the normal incremental path.
+    /// (Appended late-arrivals land at the chain tail regardless of their
+    /// store position — set-visibility is exact, relative order of
+    /// clauses this engine never saw may differ from the store.)</summary>
+    private void ReconcileEngineDynamicView(Engine engine)
+    {
+        if (GetChainTable(engine) is not { } tbl) return;
+        if (engine.CurrentProgram is null) return;
+        // Snapshot fids: the append path can materialize new trampolines,
+        // mutating the dictionary while we walk.
+        var fids = new List<int>(tbl.Chains.Keys);
+        List<Clause>? toAppend = null;
+        foreach (int fid in fids)
+        {
+            if (!tbl.Chains.TryGetValue(fid, out var chain)) continue;
+            var store = _dynamicClauses.TryGetValue(fid, out var cs)
+                ? cs : (IReadOnlyList<Clause>)Array.Empty<Clause>();
+            // Removal side — entries whose clause left the store.
+            if (chain.Entries.Count > 0)
+            {
+                var storeSet = new HashSet<Clause>(store, ReferenceEqualityComparer.Instance);
+                var program = engine.CurrentProgram;
+                for (int i = chain.Entries.Count - 1; i >= 0; i--)
+                {
+                    var entry = chain.Entries[i];
+                    if (storeSet.Contains(entry.Clause)) continue;
+                    if (program is not null && entry.DiedOperandAddr > 0
+                        && entry.DiedOperandAddr + sizeof(long) <= program.Length
+                        && IsChainInstructionAt(program, entry.NextOperandAddr - 1))
+                        BytecodeIO.WriteInt64(program, entry.DiedOperandAddr, _dbGeneration.Value);
+                    if (entry.ChunkAddr >= 0)
+                        chain.DeadChunks.Add((entry.ChunkAddr, entry.ChunkLength));
+                    chain.Entries.RemoveAt(i);
+                }
+            }
+            // Addition side — store clauses this chain never received.
+            if (store.Count != chain.Entries.Count)
+            {
+                var chainSet = new HashSet<Clause>(ReferenceEqualityComparer.Instance);
+                foreach (var e in chain.Entries) chainSet.Add(e.Clause);
+                toAppend ??= new List<Clause>();
+                toAppend.Clear();
+                foreach (var c in store)
+                    if (!chainSet.Contains(c)) toAppend.Add(c);
+                foreach (var c in toAppend)
+                    AppendDynamicClauseIncrementalCore(engine, fid, c);
+                // Still diverged after the diff? The view's layout isn't
+                // chain-table-describable (indexed) — rebuild it wholesale.
+                if (tbl.Chains.TryGetValue(fid, out var after)
+                    && after.Entries.Count != store.Count)
+                    RebuildEngineFidChainView(engine, fid);
+            }
+        }
+    }
+
+    /// <summary>Phase 33 — rebuilds one functor's dynamic-dispatch view in
+    /// <paramref name="target"/>'s buffer from the authoritative store.
+    /// Needed when the in-place mutation paths can't keep that view
+    /// coherent — the archetype: the target's buffer compiled the dynamic
+    /// predicate with the chunk-155 INDEXED layout (it went hot), whose
+    /// bucket entries the chain-table-based retract broadcast cannot
+    /// patch, leaving retracted clauses visible forever in that engine
+    /// (Logtalk's loading-stack ghosts). Strategy: materialize a fresh
+    /// chain-layout trampoline, re-link every store clause behind it, and
+    /// overwrite the OLD entry point's first bytes with
+    /// <c>execute &lt;new&gt;</c> so already-baked call sites reach the
+    /// rebuilt view. The old layout's interior is left intact — a
+    /// suspended choice point resuming into it still finds its code
+    /// (its clauses now carry dead/stale visibility, which only narrows
+    /// what an old goal sees — the safe direction for bookkeeping
+    /// predicates).</summary>
+    private void RebuildEngineFidChainView(Engine target, int functorId)
+    {
+        if (target.CurrentProgram is null
+            || target.DynamicFailStubAddr <= 0
+            || target.CurrentFunctorAddresses is not Dictionary<int, int> addrMap
+            || !addrMap.TryGetValue(functorId, out int oldAddr)
+            || Shumway.Core.CallTarget.IsUnresolved(oldAddr)
+            || Engine.IsResumeMarker(oldAddr)
+            || oldAddr < 0
+            || oldAddr + 5 > target.CurrentProgram.Length)
+            return;
+        // Drop the stale chain record so MaterializeDynamicTrampoline
+        // builds fresh state, then re-link the current store.
+        GetOrCreateChainTable(target).Chains.Remove(functorId);
+        MaterializeDynamicTrampoline(target, functorId);
+        if (_dynamicClauses.TryGetValue(functorId, out var cs))
+            foreach (var c in cs)
+                AppendDynamicClauseIncrementalCore(target, functorId, c);
+        if (!addrMap.TryGetValue(functorId, out int newAddr) || newAddr == oldAddr)
+            return;
+        // Redirect the old entry point. Any dynamic layout starts with
+        // enter_dynamic (1 byte) + a dispatch opcode of ≥5 bytes, so a
+        // 5-byte execute always fits without clobbering a chain
+        // instruction a suspended CP could resume at.
+        var program = target.CurrentProgram!;
+        program[oldAddr] = (byte)Shumway.Core.Opcode.Execute;
+        Shumway.Core.BytecodeIO.WriteInt32(program, oldAddr + 1, newAddr);
+    }
+
+    /// <summary>Diag (SHUMWAY_STACK_DIAG=1, read once) — traces the
+    /// mutation fan-out for Logtalk's '$lgt_file_loading_stack_'/2. The
+    /// diagnostic that pinned both the misaligned index-based retract
+    /// patch and the indexed-layout ghost views.</summary>
+    private static readonly bool StackDiagEnabled =
+        Environment.GetEnvironmentVariable("SHUMWAY_STACK_DIAG") == "1";
+
+    private void StackDiag(string op, Engine engine, int functorId)
+    {
+        if (!StackDiagEnabled) return;
+        var (aid, ar) = FunctorTable.Lookup(functorId);
+        string name = AtomTable.GetById(aid)?.Name ?? "?";
+        if (name != "$lgt_file_loading_stack_") return;
+        var tbl = GetChainTable(engine);
+        int entries = tbl is not null && tbl.Chains.TryGetValue(functorId, out var ch)
+            ? ch.Entries.Count : -1;
+        Console.Error.WriteLine(
+            $"[STK-{op}] eng={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(engine):X8}"
+            + $" buf={(engine.CurrentProgram is { } p ? System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(p).ToString("X8") : "null")}"
+            + $" tbl={(tbl is not null ? System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(tbl).ToString("X8") : "null")}"
+            + $" owns={EngineOwnsHostBuffer(engine)} entries={entries}");
     }
 
     private void AppendDynamicClauseIncrementalCore(
@@ -8729,10 +8908,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     internal void PrependDynamicClauseIncremental(
         Engine engine, int functorId, Clause newClause)
     {
+        StackDiag("prepend", engine, functorId);
         PrependDynamicClauseIncrementalCore(engine, functorId, newClause);
         if (OtherLiveEnginesByTable(engine) is { } others)
             foreach (var other in others)
+            {
+                StackDiag("prepend-bcast", other, functorId);
                 PrependDynamicClauseIncrementalCore(other, functorId, newClause);
+            }
     }
 
     private void PrependDynamicClauseIncrementalCore(
@@ -8956,23 +9139,40 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// suspended engine's chain may be missing entries the mutating
     /// engine's has (an append it never received pre-registration), so
     /// positions need not line up.</summary>
-    private void PatchDiedFromChainByClause(Engine engine, int functorId, Clause clause)
+    /// <returns>Number of chain entries matched (and retired). 0 means
+    /// this engine's chain has no record of the clause — either it never
+    /// received it (fine: not visible either) or its view uses a layout
+    /// the chain table doesn't describe (indexed) — the caller decides
+    /// whether to rebuild.</returns>
+    private int PatchDiedFromChainByClause(Engine engine, int functorId, Clause clause)
     {
+        bool diag = StackDiagEnabled;
         if (GetChainTable(engine) is not { } tbl
-            || !tbl.Chains.TryGetValue(functorId, out var chain)) return;
+            || !tbl.Chains.TryGetValue(functorId, out var chain))
+        {
+            if (diag) StackDiag("died-NOCHAIN", engine, functorId);
+            return 0;
+        }
         var program = engine.CurrentProgram;
+        int matched = 0, patched = 0;
         for (int i = chain.Entries.Count - 1; i >= 0; i--)
         {
             var entry = chain.Entries[i];
             if (!ReferenceEquals(entry.Clause, clause)) continue;
+            matched++;
             if (program is not null && entry.DiedOperandAddr > 0
                 && entry.DiedOperandAddr + sizeof(long) <= program.Length
                 && IsChainInstructionAt(program, entry.NextOperandAddr - 1))
+            {
                 BytecodeIO.WriteInt64(program, entry.DiedOperandAddr, _dbGeneration.Value);
+                patched++;
+            }
             if (entry.ChunkAddr >= 0)
                 chain.DeadChunks.Add((entry.ChunkAddr, entry.ChunkLength));
             chain.Entries.RemoveAt(i);
         }
+        if (diag) StackDiag($"died-m{matched}p{patched}", engine, functorId);
+        return matched;
     }
 
     private void PatchDiedFromChain(Engine engine, int functorId, int clauseIndex)
