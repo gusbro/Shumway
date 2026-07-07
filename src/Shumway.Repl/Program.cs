@@ -672,15 +672,20 @@ internal static class Program
     }
 
     /// <summary>After a solution, asks whether to search for the next:
-    /// ';' means yes. A single keypress when interactive, a whole line
-    /// when input is redirected — so the top-level stays scriptable.</summary>
+    /// ';' means yes (a single keypress when interactive).
+    ///
+    /// <para>With redirected/piped input the top-level takes only the FIRST
+    /// solution and does not consume any input — every <c>.</c>-terminated
+    /// line in the script is an independent query (SWI/GProlog <c>-g</c>
+    /// batch behaviour). Reading a line here to check for <c>;</c> used to
+    /// eat the query that followed a non-deterministic one (e.g. the line
+    /// after <c>member(X,[a,b,c]).</c>), silently dropping it. A script that
+    /// wants every solution uses <c>findall/3</c> / <c>forall/2</c>.</para>
+    /// </summary>
     private static bool WantsAnotherSolution()
     {
         if (Console.IsInputRedirected)
-        {
-            string? line = Console.ReadLine();
-            return line is not null && line.TrimStart().StartsWith(';');
-        }
+            return false;
         return Console.ReadKey(intercept: true).KeyChar == ';';
     }
 }
