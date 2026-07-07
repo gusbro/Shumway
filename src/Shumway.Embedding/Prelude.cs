@@ -41,6 +41,7 @@ internal static class Prelude
         :- public catch/3.
         :- public '$catch_run'/1.
         :- public copy_term/3.
+        :- public subsumes_term/2.
         :- public select/3.
         :- public permutation/2.
         :- public memberchk/2.
@@ -206,6 +207,20 @@ internal static class Prelude
         % broke it under Tier-1 IL — now fixed.)
         sub_atom(Atom, Before, Length, After, Sub) :-
             '$sub_atom_enum'(Atom, Before, Length, After, Sub).
+
+        %! subsumes_term(@General, @Specific) | Term inspection & construction | Succeeds if General subsumes Specific (Specific is an instance of General) without binding any variable of either term.
+        % ISO §8.2.4. A pure test: the double negation undoes the trial
+        % unification's bindings. After General = Specific, Specific's
+        % variables must be unchanged (still the same distinct unbound vars),
+        % i.e. only General's variables were bound — otherwise General does
+        % not subsume Specific.
+        subsumes_term(General, Specific) :-
+            \+ \+ (
+                term_variables(Specific, Vars),
+                General = Specific,
+                term_variables(Vars, Vars2),
+                Vars == Vars2
+            ).
 
         %! maplist(:Goal, ?List) | Lists | Succeeds if Goal holds for every element of List.
         maplist(_, []).
