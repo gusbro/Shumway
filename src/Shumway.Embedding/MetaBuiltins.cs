@@ -272,6 +272,9 @@ public static class MetaBuiltins
             Reflect, "set_prolog_flag(+Flag, +Value)", "Sets a Prolog flag.");
         BuiltinsRegistry.Register("current_prolog_flag", 2, CurrentPrologFlag,
             Reflect, "current_prolog_flag(?Flag, ?Value)", "Reads the value of a Prolog flag.");
+        BuiltinsRegistry.Register("predicate_property", 2, PredicateProperty,
+            Reflect, "predicate_property(+Head, ?Property)",
+            "Enumerates the properties (defined plus one of built_in/dynamic/static) of the predicate named by Head's functor; fails for an undefined predicate.");
         BuiltinsRegistry.Register("with_output_to", 2, WithOutputTo,
             Io, "with_output_to(+Sink, :Goal)", "Runs a goal, capturing its output into an atom, string or code list.");
         BuiltinsRegistry.Register("atom_to_term",   3, AtomToTerm,
@@ -292,14 +295,16 @@ public static class MetaBuiltins
         // stream-aware reader so the builtin set covers both names.
         BuiltinsRegistry.Register("read_term", 2, ReadTermFromStream,
             Io, "read_term(+Stream, -Term)", "Reads one term from a read-mode stream.");
-        // ISO read_term/3 — read_term(+Stream, -Term, +Options). The read
-        // options (variable_names/1, singletons/1, syntax_error/1, ...) are
-        // currently ignored: the term is parsed with the runtime operator
-        // table and unified with arg 2. Enough for source loaders (Logtalk
-        // bring-up) that pass options only for diagnostics.
-        BuiltinsRegistry.Register("read_term", 3, ReadTermFromStream,
+        // ISO read_term/3 — read_term(+Stream, -Term, +Options). Honours the
+        // variable_names/1, singletons/1 and variables/1 read options (binding
+        // each to a proper list that shares the term's variable cells); other
+        // options (double_quotes/1, syntax_error/1, ...) are ignored. Binding
+        // singletons/variable_names is required, not cosmetic: a loader that
+        // walks an unbound singletons list with member/2 loops forever
+        // (Logtalk's linter).
+        BuiltinsRegistry.Register("read_term", 3, ReadTermWithOptions,
             Io, "read_term(+Stream, -Term, +Options)",
-            "Reads one term from a read-mode stream; read options are currently ignored.");
+            "Reads one term from a read-mode stream; honours variable_names/1, singletons/1 and variables/1 options.");
         BuiltinsRegistry.Register("read",      1, Read1,
             Io, "read(-Term)", "Reads one term from current input (ISO §8.14.2).");
         BuiltinsRegistry.Register("read",      2, Read2,
@@ -789,6 +794,23 @@ public static class MetaBuiltins
 
     private static bool ReadOneTermInto(Engine engine, System.IO.TextReader reader, int regOut)
     {
+        Term? parsed = ParseOneTerm(engine, reader);
+        if (parsed is null)
+        {
+            int eofId = AtomTable.Intern("end_of_file", permanent: true).Id;
+            return engine.UnifyRegisterWithCell(regOut, Cell.Atom(eofId));
+        }
+        Cell cell = Materializer.MaterializeAsCell(engine, parsed);
+        return engine.UnifyRegisterWithCell(regOut, cell);
+    }
+
+    /// <summary>Accumulates the source text of one clause from
+    /// <paramref name="reader"/> up to its terminating solo <c>.</c> and parses
+    /// it with the engine's live operator table. Returns the parsed AST, or
+    /// <c>null</c> when only layout/comments remained before end-of-file (the
+    /// <c>end_of_file</c> case).</summary>
+    private static Term? ParseOneTerm(Engine engine, System.IO.TextReader reader)
+    {
         // Phase 33 (PrologToC corpus) — the old accumulation rule was "stop
         // at any '.' followed by whitespace", which sliced `?X =.. ?Y` in
         // half at univ's second dot (and would equally mis-split a dot
@@ -811,10 +833,7 @@ public static class MetaBuiltins
                 // a trailing-whitespace file must yield end_of_file, not a
                 // syntax error.
                 if (IsLayoutOnly(sb))
-                {
-                    int eofId = AtomTable.Intern("end_of_file", permanent: true).Id;
-                    return engine.UnifyRegisterWithCell(regOut, Cell.Atom(eofId));
-                }
+                    return null;   // end_of_file — only layout/comments remained
                 break;
             }
             char c = (char)ci;
@@ -901,12 +920,151 @@ public static class MetaBuiltins
         // `op(200, fy, ['#', '?'])` before reading a spec file) must be in
         // force for read/1,2, exactly as it already is for consult and
         // string_term/2 (the E3 fix).
-        var parser = new Shumway.Compiler.Parsing.Parser(
-            new Shumway.Compiler.Lexer.Lexer(sb.ToString()),
-            LiveOperators(engine));
-        Term parsed = parser.ReadClauseTerm();
-        Cell cell = Materializer.MaterializeAsCell(engine, parsed);
-        return engine.UnifyRegisterWithCell(regOut, cell);
+        return ParseClauseText(engine, sb.ToString());
+    }
+
+    /// <summary><c>read_term(+Stream, -Term, +Options)</c> — ISO §8.14.1. Reads
+    /// one term and honours the read options <c>variable_names/1</c>,
+    /// <c>singletons/1</c> and <c>variables/1</c> (other options — e.g.
+    /// <c>double_quotes/1</c> — are ignored). Getting these bound to proper
+    /// lists is not cosmetic: a source loader that reads with
+    /// <c>singletons(S)</c> and then walks <c>S</c> with <c>member/2</c> loops
+    /// forever if <c>S</c> is left unbound (Logtalk's linter does exactly this).
+    /// The option-list variables share the returned term's variable cells
+    /// (built via a wrapper compound so the materializer ties same-named
+    /// variables together).</summary>
+    public static bool ReadTermWithOptions(Engine engine)
+    {
+        var reader = ResolveTextReader(engine, engine.GetRegister(0));
+        Term? parsed = ParseOneTerm(engine, reader);
+        if (parsed is null)
+        {
+            int eofId = AtomTable.Intern("end_of_file", permanent: true).Id;
+            if (!engine.UnifyRegisterWithCell(1, Cell.Atom(eofId))) return false;
+            // ISO: at end_of_file the read options unify with the empty list.
+            int nilSlot = engine.AllocateHeap(1);
+            engine.SetHeap(nilSlot, Cell.Atom(AtomTable.EmptyListId));
+            return UnifyReadOptions(engine, 2, nilSlot, nilSlot, nilSlot);
+        }
+
+        // Named (non-"_") variables in first-appearance order, with occurrence
+        // counts (singletons = named vars seen exactly once, name not starting
+        // with '_').
+        var order = new List<string>();
+        var counts = new Dictionary<string, int>();
+        CollectNamedVars(parsed, order, counts);
+
+        // Wrap the term with the option-value lists so a single materialize
+        // call binds each `Name = VarTerm(Name)` pair to the SAME heap variable
+        // the term uses (VarTerm equality is by name; the materializer shares
+        // named vars within one call).
+        Term vnList = new AtomTerm("[]");
+        Term singList = new AtomTerm("[]");
+        for (int i = order.Count - 1; i >= 0; i--)
+        {
+            string nm = order[i];
+            Term pair = new CompoundTerm("=",
+                new Term[] { new AtomTerm(nm), new VarTerm(nm) });
+            vnList = new CompoundTerm(".", new Term[] { pair, vnList });
+            if (counts[nm] == 1 && !nm.StartsWith("_"))
+                singList = new CompoundTerm(".", new Term[] { pair, singList });
+        }
+
+        var wrapper = new CompoundTerm("$rt",
+            new Term[] { parsed, vnList, singList });
+        Cell wcell = Materializer.MaterializeAsCell(engine, wrapper);
+        // MaterializeAsCell returns a REF to the STR block; deref to the Str
+        // cell, whose AsHeapIndex is the functor slot with args right after it
+        // (heap[functorIdx] = functor id; heap[functorIdx + 1 + i] = arg i).
+        Cell strCell = ResolveLocal(engine, wcell);
+        int functorIdx = strCell.AsHeapIndex;
+        int parsedIdx = functorIdx + 1, vnIdx = functorIdx + 2, singIdx = functorIdx + 3;
+
+        if (!engine.UnifyRegisterWithCell(1, engine.GetHeap(parsedIdx)))
+            return false;
+
+        // variables/1: every distinct variable in the term, first-appearance
+        // order (includes anonymous variables, unlike variable_names).
+        var visited = new HashSet<int>();
+        var vars = new List<int>();
+        CollectVars(engine, parsedIdx, visited, vars);
+        Cell varsCell = Cell.Atom(AtomTable.EmptyListId);
+        for (int i = vars.Count - 1; i >= 0; i--)
+        {
+            int b = engine.AllocateHeap(2);
+            engine.SetHeap(b, Cell.Ref(vars[i]));
+            engine.SetHeap(b + 1, varsCell);
+            varsCell = Cell.Lis(b);
+        }
+        int varsIdx = engine.AllocateHeap(1);
+        engine.SetHeap(varsIdx, varsCell);
+
+        return UnifyReadOptions(engine, 2, vnIdx, singIdx, varsIdx);
+    }
+
+    /// <summary>Collects the named (non-anonymous) variable names of an AST in
+    /// first-appearance order, counting occurrences of each.</summary>
+    private static void CollectNamedVars(
+        Term t, List<string> order, Dictionary<string, int> counts)
+    {
+        switch (t)
+        {
+            case VarTerm v when v.Name != "_":
+                if (counts.TryGetValue(v.Name, out int n)) counts[v.Name] = n + 1;
+                else { order.Add(v.Name); counts[v.Name] = 1; }
+                break;
+            case CompoundTerm c:
+                // Walk the list spine iteratively so a long list literal does
+                // not recurse once per element.
+                Term cursor = c;
+                while (cursor is CompoundTerm cc
+                       && cc.Functor == "." && cc.Args.Length == 2)
+                {
+                    CollectNamedVars(cc.Args[0], order, counts);
+                    cursor = cc.Args[1];
+                }
+                if (cursor is CompoundTerm rest && !(rest.Functor == "." && rest.Args.Length == 2))
+                    foreach (var arg in rest.Args) CollectNamedVars(arg, order, counts);
+                else if (cursor is not CompoundTerm)
+                    CollectNamedVars(cursor, order, counts);
+                break;
+        }
+    }
+
+    /// <summary>Walks a <c>read_term/3</c> options list (in register
+    /// <paramref name="optReg"/>) and unifies the argument of each
+    /// <c>variable_names/1</c> / <c>singletons/1</c> / <c>variables/1</c> option
+    /// with the value at the corresponding heap index. Unknown options are
+    /// skipped; a partial or non-list tail simply ends the walk.</summary>
+    private static bool UnifyReadOptions(
+        Engine engine, int optReg, int vnIdx, int singIdx, int varsIdx)
+    {
+        Cell node = ResolveLocal(engine, engine.GetRegister(optReg));
+        while (node.Tag == Tag.Lis)
+        {
+            int hb = node.AsHeapIndex;                 // heap[hb]=head, heap[hb+1]=tail
+            Cell head = ResolveLocal(engine, engine.GetHeap(hb));
+            if (head.Tag == Tag.Str)
+            {
+                int sfx = head.AsHeapIndex;            // heap[sfx]=functor id
+                var (aid, ar) = FunctorTable.Lookup(engine.GetHeap(sfx).AsFunctorId);
+                if (ar == 1)
+                {
+                    string nm = AtomTable.GetById(aid)?.Name ?? "";
+                    int valIdx = nm switch
+                    {
+                        "variable_names" => vnIdx,
+                        "singletons"     => singIdx,
+                        "variables"      => varsIdx,
+                        _                => -1,
+                    };
+                    if (valIdx >= 0 && !engine.Unify(sfx + 1, valIdx))
+                        return false;
+                }
+            }
+            node = ResolveLocal(engine, engine.GetHeap(hb + 1));
+        }
+        return true;
     }
 
     /// <summary>The engine's live operator table (runtime `op/3` additions
@@ -915,6 +1073,26 @@ public static class MetaBuiltins
     private static Shumway.Compiler.Parsing.OperatorTable LiveOperators(Engine engine)
         => (engine.Host as PrologEngine)?.Operators
            ?? Shumway.Compiler.Parsing.OperatorTable.Default();
+
+    /// <summary>Parses one clause from <paramref name="source"/> with the live
+    /// operator table, converting a parser/lexer failure into a catchable ISO
+    /// <c>syntax_error</c> instead of letting a raw .NET exception escape (ISO
+    /// §7.10.3 — a malformed term read is a syntax error, catchable by the
+    /// program).</summary>
+    private static Term ParseClauseText(Engine engine, string source)
+    {
+        try
+        {
+            var parser = new Shumway.Compiler.Parsing.Parser(
+                new Shumway.Compiler.Lexer.Lexer(source), LiveOperators(engine));
+            return parser.ReadClauseTerm();
+        }
+        catch (Exception ex) when (ex is Shumway.Compiler.Parsing.ParseException
+                                    or Shumway.Compiler.Lexer.LexerException)
+        {
+            throw new Shumway.Core.PrologRuntimeException("syntax_error", ex.Message);
+        }
+    }
 
     /// <summary>True when the accumulated read/1 text holds no term — only
     /// whitespace, <c>%</c> line comments, and <c>/* */</c> block comments.</summary>
@@ -1017,10 +1195,7 @@ public static class MetaBuiltins
         if (!source.TrimEnd().EndsWith(".", StringComparison.Ordinal))
             source += ".";
 
-        var parser = new Shumway.Compiler.Parsing.Parser(
-            new Shumway.Compiler.Lexer.Lexer(source),
-            LiveOperators(engine));
-        Term parsed = parser.ReadClauseTerm();
+        Term parsed = ParseClauseText(engine, source);
 
         // Collect variable names from the parsed term in first-occurrence
         // order. Materialise the term once on the heap so each unique name
@@ -1635,10 +1810,7 @@ public static class MetaBuiltins
         string source = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
         if (!source.TrimEnd().EndsWith(".", StringComparison.Ordinal))
             source += ".";
-        var parser = new Shumway.Compiler.Parsing.Parser(
-            new Shumway.Compiler.Lexer.Lexer(source),
-            LiveOperators(engine));
-        Term parsed = parser.ReadClauseTerm();
+        Term parsed = ParseClauseText(engine, source);
         Cell parsedCell = Materializer.MaterializeAsCell(engine, parsed);
         return engine.UnifyRegisterWithCell(1, parsedCell);
     }
@@ -1655,10 +1827,7 @@ public static class MetaBuiltins
         string source = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
         if (!source.TrimEnd().EndsWith(".", StringComparison.Ordinal))
             source += ".";
-        var parser = new Shumway.Compiler.Parsing.Parser(
-            new Shumway.Compiler.Lexer.Lexer(source),
-            LiveOperators(engine));
-        Term parsed = parser.ReadClauseTerm();
+        Term parsed = ParseClauseText(engine, source);
         Cell parsedCell = Materializer.MaterializeAsCell(engine, parsed);
         return engine.UnifyRegisterWithCell(1, parsedCell);
     }
@@ -2067,10 +2236,7 @@ public static class MetaBuiltins
             string source = name.TrimEnd().EndsWith(".", StringComparison.Ordinal)
                 ? name
                 : name + ".";
-            var parser = new Shumway.Compiler.Parsing.Parser(
-                new Shumway.Compiler.Lexer.Lexer(source),
-                LiveOperators(engine));
-            Term parsed = parser.ReadClauseTerm();
+            Term parsed = ParseClauseText(engine, source);
             Cell newCell = Materializer.MaterializeAsCell(engine, parsed);
             return engine.UnifyRegisterWithCell(0, newCell);
         }
@@ -2671,6 +2837,42 @@ public static class MetaBuiltins
                 "permission_error", "modify,static_procedure");
         host.CompactDynamicCodeBuffer();
         return true;
+    }
+
+    /// <summary><c>predicate_property(+Head, ?Property)</c> — enumerates the
+    /// properties of the predicate named by <paramref name="Head"/>'s functor
+    /// (a callable). A defined predicate has <c>defined</c> plus exactly one of
+    /// <c>built_in</c> / <c>dynamic</c> / <c>static</c>; an undefined predicate
+    /// has none (the call fails). Non-deterministic: on backtracking it yields
+    /// each property in turn, so a bound <c>Property</c> acts as a filter. Head
+    /// must be instantiated (ISO instantiation_error / type_error(callable)).
+    /// Enough for the SWI/GNU-style introspection Logtalk's compiler relies on.</summary>
+    public static bool PredicateProperty(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "predicate_property/2 requires a PrologEngine host.");
+        Term head = MaterializeRegister(engine, 0);
+        int fid;
+        switch (head)
+        {
+            case VarTerm:
+                throw new ShumwayPrologException(IsoError.InstantiationError());
+            case AtomTerm a:
+                fid = FunctorTable.Intern(AtomTable.Intern(a.Name, permanent: true).Id, 0);
+                break;
+            case CompoundTerm c:
+                fid = FunctorTable.Intern(
+                    AtomTable.Intern(c.Functor, permanent: true).Id, c.Args.Length);
+                break;
+            default:
+                throw new ShumwayPrologException(IsoError.TypeError("callable", head));
+        }
+        var props = host.PredicatePropertyAtomIds(fid);
+        if (props.Count == 0) return false;
+        int returnPc = engine.BuiltinReturnPc;
+        return Shumway.Core.IndexEnumCursor.Start(engine, props.Count, 2, returnPc,
+            (e, i) => e.UnifyRegisterWithCell(1, Cell.Atom(props[i])));
     }
 
     /// <summary>Promotes a Core-level <see cref="PrologRuntimeException"/>

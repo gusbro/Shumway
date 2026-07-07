@@ -473,6 +473,30 @@ public sealed class Parser
                 }
                 return ReadBrace(pos);
 
+            case TokenKind.Comma:
+            case TokenKind.Bar:
+                // Comma / bar as a FUNCTOR in canonical prefix form —
+                // ','(A, B) and '|'(A, B). `write_canonical` emits nested
+                // conjunctions this way (a Logtalk compiler scratch file is
+                // full of `:-(Head, ,(G1, ,(G2, G3)))`), and every ISO Prolog
+                // reads it back. These tokens surface with their own kinds
+                // (they act as infix separators in operator position), so the
+                // functor reading only applies when one lands where an operand
+                // is expected AND a '(' immediately follows; a bare separator
+                // here is still the syntax error the default arm reports.
+                if (PeekToken().Kind == TokenKind.LParen
+                    && IsAdjacent(tok, PeekToken()))
+                {
+                    string sepName = tok.Kind == TokenKind.Comma ? "," : "|";
+                    NextToken();   // consume '('
+                    var sepArgs = ReadCommaSeparatedArgs(closing: TokenKind.RParen);
+                    if (sepArgs.Count == 0)
+                        throw new ParseException(
+                            $"Compound term '{sepName}' requires at least one argument.", pos);
+                    return new CompoundTerm(sepName, sepArgs.ToArray()) { Position = pos };
+                }
+                goto default;
+
             default:
                 throw new ParseException(
                     $"Unexpected {DescribeToken(tok)} when a term was expected.", pos);

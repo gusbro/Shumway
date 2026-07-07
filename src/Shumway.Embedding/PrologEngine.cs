@@ -34,6 +34,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     {
         [DefaultModuleName] = new ModuleManifest(DefaultModuleName),
     };
+    // Lazily-built set of every static head functor across all modules.
+    // Backs the static branch of HasPredicate / AllStaticAndDynamicFunctors
+    // so those are O(1) instead of a full clause scan — predicate_property/2
+    // (which Logtalk's compiler calls per goal) was O(clauses × calls) without
+    // it. Nulled at every static-clause mutation (consult / restore / bundle
+    // load); dynamic functors are checked live against _dynamicFunctors, so
+    // assert/retract need not invalidate it.
+    private HashSet<int>? _staticHeadFunctorsCache;
     private readonly OperatorTable _operators = OperatorTable.Default();
 
     /// <summary>Save-state chunk 264: chronological log of every source
@@ -2303,18 +2311,31 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         var seen = new HashSet<int>();
         foreach (int fid in _dynamicFunctors)
             if (seen.Add(fid)) yield return fid;
+        foreach (int fid in StaticHeadFunctors())
+            if (seen.Add(fid)) yield return fid;
+    }
+
+    /// <summary>The set of every static head functor across all modules,
+    /// built lazily and cached. Invalidated (<c>_staticHeadFunctorsCache =
+    /// null</c>) at every static-clause mutation. Membership is O(1); building
+    /// it is one clause scan, amortised across the many
+    /// <see cref="HasPredicate"/> / <c>predicate_property/2</c> calls between
+    /// consults.</summary>
+    private HashSet<int> StaticHeadFunctors()
+    {
+        if (_staticHeadFunctorsCache is not null) return _staticHeadFunctorsCache;
+        var set = new HashSet<int>();
         foreach (var manifest in _modules.Values)
         {
             foreach (var c in manifest.Clauses)
             {
                 if (TryExtractHead(c, out string n, out int a))
-                {
-                    int fid = FunctorTable.Intern(
-                        AtomTable.Intern(n, permanent: true).Id, a);
-                    if (seen.Add(fid)) yield return fid;
-                }
+                    set.Add(FunctorTable.Intern(
+                        AtomTable.Intern(n, permanent: true).Id, a));
             }
         }
+        _staticHeadFunctorsCache = set;
+        return set;
     }
 
     /// <summary>True iff <paramref name="functorId"/> is the functor of any
@@ -2325,16 +2346,30 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out _))
             return true;
         if (_dynamicFunctors.Contains(functorId)) return true;
-        foreach (var manifest in _modules.Values)
-        {
-            foreach (var c in manifest.Clauses)
-            {
-                if (TryExtractHead(c, out string n, out int a)
-                    && FunctorTable.Intern(AtomTable.Intern(n, permanent: true).Id, a) == functorId)
-                    return true;
-            }
-        }
-        return false;
+        return StaticHeadFunctors().Contains(functorId);
+    }
+
+    /// <summary>The property atom ids for <paramref name="functorId"/>, as
+    /// enumerated by <c>predicate_property/2</c>. An undefined predicate yields
+    /// the empty list (so <c>predicate_property/2</c> fails for it). A defined
+    /// predicate yields exactly one of <c>built_in</c> / <c>dynamic</c> /
+    /// <c>static</c> plus <c>defined</c>. Built-in wins over dynamic wins over
+    /// static (a builtin can't be redefined; a user predicate is dynamic if it
+    /// was declared/asserted so, else static).</summary>
+    internal List<int> PredicatePropertyAtomIds(int functorId)
+    {
+        var props = new List<int>();
+        if (!HasPredicate(functorId)) return props;
+        int kind;
+        if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out _))
+            kind = AtomTable.Intern("built_in", permanent: true).Id;
+        else if (_dynamicFunctors.Contains(functorId))
+            kind = AtomTable.Intern("dynamic", permanent: true).Id;
+        else
+            kind = AtomTable.Intern("static", permanent: true).Id;
+        props.Add(kind);
+        props.Add(AtomTable.Intern("defined", permanent: true).Id);
+        return props;
     }
 
     private List<Clause> GetOrCreateDynamicSlot(int fid)
@@ -5910,8 +5945,21 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             {
                 pendingMultifile ??= new HashSet<int>();
                 foreach (var (n, a) in multiSpecs)
-                    pendingMultifile.Add(FunctorTable.Intern(
-                        AtomTable.Intern(n, permanent: true).Id, a));
+                {
+                    int fid = FunctorTable.Intern(
+                        AtomTable.Intern(n, permanent: true).Id, a);
+                    pendingMultifile.Add(fid);
+                    // A multifile predicate accumulates clauses from several
+                    // sources (assert, other files) — so it is callable and
+                    // must FAIL (not existence_error) when it currently has no
+                    // clauses, exactly like a dynamic predicate. Register it as
+                    // dynamic + reserve an empty clause slot. (Logtalk's compiler
+                    // declares its hook predicates `:- multifile` and calls them
+                    // before any clause is added, relying on failure.)
+                    _dynamicFunctors.Add(fid);
+                    if (!_dynamicClauses.ContainsKey(fid))
+                        _dynamicClauses[fid] = new List<Clause>();
+                }
             }
             else if (TryReadFunctorIndicatorDirective(body, "table", out var tableSpecs))
             {
@@ -6168,6 +6216,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // updated clause set. Consult is one-shot at engine setup in the
         // common case, so this is amortised away.
         _dynamicPredicateCache.Clear();
+        // New static clauses just landed in _modules — drop the head-functor
+        // cache so HasPredicate / predicate_property/2 sees them.
+        _staticHeadFunctorsCache = null;
 
         // `:- initialization(Goal)` goals run now, after the consult has
         // committed, in source order (SWI load-time semantics). A goal that

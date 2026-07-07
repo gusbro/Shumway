@@ -306,7 +306,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `read(-Term)` | Reads one term from current input (ISO §8.14.2). |
 | `read(+Stream, -Term)` | Reads one term from a stream (ISO §8.14.2). |
 | `read_term(+Stream, -Term)` | Reads one term from a read-mode stream. |
-| `read_term(+Stream, -Term, +Options)` | Reads one term from a read-mode stream; read options are currently ignored. |
+| `read_term(+Stream, -Term, +Options)` | Reads one term from a read-mode stream; honours variable_names/1, singletons/1 and variables/1 options. |
 | `read_term_from_stream(+Stream, -Term)` | Reads one term from a read-mode stream. |
 | `rename(+From, +To)` | Renames / moves a file from From to To. Raises existence_error if From doesn't exist or permission_error if To already exists. |
 | `rmdir(+Path)` | Removes the directory Path. Fails when the directory is non-empty; raises existence_error if it doesn't exist. |
@@ -344,6 +344,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `current_char_conversion(?InChar, ?OutChar)` | Enumerates the active char-conversion table (ISO §8.14.10). |
 | `current_prolog_flag(?Flag, ?Value)` | Reads the value of a Prolog flag. |
 | `op(+Priority, +Type, +Name)` | Declares an operator of the given priority and type. |
+| `predicate_property(+Head, ?Property)` | Enumerates the properties (defined plus one of built_in/dynamic/static) of the predicate named by Head's functor; fails for an undefined predicate. |
 | `set_prolog_flag(+Flag, +Value)` | Sets a Prolog flag. |
 
 ## CLP(FD) — domains

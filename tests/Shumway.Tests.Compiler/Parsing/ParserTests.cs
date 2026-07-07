@@ -367,4 +367,41 @@ public class ParserTests
         // foo --> bar.
         Assert.Equal(Cmp("-->", Atom("foo"), Atom("bar")), ParseClause("foo --> bar."));
     }
+
+    // ---------- Operator atoms in functional (canonical prefix) notation ----------
+    // write_canonical emits nested conjunctions as ','(A, B); every ISO Prolog
+    // reads it back. These verify the comma / bar tokens parse as functors when
+    // a '(' immediately follows (a Logtalk compiler scratch file is full of
+    // `:-(Head, ,(G1, ,(G2, G3)))`).
+
+    [Fact]
+    public void Comma_AsFunctor_TwoArgs()
+    {
+        Assert.Equal(Cmp(",", Atom("a"), Atom("b")), Parse(",(a, b)"));
+    }
+
+    [Fact]
+    public void Comma_AsFunctor_NestedCanonicalConjunction()
+    {
+        // :-(h, ,(a, ,(b, c)))  — the shape write_canonical produces.
+        Term expected =
+            Cmp(":-",
+                Atom("h"),
+                Cmp(",", Atom("a"), Cmp(",", Atom("b"), Atom("c"))));
+        Assert.Equal(expected, ParseClause(":-(h, ,(a, ,(b, c)))."));
+    }
+
+    [Fact]
+    public void Bar_AsFunctor_TwoArgs()
+    {
+        Assert.Equal(Cmp("|", Atom("a"), Atom("b")), Parse("|(a, b)"));
+    }
+
+    [Fact]
+    public void Comma_NotFunctor_WithoutAdjacentParen_IsError()
+    {
+        // A bare comma where an operand is expected (no adjacent '(') is still
+        // a syntax error — the functor reading only fires on ',(' adjacency.
+        Assert.Throws<ParseException>(() => Parse("foo(a, , b)"));
+    }
 }
