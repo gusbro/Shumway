@@ -581,6 +581,15 @@ public static class MetaBuiltins
             Term, "random_between(+Low, +High, -X)",
             "Unifies X with a fresh pseudo-random integer in [Low, High] "
             + "(inclusive on both ends, matching SWI semantics).");
+        // Phase 33 (Logtalk backend_random) — seed introspection pair.
+        BuiltinsRegistry.Register("get_seed", 1, GetSeed1,
+            Term, "get_seed(-Seed)",
+            "Unifies Seed with a value that set_seed/1 can later use to "
+            + "reproduce exactly the random sequence that follows this "
+            + "call (the generator is reseeded as a side effect).");
+        BuiltinsRegistry.Register("set_seed", 1, SetSeed1,
+            Term, "set_seed(+Seed)",
+            "Reseeds the engine's random generator; alias of randomize/1.");
 
         // Phase 24 chunk 273 — DCG / macro expansion hook exposed.
         BuiltinsRegistry.Register("expand_term", 2, ExpandTerm2,
@@ -5634,6 +5643,36 @@ public static class MetaBuiltins
     public static bool Randomize1(Engine engine)
     {
         PrologEngine host = RequireHost(engine, "randomize/1");
+        Cell c = MaterializeRegisterAsCell(engine, 0);
+        if (c.Tag == Tag.Ref || c.Tag == Tag.AttVar)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        if (c.Tag != Tag.Int)
+            throw new ShumwayPrologException(
+                IsoError.TypeError("integer", new IntTerm(0)));
+        host.Randomize((int)c.AsInt);
+        return true;
+    }
+
+    /// <summary>Phase 33 (Logtalk backend_random) — <c>get_seed(-Seed)</c>.
+    /// The engine's <see cref="System.Random"/> doesn't expose its internal
+    /// state, so we use the standard reseed trick: draw a fresh seed value,
+    /// reseed the generator with it, and return it — a later
+    /// <c>set_seed(Seed)</c> then reproduces exactly the sequence that
+    /// follows this call.</summary>
+    public static bool GetSeed1(Engine engine)
+    {
+        PrologEngine host = RequireHost(engine, "get_seed/1");
+        int seed = host.Random.Next();
+        host.Randomize(seed);
+        return engine.UnifyRegisterWithCell(0, Cell.Int(seed));
+    }
+
+    /// <summary><c>set_seed(+Seed)</c> — reseeds the engine's random
+    /// generator; alias of <c>randomize/1</c> under the name Logtalk's
+    /// backend_random object expects.</summary>
+    public static bool SetSeed1(Engine engine)
+    {
+        PrologEngine host = RequireHost(engine, "set_seed/1");
         Cell c = MaterializeRegisterAsCell(engine, 0);
         if (c.Tag == Tag.Ref || c.Tag == Tag.AttVar)
             throw new ShumwayPrologException(IsoError.InstantiationError());

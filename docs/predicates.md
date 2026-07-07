@@ -71,6 +71,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `copy_term(+Term, -Copy, -Goals)` | Copies a term with fresh variables and collects the residual attribute goals. |
 | `expand_term(+Term, -Expanded)` | If Term has the form Head --> Body, expands it via the DCG transformation Shumway applies internally on consult. Non-DCG terms pass through unchanged. |
 | `functor(?Term, ?Name, ?Arity)` | Relates a term to its functor name and arity. |
+| `get_seed(-Seed)` | Unifies Seed with a value that set_seed/1 can later use to reproduce exactly the random sequence that follows this call (the generator is reseeded as a side effect). |
 | `is_digit(+Char)` | True when Char is a one-character atom representing an ASCII digit. |
 | `name(?AtomOrNumber, ?Codes)` | Bidirectional conversion between an atom/number and its character-code list. |
 | `numbervars(+Term, +Start, -End)` | Binds the unbound variables of Term to '$VAR'(N) terms with consecutive N from Start. |
@@ -79,6 +80,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `randomize(+Seed)` | Reseeds the engine's random generator. Seed is an integer. |
 | `read_term_from_atom(+Atom, -Term)` | Parses an atom into a term. |
 | `read_term_from_atom(+Atom, -Term, +Options)` | Parses an atom into a term; Options accepted for SWI/GProlog compat (currently ignored). |
+| `set_seed(+Seed)` | Reseeds the engine's random generator; alias of randomize/1. |
 | `string_search(+SubAtom, +Atom, ?Location)` | Searches Atom for the substring SubAtom; on success unifies Location with the 0-based starting offset. Backtrackable: produces every occurrence in left-to-right order. |
 | `string_search(+Case, +SubAtom, +Atom, ?Location)` | Arity string_search/4: like string_search/3 with a leading case flag — 0 searches case-sensitively, 1 case-insensitively. |
 | `string_term(?Atom, ?Term)` | Bidirectional: parses Atom as a Prolog term (binding Term), or renders Term using write/1 form (binding Atom). 'string' in Arity-Prolog terminology means atom — the textual representation is interned as an atom, not stored as a Shumway StringTerm. |

@@ -385,6 +385,17 @@ public sealed class Lexer
     private static bool IsHexDigit(char c) =>
         (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
 
+    /// <summary>Digit value for radix literals (0x / 0o / 0b): 0-15 for a
+    /// valid hex digit, -1 otherwise. Callers bound the accepted range by
+    /// their radix.</summary>
+    private static int RadixDigitValue(char c) => c switch
+    {
+        >= '0' and <= '9' => c - '0',
+        >= 'a' and <= 'f' => c - 'a' + 10,
+        >= 'A' and <= 'F' => c - 'A' + 10,
+        _ => -1,
+    };
+
     // ---------- Atom / variable parsers ----------
 
     private Token ParseUnquotedAtom(SourcePosition pos)
@@ -459,18 +470,51 @@ public sealed class Lexer
                 { IntValue = code };
         }
 
-        // 0x...: hexadecimal literal.
-        if (c == '0' && (Peek(1) == 'x' || Peek(1) == 'X'))
+        // 0x / 0o / 0b: radix literals (ISO 6.4.4). Accumulate through
+        // BigInteger — `long.Parse(NumberStyles.HexNumber)` interpreted 16
+        // F's as two's-complement (-1: the Logtalk random library's
+        // mask64(0xFFFFFFFFFFFFFFFF) became -1, so `/\ Mask` stopped
+        // masking and the 64-bit generators returned floats like 3e114)
+        // and threw OverflowException past 16 digits. A value that fits
+        // long stays a plain Integer token; larger values carry BigValue.
+        if (c == '0')
         {
-            Advance(); Advance();
-            int hexStart = _offset;
-            while (_offset < _source.Length && IsHexDigit(_source[_offset])) Advance();
-            if (_offset == hexStart)
+            int radix = Peek(1) switch
+            {
+                'x' or 'X' => 16,
+                'o' or 'O' => 8,
+                'b' or 'B' => 2,
+                _ => 0,
+            };
+            if (radix == 16 && RadixDigitValue(Peek(2)) < 0)
                 throw new LexerException(
                     $"Expected hex digits after 0x at {pos}.", pos);
-            long hex = long.Parse(_source[hexStart.._offset], NumberStyles.HexNumber, CultureInfo.InvariantCulture);
-            return new Token(TokenKind.Integer, pos, _source[start.._offset])
-                { IntValue = hex };
+            // For 0o / 0b require a valid digit to follow; otherwise fall
+            // through and lex the '0' as a plain decimal zero (the 'o'/'b'
+            // becomes a separate token), preserving pre-existing behaviour
+            // for sources that happen to juxtapose 0 and an atom.
+            if (radix != 0)
+            {
+                int d0 = RadixDigitValue(Peek(2));
+                if (d0 >= 0 && d0 < radix)
+                {
+                    Advance(); Advance();
+                    System.Numerics.BigInteger acc = 0;
+                    while (_offset < _source.Length)
+                    {
+                        int d = RadixDigitValue(_source[_offset]);
+                        if (d < 0 || d >= radix) break;
+                        acc = acc * radix + d;
+                        Advance();
+                    }
+                    string text = _source[start.._offset];
+                    if (acc <= long.MaxValue)
+                        return new Token(TokenKind.Integer, pos, text)
+                            { IntValue = (long)acc };
+                    return new Token(TokenKind.Integer, pos, text)
+                        { BigValue = acc, HasBigValue = true };
+                }
+            }
         }
 
         // Decimal integer part.
