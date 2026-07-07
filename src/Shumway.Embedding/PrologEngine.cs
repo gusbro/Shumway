@@ -7563,6 +7563,29 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
         else
         {
+            // Phase 33 — the derivation is being REGENERATED: MetaTransform
+            // helper names ('$disj_N', '$catchgoal_N', ...) come from the
+            // global NextMetaHelperId counter, so the fresh ASTs reference
+            // fresh helper ids. Any COMPILED artifact from the previous
+            // derivation still calls the OLD helper ids — helpers that no
+            // longer exist in the new clause set, so the link bakes an
+            // undefined sentinel and the call raises existence_error
+            // ('$disj_N'/K — the long-standing Logtalk '$disj_95' gap; hit
+            // reliably by lgtunit's runtime send-cache asserta, which bumps
+            // the derivation between queries). Nothing compiled may outlive
+            // the derivation that produced its call sites:
+            //  * the per-predicate bytecode caches, and
+            //  * the linked STATIC REGION (_staticLink) — a dynamic clause
+            //    recompiled under the new derivation calls new '$disj_N'
+            //    helpers, and those helper predicates are STATIC: they only
+            //    reach the code space through a fresh static link. Reusing
+            //    the old region would silently drop them (observed as
+            //    existence_error('$disj_N'/K) on the first call after a
+            //    runtime assert bumped the derivation).
+            _staticPredicateCache.Clear();
+            _dynamicPredicateCache.Clear();
+            _skipCompileMergedCache = null;
+            _staticLink = null;
             allRewritten = new List<Clause>();
             userLocalsCache = null;
             moduleLocalsCache = new Dictionary<string, HashSet<int>>();

@@ -39,6 +39,20 @@ public static class UnknownProcedure
                     $"warning: unknown procedure {AtomTable.GetById(atomId)?.Name ?? "?"}/{arity}");
                 return true;
             default:
+                if (System.Environment.GetEnvironmentVariable("SHUMWAY_UNDEF_DIAG") == "1")
+                {
+                    var (aid2, ar2) = FunctorTable.Lookup(functorId);
+                    string inMap = "no-map";
+                    if (engine.CurrentFunctorAddresses is { } m2)
+                        inMap = m2.TryGetValue(functorId, out int a3)
+                            ? $"map={a3} progByte=0x{(engine.CurrentProgram is { } p2 && a3 >= 0 && a3 < p2.Length ? p2[a3] : 0xEE):X2}"
+                            : "not-in-map";
+                    bool vis = engine.LiveConsultVisibleFids?.Contains(functorId) ?? false;
+                    System.Console.Error.WriteLine(
+                        $"[UNDEF] {AtomTable.GetById(aid2)?.Name}/{ar2} pc={engine.P}"
+                        + $" caller={engine.ResolveAddressToLabel?.Invoke(engine.P) ?? "?"}"
+                        + $" {inMap} visible={vis}");
+                }
                 throw PrologRuntimeException.UndefinedProcedure(functorId);
         }
     }
