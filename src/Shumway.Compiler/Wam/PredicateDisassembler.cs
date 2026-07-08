@@ -172,6 +172,138 @@ public static class PredicateDisassembler
         return result;
     }
 
+    // ---------------------------------------------------------------------
+    //  Opcode-pair / clause-shape census (diagnostic).
+    //
+    //  Walks the compiled bytecode of every static predicate in a source and
+    //  tallies the peephole-fusion candidates plus the `!, tailCall` clause
+    //  shape (a cut guarding a final tail call — the base of deterministic
+    //  recursion in the Arity corpus). Counts are over TEXTUAL adjacency in the
+    //  emitted byte stream; every candidate pair's first element is a body
+    //  opcode (cut / call / deallocate) that is never a clause terminator, so
+    //  textual adjacency equals control-flow fall-through for them (no
+    //  false-adjacency across clause boundaries).
+    // ---------------------------------------------------------------------
+
+    /// <summary>Aggregate opcode-pair and clause-shape tallies for one source.
+    /// <see cref="Clauses"/> = clause bodies (one terminator each);
+    /// <see cref="TailClauses"/> = bodies ending in an execute-family tail call;
+    /// <see cref="CutTailClauses"/> = of those, the ones whose last control op
+    /// before the tail call is a cut (the `!, tailCall` shape).</summary>
+    public readonly record struct CensusResult(
+        long Predicates, long Ops, long Pairs, long Clauses,
+        long TailClauses, long CutTailClauses,
+        long CutDeallocProceed, long CutProceed, long CallCut,
+        long DeallocExecute, long CutDealloc, long CutExecute)
+    {
+        public static CensusResult operator +(CensusResult a, CensusResult b) => new(
+            a.Predicates + b.Predicates, a.Ops + b.Ops, a.Pairs + b.Pairs,
+            a.Clauses + b.Clauses, a.TailClauses + b.TailClauses,
+            a.CutTailClauses + b.CutTailClauses,
+            a.CutDeallocProceed + b.CutDeallocProceed, a.CutProceed + b.CutProceed,
+            a.CallCut + b.CallCut, a.DeallocExecute + b.DeallocExecute,
+            a.CutDealloc + b.CutDealloc, a.CutExecute + b.CutExecute);
+    }
+
+    /// <summary>Compiles every static predicate in <paramref name="source"/> and
+    /// returns the aggregate opcode-pair / clause-shape census. Predicates that
+    /// fail to compile are skipped (best-effort corpus pass).</summary>
+    public static CensusResult CensusOpcodes(string source, bool arityCompat = false)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ClauseReader reader = arityCompat
+            ? new ClauseReader(
+                new global::Shumway.Compiler.Lexer.Lexer(source),
+                OperatorTable.Default(),
+                new Parsing.PrologFlags { ArityCompat = true })
+            : new ClauseReader(source);
+        var clauses = ClausePipeline.Apply(reader.ReadAll(), new Modes.ModeTable());
+
+        var order = new List<(string, int)>();
+        var groups = new Dictionary<(string, int), List<Clause>>();
+        foreach (Clause clause in clauses)
+        {
+            if (clause.Kind == ClauseKind.Directive) continue;
+            (string name, int arity) = HeadIndicator(clause);
+            var key = (name, arity);
+            if (!groups.TryGetValue(key, out var list))
+            {
+                groups[key] = list = new List<Clause>();
+                order.Add(key);
+            }
+            list.Add(clause);
+        }
+
+        var acc = default(CensusResult);
+        foreach ((string name, int arity) in order)
+        {
+            byte[] code;
+            try { code = new PredicateCompiler().Compile(groups[(name, arity)]).Bytecode; }
+            catch { continue; }   // best-effort: skip a predicate the compiler rejects
+            acc += CensusBytecode(code);
+        }
+        return acc;
+    }
+
+    private static bool IsExec(Opcode o) => o is Opcode.Execute or Opcode.ExecuteIl
+        or Opcode.ExecuteBytecode or Opcode.ExecuteBuiltin;
+    private static bool IsCut(Opcode o) => o is Opcode.Cut or Opcode.NeckCut;
+    private static bool IsCall(Opcode o) => o is Opcode.Call or Opcode.CallBuiltin
+        or Opcode.CallIl or Opcode.CallBytecode;
+
+    private static CensusResult CensusBytecode(byte[] code)
+    {
+        long ops = 0, pairs = 0, clauses = 0, tailClauses = 0, cutTail = 0;
+        long cutDP = 0, cutP = 0, callCut = 0, deExec = 0, cutDe = 0, cutExec = 0;
+        bool havePrev = false;
+        Opcode prev = default;
+        bool sawCut = false, callAfterCut = false;   // per-body, reset at each terminator
+
+        int pc = 0;
+        while (pc < code.Length)
+        {
+            var op = (Opcode)code[pc];
+            var info = OpcodeTable.Get(code[pc]);
+            if (info.Size == 0) break;   // corruption / unknown — stop this predicate
+            ops++;
+
+            if (havePrev)
+            {
+                pairs++;
+                if (IsCut(prev))
+                {
+                    if (op == Opcode.DeallocateProceed) cutDP++;
+                    else if (op == Opcode.Proceed) cutP++;
+                    else if (op == Opcode.Deallocate) cutDe++;
+                    else if (IsExec(op)) cutExec++;
+                }
+                if (IsCall(prev) && IsCut(op)) callCut++;
+                if (prev == Opcode.Deallocate && IsExec(op)) deExec++;
+            }
+
+            // Clause-shape tracking for `!, tailCall`.
+            if (IsCut(op)) { sawCut = true; callAfterCut = false; }
+            else if (IsCall(op) && sawCut) callAfterCut = true;
+
+            bool terminator = op is Opcode.Proceed or Opcode.DeallocateProceed || IsExec(op);
+            if (terminator)
+            {
+                clauses++;
+                if (IsExec(op))
+                {
+                    tailClauses++;
+                    if (sawCut && !callAfterCut) cutTail++;
+                }
+                sawCut = false; callAfterCut = false;
+            }
+
+            prev = op; havePrev = true;
+            pc += info.Size;
+        }
+        return new CensusResult(1, ops, pairs, clauses, tailClauses, cutTail,
+            cutDP, cutP, callCut, deExec, cutDe, cutExec);
+    }
+
     /// <summary>The outcome of splitting a clause set by an indexing key at some
     /// position: <see cref="Res"/> = worst-case residual scan (largest key-group +
     /// wildcards that merge into every group); <see cref="GroupMax"/> = that

@@ -41,6 +41,7 @@ internal static class Program
         bool emitDebugInfo = false;   // default: release (what the engine runs by default)
         bool arityCompat = false;     // --arity: lex Arity/Prolog32 sources
         bool audit = false;           // --audit: emit indexing-quality verdict lines
+        bool census = false;          // --census: emit one opcode-pair/shape tally line
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -61,6 +62,9 @@ internal static class Program
                     break;
                 case "--audit":
                     audit = true;
+                    break;
+                case "--census":
+                    census = true;
                     break;
                 case "-e" or "--eval":
                     if (++i >= args.Length) return Usage("missing source after " + a);
@@ -109,6 +113,28 @@ internal static class Program
                         e.PotStruct, e.PotStructNoWild, e.CutPct, e.Det ? "det" : "-",
                         e.DiscrimArg, $"{e.Name}/{e.Arity}", e.WorstKey));
                 }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"error: parse failed: {ex.Message}");
+                return ExitCompileError;
+            }
+            return ExitOk;
+        }
+
+        if (census)
+        {
+            // One tab-separated tally line for the whole source, for corpus-wide
+            // aggregation across files (sum the columns): CENSUS <preds> <ops>
+            // <pairs> <clauses> <tailClauses> <cutTailClauses> <cut>deallocate_proceed
+            // <cut>proceed <call><cut> <deallocate><exec> <cut>deallocate <cut><exec>
+            try
+            {
+                var c = PredicateDisassembler.CensusOpcodes(source, arityCompat);
+                Console.WriteLine(string.Join('\t', "CENSUS",
+                    c.Predicates, c.Ops, c.Pairs, c.Clauses, c.TailClauses,
+                    c.CutTailClauses, c.CutDeallocProceed, c.CutProceed, c.CallCut,
+                    c.DeallocExecute, c.CutDealloc, c.CutExecute));
             }
             catch (Exception ex)
             {
@@ -194,6 +220,10 @@ internal static class Program
               --audit                 emit indexing-quality verdict lines instead
                                       of disassembly (tab-separated, for corpus
                                       aggregation)
+              --census                emit one tab-separated opcode-pair / clause-
+                                      shape tally line for the source (peephole-
+                                      fusion + `!, tailCall` census; sum columns
+                                      across files for a corpus total)
               -h, --help              show this help
 
             Predicates are compiled with first-argument / multi-argument indexing,
