@@ -109,7 +109,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `false` | Always fails — ISO synonym of fail/0. |
 | `forall(:Condition, :Action)` | Succeeds if Action holds for every solution of Condition. |
 | `garbage_collect` | Mark-compacts the heap, reclaiming cells unreachable from the live machine state (ADR-016). Always succeeds. |
-| `get_cpu_time(-Time)` | Binds Time to the process CPU time so far, in milliseconds (GNU-Prolog timing primitive). |
+| `get_cpu_time(-Time)` | Binds Time to a high-resolution monotonic process timer, in milliseconds (float; GNU-Prolog timing primitive). |
 | `halt` | Halts the engine with exit code 0. |
 | `halt(+Status)` | Halts the engine with the given exit code. |
 | `ignore(:Goal)` | Runs Goal, succeeding whether or not Goal does. |
