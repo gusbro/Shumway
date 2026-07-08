@@ -1719,6 +1719,14 @@ public sealed class BytecodeInterpreter
                     // rather than running the sub-engine builtin.
                     if (entry.IsCall)
                     {
+                        // Phase 33 ISO audit — a backtrackable (cursor)
+                        // builtin reached THROUGH the meta-call captures
+                        // BuiltinReturnPc for its resume; without this it
+                        // kept the PREVIOUS call_builtin's continuation and
+                        // a retry re-entered the middle of the clause
+                        // (observed: call(stream_property(S, P)) re-running
+                        // the call/1 with a clobbered X0 → type_error).
+                        _engine.BuiltinReturnPc = pc + 9;
                         // A top-level call/N: a `!` written as the goal
                         // commits no further than the call itself, so the
                         // barrier is B as the call is entered.
@@ -1728,6 +1736,7 @@ public sealed class BytecodeInterpreter
                     }
                     if (entry.IsDollarCall)
                     {
+                        _engine.BuiltinReturnPc = pc + 9;   // Phase 33 — see IsCall above
                         // Cut-barrier-carrying meta-call from a $call_*
                         // control helper (chunk 88): X1 carries the barrier
                         // the enclosing call established for a `!` in X0.

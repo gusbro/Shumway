@@ -66,6 +66,8 @@ public static class MetaBuiltins
             Control, "call(:Goal, +Extra1, ..., +Extra5)", "Calls a goal extended with five extra arguments.");
         BuiltinsRegistry.Register("call", 7, Call7,
             Control, "call(:Goal, +Extra1, ..., +Extra6)", "Calls a goal extended with six extra arguments.");
+        BuiltinsRegistry.Register("call", 8, Call8,
+            Control, "call(:Goal, +Extra1, ..., +Extra7)", "Calls a goal extended with seven extra arguments (ISO requires call/2..8).");
         // '$call'/2 (chunk 88): a cut-barrier-carrying meta-call. The
         // $call_* control helpers re-enter call dispatch through it so a
         // `!` in a runtime compound goal cuts to the enclosing call's
@@ -712,12 +714,18 @@ public static class MetaBuiltins
         return true;
     }
 
-    /// <summary>Returns the underlying .NET stream's byte position when
-    /// the stream is seekable, or null otherwise (e.g. console-backed
-    /// user_input / user_output). Used both for the
+    /// <summary>Returns the stream's logical position when the stream is
+    /// repositionable, or null otherwise (e.g. console-backed
+    /// user_input / user_output). For a text read stream this is the
+    /// <em>characters consumed</em> (tracked by
+    /// <see cref="Shumway.Core.PositionTrackingReader"/> — the raw
+    /// <c>BaseStream.Position</c> over-reports by the StreamReader's
+    /// read-ahead buffer, e.g. a <c>Peek()</c> for the
+    /// <c>end_of_stream</c> property buffers the whole file); for binary
+    /// and write streams it is the byte position. Used both for the
     /// <c>position(N)</c> property of <c>stream_property/2</c> and as
     /// the seekable-stream check for <c>set_stream_position/2</c>.
-    /// (Chunk 140d.)</summary>
+    /// (Chunk 140d; Phase 33 ISO audit.)</summary>
     private static long? TryGetStreamPosition(Shumway.Core.StreamHandle h)
     {
         try
@@ -726,10 +734,16 @@ public static class MetaBuiltins
             // authoritative position source.
             if (h.BinaryStream is System.IO.Stream bs)
                 return bs.CanSeek ? bs.Position : null;
-            if (h.Reader is System.IO.StreamReader sr)
-                return sr.BaseStream.CanSeek ? sr.BaseStream.Position : null;
+            if (h.Reader is Shumway.Core.PositionTrackingReader ptr)
+                return ptr.Inner is System.IO.StreamReader sr && sr.BaseStream.CanSeek
+                    ? ptr.CharsConsumed
+                    : null;
             if (h.Writer is System.IO.StreamWriter sw)
-                return sw.BaseStream.CanSeek ? sw.BaseStream.Position : null;
+            {
+                if (!sw.BaseStream.CanSeek) return null;
+                sw.Flush();   // buffered chars must count toward the position
+                return sw.BaseStream.Position;
+            }
         }
         catch (NotSupportedException) { /* fall through */ }
         catch (ObjectDisposedException) { /* fall through */ }
@@ -737,10 +751,13 @@ public static class MetaBuiltins
     }
 
     /// <summary><c>set_stream_position(+Stream, +Position)</c> — ISO
-    /// §8.11.10. Seeks the underlying byte stream to the given
-    /// position. Position is an integer (byte offset), matching what
-    /// <c>stream_property(_, position(N))</c> yields. (Chunk 140d.)
-    /// </summary>
+    /// §8.11.10. Position is an integer matching what
+    /// <c>stream_property(_, position(N))</c> yields: characters
+    /// consumed for a text read stream, byte offset for binary and
+    /// write streams. A text read stream repositions by rewinding the
+    /// base stream, discarding the StreamReader's read-ahead buffer,
+    /// and re-consuming N characters — O(N), but exact for any
+    /// encoding. (Chunk 140d; Phase 33 ISO audit.)</summary>
     public static bool SetStreamPosition(Engine engine)
     {
         var h = Shumway.Builtins.StreamBuiltins.ResolveStream(
@@ -752,10 +769,21 @@ public static class MetaBuiltins
             throw new Shumway.Core.PrologRuntimeException("domain_error", "stream_position");
         long target = posCell.AsInt;
 
+        // Text read stream — reposition through the char-count tracker.
+        if (h.Reader is Shumway.Core.PositionTrackingReader ptr
+            && ptr.Inner is System.IO.StreamReader sr
+            && sr.BaseStream.CanSeek)
+        {
+            sr.BaseStream.Position = 0;
+            sr.DiscardBufferedData();
+            ptr.ResetCount();
+            for (long i = 0; i < target; i++)
+                if (ptr.Read() < 0) break;   // EOF before target — clamp
+            return true;
+        }
+
         System.IO.Stream? baseStream = h.BinaryStream
-            ?? (h.Reader is System.IO.StreamReader sr
-                ? sr.BaseStream
-                : h.Writer is System.IO.StreamWriter sw ? sw.BaseStream : null);
+            ?? (h.Writer is System.IO.StreamWriter sw ? sw.BaseStream : null);
         if (baseStream is null || !baseStream.CanSeek)
             throw new Shumway.Core.PrologRuntimeException(
                 "permission_error", "reposition,stream");
@@ -1392,6 +1420,43 @@ public static class MetaBuiltins
             host.Flags.EmitDebugInfo = valueName == "debug";
             return true;
         }
+        if (flagName == "char_conversion")
+        {
+            // ISO §7.11.2.1 — whether read-time character conversion
+            // (the chunk-152 table) is applied.
+            if (valueName != "on" && valueName != "off")
+                throw new ShumwayPrologException(
+                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+            host.Flags.CharConversionEnabled = valueName == "on";
+            return true;
+        }
+        if (flagName == "debug")
+        {
+            // ISO §7.11.2.2 — Shumway has no interactive debugger, but
+            // the flag itself is required; accepted and stored.
+            if (valueName != "on" && valueName != "off")
+                throw new ShumwayPrologException(
+                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+            host.Flags.Debug = valueName == "on";
+            return true;
+        }
+
+        // Phase 33 ISO audit — a flag that exists but is not user-
+        // settable raises permission_error(modify, flag, F) (ISO
+        // §8.17.1.3 c); only a flag that does not exist at all raises
+        // domain_error(prolog_flag, F).
+        switch (flagName)
+        {
+            case "bounded":
+            case "max_integer":
+            case "min_integer":
+            case "integer_rounding_function":
+            case "max_arity":
+            case "dialect":
+            case "argv":
+                throw new ShumwayPrologException(IsoError.PermissionError(
+                    "modify", "flag", new AtomTerm(flagName)));
+        }
 
         throw new ShumwayPrologException(
             IsoError.DomainError("prolog_flag", new AtomTerm(flagName)));
@@ -1411,8 +1476,8 @@ public static class MetaBuiltins
     /// flag state (engine doesn't yet vary behaviour on them).</item>
     /// <item><c>max_arity</c> — large integer constant.</item>
     /// </list>
-    /// With Flag unbound this builtin fails — full enumeration via
-    /// backtracking is a future chunk.</summary>
+    /// With Flag unbound, every flag is enumerated on backtracking
+    /// (ISO §8.17.2; Phase 33 ISO audit).</summary>
     public static bool CurrentPrologFlag(Engine engine)
     {
         if (engine.Host is not PrologEngine host)
@@ -1420,7 +1485,18 @@ public static class MetaBuiltins
                 "current_prolog_flag/2 requires the engine to be hosted by a PrologEngine.");
 
         Cell flagCell = ResolveLocal(engine, engine.GetRegister(0));
-        if (flagCell.Tag != Tag.Atom) return false;
+        if (flagCell.Tag == Tag.Ref)
+        {
+            // Unbound flag — enumerate every readable flag as a
+            // backtrackable cursor (the stream_property/2 pattern).
+            int returnPc = engine.BuiltinReturnPc;
+            return IndexEnumCursor.Start(
+                engine, EnumerableFlags.Length, 2, returnPc,
+                (e, i) => PrologFlagUnify(e, host, i));
+        }
+        if (flagCell.Tag != Tag.Atom)
+            throw new ShumwayPrologException(
+                IsoError.TypeError("atom", new VarTerm("_")));
         string flagName = AtomTable.GetById(flagCell.AsAtomId)?.Name ?? "";
 
         switch (flagName)
@@ -1467,6 +1543,12 @@ public static class MetaBuiltins
             case "compile_mode":
                 return UnifyAtom(engine, 1, host.Flags.EmitDebugInfo ? "debug" : "release");
 
+            case "char_conversion":
+                return UnifyAtom(engine, 1, host.Flags.CharConversionEnabled ? "on" : "off");
+
+            case "debug":
+                return UnifyAtom(engine, 1, host.Flags.Debug ? "on" : "off");
+
             case "max_arity":
                 // ISO requires this be either an integer or
                 // unbounded. Shumway's WAM register layout limits
@@ -1477,6 +1559,26 @@ public static class MetaBuiltins
             default:
                 return false;
         }
+    }
+
+    /// <summary>The flags <c>current_prolog_flag/2</c> enumerates when
+    /// its first argument is unbound. Every readable flag appears here;
+    /// the value is produced by the same bound-name switch.</summary>
+    private static readonly string[] EnumerableFlags =
+    {
+        "bounded", "max_arity", "integer_rounding_function",
+        "double_quotes", "unknown", "occurs_check", "char_conversion",
+        "debug", "dialect", "argv", "implicit_dynamic", "arity_compat",
+        "compile_mode",
+    };
+
+    private static bool PrologFlagUnify(Engine engine, PrologEngine host, int idx)
+    {
+        if (!UnifyAtom(engine, 0, EnumerableFlags[idx])) return false;
+        // Register 0's variable is now bound to the flag name, so
+        // re-entering the builtin takes the bound-name switch and
+        // unifies register 1 with the flag's value.
+        return CurrentPrologFlag(engine);
     }
 
     /// <summary>Constructs the AST Term for a Prolog list whose
@@ -3121,6 +3223,7 @@ public static class MetaBuiltins
     public static bool Call5(Engine engine) => CallN(engine, totalArity: 5);
     public static bool Call6(Engine engine) => CallN(engine, totalArity: 6);
     public static bool Call7(Engine engine) => CallN(engine, totalArity: 7);
+    public static bool Call8(Engine engine) => CallN(engine, totalArity: 8);
 
     /// <summary><c>'$call'(Goal, Barrier)</c> — the cut-barrier-carrying
     /// meta-call (chunk 88). It is intercepted by the bytecode interpreter

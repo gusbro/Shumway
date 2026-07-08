@@ -61,7 +61,7 @@ public class Chunk36Tests
         // parenthesised (commas separate args at priority 999).
         var engine = WithCaptureOut(out var sw);
         engine.Query("write(foo(a + b, c)).");
-        Assert.Equal("foo(a+b, c)", sw.ToString());
+        Assert.Equal("foo(a+b,c)", sw.ToString());   // Phase 33: compact ISO layout
     }
 
     // ---------- read_term_from_stream/2 ----------

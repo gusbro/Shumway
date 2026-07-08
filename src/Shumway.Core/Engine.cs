@@ -2512,6 +2512,30 @@ public sealed partial class Engine
         return sb.ToString();
     }
 
+    /// <summary>Phase 33 ISO audit — reads a PSTR chain's text starting
+    /// at the given (already dereferenced) <see cref="Tag.Pstr"/> cell
+    /// and returns the final non-PSTR tail cell (dereferenced), so
+    /// list-walking builtins (<c>atom_codes/2</c>, <c>number_codes/2</c>,
+    /// …) can consume a partial string as the code list it represents —
+    /// including a PSTR sitting in the tail of an ordinary cons chain,
+    /// e.g. <c>[0'a | "bc"]</c>.</summary>
+    public string ReadPstrChain(Cell header, out Cell tail)
+    {
+        var sb = new System.Text.StringBuilder(header.AsPstrLength);
+        while (header.Tag == Tag.Pstr)
+        {
+            int length = header.AsPstrLength;
+            for (int i = 0; i < length; i++)
+                sb.Append((char)GetPstrCodeUnit(header, i));
+            Cell t = _heap[ComputePstrTailIndex(header)];
+            if (t.Tag == Tag.Ref)
+                t = _heap[Deref(t.AsHeapIndex)];
+            header = t;
+        }
+        tail = header;
+        return sb.ToString();
+    }
+
     private void AppendPstrChain(System.Text.StringBuilder sb, Cell header)
     {
         while (header.Tag == Tag.Pstr)

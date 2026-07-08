@@ -179,7 +179,7 @@ public static class TermRenderer
         output.Write('(');
         for (int i = 0; i < arity; i++)
         {
-            if (i > 0) output.Write(", ");
+            if (i > 0) output.Write(',');   // ISO: no layout between args (Phase 33 audit)
             // Inside argument lists, comma is precedence 1000 in standard
             // Prolog so each arg can carry up to 999 priority without parens.
             Render(engine, engine.GetHeap(functorIdx + 1 + i), output, options, 999);
@@ -196,7 +196,7 @@ public static class TermRenderer
         {
             Resolve(engine, ref cursor);
             if (cursor.Tag != Tag.Lis) break;
-            if (!first) output.Write(", ");
+            if (!first) output.Write(',');   // ISO: no layout between elements (Phase 33 audit)
             int headIdx = cursor.AsHeapIndex;
             Render(engine, engine.GetHeap(headIdx), output, options);
             cursor = engine.GetHeap(headIdx + 1);
@@ -210,7 +210,7 @@ public static class TermRenderer
         }
         else
         {
-            output.Write(" | ");
+            output.Write('|');   // ISO: compact improper-list tail (Phase 33 audit)
             Render(engine, cursor, output, options);
         }
         output.Write(']');

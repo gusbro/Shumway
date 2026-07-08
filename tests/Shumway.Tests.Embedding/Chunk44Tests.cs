@@ -164,7 +164,9 @@ public class Chunk44Tests
     public void Arith_PowerIntegerExponent()
     {
         var engine = new PrologEngine();
-        Assert.Equal(Int(8), engine.Query("X is 2 ** 3.")["X"]);
+        // Phase 33 ISO audit — `**` is ISO §9.3.1 float power (8.0),
+        // `^` is ISO §9.3.10 integer exponentiation.
+        Assert.Equal(new FloatTerm(8.0), engine.Query("X is 2 ** 3.")["X"]);
         Assert.Equal(Int(1024), engine.Query("X is 2 ^ 10.")["X"]);
     }
 

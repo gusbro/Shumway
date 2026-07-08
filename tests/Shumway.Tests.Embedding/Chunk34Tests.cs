@@ -59,7 +59,7 @@ public class Chunk34Tests
     {
         var engine = WithCaptureOut(out var sw);
         engine.Query("write_term(a + b, [ignore_ops(true)]).");
-        Assert.Equal("+(a, b)", sw.ToString());
+        Assert.Equal("+(a,b)", sw.ToString());   // Phase 33: compact ISO layout
     }
 
     // ---------- atom_to_term/3 ----------

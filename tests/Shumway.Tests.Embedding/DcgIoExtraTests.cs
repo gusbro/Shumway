@@ -106,7 +106,7 @@ public class DcgIoExtraTests
     {
         var engine = WithCaptureOut(out var sw);
         engine.Query("write_canonical(foo(a, 1, [b])).");
-        Assert.Equal("foo(a, 1, [b])", sw.ToString());
+        Assert.Equal("foo(a,1,[b])", sw.ToString());   // Phase 33: compact ISO layout
     }
 
     [Fact]

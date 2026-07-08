@@ -185,6 +185,15 @@ public static class AtomCharBuiltins
                 : BuildCharAtomList(engine, s);
             return engine.UnifyRegisterWithHeapAt(1, listIdx);
         }
+        if (numCell.Tag == Tag.BigInt)
+        {
+            // Phase 33 ISO audit — a big integer renders like any int.
+            string s = engine.AsBigInt(numCell).ToString(CultureInfo.InvariantCulture);
+            int listIdx = asCodes
+                ? BuildIntCodesList(engine, s)
+                : BuildCharAtomList(engine, s);
+            return engine.UnifyRegisterWithHeapAt(1, listIdx);
+        }
 
         // List → numeric direction.
         if (numCell.Tag == Tag.Ref)
@@ -197,13 +206,13 @@ public static class AtomCharBuiltins
             string s = asCodes
                 ? ReadCodesToString(engine, strCell, builtinName)
                 : ReadCharAtomsToString(engine, strCell);
-            if (long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out long iv))
-                return engine.UnifyRegisterWithCell(0, Cell.Int(iv));
-            if (double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out double dv))
-            {
-                int idx = engine.MakeFloat(dv);
-                return engine.UnifyRegisterWithHeapAt(0, idx);
-            }
+            // Phase 33 ISO audit — full Prolog number syntax (§6.4.4):
+            // radix (0x/0o/0b), char code (0'c), BigInteger-size
+            // decimals, and floats; not just what long.TryParse knows.
+            if (TryBuildPrologNumber(engine, s, out Cell numResult, out int floatIdx))
+                return floatIdx >= 0
+                    ? engine.UnifyRegisterWithHeapAt(0, floatIdx)
+                    : engine.UnifyRegisterWithCell(0, numResult);
             // ISO: text that does not denote a number is a syntax error —
             // a catchable one, so catch/3 can recover.
             throw new PrologRuntimeException("syntax_error", "illegal_number");
@@ -211,6 +220,189 @@ public static class AtomCharBuiltins
 
         // First arg bound but not a number: ISO type_error(number, _).
         throw new PrologRuntimeException("type_error", "number");
+    }
+
+    /// <summary>Phase 33 ISO audit — parses ISO Prolog number syntax
+    /// (§6.4.4): optional leading layout, optional sign, then a decimal
+    /// integer (any size — BigInteger past long), a radix literal
+    /// (<c>0x</c>/<c>0o</c>/<c>0b</c>), a character-code literal
+    /// (<c>0'c</c>, with the quoted-char escapes), or a float
+    /// (<c>3.14</c>, <c>1.0e-5</c>, and the widely-accepted <c>1e5</c>).
+    /// On success either <paramref name="cell"/> holds an Int/BigInt cell
+    /// (<paramref name="floatIdx"/> = −1) or <paramref name="floatIdx"/>
+    /// is the heap index of a materialised float. Returns false when the
+    /// text is not a number (caller raises
+    /// <c>syntax_error(illegal_number)</c>).</summary>
+    internal static bool TryBuildPrologNumber(
+        Engine engine, string s, out Cell cell, out int floatIdx)
+    {
+        cell = default;
+        floatIdx = -1;
+        int i = 0, n = s.Length;
+        while (i < n && char.IsWhiteSpace(s[i])) i++;   // leading layout
+        bool neg = false;
+        if (i < n && (s[i] == '-' || s[i] == '+'))      // '+' is the lenient extension
+        {
+            neg = s[i] == '-';
+            i++;
+        }
+        if (i >= n || !char.IsDigit(s[i])) return false;
+
+        // Radix / char-code literals — all start "0<marker>".
+        if (s[i] == '0' && i + 1 < n)
+        {
+            char marker = s[i + 1];
+            if (marker == 'x' || marker == 'o' || marker == 'b')
+            {
+                int radix = marker == 'x' ? 16 : marker == 'o' ? 8 : 2;
+                int j = i + 2;
+                System.Numerics.BigInteger acc = 0;
+                int digits = 0;
+                while (j < n)
+                {
+                    int d = RadixDigitValue(s[j], radix);
+                    if (d < 0) break;
+                    acc = acc * radix + d;
+                    digits++; j++;
+                }
+                if (digits == 0 || j != n) return false;
+                return FinishInteger(engine, neg ? -acc : acc, ref cell);
+            }
+            if (marker == '\'')
+            {
+                if (!TryParseCharCodeLiteral(s, i + 2, out long code)) return false;
+                cell = Cell.Int(neg ? -code : code);
+                return true;
+            }
+        }
+
+        // Decimal integer / float.
+        int start = i;
+        while (i < n && char.IsDigit(s[i])) i++;
+        if (i == n)
+        {
+            var acc = System.Numerics.BigInteger.Parse(
+                s.Substring(start), CultureInfo.InvariantCulture);
+            return FinishInteger(engine, neg ? -acc : acc, ref cell);
+        }
+        // Float: fraction and/or exponent after the integer part.
+        bool sawFraction = false;
+        if (s[i] == '.' && i + 1 < n && char.IsDigit(s[i + 1]))
+        {
+            sawFraction = true;
+            i += 2;
+            while (i < n && char.IsDigit(s[i])) i++;
+        }
+        bool sawExponent = false;
+        if (i < n && (s[i] == 'e' || s[i] == 'E'))
+        {
+            int j = i + 1;
+            if (j < n && (s[j] == '+' || s[j] == '-')) j++;
+            if (j < n && char.IsDigit(s[j]))
+            {
+                sawExponent = true;
+                i = j + 1;
+                while (i < n && char.IsDigit(s[i])) i++;
+            }
+        }
+        if (!sawFraction && !sawExponent) return false;
+        if (i != n) return false;
+        if (!double.TryParse(s.Substring(start), NumberStyles.Float,
+                CultureInfo.InvariantCulture, out double dv))
+            return false;
+        floatIdx = engine.MakeFloat(neg ? -dv : dv);
+        return true;
+    }
+
+    private static bool FinishInteger(
+        Engine engine, System.Numerics.BigInteger value, ref Cell cell)
+    {
+        cell = value >= long.MinValue && value <= long.MaxValue
+            ? Cell.Int((long)value)
+            : engine.MakeBigInt(value);
+        return true;
+    }
+
+    private static int RadixDigitValue(char c, int radix)
+    {
+        int v = c switch
+        {
+            >= '0' and <= '9' => c - '0',
+            >= 'a' and <= 'f' => c - 'a' + 10,
+            >= 'A' and <= 'F' => c - 'A' + 10,
+            _ => -1,
+        };
+        return v >= 0 && v < radix ? v : -1;
+    }
+
+    /// <summary>Parses the character part of a <c>0'…</c> literal
+    /// starting at <paramref name="i"/>; the literal must consume the
+    /// whole remaining string. Handles <c>0'''</c> (quoted quote), the
+    /// single-char control escapes, and <c>\x…\</c> / octal
+    /// <c>\…\</c>.</summary>
+    private static bool TryParseCharCodeLiteral(string s, int i, out long code)
+    {
+        code = 0;
+        int n = s.Length;
+        if (i >= n) return false;
+        char c = s[i];
+        if (c == '\'')
+        {
+            // 0''' — the quote char, written doubled.
+            if (i + 1 < n && s[i + 1] == '\'' && i + 2 == n) { code = '\''; return true; }
+            return false;
+        }
+        if (c != '\\')
+        {
+            if (i + 1 != n) return false;
+            code = c;
+            return true;
+        }
+        // Backslash escape.
+        i++;
+        if (i >= n) return false;
+        char e = s[i];
+        switch (e)
+        {
+            case 'n': code = '\n'; return i + 1 == n;
+            case 't': code = '\t'; return i + 1 == n;
+            case 'r': code = '\r'; return i + 1 == n;
+            case 'a': code = 7;    return i + 1 == n;
+            case 'b': code = 8;    return i + 1 == n;
+            case 'f': code = 12;   return i + 1 == n;
+            case 'v': code = 11;   return i + 1 == n;
+            case '\\': code = '\\'; return i + 1 == n;
+            case '\'': code = '\''; return i + 1 == n;
+            case '"': code = '"';  return i + 1 == n;
+            case '`': code = '`';  return i + 1 == n;
+            case 'x':
+            {
+                // \xHH…\ — hex code terminated by a backslash.
+                long acc = 0; int j = i + 1; int digits = 0;
+                while (j < n && RadixDigitValue(s[j], 16) >= 0)
+                {
+                    acc = acc * 16 + RadixDigitValue(s[j], 16);
+                    digits++; j++;
+                }
+                if (digits == 0 || j >= n || s[j] != '\\' || j + 1 != n) return false;
+                code = acc;
+                return true;
+            }
+            case >= '0' and <= '7':
+            {
+                // \NNN\ — octal code terminated by a backslash.
+                long acc = 0; int j = i; int digits = 0;
+                while (j < n && s[j] >= '0' && s[j] <= '7')
+                {
+                    acc = acc * 8 + (s[j] - '0');
+                    digits++; j++;
+                }
+                if (digits == 0 || j >= n || s[j] != '\\' || j + 1 != n) return false;
+                code = acc;
+                return true;
+            }
+            default: return false;
+        }
     }
 
     // ---------- atom_number/2 ----------
@@ -225,12 +417,12 @@ public static class AtomCharBuiltins
         if (atomCell.Tag == Tag.Atom)
         {
             string name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
-            if (long.TryParse(name, NumberStyles.Integer,
-                    CultureInfo.InvariantCulture, out long iv))
-                return engine.UnifyRegisterWithCell(1, Cell.Int(iv));
-            if (double.TryParse(name, NumberStyles.Float,
-                    CultureInfo.InvariantCulture, out double dv))
-                return engine.UnifyRegisterWithHeapAt(1, engine.MakeFloat(dv));
+            // Phase 33 ISO audit — full Prolog number syntax (radix,
+            // 0'c, BigInteger, floats), same parser as number_codes/2.
+            if (TryBuildPrologNumber(engine, name, out Cell numCell2, out int fIdx))
+                return fIdx >= 0
+                    ? engine.UnifyRegisterWithHeapAt(1, fIdx)
+                    : engine.UnifyRegisterWithCell(1, numCell2);
             return false;   // not numeric — fail, do not throw
         }
 
@@ -413,8 +605,17 @@ public static class AtomCharBuiltins
     {
         var sb = new StringBuilder();
         Cell cursor = Resolve(engine, codesCell);
-        while (cursor.Tag == Tag.Lis)
+        while (true)
         {
+            // Phase 33 ISO audit — a PSTR (double-quoted literal under
+            // the default flag) IS a code list; consume its text and
+            // continue at its tail.
+            if (cursor.Tag == Tag.Pstr)
+            {
+                sb.Append(engine.ReadPstrChain(cursor, out cursor));
+                continue;
+            }
+            if (cursor.Tag != Tag.Lis) break;
             Cell head = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex));
             // ISO §8.16.7 / §8.16.8 type errors: a non-int element is
             // type_error(character_code); an unbound element is
@@ -439,6 +640,11 @@ public static class AtomCharBuiltins
     {
         var sb = new StringBuilder();
         Cell cursor = Resolve(engine, charsCell);
+        // Phase 33 ISO audit — a PSTR is a CODE list, not a char list;
+        // its elements are integers, so the ISO element-type error
+        // applies (type_error(character)), not type_error(list).
+        if (cursor.Tag == Tag.Pstr)
+            throw new PrologRuntimeException("type_error", "character");
         while (cursor.Tag == Tag.Lis)
         {
             Cell head = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex));

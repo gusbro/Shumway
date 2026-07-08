@@ -23,7 +23,7 @@ public class Chunk28Tests
         var engine = new PrologEngine();
         var sol = engine.Query("term_to_atom(foo(1, 2), A).");
         Assert.True(sol.Success);
-        Assert.Equal(Atom("foo(1, 2)"), sol["A"]);
+        Assert.Equal(Atom("foo(1,2)"), sol["A"]);   // Phase 33: compact ISO layout
     }
 
     [Fact]

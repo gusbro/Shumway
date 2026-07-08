@@ -112,6 +112,13 @@ public sealed class PrologFlags
     /// programs written for other Prolog implementations.</para></summary>
     public bool ImplicitDynamic { get; set; } = true;
 
+    /// <summary>ISO <c>debug</c> flag (§7.11.2.2), as a boolean
+    /// (<c>on</c> → <c>true</c>). Shumway has no interactive debugger,
+    /// but ISO requires the flag to exist and be settable; stored so
+    /// it round-trips through <c>set_prolog_flag</c> /
+    /// <c>current_prolog_flag</c>. Default <c>off</c>.</summary>
+    public bool Debug { get; set; }
+
     /// <summary>The <c>compile_mode</c> prolog flag, as a boolean: whether
     /// consult/assert emit the <c>meta dbg_info</c> source-position markers used
     /// to resolve clause-level positions for error stack traces. The flag's atom

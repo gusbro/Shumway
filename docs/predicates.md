@@ -102,8 +102,10 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `call(:Goal, +Extra1, ..., +Extra4)` | Calls a goal extended with four extra arguments. |
 | `call(:Goal, +Extra1, ..., +Extra5)` | Calls a goal extended with five extra arguments. |
 | `call(:Goal, +Extra1, ..., +Extra6)` | Calls a goal extended with six extra arguments. |
+| `call(:Goal, +Extra1, ..., +Extra7)` | Calls a goal extended with seven extra arguments (ISO requires call/2..8). |
 | `catch(:Goal, ?Catcher, :Recovery)` | Runs Goal; if it throws a ball unifying Catcher, runs Recovery instead. |
 | `fail` | Always fails. |
+| `false` | Always fails — ISO synonym of fail/0. |
 | `forall(:Condition, :Action)` | Succeeds if Action holds for every solution of Condition. |
 | `garbage_collect` | Mark-compacts the heap, reclaiming cells unreachable from the live machine state (ADR-016). Always succeeds. |
 | `get_cpu_time(-Time)` | Binds Time to the process CPU time so far, in milliseconds (GNU-Prolog timing primitive). |

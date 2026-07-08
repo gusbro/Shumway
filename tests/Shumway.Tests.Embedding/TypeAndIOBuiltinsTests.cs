@@ -135,7 +135,7 @@ public class TypeAndIOBuiltinsTests
         engine.Out = sw;
 
         Assert.True(engine.Query("write(foo(a, 1)).").Success);
-        Assert.Equal("foo(a, 1)", sw.ToString());
+        Assert.Equal("foo(a,1)", sw.ToString());   // Phase 33: compact ISO layout
     }
 
     [Fact]
@@ -146,7 +146,7 @@ public class TypeAndIOBuiltinsTests
         engine.Out = sw;
 
         Assert.True(engine.Query("write([a, b, c]).").Success);
-        Assert.Equal("[a, b, c]", sw.ToString());
+        Assert.Equal("[a,b,c]", sw.ToString());   // Phase 33: compact ISO layout
     }
 
     [Fact]
@@ -159,7 +159,7 @@ public class TypeAndIOBuiltinsTests
         // [a | T] where T is unbound — renders with " | _Gn" tail.
         Assert.True(engine.Query("write([a | T]).").Success);
         string output = sw.ToString();
-        Assert.StartsWith("[a | _G", output);
+        Assert.StartsWith("[a|_G", output);   // Phase 33: compact ISO layout
         Assert.EndsWith("]", output);
     }
 

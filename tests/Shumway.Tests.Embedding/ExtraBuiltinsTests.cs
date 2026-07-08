@@ -87,7 +87,7 @@ public class ExtraBuiltinsTests
     {
         var engine = WithCaptureOut(out var sw);
         engine.Query("write_term(foo(1, bar), []).");
-        Assert.Equal("foo(1, bar)", sw.ToString());
+        Assert.Equal("foo(1,bar)", sw.ToString());   // Phase 33: compact ISO layout
     }
 
     // ---------- sub_atom/5 ----------

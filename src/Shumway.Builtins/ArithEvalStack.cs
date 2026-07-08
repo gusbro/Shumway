@@ -434,6 +434,11 @@ public static class ArithEvalStack
                 r = a % b;                         // ISO mod: sign of the divisor
                 if (r != 0 && ((r ^ b) < 0)) r += b;
                 return true;
+            case ArithmeticEvaluator.BinOp.IntDivFloor:
+                if (b == 0) { r = 0; return false; }
+                r = a / b;                         // ISO div: floor division
+                if (a % b != 0 && ((a ^ b) < 0)) r--;
+                return true;
             default:
                 r = 0;
                 return false;

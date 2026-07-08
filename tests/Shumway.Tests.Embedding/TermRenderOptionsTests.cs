@@ -74,7 +74,7 @@ public class TermRenderOptionsTests
         engine.Query(
             "numbervars(p(X, Y, Z), 0, _), "
             + "write_term(p(X, Y, Z), [numbervars(true)]).");
-        Assert.Equal("p(A, B, C)", sw.ToString());
+        Assert.Equal("p(A,B,C)", sw.ToString());   // Phase 33: compact ISO layout
     }
 
     [Fact]
@@ -103,7 +103,7 @@ public class TermRenderOptionsTests
         engine.Query(
             "write_term(foo('weird atom', '$VAR'(0)), "
             + "[quoted(true), numbervars(true)]).");
-        Assert.Equal("foo('weird atom', A)", sw.ToString());
+        Assert.Equal("foo('weird atom',A)", sw.ToString());   // Phase 33: compact ISO layout
     }
 
     // ---------- write/1 is unchanged ----------

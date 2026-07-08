@@ -48,11 +48,21 @@ public static class ArithmeticEvaluator
 
     private static Number EvaluateAtomConstant(Engine engine, Cell atomCell)
     {
-        // ISO §7.1.2 / §7.8.7: an atom in arithmetic position that isn't
-        // a recognised arithmetic constant raises type_error(evaluable,
-        // Name/0). Shumway currently recognises no atom constants
-        // (pi, e, max_tagged_integer, … all still to come), so every
-        // bound atom hits this path.
+        // ISO §9: recognised arithmetic constants. `pi` is the one ISO
+        // constant (GProlog's table marks e / epsilon as extensions; they
+        // are cheap to accept alongside).
+        string? name = AtomTable.GetById(atomCell.AsAtomId)?.Name;
+        switch (name)
+        {
+            case "pi": return new Number(Math.PI);
+            case "e": return new Number(Math.E);
+            // Machine epsilon (2^-52): difference between 1.0 and the
+            // smallest float > 1.0 — NOT .NET's double.Epsilon (the
+            // smallest positive denormal).
+            case "epsilon": return new Number(Math.Pow(2, -52));
+        }
+        // ISO §7.1.2 / §7.8.7: any other atom in arithmetic position
+        // raises type_error(evaluable, Name/0).
         //
         // Chunk 144 carries the offending atom cell as the
         // exception's Value, so a catcher matching
@@ -120,6 +130,9 @@ public static class ArithmeticEvaluator
     {
         Add, Sub, Mul, Div, IntDiv, Mod, Rem, Min, Max, Pow,
         BitAnd, BitOr, Xor, Shl, Shr, Gcd, Atan2,
+        // Phase 33 ISO audit — appended so existing encodings stay stable.
+        IntDivFloor,   // (div)/2 — integer division rounding toward -inf
+        PowFloat,      // (**)/2 — ISO: result is ALWAYS a float (^ keeps IF)
     }
 
     public enum UnOp : byte
@@ -141,11 +154,15 @@ public static class ArithmeticEvaluator
             case "*": op = BinOp.Mul; return true;
             case "/": op = BinOp.Div; return true;
             case "//": op = BinOp.IntDiv; return true;
+            case "div": op = BinOp.IntDivFloor; return true;
             case "mod": op = BinOp.Mod; return true;
             case "rem": op = BinOp.Rem; return true;
             case "min": op = BinOp.Min; return true;
             case "max": op = BinOp.Max; return true;
-            case "**": case "^": op = BinOp.Pow; return true;
+            // ISO 9.3.1 vs 9.3.10: `**` always yields a FLOAT; `^` yields an
+            // integer for integer operands (integer power).
+            case "**": op = BinOp.PowFloat; return true;
+            case "^": op = BinOp.Pow; return true;
             case "/\\": op = BinOp.BitAnd; return true;
             case "\\/": op = BinOp.BitOr; return true;
             case "xor": op = BinOp.Xor; return true;
@@ -223,8 +240,33 @@ public static class ArithmeticEvaluator
         BinOp.Shr => ShiftRight(a, b),
         BinOp.Gcd => Gcd(a, b),
         BinOp.Atan2 => new Number(Math.Atan2(a.AsDouble(), b.AsDouble())),
+        BinOp.IntDivFloor => FloorDivide(a, b),
+        BinOp.PowFloat => new Number(Math.Pow(a.AsDouble(), b.AsDouble())),
         _ => throw new PrologRuntimeException("type_error", "evaluable"),
     };
+
+    /// <summary>ISO <c>(div)/2</c> — integer division rounding toward
+    /// negative infinity (pairs with <c>mod</c> the way <c>//</c> pairs
+    /// with <c>rem</c>).</summary>
+    private static Number FloorDivide(Number a, Number b)
+    {
+        if (a.IsFloat || b.IsFloat)
+            throw new PrologRuntimeException("type_error", "integer");
+        if (a.IsBig || b.IsBig)
+        {
+            BigInteger bigA = a.AsBigInteger();
+            BigInteger bigB = b.AsBigInteger();
+            if (bigB.IsZero) throw new PrologRuntimeException("evaluation_error", "zero_divisor");
+            BigInteger q = BigInteger.DivRem(bigA, bigB, out BigInteger r);
+            if (!r.IsZero && r.Sign != bigB.Sign) q -= 1;
+            return new Number(q);
+        }
+        if (b.IntValue == 0) throw new PrologRuntimeException("evaluation_error", "zero_divisor");
+        long qi = a.IntValue / b.IntValue;
+        long ri = a.IntValue % b.IntValue;
+        if (ri != 0 && (ri < 0) != (b.IntValue < 0)) qi--;
+        return new Number(qi);
+    }
 
     /// <summary>Applies a unary op to an already-evaluated number.</summary>
     public static Number ApplyUn(UnOp op, Number a) => op switch

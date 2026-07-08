@@ -65,6 +65,7 @@ internal static class Prelude
         :- public atomic_list_concat/2.
         :- public atomic_list_concat/3.
         :- public char_type/2.
+        :- public false/0.
         :- public once/1.
         :- public ignore/1.
         :- public chdir/1.
@@ -493,6 +494,9 @@ internal static class Prelude
         '$ascii_space'(C) :- C >= 9, C =< 13.
 
         % ===== control, database & inspection (chunk 98) =====
+
+        %! false | Control | Always fails — ISO synonym of fail/0.
+        false :- fail.
 
         %! once(:Goal) | Control | Succeeds at most once — commits to the first solution of Goal.
         once(Goal) :- call(Goal), !.

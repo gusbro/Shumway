@@ -93,7 +93,9 @@ public class TermIoConformance : IDisposable
         var e = new PrologEngine();
         Assert.True(e.Query(
             $"open('{path}', write, S), write(S, foo(1, 2)), close(S).").Success);
-        Assert.Equal("foo(1, 2)", File.ReadAllText(_tempPath));
+        // Phase 33 ISO audit — no layout between arguments, matching
+        // GNU Prolog / SWI (`foo(1,2)`).
+        Assert.Equal("foo(1,2)", File.ReadAllText(_tempPath));
     }
 
     [Fact]
@@ -146,7 +148,7 @@ public class TermIoConformance : IDisposable
         // both read back the same term. Pin the functional-vs-operator
         // distinction without baking the renderer's quoting choice in.
         var written = File.ReadAllText(_tempPath);
-        Assert.Contains("(1, 2)", written);
+        Assert.Contains("(1,2)", written);   // Phase 33: compact ISO layout
         Assert.DoesNotContain(" + ", written);
     }
 
@@ -182,7 +184,8 @@ public class TermIoConformance : IDisposable
         var e = new PrologEngine();
         Assert.True(e.Query(
             $"open('{path}', write, S), write_term(S, 1 + 2, [ignore_ops(true)]), close(S).").Success);
-        Assert.Equal("+(1, 2)", File.ReadAllText(_tempPath));
+        // Phase 33 ISO audit — compact layout, matching GNU Prolog.
+        Assert.Equal("+(1,2)", File.ReadAllText(_tempPath));
     }
 
     [Fact]

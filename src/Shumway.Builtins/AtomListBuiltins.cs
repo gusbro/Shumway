@@ -366,8 +366,16 @@ public static class AtomListBuiltins
         // Chunk 131c: an unbound code list at entry is instantiation_error.
         if (cursor.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
-        while (cursor.Tag == Tag.Lis)
+        while (true)
         {
+            // Phase 33 ISO audit — a PSTR is a code list; consume its
+            // text and continue at its tail.
+            if (cursor.Tag == Tag.Pstr)
+            {
+                sb.Append(engine.ReadPstrChain(cursor, out cursor));
+                continue;
+            }
+            if (cursor.Tag != Tag.Lis) break;
             Cell head = Resolve(engine, engine.GetHeap(cursor.AsHeapIndex));
             if (head.Tag == Tag.Ref)
                 throw new PrologRuntimeException("instantiation_error");
