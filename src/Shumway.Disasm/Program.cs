@@ -39,6 +39,7 @@ internal static class Program
         string? inputPath = null;
         var filter = new List<(string, int)>();
         bool emitDebugInfo = false;   // default: release (what the engine runs by default)
+        bool arityCompat = false;     // --arity: lex Arity/Prolog32 sources
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -53,6 +54,9 @@ internal static class Program
                     break;
                 case "--release":
                     emitDebugInfo = false;
+                    break;
+                case "-a" or "--arity":
+                    arityCompat = true;
                     break;
                 case "-e" or "--eval":
                     if (++i >= args.Length) return Usage("missing source after " + a);
@@ -91,7 +95,7 @@ internal static class Program
         try
         {
             entries = PredicateDisassembler.Disassemble(
-                source, filter.Count > 0 ? filter : null, emitDebugInfo);
+                source, filter.Count > 0 ? filter : null, emitDebugInfo, arityCompat);
         }
         catch (Exception ex)
         {

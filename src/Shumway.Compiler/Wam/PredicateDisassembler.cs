@@ -27,15 +27,26 @@ public static class PredicateDisassembler
     public static IReadOnlyList<Entry> Disassemble(
         string source,
         IReadOnlyCollection<(string Name, int Arity)>? filter = null,
-        bool emitDebugInfo = false)
+        bool emitDebugInfo = false,
+        bool arityCompat = false)
     {
         ArgumentNullException.ThrowIfNull(source);
+        // Phase 30 Arity/Prolog32 sources ($...$ atoms, #line markers, the
+        // `extrn` declaration operator) lex only with arity_compat on — the
+        // corpus files under C:\temp\test / testGen start with a `#line`
+        // directive, so the flag must be set before the first token.
+        ClauseReader reader = arityCompat
+            ? new ClauseReader(
+                new global::Shumway.Compiler.Lexer.Lexer(source),
+                OperatorTable.Default(),
+                new Parsing.PrologFlags { ArityCompat = true })
+            : new ClauseReader(source);
         // Same transform pipeline the engine runs (DCG + meta-call lowering +
         // phrase + mode specialization), so the disassembly is exactly what the
         // interpreter executes — including the synthesised if-then-else / `\+`
         // helper predicates. A mode-free table makes specialization a no-op.
         var clauses = ClausePipeline.Apply(
-            new ClauseReader(source).ReadAll(), new Modes.ModeTable());
+            reader.ReadAll(), new Modes.ModeTable());
 
         // Group by (head functor, arity), preserving first-seen order.
         var order = new List<(string Name, int Arity)>();
