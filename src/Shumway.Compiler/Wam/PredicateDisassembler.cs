@@ -128,7 +128,8 @@ public static class PredicateDisassembler
     /// that would discriminate (or -1).</summary>
     public sealed record IndexAuditEntry(
         string Name, int Arity, int Clauses, string Category,
-        int WorstBucket, int PotAtomInt, int PotStruct, int DiscrimArg, string WorstKey);
+        int WorstBucket, int PotAtomInt, int PotStruct, int PotStructNoWild,
+        int CutPct, bool Det, int DiscrimArg, string WorstKey);
 
     /// <summary>Parses <paramref name="source"/>, groups static predicates, and
     /// returns an indexing verdict for each with ≥1 clause. Categories:
@@ -171,11 +172,24 @@ public static class PredicateDisassembler
         return result;
     }
 
+    /// <summary>The outcome of splitting a clause set by an indexing key at some
+    /// position: <see cref="Res"/> = worst-case residual scan (largest key-group +
+    /// wildcards that merge into every group); <see cref="GroupMax"/> = that
+    /// largest key-group WITHOUT the wildcards — the residual once a committed
+    /// (cutting) target prunes the trailing wildcard/var clauses; <see cref="Arg"/>
+    /// = the 0-based sibling arg chosen (-1 for a sub-arg path). A default with
+    /// <c>Res == int.MaxValue</c> means "no partitioning position found".</summary>
+    private readonly record struct Split(int Res, int GroupMax, int Wild, int Arg)
+    {
+        public static readonly Split None = new(int.MaxValue, 0, 0, -1);
+        public bool Partitions => Res != int.MaxValue;
+    }
+
     private static IndexAuditEntry AnalyzePredicate(string name, int arity, List<Clause> clauses)
     {
         int n = clauses.Count;
         if (arity == 0)
-            return new IndexAuditEntry(name, arity, n, "NOARG", n, n, n, -1, "-");
+            return new IndexAuditEntry(name, arity, n, "NOARG", n, n, n, n, 0, false, -1, "-");
 
         // Head args per clause.
         var heads = new List<Term[]>(n);
@@ -206,41 +220,44 @@ public static class PredicateDisassembler
         }
 
         if (worstBase <= 2)
-            return new IndexAuditEntry(name, arity, n, "INDEXED_OK", worstBase, worstBase, worstBase, -1, worstKey);
+            return new IndexAuditEntry(name, arity, n, "INDEXED_OK",
+                worstBase, worstBase, worstBase, worstBase, 0, worstBase <= 1, -1, worstKey);
 
         // The clauses a ground call to worstKey actually scans = bucket ∪ var.
         var scanned = worstKey == "var" ? varClauses : Concat(worst, varClauses);
         bool keyIsListOrStruct = worstKey == "list" || worstKey.StartsWith("struct:", StringComparison.Ordinal);
 
-        // --- Capability A: atom/int keys only (today's switch_on_{atom,integer}
-        //     value tables — ADR-027 sub for list/struct, sibling on the var path).
-        int subAI = keyIsListOrStruct ? ProbeSubArg(heads, worst, varN, structKeys: false) : -1;
-        int sibAI = ProbeSibling(heads, scanned, structKeys: false, out int argAI);
-        int potAI = MinReduce(worstBase, subAI, sibAI);
+        // Fraction of the scanned chain whose clause body commits (a top-level cut).
+        // A committed target prunes the trailing wildcard/var clauses, so the
+        // realistic residual is GroupMax, not GroupMax+Wild (the user's point).
+        int cutCount = 0;
+        foreach (int ci in scanned) if (BodyCommits(clauses[ci])) cutCount++;
+        int cutPct = scanned.Count == 0 ? 0 : (int)Math.Round(100.0 * cutCount / scanned.Count);
 
-        // --- Capability B: add structure-functor / list keys (switch_on_structure
-        //     _sub / _arg — the addlay_p list-head-functor case). Superset of A.
-        int subB = keyIsListOrStruct ? ProbeSubArg(heads, worst, varN, structKeys: true) : -1;
-        int sibB = ProbeSibling(heads, scanned, structKeys: true, out int argB);
-        int potStruct = MinReduce(potAI, subB, sibB);
+        // --- Capability A: atom/int keys only. --- Capability B: + structure keys.
+        Split aiSub = keyIsListOrStruct ? ProbeSubArg(heads, worst, varN, structKeys: false) : Split.None;
+        Split aiSib = ProbeSibling(heads, scanned, structKeys: false);
+        Split ai = Min(aiSub, aiSib);
+        Split bSub = keyIsListOrStruct ? ProbeSubArg(heads, worst, varN, structKeys: true) : Split.None;
+        Split bSib = ProbeSibling(heads, scanned, structKeys: true);
+        Split bcap = Min(Min(bSub, bSib), ai);   // B is a superset of A
 
-        string cat; int discrim = -1;
-        if (potAI < worstBase)
-        {
-            cat = "IDX_ATOMINT";                       // reducible with today's cheap keys
-            if (sibAI == potAI && sibAI >= 0) discrim = argAI + 1;
-        }
-        else if (potStruct < worstBase)
-        {
-            cat = "IDX_STRUCT";                        // needs structure-keyed indexing (the increment)
-            if (sibB == potStruct && sibB >= 0) discrim = argB + 1;
-        }
-        else if (varN >= (worstKey == "var" ? n : worst.Count))
-            cat = "VAR_HEADED";                        // var clauses dominate; nothing to key on
-        else
-            cat = "OVERLAP";                           // no discriminator at any position, any key type
+        int potAI = ai.Partitions && ai.Res < worstBase ? ai.Res : worstBase;
+        int potStruct = bcap.Partitions && bcap.Res < worstBase ? bcap.Res : worstBase;
+        // Cut-aware residual: the winning split's largest key-group, wildcards
+        // pruned. Deterministic when that group is a singleton.
+        Split win = bcap.Partitions && bcap.Res < worstBase ? bcap : (ai.Partitions ? ai : Split.None);
+        int potNoWild = win.Partitions ? win.GroupMax : potStruct;
+        bool det = win.Partitions && win.GroupMax <= 1;
 
-        return new IndexAuditEntry(name, arity, n, cat, worstBase, potAI, potStruct, discrim, worstKey);
+        string cat; int discrim = win.Arg >= 0 ? win.Arg + 1 : -1;
+        if (potAI < worstBase) cat = "IDX_ATOMINT";
+        else if (potStruct < worstBase) cat = "IDX_STRUCT";
+        else if (varN >= (worstKey == "var" ? n : worst.Count)) { cat = "VAR_HEADED"; det = false; }
+        else { cat = "OVERLAP"; det = false; }
+
+        return new IndexAuditEntry(name, arity, n, cat,
+            worstBase, potAI, potStruct, potNoWild, cutPct, det, discrim, worstKey);
     }
 
     private static List<int> Concat(List<int> a, List<int> b)
@@ -250,31 +267,42 @@ public static class PredicateDisassembler
         return r;
     }
 
-    /// <summary>The smallest of <paramref name="cur"/> and any non-negative
-    /// reduction that actually improves on it.</summary>
-    private static int MinReduce(int cur, int a, int b)
+    private static Split Min(Split a, Split b) => a.Res <= b.Res ? a : b;
+
+    /// <summary>Does the clause body commit via a top-level cut (a <c>!</c>
+    /// conjunct in the main <c>,</c>-chain)? If so, entering it prunes the
+    /// choice points to later clauses — so an index that routes here makes the
+    /// call deterministic regardless of trailing match-all clauses. Descends
+    /// only through <c>,</c>/2 (a cut inside <c>;</c>/<c>-&gt;</c> is scoped and
+    /// does not prune sibling clauses).</summary>
+    private static bool BodyCommits(Clause c)
     {
-        int best = cur;
-        if (a >= 0 && a < best) best = a;
-        if (b >= 0 && b < best) best = b;
-        return best;
+        if (c.Kind != ClauseKind.Rule || c.Term is not CompoundTerm r || r.Args.Length != 2)
+            return false;
+        return TopLevelCut(r.Args[1]);
+
+        static bool TopLevelCut(Term t) => t switch
+        {
+            AtomTerm a => a.Name == "!",
+            CompoundTerm c when c.Functor == "," && c.Args.Length == 2 =>
+                TopLevelCut(c.Args[0]) || TopLevelCut(c.Args[1]),
+            _ => false,
+        };
     }
 
-    /// <summary>Best worst-case sub-bucket over sibling args j≥1: for each arg
-    /// position, split the clauses by principal key (a var at that position joins
-    /// every split); returns the smallest resulting worst-split with ≥2 distinct
-    /// keys, else -1. <paramref name="structKeys"/> false = only atom/int values
-    /// discriminate (var/compound/list are wildcards — the cheap capability);
-    /// true = struct-functor and list also discriminate (structure-keyed).
-    /// <paramref name="bestArg"/> receives the 0-based arg index chosen.</summary>
-    private static int ProbeSibling(List<Term[]> heads, List<int> clauseIdxs, bool structKeys, out int bestArg)
+    /// <summary>Best split over sibling args j≥1: for each arg position, partition
+    /// the clauses by key (a var at that position is a wildcard joining every
+    /// group). <paramref name="structKeys"/> false = only atom/int values
+    /// discriminate (the cheap capability); true = struct-functor and list also
+    /// discriminate (structure-keyed). Returns the minimal-residual split, or
+    /// <see cref="Split.None"/>.</summary>
+    private static Split ProbeSibling(List<Term[]> heads, List<int> clauseIdxs, bool structKeys)
     {
-        bestArg = -1;
-        if (clauseIdxs.Count == 0) return -1;
+        if (clauseIdxs.Count == 0) return Split.None;
         int maxArity = 0;
         foreach (int ci in clauseIdxs) maxArity = Math.Max(maxArity, heads[ci].Length);
 
-        int best = int.MaxValue;
+        Split best = Split.None;
         for (int j = 1; j < maxArity; j++)
         {
             var byKey = new Dictionary<string, int>();
@@ -287,32 +315,29 @@ public static class PredicateDisassembler
                 byKey[k] = byKey.TryGetValue(k, out int c) ? c + 1 : 1;
             }
             if (byKey.Count < 2) continue;      // no discrimination at this arg
-            int worstSplit = 0;
-            foreach (int c in byKey.Values) worstSplit = Math.Max(worstSplit, c);
-            worstSplit += wild;                  // wildcard clauses merge everywhere
-            if (worstSplit < best) { best = worstSplit; bestArg = j; }
+            int groupMax = 0;
+            foreach (int c in byKey.Values) groupMax = Math.Max(groupMax, c);
+            int res = groupMax + wild;           // wildcard clauses merge everywhere
+            if (res < best.Res) best = new Split(res, groupMax, wild, j);
         }
-        return best == int.MaxValue ? -1 : best;
+        return best;
     }
 
-    /// <summary>Sub-path indexing model: does a sub-path into arg0 (the list head
-    /// / a struct sub-arg; depth ≤ 2) split the bucket into ≥2 distinct keys?
-    /// <paramref name="structKeys"/> false = ADR-027 v1 (homogeneous atom/int
-    /// sub-keys); true = also key on the sub-term's functor (structure-keyed sub,
-    /// the deferred variant — the <c>addlay_p</c> list-head-functor case).
-    /// Returns the worst-split residual or -1 if no such path.</summary>
-    private static int ProbeSubArg(List<Term[]> heads, List<int> bucket, int varN, bool structKeys)
+    /// <summary>Best split over a sub-path into arg0 (the list head / a struct
+    /// sub-arg; depth ≤ 2). <paramref name="structKeys"/> false = ADR-027 v1
+    /// (homogeneous atom/int sub-keys); true = also key on the sub-term's functor
+    /// (structure-keyed sub — the <c>addlay_p</c> list-head-functor case).</summary>
+    private static Split ProbeSubArg(List<Term[]> heads, List<int> bucket, int varN, bool structKeys)
     {
-        int best = int.MaxValue;
+        Split best = Split.None;
         const int maxSub = 8;
 
-        // depth-1 and depth-2 sub positions in one sweep.
         for (int s = 0; s < maxSub; s++)
         {
             Probe(s, -1);
             for (int t = 0; t < maxSub; t++) Probe(s, t);
         }
-        return best == int.MaxValue ? -1 : best;
+        return best;
 
         void Probe(int s, int t)
         {
@@ -332,10 +357,10 @@ public static class PredicateDisassembler
             }
             if (!structKeys && sawAtom && sawInt) return;   // ADR-027 declines heterogeneous
             if (byKey.Count < 2) return;
-            int worstSplit = 0;
-            foreach (int c in byKey.Values) worstSplit = Math.Max(worstSplit, c);
-            worstSplit += wild + varN;
-            best = Math.Min(best, worstSplit);
+            int groupMax = 0;
+            foreach (int c in byKey.Values) groupMax = Math.Max(groupMax, c);
+            int res = groupMax + wild + varN;    // var-arg0 + var-at-sub clauses = wildcards
+            if (res < best.Res) best = new Split(res, groupMax, wild + varN, -1);
         }
     }
 
