@@ -416,9 +416,26 @@ public static class BundleWriter
             long minSaving = long.TryParse(
                 System.Environment.GetEnvironmentVariable("SHUMWAY_REGION_ROOT_MINSAVE"),
                 out var ms) ? ms : 64;
+            // Phase 33 — analysis↔emit scope consistency (the §9d requirement,
+            // one level deeper). Region membership is gated per ENTRY at emit
+            // time (RegionMemberScopeFids = emitOnly): entry E's roots absorb
+            // only E's predicates. But THIS analysis walks the bundle-wide
+            // graph, so a root emitted by ANOTHER entry (preltest's `main/0`
+            // during the $prelude entry's prune) must absorb NOTHING here —
+            // with the scope set to E, RegionMemberFids would let that foreign
+            // root absorb E's own predicates (`sum_list/2` "absorbed" into a
+            // main-region that the other entry's emit never builds that way),
+            // classifying them absorbed-only and stripping their WAM + IL with
+            // no alias: existence_error in the shipped bundle. A foreign root
+            // is a singleton: its calls into E are real by-fid trampolines.
+            System.Collections.Generic.IReadOnlyCollection<int> MembersForAnalysis(
+                int f, System.Collections.Generic.IReadOnlySet<int>? ex) =>
+                emitOnly.Contains(f)
+                    ? ic.RegionMemberFids(predicates[f], predicates, ex)
+                    : new[] { f };
             var forcedRoots = Shumway.Compiler.Il.RegionRootSelector.ComputeForcedRoots(
                 predicates.Keys,
-                (f, ex) => ic.RegionMemberFids(predicates[f], predicates, ex),
+                (f, ex) => MembersForAnalysis(f, ex),
                 f => predicates.TryGetValue(f, out var p) ? p.Bytecode.Length : 0,
                 minSaving);
             // A dynamic snapshot must be a standalone region method so its
@@ -428,7 +445,7 @@ public static class BundleWriter
             forcedRoots.UnionWith(dynamicSnapshotFids);
             var regionReachable = Shumway.Compiler.Il.RegionReachability.TrampolineReachable(
                 predicates, seedFids,
-                fid => ic.RegionMemberFids(predicates[fid], predicates, forcedRoots));
+                fid => MembersForAnalysis(fid, forcedRoots));
             var fullReachable = Shumway.Compiler.Il.RegionReachability.TrampolineReachable(
                 predicates, seedFids, fid => new[] { fid });
             var pruned = new HashSet<int>();
@@ -443,6 +460,7 @@ public static class BundleWriter
             DiagPrune(entry.ModuleName, predicates.Count, seedFids.Count,
                 forcedRoots.Count, regionReachable.Count, fullReachable.Count,
                 pruned.Count);
+            DiagPruneSet(entry.ModuleName, pruned);
             // The Stage-9c promotions must hold during the IL compile below, so the regions
             // Build emits match the membership the prune assumed. Restored after Build.
             Shumway.Compiler.Il.IlPredicateCompiler.RegionForcedRootFids = forcedRoots;
@@ -547,6 +565,20 @@ public static class BundleWriter
                 + $"seedFids={seedFids} forcedRoots(regions)={forcedRoots} "
                 + $"regionReachable={regionReachable} fullReachable={fullReachable} "
                 + $"pruned(stripped)={pruned}");
+    }
+
+    [System.Diagnostics.Conditional("SHUMWAY_DIAG")]
+    private static void DiagPruneSet(string moduleName, HashSet<int> pruned)
+    {
+        if (System.Environment.GetEnvironmentVariable("SHUMWAY_PRUNE_DIAG") is null) return;
+        var names = new System.Collections.Generic.List<string>();
+        foreach (int f in pruned)
+        {
+            var (aid, ar) = Shumway.Core.FunctorTable.Lookup(f);
+            names.Add($"{Shumway.Core.AtomTable.GetById(aid)?.Name}/{ar}");
+        }
+        System.Console.Error.WriteLine(
+            $"[prune-diag] module={moduleName} pruned set: {string.Join(", ", names)}");
     }
 
     [System.ThreadStaticAttribute]

@@ -258,6 +258,23 @@ public static class CompiledModuleCodec
                     _ => null,
                 };
             }
+            if (kind is null && siteOffset >= 13)
+            {
+                // ADR-027 sub-switches: 17-byte encoding, table-id at
+                // opcode+13 (argIdx + sub0 + sub1 sit in between). Without
+                // this case a sub-switch table fell to the Integer default,
+                // so an ATOM-keyed table's compile-process atom ids were
+                // serialized raw and reloaded verbatim in a fresh process —
+                // every lookup missed and dispatch ran the default chain
+                // (Blint --exe: tokenizer loop / mass parse failures).
+                byte opcodeByteSub = pred.Bytecode[siteOffset - 13];
+                kind = (Opcode)opcodeByteSub switch
+                {
+                    Opcode.SwitchOnAtomSub => SwitchTableKind.Atom,
+                    Opcode.SwitchOnIntegerSub => SwitchTableKind.Integer,
+                    _ => null,
+                };
+            }
             if (kind is not null) kinds[tableId] = kind.Value;
         }
         return kinds;

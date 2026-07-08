@@ -3860,7 +3860,9 @@ public sealed partial class Engine
             newSize = maxSize;
         }
         if (newSize > int.MaxValue)
-            throw new InvalidOperationException($"Engine {name} overflow: would exceed int.MaxValue.");
+            throw new InvalidOperationException(
+                $"Engine {name} overflow: would exceed int.MaxValue "
+                + $"(top={top}, extra={extra}, len={buffer.Length}).");
         Profiler.Realloc(name, (long)newSize * System.Runtime.CompilerServices.Unsafe.SizeOf<T>());
         Array.Resize(ref buffer, (int)newSize);
     }

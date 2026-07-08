@@ -1563,7 +1563,14 @@ public sealed class IlPredicateCompiler
 
         emit.MarkLabel(retLabel);
         emit.LoadArgument(0);
-        emit.LoadConstant(regionFid);
+        // Phase 33 — MUST go through EmitFunctorId, not a raw LoadConstant:
+        // in persist mode a build-process fid means nothing at runtime. With
+        // the raw constant baked, a persisted region whose BUILD-time fid
+        // happened to equal the RUNTIME fid of a caller's region claimed the
+        // caller's resume marker as its own and branched into a bogus
+        // internal cursor — an infinite CP-push loop (Blint --exe hang, the
+        // ILO mass parse failures, the member/2 8 GB stack crash).
+        EmitFunctorId(emit, regionFid);
         emit.Call(EngineRegionReturnCursorMethod);
         emit.StoreLocal(curLoc);
         emit.LoadLocal(curLoc);
