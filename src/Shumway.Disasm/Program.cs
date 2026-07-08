@@ -42,6 +42,7 @@ internal static class Program
         bool arityCompat = false;     // --arity: lex Arity/Prolog32 sources
         bool audit = false;           // --audit: emit indexing-quality verdict lines
         bool census = false;          // --census: emit one opcode-pair/shape tally line
+        bool detcensus = false;       // --detcensus: emit redundant-cut / det-fixpoint tally
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -65,6 +66,9 @@ internal static class Program
                     break;
                 case "--census":
                     census = true;
+                    break;
+                case "--detcensus":
+                    detcensus = true;
                     break;
                 case "-e" or "--eval":
                     if (++i >= args.Length) return Usage("missing source after " + a);
@@ -135,6 +139,27 @@ internal static class Program
                     c.Predicates, c.Ops, c.Pairs, c.Clauses, c.TailClauses,
                     c.CutTailClauses, c.CutDeallocProceed, c.CutProceed, c.CallCut,
                     c.DeallocExecute, c.CutDealloc, c.CutExecute));
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"error: parse failed: {ex.Message}");
+                return ExitCompileError;
+            }
+            return ExitOk;
+        }
+
+        if (detcensus)
+        {
+            // One line per source: DETCENSUS <preds> <detPreds> <clauses>
+            // <neckLastCut> <deepLastCut> <elideBuiltin> <elideIntra>
+            // <blockedCross> <blockedNondet>
+            try
+            {
+                var d = PredicateDisassembler.CensusDet(source, arityCompat);
+                Console.WriteLine(string.Join('\t', "DETCENSUS",
+                    d.Predicates, d.DetPredicates, d.Clauses, d.NeckLastCut,
+                    d.DeepLastCut, d.ElideBuiltin, d.ElideIntra, d.BlockedCross,
+                    d.BlockedNondet));
             }
             catch (Exception ex)
             {
