@@ -2,11 +2,44 @@
 
 ## Status
 
-**Proposed.** Tier-0 (WAM interpreter) and Tier-1 (IL, incl. `--strip-wam`
-persisted bundles). One new opcode, `switch_on_structure_sub`; the rest reuses the
-existing `switch_on_{atom,integer,structure}_arg` and ADR-027's
+**Accepted — implemented.** Tier-0 (WAM interpreter) and Tier-1 (IL, incl.
+`--strip-wam` persisted bundles). One new opcode, `switch_on_structure_sub`; the
+rest reuses the existing `switch_on_{atom,integer,structure}_arg` and ADR-027's
 `switch_on_{atom,integer}_sub`. Completes the indexing work ADR-007 (first/multi-arg)
 and ADR-027 (second-level sub-arg, atom/int) began.
+
+Implementation notes (decisions that emerged while building it):
+
+- **Fixed a shipped ADR-027 soundness bug.** A sub-switch whose discriminator is
+  **unbound** (a `Ref`, or an unfollowable hop) routed to the *wildcards-only*
+  default, which dropped the ground-key clauses whenever a var-headed clause was
+  also in the bucket — `p(f(a),1). p(f(b),2). p(X,3).` answered `p(f(Y),R)` with
+  only `R=3`. An unbound discriminator can unify with **every** clause in the
+  bucket, so the default is now the **full-bucket chain** (matching ADR-027's
+  documented "Ref → full group chain" intent). The nested `SubSwitch` carries
+  `AllClauses` for this; `LayoutSubSwitch` / `BuildSubTable` / `EmitSubSwitch` use
+  it. This is why the per-key buckets and a full default chain are emitted
+  separately (they share clause bodies, so only the try/retry/trust dispatch
+  duplicates).
+- **Sibling set = later cascade args only.** A value bucket at cascade level `li`
+  is reached with the *earlier* cascade args unbound (their var-fallthrough led
+  here); only args of levels `> li` can be bound at the call, so only those are
+  offered as sibling discriminators. (Fully var-arg0 predicates already make
+  their first concrete arg the primary index, so they need nothing new.)
+- **Atom/int sibling gated at ≥ 3 clauses.** A 2-clause bucket ends in `trust`
+  (no leftover choice point), so nesting saves only one head-unify — not worth the
+  switch's code size. The audit's own model treats worst-bucket ≤ 2 as
+  already-indexed. (List/struct buckets keep ADR-027's ≥ 2, unchanged.)
+- **`switch_on_structure_sub` keys a nested-list terminal as the cons functor.**
+  The interpreter and the Tier-1 runtime resolver / graph handle it; the Tier-1
+  *inline* fast path routes a list terminal to the sound full-bucket default
+  instead (correct, just not fast-pathed — a documented v1 corner).
+- **Verified**: all 556 Arity corpus files compile clean (0 errors, 42
+  `switch_on_structure_sub` emitted); djota 32/32; the audit's top targets emit
+  the nested indexing (`control_has_property`/`object_has_method` nest
+  `switch_on_atom_arg` on arg 1, `addlay_p` uses `switch_on_structure_sub`);
+  `BucketIndexingTests` (compiler + embedding, all three tiers). Full gate:
+  Core 436 / Interpreter 105 / Compiler 322 / Embedding 2878 / ISO 277.
 
 ## Context
 
