@@ -881,16 +881,21 @@ Scryer/Trealla — heavy DCG, `double_quotes=chars`) build and run under Shumway
       dispatcher delegates; it would only help cold multi-clause terminal-led
       parsers like `list_type//1`).
 
-- [ ] **Second-argument / deep (car) indexing — planned, general (not
-      Djota-specific).** User-confirmed to do later regardless: extend
-      indexing so that under arg 0's `var` branch a bound later argument (and,
-      for a list argument, its car) can discriminate clauses, instead of the
-      linear `try/retry/.../trust`. Broad value for multi-clause
-      terminal-/input-led predicates and output-first predicates generally.
-      Needs either a new `switch_on_car`-style opcode or a
-      `get_list`+`unify_variable`+`switch_on_atom` sequence emitted under the
-      list branch, plus the CompileIndexed layout work and (optionally) the
-      IL index-graph counterpart. Deferred.
+- [x] **Second-argument / deep (car) indexing — DELIVERED by ADR-027 +
+      ADR-028 (2026-07-08).** The planned extension — index a bound later
+      argument (and a list argument's car) instead of a linear
+      `try/retry/.../trust` — shipped in two ADRs: the **car / list-head +
+      compound sub-argument** case is ADR-027's `switch_on_{atom,integer}_sub`
+      (bounded 2-hop path); the **sibling argument inside a ground value
+      bucket** case is ADR-028 (nest `switch_on_{atom,integer,structure}_arg`
+      in the bucket) plus the structure-keyed `switch_on_structure_sub`. The
+      "under arg 0's var branch" sub-case was already covered (the var-path
+      cascade `switch_on_arg`, VAR_HEADED in the --audit). Both tiers (Tier-0
+      interpreter + Tier-1 IL, incl. `--strip-wam` persisted graph). ADR-028
+      also incidentally fixed a shipped ADR-027 unbound-discriminator
+      soundness bug. Corpus-verified (556 files clean, djota 32/32); full
+      5-project gate green. See ADR-027, ADR-028, and
+      [[adr-028-bucket-indexing]] / [[logtalk-benchmark-comparison]].
 
 - [x] **Compat libraries — the shim promoted to first-class (option b).** The
       Scryer/Trealla stdlib bits Djota needs are now built-in importable
