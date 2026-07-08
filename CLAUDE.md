@@ -1284,7 +1284,10 @@ When proposing changes:
 | Body `jump` opcode + inline deterministic if-then-else at Tier-0 | ADR-025 (proposed) |
 | Variable-width choice points — REJECTED with measured ceiling (≤1% on max-CP synthetic, below noise; soundness blueprint preserved) | ADR-026 |
 | Second-level (sub-argument) indexing — `switch_on_{atom,integer}_sub`, bounded 2-hop path (list head / struct sub-arg / token stream) | ADR-027 |
-| Sibling-arg + structure-keyed indexing inside value buckets — nested `BucketSwitch` reusing `switch_on_*_arg` + new `switch_on_structure_sub` | ADR-028 (proposed) |
+| Sibling-arg + structure-keyed indexing inside value buckets — nested `BucketSwitch` reusing `switch_on_*_arg` + new `switch_on_structure_sub` | ADR-028 |
+| Clause-epilogue peephole fusion — `deallocate;execute` + `cut;deallocate_proceed` + `cut;proceed` (Tier-0 dispatch; IL un-fuses; `call;cut` rejected as non-fusable) | ADR-029 (proposed) |
+| Redundant-cut elimination via a whole-program determinism fixpoint (linker) — elide a last-clause cut that prunes nothing (drop cut+get_level+frame) | ADR-030 (proposed) |
+| Delayed choice point via clause→if-then-else fold — `Guard,!,Body / Rest` ⟶ `(Guard->Body;Rest)` on the CP-free lowering (prototype-gated) | ADR-031 (proposed) |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | Builtins catalog | docs/design/builtins-catalog.md |

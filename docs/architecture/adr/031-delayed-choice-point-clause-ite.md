@@ -1,0 +1,137 @@
+# ADR-031: Delayed choice point via clause-to-if-then-else folding
+
+**Status:** Proposed — **prototype-gated**. Recognise the multi-clause
+`p :- Guard, !, Body.  p :- Rest.` shape and fold it to
+`p :- (Guard -> Body ; Rest)`, routed to the **CP-free** region-helper lowering,
+so a committing guard **never pushes** the clause-selection choice point the cut
+would otherwise tear down. Targets hot Tier-1 recursion (`!, tailCall`). The
+decisive risk — the inline ITE lowering was measured to *lose* in Tier-1 — is
+addressed by mandating the CP-free lowering and validating with a benchmark
+before commit.
+
+## Context
+
+For `p :- Guard, !, Body.  p :- Rest.`, WAM pushes the clause-2 choice point at
+clause 1's `try_me_else` — **before** `Guard` runs — and the `!` removes it once
+`Guard` succeeds. So every committing call pays a `PushChoicePoint` +
+`Cut` (Tier-0) or `PushIlChoicePoint` + `engine.Cut` (Tier-1) for a choice point
+that never survives. This is the classic *shallow-backtracking* / *delayed choice
+point* opportunity.
+
+`!, tailCall` (a cut immediately guarding the final recursive call) is the base
+of deterministic recursion in the Arity corpus: **6 626 clauses = 36.2% of all
+tail-call clauses, 9.2% of all clauses** (ADR-029 census). It runs hot, so it
+promotes to Tier-1 — which is where the CP push/teardown cost actually lands.
+
+This is the complement of ADR-030: there the cut sits in the *last/only* clause
+(no clause CP → redundant → elide); here the cut sits in a *non-last* clause and
+genuinely commits clause selection — the CP is real, so we must restructure so it
+is never pushed rather than remove the cut.
+
+## Decision
+
+Fold the shape at compile time:
+
+```
+p(H1) :- Guard, !, Body.
+p(H2) :- Rest.
+              ⟶       p(A) :- ( Guard' -> Body' ; Rest' ).
+p(Hk) :- ...
+```
+
+and compile the resulting `(Guard -> Body ; Rest)` through the **CP-free
+region-helper** lowering (ADR-025's measured finding: the region lowering of the
+helper form is **already CP-free for the deterministic commit**, whereas the
+*inline* ITE form pays a real `PushIlChoicePoint` + `Cut`). The guard becomes a
+conditional whose failure branches to the else **without** a clause CP ever being
+pushed; on guard success the commit is structural (no cut opcode at all).
+
+### Soundness of the fold
+
+`p :- Guard, !, Body.  p :- Rest.` is **semantically** `(Guard -> Body ; Rest)`
+**regardless of `Guard`'s determinism**: the `->` provides exactly the
+once-commit the `!` gave (commit to `Guard`'s first solution and to this clause),
+and on `Guard` failure the `->` backtracks — undoing `Guard`'s bindings — before
+running `Rest`, matching the clause-tried-next semantics. So the transform needs
+**no** determinism analysis (unlike ADR-030).
+
+Constraints:
+- **Head folding.** Clauses whose heads are distinct variable-argument patterns
+  (`p(X):-…` / `p(Y):-…`) fold trivially into one head `p(A)` with the args
+  threaded into the body. Heads with *different structure*
+  (`p(f(X)):-…` / `p(g(Y)):-…`) are already separated by first-argument indexing
+  and the cut is not doing cross-clause selection there — such predicates are
+  **not** folded (indexing already gives the deterministic dispatch).
+- **Shape.** Only the leading `Guard, !, Body` + trailing else(s) shape is folded.
+  A `!` deeper in the body, multiple cuts, or a first clause without a leading
+  cut-committed guard are left as-is.
+- The fold is applied where it strictly helps: a predicate whose clause selection
+  is *already* deterministic via indexing gains nothing and is skipped.
+
+## Risk and why it is prototype-gated
+
+ADR-025 stage (d) **measured the inline ITE lowering LOSING in Tier-1** (`boyer`
++17% min wall-clock, interleaved ABBA) precisely because the inline form pushes an
+arity-0 IL choice point and pays `PushIlChoicePoint` + `Cut`, while the region
+helper is CP-free. So the win of this ADR exists **only** through the CP-free
+lowering; naively feeding the fold to the inline path would reproduce that
+regression. ADR-025's own follow-up — "teach the IL emit to skip the ITE CP when
+the condition is guard-only (fail-label redirection to ELSE)" — is the mechanism
+that makes the folded form CP-free at Tier-1.
+
+Therefore this ADR is **prototype-first**: implement the fold, route to (or
+build) the guard-only-CP-free lowering, and A/B on a cut-guarded recursive
+benchmark **back-to-back same session** ([[wallclock-ab-must-be-back-to-back]])
+before committing the default. If the CP-free lowering does not beat the plain
+`try_me_else`-chain-plus-cut on Tier-1, the ADR is rejected with the measurement
+recorded (the ADR-021 / ADR-026 discipline: measured ceiling, not speculation).
+
+## Corpus impact
+
+`!, tailCall` = 6 626 clauses (ADR-029 census). The **foldable** subset is the
+multi-clause form (a `Guard,!,tail` first clause with a following else clause) —
+a census refinement (`--census` extension, or a dedicated pass) will size it
+before implementation; the single-clause `!, tailCall` cases are ADR-030
+territory (redundant-cut elision) not clause-folding.
+
+## Implementation plan (prototype order)
+
+1. A recogniser for the `Guard, !, Body / Rest` multi-clause shape (var-arg heads;
+   skip indexing-separated / deep-cut / multi-cut shapes).
+2. The fold to `(Guard -> Body ; Rest)` with head-arg threading, feeding the
+   existing `MetaTransform` / ADR-025 ITE lowering — but forced onto the **region
+   / CP-free** path.
+3. The guard-only-CP-skip in the IL emit (ADR-025 follow-up): when the ITE
+   condition is a deterministic guard, redirect its fail label to ELSE instead of
+   pushing an IL choice point.
+4. A/B measurement (Tier-1 promoted, ABBA, min-of-N) on a cut-guarded recursive
+   benchmark; deterministic CP-count drop as the structural metric.
+5. Decide the default from the measurement.
+
+## Verification
+
+- Semantic differential: the folded predicate yields identical solutions and
+  backtracking to the original clause form (including guard-failure → else, and
+  guard with multiple solutions committing to the first).
+- Deterministic CP-count: the folded form pushes **zero** clause-selection CPs on
+  a committing call (the structural proof of the win).
+- Tier-1 wall-clock A/B beating the plain chain-plus-cut — the go/no-go.
+- Full five-project gate.
+
+## Alternatives considered
+
+- **Delay the CP in the WAM chain directly** (emit the guard, then push the
+  clause CP only on guard success): this *is* the ITE lowering expressed in WAM;
+  folding to `(->;)` reuses the existing, tested ITE machinery rather than a new
+  chain-emit mode.
+- **Do nothing at Tier-1, rely on indexing**: where the guard is a first-arg
+  test, ADR-028 indexing already gives deterministic dispatch (no CP, cut
+  redundant → ADR-030). This ADR targets the residual: guards that are *not*
+  first-arg tests (`X > 0`, a call), which indexing cannot discriminate.
+
+## Related
+
+ADR-025 (inline ITE + the CP-free region finding + the guard-only-CP follow-up —
+the direct foundation); ADR-030 (redundant-cut elision — the last-clause
+counterpart); ADR-028 (indexing handles the first-arg-test guards); ADR-021 /
+ADR-026 (measured-ceiling discipline for rejecting/accepting); [[tier1-register-cost-poc]].
