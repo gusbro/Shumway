@@ -2758,6 +2758,27 @@ public sealed class BytecodeInterpreter
             _engine.SetPc(deadSkipTo);
             return true;
         }
+        // Phase 33 — the last clause of a dynamic chain terminates at the
+        // fail-stub, so its chain instruction is `retry_me_else <fail-stub>`
+        // (never `trust_me`). A bare push/retry therefore leaves a choice
+        // point whose only alternative is `call_builtin fail/0` — harmless on
+        // backtracking, but it makes EVERY deterministic dynamic call report
+        // as non-deterministic (a single dynamic fact `c(x)` called `c(x)`
+        // left a CP). Once this clause is confirmed visible AND it is the last
+        // one (its chain-next is the fail-stub), discard that dead choice
+        // point with trust semantics — the choice point governing this clause
+        // is the one try_me_else/retry_me_else just pushed/updated (nothing
+        // runs between the chain instruction and this check), and its saved
+        // machine state equals the current state (check_visible precedes head
+        // unification), so TrustMe's restore is a no-op and only the pop
+        // takes effect. Brings dynamic dispatch to parity with static
+        // trust_me and is what lgtunit's deterministic/1 measures.
+        if (deadSkipTo == _engine.DynamicFailStubAddr
+            && _engine.DynamicFailStubAddr > 0
+            && _engine.B >= 0)
+        {
+            _engine.TrustMe();
+        }
         _engine.SetPc(afterPc + 17);
         return true;
     }

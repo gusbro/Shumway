@@ -103,6 +103,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `call(:Goal, +Extra1, ..., +Extra5)` | Calls a goal extended with five extra arguments. |
 | `call(:Goal, +Extra1, ..., +Extra6)` | Calls a goal extended with six extra arguments. |
 | `call(:Goal, +Extra1, ..., +Extra7)` | Calls a goal extended with seven extra arguments (ISO requires call/2..8). |
+| `call_det(:Goal, -Deterministic)` | Calls Goal once and unifies Deterministic with true if Goal succeeded without leaving a choice point, false otherwise. |
 | `catch(:Goal, ?Catcher, :Recovery)` | Runs Goal; if it throws a ball unifying Catcher, runs Recovery instead. |
 | `fail` | Always fails. |
 | `false` | Always fails — ISO synonym of fail/0. |

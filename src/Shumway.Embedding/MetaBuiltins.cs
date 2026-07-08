@@ -555,6 +555,7 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("pid", 1, Pid1,
             Io, "pid(-Pid)",
             "Unifies Pid with the current process id.");
+        BuiltinsRegistry.Register("$choice_level", 1, ChoiceLevel1);
         BuiltinsRegistry.Register("sleep", 1, Sleep1,
             Io, "sleep(+Seconds)",
             "Suspends execution for Seconds (integer or float).");
@@ -5683,6 +5684,15 @@ public static class MetaBuiltins
     public static bool Pid1(Engine engine)
         => engine.UnifyRegisterWithCell(
             0, Cell.Int(Environment.ProcessId));
+
+    /// <summary><c>'$choice_level'(-Level)</c> — unifies Level with the
+    /// engine's current choice-point pointer B (a stack offset; larger =
+    /// more recent). Sampling it before and after a goal detects whether
+    /// the goal left a choice point (the determinism test backing the
+    /// prelude's <c>call_det/2</c>, used by lgtunit's <c>deterministic/1,2</c>).
+    /// Internal — not an ISO/public builtin.</summary>
+    public static bool ChoiceLevel1(Engine engine)
+        => engine.UnifyRegisterWithCell(0, Cell.Int(engine.B));
 
     public static bool Sleep1(Engine engine)
     {

@@ -42,6 +42,7 @@ internal static class Prelude
         :- public '$catch_run'/1.
         :- public copy_term/3.
         :- public subsumes_term/2.
+        :- public call_det/2.
         :- public select/3.
         :- public permutation/2.
         :- public memberchk/2.
@@ -222,6 +223,20 @@ internal static class Prelude
                 term_variables(Vars, Vars2),
                 Vars == Vars2
             ).
+
+        %! call_det(:Goal, -Deterministic) | Control | Calls Goal once and unifies Deterministic with true if Goal succeeded without leaving a choice point, false otherwise.
+        % The determinism-check primitive several SWI-family / GNU Prologs
+        % expose; lgtunit's deterministic/1,2 dispatch to it. Samples the
+        % engine choice-point pointer B before and after the goal: a goal
+        % that leaves a choice point raises B, a deterministic one does not.
+        % The final cut commits to the first solution (call_det is semidet)
+        % and discards any choice point the goal left.
+        call_det(Goal, Deterministic) :-
+            '$choice_level'(B0),
+            call(Goal),
+            '$choice_level'(B1),
+            ( B1 > B0 -> Deterministic = false ; Deterministic = true ),
+            !.
 
         %! maplist(:Goal, ?List) | Lists | Succeeds if Goal holds for every element of List.
         maplist(_, []).
