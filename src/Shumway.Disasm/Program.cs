@@ -105,8 +105,8 @@ internal static class Program
                 {
                     if (e.Clauses < 2) continue;   // single-clause preds don't index
                     Console.WriteLine(string.Join('\t',
-                        "AUDIT", e.Category, e.Clauses, e.WorstBucket, e.Potential,
-                        e.DiscrimArg, $"{e.Name}/{e.Arity}", e.WorstKey));
+                        "AUDIT", e.Category, e.Clauses, e.WorstBucket, e.PotAtomInt,
+                        e.PotStruct, e.DiscrimArg, $"{e.Name}/{e.Arity}", e.WorstKey));
                 }
             }
             catch (Exception ex)

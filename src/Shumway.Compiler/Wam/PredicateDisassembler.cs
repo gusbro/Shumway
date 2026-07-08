@@ -128,7 +128,7 @@ public static class PredicateDisassembler
     /// that would discriminate (or -1).</summary>
     public sealed record IndexAuditEntry(
         string Name, int Arity, int Clauses, string Category,
-        int WorstBucket, int Potential, int DiscrimArg, string WorstKey);
+        int WorstBucket, int PotAtomInt, int PotStruct, int DiscrimArg, string WorstKey);
 
     /// <summary>Parses <paramref name="source"/>, groups static predicates, and
     /// returns an indexing verdict for each with ≥1 clause. Categories:
@@ -175,7 +175,7 @@ public static class PredicateDisassembler
     {
         int n = clauses.Count;
         if (arity == 0)
-            return new IndexAuditEntry(name, arity, n, "NOARG", n, n, -1, "-");
+            return new IndexAuditEntry(name, arity, n, "NOARG", n, n, n, -1, "-");
 
         // Head args per clause.
         var heads = new List<Term[]>(n);
@@ -193,67 +193,81 @@ public static class PredicateDisassembler
         }
         int varN = varClauses.Count;
 
-        // Worst ground bucket by base scan (bucket size + var-arg0 clauses).
-        string worstKey = "-";
-        List<int>? worst = null;
-        int worstBase = 0;
+        // Worst bucket by base scan (bucket size + var-arg0 clauses). If there is
+        // no ground bucket, all clauses are var-headed → the "worst bucket" is the
+        // var-fallthrough chain itself (which Shumway indexes via switch_on_arg).
+        string worstKey = "var";
+        List<int> worst = varClauses;
+        int worstBase = varN;
         foreach (var (k, idxs) in buckets)
         {
             int b = idxs.Count + varN;
             if (b > worstBase) { worstBase = b; worst = idxs; worstKey = k; }
         }
 
-        // No ground bucket exceeds var-only, or arg0 already isolates everything.
-        if (worst is null)
-        {
-            // All clauses var-headed: switch_on_arg on the var path is the only
-            // lever, and the var clause is inherently in every path.
-            int vp = ProbeSibling(heads, varClauses, out int varg);
-            return new IndexAuditEntry(name, arity, n,
-                n <= 2 ? "INDEXED_OK" : "VAR_HEADED", n, vp, varg, "var");
-        }
         if (worstBase <= 2)
-            return new IndexAuditEntry(name, arity, n, "INDEXED_OK", worstBase, worstBase, -1, worstKey);
+            return new IndexAuditEntry(name, arity, n, "INDEXED_OK", worstBase, worstBase, worstBase, -1, worstKey);
 
         // The clauses a ground call to worstKey actually scans = bucket ∪ var.
-        var scanned = new List<int>(worst);
-        scanned.AddRange(varClauses);
-
-        // (1) ADR-027 sub-arg: only for list/struct buckets. Does a sub-path
-        //     (list head, or a struct sub-arg; depth ≤ 2) partition into ≥2
-        //     homogeneous ground atom/int keys?
+        var scanned = worstKey == "var" ? varClauses : Concat(worst, varClauses);
         bool keyIsListOrStruct = worstKey == "list" || worstKey.StartsWith("struct:", StringComparison.Ordinal);
-        int subResidual = keyIsListOrStruct
-            ? ProbeSubArg(heads, worst, varClauses, worstKey)
-            : -1;
 
-        // (2) Sibling arg (multi-arg) — Shumway does NOT apply this inside a
-        //     ground bucket. Would some arg j≥1 reduce the scan?
-        int sibResidual = ProbeSibling(heads, scanned, out int discrimArg);
+        // --- Capability A: atom/int keys only (today's switch_on_{atom,integer}
+        //     value tables — ADR-027 sub for list/struct, sibling on the var path).
+        int subAI = keyIsListOrStruct ? ProbeSubArg(heads, worst, varN, structKeys: false) : -1;
+        int sibAI = ProbeSibling(heads, scanned, structKeys: false, out int argAI);
+        int potAI = MinReduce(worstBase, subAI, sibAI);
 
-        if (subResidual >= 0 && subResidual < worstBase)
-            // ADR-027 already handles it.
-            return new IndexAuditEntry(name, arity, n, "INDEXED_SUBARG",
-                worstBase, subResidual, -1, worstKey);
+        // --- Capability B: add structure-functor / list keys (switch_on_structure
+        //     _sub / _arg — the addlay_p list-head-functor case). Superset of A.
+        int subB = keyIsListOrStruct ? ProbeSubArg(heads, worst, varN, structKeys: true) : -1;
+        int sibB = ProbeSibling(heads, scanned, structKeys: true, out int argB);
+        int potStruct = MinReduce(potAI, subB, sibB);
 
-        if (sibResidual >= 0 && sibResidual < worstBase)
-            return new IndexAuditEntry(name, arity, n, "MISSED_MULTIARG",
-                worstBase, sibResidual, discrimArg + 1, worstKey);
+        string cat; int discrim = -1;
+        if (potAI < worstBase)
+        {
+            cat = "IDX_ATOMINT";                       // reducible with today's cheap keys
+            if (sibAI == potAI && sibAI >= 0) discrim = argAI + 1;
+        }
+        else if (potStruct < worstBase)
+        {
+            cat = "IDX_STRUCT";                        // needs structure-keyed indexing (the increment)
+            if (sibB == potStruct && sibB >= 0) discrim = argB + 1;
+        }
+        else if (varN >= (worstKey == "var" ? n : worst.Count))
+            cat = "VAR_HEADED";                        // var clauses dominate; nothing to key on
+        else
+            cat = "OVERLAP";                           // no discriminator at any position, any key type
 
-        if (varN >= worst.Count)
-            return new IndexAuditEntry(name, arity, n, "VAR_HEADED",
-                worstBase, worstBase, -1, worstKey);
-
-        return new IndexAuditEntry(name, arity, n, "OVERLAP",
-            worstBase, worstBase, -1, worstKey);
+        return new IndexAuditEntry(name, arity, n, cat, worstBase, potAI, potStruct, discrim, worstKey);
     }
 
-    /// <summary>Best worst-case sub-bucket over sibling args j≥1 for the given
-    /// clause set: for each arg position, split the clauses by ground principal
-    /// key (a var at that position joins every split); returns the smallest
-    /// resulting worst-split size that has ≥2 distinct ground keys, else -1.
+    private static List<int> Concat(List<int> a, List<int> b)
+    {
+        var r = new List<int>(a.Count + b.Count);
+        r.AddRange(a); r.AddRange(b);
+        return r;
+    }
+
+    /// <summary>The smallest of <paramref name="cur"/> and any non-negative
+    /// reduction that actually improves on it.</summary>
+    private static int MinReduce(int cur, int a, int b)
+    {
+        int best = cur;
+        if (a >= 0 && a < best) best = a;
+        if (b >= 0 && b < best) best = b;
+        return best;
+    }
+
+    /// <summary>Best worst-case sub-bucket over sibling args j≥1: for each arg
+    /// position, split the clauses by principal key (a var at that position joins
+    /// every split); returns the smallest resulting worst-split with ≥2 distinct
+    /// keys, else -1. <paramref name="structKeys"/> false = only atom/int values
+    /// discriminate (var/compound/list are wildcards — the cheap capability);
+    /// true = struct-functor and list also discriminate (structure-keyed).
     /// <paramref name="bestArg"/> receives the 0-based arg index chosen.</summary>
-    private static int ProbeSibling(List<Term[]> heads, List<int> clauseIdxs, out int bestArg)
+    private static int ProbeSibling(List<Term[]> heads, List<int> clauseIdxs, bool structKeys, out int bestArg)
     {
         bestArg = -1;
         if (clauseIdxs.Count == 0) return -1;
@@ -264,93 +278,65 @@ public static class PredicateDisassembler
         for (int j = 1; j < maxArity; j++)
         {
             var byKey = new Dictionary<string, int>();
-            int wild = 0, distinct = 0;
+            int wild = 0;
             foreach (int ci in clauseIdxs)
             {
                 Term[] h = heads[ci];
-                string? k = j < h.Length ? GroundKey(h[j]) : null;
+                string? k = j < h.Length ? (structKeys ? GroundKey(h[j]) : AtomIntKey(h[j])) : null;
                 if (k is null) { wild++; continue; }
                 byKey[k] = byKey.TryGetValue(k, out int c) ? c + 1 : 1;
             }
-            distinct = byKey.Count;
-            if (distinct < 2) continue;         // no discrimination at this arg
+            if (byKey.Count < 2) continue;      // no discrimination at this arg
             int worstSplit = 0;
             foreach (int c in byKey.Values) worstSplit = Math.Max(worstSplit, c);
-            worstSplit += wild;                  // var-at-j clauses merge everywhere
+            worstSplit += wild;                  // wildcard clauses merge everywhere
             if (worstSplit < best) { best = worstSplit; bestArg = j; }
         }
         return best == int.MaxValue ? -1 : best;
     }
 
-    /// <summary>ADR-027 model: does a sub-path into the list head / a struct
-    /// sub-arg (depth ≤ 2) split the bucket into ≥2 homogeneous ground atom/int
-    /// keys? Returns the worst-split residual (largest homogeneous group + the
-    /// var-at-path clauses + var-arg0 clauses) or -1 if no such path.</summary>
-    private static int ProbeSubArg(List<Term[]> heads, List<int> bucket, List<int> varClauses, string worstKey)
+    /// <summary>Sub-path indexing model: does a sub-path into arg0 (the list head
+    /// / a struct sub-arg; depth ≤ 2) split the bucket into ≥2 distinct keys?
+    /// <paramref name="structKeys"/> false = ADR-027 v1 (homogeneous atom/int
+    /// sub-keys); true = also key on the sub-term's functor (structure-keyed sub,
+    /// the deferred variant — the <c>addlay_p</c> list-head-functor case).
+    /// Returns the worst-split residual or -1 if no such path.</summary>
+    private static int ProbeSubArg(List<Term[]> heads, List<int> bucket, int varN, bool structKeys)
     {
-        // Candidate sub-terms per clause at a chosen (sub0[, sub1]) path.
-        // For a list bucket the arg is '.'/2: sub0=0 (head), sub0=1 (tail).
-        // For a struct bucket f/M the arg is that compound: sub0 in 0..M-1.
-        // Depth-2 (list head → token's sub-arg) is folded in by re-probing the
-        // head compound's args.
         int best = int.MaxValue;
+        const int maxSub = 8;
 
-        // Enumerate depth-1 sub positions.
-        int maxSub = 8;
+        // depth-1 and depth-2 sub positions in one sweep.
         for (int s = 0; s < maxSub; s++)
         {
+            Probe(s, -1);
+            for (int t = 0; t < maxSub; t++) Probe(s, t);
+        }
+        return best == int.MaxValue ? -1 : best;
+
+        void Probe(int s, int t)
+        {
             var byKey = new Dictionary<string, int>();
-            int wild = 0; bool sawAtom = false, sawInt = false, bail = false;
-            // depth-2 accumulation over the same s (head is a compound, probe its args)
-            for (int pass = 0; pass < 1 && !bail; pass++) { }
+            int wild = 0; bool sawAtom = false, sawInt = false;
             foreach (int ci in bucket)
             {
                 Term arg0 = ArgAt(heads[ci], 0);
                 Term? sub = SubTerm(arg0, s);
-                if (sub is null) { wild++; continue; }   // path misses -> wildcard
-                string? k = GroundAtomOrInt(sub, ref sawAtom, ref sawInt);
+                if (sub is not null && t >= 0) sub = SubTerm(sub, t);
+                if (sub is null) { wild++; continue; }
+                string? k = structKeys
+                    ? GroundKey(sub)
+                    : GroundAtomOrInt(sub, ref sawAtom, ref sawInt);
                 if (k is null) { wild++; continue; }
                 byKey[k] = byKey.TryGetValue(k, out int c) ? c + 1 : 1;
             }
-            if (sawAtom && sawInt) continue;             // heterogeneous -> ADR-027 declines
-            if (byKey.Count >= 2)
-            {
-                int worstSplit = 0;
-                foreach (int c in byKey.Values) worstSplit = Math.Max(worstSplit, c);
-                worstSplit += wild + varClauses.Count;
-                best = Math.Min(best, worstSplit);
-            }
+            if (!structKeys && sawAtom && sawInt) return;   // ADR-027 declines heterogeneous
+            if (byKey.Count < 2) return;
+            int worstSplit = 0;
+            foreach (int c in byKey.Values) worstSplit = Math.Max(worstSplit, c);
+            worstSplit += wild + varN;
+            best = Math.Min(best, worstSplit);
         }
-
-        // Depth-2: list head is a compound sharing one functor; probe its sub-args.
-        // (struct arg that is itself a compound handled the same way.)
-        for (int s = 0; s < maxSub; s++)
-        {
-            for (int t = 0; t < maxSub; t++)
-            {
-                var byKey = new Dictionary<string, int>();
-                int wild = 0; bool sawAtom = false, sawInt = false;
-                foreach (int ci in bucket)
-                {
-                    Term arg0 = ArgAt(heads[ci], 0);
-                    Term? mid = SubTerm(arg0, s);
-                    Term? sub = mid is null ? null : SubTerm(mid, t);
-                    if (sub is null) { wild++; continue; }
-                    string? k = GroundAtomOrInt(sub, ref sawAtom, ref sawInt);
-                    if (k is null) { wild++; continue; }
-                    byKey[k] = byKey.TryGetValue(k, out int c) ? c + 1 : 1;
-                }
-                if (sawAtom && sawInt) continue;
-                if (byKey.Count >= 2)
-                {
-                    int worstSplit = 0;
-                    foreach (int c in byKey.Values) worstSplit = Math.Max(worstSplit, c);
-                    worstSplit += wild + varClauses.Count;
-                    best = Math.Min(best, worstSplit);
-                }
-            }
-        }
-        return best == int.MaxValue ? -1 : best;
     }
 
     // --- small term helpers for the audit -------------------------------------
@@ -391,6 +377,16 @@ public static class PredicateDisassembler
         CompoundTerm c when c.Functor == "." && c.Args.Length == 2 => "L",
         CompoundTerm c => "s:" + c.Functor + "/" + c.Args.Length,
         _ => "o:" + t,
+    };
+
+    /// <summary>An atom/int-only discrimination key (the cheap
+    /// switch_on_{atom,integer}_arg capability); null (wildcard) for a var or a
+    /// compound/list — those do not discriminate without structure keying.</summary>
+    private static string? AtomIntKey(Term t) => t switch
+    {
+        AtomTerm a => "a:" + a.Name,
+        IntTerm i => "i:" + i.Value,
+        _ => null,
     };
 
     /// <summary>Only atom/int ground keys (ADR-027's homogeneous sub-key
