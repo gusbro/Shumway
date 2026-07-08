@@ -176,6 +176,9 @@ public static class OpcodeTable
             OperandKind.Reg, OperandKind.IntValue, OperandKind.IntValue, OperandKind.TableId);
         Set(Opcode.SwitchOnIntegerSub, 17, "switch_on_integer_sub",
             OperandKind.Reg, OperandKind.IntValue, OperandKind.IntValue, OperandKind.TableId);
+        // ADR-028 structure-keyed sub: same encoding, functor-keyed table.
+        Set(Opcode.SwitchOnStructureSub, 17, "switch_on_structure_sub",
+            OperandKind.Reg, OperandKind.IntValue, OperandKind.IntValue, OperandKind.TableId);
 
         // Cut
         Set(Opcode.NeckCut, 1, "neck_cut");

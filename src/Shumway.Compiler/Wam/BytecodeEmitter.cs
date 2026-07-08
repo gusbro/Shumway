@@ -245,6 +245,16 @@ public sealed class BytecodeEmitter
         EmitInt(tableId);
     }
 
+    // ADR-028 — structure-keyed sub: same walk, functor-keyed table.
+    public void EmitSwitchOnStructureSub(int argIdx, int sub0, int sub1, int tableId)
+    {
+        _bytes.Add((byte)Opcode.SwitchOnStructureSub);
+        EmitInt(argIdx);
+        EmitInt(sub0);
+        EmitInt(sub1);
+        EmitInt(tableId);
+    }
+
     // ---------- Cut family ----------
 
     public void EmitNeckCut() => _bytes.Add((byte)Opcode.NeckCut);

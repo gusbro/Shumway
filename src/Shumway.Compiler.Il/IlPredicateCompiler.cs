@@ -5153,6 +5153,12 @@ public sealed class IlPredicateCompiler
 
                 case IndexNodeKind.Struct:
                 {
+                    // ADR-028: for a structure-sub node whose terminal is a nested
+                    // list (Tag.Lis), the runtime resolver keys on the cons functor.
+                    // The inline fast path instead routes it to the (sound)
+                    // full-bucket default — the list-headed clause is in that chain,
+                    // so the answer is identical; only its fast-path determinism is
+                    // forgone. Str terminals (the common case) key precisely below.
                     emit.LoadLocal(tagLoc);
                     emit.LoadConstant((int)Tag.Str);
                     emit.UnsignedBranchIfNotEqual(Target(node.DefaultTarget));

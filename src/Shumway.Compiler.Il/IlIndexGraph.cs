@@ -70,7 +70,7 @@ internal static class IlIndexGraph
         Opcode.SwitchOnTerm or Opcode.SwitchOnArg or
         Opcode.SwitchOnAtom or Opcode.SwitchOnInteger or Opcode.SwitchOnStructure or
         Opcode.SwitchOnAtomArg or Opcode.SwitchOnIntegerArg or Opcode.SwitchOnStructureArg or
-        Opcode.SwitchOnAtomSub or Opcode.SwitchOnIntegerSub;
+        Opcode.SwitchOnAtomSub or Opcode.SwitchOnIntegerSub or Opcode.SwitchOnStructureSub;
 
     /// <summary>Converts the bytecode-walking <see cref="IlIndexedDispatchInfo"/>
     /// into a WAM-independent <see cref="IndexGraph"/>. Returns null if the entry
@@ -155,6 +155,7 @@ internal static class IlIndexGraph
             }
             case Opcode.SwitchOnAtomSub:
             case Opcode.SwitchOnIntegerSub:
+            case Opcode.SwitchOnStructureSub:
             {
                 var table = tables[BytecodeIO.ReadInt32(code, pc + 13)];
                 foreach (int v in table.Values) yield return v;
@@ -208,6 +209,10 @@ internal static class IlIndexGraph
                     sub0: BytecodeIO.ReadInt32(code, pc + 5), sub1: BytecodeIO.ReadInt32(code, pc + 9));
             case Opcode.SwitchOnIntegerSub:
                 return KeyedNode(IndexNodeKind.Int, BytecodeIO.ReadInt32(code, pc + 1),
+                    tables[BytecodeIO.ReadInt32(code, pc + 13)], toTarget,
+                    sub0: BytecodeIO.ReadInt32(code, pc + 5), sub1: BytecodeIO.ReadInt32(code, pc + 9));
+            case Opcode.SwitchOnStructureSub:
+                return KeyedNode(IndexNodeKind.Struct, BytecodeIO.ReadInt32(code, pc + 1),
                     tables[BytecodeIO.ReadInt32(code, pc + 13)], toTarget,
                     sub0: BytecodeIO.ReadInt32(code, pc + 5), sub1: BytecodeIO.ReadInt32(code, pc + 9));
             default:
@@ -289,9 +294,21 @@ internal static class IlIndexGraph
                     ? Lookup(node, (int)v) : node.DefaultTarget;
             }
             case IndexNodeKind.Struct:
+            {
+                // ADR-028: a structure-sub node walks a path first, then keys on
+                // the functor of the terminal (a nested list keys as cons).
+                if (node.Sub0 >= 0)
+                {
+                    if (!TrySubCell(engine, a, node.Sub0, node.Sub1, out Cell s))
+                        return node.DefaultTarget;
+                    if (s.Tag == Tag.Str) return Lookup(node, engine.GetHeap(s.AsHeapIndex).AsFunctorId);
+                    if (s.Tag == Tag.Lis) return Lookup(node, AtomTable.ConsFunctorId);
+                    return node.DefaultTarget;
+                }
                 return a.Tag == Tag.Str
                     ? Lookup(node, engine.GetHeap(a.AsHeapIndex).AsFunctorId)
                     : node.DefaultTarget;
+            }
             default:
                 return node.DefaultTarget;
         }

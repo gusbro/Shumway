@@ -440,10 +440,14 @@ public sealed class PredicateCompiler
         public Dictionary<int, int> IntGroupPos = new();
         public Dictionary<int, int> StructGroupPos = new();
 
-        // ADR-027 second-level indexing. ListSub replaces the list-bucket chain;
-        // StructGroupSub[key] replaces a struct functor group's chain.
+        // ADR-027/028 nested indexing. A bucket's linear chain is replaced by a
+        // nested SubSwitch (sibling-arg or sub-path). ListSub for the list bucket;
+        // the *GroupSub dicts, keyed by the bucket's value key, for the typed
+        // value buckets.
         public SubSwitch? ListSub;
         public Dictionary<int, SubSwitch> StructGroupSub = new();
+        public Dictionary<int, SubSwitch> AtomGroupSub = new();
+        public Dictionary<int, SubSwitch> IntGroupSub = new();
     }
 
     // ============================================================================
@@ -455,23 +459,41 @@ public sealed class PredicateCompiler
     /// then <see cref="Sub1"/> if &gt;= 0) from argument <see cref="ArgIdx"/>.
     /// Structurally a nested copy of the top-level typed switch (a keyed table +
     /// per-key group chains + a default chain over the wildcard clauses).</summary>
+    // ADR-028 generalises the ADR-027 SubSwitch into a nested BucketSwitch that
+    // replaces ANY >= 2-clause value-bucket chain, discriminating by a
+    // (dimension, key-kind): the dimension is either a SIBLING argument (read
+    // X[SiblingArg] via switch_on_{atom,integer,structure}_arg, 9 bytes) or a
+    // SUB-path (walk from X[ArgIdx] via switch_on_{atom,integer,structure}_sub,
+    // 17 bytes, ADR-027); the key-kind is atom / integer / structure functor.
     private sealed class SubSwitch
     {
-        public int ArgIdx;
+        // Dimension.
+        public bool IsSibling;        // true => sibling arg; false => sub-path
+        public int SiblingArg;        // sibling dimension: the argument to read
+        public int ArgIdx;            // sub dimension: the bucketed arg to walk from
         public int Sub0;
         public int Sub1;              // -1 = depth-1
-        public bool IsAtom;           // atom_sub vs integer_sub
-        public SortedDictionary<int, List<int>> Buckets = new();  // key -> clauses (var-merged)
-        public List<int> Wildcards = new();                       // default clauses
+
+        public BucketKeyKind Kind;
+        public SortedDictionary<int, List<int>> Buckets = new();  // key -> {ground ∪ var-wildcards}
+        // The FULL bucket in source order — the target when the discriminator is
+        // unbound (Ref) or its key misses. An unbound discriminator can unify
+        // with every clause in the bucket, so the default MUST try them all
+        // (ADR-028 soundness fix; ADR-027's wildcards-only default dropped the
+        // ground clauses when a var-headed clause was present).
+        public List<int> AllClauses = new();
 
         // Positions resolved during layout.
         public int SwitchPos;
         public int TableId = -1;
         public readonly Dictionary<int, int> GroupPos = new();    // key -> chain pos (buckets >= 2)
-        public int DefaultChainPos = -1;                          // wildcard chain (>= 2), else -1
+        public int DefaultChainPos = -1;                          // full-bucket chain (>= 2), else -1
+
+        public int SwitchByteSize => IsSibling ? 9 : 17;
     }
 
-    private enum SubKeyKind { Var, Atom, Int }
+    private enum SubKeyKind { Var, Atom, Int, Struct }
+    private enum BucketKeyKind { Atom, Int, Struct }
 
     /// <summary>Classifies the sub-term of <paramref name="clause"/>'s
     /// <paramref name="argIdx"/> head argument reached by <paramref name="path"/>
@@ -494,13 +516,45 @@ public sealed class PredicateCompiler
             if (next is null) return (SubKeyKind.Var, 0);   // can't follow -> wildcard
             cur = next;
         }
-        return cur switch
+        return SubKeyOf(cur, listAsStruct: true);
+    }
+
+    /// <summary>Classifies a terminal term as an indexing key. <paramref
+    /// name="listAsStruct"/> true (sub-path dimension — <c>switch_on_structure_sub</c>
+    /// handles a nested list) keys a list as the cons functor; false (sibling
+    /// dimension — <c>switch_on_structure_arg</c> handles only <c>Tag.Str</c>)
+    /// treats a list as a var wildcard. A float/string is always a wildcard.</summary>
+    private static (SubKeyKind Kind, int Key) SubKeyOf(Term cur, bool listAsStruct)
+    {
+        switch (cur)
         {
-            AtomTerm a => (SubKeyKind.Atom, AtomTable.Intern(a.Name, permanent: true).Id),
-            IntTerm n when n.Value >= int.MinValue && n.Value <= int.MaxValue
-                => (SubKeyKind.Int, (int)n.Value),
-            _ => (SubKeyKind.Var, 0),   // var / compound / float / string -> wildcard
-        };
+            case AtomTerm a:
+                return (SubKeyKind.Atom, AtomTable.Intern(a.Name, permanent: true).Id);
+            case IntTerm n when n.Value >= int.MinValue && n.Value <= int.MaxValue:
+                return (SubKeyKind.Int, (int)n.Value);
+            case CompoundTerm c when c.Functor == "." && c.Args.Length == 2:
+                return listAsStruct
+                    ? (SubKeyKind.Struct, FunctorTable.Intern(AtomTable.Intern(".", permanent: true).Id, 2))
+                    : (SubKeyKind.Var, 0);
+            case CompoundTerm c:
+                return (SubKeyKind.Struct,
+                    FunctorTable.Intern(AtomTable.Intern(c.Functor, permanent: true).Id, c.Args.Length));
+            default:
+                return (SubKeyKind.Var, 0);   // var / float / string -> wildcard
+        }
+    }
+
+    /// <summary>Classifies clause <paramref name="clause"/>'s head argument
+    /// <paramref name="argPos"/> as a sibling-dimension key (a list is a wildcard —
+    /// see <see cref="SubKeyOf"/>). Out-of-range / non-compound head -> var.</summary>
+    private static (SubKeyKind Kind, int Key) ClassifyHeadArg(Clause clause, int argPos)
+    {
+        Term headTerm = clause.Kind == ClauseKind.Rule
+            ? ((CompoundTerm)clause.Term).Args[0]
+            : clause.Term;
+        if (headTerm is not CompoundTerm compound || argPos >= compound.Args.Length)
+            return (SubKeyKind.Var, 0);
+        return SubKeyOf(compound.Args[argPos], listAsStruct: false);
     }
 
     /// <summary>One compile-time hop into a head term: a list <c>'.'/2</c>
@@ -518,59 +572,85 @@ public sealed class PredicateCompiler
         return null;
     }
 
-    /// <summary>Tries to build a <see cref="SubSwitch"/> over
-    /// <paramref name="clauseSet"/> (a list bucket or a struct functor group,
-    /// each ≥ 2 clauses) by probing <paramref name="candidatePaths"/> in order and
-    /// taking the first that partitions the ground clauses into ≥ 2 distinct keys
-    /// of a single kind (all atoms, or all integers). Clauses whose chosen path
-    /// lands on a var / unfollowable position become wildcards (merged into every
-    /// bucket + the default). Returns null when no path gives a useful
-    /// partition.</summary>
-    private static SubSwitch? TryBuildSubSwitch(
-        int argIdx, IReadOnlyList<int> clauseSet, IReadOnlyList<Clause> clauses,
-        IEnumerable<(int Sub0, int Sub1)> candidatePaths)
+    /// <summary>ADR-028: build the best nested <see cref="SubSwitch"/> for a
+    /// ≥ 2-clause value bucket. Considers the SIBLING dimension (read
+    /// <paramref name="siblingArgs"/>) and — when <paramref name="subPaths"/> is
+    /// non-null (a list / struct bucket) — the SUB dimension (walk from
+    /// <paramref name="bucketArgIdx"/>). Each candidate partitions the bucket by a
+    /// single homogeneous key-kind (all atoms, all integers, or all struct
+    /// functors) with ≥ 2 distinct keys; clauses whose position is a var /
+    /// unfollowable are wildcards (merged into every keyed bucket). The candidate
+    /// with the smallest worst key-group wins (tie: sibling before sub, then lower
+    /// index). Returns null when nothing partitions.</summary>
+    private static SubSwitch? TryBuildBucketSwitch(
+        int bucketArgIdx, IReadOnlyList<int> clauseSet, IReadOnlyList<Clause> clauses,
+        IEnumerable<(int Sub0, int Sub1)>? subPaths, IReadOnlyList<int> siblingArgs)
     {
-        foreach (var (sub0, sub1) in candidatePaths)
+        SubSwitch? best = null;
+        int bestWorst = int.MaxValue;
+
+        // Sibling candidates first (cheaper dispatch, 9 vs 17 bytes; tie-break).
+        foreach (int j in siblingArgs)
+            Consider(ci => ClassifyHeadArg(clauses[ci], j),
+                     s => { s.IsSibling = true; s.SiblingArg = j; });
+
+        if (subPaths is not null)
+            foreach (var (sub0, sub1) in subPaths)
+            {
+                int s0 = sub0, s1 = sub1;
+                Consider(ci => ClassifySubPath(clauses[ci], bucketArgIdx,
+                                   s1 >= 0 ? new[] { s0, s1 } : new[] { s0 }),
+                         s => { s.ArgIdx = bucketArgIdx; s.Sub0 = s0; s.Sub1 = s1; });
+            }
+
+        return best;
+
+        // Classify the bucket at one position, build the homogeneous-kind
+        // partition (if any ≥ 2-distinct-key kind exists), and keep it if it beats
+        // the incumbent worst-group.
+        void Consider(Func<int, (SubKeyKind Kind, int Key)> keyOf, Action<SubSwitch> setDim)
         {
-            Span<int> path = sub1 >= 0 ? stackalloc int[] { sub0, sub1 } : stackalloc int[] { sub0 };
-            var atomBuckets = new SortedDictionary<int, List<int>>();
-            var intBuckets = new SortedDictionary<int, List<int>>();
-            var wildcards = new List<int>();
-            bool sawAtom = false, sawInt = false;
+            var atom = new SortedDictionary<int, List<int>>();
+            var intd = new SortedDictionary<int, List<int>>();
+            var strd = new SortedDictionary<int, List<int>>();
+            var wild = new List<int>();
             foreach (int ci in clauseSet)
             {
-                var (kind, key) = ClassifySubPath(clauses[ci], argIdx, path);
+                var (kind, key) = keyOf(ci);
                 switch (kind)
                 {
-                    case SubKeyKind.Atom: GetOrAdd(atomBuckets, key).Add(ci); sawAtom = true; break;
-                    case SubKeyKind.Int:  GetOrAdd(intBuckets, key).Add(ci);  sawInt = true;  break;
-                    default:              wildcards.Add(ci); break;
+                    case SubKeyKind.Atom:   GetOrAdd(atom, key).Add(ci); break;
+                    case SubKeyKind.Int:    GetOrAdd(intd, key).Add(ci); break;
+                    case SubKeyKind.Struct: GetOrAdd(strd, key).Add(ci); break;
+                    default:                wild.Add(ci); break;
                 }
             }
-            // v1: a single homogeneous key kind, ≥ 2 distinct keys.
-            bool useAtom;
+            // A single homogeneous ground kind with ≥ 2 distinct keys (a mixed
+            // position can't drive one typed value table — deferred).
+            int kinds = (atom.Count > 0 ? 1 : 0) + (intd.Count > 0 ? 1 : 0) + (strd.Count > 0 ? 1 : 0);
+            if (kinds != 1) return;
+            BucketKeyKind kk;
             SortedDictionary<int, List<int>> ground;
-            if (sawAtom && !sawInt && atomBuckets.Count >= 2) { useAtom = true; ground = atomBuckets; }
-            else if (sawInt && !sawAtom && intBuckets.Count >= 2) { useAtom = false; ground = intBuckets; }
-            else continue;
+            if (atom.Count >= 2) { kk = BucketKeyKind.Atom; ground = atom; }
+            else if (intd.Count >= 2) { kk = BucketKeyKind.Int; ground = intd; }
+            else if (strd.Count >= 2) { kk = BucketKeyKind.Struct; ground = strd; }
+            else return;
 
-            var ss = new SubSwitch
-            {
-                ArgIdx = argIdx, Sub0 = sub0, Sub1 = sub1, IsAtom = useAtom,
-                Wildcards = wildcards,
-            };
-            // Merge the wildcard clauses into every keyed bucket, preserving
-            // source (clause-index) order — the same rule the top level applies
-            // one level up (a var-arg clause joins every value bucket).
+            int worst = 0;
+            foreach (var g in ground.Values) worst = Math.Max(worst, g.Count + wild.Count);
+            if (worst >= bestWorst) return;   // strictly better only (sibling probed first wins ties)
+
+            var ss = new SubSwitch { Kind = kk, AllClauses = clauseSet.ToList() };
+            setDim(ss);
             foreach (var (key, specifics) in ground)
             {
                 var merged = new SortedSet<int>(specifics);
-                foreach (int w in wildcards) merged.Add(w);
+                foreach (int w in wild) merged.Add(w);
                 ss.Buckets[key] = merged.ToList();
             }
-            return ss;
+            best = ss;
+            bestWorst = worst;
         }
-        return null;
     }
 
     /// <summary>Candidate paths for a LIST bucket: the head (depth-1), then each
@@ -599,17 +679,18 @@ public sealed class PredicateCompiler
         _ => 9 + 5 * (count - 1),   // try(9) + (count-2)*retry(5) + trust(5)
     };
 
-    /// <summary>Lays out a sub-switch region starting at <paramref name="pos"/>:
-    /// the 17-byte switch, then a group chain for every bucket with ≥ 2 clauses,
-    /// then a default chain when there are ≥ 2 wildcard clauses. Returns the
-    /// position just past the region.</summary>
+    /// <summary>Lays out a nested-switch region starting at <paramref name="pos"/>:
+    /// the switch opcode (9 bytes sibling / 17 bytes sub), a group chain for every
+    /// bucket with ≥ 2 clauses, then the full-bucket default chain (the unbound /
+    /// missing-key target — ADR-028 soundness). Returns the position just past the
+    /// region.</summary>
     private static int LayoutSubSwitch(SubSwitch ss, int pos)
     {
         ss.SwitchPos = pos;
-        pos += 17;
+        pos += ss.SwitchByteSize;
         foreach (var (key, group) in ss.Buckets)
             if (group.Count >= 2) { ss.GroupPos[key] = pos; pos += SubChainSize(group.Count); }
-        if (ss.Wildcards.Count >= 2) { ss.DefaultChainPos = pos; pos += SubChainSize(ss.Wildcards.Count); }
+        if (ss.AllClauses.Count >= 2) { ss.DefaultChainPos = pos; pos += SubChainSize(ss.AllClauses.Count); }
         return pos;
     }
 
@@ -677,21 +758,49 @@ public sealed class PredicateCompiler
             levels[li] = lvl;
         }
 
-        // ADR-027: second-level sub-switches. A list bucket (≥ 2 clauses) may
-        // dispatch on its head / a token sub-arg; a struct functor group (≥ 2
-        // clauses) may dispatch on a struct sub-arg. Each replaces that bucket's
-        // linear chain when a partitioning path exists.
-        foreach (var lvl in levels)
+        // ADR-027/028: nested switches inside a value bucket. A ≥ 2-clause bucket
+        // whose clauses share the bucketed arg's key but differ at a sibling arg
+        // (any bucket) or at a sub-arg of a list/struct value (list/struct
+        // buckets) is replaced by a nested SubSwitch. The bucketed arg itself is
+        // never a useful sibling discriminator (all clauses share its key), so it
+        // is excluded from the sibling set.
+        for (int li = 0; li < levels.Length; li++)
         {
+            var lvl = levels[li];
+            // A value bucket at level li is reached with the EARLIER cascade args
+            // (levels 0..li-1) unbound — the var-fallthrough path led here — and
+            // this level's arg pinned to the bucket key. So the only args that can
+            // be bound at the call, and thus discriminate the bucket, are the
+            // LATER cascade args (levels li+1..). Earlier / this-level args would
+            // always miss to the default.
+            var siblings = new List<int>();
+            for (int lj = li + 1; lj < levels.Length; lj++) siblings.Add(levels[lj].ArgIdx);
+
             if (lvl.ListBucket.Count >= 2)
-                lvl.ListSub = TryBuildSubSwitch(
-                    lvl.ArgIdx, lvl.ListBucket, clauses, ListCandidatePaths());
+                lvl.ListSub = TryBuildBucketSwitch(
+                    lvl.ArgIdx, lvl.ListBucket, clauses, ListCandidatePaths(), siblings);
             foreach (var (key, group) in lvl.StructBuckets)
                 if (group.Count >= 2)
                 {
-                    var ss = TryBuildSubSwitch(
-                        lvl.ArgIdx, group, clauses, StructCandidatePaths());
+                    var ss = TryBuildBucketSwitch(lvl.ArgIdx, group, clauses, StructCandidatePaths(), siblings);
                     if (ss != null) lvl.StructGroupSub[key] = ss;
+                }
+            // ADR-028: atom / integer value buckets — sibling dimension only (no
+            // sub-path into a scalar value). Gated at ≥ 3: a 2-clause bucket ends
+            // in `trust` (no leftover choice point), so the only gain is one
+            // skipped head-unify — not worth the nested switch's code size (the
+            // audit treats worst-bucket ≤ 2 as already well-indexed).
+            foreach (var (key, group) in lvl.AtomBuckets)
+                if (group.Count >= 3)
+                {
+                    var ss = TryBuildBucketSwitch(lvl.ArgIdx, group, clauses, subPaths: null, siblings);
+                    if (ss != null) lvl.AtomGroupSub[key] = ss;
+                }
+            foreach (var (key, group) in lvl.IntBuckets)
+                if (group.Count >= 3)
+                {
+                    var ss = TryBuildBucketSwitch(lvl.ArgIdx, group, clauses, subPaths: null, siblings);
+                    if (ss != null) lvl.IntGroupSub[key] = ss;
                 }
         }
 
@@ -773,9 +882,19 @@ public sealed class PredicateCompiler
             lvl.StructLblPos = lvl.HasStructs ? lvl.SwitchOnStructurePos : emptyFallthrough;
 
             foreach (var (key, group) in lvl.AtomBuckets)
-                if (group.Count >= 2) { lvl.AtomGroupPos[key] = pos; pos += ChainSize(group.Count); }
+                if (group.Count >= 2)
+                {
+                    if (lvl.AtomGroupSub.TryGetValue(key, out var ss))
+                    { pos = LayoutSubSwitch(ss, pos); lvl.AtomGroupPos[key] = ss.SwitchPos; }
+                    else { lvl.AtomGroupPos[key] = pos; pos += ChainSize(group.Count); }
+                }
             foreach (var (key, group) in lvl.IntBuckets)
-                if (group.Count >= 2) { lvl.IntGroupPos[key] = pos; pos += ChainSize(group.Count); }
+                if (group.Count >= 2)
+                {
+                    if (lvl.IntGroupSub.TryGetValue(key, out var ss))
+                    { pos = LayoutSubSwitch(ss, pos); lvl.IntGroupPos[key] = ss.SwitchPos; }
+                    else { lvl.IntGroupPos[key] = pos; pos += ChainSize(group.Count); }
+                }
             foreach (var (key, group) in lvl.StructBuckets)
                 if (group.Count >= 2)
                 {
@@ -855,8 +974,11 @@ public sealed class PredicateCompiler
                 values[idx] = group.Count == 1 ? clauseBodyPos[group[0]] : ss.GroupPos[key];
                 idx++;
             }
-            int def = ss.Wildcards.Count >= 2 ? ss.DefaultChainPos
-                    : ss.Wildcards.Count == 1 ? clauseBodyPos[ss.Wildcards[0]]
+            // ADR-028: default (unbound / missing discriminator) = the FULL bucket
+            // chain (every clause can unify with an unbound discriminator), not
+            // just the wildcards.
+            int def = ss.AllClauses.Count >= 2 ? ss.DefaultChainPos
+                    : ss.AllClauses.Count == 1 ? clauseBodyPos[ss.AllClauses[0]]
                     : missAddr;
             return new SwitchTable(keys, values, def);
         }
@@ -884,13 +1006,23 @@ public sealed class PredicateCompiler
                 lvl.StructTableId = switchTables.Count;
                 switchTables.Add(BuildTable(lvl.StructBuckets, lvl.StructGroupPos, miss));
             }
-            // ADR-027 sub-switch tables (list-bucket + struct-group).
+            // ADR-027/028 nested-switch tables (list / struct / atom / int buckets).
             if (lvl.ListSub != null)
             {
                 lvl.ListSub.TableId = switchTables.Count;
                 switchTables.Add(BuildSubTable(lvl.ListSub, miss));
             }
             foreach (var ss in lvl.StructGroupSub.Values)
+            {
+                ss.TableId = switchTables.Count;
+                switchTables.Add(BuildSubTable(ss, miss));
+            }
+            foreach (var ss in lvl.AtomGroupSub.Values)
+            {
+                ss.TableId = switchTables.Count;
+                switchTables.Add(BuildSubTable(ss, miss));
+            }
+            foreach (var ss in lvl.IntGroupSub.Values)
             {
                 ss.TableId = switchTables.Count;
                 switchTables.Add(BuildSubTable(ss, miss));
@@ -909,14 +1041,31 @@ public sealed class PredicateCompiler
         // contiguously and in the same order LayoutSubSwitch reserved them.
         void EmitSubSwitch(SubSwitch ss)
         {
-            switchTableIdSites.Add(emitter.Position + 13);   // op+argIdx+sub0+sub1
-            if (ss.IsAtom) emitter.EmitSwitchOnAtomSub(ss.ArgIdx, ss.Sub0, ss.Sub1, ss.TableId);
-            else           emitter.EmitSwitchOnIntegerSub(ss.ArgIdx, ss.Sub0, ss.Sub1, ss.TableId);
+            if (ss.IsSibling)
+            {
+                switchTableIdSites.Add(emitter.Position + 5);   // op + argIdx
+                switch (ss.Kind)
+                {
+                    case BucketKeyKind.Atom:   emitter.EmitSwitchOnAtomArg(ss.SiblingArg, ss.TableId); break;
+                    case BucketKeyKind.Int:    emitter.EmitSwitchOnIntegerArg(ss.SiblingArg, ss.TableId); break;
+                    default:                   emitter.EmitSwitchOnStructureArg(ss.SiblingArg, ss.TableId); break;
+                }
+            }
+            else
+            {
+                switchTableIdSites.Add(emitter.Position + 13);   // op+argIdx+sub0+sub1
+                switch (ss.Kind)
+                {
+                    case BucketKeyKind.Atom:   emitter.EmitSwitchOnAtomSub(ss.ArgIdx, ss.Sub0, ss.Sub1, ss.TableId); break;
+                    case BucketKeyKind.Int:    emitter.EmitSwitchOnIntegerSub(ss.ArgIdx, ss.Sub0, ss.Sub1, ss.TableId); break;
+                    default:                   emitter.EmitSwitchOnStructureSub(ss.ArgIdx, ss.Sub0, ss.Sub1, ss.TableId); break;
+                }
+            }
             foreach (var (key, group) in ss.Buckets)
                 if (group.Count >= 2)
                     EmitChain(emitter, group, clauseBodyPos, arity, dispatchSites);
-            if (ss.Wildcards.Count >= 2)
-                EmitChain(emitter, ss.Wildcards, clauseBodyPos, arity, dispatchSites);
+            if (ss.AllClauses.Count >= 2)
+                EmitChain(emitter, ss.AllClauses, clauseBodyPos, arity, dispatchSites);
         }
 
         // Chunk 154: emit enter_dynamic at the very entry of every
@@ -1016,10 +1165,16 @@ public sealed class PredicateCompiler
 
             foreach (var (key, group) in lvl.AtomBuckets)
                 if (group.Count >= 2)
-                    EmitChain(emitter, group, clauseBodyPos, arity, dispatchSites);
+                {
+                    if (lvl.AtomGroupSub.TryGetValue(key, out var ss)) EmitSubSwitch(ss);
+                    else EmitChain(emitter, group, clauseBodyPos, arity, dispatchSites);
+                }
             foreach (var (key, group) in lvl.IntBuckets)
                 if (group.Count >= 2)
-                    EmitChain(emitter, group, clauseBodyPos, arity, dispatchSites);
+                {
+                    if (lvl.IntGroupSub.TryGetValue(key, out var ss)) EmitSubSwitch(ss);
+                    else EmitChain(emitter, group, clauseBodyPos, arity, dispatchSites);
+                }
             foreach (var (key, group) in lvl.StructBuckets)
                 if (group.Count >= 2)
                 {

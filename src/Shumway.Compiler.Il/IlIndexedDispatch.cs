@@ -80,7 +80,7 @@ public static class IlIndexedDispatch
         Opcode.SwitchOnTerm or Opcode.SwitchOnArg
         or Opcode.SwitchOnAtom or Opcode.SwitchOnInteger or Opcode.SwitchOnStructure
         or Opcode.SwitchOnAtomArg or Opcode.SwitchOnIntegerArg or Opcode.SwitchOnStructureArg
-        or Opcode.SwitchOnAtomSub or Opcode.SwitchOnIntegerSub;
+        or Opcode.SwitchOnAtomSub or Opcode.SwitchOnIntegerSub or Opcode.SwitchOnStructureSub;
 
     /// <summary>Tries to build the indexed-dispatch model for
     /// <paramref name="predicate"/>. Succeeds only for the WAM indexed
@@ -407,6 +407,7 @@ public static class IlIndexedDispatch
                 }
                 case Opcode.SwitchOnAtomSub:
                 case Opcode.SwitchOnIntegerSub:
+                case Opcode.SwitchOnStructureSub:
                 {
                     int tableId = BytecodeIO.ReadInt32(code, pc + 13);
                     foreach (int t in TableTargets(tables, tableId)) yield return t;
@@ -494,6 +495,11 @@ public static class IlIndexedDispatch
                         BytecodeIO.ReadInt32(code, pc + 1), BytecodeIO.ReadInt32(code, pc + 5),
                         BytecodeIO.ReadInt32(code, pc + 9));
                     break;
+                case Opcode.SwitchOnStructureSub:
+                    target = StructureSubTarget(engine, tables, BytecodeIO.ReadInt32(code, pc + 13),
+                        BytecodeIO.ReadInt32(code, pc + 1), BytecodeIO.ReadInt32(code, pc + 5),
+                        BytecodeIO.ReadInt32(code, pc + 9));
+                    break;
                 default:
                     // Not a switch: a chain head (try) or a clause body.
                     return info.AddrToEntryCursor[pc];
@@ -570,6 +576,22 @@ public static class IlIndexedDispatch
         {
             long v = sub.AsInt;
             if (v >= int.MinValue && v <= int.MaxValue) return table.Lookup((int)v);
+        }
+        return table.DefaultAddress;
+    }
+
+    // ADR-028 — structure-keyed sub target: key the table on the FUNCTOR of the
+    // sub-terminal (a nested list keys as the cons functor), default on a miss.
+    private static int StructureSubTarget(Engine engine, IReadOnlyList<SwitchTable> tables,
+        int tableId, int argIdx, int sub0, int sub1)
+    {
+        var table = tables[tableId];
+        if (TrySubCell(engine, DerefArg(engine, argIdx), sub0, sub1, out Cell sub))
+        {
+            if (sub.Tag == Tag.Str)
+                return table.Lookup(engine.GetHeap(sub.AsHeapIndex).AsFunctorId);
+            if (sub.Tag == Tag.Lis)
+                return table.Lookup(AtomTable.ConsFunctorId);
         }
         return table.DefaultAddress;
     }

@@ -1049,6 +1049,30 @@ public sealed class BytecodeInterpreter
                     break;
                 }
 
+                // ---------- Structure-keyed sub-argument indexing (ADR-028) ----------
+
+                case Opcode.SwitchOnStructureSub:
+                {
+                    int argIdx  = BytecodeIO.ReadInt32(code, pc + 1);
+                    int sub0    = BytecodeIO.ReadInt32(code, pc + 5);
+                    int sub1    = BytecodeIO.ReadInt32(code, pc + 9);
+                    int tableId = BytecodeIO.ReadInt32(code, pc + 13);
+                    var table = _switchTables[tableId];
+                    int target = table.DefaultAddress;
+                    if (TrySubCell(DerefArg(argIdx), sub0, sub1, out Cell sub))
+                    {
+                        // A Str terminal keys by its functor id; a nested list
+                        // ('.'/2, ADR-017 inline cons — no functor cell) keys as
+                        // the pre-registered cons functor.
+                        if (sub.Tag == Tag.Str)
+                            target = table.Lookup(_engine.GetHeap(sub.AsHeapIndex).AsFunctorId);
+                        else if (sub.Tag == Tag.Lis)
+                            target = table.Lookup(AtomTable.ConsFunctorId);
+                    }
+                    _engine.SetPc(target);
+                    break;
+                }
+
                 // ---------- Cut opcodes ----------
 
                 case Opcode.NeckCut:

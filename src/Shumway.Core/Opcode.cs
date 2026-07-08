@@ -262,26 +262,33 @@ public enum Opcode : byte
     SwitchOnAtomSub = 0x5C,
     SwitchOnIntegerSub = 0x5D,
 
+    // ADR-028 — structure-keyed sub-argument indexing. Same bounded 2-hop walk
+    // as the atom/integer subs, but the terminal is keyed by FUNCTOR id (the
+    // switch_on_structure table format): a Str terminal (a list keys as './2')
+    // indexes the table, anything else / a missed hop takes the default.
+    //   switch_on_structure_sub <argIdx:4> <sub0:4> <sub1:4> <tableId:4>  (17 bytes)
+    SwitchOnStructureSub = 0x5E,
+
     // Meta — last member of the dense dispatched block (chunk 429).
-    Meta = 0x5E,
+    Meta = 0x5F,
 
     // Extension escape — reserved, never dispatched.
-    ReservedExtension = 0x5F,
+    ReservedExtension = 0x60,
 
     // Reserved specialised-builtin opcodes. Defined in OpcodeTable but
     // never emitted by the compiler and never dispatched by the
     // interpreter; parked after ReservedExtension so the dispatched
     // block stays hole-free (chunk 429).
-    UnifyEq = 0x60,
-    IsOp = 0x61,
-    LessThan = 0x62,
-    GreaterThan = 0x63,
-    LessEq = 0x64,
-    GreaterEq = 0x65,
-    ArithEq = 0x66,
-    ArithNotEq = 0x67,
-    StructEq = 0x68,
-    StructNotEq = 0x69,
+    UnifyEq = 0x61,
+    IsOp = 0x62,
+    LessThan = 0x63,
+    GreaterThan = 0x64,
+    LessEq = 0x65,
+    GreaterEq = 0x66,
+    ArithEq = 0x67,
+    ArithNotEq = 0x68,
+    StructEq = 0x69,
+    StructNotEq = 0x6A,
 }
 
 /// <summary>Sub-opcodes for <see cref="Opcode.Meta"/>. Only <see cref="DbgInfo"/> exists in v1.</summary>
