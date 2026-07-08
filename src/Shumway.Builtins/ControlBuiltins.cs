@@ -21,13 +21,28 @@ public static class ControlBuiltins
     public static bool True(Engine engine) => true;
 
     /// <summary><c>get_cpu_time(-Time)</c> — GNU-Prolog timing primitive:
-    /// binds <c>Time</c> to the CPU time consumed by the process so far, in
-    /// milliseconds. Used by the classic benchmark harness (common.pl) that the
-    /// Aquarius/Van Roy programs share. We report the .NET process'
-    /// total processor time, the closest equivalent.</summary>
-    public static bool GetCpuTime(Engine engine) =>
-        engine.UnifyRegisterWithCell(0, Cell.Int(
-            (long)System.Diagnostics.Process.GetCurrentProcess().TotalProcessorTime.TotalMilliseconds));
+    /// binds <c>Time</c> to a high-resolution monotonic process timer, in
+    /// milliseconds (a float, so sub-millisecond deltas survive). Used by the
+    /// classic benchmark harness (common.pl) the Aquarius/Van Roy programs
+    /// share, and by the Logtalk <c>benchmarks</c> object and lgtunit via
+    /// <c>os::cpu_time/1</c>.
+    ///
+    /// <para>It intentionally reads a <see cref="System.Diagnostics.Stopwatch"/>
+    /// (QueryPerformanceCounter) rather than
+    /// <c>Process.TotalProcessorTime</c>: the engine runs a query on a single
+    /// thread, so elapsed monotonic time is an accurate measure of the
+    /// computation's cost, and — crucially for timing harnesses that subtract
+    /// an empty-loop baseline and divide by the iteration count — it has
+    /// sub-microsecond resolution. <c>TotalProcessorTime</c> is only updated
+    /// on the ~15.6 ms Windows scheduler tick, which made per-goal benchmark
+    /// numbers swing several-fold with the iteration count (they were
+    /// dominated by quantisation noise, not by the engine).</para></summary>
+    public static bool GetCpuTime(Engine engine)
+    {
+        double ms = System.Diagnostics.Stopwatch.GetTimestamp()
+            * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        return engine.UnifyRegisterWithHeapAt(0, engine.MakeFloat(ms));
+    }
 
     /// <summary><c>halt/0</c> — terminates execution with exit code 0.
     /// Implemented by throwing <see cref="PrologHaltException"/>, which

@@ -308,7 +308,7 @@ public static class StandardBuiltins
         BuiltinsRegistry.Register("halt", 1, ControlBuiltins.Halt1,
             Control, "halt(+Status)", "Halts the engine with the given exit code.");
         BuiltinsRegistry.Register("get_cpu_time", 1, ControlBuiltins.GetCpuTime,
-            Control, "get_cpu_time(-Time)", "Binds Time to the process CPU time so far, in milliseconds (GNU-Prolog timing primitive).");
+            Control, "get_cpu_time(-Time)", "Binds Time to a high-resolution monotonic process timer, in milliseconds (float; GNU-Prolog timing primitive).");
 
         // List manipulation extras. member/2 is intentionally NOT here —
         // chunk 40 moved it to the Prolog prelude so it can enumerate
