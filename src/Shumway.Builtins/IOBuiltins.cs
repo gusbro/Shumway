@@ -145,6 +145,11 @@ public static class IOBuiltins
         if (arity != 1) return;
         string name = AtomTable.GetById(atomId)?.Name ?? "";
         Cell valCell = Resolve(engine, engine.GetHeap(functorIdx + 1));
+        if (name == "variable_names")
+        {
+            ApplyVariableNames(engine, valCell, options);
+            return;
+        }
         bool value = IsTrueAtom(valCell);
         switch (name)
         {
@@ -153,6 +158,51 @@ public static class IOBuiltins
             case "numbervars": options.Numbervars = value; break;
             // Unknown options ignored silently.
         }
+    }
+
+    /// <summary>Parses the <c>variable_names([Name=Var, ...])</c> option
+    /// into <see cref="TermRenderOptions.VariableNames"/>, keyed by each
+    /// still-unbound <c>Var</c>'s dereferenced heap index. A bound Var, a
+    /// non-atom Name, or a malformed pair is skipped (SWI is lenient
+    /// here).</summary>
+    private static void ApplyVariableNames(Engine engine, Cell listCell, TermRenderOptions options)
+    {
+        Cell cur = Resolve(engine, listCell);
+        while (cur.Tag == Tag.Lis)
+        {
+            int headIdx = cur.AsHeapIndex;
+            Cell pair = Resolve(engine, engine.GetHeap(headIdx));
+            if (pair.Tag == Tag.Str)
+            {
+                int pairIdx = pair.AsHeapIndex;
+                var (pAtom, pArity) = FunctorTable.Lookup(engine.GetHeap(pairIdx).AsFunctorId);
+                if (pArity == 2 && (AtomTable.GetById(pAtom)?.Name ?? "") == "=")
+                {
+                    Cell nameCell = Resolve(engine, engine.GetHeap(pairIdx + 1));
+                    Cell varCell = engine.GetHeap(pairIdx + 2);
+                    int varAddr = ResolveVarAddr(engine, varCell);
+                    if (nameCell.Tag == Tag.Atom && varAddr >= 0)
+                    {
+                        options.VariableNames ??= new System.Collections.Generic.Dictionary<int, string>();
+                        // First binding for a given variable wins.
+                        options.VariableNames.TryAdd(
+                            varAddr, AtomTable.GetById(nameCell.AsAtomId)?.Name ?? "");
+                    }
+                }
+            }
+            cur = Resolve(engine, engine.GetHeap(headIdx + 1));
+        }
+    }
+
+    /// <summary>Dereferences <paramref name="varCell"/>; returns its heap
+    /// index when it is still an unbound variable, or -1 otherwise.</summary>
+    private static int ResolveVarAddr(Engine engine, Cell varCell)
+    {
+        if (varCell.Tag == Tag.AttVar) return varCell.AsHeapIndex;
+        if (varCell.Tag != Tag.Ref) return -1;
+        int addr = engine.Deref(varCell.AsHeapIndex);
+        Cell target = engine.GetHeap(addr);
+        return (target.Tag == Tag.Ref || target.Tag == Tag.AttVar) ? addr : -1;
     }
 
     private static bool IsTrueAtom(Cell c) =>

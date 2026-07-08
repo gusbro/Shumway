@@ -28,6 +28,14 @@ public sealed class TermRenderOptions
     public bool IgnoreOps { get; set; } = false;
     public bool Numbervars { get; set; } = false;
 
+    /// <summary>The <c>variable_names(Bindings)</c> write_term option
+    /// (SWI / SICStus): a map from a variable's dereferenced heap index to
+    /// the source name it should print as, instead of the default
+    /// <c>_Gn</c>. Built from a <c>[Name=Var, ...]</c> list at call time;
+    /// only entries whose <c>Var</c> is still unbound are recorded.
+    /// <c>null</c> when the option is absent.</summary>
+    public System.Collections.Generic.Dictionary<int, string>? VariableNames { get; set; }
+
     /// <summary>Operator-lookup view used by the renderer to decide
     /// whether a compound's functor should print in operator form
     /// (<c>a + b</c>) instead of canonical form (<c>+(a, b)</c>). When

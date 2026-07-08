@@ -106,6 +106,35 @@ public class TermRenderOptionsTests
         Assert.Equal("foo('weird atom',A)", sw.ToString());   // Phase 33: compact ISO layout
     }
 
+    // ---------- variable_names option (SWI/SICStus) ----------
+
+    [Fact]
+    public void WriteTerm_VariableNames_PrintsSourceNames()
+    {
+        var engine = WithCaptureOut(out var sw);
+        engine.Query(
+            "write_term(a(X,Y), [variable_names(['X'=X,'Y'=Y])]).");
+        Assert.Equal("a(X,Y)", sw.ToString());
+    }
+
+    [Fact]
+    public void WriteTerm_VariableNames_UnnamedVarKeepsGForm()
+    {
+        var engine = WithCaptureOut(out var sw);
+        // Only X is named; Y falls back to the default _G form.
+        engine.Query("write_term(f(X,Y), [variable_names(['X'=X])]).");
+        Assert.StartsWith("f(X,_G", sw.ToString());
+    }
+
+    [Fact]
+    public void WriteTerm_VariableNames_SharedVarRepeatsName()
+    {
+        var engine = WithCaptureOut(out var sw);
+        engine.Query(
+            "write_term(p(X,X), [variable_names(['X'=X])]).");
+        Assert.Equal("p(X,X)", sw.ToString());
+    }
+
     // ---------- write/1 is unchanged ----------
 
     [Fact]

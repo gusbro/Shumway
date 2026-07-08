@@ -41,6 +41,12 @@ public static class TermRenderer
                 // An attributed variable is still an unbound variable —
                 // it renders exactly like a plain one. Its attributes
                 // are not part of its written form. (chunk 77)
+                if (options.VariableNames is not null
+                    && options.VariableNames.TryGetValue(derefAddr, out string? vName))
+                {
+                    output.Write(vName);
+                    break;
+                }
                 output.Write("_G");
                 output.Write(derefAddr.ToString(CultureInfo.InvariantCulture));
                 break;
