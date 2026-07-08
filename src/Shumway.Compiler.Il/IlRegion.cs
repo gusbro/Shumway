@@ -48,7 +48,7 @@ internal sealed class IlRegion
     /// emitted IL size).</summary>
     public int TotalBytecodeBytes
     {
-        get { int s = 0; foreach (var m in Members) s += m.Bytecode.Length; return s; }
+        get { int s = 0; foreach (var m in Members) s += m.BytecodeUnfused.Length; return s; }
     }
 }
 
@@ -93,7 +93,7 @@ internal static class IlRegionBuilder
         if (calleeMap is null)
             return new IlRegion(root, members, memberFids);
 
-        int sizeSum = root.Bytecode.Length;
+        int sizeSum = root.BytecodeUnfused.Length;
         var queue = new Queue<CompiledPredicate>();
         queue.Enqueue(root);
         while (queue.Count > 0)
@@ -106,10 +106,10 @@ internal static class IlRegionBuilder
                 if (!calleeMap.TryGetValue(fid, out var callee)) continue;   // builtin / external / uncompiled
                 if (!IsStructurallyEligible(callee)) continue;   // dynamic / empty
                 if (extraEligible is not null && !extraEligible(callee)) continue;  // caller filter
-                if (sizeSum + callee.Bytecode.Length > budgetBytes) continue;       // budget → stays trampoline
+                if (sizeSum + callee.BytecodeUnfused.Length > budgetBytes) continue;       // budget → stays trampoline
                 members.Add(callee);
                 memberFids.Add(fid);
-                sizeSum += callee.Bytecode.Length;
+                sizeSum += callee.BytecodeUnfused.Length;
                 queue.Enqueue(callee);
             }
         }
@@ -122,7 +122,7 @@ internal static class IlRegionBuilder
     /// full IL-eligibility are the caller's <c>extraEligible</c> filter (it needs
     /// the linker's visibility map / the compiler instance).</summary>
     private static bool IsStructurallyEligible(CompiledPredicate p)
-        => p.Bytecode.Length > 0 && p.Bytecode[0] != (byte)Opcode.EnterDynamic;
+        => p.BytecodeUnfused.Length > 0 && p.BytecodeUnfused[0] != (byte)Opcode.EnterDynamic;
 }
 
 /// <summary>What a region cursor re-enters at (Stage 2). The region method's

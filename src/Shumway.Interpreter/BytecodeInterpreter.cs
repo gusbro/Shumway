@@ -709,6 +709,68 @@ public sealed class BytecodeInterpreter
                     break;
                 }
 
+                // ---------- ADR-029 — clause-epilogue fusions ----------
+
+                case Opcode.DeallocateExecute:
+                {
+                    // 6-byte layout: [op:1] [target:4] [Nop:1]. Mirrors
+                    // Deallocate + Execute: trim the frame, then tail-call.
+                    _engine.Deallocate();
+                    if (!FlushPendingWakeups(code))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    int target = ReadI32(code, codeArr, pc + 1);
+                    target = ResolveTargetMaybeAutoPromoted(target);
+                    if (target == UnknownFailTarget)   // chunk 417: unknown=fail
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    Shumway.Core.Profiler.Call(target);
+                    _engine.SetB0(_engine.B);   // tail call enters a new procedure
+                    DispatchToTier1OrBytecode(target);
+                    break;
+                }
+
+                case Opcode.CutDeallocateProceed:
+                {
+                    // 7-byte layout: [op:1] [slot:4] [Nop:1] [Nop:1]. Mirrors
+                    // Cut + Deallocate + Proceed. Flush wakeups BEFORE the cut
+                    // commits (see NeckCut/Cut); nothing schedules a wakeup
+                    // between the cut and the return, so no second flush.
+                    if (!FlushPendingWakeups(code))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    int cutSlot = ReadI32(code, codeArr, pc + 1);
+                    _engine.Cut((int)_engine.GetY(cutSlot).Data);
+                    _engine.Deallocate();
+                    int retPc = _engine.Cp;
+                    if (retPc < 0) return InterpreterResult.Halted;
+                    _engine.SetPc(retPc);
+                    break;
+                }
+
+                case Opcode.CutProceed:
+                {
+                    // 6-byte layout: [op:1] [slot:4] [Nop:1]. Mirrors Cut +
+                    // Proceed (frameless).
+                    if (!FlushPendingWakeups(code))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    int cpSlot = ReadI32(code, codeArr, pc + 1);
+                    _engine.Cut((int)_engine.GetY(cpSlot).Data);
+                    int rpc = _engine.Cp;
+                    if (rpc < 0) return InterpreterResult.Halted;
+                    _engine.SetPc(rpc);
+                    break;
+                }
+
                 // ---------- Choice point opcodes ----------
 
                 case Opcode.TryMeElse:

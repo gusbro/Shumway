@@ -49,11 +49,71 @@ public sealed class PredicateCompiler
     /// every existing caller (PrologEngine consult, tests).</summary>
     public bool EmitDebugInfo { get; set; } = true;
 
+    /// <summary>ADR-029 — clause-epilogue peephole fusion. When set, the final
+    /// bytecode of every compiled predicate has each `cut; deallocate_proceed`
+    /// and `cut; proceed` pair collapsed into one dispatched opcode (same total
+    /// width, Nop-padded — no offset shifts). Tier-0 dispatch-count win; the IL
+    /// describer un-fuses the opcodes, so promotion is unaffected. (Deallocate
+    /// Execute is deferred: `execute` is a link-time dispatch site the engine
+    /// rewrites to ExecuteIl/ExecuteBuiltin, so fusing it would hide that swap.)</summary>
+    public static bool EnableEpilogueFusion { get; set; } = true;
+
     public CompiledPredicate Compile(IReadOnlyList<Clause> clauses)
         => Compile(clauses,
             new LiteralPool<string>(),
             new LiteralPool<double>(),
             new LiteralPool<System.Numerics.BigInteger>());
+
+    /// <summary>Public entry — compiles then applies the ADR-029 epilogue
+    /// fusion to the final bytecode (in place; the fused opcodes keep the same
+    /// total width so all recorded offsets stay valid).</summary>
+    public CompiledPredicate Compile(
+        IReadOnlyList<Clause> clauses,
+        LiteralPool<string> stringLiterals,
+        LiteralPool<double> floatLiterals,
+        LiteralPool<System.Numerics.BigInteger> bigIntLiterals,
+        bool enableIndexing = true,
+        bool isDynamic = false,
+        int failStubAddr = 0)
+    {
+        CompiledPredicate result = CompileCore(clauses, stringLiterals, floatLiterals,
+            bigIntLiterals, enableIndexing, isDynamic, failStubAddr);
+        if (EnableEpilogueFusion) FuseEpilogues(result.Bytecode);
+        return result;
+    }
+
+    /// <summary>Collapse each `cut; deallocate_proceed` and `cut; proceed`
+    /// adjacency into its fused opcode, in place. Opcode-aligned walk (never
+    /// mis-reads an operand byte as a cut); the fused opcode reuses the cut's
+    /// operand at +1 and Nop-fills the terminator's opcode byte, so the total
+    /// width and every following offset are unchanged. The fused pairs carry no
+    /// link-time dispatch operand, so this is safe pre-link.</summary>
+    internal static void FuseEpilogues(byte[] code)
+    {
+        int pc = 0;
+        while (pc < code.Length)
+        {
+            byte b = code[pc];
+            int size = OpcodeTable.Get(b).Size;
+            if (size == 0) break;   // corruption — stop
+            int next = pc + size;
+            if ((Opcode)b == Opcode.Cut && next < code.Length)
+            {
+                switch ((Opcode)code[next])
+                {
+                    case Opcode.DeallocateProceed:
+                        code[pc] = (byte)Opcode.CutDeallocateProceed;
+                        code[next] = (byte)Opcode.Nop;   // 2nd byte already Nop
+                        break;
+                    case Opcode.Proceed:
+                        code[pc] = (byte)Opcode.CutProceed;
+                        code[next] = (byte)Opcode.Nop;
+                        break;
+                }
+            }
+            pc = next;
+        }
+    }
 
     /// <summary><paramref name="enableIndexing"/> (chunk 75 — JIT
     /// indexing) gates first-arg / multi-arg indexing. When false the
@@ -64,7 +124,7 @@ public sealed class PredicateCompiler
     /// that's rarely called or constantly churning. Once the runtime
     /// call count crosses the JIT threshold the engine recompiles with
     /// <c>enableIndexing: true</c>.</summary>
-    public CompiledPredicate Compile(
+    private CompiledPredicate CompileCore(
         IReadOnlyList<Clause> clauses,
         LiteralPool<string> stringLiterals,
         LiteralPool<double> floatLiterals,

@@ -269,26 +269,42 @@ public enum Opcode : byte
     //   switch_on_structure_sub <argIdx:4> <sub0:4> <sub1:4> <tableId:4>  (17 bytes)
     SwitchOnStructureSub = 0x5E,
 
+    // ADR-029 — clause-epilogue peephole fusion. Each fused opcode keeps the
+    // SAME total byte width as the two straight-line opcodes it replaces (the
+    // spare byte slot(s) become Nop), so no operand-address shifts cascade
+    // through try_me_else / switch tables. Each carries its single operand at
+    // offset +1 (natural sequential read); Nop padding at the tail. Tier-0
+    // dispatch-count win only — the IL describer un-fuses each to the exact IL
+    // of its two components (promotion preserved).
+    //   deallocate_execute <target:4>  (6 = deallocate 1 + execute 5) — the LCO
+    //       epilogue (the missing sibling of deallocate_proceed).
+    //   cut_deallocate_proceed <slot:4> (7 = cut 5 + deallocate_proceed 2) — the
+    //       frame-allocated deterministic-clause epilogue `Head :- Body, !.`.
+    //   cut_proceed <slot:4>           (6 = cut 5 + proceed 1) — frameless variant.
+    DeallocateExecute = 0x5F,
+    CutDeallocateProceed = 0x60,
+    CutProceed = 0x61,
+
     // Meta — last member of the dense dispatched block (chunk 429).
-    Meta = 0x5F,
+    Meta = 0x62,
 
     // Extension escape — reserved, never dispatched.
-    ReservedExtension = 0x60,
+    ReservedExtension = 0x63,
 
     // Reserved specialised-builtin opcodes. Defined in OpcodeTable but
     // never emitted by the compiler and never dispatched by the
     // interpreter; parked after ReservedExtension so the dispatched
     // block stays hole-free (chunk 429).
-    UnifyEq = 0x61,
-    IsOp = 0x62,
-    LessThan = 0x63,
-    GreaterThan = 0x64,
-    LessEq = 0x65,
-    GreaterEq = 0x66,
-    ArithEq = 0x67,
-    ArithNotEq = 0x68,
-    StructEq = 0x69,
-    StructNotEq = 0x6A,
+    UnifyEq = 0x64,
+    IsOp = 0x65,
+    LessThan = 0x66,
+    GreaterThan = 0x67,
+    LessEq = 0x68,
+    GreaterEq = 0x69,
+    ArithEq = 0x6A,
+    ArithNotEq = 0x6B,
+    StructEq = 0x6C,
+    StructNotEq = 0x6D,
 }
 
 /// <summary>Sub-opcodes for <see cref="Opcode.Meta"/>. Only <see cref="DbgInfo"/> exists in v1.</summary>

@@ -123,6 +123,12 @@ public class OpcodeTableTests
         for (int b = 0; b < 256; b++)
         {
             var info = OpcodeTable.Get((byte)b);
+            // ADR-029 fused clause-epilogue opcodes carry a trailing Nop pad so
+            // their width equals the two opcodes they replace (6/7 bytes), not
+            // 1 + 4 = 5 — the same exception AllocateGetLevel is for the 2-operand
+            // rule.
+            if (info.Op is Opcode.DeallocateExecute or Opcode.CutDeallocateProceed
+                or Opcode.CutProceed) continue;
             if (info.NumOperands == 1 && info.Op != Opcode.Meta)
                 Assert.Equal(5, info.Size);
         }

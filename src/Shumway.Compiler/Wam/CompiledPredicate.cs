@@ -18,6 +18,46 @@ namespace Shumway.Compiler.Wam;
 public sealed class CompiledPredicate
 {
     public byte[] Bytecode { get; }
+
+    private byte[]? _bytecodeUnfused;
+
+    /// <summary>ADR-029 — <see cref="Bytecode"/> with every fused clause-epilogue
+    /// opcode (<c>cut_deallocate_proceed</c> / <c>cut_proceed</c>) expanded back
+    /// to its two components (<c>cut</c> + <c>deallocate_proceed</c> / <c>cut</c>
+    /// + <c>proceed</c>). The fused forms are Nop-padded to the summed width, so
+    /// this array is the SAME length and every recorded offset (CallSites,
+    /// DispatchSites, clause ranges) stays valid against it. The Tier-1 IL
+    /// describers / emitters read THIS, so they never encounter a fused opcode
+    /// and need no per-opcode handling; the Tier-0 interpreter runs the fused
+    /// <see cref="Bytecode"/>. Lazily computed; returns <see cref="Bytecode"/>
+    /// itself when nothing is fused (fusion disabled, or a predicate with no
+    /// cut-terminated clause). Benign init race — the result is content-identical
+    /// and the reference write is atomic.</summary>
+    public byte[] BytecodeUnfused
+    {
+        get
+        {
+            if (_bytecodeUnfused is not null) return _bytecodeUnfused;
+            byte[]? copy = null;
+            int pc = 0;
+            while (pc < Bytecode.Length)
+            {
+                byte b = Bytecode[pc];
+                int size = OpcodeTable.Get(b).Size;
+                if (size == 0) break;
+                var op = (Opcode)b;
+                if (op is Opcode.CutDeallocateProceed or Opcode.CutProceed)
+                {
+                    copy ??= (byte[])Bytecode.Clone();
+                    copy[pc] = (byte)Opcode.Cut;                 // operand (slot) at +1 unchanged
+                    copy[pc + 5] = (byte)(op == Opcode.CutDeallocateProceed
+                        ? Opcode.DeallocateProceed : Opcode.Proceed);
+                }
+                pc += size;
+            }
+            return _bytecodeUnfused = copy ?? Bytecode;
+        }
+    }
     public int FunctorId { get; }
     public int Arity { get; }
     public int ClauseCount { get; }

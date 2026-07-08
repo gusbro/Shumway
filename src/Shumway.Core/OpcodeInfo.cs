@@ -216,6 +216,12 @@ public static class OpcodeTable
             OperandKind.Count, OperandKind.Perm);
         Set(Opcode.DeallocateProceed, 2, "deallocate_proceed");
 
+        // ADR-029 — clause-epilogue fusions. Single operand at +1, Nop-padded
+        // to the summed width of the two opcodes they replace.
+        Set(Opcode.DeallocateExecute, 6, "deallocate_execute", OperandKind.Address);
+        Set(Opcode.CutDeallocateProceed, 7, "cut_deallocate_proceed", OperandKind.Perm);
+        Set(Opcode.CutProceed, 6, "cut_proceed", OperandKind.Perm);
+
         // PSTR
         Set(Opcode.GetPstr, 9, "get_pstr", OperandKind.LiteralId, OperandKind.Reg);
         Set(Opcode.PutPstr, 9, "put_pstr", OperandKind.LiteralId, OperandKind.Reg);

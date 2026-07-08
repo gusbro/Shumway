@@ -566,7 +566,7 @@ public sealed class IlPredicateCompiler
     {
         ArgumentNullException.ThrowIfNull(predicate);
         if (CanCompile(predicate, calleeMap)) return null!;
-        byte[] code = predicate.Bytecode;
+        byte[] code = predicate.BytecodeUnfused;
         var unsupported = new SortedSet<string>(StringComparer.Ordinal);
         bool callUnresolved = false;
         int pc = 0;
@@ -769,7 +769,7 @@ public sealed class IlPredicateCompiler
     private static bool CanCompileSingleClause(CompiledPredicate predicate,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
     {
-        byte[] code = predicate.Bytecode;
+        byte[] code = predicate.BytecodeUnfused;
         int pc = 0;
         bool sawTerminator = false;
         while (pc < code.Length)
@@ -918,7 +918,7 @@ public sealed class IlPredicateCompiler
     private static bool IsLeafPredicate(CompiledPredicate pred)
     {
         if (pred.ClauseCount != 1) return false;
-        byte[] code = pred.Bytecode;
+        byte[] code = pred.BytecodeUnfused;
         int pc = 0;
         bool sawProceed = false;
         while (pc < code.Length)
@@ -953,7 +953,7 @@ public sealed class IlPredicateCompiler
     internal static bool IsInlinableRule(CompiledPredicate pred, bool allowCut = false)
     {
         if (pred.ClauseCount != 1) return false;
-        byte[] code = pred.Bytecode;
+        byte[] code = pred.BytecodeUnfused;
         int pc = 0;
         bool endsTerminal = false;   // last op was proceed / deallocate_proceed
         while (pc < code.Length)
@@ -1044,7 +1044,7 @@ public sealed class IlPredicateCompiler
         if (!InlineRules2 || calleeMap is null || _persistPatches is not null)
             return NoRuleInlineSites;
         var sites = new Dictionary<int, CompiledPredicate>();
-        byte[] code = predicate.Bytecode;
+        byte[] code = predicate.BytecodeUnfused;
         int pc = 0;
         while (pc < code.Length)
         {
@@ -1058,7 +1058,7 @@ public sealed class IlPredicateCompiler
                     sites[pc] = callee;
                     DiagShape("1", true, () =>
                         $"[rule-inline] caller fid={predicate.FunctorId} callee fid={callee.FunctorId} "
-                        + $"bodycalls={CountNonTailCallOpcodes(callee.Bytecode)}");
+                        + $"bodycalls={CountNonTailCallOpcodes(callee.BytecodeUnfused)}");
                 }
             }
             pc += (Opcode)code[pc] == Opcode.Meta ? 6 : OpcodeTable.Get(code[pc]).Size;
@@ -1076,7 +1076,7 @@ public sealed class IlPredicateCompiler
     {
         int extra = 0;
         foreach (var callee in sites.Values)
-            extra += CountRuleBodyThreadedCalls(callee.Bytecode);
+            extra += CountRuleBodyThreadedCalls(callee.BytecodeUnfused);
         return extra;
     }
 
@@ -1223,11 +1223,11 @@ public sealed class IlPredicateCompiler
             if (!TryDescribeIndexed(m, calleeMap, out var info))
             { reason = "multi-clause, neither chain nor indexed"; return false; }
             foreach (var (start, end) in info!.Clauses)
-                if (!RegionBodyOpcodesOk(m.Bytecode, start, end, m.CallSites, out var r))
+                if (!RegionBodyOpcodesOk(m.BytecodeUnfused, start, end, m.CallSites, out var r))
                 { reason = $"(indexed body) {r}"; return false; }
             return true;
         }
-        if (!RegionBodyOpcodesOk(m.Bytecode, 0, m.Bytecode.Length, m.CallSites, out var r2))
+        if (!RegionBodyOpcodesOk(m.BytecodeUnfused, 0, m.BytecodeUnfused.Length, m.CallSites, out var r2))
         { reason = r2; return false; }
         return true;
     }
@@ -1291,11 +1291,11 @@ public sealed class IlPredicateCompiler
             && TryDescribeIndexed(m, calleeMap, out var info))
         {
             foreach (var (start, end) in info!.Clauses)
-                CollectBuiltinResumePcs(m.Bytecode, start, end, pcs);
+                CollectBuiltinResumePcs(m.BytecodeUnfused, start, end, pcs);
         }
         else
         {
-            CollectBuiltinResumePcs(m.Bytecode, 0, m.Bytecode.Length, pcs);
+            CollectBuiltinResumePcs(m.BytecodeUnfused, 0, m.BytecodeUnfused.Length, pcs);
         }
         pcs.Sort();
         return pcs;
@@ -1552,7 +1552,7 @@ public sealed class IlPredicateCompiler
             ctx.CurrentMemberIndex = mi;
             emit.MarkLabel(memberEntry[member.FunctorId]);   // clause 0 / single-clause entry
             if (member.ClauseCount == 1)
-                EmitClauseBody(emit, member.Bytecode, 0, member.Bytecode.Length,
+                EmitClauseBody(emit, member.BytecodeUnfused, 0, member.BytecodeUnfused.Length,
                     failLabel, member.CallSites, emitSelfDelegate: effectiveSelf,
                     calleeMap: calleeMap, regionCtx: ctx);
             else if (TryDescribeIndexed(member, calleeMap, out var idxInfo))
@@ -1613,7 +1613,7 @@ public sealed class IlPredicateCompiler
                 emit.LoadConstant(member.Arity);
                 emit.Call(EnginePushIlCpMethod);
             }
-            EmitClauseBody(emit, member.Bytecode, clauses[i].Start, clauses[i].End,
+            EmitClauseBody(emit, member.BytecodeUnfused, clauses[i].Start, clauses[i].End,
                 ctx.FailLabel, member.CallSites, emitSelfDelegate: emitSelf,
                 calleeMap: calleeMap, regionCtx: ctx);
         }
@@ -1688,7 +1688,7 @@ public sealed class IlPredicateCompiler
         for (int i = 0; i < N; i++)
         {
             emit.MarkLabel(bodyLabels[i]);
-            EmitClauseBody(emit, member.Bytecode, info.Clauses[i].Start, info.Clauses[i].End,
+            EmitClauseBody(emit, member.BytecodeUnfused, info.Clauses[i].Start, info.Clauses[i].End,
                 ctx.FailLabel, member.CallSites, emitSelfDelegate: emitSelf,
                 calleeMap: calleeMap, regionCtx: ctx);
         }
@@ -1827,7 +1827,7 @@ public sealed class IlPredicateCompiler
     internal static bool IsInlinableLeafRule(CompiledPredicate pred)
     {
         if (pred.ClauseCount != 1) return false;
-        byte[] code = pred.Bytecode;
+        byte[] code = pred.BytecodeUnfused;
         int pc = 0;
         bool sawProceed = false;
         while (pc < code.Length)
@@ -1892,7 +1892,7 @@ public sealed class IlPredicateCompiler
     /// generators, e.g. crypt's odd/even.)</summary>
     internal static bool IsFactPredicate(CompiledPredicate pred)
     {
-        byte[] code = pred.Bytecode;
+        byte[] code = pred.BytecodeUnfused;
         int pc = 0;
         bool sawProceed = false;
         while (pc < code.Length)
@@ -2065,7 +2065,7 @@ public sealed class IlPredicateCompiler
         // resume-label array must be sized to include them. Chunk 433 — computed
         // ONCE here and passed down (EmitSingleClauseMetaCpBody used to recompute).
         var ruleInlineSites = ComputeRuleInlineSites(predicate, calleeMap);
-        int callSiteCount = CountNonTailCallOpcodes(predicate.Bytecode)
+        int callSiteCount = CountNonTailCallOpcodes(predicate.BytecodeUnfused)
             + CountRuleInlineExtraCursors(ruleInlineSites);
         if (callSiteCount == 0)
         {
@@ -2102,7 +2102,7 @@ public sealed class IlPredicateCompiler
         // entry (no cursor switch).
         var selfEntry = emit.DefineLabel("self_entry");
         emit.MarkLabel(selfEntry);
-        EmitClauseBody(emit, predicate.Bytecode, 0, predicate.Bytecode.Length,
+        EmitClauseBody(emit, predicate.BytecodeUnfused, 0, predicate.BytecodeUnfused.Length,
             failLabel, predicate.CallSites,
             callSiteIndexCounter: null, resumeLabels: null,
             calleeMap: calleeMap,
@@ -2204,7 +2204,7 @@ public sealed class IlPredicateCompiler
 
         if (predicate.ClauseCount == 1)
         {
-            int callSiteCount = CountNonTailCallOpcodes(predicate.Bytecode);
+            int callSiteCount = CountNonTailCallOpcodes(predicate.BytecodeUnfused);
             if (callSiteCount == 0)
             {
                 EmitSingleClauseLeafBody(emit, predicate, calleeMap);
@@ -2329,7 +2329,7 @@ public sealed class IlPredicateCompiler
         cursorsUsed = 0;
         var sites = new Dictionary<int, InlineSite>();
         if (!InlineFacts || calleeMap is null) return sites;
-        byte[] code = predicate.Bytecode;
+        byte[] code = predicate.BytecodeUnfused;
         int cursor = firstCursor;
         int pc = 0;
         while (pc < code.Length)
@@ -2353,7 +2353,7 @@ public sealed class IlPredicateCompiler
                     // in EmitSingleClauseMetaCpBody), so inlining a wide fact no
                     // longer costs more than the trampoline — no clause-count
                     // budget is needed (an earlier one was masking that flaw).
-                    && TryGetFactFirstArgKeys(callee.Bytecode, ranges, out _, out _))
+                    && TryGetFactFirstArgKeys(callee.BytecodeUnfused, ranges, out _, out _))
                 {
                     int k = ranges.Count;
                     if (cursor + (k - 1) >= Engine.ResumeMarkerCursorStride) break; // budget
@@ -2413,7 +2413,7 @@ public sealed class IlPredicateCompiler
         CompiledPredicate predicate, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
     {
         if (System.Environment.GetEnvironmentVariable("SHUMWAY_IL_SHAPE") != "2") return;
-        byte[] code = predicate.Bytecode;
+        byte[] code = predicate.BytecodeUnfused;
         int pc = 0;
         while (pc < code.Length)
         {
@@ -2439,7 +2439,7 @@ public sealed class IlPredicateCompiler
                         cat = $"Ncl-rule-{lt}";
                     else if (!TryGetFactClauseRanges(callee, out var ranges) || ranges.Count != clauses)
                         cat = "Nfact-unshaped";
-                    else if (TryGetFactFirstArgKeys(callee.Bytecode, ranges, out _, out _))
+                    else if (TryGetFactFirstArgKeys(callee.BytecodeUnfused, ranges, out _, out _))
                         cat = "Nfact-IDX(inlines)";
                     else cat = "Nfact-NOIDX";
                     // Case-2 eligibility (single-clause, cut-free, no meta /
@@ -2483,7 +2483,7 @@ public sealed class IlPredicateCompiler
         SelfDelegateEmitter emitSelf, IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
     {
         int factArity = site.Fact.Arity;
-        byte[] fcode = site.Fact.Bytecode;
+        byte[] fcode = site.Fact.BytecodeUnfused;
         int k = site.ClauseRanges.Count;
 
         // Phase 1b (chunk 360): when every clause has a DISTINCT constant first
@@ -2747,7 +2747,7 @@ public sealed class IlPredicateCompiler
         // Self-tail-recursion → in-method loop (chunk 349): startLabel is the
         // cursor-0 entry (the cursor switch above already branched the resume
         // cursors away), so a self Execute branches straight back here.
-        EmitClauseBody(emit, predicate.Bytecode, 0, predicate.Bytecode.Length,
+        EmitClauseBody(emit, predicate.BytecodeUnfused, 0, predicate.BytecodeUnfused.Length,
             failLabel, predicate.CallSites,
             callSiteIndexCounter: () => ++idxCounter,
             resumeLabels: resumeLabels,
@@ -4131,7 +4131,7 @@ public sealed class IlPredicateCompiler
                     emit.LoadArgument(0);
                     emit.Call(EngineBGetter);
                     emit.Call(EngineSetB0Method);
-                    EmitClauseBody(emit, ruleCallee.Bytecode, 0, ruleCallee.Bytecode.Length,
+                    EmitClauseBody(emit, ruleCallee.BytecodeUnfused, 0, ruleCallee.BytecodeUnfused.Length,
                         failLabel, ruleCallee.CallSites,
                         callSiteIndexCounter: callSiteIndexCounter,
                         resumeLabels: resumeLabels,
@@ -4160,7 +4160,7 @@ public sealed class IlPredicateCompiler
                     && (IsLeafPredicate(calleePred)
                         || (InlineLeafRules && IsInlinableLeafRule(calleePred))))
                 {
-                    EmitClauseBody(emit, calleePred.Bytecode, 0, calleePred.Bytecode.Length,
+                    EmitClauseBody(emit, calleePred.BytecodeUnfused, 0, calleePred.BytecodeUnfused.Length,
                         failLabel, Array.Empty<CallSite>(),
                         calleeMap: calleeMap, suppressProceedReturn: true);
                     if (callSiteIndexCounter is not null && resumeLabels is not null)
@@ -4332,7 +4332,7 @@ public sealed class IlPredicateCompiler
                     && (IsLeafPredicate(calleePredX)
                         || (InlineLeafRules && IsInlinableLeafRule(calleePredX))))
                 {
-                    EmitClauseBody(emit, calleePredX.Bytecode, 0, calleePredX.Bytecode.Length,
+                    EmitClauseBody(emit, calleePredX.BytecodeUnfused, 0, calleePredX.BytecodeUnfused.Length,
                         failLabel, Array.Empty<CallSite>(),
                         calleeMap: calleeMap, suppressProceedReturn: false);
                     pc += OpcodeTable.Get(op).Size;
@@ -4593,7 +4593,7 @@ public sealed class IlPredicateCompiler
         out TryMeElseChainInfo? info)
     {
         info = null;
-        byte[] code = predicate.Bytecode;
+        byte[] code = predicate.BytecodeUnfused;
         if (code.Length == 0) return false;
         // First instruction must be try_me_else (size 9: opcode + bp +
         // arity). ADR-025 stage (b) — clause boundaries are derived by
@@ -4691,7 +4691,7 @@ public sealed class IlPredicateCompiler
             // left Tier-0 (rare: only a tail Execute that RESOLVED to a meta
             // builtin at link time takes this form).
             var entry = Shumway.Builtins.BuiltinsRegistry.GetById(
-                BytecodeIO.ReadInt32(predicate.Bytecode, pc + 1));
+                BytecodeIO.ReadInt32(predicate.BytecodeUnfused, pc + 1));
             return !entry.IsCall && !entry.IsDollarCall;
         }
         if (op == Opcode.TryMeElse)
@@ -4701,10 +4701,10 @@ public sealed class IlPredicateCompiler
             // discipline keeps branch state in Y slots). A dispatch-chain
             // try_me_else never reaches this filter (the describers walk
             // clause BODY ranges).
-            return BytecodeIO.ReadInt32(predicate.Bytecode, pc + 5) == OpcodeTable.InlineIteCpArity;
+            return BytecodeIO.ReadInt32(predicate.BytecodeUnfused, pc + 5) == OpcodeTable.InlineIteCpArity;
         }
         if (IsAEvalOpcode(op))   // ADR-018 — gate operand kind (bigint/float lit)
-            return IsSupportedAEval(predicate.Bytecode, pc);
+            return IsSupportedAEval(predicate.BytecodeUnfused, pc);
         return IsSupportedOpcode(op);
     }
 
@@ -4768,7 +4768,7 @@ public sealed class IlPredicateCompiler
         out TryMeElseChainInfo? info)
     {
         info = null;
-        byte[] code = predicate.Bytecode;
+        byte[] code = predicate.BytecodeUnfused;
         if (code.Length == 0) return false;
         if ((Opcode)code[0] != Opcode.SwitchOnTerm) return false;
         // ADR-025 — this legacy recogniser parses me-else boundaries with a
@@ -4902,7 +4902,7 @@ public sealed class IlPredicateCompiler
     {
         int K = info.Nodes.Count;
         int N = info.Clauses.Count;
-        int totalCallSites = CountNonTailCallOpcodes(predicate.Bytecode);
+        int totalCallSites = CountNonTailCallOpcodes(predicate.BytecodeUnfused);
         // Cursor layout: 0 = initial (resolve); 1..K = chain node
         // (cursor = nodeIndex + 1); K+1.. = call-site forward resumes.
         int callBase = K + 1;
@@ -5002,7 +5002,7 @@ public sealed class IlPredicateCompiler
         for (int i = 0; i < N; i++)
         {
             emit.MarkLabel(bodyLabels[i]);
-            EmitClauseBody(emit, predicate.Bytecode, info.Clauses[i].Start, info.Clauses[i].End,
+            EmitClauseBody(emit, predicate.BytecodeUnfused, info.Clauses[i].Start, info.Clauses[i].End,
                 failLabel, predicate.CallSites,
                 callSiteIndexCounter: () => ++siteCounter,
                 resumeLabels: resumeLabels,
@@ -5257,7 +5257,7 @@ public sealed class IlPredicateCompiler
         // resume marker encodes a unique global cursor and the
         // matching label is in resumeLabels[siteIdx-1].
         int N = clauses.Count;
-        int totalCallSites = CountNonTailCallOpcodes(predicate.Bytecode);
+        int totalCallSites = CountNonTailCallOpcodes(predicate.BytecodeUnfused);
         var resumeLabels = new Sigil.Label[totalCallSites];
         for (int j = 0; j < totalCallSites; j++)
             resumeLabels[j] = emit.DefineLabel($"call_resume_{j + 1}");
@@ -5324,7 +5324,7 @@ public sealed class IlPredicateCompiler
             // unique 1-based ordinal per non-tail Call site; the
             // resume cursor in the emitted IL is cursorBase + ordinal
             // - 1 = N + (ordinal - 1).
-            EmitClauseBody(emit, predicate.Bytecode, clauses[i].Start, clauses[i].End,
+            EmitClauseBody(emit, predicate.BytecodeUnfused, clauses[i].Start, clauses[i].End,
                 failLabel, predicate.CallSites,
                 callSiteIndexCounter: () => ++siteCounter,
                 resumeLabels: resumeLabels,
@@ -5379,7 +5379,7 @@ public sealed class IlPredicateCompiler
     {
         info = null;
         if (predicate.Arity != 1) return false;
-        byte[] code = predicate.Bytecode;
+        byte[] code = predicate.BytecodeUnfused;
         if (code.Length < 17) return false;
         if ((Opcode)code[0] != Opcode.SwitchOnTerm) return false;
         // ADR-025 — same linear-scan caveat as TryDescribeSwitchedChain.
@@ -5579,7 +5579,7 @@ public sealed class IlPredicateCompiler
         int totalCallSites = 0;
         foreach (var c in clauses)
             totalCallSites += CountNonTailCallOpcodes(
-                predicate.Bytecode, c.BodyStart, c.BodyEnd);
+                predicate.BytecodeUnfused, c.BodyStart, c.BodyEnd);
         var callResumeLabels = new Sigil.Label[totalCallSites];
         for (int j = 0; j < totalCallSites; j++)
             callResumeLabels[j] = emit.DefineLabel($"call_resume_{j + 1}");
@@ -5708,7 +5708,7 @@ public sealed class IlPredicateCompiler
         for (int i = 0; i < n; i++)
         {
             emit.MarkLabel(bodyLabels[i]);
-            EmitClauseBody(emit, predicate.Bytecode,
+            EmitClauseBody(emit, predicate.BytecodeUnfused,
                 clauses[i].BodyStart, clauses[i].BodyEnd,
                 failLabel, predicate.CallSites,
                 callSiteIndexCounter: () => ++siteCounter,

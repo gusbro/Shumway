@@ -91,7 +91,7 @@ public static class IlIndexedDispatch
         Shumway.Compiler.Wam.CompiledPredicate predicate,
         System.Func<Opcode, int, bool> isBodyOpcodeEmittable,
         out IlIndexedDispatchInfo? info)
-        => TryDescribeBytes(predicate.Bytecode, 0, predicate.Bytecode.Length,
+        => TryDescribeBytes(predicate.BytecodeUnfused, 0, predicate.BytecodeUnfused.Length,
             predicate.ClauseCount, predicate.SwitchTables,
             isBodyOpcodeEmittable, out info);
 
