@@ -40,6 +40,7 @@ internal static class Program
         var filter = new List<(string, int)>();
         bool emitDebugInfo = false;   // default: release (what the engine runs by default)
         bool arityCompat = false;     // --arity: lex Arity/Prolog32 sources
+        bool audit = false;           // --audit: emit indexing-quality verdict lines
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -57,6 +58,9 @@ internal static class Program
                     break;
                 case "-a" or "--arity":
                     arityCompat = true;
+                    break;
+                case "--audit":
+                    audit = true;
                     break;
                 case "-e" or "--eval":
                     if (++i >= args.Length) return Usage("missing source after " + a);
@@ -89,6 +93,28 @@ internal static class Program
         {
             try { source = File.ReadAllText(inputPath!); }
             catch (Exception ex) { return Usage($"cannot read {inputPath}: {ex.Message}"); }
+        }
+
+        if (audit)
+        {
+            // Emit one tab-separated verdict line per predicate for corpus-wide
+            // aggregation: AUDIT <cat> <clauses> <worst> <potential> <arg> <name>/<arity>
+            try
+            {
+                foreach (var e in PredicateDisassembler.AuditIndexing(source, arityCompat))
+                {
+                    if (e.Clauses < 2) continue;   // single-clause preds don't index
+                    Console.WriteLine(string.Join('\t',
+                        "AUDIT", e.Category, e.Clauses, e.WorstBucket, e.Potential,
+                        e.DiscrimArg, $"{e.Name}/{e.Arity}", e.WorstKey));
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"error: parse failed: {ex.Message}");
+                return ExitCompileError;
+            }
+            return ExitOk;
         }
 
         IReadOnlyList<PredicateDisassembler.Entry> entries;
@@ -163,6 +189,10 @@ internal static class Program
               --release               omit debug-info markers (default — what the
                                       engine runs under compile_mode=release)
               --debug                 include the per-clause meta dbg_info markers
+              -a, --arity             lex Arity/Prolog32 sources (#line, $atoms)
+              --audit                 emit indexing-quality verdict lines instead
+                                      of disassembly (tab-separated, for corpus
+                                      aggregation)
               -h, --help              show this help
 
             Predicates are compiled with first-argument / multi-argument indexing,
