@@ -1,11 +1,65 @@
 # ADR-030: Redundant-cut elimination via a whole-program determinism fixpoint
 
-**Status:** Proposed. A sound, mode-independent, cut-aware **determinism
-fixpoint** — computed intra-module at compile time and, for the whole program,
-in the **linker** (which already owns the complete call graph) — used to elide a
-cut that provably prunes nothing, dropping the cut, its `get_level`, and (where
-the cut was the sole reason) the environment frame. Tier-agnostic: it removes
-work from both Tier-0 bytecode and Tier-1 IL.
+**Status:** **Accepted — intra-module elision shipped (default ON).** A sound,
+mode-independent, cut-aware **determinism fixpoint** used to elide a cut that
+provably prunes nothing — dropping the cut, its `get_level`, and (where the cut
+was the sole reason) the environment frame, and turning `Head :- …, call, !.`
+into a clean tail call eligible for LCO / Tier-1 self-tail loops. Tier-agnostic:
+it removes work from both Tier-0 bytecode and Tier-1 IL. The **whole-program
+(linker-closure)** extension that unblocks cross-module-callee candidates is
+**deferred** (see Implementation notes).
+
+## Implementation notes (2026-07-09)
+
+- **Shipped: intra-module elision.** `DeterminismAnalysis` (new,
+  `Shumway.Compiler.Wam`) is the single source of truth for the determinism
+  model; it computes the least-fixpoint det set over a module's clauses and
+  exposes `EliminateRedundantTrailingCuts(clauses, isEligible)` — a clause-AST
+  rewrite that drops the trailing top-level `!` from each eligible predicate's
+  **last** clause when every prefix goal is det (an empty body becomes a fact).
+  `PredicateDisassembler.CensusDet` (`--detcensus`) now delegates to it, so the
+  census and the shipped elision can never diverge. Wired into
+  `ModuleCompiler` behind `ElideRedundantCuts` (default off on the type; the
+  `implicit_dynamic`-style `PrologFlags.ElideRedundantCuts` default is **on**),
+  enabled at the two whole-module engine consult sites (query-setup +
+  runtime-consult) where `dynamicFunctors` is passed so dynamic predicates are
+  excluded. Full five-project gate green with it on: Embedding 2884 /
+  Compiler 336 / Core 436 / Interpreter 105 / ISO 277.
+- **Soundness fix found by the gate — first-argument indexing is NOT usable.**
+  The initial model treated a predicate whose clause first-args are mutually
+  exclusive (`q(a). q(b).`) as det. That is **mode-dependent**: `q(X)` with `X`
+  unbound still enumerates both clauses, so the cut in `p(X) :- q(X), !.` is
+  load-bearing. `MultiSolutionTests.QueryAll_DeepCut_YieldsCommittedBranchOnly`
+  caught it. `DispatchDet` now uses only the two **mode-independent** criteria:
+  single clause (no clause-alternative CP is ever created) and all-clauses-commit
+  (every clause has a top-level cut). Dropping first-arg barely moved the det set
+  (corpus 60.5% → 59.8%) because almost all det predicates are single-clause or
+  all-cut anyway. A mode-aware first-arg refinement is a follow-up.
+- **Why only the last clause.** A predicate's last clause is always reached with
+  its clause-alternative CP already consumed (the dispatch chain's `trust` pops
+  it, and earlier clauses' body CPs were unwound on backtrack into it), so a
+  trailing cut there can only prune the clause's own prefix CPs — which
+  prefix-det rules out. A non-last clause's cut may prune the CP pointing at
+  later clauses; those need per-clause dispatch analysis (mode-aware) and are
+  left alone.
+- **Corpus impact (556 Arity files, sound model).** 13 119 deep last-cut
+  candidates: 2 191 elidable intra-module (16.7%), 3 218 genuinely load-bearing
+  (nondet prefix), 7 710 blocked only by a cross-module callee (the deferred
+  linker-closure win). Plus 6 727 last-clause **neck** cuts, all elidable
+  (all-inline prefix) — 8 918 redundant cuts removed intra-module in total.
+- **Deferred — whole-program linker closure.** Running the fixpoint in the
+  linker (which owns the complete call graph) would resolve the 7 710
+  cross-module-blocked candidates. The intra-module pass is the foundation; the
+  linker extension reuses the same `DeterminismAnalysis` over the merged program.
+
+### Original proposal (retained below)
+
+A sound, mode-independent, cut-aware **determinism fixpoint** — computed
+intra-module at compile time and, for the whole program, in the **linker**
+(which already owns the complete call graph) — used to elide a cut that provably
+prunes nothing, dropping the cut, its `get_level`, and (where the cut was the
+sole reason) the environment frame. Tier-agnostic: it removes work from both
+Tier-0 bytecode and Tier-1 IL.
 
 ## Context
 

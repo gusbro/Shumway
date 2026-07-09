@@ -129,4 +129,13 @@ public sealed class PrologFlags
     /// positions. Mirrors <c>shumway-compile</c>'s
     /// <c>--debug</c>/<c>--release</c>.</summary>
     public bool EmitDebugInfo { get; set; } = false;
+
+    /// <summary>ADR-030 — redundant-cut elimination. When set, whole-module
+    /// consult compilation drops the redundant trailing top-level cut from each
+    /// static predicate's last clause whose prefix goals are all deterministic
+    /// (via <see cref="Shumway.Compiler.Wam.DeterminismAnalysis"/>) — semantically
+    /// identical, and it turns <c>Head :- …, call, !.</c> into a clean tail call
+    /// eligible for last-call optimisation. Dynamic predicates are excluded.
+    /// On by default (proven against the full five-project gate, like ADR-029).</summary>
+    public bool ElideRedundantCuts { get; set; } = true;
 }

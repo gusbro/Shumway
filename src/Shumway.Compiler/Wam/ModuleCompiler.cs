@@ -1,3 +1,4 @@
+using System.Linq;
 using Shumway.Compiler.Ast;
 using Shumway.Core;
 
@@ -24,6 +25,16 @@ public sealed class ModuleCompiler
     /// Release mode in <c>shumway-compile</c> sets this so a stripped
     /// .shmo's bytecode carries no debug bytes at all.</summary>
     public bool EmitDebugInfo { get; set; } = true;
+
+    /// <summary>ADR-030 — when set, run <see cref="DeterminismAnalysis"/> over the
+    /// whole clause set (which this compiler already sees in full) and drop the
+    /// redundant trailing top-level cut from each static predicate's last clause
+    /// whose prefix goals are all deterministic. Off by default: only the
+    /// whole-module *consult* / bundle-build sites turn it on — never query-goal
+    /// or single-clause <c>assertz</c> compilation, which lack the module view
+    /// the fixpoint needs. Dynamic predicates are always excluded (their clause
+    /// set changes at runtime, so "last clause" is not stable).</summary>
+    public bool ElideRedundantCuts { get; set; }
 
     public CompiledModule Compile(IEnumerable<Clause> clauses)
         => Compile(clauses, cache: null);
@@ -100,6 +111,20 @@ public sealed class ModuleCompiler
         int failStubAddr)
     {
         ArgumentNullException.ThrowIfNull(clauses);
+
+        // ADR-030 — redundant-cut elimination runs before grouping, over the full
+        // clause list (the fixpoint needs every predicate). Dynamic functors are
+        // excluded via the eligibility gate. Off unless a whole-module consult /
+        // bundle-build site opts in.
+        if (ElideRedundantCuts)
+        {
+            var materialised = clauses as IReadOnlyList<Clause> ?? clauses.ToList();
+            clauses = DeterminismAnalysis.EliminateRedundantTrailingCuts(
+                materialised,
+                dynamicFunctors is null
+                    ? null
+                    : c => !dynamicFunctors.Contains(GetFunctorId(c)));
+        }
 
         // Group by functor in first-occurrence order. The order matters: when
         // we emit the program, predicates appear in the order the source

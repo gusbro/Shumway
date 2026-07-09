@@ -322,31 +322,6 @@ public static class PredicateDisassembler
     //  the linker).
     // ---------------------------------------------------------------------
 
-    // Builtins that leave NO choice point in any mode (whitelist; everything
-    // else is treated as nondet — sound/conservative). NB: atom_concat/3 and
-    // sub_atom/5 are deliberately absent — they backtrack.
-    private static readonly HashSet<string> KnownDetBuiltins = new()
-    {
-        "true/0","fail/0","false/0","!/0","halt/0","halt/1",
-        "is/2","=:=/2","=\\=/2","</2",">/2","=</2",">=/2",
-        "=/2","==/2","\\==/2","\\=/2","@</2","@>/2","@=</2","@>=/2","compare/3",
-        "var/1","nonvar/1","atom/1","atomic/1","number/1","integer/1","float/1",
-        "compound/1","callable/1","is_list/1","ground/1",
-        "functor/3","arg/3","=../2","copy_term/2",
-        "atom_length/2","char_code/2","atom_number/2","number_codes/2","number_chars/2",
-        "atom_codes/2","atom_chars/2","upcase_atom/2","downcase_atom/2","term_to_atom/2",
-        "nl/0","nl/1","write/1","write/2","writeln/1","print/1","writeq/1","write_canonical/1",
-        "tab/1","put_char/1","format/1","format/2","format/3",
-        "assert/1","assertz/1","asserta/1","retractall/1",
-        "nb_setval/2","nb_getval/2","b_setval/2","b_getval/2",
-        "g_assign/2","g_read/2","g_assignb/2",
-    };
-
-    // Control constructs that leave no CP on success regardless of their goal
-    // argument (they wrap and never leak the inner CP).
-    private static readonly HashSet<string> DetControl = new()
-    { "\\+/1","not/1","once/1","forall/2","findall/3","findall/4","ignore/1" };
-
     /// <summary>Ask-3 aggregate for one source. <see cref="DeepLastCut"/> is the
     /// candidate population (last/only clause, body ends in a top-level cut, ≥1
     /// real call before it — so it pays get_level+frame today); the four Elide/
@@ -363,10 +338,10 @@ public static class PredicateDisassembler
             a.BlockedCross + b.BlockedCross, a.BlockedNondet + b.BlockedNondet);
     }
 
-    private enum GKind { Inline, DetBuiltin, DetUserPred, DetControl, CrossModule, Nondet }
-
     /// <summary>Compiles nothing — an AST-level determinism/redundant-cut census
-    /// over the source's static predicates.</summary>
+    /// over the source's static predicates. The determinism model itself lives in
+    /// <see cref="DeterminismAnalysis"/> (the single source of truth shared with
+    /// the shipped ADR-030 elision); this method only counts.</summary>
     public static DetCensusResult CensusDet(string source, bool arityCompat = false)
     {
         ArgumentNullException.ThrowIfNull(source);
@@ -376,191 +351,78 @@ public static class PredicateDisassembler
                 OperatorTable.Default(),
                 new Parsing.PrologFlags { ArityCompat = true })
             : new ClauseReader(source);
-        var clauses = ClausePipeline.Apply(reader.ReadAll(), new Modes.ModeTable());
+        var clauses = ClausePipeline.Apply(reader.ReadAll(), new Modes.ModeTable()).ToList();
 
-        var order = new List<(string, int)>();
-        var groups = new Dictionary<(string, int), List<Clause>>();
+        var order = new List<string>();
+        var groups = new Dictionary<string, List<Clause>>();
         foreach (Clause clause in clauses)
         {
             if (clause.Kind == ClauseKind.Directive) continue;
-            (string name, int arity) = HeadIndicator(clause);
-            var key = (name, arity);
-            if (!groups.TryGetValue(key, out var list))
+            string ind = DeterminismAnalysis.HeadIndicator(clause);
+            if (!groups.TryGetValue(ind, out var list))
             {
-                groups[key] = list = new List<Clause>();
-                order.Add(key);
+                groups[ind] = list = new List<Clause>();
+                order.Add(ind);
             }
             list.Add(clause);
         }
 
-        var definedInFile = new HashSet<string>();
-        foreach (var (n, a) in order) definedInFile.Add($"{n}/{a}");
-
-        // Pre-flatten every clause's body goals once.
-        var flat = new Dictionary<(string, int), List<List<Term>>>();
-        foreach (var (n, a) in order)
-        {
-            var perClause = new List<List<Term>>();
-            foreach (Clause c in groups[(n, a)])
-            {
-                var gs = new List<Term>();
-                Term? body = ClauseBody(c);
-                if (body is not null) FlattenConj(body, gs);
-                perClause.Add(gs);
-            }
-            flat[(n, a)] = perClause;
-        }
-
-        // --- Det fixpoint over the file's predicates. ---
-        var detPreds = new HashSet<string>();
-        bool changed = true;
-        while (changed)
-        {
-            changed = false;
-            foreach (var (n, a) in order)
-            {
-                string ind = $"{n}/{a}";
-                if (detPreds.Contains(ind)) continue;
-                if (PredIsDet(groups[(n, a)], flat[(n, a)], detPreds, definedInFile))
-                { detPreds.Add(ind); changed = true; }
-            }
-        }
+        var analysis = DeterminismAnalysis.Build(clauses);
 
         // --- Redundant-cut classification (last clause per pred). ---
         long neck = 0, deep = 0, elB = 0, elI = 0, blkC = 0, blkN = 0;
-        foreach (var (n, a) in order)
+        foreach (string ind in order)
         {
-            var cls = groups[(n, a)];
-            var goals = flat[(n, a)][^1];               // the LAST clause's goals
-            if (goals.Count == 0) continue;
-            if (goals[^1] is not AtomTerm { Name: "!" }) continue;   // not `..., !.`
-            var prefix = goals.GetRange(0, goals.Count - 1);
+            var last = groups[ind][^1];               // the LAST clause
+            if (last.Kind != ClauseKind.Rule
+                || last.Term is not CompoundTerm { Args.Length: 2 } r) continue;
+            var goals = new List<Term>();
+            FlattenConjLocal(r.Args[1], goals);
+            if (goals.Count == 0 || goals[^1] is not AtomTerm { Name: "!" }) continue;  // not `..., !.`
             int realCalls = 0;
-            GKind worst = GKind.Inline;
-            foreach (Term g in prefix)
+            int worst = 0;   // 0 = det-ish, 2 = DetUserPred, 3 = CrossModule, 4 = Nondet
+            for (int i = 0; i < goals.Count - 1; i++)
             {
-                GKind k = GoalKindOf(g, detPreds, definedInFile);
-                if (k != GKind.Inline) realCalls++;
-                worst = WorseKind(worst, k);
+                var k = analysis.Classify(goals[i]);
+                if (k != DeterminismAnalysis.GoalKind.Inline) realCalls++;
+                worst = System.Math.Max(worst, KindRank(k));
             }
             if (realCalls == 0) { neck++; continue; }   // neck cut — already W2-cheap
             deep++;
             switch (worst)
             {
-                case GKind.Nondet: blkN++; break;
-                case GKind.CrossModule: blkC++; break;
-                case GKind.DetUserPred: elI++; break;
+                case 4: blkN++; break;
+                case 3: blkC++; break;
+                case 2: elI++; break;
                 default: elB++; break;                  // Inline / DetBuiltin / DetControl only
             }
         }
 
-        long totalClauses = 0;
-        foreach (var l in flat.Values) totalClauses += l.Count;
-        return new DetCensusResult(order.Count, detPreds.Count, totalClauses,
+        long totalClauses = 0, detCount = 0;
+        foreach (string ind in order)
+        {
+            totalClauses += groups[ind].Count;
+            if (analysis.IsDet(ind)) detCount++;
+        }
+        return new DetCensusResult(order.Count, detCount, totalClauses,
             neck, deep, elB, elI, blkC, blkN);
     }
 
-    // Order for "worst blocker" pick: Nondet > CrossModule > DetUserPred > (Inline/DetBuiltin/DetControl).
-    private static GKind WorseKind(GKind a, GKind b) => Rank(a) >= Rank(b) ? a : b;
-    private static int Rank(GKind k) => k switch
+    // Census ranking for the "worst blocker" pick: Nondet > CrossModule >
+    // DetUserPred > (Inline/DetBuiltin/DetControl).
+    private static int KindRank(DeterminismAnalysis.GoalKind k) => k switch
     {
-        GKind.Nondet => 4, GKind.CrossModule => 3, GKind.DetUserPred => 2, _ => 0
+        DeterminismAnalysis.GoalKind.Nondet => 4,
+        DeterminismAnalysis.GoalKind.CrossModule => 3,
+        DeterminismAnalysis.GoalKind.DetUserPred => 2,
+        _ => 0,
     };
 
-    private static bool PredIsDet(List<Clause> cls, List<List<Term>> flat,
-        HashSet<string> detPreds, HashSet<string> definedInFile)
-    {
-        if (!DispatchDet(cls)) return false;
-        for (int i = 0; i < flat.Count; i++)
-        {
-            var goals = flat[i];
-            int lastCut = -1;
-            for (int j = 0; j < goals.Count; j++)
-                if (goals[j] is AtomTerm { Name: "!" }) lastCut = j;
-            for (int j = lastCut + 1; j < goals.Count; j++)
-                if (!LeavesNoCp(GoalKindOf(goals[j], detPreds, definedInFile)))
-                    return false;
-        }
-        return true;
-    }
-
-    // Deterministic dispatch: single clause, OR every clause commits via a
-    // top-level cut, OR the first head argument is mutually exclusive across
-    // clauses (first-arg indexing pins one clause per ground call).
-    private static bool DispatchDet(List<Clause> cls)
-    {
-        if (cls.Count == 1) return true;
-        bool allCut = true;
-        foreach (Clause c in cls) if (!BodyCommits(c)) { allCut = false; break; }
-        if (allCut) return true;
-        var keys = new HashSet<string>();
-        foreach (Clause c in cls)
-        {
-            Term head = ClauseHead(c);
-            if (head is not CompoundTerm hc || hc.Args.Length == 0) return false;  // arity 0 — no index
-            string? key = FirstArgKey(hc.Args[0]);
-            if (key is null || !keys.Add(key)) return false;   // var, or duplicate → CP possible
-        }
-        return true;
-    }
-
-    private static string? FirstArgKey(Term t) => t switch
-    {
-        AtomTerm a => "a:" + a.Name,
-        IntTerm i => "i:" + i.Value,
-        BigIntTerm b => "i:" + b.Value,
-        CompoundTerm { Functor: ".", Args.Length: 2 } => "list",
-        CompoundTerm c => "s:" + c.Functor + "/" + c.Args.Length,
-        VarTerm => null,
-        _ => "o:" + t.GetType().Name,   // float/string/pstr — a distinct, non-var key
-    };
-
-    private static GKind GoalKindOf(Term g, HashSet<string> detPreds, HashSet<string> definedInFile)
-    {
-        if (IsInlineLike(g)) return GKind.Inline;
-        string? ind = GoalIndicator(g);
-        if (ind is null) return GKind.Nondet;                       // var goal / call(_)
-        if (ind is ";/2" or "->/2" or "*->/2") return GKind.Nondet;  // scoping we don't model
-        if (DetControl.Contains(ind)) return GKind.DetControl;
-        if (KnownDetBuiltins.Contains(ind)) return GKind.DetBuiltin;
-        if (definedInFile.Contains(ind))
-            return detPreds.Contains(ind) ? GKind.DetUserPred : GKind.Nondet;
-        return GKind.CrossModule;
-    }
-
-    private static bool LeavesNoCp(GKind k) =>
-        k is GKind.Inline or GKind.DetBuiltin or GKind.DetUserPred or GKind.DetControl;
-
-    // Matches the compiler's IsInlineBodyGoal (cut / is / = / the six rel-ops),
-    // plus the constant control atoms — the goals that never push a CP AND never
-    // need a frame, so a `!` after a prefix of them is a neck cut.
-    private static bool IsInlineLike(Term g) => g switch
-    {
-        AtomTerm { Name: "!" or "true" or "fail" or "false" } => true,
-        CompoundTerm { Functor: "is" or "=", Args.Length: 2 } => true,
-        CompoundTerm { Args.Length: 2 } c
-            when Shumway.Builtins.ArithmeticEvaluator.TryRelOp(c.Functor, out _) => true,
-        _ => false,
-    };
-
-    private static string? GoalIndicator(Term g) => g switch
-    {
-        AtomTerm a => a.Name + "/0",
-        CompoundTerm c => c.Functor + "/" + c.Args.Length,
-        _ => null,
-    };
-
-    private static Term ClauseHead(Clause c) =>
-        c.Kind == ClauseKind.Rule && c.Term is CompoundTerm { Args.Length: 2 } r ? r.Args[0] : c.Term;
-
-    private static Term? ClauseBody(Clause c) =>
-        c.Kind == ClauseKind.Rule && c.Term is CompoundTerm { Args.Length: 2 } r ? r.Args[1] : null;
-
-    private static void FlattenConj(Term body, List<Term> outGoals)
+    private static void FlattenConjLocal(Term body, List<Term> outGoals)
     {
         while (body is CompoundTerm { Functor: ",", Args.Length: 2 } c)
         {
-            FlattenConj(c.Args[0], outGoals);
+            FlattenConjLocal(c.Args[0], outGoals);
             body = c.Args[1];
         }
         outGoals.Add(body);

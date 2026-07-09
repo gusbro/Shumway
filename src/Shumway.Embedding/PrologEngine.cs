@@ -2859,7 +2859,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         try
         {
             var module = new Shumway.Compiler.Wam.ModuleCompiler
-                { EmitDebugInfo = _flags.EmitDebugInfo }.Compile(
+                {
+                    EmitDebugInfo = _flags.EmitDebugInfo,
+                    ElideRedundantCuts = _flags.ElideRedundantCuts,   // ADR-030
+                }.Compile(
                 rewritten, cache: null, unindexedFunctors: null,
                 _literalPools, dynamicFunctors: _dynamicFunctors,
                 failStubAddr: failStubAddr);
@@ -7857,7 +7860,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // last-clause chain instruction with the absolute target.
         int failStubAddr =
             OpcodeTable.Get(Opcode.Call).Size + OpcodeTable.Get(Opcode.Halt).Size;
-        var module = new ModuleCompiler { EmitDebugInfo = _flags.EmitDebugInfo }.Compile(
+        var module = new ModuleCompiler
+        {
+            EmitDebugInfo = _flags.EmitDebugInfo,
+            ElideRedundantCuts = _flags.ElideRedundantCuts,   // ADR-030
+        }.Compile(
             allRewritten, skipCompileCache, unindexedFunctors, _literalPools,
             dynamicFunctors: _dynamicFunctors, failStubAddr: failStubAddr);
 
