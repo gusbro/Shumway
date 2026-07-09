@@ -195,6 +195,31 @@ public class DeterminismAnalysisTests
     }
 
     [Fact]
+    public void FailingNonLastClause_IsDet_EvenWithNondetCallee()
+    {
+        // p(X):-q(X),fail. p(X):-q(X),!.  Clause 1 always fails (never yields),
+        // so it needs no cut and its body-det is irrelevant; clause 2's TRAILING
+        // cut commits everything. Det even when q is non-det.
+        var analysis = DeterminismAnalysis.Build(
+            Parse("q(1). q(2). p(X):-q(X),fail. p(X):-q(X),!."));
+        Assert.False(analysis.IsDet("q/1"));   // q enumerates
+        Assert.True(analysis.IsDet("p/1"));    // ...but p commits → det
+    }
+
+    [Fact]
+    public void CutBeforeNondetGoal_InLastClause_IsNotDet()
+    {
+        // q/1 is non-det over a,b. p(a):-q(b),!. p(b):-q(a),!. p(X):-!,q(X).
+        // The last clause's cut is at the FRONT, so q(X) runs AFTER it and its
+        // choice points survive → non-det. Contrast with the trailing-cut case
+        // above.
+        var analysis = DeterminismAnalysis.Build(
+            Parse("q(a). q(b). p(a):-q(b),!. p(b):-q(a),!. p(X):-!,q(X)."));
+        Assert.False(analysis.IsDet("q/1"));
+        Assert.False(analysis.IsDet("p/1"));
+    }
+
+    [Fact]
     public void CatchAllNotLast_IsNotDet()
     {
         // If the cut-free catch-all is NOT last, an earlier non-committing clause

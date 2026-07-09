@@ -11,14 +11,18 @@ namespace Shumway.Compiler.Wam;
 /// never diverge.
 ///
 /// <para><b>Determinism fixpoint.</b> A user predicate is <em>det</em> (leaves no
-/// CP on success) when its dispatch is deterministic (single clause, all clauses
-/// commit via a top-level cut, or first-argument keys are mutually exclusive)
-/// AND every goal after the last cut in each clause body itself leaves no CP.
-/// Goals are classified against a conservative builtin whitelist, the det control
-/// constructs, and — recursively — the det set being computed. The least fixpoint
-/// starts empty and adds predicates until stable; unknown/cross-module callees are
-/// treated as non-det, so the analysis only ever <em>under</em>-claims determinism
-/// (sound).</para>
+/// CP on success) when its dispatch is deterministic — single clause, OR every
+/// clause except the last that <em>can succeed</em> commits via a top-level cut
+/// (the last clause is reached only via <c>trust</c>; a clause with a top-level
+/// <c>fail</c>/<c>false</c> never yields, so it is exempt) — AND every goal after
+/// the last cut in each can-succeed clause body itself leaves no CP. First-argument
+/// key exclusivity is deliberately NOT used (it is mode-dependent). Goals are
+/// classified against a conservative builtin whitelist, the det control constructs,
+/// and — recursively — the det set being computed, via a <em>greatest</em> fixpoint
+/// (assume all eligible predicates det, remove the provably non-det) so a predicate
+/// whose determinism depends on its own (self / mutual recursion) is proven det.
+/// Unknown/cross-module callees are treated as non-det, so the analysis only ever
+/// <em>under</em>-claims determinism (sound).</para>
 ///
 /// <para><b>Redundant-cut elimination.</b> A predicate's <em>last</em> clause is
 /// always reached with its clause-alternative choice point already consumed (the
@@ -164,7 +168,7 @@ public sealed class DeterminismAnalysis
             foreach (string ind in order)
             {
                 if (!detPreds.Contains(ind)) continue;
-                if (!PredIsDet(groups[ind], flat[ind], detPreds, defined))
+                if (!PredIsDet(flat[ind], detPreds, defined))
                 { detPreds.Remove(ind); changed = true; }
             }
         }
@@ -267,13 +271,14 @@ public sealed class DeterminismAnalysis
         return GoalKind.CrossModule;
     }
 
-    private static bool PredIsDet(List<Clause> cls, List<List<Term>> flat,
+    private static bool PredIsDet(List<List<Term>> flat,
         HashSet<string> detPreds, HashSet<string> definedInModule)
     {
-        if (!DispatchDet(cls)) return false;
+        if (!DispatchDet(flat)) return false;
         for (int i = 0; i < flat.Count; i++)
         {
             var goals = flat[i];
+            if (!CanSucceed(goals)) continue;   // a clause that never yields leaves no CP on success
             int lastCut = -1;
             for (int j = 0; j < goals.Count; j++)
                 if (goals[j] is AtomTerm { Name: "!" }) lastCut = j;
@@ -286,25 +291,45 @@ public sealed class DeterminismAnalysis
 
     // Deterministic dispatch, mode-AGNOSTICALLY (we do not know the call's
     // instantiation): single clause (no clause-alternative CP is ever created),
-    // OR every clause EXCEPT the last commits via a top-level cut. The last
-    // clause needs no cut — it is reached only via `trust`, with the clause-
-    // selection CP already consumed. Whichever earlier clause yields a solution
-    // must have run its top-level cut (a top-level cut is on every success path
-    // of its clause), pruning the rest; whichever clause yields therefore leaves
-    // no clause CP. The per-clause post-cut body-det check in PredIsDet covers
-    // what each clause leaves after its cut, including the last clause's cut-free
-    // body — so the two together are sound.
+    // OR every clause EXCEPT the last that CAN SUCCEED commits via a top-level
+    // cut. The last clause needs no cut — it is reached only via `trust`, with
+    // the clause-selection CP already consumed. A clause that can never succeed
+    // (a top-level `fail`/`false` conjunct) never yields, so it leaves no CP on
+    // success and is exempt too (`p(X):-q(X),fail. p(X):-q(X),!.` is det — clause
+    // 1 always fails, clause 2's trailing cut commits). Whichever surviving
+    // clause yields a solution must have run its top-level cut (a top-level cut
+    // is on every success path of its clause), pruning the rest; so whichever
+    // clause yields leaves no clause CP. The per-clause post-cut body-det check
+    // in PredIsDet (also skipping can't-succeed clauses) covers what each clause
+    // leaves after its cut — the two together are sound.
     //
     // First-argument mutual exclusivity is DELIBERATELY NOT used: it only makes
     // dispatch deterministic when the call supplies a ground first argument
     // (`q(a). q(b).` still leaves a CP under `q(X)`), so relying on it would be
     // unsound for a partially-instantiated call. This rule instead keys off the
     // cuts, whose commit is decided by runtime success, not the call mode.
-    private static bool DispatchDet(List<Clause> cls)
+    private static bool DispatchDet(List<List<Term>> flat)
     {
-        if (cls.Count == 1) return true;
-        for (int i = 0; i < cls.Count - 1; i++)
-            if (!BodyCommits(cls[i])) return false;
+        if (flat.Count == 1) return true;
+        for (int i = 0; i < flat.Count - 1; i++)
+            if (CanSucceed(flat[i]) && !HasTopLevelCut(flat[i])) return false;
+        return true;
+    }
+
+    // A top-level cut anywhere in the clause's conjunction commits it: the clause
+    // succeeds only if every top-level conjunct (incl. the cut) ran.
+    private static bool HasTopLevelCut(List<Term> goals)
+    {
+        foreach (Term g in goals) if (g is AtomTerm { Name: "!" }) return true;
+        return false;
+    }
+
+    // A clause cannot succeed if any top-level conjunct is `fail`/`false` — the
+    // whole conjunction then fails (a `fail` inside a disjunction is one `;/2`
+    // goal, not a top-level conjunct, so it is correctly not detected here).
+    private static bool CanSucceed(List<Term> goals)
+    {
+        foreach (Term g in goals) if (g is AtomTerm { Name: "fail" or "false" }) return false;
         return true;
     }
 
@@ -319,20 +344,6 @@ public sealed class DeterminismAnalysis
         _ => false,
     };
 
-    private static bool BodyCommits(Clause c)
-    {
-        if (c.Kind != ClauseKind.Rule || c.Term is not CompoundTerm r || r.Args.Length != 2)
-            return false;
-        return TopLevelCut(r.Args[1]);
-
-        static bool TopLevelCut(Term t) => t switch
-        {
-            AtomTerm a => a.Name == "!",
-            CompoundTerm c when c.Functor == "," && c.Args.Length == 2 =>
-                TopLevelCut(c.Args[0]) || TopLevelCut(c.Args[1]),
-            _ => false,
-        };
-    }
 
     private static string? GoalIndicator(Term g) => g switch
     {
