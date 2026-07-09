@@ -306,6 +306,11 @@ public sealed class IlPredicateCompiler
         typeof(Engine).GetMethod(nameof(Engine.PushIlChoicePointWithMarks),
             new[] { typeof(Func<Engine, int, bool>), typeof(int), typeof(int),
                     typeof(int), typeof(int), typeof(int), typeof(int), typeof(int) })!;
+    // ADR-031 G2 — the counter-throttled cancellation poll (NO heap GC: a GC
+    // would move the heap under the guard's snapshot locals) emitted at the
+    // back-edge of an inlined fail-direct callee's self-tail loop.
+    private static readonly MethodInfo EngineBacktrackSafePointMethod =
+        typeof(Engine).GetMethod(nameof(Engine.BacktrackSafePoint), Type.EmptyTypes)!;
     // Chunk 216 — indexed-dispatch entry resolver (mirrors the WAM switch
     // cascade, returns the entry chain-node cursor). Keyed by functor id
     // so the same IL works under runtime promotion AND a persisted bundle
@@ -4251,6 +4256,30 @@ public sealed class IlPredicateCompiler
                     continue;
                 }
 
+                // ADR-031 G2 — a CP-free guard's call to a FAIL-DIRECT callee
+                // (multi-clause and/or self-tail-recursive; see
+                // TryDescribeFailDirectCallee) is inlined as a sequential
+                // alternative chain with an in-place loop, so its failure is a
+                // direct branch to the guard's fail label. Only active from
+                // CP-free guard slices (forceLeafRuleInline).
+                if (forceLeafRuleInline && calleeMap is not null
+                    && calleeMap.TryGetValue(siteFunctorId, out var fdCallee)
+                    && !(IsLeafPredicate(fdCallee) || IsInlinableLeafRule(fdCallee))
+                    && TryDescribeFailDirectCallee(fdCallee, out var fdClauses))
+                {
+                    EmitFailDirectCalleeInline(emit, fdCallee, fdClauses!,
+                        failLabel, calleeMap, $"{lt}_fd{pc}");
+                    if (callSiteIndexCounter is not null && resumeLabels is not null)
+                    {
+                        // Dead resume cursor for this inlined site (see the
+                        // leaf-inline path above).
+                        int fdSiteIdx = callSiteIndexCounter();
+                        emit.MarkLabel(resumeLabels[fdSiteIdx - 1]);
+                    }
+                    pc += OpcodeTable.Get(op).Size;
+                    continue;
+                }
+
                 // Inlining (chunk 69): if the callee is a small static
                 // leaf, emit its body opcodes inline instead of routing
                 // through IlCallHelper.Run. Leaves push no CPs so no
@@ -5470,13 +5499,17 @@ public sealed class IlPredicateCompiler
                     break;
                 case Opcode.Call:
                 {
-                    // Tier G: the call must resolve to an inlinable single-clause
-                    // leaf so the chunk-69 inline makes its failure a direct
-                    // branch (fail-direct). Anything else keeps the CP.
+                    // Tier G: the call must resolve to a callee the guard-slice
+                    // emission inlines, making its failure a direct branch
+                    // (fail-direct): an inlinable single-clause leaf (chunk-69
+                    // path), or — G2 — a fail-direct multi-clause / self-tail-
+                    // recursive predicate (sequential-chain inline). Anything
+                    // else keeps the CP.
                     if (calleeMap is null) return false;
                     int fid = FindCallSiteFunctorId(callSites, pc);
                     if (fid < 0 || !calleeMap.TryGetValue(fid, out var callee)
-                        || !(IsLeafPredicate(callee) || IsInlinableLeafRule(callee)))
+                        || !(IsLeafPredicate(callee) || IsInlinableLeafRule(callee)
+                             || TryDescribeFailDirectCallee(callee, out _)))
                         return false;
                     snapshot = true;                   // callee head unify binds
                     regSave = true;                    // staging + callee temps clobber
@@ -5507,6 +5540,267 @@ public sealed class IlPredicateCompiler
             pc += OpcodeTable.Get(op).Size;
         }
         return false;
+    }
+
+    /// <summary>ADR-031 G2 — one clause of a fail-direct callee (see
+    /// <see cref="TryDescribeFailDirectCallee"/>).</summary>
+    internal readonly struct FailDirectClause
+    {
+        public int Start { get; init; }
+        /// <summary>pc of the terminator: <c>proceed</c>,
+        /// <c>deallocate_proceed</c>, or the self-tail <c>execute</c>.</summary>
+        public int TermPc { get; init; }
+        /// <summary>Terminator is a self-tail <c>execute</c> — the inline
+        /// emission loops back to the callee's inlined entry.</summary>
+        public bool SelfTail { get; init; }
+        /// <summary>The clause allocates an environment frame (its first real
+        /// op is <c>allocate</c>) — mid-clause failure must deallocate before
+        /// trying the next alternative.</summary>
+        public bool Framed { get; init; }
+        /// <summary>Terminator is the fused <c>deallocate_proceed</c> — the
+        /// emit deallocates then joins.</summary>
+        public bool DeallocProceed { get; init; }
+    }
+
+    /// <summary>ADR-031 G2 — true when <paramref name="callee"/> is a
+    /// FAIL-DIRECT predicate: its whole execution provably creates NO engine
+    /// choice point and every failure path is (in the inlined emission) a
+    /// direct IL branch. Requirements per clause: frameless, or a frame whose
+    /// <c>allocate</c> is the first real op and whose <c>deallocate</c>
+    /// immediately precedes the terminator; body ops restricted to the
+    /// non-CP whitelist (head unification / <c>=/2</c> family, integer
+    /// arithmetic, register moves, deterministic non-meta builtins — NO user
+    /// calls, NO cuts, NO control constructs); terminator <c>proceed</c> /
+    /// <c>deallocate_proceed</c> / a self-tail <c>execute</c> (det tail
+    /// recursion — the canonical list-walking validator). Clause dispatch is
+    /// IGNORED (the inline emission is a sequential alternative chain, so the
+    /// callee's own try/switch machinery — which WOULD push CPs — never runs).
+    /// This is the bytecode-level counterpart of ADR-030's determinism proof,
+    /// strengthened to "emits zero choice points". Capped (clauses ≤ 4, code ≤
+    /// 512 bytes) to bound inline growth.</summary>
+    internal static bool TryDescribeFailDirectCallee(
+        CompiledPredicate callee, out List<FailDirectClause>? clauses)
+    {
+        clauses = null;
+        byte[] code = callee.BytecodeUnfused;
+        if (callee.ClauseCount is < 1 or > 4 || code.Length > 512) return false;
+
+        // Clause byte ranges, dispatch-skeleton-free.
+        IReadOnlyList<(int Start, int End)> ranges;
+        if (callee.ClauseCount == 1)
+        {
+            ranges = new[] { (0, code.Length) };
+        }
+        else if (TryDescribeTryMeElseChain(callee, null, out var chain) && chain is not null)
+        {
+            ranges = chain.Clauses.Select(c => (c.Start, c.End)).ToArray();
+        }
+        else if (IlIndexedDispatch.TryDescribe(callee, static (_, _) => true, out var idx)
+                 && idx is not null)
+        {
+            ranges = idx.Clauses;
+        }
+        else
+        {
+            return false;
+        }
+
+        var result = new List<FailDirectClause>(ranges.Count);
+        foreach (var (start, end) in ranges)
+        {
+            bool framed = false, sawRealOp = false;
+            int pc = start;
+            int termPc = -1;
+            bool selfTail = false, deallocProceed = false;
+            while (pc < end)
+            {
+                var op = (Opcode)code[pc];
+                if (op == Opcode.Meta) { pc += 6; continue; }
+                if (op == Opcode.Proceed) { termPc = pc; break; }
+                if (op == Opcode.DeallocateProceed)
+                {
+                    if (!framed) return false;
+                    termPc = pc; deallocProceed = true; break;
+                }
+                if (op == Opcode.Execute)
+                {
+                    int fid = FindCallSiteFunctorId(callee.CallSites, pc);
+                    if (fid != callee.FunctorId) return false;   // v1: self-tail only
+                    termPc = pc; selfTail = true; break;
+                }
+                switch (op)
+                {
+                    case Opcode.Allocate:
+                        if (sawRealOp || framed) return false;
+                        framed = true;
+                        break;
+                    case Opcode.Deallocate:
+                        // Only as part of the tail sequence: deallocate must be
+                        // immediately followed by the (self) execute.
+                        if (!framed) return false;
+                        if ((Opcode)code[pc + OpcodeTable.Get(op).Size] != Opcode.Execute)
+                            return false;
+                        break;
+                    case Opcode.AIntCmp:
+                    case Opcode.AIntBin:
+                    case Opcode.GetAtom:
+                    case Opcode.GetInteger:
+                    case Opcode.GetNil:
+                    case Opcode.GetFloat:
+                    case Opcode.GetValueX:
+                    case Opcode.GetStructure:
+                    case Opcode.GetList:
+                    case Opcode.GetListA1:
+                    case Opcode.GetListA2:
+                    case Opcode.GetVariableX:
+                    case Opcode.UnifyValueX:
+                    case Opcode.UnifyVariableX:
+                    case Opcode.UnifyConstant:
+                    case Opcode.UnifyInteger:
+                    case Opcode.UnifyAtom:
+                    case Opcode.UnifyNil:
+                    case Opcode.UnifyVoid:
+                    case Opcode.UnifyFloat:
+                    case Opcode.UnifyBigInt:
+                    case Opcode.UnifyStructure:
+                    case Opcode.UnifyList:
+                    case Opcode.PutValueX:
+                    case Opcode.PutAtom:
+                    case Opcode.PutInteger:
+                    case Opcode.PutNil:
+                    case Opcode.PutFloat:
+                    case Opcode.PutVariableX:
+                    case Opcode.PutStructureR:
+                    case Opcode.PutListR:
+                        break;
+                    case Opcode.GetVariableY:
+                    case Opcode.GetValueY:
+                    case Opcode.UnifyVariableY:
+                    case Opcode.UnifyValueY:
+                    case Opcode.PutValueY:
+                        if (!framed) return false;
+                        break;
+                    case Opcode.CallBuiltin:
+                    {
+                        var entry = Shumway.Builtins.BuiltinsRegistry.GetById(
+                            BytecodeIO.ReadInt32(code, pc + 1));
+                        if (entry.IsCall || entry.IsDollarCall || entry.IsBacktrackable)
+                            return false;
+                        break;
+                    }
+                    default:
+                        return false;
+                }
+                sawRealOp = true;
+                pc += OpcodeTable.Get(op).Size;
+            }
+            if (termPc < 0) return false;
+            result.Add(new FailDirectClause
+            {
+                Start = start, TermPc = termPc,
+                SelfTail = selfTail, Framed = framed, DeallocProceed = deallocProceed,
+            });
+        }
+        clauses = result;
+        return true;
+    }
+
+    /// <summary>ADR-031 G2 — inlines a fail-direct callee at a CP-free guard
+    /// call site as a SEQUENTIAL alternative chain with an in-place self-tail
+    /// loop. Clause i's failure branches to clause i+1 (restoring the callee's
+    /// entry argument registers first — a partially-matched clause may have
+    /// clobbered them via <c>unify_variable_x</c>/staging); the last clause's
+    /// failure branches to <paramref name="outerFail"/> (the guard's restore
+    /// stub). A framed clause's mid-body failure detours through a
+    /// deallocate-then-fail stub. A self-tail <c>execute</c> becomes a branch
+    /// back to the inlined entry (its staging + deallocate already ran inside
+    /// the slice) with a throttled cancellation poll — but NO heap-GC safe
+    /// point: a collection would move the heap under the enclosing guard's
+    /// snapshot locals, so allocation during the walk grows the heap until the
+    /// guard exits (same acceptance as tier B).</summary>
+    private static void EmitFailDirectCalleeInline(
+        Sigil.Emit<PredicateDelegate> emit, CompiledPredicate callee,
+        List<FailDirectClause> fdClauses, Sigil.Label outerFail,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, string salt)
+    {
+        int arity = callee.Arity;
+        var join = emit.DefineLabel($"fd_join{salt}");
+        var entry = emit.DefineLabel($"fd_entry{salt}");
+        var argSaves = new Sigil.Local[arity];
+        for (int r = 0; r < arity; r++)
+            argSaves[r] = emit.DeclareLocal<Cell>($"fd_a{r}{salt}");
+        int k = fdClauses.Count;
+        var altLabels = new Sigil.Label[k + 1];
+        for (int i = 0; i < k; i++)
+            altLabels[i] = emit.DefineLabel($"fd_alt{i}{salt}");
+        altLabels[k] = outerFail;
+
+        bool anySelfTail = fdClauses.Any(c => c.SelfTail);
+        emit.MarkLabel(entry);
+        if (anySelfTail)
+        {
+            // Cancellation poll at the loop head (throttled field read).
+            emit.LoadArgument(0);
+            emit.Call(EngineBacktrackSafePointMethod);
+        }
+        for (int r = 0; r < arity; r++)
+        {
+            emit.LoadArgument(0);
+            emit.LoadConstant(r);
+            emit.Call(EngineGetRegisterMethod);
+            emit.StoreLocal(argSaves[r]);
+        }
+
+        byte[] code = callee.BytecodeUnfused;
+        for (int i = 0; i < k; i++)
+        {
+            var c = fdClauses[i];
+            emit.MarkLabel(altLabels[i]);
+            if (i > 0)
+            {
+                // Restore the callee's entry arguments a prior partial match
+                // may have clobbered.
+                for (int r = 0; r < arity; r++)
+                {
+                    emit.LoadArgument(0);
+                    emit.LoadConstant(r);
+                    emit.LoadLocal(argSaves[r]);
+                    emit.Call(EngineSetRegisterMethod);
+                }
+            }
+            Sigil.Label clauseFail = altLabels[i + 1];
+            Sigil.Label? deallocFail = null;
+            if (c.Framed)
+            {
+                deallocFail = emit.DefineLabel($"fd_df{i}{salt}");
+                clauseFail = deallocFail;
+            }
+            EmitClauseBody(emit, code, c.Start, c.TermPc,
+                clauseFail, callee.CallSites, calleeMap: calleeMap,
+                suppressProceedReturn: true, localSalt: $"{salt}_c{i}");
+            if (c.DeallocProceed)
+            {
+                emit.LoadArgument(0);
+                emit.Call(EngineDeallocateMethod);
+                emit.Branch(join);
+            }
+            else if (c.SelfTail)
+            {
+                emit.Branch(entry);      // staging + deallocate already in the slice
+            }
+            else
+            {
+                emit.Branch(join);       // proceed
+            }
+            if (deallocFail is not null)
+            {
+                emit.MarkLabel(deallocFail);
+                emit.LoadArgument(0);
+                emit.Call(EngineDeallocateMethod);
+                emit.Branch(altLabels[i + 1]);
+            }
+        }
+        emit.MarkLabel(join);
     }
 
     /// <summary>ADR-031 — emits one whole CP-free guard clause, replacing the

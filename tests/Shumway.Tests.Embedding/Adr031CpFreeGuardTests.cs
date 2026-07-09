@@ -394,6 +394,62 @@ public class Adr031BindingGuardTests
 
     [Theory]
     [MemberData(nameof(Modes))]
+    public void FailDirect_RecursiveValidator_CommitAndDeepFail(
+        Adr031CpFreeGuardTests.Mode m)
+    {
+        // G2 — the canonical shape: a self-tail-recursive det validator as the
+        // guard. Failure DEEP in the walk must reach the guard's restore stub
+        // (a direct branch chain), not the engine's backtracking.
+        var e = TierGEngine(m,
+            ":- public p/2, q/2.\n"
+            + "allpos([]).\n"
+            + "allpos([H|T]) :- H > 0, allpos(T).\n"
+            + "p(L, ok) :- allpos(L), !.\n"
+            + "p(_, bad).\n"
+            // Mixed tier-B + G2 guard: R=yes binds BEFORE the walk; a deep
+            // failure must unbind it for clause 2.
+            + "q(L, R) :- R = yes, allpos(L), !.\n"
+            + "q(_, R) :- R = no.\n");
+        Assert.True(e.Query("p([1,2,3], R), R == ok.").Success);
+        Assert.True(e.Query("p([1,2,-3], R), R == bad.").Success);   // fails at depth 3
+        Assert.True(e.Query("p([], R), R == ok.").Success);
+        Assert.True(e.Query("p(notalist, R), R == bad.").Success);
+        Assert.Single(e.QueryAll("p([1,2,3], R)."));
+        Assert.Single(e.QueryAll("p([1,2,-3], R)."));
+        // Long walk: loop mechanics, constant C# stack, cancellation-poll path.
+        Assert.True(e.Query("numlist(1, 10000, L), p(L, R), R == ok.").Success);
+
+        Assert.True(e.Query("q([1,2], R), R == yes.").Success);
+        Assert.True(e.Query("q([1,-2], R), R == no.").Success);      // undo R=yes
+        Assert.Single(e.QueryAll("q([1,-2], R)."));
+    }
+
+    [Theory]
+    [MemberData(nameof(Modes))]
+    public void FailDirect_MultiClauseCallee_AltRestoresArgs(
+        Adr031CpFreeGuardTests.Mode m)
+    {
+        // G2 — a 3-clause callee where a PARTIAL match in clause 2 clobbers the
+        // argument register (unify_variable_x writes A0) before failing; clause
+        // 3 must see the original argument (the alt-entry register restore).
+        var e = TierGEngine(m,
+            ":- public r/2.\n"
+            + "w([]).\n"
+            + "w([H|_]) :- H > 5.\n"
+            + "w(N) :- integer(N), N > 100.\n"
+            + "r(X, hit) :- w(X), !.\n"
+            + "r(_, miss).\n");
+        Assert.True(e.Query("r([], R), R == hit.").Success);
+        Assert.True(e.Query("r([9], R), R == hit.").Success);
+        Assert.True(e.Query("r([3], R), R == miss.").Success);      // clause 2 partial, then fail
+        Assert.True(e.Query("r(200, R), R == hit.").Success);       // clause 3 after 1-2 fail
+        Assert.True(e.Query("r(50, R), R == miss.").Success);
+        Assert.Single(e.QueryAll("r([3], R)."));
+        Assert.Single(e.QueryAll("r(200, R)."));
+    }
+
+    [Theory]
+    [MemberData(nameof(Modes))]
     public void AttvarHookFails_LazyCp_FallsToNextClause_Restored(
         Adr031CpFreeGuardTests.Mode m)
     {

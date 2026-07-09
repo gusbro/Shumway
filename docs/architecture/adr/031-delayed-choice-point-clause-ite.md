@@ -103,12 +103,43 @@ in favour — no regression anywhere. Full five-project gate green: Embedding
   and the cross-process `PreludeIlBakeTests` caught the resulting
   `MissingMethodException` — the getter binding is now unconditional. Gate
   green: Embedding 2923 / Compiler 351 / Core 436 / Interpreter 105 / ISO 277.
-- **Deferred — beyond G phase 1:** guard calls to NON-inlinable callees
-  (multi-clause / recursive / framed) — genuinely needs fail-continuation
-  threading through region emit + ADR-030 det-set plumbing (the original case-G
-  sketch); indexed-dispatch bucket chains (`try`/`retry` nodes — tier B/G
-  machinery at the indexed emit sites); a_eval comparison guards (1 corpus
-  pred).
+- **G2 SHIPPED (2026-07-09) — fail-direct multi-clause / self-tail-recursive
+  callees.** `TryDescribeFailDirectCallee` proves a callee **emits zero choice
+  points**: every clause frameless (or `allocate`-first / `deallocate`-before-
+  tail framed), body ops in the non-CP whitelist (unify family, integer
+  arithmetic, register moves, det non-meta builtins — no user calls, no cuts),
+  terminator `proceed` / `deallocate_proceed` / a SELF-tail `execute`; clause
+  ranges recovered from the chain/indexed describers, capped (≤ 4 clauses,
+  ≤ 512 bytes). This is the bytecode-level counterpart of ADR-030's
+  determinism proof, strengthened from "det" to "CP-free" — which is what
+  fail-direct actually requires (a det callee with TRANSIENT CPs still exits
+  through the engine's backtracking on exhaustion). The guard-slice emission
+  (`EmitFailDirectCalleeInline`) inlines the callee as a SEQUENTIAL alternative
+  chain: clause i's failure branches to clause i+1 — restoring the callee's
+  entry argument registers first, since a partial match clobbers them
+  (`unify_variable_x` writes the arg bank) — and the last clause's failure
+  branches to the guard's restore stub; a framed clause's mid-body failure
+  detours through a deallocate-then-fail stub; the self-tail `execute` becomes
+  a branch back to the inlined entry with a throttled cancellation poll
+  (`Engine.BacktrackSafePoint`) but **no heap-GC safe point** — a collection
+  would move the heap under the guard's snapshot locals, so allocation during
+  the walk grows the heap until the guard exits (tier-B acceptance). The
+  callee's own dispatch machinery (which would push CPs) never runs — the
+  sequential chain replaces it, sound because indexing is only an optimisation.
+  **Why not the dynamic fail-continuation:** IL locals die when the dispatch
+  loop re-invokes the region delegate (CP-pop re-entry, the wakeup lazy-CP
+  path), so a run-time continuation needs an engine-level continuation stack
+  with catch/3 interplay — an ADR-worthy backtracking-model change, not
+  attempted; the static inline covers the dominant validator shapes without
+  it. **Measured: 3 M iterations of a 5-element `allpos` guard walk: min
+  2297 ms vs 2544 ms (≈10%; the walk itself dominates — the saved CP+cut
+  amortises over the calls); Van Roy sweep parity.** Gate green: Embedding
+  2929 / Compiler 351 / Core 436 / Interpreter 105 / ISO 277.
+- **Deferred — beyond G2:** callees needing a TRUE dynamic fail-continuation
+  (transient CPs, non-tail body calls, mutual recursion, > 4 clauses) — the
+  engine continuation-stack design above; indexed-dispatch bucket chains
+  (`try`/`retry` nodes — tier B/G machinery at the indexed emit sites); a_eval
+  comparison guards (1 corpus pred).
 
 ## Original investigation (the fold that was NOT the answer)
 
