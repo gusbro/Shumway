@@ -2334,18 +2334,20 @@ public sealed partial class Engine
         _pendingWakeups.Clear();
     }
 
-    /// <summary>ADR-031 case B rare path — pushes the lazily-materialised
-    /// clause choice point with the SAVED clause-entry marks. A binding guard
-    /// has advanced the trails/heap by the time the commit runs its wakeup
-    /// flush; a failing hook backtracks into this CP, which must restore the
-    /// CLAUSE-ENTRY state so the next clause sees the guard fully undone. The
-    /// push itself records current state (registers are entry-identical — the
-    /// guard whitelist preserves them; <see cref="Hb"/> is left at the push's
-    /// heap top so hook bindings trail correctly), then the four restore slots
-    /// are overwritten with the entry marks.</summary>
+    /// <summary>ADR-031 rare path (cases B and G) — pushes the
+    /// lazily-materialised clause choice point with the SAVED clause-entry
+    /// marks. A binding guard has advanced the trails/heap by the time the
+    /// commit runs its wakeup flush — and a FRAMED guard-call clause (case G)
+    /// has additionally allocated its environment frame, moving <c>E</c> — so
+    /// a failing hook backtracking into this CP must restore the CLAUSE-ENTRY
+    /// state so the next clause sees the guard fully undone. The push itself
+    /// records current state (argument registers are entry-identical — the
+    /// emit saves/restores any the guard writes; <see cref="Hb"/> is left at
+    /// the push's heap top so hook bindings trail correctly), then the five
+    /// restore slots are overwritten with the entry marks.</summary>
     public void PushIlChoicePointWithMarks(
         Func<Engine, int, bool> del, int nextCursor, int arity,
-        int bindingTop, int extraTop, int heapTop, int savedHb)
+        int bindingTop, int extraTop, int heapTop, int savedHb, int entryE)
     {
         PushIlChoicePoint(del, nextCursor, arity);
         int b = _b;
@@ -2353,6 +2355,7 @@ public sealed partial class Engine
         _stack[b + CpExtraTrailOffset(arity)] = Cell.RawInt(extraTop);
         _stack[b + CpHeapTopOffset(arity)] = Cell.RawInt(heapTop);
         _stack[b + CpHbOffset(arity)] = Cell.RawInt(savedHb);
+        _stack[b + CpCeOffset(arity)] = Cell.RawInt(entryE);
     }
 
     /// <summary>Sets the engine's PC to <paramref name="returnPc"/> and

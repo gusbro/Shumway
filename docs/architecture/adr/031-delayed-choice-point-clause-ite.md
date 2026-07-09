@@ -70,17 +70,45 @@ in favour — no regression anywhere. Full five-project gate green: Embedding
   Interpreter 105 / ISO 277. Corpus sizing (`--foldcensus` guard classes):
   tier A+B cover the comparison (0.3%) + binding-unify (6.8%) fold-candidate
   guards.
-- **Deferred — the real phase 2 is case G (user-call guards, 91.9% of fold
-  candidates):** `p(X) :- check(X), !, …` — the guard call's failure propagates
-  through the engine's backtracking, so CP-free needs the callee's failure to
-  return to the call site (fail-continuation threading in region emit), gated
-  on the callee being proven det by ADR-030's `DeterminismAnalysis` (det-set
-  plumbing from compile to promotion), and reusing tier B's snapshot/restore.
-  Prototype-gated like this phase. Remaining smaller candidates: a_eval
-  comparison guards (1 corpus pred); indexed-dispatch bucket chains
-  (`try`/`retry` nodes — needs tier B's machinery at the indexed emit sites);
-  type-test builtin guards (34 preds — framed `call var/1` clauses needing
-  frame teardown + register restore on the fail path).
+- **Case G SHIPPED (2026-07-09) — guard CALLS to inlinable leaf callees (plus
+  cases E and F for free).** `p(X) :- check(X), !, …` (91.9% of fold candidates
+  have a user-call guard). Instead of the originally-sketched fail-continuation
+  threading, the shipped mechanism is **forced inlining**: the recogniser
+  accepts a FRAMED clause (`allocate_get_level; get_variable_y*; staging;
+  call; cut slot`) whose every `Call` resolves through the calleeMap to an
+  **inlinable single-clause leaf** (`IsLeafPredicate` /
+  `IsInlinableLeafRule` — no frame, no CPs, no user calls, det builtins only);
+  the guard slice is emitted with `forceLeafRuleInline` so the chunk-69 inline
+  path emits the callee's body IN PLACE — its failure is then a direct
+  `BranchIfFalse` to the guard's restore stub. Fail-direct without any new
+  control machinery; no `DeterminismAnalysis` plumbing needed for this tier
+  (an inlinable leaf is trivially det). Also accepted in guards:
+  **deterministic non-meta `CallBuiltin`** (type tests, `==` — the old case E,
+  34 preds) and **`a_int_bin`** (`is/2` fast lane — case F); both already fail
+  via a direct branch. The clause carries the tier-B snapshot plus an
+  **argument-register save** (staging and callee temps clobber A0..arity-1 —
+  saved in Cell IL locals, restored in the stub) and the stub **deallocates
+  the frame**; the lazy CP gains a fifth entry mark (`entryE` patched into
+  CpCe) because the frame moved E before the commit. In regions the guard
+  slice is emitted with `regionCtx: null` (bypassing the region `br`-call
+  whose failure would go to the region fail label — past the clause) and the
+  plan's forward-resume cursors for the inlined calls are marked dead;
+  `localSalt` threading fixes the pc-named-local collisions this introduces
+  (also fixing a latent collision in the gated-off `SHUMWAY_INLINE_RULES`
+  path). **Measured (fresh Release, same binary, `SHUMWAY_CPFREE_GUARD` A/B,
+  ABBA min-of-N, Tier-1): guard-call recursive loop 30 M iters min 3093 ms vs
+  6055 ms (≈2×); boyer min-of-8 627 vs 866 (−28% — boyer's guard shapes now
+  fire); qsort/tak/nreverse parity.** A stale-binary lesson en route: the
+  first Release rebuild silently failed (`EngineEGetter` was `#if DEBUG`-only)
+  and the cross-process `PreludeIlBakeTests` caught the resulting
+  `MissingMethodException` — the getter binding is now unconditional. Gate
+  green: Embedding 2923 / Compiler 351 / Core 436 / Interpreter 105 / ISO 277.
+- **Deferred — beyond G phase 1:** guard calls to NON-inlinable callees
+  (multi-clause / recursive / framed) — genuinely needs fail-continuation
+  threading through region emit + ADR-030 det-set plumbing (the original case-G
+  sketch); indexed-dispatch bucket chains (`try`/`retry` nodes — tier B/G
+  machinery at the indexed emit sites); a_eval comparison guards (1 corpus
+  pred).
 
 ## Original investigation (the fold that was NOT the answer)
 

@@ -126,32 +126,56 @@ public class Adr031CpFreeGuardTests
     }
 
     [Fact]
-    public void Recognizer_TiersAAndB_ClassifyCorrectly()
+    public void Recognizer_Tiers_ClassifyCorrectly()
     {
         // Direct recogniser pins (bytecode-level). Clause 0 starts after
         // try_me_else (offset 9).
         var pc = new Shumway.Compiler.Wam.PredicateCompiler();
 
-        // Tier A: pure comparison — no snapshot.
+        // Tier A: pure comparison — no snapshot, no reg save, frameless.
         var cp = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
             "loop(N):-N=<0,!. loop(N):-M is N-1,loop(M).").ReadAll().ToList());
-        Assert.True(IlPredicateCompiler.TryGetCpFreeNeckCutGuard(
-            cp.BytecodeUnfused, 9, cp.BytecodeUnfused.Length, 1, out int cut, out bool snap));
-        Assert.Equal((byte)Opcode.NeckCut, cp.BytecodeUnfused[cut]);
-        Assert.False(snap);
+        Assert.True(IlPredicateCompiler.TryGetCpFreeGuard(
+            cp.BytecodeUnfused, 9, cp.BytecodeUnfused.Length, 1,
+            calleeMap: null, cp.CallSites, out var gA));
+        Assert.Equal((byte)Opcode.NeckCut, cp.BytecodeUnfused[gA.CutPc]);
+        Assert.False(gA.NeedsSnapshot);
+        Assert.False(gA.NeedsRegSave);
+        Assert.False(gA.Framed);
 
         // Tier B: a binding guard (get_value_x) — accepted WITH snapshot.
         var cp2 = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
             "max(X,Y,X):-X>=Y,!. max(X,Y,Y).").ReadAll().ToList());
-        Assert.True(IlPredicateCompiler.TryGetCpFreeNeckCutGuard(
-            cp2.BytecodeUnfused, 9, cp2.BytecodeUnfused.Length, 3, out _, out bool snap2));
-        Assert.True(snap2);
+        Assert.True(IlPredicateCompiler.TryGetCpFreeGuard(
+            cp2.BytecodeUnfused, 9, cp2.BytecodeUnfused.Length, 3,
+            calleeMap: null, cp2.CallSites, out var gB));
+        Assert.True(gB.NeedsSnapshot);
+        Assert.False(gB.Framed);
 
-        // A guard with a real call (deep cut, framed) is NOT eligible.
+        // Tier G: a guard CALL — eligible only when the calleeMap resolves it
+        // to an inlinable single-clause leaf; without a calleeMap → rejected.
         var cp3 = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
-            "p(X):-q(X),!. p(_).").ReadAll().ToList());
-        Assert.False(IlPredicateCompiler.TryGetCpFreeNeckCutGuard(
-            cp3.BytecodeUnfused, 9, cp3.BytecodeUnfused.Length, 1, out _, out _));
+            "p(X):-q(X),!,r(X). p(X):-s(X).").ReadAll().ToList());
+        Assert.False(IlPredicateCompiler.TryGetCpFreeGuard(
+            cp3.BytecodeUnfused, 9, cp3.BytecodeUnfused.Length, 1,
+            calleeMap: null, cp3.CallSites, out _));
+
+        // With a calleeMap mapping q/1 to an inlinable leaf rule → accepted,
+        // framed + deep cut + snapshot + reg save.
+        var calleeQ = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
+            "q(X):-X>0.").ReadAll().ToList());
+        Assert.True(IlPredicateCompiler.IsInlinableLeafRule(calleeQ));
+        int qFid = cp3.CallSites[0].CalleeFunctorId;
+        var map = new System.Collections.Generic.Dictionary<
+            int, Shumway.Compiler.Wam.CompiledPredicate> { [qFid] = calleeQ };
+        Assert.True(IlPredicateCompiler.TryGetCpFreeGuard(
+            cp3.BytecodeUnfused, 9, cp3.BytecodeUnfused.Length, 1,
+            map, cp3.CallSites, out var gG));
+        Assert.True(gG.Framed);
+        Assert.True(gG.DeepCut);
+        Assert.True(gG.NeedsSnapshot);
+        Assert.True(gG.NeedsRegSave);
+        Assert.Equal((byte)Opcode.Cut, cp3.BytecodeUnfused[gG.CutPc]);
     }
 }
 
@@ -263,6 +287,109 @@ public class Adr031BindingGuardTests
         Assert.True(e.Query("lh([a,b], H, R), H == a, R == car.").Success);
         Assert.True(e.Query("lh(nil_thing, _, R), R == nil.").Success);
         Assert.Single(e.QueryAll("lh([a,b], H, R)."));
+    }
+
+    [Theory]
+    [MemberData(nameof(Modes))]
+    public void GuardCall_InlinableLeafCallee_CommitAndFallthrough(
+        Adr031CpFreeGuardTests.Mode m)
+    {
+        // Tier G — the canonical `p :- check(X), !, ...` with check/1 an
+        // inlinable leaf rule. Guard-call failure must branch to the next
+        // clause via the restore stub (frame deallocated, registers restored).
+        var e = TierGEngine(m,
+            ":- public p/2, mix/2, tt/2, ar/2.\n"
+            + "check(X) :- X > 5.\n"
+            + "p(X, big) :- check(X), !.\n"
+            + "p(_, small).\n"
+            // Mixed guard: call + comparison after it.
+            + "mix(X, both) :- check(X), X < 100, !.\n"
+            + "mix(_, nope).\n"
+            // Type-test / ==/2 builtin guard (the old case E, now covered).
+            + "tt(X, v) :- var(X), !.\n"
+            + "tt(X, nv) :- nonvar(X).\n"
+            // is/2 (a_int_bin) + cmp guard.
+            + "ar(N, lowdouble) :- M is N * 2, M < 10, !.\n"
+            + "ar(_, high).\n");
+        Assert.True(e.Query("p(9, R), R == big.").Success);
+        Assert.True(e.Query("p(3, R), R == small.").Success);
+        Assert.Single(e.QueryAll("p(9, R)."));
+        Assert.Single(e.QueryAll("p(3, R)."));
+
+        Assert.True(e.Query("mix(50, R), R == both.").Success);
+        Assert.True(e.Query("mix(200, R), R == nope.").Success);   // cmp after call fails
+        Assert.True(e.Query("mix(2, R), R == nope.").Success);     // call itself fails
+        Assert.Single(e.QueryAll("mix(50, R)."));
+
+        Assert.True(e.Query("tt(_, R), R == v.").Success);
+        Assert.True(e.Query("tt(a, R), R == nv.").Success);
+        Assert.Single(e.QueryAll("tt(a, R)."));
+
+        Assert.True(e.Query("ar(3, R), R == lowdouble.").Success);
+        Assert.True(e.Query("ar(50, R), R == high.").Success);
+        Assert.Single(e.QueryAll("ar(3, R)."));
+    }
+
+    [Theory]
+    [MemberData(nameof(Modes))]
+    public void GuardCall_CalleeBindsThenLaterGoalFails_Restored(
+        Adr031CpFreeGuardTests.Mode m)
+    {
+        // The callee BINDS an output (W = w(X)) and a LATER guard goal fails →
+        // the restore stub must undo the callee's binding for clause 2.
+        var e = TierGEngine(m,
+            ":- public q/2.\n"
+            + "bindc(X, w(X)).\n"
+            + "q(X, tagged) :- bindc(X, W), W = w(9), !.\n"
+            + "q(_, plain).\n");
+        Assert.True(e.Query("q(9, R), R == tagged.").Success);
+        Assert.True(e.Query("q(3, R), R == plain.").Success);   // W=w(3) ≠ w(9) → undo → clause 2
+        Assert.Single(e.QueryAll("q(9, R)."));
+        Assert.Single(e.QueryAll("q(3, R)."));
+    }
+
+    [Theory]
+    [MemberData(nameof(Modes))]
+    public void GuardCall_HotRecursion_Correct(Adr031CpFreeGuardTests.Mode m)
+    {
+        // The hot shape case G targets: guard call fails per iteration.
+        var e = TierGEngine(m,
+            ":- public gloop/1.\n"
+            + "done(N) :- N =< 0.\n"
+            + "gloop(N) :- done(N), !.\n"
+            + "gloop(N) :- M is N - 1, gloop(M).\n");
+        Assert.True(e.Query("gloop(20000).").Success);
+        Assert.Single(e.QueryAll("gloop(20000)."));
+    }
+
+    private static PrologEngine TierGEngine(Adr031CpFreeGuardTests.Mode m, string program)
+    {
+        switch (m)
+        {
+            case Adr031CpFreeGuardTests.Mode.Tier0:
+            {
+                var e = new PrologEngine();
+                e.IlPromotion.Threshold = 0;
+                e.ConsultString(program);
+                return e;
+            }
+            case Adr031CpFreeGuardTests.Mode.Tier1Runtime:
+            {
+                var e = new PrologEngine();
+                e.IlPromotion.Threshold = 1;
+                e.ConsultString(program);
+                return e;
+            }
+            default:
+            {
+                var bundle = new Bundle(new[] { new BundleEntry("adr031g", program) });
+                byte[] bytes = BundleWriter.ToBytes(bundle,
+                    includeCompiledBytecode: true, includeCompiledIl: true);
+                var e = new PrologEngine();
+                e.LoadBundle(BundleReader.FromBytes(bytes));
+                return e;
+            }
+        }
     }
 
     [Theory]
