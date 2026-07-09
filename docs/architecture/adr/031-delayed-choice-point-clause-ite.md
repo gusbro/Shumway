@@ -1,8 +1,56 @@
 # ADR-031: Delayed choice point via clause-to-if-then-else folding
 
-**Status:** Proposed — **prototype-gated. Investigation done (2026-07-09): the
-AST fold as specified is a no-op; the real lever is a new Tier-1 CP-free codegen
-recogniser.** Recognise the multi-clause `p :- Guard, !, Body.  p :- Rest.` shape
+**Status:** **Accepted — phase 1 (CP-free neck-cut guard commit) SHIPPED,
+default ON.** The delayed choice point landed as a **Tier-1 codegen recogniser**
+(not the AST fold — see Investigation): a non-last chain clause of the shape
+`Head :- IntCmpGuard, !, Body.` is emitted WITHOUT its entry
+`PushIlChoicePoint`; guard failure is a **direct IL branch** to the next
+clause's label, and the commit's cut tears down nothing. **Measured: the
+guard-fail recursive hot loop (`loop(N):-N=<0,!. loop(N):-M is N-1,loop(M).`,
+30 M iterations, Tier-1 promoted, ABBA min-of-N same session) runs 2.6× faster
+(≈133 ns → ≈46 ns per iteration)**; boyer flat (within noise), qsort/tak ≈3%
+in favour — no regression anywhere. Full five-project gate green: Embedding
+2902 / Compiler 351 / Core 436 / Interpreter 105 / ISO 277.
+
+## Phase 1 implementation (2026-07-09)
+
+- **Recogniser** `IlPredicateCompiler.TryGetCpFreeNeckCutGuard`: the clause
+  byte range is `[a_int_cmp | Meta]* ; neck_cut ; …` — a frameless guard of
+  **non-binding, non-allocating, register-preserving** integer comparisons
+  committing via a neck cut. Those three properties are what make the direct
+  fail-branch sound: the guard mutates NO engine state (no bindings → nothing
+  to untrail; no allocation → no heap reset; no register writes → the next
+  clause sees the entry arguments), so failing into the next clause needs no
+  restore at all, and the skipped choice point's job is fully covered.
+- **Emission** (both `EmitTryMeElseChainBody` and the region
+  `EmitRegionMultiClauseMember` — runtime promotion AND persisted bundles):
+  the clause is emitted as three `EmitClauseBody` slices — guard prefix with
+  `failLabel := next clause's label`, then `EmitCpFreeGuardCommit`, then the
+  post-cut body with the normal fail label. No changes to `EmitClauseBody`
+  itself and none to the Engine.
+- **The wakeup caveat → the choice point is materialised LAZILY.** The
+  standard emit flushes attribute wakeups before a cut, and a failing hook
+  must have the clause CP to backtrack into. `EmitCpFreeGuardCommit` checks
+  `Engine.HasPendingWakeups` (one field read): fast path (every non-attvar
+  program) → just `engine.NeckCut()` (a runtime no-op unless self-tail-loop
+  body CPs exist, where it must prune exactly as today); rare path → **push
+  the skipped CP here**, then flush + cut exactly as the standard emit. The
+  lazy push is state-identical to an entry push because the guard changed
+  nothing. This is the "delayed choice point" in its purest form.
+- **Gate lever:** `IlPredicateCompiler.CpFreeGuardCommit`
+  (`SHUMWAY_CPFREE_GUARD=0` disables) — the A/B was run with the same binary.
+- **Tier-0 unchanged** (measured flat, as expected — the CP cost being
+  removed is Tier-1's push + `TryBacktrack`/`PopIlChoicePointAndRestore`
+  round-trip per guard failure).
+- **Deferred — phase 2 candidates:** binding guards (`get_value`/`get_atom` —
+  `max/3`; needs the entry `_hb := heapTop` + trail-mark snapshot and a
+  restoring fail path, and the lazy CP must then record entry trail marks);
+  a_eval comparison guards; indexed-dispatch bucket chains (`try`/`retry`
+  nodes); type-test builtin guards.
+
+## Original investigation (the fold that was NOT the answer)
+
+Recognise the multi-clause `p :- Guard, !, Body.  p :- Rest.` shape
 and fold it to `p :- (Guard -> Body ; Rest)`, routed to the **CP-free** region-
 helper lowering, so a committing guard **never pushes** the clause-selection
 choice point the cut would otherwise tear down. Targets hot Tier-1 recursion

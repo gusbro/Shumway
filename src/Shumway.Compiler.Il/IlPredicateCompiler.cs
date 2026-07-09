@@ -283,6 +283,11 @@ public sealed class IlPredicateCompiler
     // pay essentially nothing per cut.
     private static readonly MethodInfo EngineFlushWakeupsForIlCutMethod =
         typeof(Engine).GetMethod(nameof(Engine.FlushWakeupsForIlCut), Type.EmptyTypes)!;
+    // ADR-031 — CP-free guard commit: the fast-path check that lets the
+    // emitted commit skip materialising the clause choice point entirely
+    // (see EmitCpFreeGuardCommit).
+    private static readonly MethodInfo EngineHasPendingWakeupsGetter =
+        typeof(Engine).GetProperty(nameof(Engine.HasPendingWakeups))!.GetGetMethod()!;
     // Chunk 216 — indexed-dispatch entry resolver (mirrors the WAM switch
     // cascade, returns the entry chain-node cursor). Keyed by functor id
     // so the same IL works under runtime promotion AND a persisted bundle
@@ -1131,6 +1136,21 @@ public sealed class IlPredicateCompiler
     public static bool RegionCompile { get; set; } =
         System.Environment.GetEnvironmentVariable("SHUMWAY_REGION") != "0";
 
+    /// <summary>ADR-031 — delayed choice point for the neck-cut guard clause.
+    /// A non-last chain clause of the shape <c>Head :- InlineGuard, !, Body.</c>
+    /// (guard = non-binding, non-allocating inline ops — currently the
+    /// <c>a_int_cmp</c> integer-comparison fast lane) is emitted WITHOUT its
+    /// entry <c>PushIlChoicePoint</c>: guard failure is a direct IL branch to
+    /// the next clause's label (the guard mutated no engine state, so there is
+    /// nothing to restore), and the commit needs no <c>engine.Cut</c> teardown
+    /// (nothing was pushed). The one caveat — attribute wakeups pending at the
+    /// cut need a choice point to fail into — is handled by materialising the
+    /// skipped CP LAZILY at the commit when <see cref="Engine.HasPendingWakeups"/>
+    /// (state-identical to an entry push because the guard changed nothing).
+    /// Set <c>SHUMWAY_CPFREE_GUARD=0</c> to disable (A/B lever).</summary>
+    public static bool CpFreeGuardCommit { get; set; } =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_CPFREE_GUARD") != "0";
+
     /// <summary>Stage 9c (cost-based root selection): functor ids FORCED to be region
     /// ROOTS — excluded from absorption into any OTHER region. Promoting a shared member
     /// to its own root trades N duplicated copies of its sub-region for one copy + N
@@ -1605,6 +1625,26 @@ public sealed class IlPredicateCompiler
         {
             if (i > 0)
                 emit.MarkLabel(ctx.CursorLabels[ctx.ClauseAltCursor[(mi, i)]]);
+
+            // ADR-031 — CP-free guard clause (see EmitTryMeElseChainBody): guard
+            // failure branches directly to the next clause-alternative's region
+            // cursor label; the entry CP push is skipped (lazily materialised at
+            // the commit only under pending wakeups).
+            if (CpFreeGuardCommit && i < n - 1
+                && TryGetCpFreeNeckCutGuard(
+                    member.BytecodeUnfused, clauses[i].Start, clauses[i].End, out int cutPc))
+            {
+                EmitClauseBody(emit, member.BytecodeUnfused, clauses[i].Start, cutPc,
+                    ctx.CursorLabels[ctx.ClauseAltCursor[(mi, i + 1)]], member.CallSites,
+                    emitSelfDelegate: emitSelf, calleeMap: calleeMap, regionCtx: ctx);
+                EmitCpFreeGuardCommit(emit, emitSelf, ctx.ClauseAltCursor[(mi, i + 1)],
+                    member.Arity, ctx.FailLabel, salt: $"_rm{mi}_c{i}");
+                EmitClauseBody(emit, member.BytecodeUnfused, cutPc + 1, clauses[i].End,
+                    ctx.FailLabel, member.CallSites, emitSelfDelegate: emitSelf,
+                    calleeMap: calleeMap, regionCtx: ctx);
+                continue;
+            }
+
             if (i < n - 1)
             {
                 emit.LoadArgument(0);                         // engine
@@ -5236,6 +5276,66 @@ public sealed class IlPredicateCompiler
     /// self-references for the per-clause IL CP push route through
     /// <paramref name="emitSelf"/>; callers pick the holder-based or
     /// field-based variant.</summary>
+    /// <summary>ADR-031 recogniser — true when the clause byte range is
+    /// <c>[a_int_cmp | Meta]* ; neck_cut ; …</c>: a frameless guard of
+    /// non-binding, non-allocating, register-preserving integer comparisons
+    /// committing via a neck cut. Such a guard's failure can branch DIRECTLY
+    /// to the next clause (no engine state to restore), so its clause needs
+    /// no entry choice point. <paramref name="neckCutPc"/> receives the
+    /// <c>neck_cut</c> opcode's pc.</summary>
+    internal static bool TryGetCpFreeNeckCutGuard(
+        byte[] code, int start, int end, out int neckCutPc)
+    {
+        neckCutPc = -1;
+        int pc = start;
+        while (pc < end)
+        {
+            var op = (Opcode)code[pc];
+            if (op == Opcode.Meta) { pc += 6; continue; }
+            if (op == Opcode.AIntCmp) { pc += OpcodeTable.Get(op).Size; continue; }
+            if (op == Opcode.NeckCut) { neckCutPc = pc; return true; }
+            return false;
+        }
+        return false;
+    }
+
+    /// <summary>ADR-031 — the commit of a CP-free guard clause, replacing the
+    /// entry <c>PushIlChoicePoint</c> + <c>neck_cut</c> pair. Fast path (no
+    /// pending attribute wakeups — every non-attvar program): just
+    /// <c>engine.NeckCut()</c>, a runtime no-op unless body CPs exist (the
+    /// self-tail-loop case, where it must prune exactly as today). Rare path:
+    /// wakeups are pending at the cut, and a failing hook must have a clause
+    /// choice point to backtrack into — so the SKIPPED choice point is pushed
+    /// HERE, lazily. It is state-identical to an entry push because the guard
+    /// bound nothing, allocated nothing, and wrote no argument register. Then
+    /// the flush + cut run exactly as the standard emit.</summary>
+    private static void EmitCpFreeGuardCommit(
+        Sigil.Emit<PredicateDelegate> emit,
+        SelfDelegateEmitter self, int lazyCpCursor, int arity,
+        Sigil.Label failLabel, string salt)
+    {
+        var rare = emit.DefineLabel($"cpfree_rare{salt}");
+        var after = emit.DefineLabel($"cpfree_after{salt}");
+        emit.LoadArgument(0);
+        emit.Call(EngineHasPendingWakeupsGetter);
+        emit.BranchIfTrue(rare);
+        emit.LoadArgument(0);
+        emit.Call(EngineNeckCutMethod);
+        emit.Branch(after);
+        emit.MarkLabel(rare);
+        emit.LoadArgument(0);
+        self(emit);
+        emit.LoadConstant(lazyCpCursor);
+        emit.LoadConstant(arity);
+        emit.Call(EnginePushIlCpMethod);
+        emit.LoadArgument(0);
+        emit.Call(EngineFlushWakeupsForIlCutMethod);
+        emit.BranchIfFalse(failLabel);
+        emit.LoadArgument(0);
+        emit.Call(EngineNeckCutMethod);
+        emit.MarkLabel(after);
+    }
+
     private static void EmitTryMeElseChainBody(
         Sigil.Emit<PredicateDelegate> emit,
         CompiledPredicate predicate,
@@ -5308,6 +5408,40 @@ public sealed class IlPredicateCompiler
         for (int i = 0; i < clauses.Count; i++)
         {
             emit.MarkLabel(clauseLabels[i]);
+
+            // ADR-031 — a non-last clause whose pre-cut prefix is a CP-free
+            // inline guard skips its entry choice point: guard failure branches
+            // DIRECTLY to the next clause's label (the guard mutated nothing),
+            // and the commit materialises the CP lazily only in the rare
+            // pending-wakeups case (see EmitCpFreeGuardCommit).
+            if (CpFreeGuardCommit && i < clauses.Count - 1
+                && TryGetCpFreeNeckCutGuard(
+                    predicate.BytecodeUnfused, clauses[i].Start, clauses[i].End, out int cutPc))
+            {
+                EmitClauseBody(emit, predicate.BytecodeUnfused, clauses[i].Start, cutPc,
+                    clauseLabels[i + 1], predicate.CallSites,
+                    callSiteIndexCounter: () => ++siteCounter,
+                    resumeLabels: resumeLabels,
+                    emitSelfDelegate: effectiveSelf,
+                    calleeMap: calleeMap,
+                    cursorBase: N,
+                    selfFunctorId: predicate.FunctorId,
+                    selfTailLabel: selfEntry,
+                    resetCursorBeforeSelfTail: true);
+                EmitCpFreeGuardCommit(emit, effectiveSelf, i + 1, predicate.Arity,
+                    failLabel, salt: $"_c{i}");
+                EmitClauseBody(emit, predicate.BytecodeUnfused, cutPc + 1, clauses[i].End,
+                    failLabel, predicate.CallSites,
+                    callSiteIndexCounter: () => ++siteCounter,
+                    resumeLabels: resumeLabels,
+                    emitSelfDelegate: effectiveSelf,
+                    calleeMap: calleeMap,
+                    cursorBase: N,
+                    selfFunctorId: predicate.FunctorId,
+                    selfTailLabel: selfEntry,
+                    resetCursorBeforeSelfTail: true);
+                continue;
+            }
 
             // If there's a later clause, push an IL CP for it before
             // running this clause's body.

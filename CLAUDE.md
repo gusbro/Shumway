@@ -1287,7 +1287,7 @@ When proposing changes:
 | Sibling-arg + structure-keyed indexing inside value buckets — nested `BucketSwitch` reusing `switch_on_*_arg` + new `switch_on_structure_sub` | ADR-028 |
 | Clause-epilogue peephole fusion — `cut;deallocate_proceed` shipped (Tier-0 dispatch; IL reads `BytecodeUnfused`); `deallocate;execute` + neck-cut variants deferred; `call;cut` non-fusable | ADR-029 |
 | Redundant-cut elimination via a determinism fixpoint — intra-module elision SHIPPED (default ON; `DeterminismAnalysis` drops a det-prefix last-clause trailing cut → clean tail call); first-arg indexing det is mode-dependent → excluded; linker whole-program closure deferred | ADR-030 |
-| Delayed choice point via clause→if-then-else fold — `Guard,!,Body / Rest` ⟶ `(Guard->Body;Rest)` on the CP-free lowering (prototype-gated) | ADR-031 (proposed) |
+| Delayed choice point — Tier-1 CP-free neck-cut guard commit SHIPPED default ON (guard-fail = direct IL branch, no entry CP; lazy CP materialisation under pending wakeups; 2.6× on guard-fail recursion). The clause→ITE AST fold was proven a no-op. Binding guards / indexed buckets deferred | ADR-031 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | Builtins catalog | docs/design/builtins-catalog.md |
