@@ -42,11 +42,45 @@ in favour — no regression anywhere. Full five-project gate green: Embedding
 - **Tier-0 unchanged** (measured flat, as expected — the CP cost being
   removed is Tier-1's push + `TryBacktrack`/`PopIlChoicePointAndRestore`
   round-trip per guard failure).
-- **Deferred — phase 2 candidates:** binding guards (`get_value`/`get_atom` —
-  `max/3`; needs the entry `_hb := heapTop` + trail-mark snapshot and a
-  restoring fail path, and the lazy CP must then record entry trail marks);
-  a_eval comparison guards; indexed-dispatch bucket chains (`try`/`retry`
-  nodes); type-test builtin guards.
+- **Case B SHIPPED (2026-07-09) — binding guards (tier B).** The recogniser
+  accepts the head-unification / `=/2` op family in the guard prefix
+  (`get_atom`/`get_integer`/`get_value_x`/`get_structure`/`get_list`/
+  `unify_*`…, plus the register-writing moves `get_variable_x`/`put_value_x`/
+  `unify_variable_x` gated on target ≥ arity so the entry argument registers
+  survive). These BIND and allocate, so the clause carries a 4-int snapshot:
+  entry emits `Engine.BeginIlGuard()` (sets `HB := heapTop`, so every guard
+  binding to a pre-existing variable is trailed — closing the untrailed-young-
+  binding hole) plus the two trail tops and the heap top into IL locals; guard
+  failure lands on a restore stub — `Engine.FailIlGuard` (untrail to the marks,
+  heap reset, HB restore, pending-wakeup clear) — before branching to the next
+  clause; the commit restores HB via `Engine.CommitIlGuard`. The rare
+  pending-wakeups path materialises the lazy CP via
+  `Engine.PushIlChoicePointWithMarks`, which overwrites the four restore slots
+  with the CLAUSE-ENTRY marks — so a failing attribute hook backtracks into a
+  CP that undoes the guard's own bindings (verified by a clpfd test: an
+  attvar bound out-of-domain in the guard fails the hook at the commit flush
+  and falls to the next clause with the domain intact). Four small Engine
+  additions (`BeginIlGuard`/`CommitIlGuard`/`FailIlGuard`/
+  `PushIlChoicePointWithMarks`), no invariant changes. **Measured (same
+  binary, `SHUMWAY_CPFREE_GUARD` A/B, ABBA min-of-N, Tier-1 promoted): the
+  binding-guard recursive loop (`bloop(N):-N=0,!. bloop(N):-M is N-1,
+  bloop(M).`, 30 M iterations) runs ≈1.8× faster (min 2112 ms vs 3613 ms);
+  qsort min-of-12 1013 vs 1079, nreverse 944 vs 1036 (≈6–9% in favour); boyer/
+  tak parity.** Gate green: Embedding 2914 / Compiler 351 / Core 436 /
+  Interpreter 105 / ISO 277. Corpus sizing (`--foldcensus` guard classes):
+  tier A+B cover the comparison (0.3%) + binding-unify (6.8%) fold-candidate
+  guards.
+- **Deferred — the real phase 2 is case G (user-call guards, 91.9% of fold
+  candidates):** `p(X) :- check(X), !, …` — the guard call's failure propagates
+  through the engine's backtracking, so CP-free needs the callee's failure to
+  return to the call site (fail-continuation threading in region emit), gated
+  on the callee being proven det by ADR-030's `DeterminismAnalysis` (det-set
+  plumbing from compile to promotion), and reusing tier B's snapshot/restore.
+  Prototype-gated like this phase. Remaining smaller candidates: a_eval
+  comparison guards (1 corpus pred); indexed-dispatch bucket chains
+  (`try`/`retry` nodes — needs tier B's machinery at the indexed emit sites);
+  type-test builtin guards (34 preds — framed `call var/1` clauses needing
+  frame teardown + register restore on the fail path).
 
 ## Original investigation (the fold that was NOT the answer)
 

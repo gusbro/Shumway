@@ -342,12 +342,19 @@ public static class PredicateDisassembler
     /// predicates match the <c>Guard,!,Body / Rest</c> shape, split by whether the
     /// heads fold trivially or need per-branch head threading.</summary>
     public readonly record struct FoldCensusResult(
-        long Predicates, long Candidates, long Trivial, long Threaded, long CandidateClauses)
+        long Predicates, long Candidates, long Trivial, long Threaded, long CandidateClauses,
+        long GuardCmpOnly, long GuardEvalCmp, long GuardBindingUnify,
+        long GuardTypeTestOrIdent, long GuardDetBuiltinMix, long GuardUserCall, long GuardOther)
     {
         public static FoldCensusResult operator +(FoldCensusResult a, FoldCensusResult b) => new(
             a.Predicates + b.Predicates, a.Candidates + b.Candidates,
             a.Trivial + b.Trivial, a.Threaded + b.Threaded,
-            a.CandidateClauses + b.CandidateClauses);
+            a.CandidateClauses + b.CandidateClauses,
+            a.GuardCmpOnly + b.GuardCmpOnly, a.GuardEvalCmp + b.GuardEvalCmp,
+            a.GuardBindingUnify + b.GuardBindingUnify,
+            a.GuardTypeTestOrIdent + b.GuardTypeTestOrIdent,
+            a.GuardDetBuiltinMix + b.GuardDetBuiltinMix,
+            a.GuardUserCall + b.GuardUserCall, a.GuardOther + b.GuardOther);
     }
 
     /// <summary>Sizes the ADR-031 foldable subset over a source's static
@@ -378,6 +385,7 @@ public static class PredicateDisassembler
         }
 
         long cand = 0, triv = 0, thr = 0, candClauses = 0;
+        long gCmp = 0, gEval = 0, gBind = 0, gType = 0, gDet = 0, gCall = 0, gOther = 0;
         foreach (string ind in order)
         {
             var kind = ClauseFold.Classify(groups[ind]);
@@ -385,8 +393,19 @@ public static class PredicateDisassembler
             cand++;
             candClauses += groups[ind].Count;
             if (kind == ClauseFold.FoldKind.TrivialVarHeads) triv++; else thr++;
+            switch (ClauseFold.ClassifyGuard(groups[ind]))
+            {
+                case ClauseFold.GuardClass.CmpOnly: gCmp++; break;
+                case ClauseFold.GuardClass.EvalCmp: gEval++; break;
+                case ClauseFold.GuardClass.BindingUnify: gBind++; break;
+                case ClauseFold.GuardClass.TypeTestOrIdent: gType++; break;
+                case ClauseFold.GuardClass.DetBuiltinMix: gDet++; break;
+                case ClauseFold.GuardClass.UserCall: gCall++; break;
+                default: gOther++; break;
+            }
         }
-        return new FoldCensusResult(order.Count, cand, triv, thr, candClauses);
+        return new FoldCensusResult(order.Count, cand, triv, thr, candClauses,
+            gCmp, gEval, gBind, gType, gDet, gCall, gOther);
     }
 
     /// <summary>Compiles nothing — an AST-level determinism/redundant-cut census

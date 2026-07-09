@@ -181,7 +181,10 @@ internal static class Program
             {
                 var f = PredicateDisassembler.CensusFold(source, arityCompat);
                 Console.WriteLine(string.Join('\t', "FOLDCENSUS",
-                    f.Predicates, f.Candidates, f.Trivial, f.Threaded, f.CandidateClauses));
+                    f.Predicates, f.Candidates, f.Trivial, f.Threaded, f.CandidateClauses,
+                    f.GuardCmpOnly, f.GuardEvalCmp, f.GuardBindingUnify,
+                    f.GuardTypeTestOrIdent, f.GuardDetBuiltinMix, f.GuardUserCall,
+                    f.GuardOther));
             }
             catch (Exception ex)
             {

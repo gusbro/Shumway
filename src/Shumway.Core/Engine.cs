@@ -2298,6 +2298,63 @@ public sealed partial class Engine
         PushIlChoicePoint(del, nextCursor: 0, arity: arity, onPrune: onPrune);
     }
 
+    // ----- ADR-031 case B: CP-free binding-guard support -----
+
+    /// <summary>Begins a CP-free binding-guard region (ADR-031): sets
+    /// <see cref="Hb"/> to the current heap top — so every binding the guard
+    /// makes to a pre-existing variable is trailed, exactly as if the skipped
+    /// clause choice point had been pushed — and returns the previous HB for
+    /// the commit/fail restore. The emitted IL pairs this with
+    /// <see cref="CommitIlGuard"/> (guard succeeded) or
+    /// <see cref="FailIlGuard"/> (guard failed).</summary>
+    public int BeginIlGuard()
+    {
+        int old = _hb;
+        _hb = _heapTop;
+        return old;
+    }
+
+    /// <summary>Commits a CP-free binding guard (ADR-031): restores
+    /// <see cref="Hb"/> to the heap boundary of the (unchanged) current top
+    /// choice point. The guard's bindings stay; nothing was pushed, so the
+    /// cut itself has nothing to tear down.</summary>
+    public void CommitIlGuard(int savedHb) => _hb = savedHb;
+
+    /// <summary>Fails a CP-free binding guard (ADR-031): undoes every binding
+    /// the guard trailed, discards its heap allocations, restores
+    /// <see cref="Hb"/>, and clears wakeups queued by the abandoned bindings —
+    /// the exact restore the skipped choice point's pop would have performed.
+    /// Registers / E / CP / B0 need no restore: the guard op whitelist writes
+    /// no argument register and makes no calls.</summary>
+    public void FailIlGuard(int bindingTop, int extraTop, int heapTop, int savedHb)
+    {
+        UnwindTrails(bindingTop, extraTop);
+        _heapTop = heapTop;
+        _hb = savedHb;
+        _pendingWakeups.Clear();
+    }
+
+    /// <summary>ADR-031 case B rare path — pushes the lazily-materialised
+    /// clause choice point with the SAVED clause-entry marks. A binding guard
+    /// has advanced the trails/heap by the time the commit runs its wakeup
+    /// flush; a failing hook backtracks into this CP, which must restore the
+    /// CLAUSE-ENTRY state so the next clause sees the guard fully undone. The
+    /// push itself records current state (registers are entry-identical — the
+    /// guard whitelist preserves them; <see cref="Hb"/> is left at the push's
+    /// heap top so hook bindings trail correctly), then the four restore slots
+    /// are overwritten with the entry marks.</summary>
+    public void PushIlChoicePointWithMarks(
+        Func<Engine, int, bool> del, int nextCursor, int arity,
+        int bindingTop, int extraTop, int heapTop, int savedHb)
+    {
+        PushIlChoicePoint(del, nextCursor, arity);
+        int b = _b;
+        _stack[b + CpBindingTrailOffset(arity)] = Cell.RawInt(bindingTop);
+        _stack[b + CpExtraTrailOffset(arity)] = Cell.RawInt(extraTop);
+        _stack[b + CpHeapTopOffset(arity)] = Cell.RawInt(heapTop);
+        _stack[b + CpHbOffset(arity)] = Cell.RawInt(savedHb);
+    }
+
     /// <summary>Sets the engine's PC to <paramref name="returnPc"/> and
     /// flags an IL-style tail call so the interpreter, on this
     /// retry-success, leaves PC alone instead of overriding it with

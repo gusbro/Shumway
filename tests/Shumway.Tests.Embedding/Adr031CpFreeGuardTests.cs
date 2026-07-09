@@ -126,21 +126,169 @@ public class Adr031CpFreeGuardTests
     }
 
     [Fact]
-    public void Recognizer_AcceptsIntCmpGuard_RejectsOthers()
+    public void Recognizer_TiersAAndB_ClassifyCorrectly()
     {
-        // Direct recogniser pins (bytecode-level).
+        // Direct recogniser pins (bytecode-level). Clause 0 starts after
+        // try_me_else (offset 9).
         var pc = new Shumway.Compiler.Wam.PredicateCompiler();
+
+        // Tier A: pure comparison — no snapshot.
         var cp = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
             "loop(N):-N=<0,!. loop(N):-M is N-1,loop(M).").ReadAll().ToList());
-        // Clause 0 starts after try_me_else (offset 9).
         Assert.True(IlPredicateCompiler.TryGetCpFreeNeckCutGuard(
-            cp.BytecodeUnfused, 9, cp.BytecodeUnfused.Length, out int cut));
+            cp.BytecodeUnfused, 9, cp.BytecodeUnfused.Length, 1, out int cut, out bool snap));
         Assert.Equal((byte)Opcode.NeckCut, cp.BytecodeUnfused[cut]);
+        Assert.False(snap);
 
-        // A binding guard (get_value) is NOT eligible in phase 1.
+        // Tier B: a binding guard (get_value_x) — accepted WITH snapshot.
         var cp2 = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
             "max(X,Y,X):-X>=Y,!. max(X,Y,Y).").ReadAll().ToList());
+        Assert.True(IlPredicateCompiler.TryGetCpFreeNeckCutGuard(
+            cp2.BytecodeUnfused, 9, cp2.BytecodeUnfused.Length, 3, out _, out bool snap2));
+        Assert.True(snap2);
+
+        // A guard with a real call (deep cut, framed) is NOT eligible.
+        var cp3 = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
+            "p(X):-q(X),!. p(_).").ReadAll().ToList());
         Assert.False(IlPredicateCompiler.TryGetCpFreeNeckCutGuard(
-            cp2.BytecodeUnfused, 9, cp2.BytecodeUnfused.Length, out _));
+            cp3.BytecodeUnfused, 9, cp3.BytecodeUnfused.Length, 1, out _, out _));
+    }
+}
+
+/// <summary>
+/// ADR-031 case B — the BINDING-guard tier. The guard may bind variables
+/// (head unification / <c>=/2</c>) before failing, so the CP-free fail path
+/// must restore exactly what the skipped choice point's pop would have:
+/// bindings untrailed, heap reset, HB restored, queued wakeups cleared. The
+/// canary throughout: after a guard binds-then-fails, the NEXT clause must see
+/// the arguments exactly as they were at entry.
+/// </summary>
+public class Adr031BindingGuardTests
+{
+    private const string Program =
+        ":- public umax/3, pick/2, sh/2, lh/3.\n"
+        // The classic: threaded head (repeated var) — get_value_x binds when M
+        // is unbound, then the comparison decides.
+        + "umax(X,Y,X) :- X >= Y, !.\n"
+        + "umax(_,Y,Y).\n"
+        // Bind-then-fail: R=big binds FIRST, then X>5 fails → the restore must
+        // UNBIND R or clause 2's R=small can never succeed.
+        + "pick(X,R) :- R = big, X > 5, !.\n"
+        + "pick(_,R) :- R = small.\n"
+        // Structure guard (get_structure + unify_void).
+        + "sh(X,R) :- X = k(_), !, R = yes.\n"
+        + "sh(_,R) :- R = no.\n"
+        // List guard (put_value_x temp + get_list + unify ops).
+        + "lh(X,H,R) :- X = [H|_], !, R = car.\n"
+        + "lh(_,_,R) :- R = nil.\n";
+
+    private static PrologEngine Engine(Adr031CpFreeGuardTests.Mode m)
+    {
+        switch (m)
+        {
+            case Adr031CpFreeGuardTests.Mode.Tier0:
+            {
+                var e = new PrologEngine();
+                e.IlPromotion.Threshold = 0;
+                e.ConsultString(Program);
+                return e;
+            }
+            case Adr031CpFreeGuardTests.Mode.Tier1Runtime:
+            {
+                var e = new PrologEngine();
+                e.IlPromotion.Threshold = 1;
+                e.ConsultString(Program);
+                return e;
+            }
+            default:
+            {
+                var bundle = new Bundle(new[] { new BundleEntry("adr031b", Program) });
+                byte[] bytes = BundleWriter.ToBytes(bundle,
+                    includeCompiledBytecode: true, includeCompiledIl: true);
+                var e = new PrologEngine();
+                e.LoadBundle(BundleReader.FromBytes(bytes));
+                return e;
+            }
+        }
+    }
+
+    public static TheoryData<Adr031CpFreeGuardTests.Mode> Modes => new()
+    {
+        Adr031CpFreeGuardTests.Mode.Tier0,
+        Adr031CpFreeGuardTests.Mode.Tier1Runtime,
+        Adr031CpFreeGuardTests.Mode.Tier1Bundle,
+    };
+
+    [Theory]
+    [MemberData(nameof(Modes))]
+    public void Max_CommitAndFallthrough(Adr031CpFreeGuardTests.Mode m)
+    {
+        var e = Engine(m);
+        Assert.True(e.Query("umax(7, 3, M), M == 7.").Success);
+        Assert.True(e.Query("umax(2, 9, M), M == 9.").Success);
+        Assert.Single(e.QueryAll("umax(7, 3, M)."));
+        Assert.Single(e.QueryAll("umax(2, 9, M)."));
+        // Equal values commit to clause 1 (X >= Y holds) — exactly one solution.
+        Assert.True(e.Query("umax(4, 4, M), M == 4.").Success);
+        Assert.Single(e.QueryAll("umax(4, 4, M)."));
+    }
+
+    [Theory]
+    [MemberData(nameof(Modes))]
+    public void BindThenFail_NextClauseSeesUnboundArg(Adr031CpFreeGuardTests.Mode m)
+    {
+        var e = Engine(m);
+        // Guard binds R=big then X>5 FAILS → R must be UNBOUND again for
+        // clause 2 to bind R=small. A broken restore leaves R=big and the
+        // query fails entirely.
+        Assert.True(e.Query("pick(3, R), R == small.").Success);
+        Assert.Single(e.QueryAll("pick(3, R)."));
+        // Guard succeeds → committed.
+        Assert.True(e.Query("pick(9, R), R == big.").Success);
+        Assert.Single(e.QueryAll("pick(9, R)."));
+    }
+
+    [Theory]
+    [MemberData(nameof(Modes))]
+    public void StructAndListGuards_RouteAndRestore(Adr031CpFreeGuardTests.Mode m)
+    {
+        var e = Engine(m);
+        Assert.True(e.Query("sh(k(1), R), R == yes.").Success);
+        Assert.True(e.Query("sh(other, R), R == no.").Success);
+        // Unbound arg: the guard BINDS X to k(_) and commits — ISO chain
+        // semantics (clause 1 unifies) must be preserved, one solution.
+        Assert.Single(e.QueryAll("sh(X, R)."));
+        Assert.True(e.Query("sh(X, R), R == yes.").Success);
+
+        Assert.True(e.Query("lh([a,b], H, R), H == a, R == car.").Success);
+        Assert.True(e.Query("lh(nil_thing, _, R), R == nil.").Success);
+        Assert.Single(e.QueryAll("lh([a,b], H, R)."));
+    }
+
+    [Theory]
+    [MemberData(nameof(Modes))]
+    public void AttvarHookFails_LazyCp_FallsToNextClause_Restored(
+        Adr031CpFreeGuardTests.Mode m)
+    {
+        if (m == Adr031CpFreeGuardTests.Mode.Tier1Bundle)
+            return; // clpfd is engine-opt-in (UseClpfd), not bundled — skip.
+        var e = m == Adr031CpFreeGuardTests.Mode.Tier0
+            ? new PrologEngine { }
+            : new PrologEngine { };
+        e.IlPromotion.Threshold = m == Adr031CpFreeGuardTests.Mode.Tier0 ? 0 : 1;
+        e.UseClpfd();
+        e.ConsultString(
+            ":- public g/2.\n"
+            + "g(X, hit) :- X = 5, !.\n"
+            + "g(_, miss).\n");
+        // X in 1..3: the guard's X=5 queues the clpfd verify_attributes wakeup;
+        // the CP-free commit sees pending wakeups → pushes the LAZY CP with the
+        // clause-entry marks → the hook FAILS (5 ∉ 1..3) → backtrack into the
+        // lazy CP restores the entry state → clause 2 → miss, X's domain alive.
+        var sol = e.Query("X in 1..3, g(X, R), R == miss, X = 2.");
+        Assert.True(sol.Success);
+        // In-domain value: hook succeeds at the commit → hit.
+        var sol2 = e.Query("Y in 1..9, g(Y, R), R == hit, Y == 5.");
+        Assert.True(sol2.Success);
     }
 }
