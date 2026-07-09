@@ -143,16 +143,29 @@ public sealed class DeterminismAnalysis
             flat[ind] = perClause;
         }
 
+        // GREATEST fixpoint: optimistically assume every eligible predicate is
+        // det, then remove any that is provably non-det (bad dispatch, or a body
+        // goal that leaves a CP) — where a recursive / mutually-recursive call is
+        // classified against the *current* assumption. This proves a predicate
+        // whose determinism depends on its own det-ness (self-recursion) det,
+        // which a least-fixpoint-from-empty cannot bootstrap. Sound: a minimal
+        // successful derivation of `p` leaving a residual CP would need a
+        // strictly-smaller sub-derivation (a recursive call) also leaving one —
+        // impossible under single-clause / all-but-last-commit dispatch when the
+        // non-recursive goals are det. Ineligible (e.g. dynamic) predicates never
+        // enter the set. Removal is monotone, so in-place (Gauss–Seidel) update
+        // converges to the same greatest set.
         var detPreds = new HashSet<string>();
+        foreach (string ind in order) if (eligible[ind]) detPreds.Add(ind);
         bool changed = true;
         while (changed)
         {
             changed = false;
             foreach (string ind in order)
             {
-                if (detPreds.Contains(ind) || !eligible[ind]) continue;
-                if (PredIsDet(groups[ind], flat[ind], detPreds, defined))
-                { detPreds.Add(ind); changed = true; }
+                if (!detPreds.Contains(ind)) continue;
+                if (!PredIsDet(groups[ind], flat[ind], detPreds, defined))
+                { detPreds.Remove(ind); changed = true; }
             }
         }
 
@@ -273,16 +286,25 @@ public sealed class DeterminismAnalysis
 
     // Deterministic dispatch, mode-AGNOSTICALLY (we do not know the call's
     // instantiation): single clause (no clause-alternative CP is ever created),
-    // OR every clause commits via a top-level cut (whichever clause matches
-    // prunes the rest on success). First-argument mutual exclusivity is
-    // DELIBERATELY NOT used: it only makes dispatch deterministic when the call
-    // supplies a ground first argument (`q(a). q(b).` still leaves a CP under
-    // `q(X)`), so relying on it to elide a cut would be unsound for a
-    // partially-instantiated call. A mode-aware refinement is a follow-up.
+    // OR every clause EXCEPT the last commits via a top-level cut. The last
+    // clause needs no cut — it is reached only via `trust`, with the clause-
+    // selection CP already consumed. Whichever earlier clause yields a solution
+    // must have run its top-level cut (a top-level cut is on every success path
+    // of its clause), pruning the rest; whichever clause yields therefore leaves
+    // no clause CP. The per-clause post-cut body-det check in PredIsDet covers
+    // what each clause leaves after its cut, including the last clause's cut-free
+    // body — so the two together are sound.
+    //
+    // First-argument mutual exclusivity is DELIBERATELY NOT used: it only makes
+    // dispatch deterministic when the call supplies a ground first argument
+    // (`q(a). q(b).` still leaves a CP under `q(X)`), so relying on it would be
+    // unsound for a partially-instantiated call. This rule instead keys off the
+    // cuts, whose commit is decided by runtime success, not the call mode.
     private static bool DispatchDet(List<Clause> cls)
     {
         if (cls.Count == 1) return true;
-        foreach (Clause c in cls) if (!BodyCommits(c)) return false;
+        for (int i = 0; i < cls.Count - 1; i++)
+            if (!BodyCommits(cls[i])) return false;
         return true;
     }
 

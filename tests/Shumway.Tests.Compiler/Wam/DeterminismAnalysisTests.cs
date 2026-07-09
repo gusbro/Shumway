@@ -133,6 +133,78 @@ public class DeterminismAnalysisTests
     }
 
     [Fact]
+    public void GuardedClausesPlusCatchAll_IsDet()
+    {
+        // `p(a):-q(b),!. p(b):-q(a),!. p(_).` — every clause but the LAST commits
+        // via a cut; the last (a catch-all fact) needs none (reached via trust).
+        // p/1 is deterministic. The pass proves it, enabling a caller's cut to be
+        // elided.
+        var analysis = DeterminismAnalysis.Build(
+            Parse("q(_). p(a):-q(b),!. p(b):-q(a),!. p(_)."));
+        Assert.True(analysis.IsDet("p/1"));
+
+        // A caller of the det p/1 gets its own redundant cut dropped.
+        var outp = Elide("q(_). p(a):-q(b),!. p(b):-q(a),!. p(_). foo(X):-p(X),!.");
+        Clause foo = outp[^1];
+        Assert.False(EndsInCut(foo));
+    }
+
+    [Fact]
+    public void GuardedClausesPlusCatchAllRule_IsDet()
+    {
+        // Like the catch-all fact, but the last clause is a cut-free RULE whose
+        // body is det → still det (last clause needs no cut; its body-det is
+        // checked).
+        var analysis = DeterminismAnalysis.Build(
+            Parse("q(_). p(a):-q(b),!. p(b):-q(a),!. p(_):-q(a),q(b)."));
+        Assert.True(analysis.IsDet("p/1"));
+    }
+
+    [Fact]
+    public void SelfRecursiveLastClause_IsDet_ViaGreatestFixpoint()
+    {
+        // p(c):-q(a),p(a). The last clause's body contains a RECURSIVE call.
+        // p is det because clauses 1-2 commit and clause 3's body is det *given
+        // p is det* — the greatest-fixpoint proves it (a least-fixpoint from
+        // empty cannot bootstrap the self-reference).
+        var analysis = DeterminismAnalysis.Build(
+            Parse("q(_). p(a):-q(b),!. p(b):-q(a),!. p(c):-q(a),p(a)."));
+        Assert.True(analysis.IsDet("p/1"));
+    }
+
+    [Fact]
+    public void MutualRecursion_SingleClauses_AreDet()
+    {
+        // Two single-clause predicates calling each other with det leaves —
+        // coinductively det.
+        var analysis = DeterminismAnalysis.Build(
+            Parse("base(_). a(X):-base(X),b(X). b(X):-base(X),a(X)."));
+        Assert.True(analysis.IsDet("a/1"));
+        Assert.True(analysis.IsDet("b/1"));
+    }
+
+    [Fact]
+    public void RecursiveButNondetDispatch_IsNotDet()
+    {
+        // A recursive predicate whose dispatch is NOT det (an earlier clause does
+        // not commit) must stay non-det — the greatest-fixpoint removes it. Here
+        // clause 1 leaves a CP to clause 2, so `p(X)` is genuinely non-det.
+        var analysis = DeterminismAnalysis.Build(
+            Parse("q(_). p(X):-q(X). p(X):-p(X)."));
+        Assert.False(analysis.IsDet("p/1"));
+    }
+
+    [Fact]
+    public void CatchAllNotLast_IsNotDet()
+    {
+        // If the cut-free catch-all is NOT last, an earlier non-committing clause
+        // can leave a CP → not det (and the sound rule rejects it).
+        var analysis = DeterminismAnalysis.Build(
+            Parse("q(_). p(_). p(a):-q(b),!."));
+        Assert.False(analysis.IsDet("p/1"));
+    }
+
+    [Fact]
     public void DynamicIneligible_CutIsKept()
     {
         // A predicate flagged ineligible (dynamic) is never proven det and never
