@@ -47,6 +47,20 @@ it removes work from both Tier-0 bytecode and Tier-1 IL. The **whole-program
   (nondet prefix), 7 710 blocked only by a cross-module callee (the deferred
   linker-closure win). Plus 6 727 last-clause **neck** cuts, all elidable
   (all-inline prefix) — 8 918 redundant cuts removed intra-module in total.
+- **Generalised det model (2026-07-09).** Two soundness-preserving widenings:
+  (1) `DispatchDet` requires only that every clause **except the last** commits
+  via a top-level cut — the last clause is reached only via `trust` (clause CP
+  consumed), so it needs no cut. This proves the ubiquitous "guarded clauses +
+  cut-free catch-all" idiom det (`p(a):-…,!. p(b):-…,!. p(_).` or
+  `… p(_):-q(a),q(b).`). (2) The determinism fixpoint is a **greatest** fixpoint
+  (assume every eligible predicate det, remove the provably non-det) rather than
+  a least-fixpoint-from-empty, so a predicate whose determinism depends on its
+  own det-ness (self / mutual recursion) is proven det —
+  `p(a):-q(b),!. p(b):-q(a),!. p(c):-q(a),p(a).` Sound by a minimal-derivation
+  induction (a smallest successful derivation leaving a residual CP needs a
+  strictly-smaller recursive sub-derivation also leaving one — impossible under
+  the two dispatch shapes with det non-recursive goals). Crucially this uses no
+  first-argument (mode-dependent) reasoning.
 - **Deferred — whole-program linker closure.** Running the fixpoint in the
   linker (which owns the complete call graph) would resolve the 7 710
   cross-module-blocked candidates. The intra-module pass is the foundation; the
