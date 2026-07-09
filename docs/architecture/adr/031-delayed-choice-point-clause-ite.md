@@ -1,11 +1,53 @@
 # ADR-031: Delayed choice point via clause-to-if-then-else folding
 
-**Status:** Proposed — **prototype-gated**. Recognise the multi-clause
-`p :- Guard, !, Body.  p :- Rest.` shape and fold it to
-`p :- (Guard -> Body ; Rest)`, routed to the **CP-free** region-helper lowering,
-so a committing guard **never pushes** the clause-selection choice point the cut
-would otherwise tear down. Targets hot Tier-1 recursion (`!, tailCall`). The
-decisive risk — the inline ITE lowering was measured to *lose* in Tier-1 — is
+**Status:** Proposed — **prototype-gated. Investigation done (2026-07-09): the
+AST fold as specified is a no-op; the real lever is a new Tier-1 CP-free codegen
+recogniser.** Recognise the multi-clause `p :- Guard, !, Body.  p :- Rest.` shape
+and fold it to `p :- (Guard -> Body ; Rest)`, routed to the **CP-free** region-
+helper lowering, so a committing guard **never pushes** the clause-selection
+choice point the cut would otherwise tear down. Targets hot Tier-1 recursion
+(`!, tailCall`).
+
+## Investigation (2026-07-09)
+
+- **Sizing (`--foldcensus`, `ClauseFold` recogniser).** Over the 556-file Arity
+  corpus: **3 581 fold candidates = 11.6% of 30 820 predicates** (7 183 clauses),
+  of which **3 321 (93%) have trivial var-heads** (fold with a plain variable
+  rename, no head-argument threading) and 260 need threading (`max(X,Y,X)`-style
+  repeated-var heads). Size is real.
+- **The fold-through-existing-machinery is a structural no-op — proven by
+  disassembly.** With `EnableInlineIte = false` (the default), MetaTransform
+  lowers `(Guard -> Body ; Rest)` to a helper `$disj :- Guard, !, Body. $disj :-
+  Rest.` The disassembly of the folded form is:
+  - `p/1` → `execute $disj_1` (a 5-byte trampoline), plus
+  - `$disj_1/1` → **byte-for-byte identical** to the original multi-clause `p/1`:
+    `try_me_else ELSE; allocate_get_level; …; call; cut; …; ELSE: trust_me; …`.
+
+  So routing the fold through the existing helper path just **moves the same
+  `try_me_else`+`cut` into a helper and adds a call indirection** — the CP is
+  still pushed and torn down. There is **no CP-free region-helper lowering for
+  this shape today**; the ADR's premise ("route to the CP-free lowering")
+  assumed one exists, but it does not. The inline path (`EnableInlineIte = true`)
+  is the one ADR-025 measured *losing* (+17% boyer) precisely because it too
+  pushes an arity-0 IL CP.
+- **Consequence — the fold is unnecessary; the lever is codegen.** Since the ITE
+  helper is byte-identical to the multi-clause form, a CP-free emission for the
+  `Guard, !, Body / Rest` shape would apply **directly** to the multi-clause form
+  (recognise it in `ClauseCompiler` / the region IL emit and redirect the guard's
+  fail label to the else clause instead of emitting `try_me_else` + `cut`). The
+  AST-fold step is a red herring; the whole win is the new CP-free codegen, which
+  is exactly ADR-025's deferred step-3 follow-up. That is a Tier-1 region-emit
+  change (a **major decision** per CLAUDE.md), high-risk (ADR-025's measurement
+  warns the naive version regresses), and gated on a back-to-back A/B beating the
+  plain `try_me_else`-chain-plus-cut.
+
+**Decision pending:** invest in the CP-free guard-commit codegen recogniser
+(the real ADR-031), or defer with this finding recorded. The `ClauseFold`
+recogniser + `--foldcensus` sizing tooling are committed regardless.
+
+---
+
+The decisive risk — the inline ITE lowering was measured to *lose* in Tier-1 — is
 addressed by mandating the CP-free lowering and validating with a benchmark
 before commit.
 

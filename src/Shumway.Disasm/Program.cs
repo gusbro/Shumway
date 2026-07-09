@@ -43,6 +43,7 @@ internal static class Program
         bool audit = false;           // --audit: emit indexing-quality verdict lines
         bool census = false;          // --census: emit one opcode-pair/shape tally line
         bool detcensus = false;       // --detcensus: emit redundant-cut / det-fixpoint tally
+        bool foldcensus = false;      // --foldcensus: ADR-031 Guard,!,Body/Rest fold sizing
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -69,6 +70,9 @@ internal static class Program
                     break;
                 case "--detcensus":
                     detcensus = true;
+                    break;
+                case "--foldcensus":
+                    foldcensus = true;
                     break;
                 case "-e" or "--eval":
                     if (++i >= args.Length) return Usage("missing source after " + a);
@@ -160,6 +164,24 @@ internal static class Program
                     d.Predicates, d.DetPredicates, d.Clauses, d.NeckLastCut,
                     d.DeepLastCut, d.ElideBuiltin, d.ElideIntra, d.BlockedCross,
                     d.BlockedNondet));
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"error: parse failed: {ex.Message}");
+                return ExitCompileError;
+            }
+            return ExitOk;
+        }
+
+        if (foldcensus)
+        {
+            // One line per source: FOLDCENSUS <preds> <candidates> <trivial>
+            // <threaded> <candidateClauses>
+            try
+            {
+                var f = PredicateDisassembler.CensusFold(source, arityCompat);
+                Console.WriteLine(string.Join('\t', "FOLDCENSUS",
+                    f.Predicates, f.Candidates, f.Trivial, f.Threaded, f.CandidateClauses));
             }
             catch (Exception ex)
             {

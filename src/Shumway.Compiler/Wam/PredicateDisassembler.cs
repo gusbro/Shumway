@@ -338,6 +338,57 @@ public static class PredicateDisassembler
             a.BlockedCross + b.BlockedCross, a.BlockedNondet + b.BlockedNondet);
     }
 
+    /// <summary>ADR-031 fold-sizing tally for one source: how many multi-clause
+    /// predicates match the <c>Guard,!,Body / Rest</c> shape, split by whether the
+    /// heads fold trivially or need per-branch head threading.</summary>
+    public readonly record struct FoldCensusResult(
+        long Predicates, long Candidates, long Trivial, long Threaded, long CandidateClauses)
+    {
+        public static FoldCensusResult operator +(FoldCensusResult a, FoldCensusResult b) => new(
+            a.Predicates + b.Predicates, a.Candidates + b.Candidates,
+            a.Trivial + b.Trivial, a.Threaded + b.Threaded,
+            a.CandidateClauses + b.CandidateClauses);
+    }
+
+    /// <summary>Sizes the ADR-031 foldable subset over a source's static
+    /// predicates (no compilation — an AST recognise via <see cref="ClauseFold"/>).</summary>
+    public static FoldCensusResult CensusFold(string source, bool arityCompat = false)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ClauseReader reader = arityCompat
+            ? new ClauseReader(
+                new global::Shumway.Compiler.Lexer.Lexer(source),
+                OperatorTable.Default(),
+                new Parsing.PrologFlags { ArityCompat = true })
+            : new ClauseReader(source);
+        var clauses = ClausePipeline.Apply(reader.ReadAll(), new Modes.ModeTable()).ToList();
+
+        var order = new List<string>();
+        var groups = new Dictionary<string, List<Clause>>();
+        foreach (Clause clause in clauses)
+        {
+            if (clause.Kind == ClauseKind.Directive) continue;
+            string ind = DeterminismAnalysis.HeadIndicator(clause);
+            if (!groups.TryGetValue(ind, out var list))
+            {
+                groups[ind] = list = new List<Clause>();
+                order.Add(ind);
+            }
+            list.Add(clause);
+        }
+
+        long cand = 0, triv = 0, thr = 0, candClauses = 0;
+        foreach (string ind in order)
+        {
+            var kind = ClauseFold.Classify(groups[ind]);
+            if (kind == ClauseFold.FoldKind.None) continue;
+            cand++;
+            candClauses += groups[ind].Count;
+            if (kind == ClauseFold.FoldKind.TrivialVarHeads) triv++; else thr++;
+        }
+        return new FoldCensusResult(order.Count, cand, triv, thr, candClauses);
+    }
+
     /// <summary>Compiles nothing — an AST-level determinism/redundant-cut census
     /// over the source's static predicates. The determinism model itself lives in
     /// <see cref="DeterminismAnalysis"/> (the single source of truth shared with
