@@ -118,6 +118,7 @@ internal static class Program
         };
 
         LinkResult result;
+        Shumway.Compiler.Il.IlPredicateCompiler.CpFreeGuardStats.Reset();
         try
         {
             result = ShmoLinker.Link(config);
@@ -126,6 +127,25 @@ internal static class Program
         {
             Console.Error.WriteLine($"shumway-link: error: {ex.Message}");
             return ExitLinkError;
+        }
+
+        // ADR-032 — verbose optimization panorama: what the link-time passes did,
+        // aggregated from the Info diagnostics + the IL emit's CP-free counters.
+        if (opts.Verbose)
+        {
+            var byCode = result.Diagnostics
+                .Where(d => d.Severity == LinkSeverity.Info)
+                .GroupBy(d => d.Code)
+                .ToDictionary(g => g.Key, g => g.Count());
+            Console.Error.WriteLine("shumway-link: optimization summary:");
+            foreach (var (code, n) in byCode.OrderBy(kv => kv.Key))
+                Console.Error.WriteLine($"  {code}: {n} module(s)/site(s)");
+            if (opts.IncludeCompiledIl || opts.StripWam)
+            {
+                foreach (string line in Shumway.Compiler.Il.IlPredicateCompiler
+                             .CpFreeGuardStats.Summary().Split('\n'))
+                    Console.Error.WriteLine("  " + line.TrimEnd());
+            }
         }
 
         foreach (var d in result.Diagnostics)

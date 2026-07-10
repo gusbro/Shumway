@@ -1,10 +1,14 @@
 # ADR-032: Dynamic guard fail-continuation (engine continuation stack)
 
-**Status:** Proposed — **recommendation: REJECT the engine continuation stack;
-widen the static fail-direct tiers instead.** Written after the ADR-031 G/G2
-work to settle, with data, whether the residual guard-call class (callees that
-are NOT statically fail-direct) justifies changing the engine's backtracking
-model. The design is recorded in full so the decision is revisitable.
+**Status:** **SOFT-REJECTED (revisable).** Not a hard rejection: the design is
+recorded in full and the decision is explicitly open to revisiting once the
+promotion-time accept/reject statistics (`IlPredicateCompiler.CpFreeStats`,
+surfaced by `shumway-link --verbose` and `SHUMWAY_CPFREE_STATS=1`) show, on
+real corpus programs, how much of the guard-call population remains beyond the
+static tiers after the planned widenings (caps, callee cuts, control shapes,
+true-G3 nesting). If the residual is large AND hot, the ceiling analysis below
+should be re-weighed against real numbers. Until then: widen the static
+fail-direct tiers instead.
 
 ## Problem
 

@@ -5371,6 +5371,55 @@ public sealed class IlPredicateCompiler
     /// self-references for the per-clause IL CP push route through
     /// <paramref name="emitSelf"/>; callers pick the holder-based or
     /// field-based variant.</summary>
+    /// <summary>ADR-032 sizing — promotion/link-time counters for the CP-free
+    /// guard recogniser: which tier each accepted clause took, and WHY each
+    /// cut-shaped clause was rejected. The reject reasons map 1:1 to the
+    /// ADR-032 static-widening alternatives (Caps → raise the fail-direct
+    /// caps; CalleeCut → callee-internal cuts; CalleeCalls → true-G3 nested
+    /// inlining), so running a real program with these counters IS the impact
+    /// estimate for each widening. Surfaced by <c>shumway-link --verbose</c>
+    /// (persisted IL build) and <c>SHUMWAY_CPFREE_STATS=1</c> in the REPL
+    /// (runtime promotion). Counts are per-emission (a PGO
+    /// instrumented→optimised recompile counts twice) — indicative, not exact.</summary>
+    public static class CpFreeGuardStats
+    {
+        public static long TierA, TierB, TierGLeaf, TierG2;
+        public static long RejectGuardShape;       // non-whitelist op in a cut-shaped guard
+        public static long RejectCalleeUnresolved; // no calleeMap / fid unresolved
+        public static long RejectCalleeCalls;      // callee body calls others → G3 candidate
+        public static long RejectCalleeCaps;       // callee over clause/byte caps
+        public static long RejectCalleeCut;        // cut inside the callee
+        public static long RejectCalleeShape;      // other callee shape
+
+        public static void Reset()
+        {
+            TierA = TierB = TierGLeaf = TierG2 = 0;
+            RejectGuardShape = RejectCalleeUnresolved = RejectCalleeCalls = 0;
+            RejectCalleeCaps = RejectCalleeCut = RejectCalleeShape = 0;
+        }
+
+        public static long AcceptTotal => TierA + TierB + TierGLeaf + TierG2;
+        public static long RejectTotal =>
+            RejectGuardShape + RejectCalleeUnresolved + RejectCalleeCalls
+            + RejectCalleeCaps + RejectCalleeCut + RejectCalleeShape;
+
+        public static string Summary()
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine("cp-free guard clauses (ADR-031):");
+            sb.AppendLine($"  accepted {AcceptTotal}: tierA(cmp)={TierA} tierB(bind)={TierB} "
+                + $"tierG(leaf-call)={TierGLeaf} tierG2(fail-direct-call)={TierG2}");
+            sb.AppendLine($"  rejected {RejectTotal} (cut-shaped clauses keeping their CP):");
+            sb.AppendLine($"    guard op outside whitelist        : {RejectGuardShape}");
+            sb.AppendLine($"    callee unresolved                 : {RejectCalleeUnresolved}");
+            sb.AppendLine($"    callee calls others (G3 candidate): {RejectCalleeCalls}");
+            sb.AppendLine($"    callee over caps (raise candidate): {RejectCalleeCaps}");
+            sb.AppendLine($"    callee has cut                    : {RejectCalleeCut}");
+            sb.Append($"    callee shape (control/backtrack)  : {RejectCalleeShape}");
+            return sb.ToString();
+        }
+    }
+
     /// <summary>ADR-031 — the recognised shape of a CP-free guard clause (see
     /// <see cref="TryGetCpFreeGuard"/>).</summary>
     internal readonly struct CpFreeGuardInfo
@@ -5422,7 +5471,27 @@ public sealed class IlPredicateCompiler
     {
         info = default;
         bool snapshot = false, regSave = false, framed = false, sawRealOp = false;
+        bool sawCall = false, sawFdCallee = false;
         int pc = start;
+
+        // ADR-032 sizing — count a rejection only when the clause actually has
+        // the commit-cut shape ahead (else this is just an ordinary clause).
+        void CountReject(ref long counter, int fromPc)
+        {
+            if (!HasCutAhead(code, fromPc, end)) return;
+            System.Threading.Interlocked.Increment(ref counter);
+        }
+        void CountAccept()
+        {
+            if (sawCall)
+                System.Threading.Interlocked.Increment(
+                    ref sawFdCallee ? ref CpFreeGuardStats.TierG2 : ref CpFreeGuardStats.TierGLeaf);
+            else if (snapshot)
+                System.Threading.Interlocked.Increment(ref CpFreeGuardStats.TierB);
+            else
+                System.Threading.Interlocked.Increment(ref CpFreeGuardStats.TierA);
+        }
+
         while (pc < end)
         {
             var op = (Opcode)code[pc];
@@ -5437,6 +5506,7 @@ public sealed class IlPredicateCompiler
                         CutPc = pc, DeepCut = false,
                         NeedsSnapshot = snapshot, NeedsRegSave = regSave, Framed = framed,
                     };
+                    CountAccept();
                     return true;
                 case Opcode.Cut:
                     if (!framed) return false;          // deep cut needs the frame's Y slot
@@ -5445,8 +5515,10 @@ public sealed class IlPredicateCompiler
                         CutPc = pc, DeepCut = true,
                         NeedsSnapshot = snapshot, NeedsRegSave = regSave, Framed = true,
                     };
+                    CountAccept();
                     return true;
                 case Opcode.AllocateGetLevel:
+                case Opcode.Allocate:                  // framed neck-cut clause (no get_level)
                     if (sawRealOp || framed) return false;   // only as the clause's first real op
                     framed = true;
                     break;
@@ -5505,12 +5577,55 @@ public sealed class IlPredicateCompiler
                     // path), or — G2 — a fail-direct multi-clause / self-tail-
                     // recursive predicate (sequential-chain inline). Anything
                     // else keeps the CP.
-                    if (calleeMap is null) return false;
-                    int fid = FindCallSiteFunctorId(callSites, pc);
-                    if (fid < 0 || !calleeMap.TryGetValue(fid, out var callee)
-                        || !(IsLeafPredicate(callee) || IsInlinableLeafRule(callee)
-                             || TryDescribeFailDirectCallee(callee, out _)))
+                    if (calleeMap is null)
+                    {
+                        CountReject(ref CpFreeGuardStats.RejectCalleeUnresolved, pc);
                         return false;
+                    }
+                    int fid = FindCallSiteFunctorId(callSites, pc);
+                    if (fid < 0 || !calleeMap.TryGetValue(fid, out var callee))
+                    {
+                        CountReject(ref CpFreeGuardStats.RejectCalleeUnresolved, pc);
+                        return false;
+                    }
+                    if (IsLeafPredicate(callee) || IsInlinableLeafRule(callee))
+                    {
+                        sawCall = true;
+                    }
+                    else if (TryDescribeFailDirectCallee(callee, out _, out var fdReject))
+                    {
+                        // SOUNDNESS — a MULTI-clause callee can yield MULTIPLE
+                        // solutions (overlapping clauses binding differently);
+                        // the sequential-chain inline commits to the first, so a
+                        // fallible guard goal AFTER the call could never retry
+                        // it. Sound only when the call is IMMEDIATELY followed
+                        // by the commit cut (nothing can fail back into it).
+                        // Single-clause callees have at most one solution and
+                        // may sit anywhere in the guard.
+                        if (callee.ClauseCount > 1
+                            && !NextRealOpIsCut(code, pc + OpcodeTable.Get(op).Size, end))
+                        {
+                            CountReject(ref CpFreeGuardStats.RejectCalleeShape, pc);
+                            return false;
+                        }
+                        sawCall = true;
+                        sawFdCallee = true;
+                    }
+                    else
+                    {
+                        switch (fdReject)
+                        {
+                            case FailDirectReject.Caps:
+                                CountReject(ref CpFreeGuardStats.RejectCalleeCaps, pc); break;
+                            case FailDirectReject.Cut:
+                                CountReject(ref CpFreeGuardStats.RejectCalleeCut, pc); break;
+                            case FailDirectReject.HasCalls:
+                                CountReject(ref CpFreeGuardStats.RejectCalleeCalls, pc); break;
+                            default:
+                                CountReject(ref CpFreeGuardStats.RejectCalleeShape, pc); break;
+                        }
+                        return false;
+                    }
                     snapshot = true;                   // callee head unify binds
                     regSave = true;                    // staging + callee temps clobber
                     break;
@@ -5524,7 +5639,10 @@ public sealed class IlPredicateCompiler
                     var entry = Shumway.Builtins.BuiltinsRegistry.GetById(
                         BytecodeIO.ReadInt32(code, pc + 1));
                     if (entry.IsCall || entry.IsDollarCall || entry.IsBacktrackable)
+                    {
+                        CountReject(ref CpFreeGuardStats.RejectGuardShape, pc);
                         return false;
+                    }
                     snapshot = true;                   // builtins may bind/allocate
                     regSave = true;                    // arg staging clobbers
                     break;
@@ -5534,6 +5652,7 @@ public sealed class IlPredicateCompiler
                     regSave = true;                    // writes the target register
                     break;
                 default:
+                    CountReject(ref CpFreeGuardStats.RejectGuardShape, pc);
                     return false;
             }
             sawRealOp = true;
@@ -5562,6 +5681,52 @@ public sealed class IlPredicateCompiler
         public bool DeallocProceed { get; init; }
     }
 
+    /// <summary>True when the next non-dbg opcode at <paramref name="pc"/> is the
+    /// commit cut — the position constraint that makes a MULTI-clause fail-direct
+    /// callee sound (see the soundness note in <c>TryGetCpFreeGuard</c>).</summary>
+    private static bool NextRealOpIsCut(byte[] code, int pc, int end)
+    {
+        while (pc < end && (Opcode)code[pc] == Opcode.Meta) pc += 6;
+        return pc < end && (Opcode)code[pc] is Opcode.NeckCut or Opcode.Cut;
+    }
+
+    /// <summary>ADR-032 sizing — true when a top-level commit cut
+    /// (<c>neck_cut</c> / <c>cut</c>) appears ahead in the clause range: the
+    /// clause IS the guard-commit shape, so a recogniser rejection is a real
+    /// missed CP-free opportunity worth counting (an ordinary cut-less clause
+    /// is not).</summary>
+    private static bool HasCutAhead(byte[] code, int pc, int end)
+    {
+        while (pc < end)
+        {
+            var op = (Opcode)code[pc];
+            if (op is Opcode.NeckCut or Opcode.Cut) return true;
+            int size = op == Opcode.Meta ? 6 : OpcodeTable.Get(op).Size;
+            if (size <= 0) return false;
+            pc += size;
+        }
+        return false;
+    }
+
+    /// <summary>Why <see cref="TryDescribeFailDirectCallee"/> rejected a callee
+    /// (ADR-032 sizing — <see cref="CpFreeGuardStats"/>).</summary>
+    internal enum FailDirectReject
+    {
+        None,
+        /// <summary>Over the clause-count / byte-size caps — a CAP-raise
+        /// candidate.</summary>
+        Caps,
+        /// <summary>A cut inside a callee clause — the static-widening
+        /// candidate "callee-internal cuts".</summary>
+        Cut,
+        /// <summary>A user Call/Execute to another predicate in a callee body —
+        /// the TRUE-G3 (nested inline) candidate population.</summary>
+        HasCalls,
+        /// <summary>Anything else: control constructs, backtrackable builtins,
+        /// unrecognised clause ranges, non-whitelist ops.</summary>
+        Shape,
+    }
+
     /// <summary>ADR-031 G2 — true when <paramref name="callee"/> is a
     /// FAIL-DIRECT predicate: its whole execution provably creates NO engine
     /// choice point and every failure path is (in the inlined emission) a
@@ -5580,10 +5745,30 @@ public sealed class IlPredicateCompiler
     /// 512 bytes) to bound inline growth.</summary>
     internal static bool TryDescribeFailDirectCallee(
         CompiledPredicate callee, out List<FailDirectClause>? clauses)
+        => TryDescribeFailDirectCallee(callee, out clauses, out _);
+
+    /// <summary>ADR-031 G2 fail-direct caps — a callee over these bounds keeps
+    /// its choice point. Prudence bounds (per-site inline growth + the linear
+    /// alternative chain replacing indexed dispatch), NOT soundness bounds:
+    /// raising them is safe, it just inlines more code and scans more
+    /// alternatives per call. <see cref="CpFreeGuardStats.RejectCalleeCaps"/>
+    /// counts the population a raise would admit.</summary>
+    internal static int FailDirectMaxClauses { get; set; } = 4;
+    internal static int FailDirectMaxBytes { get; set; } = 512;
+
+    internal static bool TryDescribeFailDirectCallee(
+        CompiledPredicate callee, out List<FailDirectClause>? clauses,
+        out FailDirectReject reject)
     {
         clauses = null;
+        reject = FailDirectReject.None;
         byte[] code = callee.BytecodeUnfused;
-        if (callee.ClauseCount is < 1 or > 4 || code.Length > 512) return false;
+        if (callee.ClauseCount < 1 || callee.ClauseCount > FailDirectMaxClauses
+            || code.Length > FailDirectMaxBytes)
+        {
+            reject = FailDirectReject.Caps;
+            return false;
+        }
 
         // Clause byte ranges, dispatch-skeleton-free.
         IReadOnlyList<(int Start, int End)> ranges;
@@ -5602,6 +5787,7 @@ public sealed class IlPredicateCompiler
         }
         else
         {
+            reject = FailDirectReject.Shape;
             return false;
         }
 
@@ -5619,27 +5805,44 @@ public sealed class IlPredicateCompiler
                 if (op == Opcode.Proceed) { termPc = pc; break; }
                 if (op == Opcode.DeallocateProceed)
                 {
-                    if (!framed) return false;
+                    if (!framed) { reject = FailDirectReject.Shape; return false; }
                     termPc = pc; deallocProceed = true; break;
                 }
                 if (op == Opcode.Execute)
                 {
                     int fid = FindCallSiteFunctorId(callee.CallSites, pc);
-                    if (fid != callee.FunctorId) return false;   // v1: self-tail only
+                    if (fid != callee.FunctorId)
+                    {
+                        reject = FailDirectReject.HasCalls;      // cross tail — G3 candidate
+                        return false;
+                    }
                     termPc = pc; selfTail = true; break;
                 }
                 switch (op)
                 {
+                    case Opcode.Call:
+                    case Opcode.CallIl:
+                    case Opcode.CallBytecode:
+                    case Opcode.ExecuteIl:
+                    case Opcode.ExecuteBytecode:
+                        reject = FailDirectReject.HasCalls;      // G3 candidate
+                        return false;
+                    case Opcode.Cut:
+                    case Opcode.NeckCut:
+                    case Opcode.GetLevel:
+                    case Opcode.AllocateGetLevel:
+                        reject = FailDirectReject.Cut;
+                        return false;
                     case Opcode.Allocate:
-                        if (sawRealOp || framed) return false;
+                        if (sawRealOp || framed) { reject = FailDirectReject.Shape; return false; }
                         framed = true;
                         break;
                     case Opcode.Deallocate:
                         // Only as part of the tail sequence: deallocate must be
                         // immediately followed by the (self) execute.
-                        if (!framed) return false;
+                        if (!framed) { reject = FailDirectReject.Shape; return false; }
                         if ((Opcode)code[pc + OpcodeTable.Get(op).Size] != Opcode.Execute)
-                            return false;
+                        { reject = FailDirectReject.Shape; return false; }
                         break;
                     case Opcode.AIntCmp:
                     case Opcode.AIntBin:
@@ -5678,23 +5881,24 @@ public sealed class IlPredicateCompiler
                     case Opcode.UnifyVariableY:
                     case Opcode.UnifyValueY:
                     case Opcode.PutValueY:
-                        if (!framed) return false;
+                        if (!framed) { reject = FailDirectReject.Shape; return false; }
                         break;
                     case Opcode.CallBuiltin:
                     {
                         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(
                             BytecodeIO.ReadInt32(code, pc + 1));
                         if (entry.IsCall || entry.IsDollarCall || entry.IsBacktrackable)
-                            return false;
+                        { reject = FailDirectReject.Shape; return false; }
                         break;
                     }
                     default:
+                        reject = FailDirectReject.Shape;
                         return false;
                 }
                 sawRealOp = true;
                 pc += OpcodeTable.Get(op).Size;
             }
-            if (termPc < 0) return false;
+            if (termPc < 0) { reject = FailDirectReject.Shape; return false; }
             result.Add(new FailDirectClause
             {
                 Start = start, TermPc = termPc,

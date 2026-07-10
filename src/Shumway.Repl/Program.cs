@@ -214,6 +214,13 @@ internal static class Program
 
     private static void MaybeDumpIlStats(PrologEngine engine)
     {
+        // ADR-032 sizing — SHUMWAY_CPFREE_STATS=1 prints the CP-free guard
+        // recogniser's accept/reject counters accumulated over this process's
+        // Tier-1 promotions: the per-program impact estimate for each
+        // static-widening candidate (caps / callee cuts / true-G3 nesting).
+        if (Environment.GetEnvironmentVariable("SHUMWAY_CPFREE_STATS") == "1")
+            Console.Error.WriteLine(
+                Shumway.Compiler.Il.IlPredicateCompiler.CpFreeGuardStats.Summary());
         if (Environment.GetEnvironmentVariable("SHUMWAY_IL_STATS") != "1") return;
         Console.Error.WriteLine(
             $"[il-stats] promoted={engine.IlPromotion.PromotedCount} "

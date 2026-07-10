@@ -126,6 +126,40 @@ public class Adr031CpFreeGuardTests
     }
 
     [Fact]
+    public void GuardStats_CountAcceptsAndRejects()
+    {
+        // ADR-032 sizing counters — deterministic direct-recogniser smoke
+        // (static counters are shared with concurrently-running tests, so
+        // assert MOVEMENT, not exact values; promotion is background, so the
+        // engine path can't be asserted synchronously).
+        var pc = new Shumway.Compiler.Wam.PredicateCompiler();
+
+        // Tier-A accept.
+        long a0 = IlPredicateCompiler.CpFreeGuardStats.AcceptTotal;
+        var cpA = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
+            "s(X,R):-X>0,!,R=a. s(_,R):-R=b.").ReadAll().ToList());
+        Assert.True(IlPredicateCompiler.TryGetCpFreeGuard(
+            cpA.BytecodeUnfused, 9, cpA.BytecodeUnfused.Length, 2,
+            calleeMap: null, cpA.CallSites, out _));
+        Assert.True(IlPredicateCompiler.CpFreeGuardStats.AcceptTotal > a0);
+
+        // Reject: multi-clause fail-direct callee NOT immediately before the
+        // cut (the multi-solution soundness rule).
+        long r0 = IlPredicateCompiler.CpFreeGuardStats.RejectTotal;
+        var nd = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
+            "nd(X):-X>0. nd(X):-X<100.").ReadAll().ToList());
+        var cpT = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
+            "t(X,R):-nd(X),X>1,!,R=hit. t(_,R):-R=miss.").ReadAll().ToList());
+        var map = new System.Collections.Generic.Dictionary<
+            int, Shumway.Compiler.Wam.CompiledPredicate>
+        { [cpT.CallSites[0].CalleeFunctorId] = nd };
+        Assert.False(IlPredicateCompiler.TryGetCpFreeGuard(
+            cpT.BytecodeUnfused, 9, cpT.BytecodeUnfused.Length, 2,
+            map, cpT.CallSites, out _));
+        Assert.True(IlPredicateCompiler.CpFreeGuardStats.RejectTotal > r0);
+    }
+
+    [Fact]
     public void Recognizer_Tiers_ClassifyCorrectly()
     {
         // Direct recogniser pins (bytecode-level). Clause 0 starts after
@@ -390,6 +424,28 @@ public class Adr031BindingGuardTests
                 return e;
             }
         }
+    }
+
+    [Theory]
+    [MemberData(nameof(Modes))]
+    public void MultiSolutionCallee_LaterGuardGoalRetries_NotCpFree(
+        Adr031CpFreeGuardTests.Mode m)
+    {
+        // SOUNDNESS REGRESSION — pick/2 has TWO solutions for the same input
+        // (overlapping clauses binding B differently). The guard's later goal
+        // B > 1 fails for B=1 and must RETRY pick to get B=2 — a sequential
+        // chain (no CP) could never do that, so the recogniser must REJECT this
+        // shape (multi-clause callee not immediately before the cut) and keep
+        // the clause CP. Expected: t(5,R) → big via pick's SECOND solution.
+        var e = TierGEngine(m,
+            ":- public t/2.\n"
+            + "pick(X, 1) :- X > 0.\n"
+            + "pick(X, 2) :- X > 0.\n"
+            + "t(X, R) :- pick(X, B), B > 1, !, R = big.\n"
+            + "t(_, R) :- R = small.\n");
+        Assert.True(e.Query("t(5, R), R == big.").Success);
+        Assert.Single(e.QueryAll("t(5, R)."));
+        Assert.True(e.Query("t(-1, R), R == small.").Success);
     }
 
     [Theory]
