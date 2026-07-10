@@ -83,6 +83,47 @@ public static class PredicateDisassembler
         return result;
     }
 
+    /// <summary>Compiles every predicate of <paramref name="source"/> through the
+    /// full clause pipeline (predicates that fail to compile are skipped) —
+    /// the input for tooling that replays IL-emit-time analyses per file
+    /// (<c>shumway-disasm --cpfree</c>).</summary>
+    public static IReadOnlyList<CompiledPredicate> CompileAllPredicates(
+        string source, bool arityCompat = false)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ClauseReader reader = arityCompat
+            ? new ClauseReader(
+                new global::Shumway.Compiler.Lexer.Lexer(source),
+                OperatorTable.Default(),
+                new Parsing.PrologFlags { ArityCompat = true })
+            : new ClauseReader(source);
+        var clauses = ClausePipeline.Apply(reader.ReadAll(), new Modes.ModeTable());
+
+        var order = new List<(string Name, int Arity)>();
+        var groups = new Dictionary<(string, int), List<Clause>>();
+        foreach (Clause clause in clauses)
+        {
+            if (clause.Kind == ClauseKind.Directive) continue;
+            (string name, int arity) = HeadIndicator(clause);
+            var key = (name, arity);
+            if (!groups.TryGetValue(key, out var list))
+            {
+                groups[key] = list = new List<Clause>();
+                order.Add(key);
+            }
+            list.Add(clause);
+        }
+
+        var result = new List<CompiledPredicate>(order.Count);
+        var compiler = new PredicateCompiler { EmitDebugInfo = false };
+        foreach (var key in order)
+        {
+            try { result.Add(compiler.Compile(groups[key])); }
+            catch { /* skip uncompilable predicates — tooling input only */ }
+        }
+        return result;
+    }
+
     /// <summary>Renders a single predicate's bytecode region as a header line
     /// plus one line per decoded instruction (<c>offset: mnemonic [operands]</c>).</summary>
     public static string Format(string label, byte[] bytecode)

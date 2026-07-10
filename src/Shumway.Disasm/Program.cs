@@ -44,6 +44,7 @@ internal static class Program
         bool census = false;          // --census: emit one opcode-pair/shape tally line
         bool detcensus = false;       // --detcensus: emit redundant-cut / det-fixpoint tally
         bool foldcensus = false;      // --foldcensus: ADR-031 Guard,!,Body/Rest fold sizing
+        bool cpfree = false;          // --cpfree: replay the ADR-031 CP-free recogniser
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -73,6 +74,9 @@ internal static class Program
                     break;
                 case "--foldcensus":
                     foldcensus = true;
+                    break;
+                case "--cpfree":
+                    cpfree = true;
                     break;
                 case "-e" or "--eval":
                     if (++i >= args.Length) return Usage("missing source after " + a);
@@ -164,6 +168,45 @@ internal static class Program
                     d.Predicates, d.DetPredicates, d.Clauses, d.NeckLastCut,
                     d.DeepLastCut, d.ElideBuiltin, d.ElideIntra, d.BlockedCross,
                     d.BlockedNondet));
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"error: parse failed: {ex.Message}");
+                return ExitCompileError;
+            }
+            return ExitOk;
+        }
+
+        if (cpfree)
+        {
+            // Replays the shipped ADR-031 CP-free guard recogniser over every
+            // predicate of the file (intra-file calleeMap: cross-file callees
+            // land in the "unresolved" bucket). One TSV line per source:
+            // CPFREE <tierA> <tierB> <tierGLeaf> <tierG2> <rejGuardOp>
+            // <rejUnresolved> <rejCalls(G3)> <rejCaps> <rejCut> <rejShape>
+            try
+            {
+                // The classification resolves builtin functors (a Call to ==/2,
+                // var/1… is a CallBuiltin after linking); the registry is
+                // engine-populated, so bootstrap it here.
+                Shumway.Builtins.StandardBuiltins.EnsureRegistered();
+                var preds = PredicateDisassembler.CompileAllPredicates(source, arityCompat);
+                var map = new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>();
+                foreach (var p in preds) map[p.FunctorId] = p;
+                Shumway.Compiler.Il.IlPredicateCompiler.CpFreeGuardStats.Reset();
+                foreach (var p in preds)
+                    Shumway.Compiler.Il.IlPredicateCompiler.AnalyzeCpFreeGuards(p, map);
+                Console.WriteLine(string.Join('\t', "CPFREE",
+                    Shumway.Compiler.Il.IlPredicateCompiler.CpFreeGuardStats.TierA,
+                    Shumway.Compiler.Il.IlPredicateCompiler.CpFreeGuardStats.TierB,
+                    Shumway.Compiler.Il.IlPredicateCompiler.CpFreeGuardStats.TierGLeaf,
+                    Shumway.Compiler.Il.IlPredicateCompiler.CpFreeGuardStats.TierG2,
+                    Shumway.Compiler.Il.IlPredicateCompiler.CpFreeGuardStats.RejectGuardShape,
+                    Shumway.Compiler.Il.IlPredicateCompiler.CpFreeGuardStats.RejectCalleeUnresolved,
+                    Shumway.Compiler.Il.IlPredicateCompiler.CpFreeGuardStats.RejectCalleeCalls,
+                    Shumway.Compiler.Il.IlPredicateCompiler.CpFreeGuardStats.RejectCalleeCaps,
+                    Shumway.Compiler.Il.IlPredicateCompiler.CpFreeGuardStats.RejectCalleeCut,
+                    Shumway.Compiler.Il.IlPredicateCompiler.CpFreeGuardStats.RejectCalleeShape));
             }
             catch (Exception ex)
             {

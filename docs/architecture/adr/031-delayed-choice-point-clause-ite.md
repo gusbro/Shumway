@@ -137,9 +137,17 @@ in favour — no regression anywhere. Full five-project gate green: Embedding
   2929 / Compiler 351 / Core 436 / Interpreter 105 / ISO 277.
 - **Deferred — beyond G2:** callees needing a TRUE dynamic fail-continuation
   (transient CPs, non-tail body calls, mutual recursion, > 4 clauses) — the
-  engine continuation-stack design above; indexed-dispatch bucket chains
-  (`try`/`retry` nodes — tier B/G machinery at the indexed emit sites); a_eval
-  comparison guards (1 corpus pred).
+  engine continuation-stack design (ADR-032, soft-rejected); indexed-dispatch
+  bucket chains (`try`/`retry` nodes — tier B/G machinery at the indexed emit
+  sites); a_eval comparison guards (1 corpus pred).
+- **Known emission-quality debt — the inlined callee is a LINEAR chain, not an
+  IL switch.** `EmitFailDirectCalleeInline` tries the callee's clauses
+  sequentially (nested test-and-branch), discarding the callee's own index.
+  With the current caps (≤ 4 clauses) the linear scan is fine; **if the
+  `RejectCalleeCaps` statistics ever justify raising the caps, the raise MUST
+  come with a proper IL `switch` emission** (dispatch on the bound argument's
+  tag/key, like the indexed-dispatch emit does) — inlining a wide callee as a
+  linear chain would regress exactly the predicates the raise targets.
 
 ## Original investigation (the fold that was NOT the answer)
 

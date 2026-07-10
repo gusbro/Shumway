@@ -5467,7 +5467,8 @@ public sealed class IlPredicateCompiler
         byte[] code, int start, int end, int arity,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
         IReadOnlyList<CallSite> callSites,
-        out CpFreeGuardInfo info)
+        out CpFreeGuardInfo info,
+        bool analysisOnly = false)
     {
         info = default;
         bool snapshot = false, regSave = false, framed = false, sawRealOp = false;
@@ -5583,6 +5584,27 @@ public sealed class IlPredicateCompiler
                         return false;
                     }
                     int fid = FindCallSiteFunctorId(callSites, pc);
+                    // ANALYSIS-ONLY: a Call whose target is a registered
+                    // BUILTIN — in LINKED bytecode this is already a
+                    // CallBuiltin (the chunk-247/248 linker rewrite), so the
+                    // emit sites never see it; the --cpfree sweep analyses
+                    // UNLINKED bytecode, where the classification must match
+                    // what the linked form would get. NOT enabled for emission:
+                    // emitting an unlinked builtin Call as a guard would take
+                    // the threaded-call path whose failure bypasses the stub.
+                    if (analysisOnly && fid >= 0
+                        && Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out int bid))
+                    {
+                        var bentry = Shumway.Builtins.BuiltinsRegistry.GetById(bid);
+                        if (bentry.IsCall || bentry.IsDollarCall || bentry.IsBacktrackable)
+                        {
+                            CountReject(ref CpFreeGuardStats.RejectGuardShape, pc);
+                            return false;
+                        }
+                        snapshot = true;
+                        regSave = true;
+                        break;
+                    }
                     if (fid < 0 || !calleeMap.TryGetValue(fid, out var callee))
                     {
                         CountReject(ref CpFreeGuardStats.RejectCalleeUnresolved, pc);
@@ -5679,6 +5701,25 @@ public sealed class IlPredicateCompiler
         /// <summary>Terminator is the fused <c>deallocate_proceed</c> — the
         /// emit deallocates then joins.</summary>
         public bool DeallocProceed { get; init; }
+    }
+
+    /// <summary>ADR-032 sizing tooling (<c>shumway-disasm --cpfree</c>) — replays
+    /// the CP-free guard recogniser over a predicate exactly as the two chain
+    /// emit sites would, bumping <see cref="CpFreeGuardStats"/>. Indexed / single
+    /// predicates don't participate in the CP-free path and are skipped, matching
+    /// the shipped emission.</summary>
+    public static void AnalyzeCpFreeGuards(
+        CompiledPredicate pred, IReadOnlyDictionary<int, CompiledPredicate> calleeMap)
+    {
+        // Structural chain describe (not the memoized calleeMap-resolving one:
+        // an intra-file map misses cross-file callees, which must land in the
+        // recogniser's "unresolved" bucket rather than skip the predicate).
+        TryDescribeTryMeElseChainStructural(pred, new List<int>(), out var chain);
+        if (chain is null) return;
+        var cls = chain.Clauses;
+        for (int i = 0; i < cls.Count - 1; i++)
+            TryGetCpFreeGuard(pred.BytecodeUnfused, cls[i].Start, cls[i].End,
+                pred.Arity, calleeMap, pred.CallSites, out _, analysisOnly: true);
     }
 
     /// <summary>True when the next non-dbg opcode at <paramref name="pc"/> is the

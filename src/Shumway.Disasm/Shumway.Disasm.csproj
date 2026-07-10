@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Shumway.Core\Shumway.Core.csproj" />
     <ProjectReference Include="..\Shumway.Compiler\Shumway.Compiler.csproj" />
+    <ProjectReference Include="..\Shumway.Compiler.Il\Shumway.Compiler.Il.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
