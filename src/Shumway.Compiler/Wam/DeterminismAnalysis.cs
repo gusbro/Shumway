@@ -208,7 +208,7 @@ public sealed class DeterminismAnalysis
             if (c.Kind != ClauseKind.Directive
                 && lastClauseIndex.TryGetValue(HeadIndicator(c), out int last) && last == i
                 && eligibleInd.Contains(HeadIndicator(c))
-                && TryElideTrailingCut(c, analysis, out Clause? rewritten))
+                && TryElideTrailingCut(c, analysis.Classify, out Clause? rewritten))
             {
                 result.Add(rewritten!);
             }
@@ -222,9 +222,10 @@ public sealed class DeterminismAnalysis
 
     /// <summary>Attempts to drop the redundant trailing cut from a single clause
     /// (assumed to be its predicate's last clause). Returns false when the clause
-    /// is not a <c>…, !.</c> rule or its prefix is not provably det.</summary>
+    /// is not a <c>…, !.</c> rule or its prefix is not provably det (per
+    /// <paramref name="classify"/> — module-local or whole-program).</summary>
     private static bool TryElideTrailingCut(
-        Clause c, DeterminismAnalysis analysis, out Clause? rewritten)
+        Clause c, System.Func<Term, GoalKind> classify, out Clause? rewritten)
     {
         rewritten = null;
         if (c.Kind != ClauseKind.Rule
@@ -238,7 +239,7 @@ public sealed class DeterminismAnalysis
 
         // Every goal before the trailing cut must leave no choice point.
         for (int j = 0; j < goals.Count - 1; j++)
-            if (!LeavesNoCp(analysis.Classify(goals[j]))) return false;
+            if (!LeavesNoCp(classify(goals[j]))) return false;
 
         // Rebuild the body without the trailing cut. Empty ⇒ the clause is a fact.
         var kept = goals.GetRange(0, goals.Count - 1);
@@ -255,10 +256,161 @@ public sealed class DeterminismAnalysis
         return true;
     }
 
-    // --- The det model (shared with PredicateDisassembler.CensusDet). ---
+    // --- ADR-030 linker closure: the WHOLE-PROGRAM variant. ---
+
+    /// <summary>Whole-program determinism (the ADR-030 linker closure). The same
+    /// greatest-fixpoint model as <see cref="Build"/>, but over EVERY module's
+    /// clauses at once: a goal resolves module-locally first, then to the global
+    /// PUBLIC definition — so a cross-module callee is no longer opaque and the
+    /// <see cref="GoalKind.CrossModule"/> blocker disappears for anything the
+    /// program actually defines. Qualified indicators are
+    /// <c>module + '' + name/arity</c>.</summary>
+    public sealed class WholeProgram
+    {
+        private readonly HashSet<string> _detPreds;
+        private readonly Dictionary<string, HashSet<string>> _localDefs;
+        private readonly IReadOnlyDictionary<string, string> _publicOwner;
+
+        private WholeProgram(
+            HashSet<string> detPreds,
+            Dictionary<string, HashSet<string>> localDefs,
+            IReadOnlyDictionary<string, string> publicOwner)
+        {
+            _detPreds = detPreds;
+            _localDefs = localDefs;
+            _publicOwner = publicOwner;
+        }
+
+        internal static string Qualify(string module, string ind) => module + "" + ind;
+
+        /// <summary>Resolves a bare <c>name/arity</c> goal indicator as seen from
+        /// <paramref name="module"/>: the module's own definition wins, else the
+        /// global public owner; null when the program does not define it.</summary>
+        public string? Resolve(string module, string ind)
+        {
+            if (_localDefs.TryGetValue(module, out var defs) && defs.Contains(ind))
+                return Qualify(module, ind);
+            if (_publicOwner.TryGetValue(ind, out string? owner))
+                return Qualify(owner, ind);
+            return null;
+        }
+
+        /// <summary>True iff the predicate (qualified per <see cref="Resolve"/>)
+        /// was proven deterministic by the whole-program fixpoint.</summary>
+        public bool IsDet(string module, string ind)
+            => Resolve(module, ind) is string q && _detPreds.Contains(q);
+
+        /// <summary>Classifies a body goal as seen from <paramref name="module"/>.</summary>
+        public GoalKind ClassifyIn(string module, Term goal)
+            => ClassifyCore(goal, _detPreds, ind => Resolve(module, ind));
+
+        /// <summary><paramref name="modules"/>: each module's static clauses +
+        /// an optional per-clause eligibility gate (dynamic predicates must be
+        /// excluded by the caller). <paramref name="publicOwner"/> maps a bare
+        /// public indicator to its defining module.</summary>
+        public static WholeProgram Build(
+            IReadOnlyList<(string Module, IReadOnlyList<Clause> Clauses,
+                System.Func<Clause, bool>? IsEligible)> modules,
+            IReadOnlyDictionary<string, string> publicOwner)
+        {
+            var order = new List<string>();                       // qualified inds
+            var flat = new Dictionary<string, List<List<Term>>>();
+            var eligible = new Dictionary<string, bool>();
+            var moduleOf = new Dictionary<string, string>();
+            var localDefs = new Dictionary<string, HashSet<string>>();
+
+            foreach (var (module, clauses, isEligible) in modules)
+            {
+                var defs = new HashSet<string>();
+                localDefs[module] = defs;
+                foreach (Clause c in clauses)
+                {
+                    if (c.Kind == ClauseKind.Directive) continue;
+                    string ind = HeadIndicator(c);
+                    defs.Add(ind);
+                    string q = Qualify(module, ind);
+                    if (!flat.TryGetValue(q, out var perClause))
+                    {
+                        flat[q] = perClause = new List<List<Term>>();
+                        order.Add(q);
+                        eligible[q] = isEligible?.Invoke(c) ?? true;
+                        moduleOf[q] = module;
+                    }
+                    var gs = new List<Term>();
+                    Term? body = ClauseBody(c);
+                    if (body is not null) FlattenConj(body, gs);
+                    perClause.Add(gs);
+                }
+            }
+
+            var result = new WholeProgram(new HashSet<string>(), localDefs, publicOwner);
+            var detPreds = result._detPreds;
+            foreach (string q in order) if (eligible[q]) detPreds.Add(q);
+            bool changed = true;
+            while (changed)
+            {
+                changed = false;
+                foreach (string q in order)
+                {
+                    if (!detPreds.Contains(q)) continue;
+                    string module = moduleOf[q];
+                    if (!PredIsDetCore(flat[q], detPreds, ind => result.Resolve(module, ind)))
+                    { detPreds.Remove(q); changed = true; }
+                }
+            }
+            return result;
+        }
+
+        /// <summary>The ADR-030 rewrite with whole-program knowledge: drops the
+        /// redundant trailing cut from <paramref name="module"/>'s eligible last
+        /// clauses whose prefixes are det under the whole-program fixpoint.
+        /// <paramref name="elided"/> reports how many clauses changed.</summary>
+        public List<Clause> EliminateRedundantTrailingCuts(
+            string module, IReadOnlyList<Clause> clauses,
+            System.Func<Clause, bool>? isEligible, out int elided)
+        {
+            elided = 0;
+            var lastClauseIndex = new Dictionary<string, int>();
+            var eligibleInd = new HashSet<string>();
+            for (int i = 0; i < clauses.Count; i++)
+            {
+                Clause c = clauses[i];
+                if (c.Kind == ClauseKind.Directive) continue;
+                string ind = HeadIndicator(c);
+                lastClauseIndex[ind] = i;
+                if (isEligible?.Invoke(c) ?? true) eligibleInd.Add(ind);
+            }
+            var result = new List<Clause>(clauses.Count);
+            for (int i = 0; i < clauses.Count; i++)
+            {
+                Clause c = clauses[i];
+                if (c.Kind != ClauseKind.Directive
+                    && lastClauseIndex.TryGetValue(HeadIndicator(c), out int last) && last == i
+                    && eligibleInd.Contains(HeadIndicator(c))
+                    && TryElideTrailingCut(c, g => ClassifyIn(module, g), out Clause? rewritten))
+                {
+                    result.Add(rewritten!);
+                    elided++;
+                }
+                else
+                {
+                    result.Add(c);
+                }
+            }
+            return result;
+        }
+    }
+
+    // --- The det model (shared with PredicateDisassembler.CensusDet and the
+    //     whole-program linker closure). ---
 
     internal static GoalKind Classify(
         Term g, HashSet<string> detPreds, HashSet<string> definedInModule)
+        => ClassifyCore(g, detPreds,
+            ind => definedInModule.Contains(ind) ? ind : null);
+
+    private static GoalKind ClassifyCore(
+        Term g, HashSet<string> detPreds, System.Func<string, string?> resolve)
     {
         if (IsInlineLike(g)) return GoalKind.Inline;
         string? ind = GoalIndicator(g);
@@ -266,13 +418,18 @@ public sealed class DeterminismAnalysis
         if (ind is ";/2" or "->/2" or "*->/2") return GoalKind.Nondet; // scoping we don't model
         if (DetControl.Contains(ind)) return GoalKind.DetControl;
         if (KnownDetBuiltins.Contains(ind)) return GoalKind.DetBuiltin;
-        if (definedInModule.Contains(ind))
-            return detPreds.Contains(ind) ? GoalKind.DetUserPred : GoalKind.Nondet;
-        return GoalKind.CrossModule;
+        string? q = resolve(ind);
+        if (q is null) return GoalKind.CrossModule;
+        return detPreds.Contains(q) ? GoalKind.DetUserPred : GoalKind.Nondet;
     }
 
     private static bool PredIsDet(List<List<Term>> flat,
         HashSet<string> detPreds, HashSet<string> definedInModule)
+        => PredIsDetCore(flat, detPreds,
+            ind => definedInModule.Contains(ind) ? ind : null);
+
+    private static bool PredIsDetCore(List<List<Term>> flat,
+        HashSet<string> detPreds, System.Func<string, string?> resolve)
     {
         if (!DispatchDet(flat)) return false;
         for (int i = 0; i < flat.Count; i++)
@@ -283,7 +440,7 @@ public sealed class DeterminismAnalysis
             for (int j = 0; j < goals.Count; j++)
                 if (goals[j] is AtomTerm { Name: "!" }) lastCut = j;
             for (int j = lastCut + 1; j < goals.Count; j++)
-                if (!LeavesNoCp(Classify(goals[j], detPreds, definedInModule)))
+                if (!LeavesNoCp(ClassifyCore(goals[j], detPreds, resolve)))
                     return false;
         }
         return true;

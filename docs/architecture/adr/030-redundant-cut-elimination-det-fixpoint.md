@@ -61,10 +61,24 @@ it removes work from both Tier-0 bytecode and Tier-1 IL. The **whole-program
   strictly-smaller recursive sub-derivation also leaving one — impossible under
   the two dispatch shapes with det non-recursive goals). Crucially this uses no
   first-argument (mode-dependent) reasoning.
-- **Deferred — whole-program linker closure.** Running the fixpoint in the
-  linker (which owns the complete call graph) would resolve the 7 710
-  cross-module-blocked candidates. The intra-module pass is the foundation; the
-  linker extension reuses the same `DeterminismAnalysis` over the merged program.
+- **Whole-program linker closure SHIPPED (2026-07-09).**
+  `DeterminismAnalysis.WholeProgram` runs the same greatest fixpoint over EVERY
+  linked module's clauses at once: a goal resolves module-locally first, then
+  to the global PUBLIC owner — so a cross-module callee is no longer opaque and
+  the `CrossModule` blocker disappears for anything the program defines
+  (dynamic / `:- visible` predicates stay ineligible — their clause set changes
+  at runtime). The linker pass (`ShmoLinker.WholeProgramCutElision`, running
+  right after the chunk-411 `CrossModuleUnfold` on the same V4 ClauseTerms LTO
+  channel) elides each module's redundant last-clause trailing cuts under that
+  whole-program knowledge and recompiles the modules that changed via
+  `CompileFromParts`; an Info diagnostic (`lto_cut_elision`) reports the count
+  per module. The core det model was refactored onto a resolver
+  (`ClassifyCore(goal, detPreds, resolve)`) shared verbatim by the intra-module
+  path, the census, and the closure — the single-source-of-truth discipline
+  holds. This unblocks the 7 710 corpus candidates whose only blocker was a
+  cross-module callee (up to +59% over intra-only per the census projection).
+  Gate green: Embedding 2934 / Compiler 351 / Core 436 / Interpreter 105 /
+  ISO 277.
 
 ### Original proposal (retained below)
 

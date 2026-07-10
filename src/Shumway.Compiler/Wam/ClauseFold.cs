@@ -69,6 +69,148 @@ public static class ClauseFold
         Other,
     }
 
+    /// <summary>ADR-031 G-tier sizing — how far the STATIC CP-free machinery
+    /// reaches for a guard's user-call callees, and what genuinely needs the
+    /// dynamic fail-continuation.</summary>
+    public enum CalleeClass
+    {
+        /// <summary>Every guard callee is a single-clause test-like leaf —
+        /// shipped G1 (chunk-69 forced inline).</summary>
+        LeafInlinable,
+        /// <summary>Worst callee is multi-clause (≤4) with test-like bodies and
+        /// at most a SELF-tail recursion — shipped G2 (sequential-chain
+        /// inline + in-place loop).</summary>
+        FailDirect,
+        /// <summary>Worst callee additionally calls OTHER fail-direct
+        /// predicates (tail or non-tail, DAG call graph, self-recursion only in
+        /// tail position) — reachable by a STATIC transitive inline (a G3
+        /// extension), still no engine changes.</summary>
+        FailDirectClosure,
+        /// <summary>Worst callee is defined in-file but non-det / cut-bearing /
+        /// control-bearing / &gt;4 clauses / mutually recursive / self-recursive
+        /// in non-tail position — needs the TRUE dynamic fail-continuation
+        /// (engine continuation stack).</summary>
+        NeedsDynamic,
+        /// <summary>Worst callee is not defined in this file — opaque
+        /// (linker-closure territory).</summary>
+        CrossModule,
+    }
+
+    /// <summary>Classifies a <see cref="GuardClass.UserCall"/> guard's callees
+    /// (worst across all calls in the guard). <paramref name="preds"/> maps
+    /// <c>name/arity</c> to the predicate's clauses for the whole file.</summary>
+    public static CalleeClass ClassifyGuardCallees(
+        IReadOnlyList<Clause> clauses,
+        IReadOnlyDictionary<string, List<Clause>> preds)
+    {
+        var rule = (CompoundTerm)clauses[0].Term;
+        var goals = new List<Term>();
+        FlattenConj(rule.Args[1], goals);
+        var worst = CalleeClass.LeafInlinable;
+        foreach (Term g in goals)
+        {
+            if (g is AtomTerm { Name: "!" }) break;
+            string? ind = g switch
+            {
+                AtomTerm a when !IsTestLike(a) && a.Name != "true" => a.Name + "/0",
+                CompoundTerm c when !IsTestLike(c) => c.Functor + "/" + c.Args.Length,
+                _ => null,
+            };
+            if (ind is null) continue;                 // test-like goal, not a call
+            CalleeClass cls;
+            if (!preds.ContainsKey(ind))
+                cls = CalleeClass.CrossModule;
+            else if (IsLeafTestCallee(preds[ind]))
+                cls = CalleeClass.LeafInlinable;
+            else if (IsFailDirectish(ind, preds, allowCalls: false, new HashSet<string>()))
+                cls = CalleeClass.FailDirect;
+            else if (IsFailDirectish(ind, preds, allowCalls: true, new HashSet<string>()))
+                cls = CalleeClass.FailDirectClosure;
+            else
+                cls = CalleeClass.NeedsDynamic;
+            if (cls > worst) worst = cls;
+        }
+        return worst;
+    }
+
+    // Single clause whose body (if any) is entirely test-like — the G1 shape.
+    private static bool IsLeafTestCallee(List<Clause> cls)
+    {
+        if (cls.Count != 1) return false;
+        Clause c = cls[0];
+        if (c.Kind == ClauseKind.Fact) return true;
+        if (c.Term is not CompoundTerm { Functor: ":-", Args.Length: 2 } r) return false;
+        var goals = new List<Term>();
+        FlattenConj(r.Args[1], goals);
+        foreach (Term g in goals) if (!IsTestLike(g)) return false;
+        return true;
+    }
+
+    // AST approximation of the fail-direct describe: ≤4 clauses, no cuts, each
+    // body = test-like goals + calls. Self-calls only in tail position; other
+    // calls only when allowCalls and the callee is itself fail-direct-ish
+    // (cycle → false: mutual recursion cannot be statically inlined).
+    private static bool IsFailDirectish(
+        string ind, IReadOnlyDictionary<string, List<Clause>> preds,
+        bool allowCalls, HashSet<string> visiting)
+    {
+        if (!visiting.Add(ind)) return false;          // cycle (non-self recursion)
+        try
+        {
+            var cls = preds[ind];
+            if (cls.Count > 4) return false;
+            foreach (Clause c in cls)
+            {
+                if (c.Kind == ClauseKind.Fact) continue;
+                if (c.Term is not CompoundTerm { Functor: ":-", Args.Length: 2 } r)
+                    return false;
+                var goals = new List<Term>();
+                FlattenConj(r.Args[1], goals);
+                for (int i = 0; i < goals.Count; i++)
+                {
+                    Term g = goals[i];
+                    if (g is AtomTerm { Name: "!" }) return false;   // cut in callee
+                    if (IsTestLike(g)) continue;
+                    string? callee = g switch
+                    {
+                        AtomTerm a => a.Name + "/0",
+                        CompoundTerm cc => cc.Functor + "/" + cc.Args.Length,
+                        _ => null,
+                    };
+                    if (callee is null) return false;
+                    if (callee == ind)
+                    {
+                        if (i != goals.Count - 1) return false;      // self only in tail
+                        continue;
+                    }
+                    if (!allowCalls) return false;
+                    if (!preds.ContainsKey(callee)) return false;    // cross-module
+                    if (!IsLeafTestCallee(preds[callee])
+                        && !IsFailDirectish(callee, preds, allowCalls, visiting))
+                        return false;
+                }
+            }
+            return true;
+        }
+        finally
+        {
+            visiting.Remove(ind);
+        }
+    }
+
+    // A goal the CP-free guard whitelist handles inline: comparisons, identity
+    // and type tests, =/2, is/2-style det builtins, true/fail.
+    private static bool IsTestLike(Term g) => g switch
+    {
+        AtomTerm { Name: "true" or "fail" or "false" } => true,
+        AtomTerm a0 => IsTypeTestName(a0.Name, 0),
+        CompoundTerm { Args.Length: 2 } c when IsCmp(c.Functor) || IsIdentTest(c.Functor) => true,
+        CompoundTerm { Functor: "=", Args.Length: 2 } => true,
+        CompoundTerm { Args.Length: 1 } t when IsTypeTestName(t.Functor, 1) => true,
+        CompoundTerm dg when IsDetBuiltinGoal(dg.Functor, dg.Args.Length) => true,
+        _ => false,
+    };
+
     /// <summary>Classifies the first clause's pre-cut guard for phase-2 sizing.
     /// Call only on a group <see cref="Classify"/> accepted.</summary>
     public static GuardClass ClassifyGuard(IReadOnlyList<Clause> clauses)

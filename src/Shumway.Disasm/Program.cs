@@ -184,7 +184,8 @@ internal static class Program
                     f.Predicates, f.Candidates, f.Trivial, f.Threaded, f.CandidateClauses,
                     f.GuardCmpOnly, f.GuardEvalCmp, f.GuardBindingUnify,
                     f.GuardTypeTestOrIdent, f.GuardDetBuiltinMix, f.GuardUserCall,
-                    f.GuardOther));
+                    f.GuardOther,
+                    f.CalleeG1, f.CalleeG2, f.CalleeG3, f.CalleeDynamic, f.CalleeCross));
             }
             catch (Exception ex)
             {

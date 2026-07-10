@@ -365,6 +365,15 @@ public static class ShmoLinker
         IReadOnlyList<ShmoObject> objects = CrossModuleUnfold(
             linkInput, Emit, out var ltoPublicWrappers);
 
+        // ----- 0b. ADR-030 linker closure — whole-program redundant-cut elision.
+        // The intra-module pass (ModuleCompiler.ElideRedundantCuts) cannot see
+        // cross-module callees; the linker owns every module's clauses, so the
+        // determinism fixpoint here resolves a goal module-locally first, then
+        // to the global PUBLIC definition — unblocking the last-clause cuts the
+        // intra pass left as CrossModule-blocked. Modules that gained an elision
+        // are recompiled from their clause terms (the chunk-411 LTO channel).
+        objects = WholeProgramCutElision(objects, Emit);
+
         // ----- 1. Index objects, detect duplicate module names -----
         var byModule = new Dictionary<string, ShmoObject>();
         foreach (var obj in objects)
@@ -1353,6 +1362,119 @@ public static class ShmoLinker
             }
             emit(LinkSeverity.Info, "lto_unfold",
                 $"module {obj.ModuleName}: cross-module meta-wrapper unfold applied; recompiled.",
+                obj.ModuleName);
+            result.Add(res.Object);
+        }
+        return result;
+    }
+
+    /// <summary>ADR-030 linker closure — whole-program redundant-cut elision.
+    /// Decodes every module's raw static clauses (the V4 LTO channel), runs the
+    /// <see cref="Shumway.Compiler.Wam.DeterminismAnalysis.WholeProgram"/>
+    /// greatest fixpoint (goal resolution: module-local first, then the global
+    /// PUBLIC owner; dynamic predicates ineligible), drops each module's
+    /// redundant last-clause trailing cuts under that whole-program knowledge,
+    /// and recompiles the modules that changed. Purely semantics-preserving —
+    /// an elided cut provably pruned nothing.</summary>
+    private static IReadOnlyList<ShmoObject> WholeProgramCutElision(
+        IReadOnlyList<ShmoObject> objects,
+        Action<LinkSeverity, string, string, string?> emit)
+    {
+        // Decode each module's raw static clauses.
+        var decoded = new Dictionary<string, List<Shumway.Compiler.Ast.Clause>>();
+        foreach (var obj in objects)
+        {
+            if (obj.ClauseTerms.Count == 0) continue;
+            var list = new List<Shumway.Compiler.Ast.Clause>(obj.ClauseTerms.Count);
+            foreach (var enc in obj.ClauseTerms)
+                list.Add(TermCodec.DecodeClause(enc));
+            decoded[obj.ModuleName] = list;
+        }
+        if (decoded.Count == 0) return objects;
+
+        // Global public owners + per-module dynamic (ineligible) indicator sets.
+        // A Dynamic (`:- visible`) predicate is name-resolvable cross-module but
+        // its clause set changes at runtime, so it never enters the det set.
+        var publicOwner = new Dictionary<string, string>();
+        var dynamicOf = new Dictionary<string, HashSet<string>>();
+        foreach (var obj in objects)
+        {
+            var dyn = new HashSet<string>();
+            dynamicOf[obj.ModuleName] = dyn;
+            foreach (var d in obj.Defined)
+            {
+                string ind = d.Indicator.Name + "/" + d.Indicator.Arity;
+                if (d.Visibility == PredicateVisibility.Public)
+                    publicOwner[ind] = obj.ModuleName;
+                else if (d.Visibility == PredicateVisibility.Dynamic)
+                {
+                    dyn.Add(ind);
+                    publicOwner[ind] = obj.ModuleName;
+                }
+            }
+        }
+
+        var modules = new List<(string, IReadOnlyList<Shumway.Compiler.Ast.Clause>,
+            Func<Shumway.Compiler.Ast.Clause, bool>?)>();
+        foreach (var (module, clauses) in decoded)
+        {
+            var dyn = dynamicOf[module];
+            modules.Add((module, clauses,
+                c => !dyn.Contains(Shumway.Compiler.Wam.DeterminismAnalysis.HeadIndicator(c))));
+        }
+        var wp = Shumway.Compiler.Wam.DeterminismAnalysis.WholeProgram.Build(
+            modules, publicOwner);
+
+        var result = new List<ShmoObject>(objects.Count);
+        foreach (var obj in objects)
+        {
+            if (!decoded.TryGetValue(obj.ModuleName, out var raw))
+            {
+                result.Add(obj);
+                continue;
+            }
+            var dyn = dynamicOf[obj.ModuleName];
+            var rewritten = wp.EliminateRedundantTrailingCuts(
+                obj.ModuleName, raw,
+                c => !dyn.Contains(Shumway.Compiler.Wam.DeterminismAnalysis.HeadIndicator(c)),
+                out int elided);
+            if (elided == 0)
+            {
+                result.Add(obj);
+                continue;
+            }
+
+            // Recompile from the rewritten clauses (the CrossModuleUnfold shape).
+            var publicSet = new HashSet<PredicateRef>();
+            var dynamicSet = new HashSet<PredicateRef>();
+            foreach (var d in obj.Defined)
+            {
+                if (d.Visibility == PredicateVisibility.Public) publicSet.Add(d.Indicator);
+                else if (d.Visibility == PredicateVisibility.Dynamic) dynamicSet.Add(d.Indicator);
+            }
+            var rawAll = new List<Shumway.Compiler.Ast.Clause>(rewritten);
+            foreach (var seed in obj.DynamicSeeds)
+                foreach (var enc in seed.EncodedClauses)
+                    rawAll.Add(TermCodec.DecodeClause(enc));
+            var errors = new List<ShmoCompileError>();
+            var res = ShmoCompiler.CompileFromParts(
+                obj.ModuleName, obj.Source, rawAll, publicSet, dynamicSet,
+                new List<PredicateRef>(obj.EnsureLinked),
+                new List<QualifiedPredicateRef>(), obj.BuildMode, errors,
+                arityCompat: obj.ArityCompat,
+                operatorDefs: obj.Operators);
+            if (!res.Success || res.Object is null)
+            {
+                emit(LinkSeverity.Warning, "lto_cut_elision_recompile_failed",
+                    $"module {obj.ModuleName}: whole-program cut-elision recompile failed "
+                    + $"({errors.Count} error(s)); keeping the original object.",
+                    obj.ModuleName);
+                result.Add(obj);
+                continue;
+            }
+            emit(LinkSeverity.Info, "lto_cut_elision",
+                $"module {obj.ModuleName}: {elided} redundant trailing cut(s) elided "
+                + "under the whole-program determinism fixpoint; recompiled.",
                 obj.ModuleName);
             result.Add(res.Object);
         }
