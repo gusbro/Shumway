@@ -36,6 +36,10 @@ public struct CatchFrame
     public int SnapHb;
     public int SnapBindingTrailTop;
     public int SnapExtraTrailTop;
+    /// <summary>ADR-033 — the guard-continuation stack top: a throw unwinding
+    /// out of a fail-direct shared-copy call leaves stale continuation
+    /// entries; the catch restore truncates them.</summary>
+    public int SnapGuardContTop;
 
     // ----- Recovery continuation: where the enclosing clause resumes -----
     public int RecoveryE;

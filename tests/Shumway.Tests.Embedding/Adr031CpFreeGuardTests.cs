@@ -636,6 +636,86 @@ public class Adr031BindingGuardTests
         Assert.Single(e.QueryAll("p(0, R)."));
     }
 
+    [Theory]
+    [MemberData(nameof(Modes))]
+    public void Adr033_ContinuationStack_SharedCopies_SameAnswers(
+        Adr031CpFreeGuardTests.Mode m)
+    {
+        // ADR-033 — the continuation-stack mechanism (ONE shared copy per
+        // callee + push/pop routing) must be observationally identical to the
+        // per-site duplication. Two guards call the SAME fail-direct callee
+        // (the sharing case), plus a self-tail-recursive callee (the loop
+        // inside the shared copy), plus deep-fail undo.
+        bool old = IlPredicateCompiler.CpFreeGuardContinuations;
+        IlPredicateCompiler.CpFreeGuardContinuations = true;
+        try
+        {
+            var e = TierGEngine(m,
+                ":- public p/2, q/2, r/2.\n"
+                + "cls(X, neg) :- X < 0, !.\n"
+                + "cls(X, zero) :- X =:= 0, !.\n"
+                + "cls(_, pos).\n"
+                // TWO sites calling cls/2 → one shared copy, two continuations.
+                + "p(X, R) :- cls(X, C), !, R = a(C).\n"
+                + "p(_, R) :- R = none.\n"
+                + "q(X, R) :- cls(X, C), C == neg, !, R = b.\n"
+                + "q(_, R) :- R = nb.\n"
+                // Self-tail loop inside the shared copy + deep-fail restore.
+                + "allp([]).\n"
+                + "allp([H|T]) :- H > 0, allp(T).\n"
+                + "r(L, R) :- R = t, allp(L), !.\n"
+                + "r(_, R) :- R = f.\n");
+            Assert.True(e.Query("p(-5, R), R == a(neg).").Success);
+            Assert.True(e.Query("p(0, R), R == a(zero).").Success);
+            Assert.True(e.Query("p(7, R), R == a(pos).").Success);
+            Assert.Single(e.QueryAll("p(-5, R)."));
+            Assert.True(e.Query("q(-3, R), R == b.").Success);
+            Assert.True(e.Query("q(3, R), R == nb.").Success);
+            Assert.Single(e.QueryAll("q(-3, R)."));
+            Assert.True(e.Query("r([1,2,3], R), R == t.").Success);
+            Assert.True(e.Query("r([1,-2], R), R == f.").Success);   // undo R=t
+            Assert.Single(e.QueryAll("r([1,-2], R)."));
+        }
+        finally
+        {
+            IlPredicateCompiler.CpFreeGuardContinuations = old;
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(Modes))]
+    public void Adr033_ThrowMidCopy_CatchRebalancesStack(
+        Adr031CpFreeGuardTests.Mode m)
+    {
+        // Exception safety: the guard callee THROWS mid-copy (arith on an
+        // atom) with a continuation entry pushed; catch/3 must truncate the
+        // stack (SnapGuardContTop) so subsequent guard calls stay balanced.
+        bool old = IlPredicateCompiler.CpFreeGuardContinuations;
+        IlPredicateCompiler.CpFreeGuardContinuations = true;
+        try
+        {
+            var e = TierGEngine(m,
+                ":- public s/2, driver/2.\n"
+                + "chk(X, lo) :- X < 10, !.\n"
+                + "chk(_, hi).\n"
+                + "s(X, R) :- chk(X, C), !, R = C.\n"
+                + "s(_, R) :- R = err.\n"
+                + "driver(X, R) :- catch(s(X, R), _, R = caught).\n");
+            // The throw: X = an atom → chk's X < 10 raises type_error INSIDE
+            // the shared copy (entry pushed, never popped) → catch truncates.
+            Assert.True(e.Query("driver(banana, R), R == caught.").Success);
+            // The stack is balanced again: further guard calls behave.
+            Assert.True(e.Query("driver(3, R), R == lo.").Success);
+            Assert.True(e.Query("driver(50, R), R == hi.").Success);
+            Assert.True(e.Query("driver(banana, R2), driver(4, R), R == lo.").Success);
+            Assert.Single(e.QueryAll("driver(3, R)."));
+        }
+        finally
+        {
+            IlPredicateCompiler.CpFreeGuardContinuations = old;
+        }
+    }
+
     [Fact]
     public void G3_MutualRecursion_Rejected_ByDescribe()
     {

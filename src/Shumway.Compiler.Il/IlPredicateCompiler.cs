@@ -311,6 +311,13 @@ public sealed class IlPredicateCompiler
     // back-edge of an inlined fail-direct callee's self-tail loop.
     private static readonly MethodInfo EngineBacktrackSafePointMethod =
         typeof(Engine).GetMethod(nameof(Engine.BacktrackSafePoint), Type.EmptyTypes)!;
+    // ADR-033 — the guard continuation stack (shared fail-direct callee copies).
+    private static readonly MethodInfo EnginePushGuardContMethod =
+        typeof(Engine).GetMethod(nameof(Engine.PushGuardCont), new[] { typeof(int) })!;
+    private static readonly MethodInfo EnginePopGuardContOkMethod =
+        typeof(Engine).GetMethod(nameof(Engine.PopGuardContOk), Type.EmptyTypes)!;
+    private static readonly MethodInfo EnginePopGuardContFailMethod =
+        typeof(Engine).GetMethod(nameof(Engine.PopGuardContFail), Type.EmptyTypes)!;
     // Chunk 216 — indexed-dispatch entry resolver (mirrors the WAM switch
     // cascade, returns the entry chain-node cursor). Keyed by functor id
     // so the same IL works under runtime promotion AND a persisted bundle
@@ -1589,6 +1596,7 @@ public sealed class IlPredicateCompiler
         emit.Switch(cursorLabels);
         emit.Branch(failLabel);                              // out of range (unreachable)
 
+        var gcCtx = new GuardContEmitContext();              // ADR-033 (no-op if unused)
         for (int mi = 0; mi < region.Members.Count; mi++)
         {
             var member = region.Members[mi];
@@ -1601,8 +1609,10 @@ public sealed class IlPredicateCompiler
             else if (TryDescribeIndexed(member, calleeMap, out var idxInfo))
                 EmitRegionIndexedMember(emit, member, mi, idxInfo!, ctx, effectiveSelf, calleeMap);
             else
-                EmitRegionMultiClauseMember(emit, member, mi, ctx, effectiveSelf, calleeMap);
+                EmitRegionMultiClauseMember(emit, member, mi, ctx, effectiveSelf, calleeMap, gcCtx);
         }
+
+        EmitGuardContEpilogues(emit, gcCtx, calleeMap, failLabel);   // ADR-033
 
         emit.MarkLabel(retLabel);
         emit.LoadArgument(0);
@@ -1637,7 +1647,8 @@ public sealed class IlPredicateCompiler
     private static void EmitRegionMultiClauseMember(
         Sigil.Emit<PredicateDelegate> emit, CompiledPredicate member, int mi,
         RegionEmitContext ctx, SelfDelegateEmitter emitSelf,
-        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
+        GuardContEmitContext? gcCtx = null)
     {
         if (!TryDescribeTryMeElseChain(member, calleeMap, out var chain) || chain is null)
             throw new InvalidOperationException(
@@ -1675,7 +1686,8 @@ public sealed class IlPredicateCompiler
                                 emit, member.BytecodeUnfused, s, e, fl, member.CallSites,
                                 emitSelfDelegate: emitSelf, calleeMap: calleeMap,
                                 forceLeafRuleInline: true,
-                                localSalt: $"_rm{mi0}g{i0}");
+                                localSalt: $"_rm{mi0}g{i0}",
+                                guardContCtx: gcCtx);
                         else
                             EmitClauseBody(
                                 emit, member.BytecodeUnfused, s, e, fl, member.CallSites,
@@ -3146,7 +3158,8 @@ public sealed class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? ruleInlineSites = null,
         RegionEmitContext? regionCtx = null,
         bool forceLeafRuleInline = false,
-        string localSalt = "")
+        string localSalt = "",
+        GuardContEmitContext? guardContCtx = null)
     {
         // In region mode every member is emitted into ONE shared IL method, so a
         // pc-based local name (unique within a single predicate, where pc starts at
@@ -4262,13 +4275,40 @@ public sealed class IlPredicateCompiler
                 // alternative chain with an in-place loop, so its failure is a
                 // direct branch to the guard's fail label. Only active from
                 // CP-free guard slices (forceLeafRuleInline).
+                //
+                // ADR-033 — with the continuation-stack mechanism on, the
+                // callee's code is NOT duplicated here: the site pushes its
+                // packed (ok, fail) continuation cursors and branches to the
+                // ONE shared per-method copy; the copy's epilogues pop and
+                // dispatch back through the continuation switch.
                 if (forceLeafRuleInline && calleeMap is not null
                     && calleeMap.TryGetValue(siteFunctorId, out var fdCallee)
                     && !(IsLeafPredicate(fdCallee) || IsInlinableLeafRule(fdCallee))
                     && TryDescribeFailDirectCallee(fdCallee, calleeMap, out var fdClauses, out _))
                 {
-                    EmitFailDirectCalleeInline(emit, fdCallee, fdClauses!,
-                        failLabel, calleeMap, $"{lt}_fd{pc}");
+                    if (CpFreeGuardContinuations && guardContCtx is not null)
+                    {
+                        var okLbl = emit.DefineLabel($"gc_ok{lt}_{pc}");
+                        int okCur = guardContCtx.AllocCursor(okLbl);
+                        int failCur = guardContCtx.AllocCursor(failLabel);
+                        emit.LoadArgument(0);
+                        emit.LoadConstant((okCur << 16) | failCur);
+                        emit.Call(EnginePushGuardContMethod);
+                        if (!guardContCtx.CalleeEntry.TryGetValue(
+                                siteFunctorId, out var entryLbl))
+                        {
+                            entryLbl = emit.DefineLabel($"gc_callee_{siteFunctorId}");
+                            guardContCtx.CalleeEntry[siteFunctorId] = entryLbl;
+                            guardContCtx.PendingCallees.Add(fdCallee);
+                        }
+                        emit.Branch(entryLbl);
+                        emit.MarkLabel(okLbl);
+                    }
+                    else
+                    {
+                        EmitFailDirectCalleeInline(emit, fdCallee, fdClauses!,
+                            failLabel, calleeMap, $"{lt}_fd{pc}");
+                    }
                     if (callSiteIndexCounter is not null && resumeLabels is not null)
                     {
                         // Dead resume cursor for this inlined site (see the
@@ -5438,6 +5478,66 @@ public sealed class IlPredicateCompiler
         }
     }
 
+    /// <summary>ADR-033 — gates the guard CONTINUATION-STACK mechanism: a
+    /// CP-free guard's call to a (non-leaf) fail-direct callee pushes its
+    /// ok/fail continuation cursors and branches to ONE shared per-method copy
+    /// of the callee, instead of duplicating the callee's code at every call
+    /// site. Prototype opt-in (<c>SHUMWAY_CPFREE_CONT=1</c>); the duplication
+    /// path remains the default.</summary>
+    public static bool CpFreeGuardContinuations { get; set; } =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_CPFREE_CONT") == "1";
+
+    /// <summary>ADR-033 — per-IL-method state for the continuation mechanism:
+    /// the continuation label table (cursor = index), the shared callee-copy
+    /// entry labels, and the lazily-created pop/dispatch epilogues.</summary>
+    internal sealed class GuardContEmitContext
+    {
+        public readonly List<Sigil.Label> ContLabels = new();
+        public readonly Dictionary<int, Sigil.Label> CalleeEntry = new();
+        public readonly List<CompiledPredicate> PendingCallees = new();
+        public Sigil.Label? FailEpilogue;
+        public Sigil.Label? OkEpilogue;
+        public int AllocCursor(Sigil.Label label)
+        {
+            ContLabels.Add(label);
+            return ContLabels.Count - 1;
+        }
+    }
+
+    /// <summary>ADR-033 — the method-end epilogues: each pending callee's ONE
+    /// shared copy (entered by <c>br</c> from its call sites), then the ok /
+    /// fail pop-and-dispatch blocks switching over the continuation label
+    /// table. No-op when no site used the mechanism.</summary>
+    private static void EmitGuardContEpilogues(
+        Sigil.Emit<PredicateDelegate> emit, GuardContEmitContext ctx,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
+        Sigil.Label methodFail)
+    {
+        if (ctx.PendingCallees.Count == 0) return;
+        ctx.FailEpilogue ??= emit.DefineLabel("gc_fail_epi");
+        ctx.OkEpilogue ??= emit.DefineLabel("gc_ok_epi");
+        foreach (var callee in ctx.PendingCallees)
+        {
+            emit.MarkLabel(ctx.CalleeEntry[callee.FunctorId]);
+            // Deterministic re-describe (the call site already validated it).
+            TryDescribeFailDirectCallee(callee, calleeMap, out var cls, out _);
+            EmitFailDirectCalleeInline(emit, callee, cls!, ctx.FailEpilogue,
+                calleeMap, $"_gcc{callee.FunctorId}");
+            emit.Branch(ctx.OkEpilogue);
+        }
+        var targets = ctx.ContLabels.ToArray();
+        emit.MarkLabel(ctx.OkEpilogue);
+        emit.LoadArgument(0);
+        emit.Call(EnginePopGuardContOkMethod);
+        emit.Switch(targets);
+        emit.Branch(methodFail);                 // out of range — unreachable
+        emit.MarkLabel(ctx.FailEpilogue);
+        emit.LoadArgument(0);
+        emit.Call(EnginePopGuardContFailMethod);
+        emit.Switch(targets);
+        emit.Branch(methodFail);
+    }
+
     /// <summary>ADR-031 — the recognised shape of a CP-free guard clause (see
     /// <see cref="TryGetCpFreeGuard"/>).</summary>
     internal readonly struct CpFreeGuardInfo
@@ -6535,6 +6635,7 @@ public sealed class IlPredicateCompiler
     {
         var clauses = info.Clauses;
         var failLabel = emit.DefineLabel("fail");
+        var gcCtx = new GuardContEmitContext();          // ADR-033 (no-op if unused)
 
         // Phase 16 chunk 188: multi-clause TryMeElseChain threads
         // non-leaf Call sites just like the chunk-182 single-clause
@@ -6621,7 +6722,8 @@ public sealed class IlPredicateCompiler
                         selfFunctorId: predicate.FunctorId,
                         selfTailLabel: selfEntry,
                         resetCursorBeforeSelfTail: true,
-                        forceLeafRuleInline: true),
+                        forceLeafRuleInline: true,
+                        guardContCtx: gcCtx),
                     predicate.BytecodeUnfused, clauses[i].Start, clauses[i].End, ginfo,
                     clauseLabels[i + 1], failLabel,
                     effectiveSelf, i + 1, predicate.Arity, salt: $"_c{i}");
@@ -6654,6 +6756,8 @@ public sealed class IlPredicateCompiler
                 selfTailLabel: selfEntry,
                 resetCursorBeforeSelfTail: true);
         }
+
+        EmitGuardContEpilogues(emit, gcCtx, calleeMap, failLabel);   // ADR-033
 
         emit.MarkLabel(failLabel);
         emit.LoadConstant(false);

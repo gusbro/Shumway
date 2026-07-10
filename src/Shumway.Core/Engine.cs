@@ -413,6 +413,7 @@ public sealed partial class Engine
             SnapHb = _hb,
             SnapBindingTrailTop = _bindingTrailTop,
             SnapExtraTrailTop = _extraTrailTop,
+            SnapGuardContTop = _guardContTop,
             RecoveryE = (int)_stack[_e + EnvCeOffset].Data,
             RecoveryCp = (int)_stack[_e + EnvCpOffset].Data,
         });
@@ -469,6 +470,8 @@ public sealed partial class Engine
         _heapTop = f.SnapHeapTop;
         _hb = f.SnapHb;
         _b = f.SnapB;
+        // ADR-033 — drop guard-continuation entries the guarded goal pushed.
+        _guardContTop = f.SnapGuardContTop;
         // The recovery goal runs as a fresh predicate activation, so its cut
         // barrier is the restored choice-point level.
         _b0 = f.SnapB;
@@ -2297,6 +2300,45 @@ public sealed partial class Engine
     {
         PushIlChoicePoint(del, nextCursor: 0, arity: arity, onPrune: onPrune);
     }
+
+    // ----- ADR-033: the guard continuation stack -----
+
+    // One packed int per active shared-copy call: (okCursor << 16) | failCursor.
+    // Pushed by a CP-free guard's call site just before branching to a shared
+    // fail-direct callee copy; popped by the copy's ok / fail epilogue, which
+    // dispatches the corresponding half through the method's continuation
+    // switch. Same-method only (v1): fail-direct code never leaves the IL
+    // method invocation, so the guard's snapshot locals are still live when a
+    // fail continuation dispatches. Holds ints — never a heap-GC root.
+    private int[] _guardContStack = new int[64];
+    private int _guardContTop;
+
+    /// <summary>ADR-033 — current guard-continuation stack top (snapshotted by
+    /// <c>catch/3</c> frames; reset at query setup).</summary>
+    public int GuardContTop => _guardContTop;
+
+    /// <summary>ADR-033 — truncates the guard-continuation stack (catch
+    /// unwind / query setup). Stale entries above the mark belong to an
+    /// abandoned computation.</summary>
+    public void ResetGuardContTop(int top) => _guardContTop = top;
+
+    /// <summary>ADR-033 — push a shared-copy call's continuations, packed
+    /// <c>(okCursor &lt;&lt; 16) | failCursor</c> (method-local continuation
+    /// cursors are small).</summary>
+    public void PushGuardCont(int packed)
+    {
+        if (_guardContTop == _guardContStack.Length)
+            System.Array.Resize(ref _guardContStack, _guardContStack.Length * 2);
+        _guardContStack[_guardContTop++] = packed;
+    }
+
+    /// <summary>ADR-033 — pop the top continuation pair and return the OK
+    /// cursor (the shared copy succeeded).</summary>
+    public int PopGuardContOk() => _guardContStack[--_guardContTop] >> 16;
+
+    /// <summary>ADR-033 — pop the top continuation pair and return the FAIL
+    /// cursor (the shared copy exhausted its alternatives).</summary>
+    public int PopGuardContFail() => _guardContStack[--_guardContTop] & 0xFFFF;
 
     // ----- ADR-031 case B: CP-free binding-guard support -----
 
