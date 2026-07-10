@@ -68,10 +68,8 @@ public static class BundleWriter
                 // can't classify rule-bearing vs fact-only dynamics from
                 // bytecode. Feed the split from the warm engine's rehydrated
                 // clause store instead.
-                var seededFids = new HashSet<int>();
                 foreach (int fid in warmEngine.DynamicFunctorsWithClauses())
                 {
-                    seededFids.Add(fid);
                     bool rules = false;
                     foreach (var c in warmEngine.DynamicClausesFor(fid))
                         if (c.Kind == Shumway.Compiler.Ast.ClauseKind.Rule) { rules = true; break; }
@@ -86,14 +84,6 @@ public static class BundleWriter
                         Shumway.Compiler.Il.IlPredicateCompiler.CpFreeGuardStats.DynPoolFacts++;
                     }
                 }
-                // Empty-dynamic census — declared / auto-promoted dynamics
-                // with NO clauses at link time (pure runtime-assert targets):
-                // the CpFreeEmptyDynInline measurement inlines a guard call
-                // to one as FAIL under the ADR-034 staleness test.
-                foreach (int fid in warmEngine.AllDynamicFunctors())
-                    if (!seededFids.Contains(fid))
-                        Shumway.Compiler.Il.IlPredicateCompiler.CpFreeGuardStats
-                            .EmptyDynamicFids[fid] = 1;
             }
             for (int i = 0; i < effective.Length; i++)
             {

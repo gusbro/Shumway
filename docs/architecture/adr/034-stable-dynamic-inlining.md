@@ -110,38 +110,43 @@ through a baked bundle):
   clears the live interpreter's slot; the next dispatch falls back to
   `ResolveByFunctorId` (live) → miss → the callee's WAM chain.
 
-## Extension: empty-dynamic-as-fail (SHIPPED default ON)
+## Rejected: empty-dynamic-as-fail (measured 2026-07-10, then removed)
 
-The measurement round for the "eviction cascade" idea showed it isn't needed:
-the residual `g3:inner-dynamic-facts` / `op:EnterDynamic-facts` sightings are
-dynamics with NO clauses at link time — pure runtime-assert targets (the ~500
-`arity_implicit_dynamic` + `linked as empty dynamic` host natives). A call to
-one **fails, exactly** — so its fast path is a branch to the guard's fail
-label, under the very same clause-entry staleness test: the first assert
-flips every embedding clause to the un-inlined fallback whose threaded by-fid
-call dispatches against the live predicate. No cascade, no new machinery —
-`IsDynMutated` already covers any mutated fid.
+The "eviction cascade for empty dynamics" question was answered by building
+the minimal alternative and measuring: a guard call to a dynamic with NO
+clauses at link time was inlined as FAIL (semantically exact while empty)
+under the same clause-entry staleness test — the first assert flipped every
+embedding clause to the live fallback. Static acceptance exploded — test/
+724 → 1 222 (+69%), testGen/ 601 → 1 269 (+111%) in the default
+configuration; tierG 5→315 / 47→498 —
 
-- Census: `CpFreeGuardStats.EmptyDynamicFids` (all dynamic functors minus the
-  seeded ones, fed by the link-time warm engine).
-- Recognizer + G3-inner describe accept an `enter_dynamic` callee whose fid is
-  in the set (det — zero solutions — so any guard position); the emit lowers
-  the call to a conditional-on-true branch to the fail label. Cross-tail
-  (`execute`) to an empty dynamic is NOT converted (v1; shows as
-  `op:EnterDynamic-facts` residual).
-- Gated `SHUMWAY_CPFREE_EMPTYDYN` — default ON; `=0` disables.
+**and it was still rejected**, on the user's runtime-cost argument:
 
-**Measured (whole-program links, 2026-07-10):** the single biggest widening
-of the whole ADR-031 arc —
+1. **In any reasonable program the assert happens** (assert-before-call is
+   the dominant idiom for these predicates), so the steady state is the
+   FALLBACK — which is exactly the pre-feature plain path — **plus** a
+   per-clause-entry membership probe and ~2% of dead optimized code. The
+   static acceptance counts measured link-time conversions, not runtime
+   wins; for the dominant population the feature is a net runtime cost.
+   The only true beneficiaries are never-asserted empties (dead features,
+   mode-gated hooks) — not worth taxing everything else.
+2. **The corpus counts were inflated by placeholders.** Most of the "empty
+   dynamics" are GX host-interface predicates (`i_*`) that these links model
+   as empty dynamics only because they were linked WITHOUT the host
+   (`--allow-undefined`). In a production link they are FOREIGN predicates
+   (`[PrologPredicate]` / `:- native`), and the guard machinery already
+   derives their det-ness from the implementation itself
+   (`BacktrackableDetector` — det foreigns are accepted as det builtins,
+   non-det ones are `IsBacktrackable` and rejected). Foreign calls need no
+   dynamic modelling at all.
 
-| corpus | default (dup) | CONT | of which empty-dyn |
-|---|---|---|---|
-| test/ (te/4) | 724 → **1 222** (+69%) | 733 → **1 296** (+77%) | 498 / 563 |
-| testGen/ (generate/3) | 601 → **1 269** (+111%) | 650 → **1 453** (+124%) | 668 / 803 |
+What the assert-before-call idiom would actually profit from is the
+**runtime tier**: caller re-promotion with the SETTLED fact set inlined
+(ADR-023's churn re-arm already re-snapshots the predicate itself after 4096
+mutation-free calls) plus caller invalidation — a properly-scoped cascade /
+generation check. Future work, to be sized on a runnable corpus.
 
-tierG 5→315 / 47→498; tierG2 468→721 / 424→776 (CONT). Bundles +1.7–2.2%.
-
-### Mixed-cycle soundness fix (found by this measurement)
+### Mixed-cycle soundness fix (found by the same measurement — KEPT)
 
 The deep-G3 tail-cycle rule accepted a cycle whose BACK-edge was tail without
 checking the rest of the segment — a MIXED cycle (`A -Call→ B -Execute→ A`)
