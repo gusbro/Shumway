@@ -149,6 +149,94 @@ public class Adr034StableDynamicTests
 
     [Theory]
     [MemberData(nameof(Modes))]
+    public void EmptyDynamic_FailFast_ThenLiveAfterAssert(
+        Adr031CpFreeGuardTests.Mode m)
+    {
+        // Empty-dynamic-as-fail (gated) — e/1 has NO clauses at link time: a
+        // guard call to it is inlined as FAIL (semantically exact) under the
+        // ADR-034 clause-entry staleness test; the first assert flips the
+        // clause to the fallback whose threaded call sees the live predicate.
+        bool old = Shumway.Compiler.Il.IlPredicateCompiler.CpFreeEmptyDynInline;
+        Shumway.Compiler.Il.IlPredicateCompiler.CpFreeEmptyDynInline = true;
+        try
+        {
+            var e = Engine(m,
+                ":- public g/2.\n"
+                + ":- dynamic e/1.\n"
+                + "g(X, R) :- e(X), !, R = found.\n"
+                + "g(_, R) :- R = none.\n");
+            Assert.True(e.Query("g(1, R), R == none.").Success);    // fast fail path
+            Assert.Single(e.QueryAll("g(1, R)."));
+            // Mutation, same query — the clause-entry test must route to the
+            // fallback (ISO logical update view).
+            Assert.True(e.Query("assertz(e(1)), g(1, R), R == found.").Success);
+            Assert.True(e.Query("g(1, R), R == found.").Success);   // cross-query
+            Assert.True(e.Query("g(2, R), R == none.").Success);
+            Assert.Single(e.QueryAll("g(1, R)."));
+        }
+        finally
+        {
+            Shumway.Compiler.Il.IlPredicateCompiler.CpFreeEmptyDynInline = old;
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(Modes))]
+    public void EmptyDynamic_InsideG3Inner_CollectedTransitively(
+        Adr031CpFreeGuardTests.Mode m)
+    {
+        // The empty dynamic one level DOWN (a G3 inner): the fid must reach
+        // the caller clause's staleness test transitively.
+        bool old = Shumway.Compiler.Il.IlPredicateCompiler.CpFreeEmptyDynInline;
+        Shumway.Compiler.Il.IlPredicateCompiler.CpFreeEmptyDynInline = true;
+        try
+        {
+            var e = Engine(m,
+                ":- public v/2.\n"
+                + ":- dynamic e/1.\n"
+                + "valid(X) :- integer(X), e(X).\n"
+                + "v(X, R) :- valid(X), !, R = ok.\n"
+                + "v(_, R) :- R = bad.\n");
+            Assert.True(e.Query("v(1, R), R == bad.").Success);
+            Assert.True(e.Query("assertz(e(1)), v(1, R), R == ok.").Success);
+            Assert.True(e.Query("v(1, R), R == ok.").Success);
+            Assert.True(e.Query("v(2, R), R == bad.").Success);
+            Assert.Single(e.QueryAll("v(1, R)."));
+        }
+        finally
+        {
+            Shumway.Compiler.Il.IlPredicateCompiler.CpFreeEmptyDynInline = old;
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(Modes))]
+    public void EmptyDynamic_MutationInSameGuard_NotCombined(
+        Adr031CpFreeGuardTests.Mode m)
+    {
+        // The staleness-window shape, empty-dynamic flavour: the guard
+        // asserts to e/1 and then calls it — the combination must stay on
+        // the plain path (dyn+mutation), where the call dispatches live.
+        bool old = Shumway.Compiler.Il.IlPredicateCompiler.CpFreeEmptyDynInline;
+        Shumway.Compiler.Il.IlPredicateCompiler.CpFreeEmptyDynInline = true;
+        try
+        {
+            var e = Engine(m,
+                ":- public k/2.\n"
+                + ":- dynamic e/1.\n"
+                + "k(X, R) :- assertz(e(X)), e(X), !, R = y.\n"
+                + "k(_, R) :- R = n.\n");
+            Assert.True(e.Query("k(5, R), R == y.").Success);
+            Assert.Single(e.QueryAll("k(5, R)."));
+        }
+        finally
+        {
+            Shumway.Compiler.Il.IlPredicateCompiler.CpFreeEmptyDynInline = old;
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(Modes))]
     public void SnapshotInsideG3Inner_CollectedTransitively(
         Adr031CpFreeGuardTests.Mode m)
     {

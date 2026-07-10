@@ -110,6 +110,49 @@ through a baked bundle):
   clears the live interpreter's slot; the next dispatch falls back to
   `ResolveByFunctorId` (live) → miss → the callee's WAM chain.
 
+## Extension: empty-dynamic-as-fail (SHIPPED default ON)
+
+The measurement round for the "eviction cascade" idea showed it isn't needed:
+the residual `g3:inner-dynamic-facts` / `op:EnterDynamic-facts` sightings are
+dynamics with NO clauses at link time — pure runtime-assert targets (the ~500
+`arity_implicit_dynamic` + `linked as empty dynamic` host natives). A call to
+one **fails, exactly** — so its fast path is a branch to the guard's fail
+label, under the very same clause-entry staleness test: the first assert
+flips every embedding clause to the un-inlined fallback whose threaded by-fid
+call dispatches against the live predicate. No cascade, no new machinery —
+`IsDynMutated` already covers any mutated fid.
+
+- Census: `CpFreeGuardStats.EmptyDynamicFids` (all dynamic functors minus the
+  seeded ones, fed by the link-time warm engine).
+- Recognizer + G3-inner describe accept an `enter_dynamic` callee whose fid is
+  in the set (det — zero solutions — so any guard position); the emit lowers
+  the call to a conditional-on-true branch to the fail label. Cross-tail
+  (`execute`) to an empty dynamic is NOT converted (v1; shows as
+  `op:EnterDynamic-facts` residual).
+- Gated `SHUMWAY_CPFREE_EMPTYDYN` — default ON; `=0` disables.
+
+**Measured (whole-program links, 2026-07-10):** the single biggest widening
+of the whole ADR-031 arc —
+
+| corpus | default (dup) | CONT | of which empty-dyn |
+|---|---|---|---|
+| test/ (te/4) | 724 → **1 222** (+69%) | 733 → **1 296** (+77%) | 498 / 563 |
+| testGen/ (generate/3) | 601 → **1 269** (+111%) | 650 → **1 453** (+124%) | 668 / 803 |
+
+tierG 5→315 / 47→498; tierG2 468→721 / 424→776 (CONT). Bundles +1.7–2.2%.
+
+### Mixed-cycle soundness fix (found by this measurement)
+
+The deep-G3 tail-cycle rule accepted a cycle whose BACK-edge was tail without
+checking the rest of the segment — a MIXED cycle (`A -Call→ B -Execute→ A`)
+nests activations of the same copy (the case-3 IL-local clobber), and the
+describe became entry-point-dependent (accepted from A, rejected from B — the
+emit's re-describe from B then crashed the link). Fix: `visiting` maps each
+on-path fid to the count of NON-TAIL edges at its entry; a back-edge is
+accepted only when the count is unchanged (pure-tail cycle segment), which is
+also entry-point-independent (a mixed cycle rejects from every entry).
+Measured residuals: `g3:cycle-mixed` 67, `g3:cycle-nontail` 48 (test/).
+
 ## Soundness argument
 
 The check dominates every path to embedded-snapshot code: clause entries are

@@ -4320,6 +4320,33 @@ public sealed class IlPredicateCompiler
                     continue;
                 }
 
+                // Empty-dynamic-as-fail (gated) — in a CP-free guard slice, a
+                // call to a dynamic with NO clauses at link time IS failure:
+                // branch to the guard's fail label. Sound under the ADR-034
+                // clause-entry staleness test (the recognizer collected the
+                // fid, so the clause has the test + fallback; the first
+                // assert routes every later activation to the fallback's
+                // threaded live call). The branch is conditional-on-true so
+                // the following (unreachable) ops keep Sigil's verifier happy.
+                if (forceLeafRuleInline && CpFreeEmptyDynInline
+                    && calleeMap is not null
+                    && calleeMap.TryGetValue(siteFunctorId, out var edCallee)
+                    && (Opcode)edCallee.BytecodeUnfused[0] == Opcode.EnterDynamic
+                    && CpFreeGuardStats.EmptyDynamicFids.ContainsKey(siteFunctorId))
+                {
+                    emit.LoadConstant(1);
+                    emit.BranchIfTrue(failLabel);
+                    if (callSiteIndexCounter is not null && resumeLabels is not null)
+                    {
+                        // Dead resume cursor for this site (the leaf-inline
+                        // precedent) — the chain dispatch switch references it.
+                        int edSiteIdx = callSiteIndexCounter();
+                        emit.MarkLabel(resumeLabels[edSiteIdx - 1]);
+                    }
+                    pc += OpcodeTable.Get(op).Size;
+                    continue;
+                }
+
                 // ADR-031 G2 — a CP-free guard's call to a FAIL-DIRECT callee
                 // (multi-clause and/or self-tail-recursive; see
                 // TryDescribeFailDirectCallee) is inlined as a sequential
@@ -4425,7 +4452,10 @@ public sealed class IlPredicateCompiler
                 if (callSiteIndexCounter is null || resumeLabels is null)
                     throw new InvalidOperationException(
                         "Threaded non-tail Call requires callSiteIndexCounter + "
-                        + "resumeLabels for forward-resume cursor allocation.");
+                        + "resumeLabels for forward-resume cursor allocation "
+                        + $"(owner {DescribeFid(_emitOwnerFid)}, pc={pc}, "
+                        + $"callee {DescribeFid(siteFunctorId)}, salt='{lt}', "
+                        + $"force={forceLeafRuleInline}, region={regionCtx is not null}).");
 
                 int siteIdx = callSiteIndexCounter();
                 // Phase 16: the cursor encoded in the resume marker is
@@ -5509,9 +5539,10 @@ public sealed class IlPredicateCompiler
         /// link-time IL build from the warm engine's rehydrated seeds (the
         /// link calleeMap only sees hollow trampolines); the rules/facts
         /// shape-detail split consults this before falling back to the
-        /// bytecode scan. Populated single-threaded before emit; read-only
-        /// during emit.</summary>
-        public static readonly HashSet<int> RuleBearingDynamicFids = new();
+        /// bytecode scan. Concurrent: parallel test hosts build bundles
+        /// side by side (one link per process in the CLI).</summary>
+        public static readonly System.Collections.Concurrent.ConcurrentDictionary<int, byte>
+            RuleBearingDynamicFids = new();
 
         /// <summary>Stable-dynamic census — dynamic predicates with clauses,
         /// split rule-bearing (the mutation-cold fast-path candidate pool)
@@ -5523,6 +5554,20 @@ public sealed class IlPredicateCompiler
         /// clause-entry staleness test + fallback).</summary>
         public static long AcceptWithDynSnapshot;
 
+        /// <summary>Empty-dynamic inlining (ADR-034 extension, gated
+        /// <see cref="CpFreeEmptyDynInline"/>) — dynamic predicates with NO
+        /// clauses at link time (pure runtime-assert targets). Populated by
+        /// the link-time IL build from the warm engine (all dynamic functors
+        /// minus the seeded ones); a guard call to one is inlined as FAIL
+        /// under the same clause-entry staleness test + fallback machinery.</summary>
+        public static readonly System.Collections.Concurrent.ConcurrentDictionary<int, byte>
+            EmptyDynamicFids = new();
+
+        /// <summary>Accepted CP-free guard clauses whose guard inlines one or
+        /// more EMPTY dynamics as fail (checked) — the measurement counter
+        /// for whether empty-dynamic support pays.</summary>
+        public static long AcceptWithEmptyDyn;
+
         public static void Reset()
         {
             TierA = TierB = TierGLeaf = TierG2 = 0;
@@ -5533,6 +5578,8 @@ public sealed class IlPredicateCompiler
             RuleBearingDynamicFids.Clear();
             DynPoolRules = DynPoolFacts = 0;
             AcceptWithDynSnapshot = 0;
+            EmptyDynamicFids.Clear();
+            AcceptWithEmptyDyn = 0;
         }
 
         public static long AcceptTotal => TierA + TierB + TierGLeaf + TierG2;
@@ -5556,6 +5603,8 @@ public sealed class IlPredicateCompiler
                 sb.AppendLine($"    dynamic pool: rule-bearing={DynPoolRules} fact-only={DynPoolFacts}");
             if (AcceptWithDynSnapshot > 0)
                 sb.AppendLine($"    accepted w/ inlined dynamic snapshot (checked): {AcceptWithDynSnapshot}");
+            if (AcceptWithEmptyDyn > 0)
+                sb.AppendLine($"    accepted w/ empty-dynamic-as-fail (checked)   : {AcceptWithEmptyDyn}");
             sb.Append($"    callee shape (control/backtrack)  : {RejectCalleeShape}");
             return sb.ToString();
         }
@@ -5569,6 +5618,20 @@ public sealed class IlPredicateCompiler
     /// path remains the default.</summary>
     public static bool CpFreeGuardContinuations { get; set; } =
         System.Environment.GetEnvironmentVariable("SHUMWAY_CPFREE_CONT") == "1";
+
+    /// <summary>ADR-034 extension (measurement-gated,
+    /// <c>SHUMWAY_CPFREE_EMPTYDYN=1</c>) — a guard call to a dynamic predicate
+    /// with NO clauses at link time (a pure runtime-assert target,
+    /// <see cref="CpFreeGuardStats.EmptyDynamicFids"/>) is inlined as FAIL:
+    /// semantically exact while the predicate stays empty, and guarded by the
+    /// same ADR-034 clause-entry staleness test — the first assert flips the
+    /// clause to the un-inlined fallback whose threaded call sees the live
+    /// predicate. Replaces the heavier eviction-cascade idea for empty
+    /// dynamics. Default ON (measured: test/ +69%, testGen/ +111% accepted
+    /// CP-free guards in the default configuration); <c>SHUMWAY_CPFREE_EMPTYDYN=0</c>
+    /// disables.</summary>
+    public static bool CpFreeEmptyDynInline { get; set; } =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_CPFREE_EMPTYDYN") != "0";
 
     /// <summary>ADR-033 — per-IL-method state for the continuation mechanism:
     /// the continuation label table (cursor = index), the shared callee-copy
@@ -5678,6 +5741,9 @@ public sealed class IlPredicateCompiler
     {
         public List<int>? DynFids;
         public bool DbMutation;
+        /// <summary>At least one collected fid is an EMPTY dynamic inlined as
+        /// fail (the <see cref="CpFreeEmptyDynInline"/> measurement).</summary>
+        public bool EmptyDyn;
         public void AddDyn(int fid)
         {
             DynFids ??= new List<int>();
@@ -5754,6 +5820,8 @@ public sealed class IlPredicateCompiler
                 System.Threading.Interlocked.Increment(ref CpFreeGuardStats.TierA);
             if (extras.DynFids is { Count: > 0 })
                 System.Threading.Interlocked.Increment(ref CpFreeGuardStats.AcceptWithDynSnapshot);
+            if (extras.EmptyDyn)
+                System.Threading.Interlocked.Increment(ref CpFreeGuardStats.AcceptWithEmptyDyn);
         }
         // ADR-034 — a guard that inlines a dynamic snapshot must not also be
         // able to MUTATE the database (the clause-entry staleness test would
@@ -5901,6 +5969,22 @@ public sealed class IlPredicateCompiler
                         CountReject(ref CpFreeGuardStats.RejectCalleeUnresolved, pc);
                         return false;
                     }
+    		    // Empty-dynamic-as-fail (gated) — a call to a dynamic with
+                    // NO clauses at link time fails, exactly; the collected
+                    // fid gives the clause the staleness test + fallback, so
+                    // the first assert routes to the live predicate. Empty =
+                    // zero solutions = det, so any guard position is fine.
+                    if (CpFreeEmptyDynInline
+                        && (Opcode)callee.BytecodeUnfused[0] == Opcode.EnterDynamic
+                        && CpFreeGuardStats.EmptyDynamicFids.ContainsKey(fid))
+                    {
+                        extras.AddDyn(fid);
+                        extras.EmptyDyn = true;
+                        sawCall = true;
+                        snapshot = true;               // call staging may bind/allocate
+                        regSave = true;
+                        break;
+                    }
                     // ADR-034 — a dynamic SNAPSHOT callee (ADR-023 bake): its
                     // truth can change at runtime, so inlining is allowed only
                     // for rule-bearing (mutation-cold) dynamics, and only with
@@ -5997,6 +6081,22 @@ public sealed class IlPredicateCompiler
         return false;
     }
 
+    /// <summary>Diagnostic — renders a functor id as <c>name/arity(fid)</c>
+    /// for emit-time error messages (fids are process-local, useless alone).</summary>
+    private static string DescribeFid(int fid)
+    {
+        try
+        {
+            var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(fid);
+            string name = Shumway.Core.AtomTable.GetById(atomId)?.Name ?? "?";
+            return $"{name}/{arity}(fid={fid})";
+        }
+        catch
+        {
+            return $"fid={fid}";
+        }
+    }
+
     /// <summary>Stats classifier — does a dynamic predicate's compiled chain
     /// contain RULE bodies (vs. facts only)? The practical Arity model: a
     /// dynamic that already has rules with bodies (`:- visible` for
@@ -6015,7 +6115,7 @@ public sealed class IlPredicateCompiler
         // DynamicSeeds) — the census set fed from the warm engine's clause
         // store is the ground truth there. Runtime: the set is empty and the
         // bytecode scan below sees the real in-place chain with clause bodies.
-        if (CpFreeGuardStats.RuleBearingDynamicFids.Contains(pred.FunctorId))
+        if (CpFreeGuardStats.RuleBearingDynamicFids.ContainsKey(pred.FunctorId))
             return true;
         byte[] code = pred.BytecodeUnfused;
         int pc = 0;
@@ -6249,16 +6349,22 @@ public sealed class IlPredicateCompiler
         out FailDirectReject reject,
         FailDirectExtras? extras = null)
     {
-        var visiting = new HashSet<int> { callee.FunctorId };
+        // visiting maps each on-path fid to the number of NON-TAIL edges on
+        // the path when it was entered — a tail-cycle back-edge is sound only
+        // when the whole cycle segment is tail edges (counts equal), which
+        // also makes the describe ENTRY-POINT-INDEPENDENT for cyclic SCCs
+        // (a mixed cycle rejects from every entry; the emit re-describes from
+        // a different node than the recognizer validated).
+        var visiting = new Dictionary<int, int> { [callee.FunctorId] = 0 };
         int budget = FailDirectMaxTotalBytes - callee.BytecodeUnfused.Length;
         return DescribeFailDirectCore(
-            callee, calleeMap, visiting, ref budget, out clauses, out reject, extras);
+            callee, calleeMap, visiting, 0, ref budget, out clauses, out reject, extras);
     }
 
     private static bool DescribeFailDirectCore(
         CompiledPredicate callee,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
-        HashSet<int> visiting, ref int budget,
+        Dictionary<int, int> visiting, int nonTailCount, ref int budget,
         out List<FailDirectClause>? clauses,
         out FailDirectReject reject,
         FailDirectExtras? extras = null)
@@ -6356,23 +6462,31 @@ public sealed class IlPredicateCompiler
                     // describe path, so it has (or will have) its own shared
                     // copy — the emit is a plain `br` into it, inheriting the
                     // continuations (LCO; nothing pushed, O(1) stack). Sound
-                    // with per-copy IL locals because the position rule
-                    // (last-clause-or-cut-committed, enforced below for every
-                    // cross-tail clause) forfeits the abandoned activation's
-                    // alternatives — its entry marks are dead when the next
-                    // activation of the same copy overwrites them. The
-                    // greatest-fixpoint reading: accept the cycle edge; if any
-                    // participant's own walk fails, ITS describe rejects and
-                    // the whole acceptance collapses. Det is unknown at the
-                    // cycle edge → conservative FALSE (the caller never counts
-                    // as det, so the callee stays out of mid-guard positions).
-                    if (!visiting.Add(fid))
+                    // with per-copy IL locals ONLY when the WHOLE cycle
+                    // segment is tail edges (no non-tail edge since the
+                    // target was entered — counts equal): the position rule
+                    // (last-clause-or-cut-committed) then forfeits every
+                    // abandoned activation's alternatives, so its entry marks
+                    // are dead when the next activation of the same copy
+                    // overwrites them. A MIXED cycle (a non-tail edge inside,
+                    // e.g. A -Call-> B -Execute-> A) nests activations of the
+                    // same copy → IL-local clobber → rejected (the case-3
+                    // frame machinery would be needed). Det is unknown at the
+                    // cycle edge → conservative FALSE.
+                    if (visiting.TryGetValue(fid, out int tgtEntryNt))
                     {
+                        if (tgtEntryNt != nonTailCount)
+                        {
+                            CpFreeGuardStats.BumpShapeDetail("g3:cycle-mixed");
+                            reject = FailDirectReject.HasCalls;
+                            return false;
+                        }
                         termPc = pc;
                         crossTailFid = fid;
                         crossTailDet = false;
                         break;
                     }
+                    visiting[fid] = nonTailCount;
                     bool tgtOk, tgtDet = false;
                     try
                     {
@@ -6384,8 +6498,10 @@ public sealed class IlPredicateCompiler
                         {
                             // Leaves still need a describable copy — run the
                             // core describe (single-clause leaves pass it).
+                            // Tail edge: nonTailCount unchanged.
                             tgtOk = DescribeFailDirectCore(tailTgt, calleeMap,
-                                visiting, ref budget, out var leafCls, out _, extras);
+                                visiting, nonTailCount, ref budget,
+                                out var leafCls, out _, extras);
                             tgtDet = tgtOk && FailDirectCalleeIsDet(leafCls!);
                         }
                         else
@@ -6394,13 +6510,14 @@ public sealed class IlPredicateCompiler
                             // shared copy per method, not per-site duplication,
                             // so the cumulative budget does not apply (the
                             // per-callee caps inside the describe still bound
-                            // each copy).
+                            // each copy). Tail edge: nonTailCount unchanged.
                             int tgtBudget = FailDirectMaxTotalBytes
                                 - tailTgt.BytecodeUnfused.Length;
                             List<FailDirectClause>? tgtCls = null;
                             tgtOk = tgtBudget >= 0
                                 && DescribeFailDirectCore(tailTgt, calleeMap,
-                                    visiting, ref tgtBudget, out tgtCls, out _, extras);
+                                    visiting, nonTailCount, ref tgtBudget,
+                                    out tgtCls, out _, extras);
                             if (tgtOk)
                                 tgtDet = FailDirectCalleeIsDet(tgtCls!);
                         }
@@ -6446,7 +6563,7 @@ public sealed class IlPredicateCompiler
                             reject = FailDirectReject.HasCalls;
                             return false;
                         }
-                        if (!visiting.Add(ifid))                 // cycle = mutual recursion
+                        if (!visiting.TryAdd(ifid, nonTailCount + 1))   // cycle = mutual recursion
                         {
                             // ADR-033 deep G3 v1 — NON-tail cycles stay
                             // rejected even under continuations: a re-entered
@@ -6482,18 +6599,35 @@ public sealed class IlPredicateCompiler
                             }
                             else if ((Opcode)inner.BytecodeUnfused[0] == Opcode.EnterDynamic)
                             {
-                                // A dynamic inner can never be statically
-                                // inlined (its clauses change at runtime) —
-                                // classify without recursing (the recursion
-                                // would pollute the inner-reject counters).
-                                // Split by clause shape: a rule-bearing dynamic
-                                // (:- visible for findall/setof visibility, the
-                                // Arity idiom) is mutation-cold in practice —
-                                // the stable-dynamic fast-path candidate pool.
-                                innerOk = false;
-                                g3Detail = DynamicHasRuleBodies(inner)
-                                    ? "g3:inner-dynamic-rules"
-                                    : "g3:inner-dynamic-facts";
+                                // Empty-dynamic-as-fail (gated) — see the
+                                // recognizer's twin: an empty inner fails
+                                // exactly (det), under the caller clause's
+                                // staleness test.
+                                if (CpFreeEmptyDynInline
+                                    && CpFreeGuardStats.EmptyDynamicFids.ContainsKey(ifid))
+                                {
+                                    innerOk = true;
+                                    if (extras is not null)
+                                    {
+                                        extras.AddDyn(ifid);
+                                        extras.EmptyDyn = true;
+                                    }
+                                }
+                                else
+                                {
+                                    // A dynamic inner can never be statically
+                                    // inlined (its clauses change at runtime) —
+                                    // classify without recursing (the recursion
+                                    // would pollute the inner-reject counters).
+                                    // Split by clause shape: a rule-bearing dynamic
+                                    // (:- visible for findall/setof visibility, the
+                                    // Arity idiom) is mutation-cold in practice —
+                                    // the stable-dynamic fast-path candidate pool.
+                                    innerOk = false;
+                                    g3Detail = DynamicHasRuleBodies(inner)
+                                        ? "g3:inner-dynamic-rules"
+                                        : "g3:inner-dynamic-facts";
+                                }
                             }
                             else
                             {
@@ -6515,7 +6649,8 @@ public sealed class IlPredicateCompiler
                                     g3Detail = "g3:budget";
                                 }
                                 else if (!DescribeFailDirectCore(inner, calleeMap,
-                                             visiting, ref innerBudget, out var innerCls,
+                                             visiting, nonTailCount + 1,   // non-tail edge
+                                             ref innerBudget, out var innerCls,
                                              out var innerReject, extras))
                                 {
                                     innerOk = false;
