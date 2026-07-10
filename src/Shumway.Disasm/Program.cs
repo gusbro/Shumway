@@ -214,6 +214,10 @@ internal static class Program
                     if (byOp[b] > 0)
                         Console.WriteLine(string.Join('\t', "CPFREEOP",
                             ((Shumway.Core.Opcode)b).ToString(), byOp[b]));
+                // Sub-reason breakdown of the callee-shape rejections.
+                foreach (var kv in Shumway.Compiler.Il.IlPredicateCompiler
+                             .CpFreeGuardStats.RejectShapeDetail)
+                    Console.WriteLine(string.Join('\t', "CPFREESH", kv.Key, kv.Value));
             }
             catch (Exception ex)
             {

@@ -582,6 +582,58 @@ public class Adr031BindingGuardTests
 
     [Theory]
     [MemberData(nameof(Modes))]
+    public void G3_NestedFailDirectCallees_InlineTransitively(
+        Adr031CpFreeGuardTests.Mode m)
+    {
+        var e = TierGEngine(m,
+            ":- public p/2, q/2.\n"
+            // val/1 calls h1/1 (leaf rule, det) NON-tail then tests more.
+            + "h1(X) :- X > 3.\n"
+            + "val(X) :- h1(X), X < 100.\n"
+            + "p(X, R) :- val(X), !, R = inr.\n"
+            + "p(_, R) :- R = outr.\n"
+            // wrap/2 calls a DET multi-clause inner (cls2, all-but-last-cut)
+            // mid-body — allowed by the nested det rule.
+            + "cls2(X, neg) :- X < 0, !.\n"
+            + "cls2(_, pos).\n"
+            + "wrap(X, C) :- cls2(X, C), C == pos.\n"
+            + "q(X, R) :- wrap(X, C0), !, R = ok(C0).\n"
+            + "q(_, R) :- R = none.\n");
+        Assert.True(e.Query("p(50, R), R == inr.").Success);
+        Assert.True(e.Query("p(2, R), R == outr.").Success);      // inner h1 fails
+        Assert.True(e.Query("p(200, R), R == outr.").Success);    // outer test fails
+        Assert.Single(e.QueryAll("p(50, R)."));
+        Assert.Single(e.QueryAll("p(2, R)."));
+
+        Assert.True(e.Query("q(5, R), R == ok(pos).").Success);
+        Assert.True(e.Query("q(-5, R), R == none.").Success);     // cls2→neg, C==pos fails, undo
+        Assert.Single(e.QueryAll("q(5, R)."));
+        Assert.Single(e.QueryAll("q(-5, R)."));
+    }
+
+    [Fact]
+    public void G3_MutualRecursion_Rejected_ByDescribe()
+    {
+        // Mutual recursion cannot be statically inlined — the visiting set
+        // rejects the cycle (describe-level check; running it would loop).
+        var pc = new Shumway.Compiler.Wam.PredicateCompiler();
+        var ma = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
+            "ma(X):-mb(X).").ReadAll().ToList());
+        var mb = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
+            "mb(X):-ma(X).").ReadAll().ToList());
+        var map = new System.Collections.Generic.Dictionary<
+            int, Shumway.Compiler.Wam.CompiledPredicate>
+        {
+            [ma.FunctorId] = ma,
+            [mb.FunctorId] = mb,
+        };
+        Assert.False(IlPredicateCompiler.TryDescribeFailDirectCallee(
+            ma, map, out _, out var rej));
+        Assert.Equal(IlPredicateCompiler.FailDirectReject.HasCalls, rej);
+    }
+
+    [Theory]
+    [MemberData(nameof(Modes))]
     public void FailDirect_RecursiveValidator_CommitAndDeepFail(
         Adr031CpFreeGuardTests.Mode m)
     {

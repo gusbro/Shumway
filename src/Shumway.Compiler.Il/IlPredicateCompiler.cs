@@ -4265,7 +4265,7 @@ public sealed class IlPredicateCompiler
                 if (forceLeafRuleInline && calleeMap is not null
                     && calleeMap.TryGetValue(siteFunctorId, out var fdCallee)
                     && !(IsLeafPredicate(fdCallee) || IsInlinableLeafRule(fdCallee))
-                    && TryDescribeFailDirectCallee(fdCallee, out var fdClauses))
+                    && TryDescribeFailDirectCallee(fdCallee, calleeMap, out var fdClauses, out _))
                 {
                     EmitFailDirectCalleeInline(emit, fdCallee, fdClauses!,
                         failLabel, calleeMap, $"{lt}_fd{pc}");
@@ -5397,12 +5397,23 @@ public sealed class IlPredicateCompiler
         /// opcode byte.</summary>
         public static readonly long[] RejectGuardOpByOpcode = new long[256];
 
+        /// <summary>Sub-reason breakdown of <see cref="RejectCalleeShape"/> —
+        /// the bucket is a mixed bag (non-whitelist callee ops, backtrackable
+        /// builtins, unrecognised clause ranges, frame discipline, the
+        /// multi-solution position rule …); this ranks its composition.</summary>
+        public static readonly System.Collections.Concurrent.ConcurrentDictionary<string, long>
+            RejectShapeDetail = new();
+
+        internal static void BumpShapeDetail(string detail)
+            => RejectShapeDetail.AddOrUpdate(detail, 1, static (_, v) => v + 1);
+
         public static void Reset()
         {
             TierA = TierB = TierGLeaf = TierG2 = 0;
             RejectGuardShape = RejectCalleeUnresolved = RejectCalleeCalls = 0;
             RejectCalleeCaps = RejectCalleeCut = RejectCalleeShape = 0;
             System.Array.Clear(RejectGuardOpByOpcode);
+            RejectShapeDetail.Clear();
         }
 
         public static long AcceptTotal => TierA + TierB + TierGLeaf + TierG2;
@@ -5642,7 +5653,7 @@ public sealed class IlPredicateCompiler
                     {
                         sawCall = true;
                     }
-                    else if (TryDescribeFailDirectCallee(callee, out var fdCls, out var fdReject))
+                    else if (TryDescribeFailDirectCallee(callee, calleeMap, out var fdCls, out var fdReject))
                     {
                         // SOUNDNESS — a MULTI-clause callee can yield MULTIPLE
                         // solutions (overlapping clauses binding differently);
@@ -5657,6 +5668,7 @@ public sealed class IlPredicateCompiler
                             && !FailDirectCalleeIsDet(fdCls!)
                             && !NextRealOpIsCut(code, pc + OpcodeTable.Get(op).Size, end))
                         {
+                            CpFreeGuardStats.BumpShapeDetail("multi-mid-guard");
                             CountReject(ref CpFreeGuardStats.RejectCalleeShape, pc);
                             return false;
                         }
@@ -5835,19 +5847,52 @@ public sealed class IlPredicateCompiler
     /// 512 bytes) to bound inline growth.</summary>
     internal static bool TryDescribeFailDirectCallee(
         CompiledPredicate callee, out List<FailDirectClause>? clauses)
-        => TryDescribeFailDirectCallee(callee, out clauses, out _);
+        => TryDescribeFailDirectCallee(callee, null, out clauses, out _);
+
+    internal static bool TryDescribeFailDirectCallee(
+        CompiledPredicate callee, out List<FailDirectClause>? clauses,
+        out FailDirectReject reject)
+        => TryDescribeFailDirectCallee(callee, null, out clauses, out reject);
 
     /// <summary>ADR-031 G2 fail-direct caps — a callee over these bounds keeps
     /// its choice point. Prudence bounds (per-site inline growth + the linear
     /// alternative chain replacing indexed dispatch), NOT soundness bounds:
     /// raising them is safe, it just inlines more code and scans more
     /// alternatives per call. <see cref="CpFreeGuardStats.RejectCalleeCaps"/>
-    /// counts the population a raise would admit.</summary>
+    /// counts the population a raise would admit. NOTE (user directive,
+    /// recorded in ADR-031): raising <see cref="FailDirectMaxClauses"/> must
+    /// come with a proper IL switch emission, never a wider linear chain.</summary>
     internal static int FailDirectMaxClauses { get; set; } = 4;
     internal static int FailDirectMaxBytes { get; set; } = 512;
 
+    /// <summary>ADR-031 G3 — the TOTAL bytecode budget across a nested
+    /// fail-direct inline (the guard callee plus every transitively inlined
+    /// inner callee, per site). Bounds the compounding code growth of the
+    /// nesting; the per-callee caps above still apply at every level.</summary>
+    internal static int FailDirectMaxTotalBytes { get; set; } = 1536;
+
+    /// <summary>G3 entry — with a <paramref name="calleeMap"/>, callee bodies
+    /// may CALL other predicates when each inner callee is itself
+    /// leaf-inlinable or fail-direct (recursively; DAG only — a visited set
+    /// rejects mutual recursion) AND deterministic or immediately followed by
+    /// the clause's commit cut (the nested multi-solution rule).</summary>
     internal static bool TryDescribeFailDirectCallee(
-        CompiledPredicate callee, out List<FailDirectClause>? clauses,
+        CompiledPredicate callee,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
+        out List<FailDirectClause>? clauses,
+        out FailDirectReject reject)
+    {
+        var visiting = new HashSet<int> { callee.FunctorId };
+        int budget = FailDirectMaxTotalBytes - callee.BytecodeUnfused.Length;
+        return DescribeFailDirectCore(
+            callee, calleeMap, visiting, ref budget, out clauses, out reject);
+    }
+
+    private static bool DescribeFailDirectCore(
+        CompiledPredicate callee,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
+        HashSet<int> visiting, ref int budget,
+        out List<FailDirectClause>? clauses,
         out FailDirectReject reject)
     {
         clauses = null;
@@ -5877,6 +5922,7 @@ public sealed class IlPredicateCompiler
         }
         else
         {
+            CpFreeGuardStats.BumpShapeDetail("ranges");
             reject = FailDirectReject.Shape;
             return false;
         }
@@ -5895,7 +5941,7 @@ public sealed class IlPredicateCompiler
                 if (op == Opcode.Proceed) { termPc = pc; break; }
                 if (op == Opcode.DeallocateProceed)
                 {
-                    if (!framed) { reject = FailDirectReject.Shape; return false; }
+                    if (!framed) { CpFreeGuardStats.BumpShapeDetail("frame"); reject = FailDirectReject.Shape; return false; }
                     termPc = pc; deallocProceed = true; break;
                 }
                 if (op == Opcode.Execute)
@@ -5911,6 +5957,57 @@ public sealed class IlPredicateCompiler
                 switch (op)
                 {
                     case Opcode.Call:
+                    {
+                        // G3 — a non-tail call to ANOTHER predicate is
+                        // acceptable when the inner callee is itself
+                        // leaf-inlinable or fail-direct (recursive describe;
+                        // the visiting set rejects mutual recursion) AND
+                        // deterministic or immediately followed by this
+                        // clause's commit cut (nested multi-solution rule),
+                        // within the total inline budget.
+                        if (calleeMap is null)
+                        {
+                            reject = FailDirectReject.HasCalls;
+                            return false;
+                        }
+                        int ifid = FindCallSiteFunctorId(callee.CallSites, pc);
+                        if (ifid < 0 || !calleeMap.TryGetValue(ifid, out var inner)
+                            || !visiting.Add(ifid))              // cycle = mutual recursion
+                        {
+                            reject = FailDirectReject.HasCalls;
+                            return false;
+                        }
+                        bool innerOk;
+                        try
+                        {
+                            if (IsLeafPredicate(inner) || IsInlinableLeafRule(inner))
+                            {
+                                innerOk = true;                  // single-clause → det
+                            }
+                            else
+                            {
+                                int innerLen = inner.BytecodeUnfused.Length;
+                                budget -= innerLen;
+                                innerOk = budget >= 0
+                                    && DescribeFailDirectCore(inner, calleeMap,
+                                        visiting, ref budget, out var innerCls, out _)
+                                    && (inner.ClauseCount == 1
+                                        || FailDirectCalleeIsDet(innerCls!)
+                                        || NextRealOpIsCut(
+                                            code, pc + OpcodeTable.Get(op).Size, end));
+                            }
+                        }
+                        finally
+                        {
+                            visiting.Remove(ifid);
+                        }
+                        if (!innerOk)
+                        {
+                            reject = FailDirectReject.HasCalls;
+                            return false;
+                        }
+                        break;
+                    }
                     case Opcode.CallIl:
                     case Opcode.CallBytecode:
                     case Opcode.ExecuteIl:
@@ -5931,15 +6028,15 @@ public sealed class IlPredicateCompiler
                         reject = FailDirectReject.Cut;
                         return false;
                     case Opcode.Allocate:
-                        if (sawRealOp || framed) { reject = FailDirectReject.Shape; return false; }
+                        if (sawRealOp || framed) { CpFreeGuardStats.BumpShapeDetail("frame"); reject = FailDirectReject.Shape; return false; }
                         framed = true;
                         break;
                     case Opcode.Deallocate:
                         // Only as part of the tail sequence: deallocate must be
                         // immediately followed by the (self) execute.
-                        if (!framed) { reject = FailDirectReject.Shape; return false; }
+                        if (!framed) { CpFreeGuardStats.BumpShapeDetail("frame"); reject = FailDirectReject.Shape; return false; }
                         if ((Opcode)code[pc + OpcodeTable.Get(op).Size] != Opcode.Execute)
-                        { reject = FailDirectReject.Shape; return false; }
+                        { CpFreeGuardStats.BumpShapeDetail("frame"); reject = FailDirectReject.Shape; return false; }
                         break;
                     case Opcode.AIntCmp:
                     case Opcode.AIntBin:
@@ -5982,24 +6079,30 @@ public sealed class IlPredicateCompiler
                     case Opcode.UnifyValueY:
                     case Opcode.PutValueY:
                     case Opcode.PutVariableY:
-                        if (!framed) { reject = FailDirectReject.Shape; return false; }
+                        if (!framed) { CpFreeGuardStats.BumpShapeDetail("frame"); reject = FailDirectReject.Shape; return false; }
                         break;
                     case Opcode.CallBuiltin:
                     {
                         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(
                             BytecodeIO.ReadInt32(code, pc + 1));
                         if (entry.IsCall || entry.IsDollarCall || entry.IsBacktrackable)
-                        { reject = FailDirectReject.Shape; return false; }
+                        {
+                            CpFreeGuardStats.BumpShapeDetail(
+                                $"builtin:{entry.Name}/{entry.Arity}");
+                            reject = FailDirectReject.Shape;
+                            return false;
+                        }
                         break;
                     }
                     default:
+                        CpFreeGuardStats.BumpShapeDetail($"op:{op}");
                         reject = FailDirectReject.Shape;
                         return false;
                 }
                 sawRealOp = true;
                 pc += OpcodeTable.Get(op).Size;
             }
-            if (termPc < 0) { reject = FailDirectReject.Shape; return false; }
+            if (termPc < 0) { CpFreeGuardStats.BumpShapeDetail("no-term"); reject = FailDirectReject.Shape; return false; }
             result.Add(new FailDirectClause
             {
                 Start = start, TermPc = termPc,
@@ -6016,6 +6119,7 @@ public sealed class IlPredicateCompiler
         {
             if (result[i].SelfTail && result[i].CutPc < 0)
             {
+                CpFreeGuardStats.BumpShapeDetail("selftail-pos");
                 reject = FailDirectReject.Shape;
                 return false;
             }
@@ -6130,7 +6234,7 @@ public sealed class IlPredicateCompiler
                 // Slice 1 — up to the committing neck cut.
                 EmitClauseBody(emit, code, c.Start, c.CutPc,
                     preCutFail, callee.CallSites, calleeMap: calleeMap,
-                    suppressProceedReturn: true, localSalt: $"{salt}_c{i}a");
+                    suppressProceedReturn: true, forceLeafRuleInline: true, localSalt: $"{salt}_c{i}a");
                 // The cut: a goal boundary (flush pending wakeups; a failing
                 // hook backtracks into the next alternative, pre-commit) — but
                 // NO engine Cut call: a fail-direct callee pushed nothing.
@@ -6145,7 +6249,7 @@ public sealed class IlPredicateCompiler
                     committedFail = df2;
                     EmitClauseBody(emit, code, c.CutPc + 1, c.TermPc,
                         committedFail, callee.CallSites, calleeMap: calleeMap,
-                        suppressProceedReturn: true, localSalt: $"{salt}_c{i}b");
+                        suppressProceedReturn: true, forceLeafRuleInline: true, localSalt: $"{salt}_c{i}b");
                     EmitFailDirectTerminator(emit, c, entry, join);
                     emit.MarkLabel(df2);
                     emit.LoadArgument(0);
@@ -6156,7 +6260,7 @@ public sealed class IlPredicateCompiler
                 {
                     EmitClauseBody(emit, code, c.CutPc + 1, c.TermPc,
                         committedFail, callee.CallSites, calleeMap: calleeMap,
-                        suppressProceedReturn: true, localSalt: $"{salt}_c{i}b");
+                        suppressProceedReturn: true, forceLeafRuleInline: true, localSalt: $"{salt}_c{i}b");
                     EmitFailDirectTerminator(emit, c, entry, join);
                 }
             }
@@ -6164,7 +6268,7 @@ public sealed class IlPredicateCompiler
             {
                 EmitClauseBody(emit, code, c.Start, c.TermPc,
                     preCutFail, callee.CallSites, calleeMap: calleeMap,
-                    suppressProceedReturn: true, localSalt: $"{salt}_c{i}");
+                    suppressProceedReturn: true, forceLeafRuleInline: true, localSalt: $"{salt}_c{i}");
                 EmitFailDirectTerminator(emit, c, entry, join);
             }
 
