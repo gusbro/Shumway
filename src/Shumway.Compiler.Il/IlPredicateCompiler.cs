@@ -5391,11 +5391,18 @@ public sealed class IlPredicateCompiler
         public static long RejectCalleeCut;        // cut inside the callee
         public static long RejectCalleeShape;      // other callee shape
 
+        /// <summary>Per-opcode breakdown of <see cref="RejectGuardShape"/> —
+        /// WHICH non-whitelist opcode rejected the cut-shaped guard, so the
+        /// whitelist-widening candidates rank by real frequency. Indexed by the
+        /// opcode byte.</summary>
+        public static readonly long[] RejectGuardOpByOpcode = new long[256];
+
         public static void Reset()
         {
             TierA = TierB = TierGLeaf = TierG2 = 0;
             RejectGuardShape = RejectCalleeUnresolved = RejectCalleeCalls = 0;
             RejectCalleeCaps = RejectCalleeCut = RejectCalleeShape = 0;
+            System.Array.Clear(RejectGuardOpByOpcode);
         }
 
         public static long AcceptTotal => TierA + TierB + TierGLeaf + TierG2;
@@ -5482,6 +5489,14 @@ public sealed class IlPredicateCompiler
             if (!HasCutAhead(code, fromPc, end)) return;
             System.Threading.Interlocked.Increment(ref counter);
         }
+        // The guard-op variant additionally records WHICH opcode rejected.
+        void CountGuardOpReject(Opcode rejectedOp, int fromPc)
+        {
+            if (!HasCutAhead(code, fromPc, end)) return;
+            System.Threading.Interlocked.Increment(ref CpFreeGuardStats.RejectGuardShape);
+            System.Threading.Interlocked.Increment(
+                ref CpFreeGuardStats.RejectGuardOpByOpcode[(byte)rejectedOp]);
+        }
         void CountAccept()
         {
             if (sawCall)
@@ -5555,6 +5570,11 @@ public sealed class IlPredicateCompiler
                     if (!framed) return false;
                     snapshot = true;
                     break;
+                case Opcode.PutVariableY:              // fresh var → Yn AND Ai (call staging)
+                    if (!framed) return false;
+                    snapshot = true;                   // allocates the fresh heap var
+                    regSave = true;                    // writes the argument register
+                    break;
                 // Register-writing moves: covered by the entry register save.
                 case Opcode.GetVariableX:              // Xn := Ai
                 case Opcode.UnifyVariableX:            // Xn := subterm
@@ -5567,7 +5587,15 @@ public sealed class IlPredicateCompiler
                 case Opcode.PutVariableX:
                 case Opcode.PutStructureR:
                 case Opcode.PutListR:
-                    snapshot = true;                   // put_structure_r/put_variable allocate
+                // Compound-argument builds for the guard call: allocate heap
+                // (snapshot's heap reset covers), write the argument register
+                // (regSave covers), and set write mode for the following
+                // unify_* ops (already whitelisted). No CP, no pre-existing
+                // binding.
+                case Opcode.PutStructure:
+                case Opcode.PutList:
+                case Opcode.PutPstr:
+                    snapshot = true;                   // put_structure/put_variable allocate
                     regSave = true;
                     break;
                 case Opcode.Call:
@@ -5598,7 +5626,7 @@ public sealed class IlPredicateCompiler
                         var bentry = Shumway.Builtins.BuiltinsRegistry.GetById(bid);
                         if (bentry.IsCall || bentry.IsDollarCall || bentry.IsBacktrackable)
                         {
-                            CountReject(ref CpFreeGuardStats.RejectGuardShape, pc);
+                            CountGuardOpReject(Opcode.CallBuiltin, pc);
                             return false;
                         }
                         snapshot = true;
@@ -5662,7 +5690,7 @@ public sealed class IlPredicateCompiler
                         BytecodeIO.ReadInt32(code, pc + 1));
                     if (entry.IsCall || entry.IsDollarCall || entry.IsBacktrackable)
                     {
-                        CountReject(ref CpFreeGuardStats.RejectGuardShape, pc);
+                        CountGuardOpReject(op, pc);
                         return false;
                     }
                     snapshot = true;                   // builtins may bind/allocate
@@ -5674,7 +5702,7 @@ public sealed class IlPredicateCompiler
                     regSave = true;                    // writes the target register
                     break;
                 default:
-                    CountReject(ref CpFreeGuardStats.RejectGuardShape, pc);
+                    CountGuardOpReject(op, pc);
                     return false;
             }
             sawRealOp = true;
@@ -5916,12 +5944,16 @@ public sealed class IlPredicateCompiler
                     case Opcode.PutVariableX:
                     case Opcode.PutStructureR:
                     case Opcode.PutListR:
+                    case Opcode.PutStructure:
+                    case Opcode.PutList:
+                    case Opcode.PutPstr:
                         break;
                     case Opcode.GetVariableY:
                     case Opcode.GetValueY:
                     case Opcode.UnifyVariableY:
                     case Opcode.UnifyValueY:
                     case Opcode.PutValueY:
+                    case Opcode.PutVariableY:
                         if (!framed) { reject = FailDirectReject.Shape; return false; }
                         break;
                     case Opcode.CallBuiltin:

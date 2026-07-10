@@ -450,6 +450,44 @@ public class Adr031BindingGuardTests
 
     [Theory]
     [MemberData(nameof(Modes))]
+    public void GuardCallStaging_FreshVarCompoundAndList_Widened(
+        Adr031CpFreeGuardTests.Mode m)
+    {
+        // The corpus-ranked staging widenings: put_variable_y (a fresh OUTPUT
+        // argument for the guard call, read post-cut), put_structure and
+        // put_list (compound/list arguments built for the call). Each shape
+        // must commit correctly and — the canary — fully undo on guard failure.
+        var e = TierGEngine(m,
+            ":- public p/2, q/2, r/3.\n"
+            // Fresh-var output arg (put_variable_y), used both in a later
+            // guard goal AND post-cut.
+            + "dbl(X, Y) :- Y is X * 2.\n"
+            + "p(X, R) :- dbl(X, D), D > 5, !, R = big(D).\n"
+            + "p(_, R) :- R = small.\n"
+            // Compound argument (put_structure).
+            + "tagok(f(X)) :- X > 0.\n"
+            + "q(X, R) :- tagok(f(X)), !, R = pos.\n"
+            + "q(_, R) :- R = neg.\n"
+            // List argument (put_list).
+            + "firstpos([H|_]) :- H > 0.\n"
+            + "r(X, Y, R) :- firstpos([X,Y]), !, R = yes.\n"
+            + "r(_, _, R) :- R = no.\n");
+        Assert.True(e.Query("p(4, R), R == big(8).").Success);
+        Assert.True(e.Query("p(2, R), R == small.").Success);    // 4 > 5 fails → undo D
+        Assert.Single(e.QueryAll("p(4, R)."));
+        Assert.Single(e.QueryAll("p(2, R)."));
+
+        Assert.True(e.Query("q(3, R), R == pos.").Success);
+        Assert.True(e.Query("q(-3, R), R == neg.").Success);     // undo the f(X) build
+        Assert.Single(e.QueryAll("q(3, R)."));
+
+        Assert.True(e.Query("r(1, 9, R), R == yes.").Success);
+        Assert.True(e.Query("r(-1, 9, R), R == no.").Success);   // undo the list build
+        Assert.Single(e.QueryAll("r(1, 9, R)."));
+    }
+
+    [Theory]
+    [MemberData(nameof(Modes))]
     public void FailDirect_RecursiveValidator_CommitAndDeepFail(
         Adr031CpFreeGuardTests.Mode m)
     {

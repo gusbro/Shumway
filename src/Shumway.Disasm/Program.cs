@@ -207,6 +207,13 @@ internal static class Program
                     Shumway.Compiler.Il.IlPredicateCompiler.CpFreeGuardStats.RejectCalleeCaps,
                     Shumway.Compiler.Il.IlPredicateCompiler.CpFreeGuardStats.RejectCalleeCut,
                     Shumway.Compiler.Il.IlPredicateCompiler.CpFreeGuardStats.RejectCalleeShape));
+                // Per-opcode breakdown of the guard-op rejections.
+                var byOp = Shumway.Compiler.Il.IlPredicateCompiler
+                    .CpFreeGuardStats.RejectGuardOpByOpcode;
+                for (int b = 0; b < byOp.Length; b++)
+                    if (byOp[b] > 0)
+                        Console.WriteLine(string.Join('\t', "CPFREEOP",
+                            ((Shumway.Core.Opcode)b).ToString(), byOp[b]));
             }
             catch (Exception ex)
             {
