@@ -55,6 +55,32 @@ toward engine frames.
   member is `br` to ITS copy entry, inheriting the caller's continuations
   (that is what continuations do).
 
+### Cross-tail (implemented)
+
+A fail-direct clause ending in `execute <other-fid>` is accepted when the
+continuation mode is on and the target itself describes fail-direct:
+`FailDirectClause.CrossTailFid/CrossTailDet` carry the target; the terminator
+emits `br` to the target's shared copy (`GetOrAddGuardContCopy`), inheriting
+the caller's ok/fail continuations — LCO composition, no push. Soundness
+mirrors self-tail: a cross-tail clause must be the LAST clause or
+cut-committed (`selftail-pos` reject otherwise), because inheriting the fail
+continuation forfeits the caller's remaining alternatives. And the target's
+multiplicity folds into the caller's det (`FailDirectCalleeIsDet` returns
+false when any clause cross-tails a non-det target): committing the caller's
+clause selection does NOT commit the target's alternatives, so a multi-
+solution target keeps the caller out of mid-guard positions.
+
+**Measured (whole-program links, fresh binaries, 2026-07-10):** test/(te/4)
+724 → 733 accepted (tierG2 459 → 468), bundle +0.4%; testGen/(generate/3)
+601 → 650 (tierG2 375 → 424), bundle +0.27%. The `g3:cross-tail` sightings
+(666 / 1 859) mostly FUNNEL into deeper reject reasons once the target is
+actually described — `g3:inner-calls` +299, `g3:inner-dynamic` +227 on test/
+— i.e. the typical tail-called target itself calls other predicates or is
+dynamic, so it isn't fail-direct either. The conversion yield is the funnel's
+bottom, not the sightings count. Raising it means attacking `inner-calls`
+(deeper G3 through the shared copies — the stack already permits arbitrary
+depth) and `inner-dynamic` (needs the ADR-023 caller-eviction cascade).
+
 ### Costs and kept hybrid
 
 - Push + pop ≈ 4 field operations per guard call — the duplication path is a

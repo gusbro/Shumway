@@ -716,6 +716,57 @@ public class Adr031BindingGuardTests
         }
     }
 
+    [Theory]
+    [MemberData(nameof(Modes))]
+    public void Adr033_CrossTail_ComposesThroughSharedCopies(
+        Adr031CpFreeGuardTests.Mode m)
+    {
+        // ADR-033 cross-tail — the Arity helper-chain idiom: valid/1 tail-calls
+        // range/1 (LCO). Under continuations the tail is a `br` to range's
+        // shared copy, INHERITING the guard's continuations: range's success
+        // returns to the guard, its failure lands in the guard's restore stub.
+        bool old = IlPredicateCompiler.CpFreeGuardContinuations;
+        IlPredicateCompiler.CpFreeGuardContinuations = true;
+        try
+        {
+            var e = TierGEngine(m,
+                ":- public p/2, q/2, w/2.\n"
+                + "range(X) :- X > 0, X < 100.\n"          // det leaf-ish target
+                + "valid(X) :- integer(X), range(X).\n"    // cross-tail (last clause)
+                + "p(X, R) :- valid(X), !, R = ok.\n"
+                + "p(_, R) :- R = bad.\n"
+                // Cross-tail in a CUT-COMMITTED non-last clause.
+                + "cls2(X, low) :- X < 50, !, range(X).\n"
+                + "cls2(_, hi).\n"
+                + "q(X, R) :- cls2(X, C), !, R = C.\n"
+                + "q(_, R) :- R = none.\n"
+                // Det target chain → the CALLER stays det → allowed MID-guard.
+                + "w(X, R) :- valid(X), X > 10, !, R = big.\n"
+                + "w(_, R) :- R = small.\n");
+            Assert.True(e.Query("p(5, R), R == ok.").Success);
+            Assert.True(e.Query("p(500, R), R == bad.").Success);   // range fails in tail
+            Assert.True(e.Query("p(foo, R), R == bad.").Success);   // integer/1 fails pre-tail
+            Assert.Single(e.QueryAll("p(5, R)."));
+            Assert.Single(e.QueryAll("p(500, R)."));
+
+            Assert.True(e.Query("q(5, R), R == low.").Success);
+            Assert.True(e.Query("q(80, R), R == hi.").Success);
+            // Committed clause 1, then range(-5) fails in the tail → cls2
+            // FAILS (clause 2 must NOT run — selection was committed) → outer.
+            Assert.True(e.Query("q(-5, R), R == none.").Success);
+            Assert.Single(e.QueryAll("q(5, R)."));
+            Assert.Single(e.QueryAll("q(-5, R)."));
+
+            Assert.True(e.Query("w(50, R), R == big.").Success);
+            Assert.True(e.Query("w(5, R), R == small.").Success);   // mid-guard retry-free
+            Assert.Single(e.QueryAll("w(50, R)."));
+        }
+        finally
+        {
+            IlPredicateCompiler.CpFreeGuardContinuations = old;
+        }
+    }
+
     [Fact]
     public void G3_MutualRecursion_Rejected_ByDescribe()
     {

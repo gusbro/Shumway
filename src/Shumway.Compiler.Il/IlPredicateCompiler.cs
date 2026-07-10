@@ -4307,7 +4307,7 @@ public sealed class IlPredicateCompiler
                     else
                     {
                         EmitFailDirectCalleeInline(emit, fdCallee, fdClauses!,
-                            failLabel, calleeMap, $"{lt}_fd{pc}");
+                            failLabel, calleeMap, $"{lt}_fd{pc}", guardContCtx);
                     }
                     if (callSiteIndexCounter is not null && resumeLabels is not null)
                     {
@@ -5508,6 +5508,21 @@ public sealed class IlPredicateCompiler
     /// shared copy (entered by <c>br</c> from its call sites), then the ok /
     /// fail pop-and-dispatch blocks switching over the continuation label
     /// table. No-op when no site used the mechanism.</summary>
+    /// <summary>ADR-033 — the shared-copy entry label for <paramref name="fid"/>,
+    /// registering the callee for method-end emission on first request.</summary>
+    private static Sigil.Label GetOrAddGuardContCopy(
+        Sigil.Emit<PredicateDelegate> emit, GuardContEmitContext ctx,
+        int fid, CompiledPredicate callee)
+    {
+        if (!ctx.CalleeEntry.TryGetValue(fid, out var entryLbl))
+        {
+            entryLbl = emit.DefineLabel($"gc_callee_{fid}");
+            ctx.CalleeEntry[fid] = entryLbl;
+            ctx.PendingCallees.Add(callee);
+        }
+        return entryLbl;
+    }
+
     private static void EmitGuardContEpilogues(
         Sigil.Emit<PredicateDelegate> emit, GuardContEmitContext ctx,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
@@ -5516,13 +5531,16 @@ public sealed class IlPredicateCompiler
         if (ctx.PendingCallees.Count == 0) return;
         ctx.FailEpilogue ??= emit.DefineLabel("gc_fail_epi");
         ctx.OkEpilogue ??= emit.DefineLabel("gc_ok_epi");
-        foreach (var callee in ctx.PendingCallees)
+        // Index loop: emitting a copy may register FURTHER pending callees
+        // (cross-tail targets, shared inners).
+        for (int ci = 0; ci < ctx.PendingCallees.Count; ci++)
         {
+            var callee = ctx.PendingCallees[ci];
             emit.MarkLabel(ctx.CalleeEntry[callee.FunctorId]);
             // Deterministic re-describe (the call site already validated it).
             TryDescribeFailDirectCallee(callee, calleeMap, out var cls, out _);
             EmitFailDirectCalleeInline(emit, callee, cls!, ctx.FailEpilogue,
-                calleeMap, $"_gcc{callee.FunctorId}");
+                calleeMap, $"_gcc{callee.FunctorId}", ctx);
             emit.Branch(ctx.OkEpilogue);
         }
         var targets = ctx.ContLabels.ToArray();
@@ -5849,18 +5867,34 @@ public sealed class IlPredicateCompiler
         /// entirely. (In a fail-direct callee every cut is a neck cut — a deep
         /// cut implies a preceding call, which the shape excludes.)</summary>
         public int CutPc { get; init; }
+        /// <summary>ADR-033 — the functor id of a CROSS-tail target (the clause
+        /// ends <c>execute OTHER</c>), or -1. Only under the continuation
+        /// mechanism: the terminator branches to the TARGET's shared copy,
+        /// inheriting the continuations on the stack — sound because the
+        /// clause has no remaining alternatives at the tail (last clause, or
+        /// cut-committed — the same position rule as self-tail).</summary>
+        public int CrossTailFid { get; init; }
+        /// <summary>Whether the cross-tail target is itself deterministic —
+        /// the target's multiplicity IS this clause's multiplicity, so the
+        /// caller's det classification must fold it in (a committed clause
+        /// selection does NOT commit the target's alternatives).</summary>
+        public bool CrossTailDet { get; init; }
     }
 
     /// <summary>True when the described callee is DETERMINISTIC (at most one
     /// solution): every clause except the last carries a top-level cut, so
     /// whichever clause yields commits (the bytecode analogue of ADR-030's
     /// all-but-last-commit dispatch rule; the last clause's whitelist body
-    /// yields at most once). A det callee may sit ANYWHERE in the guard — the
-    /// multi-solution retry hazard needs a second solution to exist.</summary>
+    /// yields at most once) — AND every cross-tail target is det (its
+    /// solutions are the clause's solutions). A det callee may sit ANYWHERE in
+    /// the guard — the multi-solution retry hazard needs a second solution to
+    /// exist.</summary>
     internal static bool FailDirectCalleeIsDet(List<FailDirectClause> clauses)
     {
         for (int i = 0; i < clauses.Count - 1; i++)
             if (clauses[i].CutPc < 0) return false;
+        foreach (var c in clauses)
+            if (c.CrossTailFid >= 0 && !c.CrossTailDet) return false;
         return true;
     }
 
@@ -6044,6 +6078,8 @@ public sealed class IlPredicateCompiler
             bool framed = false, sawRealOp = false;
             int pc = start;
             int termPc = -1, cutPc = -1;
+            int crossTailFid = -1;
+            bool crossTailDet = false;
             bool selfTail = false, deallocProceed = false;
             while (pc < end)
             {
@@ -6058,13 +6094,60 @@ public sealed class IlPredicateCompiler
                 if (op == Opcode.Execute)
                 {
                     int fid = FindCallSiteFunctorId(callee.CallSites, pc);
-                    if (fid != callee.FunctorId)
+                    if (fid == callee.FunctorId)
+                    {
+                        termPc = pc; selfTail = true; break;
+                    }
+                    // ADR-033 — a CROSS tail: acceptable under the continuation
+                    // mechanism when the target is itself leaf/fail-direct
+                    // (recursive describe; visiting set rejects mutual
+                    // recursion — deferred). The target's det-ness is recorded
+                    // for the caller's multiplicity (FailDirectCalleeIsDet).
+                    if (!CpFreeGuardContinuations || calleeMap is null
+                        || !calleeMap.TryGetValue(fid, out var tailTgt)
+                        || !visiting.Add(fid))
                     {
                         CpFreeGuardStats.BumpShapeDetail("g3:cross-tail");
                         reject = FailDirectReject.HasCalls;      // cross tail — G3 candidate
                         return false;
                     }
-                    termPc = pc; selfTail = true; break;
+                    bool tgtOk, tgtDet = false;
+                    try
+                    {
+                        if (IsLeafPredicate(tailTgt) || IsInlinableLeafRule(tailTgt))
+                        {
+                            // Leaves still need a describable copy — run the
+                            // core describe (single-clause leaves pass it).
+                            tgtOk = DescribeFailDirectCore(tailTgt, calleeMap,
+                                visiting, ref budget, out var leafCls, out _);
+                            tgtDet = tgtOk;
+                        }
+                        else
+                        {
+                            budget -= tailTgt.BytecodeUnfused.Length;
+                            List<FailDirectClause>? tgtCls = null;
+                            tgtOk = budget >= 0
+                                && DescribeFailDirectCore(tailTgt, calleeMap,
+                                    visiting, ref budget, out tgtCls, out _);
+                            if (tgtOk)
+                                tgtDet = tailTgt.ClauseCount == 1
+                                    || FailDirectCalleeIsDet(tgtCls!);
+                        }
+                    }
+                    finally
+                    {
+                        visiting.Remove(fid);
+                    }
+                    if (!tgtOk)
+                    {
+                        CpFreeGuardStats.BumpShapeDetail("g3:cross-tail");
+                        reject = FailDirectReject.HasCalls;
+                        return false;
+                    }
+                    termPc = pc;
+                    crossTailFid = fid;
+                    crossTailDet = tgtDet;
+                    break;
                 }
                 switch (op)
                 {
@@ -6268,16 +6351,19 @@ public sealed class IlPredicateCompiler
                 Start = start, TermPc = termPc,
                 SelfTail = selfTail, Framed = framed, DeallocProceed = deallocProceed,
                 CutPc = cutPc,
+                CrossTailFid = crossTailFid, CrossTailDet = crossTailDet,
             });
         }
-        // SOUNDNESS — a self-tail recursion in a NON-LAST clause without a
-        // preceding cut: if a deeper iteration fails, real backtracking returns
-        // to THIS iteration's remaining alternatives, which the in-place loop
-        // cannot do. Sound only when the recursive clause is the last (no
-        // alternatives after it) or its cut committed the selection first.
+        // SOUNDNESS — a tail transfer (self-recursion OR a cross-tail) in a
+        // NON-LAST clause without a preceding cut: if the transferred-to code
+        // fails, real backtracking returns to THIS clause's remaining
+        // alternatives, which neither the in-place loop nor the inherited
+        // continuation can do. Sound only when the tail clause is the last
+        // (no alternatives after it) or its cut committed the selection first.
         for (int i = 0; i < result.Count - 1; i++)
         {
-            if (result[i].SelfTail && result[i].CutPc < 0)
+            if ((result[i].SelfTail || result[i].CrossTailFid >= 0)
+                && result[i].CutPc < 0)
             {
                 CpFreeGuardStats.BumpShapeDetail("selftail-pos");
                 reject = FailDirectReject.Shape;
@@ -6304,7 +6390,8 @@ public sealed class IlPredicateCompiler
     private static void EmitFailDirectCalleeInline(
         Sigil.Emit<PredicateDelegate> emit, CompiledPredicate callee,
         List<FailDirectClause> fdClauses, Sigil.Label outerFail,
-        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, string salt)
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap, string salt,
+        GuardContEmitContext? gcCtx = null)
     {
         int arity = callee.Arity;
         var join = emit.DefineLabel($"fd_join{salt}");
@@ -6394,7 +6481,7 @@ public sealed class IlPredicateCompiler
                 // Slice 1 — up to the committing neck cut.
                 EmitClauseBody(emit, code, c.Start, c.CutPc,
                     preCutFail, callee.CallSites, calleeMap: calleeMap,
-                    suppressProceedReturn: true, forceLeafRuleInline: true, localSalt: $"{salt}_c{i}a");
+                    suppressProceedReturn: true, forceLeafRuleInline: true, localSalt: $"{salt}_c{i}a", guardContCtx: gcCtx);
                 // The cut: a goal boundary (flush pending wakeups; a failing
                 // hook backtracks into the next alternative, pre-commit) — but
                 // NO engine Cut call: a fail-direct callee pushed nothing.
@@ -6409,8 +6496,8 @@ public sealed class IlPredicateCompiler
                     committedFail = df2;
                     EmitClauseBody(emit, code, c.CutPc + OpcodeTable.Get((Opcode)code[c.CutPc]).Size, c.TermPc,
                         committedFail, callee.CallSites, calleeMap: calleeMap,
-                        suppressProceedReturn: true, forceLeafRuleInline: true, localSalt: $"{salt}_c{i}b");
-                    EmitFailDirectTerminator(emit, c, entry, join);
+                        suppressProceedReturn: true, forceLeafRuleInline: true, localSalt: $"{salt}_c{i}b", guardContCtx: gcCtx);
+                    EmitFailDirectTerminator(emit, c, entry, join, gcCtx, calleeMap);
                     emit.MarkLabel(df2);
                     emit.LoadArgument(0);
                     emit.Call(EngineDeallocateMethod);
@@ -6420,16 +6507,16 @@ public sealed class IlPredicateCompiler
                 {
                     EmitClauseBody(emit, code, c.CutPc + OpcodeTable.Get((Opcode)code[c.CutPc]).Size, c.TermPc,
                         committedFail, callee.CallSites, calleeMap: calleeMap,
-                        suppressProceedReturn: true, forceLeafRuleInline: true, localSalt: $"{salt}_c{i}b");
-                    EmitFailDirectTerminator(emit, c, entry, join);
+                        suppressProceedReturn: true, forceLeafRuleInline: true, localSalt: $"{salt}_c{i}b", guardContCtx: gcCtx);
+                    EmitFailDirectTerminator(emit, c, entry, join, gcCtx, calleeMap);
                 }
             }
             else
             {
                 EmitClauseBody(emit, code, c.Start, c.TermPc,
                     preCutFail, callee.CallSites, calleeMap: calleeMap,
-                    suppressProceedReturn: true, forceLeafRuleInline: true, localSalt: $"{salt}_c{i}");
-                EmitFailDirectTerminator(emit, c, entry, join);
+                    suppressProceedReturn: true, forceLeafRuleInline: true, localSalt: $"{salt}_c{i}", guardContCtx: gcCtx);
+                EmitFailDirectTerminator(emit, c, entry, join, gcCtx, calleeMap);
             }
 
             if (deallocFail is not null)
@@ -6450,10 +6537,14 @@ public sealed class IlPredicateCompiler
     }
 
     /// <summary>The terminator of one inlined fail-direct clause: rejoin the
-    /// guard (<c>proceed</c> / <c>deallocate_proceed</c>) or loop (self-tail).</summary>
+    /// guard (<c>proceed</c> / <c>deallocate_proceed</c>), loop (self-tail),
+    /// or — ADR-033 — branch to a cross-tail target's shared copy, inheriting
+    /// the continuations on the stack (tail-call composition).</summary>
     private static void EmitFailDirectTerminator(
         Sigil.Emit<PredicateDelegate> emit, FailDirectClause c,
-        Sigil.Label entry, Sigil.Label join)
+        Sigil.Label entry, Sigil.Label join,
+        GuardContEmitContext? gcCtx = null,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap = null)
     {
         if (c.DeallocProceed)
         {
@@ -6464,6 +6555,16 @@ public sealed class IlPredicateCompiler
         else if (c.SelfTail)
         {
             emit.Branch(entry);          // staging + deallocate already in the slice
+        }
+        else if (c.CrossTailFid >= 0)
+        {
+            // Only reachable under the continuation mechanism (the describe
+            // gates cross-tails on CpFreeGuardContinuations).
+            if (gcCtx is null || calleeMap is null
+                || !calleeMap.TryGetValue(c.CrossTailFid, out var tailTgt))
+                throw new InvalidOperationException(
+                    "cross-tail clause emitted without a continuation context");
+            emit.Branch(GetOrAddGuardContCopy(emit, gcCtx, c.CrossTailFid, tailTgt));
         }
         else
         {
