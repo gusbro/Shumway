@@ -770,8 +770,10 @@ public class Adr031BindingGuardTests
     [Fact]
     public void G3_MutualRecursion_Rejected_ByDescribe()
     {
-        // Mutual recursion cannot be statically inlined — the visiting set
-        // rejects the cycle (describe-level check; running it would loop).
+        // DUPLICATION mode: mutual recursion cannot be statically inlined —
+        // the visiting set rejects the cycle (describe-level check; running
+        // it would loop). Under CONTINUATIONS the same TAIL cycle is accepted
+        // (see Adr033_TailCycle_AcceptedByDescribe_UnderContinuations).
         var pc = new Shumway.Compiler.Wam.PredicateCompiler();
         var ma = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
             "ma(X):-mb(X).").ReadAll().ToList());
@@ -786,6 +788,196 @@ public class Adr031BindingGuardTests
         Assert.False(IlPredicateCompiler.TryDescribeFailDirectCallee(
             ma, map, out _, out var rej));
         Assert.Equal(IlPredicateCompiler.FailDirectReject.HasCalls, rej);
+    }
+
+    [Fact]
+    public void Adr033_TailCycle_AcceptedByDescribe_UnderContinuations()
+    {
+        // Deep G3 v1 — a TAIL cycle (mutual tail recursion) composes through
+        // the shared copies: `br` into the in-flight participant's copy, LCO.
+        // The cycle edge's det is conservatively FALSE.
+        var pc = new Shumway.Compiler.Wam.PredicateCompiler();
+        var ma = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
+            "ma(X):-mb(X).").ReadAll().ToList());
+        var mb = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
+            "mb(X):-ma(X).").ReadAll().ToList());
+        var map = new System.Collections.Generic.Dictionary<
+            int, Shumway.Compiler.Wam.CompiledPredicate>
+        {
+            [ma.FunctorId] = ma,
+            [mb.FunctorId] = mb,
+        };
+        bool old = IlPredicateCompiler.CpFreeGuardContinuations;
+        IlPredicateCompiler.CpFreeGuardContinuations = true;
+        try
+        {
+            Assert.True(IlPredicateCompiler.TryDescribeFailDirectCallee(
+                ma, map, out var cls, out _));
+            Assert.Single(cls!);
+            Assert.Equal(mb.FunctorId, cls![0].CrossTailFid);
+            // Cycle edge → conservative nondet → the caller stays out of
+            // mid-guard positions.
+            Assert.False(IlPredicateCompiler.FailDirectCalleeIsDet(cls!));
+        }
+        finally
+        {
+            IlPredicateCompiler.CpFreeGuardContinuations = old;
+        }
+    }
+
+    [Fact]
+    public void Adr033_NonTailCycle_StillRejected_UnderContinuations()
+    {
+        // Deep G3 v1 — a NON-tail cycle stays rejected even under
+        // continuations: a re-entered copy's IL locals would clobber the
+        // outer activation's entry marks (needs real frames — deferred).
+        var pc = new Shumway.Compiler.Wam.PredicateCompiler();
+        var na = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
+            "na(X):-nb(X),X>0.").ReadAll().ToList());
+        var nb = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
+            "nb(X):-na(X),X<100.").ReadAll().ToList());
+        var map = new System.Collections.Generic.Dictionary<
+            int, Shumway.Compiler.Wam.CompiledPredicate>
+        {
+            [na.FunctorId] = na,
+            [nb.FunctorId] = nb,
+        };
+        bool old = IlPredicateCompiler.CpFreeGuardContinuations;
+        IlPredicateCompiler.CpFreeGuardContinuations = true;
+        try
+        {
+            Assert.False(IlPredicateCompiler.TryDescribeFailDirectCallee(
+                na, map, out _, out var rej));
+            Assert.Equal(IlPredicateCompiler.FailDirectReject.HasCalls, rej);
+        }
+        finally
+        {
+            IlPredicateCompiler.CpFreeGuardContinuations = old;
+        }
+    }
+
+    [Fact]
+    public void Adr033_DeepChain_FreshBudgetPerCopy_UnderContinuations()
+    {
+        // Deep G3 v1 — a 4-level chain whose CUMULATIVE size exceeds
+        // FailDirectMaxTotalBytes while every level fits the per-callee caps:
+        // duplication rejects (the budget bounds per-site growth); the
+        // continuation mechanism accepts (one shared copy per callee — no
+        // cumulative duplication), each copy still bounded by the caps.
+        string Bulk(string name, string next)
+        {
+            var args = string.Join(",", System.Linq.Enumerable.Range(1, 80));
+            return next.Length == 0
+                ? $"{name}(X):-X=f({args})."
+                : $"{name}(X):-{next}(Y),X=f({args}),Y=X.";
+        }
+        var pc = new Shumway.Compiler.Wam.PredicateCompiler();
+        var b5 = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
+            Bulk("b5", "")).ReadAll().ToList());
+        var b4 = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
+            Bulk("b4", "b5")).ReadAll().ToList());
+        var b3 = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
+            Bulk("b3", "b4")).ReadAll().ToList());
+        var b2 = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
+            Bulk("b2", "b3")).ReadAll().ToList());
+        var b1 = pc.Compile(new Shumway.Compiler.Parsing.ClauseReader(
+            Bulk("b1", "b2")).ReadAll().ToList());
+        // Each level must individually fit the caps or the test proves
+        // nothing. The DUP budget consumes b1..b4 (the leaf b5 classifies as
+        // an inlinable leaf rule and is budget-free), so 4 budgeted levels
+        // must exceed the cumulative cap.
+        Assert.True(b1.BytecodeUnfused.Length <= IlPredicateCompiler.FailDirectMaxBytes);
+        Assert.True(b1.BytecodeUnfused.Length * 4
+                    > IlPredicateCompiler.FailDirectMaxTotalBytes);
+        var map = new System.Collections.Generic.Dictionary<
+            int, Shumway.Compiler.Wam.CompiledPredicate>
+        {
+            [b1.FunctorId] = b1, [b2.FunctorId] = b2,
+            [b3.FunctorId] = b3, [b4.FunctorId] = b4,
+            [b5.FunctorId] = b5,
+        };
+        bool old = IlPredicateCompiler.CpFreeGuardContinuations;
+        IlPredicateCompiler.CpFreeGuardContinuations = false;
+        try
+        {
+            Assert.False(IlPredicateCompiler.TryDescribeFailDirectCallee(
+                b1, map, out _, out var rej));
+            Assert.Equal(IlPredicateCompiler.FailDirectReject.HasCalls, rej);
+            IlPredicateCompiler.CpFreeGuardContinuations = true;
+            Assert.True(IlPredicateCompiler.TryDescribeFailDirectCallee(
+                b1, map, out _, out _));
+        }
+        finally
+        {
+            IlPredicateCompiler.CpFreeGuardContinuations = old;
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(Modes))]
+    public void Adr033_MutualTailRecursion_RunsThroughSharedCopies(
+        Adr031CpFreeGuardTests.Mode m)
+    {
+        // The even/odd idiom — mutual TAIL recursion as a guard callee. Under
+        // continuations the copies compose by `br` (LCO): O(1) continuation
+        // stack regardless of depth. All-var heads keep the chains unindexed.
+        bool old = IlPredicateCompiler.CpFreeGuardContinuations;
+        IlPredicateCompiler.CpFreeGuardContinuations = true;
+        try
+        {
+            var e = TierGEngine(m,
+                ":- public p/2.\n"
+                + "even(N) :- N =:= 0.\n"
+                + "even(N) :- N > 0, M is N - 1, odd(M).\n"
+                + "odd(N) :- N > 0, M is N - 1, even(M).\n"
+                + "p(N, R) :- even(N), !, R = e.\n"
+                + "p(_, R) :- R = o.\n");
+            Assert.True(e.Query("p(10, R), R == e.").Success);
+            Assert.True(e.Query("p(7, R), R == o.").Success);
+            Assert.True(e.Query("p(0, R), R == e.").Success);
+            Assert.True(e.Query("p(-4, R), R == o.").Success);
+            Assert.Single(e.QueryAll("p(10, R)."));
+            Assert.Single(e.QueryAll("p(7, R)."));
+            // Deep: tail cycles push nothing on the continuation stack.
+            Assert.True(e.Query("p(20000, R), R == e.").Success);
+            Assert.True(e.Query("p(20001, R), R == o.").Success);
+        }
+        finally
+        {
+            IlPredicateCompiler.CpFreeGuardContinuations = old;
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(Modes))]
+    public void Adr033_SingleClauseWrapper_InheritsCrossTailMultiplicity(
+        Adr031CpFreeGuardTests.Mode m)
+    {
+        // MULTIPLICITY REGRESSION — c/2 is a SINGLE-clause wrapper that
+        // cross-tails a MULTI-solution target. A ClauseCount==1 "trivially
+        // det" shortcut would let c sit mid-guard, committing to m's first
+        // solution (B=1) — B > 1 then fails and the correct second solution
+        // (B=2) is never tried. The det check must follow CrossTailDet.
+        bool old = IlPredicateCompiler.CpFreeGuardContinuations;
+        IlPredicateCompiler.CpFreeGuardContinuations = true;
+        try
+        {
+            var e = TierGEngine(m,
+                ":- public t/2.\n"
+                + "m(X, R) :- X > 0, R = 1.\n"
+                + "m(X, R) :- X > 0, R = 2.\n"
+                + "c(X, B) :- m(X, B).\n"
+                + "t(X, R) :- c(X, B), B > 1, !, R = big.\n"
+                + "t(_, R) :- R = small.\n");
+            Assert.True(e.Query("t(5, R), R == big.").Success);   // via m's 2nd solution
+            Assert.True(e.Query("t(-5, R), R == small.").Success);
+            Assert.Single(e.QueryAll("t(5, R)."));
+            Assert.Single(e.QueryAll("t(-5, R)."));
+        }
+        finally
+        {
+            IlPredicateCompiler.CpFreeGuardContinuations = old;
+        }
     }
 
     [Theory]

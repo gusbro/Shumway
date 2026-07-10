@@ -5923,17 +5923,19 @@ public sealed class IlPredicateCompiler
                     }
                     else if (TryDescribeFailDirectCallee(callee, calleeMap, out var fdCls, out var fdReject, extras))
                     {
-                        // SOUNDNESS — a MULTI-clause callee can yield MULTIPLE
-                        // solutions (overlapping clauses binding differently);
-                        // the sequential-chain inline commits to the first, so a
-                        // fallible guard goal AFTER the call could never retry
-                        // it. Sound when the callee is DETERMINISTIC (every
-                        // non-last clause cut-commits — at most one solution,
-                        // nothing to retry) OR the call is IMMEDIATELY followed
-                        // by the commit cut (nothing can fail back into it).
-                        // Single-clause callees are trivially det.
-                        if (callee.ClauseCount > 1
-                            && !FailDirectCalleeIsDet(fdCls!)
+                        // SOUNDNESS — a MULTI-solution callee (overlapping
+                        // clauses binding differently, or a cross-tail into a
+                        // nondet target — even from a single clause): the
+                        // sequential-chain inline commits to the first
+                        // solution, so a fallible guard goal AFTER the call
+                        // could never retry it. Sound when the callee is
+                        // DETERMINISTIC (FailDirectCalleeIsDet — every
+                        // non-last clause cut-commits AND every cross-tail
+                        // target det) OR the call is IMMEDIATELY followed by
+                        // the commit cut (nothing can fail back into it). No
+                        // ClauseCount==1 shortcut: a single clause inherits a
+                        // nondet cross-tail target's multiplicity.
+                        if (!FailDirectCalleeIsDet(fdCls!)
                             && !NextRealOpIsCut(code, pc + OpcodeTable.Get(op).Size, end))
                         {
                             CpFreeGuardStats.BumpShapeDetail("multi-mid-guard");
@@ -6332,12 +6334,10 @@ public sealed class IlPredicateCompiler
                     }
                     // ADR-033 — a CROSS tail: acceptable under the continuation
                     // mechanism when the target is itself leaf/fail-direct
-                    // (recursive describe; visiting set rejects mutual
-                    // recursion — deferred). The target's det-ness is recorded
+                    // (recursive describe). The target's det-ness is recorded
                     // for the caller's multiplicity (FailDirectCalleeIsDet).
                     if (!CpFreeGuardContinuations || calleeMap is null
-                        || !calleeMap.TryGetValue(fid, out var tailTgt)
-                        || !visiting.Add(fid))
+                        || !calleeMap.TryGetValue(fid, out var tailTgt))
                     {
                         CpFreeGuardStats.BumpShapeDetail("g3:cross-tail");
                         reject = FailDirectReject.HasCalls;      // cross tail — G3 candidate
@@ -6347,32 +6347,62 @@ public sealed class IlPredicateCompiler
                     // and the caller clause carries its staleness test.
                     if (tailTgt.IsDynamicSnapshot && !tailTgt.SnapshotRuleBearing)
                     {
-                        visiting.Remove(fid);
                         CpFreeGuardStats.BumpShapeDetail("dyn-snapshot-facts");
                         reject = FailDirectReject.HasCalls;
                         return false;
                     }
+                    // ADR-033 deep G3 — a TAIL CYCLE (mutual tail recursion,
+                    // the even/odd idiom): the target is already on the
+                    // describe path, so it has (or will have) its own shared
+                    // copy — the emit is a plain `br` into it, inheriting the
+                    // continuations (LCO; nothing pushed, O(1) stack). Sound
+                    // with per-copy IL locals because the position rule
+                    // (last-clause-or-cut-committed, enforced below for every
+                    // cross-tail clause) forfeits the abandoned activation's
+                    // alternatives — its entry marks are dead when the next
+                    // activation of the same copy overwrites them. The
+                    // greatest-fixpoint reading: accept the cycle edge; if any
+                    // participant's own walk fails, ITS describe rejects and
+                    // the whole acceptance collapses. Det is unknown at the
+                    // cycle edge → conservative FALSE (the caller never counts
+                    // as det, so the callee stays out of mid-guard positions).
+                    if (!visiting.Add(fid))
+                    {
+                        termPc = pc;
+                        crossTailFid = fid;
+                        crossTailDet = false;
+                        break;
+                    }
                     bool tgtOk, tgtDet = false;
                     try
                     {
+                        // Det via FailDirectCalleeIsDet in BOTH branches — no
+                        // ClauseCount==1 shortcut: a single-clause target whose
+                        // body itself cross-tails a NONDET target inherits that
+                        // multiplicity (the det check follows CrossTailDet).
                         if (IsLeafPredicate(tailTgt) || IsInlinableLeafRule(tailTgt))
                         {
                             // Leaves still need a describable copy — run the
                             // core describe (single-clause leaves pass it).
                             tgtOk = DescribeFailDirectCore(tailTgt, calleeMap,
                                 visiting, ref budget, out var leafCls, out _, extras);
-                            tgtDet = tgtOk;
+                            tgtDet = tgtOk && FailDirectCalleeIsDet(leafCls!);
                         }
                         else
                         {
-                            budget -= tailTgt.BytecodeUnfused.Length;
+                            // ADR-033 deep G3 — FRESH budget: the target is ONE
+                            // shared copy per method, not per-site duplication,
+                            // so the cumulative budget does not apply (the
+                            // per-callee caps inside the describe still bound
+                            // each copy).
+                            int tgtBudget = FailDirectMaxTotalBytes
+                                - tailTgt.BytecodeUnfused.Length;
                             List<FailDirectClause>? tgtCls = null;
-                            tgtOk = budget >= 0
+                            tgtOk = tgtBudget >= 0
                                 && DescribeFailDirectCore(tailTgt, calleeMap,
-                                    visiting, ref budget, out tgtCls, out _, extras);
+                                    visiting, ref tgtBudget, out tgtCls, out _, extras);
                             if (tgtOk)
-                                tgtDet = tailTgt.ClauseCount == 1
-                                    || FailDirectCalleeIsDet(tgtCls!);
+                                tgtDet = FailDirectCalleeIsDet(tgtCls!);
                         }
                     }
                     finally
@@ -6418,7 +6448,18 @@ public sealed class IlPredicateCompiler
                         }
                         if (!visiting.Add(ifid))                 // cycle = mutual recursion
                         {
-                            CpFreeGuardStats.BumpShapeDetail("g3:cycle");
+                            // ADR-033 deep G3 v1 — NON-tail cycles stay
+                            // rejected even under continuations: a re-entered
+                            // copy's IL locals (entry marks, saved registers)
+                            // would clobber the outer activation's, and a
+                            // later goal in the outer alternative could then
+                            // under-restore. Sound support needs real frames
+                            // (marks + registers pushed per activation) —
+                            // deferred; the distinct label measures the true
+                            // residual (the plain g3:cycle count undercounts:
+                            // upper levels report as g3:inner-calls).
+                            CpFreeGuardStats.BumpShapeDetail(
+                                CpFreeGuardContinuations ? "g3:cycle-nontail" : "g3:cycle");
                             reject = FailDirectReject.HasCalls;
                             return false;
                         }
@@ -6457,14 +6498,24 @@ public sealed class IlPredicateCompiler
                             else
                             {
                                 int innerLen = inner.BytecodeUnfused.Length;
-                                budget -= innerLen;
-                                if (budget < 0)
+                                // ADR-033 deep G3 — under continuations the
+                                // inner is ONE shared copy per method, not a
+                                // per-site duplication: the cumulative budget
+                                // does not apply — each copy gets a FRESH one
+                                // (the per-callee caps inside the describe
+                                // still bound every copy individually). The
+                                // duplication path keeps the shared budget.
+                                int freshBudget = FailDirectMaxTotalBytes - innerLen;
+                                if (!CpFreeGuardContinuations) budget -= innerLen;
+                                ref int innerBudget = ref CpFreeGuardContinuations
+                                    ? ref freshBudget : ref budget;
+                                if (innerBudget < 0)
                                 {
                                     innerOk = false;
                                     g3Detail = "g3:budget";
                                 }
                                 else if (!DescribeFailDirectCore(inner, calleeMap,
-                                             visiting, ref budget, out var innerCls,
+                                             visiting, ref innerBudget, out var innerCls,
                                              out var innerReject, extras))
                                 {
                                     innerOk = false;
@@ -6475,8 +6526,11 @@ public sealed class IlPredicateCompiler
                                         _ => "g3:inner-shape",
                                     };
                                 }
-                                else if (!(inner.ClauseCount == 1
-                                           || FailDirectCalleeIsDet(innerCls!)
+                                // No ClauseCount==1 shortcut: a single-clause
+                                // inner cross-tailing a NONDET target inherits
+                                // its multiplicity (FailDirectCalleeIsDet
+                                // follows CrossTailDet).
+                                else if (!(FailDirectCalleeIsDet(innerCls!)
                                            || NextRealOpIsCut(
                                                code, pc + OpcodeTable.Get(op).Size, end)))
                                 {

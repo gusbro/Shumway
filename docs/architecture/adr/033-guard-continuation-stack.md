@@ -94,6 +94,53 @@ depth) and `inner-dynamic` (needs the ADR-023 caller-eviction cascade).
   (an exception mid-callee leaves stale entries); query setup resets the top.
   The stack holds ints (cursors) — no heap-GC roots.
 
+### Deep G3 v1 (implemented): tail cycles + fresh per-copy budget
+
+The call-stack model has three cost tiers, and the third is deliberately not
+built:
+
+1. **Tail calls (self/cross-tail): push nothing** — `br` into the target's
+   copy, LCO. Mutual TAIL recursion (the even/odd idiom) is a cross-tail
+   CYCLE: the describe's visiting-set rejection is lifted for the `Execute`
+   edge under continuations (greatest-fixpoint reading: accept the edge; if
+   any participant's own walk fails, its describe rejects and the acceptance
+   collapses). Sound with plain per-copy IL locals BECAUSE the cross-tail
+   position rule (last-clause-or-cut-committed) forfeits the abandoned
+   activation's alternatives — its entry marks are dead when the next
+   activation of the same copy overwrites them. The cycle edge's det is
+   conservatively FALSE, so a cyclic callee never sits mid-guard.
+2. **Acyclic non-tail calls: one packed int per active call.** The cumulative
+   `FailDirectMaxTotalBytes` budget is lifted under continuations — each
+   callee is ONE shared copy per method, not per-site duplication — replaced
+   by a FRESH per-copy budget (the per-callee caps still bound every copy).
+   Per-activation state (entry marks, saved registers) stays in the copy's IL
+   locals, sound because an acyclic copy graph never re-enters a copy while
+   it is active.
+3. **Non-tail cycles: NOT built (v1).** A re-entered copy's IL locals would
+   clobber the outer activation's entry marks; a later goal failing in the
+   outer alternative would then under-restore. Sound support needs real
+   frames (marks + registers pushed per activation). The residual is now
+   measured directly (`g3:cycle-nontail`): test/ 14, testGen/ 19 — it does
+   not currently justify the frame machinery.
+
+**Multiplicity fix (latent bug of the cross-tail commit):** the
+`ClauseCount == 1 → trivially det` shortcuts (recognizer multi-mid rule,
+inner rule, cross-tail target det) bypassed `FailDirectCalleeIsDet` — but a
+single-clause wrapper that cross-tails a NONDET target inherits its
+multiplicity. All three sites now go through `FailDirectCalleeIsDet` (which
+follows `CrossTailDet`); pinned by
+`Adr033_SingleClauseWrapper_InheritsCrossTailMultiplicity`.
+
+**Measured (whole-program links, 2026-07-10):** accepted UNCHANGED (test/
+733, testGen/ 650 under CONT) — the freed deep chains re-block on the true
+funnel bottoms: EMPTY dynamics (`g3:inner-dynamic-facts` 2 329 +
+`op:EnterDynamic-facts` 1 452 on testGen — assert targets, inherent until an
+ADR-023 caller-eviction cascade) and real semantics (`multi-mid` 461,
+`nondet-mid` 214). `g3:budget` 40→25 (test/). The value of deep-G3 v1 is the
+CAPABILITY — mutual tail recursion and caps-free deep chains compose
+correctly through the copies (proven by the unit suite) — not corpus counts
+on these two apps.
+
 ## v2 (deferred): cross-method continuations
 
 A callee in a DIFFERENT region needs continuation entries that survive the
