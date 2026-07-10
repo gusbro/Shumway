@@ -1748,6 +1748,23 @@ public sealed partial class Engine
     /// <c>set_prolog_flag(unknown, _)</c>.</summary>
     public UnknownAction OnUnknown { get; set; } = UnknownAction.Error;
 
+    /// <summary>ADR-034 — functor ids of dynamic predicates mutated
+    /// (assert/retract/abolish) at any point in this host engine's lifetime.
+    /// A REFERENCE to the embedding layer's host-lifetime set (shared across
+    /// this host's per-query engines, single-threaded by the engine
+    /// concurrency contract), installed at query setup. Compiled IL whose
+    /// clause embeds an inlined dynamic-SNAPSHOT (a stable rule-bearing
+    /// dynamic, ADR-023/034) tests membership at clause entry via
+    /// <see cref="IsDynMutated"/> and takes the un-inlined fallback path when
+    /// the snapshot is stale — mutation mid-query is visible immediately
+    /// because the set instance is shared, not copied.</summary>
+    public System.Collections.Generic.HashSet<int>? MutatedDynamicFids;
+
+    /// <summary>ADR-034 — the emitted clause-entry staleness test (see
+    /// <see cref="MutatedDynamicFids"/>).</summary>
+    public bool IsDynMutated(int functorId)
+        => MutatedDynamicFids is { Count: > 0 } s && s.Contains(functorId);
+
     // ----- Meta-call route cache (chunk 416) -----
     //
     // Shared by the bytecode interpreter's DispatchCall and Tier-1's

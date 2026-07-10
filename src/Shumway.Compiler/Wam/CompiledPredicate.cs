@@ -122,6 +122,25 @@ public sealed class CompiledPredicate
     /// <summary>See <see cref="IlIndexedShapeMemo"/> (chunk 433).</summary>
     internal object? IlIndexedAtomShapeMemo;
 
+    /// <summary>ADR-034 — this predicate is a STATIC-style SNAPSHOT of a
+    /// dynamic predicate's clauses (ADR-023 <c>BuildDynamicSnapshot</c>): no
+    /// <c>enter_dynamic</c>/<c>check_visible</c>, so it is structurally
+    /// indistinguishable from a static predicate — but its truth can change
+    /// at runtime (assert/retract). Callers must NOT inline it except through
+    /// the ADR-034 checked-guard machinery (a clause-entry staleness test +
+    /// un-inlined fallback); the predicate's OWN delegate is evictable
+    /// (<c>IlPromotionStore.EvictDelegate</c>) so by-fid dispatch stays
+    /// live.</summary>
+    public bool IsDynamicSnapshot { get; set; }
+
+    /// <summary>ADR-034 — the snapshot's clause set contains RULE clauses
+    /// (bodies). The practical Arity model: a dynamic that ships rules
+    /// (<c>:- visible</c> for findall/setof meta-call visibility) is
+    /// mutation-cold and eligible for checked caller-inlining; a fact-only
+    /// dynamic is a real assert/retract target and is never
+    /// caller-inlined.</summary>
+    public bool SnapshotRuleBearing { get; set; }
+
     /// <summary>One <see cref="SourcePosition"/> per clause, in source
     /// order. Aligned with the <c>Meta(DbgInfo, clauseIndex)</c> opcodes
     /// the predicate compiler emits at each clause boundary (chunk 55):

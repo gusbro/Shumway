@@ -60,7 +60,31 @@ public static class BundleWriter
             // among cross-module callers) on a real 39-module corpus bundle.
             PrologEngine? warmEngine = null;
             if (includeCompiledIl && effective.Any(en => en.CompiledIl is null))
+            {
                 warmEngine = BuildWarmEngine(effective);
+                // Stable-dynamic census — the link-time calleeMap only ever
+                // sees a dynamic predicate's hollow trampoline (chunk 209
+                // peels its clauses into DynamicSeeds), so the CP-free stats
+                // can't classify rule-bearing vs fact-only dynamics from
+                // bytecode. Feed the split from the warm engine's rehydrated
+                // clause store instead.
+                foreach (int fid in warmEngine.DynamicFunctorsWithClauses())
+                {
+                    bool rules = false;
+                    foreach (var c in warmEngine.DynamicClausesFor(fid))
+                        if (c.Kind == Shumway.Compiler.Ast.ClauseKind.Rule) { rules = true; break; }
+                    if (rules)
+                    {
+                        Shumway.Compiler.Il.IlPredicateCompiler.CpFreeGuardStats
+                            .RuleBearingDynamicFids.Add(fid);
+                        Shumway.Compiler.Il.IlPredicateCompiler.CpFreeGuardStats.DynPoolRules++;
+                    }
+                    else
+                    {
+                        Shumway.Compiler.Il.IlPredicateCompiler.CpFreeGuardStats.DynPoolFacts++;
+                    }
+                }
+            }
             for (int i = 0; i < effective.Length; i++)
             {
                 byte[]? compiledBytecode = effective[i].CompiledBytecode;

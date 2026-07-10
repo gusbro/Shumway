@@ -107,6 +107,15 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// visible to that query — they take effect on the next compilation.</summary>
     private readonly Dictionary<int, List<Clause>> _dynamicClauses = new();
 
+    /// <summary>ADR-034 — dynamic functor ids mutated at any point in this
+    /// host's lifetime. Shared BY REFERENCE into every per-query
+    /// <see cref="Engine"/> (see <see cref="Engine.MutatedDynamicFids"/>) so
+    /// baked clause-entry staleness tests see a mid-query mutation
+    /// immediately. Grows monotonically; never cleared (a caller whose IL
+    /// embeds a stale snapshot must stay on its fallback path for the rest of
+    /// the process — re-linking or re-promotion is the way back).</summary>
+    private readonly HashSet<int> _mutatedDynamicFids = new();
+
     /// <summary>ADR-015 chunk C step 4: per-dynamic-functor chain state
     /// — one entry per clause currently in <see cref="_dynamicClauses"/>,
     /// in the same order, carrying the absolute byte position of the
@@ -1952,9 +1961,21 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         for (int i = 0; i < entry.Clauses.Count; i++)
             if (entry.HeadFids[i] == fid) own.Add(entry.Clauses[i]);
         if (own.Count == 0) return null;
-        return new Shumway.Compiler.Wam.PredicateCompiler { EmitDebugInfo = _flags.EmitDebugInfo }
+        var snap = new Shumway.Compiler.Wam.PredicateCompiler { EmitDebugInfo = _flags.EmitDebugInfo }
             .Compile(own, _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts,
                 enableIndexing: true, isDynamic: false, failStubAddr: 0);
+        // ADR-034 — mark the snapshot so caller-side inlining knows this
+        // "static-looking" predicate is really a dynamic whose truth can
+        // change; rule-bearing (from the RAW source clauses — the transformed
+        // ones may have been rewritten) gates checked caller-inlining.
+        snap.IsDynamicSnapshot = true;
+        foreach (var c in raw)
+            if (c.Kind == Shumway.Compiler.Ast.ClauseKind.Rule)
+            {
+                snap.SnapshotRuleBearing = true;
+                break;
+            }
+        return snap;
     }
 
     /// <summary>ADR-023 build-time persist (for <c>--with-compiled-il</c> / <c>--exe</c>
@@ -3554,7 +3575,18 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 if (buf[bufOffset] != expected) continue;
 
                 // Prefer the IL variant when IL is available.
-                bool hasIl = ilTable is not null
+                // ADR-023/034 — but never for a DYNAMIC callee: its delegate
+                // (the bundle-baked or runtime-promoted snapshot) is EVICTED
+                // on the first assert/retract, while a CallIl/ExecuteIl
+                // rewrite persists in the buffer across queries — the
+                // hardened site would run the stale snapshot (or crash on
+                // the cleared table slot). Dynamic callees stay on the
+                // generic Call/Execute path, whose OnDispatch resolves per
+                // call and sees the eviction. (The pre-fix symptom:
+                // `assertz(f(7)), f(7)` FALSE through a baked-snapshot
+                // bundle — the ISO logical update view broken.)
+                bool hasIl = !_dynamicFunctors.Contains(calleeFid)
+                    && ilTable is not null
                     && (uint)calleeFid < (uint)ilTable.Length
                     && ilTable[calleeFid] is not null;
                 if (hasIl)
@@ -4604,6 +4636,20 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // Tier-0 bytecode (the current database); the predicate re-warms before
         // re-snapshotting, and past the churn limit stays on Tier 0.
         IlPromotion.EvictDelegate(functorId);
+        // ADR-023/034 — the CURRENT query's interpreter snapshotted the
+        // delegate into its direct fid table at setup (IL callers dispatch
+        // every callee by fid through it via resume markers). Clear the slot
+        // so the very next dispatch re-resolves live — TryGet misses, and the
+        // call falls back to the Tier-0 enter_dynamic chain (the logical
+        // update view).
+        var ilTable = _rewriteInterp?.IlByFunctorId;
+        if (ilTable is not null && (uint)functorId < (uint)ilTable.Length)
+            ilTable[functorId] = null;
+        // ADR-034 — and any CALLER whose IL embeds this predicate's inlined
+        // snapshot must stop using it: the emitted clause-entry staleness test
+        // reads this host-lifetime set (shared into every per-query engine),
+        // so the fallback path takes over from the very next clause entry.
+        _mutatedDynamicFids.Add(functorId);
         // Chunk 430 — the functor's clause list changed, so its cached
         // transformed/rewritten clauses are stale too.
         _dynamicRewriteCache.Remove(functorId);
@@ -8245,6 +8291,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // prefix. Used by the upcoming incremental-assertz path and
             // by dynamic predicates' last-clause chain instructions.
             DynamicFailStubAddr = failStubAddr,
+            // ADR-034 — the host-lifetime mutated-dynamics set, shared by
+            // reference so baked staleness tests see mutations live.
+            MutatedDynamicFids = _mutatedDynamicFids,
         };
         // Chunk 151b: the persistent buffer is over-allocated, so the
         // engine's ProgramLength must reflect the live region (not the

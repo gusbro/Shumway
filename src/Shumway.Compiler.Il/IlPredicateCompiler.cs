@@ -265,6 +265,9 @@ public sealed class IlPredicateCompiler
         typeof(Engine).GetMethod(nameof(Engine.Deallocate), Type.EmptyTypes)!;
     private static readonly MethodInfo EngineNeckCutMethod =
         typeof(Engine).GetMethod(nameof(Engine.NeckCut), Type.EmptyTypes)!;
+    // ADR-034 — the clause-entry staleness test for inlined dynamic snapshots.
+    private static readonly MethodInfo EngineIsDynMutatedMethod =
+        typeof(Engine).GetMethod(nameof(Engine.IsDynMutated), new[] { typeof(int) })!;
     // Chunk 215 — deep cut (get_level + cut). GetLevel stashes the
     // procedure-entry barrier (_b0) into a Y slot; CutToLevel reads it
     // back and commits. Both are plain engine calls — the CP / _b0
@@ -1087,6 +1090,7 @@ public sealed class IlPredicateCompiler
             {
                 int fid = FindCallSiteFunctorId(predicate.CallSites, pc);
                 if (fid >= 0 && calleeMap.TryGetValue(fid, out var callee)
+                    && !callee.IsDynamicSnapshot       // ADR-034 — no unchecked inline
                     && IsInlinableRule(callee, allowCut: true)
                     && !IsInlinableLeafRule(callee))   // pure leaf rules → case 1
                 {
@@ -1678,6 +1682,28 @@ public sealed class IlPredicateCompiler
             {
                 int guardEnd = ginfo.CutPc;
                 int mi0 = mi, i0 = i;
+                // ADR-034 — the guard inlines dynamic SNAPSHOTS: prefix the
+                // clause with a staleness test per embedded fid; a mutated one
+                // takes the fallback path — plain entry CP + un-inlined guard
+                // (its dynamic call is a threaded by-fid call that dispatches
+                // against the LIVE predicate) + jump into the shared
+                // post-commit body. The guard's planned Call cursors are NOT
+                // dead-marked in that case: the fallback's threaded calls own
+                // them.
+                var dynFids = ginfo.EmbeddedDynamicFids;
+                Sigil.Label? dynFb = null, dynBody = null;
+                if (dynFids is { Count: > 0 })
+                {
+                    dynFb = emit.DefineLabel($"dynfb_rm{mi}_{i}");
+                    dynBody = emit.DefineLabel($"dynbody_rm{mi}_{i}");
+                    foreach (int df in dynFids)
+                    {
+                        emit.LoadArgument(0);
+                        EmitFunctorId(emit, df);
+                        emit.Call(EngineIsDynMutatedMethod);
+                        emit.BranchIfTrue(dynFb);
+                    }
+                }
                 EmitCpFreeGuardClause(emit,
                     (s, e, fl) =>
                     {
@@ -1689,16 +1715,20 @@ public sealed class IlPredicateCompiler
                                 localSalt: $"_rm{mi0}g{i0}",
                                 guardContCtx: gcCtx);
                         else
+                        {
+                            if (dynBody is not null)
+                                emit.MarkLabel(dynBody);   // fallback re-joins here
                             EmitClauseBody(
                                 emit, member.BytecodeUnfused, s, e, fl, member.CallSites,
                                 emitSelfDelegate: emitSelf, calleeMap: calleeMap,
                                 regionCtx: ctx);
+                        }
                     },
                     member.BytecodeUnfused, clauses[i].Start, clauses[i].End, ginfo,
                     ctx.CursorLabels[ctx.ClauseAltCursor[(mi, i + 1)]], ctx.FailLabel,
                     emitSelf, ctx.ClauseAltCursor[(mi, i + 1)], member.Arity,
                     salt: $"_rm{mi}_c{i}",
-                    markDeadCursors: () =>
+                    markDeadCursors: dynFids is { Count: > 0 } ? (Action?)null : () =>
                     {
                         // The plan allocated a forward-resume cursor per Call
                         // site in the member; the guard's Calls were inlined, so
@@ -1715,6 +1745,26 @@ public sealed class IlPredicateCompiler
                                 ? 6 : OpcodeTable.Get(code2[pc2]).Size;
                         }
                     });
+                if (dynFb is not null)
+                {
+                    emit.MarkLabel(dynFb);
+                    emit.LoadArgument(0);                         // engine
+                    emitSelf(emit);                               // → region delegate
+                    emit.LoadConstant(ctx.ClauseAltCursor[(mi, i + 1)]);
+                    emit.LoadConstant(member.Arity);
+                    emit.Call(EnginePushIlCpMethod);
+                    int cutSz = OpcodeTable.Get(
+                        (Opcode)member.BytecodeUnfused[guardEnd]).Size;
+                    // localSalt: the fallback re-emits the same pcs the
+                    // optimized guard slice already emitted — pc-named IL
+                    // locals must not collide.
+                    EmitClauseBody(emit, member.BytecodeUnfused,
+                        clauses[i].Start, guardEnd + cutSz,
+                        ctx.FailLabel, member.CallSites, emitSelfDelegate: emitSelf,
+                        calleeMap: calleeMap, regionCtx: ctx,
+                        localSalt: $"_dynfb{mi}_{i}");
+                    emit.Branch(dynBody!);
+                }
                 continue;
             }
 
@@ -2452,6 +2502,7 @@ public sealed class IlPredicateCompiler
             {
                 int fid = FindCallSiteFunctorId(predicate.CallSites, pc);
                 if (fid >= 0 && calleeMap.TryGetValue(fid, out var callee)
+                    && !callee.IsDynamicSnapshot       // ADR-034 — no unchecked inline
                     && callee.ClauseCount >= 2 && IsFactPredicate(callee)
                     && TryGetFactClauseRanges(callee, out var ranges)
                     && ranges.Count == callee.ClauseCount
@@ -4326,8 +4377,14 @@ public sealed class IlPredicateCompiler
                 // meta-CP is needed; the post-call label still gets
                 // marked for any outer logic but no choice point lives
                 // there.
+                // ADR-034 — a dynamic SNAPSHOT may be inlined ONLY under the
+                // checked-guard machinery (forceLeafRuleInline slices, whose
+                // recognizer collected the fid for the clause-entry staleness
+                // test); in any other position it takes the threaded by-fid
+                // call, which dispatches against the LIVE dynamic.
                 if (calleeMap is not null
                     && calleeMap.TryGetValue(siteFunctorId, out var calleePred)
+                    && (!calleePred.IsDynamicSnapshot || forceLeafRuleInline)
                     && (IsLeafPredicate(calleePred)
                         || ((InlineLeafRules || forceLeafRuleInline)
                             && IsInlinableLeafRule(calleePred))))
@@ -5447,6 +5504,25 @@ public sealed class IlPredicateCompiler
         internal static void BumpShapeDetail(string detail)
             => RejectShapeDetail.AddOrUpdate(detail, 1, static (_, v) => v + 1);
 
+        /// <summary>Stable-dynamic census — functor ids of dynamic predicates
+        /// whose clause store contains RULE clauses (bodies). Populated by the
+        /// link-time IL build from the warm engine's rehydrated seeds (the
+        /// link calleeMap only sees hollow trampolines); the rules/facts
+        /// shape-detail split consults this before falling back to the
+        /// bytecode scan. Populated single-threaded before emit; read-only
+        /// during emit.</summary>
+        public static readonly HashSet<int> RuleBearingDynamicFids = new();
+
+        /// <summary>Stable-dynamic census — dynamic predicates with clauses,
+        /// split rule-bearing (the mutation-cold fast-path candidate pool)
+        /// vs fact-only (the real assert/retract targets).</summary>
+        public static long DynPoolRules, DynPoolFacts;
+
+        /// <summary>ADR-034 — accepted CP-free guard clauses whose guard
+        /// inlines one or more dynamic SNAPSHOTS (each such clause carries the
+        /// clause-entry staleness test + fallback).</summary>
+        public static long AcceptWithDynSnapshot;
+
         public static void Reset()
         {
             TierA = TierB = TierGLeaf = TierG2 = 0;
@@ -5454,6 +5530,9 @@ public sealed class IlPredicateCompiler
             RejectCalleeCaps = RejectCalleeCut = RejectCalleeShape = 0;
             System.Array.Clear(RejectGuardOpByOpcode);
             RejectShapeDetail.Clear();
+            RuleBearingDynamicFids.Clear();
+            DynPoolRules = DynPoolFacts = 0;
+            AcceptWithDynSnapshot = 0;
         }
 
         public static long AcceptTotal => TierA + TierB + TierGLeaf + TierG2;
@@ -5473,6 +5552,10 @@ public sealed class IlPredicateCompiler
             sb.AppendLine($"    callee calls others (G3 candidate): {RejectCalleeCalls}");
             sb.AppendLine($"    callee over caps (raise candidate): {RejectCalleeCaps}");
             sb.AppendLine($"    callee has cut                    : {RejectCalleeCut}");
+            if (DynPoolRules + DynPoolFacts > 0)
+                sb.AppendLine($"    dynamic pool: rule-bearing={DynPoolRules} fact-only={DynPoolFacts}");
+            if (AcceptWithDynSnapshot > 0)
+                sb.AppendLine($"    accepted w/ inlined dynamic snapshot (checked): {AcceptWithDynSnapshot}");
             sb.Append($"    callee shape (control/backtrack)  : {RejectCalleeShape}");
             return sb.ToString();
         }
@@ -5576,7 +5659,40 @@ public sealed class IlPredicateCompiler
         /// <summary>The clause allocated an environment frame before the cut —
         /// the fail path must <c>Deallocate</c> before branching on.</summary>
         public bool Framed { get; init; }
+        /// <summary>ADR-034 — functor ids of the dynamic SNAPSHOTS this
+        /// clause's guard (transitively, through fail-direct callees and
+        /// shared copies) inlines. Non-null → the emit prefixes the clause
+        /// with a staleness test per fid (<c>Engine.IsDynMutated</c>) and an
+        /// un-inlined fallback path (plain guard + real by-fid call to the
+        /// live dynamic + jump into the shared post-commit body).</summary>
+        public List<int>? EmbeddedDynamicFids { get; init; }
     }
+
+    /// <summary>ADR-034 — side-channel collected by the fail-direct describe
+    /// walk: the dynamic-snapshot fids a guard would inline (transitively) and
+    /// whether any walked code calls a database-mutation builtin. A guard that
+    /// embeds a snapshot AND can mutate the database is rejected — the
+    /// clause-entry staleness test would be stale by the time the inlined
+    /// snapshot runs.</summary>
+    internal sealed class FailDirectExtras
+    {
+        public List<int>? DynFids;
+        public bool DbMutation;
+        public void AddDyn(int fid)
+        {
+            DynFids ??= new List<int>();
+            if (!DynFids.Contains(fid)) DynFids.Add(fid);
+        }
+    }
+
+    /// <summary>ADR-034 — builtins that mutate the dynamic clause store (the
+    /// staleness-window set: none may run between a clause's entry test and
+    /// its inlined snapshot code). <c>retract/1</c> is backtrackable and
+    /// already rejected by the guard whitelist.</summary>
+    private static bool IsDbMutationBuiltin(Shumway.Builtins.BuiltinEntry e)
+        => (e.Name, e.Arity) is ("assert", 1) or ("asserta", 1) or ("assertz", 1)
+            or ("retractall", 1) or ("abolish", 1) or ("abolish", 2)
+            or ("consult", 1) or ("reconsult", 1) or ("restore_state", 1);
 
     /// <summary>ADR-031 recogniser — true when the clause byte range is a
     /// CP-free guard committing via a cut. Three tiers share one walk:
@@ -5609,6 +5725,7 @@ public sealed class IlPredicateCompiler
         info = default;
         bool snapshot = false, regSave = false, framed = false, sawRealOp = false;
         bool sawCall = false, sawFdCallee = false;
+        var extras = new FailDirectExtras();           // ADR-034 collector
         int pc = start;
 
         // ADR-032 sizing — count a rejection only when the clause actually has
@@ -5635,6 +5752,19 @@ public sealed class IlPredicateCompiler
                 System.Threading.Interlocked.Increment(ref CpFreeGuardStats.TierB);
             else
                 System.Threading.Interlocked.Increment(ref CpFreeGuardStats.TierA);
+            if (extras.DynFids is { Count: > 0 })
+                System.Threading.Interlocked.Increment(ref CpFreeGuardStats.AcceptWithDynSnapshot);
+        }
+        // ADR-034 — a guard that inlines a dynamic snapshot must not also be
+        // able to MUTATE the database (the clause-entry staleness test would
+        // be stale by the time the inlined code runs). Checked at the accept
+        // point so both orders (mutate-then-call, call-then-mutate) reject.
+        bool AcceptEmbeddedDynamics()
+        {
+            if (extras.DynFids is not { Count: > 0 } || !extras.DbMutation) return true;
+            CpFreeGuardStats.BumpShapeDetail("dyn+mutation");
+            CountReject(ref CpFreeGuardStats.RejectCalleeShape, pc);
+            return false;
         }
 
         while (pc < end)
@@ -5646,19 +5776,23 @@ public sealed class IlPredicateCompiler
                     pc += 6;
                     continue;
                 case Opcode.NeckCut:
+                    if (!AcceptEmbeddedDynamics()) return false;
                     info = new CpFreeGuardInfo
                     {
                         CutPc = pc, DeepCut = false,
                         NeedsSnapshot = snapshot, NeedsRegSave = regSave, Framed = framed,
+                        EmbeddedDynamicFids = extras.DynFids,
                     };
                     CountAccept();
                     return true;
                 case Opcode.Cut:
                     if (!framed) return false;          // deep cut needs the frame's Y slot
+                    if (!AcceptEmbeddedDynamics()) return false;
                     info = new CpFreeGuardInfo
                     {
                         CutPc = pc, DeepCut = true,
                         NeedsSnapshot = snapshot, NeedsRegSave = regSave, Framed = true,
+                        EmbeddedDynamicFids = extras.DynFids,
                     };
                     CountAccept();
                     return true;
@@ -5767,11 +5901,27 @@ public sealed class IlPredicateCompiler
                         CountReject(ref CpFreeGuardStats.RejectCalleeUnresolved, pc);
                         return false;
                     }
+                    // ADR-034 — a dynamic SNAPSHOT callee (ADR-023 bake): its
+                    // truth can change at runtime, so inlining is allowed only
+                    // for rule-bearing (mutation-cold) dynamics, and only with
+                    // the clause-entry staleness test the collected fid
+                    // triggers. Fact-only dynamics are the real assert
+                    // targets — never caller-inlined.
+                    if (callee.IsDynamicSnapshot)
+                    {
+                        if (!callee.SnapshotRuleBearing)
+                        {
+                            CpFreeGuardStats.BumpShapeDetail("dyn-snapshot-facts");
+                            CountReject(ref CpFreeGuardStats.RejectCalleeShape, pc);
+                            return false;
+                        }
+                        extras.AddDyn(callee.FunctorId);
+                    }
                     if (IsLeafPredicate(callee) || IsInlinableLeafRule(callee))
                     {
                         sawCall = true;
                     }
-                    else if (TryDescribeFailDirectCallee(callee, calleeMap, out var fdCls, out var fdReject))
+                    else if (TryDescribeFailDirectCallee(callee, calleeMap, out var fdCls, out var fdReject, extras))
                     {
                         // SOUNDNESS — a MULTI-clause callee can yield MULTIPLE
                         // solutions (overlapping clauses binding differently);
@@ -5825,6 +5975,8 @@ public sealed class IlPredicateCompiler
                         CountGuardOpReject(op, pc);
                         return false;
                     }
+                    if (IsDbMutationBuiltin(entry))
+                        extras.DbMutation = true;      // ADR-034 (see AcceptEmbeddedDynamics)
                     snapshot = true;                   // builtins may bind/allocate
                     regSave = true;                    // arg staging clobbers
                     break;
@@ -5839,6 +5991,84 @@ public sealed class IlPredicateCompiler
             }
             sawRealOp = true;
             pc += OpcodeTable.Get(op).Size;
+        }
+        return false;
+    }
+
+    /// <summary>Stats classifier — does a dynamic predicate's compiled chain
+    /// contain RULE bodies (vs. facts only)? The practical Arity model: a
+    /// dynamic that already has rules with bodies (`:- visible` for
+    /// findall/setof meta-call visibility) is never mutated at runtime, so it
+    /// is a stable-dynamic inline candidate; fact-only dynamics are the real
+    /// assert/retract targets. Scans the chain blob for body markers: frame
+    /// allocation, body-arg staging (put_*), calls, arithmetic, cut. The
+    /// ADR-015 chain tail's <c>call_builtin fail/0</c> stub and the internal
+    /// body-dispatch <c>execute</c> of the indexed-dynamic layout (not a
+    /// CallSite) are fact-compatible. A body-less tail-call rule
+    /// (<c>p(X) :- q(X).</c>, execute recorded as a CallSite) counts as a
+    /// rule.</summary>
+    private static bool DynamicHasRuleBodies(CompiledPredicate pred)
+    {
+        // Link-time: the calleeMap holds a hollow trampoline (clauses live in
+        // DynamicSeeds) — the census set fed from the warm engine's clause
+        // store is the ground truth there. Runtime: the set is empty and the
+        // bytecode scan below sees the real in-place chain with clause bodies.
+        if (CpFreeGuardStats.RuleBearingDynamicFids.Contains(pred.FunctorId))
+            return true;
+        byte[] code = pred.BytecodeUnfused;
+        int pc = 0;
+        while (pc < code.Length)
+        {
+            var op = (Opcode)code[pc];
+            int size = OpcodeTable.Get(op).Size;
+            if (size <= 0) return false;               // corrupt — don't classify
+            switch (op)
+            {
+                case >= Opcode.PutVariableX and <= Opcode.PutBigInt:
+                case Opcode.PutStructureR:
+                case Opcode.PutListR:
+                case Opcode.PutPstr:
+                case Opcode.Allocate:
+                case Opcode.AllocateGetLevel:
+                case Opcode.Deallocate:
+                case Opcode.DeallocateProceed:
+                case Opcode.Call:
+                case Opcode.CallIl:
+                case Opcode.CallBytecode:
+                case Opcode.ExecuteBuiltin:
+                case Opcode.ExecuteIl:
+                case Opcode.ExecuteBytecode:
+                case Opcode.AEvalPush:
+                case Opcode.AEvalBin:
+                case Opcode.AEvalUn:
+                case Opcode.AEvalIs:
+                case Opcode.AEvalCmp:
+                case Opcode.AIntBin:
+                case Opcode.AIntCmp:
+                case Opcode.Cut:
+                case Opcode.NeckCut:
+                case Opcode.GetLevel:
+                case Opcode.CutDeallocateProceed:
+                case Opcode.CutProceed:
+                    return true;
+                case Opcode.CallBuiltin:
+                {
+                    var entry = Shumway.Builtins.BuiltinsRegistry.GetById(
+                        BytecodeIO.ReadInt32(code, pc + 1));
+                    if (entry.Name != "fail" || entry.Arity != 0) return true;
+                    break;                             // ADR-015 fail stub
+                }
+                case Opcode.Execute:
+                {
+                    // A tail-call to another predicate is a rule body; the
+                    // indexed-dynamic layout's internal body dispatch is not
+                    // recorded as a CallSite.
+                    foreach (var site in pred.CallSites)
+                        if (site.OpcodeOffset == pc) return true;
+                    break;
+                }
+            }
+            pc += size;
         }
         return false;
     }
@@ -6014,12 +6244,13 @@ public sealed class IlPredicateCompiler
         CompiledPredicate callee,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
         out List<FailDirectClause>? clauses,
-        out FailDirectReject reject)
+        out FailDirectReject reject,
+        FailDirectExtras? extras = null)
     {
         var visiting = new HashSet<int> { callee.FunctorId };
         int budget = FailDirectMaxTotalBytes - callee.BytecodeUnfused.Length;
         return DescribeFailDirectCore(
-            callee, calleeMap, visiting, ref budget, out clauses, out reject);
+            callee, calleeMap, visiting, ref budget, out clauses, out reject, extras);
     }
 
     private static bool DescribeFailDirectCore(
@@ -6027,7 +6258,8 @@ public sealed class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
         HashSet<int> visiting, ref int budget,
         out List<FailDirectClause>? clauses,
-        out FailDirectReject reject)
+        out FailDirectReject reject,
+        FailDirectExtras? extras = null)
     {
         clauses = null;
         reject = FailDirectReject.None;
@@ -6111,6 +6343,15 @@ public sealed class IlPredicateCompiler
                         reject = FailDirectReject.HasCalls;      // cross tail — G3 candidate
                         return false;
                     }
+                    // ADR-034 — a dynamic-snapshot target: rule-bearing only,
+                    // and the caller clause carries its staleness test.
+                    if (tailTgt.IsDynamicSnapshot && !tailTgt.SnapshotRuleBearing)
+                    {
+                        visiting.Remove(fid);
+                        CpFreeGuardStats.BumpShapeDetail("dyn-snapshot-facts");
+                        reject = FailDirectReject.HasCalls;
+                        return false;
+                    }
                     bool tgtOk, tgtDet = false;
                     try
                     {
@@ -6119,7 +6360,7 @@ public sealed class IlPredicateCompiler
                             // Leaves still need a describable copy — run the
                             // core describe (single-clause leaves pass it).
                             tgtOk = DescribeFailDirectCore(tailTgt, calleeMap,
-                                visiting, ref budget, out var leafCls, out _);
+                                visiting, ref budget, out var leafCls, out _, extras);
                             tgtDet = tgtOk;
                         }
                         else
@@ -6128,7 +6369,7 @@ public sealed class IlPredicateCompiler
                             List<FailDirectClause>? tgtCls = null;
                             tgtOk = budget >= 0
                                 && DescribeFailDirectCore(tailTgt, calleeMap,
-                                    visiting, ref budget, out tgtCls, out _);
+                                    visiting, ref budget, out tgtCls, out _, extras);
                             if (tgtOk)
                                 tgtDet = tailTgt.ClauseCount == 1
                                     || FailDirectCalleeIsDet(tgtCls!);
@@ -6138,6 +6379,8 @@ public sealed class IlPredicateCompiler
                     {
                         visiting.Remove(fid);
                     }
+                    if (tgtOk && tailTgt.IsDynamicSnapshot)
+                        extras?.AddDyn(tailTgt.FunctorId);
                     if (!tgtOk)
                     {
                         CpFreeGuardStats.BumpShapeDetail("g3:cross-tail");
@@ -6183,7 +6426,16 @@ public sealed class IlPredicateCompiler
                         string g3Detail = "g3:inner-shape";
                         try
                         {
-                            if (IsLeafPredicate(inner) || IsInlinableLeafRule(inner))
+                            // ADR-034 — a dynamic-SNAPSHOT inner: rule-bearing
+                            // only (fact-only dynamics are real assert
+                            // targets); an accepted one is collected below so
+                            // the top-level clause carries its staleness test.
+                            if (inner.IsDynamicSnapshot && !inner.SnapshotRuleBearing)
+                            {
+                                innerOk = false;
+                                g3Detail = "dyn-snapshot-facts";
+                            }
+                            else if (IsLeafPredicate(inner) || IsInlinableLeafRule(inner))
                             {
                                 innerOk = true;                  // single-clause → det
                             }
@@ -6193,8 +6445,14 @@ public sealed class IlPredicateCompiler
                                 // inlined (its clauses change at runtime) —
                                 // classify without recursing (the recursion
                                 // would pollute the inner-reject counters).
+                                // Split by clause shape: a rule-bearing dynamic
+                                // (:- visible for findall/setof visibility, the
+                                // Arity idiom) is mutation-cold in practice —
+                                // the stable-dynamic fast-path candidate pool.
                                 innerOk = false;
-                                g3Detail = "g3:inner-dynamic";
+                                g3Detail = DynamicHasRuleBodies(inner)
+                                    ? "g3:inner-dynamic-rules"
+                                    : "g3:inner-dynamic-facts";
                             }
                             else
                             {
@@ -6207,7 +6465,7 @@ public sealed class IlPredicateCompiler
                                 }
                                 else if (!DescribeFailDirectCore(inner, calleeMap,
                                              visiting, ref budget, out var innerCls,
-                                             out var innerReject))
+                                             out var innerReject, extras))
                                 {
                                     innerOk = false;
                                     g3Detail = innerReject switch
@@ -6241,6 +6499,8 @@ public sealed class IlPredicateCompiler
                             reject = FailDirectReject.HasCalls;
                             return false;
                         }
+                        if (inner.IsDynamicSnapshot)
+                            extras?.AddDyn(inner.FunctorId);     // ADR-034
                         break;
                     }
                     case Opcode.CallIl:
@@ -6335,8 +6595,19 @@ public sealed class IlPredicateCompiler
                             reject = FailDirectReject.Shape;
                             return false;
                         }
+                        if (IsDbMutationBuiltin(entry) && extras is not null)
+                            extras.DbMutation = true;            // ADR-034
                         break;
                     }
+                    case Opcode.EnterDynamic:
+                        // The callee itself is dynamic (direct guard call to a
+                        // dynamic predicate). Same rules/facts split as the
+                        // inner-dynamic case — rule-bearing dynamics are the
+                        // stable-dynamic fast-path candidate pool.
+                        CpFreeGuardStats.BumpShapeDetail(DynamicHasRuleBodies(callee)
+                            ? "op:EnterDynamic-rules" : "op:EnterDynamic-facts");
+                        reject = FailDirectReject.Shape;
+                        return false;
                     default:
                         CpFreeGuardStats.BumpShapeDetail($"op:{op}");
                         reject = FailDirectReject.Shape;
@@ -6748,7 +7019,37 @@ public sealed class IlPredicateCompiler
         // resume marker encodes a unique global cursor and the
         // matching label is in resumeLabels[siteIdx-1].
         int N = clauses.Count;
-        int totalCallSites = CountNonTailCallOpcodes(predicate.BytecodeUnfused);
+
+        // ADR-031/034 pre-scan — recognise each non-last clause's CP-free
+        // guard ONCE (the stats count per invocation, and the ADR-034 fallback
+        // needs the result before the cursor space is sized): a clause whose
+        // guard embeds dynamic SNAPSHOTS re-emits its guard Call sites on the
+        // fallback path as threaded calls, each taking an EXTRA forward-resume
+        // cursor beyond the one-per-site base count.
+        var guardOk = new bool[N];
+        var guardInfo = new CpFreeGuardInfo[N];
+        int extraDynSites = 0;
+        if (CpFreeGuardCommit)
+            for (int gi = 0; gi < N - 1; gi++)
+                if (TryGetCpFreeGuard(
+                        predicate.BytecodeUnfused, clauses[gi].Start, clauses[gi].End,
+                        predicate.Arity, calleeMap, predicate.CallSites, out guardInfo[gi]))
+                {
+                    guardOk[gi] = true;
+                    if (guardInfo[gi].EmbeddedDynamicFids is { Count: > 0 })
+                    {
+                        int pcX = clauses[gi].Start;
+                        byte[] codeX = predicate.BytecodeUnfused;
+                        while (pcX < guardInfo[gi].CutPc)
+                        {
+                            if ((Opcode)codeX[pcX] == Opcode.Call) extraDynSites++;
+                            pcX += (Opcode)codeX[pcX] == Opcode.Meta
+                                ? 6 : OpcodeTable.Get(codeX[pcX]).Size;
+                        }
+                    }
+                }
+        int totalCallSites = CountNonTailCallOpcodes(predicate.BytecodeUnfused)
+            + extraDynSites;
         var resumeLabels = new Sigil.Label[totalCallSites];
         for (int j = 0; j < totalCallSites; j++)
             resumeLabels[j] = emit.DefineLabel($"call_resume_{j + 1}");
@@ -6806,15 +7107,73 @@ public sealed class IlPredicateCompiler
             // materialises the CP lazily only in the rare pending-wakeups case
             // (see EmitCpFreeGuardClause). forceLeafRuleInline: a tier-G guard
             // Call MUST take the chunk-69 inline path (its failure is then a
-            // direct branch to the guard's fail label).
-            if (CpFreeGuardCommit && i < clauses.Count - 1
-                && TryGetCpFreeGuard(
-                    predicate.BytecodeUnfused, clauses[i].Start, clauses[i].End,
-                    predicate.Arity, calleeMap, predicate.CallSites, out var ginfo))
+            // direct branch to the guard's fail label). Recognition ran once
+            // in the pre-scan above (guardOk/guardInfo).
+            if (guardOk[i])
             {
+                var ginfo = guardInfo[i];
+                // ADR-034 — staleness test + fallback (see the region driver's
+                // twin for the full story): a mutated embedded snapshot sends
+                // the clause down a plain path — entry CP + un-inlined guard
+                // (threaded by-fid calls reach the LIVE dynamic) + jump into
+                // the shared post-commit body.
+                var dynFids = ginfo.EmbeddedDynamicFids;
+                Sigil.Label? dynFb = null, dynBody = null;
+                if (dynFids is { Count: > 0 })
+                {
+                    dynFb = emit.DefineLabel($"dynfb_c{i}");
+                    dynBody = emit.DefineLabel($"dynbody_c{i}");
+                    foreach (int df in dynFids)
+                    {
+                        emit.LoadArgument(0);
+                        EmitFunctorId(emit, df);
+                        emit.Call(EngineIsDynMutatedMethod);
+                        emit.BranchIfTrue(dynFb);
+                    }
+                }
                 EmitCpFreeGuardClause(emit,
-                    (s, e, fl) => EmitClauseBody(
-                        emit, predicate.BytecodeUnfused, s, e, fl, predicate.CallSites,
+                    (s, e, fl) =>
+                    {
+                        // Guard slice: e == CutPc; post-commit body: e == end.
+                        // Only the GUARD slice forces leaf inlining — the
+                        // recognizer's snapshot-fid collection stops at the
+                        // cut, so a forced inline in the body slice would
+                        // bypass the ADR-034 staleness check.
+                        bool isGuardSlice = e <= ginfo.CutPc;
+                        if (dynBody is not null && !isGuardSlice)
+                            emit.MarkLabel(dynBody);       // fallback re-joins here
+                        EmitClauseBody(
+                            emit, predicate.BytecodeUnfused, s, e, fl, predicate.CallSites,
+                            callSiteIndexCounter: () => ++siteCounter,
+                            resumeLabels: resumeLabels,
+                            emitSelfDelegate: effectiveSelf,
+                            calleeMap: calleeMap,
+                            cursorBase: N,
+                            selfFunctorId: predicate.FunctorId,
+                            selfTailLabel: selfEntry,
+                            resetCursorBeforeSelfTail: true,
+                            forceLeafRuleInline: isGuardSlice,
+                            guardContCtx: gcCtx);
+                    },
+                    predicate.BytecodeUnfused, clauses[i].Start, clauses[i].End, ginfo,
+                    clauseLabels[i + 1], failLabel,
+                    effectiveSelf, i + 1, predicate.Arity, salt: $"_c{i}");
+                if (dynFb is not null)
+                {
+                    emit.MarkLabel(dynFb);
+                    emit.LoadArgument(0);
+                    effectiveSelf(emit);
+                    emit.LoadConstant(i + 1);
+                    emit.LoadConstant(predicate.Arity);
+                    emit.Call(EnginePushIlCpMethod);
+                    int cutSz = OpcodeTable.Get(
+                        (Opcode)predicate.BytecodeUnfused[ginfo.CutPc]).Size;
+                    // localSalt: the fallback re-emits the same pcs the
+                    // optimized guard slice already emitted — pc-named IL
+                    // locals must not collide.
+                    EmitClauseBody(emit, predicate.BytecodeUnfused,
+                        clauses[i].Start, ginfo.CutPc + cutSz,
+                        failLabel, predicate.CallSites,
                         callSiteIndexCounter: () => ++siteCounter,
                         resumeLabels: resumeLabels,
                         emitSelfDelegate: effectiveSelf,
@@ -6823,11 +7182,9 @@ public sealed class IlPredicateCompiler
                         selfFunctorId: predicate.FunctorId,
                         selfTailLabel: selfEntry,
                         resetCursorBeforeSelfTail: true,
-                        forceLeafRuleInline: true,
-                        guardContCtx: gcCtx),
-                    predicate.BytecodeUnfused, clauses[i].Start, clauses[i].End, ginfo,
-                    clauseLabels[i + 1], failLabel,
-                    effectiveSelf, i + 1, predicate.Arity, salt: $"_c{i}");
+                        localSalt: $"_dynfb{i}");
+                    emit.Branch(dynBody!);
+                }
                 continue;
             }
 
