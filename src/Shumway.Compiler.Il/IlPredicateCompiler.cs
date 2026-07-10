@@ -5960,6 +5960,7 @@ public sealed class IlPredicateCompiler
                     int fid = FindCallSiteFunctorId(callee.CallSites, pc);
                     if (fid != callee.FunctorId)
                     {
+                        CpFreeGuardStats.BumpShapeDetail("g3:cross-tail");
                         reject = FailDirectReject.HasCalls;      // cross tail — G3 candidate
                         return false;
                     }
@@ -5978,34 +5979,73 @@ public sealed class IlPredicateCompiler
                         // within the total inline budget.
                         if (calleeMap is null)
                         {
+                            CpFreeGuardStats.BumpShapeDetail("g3:no-map");
                             reject = FailDirectReject.HasCalls;
                             return false;
                         }
                         int ifid = FindCallSiteFunctorId(callee.CallSites, pc);
-                        if (ifid < 0 || !calleeMap.TryGetValue(ifid, out var inner)
-                            || !visiting.Add(ifid))              // cycle = mutual recursion
+                        if (ifid < 0 || !calleeMap.TryGetValue(ifid, out var inner))
                         {
+                            CpFreeGuardStats.BumpShapeDetail("g3:unresolved");
+                            reject = FailDirectReject.HasCalls;
+                            return false;
+                        }
+                        if (!visiting.Add(ifid))                 // cycle = mutual recursion
+                        {
+                            CpFreeGuardStats.BumpShapeDetail("g3:cycle");
                             reject = FailDirectReject.HasCalls;
                             return false;
                         }
                         bool innerOk;
+                        string g3Detail = "g3:inner-shape";
                         try
                         {
                             if (IsLeafPredicate(inner) || IsInlinableLeafRule(inner))
                             {
                                 innerOk = true;                  // single-clause → det
                             }
+                            else if ((Opcode)inner.BytecodeUnfused[0] == Opcode.EnterDynamic)
+                            {
+                                // A dynamic inner can never be statically
+                                // inlined (its clauses change at runtime) —
+                                // classify without recursing (the recursion
+                                // would pollute the inner-reject counters).
+                                innerOk = false;
+                                g3Detail = "g3:inner-dynamic";
+                            }
                             else
                             {
                                 int innerLen = inner.BytecodeUnfused.Length;
                                 budget -= innerLen;
-                                innerOk = budget >= 0
-                                    && DescribeFailDirectCore(inner, calleeMap,
-                                        visiting, ref budget, out var innerCls, out _)
-                                    && (inner.ClauseCount == 1
-                                        || FailDirectCalleeIsDet(innerCls!)
-                                        || NextRealOpIsCut(
-                                            code, pc + OpcodeTable.Get(op).Size, end));
+                                if (budget < 0)
+                                {
+                                    innerOk = false;
+                                    g3Detail = "g3:budget";
+                                }
+                                else if (!DescribeFailDirectCore(inner, calleeMap,
+                                             visiting, ref budget, out var innerCls,
+                                             out var innerReject))
+                                {
+                                    innerOk = false;
+                                    g3Detail = innerReject switch
+                                    {
+                                        FailDirectReject.Caps => "g3:inner-caps",
+                                        FailDirectReject.HasCalls => "g3:inner-calls",
+                                        _ => "g3:inner-shape",
+                                    };
+                                }
+                                else if (!(inner.ClauseCount == 1
+                                           || FailDirectCalleeIsDet(innerCls!)
+                                           || NextRealOpIsCut(
+                                               code, pc + OpcodeTable.Get(op).Size, end)))
+                                {
+                                    innerOk = false;
+                                    g3Detail = "g3:nondet-mid";
+                                }
+                                else
+                                {
+                                    innerOk = true;
+                                }
                             }
                         }
                         finally
@@ -6014,6 +6054,7 @@ public sealed class IlPredicateCompiler
                         }
                         if (!innerOk)
                         {
+                            CpFreeGuardStats.BumpShapeDetail(g3Detail);
                             reject = FailDirectReject.HasCalls;
                             return false;
                         }
@@ -6023,6 +6064,7 @@ public sealed class IlPredicateCompiler
                     case Opcode.CallBytecode:
                     case Opcode.ExecuteIl:
                     case Opcode.ExecuteBytecode:
+                        CpFreeGuardStats.BumpShapeDetail("g3:exec-variant");
                         reject = FailDirectReject.HasCalls;      // G3 candidate
                         return false;
                     case Opcode.NeckCut:
