@@ -1800,6 +1800,8 @@ public sealed class IlPredicateCompiler
         IlIndexedDispatchInfo info, RegionEmitContext ctx, SelfDelegateEmitter emitSelf,
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
     {
+        if (CpFreeIndexedCensus)
+            AnalyzeIndexedBucketGuards(member, info, calleeMap);
         int K = info.Nodes.Count;
         int N = info.Clauses.Count;
         string salt = $"_rm{mi}";
@@ -5135,6 +5137,8 @@ public sealed class IlPredicateCompiler
         SelfDelegateEmitter emitSelf,
         System.Type selfDelType)
     {
+        if (CpFreeIndexedCensus)
+            AnalyzeIndexedBucketGuards(predicate, info, calleeMap);
         int K = info.Nodes.Count;
         int N = info.Clauses.Count;
         int totalCallSites = CountNonTailCallOpcodes(predicate.BytecodeUnfused);
@@ -5527,6 +5531,14 @@ public sealed class IlPredicateCompiler
         /// clause-entry staleness test + fallback).</summary>
         public static long AcceptWithDynSnapshot;
 
+        /// <summary>ADR-031 indexed-bucket sizing (census-only, gated
+        /// <see cref="CpFreeIndexedCensus"/>) — chain nodes inside INDEXED
+        /// dispatch that push a bucket choice point (NextCursor ≥ 0), how
+        /// many of them run a cut-shaped clause, and how many of those the
+        /// CP-free recognizer would accept. The emission does NOT act on
+        /// this — it sizes the deferred "indexed buckets" extension.</summary>
+        public static long IndexedBucketCpNodes, IndexedBucketCandidates, IndexedBucketAccept;
+
         public static void Reset()
         {
             TierA = TierB = TierGLeaf = TierG2 = 0;
@@ -5537,6 +5549,7 @@ public sealed class IlPredicateCompiler
             RuleBearingDynamicFids.Clear();
             DynPoolRules = DynPoolFacts = 0;
             AcceptWithDynSnapshot = 0;
+            IndexedBucketCpNodes = IndexedBucketCandidates = IndexedBucketAccept = 0;
         }
 
         public static long AcceptTotal => TierA + TierB + TierGLeaf + TierG2;
@@ -5560,6 +5573,9 @@ public sealed class IlPredicateCompiler
                 sb.AppendLine($"    dynamic pool: rule-bearing={DynPoolRules} fact-only={DynPoolFacts}");
             if (AcceptWithDynSnapshot > 0)
                 sb.AppendLine($"    accepted w/ inlined dynamic snapshot (checked): {AcceptWithDynSnapshot}");
+            if (IndexedBucketCpNodes > 0)
+                sb.AppendLine($"    indexed-bucket census: CP nodes={IndexedBucketCpNodes} "
+                    + $"cut-shaped={IndexedBucketCandidates} recognizer-acceptable={IndexedBucketAccept}");
             sb.Append($"    callee shape (control/backtrack)  : {RejectCalleeShape}");
             return sb.ToString();
         }
@@ -5573,6 +5589,38 @@ public sealed class IlPredicateCompiler
     /// path remains the default.</summary>
     public static bool CpFreeGuardContinuations { get; set; } =
         System.Environment.GetEnvironmentVariable("SHUMWAY_CPFREE_CONT") == "1";
+
+    /// <summary>ADR-031 indexed-bucket sizing census, opt-in
+    /// (<c>SHUMWAY_CPFREE_IDXCENSUS=1</c>): at the two indexed emit sites,
+    /// replay the CP-free recognizer over every bucket chain node that
+    /// pushes a choice point, WITHOUT changing emission — the main
+    /// accept/reject counters stay clean (the census calls suppress them);
+    /// only the <c>indexed-bucket census</c> summary line and (unavoidably)
+    /// the describe-level shape-detail labels reflect the census.</summary>
+    internal static readonly bool CpFreeIndexedCensus =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_CPFREE_IDXCENSUS") == "1";
+
+    /// <summary>See <see cref="CpFreeIndexedCensus"/>.</summary>
+    private static void AnalyzeIndexedBucketGuards(
+        CompiledPredicate pred, IlIndexedDispatchInfo info,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+    {
+        byte[] code = pred.BytecodeUnfused;
+        foreach (var node in info.Nodes)
+        {
+            if (node.NextCursor < 0) continue;      // chain tail — no CP push
+            System.Threading.Interlocked.Increment(
+                ref CpFreeGuardStats.IndexedBucketCpNodes);
+            var (s, e) = info.Clauses[node.ClauseIndex];
+            if (!HasCutAhead(code, s, e)) continue;
+            System.Threading.Interlocked.Increment(
+                ref CpFreeGuardStats.IndexedBucketCandidates);
+            if (TryGetCpFreeGuard(code, s, e, pred.Arity, calleeMap,
+                    pred.CallSites, out _, suppressStats: true))
+                System.Threading.Interlocked.Increment(
+                    ref CpFreeGuardStats.IndexedBucketAccept);
+        }
+    }
 
     // Empty-dynamic-as-fail: MEASURED AND REJECTED (2026-07-10). Inlining a
     // guard call to a link-time-empty dynamic as FAIL (under the ADR-034
@@ -5736,7 +5784,8 @@ public sealed class IlPredicateCompiler
         IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
         IReadOnlyList<CallSite> callSites,
         out CpFreeGuardInfo info,
-        bool analysisOnly = false)
+        bool analysisOnly = false,
+        bool suppressStats = false)
     {
         info = default;
         bool snapshot = false, regSave = false, framed = false, sawRealOp = false;
@@ -5746,21 +5795,24 @@ public sealed class IlPredicateCompiler
 
         // ADR-032 sizing — count a rejection only when the clause actually has
         // the commit-cut shape ahead (else this is just an ordinary clause).
+        // suppressStats: the indexed-bucket census replays the recognizer
+        // without perturbing the emission-driven counters.
         void CountReject(ref long counter, int fromPc)
         {
-            if (!HasCutAhead(code, fromPc, end)) return;
+            if (suppressStats || !HasCutAhead(code, fromPc, end)) return;
             System.Threading.Interlocked.Increment(ref counter);
         }
         // The guard-op variant additionally records WHICH opcode rejected.
         void CountGuardOpReject(Opcode rejectedOp, int fromPc)
         {
-            if (!HasCutAhead(code, fromPc, end)) return;
+            if (suppressStats || !HasCutAhead(code, fromPc, end)) return;
             System.Threading.Interlocked.Increment(ref CpFreeGuardStats.RejectGuardShape);
             System.Threading.Interlocked.Increment(
                 ref CpFreeGuardStats.RejectGuardOpByOpcode[(byte)rejectedOp]);
         }
         void CountAccept()
         {
+            if (suppressStats) return;
             if (sawCall)
                 System.Threading.Interlocked.Increment(
                     ref sawFdCallee ? ref CpFreeGuardStats.TierG2 : ref CpFreeGuardStats.TierGLeaf);
@@ -5778,7 +5830,7 @@ public sealed class IlPredicateCompiler
         bool AcceptEmbeddedDynamics()
         {
             if (extras.DynFids is not { Count: > 0 } || !extras.DbMutation) return true;
-            CpFreeGuardStats.BumpShapeDetail("dyn+mutation");
+            if (!suppressStats) CpFreeGuardStats.BumpShapeDetail("dyn+mutation");
             CountReject(ref CpFreeGuardStats.RejectCalleeShape, pc);
             return false;
         }
@@ -5927,7 +5979,8 @@ public sealed class IlPredicateCompiler
                     {
                         if (!callee.SnapshotRuleBearing)
                         {
-                            CpFreeGuardStats.BumpShapeDetail("dyn-snapshot-facts");
+                            if (!suppressStats)
+                                CpFreeGuardStats.BumpShapeDetail("dyn-snapshot-facts");
                             CountReject(ref CpFreeGuardStats.RejectCalleeShape, pc);
                             return false;
                         }
@@ -5954,7 +6007,8 @@ public sealed class IlPredicateCompiler
                         if (!FailDirectCalleeIsDet(fdCls!)
                             && !NextRealOpIsCut(code, pc + OpcodeTable.Get(op).Size, end))
                         {
-                            CpFreeGuardStats.BumpShapeDetail("multi-mid-guard");
+                            if (!suppressStats)
+                                CpFreeGuardStats.BumpShapeDetail("multi-mid-guard");
                             CountReject(ref CpFreeGuardStats.RejectCalleeShape, pc);
                             return false;
                         }
