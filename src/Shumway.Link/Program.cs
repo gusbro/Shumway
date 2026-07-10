@@ -145,6 +145,10 @@ internal static class Program
                 foreach (string line in Shumway.Compiler.Il.IlPredicateCompiler
                              .CpFreeGuardStats.Summary().Split('\n'))
                     Console.Error.WriteLine("  " + line.TrimEnd());
+                foreach (var kv in Shumway.Compiler.Il.IlPredicateCompiler
+                             .CpFreeGuardStats.RejectShapeDetail
+                             .OrderByDescending(kv => kv.Value))
+                    Console.Error.WriteLine($"      shape[{kv.Key}]: {kv.Value}");
             }
         }
 
