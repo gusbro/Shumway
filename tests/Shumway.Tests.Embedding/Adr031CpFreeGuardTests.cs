@@ -488,6 +488,100 @@ public class Adr031BindingGuardTests
 
     [Theory]
     [MemberData(nameof(Modes))]
+    public void CalleeCut_CommitsClauseSelection_AllRoutes(
+        Adr031CpFreeGuardTests.Mode m)
+    {
+        var e = TierGEngine(m,
+            ":- public p/2, w/2, d/2.\n"
+            // Det classify-style callee (all-but-last commit): inlined with the
+            // cut splitting each clause's fail routing.
+            + "cls(X, neg) :- X < 0, !.\n"
+            + "cls(X, zero) :- X =:= 0, !.\n"
+            + "cls(_, pos).\n"
+            + "p(X, R) :- cls(X, C), !, R = C.\n"
+            + "p(_, R) :- R = none.\n"
+            // POST-cut failure exits the callee (no later alternatives tried):
+            // cc(5): clause 1 commits, then 5 > 100 fails → cc FAILS (clause 2
+            // must NOT run) → outer clause 2.
+            + "cc(X) :- X > 0, !, X > 100.\n"
+            + "cc(X) :- X < -1000.\n"
+            + "w(X, R) :- cc(X), !, R = big.\n"
+            + "w(_, R) :- R = small.\n"
+            // A DET callee may sit MID-guard (a later fallible goal is fine:
+            // det ⇒ no second solution to retry).
+            + "d(X, R) :- cls(X, C), C == neg, !, R = yes.\n"
+            + "d(_, R) :- R = no.\n");
+        Assert.True(e.Query("p(-5, R), R == neg.").Success);
+        Assert.True(e.Query("p(0, R), R == zero.").Success);
+        Assert.True(e.Query("p(7, R), R == pos.").Success);
+        Assert.Single(e.QueryAll("p(-5, R)."));
+        Assert.Single(e.QueryAll("p(7, R)."));
+
+        Assert.True(e.Query("w(5, R), R == small.").Success);      // post-cut fail
+        Assert.True(e.Query("w(200, R), R == big.").Success);      // post-cut pass
+        Assert.True(e.Query("w(-2000, R), R == big.").Success);    // pre-cut fail → clause 2
+        Assert.True(e.Query("w(-5, R), R == small.").Success);     // both fail
+        Assert.Single(e.QueryAll("w(5, R)."));
+
+        Assert.True(e.Query("d(-3, R), R == yes.").Success);
+        Assert.True(e.Query("d(3, R), R == no.").Success);         // C==pos ≠ neg → undo → clause 2
+        Assert.Single(e.QueryAll("d(-3, R)."));
+        Assert.Single(e.QueryAll("d(3, R)."));
+    }
+
+    [Theory]
+    [MemberData(nameof(Modes))]
+    public void CalleeAltRestore_HeadBindingUndone_BetweenAlternatives(
+        Adr031CpFreeGuardTests.Mode m)
+    {
+        // SOUNDNESS REGRESSION (the missing per-alternative untrail): clause 1
+        // BINDS the unbound argument (Y := a) in its head, then its body fails —
+        // clause 2 must see Y UNBOUND again to bind Y := b. Without the
+        // callee-entry-marks untrail, Y stays a and cb fails entirely.
+        var e = TierGEngine(m,
+            ":- public p/2.\n"
+            + "cb(a, R) :- R = 1, 2 > 3.\n"          // head binds, body fails
+            + "cb(b, 2).\n"
+            + "p(Y, N) :- cb(Y, N), !.\n"
+            + "p(_, none).\n");
+        Assert.True(e.Query("p(Y, N), Y == b, N == 2.").Success);
+        Assert.Single(e.QueryAll("p(Y, N)."));
+        Assert.True(e.Query("p(a, N), N == none.").Success);   // bound a: body fails, b mismatch
+    }
+
+    [Theory]
+    [MemberData(nameof(Modes))]
+    public void NonLastRecursiveClause_WithoutCut_KeepsCp(
+        Adr031CpFreeGuardTests.Mode m)
+    {
+        // SOUNDNESS REGRESSION (self-tail in a non-last clause): when a deeper
+        // iteration fails, real backtracking returns to THIS iteration's later
+        // alternatives — the in-place loop can't, so the shape must keep its
+        // CP. f([9,-1]): clause 1 recurses into [-1] which fails both clauses;
+        // real backtracking then tries clause 2 on [9,-1] → SUCCEEDS.
+        var e = TierGEngine(m,
+            ":- public p/2.\n"
+            + "f([H|T]) :- H > 0, f(T).\n"           // recursive, NON-last, no cut
+            + "f([9|_]).\n"
+            + "p(L, R) :- f(L), !, R = yes.\n"
+            + "p(_, R) :- R = no.\n");
+        Assert.True(e.Query("p([9,-1], R), R == yes.").Success);
+        Assert.Single(e.QueryAll("p([9,-1], R)."));
+        Assert.True(e.Query("p([1,-1], R), R == no.").Success);
+        // With a committing cut the loop IS sound (clause 2 pruned).
+        var e2 = TierGEngine(m,
+            ":- public q/2.\n"
+            + "g([H|T]) :- H > 0, !, g(T).\n"
+            + "g([]).\n"
+            + "q(L, R) :- g(L), !, R = yes.\n"
+            + "q(_, R) :- R = no.\n");
+        Assert.True(e2.Query("q([1,2], R), R == yes.").Success);
+        Assert.True(e2.Query("q([1,-2], R), R == no.").Success);
+        Assert.Single(e2.QueryAll("q([1,2], R)."));
+    }
+
+    [Theory]
+    [MemberData(nameof(Modes))]
     public void FailDirect_RecursiveValidator_CommitAndDeepFail(
         Adr031CpFreeGuardTests.Mode m)
     {

@@ -5642,17 +5642,19 @@ public sealed class IlPredicateCompiler
                     {
                         sawCall = true;
                     }
-                    else if (TryDescribeFailDirectCallee(callee, out _, out var fdReject))
+                    else if (TryDescribeFailDirectCallee(callee, out var fdCls, out var fdReject))
                     {
                         // SOUNDNESS — a MULTI-clause callee can yield MULTIPLE
                         // solutions (overlapping clauses binding differently);
                         // the sequential-chain inline commits to the first, so a
                         // fallible guard goal AFTER the call could never retry
-                        // it. Sound only when the call is IMMEDIATELY followed
+                        // it. Sound when the callee is DETERMINISTIC (every
+                        // non-last clause cut-commits — at most one solution,
+                        // nothing to retry) OR the call is IMMEDIATELY followed
                         // by the commit cut (nothing can fail back into it).
-                        // Single-clause callees have at most one solution and
-                        // may sit anywhere in the guard.
+                        // Single-clause callees are trivially det.
                         if (callee.ClauseCount > 1
+                            && !FailDirectCalleeIsDet(fdCls!)
                             && !NextRealOpIsCut(code, pc + OpcodeTable.Get(op).Size, end))
                         {
                             CountReject(ref CpFreeGuardStats.RejectCalleeShape, pc);
@@ -5729,6 +5731,25 @@ public sealed class IlPredicateCompiler
         /// <summary>Terminator is the fused <c>deallocate_proceed</c> — the
         /// emit deallocates then joins.</summary>
         public bool DeallocProceed { get; init; }
+        /// <summary>pc of the clause's FIRST top-level <c>neck_cut</c>, or -1.
+        /// The cut commits the callee's clause selection: failures BEFORE it
+        /// go to the next alternative, failures AFTER it exit the callee
+        /// entirely. (In a fail-direct callee every cut is a neck cut — a deep
+        /// cut implies a preceding call, which the shape excludes.)</summary>
+        public int CutPc { get; init; }
+    }
+
+    /// <summary>True when the described callee is DETERMINISTIC (at most one
+    /// solution): every clause except the last carries a top-level cut, so
+    /// whichever clause yields commits (the bytecode analogue of ADR-030's
+    /// all-but-last-commit dispatch rule; the last clause's whitelist body
+    /// yields at most once). A det callee may sit ANYWHERE in the guard — the
+    /// multi-solution retry hazard needs a second solution to exist.</summary>
+    internal static bool FailDirectCalleeIsDet(List<FailDirectClause> clauses)
+    {
+        for (int i = 0; i < clauses.Count - 1; i++)
+            if (clauses[i].CutPc < 0) return false;
+        return true;
     }
 
     /// <summary>ADR-032 sizing tooling (<c>shumway-disasm --cpfree</c>) — replays
@@ -5865,7 +5886,7 @@ public sealed class IlPredicateCompiler
         {
             bool framed = false, sawRealOp = false;
             int pc = start;
-            int termPc = -1;
+            int termPc = -1, cutPc = -1;
             bool selfTail = false, deallocProceed = false;
             while (pc < end)
             {
@@ -5896,8 +5917,15 @@ public sealed class IlPredicateCompiler
                     case Opcode.ExecuteBytecode:
                         reject = FailDirectReject.HasCalls;      // G3 candidate
                         return false;
-                    case Opcode.Cut:
                     case Opcode.NeckCut:
+                        // The callee-internal commit — record the FIRST one
+                        // (selection is committed from there on; later cuts are
+                        // flush-only no-ops the emit handles inline).
+                        if (cutPc < 0) cutPc = pc;
+                        break;
+                    // A deep cut / its barrier plumbing implies a preceding
+                    // call — impossible in this shape; reject defensively.
+                    case Opcode.Cut:
                     case Opcode.GetLevel:
                     case Opcode.AllocateGetLevel:
                         reject = FailDirectReject.Cut;
@@ -5976,7 +6004,21 @@ public sealed class IlPredicateCompiler
             {
                 Start = start, TermPc = termPc,
                 SelfTail = selfTail, Framed = framed, DeallocProceed = deallocProceed,
+                CutPc = cutPc,
             });
+        }
+        // SOUNDNESS — a self-tail recursion in a NON-LAST clause without a
+        // preceding cut: if a deeper iteration fails, real backtracking returns
+        // to THIS iteration's remaining alternatives, which the in-place loop
+        // cannot do. Sound only when the recursive clause is the last (no
+        // alternatives after it) or its cut committed the selection first.
+        for (int i = 0; i < result.Count - 1; i++)
+        {
+            if (result[i].SelfTail && result[i].CutPc < 0)
+            {
+                reject = FailDirectReject.Shape;
+                return false;
+            }
         }
         clauses = result;
         return true;
@@ -6006,6 +6048,16 @@ public sealed class IlPredicateCompiler
         var argSaves = new Sigil.Local[arity];
         for (int r = 0; r < arity; r++)
             argSaves[r] = emit.DeclareLocal<Cell>($"fd_a{r}{salt}");
+        // Callee-entry trail/heap marks: a partially-matched clause may have
+        // BOUND caller-visible terms (head unification with unbound arguments)
+        // before failing — the next alternative must see them undone, exactly
+        // as the clause choice point's restore would have done. (The enclosing
+        // guard's snapshot covers the whole clause; these marks cover just the
+        // callee, so guard bindings made BEFORE the call survive.)
+        var mBt = emit.DeclareLocal<int>($"fd_bt{salt}");
+        var mXt = emit.DeclareLocal<int>($"fd_xt{salt}");
+        var mH = emit.DeclareLocal<int>($"fd_h{salt}");
+        var mHb = emit.DeclareLocal<int>($"fd_hb{salt}");
         int k = fdClauses.Count;
         var altLabels = new Sigil.Label[k + 1];
         for (int i = 0; i < k; i++)
@@ -6027,6 +6079,15 @@ public sealed class IlPredicateCompiler
             emit.Call(EngineGetRegisterMethod);
             emit.StoreLocal(argSaves[r]);
         }
+        emit.LoadArgument(0); emit.Call(EngineBindingTrailTopGetter); emit.StoreLocal(mBt);
+        emit.LoadArgument(0); emit.Call(EngineExtraTrailTopGetter); emit.StoreLocal(mXt);
+        emit.LoadArgument(0); emit.Call(EngineHeapTopGetter); emit.StoreLocal(mH);
+        // NESTED HB raise: the guard's own staging creates fresh vars AFTER the
+        // guard-level raise (put_variable_y outputs) — young w.r.t. the guard's
+        // HB, so a callee binding them would go UNTRAILED and survive the
+        // per-alternative untrail. Raising HB again to the CALLEE-entry heap
+        // top makes every pre-callee term old; restored at the join.
+        emit.LoadArgument(0); emit.Call(EngineBeginIlGuardMethod); emit.StoreLocal(mHb);
 
         byte[] code = callee.BytecodeUnfused;
         for (int i = 0; i < k; i++)
@@ -6035,8 +6096,15 @@ public sealed class IlPredicateCompiler
             emit.MarkLabel(altLabels[i]);
             if (i > 0)
             {
-                // Restore the callee's entry arguments a prior partial match
-                // may have clobbered.
+                // Undo the previous alternative's partial work: untrail to the
+                // callee-entry marks (head-unify bindings!), reset the heap,
+                // clear wakeups its bindings queued, then restore the entry
+                // argument registers it may have clobbered. HB stays at the
+                // RAISED callee boundary (mH) — the next alternative's bindings
+                // must trail too.
+                emit.LoadArgument(0);
+                emit.LoadLocal(mBt); emit.LoadLocal(mXt); emit.LoadLocal(mH); emit.LoadLocal(mH);
+                emit.Call(EngineFailIlGuardMethod);
                 for (int r = 0; r < arity; r++)
                 {
                     emit.LoadArgument(0);
@@ -6045,30 +6113,61 @@ public sealed class IlPredicateCompiler
                     emit.Call(EngineSetRegisterMethod);
                 }
             }
-            Sigil.Label clauseFail = altLabels[i + 1];
+
+            // Fail routing. Pre-cut: the next alternative (via a deallocating
+            // stub when framed). Post-cut: clause selection is COMMITTED — the
+            // callee fails outright (via its own deallocating stub when framed).
+            Sigil.Label preCutFail = altLabels[i + 1];
             Sigil.Label? deallocFail = null;
             if (c.Framed)
             {
                 deallocFail = emit.DefineLabel($"fd_df{i}{salt}");
-                clauseFail = deallocFail;
+                preCutFail = deallocFail;
             }
-            EmitClauseBody(emit, code, c.Start, c.TermPc,
-                clauseFail, callee.CallSites, calleeMap: calleeMap,
-                suppressProceedReturn: true, localSalt: $"{salt}_c{i}");
-            if (c.DeallocProceed)
+
+            if (c.CutPc >= 0)
             {
+                // Slice 1 — up to the committing neck cut.
+                EmitClauseBody(emit, code, c.Start, c.CutPc,
+                    preCutFail, callee.CallSites, calleeMap: calleeMap,
+                    suppressProceedReturn: true, localSalt: $"{salt}_c{i}a");
+                // The cut: a goal boundary (flush pending wakeups; a failing
+                // hook backtracks into the next alternative, pre-commit) — but
+                // NO engine Cut call: a fail-direct callee pushed nothing.
                 emit.LoadArgument(0);
-                emit.Call(EngineDeallocateMethod);
-                emit.Branch(join);
-            }
-            else if (c.SelfTail)
-            {
-                emit.Branch(entry);      // staging + deallocate already in the slice
+                emit.Call(EngineFlushWakeupsForIlCutMethod);
+                emit.BranchIfFalse(preCutFail);
+                // Slice 2 — post-commit: failures exit the callee.
+                Sigil.Label committedFail = outerFail;
+                if (c.Framed)
+                {
+                    var df2 = emit.DefineLabel($"fd_dfc{i}{salt}");
+                    committedFail = df2;
+                    EmitClauseBody(emit, code, c.CutPc + 1, c.TermPc,
+                        committedFail, callee.CallSites, calleeMap: calleeMap,
+                        suppressProceedReturn: true, localSalt: $"{salt}_c{i}b");
+                    EmitFailDirectTerminator(emit, c, entry, join);
+                    emit.MarkLabel(df2);
+                    emit.LoadArgument(0);
+                    emit.Call(EngineDeallocateMethod);
+                    emit.Branch(outerFail);
+                }
+                else
+                {
+                    EmitClauseBody(emit, code, c.CutPc + 1, c.TermPc,
+                        committedFail, callee.CallSites, calleeMap: calleeMap,
+                        suppressProceedReturn: true, localSalt: $"{salt}_c{i}b");
+                    EmitFailDirectTerminator(emit, c, entry, join);
+                }
             }
             else
             {
-                emit.Branch(join);       // proceed
+                EmitClauseBody(emit, code, c.Start, c.TermPc,
+                    preCutFail, callee.CallSites, calleeMap: calleeMap,
+                    suppressProceedReturn: true, localSalt: $"{salt}_c{i}");
+                EmitFailDirectTerminator(emit, c, entry, join);
             }
+
             if (deallocFail is not null)
             {
                 emit.MarkLabel(deallocFail);
@@ -6078,6 +6177,34 @@ public sealed class IlPredicateCompiler
             }
         }
         emit.MarkLabel(join);
+        // Success: drop the nested HB raise back to the guard-level boundary.
+        // (The failure exits skip this — the outer restore stub reinstates the
+        // clause-entry HB itself.)
+        emit.LoadArgument(0);
+        emit.LoadLocal(mHb);
+        emit.Call(EngineCommitIlGuardMethod);
+    }
+
+    /// <summary>The terminator of one inlined fail-direct clause: rejoin the
+    /// guard (<c>proceed</c> / <c>deallocate_proceed</c>) or loop (self-tail).</summary>
+    private static void EmitFailDirectTerminator(
+        Sigil.Emit<PredicateDelegate> emit, FailDirectClause c,
+        Sigil.Label entry, Sigil.Label join)
+    {
+        if (c.DeallocProceed)
+        {
+            emit.LoadArgument(0);
+            emit.Call(EngineDeallocateMethod);
+            emit.Branch(join);
+        }
+        else if (c.SelfTail)
+        {
+            emit.Branch(entry);          // staging + deallocate already in the slice
+        }
+        else
+        {
+            emit.Branch(join);           // proceed
+        }
     }
 
     /// <summary>ADR-031 — emits one whole CP-free guard clause, replacing the
