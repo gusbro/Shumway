@@ -1,16 +1,54 @@
-# ADR-031: Delayed choice point via clause-to-if-then-else folding
+# ADR-031: Delayed choice point (CP-free guard commit)
 
-**Status:** **Accepted — phase 1 (CP-free neck-cut guard commit) SHIPPED,
-default ON.** The delayed choice point landed as a **Tier-1 codegen recogniser**
-(not the AST fold — see Investigation): a non-last chain clause of the shape
-`Head :- IntCmpGuard, !, Body.` is emitted WITHOUT its entry
-`PushIlChoicePoint`; guard failure is a **direct IL branch** to the next
-clause's label, and the commit's cut tears down nothing. **Measured: the
-guard-fail recursive hot loop (`loop(N):-N=<0,!. loop(N):-M is N-1,loop(M).`,
-30 M iterations, Tier-1 promoted, ABBA min-of-N same session) runs 2.6× faster
-(≈133 ns → ≈46 ns per iteration)**; boyer flat (within noise), qsort/tak ≈3%
-in favour — no regression anywhere. Full five-project gate green: Embedding
-2902 / Compiler 351 / Core 436 / Interpreter 105 / ISO 277.
+**Status:** **Accepted — SHIPPED default ON through five widening rounds**
+(2026-07-09/10). The delayed choice point landed as a **Tier-1 codegen
+recogniser** (`IlPredicateCompiler.TryGetCpFreeGuard`), not the originally
+sketched clause→ITE AST fold (proven a structural no-op — see Investigation).
+A non-last chain clause of the shape `Head :- Guard, !, Body.` is emitted
+WITHOUT its entry `PushIlChoicePoint`: guard failure branches to the next
+clause (directly, or through a restoring stub), and the commit tears down
+nothing. The lazy choice point (materialised at the commit only under pending
+attribute wakeups, carrying the clause-entry marks) preserves the attvar-hook
+semantics without paying for a CP anywhere else.
+
+## Consolidated state (what ships, per tier)
+
+| Tier | Guard contents | Machinery | Measured |
+|------|----------------|-----------|----------|
+| A | `a_int_cmp` comparisons | pure branch, zero restore | **2.6×** (guard-fail loop, 30 M) |
+| B | unify family (`get_*`/`unify_*`), reg moves, staging (`put_variable_y`/`put_structure`/`put_list`/`put_pstr`), `a_int_bin`, det builtins | 4-int snapshot (`BeginIlGuard` HB raise, `FailIlGuard` restore), argument-register save | **~1.8×** (binding loop); Blint 58 clauses |
+| G (leaf) | call to a single-clause leaf | chunk-69 forced inline — callee failure is a direct branch | ~2× (guard-call loop) |
+| G2 | call to a multi-clause / self-tail-recursive fail-direct callee | sequential-alternative-chain inline + in-place loop; per-alternative untrail (callee-entry marks + NESTED HB raise); framed clauses get deallocating fail stubs | ~10% (5-elem walk loop) |
+| G2+cuts | callee-internal neck cuts | clause split at the first cut: pre-cut fails → next alternative, post-cut fails → exit the callee; det callees (all-non-last-cut) may sit MID-guard | **~15%** (classify loop); Blint 63 accepted |
+| G3 | callee bodies calling OTHER fail-direct predicates | recursive describe (visiting set — mutual recursion rejected; nested det-or-before-cut rule; `FailDirectMaxTotalBytes` = 1536 budget); the emit recursion was structural | runtime-only win (file-level census unchanged, as predicted) |
+
+**Soundness rules discovered en route** (each with a regression test):
+first-argument det is mode-dependent (ADR-030 lesson, applies here too); a
+MULTI-solution callee must be det or immediately before the commit cut; a
+partially-matched callee alternative must be untrailed (callee-entry marks —
+and guard-staging fresh vars need the NESTED HB raise to trail at all); a
+self-tail recursion must be in the last clause or cut-committed.
+
+**Sizing instruments:** `shumway-disasm --cpfree` (per-file TSV + `CPFREEOP`
+guard-op ranking + `CPFREESH` shape-detail), `shumway-link --verbose`
+optimization summary, `SHUMWAY_CPFREE_STATS=1` (runtime promotion). Corpus
+(556 files, 10 011 cut-shaped chain clauses, file-level view): 479 accepted;
+residual buckets: unresolved 6 617 (cross-FILE — resolves at link/runtime),
+shape 941 = "ranges" (callee dispatch layouts the describers cannot decompose:
+ADR-027/028 sub-switches, var-bucket try/retry chains — the next
+describe-coverage widening if pursued), callee-cut residue 1 012 (deep cuts ⇒
+calls ⇒ G3-class), guard-op 651 (head ops before allocate), G3 256, caps 187.
+Blint runtime (whole-program calleeMap): **63 of 129 cut-shaped clauses
+(≈49%) CP-free**. Caps verdict: 187 (1.9%) does NOT justify raising
+`FailDirectMaxClauses`; when data justifies it, the raise MUST ship with a
+proper IL switch emission, never a wider linear chain (user directive).
+
+Original phase-1 measurement: the guard-fail recursive hot loop
+(`loop(N):-N=<0,!. loop(N):-M is N-1,loop(M).`, 30 M iterations, Tier-1
+promoted, ABBA min-of-N same session) runs 2.6× faster (≈133 ns → ≈46 ns per
+iteration); boyer/qsort/tak/nreverse never regressed across the rounds. Gate
+at consolidation: Embedding 2954 / Compiler 351 / Core 436 / Interpreter 105 /
+ISO 277.
 
 ## Phase 1 implementation (2026-07-09)
 
