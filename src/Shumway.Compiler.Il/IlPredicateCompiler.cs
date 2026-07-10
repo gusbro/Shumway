@@ -5905,13 +5905,18 @@ public sealed class IlPredicateCompiler
             return false;
         }
 
-        // Clause byte ranges, dispatch-skeleton-free.
+        // Clause byte ranges, dispatch-skeleton-free. STRUCTURAL chain describe
+        // (not the memoized calleeMap-resolving one): a chain with Call sites
+        // fails the memo's resolve against a null/partial map, which would
+        // misclassify chains-with-calls as "ranges" — this walk validates every
+        // Call itself (the G3 rules).
         IReadOnlyList<(int Start, int End)> ranges;
         if (callee.ClauseCount == 1)
         {
             ranges = new[] { (0, code.Length) };
         }
-        else if (TryDescribeTryMeElseChain(callee, null, out var chain) && chain is not null)
+        else if (TryDescribeTryMeElseChainStructural(callee, new List<int>(), out var chain)
+                 && chain is not null)
         {
             ranges = chain.Clauses.Select(c => (c.Start, c.End)).ToArray();
         }
@@ -5923,6 +5928,12 @@ public sealed class IlPredicateCompiler
         else
         {
             CpFreeGuardStats.BumpShapeDetail("ranges");
+            if (System.Environment.GetEnvironmentVariable("SHUMWAY_CPFREE_DETAIL") == "1")
+            {
+                var (atomId, ar) = FunctorTable.Lookup(callee.FunctorId);
+                CpFreeGuardStats.BumpShapeDetail(
+                    $"ranges:{AtomTable.GetById(atomId)?.Name}/{ar}");
+            }
             reject = FailDirectReject.Shape;
             return false;
         }
@@ -6015,19 +6026,26 @@ public sealed class IlPredicateCompiler
                         reject = FailDirectReject.HasCalls;      // G3 candidate
                         return false;
                     case Opcode.NeckCut:
+                    case Opcode.Cut:
                         // The callee-internal commit — record the FIRST one
                         // (selection is committed from there on; later cuts are
-                        // flush-only no-ops the emit handles inline).
+                        // flush-only no-ops the emit handles inline). A DEEP
+                        // cut (after inlined calls) gets the same flush-only
+                        // split: the inlined inner callees push no choice
+                        // points, so there is nothing for an engine cut to
+                        // prune; the GetLevel-captured barrier is never
+                        // consumed.
+                        if (op == Opcode.Cut && !framed)
+                        { CpFreeGuardStats.BumpShapeDetail("frame"); reject = FailDirectReject.Shape; return false; }
                         if (cutPc < 0) cutPc = pc;
                         break;
-                    // A deep cut / its barrier plumbing implies a preceding
-                    // call — impossible in this shape; reject defensively.
-                    case Opcode.Cut:
                     case Opcode.GetLevel:
-                    case Opcode.AllocateGetLevel:
-                        reject = FailDirectReject.Cut;
-                        return false;
+                        // Writes the cut barrier into a Y slot — harmless here
+                        // (the flush-only cut emission never reads it back).
+                        if (!framed) { CpFreeGuardStats.BumpShapeDetail("frame"); reject = FailDirectReject.Shape; return false; }
+                        break;
                     case Opcode.Allocate:
+                    case Opcode.AllocateGetLevel:      // deep-cut framed opener
                         if (sawRealOp || framed) { CpFreeGuardStats.BumpShapeDetail("frame"); reject = FailDirectReject.Shape; return false; }
                         framed = true;
                         break;
@@ -6247,7 +6265,7 @@ public sealed class IlPredicateCompiler
                 {
                     var df2 = emit.DefineLabel($"fd_dfc{i}{salt}");
                     committedFail = df2;
-                    EmitClauseBody(emit, code, c.CutPc + 1, c.TermPc,
+                    EmitClauseBody(emit, code, c.CutPc + OpcodeTable.Get((Opcode)code[c.CutPc]).Size, c.TermPc,
                         committedFail, callee.CallSites, calleeMap: calleeMap,
                         suppressProceedReturn: true, forceLeafRuleInline: true, localSalt: $"{salt}_c{i}b");
                     EmitFailDirectTerminator(emit, c, entry, join);
@@ -6258,7 +6276,7 @@ public sealed class IlPredicateCompiler
                 }
                 else
                 {
-                    EmitClauseBody(emit, code, c.CutPc + 1, c.TermPc,
+                    EmitClauseBody(emit, code, c.CutPc + OpcodeTable.Get((Opcode)code[c.CutPc]).Size, c.TermPc,
                         committedFail, callee.CallSites, calleeMap: calleeMap,
                         suppressProceedReturn: true, forceLeafRuleInline: true, localSalt: $"{salt}_c{i}b");
                     EmitFailDirectTerminator(emit, c, entry, join);

@@ -611,6 +611,31 @@ public class Adr031BindingGuardTests
         Assert.Single(e.QueryAll("q(-5, R)."));
     }
 
+    [Theory]
+    [MemberData(nameof(Modes))]
+    public void G3_DeepCutCallee_CallThenCut_Inlines(
+        Adr031CpFreeGuardTests.Mode m)
+    {
+        // The has_loadevent shape: each callee clause CALLS an (inlinable)
+        // inner then commits with a DEEP cut (AllocateGetLevel + Cut slot +
+        // the fused cut_deallocate_proceed epilogue). The inline emission
+        // treats the deep cut as the same flush-only split as a neck cut —
+        // the inlined inner pushed no choice points.
+        var e = TierGEngine(m,
+            ":- public p/2.\n"
+            + "info(X) :- X > 10.\n"
+            + "hasit(X) :- info(X), !.\n"
+            + "hasit(X) :- X < -10, !.\n"
+            + "p(X, R) :- hasit(X), !, R = yes.\n"
+            + "p(_, R) :- R = no.\n");
+        Assert.True(e.Query("p(50, R), R == yes.").Success);      // clause 1 commits
+        Assert.True(e.Query("p(-50, R), R == yes.").Success);     // clause 1 fails → 2
+        Assert.True(e.Query("p(0, R), R == no.").Success);        // both fail → outer 2
+        Assert.Single(e.QueryAll("p(50, R)."));
+        Assert.Single(e.QueryAll("p(-50, R)."));
+        Assert.Single(e.QueryAll("p(0, R)."));
+    }
+
     [Fact]
     public void G3_MutualRecursion_Rejected_ByDescribe()
     {
