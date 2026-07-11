@@ -360,6 +360,34 @@ public static class MetaBuiltins
             + "dynamic_only(true) restricts the snapshot to dynamic clauses "
             + "(no consult history); restore_state/1 then merges them into "
             + "the engine's current state via assertz without resetting.");
+        // Arity save/restore — dynamic-database snapshots with destructive
+        // REPLACE semantics (distinct from save_state's merge/replay family).
+        BuiltinsRegistry.Register("save", 0, Save0,
+            Database, "save",
+            "Snapshots the current user dynamic database (all dynamic "
+            + "predicates' clauses) in memory, replacing any previous save/0 "
+            + "snapshot. Engine-internal ($-prefixed) dynamics are excluded. "
+            + "Restore with restore/0. Arity-Prolog compatible builtin.");
+        BuiltinsRegistry.Register("save", 1, Save1,
+            Database, "save(+File)",
+            "Like save/0 but writes the dynamic-database snapshot to File "
+            + "(a compact binary only Shumway reads back). Restore with "
+            + "restore/1. Arity-Prolog compatible builtin.");
+        BuiltinsRegistry.Register("restore", 0, Restore0,
+            Database, "restore",
+            "Destructively resets the user dynamic database to the last "
+            + "save/0 snapshot: every user dynamic predicate's clauses are "
+            + "removed (declarations survive - calls fail rather than raise) "
+            + "and the snapshot's clauses re-installed. Without a prior "
+            + "save/0 the snapshot is empty, so restore/0 just clears all "
+            + "user dynamics. Static predicates are never touched. Effects "
+            + "are permanent (not undone by backtracking) and visible to "
+            + "later goals of the same query. Arity-Prolog compatible.");
+        BuiltinsRegistry.Register("restore", 1, Restore1,
+            Database, "restore(+File)",
+            "restore/0 semantics with the snapshot read from File (written "
+            + "by save/1). Raises existence_error if File does not exist. "
+            + "Arity-Prolog compatible builtin.");
         // Phase 24 chunk 266: recorded database (Arity-Prolog).
         BuiltinsRegistry.Register("recorda", 3, Recorda3,
             Database, "recorda(+Key, ?Term, -Ref)",
@@ -3621,6 +3649,66 @@ public static class MetaBuiltins
         Term opts = MaterializeRegister(engine, 1);
         bool dynamicOnly = ExtractDynamicOnly(opts);
         host.SaveState(path, dynamicOnly);
+        return true;
+    }
+
+    /// <summary><c>save/0</c> — Arity-compatible: snapshots the user dynamic
+    /// database in memory (replacing any previous snapshot). See
+    /// <see cref="PrologEngine.SaveDb"/>.</summary>
+    public static bool Save0(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "save/0 requires the engine to be hosted by a PrologEngine.");
+        host.SaveDb();
+        return true;
+    }
+
+    /// <summary><c>save(+File)</c> — Arity-compatible: writes the dynamic-
+    /// database snapshot to <c>File</c>. See
+    /// <see cref="PrologEngine.SaveDbToFile"/>.</summary>
+    public static bool Save1(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "save/1 requires the engine to be hosted by a PrologEngine.");
+        string path = RequireAtomPath(engine, register: 0, builtin: "save/1");
+        host.SaveDbToFile(path);
+        return true;
+    }
+
+    /// <summary><c>restore/0</c> — Arity-compatible destructive REPLACE:
+    /// wipes every user dynamic predicate's clauses and re-installs the last
+    /// <c>save/0</c> snapshot (no snapshot = wipe only). Declarations and
+    /// static predicates are untouched. See
+    /// <see cref="PrologEngine.RestoreDb"/>.</summary>
+    public static bool Restore0(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "restore/0 requires the engine to be hosted by a PrologEngine.");
+        host.RestoreDb(engine);
+        return true;
+    }
+
+    /// <summary><c>restore(+File)</c> — <c>restore/0</c> semantics with the
+    /// snapshot read from <c>File</c> (written by <c>save/1</c>). See
+    /// <see cref="PrologEngine.RestoreDbFromFile"/>.</summary>
+    public static bool Restore1(Engine engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "restore/1 requires the engine to be hosted by a PrologEngine.");
+        string path = RequireAtomPath(engine, register: 0, builtin: "restore/1");
+        if (!System.IO.File.Exists(path))
+            throw new Shumway.Core.PrologRuntimeException(
+                $"existence_error(source_sink, '{path}')");
+        try { host.RestoreDbFromFile(engine, path); }
+        catch (InvalidDataException ex)
+        {
+            throw new Shumway.Core.PrologRuntimeException(
+                $"type_error(save_file, '{path}') /* {ex.Message} */");
+        }
         return true;
     }
 

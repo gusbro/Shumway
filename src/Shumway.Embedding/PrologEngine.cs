@@ -2280,6 +2280,160 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         chain.Entries.Clear();
     }
 
+    // ============================================================================
+    // Arity save/0,1 + restore/0,1 — dynamic-database snapshots
+    // ============================================================================
+
+    /// <summary>The in-memory <c>save/0</c> snapshot: functor id → a copy of
+    /// its clause list at save time. Null = no <c>save/0</c> yet — restore
+    /// treats that as the EMPTY snapshot (wipes every user dynamic).
+    /// Clause objects are immutable ASTs, so sharing them is safe.</summary>
+    private Dictionary<int, List<Clause>>? _dbSnapshot;
+
+    /// <summary>Arity save/restore operate on USER dynamics only: engine /
+    /// library internals (tabling's <c>$tbl_*</c>, <c>$wfs_mode</c>, the
+    /// prelude's <c>$prelude$…</c> locals) are excluded from both the
+    /// snapshot and the restore wipe — wiping them mid-session would corrupt
+    /// engine-internal state. User module-local dynamics (mangled
+    /// <c>module$name</c>) don't start with <c>$</c> and are included.</summary>
+    private static bool IsUserDynamicFid(int fid)
+    {
+        var (atomId, _) = Shumway.Core.FunctorTable.Lookup(fid);
+        string? name = Shumway.Core.AtomTable.GetById(atomId)?.Name;
+        return !string.IsNullOrEmpty(name) && name[0] != '$';
+    }
+
+    /// <summary>Removes every clause of a dynamic functor while KEEPING its
+    /// <c>:- dynamic</c> declaration (unlike <see cref="AbolishDynamic(int)"/>):
+    /// calls fail instead of raising, and a later assert works normally.
+    /// Mid-query correct — patches the live chains' <c>died</c> slots (this
+    /// engine + suspended siblings) and runs the full invalidation funnel
+    /// (caches, IL eviction, the ADR-034 mutated-fids set).</summary>
+    internal void ClearDynamicClauses(Engine engine, int functorId)
+    {
+        if (_dynamicClauses.TryGetValue(functorId, out var list)) list.Clear();
+        InvalidateDynamicCache(functorId);
+        InvalidatePersistent();
+        AbolishDynamicInChain(engine, functorId);
+        if (OtherLiveEnginesByTable(engine) is { } others)
+            foreach (var other in others)
+                AbolishDynamicInChain(other, functorId);
+    }
+
+    /// <summary><c>save/0</c> — snapshots the user dynamic database (clause
+    /// lists) in memory, replacing any previous snapshot.</summary>
+    internal void SaveDb()
+    {
+        var snap = new Dictionary<int, List<Clause>>();
+        foreach (var (fid, list) in _dynamicClauses)
+            if (list.Count > 0 && IsUserDynamicFid(fid))
+                snap[fid] = new List<Clause>(list);
+        _dbSnapshot = snap;
+    }
+
+    /// <summary><c>restore/0</c> — destructive REPLACE: wipes every user
+    /// dynamic predicate's clauses (declarations survive) and re-installs the
+    /// last <c>save/0</c> snapshot. No snapshot = the empty snapshot: the
+    /// wipe alone. Statics are never touched.</summary>
+    internal void RestoreDb(Engine engine) => RestoreDbFrom(engine, _dbSnapshot);
+
+    private void RestoreDbFrom(Engine engine, Dictionary<int, List<Clause>>? snapshot)
+    {
+        // Wipe first — every user dynamic that currently has clauses.
+        var toClear = new List<int>();
+        foreach (var (fid, list) in _dynamicClauses)
+            if (list.Count > 0 && IsUserDynamicFid(fid))
+                toClear.Add(fid);
+        foreach (int fid in toClear)
+            ClearDynamicClauses(engine, fid);
+
+        if (snapshot is null) return;
+        // Re-install through the canonical mutation path: the store gets the
+        // clause, and the incremental chain append makes the restored state
+        // visible to the RUNNING query's dispatch (ADR-015 logical update
+        // view), exactly as a sequence of assertz would. The snapshot is
+        // keyed by fid (not re-derived from the head term) so module-local
+        // dynamics whose storage name is mangled restore to the right slot.
+        foreach (var (fid, clauses) in snapshot)
+        {
+            EnsureDynamic(fid);
+            var slot = GetOrCreateDynamicSlot(fid);
+            foreach (var c in clauses)
+            {
+                slot.Add(c);
+                InvalidateDynamicCache(fid);
+                AppendDynamicClauseIncremental(engine, fid, c);
+            }
+        }
+    }
+
+    private const uint DbSnapshotMagic = 0x53484442;   // "SHDB"
+    private const int DbSnapshotVersion = 1;
+
+    /// <summary><c>save(+File)</c> — like <see cref="SaveDb"/> but writes the
+    /// snapshot to <paramref name="path"/> (a compact binary: per-predicate
+    /// storage name/arity + <see cref="TermCodec"/>-encoded clauses).</summary>
+    internal void SaveDbToFile(string path)
+    {
+        using var fs = new FileStream(path, FileMode.Create, FileAccess.Write);
+        using var w = new BinaryWriter(fs, System.Text.Encoding.UTF8);
+        var preds = new List<(int Fid, List<Clause> Clauses)>();
+        foreach (var (fid, list) in _dynamicClauses)
+            if (list.Count > 0 && IsUserDynamicFid(fid))
+                preds.Add((fid, list));
+        w.Write(DbSnapshotMagic);
+        w.Write(DbSnapshotVersion);
+        w.Write(preds.Count);
+        foreach (var (fid, clauses) in preds)
+        {
+            var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(fid);
+            w.Write(Shumway.Core.AtomTable.GetById(atomId)!.Name);
+            w.Write(arity);
+            w.Write(clauses.Count);
+            foreach (var c in clauses)
+            {
+                byte[] bytes = TermCodec.EncodeClause(c);
+                w.Write(bytes.Length);
+                w.Write(bytes);
+            }
+        }
+    }
+
+    /// <summary><c>restore(+File)</c> — <see cref="RestoreDb"/> semantics,
+    /// with the snapshot read from <paramref name="path"/>. Throws
+    /// <see cref="InvalidDataException"/> when the file is not a
+    /// <c>save/1</c> snapshot.</summary>
+    internal void RestoreDbFromFile(Engine engine, string path)
+    {
+        var snapshot = new Dictionary<int, List<Clause>>();
+        using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read))
+        using (var r = new BinaryReader(fs, System.Text.Encoding.UTF8))
+        {
+            if (r.ReadUInt32() != DbSnapshotMagic)
+                throw new InvalidDataException("not a save/1 snapshot (bad magic)");
+            int version = r.ReadInt32();
+            if (version != DbSnapshotVersion)
+                throw new InvalidDataException($"unsupported snapshot version {version}");
+            int predCount = r.ReadInt32();
+            for (int p = 0; p < predCount; p++)
+            {
+                string name = r.ReadString();
+                int arity = r.ReadInt32();
+                int fid = Shumway.Core.FunctorTable.Intern(
+                    Shumway.Core.AtomTable.Intern(name, permanent: true).Id, arity);
+                int clauseCount = r.ReadInt32();
+                var clauses = new List<Clause>(clauseCount);
+                for (int i = 0; i < clauseCount; i++)
+                {
+                    int len = r.ReadInt32();
+                    clauses.Add(TermCodec.DecodeClause(r.ReadBytes(len)));
+                }
+                snapshot[fid] = clauses;
+            }
+        }
+        RestoreDbFrom(engine, snapshot);
+    }
+
     /// <summary>Chunk 150 — re-threads <paramref name="functorId"/>'s
     /// chain through only its live entries, bypassing every dead
     /// (retracted or abolished) entry in the running bytecode. The
