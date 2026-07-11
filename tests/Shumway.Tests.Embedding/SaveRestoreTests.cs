@@ -13,7 +13,7 @@ namespace Shumway.Tests.Embedding;
 /// </summary>
 public class SaveRestoreTests
 {
-    private static PrologEngine Engine(string program)
+    private static PrologEngine Activation(string program)
     {
         var e = new PrologEngine();
         e.ConsultString(program);
@@ -32,7 +32,7 @@ public class SaveRestoreTests
     [Fact]
     public void SaveRestore_InMemory_RoundTrip()
     {
-        var e = Engine(Program);
+        var e = Activation(Program);
         Assert.True(e.Query("assertz(g(a, 1)), save.").Success);
         // Mutate after the snapshot: add, remove, add to another predicate.
         Assert.True(e.Query("assertz(f(3)), retract(f(1)), assertz(g(b, 2)).").Success);
@@ -48,7 +48,7 @@ public class SaveRestoreTests
     [Fact]
     public void Restore_WithoutSave_WipesAllUserDynamics()
     {
-        var e = Engine(Program);
+        var e = Activation(Program);
         Assert.True(e.Query("assertz(g(k, 9)).").Success);
         Assert.True(e.Query("restore.").Success);
         // Every user dynamic is empty now — calls FAIL (no existence_error:
@@ -62,7 +62,7 @@ public class SaveRestoreTests
     [Fact]
     public void Restore_MidQuery_LogicalUpdateView()
     {
-        var e = Engine(Program);
+        var e = Activation(Program);
         // One query: snapshot, mutate, restore, and the SAME query's later
         // goals see the restored state.
         Assert.True(e.Query(
@@ -73,7 +73,7 @@ public class SaveRestoreTests
     [Fact]
     public void Restore_DoesNotTouchStatics()
     {
-        var e = Engine(Program);
+        var e = Activation(Program);
         Assert.True(e.Query("restore.").Success);
         Assert.True(e.Query("s(static_one).").Success);
         Assert.True(e.Query("go.").Success);
@@ -82,7 +82,7 @@ public class SaveRestoreTests
     [Fact]
     public void Restore_KeepsInternalDollarDynamics()
     {
-        var e = Engine(Program);
+        var e = Activation(Program);
         // A $-prefixed dynamic is engine/library-internal by convention:
         // excluded from BOTH the snapshot and the restore wipe.
         Assert.True(e.Query("assertz('$mine'(1)).").Success);
@@ -100,7 +100,7 @@ public class SaveRestoreTests
             $"shumway_saverestore_{System.Guid.NewGuid():N}.sav");
         try
         {
-            var e = Engine(Program);
+            var e = Activation(Program);
             Assert.True(e.Query("assertz(g(x, 5)).").Success);
             Assert.True(e.Query($"save('{path.Replace("\\", "\\\\")}').").Success);
             Assert.True(e.Query("assertz(f(42)), retract(f(2)), retract(g(x, 5)).").Success);
@@ -109,7 +109,7 @@ public class SaveRestoreTests
             Assert.True(e.Query("g(x, 5).").Success);
 
             // A FRESH engine (same static program) restores the same file.
-            var e2 = Engine(Program);
+            var e2 = Activation(Program);
             Assert.True(e2.Query("assertz(f(777)).").Success);
             Assert.True(e2.Query($"restore('{path.Replace("\\", "\\\\")}').").Success);
             Assert.True(e2.Query("findall(X, f(X), L), L == [1, 2].").Success);
@@ -125,7 +125,7 @@ public class SaveRestoreTests
     [Fact]
     public void Restore_MissingFile_RaisesCatchableError()
     {
-        var e = Engine(Program);
+        var e = Activation(Program);
         Assert.True(e.Query(
             "catch(restore(no_such_snapshot_file_xyz), _, true).").Success);
         // And the database was NOT wiped by the failed restore.

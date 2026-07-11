@@ -43,7 +43,7 @@ internal static class RetractTrace
     }
 
     [Conditional(TraceSymbol)]
-    public static void PrePush(Engine engine)
+    public static void PrePush(Activation engine)
     {
         Cell r0 = engine.GetRegister(0);
         Console.Error.WriteLine(
@@ -51,19 +51,19 @@ internal static class RetractTrace
     }
 
     [Conditional(TraceSymbol)]
-    public static void PostPush(Engine engine)
+    public static void PostPush(Activation engine)
     {
         Cell r0 = engine.GetRegister(0);
         int b = engine.B;
-        Cell arityCell = engine.GetStack(b + Engine.CpArityOffset);
-        Cell savedArg0 = engine.GetStack(b + Engine.CpArg1Offset);
+        Cell arityCell = engine.GetStack(b + Activation.CpArityOffset);
+        Cell savedArg0 = engine.GetStack(b + Activation.CpArg1Offset);
         Console.Error.WriteLine(
             $"[retract] POST-PUSH: register[0] = {DescribeCell(r0)} B={b} "
             + $"stack[B+arityOff]={arityCell.Data} stack[B+arg1Off]={DescribeCell(savedArg0)}");
     }
 
     [Conditional(TraceSymbol)]
-    public static void StepEntry(Engine engine, bool isResume, int startIndex)
+    public static void StepEntry(Activation engine, bool isResume, int startIndex)
     {
         Cell r0 = engine.GetRegister(0);
         Console.Error.WriteLine(
@@ -88,7 +88,7 @@ internal static class RetractTrace
 
     [Conditional(TraceSymbol)]
     public static void HeapStateBeforeUnify(
-        Engine engine, int patternRegHeap, int candSlot, int savedHb)
+        Activation engine, int patternRegHeap, int candSlot, int savedHb)
     {
         Console.Error.WriteLine(
             $"[retract] pre-unify: patternRegHeap={patternRegHeap} "
@@ -102,7 +102,7 @@ internal static class RetractTrace
 
     [Conditional(TraceSymbol)]
     public static void HeapStateAfterUnify(
-        Engine engine, int patternRegHeap, int candSlot, bool result)
+        Activation engine, int patternRegHeap, int candSlot, bool result)
     {
         Console.Error.WriteLine(
             $"[retract] post-unify: result={result} hb={engine.Hb} "
@@ -145,14 +145,14 @@ internal static class RetractTrace
     }
 
     [Conditional(TraceSymbol)]
-    private static void DumpCell(Engine engine, int idx, string label)
+    private static void DumpCell(Activation engine, int idx, string label)
     {
         Cell c = engine.GetHeap(idx);
         Console.Error.WriteLine($"[retract]   heap[{idx}] ({label}) = {DescribeCell(c)}");
     }
 
     [Conditional(TraceSymbol)]
-    private static void DumpStructure(Engine engine, int rootIdx, string label,
+    private static void DumpStructure(Activation engine, int rootIdx, string label,
         int maxDepth)
     {
         int derefIdx = engine.Deref(rootIdx);

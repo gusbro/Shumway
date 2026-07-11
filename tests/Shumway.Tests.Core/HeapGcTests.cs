@@ -12,7 +12,7 @@ public class HeapGcTests
 {
     // Neutralise the default registers (each starts as Ref(0), which would
     // conservatively pin heap cell 0) so a test controls its roots exactly.
-    private static void ClearRegisters(Engine e)
+    private static void ClearRegisters(Activation e)
     {
         for (int i = 0; i < e.RegisterCount; i++)
             e.SetRegister(i, Cell.Atom(0));
@@ -24,7 +24,7 @@ public class HeapGcTests
     [Fact]
     public void Collect_SlidesLiveStructureOverLeadingGarbage()
     {
-        var e = new Engine();
+        var e = new Activation();
         ClearRegisters(e);
 
         // [0,1] garbage unbound vars; [2]=foo/2 functor, [3]=1, [4]=2;
@@ -59,7 +59,7 @@ public class HeapGcTests
     [Fact]
     public void Collect_PreservesUnboundVariableSelfRef()
     {
-        var e = new Engine();
+        var e = new Activation();
         ClearRegisters(e);
 
         e.AllocateHeapUnbound();                  // 0 garbage
@@ -77,7 +77,7 @@ public class HeapGcTests
     [Fact]
     public void Collect_FollowsListSpine()
     {
-        var e = new Engine();
+        var e = new Activation();
         ClearRegisters(e);
 
         // Build [1, 2] : a LIS pair (head=1, tail=LIS pair (head=2, tail=[])).
@@ -111,7 +111,7 @@ public class HeapGcTests
     [Fact]
     public void Collect_NoGarbage_IsNoOp()
     {
-        var e = new Engine();
+        var e = new Activation();
         ClearRegisters(e);
         int f = e.AllocateHeap(3);
         e.SetHeap(f, Cell.Functor(FooFunctor()));

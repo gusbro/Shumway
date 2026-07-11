@@ -27,7 +27,7 @@ namespace Shumway.Disasm;
 /// <para>Exit codes: 0 success, 1 a predicate failed to compile, 3 usage
 /// error.</para>
 /// </summary>
-internal static class Program
+internal static class DisasmCli
 {
     private const int ExitOk = 0;
     private const int ExitCompileError = 1;

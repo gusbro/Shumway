@@ -3,7 +3,7 @@ using System.Diagnostics;
 namespace Shumway.Core.Diagnostics;
 
 /// <summary>Opt-in trace points around
-/// <see cref="Engine.PopIlChoicePointAndRestore"/>. Activated by the
+/// <see cref="Activation.PopIlChoicePointAndRestore"/>. Activated by the
 /// <c>SHUMWAY_RETRACT_TRACE</c> compile constant (set via the
 /// <c>ShumwayRetractTrace=true</c> MSBuild property). Zero runtime
 /// cost when the symbol is not defined.</summary>
@@ -12,11 +12,11 @@ public static class PopRestoreTrace
     private const string TraceSymbol = "SHUMWAY_RETRACT_TRACE";
 
     [Conditional(TraceSymbol)]
-    public static void PrePop(Engine engine, int b)
+    public static void PrePop(Activation engine, int b)
     {
-        int arity = (int)engine.GetStack(b + Engine.CpArityOffset).Data;
+        int arity = (int)engine.GetStack(b + Activation.CpArityOffset).Data;
         Cell savedArg0 = arity > 0
-            ? engine.GetStack(b + Engine.CpArg1Offset)
+            ? engine.GetStack(b + Activation.CpArg1Offset)
             : default;
         Console.Error.WriteLine(
             $"[poprestore] PRE-POP: B={b} arity={arity} "
@@ -24,7 +24,7 @@ public static class PopRestoreTrace
     }
 
     [Conditional(TraceSymbol)]
-    public static void PostRestore(Engine engine, int arity)
+    public static void PostRestore(Activation engine, int arity)
     {
         Cell r0 = arity > 0 ? engine.GetRegister(0) : default;
         Console.Error.WriteLine(

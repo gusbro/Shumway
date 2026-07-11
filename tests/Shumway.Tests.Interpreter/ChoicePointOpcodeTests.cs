@@ -32,7 +32,7 @@ public class ChoicePointOpcodeTests
     [Fact]
     public void TryMeElse_PushesChoicePointWithGivenBpAndArity()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.SetRegister(0, Cell.Atom(42));
         var interp = new BytecodeInterpreter(engine);
 
@@ -42,18 +42,18 @@ public class ChoicePointOpcodeTests
 
         // A CP must be active.
         Assert.True(engine.B >= 0);
-        int arity = (int)engine.GetStack(engine.B + Engine.CpArityOffset).Data;
-        int bp = (int)engine.GetStack(engine.B + Engine.CpBpOffset(arity)).Data;
+        int arity = (int)engine.GetStack(engine.B + Activation.CpArityOffset).Data;
+        int bp = (int)engine.GetStack(engine.B + Activation.CpBpOffset(arity)).Data;
         Assert.Equal(1, arity);
         Assert.Equal(14, bp);
         // Saved A1 matches X[0] at push.
-        Assert.Equal(Cell.Atom(42), engine.GetStack(engine.B + Engine.CpArg1Offset));
+        Assert.Equal(Cell.Atom(42), engine.GetStack(engine.B + Activation.CpArg1Offset));
     }
 
     [Fact]
     public void RetryMeElse_RestoresStateAndUpdatesBp()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.SetRegister(0, Cell.Atom(7));
         // Manually set up a CP so retry has something to restore from.
         engine.PushChoicePoint(arity: 1, nextClauseAddr: 0x100);
@@ -67,7 +67,7 @@ public class ChoicePointOpcodeTests
 
         Assert.Equal(Cell.Atom(7), engine.GetRegister(0));  // restored
         // BP was updated.
-        int bp = (int)engine.GetStack(engine.B + Engine.CpBpOffset(1)).Data;
+        int bp = (int)engine.GetStack(engine.B + Activation.CpBpOffset(1)).Data;
         Assert.Equal(0x200, bp);
         Assert.True(engine.B >= 0);                          // CP preserved
     }
@@ -75,7 +75,7 @@ public class ChoicePointOpcodeTests
     [Fact]
     public void TrustMe_RestoresStateAndDiscardsCp()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.SetRegister(0, Cell.Atom(3));
         engine.PushChoicePoint(arity: 1, nextClauseAddr: 0x100);
         engine.SetRegister(0, Cell.Atom(77));
@@ -106,7 +106,7 @@ public class ChoicePointOpcodeTests
             Opcode.Halt,
             Opcode.Halt);
 
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
         Assert.Equal(28, engine.P);                         // landed on the backtrack target
@@ -121,7 +121,7 @@ public class ChoicePointOpcodeTests
             Opcode.GetAtom, 100, 0,
             Opcode.Halt);
 
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Failed, interp.Run(code, 0));
     }
@@ -167,7 +167,7 @@ public class ChoicePointOpcodeTests
     {
         // ?- p(a). — should match clause 1 on the first try.
         var code = BuildMultiClauseFixture();
-        var engine = new Engine();
+        var engine = new Activation();
         engine.SetRegister(0, Cell.Atom(100));        // pre-load X[0] with 'a'
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 9));     // start at the call
@@ -180,7 +180,7 @@ public class ChoicePointOpcodeTests
     {
         // ?- p(b). — clause 1 fails, retry_me_else moves to clause 2 which matches.
         var code = BuildMultiClauseFixture();
-        var engine = new Engine();
+        var engine = new Activation();
         engine.SetRegister(0, Cell.Atom(101));
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 9));
@@ -192,7 +192,7 @@ public class ChoicePointOpcodeTests
     {
         // ?- p(c). — both retry paths fail, trust_me lands clause 3 which matches.
         var code = BuildMultiClauseFixture();
-        var engine = new Engine();
+        var engine = new Activation();
         engine.SetRegister(0, Cell.Atom(102));
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 9));
@@ -206,7 +206,7 @@ public class ChoicePointOpcodeTests
         // ?- p(d). — no clause matches; trust_me discards the CP and the final fail
         // has no CP to backtrack to, so the interpreter reports Failed.
         var code = BuildMultiClauseFixture();
-        var engine = new Engine();
+        var engine = new Activation();
         engine.SetRegister(0, Cell.Atom(103));        // 'd' — unknown
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Failed, interp.Run(code, 9));
@@ -241,7 +241,7 @@ public class ChoicePointOpcodeTests
             Opcode.GetAtom, 101, 0,       // 33..41
             Opcode.Halt);                 // 42
 
-        var engine = new Engine();
+        var engine = new Activation();
         int x0 = engine.AllocateHeapUnbound();
         engine.SetRegister(0, Cell.Ref(x0));
         // The CP needs Hb to be below x0 for the binding to be trailed, otherwise the

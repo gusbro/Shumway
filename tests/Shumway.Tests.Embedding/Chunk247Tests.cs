@@ -174,7 +174,7 @@ public class Chunk247Tests
         var shmo = ShmoCompiler.CompileSource(
             ":- public bare/0.\nbare.\n");
         // Use Shumway.Core.dll — it doesn't carry [PrologPredicate].
-        string emptyDll = typeof(Shumway.Core.Engine).Assembly.Location;
+        string emptyDll = typeof(Shumway.Core.Activation).Assembly.Location;
         var config = new LinkConfig
         {
             Objects = new[] { shmo },

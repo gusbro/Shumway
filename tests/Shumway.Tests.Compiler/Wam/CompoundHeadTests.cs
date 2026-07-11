@@ -235,7 +235,7 @@ public class CompoundHeadTests
         Array.Copy(cc.Bytecode, 0, full, prefix.Length, cc.Bytecode.Length);
         BytecodeIO.WriteInt32(full, callPos + 1, clauseStart);
 
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(full, 0));
     }
@@ -263,7 +263,7 @@ public class CompoundHeadTests
         Array.Copy(cc.Bytecode, 0, full, prefix.Length, cc.Bytecode.Length);
         BytecodeIO.WriteInt32(full, callPos + 1, clauseStart);
 
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Failed, interp.Run(full, 0));
     }
@@ -304,7 +304,7 @@ public class CompoundHeadTests
         Array.Copy(cc.Bytecode, 0, full, prefix.Length, cc.Bytecode.Length);
         BytecodeIO.WriteInt32(full, callPos + 1, clauseStart);
 
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(full, 0));
     }
@@ -331,7 +331,7 @@ public class CompoundHeadTests
         Array.Copy(cc.Bytecode, 0, full, prefix.Length, cc.Bytecode.Length);
         BytecodeIO.WriteInt32(full, callPos + 1, clauseStart);
 
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(full, 0));
     }

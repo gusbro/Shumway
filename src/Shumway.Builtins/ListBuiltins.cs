@@ -19,7 +19,7 @@ public static class ListBuiltins
 {
     // ---------- member/2 ----------
 
-    public static bool Member(Engine engine)
+    public static bool Member(Activation engine)
     {
         Cell elem = engine.GetRegister(0);
         Cell cur = Resolve(engine, engine.GetRegister(1));
@@ -50,10 +50,10 @@ public static class ListBuiltins
 
     // ---------- nth0/3 + nth1/3 ----------
 
-    public static bool Nth0(Engine engine) => NthImpl(engine, oneBased: false);
-    public static bool Nth1(Engine engine) => NthImpl(engine, oneBased: true);
+    public static bool Nth0(Activation engine) => NthImpl(engine, oneBased: false);
+    public static bool Nth1(Activation engine) => NthImpl(engine, oneBased: true);
 
-    private static bool NthImpl(Engine engine, bool oneBased)
+    private static bool NthImpl(Activation engine, bool oneBased)
     {
         Cell n = Resolve(engine, engine.GetRegister(0));
         // A variable index enumerates every position on backtracking — the
@@ -97,7 +97,7 @@ public static class ListBuiltins
         public int Pos;
         public readonly bool OneBased;
         public readonly int ReturnPc;
-        public readonly Func<Engine, int, bool> Resume;
+        public readonly Func<Activation, int, bool> Resume;
 
         public NthCursor(bool oneBased, int returnPc)
         {
@@ -108,7 +108,7 @@ public static class ListBuiltins
         }
     }
 
-    private static bool NthStep(Engine engine, NthCursor c, bool isResume)
+    private static bool NthStep(Activation engine, NthCursor c, bool isResume)
     {
         Cell cur = Resolve(engine, engine.GetRegister(1));
         for (int k = 0; k < c.Pos && cur.Tag == Tag.Lis; k++)
@@ -132,7 +132,7 @@ public static class ListBuiltins
 
     // ---------- reverse/2 ----------
 
-    public static bool Reverse(Engine engine)
+    public static bool Reverse(Activation engine)
     {
         var heads = new List<Cell>();
         Cell cur = Resolve(engine, engine.GetRegister(0));
@@ -156,7 +156,7 @@ public static class ListBuiltins
 
     // ---------- last/2 ----------
 
-    public static bool Last(Engine engine)
+    public static bool Last(Activation engine)
     {
         Cell cur = Resolve(engine, engine.GetRegister(0));
         int lastHeadIdx = -1;
@@ -173,7 +173,7 @@ public static class ListBuiltins
 
     // ---------- list_to_set/2 ----------
 
-    public static bool ListToSet(Engine engine)
+    public static bool ListToSet(Activation engine)
     {
         // Preserve first occurrence order; drop subsequent structurally
         // equal duplicates.
@@ -202,7 +202,7 @@ public static class ListBuiltins
 
     // ---------- Shared helpers ----------
 
-    private static int BuildList(Engine engine, IReadOnlyList<Cell> elements)
+    private static int BuildList(Activation engine, IReadOnlyList<Cell> elements)
     {
         if (elements.Count == 0)
         {
@@ -222,7 +222,7 @@ public static class ListBuiltins
         return start;
     }
 
-    private static Cell Resolve(Engine engine, Cell c)
+    private static Cell Resolve(Activation engine, Cell c)
     {
         if (c.Tag != Tag.Ref) return c;
         return engine.GetHeap(engine.Deref(c.AsHeapIndex));

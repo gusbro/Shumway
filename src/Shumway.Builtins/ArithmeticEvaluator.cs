@@ -21,7 +21,7 @@ public static class ArithmeticEvaluator
 {
     /// <summary>Reads the value at <paramref name="cell"/> (dereferencing if
     /// it's a REF) and computes its numeric value.</summary>
-    public static Number Evaluate(Engine engine, Cell cell)
+    public static Number Evaluate(Activation engine, Cell cell)
     {
         cell = ResolveRef(engine, cell);
         return cell.Tag switch
@@ -39,14 +39,14 @@ public static class ArithmeticEvaluator
         };
     }
 
-    private static Cell ResolveRef(Engine engine, Cell cell)
+    private static Cell ResolveRef(Activation engine, Cell cell)
     {
         if (cell.Tag != Tag.Ref) return cell;
         int addr = engine.Deref(cell.AsHeapIndex);
         return engine.GetHeap(addr);
     }
 
-    private static Number EvaluateAtomConstant(Engine engine, Cell atomCell)
+    private static Number EvaluateAtomConstant(Activation engine, Cell atomCell)
     {
         // ISO §9: recognised arithmetic constants. `pi` is the one ISO
         // constant (GProlog's table marks e / epsilon as extensions; they
@@ -70,7 +70,7 @@ public static class ArithmeticEvaluator
         throw new PrologRuntimeException("type_error", "evaluable", engine, atomCell);
     }
 
-    private static Number EvaluateCompound(Engine engine, Cell strCell)
+    private static Number EvaluateCompound(Activation engine, Cell strCell)
     {
         int functorIdx = strCell.AsHeapIndex;
         int functorId = engine.GetHeap(functorIdx).AsFunctorId;
@@ -97,7 +97,7 @@ public static class ArithmeticEvaluator
     /// Public so callers that already hold the function name and operand cell
     /// (e.g. <see cref="Evaluate"/> dispatching a compound) reuse the full ISO
     /// semantics.</summary>
-    public static Number EvaluateUnary(Engine engine, string name, Cell argCell)
+    public static Number EvaluateUnary(Activation engine, string name, Cell argCell)
     {
         Number a = Evaluate(engine, argCell);
         if (TryUnOp(name, out UnOp op)) return ApplyUn(op, a);
@@ -109,7 +109,7 @@ public static class ArithmeticEvaluator
     /// Public so callers that already hold the function name and operand cells
     /// (e.g. <see cref="Evaluate"/> dispatching a compound) reuse the full ISO
     /// semantics.</summary>
-    public static Number EvaluateBinary(Engine engine, string name, Cell aCell, Cell bCell)
+    public static Number EvaluateBinary(Activation engine, string name, Cell aCell, Cell bCell)
     {
         Number a = Evaluate(engine, aCell);
         Number b = Evaluate(engine, bCell);

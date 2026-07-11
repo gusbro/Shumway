@@ -32,7 +32,7 @@ public class CompoundOpcodeTests
     [Fact]
     public void PutStructure_BuildsStrAndFunctorAndEntersWriteMode()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int fooFunctor = FunctorTable.Intern(atomId: 200, arity: 2);
 
         var code = BuildCode(Opcode.PutStructure, fooFunctor, 0, Opcode.Halt);
@@ -57,7 +57,7 @@ public class CompoundOpcodeTests
     [Fact]
     public void PutStructure_FollowedByUnifyConstants_BuildsCompleteCompound()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int fooFunctor = FunctorTable.Intern(atomId: 200, arity: 2);
 
         // put_structure foo/2, X[0]; unify_constant 100; unify_constant 101; halt
@@ -83,7 +83,7 @@ public class CompoundOpcodeTests
     [Fact]
     public void GetStructure_OnMatchingCompound_EntersReadMode()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int fooFunctor = FunctorTable.Intern(atomId: 200, arity: 2);
 
         // Build foo(100, 101) first, then re-open it via get_structure.
@@ -104,7 +104,7 @@ public class CompoundOpcodeTests
     [Fact]
     public void GetStructure_FunctorMismatch_Fails()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int fooFunctor = FunctorTable.Intern(atomId: 200, arity: 2);
         int barFunctor = FunctorTable.Intern(atomId: 201, arity: 2);
 
@@ -122,7 +122,7 @@ public class CompoundOpcodeTests
     [Fact]
     public void GetStructure_OnUnboundVariable_EntersWriteMode()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int fooFunctor = FunctorTable.Intern(atomId: 200, arity: 1);
         int heapIdx = engine.AllocateHeapUnbound();
         engine.SetRegister(0, Cell.Ref(heapIdx));
@@ -145,7 +145,7 @@ public class CompoundOpcodeTests
     [Fact]
     public void PutList_BuildsLisAndEntersWriteMode()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         var code = BuildCode(Opcode.PutList, 0, Opcode.Halt);
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
@@ -164,7 +164,7 @@ public class CompoundOpcodeTests
     [Fact]
     public void GetList_OnExistingList_EntersReadMode()
     {
-        var engine = new Engine();
+        var engine = new Activation();
 
         // Build [100] (single-cons list) first.
         var build = BuildCode(
@@ -188,7 +188,7 @@ public class CompoundOpcodeTests
     [Fact]
     public void GetList_OnAtom_Fails()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.SetRegister(0, Cell.Atom(100));      // X[0] is an atom, not a list
 
         var code = BuildCode(Opcode.GetList, 0, Opcode.Halt);
@@ -199,7 +199,7 @@ public class CompoundOpcodeTests
     [Fact]
     public void GetListA1_DispatchesToX0()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         var build = BuildCode(
             Opcode.PutList, 0,
             Opcode.UnifyConstant, 42,
@@ -219,7 +219,7 @@ public class CompoundOpcodeTests
     public void UnifyVariableX_WriteMode_AllocatesFreshUnbound()
     {
         // Build foo/1 with an unbound arg captured into X[1].
-        var engine = new Engine();
+        var engine = new Activation();
         int fooFunctor = FunctorTable.Intern(atomId: 200, arity: 1);
         var code = BuildCode(
             Opcode.PutStructure, fooFunctor, 0,
@@ -239,7 +239,7 @@ public class CompoundOpcodeTests
     public void UnifyVariableX_ReadMode_CopiesArgIntoRegister()
     {
         // Build foo(100) and then read it back, capturing the arg into X[1].
-        var engine = new Engine();
+        var engine = new Activation();
         int fooFunctor = FunctorTable.Intern(atomId: 200, arity: 1);
 
         var code = BuildCode(
@@ -259,7 +259,7 @@ public class CompoundOpcodeTests
     [Fact]
     public void UnifyValueX_WriteMode_CopiesRegisterToHeap()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int fooFunctor = FunctorTable.Intern(atomId: 200, arity: 1);
         engine.SetRegister(1, Cell.Atom(99));
 
@@ -280,7 +280,7 @@ public class CompoundOpcodeTests
     [Fact]
     public void UnifyValueX_ReadMode_UnifiesAgainstHeap_Success()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int fooFunctor = FunctorTable.Intern(atomId: 200, arity: 1);
         engine.SetRegister(1, Cell.Atom(100));
 
@@ -298,7 +298,7 @@ public class CompoundOpcodeTests
     [Fact]
     public void UnifyValueX_ReadMode_Mismatch_Fails()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int fooFunctor = FunctorTable.Intern(atomId: 200, arity: 1);
         engine.SetRegister(1, Cell.Atom(999));    // X[1] differs from heap arg (100)
 
@@ -318,7 +318,7 @@ public class CompoundOpcodeTests
     [Fact]
     public void UnifyVoid_WriteMode_AllocatesAnonymousUnbounds()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int fooFunctor = FunctorTable.Intern(atomId: 200, arity: 3);
         int heapBefore = engine.HeapTop;
 
@@ -338,7 +338,7 @@ public class CompoundOpcodeTests
     [Fact]
     public void UnifyVoid_ReadMode_AdvancesPointerWithoutAllocating()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int fooFunctor = FunctorTable.Intern(atomId: 200, arity: 2);
 
         // Build foo(100, 101), then read back skipping both args via unify_void 2.
@@ -360,7 +360,7 @@ public class CompoundOpcodeTests
     [Fact]
     public void UnifyConstant_ReadMode_BacktracksOnMismatch()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int fooFunctor = FunctorTable.Intern(atomId: 200, arity: 1);
 
         // Build foo(100). Then try_me_else creates a CP, and we attempt to match against
@@ -409,7 +409,7 @@ public class CompoundOpcodeTests
         //   42..46: unify_variable_x 1
         //   47..51: unify_variable_x 2
         //   52:     proceed
-        var engine = new Engine();
+        var engine = new Activation();
         int fooFunctor = FunctorTable.Intern(atomId: 200, arity: 2);
 
         var code = BuildCode(

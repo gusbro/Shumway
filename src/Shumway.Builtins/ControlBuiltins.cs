@@ -17,8 +17,8 @@ namespace Shumway.Builtins;
 /// </summary>
 public static class ControlBuiltins
 {
-    public static bool Fail(Engine engine) => false;
-    public static bool True(Engine engine) => true;
+    public static bool Fail(Activation engine) => false;
+    public static bool True(Activation engine) => true;
 
     /// <summary><c>get_cpu_time(-Time)</c> — GNU-Prolog timing primitive:
     /// binds <c>Time</c> to a high-resolution monotonic process timer, in
@@ -37,7 +37,7 @@ public static class ControlBuiltins
     /// on the ~15.6 ms Windows scheduler tick, which made per-goal benchmark
     /// numbers swing several-fold with the iteration count (they were
     /// dominated by quantisation noise, not by the engine).</para></summary>
-    public static bool GetCpuTime(Engine engine)
+    public static bool GetCpuTime(Activation engine)
     {
         double ms = System.Diagnostics.Stopwatch.GetTimestamp()
             * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
@@ -50,7 +50,7 @@ public static class ControlBuiltins
     /// <c>Mark</c> to its index. The mark is updated by each
     /// <c>'$time_report'</c>, so successive reports show per-answer
     /// deltas (SWI-style).</summary>
-    public static bool TimeStart(Engine engine)
+    public static bool TimeStart(Activation engine)
     {
         var marks = engine.TimeMarks ??= new List<(double, long, long)>();
         double ms = System.Diagnostics.Stopwatch.GetTimestamp()
@@ -63,7 +63,7 @@ public static class ControlBuiltins
     /// SWI-style resource line for the deltas since <c>Mark</c> (or since
     /// its previous report) to the engine's output, then re-arms the mark:
     /// <c>% N inferences, S seconds, C heap cells (L Lips)</c>.</summary>
-    public static bool TimeReport(Engine engine)
+    public static bool TimeReport(Activation engine)
     {
         Cell c = engine.GetRegister(0);
         if (c.Tag == Tag.Ref)
@@ -96,12 +96,12 @@ public static class ControlBuiltins
     /// Implemented by throwing <see cref="PrologHaltException"/>, which
     /// the outer <c>Query</c> path intercepts and converts into a
     /// clean termination of the iteration.</summary>
-    public static bool Halt0(Engine engine) =>
+    public static bool Halt0(Activation engine) =>
         throw new PrologHaltException(0);
 
     /// <summary><c>halt(Code)</c> — terminates execution with the given
     /// integer exit code.</summary>
-    public static bool Halt1(Engine engine)
+    public static bool Halt1(Activation engine)
     {
         Cell c = engine.GetRegister(0);
         if (c.Tag == Tag.Ref)

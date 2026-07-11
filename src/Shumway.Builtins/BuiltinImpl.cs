@@ -15,4 +15,4 @@ namespace Shumway.Builtins;
 /// bindings they create are reversible by backtracking, just like bindings
 /// from interpreted clauses.</para>
 /// </summary>
-public delegate bool BuiltinImpl(Engine engine);
+public delegate bool BuiltinImpl(Activation engine);

@@ -5,8 +5,8 @@ namespace Shumway.Embedding;
 
 /// <summary>
 /// Allocates a static <see cref="Term"/> tree onto a runtime
-/// <see cref="Engine"/>'s heap. The mirror image of
-/// <see cref="TermReader.Materialize(Engine, int)"/>: heap → Term goes one way,
+/// <see cref="Activation"/>'s heap. The mirror image of
+/// <see cref="TermReader.Materialize(Activation, int)"/>: heap → Term goes one way,
 /// this goes the other.
 ///
 /// <para>Used by meta-builtins (<c>findall/3</c>) that run a goal in a fresh
@@ -27,7 +27,7 @@ public static class Materializer
     /// arg slot. Atomic terms return value cells (<c>Atom</c>, <c>Int</c>);
     /// floats, strings, lists, compounds, and variables return <c>Ref</c>
     /// or <c>Lis</c> cells pointing at freshly-allocated heap regions.</summary>
-    public static Cell MaterializeAsCell(Engine engine, Term term)
+    public static Cell MaterializeAsCell(Activation engine, Term term)
     {
         // chunk 432: the per-call variable-map Dictionary is pooled on the
         // engine (clear-on-use). Variable identity must NOT leak across
@@ -57,7 +57,7 @@ public static class Materializer
     }
 
     private static Cell MaterializeAsCell(
-        Engine engine, Term term, Dictionary<string, int> varMap)
+        Activation engine, Term term, Dictionary<string, int> varMap)
     {
         switch (term)
         {

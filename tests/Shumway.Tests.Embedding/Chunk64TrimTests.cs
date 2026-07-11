@@ -5,7 +5,7 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>
 /// Chunk 64 (revisited): env-trimming runtime gate is now ON. The
-/// <see cref="Shumway.Core.Engine.TrimEnv"/> implementation grew a
+/// <see cref="Shumway.Core.Activation.TrimEnv"/> implementation grew a
 /// CP-frame-protection check that raises the target shrink address
 /// to the top of the most recent CP frame, which was the missing
 /// piece in the prior investigation rounds — without it, a Call /

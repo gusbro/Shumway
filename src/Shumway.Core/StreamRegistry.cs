@@ -14,7 +14,7 @@ namespace Shumway.Core;
 /// <item>The two terminal-default handles — <c>user_input</c> (a
 ///   reader wrapping <see cref="System.Console.In"/>) and
 ///   <c>user_output</c> (a writer initially pointing at the engine's
-///   <see cref="Engine.Out"/>). They're registered with their alias
+///   <see cref="Activation.Out"/>). They're registered with their alias
 ///   set to the conventional name, so a Prolog program can refer to
 ///   them either by handle or by atom.</item>
 /// <item>The current-input / current-output cursors — updated by
@@ -41,7 +41,7 @@ public sealed class StreamRegistry
 
     /// <summary>The handle representing <c>user_output</c> — the
     /// terminal-default writer. Always registered; its underlying
-    /// writer starts as the engine's <see cref="Engine.Out"/>.</summary>
+    /// writer starts as the engine's <see cref="Activation.Out"/>.</summary>
     public StreamHandle UserOutput { get; }
 
     /// <summary>The handle representing <c>user_error</c> — the ISO

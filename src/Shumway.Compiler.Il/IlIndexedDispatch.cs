@@ -237,9 +237,9 @@ public static class IlIndexedDispatch
 
         // Cursor budget: cursor 0 = resolve, 1..K = nodes, K+1.. = call-site
         // resumes. The resume-marker encoding caps a predicate at
-        // Engine.ResumeMarkerCursorStride cursors.
+        // Activation.ResumeMarkerCursorStride cursors.
         int callSites = CountCalls(code, start, end);
-        if (nodes.Count + 1 + callSites >= Engine.ResumeMarkerCursorStride) return false;
+        if (nodes.Count + 1 + callSites >= Activation.ResumeMarkerCursorStride) return false;
 
         info = new IlIndexedDispatchInfo
         {
@@ -279,17 +279,17 @@ public static class IlIndexedDispatch
     // the functor id is name-relative via chunk-197 patching and the
     // engine's linked code is available at first call).
     // ------------------------------------------------------------------
-    // Chunk 233 — per-engine cache moved onto the Engine itself
-    // (Engine.IlIndexedDispatchCache is a plain object slot). The
-    // previous shape was a ConditionalWeakTable<Engine, ConcurrentDictionary> —
+    // Chunk 233 — per-engine cache moved onto the Activation itself
+    // (Activation.IlIndexedDispatchCache is a plain object slot). The
+    // previous shape was a ConditionalWeakTable<Activation, ConcurrentDictionary> —
     // every IL Call to an indexed predicate paid the ConditionalWeakTable's
     // internal lock + the ConcurrentDictionary's bucket lock (visible
-    // as Monitor.Enter_Slowpath in dotnet-trace). Engine is single-
+    // as Monitor.Enter_Slowpath in dotnet-trace). Activation is single-
     // threaded so a plain Dictionary suffices; the engine-typed slot
     // gives the cache engine lifetime without the weak-table.
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
-    private static Dictionary<int, IndexGraph> CacheFor(Engine engine)
+    private static Dictionary<int, IndexGraph> CacheFor(Activation engine)
     {
         if (engine.IlIndexedDispatchCache is Dictionary<int, IndexGraph> typed)
             return typed;
@@ -305,7 +305,7 @@ public static class IlIndexedDispatch
     /// pre-registered from the bundle (a stripped predicate — see
     /// <see cref="RegisterModelForEngine"/>). Once cached, the walk reads no
     /// bytecode.</summary>
-    public static int ResolveEntryByFunctorId(Engine engine, int functorId)
+    public static int ResolveEntryByFunctorId(Activation engine, int functorId)
     {
         var cache = CacheFor(engine);
         if (!cache.TryGetValue(functorId, out var graph))
@@ -325,7 +325,7 @@ public static class IlIndexedDispatch
     /// used by the LoadBundle path for a predicate whose WAM body was stripped
     /// (--strip-wam): its switch model lives in the bundle as an
     /// <see cref="IndexGraph"/>, not in the linked code.</summary>
-    internal static void RegisterModelForEngine(Engine engine, int functorId, IndexGraph graph)
+    internal static void RegisterModelForEngine(Activation engine, int functorId, IndexGraph graph)
     {
         var cache = CacheFor(engine);
         cache[functorId] = graph;
@@ -335,10 +335,10 @@ public static class IlIndexedDispatch
     /// decodes a persisted dispatch graph and registers it for the functor, so a
     /// stripped predicate dispatches without its WAM body. Keys are interned in
     /// the current process by the codec.</summary>
-    public static void RegisterPersistedGraph(Engine engine, int functorId, byte[] graphBytes)
+    public static void RegisterPersistedGraph(Activation engine, int functorId, byte[] graphBytes)
         => RegisterModelForEngine(engine, functorId, IndexGraphCodec.Decode(graphBytes));
 
-    private static IlIndexedDispatchInfo? BuildModelFromEngine(Engine engine, int functorId)
+    private static IlIndexedDispatchInfo? BuildModelFromEngine(Activation engine, int functorId)
     {
         var addrMap = engine.CurrentFunctorAddresses
             ?? throw new InvalidOperationException(
@@ -444,7 +444,7 @@ public static class IlIndexedDispatch
     /// reproducing the interpreter's switch semantics exactly, and returns
     /// the cursor of the chain node (or deterministic clause) the call
     /// enters. Pure read-only over the engine's argument registers / heap.</summary>
-    internal static int ResolveEntryCursor(Engine engine, IlIndexedDispatchInfo info)
+    internal static int ResolveEntryCursor(Activation engine, IlIndexedDispatchInfo info)
     {
         byte[] code = info.Bytecode;
         var tables = info.SwitchTables;
@@ -508,13 +508,13 @@ public static class IlIndexedDispatch
         }
     }
 
-    private static Cell DerefArg(Engine engine, int argIdx)
+    private static Cell DerefArg(Activation engine, int argIdx)
     {
         Cell c = engine.GetRegister(argIdx);
         return c.Tag == Tag.Ref ? engine.GetHeap(engine.Deref(c.AsHeapIndex)) : c;
     }
 
-    private static int TermTarget(Engine engine, byte[] code, int pc, int argIdx, int addrBase)
+    private static int TermTarget(Activation engine, byte[] code, int pc, int argIdx, int addrBase)
     {
         int varAddr    = BytecodeIO.ReadInt32(code, pc + addrBase);
         int constAddr  = BytecodeIO.ReadInt32(code, pc + addrBase + 4);
@@ -531,14 +531,14 @@ public static class IlIndexedDispatch
         };
     }
 
-    private static int AtomTarget(Engine engine, IReadOnlyList<SwitchTable> tables, int tableId, int argIdx)
+    private static int AtomTarget(Activation engine, IReadOnlyList<SwitchTable> tables, int tableId, int argIdx)
     {
         var table = tables[tableId];
         Cell a = DerefArg(engine, argIdx);
         return a.Tag == Tag.Atom ? table.Lookup(a.AsAtomId) : table.DefaultAddress;
     }
 
-    private static int IntegerTarget(Engine engine, IReadOnlyList<SwitchTable> tables, int tableId, int argIdx)
+    private static int IntegerTarget(Activation engine, IReadOnlyList<SwitchTable> tables, int tableId, int argIdx)
     {
         var table = tables[tableId];
         Cell a = DerefArg(engine, argIdx);
@@ -547,7 +547,7 @@ public static class IlIndexedDispatch
         return v >= int.MinValue && v <= int.MaxValue ? table.Lookup((int)v) : table.DefaultAddress;
     }
 
-    private static int StructureTarget(Engine engine, IReadOnlyList<SwitchTable> tables, int tableId, int argIdx)
+    private static int StructureTarget(Activation engine, IReadOnlyList<SwitchTable> tables, int tableId, int argIdx)
     {
         var table = tables[tableId];
         Cell a = DerefArg(engine, argIdx);
@@ -559,7 +559,7 @@ public static class IlIndexedDispatch
     // ADR-027 — second-level (sub-argument) targets. Mirror the interpreter's
     // SwitchOnAtomSub / SwitchOnIntegerSub: walk a bounded path from X[argIdx],
     // then key the table on the atom / integer reached (default on a miss).
-    private static int AtomSubTarget(Engine engine, IReadOnlyList<SwitchTable> tables,
+    private static int AtomSubTarget(Activation engine, IReadOnlyList<SwitchTable> tables,
         int tableId, int argIdx, int sub0, int sub1)
     {
         var table = tables[tableId];
@@ -568,7 +568,7 @@ public static class IlIndexedDispatch
             : table.DefaultAddress;
     }
 
-    private static int IntegerSubTarget(Engine engine, IReadOnlyList<SwitchTable> tables,
+    private static int IntegerSubTarget(Activation engine, IReadOnlyList<SwitchTable> tables,
         int tableId, int argIdx, int sub0, int sub1)
     {
         var table = tables[tableId];
@@ -582,7 +582,7 @@ public static class IlIndexedDispatch
 
     // ADR-028 — structure-keyed sub target: key the table on the FUNCTOR of the
     // sub-terminal (a nested list keys as the cons functor), default on a miss.
-    private static int StructureSubTarget(Engine engine, IReadOnlyList<SwitchTable> tables,
+    private static int StructureSubTarget(Activation engine, IReadOnlyList<SwitchTable> tables,
         int tableId, int argIdx, int sub0, int sub1)
     {
         var table = tables[tableId];
@@ -600,7 +600,7 @@ public static class IlIndexedDispatch
     /// <paramref name="sub1"/> if &gt;= 0) from a deref'd <paramref name="cell"/>;
     /// returns the deref'd terminal, or false on a non-compound / out-of-range
     /// hop. Mirrors <c>BytecodeInterpreter.TrySubCell</c>.</summary>
-    private static bool TrySubCell(Engine engine, Cell cell, int sub0, int sub1, out Cell result)
+    private static bool TrySubCell(Activation engine, Cell cell, int sub0, int sub1, out Cell result)
     {
         if (!TryHop(engine, cell, sub0, out result)) return false;
         if (sub1 >= 0 && !TryHop(engine, result, sub1, out result)) return false;
@@ -615,10 +615,10 @@ public static class IlIndexedDispatch
     /// default — exactly the runtime walk's semantics. Public because the emitted
     /// IL (loaded via <c>Assembly.Load</c> in a fresh process for a persisted
     /// bundle) calls it directly.</summary>
-    public static Cell WalkSubOrMiss(Engine engine, Cell cell, int sub0, int sub1)
+    public static Cell WalkSubOrMiss(Activation engine, Cell cell, int sub0, int sub1)
         => TrySubCell(engine, cell, sub0, sub1, out Cell r) ? r : Cell.Ref(0);
 
-    private static bool TryHop(Engine engine, Cell cell, int idx, out Cell next)
+    private static bool TryHop(Activation engine, Cell cell, int idx, out Cell next)
     {
         next = default;
         if (cell.Tag == Tag.Lis)
@@ -638,6 +638,6 @@ public static class IlIndexedDispatch
         return false;
     }
 
-    private static Cell Deref(Engine engine, Cell c) =>
+    private static Cell Deref(Activation engine, Cell c) =>
         c.Tag == Tag.Ref ? engine.GetHeap(engine.Deref(c.AsHeapIndex)) : c;
 }

@@ -98,9 +98,9 @@ public readonly struct Number : IEquatable<Number>
     /// <summary>Materialises the number as a heap cell. Inline-range ints go
     /// in <see cref="Cell.Int"/>; BigIntegers are stored in the engine's
     /// big-int side table and the returned cell is a <see cref="Cell.BigInt"/>;
-    /// floats are placed on the heap via <see cref="Engine.MakeFloat"/> and
+    /// floats are placed on the heap via <see cref="Activation.MakeFloat"/> and
     /// the returned cell is a REF to the header.</summary>
-    public Cell ToCell(Engine engine) => ValueKind switch
+    public Cell ToCell(Activation engine) => ValueKind switch
     {
         Kind.Float => Cell.Ref(engine.MakeFloat(FloatValue)),
         Kind.Big => engine.MakeBigInt(BigValue),

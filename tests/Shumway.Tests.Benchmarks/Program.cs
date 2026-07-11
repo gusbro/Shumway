@@ -348,7 +348,7 @@ public static class VanRoyMultiEngine
         sb.AppendLine();
         sb.AppendLine("## Engines");
         sb.AppendLine();
-        sb.AppendLine("| Engine | Version | Mode |");
+        sb.AppendLine("| Activation | Version | Mode |");
         sb.AppendLine("|---|---|---|");
         sb.AppendLine("| Shumway | (this build) | Bytecode interpreter + Tier-1 IL (in-process) |");
         sb.AppendLine("| GNU Prolog | 1.5.0 | Native compiled (`gplc` + MSVC link) |");
@@ -364,9 +364,9 @@ public static class VanRoyMultiEngine
         foreach (var grp in results.GroupBy(r => r.Benchmark).OrderBy(g =>
             Array.FindIndex(Benchmarks, x => x.Name == g.Key)))
         {
-            var sh  = grp.FirstOrDefault(r => r.Engine == "shumway");
-            var gp  = grp.FirstOrDefault(r => r.Engine == "gprolog");
-            var sw  = grp.FirstOrDefault(r => r.Engine == "swipl");
+            var sh  = grp.FirstOrDefault(r => r.Activation == "shumway");
+            var gp  = grp.FirstOrDefault(r => r.Activation == "gprolog");
+            var sw  = grp.FirstOrDefault(r => r.Activation == "swipl");
             int iters = sh?.Iterations ?? 0;
             sb.AppendLine($"| {grp.Key} | {iters} | {FmtPi(sh)} | {FmtPi(gp)} | {FmtPi(sw)} |");
         }
@@ -378,9 +378,9 @@ public static class VanRoyMultiEngine
         foreach (var grp in results.GroupBy(r => r.Benchmark).OrderBy(g =>
             Array.FindIndex(Benchmarks, x => x.Name == g.Key)))
         {
-            var sh = PerIterUs(grp.First(r => r.Engine == "shumway"));
-            var gp = grp.FirstOrDefault(r => r.Engine == "gprolog");
-            var sw = grp.FirstOrDefault(r => r.Engine == "swipl");
+            var sh = PerIterUs(grp.First(r => r.Activation == "shumway"));
+            var gp = grp.FirstOrDefault(r => r.Activation == "gprolog");
+            var sw = grp.FirstOrDefault(r => r.Activation == "swipl");
             sb.AppendLine($"| {grp.Key} | {FmtRatio(sh, PerIterUs(gp))} | {FmtRatio(sh, PerIterUs(sw))} |");
         }
         sb.AppendLine();
@@ -475,7 +475,7 @@ public static class VanRoyMultiEngine
     private static void PrintRatioSummary(List<Result> results)
     {
         // Per-benchmark: shumway per-iter vs each external engine.
-        var engineNames = results.Select(r => r.Engine).Distinct().Where(n => n != "shumway").ToList();
+        var engineNames = results.Select(r => r.Activation).Distinct().Where(n => n != "shumway").ToList();
         if (engineNames.Count == 0) return;
         Console.WriteLine("Per-iteration ratios (>1.0 = Shumway slower; <noise> when work below measurement threshold):");
         Console.Write($"{"benchmark",-12}");
@@ -485,10 +485,10 @@ public static class VanRoyMultiEngine
         foreach (var grp in results.GroupBy(r => r.Benchmark))
         {
             Console.Write($"{grp.Key,-12}");
-            double? sh = PerIterUs(grp.Single(r => r.Engine == "shumway"));
+            double? sh = PerIterUs(grp.Single(r => r.Activation == "shumway"));
             foreach (var eng in engineNames)
             {
-                var r = grp.FirstOrDefault(x => x.Engine == eng);
+                var r = grp.FirstOrDefault(x => x.Activation == eng);
                 if (r is null) { Console.Write($" {"-",-18}"); continue; }
                 double? ext = PerIterUs(r);
                 if (sh is null || ext is null)
@@ -503,7 +503,7 @@ public static class VanRoyMultiEngine
         }
     }
 
-    private record Result(string Benchmark, string Engine, int Iterations,
+    private record Result(string Benchmark, string Activation, int Iterations,
                           double StartupMs, double TotalMs, double TotalStddevMs = 0);
 
     // ---- gplc compilation ----
@@ -911,7 +911,7 @@ public static class VanRoyMultiEngine
             string perStr = per is null ? "" : per.Value.ToString("F4", CultureInfo.InvariantCulture);
             sb.AppendLine(string.Format(CultureInfo.InvariantCulture,
                 "{0},{1},{2},{3:F3},{4:F3},{5:F3},{6}",
-                r.Benchmark, r.Engine, r.Iterations, r.StartupMs, r.TotalMs, r.TotalStddevMs, perStr));
+                r.Benchmark, r.Activation, r.Iterations, r.StartupMs, r.TotalMs, r.TotalStddevMs, perStr));
         }
         File.WriteAllText(path, sb.ToString());
     }

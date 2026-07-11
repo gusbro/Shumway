@@ -1,12 +1,12 @@
 namespace Shumway.Core;
 
 /// <summary>
-/// Tunable parameters for an <see cref="Engine"/>. Sizes are in <see cref="Cell"/>
+/// Tunable parameters for an <see cref="Activation"/>. Sizes are in <see cref="Cell"/>
 /// units (or <see cref="ExtraTrailEntry"/> for the extra trail, <c>int</c> for the
 /// binding trail). A maximum of <c>0</c> means unlimited (the engine still throws
 /// on .NET array-size limits, naturally).
 /// </summary>
-public sealed class EngineConfig
+public sealed class ActivationConfig
 {
     public int InitialHeapSize { get; init; } = 65536;
     public int MaxHeapSize { get; init; }

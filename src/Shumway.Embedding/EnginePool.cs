@@ -41,7 +41,7 @@ public enum PoolReusePolicy
 /// <example><code>
 /// using var pool = EnginePool.FromSource("ancestor(X, Y) :- parent(X, Y). ...", maxSize: 8);
 /// using (var lease = pool.Rent())
-///     foreach (var s in lease.Engine.QueryAll("ancestor(tom, X)."))
+///     foreach (var s in lease.Activation.QueryAll("ancestor(tom, X)."))
 ///         Console.WriteLine(s["X"]);
 /// </code></example>
 /// </summary>
@@ -158,7 +158,7 @@ public sealed class EnginePool : IDisposable
     }
 
     /// <summary>A rented engine. Dispose to return it to the pool; access the
-    /// engine through <see cref="Engine"/> until then.</summary>
+    /// engine through <see cref="Activation"/> until then.</summary>
     public sealed class Lease : IDisposable
     {
         private EnginePool? _pool;
@@ -166,11 +166,11 @@ public sealed class EnginePool : IDisposable
         internal Lease(EnginePool pool, PrologEngine engine)
         {
             _pool = pool;
-            Engine = engine;
+            Activation = engine;
         }
 
         /// <summary>The rented engine. Valid until this lease is disposed.</summary>
-        public PrologEngine Engine { get; }
+        public PrologEngine Activation { get; }
 
         /// <summary>Returns the engine to the pool. Idempotent.</summary>
         public void Dispose()
@@ -178,7 +178,7 @@ public sealed class EnginePool : IDisposable
             var pool = Interlocked.Exchange(ref _pool, null);
             if (pool is null) return;
             if (Volatile.Read(ref pool._disposed) != 0) return;   // pool gone: drop the engine
-            pool.Return(Engine);
+            pool.Return(Activation);
         }
     }
 }

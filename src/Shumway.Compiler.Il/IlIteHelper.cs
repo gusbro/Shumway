@@ -11,7 +11,7 @@ namespace Shumway.Compiler.Il;
 /// point is pushed with <see cref="Resume"/> as its callback and the
 /// <b>resume marker</b> of the ELSE cursor stored in the CP's cursor slot: on
 /// backtrack the engine invokes the callback, which parks the marker as the
-/// PC (<see cref="Engine.ResumeAtReturnPc"/>) so the dispatch loop decodes it
+/// PC (<see cref="Activation.ResumeAtReturnPc"/>) so the dispatch loop decodes it
 /// and re-enters the owning predicate's delegate at the ELSE label — the same
 /// resume protocol chunk-218 backtrackable builtins use. Must be public: a
 /// persisted-bundle .dll references the field from a fresh process.</para>
@@ -23,7 +23,7 @@ public static class IlIteHelper
     /// encoded resume marker of the ELSE branch (patched name-relative in
     /// persisted bundles). Always succeeds — there is always an else branch
     /// to run.</summary>
-    public static readonly System.Func<Engine, int, bool> Resume =
+    public static readonly System.Func<Activation, int, bool> Resume =
         static (engine, marker) =>
         {
             engine.ResumeAtReturnPc(marker);

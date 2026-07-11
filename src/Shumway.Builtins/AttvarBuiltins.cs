@@ -24,7 +24,7 @@ public static class AttvarBuiltins
     /// <c>Value</c>. A plain unbound variable is promoted to an
     /// attributed variable in place. Throws <c>type_error(var, _)</c>
     /// when <c>Var</c> is already bound to a non-variable.</summary>
-    public static bool PutAttr(Engine engine)
+    public static bool PutAttr(Activation engine)
     {
         int varAddr = RegisterToHeap(engine, 0);
         int moduleId = ModuleId(engine, 1);
@@ -37,7 +37,7 @@ public static class AttvarBuiltins
     /// <c>Value</c> with the attribute <c>Module</c> carries on
     /// <c>Var</c>. Fails silently when <c>Var</c> has no such attribute
     /// (or isn't an attributed variable at all).</summary>
-    public static bool GetAttr(Engine engine)
+    public static bool GetAttr(Activation engine)
     {
         int varAddr = RegisterToHeap(engine, 0);
         int moduleId = ModuleId(engine, 1);
@@ -48,7 +48,7 @@ public static class AttvarBuiltins
     /// <summary><c>del_attr(+Var, +Module)</c> — removes <c>Module</c>'s
     /// attribute from <c>Var</c>. Always succeeds, even when <c>Var</c>
     /// carries no such attribute or isn't an attributed variable.</summary>
-    public static bool DelAttr(Engine engine)
+    public static bool DelAttr(Activation engine)
     {
         int varAddr = RegisterToHeap(engine, 0);
         int moduleId = ModuleId(engine, 1);
@@ -61,8 +61,8 @@ public static class AttvarBuiltins
     /// — already names a heap cell; an immediate is copied onto a fresh
     /// heap cell. Mirrors the engine's own register materialisation, so
     /// a non-variable passed where a variable is required reaches
-    /// <see cref="Engine.PutAttr"/>'s type check intact.</summary>
-    private static int RegisterToHeap(Engine engine, int regIdx)
+    /// <see cref="Activation.PutAttr"/>'s type check intact.</summary>
+    private static int RegisterToHeap(Activation engine, int regIdx)
     {
         Cell c = engine.GetRegister(regIdx);
         // REF and ATTVAR both carry a heap home index as payload.
@@ -75,7 +75,7 @@ public static class AttvarBuiltins
     /// <summary>Reads the module argument — required to be a bound atom
     /// — and returns its atom id. Throws <c>instantiation_error</c> for
     /// an unbound module and <c>type_error(atom, _)</c> for a non-atom.</summary>
-    private static int ModuleId(Engine engine, int regIdx)
+    private static int ModuleId(Activation engine, int regIdx)
     {
         Cell c = engine.GetRegister(regIdx);
         if (c.Tag == Tag.Ref)

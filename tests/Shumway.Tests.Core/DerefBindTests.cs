@@ -10,7 +10,7 @@ public class DerefBindTests
     [Fact]
     public void Deref_UnboundVar_ReturnsSelf()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int v = engine.AllocateHeapUnbound();
         Assert.Equal(v, engine.Deref(v));
     }
@@ -18,7 +18,7 @@ public class DerefBindTests
     [Fact]
     public void Deref_AtomicCell_ReturnsSelf()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int slot = engine.AllocateHeap(1);
         engine.SetHeap(slot, Cell.Atom(42));
         Assert.Equal(slot, engine.Deref(slot));
@@ -27,7 +27,7 @@ public class DerefBindTests
     [Fact]
     public void Deref_RefPointingElsewhere_FollowsOnce()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int target = engine.AllocateHeap(1);
         engine.SetHeap(target, Cell.Atom(7));
         int via = engine.AllocateHeap(1);
@@ -38,7 +38,7 @@ public class DerefBindTests
     [Fact]
     public void Deref_FollowsChainToFinalCell()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int target = engine.AllocateHeap(1);
         engine.SetHeap(target, Cell.Atom(99));
         int mid = engine.AllocateHeap(1);
@@ -52,7 +52,7 @@ public class DerefBindTests
     [Fact]
     public void Deref_RefToSelf_TreatedAsUnbound()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int v = engine.AllocateHeap(1);
         engine.SetHeap(v, Cell.Ref(v));   // self-pointing REF
         Assert.Equal(v, engine.Deref(v));
@@ -63,7 +63,7 @@ public class DerefBindTests
     [Fact]
     public void Bind_NoChoicePoint_NoTrailEntry()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int v = engine.AllocateHeapUnbound();
         // Hb is 0 by default — v is "young", binding is not trailed.
         engine.Bind(v, Cell.Atom(5));
@@ -74,7 +74,7 @@ public class DerefBindTests
     [Fact]
     public void Bind_VarOlderThanHb_IsTrailed()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int v = engine.AllocateHeapUnbound();         // idx 0
         engine.AllocateHeap(1);                       // idx 1, advance heap top
         engine.SetHbForTesting(1);                    // HB = 1, so var 0 is "old" (0 < 1)
@@ -88,7 +88,7 @@ public class DerefBindTests
     public void Bind_VarEqualToHb_IsNotTrailed()
     {
         // HB check is strictly less-than: a var at exactly heap[Hb] is "young".
-        var engine = new Engine();
+        var engine = new Activation();
         engine.AllocateHeap(2);
         int v = engine.AllocateHeapUnbound();         // idx 2
         engine.SetHbForTesting(v);                    // HB = 2
@@ -100,7 +100,7 @@ public class DerefBindTests
     [Fact]
     public void Bind_OverwritesCell()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int v = engine.AllocateHeapUnbound();
         engine.Bind(v, Cell.Int(42));
         Assert.Equal(Cell.Int(42), engine.GetHeap(v));
@@ -109,7 +109,7 @@ public class DerefBindTests
     [Fact]
     public void Bind_MultipleOldVars_AppendsTrailInOrder()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int a = engine.AllocateHeapUnbound();
         int b = engine.AllocateHeapUnbound();
         int c = engine.AllocateHeapUnbound();
@@ -128,7 +128,7 @@ public class DerefBindTests
     [Fact]
     public void BindingTrail_GrowsWhenInitialCapacityExceeded()
     {
-        var engine = new Engine(new EngineConfig { InitialBindingTrailSize = 2 });
+        var engine = new Activation(new ActivationConfig { InitialBindingTrailSize = 2 });
         int a = engine.AllocateHeapUnbound();
         int b = engine.AllocateHeapUnbound();
         int c = engine.AllocateHeapUnbound();
@@ -147,7 +147,7 @@ public class DerefBindTests
     [Fact]
     public void UnwindBindingTrail_RestoresCellsToUnbound()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int a = engine.AllocateHeapUnbound();
         int b = engine.AllocateHeapUnbound();
         engine.SetHbForTesting(engine.HeapTop);
@@ -166,7 +166,7 @@ public class DerefBindTests
     [Fact]
     public void UnwindBindingTrail_PartialUnwind_LeavesEarlierBindings()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int a = engine.AllocateHeapUnbound();
         int b = engine.AllocateHeapUnbound();
         int c = engine.AllocateHeapUnbound();
@@ -187,7 +187,7 @@ public class DerefBindTests
     [Fact]
     public void UnwindBindingTrail_NoOp_WhenTargetMatchesTop()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int v = engine.AllocateHeapUnbound();
         engine.SetHbForTesting(engine.HeapTop);
         engine.Bind(v, Cell.Atom(1));
@@ -202,7 +202,7 @@ public class DerefBindTests
     [InlineData(100)]
     public void UnwindBindingTrail_OutOfRange_Throws(int badTarget)
     {
-        var engine = new Engine();
+        var engine = new Activation();
         Assert.Throws<ArgumentOutOfRangeException>(() => engine.UnwindBindingTrail(badTarget));
     }
 }

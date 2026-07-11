@@ -8,7 +8,7 @@ public class EngineStateTests
     [Fact]
     public void Default_Ctor_StartsEmpty()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         Assert.Equal(0, engine.HeapTop);
         Assert.Equal(0, engine.Hb);
         Assert.Equal(0, engine.StackTop);
@@ -23,8 +23,8 @@ public class EngineStateTests
     [Fact]
     public void Default_Ctor_UsesDefaultConfigSizes()
     {
-        var engine = new Engine();
-        var defaults = new EngineConfig();
+        var engine = new Activation();
+        var defaults = new ActivationConfig();
         Assert.Equal(defaults.InitialHeapSize, engine.HeapCapacity);
         Assert.Equal(defaults.InitialStackSize, engine.StackCapacity);
         Assert.Equal(defaults.InitialRegisterCount, engine.RegisterCount);
@@ -35,7 +35,7 @@ public class EngineStateTests
     [Fact]
     public void Custom_Config_AppliesInitialSizes()
     {
-        var config = new EngineConfig
+        var config = new ActivationConfig
         {
             InitialHeapSize = 7,
             InitialStackSize = 9,
@@ -43,7 +43,7 @@ public class EngineStateTests
             InitialBindingTrailSize = 5,
             InitialExtraTrailSize = 2,
         };
-        var engine = new Engine(config);
+        var engine = new Activation(config);
         Assert.Equal(7, engine.HeapCapacity);
         Assert.Equal(9, engine.StackCapacity);
         Assert.Equal(3, engine.RegisterCount);
@@ -54,7 +54,7 @@ public class EngineStateTests
     [Fact]
     public void Ctor_NullConfig_Throws()
     {
-        Assert.Throws<ArgumentNullException>(() => new Engine(null!));
+        Assert.Throws<ArgumentNullException>(() => new Activation(null!));
     }
 
     [Theory]
@@ -62,13 +62,13 @@ public class EngineStateTests
     [InlineData(-1)]
     public void Ctor_InvalidConfigSize_Throws(int size)
     {
-        Assert.Throws<ArgumentException>(() => new Engine(new EngineConfig { InitialHeapSize = size }));
+        Assert.Throws<ArgumentException>(() => new Activation(new ActivationConfig { InitialHeapSize = size }));
     }
 
     [Fact]
     public void AllocateHeapUnbound_AdvancesTopAndWritesSelfPointingRef()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int a = engine.AllocateHeapUnbound();
         Assert.Equal(0, a);
         Assert.Equal(1, engine.HeapTop);
@@ -85,7 +85,7 @@ public class EngineStateTests
     [Fact]
     public void AllocateHeap_AdvancesTopByCount()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int a = engine.AllocateHeap(3);
         Assert.Equal(0, a);
         Assert.Equal(3, engine.HeapTop);
@@ -96,14 +96,14 @@ public class EngineStateTests
     [InlineData(-1)]
     public void AllocateHeap_NonPositiveCount_Throws(int count)
     {
-        var engine = new Engine();
+        var engine = new Activation();
         Assert.Throws<ArgumentOutOfRangeException>(() => engine.AllocateHeap(count));
     }
 
     [Fact]
     public void Heap_GrowsGeometricallyWhenExhausted()
     {
-        var engine = new Engine(new EngineConfig { InitialHeapSize = 2 });
+        var engine = new Activation(new ActivationConfig { InitialHeapSize = 2 });
         Assert.Equal(2, engine.HeapCapacity);
 
         engine.AllocateHeapUnbound();
@@ -118,7 +118,7 @@ public class EngineStateTests
     [Fact]
     public void Heap_PreservesContentsAcrossGrowth()
     {
-        var engine = new Engine(new EngineConfig { InitialHeapSize = 2 });
+        var engine = new Activation(new ActivationConfig { InitialHeapSize = 2 });
         int a = engine.AllocateHeap(1);
         engine.SetHeap(a, Cell.Atom(7));
 
@@ -132,7 +132,7 @@ public class EngineStateTests
     [Fact]
     public void Heap_MaxSizeExceeded_Throws()
     {
-        var engine = new Engine(new EngineConfig { InitialHeapSize = 2, MaxHeapSize = 4 });
+        var engine = new Activation(new ActivationConfig { InitialHeapSize = 2, MaxHeapSize = 4 });
         engine.AllocateHeap(4); // exactly fills the max
         Assert.Equal(4, engine.HeapTop);
 
@@ -142,7 +142,7 @@ public class EngineStateTests
     [Fact]
     public void Heap_MaxSizeZero_MeansUnlimited()
     {
-        var engine = new Engine(new EngineConfig { InitialHeapSize = 2, MaxHeapSize = 0 });
+        var engine = new Activation(new ActivationConfig { InitialHeapSize = 2, MaxHeapSize = 0 });
         // Growing past the initial budget should not throw.
         for (int i = 0; i < 50; i++)
             engine.AllocateHeapUnbound();
@@ -152,7 +152,7 @@ public class EngineStateTests
     [Fact]
     public void SetHbForTesting_InRange_Updates()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.AllocateHeap(5);
         engine.SetHbForTesting(3);
         Assert.Equal(3, engine.Hb);
@@ -163,7 +163,7 @@ public class EngineStateTests
     [InlineData(100)]   // beyond heap top
     public void SetHbForTesting_OutOfRange_Throws(int badHb)
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.AllocateHeap(5);
         Assert.Throws<ArgumentOutOfRangeException>(() => engine.SetHbForTesting(badHb));
     }

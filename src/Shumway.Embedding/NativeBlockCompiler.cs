@@ -31,7 +31,7 @@ public static class NativeBlockCompiler
     private static readonly MethodInfo ToTermGeneric =
         typeof(PrologEngine).GetMethod(nameof(PrologEngine.ToTerm))!;
     private static readonly PropertyInfo HostProp =
-        typeof(Engine).GetProperty(nameof(Engine.Host))!;
+        typeof(Activation).GetProperty(nameof(Activation.Host))!;
     // ADR-022 — persistent scalar `:- c` global accessors.
     private static readonly MethodInfo GetGlobalIntM =
         typeof(PrologEngine).GetMethod(nameof(PrologEngine.GetNativeGlobalInt))!;
@@ -48,9 +48,9 @@ public static class NativeBlockCompiler
         typeof(PrologEngine).GetMethod(nameof(PrologEngine.GetOrCreateReftypeSlot),
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
     private static readonly MethodInfo MakeForeignM =
-        typeof(Engine).GetMethod(nameof(Engine.MakeForeign))!;
+        typeof(Activation).GetMethod(nameof(Activation.MakeForeign))!;
     private static readonly MethodInfo UnifyRegCell =
-        typeof(Engine).GetMethod(nameof(Engine.UnifyRegisterWithCell))!;
+        typeof(Activation).GetMethod(nameof(Activation.UnifyRegisterWithCell))!;
     private static readonly MethodInfo ReadSlotM =
         typeof(NativeBlockCompiler).GetMethod(nameof(ReadReftypeSlot))!;
     // ADR-024 managed-snapshot helpers (the `:- native` Reftype-param path).
@@ -72,13 +72,13 @@ public static class NativeBlockCompiler
     /// cell), or null. Shared by the Expression-compiled blocks (called from
     /// emitted IL). Phase 33 A3 — reads the dereferenced cell directly instead of
     /// materializing a '$foreign'(Id) term per call.</summary>
-    public static TermSlot? ReadReftypeSlot(Engine engine, int reg)
+    public static TermSlot? ReadReftypeSlot(Activation engine, int reg)
     {
         var c = RegisterMarshalling.DerefRegisterCell(engine, reg);
         return c.Tag == Shumway.Core.Tag.Foreign ? engine.AsForeign<TermSlot>(c) : null;
     }
 
-    /// <summary>Compiles the block to a <c>Func&lt;Engine,bool&gt;</c> whose Prolog
+    /// <summary>Compiles the block to a <c>Func&lt;Activation,bool&gt;</c> whose Prolog
     /// variables live in argument registers <paramref name="regOffset"/>.. (in
     /// <paramref name="vars"/> order). Returns null — fall back to the interpreter
     /// — when the block uses an unsupported construct or runtime IL generation is
@@ -91,7 +91,7 @@ public static class NativeBlockCompiler
     /// interpreter fallback. Lets a microbench compare the two paths.</summary>
     public static bool ForceInterpreter;
 
-    public static Func<Engine, bool>? TryCompile(IReadOnlyList<NativeVar> vars,
+    public static Func<Activation, bool>? TryCompile(IReadOnlyList<NativeVar> vars,
         IReadOnlyList<CStmt> stmts, IReadOnlyList<NativeScalarGlobal> scalarGlobals,
         int regOffset, Func<string, MethodInfo?> resolve, PrologEngine? host = null)
     {
@@ -140,7 +140,7 @@ public static class NativeBlockCompiler
             foreach (var g in scalarGlobals) _scalarFloat[g.Name] = g.IsFloat;
         }
 
-        public Func<Engine, bool> Compile()
+        public Func<Activation, bool> Compile()
         {
             var typing = NativeBlockTyping.Compute(_vars, _stmts, _resolve,
                 _hostInstance?.NativeTypedefsView);
@@ -153,7 +153,7 @@ public static class NativeBlockCompiler
             foreach (var g in _scalarGlobals)
                 _types[g.Name] = g.IsFloat ? typeof(double) : typeof(long);
 
-            _engine = Expression.Parameter(typeof(Engine), "engine");
+            _engine = Expression.Parameter(typeof(Activation), "engine");
             _host = Expression.Variable(typeof(PrologEngine), "host");
             _ret = Expression.Label(typeof(bool), "ret");
 
@@ -201,7 +201,7 @@ public static class NativeBlockCompiler
 
             body.Add(Expression.Label(_ret, Expression.Constant(true)));
             var block = Expression.Block(typeof(bool), locals, body);
-            return Expression.Lambda<Func<Engine, bool>>(block, _engine).Compile();
+            return Expression.Lambda<Func<Activation, bool>>(block, _engine).Compile();
         }
 
         // ----- statement / expression emit ---------------------------------

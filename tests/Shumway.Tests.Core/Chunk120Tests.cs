@@ -10,7 +10,7 @@ namespace Shumway.Tests.Core;
 /// <para>Adds the <c>ViewGen</c> slot to the choice-point frame and has
 /// <c>PushChoicePoint</c> / <c>RestoreCommonFromCurrentCp</c> save and
 /// restore it alongside the rest of engine state. Nothing yet samples
-/// <see cref="Engine.CurrentViewGen"/> (the upcoming <c>EnterDynamic</c>
+/// <see cref="Activation.CurrentViewGen"/> (the upcoming <c>EnterDynamic</c>
 /// opcode will), so the field stays at 0 in practice and no existing
 /// behaviour shifts. These tests pin the save/restore contract so the
 /// upcoming <c>CheckVisible</c> opcode can rely on it.</para>
@@ -20,7 +20,7 @@ public class Chunk120Tests
     [Fact]
     public void PushChoicePoint_CapturesCurrentViewGen()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.CurrentViewGen = 42;
         engine.PushChoicePoint(arity: 0, nextClauseAddr: 0);
 
@@ -30,7 +30,7 @@ public class Chunk120Tests
     [Fact]
     public void RetryMeElse_RestoresViewGenFromCp()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.CurrentViewGen = 42;
         engine.PushChoicePoint(arity: 0, nextClauseAddr: 0);
 
@@ -44,7 +44,7 @@ public class Chunk120Tests
     [Fact]
     public void TrustMe_RestoresViewGenAlongsideTheRestOfState()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.CurrentViewGen = 7;
         engine.PushChoicePoint(arity: 0, nextClauseAddr: 0);
 
@@ -56,7 +56,7 @@ public class Chunk120Tests
     [Fact]
     public void NestedChoicePoints_EachCarriesItsOwnViewGen()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.CurrentViewGen = 1;
         engine.PushChoicePoint(arity: 0, nextClauseAddr: 0);
 

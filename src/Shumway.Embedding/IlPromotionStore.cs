@@ -39,8 +39,8 @@ public sealed class IlPromotionStore
     // InstallDelegate / the evict path, which drop the cached pair — so a
     // swapped delegate (PGO phase-2, churn re-promote, evict) is never
     // shadowed by a stale wrapper across queries.
-    private readonly Dictionary<int, Func<Engine, bool>> _dispatchWrappers = new();
-    private readonly Dictionary<int, Func<Engine, int, bool>> _resumeWrappers = new();
+    private readonly Dictionary<int, Func<Activation, bool>> _dispatchWrappers = new();
+    private readonly Dictionary<int, Func<Activation, int, bool>> _resumeWrappers = new();
 
     private void InstallDelegate(int functorId, PredicateDelegate del)
     {
@@ -50,24 +50,24 @@ public sealed class IlPromotionStore
     }
 
     /// <summary>The cached `engine => del(engine, 0)` dispatch wrapper for a
-    /// promoted predicate (null when not promoted). Engine-lifetime — the
+    /// promoted predicate (null when not promoted). Activation-lifetime — the
     /// per-query adapter probes this instead of allocating its own.</summary>
-    internal Func<Engine, bool>? TryGetDispatchWrapper(int functorId)
+    internal Func<Activation, bool>? TryGetDispatchWrapper(int functorId)
     {
         if (_dispatchWrappers.TryGetValue(functorId, out var w)) return w;
         if (!_delegates.TryGetValue(functorId, out var del)) return null;
-        Func<Engine, bool> wrapper = engine => del(engine, 0);
+        Func<Activation, bool> wrapper = engine => del(engine, 0);
         _dispatchWrappers[functorId] = wrapper;
         return wrapper;
     }
 
     /// <summary>The cached `(engine, cursor) => del(engine, cursor)` resume
-    /// wrapper for a promoted predicate (null when not promoted). Engine-lifetime.</summary>
-    internal Func<Engine, int, bool>? TryGetResumeWrapper(int functorId)
+    /// wrapper for a promoted predicate (null when not promoted). Activation-lifetime.</summary>
+    internal Func<Activation, int, bool>? TryGetResumeWrapper(int functorId)
     {
         if (_resumeWrappers.TryGetValue(functorId, out var w)) return w;
         if (!_delegates.TryGetValue(functorId, out var del)) return null;
-        Func<Engine, int, bool> wrapper = (engine, cursor) => del(engine, cursor);
+        Func<Activation, int, bool> wrapper = (engine, cursor) => del(engine, cursor);
         _resumeWrappers[functorId] = wrapper;
         return wrapper;
     }
@@ -641,7 +641,7 @@ public sealed class IlPromotionStore
     /// background compilation the answer stays DETERMINISTIC: an in-flight
     /// compile of this functor settles (bounded wait + drain) before
     /// answering, so the suite-wide "N warm queries → promoted" assertions
-    /// hold regardless of worker latency. Engine-thread only, like every
+    /// hold regardless of worker latency. Activation-thread only, like every
     /// promotion API.</summary>
     public bool IsPromoted(int functorId)
     {

@@ -10,7 +10,7 @@ public class TrailUnwindTests
     [Fact]
     public void UnwindTrails_BindingOnly_RestoresAll()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int a = engine.AllocateHeapUnbound();
         int b = engine.AllocateHeapUnbound();
         engine.SetHbForTesting(engine.HeapTop);
@@ -27,7 +27,7 @@ public class TrailUnwindTests
     [Fact]
     public void UnwindTrails_BindingOnly_PartialUnwind()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int a = engine.AllocateHeapUnbound();
         int b = engine.AllocateHeapUnbound();
         int c = engine.AllocateHeapUnbound();
@@ -49,7 +49,7 @@ public class TrailUnwindTests
     [Fact]
     public void TrailValueChange_AppendsExtraTrailEntry()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int slot = engine.AllocateHeap(1);
         engine.SetHeap(slot, Cell.Atom(7));
         engine.TrailValueChange(slot, Cell.Atom(7));
@@ -59,7 +59,7 @@ public class TrailUnwindTests
     [Fact]
     public void UnwindTrails_ExtraOnly_RestoresOldValue()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int slot = engine.AllocateHeap(1);
         engine.SetHeap(slot, Cell.Atom(7));
         engine.TrailValueChange(slot, Cell.Atom(7));
@@ -73,7 +73,7 @@ public class TrailUnwindTests
     [Fact]
     public void ExtraTrail_GrowsWhenInitialCapacityExceeded()
     {
-        var engine = new Engine(new EngineConfig { InitialExtraTrailSize = 2 });
+        var engine = new Activation(new ActivationConfig { InitialExtraTrailSize = 2 });
         int slot = engine.AllocateHeap(1);
         engine.SetHeap(slot, Cell.Atom(0));
         engine.TrailValueChange(slot, Cell.Atom(0));
@@ -90,7 +90,7 @@ public class TrailUnwindTests
     {
         // Sequence: bind X, change cell C, bind Y. Trail state captures the marker so
         // unwind first rolls Y back, then restores C, then rolls X back.
-        var engine = new Engine();
+        var engine = new Activation();
         int x = engine.AllocateHeapUnbound();
         int y = engine.AllocateHeapUnbound();
         int cSlot = engine.AllocateHeap(1);
@@ -116,7 +116,7 @@ public class TrailUnwindTests
     {
         // Sequence: bind X (keep), value-change C (keep), bind Y (rollback). Unwind to
         // targets that preserve the first binding and the value change.
-        var engine = new Engine();
+        var engine = new Activation();
         int x = engine.AllocateHeapUnbound();
         int y = engine.AllocateHeapUnbound();
         int cSlot = engine.AllocateHeap(1);
@@ -139,7 +139,7 @@ public class TrailUnwindTests
     [Fact]
     public void UnwindTrails_MultipleExtrasOnly()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int a = engine.AllocateHeap(1); engine.SetHeap(a, Cell.Atom(1));
         int b = engine.AllocateHeap(1); engine.SetHeap(b, Cell.Atom(2));
 
@@ -162,7 +162,7 @@ public class TrailUnwindTests
     [InlineData(0, 1000)]
     public void UnwindTrails_InvalidTargets_Throw(int bindingTarget, int extraTarget)
     {
-        var engine = new Engine();
+        var engine = new Activation();
         Assert.Throws<ArgumentOutOfRangeException>(() => engine.UnwindTrails(bindingTarget, extraTarget));
     }
 }

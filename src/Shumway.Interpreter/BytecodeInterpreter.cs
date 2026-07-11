@@ -4,7 +4,7 @@ namespace Shumway.Interpreter;
 
 /// <summary>
 /// Tier 0 WAM bytecode interpreter. Dispatches one opcode at a time on a target
-/// <see cref="Engine"/>, calling into the engine's state-management APIs for the
+/// <see cref="Activation"/>, calling into the engine's state-management APIs for the
 /// actual work. The opcode encoding is defined in ADR-006 and the per-instruction
 /// semantics in docs/design/wam-instruction-set.md.
 ///
@@ -21,7 +21,7 @@ namespace Shumway.Interpreter;
 /// </summary>
 public sealed class BytecodeInterpreter
 {
-    private readonly Engine _engine;
+    private readonly Activation _engine;
 #if SHUMWAY_PROFILE
     private static readonly bool _dispatchTrace =
         System.Environment.GetEnvironmentVariable("ITE_TRACE") == "1";
@@ -99,20 +99,20 @@ public sealed class BytecodeInterpreter
     ///
     /// <para>Null when no IL is wired (Tier-0-only mode); the linker
     /// must not emit <see cref="Opcode.CallIl"/> in that case.</para></summary>
-    public Func<Engine, int, bool>?[]? IlByFunctorId { get; set; }
+    public Func<Activation, int, bool>?[]? IlByFunctorId { get; set; }
 
-    public BytecodeInterpreter(Engine engine)
+    public BytecodeInterpreter(Activation engine)
         : this(engine, Array.Empty<string>(), Array.Empty<double>(), Array.Empty<SwitchTable>())
     {
     }
 
-    public BytecodeInterpreter(Engine engine, IReadOnlyList<string> stringLiterals)
+    public BytecodeInterpreter(Activation engine, IReadOnlyList<string> stringLiterals)
         : this(engine, stringLiterals, Array.Empty<double>(), Array.Empty<SwitchTable>())
     {
     }
 
     public BytecodeInterpreter(
-        Engine engine,
+        Activation engine,
         IReadOnlyList<string> stringLiterals,
         IReadOnlyList<double> floatLiterals)
         : this(engine, stringLiterals, floatLiterals, Array.Empty<SwitchTable>())
@@ -120,7 +120,7 @@ public sealed class BytecodeInterpreter
     }
 
     public BytecodeInterpreter(
-        Engine engine,
+        Activation engine,
         IReadOnlyList<string> stringLiterals,
         IReadOnlyList<double> floatLiterals,
         IReadOnlyList<SwitchTable> switchTables)
@@ -137,7 +137,7 @@ public sealed class BytecodeInterpreter
     /// Bundles provide all four at load time; for tests they're passed
     /// directly.</summary>
     public BytecodeInterpreter(
-        Engine engine,
+        Activation engine,
         IReadOnlyList<string> stringLiterals,
         IReadOnlyList<double> floatLiterals,
         IReadOnlyList<SwitchTable> switchTables,
@@ -153,7 +153,7 @@ public sealed class BytecodeInterpreter
         _floatLiterals = floatLiterals;
         _switchTables = switchTables;
         _bigIntLiterals = bigIntLiterals;
-        // Let Tier-1 IL code (which holds only an Engine) run pending
+        // Let Tier-1 IL code (which holds only an Activation) run pending
         // attribute wakeups before an IL-emitted cut commits — the IL
         // counterpart of the chunk-335 flush-before-cut. Wakeups run through
         // the interpreter's goal machinery; `code` is fetched live so the
@@ -161,7 +161,7 @@ public sealed class BytecodeInterpreter
         _engine.Tier1WakeupFlusher = () => FlushPendingWakeups(_engine.GetProgramView());
     }
 
-    public Engine Engine => _engine;
+    public Activation Activation => _engine;
     public IReadOnlyList<string> StringLiterals => _stringLiterals;
     public IReadOnlyList<double> FloatLiterals => _floatLiterals;
     public IReadOnlyList<System.Numerics.BigInteger> BigIntLiterals => _bigIntLiterals;
@@ -193,7 +193,7 @@ public sealed class BytecodeInterpreter
         // RunCatching entering a catch frame's recovery goal) hands us the marker.
         // The dispatch loop's IsResumeMarker check — which sits BEFORE its own
         // bounds check for exactly this reason — routes it to the IL delegate.
-        if ((startPc < 0 || startPc >= code.Length) && !Engine.IsResumeMarker(startPc))
+        if ((startPc < 0 || startPc >= code.Length) && !Activation.IsResumeMarker(startPc))
             throw new ArgumentOutOfRangeException(nameof(startPc),
                 $"startPc 0x{startPc:X} is outside [0, 0x{code.Length:X}).");
 
@@ -294,12 +294,12 @@ public sealed class BytecodeInterpreter
             // cursor. The marker check sits BEFORE the codeLen bounds
             // check because the marker's int value is intentionally
             // out of the bytecode range.
-            if (Engine.IsResumeMarker(pc))
+            if (Activation.IsResumeMarker(pc))
             {
                 // ADR-016 safe point: an IL non-tail callee has Proceeded
                 // back to its caller; caller state lives in the engine.
                 _engine.MaybeCollectHeap();
-                var (functorId, cursor) = Engine.DecodeResumeMarker(pc);
+                var (functorId, cursor) = Activation.DecodeResumeMarker(pc);
                 // Direct index into the link-time IlByFunctorId array — the same
                 // O(1) array access CallIl (bytecode→IL) uses, instead of the
                 // dispatcher's interface call + dictionary + cached wrapper. Fall
@@ -860,7 +860,7 @@ public sealed class BytecodeInterpreter
                     // chunk 432: sample through the shared GenerationBox (one
                     // field read) instead of invoking the Func<long> provider
                     // per dynamic-predicate call. The provider remains as the
-                    // fallback for bare-Engine tests that wire it directly.
+                    // fallback for bare-Activation tests that wire it directly.
                     var box = _engine.DbGenerationBox;
                     if (box is not null)
                     {
@@ -2193,7 +2193,7 @@ public sealed class BytecodeInterpreter
         // Don't feed it to OnDispatch, which expects an address; hand it to the
         // outer Dispatch loop, whose IsResumeMarker check routes it to the IL
         // delegate via IlByFunctorId.
-        if (Engine.IsResumeMarker(target))
+        if (Activation.IsResumeMarker(target))
         {
             _engine.SetPc(target);
             return;
@@ -2277,7 +2277,7 @@ public sealed class BytecodeInterpreter
     /// is queued, the overwhelmingly common case.
     ///
     /// <para>Chunk 429: split into an aggressively-inlined guard over a
-    /// NoInlining slow body (the <see cref="Engine.FlushWakeupsForIlCut"/>
+    /// NoInlining slow body (the <see cref="Activation.FlushWakeupsForIlCut"/>
     /// precedent), so the 12 goal-boundary call sites pay only the inline
     /// queue-count check when nothing is queued instead of a call into a
     /// method too large to inline.</para></summary>
@@ -2737,7 +2737,7 @@ public sealed class BytecodeInterpreter
             // visibility is not widened: the sentinel's fid was chosen by the LINK
             // layer (mangled for a local), so resolving that exact fid's own alias
             // grants nothing the link didn't already grant. Cold path — sentinels only.
-            if (Engine.IsResumeMarker(latest))
+            if (Activation.IsResumeMarker(latest))
                 return latest;
         }
         // Chunk 417: honour the `unknown` flag — error throws here,
@@ -3193,8 +3193,8 @@ public sealed class BytecodeInterpreter
                 // failed IL pushed before its match attempt).
                 continue;
             }
-            int arity = (int)_engine.GetStack(_engine.B + Engine.CpArityOffset).Data;
-            int bp = (int)_engine.GetStack(_engine.B + Engine.CpBpOffset(arity)).Data;
+            int arity = (int)_engine.GetStack(_engine.B + Activation.CpArityOffset).Data;
+            int bp = (int)_engine.GetStack(_engine.B + Activation.CpBpOffset(arity)).Data;
             _engine.SetPc(bp);
             return true;
         }

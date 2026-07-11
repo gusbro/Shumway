@@ -14,7 +14,7 @@ public sealed class DynamicIlPromotionTests
     private static int Fid(string name, int arity) =>
         FunctorTable.Intern(AtomTable.Intern(name, permanent: true).Id, arity);
 
-    private static PrologEngine Engine(string program, int threshold = 1)
+    private static PrologEngine Activation(string program, int threshold = 1)
     {
         var e = new PrologEngine();
         e.IlPromotion.Threshold = threshold;
@@ -25,7 +25,7 @@ public sealed class DynamicIlPromotionTests
     [Fact]
     public void ReadHotDynamic_PromotesToIl_AndRunsCorrectly()
     {
-        var e = Engine(":- dynamic color/1.\ncolor(red).\ncolor(green).\ncolor(blue).\n");
+        var e = Activation(":- dynamic color/1.\ncolor(red).\ncolor(green).\ncolor(blue).\n");
         int fid = Fid("color", 1);
 
         for (int i = 0; i < 5; i++)
@@ -39,7 +39,7 @@ public sealed class DynamicIlPromotionTests
     [Fact]
     public void Mutation_EvictsSnapshot_AndReflectsNewState()
     {
-        var e = Engine(":- dynamic color/1.\ncolor(red).\ncolor(green).\ncolor(blue).\n");
+        var e = Activation(":- dynamic color/1.\ncolor(red).\ncolor(green).\ncolor(blue).\n");
         int fid = Fid("color", 1);
 
         for (int i = 0; i < 5; i++) Assert.True(e.Query("color(green).").Success);
@@ -60,7 +60,7 @@ public sealed class DynamicIlPromotionTests
     [Fact]
     public void Retract_EvictsAndReflectsRemoval()
     {
-        var e = Engine(":- dynamic n/1.\nn(1).\nn(2).\nn(3).\n");
+        var e = Activation(":- dynamic n/1.\nn(1).\nn(2).\nn(3).\n");
         int fid = Fid("n", 1);
         for (int i = 0; i < 5; i++) Assert.True(e.Query("n(2).").Success);
         Assert.True(e.IlPromotion.IsPromoted(fid));
@@ -74,7 +74,7 @@ public sealed class DynamicIlPromotionTests
     [Fact]
     public void ChurnGuard_PinsToTier0AfterRepeatedMutation()
     {
-        var e = Engine(":- dynamic d/1.\nd(0).\n");
+        var e = Activation(":- dynamic d/1.\nd(0).\n");
         int fid = Fid("d", 1);
         // each round: warm to promotion, then mutate to evict. Past the churn
         // limit (3) the predicate stays on Tier 0 even when hot. (Phase 33 L5:
@@ -96,7 +96,7 @@ public sealed class DynamicIlPromotionTests
         // Phase 33 L5 — the Arity load-mutate-then-read-forever profile: a
         // predicate churn-pinned during its startup mutation phase re-arms after
         // a long mutation-free read stretch and earns IL again.
-        var e = Engine(":- dynamic d/1.\nd(0).\n");
+        var e = Activation(":- dynamic d/1.\nd(0).\n");
         e.IlPromotion.ChurnRearmCalls = 20;   // short streak for the test
         int fid = Fid("d", 1);
         for (int round = 0; round < 6; round++)
@@ -170,7 +170,7 @@ public sealed class DynamicIlPromotionTests
         // clause MID-ITERATION must still see only the snapshot as of when its goal
         // began (ADR-015) — the in-progress call finishes on the snapshot delegate;
         // the assert evicts it only for FUTURE calls.
-        var e = Engine(
+        var e = Activation(
             ":- dynamic d/1.\nd(1).\nd(2).\nd(3).\n" +
             "iter(L) :- findall(X, (d(X), (X =:= 2 -> assertz(d(99)) ; true)), L).\n");
         int fid = Fid("d", 1);

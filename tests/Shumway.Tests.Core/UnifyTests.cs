@@ -10,7 +10,7 @@ public class UnifyTests
     [Fact]
     public void Unify_TwoUnboundVars_BindsYoungerToOlder()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int older = engine.AllocateHeapUnbound();
         int younger = engine.AllocateHeapUnbound();
 
@@ -28,7 +28,7 @@ public class UnifyTests
     [Fact]
     public void Unify_TwoUnboundVars_OrderIndependent()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int older = engine.AllocateHeapUnbound();
         int younger = engine.AllocateHeapUnbound();
 
@@ -41,7 +41,7 @@ public class UnifyTests
     [Fact]
     public void Unify_SameVarIndex_TrueWithoutWork()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int v = engine.AllocateHeapUnbound();
         engine.SetHbForTesting(engine.HeapTop);
         Assert.True(engine.Unify(v, v));
@@ -54,7 +54,7 @@ public class UnifyTests
     [Fact]
     public void Unify_VarWithAtom_CopiesAtomIntoVar()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int v = engine.AllocateHeapUnbound();
         int aSlot = engine.AllocateHeap(1);
         engine.SetHeap(aSlot, Cell.Atom(42));
@@ -68,7 +68,7 @@ public class UnifyTests
     [Fact]
     public void Unify_AtomWithVar_BindsVarSameWay()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int aSlot = engine.AllocateHeap(1);
         engine.SetHeap(aSlot, Cell.Atom(13));
         int v = engine.AllocateHeapUnbound();
@@ -80,7 +80,7 @@ public class UnifyTests
     [Fact]
     public void Unify_VarWithInt_CopiesInt()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int v = engine.AllocateHeapUnbound();
         int iSlot = engine.AllocateHeap(1);
         engine.SetHeap(iSlot, Cell.Int(-1234));
@@ -95,7 +95,7 @@ public class UnifyTests
     {
         // For STR / LIS / PSTR values the binding policy writes a REF, not a copy of
         // the STR cell, so the var becomes a pointer to the compound's heap position.
-        var engine = new Engine();
+        var engine = new Activation();
         int s = engine.AllocateHeap(2);
         engine.SetHeap(s, Cell.Str(s + 1));
         engine.SetHeap(s + 1, Cell.Functor(99));
@@ -113,7 +113,7 @@ public class UnifyTests
     [Fact]
     public void Unify_TwoIdenticalAtoms_Succeeds()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int a = engine.AllocateHeap(1);
         engine.SetHeap(a, Cell.Atom(7));
         int b = engine.AllocateHeap(1);
@@ -124,7 +124,7 @@ public class UnifyTests
     [Fact]
     public void Unify_DifferentAtoms_Fails()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int a = engine.AllocateHeap(1);
         engine.SetHeap(a, Cell.Atom(7));
         int b = engine.AllocateHeap(1);
@@ -142,7 +142,7 @@ public class UnifyTests
     [InlineData(Cell.MinInt60)]
     public void Unify_TwoEqualInts_Succeeds(long value)
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int a = engine.AllocateHeap(1); engine.SetHeap(a, Cell.Int(value));
         int b = engine.AllocateHeap(1); engine.SetHeap(b, Cell.Int(value));
         Assert.True(engine.Unify(a, b));
@@ -151,7 +151,7 @@ public class UnifyTests
     [Fact]
     public void Unify_DifferentInts_Fails()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int a = engine.AllocateHeap(1); engine.SetHeap(a, Cell.Int(42));
         int b = engine.AllocateHeap(1); engine.SetHeap(b, Cell.Int(43));
         Assert.False(engine.Unify(a, b));
@@ -162,7 +162,7 @@ public class UnifyTests
     [Fact]
     public void Unify_AtomVsInt_Fails()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int a = engine.AllocateHeap(1); engine.SetHeap(a, Cell.Atom(0));
         int b = engine.AllocateHeap(1); engine.SetHeap(b, Cell.Int(0));
         Assert.False(engine.Unify(a, b));
@@ -171,7 +171,7 @@ public class UnifyTests
     [Fact]
     public void Unify_AtomVsCompound_Fails()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int s = engine.AllocateHeap(2);
         engine.SetHeap(s, Cell.Str(s + 1));
         engine.SetHeap(s + 1, Cell.Functor(0));
@@ -184,7 +184,7 @@ public class UnifyTests
     [Fact]
     public void Unify_FollowsRefChainsOnBothSides()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int chainEnd = engine.AllocateHeap(1);
         engine.SetHeap(chainEnd, Cell.Atom(7));
         int mid = engine.AllocateHeap(1);
@@ -207,7 +207,7 @@ public class UnifyTests
     [Fact]
     public void Unify_DoesNotTrailWhenVarIsYoungerThanHb()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         // Hb left at 0 — every var is young.
         int v = engine.AllocateHeapUnbound();
         int aSlot = engine.AllocateHeap(1);
@@ -219,7 +219,7 @@ public class UnifyTests
     [Fact]
     public void Unify_TrailsWhenVarIsOlderThanHb()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int v = engine.AllocateHeapUnbound();           // idx 0
         int aSlot = engine.AllocateHeap(1);             // idx 1
         engine.SetHeap(aSlot, Cell.Atom(99));
@@ -233,7 +233,7 @@ public class UnifyTests
     [Fact]
     public void Unify_TwoOldVars_OnlyTheBoundOneTrails()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int older = engine.AllocateHeapUnbound();
         int younger = engine.AllocateHeapUnbound();
         engine.SetHbForTesting(engine.HeapTop);
@@ -249,7 +249,7 @@ public class UnifyTests
     {
         // A composite scenario: a successful unify writes to the heap; if a later
         // unify fails, the caller can roll back via UnwindBindingTrail.
-        var engine = new Engine();
+        var engine = new Activation();
         int v1 = engine.AllocateHeapUnbound();
         int v2 = engine.AllocateHeapUnbound();
         int a7 = engine.AllocateHeap(1); engine.SetHeap(a7, Cell.Atom(7));

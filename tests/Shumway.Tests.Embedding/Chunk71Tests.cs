@@ -49,7 +49,7 @@ public class Chunk71Tests
         var method = type!.GetMethod(entries[0].MethodName);
         Assert.NotNull(method);
         var del = method!.CreateDelegate<PredicateDelegate>();
-        var engine = new Engine();
+        var engine = new Activation();
         Assert.True(del(engine, 0));
     }
 

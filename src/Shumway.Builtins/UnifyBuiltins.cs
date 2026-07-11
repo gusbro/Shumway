@@ -11,7 +11,7 @@ public static class UnifyBuiltins
 {
     /// <summary><c>?=(X, Y)</c> — succeeds iff X and Y can be unified, with any
     /// resulting bindings kept. Just delegates to the existing unify code.</summary>
-    public static bool Unify(Engine engine) =>
+    public static bool Unify(Activation engine) =>
         engine.UnifyRegisters(0, 1);
 
     /// <summary><c>unify_with_occurs_check(X, Y)</c> — ISO §8.2.2. Like
@@ -19,7 +19,7 @@ public static class UnifyBuiltins
     /// by an occurs-check; binding a variable into a term where it
     /// already occurs (which plain <c>=/2</c> would resolve into a
     /// cyclic term) fails.</summary>
-    public static bool UnifyWithOccursCheck(Engine engine) =>
+    public static bool UnifyWithOccursCheck(Activation engine) =>
         engine.UnifyRegistersWithOccursCheck(0, 1);
 
     /// <summary><c>\=(X, Y)</c> — succeeds iff X and Y CANNOT be unified.
@@ -27,7 +27,7 @@ public static class UnifyBuiltins
     /// before reporting the result. The heap-top is restored so any
     /// freshly-allocated heap cells from the trial are released.
     /// </summary>
-    public static bool NotUnifiable(Engine engine)
+    public static bool NotUnifiable(Activation engine)
     {
         int savedHeapTop = engine.HeapTop;
         int savedBindingTrail = engine.BindingTrailTop;
@@ -52,10 +52,10 @@ public static class UnifyBuiltins
     }
 
     /// <summary><c>==(X, Y)</c> — structural identity, no unification.</summary>
-    public static bool StructurallyEqual(Engine engine) =>
+    public static bool StructurallyEqual(Activation engine) =>
         engine.AreStructurallyEqual(engine.GetRegister(0), engine.GetRegister(1));
 
     /// <summary><c>\==(X, Y)</c> — the negation of <c>==/2</c>.</summary>
-    public static bool StructurallyNotEqual(Engine engine) =>
+    public static bool StructurallyNotEqual(Activation engine) =>
         !engine.AreStructurallyEqual(engine.GetRegister(0), engine.GetRegister(1));
 }

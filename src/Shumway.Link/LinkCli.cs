@@ -28,7 +28,7 @@ namespace Shumway.Link;
 /// <para>Exit codes: 0 on success, 1 on link error, 3 on usage
 /// error.</para>
 /// </summary>
-internal static class Program
+internal static class LinkCli
 {
     private const int ExitOk = 0;
     private const int ExitLinkError = 1;

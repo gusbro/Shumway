@@ -47,13 +47,13 @@ public class IlExtendedOpcodeTests
         var del = new IlPredicateCompiler().Compile(pred);
 
         // Caller passes [] â€” match.
-        var engine1 = new Engine();
+        var engine1 = new Activation();
         engine1.SetRegister(0, Cell.Atom(AtomTable.EmptyListId));
         Assert.True(del(engine1, 0));
 
         // Caller passes any other atom â€” fail.
         int otherId = AtomTable.Intern("nope", permanent: true).Id;
-        var engine2 = new Engine();
+        var engine2 = new Activation();
         engine2.SetRegister(0, Cell.Atom(otherId));
         Assert.False(del(engine2, 0));
     }
@@ -72,13 +72,13 @@ public class IlExtendedOpcodeTests
         var del = new IlPredicateCompiler().Compile(pred);
 
         // Same atom in both slots â†’ match.
-        var engine1 = new Engine();
+        var engine1 = new Activation();
         engine1.SetRegister(0, Cell.Atom(aId));
         engine1.SetRegister(1, Cell.Atom(aId));
         Assert.True(del(engine1, 0));
 
         // Different atoms â†’ no match.
-        var engine2 = new Engine();
+        var engine2 = new Activation();
         engine2.SetRegister(0, Cell.Atom(aId));
         engine2.SetRegister(1, Cell.Atom(bId));
         Assert.False(del(engine2, 0));
@@ -91,7 +91,7 @@ public class IlExtendedOpcodeTests
         var pred = CompileFromSource("p(X, X).");
         var del = new IlPredicateCompiler().Compile(pred);
 
-        var engine = new Engine();
+        var engine = new Activation();
         int h0 = engine.AllocateHeapUnbound();
         int h1 = engine.AllocateHeapUnbound();
         engine.SetRegister(0, Cell.Ref(h0));
@@ -111,13 +111,13 @@ public class IlExtendedOpcodeTests
         var pred = CompileFromSource("p(end, []).");
         var del = new IlPredicateCompiler().Compile(pred);
 
-        var engine1 = new Engine();
+        var engine1 = new Activation();
         engine1.SetRegister(0, Cell.Atom(markerId));
         engine1.SetRegister(1, Cell.Atom(AtomTable.EmptyListId));
         Assert.True(del(engine1, 0));
 
         // [] in arg 0 doesn't match atom 'end'.
-        var engine2 = new Engine();
+        var engine2 = new Activation();
         engine2.SetRegister(0, Cell.Atom(AtomTable.EmptyListId));
         engine2.SetRegister(1, Cell.Atom(AtomTable.EmptyListId));
         Assert.False(del(engine2, 0));
@@ -132,7 +132,7 @@ public class IlExtendedOpcodeTests
         Assert.NotNull(del);
 
         int barId = AtomTable.Intern("bar", permanent: true).Id;
-        var engine = new Engine();
+        var engine = new Activation();
         engine.SetRegister(0, Cell.Atom(barId));
         Assert.True(del!(engine, 0));
     }

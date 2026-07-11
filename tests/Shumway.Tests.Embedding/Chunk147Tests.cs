@@ -4,7 +4,7 @@ using Xunit;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// Chunk 147: <see cref="Shumway.Core.Engine.Cut"/>'s trail
+/// Chunk 147: <see cref="Shumway.Core.Activation.Cut"/>'s trail
 /// compaction can drop entries above any surviving catch frame's
 /// snapshot. Pre-fix the catch frame kept its stale snap value, so
 /// a later throw's <c>UnwindToCatchFrame</c> asked

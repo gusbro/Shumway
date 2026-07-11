@@ -6,7 +6,7 @@ namespace Shumway.Tests.Embedding;
 
 /// <summary>
 /// Chunk 416 (Phase 29, ADR-021 candidate) — the per-engine meta-call route
-/// cache (<c>Engine.MetaRouteCache</c>, see <c>MetaRoute.cs</c>). A runtime
+/// cache (<c>Activation.MetaRouteCache</c>, see <c>MetaRoute.cs</c>). A runtime
 /// meta-call's dispatch decision is cached per (goal atom id, total arity)
 /// and replayed on repeat goals. These tests pin the discriminating cases:
 /// every scenario repeats the SAME goal functor within one query, so the

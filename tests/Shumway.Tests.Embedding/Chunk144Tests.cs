@@ -13,7 +13,7 @@ namespace Shumway.Tests.Embedding;
 /// <see cref="Shumway.Core.PrologRuntimeException"/>-translation
 /// path. Chunk 144 widens the exception with a <c>Value</c> payload
 /// captured at the throw site by an
-/// <see cref="Shumway.Core.Engine.MaterializeCellToTerm"/> callback,
+/// <see cref="Shumway.Core.Activation.MaterializeCellToTerm"/> callback,
 /// and <c>MetaBuiltins.TranslateRuntimeError</c> uses it when building
 /// the error compound. Catchers matching on the value slot now bind
 /// to the actual culprit.

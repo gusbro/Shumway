@@ -9,7 +9,7 @@ namespace Shumway.Tests.Interpreter;
 /// the two new opcodes — <c>enter_dynamic</c> and <c>check_visible</c>.
 ///
 /// <para><c>enter_dynamic</c> samples the host's
-/// <c>DbGeneration</c> into <see cref="Engine.CurrentViewGen"/>; the
+/// <c>DbGeneration</c> into <see cref="Activation.CurrentViewGen"/>; the
 /// surrounding <c>try_me_else</c> captures it into the CP. Every clause
 /// in the chain begins with <c>check_visible &lt;born:8&gt; &lt;died:8&gt;</c>,
 /// which fails (backtracks) if the call's captured view-gen is outside
@@ -50,7 +50,7 @@ public class Chunk121Tests
     [Fact]
     public void EnterDynamic_SamplesDbGenerationIntoCurrentViewGen()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.DbGenerationProvider = () => 42L;
         var interp = new BytecodeInterpreter(engine);
 
@@ -63,7 +63,7 @@ public class Chunk121Tests
     [Fact]
     public void EnterDynamic_WithoutProvider_StaysAtZero()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         // No DbGenerationProvider wired.
         var interp = new BytecodeInterpreter(engine);
 
@@ -78,7 +78,7 @@ public class Chunk121Tests
     [Fact]
     public void CheckVisible_BornBeforeAndDiedAtInfinity_PassesThrough()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.CurrentViewGen = 5;
         var interp = new BytecodeInterpreter(engine);
 
@@ -114,7 +114,7 @@ public class Chunk121Tests
     [Fact]
     public void CheckVisible_BornAfterView_Backtracks()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.CurrentViewGen = 5;
         var interp = new BytecodeInterpreter(engine);
 
@@ -127,7 +127,7 @@ public class Chunk121Tests
     [Fact]
     public void CheckVisible_DiedAtOrBeforeView_Backtracks()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.CurrentViewGen = 5;
         var interp = new BytecodeInterpreter(engine);
 
@@ -141,7 +141,7 @@ public class Chunk121Tests
     public void CheckVisible_ViewExactlyAtBorn_IsVisible()
     {
         // born ≤ G < died — edge: born == G is visible.
-        var engine = new Engine();
+        var engine = new Activation();
         engine.CurrentViewGen = 7;
         var interp = new BytecodeInterpreter(engine);
 
@@ -155,7 +155,7 @@ public class Chunk121Tests
     public void CheckVisible_ViewExactlyAtDied_IsInvisible()
     {
         // born ≤ G < died — edge: G == died is invisible.
-        var engine = new Engine();
+        var engine = new Activation();
         engine.CurrentViewGen = 10;
         var interp = new BytecodeInterpreter(engine);
 

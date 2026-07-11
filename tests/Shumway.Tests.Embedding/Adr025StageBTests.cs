@@ -16,7 +16,7 @@ namespace Shumway.Tests.Embedding;
 /// </summary>
 public class Adr025StageBTests
 {
-    private static (PrologEngine Engine, int Fid) Promoted(
+    private static (PrologEngine Activation, int Fid) Promoted(
         string program, string name, int arity, string warmQuery)
     {
         var e = new PrologEngine { EnableInlineIte = true };

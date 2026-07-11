@@ -34,7 +34,7 @@ public partial class C242WithEngine
     public int LastSeenB;
 
     [PrologPredicate("c242_log_b/1")]
-    public void RecordB(Engine engine, int tag) => LastSeenB = tag;
+    public void RecordB(Activation engine, int tag) => LastSeenB = tag;
 }
 
 [PrologTerm("c242_pt")]
@@ -52,13 +52,13 @@ public partial class C242Mixed
     public int Captured;
 
     [PrologPredicate("c242_capture/1")]
-    public void Capture(int n, Engine engine) { _ = engine; Captured = n; }
+    public void Capture(int n, Activation engine) { _ = engine; Captured = n; }
 }
 
 public static partial class C242Raw
 {
     [PrologPredicate("c242_raw_true/0")]
-    public static bool RawTrue(Engine engine) => true;
+    public static bool RawTrue(Activation engine) => true;
 }
 
 public partial class C242Strings
@@ -69,7 +69,7 @@ public partial class C242Strings
 
 /// <summary>
 /// Chunk 242: typed-signature <c>[PrologPredicate]</c>. The chunk-
-/// 237 raw <c>bool Method(Engine)</c> shape still works as before;
+/// 237 raw <c>bool Method(Activation)</c> shape still works as before;
 /// this chunk adds an ergonomic typed signature whose register
 /// decoding / return encoding is filled in by the generator.
 /// </summary>

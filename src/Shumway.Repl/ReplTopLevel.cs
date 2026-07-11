@@ -16,7 +16,7 @@ namespace Shumway.Repl;
 /// embedding API — its purpose is interactive exercising of Shumway, not
 /// to be a full-featured development environment.</para>
 /// </summary>
-internal static class Program
+internal static class ReplTopLevel
 {
     private static int Main(string[] args)
     {

@@ -11,7 +11,7 @@ namespace Shumway.Tests.Embedding;
 /// point that saves preCallB as <c>Cell.Int(preCallB)</c> in an
 /// arity-1 frame slot. On backtrack the resume path reads preCallB
 /// back via <see cref="Shumway.Compiler.Il.IlRuntimeHelpers.ReadPreCallB"/>,
-/// drives <see cref="Engine.BacktrackRunner"/> to fetch the callee's
+/// drives <see cref="Activation.BacktrackRunner"/> to fetch the callee's
 /// next solution, re-pushes a fresh meta-CP for the iteration after
 /// that, and rejoins the body at the post-call label.
 ///

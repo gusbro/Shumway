@@ -22,7 +22,7 @@ public class Adr031IndexedBucketTests
         Adr031CpFreeGuardTests.Mode.Tier1Bundle,
     };
 
-    private static PrologEngine Engine(Adr031CpFreeGuardTests.Mode m, string program)
+    private static PrologEngine Activation(Adr031CpFreeGuardTests.Mode m, string program)
     {
         switch (m)
         {
@@ -61,7 +61,7 @@ public class Adr031IndexedBucketTests
         // whose first two clauses are tierA guards. Guard failure must walk
         // the bucket (node → node → catch-all) without engine round trips;
         // key 'b' must never see bucket 'a'.
-        var e = Engine(m,
+        var e = Activation(m,
             ":- public p/3.\n"
             + "p(a, X, R) :- X > 10, !, R = abig.\n"
             + "p(a, X, R) :- X > 0, !, R = asmall.\n"
@@ -89,7 +89,7 @@ public class Adr031IndexedBucketTests
         // guard clauses live in EVERY chain (key buckets + the var/default
         // chain), each node with a DIFFERENT next — a guard failure must
         // continue in the chain it was entered through.
-        var e = Engine(m,
+        var e = Activation(m,
             ":- public q/2.\n"
             + "q(a, R) :- !, R = qa.\n"
             + "q(X, R) :- atom(X), !, R = qatom.\n"
@@ -116,7 +116,7 @@ public class Adr031IndexedBucketTests
         // chain TAIL (idxnext = −1). Both guards failing must fail the
         // predicate (the sentinel falls through the dispatch switch), and the
         // CALLER's alternative must run.
-        var e = Engine(m,
+        var e = Activation(m,
             ":- public t/2.\n"
             + "r(a, X) :- X > 10, !.\n"
             + "r(a, X) :- X > 100, !.\n"
@@ -138,7 +138,7 @@ public class Adr031IndexedBucketTests
         // dynamic rd/1's snapshot; after the first assert the clause-entry
         // test routes to the fallback, which materializes the bucket CP FROM
         // the idxnext local and calls the live predicate.
-        var e = Engine(m,
+        var e = Activation(m,
             ":- public s/3.\n"
             + ":- dynamic rd/1.\n"
             + "rd(X) :- X > 0.\n"
@@ -166,7 +166,7 @@ public class Adr031IndexedBucketTests
         // The LOCAL indexed predicate is absorbed as a region member — the
         // region driver's twin of the standalone path (region cursors in
         // idxnext, region-wide dispatch switch in the fail stub).
-        var e = Engine(m,
+        var e = Activation(m,
             ":- public main/3, many/3.\n"
             + "pl(a, X, R) :- X > 10, !, R = abig.\n"
             + "pl(a, X, R) :- X > 0, !, R = asmall.\n"
@@ -200,7 +200,7 @@ public class Adr031IndexedBucketTests
         IlPredicateCompiler.CpFreeIndexedBuckets = false;
         try
         {
-            var e = Engine(Adr031CpFreeGuardTests.Mode.Tier1Bundle,
+            var e = Activation(Adr031CpFreeGuardTests.Mode.Tier1Bundle,
                 ":- public p/3.\n"
                 + "p(a, X, R) :- X > 10, !, R = abig.\n"
                 + "p(a, X, R) :- X > 0, !, R = asmall.\n"

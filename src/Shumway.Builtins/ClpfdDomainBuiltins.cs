@@ -23,20 +23,20 @@ public static class ClpfdDomainBuiltins
 
     // ---- argument helpers ----
 
-    private static Cell Arg(Engine engine, int reg)
+    private static Cell Arg(Activation engine, int reg)
     {
         Cell c = engine.GetRegister(reg);
         return c.Tag == Tag.Ref ? engine.GetHeap(engine.Deref(c.AsHeapIndex)) : c;
     }
 
-    private static ClpfdDomain Dom(Engine engine, int reg) =>
+    private static ClpfdDomain Dom(Activation engine, int reg) =>
         engine.AsForeign<ClpfdDomain>(Arg(engine, reg))
             ?? throw new PrologRuntimeException("type_error", "fd_domain");
 
-    private static bool WriteDom(Engine engine, int reg, ClpfdDomain d) =>
+    private static bool WriteDom(Activation engine, int reg, ClpfdDomain d) =>
         engine.UnifyRegisterWithCell(reg, engine.MakeForeign(d));
 
-    private static long ReadBound(Engine engine, int reg)
+    private static long ReadBound(Activation engine, int reg)
     {
         Cell c = Arg(engine, reg);
         return c.Tag switch
@@ -48,14 +48,14 @@ public static class ClpfdDomainBuiltins
         };
     }
 
-    private static long ReadInt(Engine engine, int reg)
+    private static long ReadInt(Activation engine, int reg)
     {
         Cell c = Arg(engine, reg);
         if (c.Tag != Tag.Int) throw new PrologRuntimeException("type_error", "integer");
         return c.AsInt;
     }
 
-    private static bool WriteBound(Engine engine, int reg, long v)
+    private static bool WriteBound(Activation engine, int reg, long v)
     {
         Cell cell = v == Inf ? Cell.Atom(InfAtom) : v == Sup ? Cell.Atom(SupAtom) : Cell.Int(v);
         return engine.UnifyRegisterWithCell(reg, cell);
@@ -64,67 +64,67 @@ public static class ClpfdDomainBuiltins
     // ---- builtins ----
 
     /// <summary>$dom_new(+Lo, +Hi, -Dom): the interval domain [Lo, Hi].</summary>
-    public static bool New(Engine engine) =>
+    public static bool New(Activation engine) =>
         WriteDom(engine, 2, ClpfdDomain.Interval(ReadBound(engine, 0), ReadBound(engine, 1)));
 
     /// <summary>$dom_universal(-Dom): [inf, sup].</summary>
-    public static bool UniversalB(Engine engine) => WriteDom(engine, 0, ClpfdDomain.Universal);
+    public static bool UniversalB(Activation engine) => WriteDom(engine, 0, ClpfdDomain.Universal);
 
     /// <summary>$dom_min(+Dom, -Min) / $dom_max(+Dom, -Max). Fail on empty.</summary>
-    public static bool Min(Engine engine)
+    public static bool Min(Activation engine)
     {
         var d = Dom(engine, 0);
         return !d.IsEmpty && WriteBound(engine, 1, d.Min);
     }
 
-    public static bool Max(Engine engine)
+    public static bool Max(Activation engine)
     {
         var d = Dom(engine, 0);
         return !d.IsEmpty && WriteBound(engine, 1, d.Max);
     }
 
     /// <summary>$dom_above(+Dom, +B, -Dom2): part of Dom at or below B.</summary>
-    public static bool Above(Engine engine) =>
+    public static bool Above(Activation engine) =>
         WriteDom(engine, 2, Dom(engine, 0).Above(ReadBound(engine, 1)));
 
     /// <summary>$dom_below(+Dom, +B, -Dom2): part of Dom at or above B.</summary>
-    public static bool Below(Engine engine) =>
+    public static bool Below(Activation engine) =>
         WriteDom(engine, 2, Dom(engine, 0).Below(ReadBound(engine, 1)));
 
     /// <summary>$dom_isect(+D1, +D2, -D3): intersection.</summary>
-    public static bool Isect(Engine engine) =>
+    public static bool Isect(Activation engine) =>
         WriteDom(engine, 2, Dom(engine, 0).Intersect(Dom(engine, 1)));
 
     /// <summary>$dom_union(+D1, +D2, -D3): union (merging adjacency).</summary>
-    public static bool Union(Engine engine) =>
+    public static bool Union(Activation engine) =>
         WriteDom(engine, 2, Dom(engine, 0).Union(Dom(engine, 1)));
 
     /// <summary>$dom_del(+Dom, +V, -Dom2): remove the integer value V.</summary>
-    public static bool Del(Engine engine) =>
+    public static bool Del(Activation engine) =>
         WriteDom(engine, 2, Dom(engine, 0).Without(ReadInt(engine, 1)));
 
     /// <summary>$dom_size(+Dom, -N): value count (or a big sentinel if infinite).</summary>
-    public static bool Size(Engine engine) =>
+    public static bool Size(Activation engine) =>
         engine.UnifyRegisterWithCell(1, Cell.Int(Dom(engine, 0).Size(SizeInfinite)));
 
     /// <summary>$dom_contains(+Dom, +V): V is an integer in Dom.</summary>
-    public static bool Contains(Engine engine) => Dom(engine, 0).Contains(ReadInt(engine, 1));
+    public static bool Contains(Activation engine) => Dom(engine, 0).Contains(ReadInt(engine, 1));
 
     /// <summary>$dom_empty(+Dom): Dom has no values.</summary>
-    public static bool IsEmptyB(Engine engine) => Dom(engine, 0).IsEmpty;
+    public static bool IsEmptyB(Activation engine) => Dom(engine, 0).IsEmpty;
 
     /// <summary>$dom_singleton(+Dom, -V): Dom is exactly {V}.</summary>
-    public static bool Singleton(Engine engine)
+    public static bool Singleton(Activation engine)
     {
         var d = Dom(engine, 0);
         return d.TrySingleton(out long v) && engine.UnifyRegisterWithCell(1, Cell.Int(v));
     }
 
     /// <summary>$dom_same(+D1, +D2): the two domains are equal.</summary>
-    public static bool Same(Engine engine) => Dom(engine, 0).SameAs(Dom(engine, 1));
+    public static bool Same(Activation engine) => Dom(engine, 0).SameAs(Dom(engine, 1));
 
     /// <summary>$dom_values(+Dom, -List): the values of a finite Dom, ascending.</summary>
-    public static bool Values(Engine engine)
+    public static bool Values(Activation engine)
     {
         var d = Dom(engine, 0);
         var vals = new System.Collections.Generic.List<long>();
@@ -135,7 +135,7 @@ public static class ClpfdDomainBuiltins
 
     /// <summary>$dom_intervals(+Dom, -List): a list of L-H interval terms, for
     /// the residual-constraint projection.</summary>
-    public static bool Intervals(Engine engine)
+    public static bool Intervals(Activation engine)
     {
         var ivs = Dom(engine, 0).Intervals();
         return engine.UnifyRegisterWithHeapAt(1,
@@ -156,7 +156,7 @@ public static class ClpfdDomainBuiltins
     /// from <paramref name="elem"/>) and returns the heap index of its head.
     /// <paramref name="elem"/> may itself allocate heap, so each element is
     /// materialised before its cons cell is laid down.</summary>
-    private static int BuildList(Engine engine, int n, System.Func<int, Cell> elem)
+    private static int BuildList(Activation engine, int n, System.Func<int, Cell> elem)
     {
         if (n == 0)
         {
@@ -185,7 +185,7 @@ public static class ClpfdDomainBuiltins
     /// <c>V-NewDom</c> pairs for every variable whose domain a saturated Hall
     /// interval shrank — the Prolog caller narrows each (re-propagating), so the
     /// O(n^3) interval search runs natively while narrowing stays in the engine.</summary>
-    public static bool Hall(Engine engine)
+    public static bool Hall(Activation engine)
     {
         var vars = ReadListCells(engine, 0);
         var domCells = ReadListCells(engine, 1);
@@ -242,7 +242,7 @@ public static class ClpfdDomainBuiltins
 
     /// <summary>Reads a proper Prolog list at the register into its (deref'd)
     /// element cells.</summary>
-    private static System.Collections.Generic.List<Cell> ReadListCells(Engine engine, int reg)
+    private static System.Collections.Generic.List<Cell> ReadListCells(Activation engine, int reg)
     {
         var items = new System.Collections.Generic.List<Cell>();
         Cell cur = Arg(engine, reg);

@@ -4,7 +4,7 @@ namespace Shumway.Repl;
 
 /// <summary>
 /// Chunk 251 — pure helpers the REPL's
-/// <c>Program.PrintError</c> calls into. Factored out so the
+/// <c>ReplTopLevel.PrintError</c> calls into. Factored out so the
 /// formatting logic is unit-testable without spinning up a real
 /// REPL session.
 /// </summary>

@@ -20,7 +20,7 @@ public sealed record NativeBlockBody(NativeVar[] Vars, CStmt[] Stmts, NativeScal
 /// <item>the block lookup (<see cref="BlockProvider"/>) and interop resolver
 ///   (<see cref="InteropResolver"/>);</item>
 /// <item>the reflection handles for the marshalling the emitted IL calls —
-///   <c>RegisterMarshalling</c> read/unify, <c>Engine.Host</c>, the typed
+///   <c>RegisterMarshalling</c> read/unify, <c>Activation.Host</c>, the typed
 ///   <c>FromTerm</c>/<c>ToTerm</c> overloads on the host, and the <c>AtomTerm</c>
 ///   constructor — none of whose declaring types <c>Shumway.Compiler.Il</c> may
 ///   name at compile time.</item>
@@ -45,9 +45,9 @@ public sealed class NativeInlineContext
     /// emit exactly as in the runtime delegate compiler.</summary>
     public Func<System.Collections.Generic.IReadOnlyDictionary<string, CType>?>? TypedefsProvider { get; init; }
 
-    public required MethodInfo ReadRegisterAsTerm { get; init; }   // (Engine, int) -> Term
-    public required MethodInfo UnifyRegisterWithTerm { get; init; } // (Engine, int, Term) -> bool
-    public required MethodInfo HostGetter { get; init; }            // Engine.Host -> object
+    public required MethodInfo ReadRegisterAsTerm { get; init; }   // (Activation, int) -> Term
+    public required MethodInfo UnifyRegisterWithTerm { get; init; } // (Activation, int, Term) -> bool
+    public required MethodInfo HostGetter { get; init; }            // Activation.Host -> object
     public required Type HostType { get; init; }                    // typeof(PrologEngine)
     public required MethodInfo FromTermLong { get; init; }          // host.FromTerm<long>(Term)
     public required MethodInfo FromTermDouble { get; init; }
@@ -68,7 +68,7 @@ public sealed class NativeInlineContext
     public MethodInfo? GetOrCreateReftypeSlot { get; init; }        // host.GetOrCreateReftypeSlot(string) -> TermSlot
     public MethodInfo? MakeForeign { get; init; }                   // engine.MakeForeign(object) -> Cell
     public MethodInfo? UnifyRegisterWithCell { get; init; }         // engine.UnifyRegisterWithCell(int, Cell) -> bool
-    public MethodInfo? ReadReftypeSlot { get; init; }               // (Engine, int) -> TermSlot
+    public MethodInfo? ReadReftypeSlot { get; init; }               // (Activation, int) -> TermSlot
     public MethodInfo? SlotSetValue { get; init; }                  // slot.SetValue(Term)   [fill_par]
     public MethodInfo? SlotMaterialize { get; init; }               // slot.Materialize() -> Term  [reftype_term]
 

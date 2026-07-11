@@ -19,7 +19,7 @@ namespace Shumway.Builtins;
 public static class MultiSolutionHelpers
 {
     /// <summary>Chunk 408 — <c>'$get_cut_barrier'(K)</c>: unifies K with the
-    /// clause's cut barrier (<see cref="Engine.B0"/>, the choice-point level the
+    /// clause's cut barrier (<see cref="Activation.B0"/>, the choice-point level the
     /// caller's Call/Execute established — what a neck cut commits to). Inserted
     /// by <c>MetaTransform</c> as the FIRST body goal of a clause that has a
     /// <c>!</c> inside a <c>;</c>/<c>-&gt;</c> branch: the branch lowers to a
@@ -27,14 +27,14 @@ public static class MultiSolutionHelpers
     /// branch cut commits the HOST clause (ISO 7.8.8 cut transparency in
     /// then/else and disjunction branches) instead of just the helper. The cut
     /// itself runs as <c>'$call'(!, K)</c> — the chunk-88 barrier-cut path.</summary>
-    public static bool GetCutBarrier(Engine engine)
+    public static bool GetCutBarrier(Activation engine)
         => engine.UnifyRegisterWithCell(0, Cell.Int(engine.B0));
 
     /// <summary><c>'$list_length'(List, N)</c> — given a proper list,
     /// bind <c>N</c> to its length. Fails for partial / improper
     /// lists. Used by the prelude's <c>length/2</c> when the list is
     /// ground.</summary>
-    public static bool ListLength(Engine engine)
+    public static bool ListLength(Activation engine)
     {
         Cell cur = Resolve(engine, engine.GetRegister(0));
         int count = 0;
@@ -52,7 +52,7 @@ public static class MultiSolutionHelpers
     /// of <c>N</c> unbound variables and unifies it with <c>List</c>.
     /// Used by the prelude's <c>length/2</c> when <c>N</c> is ground.
     /// </summary>
-    public static bool MakeVarList(Engine engine)
+    public static bool MakeVarList(Activation engine)
     {
         Cell nCell = Resolve(engine, engine.GetRegister(0));
         // Chunk 131a: ISO precedence — instantiation_error before type_error.
@@ -72,7 +72,7 @@ public static class MultiSolutionHelpers
     /// arithmetic constraints satisfied. The prelude's
     /// <c>sub_atom/5</c> calls <c>member/2</c> on the result so that
     /// every decomposition becomes a choice point.</summary>
-    public static bool SubAtomDecompositions(Engine engine)
+    public static bool SubAtomDecompositions(Activation engine)
     {
         Cell atomCell = Resolve(engine, engine.GetRegister(0));
         // Chunk 131a: ISO precedence — instantiation_error before type_error.
@@ -159,7 +159,7 @@ public static class MultiSolutionHelpers
     /// cursor resumed at PC 0). <see cref="BacktrackableDetector"/> now derives
     /// that flag from this method's IL (it calls <c>IndexEnumCursor.Start</c>),
     /// so it is correct under both tiers automatically.</para></summary>
-    public static bool SubAtomEnum(Engine engine)
+    public static bool SubAtomEnum(Activation engine)
     {
         Cell atomCell = Resolve(engine, engine.GetRegister(0));
         if (atomCell.Tag == Tag.Ref)
@@ -175,7 +175,7 @@ public static class MultiSolutionHelpers
         // order, so advancing the pair by one per call keeps it in lock-step
         // with i — O(1) per decomposition, no heap list.
         int before = 0, length = 0;
-        bool TryAt(Engine e, int i)
+        bool TryAt(Activation e, int i)
         {
             int b = before, l = length;
             if (length < len - before) length++;
@@ -191,7 +191,7 @@ public static class MultiSolutionHelpers
         return IndexEnumCursor.Start(engine, total, arity: 5, engine.BuiltinReturnPc, TryAt);
     }
 
-    private static int BuildFreshVarList(Engine engine, int count)
+    private static int BuildFreshVarList(Activation engine, int count)
     {
         if (count == 0)
         {
@@ -211,7 +211,7 @@ public static class MultiSolutionHelpers
         return start;
     }
 
-    private static Cell Resolve(Engine engine, Cell c)
+    private static Cell Resolve(Activation engine, Cell c)
     {
         if (c.Tag != Tag.Ref) return c;
         int addr = engine.Deref(c.AsHeapIndex);

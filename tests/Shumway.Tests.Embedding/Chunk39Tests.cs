@@ -120,7 +120,7 @@ public class Chunk39Tests
     }
 
     // ============================================================================
-    // Engine integration — promotion fires on hot predicates
+    // Activation integration — promotion fires on hot predicates
     // ============================================================================
 
     [Fact]

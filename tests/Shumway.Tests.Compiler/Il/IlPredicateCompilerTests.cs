@@ -98,7 +98,7 @@ public class IlPredicateCompilerTests
     {
         var pred = CompileFromSource("ready.");
         var del = new IlPredicateCompiler().Compile(pred);
-        var engine = new Engine();
+        var engine = new Activation();
         Assert.True(del(engine, 0));
     }
 
@@ -113,12 +113,12 @@ public class IlPredicateCompilerTests
         var del = new IlPredicateCompiler().Compile(pred);
 
         // Caller passes 'red' in X[0] â†’ match.
-        var engine1 = new Engine();
+        var engine1 = new Activation();
         engine1.SetRegister(0, Cell.Atom(redId));
         Assert.True(del(engine1, 0));
 
         // Caller passes 'green' â†’ no match.
-        var engine2 = new Engine();
+        var engine2 = new Activation();
         engine2.SetRegister(0, Cell.Atom(greenId));
         Assert.False(del(engine2, 0));
     }
@@ -134,19 +134,19 @@ public class IlPredicateCompilerTests
         var del = new IlPredicateCompiler().Compile(pred);
 
         // Both args match.
-        var engine1 = new Engine();
+        var engine1 = new Activation();
         engine1.SetRegister(0, Cell.Atom(aId));
         engine1.SetRegister(1, Cell.Atom(bId));
         Assert.True(del(engine1, 0));
 
         // First matches, second doesn't.
-        var engine2 = new Engine();
+        var engine2 = new Activation();
         engine2.SetRegister(0, Cell.Atom(aId));
         engine2.SetRegister(1, Cell.Atom(xId));
         Assert.False(del(engine2, 0));
 
         // First doesn't match â€” never gets to the second.
-        var engine3 = new Engine();
+        var engine3 = new Activation();
         engine3.SetRegister(0, Cell.Atom(xId));
         engine3.SetRegister(1, Cell.Atom(bId));
         Assert.False(del(engine3, 0));
@@ -162,7 +162,7 @@ public class IlPredicateCompilerTests
         var pred = CompileFromSource("colour(red).");
         var del = new IlPredicateCompiler().Compile(pred);
 
-        var engine = new Engine();
+        var engine = new Activation();
         int h = engine.AllocateHeapUnbound();
         engine.SetRegister(0, Cell.Ref(h));
 

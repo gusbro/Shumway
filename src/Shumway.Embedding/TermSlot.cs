@@ -11,7 +11,7 @@ namespace Shumway.Embedding;
 ///
 /// <para>This first cut models the cursor at the AST <see cref="Term"/> level
 /// (pragmatic and correct); a later refinement can push it down to raw heap cells.
-/// The slot itself is wrapped as a Foreign cell (<see cref="Shumway.Core.Engine.
+/// The slot itself is wrapped as a Foreign cell (<see cref="Shumway.Core.Activation.
 /// MakeForeign"/>) so it can live in a Prolog variable and pass between
 /// builtins.</para></summary>
 public sealed class TermSlot

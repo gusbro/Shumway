@@ -34,7 +34,7 @@ public static class StandardOrderComparator
     /// acyclic list) never allocates / probes the set.</summary>
     private const int CycleThreshold = 1 << 16;
 
-    public static int Compare(Engine engine, Cell aCell, Cell bCell)
+    public static int Compare(Activation engine, Cell aCell, Cell bCell)
         => CompareRec(engine, aCell, bCell, 0);
 
     /// <summary>Recursive ordered comparison, threading the C#-recursion depth.
@@ -43,7 +43,7 @@ public static class StandardOrderComparator
     /// remaining sub-term is compared by the non-recursive
     /// <see cref="CompareCompoundsIterative"/> so a long / deep / cyclic term
     /// can never overflow the C# stack.</summary>
-    private static int CompareRec(Engine engine, Cell aCell, Cell bCell, int depth)
+    private static int CompareRec(Activation engine, Cell aCell, Cell bCell, int depth)
     {
         var (a, aAddr) = Resolve(engine, aCell);
         var (b, bAddr) = Resolve(engine, bCell);
@@ -89,7 +89,7 @@ public static class StandardOrderComparator
     /// already in progress means "equal on this branch" (the co-inductive
     /// reading, consistent with <c>==/2</c>). The stack + set are pooled on the
     /// engine and cleared on entry; the walk is self-contained.</summary>
-    private static int CompareCompoundsIterative(Engine engine, Cell aTop, Cell bTop)
+    private static int CompareCompoundsIterative(Activation engine, Cell aTop, Cell bTop)
     {
         List<Cell> stack = engine.CompareStack ??= new List<Cell>(64);
         stack.Clear();
@@ -151,7 +151,7 @@ public static class StandardOrderComparator
         _ => 4,                                            // PSTR etc. — defer
     };
 
-    private static int CompareNumbers(Engine engine, Cell a, Cell b)
+    private static int CompareNumbers(Activation engine, Cell a, Cell b)
     {
         Number na = ToNumber(engine, a);
         Number nb = ToNumber(engine, b);
@@ -163,7 +163,7 @@ public static class StandardOrderComparator
         return 0;
     }
 
-    private static Number ToNumber(Engine engine, Cell c) => c.Tag switch
+    private static Number ToNumber(Activation engine, Cell c) => c.Tag switch
     {
         Tag.Int => new Number(c.AsInt),
         Tag.BigInt => new Number(engine.AsBigInt(c)),
@@ -182,7 +182,7 @@ public static class StandardOrderComparator
     /// <summary>Returns (functor name, arity, base heap index for args[0]).
     /// For a STR cell the args begin one past the functor cell; for a LIS
     /// cell they're the head and tail at consecutive indices.</summary>
-    private static (string Name, int Arity, int ArgsBase) DescribeCompound(Engine engine, Cell c)
+    private static (string Name, int Arity, int ArgsBase) DescribeCompound(Activation engine, Cell c)
     {
         if (c.Tag == Tag.Lis)
             return (".", 2, c.AsHeapIndex);
@@ -195,7 +195,7 @@ public static class StandardOrderComparator
         return (name, arity, functorIdx + 1);
     }
 
-    private static (Cell Cell, int Addr) Resolve(Engine engine, Cell c)
+    private static (Cell Cell, int Addr) Resolve(Activation engine, Cell c)
     {
         // A bare ATTVAR cell (chunk 77) carries its home index as
         // payload, so it compares by that address — like any variable.

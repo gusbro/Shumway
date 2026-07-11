@@ -42,8 +42,9 @@ These are hard constraints. If a change requires breaking one of them, **stop an
 
 ### Memory and concurrency
 
-- **Engines are single-threaded internally.** No locks inside the engine state. The caller guarantees that only one thread accesses a given engine at a time.
-- **Engines are thread-agile.** No `[ThreadStatic]` state. An engine can be used from different threads as long as access is serialized.
+- **Naming (renamed 2026-07-11):** `Shumway.Core.Activation` (née `Engine`) is the per-query WAM machine — heap, stacks, trails, registers, choice points — born at every `SetupQueryFromTerm` and alive exactly as long as its solution enumeration. Several activations can coexist over one database (a suspended `QueryAll` plus a nested query). The durable Prolog instance (dynamic store, compiled code space, consult history) is `Shumway.Embedding.PrologEngine`. Historical docs/comments that say "engine" for the per-query machine mean Activation.
+- **Activations are single-threaded internally.** No locks inside the activation state. The caller guarantees that only one thread accesses a given activation at a time.
+- **Activations are thread-agile.** No `[ThreadStatic]` state. An activation can be used from different threads as long as access is serialized.
 - **Global tables (atom table, functor table, code cache) are thread-safe.** Use `ConcurrentDictionary` or fine-grained locks. Multiple engines may share these tables.
 - **The heap is a `Cell[]` of 8-byte blittable values.** Never put managed object references inside cells. References to managed objects (BigInteger, string, foreign object) live in per-engine auxiliary tables, accessed by integer id from the cell.
 - **Cells are 8 bytes: 4 bits tag + 60 bits payload.** See ADR-002 for the exact layout. Do not change this layout.

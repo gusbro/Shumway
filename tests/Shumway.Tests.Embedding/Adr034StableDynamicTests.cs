@@ -32,7 +32,7 @@ public class Adr034StableDynamicTests
         Adr031CpFreeGuardTests.Mode.Tier1Bundle,
     };
 
-    private static PrologEngine Engine(Adr031CpFreeGuardTests.Mode m, string program)
+    private static PrologEngine Activation(Adr031CpFreeGuardTests.Mode m, string program)
     {
         switch (m)
         {
@@ -74,7 +74,7 @@ public class Adr034StableDynamicTests
     public void StaleSnapshot_MutationFlipsCallerToLivePath(
         Adr031CpFreeGuardTests.Mode m)
     {
-        var e = Engine(m, RuleDynProgram);
+        var e = Activation(m, RuleDynProgram);
         // Fast path (snapshot, where inlined): the shipped rule decides.
         Assert.True(e.Query("g(5, R), R == yes.").Success);
         Assert.True(e.Query("g(-1, R), R == no.").Success);
@@ -96,7 +96,7 @@ public class Adr034StableDynamicTests
     [MemberData(nameof(Modes))]
     public void StaleSnapshot_RetractFlipsToo(Adr031CpFreeGuardTests.Mode m)
     {
-        var e = Engine(m, RuleDynProgram);
+        var e = Activation(m, RuleDynProgram);
         Assert.True(e.Query("g(5, R), R == yes.").Success);
         // Retract the only rule → r/1 has no clauses → g falls to clause 2.
         Assert.True(e.Query("retract((r(X) :- X > 0)), g(5, R), R == no.").Success);
@@ -112,7 +112,7 @@ public class Adr034StableDynamicTests
         // f/1 is a FACT-ONLY dynamic — a real assert target. It must never be
         // caller-inlined (neither by the guard tiers nor by the leaf/fact
         // inliners), so a later assert is visible with no staleness machinery.
-        var e = Engine(m,
+        var e = Activation(m,
             ":- public h/2.\n"
             + ":- dynamic f/1.\n"
             + "f(1).\n"
@@ -137,7 +137,7 @@ public class Adr034StableDynamicTests
         // reject the combination and keep the clause on the plain path, where
         // the call dispatches live. k(-5): assertz(r(-5)) then r(-5) succeeds
         // via the NEW fact (the shipped rule -5 > 0 fails).
-        var e = Engine(m,
+        var e = Activation(m,
             ":- public k/2.\n"
             + ":- dynamic r/1.\n"
             + "r(X) :- X > 0.\n"
@@ -157,7 +157,7 @@ public class Adr034StableDynamicTests
         // would be the plain path plus a per-entry probe — a net cost. This
         // pins the plain behaviour: a guard call to an empty dynamic keeps
         // the live dispatch, and asserts are visible with no extra machinery.
-        var e = Engine(m,
+        var e = Activation(m,
             ":- public g/2.\n"
             + ":- dynamic e/1.\n"
             + "g(X, R) :- e(X), !, R = found.\n"
@@ -178,7 +178,7 @@ public class Adr034StableDynamicTests
         // whose body calls the dynamic r/1 (a G3 inner). The staleness fid
         // must be collected transitively so the CALLER clause carries the
         // test.
-        var e = Engine(m,
+        var e = Activation(m,
             ":- public v/2.\n"
             + ":- dynamic r/1.\n"
             + "r(X) :- X > 0.\n"

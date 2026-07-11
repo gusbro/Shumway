@@ -13,7 +13,7 @@ public static class TypeBuiltins
     /// <summary><c>var(X)</c> — X is an unbound variable. An attributed
     /// variable (chunk 77) counts as unbound — it has no value yet,
     /// only attributes.</summary>
-    public static bool IsVar(Engine engine)
+    public static bool IsVar(Activation engine)
     {
         var t = Tag0(engine);
         return t == Tag.Ref || t == Tag.AttVar;
@@ -22,7 +22,7 @@ public static class TypeBuiltins
     /// <summary><c>nonvar(X)</c> — X is bound to a non-variable term.
     /// An attributed variable is still a variable, so <c>nonvar</c>
     /// rejects it.</summary>
-    public static bool IsNonVar(Engine engine)
+    public static bool IsNonVar(Activation engine)
     {
         var t = Tag0(engine);
         return t != Tag.Ref && t != Tag.AttVar;
@@ -31,26 +31,26 @@ public static class TypeBuiltins
     /// <summary><c>attvar(X)</c> — X is an attributed variable
     /// (chunk 77). False for plain unbound variables and for any
     /// bound term.</summary>
-    public static bool IsAttVar(Engine engine) => Tag0(engine) == Tag.AttVar;
+    public static bool IsAttVar(Activation engine) => Tag0(engine) == Tag.AttVar;
 
     /// <summary><c>atom(X)</c> — X is bound to an atom (including <c>[]</c>
     /// and <c>{}</c>, which are atoms in ISO).</summary>
-    public static bool IsAtom(Engine engine) => Tag0(engine) == Tag.Atom;
+    public static bool IsAtom(Activation engine) => Tag0(engine) == Tag.Atom;
 
     /// <summary><c>integer(X)</c> — X is an integer cell. Both inline ints
     /// and BigInteger cells satisfy the predicate.</summary>
-    public static bool IsInteger(Engine engine)
+    public static bool IsInteger(Activation engine)
     {
         var t = Tag0(engine);
         return t == Tag.Int || t == Tag.BigInt;
     }
 
     /// <summary><c>float(X)</c> — X is a float cell.</summary>
-    public static bool IsFloat(Engine engine) => Tag0(engine) == Tag.Float;
+    public static bool IsFloat(Activation engine) => Tag0(engine) == Tag.Float;
 
     /// <summary><c>number(X)</c> — X is either an integer (inline or big) or
     /// a float.</summary>
-    public static bool IsNumber(Engine engine)
+    public static bool IsNumber(Activation engine)
     {
         var t = Tag0(engine);
         return t is Tag.Int or Tag.BigInt or Tag.Float;
@@ -58,7 +58,7 @@ public static class TypeBuiltins
 
     /// <summary><c>atomic(X)</c> — X is a non-compound, non-variable term
     /// (atom, integer, bigint, float, string, PSTR).</summary>
-    public static bool IsAtomic(Engine engine)
+    public static bool IsAtomic(Activation engine)
     {
         var t = Tag0(engine);
         return t is Tag.Atom or Tag.Int or Tag.BigInt or Tag.Float or Tag.String or Tag.Pstr;
@@ -66,7 +66,7 @@ public static class TypeBuiltins
 
     /// <summary><c>compound(X)</c> — X is a compound term (STR or non-empty
     /// LIS). An empty list (the atom <c>[]</c>) is NOT compound.</summary>
-    public static bool IsCompound(Engine engine)
+    public static bool IsCompound(Activation engine)
     {
         var t = Tag0(engine);
         return t is Tag.Str or Tag.Lis;
@@ -74,7 +74,7 @@ public static class TypeBuiltins
 
     /// <summary><c>callable(X)</c> — X is an atom or a compound term (ISO
     /// §8.3.6). An unbound variable, number, string or PSTR is not callable.</summary>
-    public static bool IsCallable(Engine engine)
+    public static bool IsCallable(Activation engine)
     {
         var t = Tag0(engine);
         return t is Tag.Atom or Tag.Str or Tag.Lis;
@@ -83,7 +83,7 @@ public static class TypeBuiltins
     /// <summary><c>is_list(X)</c> — X is a proper list: a cons chain
     /// terminated by the empty-list atom. An unbound tail makes it a partial
     /// list — fails. An atom other than <c>[]</c> at the tail — fails.</summary>
-    public static bool IsList(Engine engine)
+    public static bool IsList(Activation engine)
     {
         Cell cell = engine.GetRegister(0);
         while (true)
@@ -106,10 +106,10 @@ public static class TypeBuiltins
     /// <summary><c>ground(X)</c> — X contains no unbound variables. Walks
     /// the heap representation recursively; on the first dereferenced
     /// REF still pointing at itself the predicate fails.</summary>
-    public static bool IsGround(Engine engine) =>
+    public static bool IsGround(Activation engine) =>
         IsGroundCell(engine, engine.GetRegister(0));
 
-    private static bool IsGroundCell(Engine engine, Cell cell)
+    private static bool IsGroundCell(Activation engine, Cell cell)
     {
         if (cell.Tag == Tag.Ref)
         {
@@ -148,10 +148,10 @@ public static class TypeBuiltins
     /// set of compound anchors on the current DFS path; a reference back to
     /// one of them is a cycle. Shared (DAG) subterms are fine — each anchor
     /// is removed from the path set once its subtree is fully checked.</summary>
-    public static bool AcyclicTerm(Engine engine) =>
+    public static bool AcyclicTerm(Activation engine) =>
         IsAcyclicCell(engine, engine.GetRegister(0), new HashSet<int>());
 
-    private static bool IsAcyclicCell(Engine engine, Cell cell, HashSet<int> onPath)
+    private static bool IsAcyclicCell(Activation engine, Cell cell, HashSet<int> onPath)
     {
         if (cell.Tag == Tag.Ref)
         {
@@ -187,9 +187,9 @@ public static class TypeBuiltins
         }
     }
 
-    private static Tag Tag0(Engine engine) => Resolve(engine, engine.GetRegister(0)).Tag;
+    private static Tag Tag0(Activation engine) => Resolve(engine, engine.GetRegister(0)).Tag;
 
-    private static Cell Resolve(Engine engine, Cell cell)
+    private static Cell Resolve(Activation engine, Cell cell)
     {
         if (cell.Tag != Tag.Ref) return cell;
         int addr = engine.Deref(cell.AsHeapIndex);

@@ -15,10 +15,10 @@ public class Chunk237Tests
     public static class StaticPreds
     {
         [PrologPredicate(1)]
-        public static bool c237_always_true(Engine engine) => true;
+        public static bool c237_always_true(Activation engine) => true;
 
         [PrologPredicate("chunk237_answer/1")]
-        public static bool Answer(Engine engine)
+        public static bool Answer(Activation engine)
         {
             return engine.UnifyRegisterWithCell(0, Cell.Int(42));
         }
@@ -43,7 +43,7 @@ public class Chunk237Tests
     public class NonStaticContainer
     {
         [PrologPredicate("c237_yes_42/1")]
-        public static bool Yes42(Engine engine)
+        public static bool Yes42(Activation engine)
             => engine.UnifyRegisterWithCell(0, Cell.Int(42));
     }
 
@@ -63,14 +63,14 @@ public class Chunk237Tests
         private int _count;
 
         [PrologPredicate("c237_counter_bump/0")]
-        public bool Bump(Engine engine)
+        public bool Bump(Activation engine)
         {
             _count++;
             return true;
         }
 
         [PrologPredicate("c237_counter_value/1")]
-        public bool Value(Engine engine)
+        public bool Value(Activation engine)
         {
             return engine.UnifyRegisterWithCell(0, Cell.Int(_count));
         }
@@ -97,7 +97,7 @@ public class Chunk237Tests
     public static class ThrowingPreds
     {
         [PrologPredicate("c237_explode/0")]
-        public static bool Explode(Engine engine)
+        public static bool Explode(Activation engine)
         {
             throw new PrologRuntimeException("type_error(my_reason, x)");
         }
@@ -128,7 +128,7 @@ public class Chunk237Tests
     public class InstanceOnlyPreds
     {
         [PrologPredicate("need_instance/0")]
-        public bool NeedInstance(Engine engine) => true;
+        public bool NeedInstance(Activation engine) => true;
     }
 
     [Fact]
@@ -176,7 +176,7 @@ public class Chunk237Tests
     public static class CollidingPreds
     {
         [PrologPredicate("assertz/1")]
-        public static bool Hijack(Engine engine) => true;
+        public static bool Hijack(Activation engine) => true;
     }
 
     [Fact]

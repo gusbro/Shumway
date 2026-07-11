@@ -36,7 +36,7 @@ public class Chunk63Tests
         // Chunk 66 implemented the meta-CP machinery the chunk 63
         // investigation identified as the missing piece. Each IL Call
         // site now pushes a per-site CP that on backtrack drives
-        // Engine.BacktrackRunner and re-enters the IL caller at a
+        // Activation.BacktrackRunner and re-enters the IL caller at a
         // post-call cursor, so a non-leaf callee is welcome in
         // single-clause IL bodies.
         var engine = new PrologEngine();

@@ -10,12 +10,12 @@ public class EnvFrameTests
     [Fact]
     public void FrameLayoutConstants_MatchAdr005()
     {
-        Assert.Equal(0, Engine.EnvCeOffset);
-        Assert.Equal(1, Engine.EnvCpOffset);
-        Assert.Equal(2, Engine.EnvNOffset);        // ADR-016: live-perm count
-        Assert.Equal(3, Engine.EnvY1Offset);
-        Assert.Equal(3, Engine.EnvSize(0));
-        Assert.Equal(3 + 5, Engine.EnvSize(5));
+        Assert.Equal(0, Activation.EnvCeOffset);
+        Assert.Equal(1, Activation.EnvCpOffset);
+        Assert.Equal(2, Activation.EnvNOffset);        // ADR-016: live-perm count
+        Assert.Equal(3, Activation.EnvY1Offset);
+        Assert.Equal(3, Activation.EnvSize(0));
+        Assert.Equal(3 + 5, Activation.EnvSize(5));
     }
 
     // ---------- Allocate ----------
@@ -23,7 +23,7 @@ public class EnvFrameTests
     [Fact]
     public void Allocate_FirstFrame_SavesPriorRegisters()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.SetCp(100);
         Assert.Equal(-1, engine.E);
         Assert.Equal(100, engine.Cp);
@@ -59,7 +59,7 @@ public class EnvFrameTests
         // permanent (the old behaviour generated one dead heap cell per Y slot,
         // driving the heap GC in permanent-heavy loops). The Y slots are the
         // uninitialised RawInt sentinel until first written.
-        var engine = new Engine();
+        var engine = new Activation();
         int heapBefore = engine.HeapTop;
         engine.Allocate(8);
         Assert.Equal(heapBefore, engine.HeapTop);   // zero heap growth
@@ -68,7 +68,7 @@ public class EnvFrameTests
     [Fact]
     public void Allocate_ZeroPermanents_OnlyControlSlots()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.Allocate(0);
         Assert.Equal(0, engine.E);
         Assert.Equal(3, engine.StackTop);          // CE, CP, N
@@ -77,7 +77,7 @@ public class EnvFrameTests
     [Fact]
     public void Allocate_NestedFrames_CeChains()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.SetCp(7);
         engine.Allocate(1);                         // frame at idx 0, size 4 (CE,CP,N,Y1)
         int firstFrame = 0;
@@ -91,25 +91,25 @@ public class EnvFrameTests
         Assert.Equal(9, engine.StackTop);
 
         // Second frame's CE points at the first frame; CP is the most-recent _cp.
-        Assert.Equal(firstFrame, (int)engine.GetStack(secondFrame + Engine.EnvCeOffset).Data);
-        Assert.Equal(8, (int)engine.GetStack(secondFrame + Engine.EnvCpOffset).Data);
+        Assert.Equal(firstFrame, (int)engine.GetStack(secondFrame + Activation.EnvCeOffset).Data);
+        Assert.Equal(8, (int)engine.GetStack(secondFrame + Activation.EnvCpOffset).Data);
 
         // First frame's contents are unchanged by the second Allocate.
-        Assert.Equal(-1, (int)engine.GetStack(firstFrame + Engine.EnvCeOffset).Data);
-        Assert.Equal(7, (int)engine.GetStack(firstFrame + Engine.EnvCpOffset).Data);
+        Assert.Equal(-1, (int)engine.GetStack(firstFrame + Activation.EnvCeOffset).Data);
+        Assert.Equal(7, (int)engine.GetStack(firstFrame + Activation.EnvCpOffset).Data);
     }
 
     [Fact]
     public void Allocate_NegativeCount_Throws()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         Assert.Throws<ArgumentOutOfRangeException>(() => engine.Allocate(-1));
     }
 
     [Fact]
     public void Allocate_GrowsStackOnOverflow()
     {
-        var engine = new Engine(new EngineConfig { InitialStackSize = 3 });
+        var engine = new Activation(new ActivationConfig { InitialStackSize = 3 });
         Assert.Equal(3, engine.StackCapacity);
 
         engine.Allocate(0);                         // fills the initial budget (size 3)
@@ -123,7 +123,7 @@ public class EnvFrameTests
     [Fact]
     public void Allocate_PreservesPriorFramesAcrossStackGrowth()
     {
-        var engine = new Engine(new EngineConfig { InitialStackSize = 2 });
+        var engine = new Activation(new ActivationConfig { InitialStackSize = 2 });
         engine.SetCp(99);
         engine.Allocate(0);                         // frame at idx 0
 
@@ -131,13 +131,13 @@ public class EnvFrameTests
         engine.Allocate(2);                         // forces growth
 
         // First frame's saved CP should still be readable.
-        Assert.Equal(99, (int)engine.GetStack(0 + Engine.EnvCpOffset).Data);
+        Assert.Equal(99, (int)engine.GetStack(0 + Activation.EnvCpOffset).Data);
     }
 
     [Fact]
     public void Allocate_MaxStackSizeExceeded_Throws()
     {
-        var engine = new Engine(new EngineConfig { InitialStackSize = 3, MaxStackSize = 3 });
+        var engine = new Activation(new ActivationConfig { InitialStackSize = 3, MaxStackSize = 3 });
         engine.Allocate(0);                         // exactly fills the cap (size 3)
         Assert.Throws<InvalidOperationException>(() => engine.Allocate(0));
     }
@@ -147,7 +147,7 @@ public class EnvFrameTests
     [Fact]
     public void Deallocate_RestoresPriorRegisters()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.SetCp(42);
         engine.Allocate(2);
 
@@ -167,7 +167,7 @@ public class EnvFrameTests
         // A choice point opened during the clause body sits above the frame, so
         // the frame must survive deallocate — a backtrack into the CP could
         // reactivate it. Reclaiming would corrupt the CP's saved slots.
-        var engine = new Engine();
+        var engine = new Activation();
         engine.SetCp(42);
         engine.Allocate(2);                 // frame at 0
         engine.PushChoicePoint(0, 100);     // CP above the frame: _b >= 0 frame
@@ -184,7 +184,7 @@ public class EnvFrameTests
     {
         // Allocate captures the *current* _cp into the new frame, so each Deallocate
         // restores _cp to the value that was current at its corresponding Allocate.
-        var engine = new Engine();
+        var engine = new Activation();
         engine.SetCp(7);
         engine.Allocate(0);                         // frame 0 saves CP=7
         engine.SetCp(8);
@@ -208,7 +208,7 @@ public class EnvFrameTests
     [Fact]
     public void Deallocate_NoFrame_Throws()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         Assert.Throws<InvalidOperationException>(() => engine.Deallocate());
     }
 
@@ -217,7 +217,7 @@ public class EnvFrameTests
     {
         // The WAM convention is allocate ... deallocate proceed, where deallocate restores
         // CE/CP and proceed jumps to CP. The pair must be transparent to the caller.
-        var engine = new Engine();
+        var engine = new Activation();
         engine.SetCp(999);
         int eBefore = engine.E;
         int cpBefore = engine.Cp;
@@ -234,7 +234,7 @@ public class EnvFrameTests
     [Fact]
     public void GetY_WithinFrame_ReadsCorrectSlot()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.Allocate(3);
         engine.SetY(1, Cell.Atom(42));
         Assert.Equal(Cell.Atom(42), engine.GetY(1));
@@ -247,21 +247,21 @@ public class EnvFrameTests
     [Fact]
     public void GetY_NoActiveFrame_Throws()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         Assert.Throws<InvalidOperationException>(() => engine.GetY(0));
     }
 
     [Fact]
     public void SetY_NoActiveFrame_Throws()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         Assert.Throws<InvalidOperationException>(() => engine.SetY(0, Cell.Atom(0)));
     }
 
     [Fact]
     public void GetY_AfterFrameSwitch_TargetsTheCurrentFrame()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.Allocate(1);
         engine.SetY(0, Cell.Atom(10));     // outer Y0 = 10
 

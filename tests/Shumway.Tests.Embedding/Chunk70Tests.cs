@@ -13,8 +13,8 @@ namespace Shumway.Tests.Embedding;
 /// <see cref="Shumway.Core.Tag.Pstr"/>-tagged tail (the design noted
 /// this as the lazy-concat plug-in point); chunk 70 makes the chain
 /// actually get built and makes the read paths
-/// (<see cref="Shumway.Core.Engine.AsPstrString"/>,
-/// <see cref="Shumway.Core.Engine.GetPstrChainLength"/>) follow it.
+/// (<see cref="Shumway.Core.Activation.AsPstrString"/>,
+/// <see cref="Shumway.Core.Activation.GetPstrChainLength"/>) follow it.
 ///
 /// <para>The chunk is observably a performance optimisation; these
 /// tests pin the correctness contract by checking that lazy-concat

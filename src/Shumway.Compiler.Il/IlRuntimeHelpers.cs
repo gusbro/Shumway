@@ -9,7 +9,7 @@ namespace Shumway.Compiler.Il;
 /// emitted predicate is one indirect call away from the implementation.
 ///
 /// <para>Each helper assumes the embedding layer has populated the
-/// matching <see cref="Engine"/> field at query setup time. A null
+/// matching <see cref="Activation"/> field at query setup time. A null
 /// field is a programmer error (a non-embedded engine ran IL it
 /// shouldn't have) and surfaces as <see cref="InvalidOperationException"/>
 /// rather than a silent miscompile.</para>
@@ -30,7 +30,7 @@ public static class IlRuntimeHelpers
     /// and unify it with <c>X[<paramref name="argReg"/>]</c>. Mirrors
     /// what the bytecode interpreter does for the same opcode but
     /// reachable from an IL <c>call</c>.</summary>
-    public static bool GetPstr(Engine engine, int literalId, int argReg)
+    public static bool GetPstr(Activation engine, int literalId, int argReg)
     {
         string s = ResolveStringLiteral(engine, literalId);
         int headerIdx = engine.MakePstr(s);
@@ -40,14 +40,14 @@ public static class IlRuntimeHelpers
     /// <summary>IL <c>put_pstr</c>: same as <see cref="GetPstr"/> but
     /// writes the resulting REF directly into the register without
     /// unifying (the caller is filling a fresh arg slot).</summary>
-    public static void PutPstr(Engine engine, int literalId, int argReg)
+    public static void PutPstr(Activation engine, int literalId, int argReg)
     {
         string s = ResolveStringLiteral(engine, literalId);
         int headerIdx = engine.MakePstr(s);
         engine.SetRegister(argReg, Cell.Ref(headerIdx));
     }
 
-    private static string ResolveStringLiteral(Engine engine, int literalId)
+    private static string ResolveStringLiteral(Activation engine, int literalId)
     {
         var pool = engine.CurrentStringLiterals
             ?? throw new InvalidOperationException(

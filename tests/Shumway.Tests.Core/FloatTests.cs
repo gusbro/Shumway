@@ -10,7 +10,7 @@ public class FloatTests
     [Fact]
     public void MakeFloat_AllocatesContiguousHeaderAndPaired()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int idx = engine.MakeFloat(1.5);
 
         Assert.Equal(Tag.Float, engine.GetHeap(idx).Tag);
@@ -21,7 +21,7 @@ public class FloatTests
     [Fact]
     public void MakeFloat_AdvancesHeapTopByTwo()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int before = engine.HeapTop;
         engine.MakeFloat(1.0);
         Assert.Equal(before + 2, engine.HeapTop);
@@ -40,7 +40,7 @@ public class FloatTests
     [InlineData(double.NaN)]
     public void MakeFloat_RoundTripsBitExact(double value)
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int idx = engine.MakeFloat(value);
         double decoded = Cell.DecodeFloat(engine.GetHeap(idx), engine.GetHeap(idx + 1));
         Assert.Equal(
@@ -53,7 +53,7 @@ public class FloatTests
     {
         // -0.0 is excluded from the Theory above because xUnit treats it as a duplicate
         // of 0.0 under Equals.
-        var engine = new Engine();
+        var engine = new Activation();
         int idx = engine.MakeFloat(-0.0);
         double decoded = Cell.DecodeFloat(engine.GetHeap(idx), engine.GetHeap(idx + 1));
         Assert.Equal(
@@ -74,7 +74,7 @@ public class FloatTests
     [InlineData(double.MinValue)]
     public void Unify_FloatsBitEqual_Succeeds(double value)
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int a = engine.MakeFloat(value);
         int b = engine.MakeFloat(value);
         Assert.True(engine.Unify(a, b));
@@ -85,7 +85,7 @@ public class FloatTests
     {
         // SWI-Prolog and the design doc both say NaN unifies with NaN under =/2.
         // Numeric comparison via =:= would fail; that's a different operator.
-        var engine = new Engine();
+        var engine = new Activation();
         int a = engine.MakeFloat(double.NaN);
         int b = engine.MakeFloat(double.NaN);
         Assert.True(engine.Unify(a, b));
@@ -96,7 +96,7 @@ public class FloatTests
     {
         // == returns true for these, but their bit patterns differ. Unify uses bit
         // comparison, so they don't unify — matching the "structural equality" intent.
-        var engine = new Engine();
+        var engine = new Activation();
         int a = engine.MakeFloat(0.0);
         int b = engine.MakeFloat(-0.0);
         Assert.False(engine.Unify(a, b));
@@ -105,7 +105,7 @@ public class FloatTests
     [Fact]
     public void Unify_DifferentFloats_Fails()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int a = engine.MakeFloat(1.5);
         int b = engine.MakeFloat(2.5);
         Assert.False(engine.Unify(a, b));
@@ -115,7 +115,7 @@ public class FloatTests
     public void Unify_FloatsWithDistinctPairedCells_StillCompareByValue()
     {
         // The two Floats live in separate heap regions but encode the same double.
-        var engine = new Engine();
+        var engine = new Activation();
         int a = engine.MakeFloat(7.25);
         engine.AllocateHeap(5);                    // padding between the two
         int b = engine.MakeFloat(7.25);
@@ -130,7 +130,7 @@ public class FloatTests
     [Fact]
     public void Unify_FloatVsInt_Fails()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int a = engine.MakeFloat(1.0);
         int b = engine.AllocateHeap(1);
         engine.SetHeap(b, Cell.Int(1));
@@ -140,7 +140,7 @@ public class FloatTests
     [Fact]
     public void Unify_FloatVsAtom_Fails()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int a = engine.MakeFloat(0.0);
         int b = engine.AllocateHeap(1);
         engine.SetHeap(b, Cell.Atom(AtomTable.EmptyListId));
@@ -152,7 +152,7 @@ public class FloatTests
     [Fact]
     public void Unify_VarWithFloat_CopiesHeaderAndPreservesPaired()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int v = engine.AllocateHeapUnbound();
         int f = engine.MakeFloat(3.14);
 
@@ -171,7 +171,7 @@ public class FloatTests
     [Fact]
     public void Unify_FloatWithVar_BindsVarSameWay()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int f = engine.MakeFloat(-2.71);
         int v = engine.AllocateHeapUnbound();
 
@@ -184,7 +184,7 @@ public class FloatTests
     {
         // After binding a var to a Float, the var participates in subsequent Float
         // unifications as if it were the original Float.
-        var engine = new Engine();
+        var engine = new Activation();
         int v = engine.AllocateHeapUnbound();
         int f1 = engine.MakeFloat(42.0);
         Assert.True(engine.Unify(v, f1));

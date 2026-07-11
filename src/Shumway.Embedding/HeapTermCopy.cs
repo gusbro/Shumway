@@ -37,7 +37,7 @@ internal static class HeapTermCopy
 {
     /// <summary>Copies the value held in register <paramref name="regIdx"/> to
     /// fresh heap cells and returns the copied value cell.</summary>
-    public static Cell CopyRegister(Engine engine, int regIdx)
+    public static Cell CopyRegister(Activation engine, int regIdx)
     {
         // Pool the two identity maps on the engine (clear-on-use), the
         // chunk-432 pattern: the depth guard means only the outermost copy uses
@@ -67,7 +67,7 @@ internal static class HeapTermCopy
         }
     }
 
-    private static Cell CopyRegisterValue(Engine engine, Cell rc,
+    private static Cell CopyRegisterValue(Activation engine, Cell rc,
         Dictionary<int, Cell> varMap, Dictionary<int, Cell> structMap)
     {
         switch (rc.Tag)
@@ -93,7 +93,7 @@ internal static class HeapTermCopy
 
     /// <summary>Copies the value stored at heap slot <paramref name="addr"/>
     /// (dereferencing first).</summary>
-    private static Cell CopyAt(Engine engine, int addr,
+    private static Cell CopyAt(Activation engine, int addr,
         Dictionary<int, Cell> varMap, Dictionary<int, Cell> structMap)
     {
         int a = engine.Deref(addr);
@@ -129,7 +129,7 @@ internal static class HeapTermCopy
 
     /// <summary><paramref name="fAddr"/> is the source FUNCTOR cell address
     /// (functor at fAddr, args at fAddr+1..fAddr+arity).</summary>
-    private static Cell CopyStr(Engine engine, int fAddr,
+    private static Cell CopyStr(Activation engine, int fAddr,
         Dictionary<int, Cell> varMap, Dictionary<int, Cell> structMap)
     {
         if (structMap.TryGetValue(fAddr, out Cell cached)) return cached;
@@ -150,7 +150,7 @@ internal static class HeapTermCopy
 
     /// <summary><paramref name="firstHead"/> is the source cons's head-cell
     /// address (head at firstHead, tail at firstHead+1).</summary>
-    private static Cell CopyLis(Engine engine, int firstHead,
+    private static Cell CopyLis(Activation engine, int firstHead,
         Dictionary<int, Cell> varMap, Dictionary<int, Cell> structMap)
     {
         if (structMap.TryGetValue(firstHead, out Cell cached)) return cached;

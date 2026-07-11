@@ -21,7 +21,7 @@ public sealed class NativeBlockEntry
     /// <summary>ADR-022 — the scalar `:- c` globals this block reads/writes, mapped
     /// to per-engine persistent storage (Arity static-storage semantics).</summary>
     public NativeScalarGlobal[] ScalarGlobals { get; }
-    internal Func<Engine, bool>? Compiled;
+    internal Func<Activation, bool>? Compiled;
     internal bool CompileTried;
 
     // Phase 33 A1 — the block-invariant lookup maps the interpreter fallback used
@@ -78,7 +78,7 @@ public static class NativeBlockRunner
     /// <c>regOffset + vars.Count - 1</c> (in <paramref name="vars"/> order). Used
     /// by <see cref="Build"/> (offset 0, a per-block builtin) and by the
     /// <c>'$native_run'</c> dispatch (offset 1, after the block-name argument).</summary>
-    public static bool RunBlock(Engine engine, IReadOnlyList<NativeVar> vars,
+    public static bool RunBlock(Activation engine, IReadOnlyList<NativeVar> vars,
         IReadOnlyList<CStmt> stmts, IReadOnlyList<NativeScalarGlobal> scalarGlobals, int regOffset)
     {
         // Standalone form (tests / ad-hoc callers): builds the lookup maps fresh.
@@ -93,14 +93,14 @@ public static class NativeBlockRunner
     /// <summary>Phase 33 A1 — the '$native_run' dispatch entry: reuses the entry's
     /// lazily-built block-invariant maps instead of rebuilding three dictionaries
     /// per call.</summary>
-    internal static bool RunBlock(Engine engine, NativeBlockEntry entry, int regOffset)
+    internal static bool RunBlock(Activation engine, NativeBlockEntry entry, int regOffset)
     {
         entry.EnsureMaps();
         return RunBlockCore(engine, entry.Vars, entry.Stmts, entry.ScalarGlobals, regOffset,
             entry.IndexMap!, entry.KindMap!, entry.ScalarFloatMap!);
     }
 
-    private static bool RunBlockCore(Engine engine, IReadOnlyList<NativeVar> vars,
+    private static bool RunBlockCore(Activation engine, IReadOnlyList<NativeVar> vars,
         IReadOnlyList<CStmt> stmts, IReadOnlyList<NativeScalarGlobal> scalarGlobals, int regOffset,
         Dictionary<string, int> index, Dictionary<string, NativeKind> kindOf,
         Dictionary<string, bool> scalarFloat)
@@ -149,7 +149,7 @@ public static class NativeBlockRunner
 
     // -----------------------------------------------------------------------
 
-    private static object? ReadInput(PrologEngine host, Engine engine, int reg, NativeKind kind)
+    private static object? ReadInput(PrologEngine host, Activation engine, int reg, NativeKind kind)
     {
         // ADR-024 — a reftype input is a slot handle (a Foreign cell). Phase 33
         // A3: unwrap it straight from the dereferenced cell — no Term walk.

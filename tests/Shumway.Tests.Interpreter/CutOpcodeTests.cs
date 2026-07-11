@@ -31,7 +31,7 @@ public class CutOpcodeTests
     public void Call_CapturesCurrentBIntoB0BeforeJumping()
     {
         // Set up an outer CP, then issue a call. The callee's B0 should match the outer CP's B.
-        var engine = new Engine();
+        var engine = new Activation();
         engine.PushChoicePoint(0, 0);          // outer CP at idx 0
         int outerB = engine.B;
 
@@ -53,7 +53,7 @@ public class CutOpcodeTests
     [Fact]
     public void Execute_RefreshesB0()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.PushChoicePoint(0, 0);
         int outerB = engine.B;
 
@@ -71,7 +71,7 @@ public class CutOpcodeTests
     [Fact]
     public void NeckCut_DiscardsCpsAboveB0()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.SetB0(-1);                        // simulate "procedure entered with no CP"
         engine.PushChoicePoint(0, 0);            // simulate try_me_else creating CP
 
@@ -84,7 +84,7 @@ public class CutOpcodeTests
     [Fact]
     public void NeckCut_PreservesCpsBelowB0()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.PushChoicePoint(0, 0);            // outer CP — pre-procedure
         int outerB = engine.B;
         engine.SetB0(outerB);                    // procedure entry saw this as B
@@ -99,7 +99,7 @@ public class CutOpcodeTests
     [Fact]
     public void NeckCut_WithNoCps_IsNoOp()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.SetB0(-1);
         var code = BuildCode(Opcode.NeckCut, Opcode.Halt);
         var interp = new BytecodeInterpreter(engine);
@@ -115,7 +115,7 @@ public class CutOpcodeTests
         // get_level captures _b0 (the procedure-entry cut barrier), not the
         // current _b. The Y slot keeps that value across sub-goal calls that
         // overwrite the engine's B0 register.
-        var engine = new Engine();
+        var engine = new Activation();
         engine.PushChoicePoint(0, 0);            // CPs the cut should discard
         engine.SetB0(-1);                         // simulate "procedure entry saw no CPs"
         engine.Allocate(1);
@@ -130,7 +130,7 @@ public class CutOpcodeTests
     [Fact]
     public void CutOpcode_CutsToBarrierStoredInY()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.PushChoicePoint(0, 0);            // outer CP
         int outerB = engine.B;
         engine.Allocate(1);
@@ -149,7 +149,7 @@ public class CutOpcodeTests
         // Sets up: outer CP exists at B = outerB, then "procedure entered" with
         // _b0 = outerB. get_level captures _b0 into Y[0]. An inner CP is pushed
         // (a sub-goal CP). Cut Y[0] should discard the inner but keep outer.
-        var engine = new Engine();
+        var engine = new Activation();
         engine.PushChoicePoint(0, 0);
         int outerB = engine.B;
         engine.SetB0(outerB);
@@ -217,7 +217,7 @@ public class CutOpcodeTests
             Opcode.GetAtom, 102, 0,           // 55..63
             Opcode.Proceed);                  // 64
 
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
 

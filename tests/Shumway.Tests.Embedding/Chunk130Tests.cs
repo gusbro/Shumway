@@ -16,11 +16,11 @@ namespace Shumway.Tests.Embedding;
 /// <c>entry.Name</c> / <c>entry.Arity</c> as it unwinds out of the
 /// impl, and <c>TranslateRuntimeError</c> reads from there. This works
 /// even when the throw originates in a sub-engine query whose
-/// <see cref="Engine"/> instance is gone by the time the parent's
+/// <see cref="Activation"/> instance is gone by the time the parent's
 /// <c>catch/3</c> handler runs.</item>
 /// <item>For a direct <c>throw new ShumwayPrologException(IsoError.X(...,
 /// engine))</c> from inside an impl, the <see cref="IsoError"/> factory
-/// reads <see cref="Engine.CurrentBuiltinName"/> (set by the same
+/// reads <see cref="Activation.CurrentBuiltinName"/> (set by the same
 /// dispatch right before calling the impl) and emits the indicator
 /// inline.</item>
 /// </list>
@@ -97,7 +97,7 @@ public class Chunk130Tests
         pe.Query("X = 1.");  // unification — no builtin dispatch.
         // Build a synthetic engine with CurrentBuiltinName primed to
         // exercise the factory directly.
-        var raw = new Engine
+        var raw = new Activation
         {
             CurrentBuiltinName = "frobnicate",
             CurrentBuiltinArity = 3,
@@ -124,10 +124,10 @@ public class Chunk130Tests
     [Fact]
     public void IsoError_EngineWithoutCurrentBuiltin_KeepsAnonymousContext()
     {
-        // Engine instance in hand but no builtin currently active — the
+        // Activation instance in hand but no builtin currently active — the
         // factory still gets to fall through to the var. The
         // current-builtin field is null on a fresh engine.
-        var raw = new Engine();
+        var raw = new Activation();
         Assert.Null(raw.CurrentBuiltinName);
         var err = IsoError.InstantiationError(raw);
         var ct = Assert.IsType<CompoundTerm>(err);

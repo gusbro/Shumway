@@ -10,7 +10,7 @@ public class CutTests
     [Fact]
     public void Cut_BarrierEqualsCurrentB_IsNoOp()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.PushChoicePoint(0, 0);
         int bBefore = engine.B;
         int stackBefore = engine.StackTop;
@@ -24,7 +24,7 @@ public class CutTests
     [Fact]
     public void Cut_DiscardsCpsAboveBarrier()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.PushChoicePoint(0, 0x100);
         int outer = engine.B;
         engine.PushChoicePoint(0, 0x200);
@@ -38,7 +38,7 @@ public class CutTests
     [Fact]
     public void Cut_ToNegativeOne_DiscardsAllCps()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.PushChoicePoint(0, 0);
         engine.PushChoicePoint(0, 0);
         Assert.NotEqual(-1, engine.B);
@@ -53,7 +53,7 @@ public class CutTests
     [InlineData(int.MinValue)]
     public void Cut_NegativeBarrierBelowMinusOne_Throws(int badBarrier)
     {
-        var engine = new Engine();
+        var engine = new Activation();
         Assert.Throws<ArgumentOutOfRangeException>(() => engine.Cut(badBarrier));
     }
 
@@ -66,7 +66,7 @@ public class CutTests
         // clause-entry snapshot). ISO semantics: cut commits to the
         // most recent *active* CP; if it's gone, the cut is a no-op.
         // Was an ArgumentOutOfRangeException pre-chunk-146.
-        var engine = new Engine();
+        var engine = new Activation();
         engine.PushChoicePoint(0, 0);
         int bBefore = engine.B;
         engine.Cut(engine.B + 100);
@@ -80,7 +80,7 @@ public class CutTests
     {
         // Setup so that the inner-CP region has bindings of vars created both before
         // and after the parent CP.
-        var engine = new Engine();
+        var engine = new Activation();
         int oldVar = engine.AllocateHeapUnbound();         // idx 0, "old" (pre-parent)
 
         engine.PushChoicePoint(0, 0);                       // parent: parentHeapTop = 1
@@ -109,7 +109,7 @@ public class CutTests
     [Fact]
     public void Cut_LeavesPreParentBindingsUntouched()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int v = engine.AllocateHeapUnbound();
         // Pre-existing trail entry from outside any CP (HB still 0 — won't actually trail).
         // Construct one manually via a CP/binding sequence.
@@ -130,7 +130,7 @@ public class CutTests
     [Fact]
     public void Cut_ToNegativeOne_EmptiesBindingTrail()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int v = engine.AllocateHeapUnbound();
         engine.PushChoicePoint(0, 0);
         engine.Bind(v, Cell.Atom(1));
@@ -148,7 +148,7 @@ public class CutTests
     [Fact]
     public void Cut_KeepsExtraEntriesForOldCells_DiscardsForNewCells()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int oldCell = engine.AllocateHeap(1);
         engine.SetHeap(oldCell, Cell.Atom(10));             // idx 0
 
@@ -178,7 +178,7 @@ public class CutTests
         // that UnwindTrails processes the extra BEFORE the binding — otherwise the binding
         // is rolled back first and the extra writes the intermediate (bound) value over
         // the unbound state, leaving the cell with the wrong final value.
-        var engine = new Engine();
+        var engine = new Activation();
         int cell = engine.AllocateHeapUnbound();             // idx 0
 
         engine.PushChoicePoint(0, 0);                         // parent at heap top = 1
@@ -210,7 +210,7 @@ public class CutTests
     {
         // Two ValueChange entries on the same cell. Reverse-order processing must restore
         // the original value through both.
-        var engine = new Engine();
+        var engine = new Activation();
         int cell = engine.AllocateHeap(1);
         engine.SetHeap(cell, Cell.Atom(10));                 // idx 0
 
@@ -238,7 +238,7 @@ public class CutTests
         // GetLevel captures _b0 (the procedure-entry barrier), NOT the current
         // B — so the captured value survives sub-goal calls that overwrite
         // the engine's B0 register.
-        var engine = new Engine();
+        var engine = new Activation();
         engine.PushChoicePoint(0, 0);
         engine.SetB0(-1);                                     // simulate "procedure entry saw no CPs"
         engine.Allocate(1);
@@ -253,7 +253,7 @@ public class CutTests
     [Fact]
     public void GetLevelThenCut_DiscardsCpsCreatedAfterCapture()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.PushChoicePoint(0, 0x100);                     // pre-procedure CP
         int outerB = engine.B;
         engine.SetB0(outerB);                                 // "procedure entered with B=outerB"
@@ -272,7 +272,7 @@ public class CutTests
     [Fact]
     public void GetLevel_NoEnvironment_Throws()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         Assert.Throws<InvalidOperationException>(() => engine.GetLevel(0));
     }
 
@@ -283,7 +283,7 @@ public class CutTests
     {
         // After Cut, the surviving (outer) CP must still be usable: TrustMe should
         // restore from it correctly.
-        var engine = new Engine();
+        var engine = new Activation();
         int v = engine.AllocateHeapUnbound();
 
         engine.PushChoicePoint(0, 0x100);                     // outer

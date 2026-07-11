@@ -17,7 +17,7 @@ namespace Shumway.Builtins;
 /// </list>
 ///
 /// <para>Cells stored here are snapshots taken at write time —
-/// see <c>Engine.SnapshotIntoHeap</c>. The store survives across
+/// see <c>Activation.SnapshotIntoHeap</c>. The store survives across
 /// queries on the hosting engine.</para>
 ///
 /// <para>Chunk 423 — keyed by ATOM ID, not name string. The id is what

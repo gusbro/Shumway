@@ -22,7 +22,7 @@ namespace Shumway.Builtins;
 /// </summary>
 public static class GlobalVarsBuiltins
 {
-    public static bool NbSetval(Engine engine)
+    public static bool NbSetval(Activation engine)
     {
         int nameId = ResolveAtomId(engine, engine.GetRegister(0));
         Cell value = Resolve(engine, engine.GetRegister(1));
@@ -37,7 +37,7 @@ public static class GlobalVarsBuiltins
         return true;
     }
 
-    public static bool NbGetval(Engine engine)
+    public static bool NbGetval(Activation engine)
     {
         int nameId = ResolveAtomId(engine, engine.GetRegister(0));
         if (!Globals(engine).TryGet(nameId, out Cell stored))
@@ -48,7 +48,7 @@ public static class GlobalVarsBuiltins
     /// <summary><c>nb_current(?Name, ?Value)</c> — enumerates the
     /// global var store; like nb_getval but doesn't throw on a
     /// missing entry.</summary>
-    public static bool NbCurrent(Engine engine)
+    public static bool NbCurrent(Activation engine)
     {
         Cell nameCell = Resolve(engine, engine.GetRegister(0));
         if (nameCell.Tag == Tag.Atom)
@@ -66,7 +66,7 @@ public static class GlobalVarsBuiltins
     }
 
     private static bool NbCurrentUnify(
-        Engine engine, (string Name, Cell Value)[] entries, int idx)
+        Activation engine, (string Name, Cell Value)[] entries, int idx)
     {
         var (name, value) = entries[idx];
         Cell nameCell = Cell.Atom(AtomTable.Intern(name, permanent: false).Id);
@@ -75,7 +75,7 @@ public static class GlobalVarsBuiltins
         return true;
     }
 
-    public static bool BSetval(Engine engine)
+    public static bool BSetval(Activation engine)
     {
         int nameId = ResolveAtomId(engine, engine.GetRegister(0));
         Cell value = Resolve(engine, engine.GetRegister(1));
@@ -83,7 +83,7 @@ public static class GlobalVarsBuiltins
         return true;
     }
 
-    public static bool BGetval(Engine engine)
+    public static bool BGetval(Activation engine)
     {
         int nameId = ResolveAtomId(engine, engine.GetRegister(0));
         if (!Globals(engine).TryGet(nameId, out Cell stored))
@@ -93,7 +93,7 @@ public static class GlobalVarsBuiltins
 
     // ---------- helpers ----------
 
-    private static GlobalVarStore Globals(Engine engine)
+    private static GlobalVarStore Globals(Activation engine)
     {
         if (engine.Host is not IGlobalVarHost host)
             throw new InvalidOperationException(
@@ -105,7 +105,7 @@ public static class GlobalVarsBuiltins
     /// <summary>Chunk 423 — the store is keyed by atom id (see
     /// <see cref="GlobalVarStore"/>), so the builtins resolve the key
     /// to its id and never touch the name string on the hot path.</summary>
-    private static int ResolveAtomId(Engine engine, Cell cell)
+    private static int ResolveAtomId(Activation engine, Cell cell)
     {
         Cell d = Resolve(engine, cell);
         if (d.Tag == Tag.Ref)
@@ -115,7 +115,7 @@ public static class GlobalVarsBuiltins
         return d.AsAtomId;
     }
 
-    private static Cell Resolve(Engine engine, Cell c)
+    private static Cell Resolve(Activation engine, Cell c)
     {
         if (c.Tag != Tag.Ref) return c;
         return engine.GetHeap(engine.Deref(c.AsHeapIndex));

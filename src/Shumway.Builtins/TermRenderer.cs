@@ -19,17 +19,17 @@ namespace Shumway.Builtins;
 /// </summary>
 public static class TermRenderer
 {
-    public static void Render(Engine engine, Cell cell, TextWriter output)
+    public static void Render(Activation engine, Cell cell, TextWriter output)
         => Render(engine, cell, output, TermRenderOptions.Default);
 
-    public static void Render(Engine engine, Cell cell, TextWriter output, TermRenderOptions options)
+    public static void Render(Activation engine, Cell cell, TextWriter output, TermRenderOptions options)
         => Render(engine, cell, output, options, maxPriority: 1200);
 
     /// <summary>Renders <paramref name="cell"/> bounded by
     /// <paramref name="maxPriority"/>: if the term itself is an operator
     /// of higher priority it gets wrapped in parens so the result is
     /// re-parseable. Top-level callers pass 1200 (no bound).</summary>
-    public static void Render(Engine engine, Cell cell, TextWriter output,
+    public static void Render(Activation engine, Cell cell, TextWriter output,
         TermRenderOptions options, int maxPriority)
     {
         int derefAddr = Resolve(engine, ref cell);
@@ -84,7 +84,7 @@ public static class TermRenderer
         }
     }
 
-    private static int Resolve(Engine engine, ref Cell cell)
+    private static int Resolve(Activation engine, ref Cell cell)
     {
         // A bare ATTVAR cell (chunk 77) carries its own home index as
         // payload — surface that as the deref address and leave the
@@ -96,7 +96,7 @@ public static class TermRenderer
         return addr;
     }
 
-    private static void RenderCompound(Engine engine, Cell strCell, TextWriter output, TermRenderOptions options, int maxPriority)
+    private static void RenderCompound(Activation engine, Cell strCell, TextWriter output, TermRenderOptions options, int maxPriority)
     {
         int functorIdx = strCell.AsHeapIndex;
         Cell functorCell = engine.GetHeap(functorIdx);
@@ -193,7 +193,7 @@ public static class TermRenderer
         output.Write(')');
     }
 
-    private static void RenderList(Engine engine, Cell lisCell, TextWriter output, TermRenderOptions options)
+    private static void RenderList(Activation engine, Cell lisCell, TextWriter output, TermRenderOptions options)
     {
         output.Write('[');
         bool first = true;

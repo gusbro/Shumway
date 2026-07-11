@@ -14,7 +14,7 @@ public class CompoundUnifyTests
     [Fact]
     public void Unify_CompoundsSameFunctorMatchingAtomArgs_Succeeds()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int foo2 = FunctorTable.Intern(atomId: 100, arity: 2);
 
         int a = BuildCompound(engine, foo2, Cell.Atom(1), Cell.Atom(2));
@@ -25,7 +25,7 @@ public class CompoundUnifyTests
     [Fact]
     public void Unify_CompoundsSameFunctorMismatchedArg_Fails()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int foo2 = FunctorTable.Intern(atomId: 100, arity: 2);
 
         int a = BuildCompound(engine, foo2, Cell.Atom(1), Cell.Atom(2));
@@ -36,7 +36,7 @@ public class CompoundUnifyTests
     [Fact]
     public void Unify_CompoundsDifferentFunctorName_Fails()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int foo2 = FunctorTable.Intern(atomId: 100, arity: 2);
         int bar2 = FunctorTable.Intern(atomId: 200, arity: 2);
 
@@ -48,7 +48,7 @@ public class CompoundUnifyTests
     [Fact]
     public void Unify_CompoundsSameNameDifferentArity_Fails()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         // foo/2 and foo/3 are distinct functors — FunctorTable.Intern keys on the pair.
         int foo2 = FunctorTable.Intern(atomId: 100, arity: 2);
         int foo3 = FunctorTable.Intern(atomId: 100, arity: 3);
@@ -62,7 +62,7 @@ public class CompoundUnifyTests
     [Fact]
     public void Unify_CompoundWithVarArg_BindsVar()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int foo2 = FunctorTable.Intern(atomId: 100, arity: 2);
 
         // foo(X, atom(2)) where X is inline-unbound at heap[xPos]
@@ -81,7 +81,7 @@ public class CompoundUnifyTests
     [Fact]
     public void Unify_CompoundsWithMatchingVarArgs_BindsBothToSameTarget()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int foo2 = FunctorTable.Intern(atomId: 100, arity: 2);
 
         // foo(X, X) — both arg slots reference the same var via REF.
@@ -104,7 +104,7 @@ public class CompoundUnifyTests
     [Fact]
     public void Unify_CompoundsWithVarSharedFails_WhenTargetsDisagree()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int foo2 = FunctorTable.Intern(atomId: 100, arity: 2);
 
         // foo(X, X)
@@ -125,7 +125,7 @@ public class CompoundUnifyTests
     [Fact]
     public void Unify_NestedCompoundsStructurallyEqual_Succeeds()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int foo2 = FunctorTable.Intern(atomId: 100, arity: 2);
         int bar1 = FunctorTable.Intern(atomId: 200, arity: 1);
 
@@ -142,7 +142,7 @@ public class CompoundUnifyTests
     [Fact]
     public void Unify_NestedCompoundsInnerMismatch_Fails()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int foo2 = FunctorTable.Intern(atomId: 100, arity: 2);
         int bar1 = FunctorTable.Intern(atomId: 200, arity: 1);
 
@@ -160,7 +160,7 @@ public class CompoundUnifyTests
     {
         // Demonstrates the WAM convention: Unify makes bindings as it goes; on overall
         // failure, the caller is responsible for trail unwind back to the pre-unify mark.
-        var engine = new Engine();
+        var engine = new Activation();
         int foo2 = FunctorTable.Intern(atomId: 100, arity: 2);
 
         // foo(X, atom(100))
@@ -191,7 +191,7 @@ public class CompoundUnifyTests
     [Fact]
     public void Unify_TwoStrsDerefToSameAddress_TrueViaShortCircuit()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int foo2 = FunctorTable.Intern(atomId: 100, arity: 2);
         int s = BuildCompound(engine, foo2, Cell.Atom(1), Cell.Atom(2));
         // A REF cell pointing at the STR — Deref normalises both arguments to `s`.
@@ -206,7 +206,7 @@ public class CompoundUnifyTests
     [Fact]
     public void Unify_TwoIdenticalLists_Succeeds()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int a = BuildList(engine, new[] { Cell.Atom(1), Cell.Atom(2), Cell.Atom(3) });
         int b = BuildList(engine, new[] { Cell.Atom(1), Cell.Atom(2), Cell.Atom(3) });
         Assert.True(engine.Unify(a, b));
@@ -215,7 +215,7 @@ public class CompoundUnifyTests
     [Fact]
     public void Unify_ListsDifferAtFirstElement_Fails()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int a = BuildList(engine, new[] { Cell.Atom(1), Cell.Atom(2) });
         int b = BuildList(engine, new[] { Cell.Atom(99), Cell.Atom(2) });
         Assert.False(engine.Unify(a, b));
@@ -224,7 +224,7 @@ public class CompoundUnifyTests
     [Fact]
     public void Unify_ListsDifferAtLaterElement_Fails()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int a = BuildList(engine, new[] { Cell.Atom(1), Cell.Atom(2), Cell.Atom(3) });
         int b = BuildList(engine, new[] { Cell.Atom(1), Cell.Atom(2), Cell.Atom(99) });
         Assert.False(engine.Unify(a, b));
@@ -233,7 +233,7 @@ public class CompoundUnifyTests
     [Fact]
     public void Unify_ListsOfDifferentLengths_Fails()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         // [1, 2] tail is a LIS cell; [1] tail is the [] atom — different tags, no match.
         int a = BuildList(engine, new[] { Cell.Atom(1), Cell.Atom(2) });
         int b = BuildList(engine, new[] { Cell.Atom(1) });
@@ -243,7 +243,7 @@ public class CompoundUnifyTests
     [Fact]
     public void Unify_ListWithVarHead_BindsVar()
     {
-        var engine = new Engine();
+        var engine = new Activation();
 
         // Build [X, atom(2)] with the var inlined as the head.
         int a = engine.AllocateHeap(5);
@@ -263,7 +263,7 @@ public class CompoundUnifyTests
     [Fact]
     public void Unify_ListWithVarTail_BindsTail()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         // [1 | T] where T is an unbound var inlined as the tail.
         int a = engine.AllocateHeap(3);
         engine.SetHeap(a, Cell.Lis(a + 1));
@@ -282,7 +282,7 @@ public class CompoundUnifyTests
     [Fact]
     public void Unify_EmptyListAtomVsEmptyListAtom_Succeeds()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         // [] is just an atom, so unifying [] with [] is plain atom equality.
         int a = engine.AllocateHeap(1);
         engine.SetHeap(a, Cell.Atom(AtomTable.EmptyListId));
@@ -294,7 +294,7 @@ public class CompoundUnifyTests
     [Fact]
     public void Unify_LisVsAtom_Fails()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int l = BuildList(engine, new[] { Cell.Atom(1) });
         int atomSlot = engine.AllocateHeap(1);
         engine.SetHeap(atomSlot, Cell.Atom(99));
@@ -305,7 +305,7 @@ public class CompoundUnifyTests
 
     /// <summary>Lays out a compound term as STR + FUNCTOR + args contiguously. Returns
     /// the heap index of the STR cell.</summary>
-    private static int BuildCompound(Engine engine, int functorId, params Cell[] args)
+    private static int BuildCompound(Activation engine, int functorId, params Cell[] args)
     {
         int s = engine.AllocateHeap(2 + args.Length);
         engine.SetHeap(s, Cell.Str(s + 1));
@@ -318,7 +318,7 @@ public class CompoundUnifyTests
     /// <summary>Lays out a proper list <c>[e0, e1, ...]</c> with the supplied elements as
     /// head cells, terminated by the empty-list atom. Returns the heap index of the
     /// outermost LIS cell.</summary>
-    private static int BuildList(Engine engine, Cell[] elements)
+    private static int BuildList(Activation engine, Cell[] elements)
     {
         if (elements.Length == 0)
         {

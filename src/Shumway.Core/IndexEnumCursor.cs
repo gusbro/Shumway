@@ -19,10 +19,10 @@ public sealed class IndexEnumCursor
     private readonly int _count;
     private readonly int _arity;
     private readonly int _returnPc;
-    private readonly Func<Engine, int, bool> _tryAt;
-    private readonly Func<Engine, int, bool> _resume;
+    private readonly Func<Activation, int, bool> _tryAt;
+    private readonly Func<Activation, int, bool> _resume;
 
-    private IndexEnumCursor(int count, int arity, int returnPc, Func<Engine, int, bool> tryAt)
+    private IndexEnumCursor(int count, int arity, int returnPc, Func<Activation, int, bool> tryAt)
     {
         _count = count;
         _arity = arity;
@@ -36,7 +36,7 @@ public sealed class IndexEnumCursor
     /// cursor that yields the rest on backtracking. Returns false for an empty
     /// set or when candidate 0 fails with no successor.</summary>
     public static bool Start(
-        Engine engine, int count, int arity, int returnPc, Func<Engine, int, bool> tryAt)
+        Activation engine, int count, int arity, int returnPc, Func<Activation, int, bool> tryAt)
     {
         if (count <= 0) return false;
         var c = new IndexEnumCursor(count, arity, returnPc, tryAt);
@@ -45,7 +45,7 @@ public sealed class IndexEnumCursor
         return tryAt(engine, 0);
     }
 
-    private bool Resume(Engine engine, int _)
+    private bool Resume(Activation engine, int _)
     {
         int i = _index++;
         if (_index < _count) engine.PushBuiltinChoicePoint(_resume, _arity);

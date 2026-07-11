@@ -9,9 +9,9 @@ namespace Shumway.Tests.Embedding;
 /// Chunk 57: env-trimming infrastructure. The compile-time analysis
 /// (live-perms-after-each-goal) emits accurate <c>num_live_perms</c>
 /// operands in <c>Call</c> and <c>CallBuiltin</c> instructions. The
-/// runtime <see cref="Engine.TrimEnv"/> is currently a no-op pending
+/// runtime <see cref="Activation.TrimEnv"/> is currently a no-op pending
 /// a focused soundness review of its interaction with Tier-1 IL
-/// promotion (see the method's XML doc on Engine.cs); these tests
+/// promotion (see the method's XML doc on Activation.cs); these tests
 /// pin the static analysis so the operand stays meaningful for when
 /// the runtime gate flips on.
 ///

@@ -40,7 +40,7 @@ public static class IlDebugMarkers
         return (AtomTable.GetById(atomId)?.Name ?? "?") + "/" + arity;
     }
 
-    public static void Check_PutValueY(Engine engine, int ownerFid, int slot, int arg, int pc)
+    public static void Check_PutValueY(Activation engine, int ownerFid, int slot, int arg, int pc)
     {
         var xc = engine.GetRegister(arg);
         var yc = engine.GetY(slot);
@@ -50,7 +50,7 @@ public static class IlDebugMarkers
             System.Console.Error.WriteLine($"[il-debug] {LabelFor(ownerFid)} pc=0x{pc:X4} put_value_y slot={slot} arg={arg}: Y[{slot}]={Describe(engine, yc)} (E={engine.E})");
     }
 
-    public static void Check_PutValueX(Engine engine, int ownerFid, int src, int arg, int pc)
+    public static void Check_PutValueX(Activation engine, int ownerFid, int src, int arg, int pc)
     {
         var s = engine.GetRegister(src);
         var d = engine.GetRegister(arg);
@@ -58,7 +58,7 @@ public static class IlDebugMarkers
             Fail(ownerFid, pc, "put_value_x", $"src={src} arg={arg}: X[{src}]={Describe(engine, s)} != X[{arg}]={Describe(engine, d)}");
     }
 
-    public static void Check_GetVariableY(Engine engine, int ownerFid, int slot, int arg, int pc)
+    public static void Check_GetVariableY(Activation engine, int ownerFid, int slot, int arg, int pc)
     {
         var yc = engine.GetY(slot);
         var xc = engine.GetRegister(arg);
@@ -66,7 +66,7 @@ public static class IlDebugMarkers
             Fail(ownerFid, pc, "get_variable_y", $"slot={slot} arg={arg}: Y[{slot}]={Describe(engine, yc)} != X[{arg}]={Describe(engine, xc)}");
     }
 
-    public static void Check_GetVariableX(Engine engine, int ownerFid, int dest, int arg, int pc)
+    public static void Check_GetVariableX(Activation engine, int ownerFid, int dest, int arg, int pc)
     {
         var s = engine.GetRegister(arg);
         var d = engine.GetRegister(dest);
@@ -74,7 +74,7 @@ public static class IlDebugMarkers
             Fail(ownerFid, pc, "get_variable_x", $"dest={dest} arg={arg}: X[{dest}]={Describe(engine, d)} != X[{arg}]={Describe(engine, s)}");
     }
 
-    public static void Check_PutVariableY(Engine engine, int ownerFid, int slot, int arg, int pc)
+    public static void Check_PutVariableY(Activation engine, int ownerFid, int slot, int arg, int pc)
     {
         var xc = engine.GetRegister(arg);
         var yc = engine.GetY(slot);
@@ -84,7 +84,7 @@ public static class IlDebugMarkers
             Fail(ownerFid, pc, "put_variable_y", $"X[{arg}] tag={xc.Tag} (expected Ref)");
     }
 
-    public static void Check_PutVariableX(Engine engine, int ownerFid, int dest, int arg, int pc)
+    public static void Check_PutVariableX(Activation engine, int ownerFid, int dest, int arg, int pc)
     {
         var xc = engine.GetRegister(arg);
         var dc = engine.GetRegister(dest);
@@ -94,7 +94,7 @@ public static class IlDebugMarkers
             Fail(ownerFid, pc, "put_variable_x", $"X[{arg}] tag={xc.Tag} (expected Ref)");
     }
 
-    public static void Check_PreCall(Engine engine, int ownerFid, int siteFunctorId, int arity, int pc)
+    public static void Check_PreCall(Activation engine, int ownerFid, int siteFunctorId, int arity, int pc)
     {
         if (!LogTrace) return;
         var sb = new System.Text.StringBuilder();
@@ -111,7 +111,7 @@ public static class IlDebugMarkers
         System.Console.Error.WriteLine(sb.ToString());
     }
 
-    public static void Check_PostCall(Engine engine, int ownerFid, int siteFunctorId, int arity, int pc)
+    public static void Check_PostCall(Activation engine, int ownerFid, int siteFunctorId, int arity, int pc)
     {
         if (!LogTrace) return;
         var sb = new System.Text.StringBuilder();
@@ -128,13 +128,13 @@ public static class IlDebugMarkers
         System.Console.Error.WriteLine(sb.ToString());
     }
 
-    public static void Check_Allocate(Engine engine, int ownerFid, int n, int pc, int preE)
+    public static void Check_Allocate(Activation engine, int ownerFid, int n, int pc, int preE)
     {
         if (engine.E < 0 || engine.E == preE)
             Fail(ownerFid, pc, "allocate", $"_e did not advance from {preE} (current {engine.E})");
     }
 
-    public static void Check_Deallocate(Engine engine, int ownerFid, int preE, int pc)
+    public static void Check_Deallocate(Activation engine, int ownerFid, int preE, int pc)
     {
         if (engine.E == preE)
             Fail(ownerFid, pc, "deallocate", $"_e unchanged at {preE} — frame chain not popped");
@@ -147,7 +147,7 @@ public static class IlDebugMarkers
         throw new System.InvalidOperationException(msg);
     }
 
-    private static string Describe(Engine engine, Cell c)
+    private static string Describe(Activation engine, Cell c)
     {
         switch (c.Tag)
         {

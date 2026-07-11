@@ -40,7 +40,7 @@ internal static class FindallSnapshot
     /// relative cell image, or returns <c>null</c> if it holds a value leaf and
     /// the caller should fall back to the AST path. The image's slot 0 is the
     /// root value cell.</summary>
-    public static Cell[]? TrySnapshotRegister(Engine engine, int regIdx)
+    public static Cell[]? TrySnapshotRegister(Activation engine, int regIdx)
     {
         // Pooled, clear-on-use scratch (snapshots never nest). Only the ToArray
         // below allocates per solution — the detached backtrack-safe image.
@@ -66,7 +66,7 @@ internal static class FindallSnapshot
     /// returns the root value cell. A block copy: every index-bearing cell is
     /// shifted by the allocation base, so the image's relative addressing
     /// becomes absolute. Fresh vars (self-referential REFs) stay unbound.</summary>
-    public static Cell EmitSnapshot(Engine engine, Cell[] snap)
+    public static Cell EmitSnapshot(Activation engine, Cell[] snap)
     {
         int b = engine.AllocateHeap(snap.Length);
         for (int i = 0; i < snap.Length; i++)
@@ -92,7 +92,7 @@ internal static class FindallSnapshot
     /// <summary>Copies a register / argument value cell, appending any
     /// sub-structure to <paramref name="cells"/> and returning the value cell
     /// (relative addressing). Mirrors <see cref="HeapTermCopy.CopyRegisterValue"/>.</summary>
-    private static Cell CopyValue(Engine engine, Cell rc,
+    private static Cell CopyValue(Activation engine, Cell rc,
         List<Cell> cells, Dictionary<int, int> varMap, Dictionary<int, int> structMap)
     {
         switch (rc.Tag)
@@ -114,7 +114,7 @@ internal static class FindallSnapshot
         }
     }
 
-    private static Cell CopyAt(Engine engine, int addr,
+    private static Cell CopyAt(Activation engine, int addr,
         List<Cell> cells, Dictionary<int, int> varMap, Dictionary<int, int> structMap)
     {
         int a = engine.Deref(addr);
@@ -149,7 +149,7 @@ internal static class FindallSnapshot
     /// <summary><paramref name="fAddr"/> is the source FUNCTOR cell address.
     /// Mirrors <see cref="HeapTermCopy.CopyStr"/>: image slot layout
     /// [STR(base+1)][Functor][arg0..], value cell REF(base).</summary>
-    private static Cell CopyStr(Engine engine, int fAddr,
+    private static Cell CopyStr(Activation engine, int fAddr,
         List<Cell> cells, Dictionary<int, int> varMap, Dictionary<int, int> structMap)
     {
         if (structMap.TryGetValue(fAddr, out int cached)) return Cell.Ref(cached);
@@ -167,7 +167,7 @@ internal static class FindallSnapshot
     /// <summary><paramref name="firstHead"/> is the source cons head-cell
     /// address. Mirrors <see cref="HeapTermCopy.CopyLis"/> — iterative spine
     /// walk (chunk 111) so a long list does not recurse per element.</summary>
-    private static Cell CopyLis(Engine engine, int firstHead,
+    private static Cell CopyLis(Activation engine, int firstHead,
         List<Cell> cells, Dictionary<int, int> varMap, Dictionary<int, int> structMap)
     {
         if (structMap.TryGetValue(firstHead, out int cachedFirst))

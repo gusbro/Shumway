@@ -168,13 +168,13 @@ public class Phase33Wave1Tests
             Shumway.Embedding.PoolReusePolicy.FreshEngine);
         using (var lease = pool.Rent())
         {
-            Assert.True(lease.Engine.Query("assertz(fact(9)), fact(9).").Success);
+            Assert.True(lease.Activation.Query("assertz(fact(9)), fact(9).").Success);
         }
         using (var lease = pool.Rent())
         {
             // A fresh engine: the previous rental's assert is NOT visible.
-            Assert.False(lease.Engine.Query("fact(9).").Success);
-            Assert.True(lease.Engine.Query("base(1).").Success);
+            Assert.False(lease.Activation.Query("fact(9).").Success);
+            Assert.True(lease.Activation.Query("base(1).").Success);
         }
     }
 
@@ -184,9 +184,9 @@ public class Phase33Wave1Tests
         using var pool = Shumway.Embedding.EnginePool.FromSource(
             ":- dynamic(fact/1).\nbase(1).\n", maxSize: 1);   // default ReuseState
         using (var lease = pool.Rent())
-            Assert.True(lease.Engine.Query("assertz(fact(9)).").Success);
+            Assert.True(lease.Activation.Query("assertz(fact(9)).").Success);
         using (var lease = pool.Rent())
-            Assert.True(lease.Engine.Query("fact(9).").Success);   // documented carry-over
+            Assert.True(lease.Activation.Query("fact(9).").Success);   // documented carry-over
     }
 
     // ---- E11b: an unknown scalar return type in a ':- c' prototype fails loudly at

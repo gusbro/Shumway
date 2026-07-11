@@ -3,7 +3,7 @@ using Shumway.Core;
 namespace Shumway.Builtins;
 
 /// <summary>
-/// Basic I/O builtins. All output goes through <see cref="Engine.Out"/>,
+/// Basic I/O builtins. All output goes through <see cref="Activation.Out"/>,
 /// which defaults to <see cref="System.Console.Out"/> but can be swapped
 /// for a <see cref="System.IO.StringWriter"/> (or any other writer) by the
 /// embedding caller — particularly useful for capturing program output in
@@ -15,7 +15,7 @@ public static class IOBuiltins
     /// using operator-form rendering for known operators (no trailing
     /// newline). Atom quoting is off; pass <c>quoted(true)</c> through
     /// <c>write_term/2</c> if you need the parseable form.</summary>
-    public static bool Write(Engine engine)
+    public static bool Write(Activation engine)
     {
         TermRenderer.Render(engine, engine.GetRegister(0), CurrentWriter(engine), DefaultOptions(engine));
         return true;
@@ -24,10 +24,10 @@ public static class IOBuiltins
     /// <summary>The current output writer. Prefers the chunk-140
     /// per-engine stream registry's current_output (so
     /// <c>set_output/1</c> redirects all the write-family builtins);
-    /// falls back to <see cref="Engine.Out"/> for engines without a
+    /// falls back to <see cref="Activation.Out"/> for engines without a
     /// registry. Refuses a binary stream — text I/O on a binary
     /// stream is permission_error(output, binary_stream, _).</summary>
-    private static System.IO.TextWriter CurrentWriter(Engine engine)
+    private static System.IO.TextWriter CurrentWriter(Activation engine)
     {
         if (engine.Streams is { } reg)
         {
@@ -42,8 +42,8 @@ public static class IOBuiltins
     /// <summary><c>nl</c> — writes a single newline character to the
     /// current output stream. With the per-engine stream registry
     /// wired (chunk 140), <c>set_output/1</c> changes where this
-    /// writes; without one, falls back to <see cref="Engine.Out"/>.</summary>
-    public static bool Nl(Engine engine)
+    /// writes; without one, falls back to <see cref="Activation.Out"/>.</summary>
+    public static bool Nl(Activation engine)
     {
         var w = engine.Streams?.CurrentOutput.Writer ?? engine.Out;
         w.WriteLine();
@@ -51,7 +51,7 @@ public static class IOBuiltins
     }
 
     /// <summary><c>writeln(X)</c> — equivalent to <c>write(X), nl</c>.</summary>
-    public static bool Writeln(Engine engine)
+    public static bool Writeln(Activation engine)
     {
         var w = CurrentWriter(engine);
         TermRenderer.Render(engine, engine.GetRegister(0), w, DefaultOptions(engine));
@@ -63,7 +63,7 @@ public static class IOBuiltins
     /// quoted form: atoms and strings get quote characters where
     /// needed so the output reads back. Equivalent to
     /// <c>write_term(X, [quoted(true), numbervars(true)])</c>.</summary>
-    public static bool Writeq1(Engine engine)
+    public static bool Writeq1(Activation engine)
     {
         var opts = QuotedOptions(engine);
         TermRenderer.Render(engine, engine.GetRegister(0), CurrentWriter(engine), opts);
@@ -72,7 +72,7 @@ public static class IOBuiltins
 
     /// <summary><c>writeq(+Stream, X)</c> — stream-aware writeq.
     /// ISO §8.14.5.</summary>
-    public static bool Writeq2(Engine engine)
+    public static bool Writeq2(Activation engine)
     {
         var h = StreamBuiltins.ResolveStream(engine, engine.GetRegister(0));
         if (h.IsBinary)
@@ -84,7 +84,7 @@ public static class IOBuiltins
         return true;
     }
 
-    private static TermRenderOptions QuotedOptions(Engine engine) =>
+    private static TermRenderOptions QuotedOptions(Activation engine) =>
         new TermRenderOptions
         {
             Operators = engine.Operators,
@@ -92,7 +92,7 @@ public static class IOBuiltins
             Numbervars = true,
         };
 
-    private static TermRenderOptions DefaultOptions(Engine engine) =>
+    private static TermRenderOptions DefaultOptions(Activation engine) =>
         new TermRenderOptions { Operators = engine.Operators };
 
     /// <summary><c>write_term(Term, Options)</c> — writes <c>Term</c>
@@ -101,7 +101,7 @@ public static class IOBuiltins
     /// Any other option name is silently ignored — Phase 1 doesn't yet
     /// support the full ISO menu, and silent skipping matches what
     /// SWI does for unknown options.</summary>
-    public static bool WriteTerm(Engine engine)
+    public static bool WriteTerm(Activation engine)
     {
         var options = ReadWriteTermOptions(engine, optsReg: 1);
         TermRenderer.Render(engine, engine.GetRegister(0), CurrentWriter(engine), options);
@@ -110,7 +110,7 @@ public static class IOBuiltins
 
     /// <summary><c>write_term(+Stream, +Term, +Options)</c> — ISO
     /// §8.14.3.</summary>
-    public static bool WriteTerm3(Engine engine)
+    public static bool WriteTerm3(Activation engine)
     {
         var h = StreamBuiltins.ResolveStream(engine, engine.GetRegister(0));
         if (h.IsBinary)
@@ -122,7 +122,7 @@ public static class IOBuiltins
         return true;
     }
 
-    private static TermRenderOptions ReadWriteTermOptions(Engine engine, int optsReg)
+    private static TermRenderOptions ReadWriteTermOptions(Activation engine, int optsReg)
     {
         var options = new TermRenderOptions { Operators = engine.Operators };
         Cell optsCell = Resolve(engine, engine.GetRegister(optsReg));
@@ -136,7 +136,7 @@ public static class IOBuiltins
         return options;
     }
 
-    private static void ApplyOption(Engine engine, Cell optCell, TermRenderOptions options)
+    private static void ApplyOption(Activation engine, Cell optCell, TermRenderOptions options)
     {
         if (optCell.Tag != Tag.Str) return;
         int functorIdx = optCell.AsHeapIndex;
@@ -165,7 +165,7 @@ public static class IOBuiltins
     /// still-unbound <c>Var</c>'s dereferenced heap index. A bound Var, a
     /// non-atom Name, or a malformed pair is skipped (SWI is lenient
     /// here).</summary>
-    private static void ApplyVariableNames(Engine engine, Cell listCell, TermRenderOptions options)
+    private static void ApplyVariableNames(Activation engine, Cell listCell, TermRenderOptions options)
     {
         Cell cur = Resolve(engine, listCell);
         while (cur.Tag == Tag.Lis)
@@ -196,7 +196,7 @@ public static class IOBuiltins
 
     /// <summary>Dereferences <paramref name="varCell"/>; returns its heap
     /// index when it is still an unbound variable, or -1 otherwise.</summary>
-    private static int ResolveVarAddr(Engine engine, Cell varCell)
+    private static int ResolveVarAddr(Activation engine, Cell varCell)
     {
         if (varCell.Tag == Tag.AttVar) return varCell.AsHeapIndex;
         if (varCell.Tag != Tag.Ref) return -1;
@@ -213,7 +213,7 @@ public static class IOBuiltins
     /// form. Phase 1 aliases to <c>write/1</c>; the canonical-form switch
     /// (quoting special characters, qualifying operators) will land with
     /// <c>TermRenderer</c>'s option-aware rewrite.</summary>
-    public static bool WriteCanonical(Engine engine)
+    public static bool WriteCanonical(Activation engine)
     {
         TermRenderer.Render(engine, engine.GetRegister(0), CurrentWriter(engine),
             CanonicalOptions(engine));
@@ -221,7 +221,7 @@ public static class IOBuiltins
     }
 
     /// <summary><c>write_canonical(+Stream, +Term)</c> — ISO §8.14.6.</summary>
-    public static bool WriteCanonical2(Engine engine)
+    public static bool WriteCanonical2(Activation engine)
     {
         var h = StreamBuiltins.ResolveStream(engine, engine.GetRegister(0));
         if (h.IsBinary)
@@ -233,7 +233,7 @@ public static class IOBuiltins
         return true;
     }
 
-    private static TermRenderOptions CanonicalOptions(Engine engine) =>
+    private static TermRenderOptions CanonicalOptions(Activation engine) =>
         new TermRenderOptions
         {
             Operators = engine.Operators,
@@ -244,7 +244,7 @@ public static class IOBuiltins
     /// <summary><c>print(X)</c> — ISO defines this as a portray/1 hook
     /// fallback to <c>write/1</c>. Phase 1 implements only the
     /// <c>write/1</c> fallback path.</summary>
-    public static bool Print(Engine engine)
+    public static bool Print(Activation engine)
     {
         TermRenderer.Render(engine, engine.GetRegister(0), CurrentWriter(engine),
             DefaultOptions(engine));
@@ -263,13 +263,13 @@ public static class IOBuiltins
     /// </list>
     /// <para>The format string may be an atom or a PSTR. The args list
     /// must be a proper list — pass <c>[]</c> when no args are needed.</para></summary>
-    public static bool Format(Engine engine) =>
+    public static bool Format(Activation engine) =>
         FormatImpl(engine, engine.Out, fmtReg: 0, argsReg: 1, "format/2");
 
     /// <summary><c>format(Stream, FormatString, Args)</c> — stream-aware
     /// variant of <see cref="Format"/>. The stream handle must be a
     /// FOREIGN cell wrapping a <see cref="System.IO.StreamWriter"/>.</summary>
-    public static bool Format3(Engine engine)
+    public static bool Format3(Activation engine)
     {
         // Chunk 140a refactor: streams are StreamHandle-wrapped via
         // the per-engine StreamRegistry. Resolve through StreamBuiltins
@@ -280,7 +280,7 @@ public static class IOBuiltins
         return FormatImpl(engine, h.Writer!, fmtReg: 1, argsReg: 2, "format/3");
     }
 
-    private static bool FormatImpl(Engine engine, System.IO.TextWriter output, int fmtReg, int argsReg, string name)
+    private static bool FormatImpl(Activation engine, System.IO.TextWriter output, int fmtReg, int argsReg, string name)
     {
         string fmt = ReadStringArg(engine, engine.GetRegister(fmtReg), name);
         var args = ReadProperListAsCells(engine, engine.GetRegister(argsReg), name);
@@ -534,7 +534,7 @@ public static class IOBuiltins
         return args[idx++];
     }
 
-    private static string ReadStringArg(Engine engine, Cell c, string builtinName)
+    private static string ReadStringArg(Activation engine, Cell c, string builtinName)
     {
         Cell d = Resolve(engine, c);
         if (d.Tag == Tag.Atom)
@@ -548,7 +548,7 @@ public static class IOBuiltins
         throw new PrologRuntimeException("type_error", "atom");
     }
 
-    private static List<Cell> ReadProperListAsCells(Engine engine, Cell c, string builtinName)
+    private static List<Cell> ReadProperListAsCells(Activation engine, Cell c, string builtinName)
     {
         var result = new List<Cell>();
         Cell cur = Resolve(engine, c);
@@ -565,7 +565,7 @@ public static class IOBuiltins
         return result;
     }
 
-    private static Cell Resolve(Engine engine, Cell c)
+    private static Cell Resolve(Activation engine, Cell c)
     {
         if (c.Tag != Tag.Ref) return c;
         return engine.GetHeap(engine.Deref(c.AsHeapIndex));

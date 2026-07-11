@@ -98,7 +98,7 @@ public class Chunk150Tests
     }
 
     // The per-engine PrologEngine doesn't track FreeChunks itself —
-    // the free-list lives on the per-query Engine because the
+    // the free-list lives on the per-query Activation because the
     // program buffer it refers to is per-query. Across queries the
     // program is rebuilt from scratch (from _dynamicClauses, which
     // only holds live clauses), so a cross-query free-list would

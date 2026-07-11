@@ -30,7 +30,7 @@ public class PstrOpcodeTests
     [Fact]
     public void PutPstr_SetsRegisterToRefAtPstrHeader()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine, new[] { "hello" });
 
         var code = BuildCode(Opcode.PutPstr, 0, 0, Opcode.Halt);
@@ -49,7 +49,7 @@ public class PstrOpcodeTests
     [Fact]
     public void PutPstr_EmptyStringLiteral_ProducesZeroLengthPstr()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine, new[] { "" });
 
         var code = BuildCode(Opcode.PutPstr, 0, 0, Opcode.Halt);
@@ -62,7 +62,7 @@ public class PstrOpcodeTests
     [Fact]
     public void GetPstr_OnUnboundRegister_BindsItToTheLiteral()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int x0 = engine.AllocateHeapUnbound();
         engine.SetRegister(0, Cell.Ref(x0));
 
@@ -82,7 +82,7 @@ public class PstrOpcodeTests
     [Fact]
     public void GetPstr_AgainstMatchingPstr_Succeeds()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine, new[] { "abc" });
 
         // put_pstr "abc" → X[0], then get_pstr "abc" against X[0] should re-unify cleanly.
@@ -96,7 +96,7 @@ public class PstrOpcodeTests
     [Fact]
     public void GetPstr_AgainstMismatchedPstr_Fails()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine, new[] { "abc", "xyz" });
 
         var code = BuildCode(
@@ -109,7 +109,7 @@ public class PstrOpcodeTests
     [Fact]
     public void GetPstr_LiteralIdOutOfRange_Throws()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine, Array.Empty<string>());
 
         var code = BuildCode(Opcode.GetPstr, 5, 0, Opcode.Halt);
@@ -120,7 +120,7 @@ public class PstrOpcodeTests
     [Fact]
     public void DefaultConstructor_PoolIsEmpty_PstrOpcodesThrowOnUse()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);          // no pool
 
         var code = BuildCode(Opcode.PutPstr, 0, 0, Opcode.Halt);
@@ -132,7 +132,7 @@ public class PstrOpcodeTests
     [Fact]
     public void UnifyPstrHead_DecomposesFirstCodeUnitAndAdvancesCursor()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine, new[] { "ab" });
 
         // Build "ab" PSTR, then point the unify cursor at the header and decompose.
@@ -161,7 +161,7 @@ public class PstrOpcodeTests
     [Fact]
     public void UnifyPstrHead_LastCodeUnit_ReplacesCursorWithPstrTail()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine, new[] { "a" });
         var build = BuildCode(Opcode.PutPstr, 0, 0, Opcode.Halt);
         Assert.Equal(InterpreterResult.Halted, interp.Run(build, 0));
@@ -186,7 +186,7 @@ public class PstrOpcodeTests
     public void UnifyPstrHead_OnEmptyOrNonPstr_Fails()
     {
         // Empty PSTR case: build "" then try to decompose.
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine, new[] { "" });
         var build = BuildCode(Opcode.PutPstr, 0, 0, Opcode.Halt);
         Assert.Equal(InterpreterResult.Halted, interp.Run(build, 0));
@@ -204,7 +204,7 @@ public class PstrOpcodeTests
     [Fact]
     public void UnifyPstrHead_ChainOfThreeSteps_ProducesEachCodeUnitInOrder()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine, new[] { "xyz" });
         var build = BuildCode(Opcode.PutPstr, 0, 0, Opcode.Halt);
         Assert.Equal(InterpreterResult.Halted, interp.Run(build, 0));
@@ -236,7 +236,7 @@ public class PstrOpcodeTests
     public void GetPstr_FailureBacktracksToBp()
     {
         // put_pstr "abc"; try_me_else BP; get_pstr "xyz" (fail); halt; halt(BP)
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine, new[] { "abc", "xyz" });
 
         var code = BuildCode(

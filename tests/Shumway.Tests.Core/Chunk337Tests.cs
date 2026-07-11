@@ -31,7 +31,7 @@ public class Chunk337Tests
     [Fact]
     public void Cut_DoesNotDropAttrModify_ForOldAttvar_WhenLogIndexExceedsParentHeapTop()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         const int mod = 1;
 
         // An OLD attributed variable X (low heap home) with attribute value v0.
@@ -84,7 +84,7 @@ public class Chunk337Tests
     [Fact]
     public void Cut_PreservesAttrModify_ForOldAttvar_SmallLogIndex()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         const int mod = 1;
 
         int x = engine.AllocateHeapUnbound();
@@ -123,7 +123,7 @@ public class Chunk337Tests
     [Fact]
     public void Cut_TrimsBigIntTable_OnBacktrack_WhenTableIndexExceedsParentHeapTop()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         var big = BigInteger.Pow(2, 100);   // out of 60-bit range → table slot
 
         // Inflate the bigint table so its indices are large while the heap

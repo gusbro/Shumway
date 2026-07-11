@@ -21,7 +21,7 @@ public static class ArithmeticBuiltins
     /// Overflow falls back to the slow evaluator (which promotes to
     /// BigInt). Targets tight-loop arithmetic in tak / queens / crypt
     /// where each iteration does e.g. `N1 is N - 1`.</para></summary>
-    public static bool Is(Engine engine)
+    public static bool Is(Activation engine)
     {
         Cell rhs = engine.GetRegister(1);
         if (rhs.Tag == Tag.Ref) rhs = engine.GetHeap(engine.Deref(rhs.AsHeapIndex));
@@ -35,27 +35,27 @@ public static class ArithmeticBuiltins
         return engine.UnifyRegisterWithCell(0, cell);
     }
 
-    public static bool ArithEqual(Engine engine) =>
+    public static bool ArithEqual(Activation engine) =>
         TryFastIntCompare(engine, out int cmp) ? cmp == 0
         : Number.Compare(EvaluateA(engine), EvaluateB(engine)) == 0;
 
-    public static bool ArithNotEqual(Engine engine) =>
+    public static bool ArithNotEqual(Activation engine) =>
         TryFastIntCompare(engine, out int cmp) ? cmp != 0
         : Number.Compare(EvaluateA(engine), EvaluateB(engine)) != 0;
 
-    public static bool ArithLess(Engine engine) =>
+    public static bool ArithLess(Activation engine) =>
         TryFastIntCompare(engine, out int cmp) ? cmp < 0
         : Number.Compare(EvaluateA(engine), EvaluateB(engine)) < 0;
 
-    public static bool ArithGreater(Engine engine) =>
+    public static bool ArithGreater(Activation engine) =>
         TryFastIntCompare(engine, out int cmp) ? cmp > 0
         : Number.Compare(EvaluateA(engine), EvaluateB(engine)) > 0;
 
-    public static bool ArithLessOrEqual(Engine engine) =>
+    public static bool ArithLessOrEqual(Activation engine) =>
         TryFastIntCompare(engine, out int cmp) ? cmp <= 0
         : Number.Compare(EvaluateA(engine), EvaluateB(engine)) <= 0;
 
-    public static bool ArithGreaterOrEqual(Engine engine) =>
+    public static bool ArithGreaterOrEqual(Activation engine) =>
         TryFastIntCompare(engine, out int cmp) ? cmp >= 0
         : Number.Compare(EvaluateA(engine), EvaluateB(engine)) >= 0;
 
@@ -90,7 +90,7 @@ public static class ArithmeticBuiltins
     // Checked integer arithmetic for the hot ops on already-deref'd Int
     // operands; returns false on overflow / out-of-60-bit-range / div-by-zero
     // / non-fast op, so the caller falls to the BigInt-promoting slow path.
-    private static bool TryFastIntBinary(Engine engine, Cell strCell, out long result)
+    private static bool TryFastIntBinary(Activation engine, Cell strCell, out long result)
     {
         result = 0;
         if (!_fidsInit) InitFids();
@@ -140,7 +140,7 @@ public static class ArithmeticBuiltins
     // Fast int-int comparison: skip Number boxing when both operands
     // are concrete ints (possibly behind one level of indirection).
     // Returns true on success with `cmp` ∈ {-1, 0, 1}.
-    private static bool TryFastIntCompare(Engine engine, out int cmp)
+    private static bool TryFastIntCompare(Activation engine, out int cmp)
     {
         cmp = 0;
         Cell a = engine.GetRegister(0);
@@ -163,7 +163,7 @@ public static class ArithmeticBuiltins
     /// binds <c>X</c> to <c>Low</c> and pushes a runtime choice point
     /// for the next integer (chunk 59) — each backtrack advances to
     /// <c>Low + 1</c>, <c>Low + 2</c>, etc., until <c>High</c> is reached.</summary>
-    public static bool Between(Engine engine)
+    public static bool Between(Activation engine)
     {
         Cell lo = Resolve(engine, engine.GetRegister(0));
         Cell hi = Resolve(engine, engine.GetRegister(1));
@@ -216,7 +216,7 @@ public static class ArithmeticBuiltins
         private long _current;
         private readonly long _hi;
         private readonly int _returnPc;
-        public readonly Func<Engine, int, bool> Resume;
+        public readonly Func<Activation, int, bool> Resume;
 
         public BetweenCursor(long start, long hi, int returnPc)
         {
@@ -226,7 +226,7 @@ public static class ArithmeticBuiltins
             Resume = Step;
         }
 
-        private bool Step(Engine engine, int _)
+        private bool Step(Activation engine, int _)
         {
             long next = ++_current;   // this backtrack yields the next value
             if (next < _hi)
@@ -246,7 +246,7 @@ public static class ArithmeticBuiltins
     /// <c>domain_error(not_less_than_zero, X)</c>; both args unbound
     /// raises <c>instantiation_error</c>; a non-integer raises
     /// <c>type_error(integer, _)</c>.</para></summary>
-    public static bool Succ(Engine engine)
+    public static bool Succ(Activation engine)
     {
         Cell xc = Resolve(engine, engine.GetRegister(0));
         Cell yc = Resolve(engine, engine.GetRegister(1));
@@ -277,7 +277,7 @@ public static class ArithmeticBuiltins
     /// any one of the three arguments allowed to be free. With X+Y
     /// bound it computes Z; with X+Z bound it computes Y = Z-X; with
     /// Y+Z bound it computes X = Z-Y. (Chunk 54.)</summary>
-    public static bool Plus(Engine engine)
+    public static bool Plus(Activation engine)
     {
         Cell xc = Resolve(engine, engine.GetRegister(0));
         Cell yc = Resolve(engine, engine.GetRegister(1));
@@ -307,13 +307,13 @@ public static class ArithmeticBuiltins
         }
     }
 
-    private static Number EvaluateA(Engine engine) =>
+    private static Number EvaluateA(Activation engine) =>
         ArithmeticEvaluator.Evaluate(engine, engine.GetRegister(0));
 
-    private static Number EvaluateB(Engine engine) =>
+    private static Number EvaluateB(Activation engine) =>
         ArithmeticEvaluator.Evaluate(engine, engine.GetRegister(1));
 
-    private static Cell Resolve(Engine engine, Cell c)
+    private static Cell Resolve(Activation engine, Cell c)
     {
         if (c.Tag != Tag.Ref) return c;
         return engine.GetHeap(engine.Deref(c.AsHeapIndex));

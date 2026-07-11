@@ -67,7 +67,7 @@ public class Adr031CpFreeGuardTests
     public enum Mode { Tier0, Tier1Runtime, Tier1Bundle }
     public static TheoryData<Mode> Modes => new() { Mode.Tier0, Mode.Tier1Runtime, Mode.Tier1Bundle };
 
-    private static PrologEngine Engine(Mode m) => m switch
+    private static PrologEngine Activation(Mode m) => m switch
     {
         Mode.Tier0 => Tier0(),
         Mode.Tier1Runtime => Tier1Runtime(),
@@ -78,7 +78,7 @@ public class Adr031CpFreeGuardTests
     [MemberData(nameof(Modes))]
     public void HotRecursion_GuardFailsPerIteration_Terminates(Mode m)
     {
-        var e = Engine(m);
+        var e = Activation(m);
         // 50k iterations of guard-fail → next clause → self-tail loop.
         Assert.True(e.Query("loop(50000).").Success);
         Assert.Single(e.QueryAll("loop(50000)."));   // the commit is deterministic
@@ -88,7 +88,7 @@ public class Adr031CpFreeGuardTests
     [MemberData(nameof(Modes))]
     public void ThreeClauseChain_EachGuardRoutesCorrectly(Mode m)
     {
-        var e = Engine(m);
+        var e = Activation(m);
         Assert.True(e.Query("cls(-5, R), R == neg.").Success);
         Assert.True(e.Query("cls(0, R), R == zero.").Success);
         Assert.True(e.Query("cls(7, R), R == pos.").Success);
@@ -102,7 +102,7 @@ public class Adr031CpFreeGuardTests
     [MemberData(nameof(Modes))]
     public void PostCommitBody_WithRealCall_RunsAfterCpFreeCommit(Mode m)
     {
-        var e = Engine(m);
+        var e = Activation(m);
         // The commit clause's body is a real call (base/2), exercising the split
         // emission's second half; the recursion sums 1+2+…+N.
         Assert.True(e.Query("gsum(1, R), R == 1.").Success);
@@ -115,7 +115,7 @@ public class Adr031CpFreeGuardTests
     [MemberData(nameof(Modes))]
     public void GuardFail_IntoNondetElseClauses_StillEnumerates(Mode m)
     {
-        var e = Engine(m);
+        var e = Activation(m);
         // Guard fails (N=5 ≤ 100) → direct branch to clause 2 → backtracking must
         // still reach clause 3.
         var sols = e.QueryAll("mixed(5, R).").Select(s => s["R"]!.ToString()).ToList();
@@ -240,7 +240,7 @@ public class Adr031BindingGuardTests
         + "lh(X,H,R) :- X = [H|_], !, R = car.\n"
         + "lh(_,_,R) :- R = nil.\n";
 
-    private static PrologEngine Engine(Adr031CpFreeGuardTests.Mode m)
+    private static PrologEngine Activation(Adr031CpFreeGuardTests.Mode m)
     {
         switch (m)
         {
@@ -281,7 +281,7 @@ public class Adr031BindingGuardTests
     [MemberData(nameof(Modes))]
     public void Max_CommitAndFallthrough(Adr031CpFreeGuardTests.Mode m)
     {
-        var e = Engine(m);
+        var e = Activation(m);
         Assert.True(e.Query("umax(7, 3, M), M == 7.").Success);
         Assert.True(e.Query("umax(2, 9, M), M == 9.").Success);
         Assert.Single(e.QueryAll("umax(7, 3, M)."));
@@ -295,7 +295,7 @@ public class Adr031BindingGuardTests
     [MemberData(nameof(Modes))]
     public void BindThenFail_NextClauseSeesUnboundArg(Adr031CpFreeGuardTests.Mode m)
     {
-        var e = Engine(m);
+        var e = Activation(m);
         // Guard binds R=big then X>5 FAILS → R must be UNBOUND again for
         // clause 2 to bind R=small. A broken restore leaves R=big and the
         // query fails entirely.
@@ -310,7 +310,7 @@ public class Adr031BindingGuardTests
     [MemberData(nameof(Modes))]
     public void StructAndListGuards_RouteAndRestore(Adr031CpFreeGuardTests.Mode m)
     {
-        var e = Engine(m);
+        var e = Activation(m);
         Assert.True(e.Query("sh(k(1), R), R == yes.").Success);
         Assert.True(e.Query("sh(other, R), R == no.").Success);
         // Unbound arg: the guard BINDS X to k(_) and commits — ISO chain

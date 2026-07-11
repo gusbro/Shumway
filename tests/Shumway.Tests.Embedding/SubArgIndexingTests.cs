@@ -31,7 +31,7 @@ public class SubArgIndexingTests
     private static int Fid(string n, int a) =>
         FunctorTable.Intern(AtomTable.Intern(n, permanent: true).Id, a);
 
-    private static PrologEngine Engine(Mode mode)
+    private static PrologEngine Activation(Mode mode)
     {
         if (mode == Mode.Tier0)
         {
@@ -63,7 +63,7 @@ public class SubArgIndexingTests
     [MemberData(nameof(Modes))]
     public void ListHeadAtom_DistinctKey_IsCorrect(Mode mode)
     {
-        var e = Engine(mode);
+        var e = Activation(mode);
         Assert.Single(e.QueryAll("tok([c,z], R)."));
         Assert.True(e.Query("tok([c,z], R), R == [z].").Success);
         Assert.Equal(4, e.QueryAll("tok(X, Y).").Count());
@@ -73,7 +73,7 @@ public class SubArgIndexingTests
     [MemberData(nameof(Modes))]
     public void TokenStream_DepthTwo_IntegerCode(Mode mode)
     {
-        var e = Engine(mode);
+        var e = Activation(mode);
         Assert.True(e.Query("pc([t(sym,105,x,y), rest], W), W == two.").Success);
         Assert.Single(e.QueryAll("pc([t(sym,106,_,_)], _)."));
         Assert.False(e.Query("pc([t(sym,999,_,_)], _).").Success);
@@ -83,7 +83,7 @@ public class SubArgIndexingTests
     [MemberData(nameof(Modes))]
     public void StructSubArg_OpCode(Mode mode)
     {
-        var e = Engine(mode);
+        var e = Activation(mode);
         Assert.True(e.Query("eo(e(31,foo), S), S == wc.").Success);
         Assert.False(e.Query("eo(e(99,_), _).").Success);
     }
@@ -92,7 +92,7 @@ public class SubArgIndexingTests
     [MemberData(nameof(Modes))]
     public void Wildcard_ClauseMergesIntoEveryBucketAndDefault(Mode mode)
     {
-        var e = Engine(mode);
+        var e = Activation(mode);
         // w([a,z], V): clause 1 (V=[z]) then the var-arg wildcard (V=wild).
         Assert.Equal(2, e.QueryAll("w([a,z], V).").Count());
         // A key with no specific clause still matches the wildcard alone.
@@ -106,7 +106,7 @@ public class SubArgIndexingTests
         // Determinism proxy: a distinct-key lookup jumps straight to the one
         // clause body, so it allocates strictly fewer cells than enumerating
         // every clause of the same predicate via a var-arg traversal.
-        var e = Engine(Mode.Tier0);
+        var e = Activation(Mode.Tier0);
         e.QueryAll("tok([c,z], R).").ToList();
         long hit = e.LastQueryCellsAllocated;
         e.QueryAll("tok(X, Y).").ToList();

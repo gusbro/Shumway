@@ -14,7 +14,7 @@ public static class StandardOrderBuiltins
     /// <summary><c>compare(Order, X, Y)</c> — unifies <c>Order</c> with the
     /// atom <c>&lt;</c>, <c>=</c>, or <c>&gt;</c> according to the standard
     /// order of <c>X</c> and <c>Y</c>.</summary>
-    public static bool Compare3(Engine engine)
+    public static bool Compare3(Activation engine)
     {
         int cmp = StandardOrderComparator.Compare(
             engine, engine.GetRegister(1), engine.GetRegister(2));
@@ -23,19 +23,19 @@ public static class StandardOrderBuiltins
         return engine.UnifyRegisterWithCell(0, Cell.Atom(atomId));
     }
 
-    public static bool TermLess(Engine engine) =>
+    public static bool TermLess(Activation engine) =>
         StandardOrderComparator.Compare(engine,
             engine.GetRegister(0), engine.GetRegister(1)) < 0;
 
-    public static bool TermGreater(Engine engine) =>
+    public static bool TermGreater(Activation engine) =>
         StandardOrderComparator.Compare(engine,
             engine.GetRegister(0), engine.GetRegister(1)) > 0;
 
-    public static bool TermLessOrEqual(Engine engine) =>
+    public static bool TermLessOrEqual(Activation engine) =>
         StandardOrderComparator.Compare(engine,
             engine.GetRegister(0), engine.GetRegister(1)) <= 0;
 
-    public static bool TermGreaterOrEqual(Engine engine) =>
+    public static bool TermGreaterOrEqual(Activation engine) =>
         StandardOrderComparator.Compare(engine,
             engine.GetRegister(0), engine.GetRegister(1)) >= 0;
 }

@@ -81,7 +81,7 @@ public sealed class PrologFlags
     /// undefined-procedure point (static Call/Execute sentinels, the
     /// resume-marker fallback, both meta-call dispatchers, the
     /// in-engine hook goal runner) honours it via
-    /// <c>Engine.OnUnknown</c>.</summary>
+    /// <c>Activation.OnUnknown</c>.</summary>
     public string Unknown { get; set; } = "error";
 
     /// <summary>ISO <c>occurs_check</c> flag. <c>false</c> (the

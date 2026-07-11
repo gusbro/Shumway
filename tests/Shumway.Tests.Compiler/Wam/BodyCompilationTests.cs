@@ -250,7 +250,7 @@ public class BodyCompilationTests
         BytecodeIO.WriteInt32(full, prefix.Length + p.CallSites[0].OpcodeOffset + 1,
             prefix.Length + addrs[q.FunctorId]);
 
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(full, 0));
     }
@@ -280,7 +280,7 @@ public class BodyCompilationTests
             BytecodeIO.WriteInt32(full, prefix.Length + site.OpcodeOffset + 1,
                 prefix.Length + addrs[site.CalleeFunctorId]);
 
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(full, 0));
     }
@@ -317,7 +317,7 @@ public class BodyCompilationTests
             BytecodeIO.WriteInt32(full, prefix.Length + site.OpcodeOffset + 1,
                 prefix.Length + addrs[site.CalleeFunctorId]);
 
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(full, 0));
     }
@@ -347,7 +347,7 @@ public class BodyCompilationTests
             BytecodeIO.WriteInt32(full, prefix.Length + site.OpcodeOffset + 1,
                 prefix.Length + addrs[site.CalleeFunctorId]);
 
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Failed, interp.Run(full, 0));
     }

@@ -30,7 +30,7 @@ public class Adr029FusionTests
     private static int Fid(string n, int a) =>
         FunctorTable.Intern(AtomTable.Intern(n, permanent: true).Id, a);
 
-    private static PrologEngine Engine(Mode mode)
+    private static PrologEngine Activation(Mode mode)
     {
         if (mode == Mode.Tier0)
         {
@@ -55,7 +55,7 @@ public class Adr029FusionTests
     [MemberData(nameof(Modes))]
     public void DeepCutCommit_IsDeterministic(Mode mode)
     {
-        var e = Engine(mode);
+        var e = Activation(mode);
         // The cut commits: exactly one solution, the looked-up value.
         Assert.True(e.Query("pick(a, R), R == 1.").Success);
         Assert.Single(e.QueryAll("pick(a, R)."));
@@ -69,7 +69,7 @@ public class Adr029FusionTests
     [MemberData(nameof(Modes))]
     public void LastClauseCutCommit_IsCorrect(Mode mode)
     {
-        var e = Engine(mode);
+        var e = Activation(mode);
         Assert.True(e.Query("classify(5, C), C == pos.").Success);
         Assert.Single(e.QueryAll("classify(5, C)."));      // cut commits to pos
         Assert.True(e.Query("classify(-1, C), C == other.").Success);

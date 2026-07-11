@@ -16,7 +16,7 @@ public class EnginePoolTests
     {
         using var pool = EnginePool.FromSource(Program, maxSize: 4);
         using var lease = pool.Rent();
-        var sol = lease.Engine.Query("double(21, R).");
+        var sol = lease.Activation.Query("double(21, R).");
         Assert.True(sol.Success);
         Assert.Equal(42L, sol.Get<long>("R"));
     }
@@ -27,7 +27,7 @@ public class EnginePoolTests
         using var pool = EnginePool.FromSource(Program, maxSize: 4);
         for (int i = 0; i < 10; i++)
             using (var lease = pool.Rent())
-                Assert.True(lease.Engine.Query("double(1, _).").Success);
+                Assert.True(lease.Activation.Query("double(1, _).").Success);
         // No contention → a single engine was created and reused.
         Assert.Equal(1, pool.Created);
     }
@@ -40,7 +40,7 @@ public class EnginePoolTests
         Parallel.For(0, 200, i =>
         {
             using var lease = pool.Rent();
-            var sol = lease.Engine.Query($"fact({i % 10}, F).");
+            var sol = lease.Activation.Query($"fact({i % 10}, F).");
             results[i] = sol.Get<long>("F");
         });
         long[] expected = { 1, 1, 2, 6, 24, 120, 720, 5040, 40320, 362880 };
@@ -54,7 +54,7 @@ public class EnginePoolTests
     {
         using var pool = EnginePool.FromSource(Program, maxSize: 2);
         using var lease = await pool.RentAsync();
-        Assert.True(lease.Engine.Query("double(5, R), R == 10.").Success);
+        Assert.True(lease.Activation.Query("double(5, R), R == 10.").Success);
     }
 
     [Fact]
@@ -68,7 +68,7 @@ public class EnginePoolTests
         lease1.Dispose();
         // Now a rent succeeds immediately and reuses the returned engine.
         using var lease2 = pool.Rent();
-        Assert.True(lease2.Engine.Query("double(2, _).").Success);
+        Assert.True(lease2.Activation.Query("double(2, _).").Success);
         Assert.Equal(1, pool.Created);
     }
 
@@ -95,6 +95,6 @@ public class EnginePoolTests
         // can still acquire (otherwise the size-1 pool would deadlock).
         Assert.Throws<InvalidOperationException>(() => pool.Rent());
         using var lease = pool.Rent();   // would block forever if the permit leaked
-        Assert.True(lease.Engine.Query("double(3, _).").Success);
+        Assert.True(lease.Activation.Query("double(3, _).").Success);
     }
 }

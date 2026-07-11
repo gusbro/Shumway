@@ -14,11 +14,11 @@ public static class SortBuiltins
 {
     /// <summary><c>sort(List, Sorted)</c> — sort in standard order, dropping
     /// adjacent duplicates.</summary>
-    public static bool Sort(Engine engine) => SortImpl(engine, dedup: true);
+    public static bool Sort(Activation engine) => SortImpl(engine, dedup: true);
 
     /// <summary><c>msort(List, Sorted)</c> — sort in standard order, keeping
     /// every element.</summary>
-    public static bool Msort(Engine engine) => SortImpl(engine, dedup: false);
+    public static bool Msort(Activation engine) => SortImpl(engine, dedup: false);
 
     /// <summary><c>keysort(+Pairs, -Sorted)</c> — stable-sort a
     /// list of <c>Key-Value</c> pairs by <c>Key</c> in the standard
@@ -28,7 +28,7 @@ public static class SortBuiltins
     /// surfacing example — rely on it). Each element must be a
     /// compound <c>'-'/2</c>; a non-pair element raises
     /// <c>type_error(pair, Element)</c>. ISO §8.4.4.</summary>
-    public static bool Keysort(Engine engine)
+    public static bool Keysort(Activation engine)
     {
         var pairs = new List<(Cell Pair, Cell Key, int Index)>();
         Cell cursor = Resolve(engine, engine.GetRegister(0));
@@ -62,7 +62,7 @@ public static class SortBuiltins
     /// <summary>Extracts the <c>K</c> from a <c>K-V</c> pair cell.
     /// A non-pair raises <c>type_error(pair, Element)</c> per ISO
     /// §8.4.4.</summary>
-    private static Cell ExtractPairKey(Engine engine, Cell pair)
+    private static Cell ExtractPairKey(Activation engine, Cell pair)
     {
         if (pair.Tag != Tag.Str)
             throw new PrologRuntimeException("type_error", "pair");
@@ -77,7 +77,7 @@ public static class SortBuiltins
         return Resolve(engine, engine.GetHeap(functorIdx + 1));
     }
 
-    private static bool SortImpl(Engine engine, bool dedup)
+    private static bool SortImpl(Activation engine, bool dedup)
     {
         // Walk the input list collecting one cell per element. We keep the
         // *dereferenced* cell so an unbound element stays an unbound REF
@@ -124,7 +124,7 @@ public static class SortBuiltins
     /// 2N + 1 contiguous cells laid out as (Lis, head, Lis, head, …, nil).
     /// Returns the index of the first Lis cell, or of the lone nil cell
     /// when the list is empty.</summary>
-    private static int BuildList(Engine engine, IReadOnlyList<Cell> elements)
+    private static int BuildList(Activation engine, IReadOnlyList<Cell> elements)
     {
         if (elements.Count == 0)
         {
@@ -145,7 +145,7 @@ public static class SortBuiltins
         return start;
     }
 
-    private static Cell Resolve(Engine engine, Cell c)
+    private static Cell Resolve(Activation engine, Cell c)
     {
         if (c.Tag != Tag.Ref) return c;
         int addr = engine.Deref(c.AsHeapIndex);

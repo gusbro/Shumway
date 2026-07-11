@@ -1,7 +1,7 @@
 namespace Shumway.Core;
 
 /// <summary>Chunk 416 — the dispatch decision for a runtime meta-call goal,
-/// cached per (goal atom id, total arity) in <see cref="Engine.MetaRouteCache"/>.
+/// cached per (goal atom id, total arity) in <see cref="Activation.MetaRouteCache"/>.
 ///
 /// <para>A runtime meta-call (<c>call/N</c>, <c>'$call'/2</c>) classifies its
 /// goal term by functor every time: intern the functor, compare against the
@@ -13,7 +13,7 @@ namespace Shumway.Core;
 /// straight to the action on a repeat goal.</para>
 ///
 /// <para>Soundness of the cache lifetime: the cache is stamped with the
-/// <see cref="Engine.CurrentFunctorAddresses"/> instance it was built
+/// <see cref="Activation.CurrentFunctorAddresses"/> instance it was built
 /// against and is discarded when that reference changes (a new query links
 /// a new map). Within one query the map is add-only — mid-query auto
 /// promotion (chunk 207) adds entries, and in-place assertz/asserta/retract

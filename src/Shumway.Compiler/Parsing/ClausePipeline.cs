@@ -26,7 +26,7 @@ public static class ClausePipeline
     /// only; the runtime assert path must pass false (the incremental clause
     /// append doesn't rebase intra-clause branch operands).</summary>
     /// <param name="helperIdProvider">Phase 33 — synthesized-helper id source.
-    /// Engine consult/assert paths pass the ENGINE's monotonic sequence so two
+    /// Activation consult/assert paths pass the ENGINE's monotonic sequence so two
     /// transforms into the same module never reuse a helper name; null keeps the
     /// per-Apply counter (standalone tooling, where module mangling isolates).</param>
     /// <param name="helperPrefix">Phase 33 — reserved namespace for the QUERY

@@ -11,11 +11,11 @@ namespace Shumway.Tests.Embedding;
 /// </summary>
 public class Chunk96Tests
 {
-    private static PrologEngine Engine() => new();
+    private static PrologEngine Activation() => new();
 
-    private static int Count(string query) => Engine().QueryAll(query).Count();
+    private static int Count(string query) => Activation().QueryAll(query).Count();
 
-    private static bool Holds(string query) => Engine().Query(query).Success;
+    private static bool Holds(string query) => Activation().Query(query).Success;
 
     // ---- select / permutation ----
 

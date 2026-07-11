@@ -27,9 +27,9 @@ public class Chunk123Tests
     private static byte[] ReadProgram(PrologEngine engine)
     {
         // After a query has run, _currentEngine isn't held on PrologEngine;
-        // the most recently used Engine's program lives until the next
+        // the most recently used Activation's program lives until the next
         // query setup. We grab it indirectly by running a no-op query and
-        // peeking through the Engine via an internal accessor — but that
+        // peeking through the Activation via an internal accessor — but that
         // accessor doesn't exist here, so we synthesise it via reflection
         // on the dyn-chains' die-slot reads. Simpler: do a fresh query
         // that exposes the program via a probe builtin? The simpler path:

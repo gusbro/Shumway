@@ -244,7 +244,7 @@ internal static class IlIndexGraph
     /// <summary>Walks the graph for the engine's current registers and returns
     /// the entry cursor — the WAM-free counterpart of
     /// <c>IlIndexedDispatch.ResolveEntryCursor</c>.</summary>
-    public static int Resolve(Engine engine, IndexGraph graph)
+    public static int Resolve(Activation engine, IndexGraph graph)
     {
         int idx = 0;
         while (true)
@@ -256,7 +256,7 @@ internal static class IlIndexGraph
         }
     }
 
-    private static IndexTarget TargetFor(Engine engine, IndexNode node)
+    private static IndexTarget TargetFor(Activation engine, IndexNode node)
     {
         Cell a = DerefArg(engine, node.ArgIdx);
         switch (node.Kind)
@@ -322,7 +322,7 @@ internal static class IlIndexGraph
         return node.DefaultTarget;
     }
 
-    private static Cell DerefArg(Engine engine, int argIdx)
+    private static Cell DerefArg(Activation engine, int argIdx)
     {
         Cell c = engine.GetRegister(argIdx);
         return c.Tag == Tag.Ref ? engine.GetHeap(engine.Deref(c.AsHeapIndex)) : c;
@@ -330,14 +330,14 @@ internal static class IlIndexGraph
 
     // ADR-027 — bounded sub-argument path walk (mirrors
     // BytecodeInterpreter.TrySubCell / IlIndexedDispatch.TrySubCell).
-    private static bool TrySubCell(Engine engine, Cell cell, int sub0, int sub1, out Cell result)
+    private static bool TrySubCell(Activation engine, Cell cell, int sub0, int sub1, out Cell result)
     {
         if (!TryHop(engine, cell, sub0, out result)) return false;
         if (sub1 >= 0 && !TryHop(engine, result, sub1, out result)) return false;
         return true;
     }
 
-    private static bool TryHop(Engine engine, Cell cell, int idx, out Cell next)
+    private static bool TryHop(Activation engine, Cell cell, int idx, out Cell next)
     {
         next = default;
         if (cell.Tag == Tag.Lis)
@@ -357,6 +357,6 @@ internal static class IlIndexGraph
         return false;
     }
 
-    private static Cell DerefCell(Engine engine, Cell c) =>
+    private static Cell DerefCell(Activation engine, Cell c) =>
         c.Tag == Tag.Ref ? engine.GetHeap(engine.Deref(c.AsHeapIndex)) : c;
 }

@@ -84,7 +84,7 @@ public static class TermReader
     /// into an AST <see cref="Term"/>. Follows REF chains and expands compound /
     /// list structures iteratively; cycles are broken via a synthetic
     /// <c>VarTerm("_C{addr}")</c> placeholder.</summary>
-    public static Term Materialize(Engine engine, int heapIdx)
+    public static Term Materialize(Activation engine, int heapIdx)
     {
         bool pooled = !_tlBusy;
         List<Frame> work;
@@ -159,7 +159,7 @@ public static class TermReader
     /// per child (in reverse, so the leftmost child is expanded first and its
     /// result lands deepest). All C# stack growth is thereby replaced by growth
     /// of the explicit <paramref name="work"/> stack.</summary>
-    private static void Expand(Engine engine, int heapIdx,
+    private static void Expand(Activation engine, int heapIdx,
         List<Frame> work, List<Term> results, HashSet<int> active, ref int consFid)
     {
         int derefAddr = engine.Deref(heapIdx);

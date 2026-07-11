@@ -37,7 +37,7 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
     // promote here") is cached per address: the fast-loop is a single
     // dictionary probe. The values are the store's engine-lifetime wrappers
     // (B3), not per-query closures.
-    private readonly Dictionary<int, Func<Engine, bool>> _dispatchCache = new();
+    private readonly Dictionary<int, Func<Activation, bool>> _dispatchCache = new();
 
     public Tier1DispatcherAdapter(
         IlPromotionStore store,
@@ -68,14 +68,14 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
         }
     }
 
-    public Func<Engine, int, bool>? ResolveByFunctorId(int functorId)
+    public Func<Activation, int, bool>? ResolveByFunctorId(int functorId)
         // Phase 16 — threaded resume. Returns the store's engine-lifetime
         // cached wrapper over the bound IL delegate (or null if the predicate
         // isn't promoted, which shouldn't happen for a marker we ourselves
         // emitted but we defend anyway).
         => _store.TryGetResumeWrapper(functorId);
 
-    public Func<Engine, bool>? OnDispatch(int targetAddress)
+    public Func<Activation, bool>? OnDispatch(int targetAddress)
     {
         // Phase 18 chunk 202 hot path: a previously-resolved cache
         // entry skips every lookup below.

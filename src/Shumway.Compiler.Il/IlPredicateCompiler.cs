@@ -172,23 +172,23 @@ public sealed class IlPredicateCompiler
     private static readonly MethodInfo CellIntMethod =
         typeof(Cell).GetMethod(nameof(Cell.Int), new[] { typeof(long) })!;
     private static readonly MethodInfo EngineUnifyMethod =
-        typeof(Engine).GetMethod(
-            nameof(Engine.UnifyRegisterWithCell),
+        typeof(Activation).GetMethod(
+            nameof(Activation.UnifyRegisterWithCell),
             new[] { typeof(int), typeof(Cell) })!;
     private static readonly MethodInfo EngineUnifyRegistersMethod =
-        typeof(Engine).GetMethod(
-            nameof(Engine.UnifyRegisters),
+        typeof(Activation).GetMethod(
+            nameof(Activation.UnifyRegisters),
             new[] { typeof(int), typeof(int) })!;
     private static readonly MethodInfo EngineGetRegisterMethod =
-        typeof(Engine).GetMethod(nameof(Engine.GetRegister), new[] { typeof(int) })!;
+        typeof(Activation).GetMethod(nameof(Activation.GetRegister), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineGetHeapMethod =
-        typeof(Engine).GetMethod(nameof(Engine.GetHeap), new[] { typeof(int) })!;
+        typeof(Activation).GetMethod(nameof(Activation.GetHeap), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineDerefMethod =
-        typeof(Engine).GetMethod(nameof(Engine.Deref), new[] { typeof(int) })!;
+        typeof(Activation).GetMethod(nameof(Activation.Deref), new[] { typeof(int) })!;
     private static readonly MethodInfo EnginePushIlCpMethod =
-        typeof(Engine).GetMethod(
-            nameof(Engine.PushIlChoicePoint),
-            new[] { typeof(Func<Engine, int, bool>), typeof(int), typeof(int) })!;
+        typeof(Activation).GetMethod(
+            nameof(Activation.PushIlChoicePoint),
+            new[] { typeof(Func<Activation, int, bool>), typeof(int), typeof(int) })!;
     // Chunk 76 — PGO: instrumented IL calls this on each clause success.
     private static readonly MethodInfo IlProfileCountersBump =
         typeof(IlProfileCounters).GetMethod(nameof(IlProfileCounters.Bump))!;
@@ -208,14 +208,14 @@ public sealed class IlPredicateCompiler
     private static readonly MethodInfo CellTagIdGetter =
         typeof(Cell).GetProperty(nameof(Cell.TagId))!.GetGetMethod()!;
     private static readonly MethodInfo EngineSetRegisterMethod =
-        typeof(Engine).GetMethod(nameof(Engine.SetRegister), new[] { typeof(int), typeof(Cell) })!;
+        typeof(Activation).GetMethod(nameof(Activation.SetRegister), new[] { typeof(int), typeof(Cell) })!;
     // Float literals (get_float / put_float). MakeFloat allocates the 2-cell
     // heap float and returns the header index; Cell.Ref wraps it so the value
     // unifies / binds exactly like the interpreter's float path. The float VALUE
     // is baked as an ldc.r8 constant (resolved from the predicate's pool at emit
     // time), so it is process-independent — no Phase-17 patch needed for persist.
     private static readonly MethodInfo EngineMakeFloatMethod =
-        typeof(Engine).GetMethod(nameof(Engine.MakeFloat), new[] { typeof(double) })!;
+        typeof(Activation).GetMethod(nameof(Activation.MakeFloat), new[] { typeof(double) })!;
     // ADR-018 — arithmetic instruction set runtime helpers (Shumway.Builtins.
     // ArithEvalStack). The Tier-1 emit calls these statics directly, so the
     // a_eval_* opcodes run the same eval-stack code as the Tier-0 interpreter.
@@ -224,10 +224,10 @@ public sealed class IlPredicateCompiler
             nameof(Shumway.Builtins.ArithEvalStack.PushInt), new[] { typeof(long) })!;
     private static readonly MethodInfo ArithPushRegMethod =
         typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
-            nameof(Shumway.Builtins.ArithEvalStack.PushReg), new[] { typeof(Engine), typeof(int) })!;
+            nameof(Shumway.Builtins.ArithEvalStack.PushReg), new[] { typeof(Activation), typeof(int) })!;
     private static readonly MethodInfo ArithPushYMethod =
         typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
-            nameof(Shumway.Builtins.ArithEvalStack.PushY), new[] { typeof(Engine), typeof(int) })!;
+            nameof(Shumway.Builtins.ArithEvalStack.PushY), new[] { typeof(Activation), typeof(int) })!;
     private static readonly MethodInfo ArithBinMethod =
         typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
             nameof(Shumway.Builtins.ArithEvalStack.Bin), new[] { typeof(int) })!;
@@ -236,16 +236,16 @@ public sealed class IlPredicateCompiler
             nameof(Shumway.Builtins.ArithEvalStack.Un), new[] { typeof(int) })!;
     private static readonly MethodInfo ArithIsRegMethod =
         typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
-            nameof(Shumway.Builtins.ArithEvalStack.IsReg), new[] { typeof(Engine), typeof(int) })!;
+            nameof(Shumway.Builtins.ArithEvalStack.IsReg), new[] { typeof(Activation), typeof(int) })!;
     private static readonly MethodInfo ArithIsPermMethod =
         typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
-            nameof(Shumway.Builtins.ArithEvalStack.IsPerm), new[] { typeof(Engine), typeof(int) })!;
+            nameof(Shumway.Builtins.ArithEvalStack.IsPerm), new[] { typeof(Activation), typeof(int) })!;
     private static readonly MethodInfo ArithSetRegMethod =
         typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
-            nameof(Shumway.Builtins.ArithEvalStack.SetReg), new[] { typeof(Engine), typeof(int) })!;
+            nameof(Shumway.Builtins.ArithEvalStack.SetReg), new[] { typeof(Activation), typeof(int) })!;
     private static readonly MethodInfo ArithSetPermMethod =
         typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
-            nameof(Shumway.Builtins.ArithEvalStack.SetPerm), new[] { typeof(Engine), typeof(int) })!;
+            nameof(Shumway.Builtins.ArithEvalStack.SetPerm), new[] { typeof(Activation), typeof(int) })!;
     private static readonly MethodInfo ArithFusedBinMethod =
         typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
             nameof(Shumway.Builtins.ArithEvalStack.FusedBin))!;
@@ -256,21 +256,21 @@ public sealed class IlPredicateCompiler
         typeof(Shumway.Builtins.ArithEvalStack).GetMethod(
             nameof(Shumway.Builtins.ArithEvalStack.Cmp), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineGetYMethod =
-        typeof(Engine).GetMethod(nameof(Engine.GetY), new[] { typeof(int) })!;
+        typeof(Activation).GetMethod(nameof(Activation.GetY), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineSetYMethod =
-        typeof(Engine).GetMethod(nameof(Engine.SetY), new[] { typeof(int), typeof(Cell) })!;
+        typeof(Activation).GetMethod(nameof(Activation.SetY), new[] { typeof(int), typeof(Cell) })!;
     private static readonly MethodInfo EngineAllocateMethod =
-        typeof(Engine).GetMethod(nameof(Engine.Allocate), new[] { typeof(int) })!;
+        typeof(Activation).GetMethod(nameof(Activation.Allocate), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineDeallocateMethod =
-        typeof(Engine).GetMethod(nameof(Engine.Deallocate), Type.EmptyTypes)!;
+        typeof(Activation).GetMethod(nameof(Activation.Deallocate), Type.EmptyTypes)!;
     private static readonly MethodInfo EngineNeckCutMethod =
-        typeof(Engine).GetMethod(nameof(Engine.NeckCut), Type.EmptyTypes)!;
+        typeof(Activation).GetMethod(nameof(Activation.NeckCut), Type.EmptyTypes)!;
     // ADR-034 — the clause-entry staleness test for inlined dynamic snapshots.
     private static readonly MethodInfo EngineIsDynMutatedMethod =
-        typeof(Engine).GetMethod(nameof(Engine.IsDynMutated), new[] { typeof(int) })!;
+        typeof(Activation).GetMethod(nameof(Activation.IsDynMutated), new[] { typeof(int) })!;
     // ADR-031 rare path — patch the lazy CP's saved args back to clause entry.
     private static readonly MethodInfo EngineSetTopCpArgRegisterMethod =
-        typeof(Engine).GetMethod(nameof(Engine.SetTopCpArgRegister),
+        typeof(Activation).GetMethod(nameof(Activation.SetTopCpArgRegister),
             new[] { typeof(int), typeof(Cell) })!;
     // Chunk 215 — deep cut (get_level + cut). GetLevel stashes the
     // procedure-entry barrier (_b0) into a Y slot; CutToLevel reads it
@@ -279,9 +279,9 @@ public sealed class IlPredicateCompiler
     // caller's Call/Execute, saved per-CP in CpB0Offset, IL clause CPs are
     // real engine CPs that Cut removes).
     private static readonly MethodInfo EngineGetLevelMethod =
-        typeof(Engine).GetMethod(nameof(Engine.GetLevel), new[] { typeof(int) })!;
+        typeof(Activation).GetMethod(nameof(Activation.GetLevel), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineCutToLevelMethod =
-        typeof(Engine).GetMethod(nameof(Engine.CutToLevel), new[] { typeof(int) })!;
+        typeof(Activation).GetMethod(nameof(Activation.CutToLevel), new[] { typeof(int) })!;
     // Phase 28 — a cut is a goal boundary, so pending attribute wakeups must
     // run before the IL-emitted cut commits (the IL counterpart of the
     // chunk-335 flush-before-cut). Returns false when a wakeup failed, which
@@ -289,42 +289,42 @@ public sealed class IlPredicateCompiler
     // with a single field read when nothing is queued, so non-attvar programs
     // pay essentially nothing per cut.
     private static readonly MethodInfo EngineFlushWakeupsForIlCutMethod =
-        typeof(Engine).GetMethod(nameof(Engine.FlushWakeupsForIlCut), Type.EmptyTypes)!;
+        typeof(Activation).GetMethod(nameof(Activation.FlushWakeupsForIlCut), Type.EmptyTypes)!;
     // ADR-031 — CP-free guard commit: the fast-path check that lets the
     // emitted commit skip materialising the clause choice point entirely
     // (see EmitCpFreeGuardCommit).
     private static readonly MethodInfo EngineHasPendingWakeupsGetter =
-        typeof(Engine).GetProperty(nameof(Engine.HasPendingWakeups))!.GetGetMethod()!;
+        typeof(Activation).GetProperty(nameof(Activation.HasPendingWakeups))!.GetGetMethod()!;
     // ADR-031 case B — the binding-guard snapshot/restore surface.
     private static readonly MethodInfo EngineBindingTrailTopGetter =
-        typeof(Engine).GetProperty(nameof(Engine.BindingTrailTop))!.GetGetMethod()!;
+        typeof(Activation).GetProperty(nameof(Activation.BindingTrailTop))!.GetGetMethod()!;
     private static readonly MethodInfo EngineExtraTrailTopGetter =
-        typeof(Engine).GetProperty(nameof(Engine.ExtraTrailTop))!.GetGetMethod()!;
+        typeof(Activation).GetProperty(nameof(Activation.ExtraTrailTop))!.GetGetMethod()!;
     private static readonly MethodInfo EngineHeapTopGetter =
-        typeof(Engine).GetProperty(nameof(Engine.HeapTop))!.GetGetMethod()!;
+        typeof(Activation).GetProperty(nameof(Activation.HeapTop))!.GetGetMethod()!;
     private static readonly MethodInfo EngineBeginIlGuardMethod =
-        typeof(Engine).GetMethod(nameof(Engine.BeginIlGuard), Type.EmptyTypes)!;
+        typeof(Activation).GetMethod(nameof(Activation.BeginIlGuard), Type.EmptyTypes)!;
     private static readonly MethodInfo EngineCommitIlGuardMethod =
-        typeof(Engine).GetMethod(nameof(Engine.CommitIlGuard), new[] { typeof(int) })!;
+        typeof(Activation).GetMethod(nameof(Activation.CommitIlGuard), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineFailIlGuardMethod =
-        typeof(Engine).GetMethod(nameof(Engine.FailIlGuard),
+        typeof(Activation).GetMethod(nameof(Activation.FailIlGuard),
             new[] { typeof(int), typeof(int), typeof(int), typeof(int) })!;
     private static readonly MethodInfo EnginePushIlCpWithMarksMethod =
-        typeof(Engine).GetMethod(nameof(Engine.PushIlChoicePointWithMarks),
-            new[] { typeof(Func<Engine, int, bool>), typeof(int), typeof(int),
+        typeof(Activation).GetMethod(nameof(Activation.PushIlChoicePointWithMarks),
+            new[] { typeof(Func<Activation, int, bool>), typeof(int), typeof(int),
                     typeof(int), typeof(int), typeof(int), typeof(int), typeof(int) })!;
     // ADR-031 G2 — the counter-throttled cancellation poll (NO heap GC: a GC
     // would move the heap under the guard's snapshot locals) emitted at the
     // back-edge of an inlined fail-direct callee's self-tail loop.
     private static readonly MethodInfo EngineBacktrackSafePointMethod =
-        typeof(Engine).GetMethod(nameof(Engine.BacktrackSafePoint), Type.EmptyTypes)!;
+        typeof(Activation).GetMethod(nameof(Activation.BacktrackSafePoint), Type.EmptyTypes)!;
     // ADR-033 — the guard continuation stack (shared fail-direct callee copies).
     private static readonly MethodInfo EnginePushGuardContMethod =
-        typeof(Engine).GetMethod(nameof(Engine.PushGuardCont), new[] { typeof(int) })!;
+        typeof(Activation).GetMethod(nameof(Activation.PushGuardCont), new[] { typeof(int) })!;
     private static readonly MethodInfo EnginePopGuardContOkMethod =
-        typeof(Engine).GetMethod(nameof(Engine.PopGuardContOk), Type.EmptyTypes)!;
+        typeof(Activation).GetMethod(nameof(Activation.PopGuardContOk), Type.EmptyTypes)!;
     private static readonly MethodInfo EnginePopGuardContFailMethod =
-        typeof(Engine).GetMethod(nameof(Engine.PopGuardContFail), Type.EmptyTypes)!;
+        typeof(Activation).GetMethod(nameof(Activation.PopGuardContFail), Type.EmptyTypes)!;
     // Chunk 216 — indexed-dispatch entry resolver (mirrors the WAM switch
     // cascade, returns the entry chain-node cursor). Keyed by functor id
     // so the same IL works under runtime promotion AND a persisted bundle
@@ -340,51 +340,51 @@ public sealed class IlPredicateCompiler
     // this to a resume marker before invoking a backtrackable builtin, so
     // the builtin's CP resume re-enters the IL caller correctly.
     private static readonly MethodInfo EngineBuiltinReturnPcSetter =
-        typeof(Engine).GetProperty(nameof(Engine.BuiltinReturnPc))!.GetSetMethod()!;
+        typeof(Activation).GetProperty(nameof(Activation.BuiltinReturnPc))!.GetSetMethod()!;
     private static readonly MethodInfo EngineSetPcMethod =
-        typeof(Engine).GetMethod(
-            nameof(Engine.SetPc),
+        typeof(Activation).GetMethod(
+            nameof(Activation.SetPc),
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
             null, new[] { typeof(int) }, null)!;
     private static readonly MethodInfo EngineSetB0Method =
-        typeof(Engine).GetMethod(
-            nameof(Engine.SetB0),
+        typeof(Activation).GetMethod(
+            nameof(Activation.SetB0),
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
             null, new[] { typeof(int) }, null)!;
     // Phase 16 chunk 182 — threaded IL non-tail Call. Setting Cp to a
     // resume marker before transferring to the callee is how the IL
     // caller registers its forward continuation.
     private static readonly MethodInfo EngineSetCpMethod =
-        typeof(Engine).GetMethod(
-            nameof(Engine.SetCp),
+        typeof(Activation).GetMethod(
+            nameof(Activation.SetCp),
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
             null, new[] { typeof(int) }, null)!;
     private static readonly MethodInfo EngineBGetter =
-        typeof(Engine).GetProperty(nameof(Engine.B))!.GetGetMethod()!;
+        typeof(Activation).GetProperty(nameof(Activation.B))!.GetGetMethod()!;
     // Phase 33 W6 — ExecuteBuiltin's tail-return contract reads the caller's
     // continuation (Cp) for BuiltinReturnPc.
     private static readonly MethodInfo EngineCpGetter =
-        typeof(Engine).GetProperty(nameof(Engine.Cp))!.GetGetMethod()!;
+        typeof(Activation).GetProperty(nameof(Activation.Cp))!.GetGetMethod()!;
     // ADR-025 stage (b) — the inline-ITE choice point's resume callback.
     private static readonly FieldInfo IlIteHelperResumeField =
         typeof(IlIteHelper).GetField(nameof(IlIteHelper.Resume))!;
     // ADR-025 — capture CURRENT B (the inline-ITE barrier; see Opcode.GetLevelB).
     private static readonly MethodInfo EngineGetLevelBMethod =
-        typeof(Engine).GetMethod(nameof(Engine.GetLevelB), new[] { typeof(int) })!;
+        typeof(Activation).GetMethod(nameof(Activation.GetLevelB), new[] { typeof(int) })!;
     // Was DEBUG-only (diagnostic dumps); ADR-031 case G reads E at clause entry
     // for the lazy CP's entry marks, so the binding is now unconditional.
     private static readonly MethodInfo EngineEGetter =
-        typeof(Engine).GetProperty(nameof(Engine.E))!.GetGetMethod()!;
+        typeof(Activation).GetProperty(nameof(Activation.E))!.GetGetMethod()!;
     private static readonly MethodInfo EngineIlTailCallPendingSetter =
-        typeof(Engine).GetProperty(nameof(Engine.IlTailCallPending))!.GetSetMethod()!;
+        typeof(Activation).GetProperty(nameof(Activation.IlTailCallPending))!.GetSetMethod()!;
     // The watermark-gated heap-GC safe point the dispatch loop runs at every
     // goal boundary; a self-tail-recursion in-method loop must call it at the
     // back-edge so an allocating loop still collects (the loop bypasses the
     // dispatch loop that would otherwise run it).
     private static readonly MethodInfo EngineMaybeCollectHeapMethod =
-        typeof(Engine).GetMethod(nameof(Engine.MaybeCollectHeap), Type.EmptyTypes)!;
+        typeof(Activation).GetMethod(nameof(Activation.MaybeCollectHeap), Type.EmptyTypes)!;
     private static readonly MethodInfo EngineCurrentFunctorAddressesGetter =
-        typeof(Engine).GetProperty(nameof(Engine.CurrentFunctorAddresses))!.GetGetMethod()!;
+        typeof(Activation).GetProperty(nameof(Activation.CurrentFunctorAddresses))!.GetGetMethod()!;
     private static readonly MethodInfo IlExecuteHelperResolveMethod =
         typeof(IlExecuteHelper).GetMethod(nameof(IlExecuteHelper.Resolve))!;
     // Theme-1 / WAM stripping: an IL caller dispatches a callee by FUNCTOR ID
@@ -393,11 +393,11 @@ public sealed class IlPredicateCompiler
     // directly via IlByFunctorId when it has IL, or falls back to its WAM
     // address otherwise — so an IL-only callee needs no WAM body/address.
     private static readonly MethodInfo EngineEncodeResumeMarkerMethod =
-        typeof(Engine).GetMethod(nameof(Engine.EncodeResumeMarker))!;
+        typeof(Activation).GetMethod(nameof(Activation.EncodeResumeMarker))!;
     // Phase 29 region compilation — a member's proceed decodes Cp via this to
     // choose intra-region br (a return cursor) vs cross-region return-to-loop (-1).
     private static readonly MethodInfo EngineRegionReturnCursorMethod =
-        typeof(Engine).GetMethod(nameof(Engine.RegionReturnCursor))!;
+        typeof(Activation).GetMethod(nameof(Activation.RegionReturnCursor))!;
     // Phase 19 — meta-call dispatch helper.
     private static readonly MethodInfo IlMetaCallHelperDispatchMethod =
         typeof(IlMetaCallHelper).GetMethod(nameof(IlMetaCallHelper.Dispatch))!;
@@ -405,41 +405,41 @@ public sealed class IlPredicateCompiler
         typeof(IlMetaCallHelper).GetMethod(nameof(IlMetaCallHelper.ReadIntRegister))!;
     // ---------- get_structure / put_structure (chunk 48) ----------
     private static readonly MethodInfo EngineGetStructureMethod =
-        typeof(Engine).GetMethod(nameof(Engine.GetStructure), new[] { typeof(int), typeof(int) })!;
+        typeof(Activation).GetMethod(nameof(Activation.GetStructure), new[] { typeof(int), typeof(int) })!;
     private static readonly MethodInfo EnginePutStructureMethod =
-        typeof(Engine).GetMethod(nameof(Engine.PutStructure), new[] { typeof(int), typeof(int) })!;
+        typeof(Activation).GetMethod(nameof(Activation.PutStructure), new[] { typeof(int), typeof(int) })!;
     // ADR-020 reserve-upfront roots.
     private static readonly MethodInfo EnginePutStructureReservedMethod =
-        typeof(Engine).GetMethod(nameof(Engine.PutStructureReserved), new[] { typeof(int), typeof(int), typeof(int) })!;
+        typeof(Activation).GetMethod(nameof(Activation.PutStructureReserved), new[] { typeof(int), typeof(int), typeof(int) })!;
     private static readonly MethodInfo EnginePutListReservedMethod =
-        typeof(Engine).GetMethod(nameof(Engine.PutListReserved), new[] { typeof(int) })!;
+        typeof(Activation).GetMethod(nameof(Activation.PutListReserved), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineUnifyArgCellMethod =
-        typeof(Engine).GetMethod(nameof(Engine.UnifyArgCell), new[] { typeof(Cell) })!;
+        typeof(Activation).GetMethod(nameof(Activation.UnifyArgCell), new[] { typeof(Cell) })!;
     private static readonly MethodInfo EngineUnifyVariableXMethod =
-        typeof(Engine).GetMethod(nameof(Engine.UnifyVariableX), new[] { typeof(int) })!;
+        typeof(Activation).GetMethod(nameof(Activation.UnifyVariableX), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineUnifyValueXMethod =
-        typeof(Engine).GetMethod(nameof(Engine.UnifyValueX), new[] { typeof(int) })!;
+        typeof(Activation).GetMethod(nameof(Activation.UnifyValueX), new[] { typeof(int) })!;
     // ADR-019 inline nested compound build/match.
     private static readonly MethodInfo EngineUnifyStructureMethod =
-        typeof(Engine).GetMethod(nameof(Engine.UnifyStructure), new[] { typeof(int) })!;
+        typeof(Activation).GetMethod(nameof(Activation.UnifyStructure), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineUnifyListMethod =
-        typeof(Engine).GetMethod(nameof(Engine.UnifyList), Type.EmptyTypes)!;
+        typeof(Activation).GetMethod(nameof(Activation.UnifyList), Type.EmptyTypes)!;
     private static readonly MethodInfo EngineUnifyVariableYMethod =
-        typeof(Engine).GetMethod(nameof(Engine.UnifyVariableY), new[] { typeof(int) })!;
+        typeof(Activation).GetMethod(nameof(Activation.UnifyVariableY), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineUnifyValueYMethod =
-        typeof(Engine).GetMethod(nameof(Engine.UnifyValueY), new[] { typeof(int) })!;
+        typeof(Activation).GetMethod(nameof(Activation.UnifyValueY), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineUnifyVoidMethod =
-        typeof(Engine).GetMethod(nameof(Engine.UnifyVoid), new[] { typeof(int) })!;
+        typeof(Activation).GetMethod(nameof(Activation.UnifyVoid), new[] { typeof(int) })!;
     // ---------- get_list / put_list / pstr (chunk 49) ----------
     private static readonly MethodInfo EngineGetListMethod =
-        typeof(Engine).GetMethod(nameof(Engine.GetList), new[] { typeof(int) })!;
+        typeof(Activation).GetMethod(nameof(Activation.GetList), new[] { typeof(int) })!;
     private static readonly MethodInfo EnginePutListMethod =
-        typeof(Engine).GetMethod(nameof(Engine.PutList), new[] { typeof(int) })!;
+        typeof(Activation).GetMethod(nameof(Activation.PutList), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineMakePstrMethod =
-        typeof(Engine).GetMethod(nameof(Engine.MakePstr), new[] { typeof(string) })!;
+        typeof(Activation).GetMethod(nameof(Activation.MakePstr), new[] { typeof(string) })!;
     private static readonly MethodInfo EngineUnifyRegisterWithHeapAtMethod =
-        typeof(Engine).GetMethod(
-            nameof(Engine.UnifyRegisterWithHeapAt),
+        typeof(Activation).GetMethod(
+            nameof(Activation.UnifyRegisterWithHeapAt),
             new[] { typeof(int), typeof(int) })!;
     private static readonly MethodInfo IlGetPstrHelperMethod =
         typeof(IlRuntimeHelpers).GetMethod(nameof(IlRuntimeHelpers.GetPstr))!;
@@ -476,7 +476,7 @@ public sealed class IlPredicateCompiler
     // (resume-marker dispatch in chunk 182), and the natural CP cascade
     // handles backtracking across IL/bytecode boundaries without help.
     private static readonly MethodInfo EngineAllocateHeapUnboundMethod =
-        typeof(Engine).GetMethod(nameof(Engine.AllocateHeapUnbound), Type.EmptyTypes)!;
+        typeof(Activation).GetMethod(nameof(Activation.AllocateHeapUnbound), Type.EmptyTypes)!;
     private static readonly MethodInfo CellRefMethod =
         typeof(Cell).GetMethod(nameof(Cell.Ref), new[] { typeof(int) })!;
     private static readonly MethodInfo BuiltinsRegistryGetByIdMethod =
@@ -832,7 +832,7 @@ public sealed class IlPredicateCompiler
             if (op == Opcode.Call)
             {
                 // Non-tail Call: chunk 66 emits a meta-CP at every IL
-                // Call site that drives Engine.BacktrackRunner on
+                // Call site that drives Activation.BacktrackRunner on
                 // resume to retry callee alternatives and rejoin the
                 // body at a post-call cursor. No leaf restriction
                 // needed — just confirm we have a calleeMap entry so
@@ -1183,7 +1183,7 @@ public sealed class IlPredicateCompiler
     /// nothing to restore), and the commit needs no <c>engine.Cut</c> teardown
     /// (nothing was pushed). The one caveat — attribute wakeups pending at the
     /// cut need a choice point to fail into — is handled by materialising the
-    /// skipped CP LAZILY at the commit when <see cref="Engine.HasPendingWakeups"/>
+    /// skipped CP LAZILY at the commit when <see cref="Activation.HasPendingWakeups"/>
     /// (state-identical to an entry push because the guard changed nothing).
     /// Set <c>SHUMWAY_CPFREE_GUARD=0</c> to disable (A/B lever).</summary>
     public static bool CpFreeGuardCommit { get; set; } =
@@ -1473,7 +1473,7 @@ public sealed class IlPredicateCompiler
     /// <summary>Emit a whole region as one IL method (Stage 3). Layout: a `cur`
     /// local seeded from <c>arg1</c>; a `dispatch` jump table over the plan's cursor
     /// space (0 = root entry); each member as a labeled block; a shared `ret` handler
-    /// that decodes <c>Cp</c> (<see cref="Engine.RegionReturnCursor"/>) — intra-region
+    /// that decodes <c>Cp</c> (<see cref="Activation.RegionReturnCursor"/>) — intra-region
     /// → <c>br dispatch</c> at the return cursor, cross-region → <c>return true</c>
     /// (the loop runs <c>Cp</c>).</summary>
     private PredicateDelegate CompileRegion(IlRegion region, IlRegionPlan plan,
@@ -1500,7 +1500,7 @@ public sealed class IlPredicateCompiler
             $"ShumwayIlRegion_{region.Root.FunctorId}_{region.Root.Arity}",
             doVerify: DoVerify || DebugMode);
         EmitRegionInto(emit, emitSelf, region, plan, calleeMap,
-            typeof(Func<Engine, int, bool>));   // runtime path: SelfFromHolder → Func
+            typeof(Func<Activation, int, bool>));   // runtime path: SelfFromHolder → Func
         int regionFid = region.Root.FunctorId;
         return FinishEmit(emit,
             $"region root={regionFid} {FidName(regionFid)} members=["
@@ -1540,7 +1540,7 @@ public sealed class IlPredicateCompiler
         //     win at ≥2 (worth the +1 IL op the size math costs at P=2) — the same call
         //     the chunk-426 inline-fact hoist already makes for its holder-only pushes.
         // So gate by the loader kind: selfDelType is PredicateDelegate on the persisted
-        // (array-field) path, Func<Engine,int,bool> on the runtime (holder) path.
+        // (array-field) path, Func<Activation,int,bool> on the runtime (holder) path.
         SelfDelegateEmitter effectiveSelf = emitSelf;
         int pushSites = 0;
         foreach (var s in plan.Sites)
@@ -2559,7 +2559,7 @@ public sealed class IlPredicateCompiler
             $"ShumwayIl_metacp_{predicate.FunctorId}_{predicate.Arity}",
             doVerify: DoVerify || DebugMode);
         EmitSingleClauseMetaCpBody(emit, predicate, callSiteCount, calleeMap, emitSelf,
-            typeof(Func<Engine, int, bool>),   // runtime path: SelfFromHolder → Func
+            typeof(Func<Activation, int, bool>),   // runtime path: SelfFromHolder → Func
             ruleInlineSites);                  // chunk 433 — precomputed by the caller
         var del = FinishEmit(emit,
             $"compile fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity} clauses={predicate.ClauseCount}");
@@ -2635,7 +2635,7 @@ public sealed class IlPredicateCompiler
                     && TryGetFactFirstArgKeys(callee.BytecodeUnfused, ranges, out _, out _))
                 {
                     int k = ranges.Count;
-                    if (cursor + (k - 1) >= Engine.ResumeMarkerCursorStride) break; // budget
+                    if (cursor + (k - 1) >= Activation.ResumeMarkerCursorStride) break; // budget
                     int seq = NextLabelSeq();
                     var alt = new Sigil.Label[k - 1];
                     for (int j = 0; j < k - 1; j++)
@@ -3288,7 +3288,7 @@ public sealed class IlPredicateCompiler
     {
         if (_persistPatches is null)
         {
-            emit.LoadConstant(Shumway.Core.Engine.EncodeResumeMarker(functorId, cursor));
+            emit.LoadConstant(Shumway.Core.Activation.EncodeResumeMarker(functorId, cursor));
             return;
         }
         var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(functorId);
@@ -4370,7 +4370,7 @@ public sealed class IlPredicateCompiler
                 // helper, then on success pushes a meta-CP that saves
                 // preCallB as Cell.Int(preCallB) in arity-1 of the
                 // CP frame. On backtrack the resume path reads
-                // preCallB back, drives Engine.BacktrackRunner to
+                // preCallB back, drives Activation.BacktrackRunner to
                 // fetch the callee's next solution, and re-enters
                 // the body at the post-call label.
                 int siteFunctorId = FindCallSiteFunctorId(callSites, pc);   // chunk 433
@@ -4578,7 +4578,7 @@ public sealed class IlPredicateCompiler
                 EmitResumeMarker(emit, _emitOwnerFid, resumeCursor);
                 emit.Call(EngineSetCpMethod);
 
-                // engine.SetPc(Engine.EncodeResumeMarker(siteFunctorId, 0));
+                // engine.SetPc(Activation.EncodeResumeMarker(siteFunctorId, 0));
                 // The dispatcher routes the marker to the callee's IL delegate
                 // (by functor id, cursor 0 = entry) or falls back to its WAM
                 // address — no resolution through the callee's WAM address here.
@@ -5233,7 +5233,7 @@ public sealed class IlPredicateCompiler
             var emit = Sigil.Emit<PredicateDelegate>.NewDynamicMethod(
                 $"ShumwayIl_idx_{predicate.FunctorId}", doVerify: DoVerify || DebugMode);
             EmitIndexedDispatchBody(emit, predicate, info, calleeMap, emitSelf,
-                typeof(Func<Engine, int, bool>));   // runtime path: SelfFromHolder → Func
+                typeof(Func<Activation, int, bool>));   // runtime path: SelfFromHolder → Func
             var del = FinishEmit(emit,
             $"compile fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity} clauses={predicate.ClauseCount}");
             IndexedDelegateHolder.Register(holderKey, del);
@@ -5682,7 +5682,7 @@ public sealed class IlPredicateCompiler
             $"ShumwayIl_tryelse_{predicate.FunctorId}",
             doVerify: DoVerify || DebugMode);
         EmitTryMeElseChainBody(emit, predicate, info, calleeMap, emitSelf,
-            typeof(Func<Engine, int, bool>));   // runtime path: SelfFromHolder → Func
+            typeof(Func<Activation, int, bool>));   // runtime path: SelfFromHolder → Func
 
         var del = FinishEmit(emit,
             $"compile fid={predicate.FunctorId} {FidName(predicate.FunctorId)}/{predicate.Arity} clauses={predicate.ClauseCount}");
@@ -6021,7 +6021,7 @@ public sealed class IlPredicateCompiler
         /// <summary>ADR-034 — functor ids of the dynamic SNAPSHOTS this
         /// clause's guard (transitively, through fail-direct callees and
         /// shared copies) inlines. Non-null → the emit prefixes the clause
-        /// with a staleness test per fid (<c>Engine.IsDynMutated</c>) and an
+        /// with a staleness test per fid (<c>Activation.IsDynMutated</c>) and an
         /// un-inlined fallback path (plain guard + real by-fid call to the
         /// live dynamic + jump into the shared post-commit body).</summary>
         public List<int>? EmbeddedDynamicFids { get; init; }
@@ -7309,9 +7309,9 @@ public sealed class IlPredicateCompiler
     /// comparisons): guard failure branches DIRECTLY to
     /// <paramref name="nextClauseLabel"/>; nothing to restore. <b>Tier B</b>
     /// (binding guard): clause entry snapshots the two trail tops + heap top in
-    /// IL locals and <see cref="Engine.BeginIlGuard"/> raises HB so every guard
+    /// IL locals and <see cref="Activation.BeginIlGuard"/> raises HB so every guard
     /// binding is trailed; guard failure lands on a restore stub
-    /// (<see cref="Engine.FailIlGuard"/> — untrail, heap reset, HB restore,
+    /// (<see cref="Activation.FailIlGuard"/> — untrail, heap reset, HB restore,
     /// wakeup clear) before branching to the next clause.</para>
     ///
     /// <para><b>Commit</b> (both tiers): fast path (no pending attribute
@@ -7320,7 +7320,7 @@ public sealed class IlPredicateCompiler
     /// exactly as today), plus the HB restore for tier B. Rare path: wakeups
     /// pend at the cut and a failing hook must have a clause choice point to
     /// backtrack into — the SKIPPED CP is materialised lazily here (tier B via
-    /// <see cref="Engine.PushIlChoicePointWithMarks"/> carrying the CLAUSE-ENTRY
+    /// <see cref="Activation.PushIlChoicePointWithMarks"/> carrying the CLAUSE-ENTRY
     /// marks, so backtracking into it undoes the guard's bindings), then flush
     /// + cut run exactly as the standard emit.</para></summary>
     private static void EmitCpFreeGuardClause(
@@ -7888,7 +7888,7 @@ public sealed class IlPredicateCompiler
             $"ShumwayIl_indexed_{predicate.FunctorId}",
             doVerify: DoVerify || DebugMode);
         EmitIndexedAtomBody(emit, predicate, info, emitSelf,
-            typeof(Func<Engine, int, bool>),   // runtime path: SelfFromHolder → Func
+            typeof(Func<Activation, int, bool>),   // runtime path: SelfFromHolder → Func
             profileKey, groundOrder, calleeMap);
 
         var del = FinishEmit(emit,
@@ -8128,7 +8128,7 @@ public sealed class IlPredicateCompiler
         {
             e.LoadField(IndexedDelegateHolder.SlotsField);
             e.LoadConstant(holderKey);
-            e.LoadElement<Func<Engine, int, bool>>();
+            e.LoadElement<Func<Activation, int, bool>>();
         };
 
     internal static SelfDelegateEmitter SelfFromArrayField(
@@ -8161,7 +8161,7 @@ public sealed class IlPredicateCompiler
         // it, so any array version a reader can observe after delegate X
         // escaped (always through a fenced channel — the compile-result
         // queue or the promotion tables) already contains X's slot.
-        public static Func<Engine, int, bool>?[] Slots = new Func<Engine, int, bool>?[256];
+        public static Func<Activation, int, bool>?[] Slots = new Func<Activation, int, bool>?[256];
         private static readonly object _lock = new();
 
         internal static readonly System.Reflection.FieldInfo SlotsField =
@@ -8176,11 +8176,11 @@ public sealed class IlPredicateCompiler
         {
             lock (_lock)
             {
-                var wrapped = new Func<Engine, int, bool>(del);
+                var wrapped = new Func<Activation, int, bool>(del);
                 var arr = Slots;
                 if (key >= arr.Length)
                 {
-                    var grown = new Func<Engine, int, bool>?[System.Math.Max(arr.Length * 2, key + 1)];
+                    var grown = new Func<Activation, int, bool>?[System.Math.Max(arr.Length * 2, key + 1)];
                     System.Array.Copy(arr, grown, arr.Length);
                     grown[key] = wrapped;
                     System.Threading.Volatile.Write(ref Slots, grown);
@@ -8192,17 +8192,17 @@ public sealed class IlPredicateCompiler
             }
         }
 
-        public static Func<Engine, int, bool> Get(int key) => Slots[key]!;
+        public static Func<Activation, int, bool> Get(int key) => Slots[key]!;
     }
 
     /// <summary>Resolves a callee functor id to its current-query
-    /// bytecode address by consulting <see cref="Engine.CurrentFunctorAddresses"/>.
+    /// bytecode address by consulting <see cref="Activation.CurrentFunctorAddresses"/>.
     /// Called from IL-emitted Execute opcodes (chunk 47) so the tail-call
     /// target stays correct across queries even when the link layout
     /// changes between them.</summary>
     public static class IlExecuteHelper
     {
-        public static int Resolve(Engine engine, int functorId)
+        public static int Resolve(Activation engine, int functorId)
         {
             var map = engine.CurrentFunctorAddresses;
             if (map is null)
@@ -8287,7 +8287,7 @@ public sealed class IlPredicateCompiler
         /// a neck_cut at the callee entry commits to the call's
         /// barrier rather than the IL caller's.</para>
         /// </summary>
-        public static int Dispatch(Engine engine, int callArity, int cutBarrier)
+        public static int Dispatch(Activation engine, int callArity, int cutBarrier)
         {
             Cell goal = DerefCell(engine, engine.GetRegister(0));
 
@@ -8475,7 +8475,7 @@ public sealed class IlPredicateCompiler
         /// <summary>Invokes a builtin reached as a runtime meta-call goal
         /// (chunk 416 — shared by the slow path and the cached
         /// Builtin route).</summary>
-        private static int InvokeBuiltinGoal(Engine engine, int builtinId)
+        private static int InvokeBuiltinGoal(Activation engine, int builtinId)
         {
             var builtin = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
             engine.CurrentBuiltinName = builtin.Name;
@@ -8491,7 +8491,7 @@ public sealed class IlPredicateCompiler
             }
         }
 
-        private static Cell DerefCell(Engine engine, Cell c) =>
+        private static Cell DerefCell(Activation engine, Cell c) =>
             c.Tag == Tag.Ref ? engine.GetHeap(engine.Deref(c.AsHeapIndex)) : c;
 
         /// <summary>Reads <c>engine.GetRegister(reg)</c>, dereferences
@@ -8499,7 +8499,7 @@ public sealed class IlPredicateCompiler
         /// payload. Used by the IL emit to fetch <c>$call/2</c>'s
         /// cut-barrier argument (X[1]) without the IL needing to
         /// inline the deref logic.</summary>
-        public static int ReadIntRegister(Engine engine, int reg)
+        public static int ReadIntRegister(Activation engine, int reg)
         {
             Cell c = engine.GetRegister(reg);
             if (c.Tag == Tag.Ref) c = engine.GetHeap(engine.Deref(c.AsHeapIndex));

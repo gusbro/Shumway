@@ -16,7 +16,7 @@ namespace Shumway.Core;
 /// <c>Overflow == null</c> the view is just a thin wrapper over
 /// <c>Primary</c> — the chunk-151a starting state, behaviour-
 /// preserving so the per-query rebuild keeps working while we land
-/// the interpreter / Engine rewiring.</para>
+/// the interpreter / Activation rewiring.</para>
 ///
 /// <para>The struct is a <c>readonly ref struct</c>-friendly value
 /// (just three fields) — the JIT inlines the indexer and hoists

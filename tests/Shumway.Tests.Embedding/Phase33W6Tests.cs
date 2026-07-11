@@ -22,7 +22,7 @@ public class Phase33W6Tests
     /// <c>predName/arity</c> as ONE clause of exactly
     /// <c>execute_builtin &lt;builtin&gt;</c> — arguments pass through the
     /// X registers untouched, the builtin is the whole body.</summary>
-    private static (PrologEngine Engine, int PredFid) EngineWith(
+    private static (PrologEngine Activation, int PredFid) EngineWith(
         string predName, int arity, string builtinName, int builtinArity,
         int ilThreshold)
     {

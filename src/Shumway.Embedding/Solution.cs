@@ -37,7 +37,7 @@ public sealed class Solution
     /// converters work without it, but a user converter for a custom
     /// type needs the engine that registered it). Null only for the
     /// failed-query sentinel created by <c>Query(string)</c>.</summary>
-    internal PrologEngine? Engine { get; }
+    internal PrologEngine? Activation { get; }
 
     internal Solution(bool success, IReadOnlyDictionary<string, Term> bindings,
         bool isLast = false, PrologEngine? engine = null)
@@ -45,7 +45,7 @@ public sealed class Solution
         Success = success;
         Bindings = bindings;
         IsLast = isLast;
-        Engine = engine;
+        Activation = engine;
     }
 
     /// <summary>Returns the binding for the named variable, or <c>null</c> if the
@@ -67,11 +67,11 @@ public sealed class Solution
         if (!Bindings.TryGetValue(variableName, out var t))
             throw new KeyNotFoundException(
                 $"Solution has no binding for variable '{variableName}'.");
-        if (Engine is null)
+        if (Activation is null)
             throw new InvalidOperationException(
                 "Solution.Get<T> requires a host PrologEngine; this solution was "
                 + "constructed without one (failed-query sentinel).");
-        return Engine.FromTerm<T>(t);
+        return Activation.FromTerm<T>(t);
     }
 
     /// <summary>Chunk 238 — non-throwing variant of <see cref="Get{T}"/>:
@@ -81,12 +81,12 @@ public sealed class Solution
     public bool TryGet<T>(string variableName, out T value)
     {
         ArgumentNullException.ThrowIfNull(variableName);
-        if (!Bindings.TryGetValue(variableName, out var t) || Engine is null)
+        if (!Bindings.TryGetValue(variableName, out var t) || Activation is null)
         {
             value = default!;
             return false;
         }
-        value = Engine.FromTerm<T>(t);
+        value = Activation.FromTerm<T>(t);
         return true;
     }
 

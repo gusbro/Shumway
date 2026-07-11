@@ -8,10 +8,10 @@ namespace Shumway.SourceGen;
 
 /// <summary>
 /// Chunk 242 — Roslyn incremental source generator that emits a
-/// <c>bool(Engine)</c> bridge method for every
+/// <c>bool(Activation)</c> bridge method for every
 /// <c>[Shumway.Embedding.PrologPredicate]</c>-decorated method whose
 /// signature is <em>not</em> the raw
-/// <c>bool Method(Shumway.Core.Engine)</c> form.
+/// <c>bool Method(Shumway.Core.Activation)</c> form.
 ///
 /// <para>The bridge name is
 /// <c>_{originalName}_PrologBridge</c>; the runtime
@@ -33,7 +33,7 @@ namespace Shumway.SourceGen;
 ///   case, which the <c>[PrologPredicate]</c> arity must reflect.</item>
 /// </list>
 ///
-/// <para>An <c>Engine</c> parameter (anywhere in the user method's
+/// <para>An <c>Activation</c> parameter (anywhere in the user method's
 /// signature) is allowed and passed through verbatim — it doesn't
 /// count toward the typed-parameter list. Useful for predicates
 /// that want both ergonomic typed args <em>and</em> direct engine
@@ -43,7 +43,7 @@ namespace Shumway.SourceGen;
 public sealed class PrologPredicateGenerator : IIncrementalGenerator
 {
     private const string AttributeFullName = "Shumway.Embedding.PrologPredicateAttribute";
-    private const string EngineFullName = "Shumway.Core.Engine";
+    private const string EngineFullName = "Shumway.Core.Activation";
 
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
@@ -99,9 +99,9 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
             }
         }
 
-        // Skip the raw bool(Engine) form — RegisterPredicates handles
+        // Skip the raw bool(Activation) form — RegisterPredicates handles
         // it directly without a bridge. Only when not non-det; a
-        // non-det attribute on a bool(Engine) is a misuse the
+        // non-det attribute on a bool(Activation) is a misuse the
         // generator surfaces by still emitting a bridge that will
         // fail to compile (wrong return type).
         if (!nonDeterministic
@@ -294,7 +294,7 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
         sb.Append(indent).AppendLine("/// then unifies the encoded return value (when non-void / non-bool).</summary>");
         sb.Append(indent).Append("public ").Append(staticness)
           .Append("bool ").Append(bridgeName)
-          .AppendLine("(global::Shumway.Core.Engine engine)");
+          .AppendLine("(global::Shumway.Core.Activation engine)");
         sb.Append(indent).AppendLine("{");
         sb.Append(indent).AppendLine("    var host = (global::Shumway.Embedding.PrologEngine)engine.Host!;");
 
@@ -503,7 +503,7 @@ public sealed class PrologPredicateGenerator : IIncrementalGenerator
     {
         sb.Append(indent).Append("private static bool ").Append(nonDetUnifyName(b))
           .Append("(global::Shumway.Embedding.PrologEngine host, ")
-          .Append("global::Shumway.Core.Engine engine, ")
+          .Append("global::Shumway.Core.Activation engine, ")
           .Append(b.ElementTypeName).AppendLine(" __current)");
         sb.Append(indent).AppendLine("{");
         // Unify the current value with the register right after the typed

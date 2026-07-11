@@ -27,7 +27,7 @@ namespace Shumway.Lib;
 ///
 /// <para>Exit codes: 0 on success, 1 on operation error, 3 on usage error.</para>
 /// </summary>
-internal static class Program
+internal static class LibrarianCli
 {
     private const int ExitOk = 0;
     private const int ExitError = 1;

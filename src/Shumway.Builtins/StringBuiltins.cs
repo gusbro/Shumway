@@ -22,7 +22,7 @@ public static class StringBuiltins
     /// length (in chars) of <paramref name="String"/>. <c>String</c>
     /// can be a PSTR or an atom (handy for callers that haven't yet
     /// settled on one representation).</summary>
-    public static bool StringLength(Engine engine)
+    public static bool StringLength(Activation engine)
     {
         string s = ReadStringOrAtom(engine, 0, "string_length/2");
         return engine.UnifyRegisterWithCell(1, Cell.Int(s.Length));
@@ -37,7 +37,7 @@ public static class StringBuiltins
     ///   split of <c>AB</c> via a runtime CP (chunk 59) — same shape as
     ///   <c>atom_concat/3</c>'s split mode.</item>
     /// </list></summary>
-    public static bool StringConcat(Engine engine)
+    public static bool StringConcat(Activation engine)
     {
         Cell aRaw = engine.GetRegister(0);
         Cell bRaw = engine.GetRegister(1);
@@ -86,7 +86,7 @@ public static class StringBuiltins
         private readonly string _ab;
         private readonly int _returnPc;
         private int _splitIdx;
-        public readonly Func<Engine, int, bool> Resume;
+        public readonly Func<Activation, int, bool> Resume;
 
         public StringConcatSplitCursor(string ab, int returnPc)
         {
@@ -96,9 +96,9 @@ public static class StringBuiltins
             Resume = (e, _) => Attempt(e, isResume: true);
         }
 
-        public bool Start(Engine engine) => Attempt(engine, isResume: false);
+        public bool Start(Activation engine) => Attempt(engine, isResume: false);
 
-        private bool Attempt(Engine engine, bool isResume)
+        private bool Attempt(Activation engine, bool isResume)
         {
             int splitIdx = _splitIdx;
             if (splitIdx > _ab.Length) return false;
@@ -120,7 +120,7 @@ public static class StringBuiltins
     /// <c>String ↔ list-of-single-character-atoms</c>. With both args
     /// bound it verifies the relation; with one var it builds the
     /// other.</summary>
-    public static bool StringChars(Engine engine)
+    public static bool StringChars(Activation engine)
     {
         Cell strCell = Resolve(engine, engine.GetRegister(0));
         if (strCell.Tag == Tag.Pstr || strCell.Tag == Tag.Atom)
@@ -142,7 +142,7 @@ public static class StringBuiltins
 
     /// <summary><c>string_codes(String, Codes)</c> — bidirectional
     /// <c>String ↔ list-of-character-codes</c>.</summary>
-    public static bool StringCodes(Engine engine)
+    public static bool StringCodes(Activation engine)
     {
         Cell strCell = Resolve(engine, engine.GetRegister(0));
         if (strCell.Tag == Tag.Pstr || strCell.Tag == Tag.Atom)
@@ -169,7 +169,7 @@ public static class StringBuiltins
     /// behaviour: empty <c>SepChars</c> means "no splitting" (whole
     /// string returned, trimmed). Pieces are PSTRs in the resulting
     /// list. Phase-1 supports +,+,+,? mode only.</summary>
-    public static bool SplitString(Engine engine)
+    public static bool SplitString(Activation engine)
     {
         string s = ReadStringOrAtom(engine, 0, "split_string/4");
         string seps = ReadStringOrAtom(engine, 1, "split_string/4");
@@ -207,7 +207,7 @@ public static class StringBuiltins
 
     /// <summary><c>upcase_atom(Atom, Upper)</c> — uppercase the atom's
     /// name. Result is an atom (not a string) to match SWI.</summary>
-    public static bool UpcaseAtom(Engine engine)
+    public static bool UpcaseAtom(Activation engine)
     {
         Cell src = Resolve(engine, engine.GetRegister(0));
         if (src.Tag != Tag.Atom)
@@ -221,7 +221,7 @@ public static class StringBuiltins
 
     /// <summary><c>downcase_atom(Atom, Lower)</c> — lowercase the
     /// atom's name.</summary>
-    public static bool DowncaseAtom(Engine engine)
+    public static bool DowncaseAtom(Activation engine)
     {
         Cell src = Resolve(engine, engine.GetRegister(0));
         if (src.Tag != Tag.Atom)
@@ -235,7 +235,7 @@ public static class StringBuiltins
 
     // ---------- Helpers ----------
 
-    private static string ReadStringOrAtom(Engine engine, int regIdx, string builtinName)
+    private static string ReadStringOrAtom(Activation engine, int regIdx, string builtinName)
     {
         Cell c = Resolve(engine, engine.GetRegister(regIdx));
         if (c.Tag == Tag.Atom)
@@ -247,7 +247,7 @@ public static class StringBuiltins
         throw new PrologRuntimeException("type_error", $"{builtinName}: string or atom");
     }
 
-    private static Cell Resolve(Engine engine, Cell c)
+    private static Cell Resolve(Activation engine, Cell c)
     {
         if (c.Tag != Tag.Ref) return c;
         int addr = engine.Deref(c.AsHeapIndex);
@@ -260,13 +260,13 @@ public static class StringBuiltins
     /// register). Used by chunk-70's lazy <c>string_concat</c> when
     /// it needs the source PSTR header's address to chain a new
     /// header to it.</summary>
-    private static int ResolveIndex(Engine engine, Cell c)
+    private static int ResolveIndex(Activation engine, Cell c)
     {
         if (c.Tag != Tag.Ref) return -1;
         return engine.Deref(c.AsHeapIndex);
     }
 
-    private static int BuildCharAtomList(Engine engine, string s)
+    private static int BuildCharAtomList(Activation engine, string s)
     {
         if (s.Length == 0)
         {
@@ -291,7 +291,7 @@ public static class StringBuiltins
         return start;
     }
 
-    private static int BuildCodeList(Engine engine, string s)
+    private static int BuildCodeList(Activation engine, string s)
     {
         if (s.Length == 0)
         {
@@ -311,7 +311,7 @@ public static class StringBuiltins
         return start;
     }
 
-    private static int BuildPstrList(Engine engine, List<string> pieces)
+    private static int BuildPstrList(Activation engine, List<string> pieces)
     {
         if (pieces.Count == 0)
         {
@@ -335,7 +335,7 @@ public static class StringBuiltins
         return spine;
     }
 
-    private static string ReadCharAtomsToString(Engine engine, Cell charsCell, string builtinName)
+    private static string ReadCharAtomsToString(Activation engine, Cell charsCell, string builtinName)
     {
         var sb = new StringBuilder();
         Cell cursor = Resolve(engine, charsCell);
@@ -358,7 +358,7 @@ public static class StringBuiltins
         return sb.ToString();
     }
 
-    private static string ReadCodesToString(Engine engine, Cell codesCell, string builtinName)
+    private static string ReadCodesToString(Activation engine, Cell codesCell, string builtinName)
     {
         var sb = new StringBuilder();
         Cell cursor = Resolve(engine, codesCell);

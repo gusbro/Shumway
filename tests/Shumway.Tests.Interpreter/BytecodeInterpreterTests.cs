@@ -11,7 +11,7 @@ public class BytecodeInterpreterTests
     [Fact]
     public void Run_HaltAlone_ReturnsHalted()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);
         byte[] code = { (byte)Opcode.Halt };
 
@@ -21,7 +21,7 @@ public class BytecodeInterpreterTests
     [Fact]
     public void Run_ReservedInvalid_Throws()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);
         byte[] code = { (byte)Opcode.ReservedInvalid };
 
@@ -36,7 +36,7 @@ public class BytecodeInterpreterTests
         // less_than, etc.) are reserved bytecode forms whose dispatch will
         // land in a later chunk; for now they fall through to the
         // default-throws branch.
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);
         byte[] code = { (byte)Opcode.UnifyEq };
 
@@ -50,7 +50,7 @@ public class BytecodeInterpreterTests
     public void Run_ProceedAtTopLevel_ReturnsHalted()
     {
         // CP defaults to -1, so a top-level proceed is "returned past the entry point".
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);
         byte[] code = { (byte)Opcode.Proceed };
 
@@ -61,7 +61,7 @@ public class BytecodeInterpreterTests
     public void Run_ProceedWithCpSet_JumpsToCp()
     {
         // proceed at PC=0 jumps to CP=1, where we have a halt.
-        var engine = new Engine();
+        var engine = new Activation();
         engine.SetCp(1);
         var interp = new BytecodeInterpreter(engine);
         byte[] code = { (byte)Opcode.Proceed, (byte)Opcode.Halt };
@@ -86,7 +86,7 @@ public class BytecodeInterpreterTests
         code[9] = (byte)Opcode.Halt;
         code[10] = (byte)Opcode.Proceed;
 
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
         // Final PC is at the halt instruction.
@@ -104,7 +104,7 @@ public class BytecodeInterpreterTests
         BytecodeIO.WriteInt32(code, 1, value:5);
         code[5] = (byte)Opcode.Halt;
 
-        var engine = new Engine();
+        var engine = new Activation();
         engine.SetCp(0x77);                    // sentinel value to verify execute does not overwrite
         var interp = new BytecodeInterpreter(engine);
 
@@ -145,7 +145,7 @@ public class BytecodeInterpreterTests
 
         code[20] = (byte)Opcode.Proceed;
 
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
         Assert.Equal(9, engine.P);
@@ -166,7 +166,7 @@ public class BytecodeInterpreterTests
         code[5] = (byte)Opcode.Deallocate;
         code[6] = (byte)Opcode.Halt;
 
-        var engine = new Engine();
+        var engine = new Activation();
         engine.SetCp(0x42);                     // sentinel
         var interp = new BytecodeInterpreter(engine);
 
@@ -189,7 +189,7 @@ public class BytecodeInterpreterTests
         BytecodeIO.WriteInt32(code, 1, 0);
         code[5] = (byte)Opcode.Halt;
 
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
         Assert.Equal(5, engine.P);
@@ -213,7 +213,7 @@ public class BytecodeInterpreterTests
         code[11] = (byte)Opcode.Deallocate;
         code[12] = (byte)Opcode.Halt;
 
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
         Assert.Equal(-1, engine.E);
@@ -245,7 +245,7 @@ public class BytecodeInterpreterTests
 
         code[20] = (byte)Opcode.Proceed;
 
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(code, 0));
         Assert.Equal(-1, engine.E);              // env popped
@@ -260,7 +260,7 @@ public class BytecodeInterpreterTests
     [InlineData(100)]
     public void Run_StartPcOutOfRange_Throws(int startPc)
     {
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);
         byte[] code = { (byte)Opcode.Halt };
         Assert.Throws<ArgumentOutOfRangeException>(() => interp.Run(code, startPc));
@@ -269,7 +269,7 @@ public class BytecodeInterpreterTests
     [Fact]
     public void Run_NullCode_Throws()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);
         Assert.Throws<ArgumentNullException>(() => interp.Run(null!, 0));
     }
@@ -288,7 +288,7 @@ public class BytecodeInterpreterTests
         code[0] = (byte)Opcode.Execute;
         BytecodeIO.WriteInt32(code, 1, 999);
 
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);
         Assert.Throws<InvalidOperationException>(() => interp.Run(code, 0));
     }

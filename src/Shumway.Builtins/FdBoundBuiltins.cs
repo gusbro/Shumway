@@ -29,7 +29,7 @@ public static class FdBoundBuiltins
 
     /// <summary>Reads argument <paramref name="reg"/> as a bound: an integer, or
     /// the atoms inf/sup mapped to the long sentinels.</summary>
-    private static long ReadBound(Engine engine, int reg)
+    private static long ReadBound(Activation engine, int reg)
     {
         Cell c = engine.GetRegister(reg);
         if (c.Tag == Tag.Ref) c = engine.GetHeap(engine.Deref(c.AsHeapIndex));
@@ -42,7 +42,7 @@ public static class FdBoundBuiltins
         };
     }
 
-    private static long ReadInt(Engine engine, int reg)
+    private static long ReadInt(Activation engine, int reg)
     {
         Cell c = engine.GetRegister(reg);
         if (c.Tag == Tag.Ref) c = engine.GetHeap(engine.Deref(c.AsHeapIndex));
@@ -50,7 +50,7 @@ public static class FdBoundBuiltins
         return c.AsInt;
     }
 
-    private static bool WriteBound(Engine engine, int reg, long v)
+    private static bool WriteBound(Activation engine, int reg, long v)
     {
         Cell cell = v switch
         {
@@ -64,20 +64,20 @@ public static class FdBoundBuiltins
     // ---- comparisons ----
 
     /// <summary>clpfd_ble(A, B): A ≤ B in the inf &lt; ints &lt; sup order.</summary>
-    public static bool Ble(Engine engine) => ReadBound(engine, 0) <= ReadBound(engine, 1);
+    public static bool Ble(Activation engine) => ReadBound(engine, 0) <= ReadBound(engine, 1);
 
     /// <summary>clpfd_blt(A, B): A &lt; B.</summary>
-    public static bool Blt(Engine engine) => ReadBound(engine, 0) < ReadBound(engine, 1);
+    public static bool Blt(Activation engine) => ReadBound(engine, 0) < ReadBound(engine, 1);
 
     /// <summary>clpfd_bmin(A, B, -M): M = min(A, B).</summary>
-    public static bool Bmin(Engine engine)
+    public static bool Bmin(Activation engine)
     {
         long a = ReadBound(engine, 0), b = ReadBound(engine, 1);
         return WriteBound(engine, 2, a <= b ? a : b);
     }
 
     /// <summary>clpfd_bmax(A, B, -M): M = max(A, B).</summary>
-    public static bool Bmax(Engine engine)
+    public static bool Bmax(Activation engine)
     {
         long a = ReadBound(engine, 0), b = ReadBound(engine, 1);
         return WriteBound(engine, 2, a >= b ? a : b);
@@ -86,42 +86,42 @@ public static class FdBoundBuiltins
     // ---- additive bound arithmetic (mins never carry sup, maxes never inf) ----
 
     /// <summary>clpfd_add_lo(A, B, -R): lower bound of A + B (inf-absorbing).</summary>
-    public static bool AddLo(Engine engine)
+    public static bool AddLo(Activation engine)
     {
         long a = ReadBound(engine, 0), b = ReadBound(engine, 1);
         return WriteBound(engine, 2, (a == Inf || b == Inf) ? Inf : a + b);
     }
 
     /// <summary>clpfd_add_hi(A, B, -R): upper bound of A + B (sup-absorbing).</summary>
-    public static bool AddHi(Engine engine)
+    public static bool AddHi(Activation engine)
     {
         long a = ReadBound(engine, 0), b = ReadBound(engine, 1);
         return WriteBound(engine, 2, (a == Sup || b == Sup) ? Sup : a + b);
     }
 
     /// <summary>clpfd_sub_lo(A, B, -R): lower bound of A − B.</summary>
-    public static bool SubLo(Engine engine)
+    public static bool SubLo(Activation engine)
     {
         long a = ReadBound(engine, 0), b = ReadBound(engine, 1);
         return WriteBound(engine, 2, (a == Inf || b == Sup) ? Inf : a - b);
     }
 
     /// <summary>clpfd_sub_hi(A, B, -R): upper bound of A − B.</summary>
-    public static bool SubHi(Engine engine)
+    public static bool SubHi(Activation engine)
     {
         long a = ReadBound(engine, 0), b = ReadBound(engine, 1);
         return WriteBound(engine, 2, (a == Sup || b == Inf) ? Sup : a - b);
     }
 
     /// <summary>clpfd_bneg(X, -Y): Y = −X (inf ↔ sup).</summary>
-    public static bool Bneg(Engine engine)
+    public static bool Bneg(Activation engine)
     {
         long x = ReadBound(engine, 0);
         return WriteBound(engine, 1, x == Inf ? Sup : x == Sup ? Inf : -x);
     }
 
     /// <summary>clpfd_bmul(B, K, -R): B × the nonzero integer constant K.</summary>
-    public static bool Bmul(Engine engine)
+    public static bool Bmul(Activation engine)
     {
         long b = ReadBound(engine, 0), k = ReadInt(engine, 1);
         long r = b == Inf ? (k > 0 ? Inf : Sup)
@@ -131,7 +131,7 @@ public static class FdBoundBuiltins
     }
 
     /// <summary>clpfd_bfloordiv(C, K, -R): ⌊C / K⌋ for nonzero integer K.</summary>
-    public static bool Bfloordiv(Engine engine)
+    public static bool Bfloordiv(Activation engine)
     {
         long c = ReadBound(engine, 0), k = ReadInt(engine, 1);
         long r = c == Inf ? (k > 0 ? Inf : Sup)
@@ -141,7 +141,7 @@ public static class FdBoundBuiltins
     }
 
     /// <summary>clpfd_bceildiv(C, K, -R): ⌈C / K⌉ for nonzero integer K.</summary>
-    public static bool Bceildiv(Engine engine)
+    public static bool Bceildiv(Activation engine)
     {
         long c = ReadBound(engine, 0), k = ReadInt(engine, 1);
         long r = c == Inf ? (k > 0 ? Inf : Sup)

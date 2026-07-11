@@ -31,7 +31,7 @@ namespace Shumway.Builtins;
 /// interpreter dispatches the <c>a_eval_*</c> opcodes here, and the Tier-1 IL
 /// emit (<c>IlPredicateCompiler</c>) emits direct calls to them. The Tier-1
 /// path is why the stack lives here (reachable from an IL delegate that only
-/// carries the <see cref="Engine"/>) rather than as an interpreter field.</para>
+/// carries the <see cref="Activation"/>) rather than as an interpreter field.</para>
 ///
 /// <para><b>Thread-safety / engine-agility.</b> The backing arrays are
 /// <c>[ThreadStatic]</c>, but they are <i>not</i> engine state — they carry no
@@ -131,7 +131,7 @@ public static class ArithEvalStack
     // compound expressions — `C is A*B+Carry` — use).
     /// <summary>Evaluates the X-register and pushes the result (a_eval_push kind 3).</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static void PushReg(Engine engine, int reg)
+    public static void PushReg(Activation engine, int reg)
     {
         Cell c = engine.GetRegister(reg);
         if (c.Tag == Tag.Ref) c = engine.GetHeap(engine.Deref(c.AsHeapIndex));
@@ -142,7 +142,7 @@ public static class ArithEvalStack
     /// <summary>Evaluates the permanent (Y) slot and pushes the result
     /// (a_eval_push kind 4).</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static void PushY(Engine engine, int slot)
+    public static void PushY(Activation engine, int slot)
     {
         Cell c = engine.GetY(slot);
         if (c.Tag == Tag.Ref) c = engine.GetHeap(engine.Deref(c.AsHeapIndex));
@@ -155,7 +155,7 @@ public static class ArithEvalStack
     // can throw, so the try/catch (which would block inlining of the fast lane)
     // lives here. The cell is already deref'd by the caller.
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static void PushEvalSlow(Engine engine, Cell cell)
+    private static void PushEvalSlow(Activation engine, Cell cell)
     {
         try { Push(ArithmeticEvaluator.Evaluate(engine, cell)); }
         catch (PrologRuntimeException re) { re.StampBuiltin("is", 2); throw; }
@@ -213,23 +213,23 @@ public static class ArithEvalStack
     /// <summary>Pops the result and unifies it with the X-register
     /// (a_eval_is kind 3). Returns the unification outcome.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static bool IsReg(Engine engine, int reg) => engine.UnifyRegisterWithCell(reg, PopCell(engine));
+    public static bool IsReg(Activation engine, int reg) => engine.UnifyRegisterWithCell(reg, PopCell(engine));
 
     /// <summary>Pops the result and unifies it with the permanent (Y) slot
     /// (a_eval_is kind 4). Returns the unification outcome.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static bool IsPerm(Engine engine, int slot) => engine.UnifyPermanentWithCell(slot, PopCell(engine));
+    public static bool IsPerm(Activation engine, int slot) => engine.UnifyPermanentWithCell(slot, PopCell(engine));
 
     /// <summary>Pops the result and stores it directly into the X-register
     /// (a_eval_is kind 5) — a first-occurrence target variable, bound by a plain
     /// store rather than unification (no unbound heap cell, no trail entry).</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static void SetReg(Engine engine, int reg) => engine.SetRegister(reg, PopCell(engine));
+    public static void SetReg(Activation engine, int reg) => engine.SetRegister(reg, PopCell(engine));
 
     /// <summary>Pops the result and stores it directly into the permanent (Y)
     /// slot (a_eval_is kind 6) — first-occurrence permanent target.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static void SetPerm(Engine engine, int slot) => engine.SetY(slot, PopCell(engine));
+    public static void SetPerm(Activation engine, int slot) => engine.SetY(slot, PopCell(engine));
 
     // Phase 33 IL round 2 — PopCell carried a try/catch, which makes a method
     // UNINLINEABLE outright, and it runs once per a_eval_is (every compiled
@@ -237,7 +237,7 @@ public static class ArithEvalStack
     // is the inlineable fast path; only the boxed Number.ToCell (bigint alloc /
     // float pair — can raise) keeps the try/catch, in the cold NoInlining half.
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static Cell PopCell(Engine engine)
+    private static Cell PopCell(Activation engine)
     {
         int ai = --_top;
         if (!_b![ai]) return Cell.Int(_i![ai]);   // int lane always fits Cell.Int by invariant
@@ -245,7 +245,7 @@ public static class ArithEvalStack
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static Cell PopCellBoxed(Engine engine, int ai)
+    private static Cell PopCellBoxed(Activation engine, int ai)
     {
         try { return _n![ai].ToCell(engine); }
         catch (PrologRuntimeException re) { re.StampBuiltin("is", 2); throw; }
@@ -287,7 +287,7 @@ public static class ArithEvalStack
     // and limits optimisation) moves to the cold slow path. Integer-heavy code
     // (cx, crypt) never leaves the fast lane.
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static bool FusedBin(Engine engine, int op,
+    public static bool FusedBin(Activation engine, int op,
         int aKind, int aVal, int bKind, int bVal, int tKind, int tVal)
     {
         if (TryReadInt(engine, aKind, aVal, out long ai)
@@ -298,7 +298,7 @@ public static class ArithEvalStack
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static bool FusedBinSlow(Engine engine, int op,
+    private static bool FusedBinSlow(Activation engine, int op,
         int aKind, int aVal, int bKind, int bVal, int tKind, int tVal)
     {
         Cell result;
@@ -318,7 +318,7 @@ public static class ArithEvalStack
 
     /// <summary><c>A cmp B</c> over two simple leaf operands.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static bool FusedCmp(Engine engine, int rel,
+    public static bool FusedCmp(Activation engine, int rel,
         int aKind, int aVal, int bKind, int bVal)
     {
         if (TryReadInt(engine, aKind, aVal, out long ai)
@@ -328,7 +328,7 @@ public static class ArithEvalStack
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static bool FusedCmpSlow(Engine engine, int rel,
+    private static bool FusedCmpSlow(Activation engine, int rel,
         int aKind, int aVal, int bKind, int bVal)
     {
         try
@@ -349,7 +349,7 @@ public static class ArithEvalStack
     // full ReadOperand (whose Evaluate raises instantiation_error / type_error)
     // under the try/catch.
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static bool TryReadInt(Engine engine, int kind, int val, out long iVal)
+    private static bool TryReadInt(Activation engine, int kind, int val, out long iVal)
     {
         if (kind == 0) { iVal = val; return true; }
         Cell c = kind == 4 ? engine.GetY(val) : engine.GetRegister(val);
@@ -363,7 +363,7 @@ public static class ArithEvalStack
     // value; false (boxed, nVal valid) for a float / bigint. An int literal and
     // an int-valued register/Y take the fast lane; an unbound var raises
     // instantiation_error from Evaluate, exactly as is/2 does.
-    private static bool ReadOperand(Engine engine, int kind, int val, out long iVal, out Number nVal)
+    private static bool ReadOperand(Activation engine, int kind, int val, out long iVal, out Number nVal)
     {
         if (kind == 0) { iVal = val; nVal = default; return true; }
         Cell c = kind == 4 ? engine.GetY(val) : engine.GetRegister(val);
@@ -376,7 +376,7 @@ public static class ArithEvalStack
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static bool Deliver(Engine engine, int tKind, int tVal, Cell result)
+    private static bool Deliver(Activation engine, int tKind, int tVal, Cell result)
     {
         switch (tKind)
         {

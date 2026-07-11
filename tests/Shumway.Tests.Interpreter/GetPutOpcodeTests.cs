@@ -29,9 +29,9 @@ public class GetPutOpcodeTests
         return code;
     }
 
-    private static (Engine engine, BytecodeInterpreter interp) NewEngine()
+    private static (Activation engine, BytecodeInterpreter interp) NewEngine()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         return (engine, new BytecodeInterpreter(engine));
     }
 

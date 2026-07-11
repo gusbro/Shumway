@@ -12,7 +12,7 @@ namespace Shumway.Tests.Embedding;
 /// real-world surfacer of this bug) compiles to a 30+-goal
 /// sequence with many cross-goal variable threads — its register
 /// peak well exceeds 64. The fix grows the bank on demand on
-/// <c>Engine.SetRegister</c> and on <c>PushChoicePoint</c>.
+/// <c>Activation.SetRegister</c> and on <c>PushChoicePoint</c>.
 /// </summary>
 public class RegisterAutoGrowTests
 {

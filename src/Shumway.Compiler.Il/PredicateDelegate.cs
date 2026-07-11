@@ -25,4 +25,4 @@ namespace Shumway.Compiler.Il;
 /// pop the IL's own CP and re-enter the IL with the next cursor — that's
 /// how external backtracking through alternative clauses works.</para>
 /// </summary>
-public delegate bool PredicateDelegate(Engine engine, int clauseCursor);
+public delegate bool PredicateDelegate(Activation engine, int clauseCursor);

@@ -19,14 +19,14 @@ public static class StreamBuiltins
     /// handle directly, or an atom matching a registered alias.
     /// Throws ISO-shaped errors for the failure modes ISO §8.11
     /// specifies.</summary>
-    public static StreamHandle ResolveStream(Engine engine, Cell cell)
+    public static StreamHandle ResolveStream(Activation engine, Cell cell)
     {
         Cell d = Resolve(engine, cell);
         if (d.Tag == Tag.Ref)
             throw new PrologRuntimeException("instantiation_error");
 
         StreamRegistry registry = engine.Streams
-            ?? throw new InvalidOperationException("Engine has no stream registry.");
+            ?? throw new InvalidOperationException("Activation has no stream registry.");
 
         if (d.Tag == Tag.Foreign)
         {
@@ -48,7 +48,7 @@ public static class StreamBuiltins
         throw new PrologRuntimeException("type_error", "stream_or_alias");
     }
 
-    private static StreamHandle ResolveReader(Engine engine, Cell cell)
+    private static StreamHandle ResolveReader(Activation engine, Cell cell)
     {
         var h = ResolveStream(engine, cell);
         if (!h.IsReader)
@@ -56,7 +56,7 @@ public static class StreamBuiltins
         return h;
     }
 
-    private static StreamHandle ResolveWriter(Engine engine, Cell cell)
+    private static StreamHandle ResolveWriter(Activation engine, Cell cell)
     {
         var h = ResolveStream(engine, cell);
         if (!h.IsWriter)
@@ -66,7 +66,7 @@ public static class StreamBuiltins
 
     // ---------- open/3, close/1 ----------
 
-    public static bool Open(Engine engine)
+    public static bool Open(Activation engine)
     {
         Cell pathCell = Resolve(engine, engine.GetRegister(0));
         Cell modeCell = Resolve(engine, engine.GetRegister(1));
@@ -81,7 +81,7 @@ public static class StreamBuiltins
         string mode = AtomTable.GetById(modeCell.AsAtomId)?.Name ?? "";
 
         StreamRegistry registry = engine.Streams
-            ?? throw new InvalidOperationException("Engine has no stream registry.");
+            ?? throw new InvalidOperationException("Activation has no stream registry.");
 
         int id = registry.NextId();
         StreamHandle handle;
@@ -123,7 +123,7 @@ public static class StreamBuiltins
     /// honoured only via the default end_of_file handling). Any
     /// other option raises <c>domain_error(stream_option, _)</c>.
     /// </summary>
-    public static bool OpenWithOptions(Engine engine)
+    public static bool OpenWithOptions(Activation engine)
     {
         Cell pathCell = Resolve(engine, engine.GetRegister(0));
         Cell modeCell = Resolve(engine, engine.GetRegister(1));
@@ -198,7 +198,7 @@ public static class StreamBuiltins
             throw new PrologRuntimeException("type_error", "list");
 
         StreamRegistry registry = engine.Streams
-            ?? throw new InvalidOperationException("Engine has no stream registry.");
+            ?? throw new InvalidOperationException("Activation has no stream registry.");
 
         // ISO permission_error(open, source_sink, alias(_)) when the
         // requested alias is already taken.
@@ -255,7 +255,7 @@ public static class StreamBuiltins
         return engine.UnifyRegisterWithCell(2, foreignCell);
     }
 
-    public static bool Close(Engine engine)
+    public static bool Close(Activation engine)
     {
         var h = ResolveStream(engine, engine.GetRegister(0));
         if (h.Reader is not null) h.Reader.Dispose();
@@ -274,7 +274,7 @@ public static class StreamBuiltins
     /// is parsed shallowly: <c>force(true)</c> swallows close
     /// exceptions. Other options are accepted but ignored.
     /// Without an options list, <c>close/1</c> is the entry point.</summary>
-    public static bool Close2(Engine engine)
+    public static bool Close2(Activation engine)
     {
         var h = ResolveStream(engine, engine.GetRegister(0));
         bool force = ContainsForceTrue(engine, engine.GetRegister(1));
@@ -293,7 +293,7 @@ public static class StreamBuiltins
         return true;
     }
 
-    private static bool ContainsForceTrue(Engine engine, Cell listCell)
+    private static bool ContainsForceTrue(Activation engine, Cell listCell)
     {
         Cell cursor = DerefLocal(engine, listCell);
         int trueAtomId = AtomTable.Intern("true", permanent: true).Id;
@@ -318,7 +318,7 @@ public static class StreamBuiltins
         return false;
     }
 
-    private static Cell DerefLocal(Engine engine, Cell c)
+    private static Cell DerefLocal(Activation engine, Cell c)
     {
         if (c.Tag != Tag.Ref) return c;
         return engine.GetHeap(engine.Deref(c.AsHeapIndex));
@@ -328,8 +328,8 @@ public static class StreamBuiltins
 
     /// <summary><c>write(Stream, Term)</c> — renders Term to the
     /// stream's writer in canonical form (matches write/1 over
-    /// <see cref="Engine.Out"/>).</summary>
-    public static bool WriteToStream(Engine engine)
+    /// <see cref="Activation.Out"/>).</summary>
+    public static bool WriteToStream(Activation engine)
     {
         var h = ResolveWriter(engine, engine.GetRegister(0));
         if (h.IsBinary)
@@ -342,7 +342,7 @@ public static class StreamBuiltins
     }
 
     /// <summary><c>nl(Stream)</c> — writes a newline to the given stream.</summary>
-    public static bool NlOnStream(Engine engine)
+    public static bool NlOnStream(Activation engine)
     {
         var h = ResolveWriter(engine, engine.GetRegister(0));
         if (h.IsBinary)
@@ -355,7 +355,7 @@ public static class StreamBuiltins
     /// the stream and unifies the result with <c>Char</c> as a
     /// single-character atom. End of stream returns the atom
     /// <c>end_of_file</c>.</summary>
-    public static bool GetChar(Engine engine)
+    public static bool GetChar(Activation engine)
     {
         var h = ResolveReader(engine, engine.GetRegister(0));
         return ReadCharInto(engine, h, regOut: 1);
@@ -363,7 +363,7 @@ public static class StreamBuiltins
 
     /// <summary><c>peek_char(Stream, Char)</c> — returns the next char
     /// without consuming it. EOF yields <c>end_of_file</c>.</summary>
-    public static bool PeekChar(Engine engine)
+    public static bool PeekChar(Activation engine)
     {
         var h = ResolveReader(engine, engine.GetRegister(0));
         return PeekCharInto(engine, h, regOut: 1);
@@ -373,34 +373,34 @@ public static class StreamBuiltins
 
     /// <summary><c>get_char/1</c> — reads one character from the
     /// current input stream. ISO §8.12.1.</summary>
-    public static bool GetChar0(Engine engine)
+    public static bool GetChar0(Activation engine)
     {
         var h = engine.Streams?.CurrentInput
-            ?? throw new InvalidOperationException("Engine has no stream registry.");
+            ?? throw new InvalidOperationException("Activation has no stream registry.");
         return ReadCharInto(engine, h, regOut: 0);
     }
 
     /// <summary><c>peek_char/1</c> — peeks one character from the
     /// current input stream. ISO §8.12.2.</summary>
-    public static bool PeekChar0(Engine engine)
+    public static bool PeekChar0(Activation engine)
     {
         var h = engine.Streams?.CurrentInput
-            ?? throw new InvalidOperationException("Engine has no stream registry.");
+            ?? throw new InvalidOperationException("Activation has no stream registry.");
         return PeekCharInto(engine, h, regOut: 0);
     }
 
     /// <summary><c>put_char/1</c> — writes a single-character atom to
     /// the current output stream. ISO §8.12.3.</summary>
-    public static bool PutChar1(Engine engine)
+    public static bool PutChar1(Activation engine)
     {
         var h = engine.Streams?.CurrentOutput
-            ?? throw new InvalidOperationException("Engine has no stream registry.");
+            ?? throw new InvalidOperationException("Activation has no stream registry.");
         WriteOneChar(engine, h, regChar: 0);
         return true;
     }
 
     /// <summary><c>put_char(+Stream, +Char)</c> — ISO §8.12.3.</summary>
-    public static bool PutChar2(Engine engine)
+    public static bool PutChar2(Activation engine)
     {
         var h = ResolveWriter(engine, engine.GetRegister(0));
         WriteOneChar(engine, h, regChar: 1);
@@ -409,30 +409,30 @@ public static class StreamBuiltins
 
     /// <summary><c>get_code/1</c> — reads one character code from
     /// current input. EOF returns -1. ISO §8.12.4.</summary>
-    public static bool GetCode0(Engine engine)
+    public static bool GetCode0(Activation engine)
     {
         var h = engine.Streams?.CurrentInput
-            ?? throw new InvalidOperationException("Engine has no stream registry.");
+            ?? throw new InvalidOperationException("Activation has no stream registry.");
         return ReadCodeInto(engine, h, regOut: 0);
     }
 
     /// <summary><c>get_code(+Stream, -Code)</c> — ISO §8.12.4.</summary>
-    public static bool GetCode2(Engine engine)
+    public static bool GetCode2(Activation engine)
     {
         var h = ResolveReader(engine, engine.GetRegister(0));
         return ReadCodeInto(engine, h, regOut: 1);
     }
 
     /// <summary><c>peek_code/1</c> — ISO §8.12.5.</summary>
-    public static bool PeekCode0(Engine engine)
+    public static bool PeekCode0(Activation engine)
     {
         var h = engine.Streams?.CurrentInput
-            ?? throw new InvalidOperationException("Engine has no stream registry.");
+            ?? throw new InvalidOperationException("Activation has no stream registry.");
         return PeekCodeInto(engine, h, regOut: 0);
     }
 
     /// <summary><c>peek_code(+Stream, -Code)</c> — ISO §8.12.5.</summary>
-    public static bool PeekCode2(Engine engine)
+    public static bool PeekCode2(Activation engine)
     {
         var h = ResolveReader(engine, engine.GetRegister(0));
         return PeekCodeInto(engine, h, regOut: 1);
@@ -440,16 +440,16 @@ public static class StreamBuiltins
 
     /// <summary><c>put_code(+Code)</c> — writes the character with the
     /// given code to current output. ISO §8.12.6.</summary>
-    public static bool PutCode1(Engine engine)
+    public static bool PutCode1(Activation engine)
     {
         var h = engine.Streams?.CurrentOutput
-            ?? throw new InvalidOperationException("Engine has no stream registry.");
+            ?? throw new InvalidOperationException("Activation has no stream registry.");
         WriteOneCode(engine, h, regCode: 0);
         return true;
     }
 
     /// <summary><c>put_code(+Stream, +Code)</c> — ISO §8.12.6.</summary>
-    public static bool PutCode2(Engine engine)
+    public static bool PutCode2(Activation engine)
     {
         var h = ResolveWriter(engine, engine.GetRegister(0));
         WriteOneCode(engine, h, regCode: 1);
@@ -460,30 +460,30 @@ public static class StreamBuiltins
 
     /// <summary><c>get_byte/1</c> — reads one byte from current
     /// input. EOF returns -1. ISO §8.13.1.</summary>
-    public static bool GetByte0(Engine engine)
+    public static bool GetByte0(Activation engine)
     {
         var h = engine.Streams?.CurrentInput
-            ?? throw new InvalidOperationException("Engine has no stream registry.");
+            ?? throw new InvalidOperationException("Activation has no stream registry.");
         return ReadByteInto(engine, h, regOut: 0);
     }
 
     /// <summary><c>get_byte(+Stream, -Byte)</c> — ISO §8.13.1.</summary>
-    public static bool GetByte2(Engine engine)
+    public static bool GetByte2(Activation engine)
     {
         var h = ResolveStream(engine, engine.GetRegister(0));
         return ReadByteInto(engine, h, regOut: 1);
     }
 
     /// <summary><c>peek_byte/1</c> — ISO §8.13.2.</summary>
-    public static bool PeekByte0(Engine engine)
+    public static bool PeekByte0(Activation engine)
     {
         var h = engine.Streams?.CurrentInput
-            ?? throw new InvalidOperationException("Engine has no stream registry.");
+            ?? throw new InvalidOperationException("Activation has no stream registry.");
         return PeekByteInto(engine, h, regOut: 0);
     }
 
     /// <summary><c>peek_byte(+Stream, -Byte)</c> — ISO §8.13.2.</summary>
-    public static bool PeekByte2(Engine engine)
+    public static bool PeekByte2(Activation engine)
     {
         var h = ResolveStream(engine, engine.GetRegister(0));
         return PeekByteInto(engine, h, regOut: 1);
@@ -491,16 +491,16 @@ public static class StreamBuiltins
 
     /// <summary><c>put_byte/1</c> — writes one byte to current
     /// output. ISO §8.13.3.</summary>
-    public static bool PutByte1(Engine engine)
+    public static bool PutByte1(Activation engine)
     {
         var h = engine.Streams?.CurrentOutput
-            ?? throw new InvalidOperationException("Engine has no stream registry.");
+            ?? throw new InvalidOperationException("Activation has no stream registry.");
         WriteOneByte(engine, h, regByte: 0);
         return true;
     }
 
     /// <summary><c>put_byte(+Stream, +Byte)</c> — ISO §8.13.3.</summary>
-    public static bool PutByte2(Engine engine)
+    public static bool PutByte2(Activation engine)
     {
         var h = ResolveStream(engine, engine.GetRegister(0));
         WriteOneByte(engine, h, regByte: 1);
@@ -509,7 +509,7 @@ public static class StreamBuiltins
 
     // ---------- byte helpers ----------
 
-    private static bool ReadByteInto(Engine engine, StreamHandle h, int regOut)
+    private static bool ReadByteInto(Activation engine, StreamHandle h, int regOut)
     {
         if (!h.IsReader)
             throw new PrologRuntimeException("permission_error", "input,stream");
@@ -521,7 +521,7 @@ public static class StreamBuiltins
         return engine.UnifyRegisterWithCell(regOut, Cell.Int(b));
     }
 
-    private static bool PeekByteInto(Engine engine, StreamHandle h, int regOut)
+    private static bool PeekByteInto(Activation engine, StreamHandle h, int regOut)
     {
         if (!h.IsReader)
             throw new PrologRuntimeException("permission_error", "input,stream");
@@ -536,7 +536,7 @@ public static class StreamBuiltins
         return engine.UnifyRegisterWithCell(regOut, Cell.Int(b));
     }
 
-    private static void WriteOneByte(Engine engine, StreamHandle h, int regByte)
+    private static void WriteOneByte(Activation engine, StreamHandle h, int regByte)
     {
         if (!h.IsWriter)
             throw new PrologRuntimeException("permission_error", "output,stream");
@@ -557,7 +557,7 @@ public static class StreamBuiltins
 
     // ---------- character / code helpers ----------
 
-    private static bool ReadCharInto(Engine engine, StreamHandle h, int regOut)
+    private static bool ReadCharInto(Activation engine, StreamHandle h, int regOut)
     {
         if (!h.IsReader)
             throw new PrologRuntimeException("permission_error", "input,stream");
@@ -575,7 +575,7 @@ public static class StreamBuiltins
         return engine.UnifyRegisterWithCell(regOut, Cell.Atom(atomId));
     }
 
-    private static bool PeekCharInto(Engine engine, StreamHandle h, int regOut)
+    private static bool PeekCharInto(Activation engine, StreamHandle h, int regOut)
     {
         if (!h.IsReader)
             throw new PrologRuntimeException("permission_error", "input,stream");
@@ -598,7 +598,7 @@ public static class StreamBuiltins
     private static readonly int _eofAtomId =
         AtomTable.Intern("end_of_file", permanent: true).Id;
 
-    private static bool ReadCodeInto(Engine engine, StreamHandle h, int regOut)
+    private static bool ReadCodeInto(Activation engine, StreamHandle h, int regOut)
     {
         if (!h.IsReader)
             throw new PrologRuntimeException("permission_error", "input,stream");
@@ -609,7 +609,7 @@ public static class StreamBuiltins
         return engine.UnifyRegisterWithCell(regOut, Cell.Int(c));
     }
 
-    private static bool PeekCodeInto(Engine engine, StreamHandle h, int regOut)
+    private static bool PeekCodeInto(Activation engine, StreamHandle h, int regOut)
     {
         if (!h.IsReader)
             throw new PrologRuntimeException("permission_error", "input,stream");
@@ -619,7 +619,7 @@ public static class StreamBuiltins
         return engine.UnifyRegisterWithCell(regOut, Cell.Int(c));
     }
 
-    private static void WriteOneChar(Engine engine, StreamHandle h, int regChar)
+    private static void WriteOneChar(Activation engine, StreamHandle h, int regChar)
     {
         if (h.IsBinary)
             throw new PrologRuntimeException("permission_error", "output,binary_stream");
@@ -634,7 +634,7 @@ public static class StreamBuiltins
         h.Writer!.Write(name[0]);
     }
 
-    private static void WriteOneCode(Engine engine, StreamHandle h, int regCode)
+    private static void WriteOneCode(Activation engine, StreamHandle h, int regCode)
     {
         if (h.IsBinary)
             throw new PrologRuntimeException("permission_error", "output,binary_stream");
@@ -654,19 +654,19 @@ public static class StreamBuiltins
     /// <summary><c>current_input(Stream)</c> — ISO §8.11.1. Unifies
     /// <c>Stream</c> with the current input handle (a Foreign cell
     /// wrapping its <see cref="StreamHandle"/>).</summary>
-    public static bool CurrentInput(Engine engine)
+    public static bool CurrentInput(Activation engine)
     {
         StreamRegistry registry = engine.Streams
-            ?? throw new InvalidOperationException("Engine has no stream registry.");
+            ?? throw new InvalidOperationException("Activation has no stream registry.");
         Cell handleCell = engine.MakeForeign(registry.CurrentInput);
         return engine.UnifyRegisterWithCell(0, handleCell);
     }
 
     /// <summary><c>current_output(Stream)</c> — ISO §8.11.2.</summary>
-    public static bool CurrentOutput(Engine engine)
+    public static bool CurrentOutput(Activation engine)
     {
         StreamRegistry registry = engine.Streams
-            ?? throw new InvalidOperationException("Engine has no stream registry.");
+            ?? throw new InvalidOperationException("Activation has no stream registry.");
         Cell handleCell = engine.MakeForeign(registry.CurrentOutput);
         return engine.UnifyRegisterWithCell(0, handleCell);
     }
@@ -674,7 +674,7 @@ public static class StreamBuiltins
     /// <summary><c>set_input(Stream)</c> — ISO §8.11.3. Reassigns the
     /// current input cursor; <c>set_input(user_input)</c> resets to
     /// the terminal default.</summary>
-    public static bool SetInput(Engine engine)
+    public static bool SetInput(Activation engine)
     {
         var h = ResolveStream(engine, engine.GetRegister(0));
         engine.Streams!.SetCurrentInput(h);
@@ -682,7 +682,7 @@ public static class StreamBuiltins
     }
 
     /// <summary><c>set_output(Stream)</c> — ISO §8.11.4.</summary>
-    public static bool SetOutput(Engine engine)
+    public static bool SetOutput(Activation engine)
     {
         var h = ResolveStream(engine, engine.GetRegister(0));
         engine.Streams!.SetCurrentOutput(h);
@@ -693,16 +693,16 @@ public static class StreamBuiltins
 
     /// <summary><c>flush_output/0</c> — ISO §8.11.7. Flushes the
     /// current output stream.</summary>
-    public static bool FlushOutput0(Engine engine)
+    public static bool FlushOutput0(Activation engine)
     {
         var h = engine.Streams?.CurrentOutput ?? throw new InvalidOperationException(
-            "Engine has no stream registry.");
+            "Activation has no stream registry.");
         h.Writer!.Flush();
         return true;
     }
 
     /// <summary><c>flush_output(Stream)</c> — ISO §8.11.7.</summary>
-    public static bool FlushOutput1(Engine engine)
+    public static bool FlushOutput1(Activation engine)
     {
         var h = ResolveWriter(engine, engine.GetRegister(0));
         h.Writer!.Flush();
@@ -712,7 +712,7 @@ public static class StreamBuiltins
     // ---------- at_end_of_stream ----------
 
     /// <summary><c>at_end_of_stream(Stream)</c> — ISO §8.11.9.</summary>
-    public static bool AtEndOfStream1(Engine engine)
+    public static bool AtEndOfStream1(Activation engine)
     {
         var h = ResolveStream(engine, engine.GetRegister(0));
         if (h.Reader is null) return false;       // a writer is never "at end"
@@ -723,7 +723,7 @@ public static class StreamBuiltins
     }
 
     /// <summary><c>at_end_of_stream/0</c> — checks current_input.</summary>
-    public static bool AtEndOfStream0(Engine engine)
+    public static bool AtEndOfStream0(Activation engine)
     {
         var h = engine.Streams?.CurrentInput;
         if (h?.Reader is null) return false;
@@ -733,7 +733,7 @@ public static class StreamBuiltins
 
     // ---------- Helpers ----------
 
-    private static Cell Resolve(Engine engine, Cell c)
+    private static Cell Resolve(Activation engine, Cell c)
     {
         if (c.Tag != Tag.Ref) return c;
         return engine.GetHeap(engine.Deref(c.AsHeapIndex));

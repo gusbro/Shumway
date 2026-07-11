@@ -11,7 +11,7 @@ public class AuxiliaryTablesTests
     [Fact]
     public void MakeBigInt_RoundTripsValue()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         var value = BigInteger.Parse("123456789012345678901234567890");
         Cell cell = engine.MakeBigInt(value);
         Assert.Equal(Tag.BigInt, cell.Tag);
@@ -26,7 +26,7 @@ public class AuxiliaryTablesTests
         // Values must be outside the 60-bit inline range — anything that
         // fits inline auto-collapses to Tag.Int to keep cell representations
         // canonical for unification.
-        var engine = new Engine();
+        var engine = new Activation();
         var value = BigInteger.Parse(decimalLiteral);
         Cell cell = engine.MakeBigInt(value);
         Assert.Equal(Tag.BigInt, cell.Tag);
@@ -44,7 +44,7 @@ public class AuxiliaryTablesTests
         // Values inside the 60-bit signed range collapse to Tag.Int so that
         // unification doesn't have to cross tag boundaries to recognise that
         // BigInteger(5) and Int(5) represent the same value (ADR-013).
-        var engine = new Engine();
+        var engine = new Activation();
         var value = BigInteger.Parse(decimalLiteral);
         Cell cell = engine.MakeBigInt(value);
         Assert.Equal(Tag.Int, cell.Tag);
@@ -56,7 +56,7 @@ public class AuxiliaryTablesTests
     {
         // Two BigInt cells with the same outside-range value get separate
         // side-table slots. The collapse only fires for inline-range values.
-        var engine = new Engine();
+        var engine = new Activation();
         var big = BigInteger.Parse("999999999999999999999");
         Cell a = engine.MakeBigInt(big);
         Cell b = engine.MakeBigInt(big);
@@ -67,7 +67,7 @@ public class AuxiliaryTablesTests
     [Fact]
     public void AsBigInt_OnWrongTag_Throws()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         Assert.Throws<InvalidOperationException>(() => engine.AsBigInt(Cell.Atom(0)));
     }
 
@@ -79,7 +79,7 @@ public class AuxiliaryTablesTests
     [InlineData("emoji 😀 still works")]   // surrogate pair
     public void MakeString_RoundTrips(string value)
     {
-        var engine = new Engine();
+        var engine = new Activation();
         Cell cell = engine.MakeString(value);
         Assert.Equal(Tag.String, cell.Tag);
         Assert.Equal(value, engine.AsString(cell));
@@ -90,7 +90,7 @@ public class AuxiliaryTablesTests
     {
         // The string table is append-only; identical content goes into separate slots.
         // Deduplication is the atom table's job; STRING cells are opaque.
-        var engine = new Engine();
+        var engine = new Activation();
         Cell a = engine.MakeString("foo");
         Cell b = engine.MakeString("foo");
         Assert.NotEqual(a.AsStringId, b.AsStringId);
@@ -99,14 +99,14 @@ public class AuxiliaryTablesTests
     [Fact]
     public void MakeString_Null_Throws()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         Assert.Throws<ArgumentNullException>(() => engine.MakeString(null!));
     }
 
     [Fact]
     public void AsString_OnWrongTag_Throws()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         Assert.Throws<InvalidOperationException>(() => engine.AsString(Cell.Atom(0)));
     }
 
@@ -115,7 +115,7 @@ public class AuxiliaryTablesTests
     [Fact]
     public void MakeForeign_RoundTripsObject()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         var obj = new object();
         Cell cell = engine.MakeForeign(obj);
         Assert.Equal(Tag.Foreign, cell.Tag);
@@ -125,7 +125,7 @@ public class AuxiliaryTablesTests
     [Fact]
     public void MakeForeign_AcceptsNull()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         Cell cell = engine.MakeForeign(null);
         Assert.Equal(Tag.Foreign, cell.Tag);
         Assert.Null(engine.AsForeign(cell));
@@ -134,7 +134,7 @@ public class AuxiliaryTablesTests
     [Fact]
     public void AsForeignTyped_CastsToType()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         var list = new List<int> { 1, 2, 3 };
         Cell cell = engine.MakeForeign(list);
         var roundTripped = engine.AsForeign<List<int>>(cell);
@@ -144,7 +144,7 @@ public class AuxiliaryTablesTests
     [Fact]
     public void AsForeignTyped_OnNullValue_ReturnsNull()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         Cell cell = engine.MakeForeign(null);
         Assert.Null(engine.AsForeign<List<int>>(cell));
     }
@@ -152,7 +152,7 @@ public class AuxiliaryTablesTests
     [Fact]
     public void AsForeignTyped_WrongType_Throws()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         Cell cell = engine.MakeForeign("a string");
         Assert.Throws<InvalidCastException>(() => engine.AsForeign<List<int>>(cell));
     }
@@ -160,7 +160,7 @@ public class AuxiliaryTablesTests
     [Fact]
     public void AsForeign_OnWrongTag_Throws()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         Assert.Throws<InvalidOperationException>(() => engine.AsForeign(Cell.Atom(0)));
     }
 
@@ -169,7 +169,7 @@ public class AuxiliaryTablesTests
     [Fact]
     public void Unify_BigIntsEqual_Succeeds()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         var big = BigInteger.Parse("999999999999999999999");
         int a = engine.AllocateHeap(1); engine.SetHeap(a, engine.MakeBigInt(big));
         int b = engine.AllocateHeap(1); engine.SetHeap(b, engine.MakeBigInt(big));
@@ -179,7 +179,7 @@ public class AuxiliaryTablesTests
     [Fact]
     public void Unify_BigIntsDifferent_Fails()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int a = engine.AllocateHeap(1); engine.SetHeap(a, engine.MakeBigInt(BigInteger.Parse("100000000000000000000")));
         int b = engine.AllocateHeap(1); engine.SetHeap(b, engine.MakeBigInt(BigInteger.Parse("100000000000000000001")));
         Assert.False(engine.Unify(a, b));
@@ -193,7 +193,7 @@ public class AuxiliaryTablesTests
         // unify. The invariant (ADR-013) is that the canonical form for a
         // 60-bit-fitting integer is always Tag.Int, regardless of how it was
         // produced.
-        var engine = new Engine();
+        var engine = new Activation();
         int a = engine.AllocateHeap(1); engine.SetHeap(a, Cell.Int(5));
         int b = engine.AllocateHeap(1); engine.SetHeap(b, engine.MakeBigInt(new BigInteger(5)));
         Assert.Equal(Tag.Int, engine.GetHeap(b).Tag);
@@ -203,7 +203,7 @@ public class AuxiliaryTablesTests
     [Fact]
     public void Unify_VarWithBigInt_CopiesCellIntoVar()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int v = engine.AllocateHeapUnbound();
         int b = engine.AllocateHeap(1);
         Cell bigCell = engine.MakeBigInt(BigInteger.Parse("999999999999999999999"));
@@ -219,7 +219,7 @@ public class AuxiliaryTablesTests
     [Fact]
     public void Unify_StringsEqualContent_SucceedsEvenWhenIdsDiffer()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int a = engine.AllocateHeap(1); engine.SetHeap(a, engine.MakeString("hello"));
         int b = engine.AllocateHeap(1); engine.SetHeap(b, engine.MakeString("hello"));   // distinct id
         Assert.NotEqual(engine.GetHeap(a).AsStringId, engine.GetHeap(b).AsStringId);
@@ -229,7 +229,7 @@ public class AuxiliaryTablesTests
     [Fact]
     public void Unify_StringsDifferentContent_Fails()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int a = engine.AllocateHeap(1); engine.SetHeap(a, engine.MakeString("hello"));
         int b = engine.AllocateHeap(1); engine.SetHeap(b, engine.MakeString("world"));
         Assert.False(engine.Unify(a, b));
@@ -238,7 +238,7 @@ public class AuxiliaryTablesTests
     [Fact]
     public void Unify_StringVsAtom_Fails()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int a = engine.AllocateHeap(1); engine.SetHeap(a, engine.MakeString("hello"));
         int b = engine.AllocateHeap(1); engine.SetHeap(b, Cell.Atom(0));
         Assert.False(engine.Unify(a, b));
@@ -247,7 +247,7 @@ public class AuxiliaryTablesTests
     [Fact]
     public void Unify_VarWithString_CopiesCellIntoVar()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int v = engine.AllocateHeapUnbound();
         int s = engine.AllocateHeap(1);
         Cell strCell = engine.MakeString("hello");
@@ -262,7 +262,7 @@ public class AuxiliaryTablesTests
     [Fact]
     public void Unify_ForeignsSameReference_Succeeds()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         var shared = new object();
         int a = engine.AllocateHeap(1); engine.SetHeap(a, engine.MakeForeign(shared));
         int b = engine.AllocateHeap(1); engine.SetHeap(b, engine.MakeForeign(shared));
@@ -274,7 +274,7 @@ public class AuxiliaryTablesTests
     {
         // Reference semantics: two separate instances with .Equals true (e.g. string
         // boxed as object) still fail Unify, per cell-layout-detail.md.
-        var engine = new Engine();
+        var engine = new Activation();
         var s1 = new string('x', 5);
         var s2 = new string('x', 5);
         Assert.False(ReferenceEquals(s1, s2));
@@ -289,7 +289,7 @@ public class AuxiliaryTablesTests
     public void Unify_ForeignsBothNull_Succeeds()
     {
         // ReferenceEquals(null, null) is true.
-        var engine = new Engine();
+        var engine = new Activation();
         int a = engine.AllocateHeap(1); engine.SetHeap(a, engine.MakeForeign(null));
         int b = engine.AllocateHeap(1); engine.SetHeap(b, engine.MakeForeign(null));
         Assert.True(engine.Unify(a, b));
@@ -298,7 +298,7 @@ public class AuxiliaryTablesTests
     [Fact]
     public void Unify_ForeignNullVsNonNull_Fails()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int a = engine.AllocateHeap(1); engine.SetHeap(a, engine.MakeForeign(null));
         int b = engine.AllocateHeap(1); engine.SetHeap(b, engine.MakeForeign(new object()));
         Assert.False(engine.Unify(a, b));
@@ -312,8 +312,8 @@ public class AuxiliaryTablesTests
         // an unrelated object — the API does not promise meaningful behaviour, but it
         // must not throw silently for an in-range stranger id, so we just document the
         // shape here without asserting a specific outcome.
-        var e1 = new Engine();
-        var e2 = new Engine();
+        var e1 = new Activation();
+        var e2 = new Activation();
         e2.MakeForeign(new object());   // grow e2 so the stranger id is in range for e1
 
         var foreign1 = e1.MakeForeign("shared");
@@ -325,7 +325,7 @@ public class AuxiliaryTablesTests
     [Fact]
     public void Unify_VarWithForeign_CopiesCellIntoVar()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         int v = engine.AllocateHeapUnbound();
         int f = engine.AllocateHeap(1);
         var obj = new object();

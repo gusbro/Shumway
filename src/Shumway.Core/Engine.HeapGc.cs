@@ -13,7 +13,7 @@ namespace Shumway.Core;
 /// is always safe. Attvar relocation (the attr table keyed by home
 /// index, the attr-modify side log, pending wakeups) is a follow-up.</para>
 /// </summary>
-public sealed partial class Engine
+public sealed partial class Activation
 {
     // Scratch buffers reused across collections to avoid per-GC churn.
     private bool[]? _gcMarked;

@@ -29,7 +29,7 @@ public class BucketIndexingTests
     private static int Fid(string n, int a) =>
         FunctorTable.Intern(AtomTable.Intern(n, permanent: true).Id, a);
 
-    private static PrologEngine Engine(Mode mode)
+    private static PrologEngine Activation(Mode mode)
     {
         if (mode == Mode.Tier0)
         {
@@ -58,7 +58,7 @@ public class BucketIndexingTests
     {
         // The regression: p(f(Y),R) once returned only R=3 (the sub-switch default
         // routed the unbound discriminator to the wildcards, dropping f(a)/f(b)).
-        var e = Engine(mode);
+        var e = Activation(mode);
         Assert.Equal(3, e.QueryAll("p(f(Y), R).").Count());
         Assert.True(e.Query("p(f(a), R), R == 1.").Success);
         Assert.True(e.Query("p(f(b), R), R == 2.").Success);
@@ -68,7 +68,7 @@ public class BucketIndexingTests
     [MemberData(nameof(Modes))]
     public void AtomSibling_BoundKey_IsCorrect(Mode mode)
     {
-        var e = Engine(mode);
+        var e = Activation(mode);
         Assert.True(e.Query("h(a, y, V), V == 2.").Success);   // nested arg1 index picks (a,y)
         Assert.Single(e.QueryAll("h(a, y, V)."));               // deterministic
         Assert.Equal(4, e.QueryAll("h(A, B, C).").Count());     // full enumeration intact
@@ -80,7 +80,7 @@ public class BucketIndexingTests
     [MemberData(nameof(Modes))]
     public void StructureKeyedSub_RoutesByHeadFunctor(Mode mode)
     {
-        var e = Engine(mode);
+        var e = Activation(mode);
         // Each functor routes to its clause plus the catch-all.
         Assert.True(e.Query("rr([amp(9)], R), R == amped.").Success);
         Assert.True(e.Query("rr([lit(8)], R), R == litted.").Success);
@@ -93,7 +93,7 @@ public class BucketIndexingTests
     [Fact]
     public void AtomSiblingHit_AllocatesNoMoreThanFullScan()
     {
-        var e = Engine(Mode.Tier0);
+        var e = Activation(Mode.Tier0);
         e.QueryAll("h(a, y, V).").ToList();
         long hit = e.LastQueryCellsAllocated;
         e.QueryAll("h(A, B, C).").ToList();

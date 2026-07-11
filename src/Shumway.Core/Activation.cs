@@ -16,9 +16,9 @@ namespace Shumway.Core;
 /// auxiliary-table value tags throw <see cref="NotImplementedException"/> from
 /// <see cref="Unify"/> for now; they land with the subsystems that produce them.
 /// </summary>
-public sealed partial class Engine
+public sealed partial class Activation
 {
-    private readonly EngineConfig _config;
+    private readonly ActivationConfig _config;
 
     // ----- Heap -----
     private Cell[] _heap;
@@ -141,7 +141,7 @@ public sealed partial class Engine
     public System.IO.TextWriter Out { get; set; } = Console.Out;
 
     /// <summary>Opaque back-reference to the embedding-layer object that owns
-    /// this engine (typically a <c>PrologEngine</c>). Engine itself doesn't
+    /// this engine (typically a <c>PrologEngine</c>). Activation itself doesn't
     /// touch the value — it's read by meta-builtins like <c>findall/3</c>
     /// that need to spawn a peer engine to run a sub-query. The Core layer
     /// stays free of any embedding-layer types by keeping this typed as
@@ -154,7 +154,7 @@ public sealed partial class Engine
     /// <c>null</c> means "no operator-form rendering, always canonical".</summary>
     public IOperatorLookup? Operators { get; set; }
 
-    // ----- Engine registers (per ADR-005) -----
+    // ----- Activation registers (per ADR-005) -----
     // -1 means "none yet" for E, B, and B0. P and CP track the program counter and
     // continuation point; they are set when the interpreter is hooked up. B0 is
     // the value of B at the most recent procedure entry — neck_cut uses it as the
@@ -187,9 +187,9 @@ public sealed partial class Engine
 
     public bool ReservedWrite => _reservedWrite;
 
-    public Engine() : this(new EngineConfig()) { }
+    public Activation() : this(new ActivationConfig()) { }
 
-    public Engine(EngineConfig config)
+    public Activation(ActivationConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
         Validate(config);
@@ -206,7 +206,7 @@ public sealed partial class Engine
         // builds; a normal build never reads the environment here. The fuzz
         // FIELDS and their (branch-predicted) checks in MaybeCollectHeap stay,
         // because the test suite also drives them programmatically
-        // (GcStressMode / EngineConfig).
+        // (GcStressMode / ActivationConfig).
         DiagReadGcOverrides();
     }
 
@@ -229,7 +229,7 @@ public sealed partial class Engine
         UpdateGcDiagActive();
     }
 
-    private static void Validate(EngineConfig c)
+    private static void Validate(ActivationConfig c)
     {
         if (c.InitialHeapSize <= 0) throw new ArgumentException("InitialHeapSize must be > 0", nameof(c));
         if (c.InitialStackSize <= 0) throw new ArgumentException("InitialStackSize must be > 0", nameof(c));
@@ -238,7 +238,7 @@ public sealed partial class Engine
         if (c.InitialExtraTrailSize <= 0) throw new ArgumentException("InitialExtraTrailSize must be > 0", nameof(c));
     }
 
-    public EngineConfig Config => _config;
+    public ActivationConfig Config => _config;
 
     // ----- Heap accessors -----
 
@@ -772,7 +772,7 @@ public sealed partial class Engine
         // order so any stale ones sit at the top of _ilCpStack —
         // pop them down to the first <= barrier. Replaces the
         // chunk-164 foreach-over-dict-Keys loop (which was 5.31%
-        // self-time on Engine.Cut in Blint with user IL active,
+        // self-time on Activation.Cut in Blint with user IL active,
         // plus a List<int> allocation per cut that hit any IL CP).
         while (_ilCpTop > 0 && _ilCpStack[_ilCpTop - 1].Key > barrier)
         {
@@ -978,7 +978,7 @@ public sealed partial class Engine
     /// <summary>Ensures the X-register bank can hold at least
     /// <paramref name="required"/> registers, doubling the backing
     /// array if needed. The initial register count
-    /// (<see cref="EngineConfig.InitialRegisterCount"/>) covers the
+    /// (<see cref="ActivationConfig.InitialRegisterCount"/>) covers the
     /// vast majority of predicates; this growth path catches the tail
     /// where a single complex clause has more live temporaries than
     /// the initial bank holds. Existing register values are preserved.</summary>
@@ -1777,7 +1777,7 @@ public sealed partial class Engine
 
     /// <summary><c>time/1</c> marks — (wall ms, heap cells, inferences) at
     /// start / last report; index = the mark handle bound by
-    /// <c>'$time_start'</c>. Engine-lifetime (one query), so the list stays
+    /// <c>'$time_start'</c>. Activation-lifetime (one query), so the list stays
     /// tiny and needs no cleanup.</summary>
     public System.Collections.Generic.List<(double WallMs, long Cells, long Inferences)>? TimeMarks;
 
@@ -1824,7 +1824,7 @@ public sealed partial class Engine
     /// layer at query setup so IL-emitted <c>get_pstr</c> / <c>put_pstr</c>
     /// opcodes (chunk 50) can resolve a literal id to its string at
     /// runtime — same lookup the bytecode interpreter does, but
-    /// accessible from the Engine surface so Tier-1 IL doesn't need
+    /// accessible from the Activation surface so Tier-1 IL doesn't need
     /// to carry its own pool reference.</summary>
     public IReadOnlyList<string>? CurrentStringLiterals { get; set; }
 
@@ -1986,7 +1986,7 @@ public sealed partial class Engine
 
     /// <summary>Chunk-150 free-list of dead-clause bytecode regions
     /// available for reuse by within-query incremental
-    /// <c>assertz</c> / <c>asserta</c>. Lives on <see cref="Engine"/>
+    /// <c>assertz</c> / <c>asserta</c>. Lives on <see cref="Activation"/>
     /// purely as legacy ABI — chunk 151b migrated the live free-list
     /// to <c>PrologEngine</c>'s persistent buffer so chunks freed in
     /// one query are reusable by the next. Not consulted by any
@@ -2029,7 +2029,7 @@ public sealed partial class Engine
     /// Wired by the embedding layer at query setup so the
     /// <c>enter_dynamic</c> opcode can sample it without the interpreter
     /// having to depend on the embedding layer's types. chunk 432: kept as
-    /// the fallback for bare-Engine tests; the production path is
+    /// the fallback for bare-Activation tests; the production path is
     /// <see cref="DbGenerationBox"/>, which the interpreter checks first.</summary>
     public Func<long>? DbGenerationProvider { get; set; }
 
@@ -2137,10 +2137,10 @@ public sealed partial class Engine
     /// <summary>Chunk 233 — per-engine slot for the IL indexed-dispatch
     /// cache (the typed dictionary lives in Compiler.Il and Core can't
     /// name its type). Previously a
-    /// <c>ConditionalWeakTable&lt;Engine, ConcurrentDictionary&gt;</c>
+    /// <c>ConditionalWeakTable&lt;Activation, ConcurrentDictionary&gt;</c>
     /// in <c>IlIndexedDispatch._perEngineCache</c> — every IL Call to
     /// an indexed predicate paid an internal ConditionalWeakTable
-    /// lock + a ConcurrentDictionary bucket lock. Engine is single-
+    /// lock + a ConcurrentDictionary bucket lock. Activation is single-
     /// threaded and the cache lives exactly as long as the engine, so
     /// a plain instance field is both safe and free of those internal
     /// locks. Compiler.Il accesses it via an <c>is</c> pattern check
@@ -2239,13 +2239,13 @@ public sealed partial class Engine
 
     private struct IlChoicePointEntry
     {
-        public Func<Engine, int, bool> Del;
+        public Func<Activation, int, bool> Del;
         public int Cursor;
         // Chunk 231 — the _b value at PushIlChoicePoint time. Lets
         // Cut(barrier) compare against the IL CP stack without going
         // through the Dictionary's KeyCollection (which was the
-        // PopIlChoicePointAndRestore + Engine.Cut hot path: ~5.31%
-        // self-time on Engine.Cut from the foreach over Keys, plus
+        // PopIlChoicePointAndRestore + Activation.Cut hot path: ~5.31%
+        // self-time on Activation.Cut from the foreach over Keys, plus
         // ~1.55% from FindValue/MoveNext on dict ops in profiling
         // Blint with bundled user IL).
         public int Key;
@@ -2275,7 +2275,7 @@ public sealed partial class Engine
     /// bytecode address. State preservation matches the bytecode CP
     /// machinery exactly — the only difference is what happens at retry
     /// time.</summary>
-    public void PushIlChoicePoint(Func<Engine, int, bool> del, int nextCursor, int arity)
+    public void PushIlChoicePoint(Func<Activation, int, bool> del, int nextCursor, int arity)
         => PushIlChoicePoint(del, nextCursor, arity, onPrune: null);
 
     /// <summary>Chunk 245 overload — additionally registers an
@@ -2288,7 +2288,7 @@ public sealed partial class Engine
     /// callback small and safe (a single Dispose, no
     /// arbitrary user code).</summary>
     public void PushIlChoicePoint(
-        Func<Engine, int, bool> del, int nextCursor, int arity, Action? onPrune)
+        Func<Activation, int, bool> del, int nextCursor, int arity, Action? onPrune)
     {
         ArgumentNullException.ThrowIfNull(del);
         PushChoicePoint(arity, IlChoicePointSentinelBp);
@@ -2317,7 +2317,7 @@ public sealed partial class Engine
     /// (which points at the parent procedure's continuation, not the
     /// next instruction in the current clause).</para></summary>
     public void PushBuiltinChoicePoint(
-        Func<Engine, int, bool> del, int arity)
+        Func<Activation, int, bool> del, int arity)
     {
         PushIlChoicePoint(del, nextCursor: 0, arity: arity);
     }
@@ -2329,7 +2329,7 @@ public sealed partial class Engine
     /// engine backtracking through it (in which case
     /// MoveNext-returns-false already handles Dispose).</summary>
     public void PushBuiltinChoicePoint(
-        Func<Engine, int, bool> del, int arity, Action? onPrune)
+        Func<Activation, int, bool> del, int arity, Action? onPrune)
     {
         PushIlChoicePoint(del, nextCursor: 0, arity: arity, onPrune: onPrune);
     }
@@ -2421,7 +2421,7 @@ public sealed partial class Engine
     /// the push's heap top so hook bindings trail correctly), then the five
     /// restore slots are overwritten with the entry marks.</summary>
     public void PushIlChoicePointWithMarks(
-        Func<Engine, int, bool> del, int nextCursor, int arity,
+        Func<Activation, int, bool> del, int nextCursor, int arity,
         int bindingTop, int extraTop, int heapTop, int savedHb, int entryE)
     {
         PushIlChoicePoint(del, nextCursor, arity);
@@ -2475,7 +2475,7 @@ public sealed partial class Engine
     /// frame at pop time.</summary>
     public static bool TraceCpStack { get; set; }
 
-    public (Func<Engine, int, bool> Del, int Cursor) PopIlChoicePointAndRestore()
+    public (Func<Activation, int, bool> Del, int Cursor) PopIlChoicePointAndRestore()
     {
         if (_b < 0)
             throw new InvalidOperationException("PopIlChoicePointAndRestore: no active choice point.");
@@ -2895,7 +2895,7 @@ public sealed partial class Engine
     public int ExtraTrailTop => _extraTrailTop;
     public int ExtraTrailCapacity => _extraTrail.Length;
 
-    // ----- Engine register accessors (read-only for now; set by the interpreter later) -----
+    // ----- Activation register accessors (read-only for now; set by the interpreter later) -----
 
     public int E => _e;
     public int B => _b;
@@ -3794,7 +3794,7 @@ public sealed partial class Engine
     /// <summary>Set by the bytecode interpreter so Tier-1 IL code can run
     /// pending <c>verify_attributes</c> wakeups through the interpreter's
     /// goal-running machinery (which the IL delegate, holding only an
-    /// <see cref="Engine"/>, cannot reach directly). Returns false when a
+    /// <see cref="Activation"/>, cannot reach directly). Returns false when a
     /// hook failed.</summary>
     internal Func<bool>? Tier1WakeupFlusher { get; set; }
 
@@ -4002,12 +4002,12 @@ public sealed partial class Engine
         if (maxSize > 0 && newSize > maxSize)
         {
             if (required > maxSize)
-                throw new InvalidOperationException($"Engine {name} overflow: would need {required} cells, max is {maxSize}.");
+                throw new InvalidOperationException($"Activation {name} overflow: would need {required} cells, max is {maxSize}.");
             newSize = maxSize;
         }
         if (newSize > int.MaxValue)
             throw new InvalidOperationException(
-                $"Engine {name} overflow: would exceed int.MaxValue "
+                $"Activation {name} overflow: would exceed int.MaxValue "
                 + $"(top={top}, extra={extra}, len={buffer.Length}).");
         Profiler.Realloc(name, (long)newSize * System.Runtime.CompilerServices.Unsafe.SizeOf<T>());
         Array.Resize(ref buffer, (int)newSize);
@@ -4362,7 +4362,7 @@ public sealed partial class Engine
 /// <summary>chunk 432 — shared mutable holder for the host's dynamic-database
 /// generation (the ADR-015 logical-update-view clock). The embedding layer
 /// keeps ONE box per <c>PrologEngine</c>, increments <c>Value</c> wherever it
-/// bumps the generation, and hands the same box to every <see cref="Engine"/>
+/// bumps the generation, and hands the same box to every <see cref="Activation"/>
 /// it sets up — so the <c>enter_dynamic</c> opcode samples the generation with
 /// a plain field read instead of invoking a <c>Func&lt;long&gt;</c> per
 /// dynamic-predicate call. Single-writer (the host), read by the engine the

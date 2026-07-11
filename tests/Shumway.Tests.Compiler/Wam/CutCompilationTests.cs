@@ -171,7 +171,7 @@ public class CutCompilationTests
         var program = AssembleProgram(module, pFunctor,
             launcher => launcher.EmitPutAtom(atomA, 0));
 
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(
             engine, Array.Empty<string>(), Array.Empty<double>(), program.SwitchTables);
         Assert.Equal(InterpreterResult.Halted, interp.Run(program.Bytecode, 0));
@@ -195,7 +195,7 @@ public class CutCompilationTests
         var program = AssembleProgram(module, pFunctor,
             launcher => launcher.EmitPutAtom(atomA, 0));
 
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(
             engine, Array.Empty<string>(), Array.Empty<double>(), program.SwitchTables);
         Assert.Equal(InterpreterResult.Halted, interp.Run(program.Bytecode, 0));
@@ -221,7 +221,7 @@ public class CutCompilationTests
         var program = AssembleProgram(module, pFunctor,
             launcher => launcher.EmitPutAtom(atomA, 0));
 
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(
             engine, Array.Empty<string>(), Array.Empty<double>(), program.SwitchTables);
         Assert.Equal(InterpreterResult.Failed, interp.Run(program.Bytecode, 0));
@@ -241,7 +241,7 @@ public class CutCompilationTests
         var program = AssembleProgram(module, pFunctor,
             launcher => launcher.EmitPutAtom(atomA, 0));
 
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(
             engine, Array.Empty<string>(), Array.Empty<double>(), program.SwitchTables);
         Assert.Equal(InterpreterResult.Halted, interp.Run(program.Bytecode, 0));

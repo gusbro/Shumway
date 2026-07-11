@@ -21,7 +21,7 @@ public static class AtomListBuiltins
     /// <item>(-, +): List is unbound, N is a non-negative integer — bind
     ///   List to a fresh list of N anonymous variables.</item>
     /// </list></summary>
-    public static bool Length(Engine engine)
+    public static bool Length(Activation engine)
     {
         Cell listCell = Resolve(engine, engine.GetRegister(0));
         Cell nCell = Resolve(engine, engine.GetRegister(1));
@@ -56,7 +56,7 @@ public static class AtomListBuiltins
         throw new PrologRuntimeException("type_error", "integer");
     }
 
-    private static int BuildFreshVarList(Engine engine, int count)
+    private static int BuildFreshVarList(Activation engine, int count)
     {
         if (count == 0)
         {
@@ -87,7 +87,7 @@ public static class AtomListBuiltins
     ///   prefix/suffix split via a runtime CP (chunk 56). Each backtrack
     ///   advances the split point by one element.</item>
     /// </list></summary>
-    public static bool Append(Engine engine)
+    public static bool Append(Activation engine)
     {
         // chunk 432: two-pass det path — walk L1's spine once to count
         // (and classify the tail), reserve the result cells in one
@@ -132,9 +132,9 @@ public static class AtomListBuiltins
 
     /// <summary>Non-deterministic <c>append/3</c> path: L1 isn't bound, so
     /// we drive the split off L3. Collect L3's elements, then enumerate
-    /// every split point 0..N. The CP machinery (<see cref="Engine.PushBuiltinChoicePoint"/>)
+    /// every split point 0..N. The CP machinery (<see cref="Activation.PushBuiltinChoicePoint"/>)
     /// makes each backtrack try the next split.</summary>
-    private static bool AppendSplit(Engine engine, int returnPc)
+    private static bool AppendSplit(Activation engine, int returnPc)
     {
         // L3 must be ground enough to walk — collect its elements.
         var elems = new List<Cell>();
@@ -179,7 +179,7 @@ public static class AtomListBuiltins
         private readonly Cell _suffixTail;
         private readonly int _returnPc;
         private int _splitIdx;
-        public readonly Func<Engine, int, bool> Resume;
+        public readonly Func<Activation, int, bool> Resume;
 
         public AppendSplitCursor(IReadOnlyList<Cell> elems, Cell suffixTail, int returnPc)
         {
@@ -190,9 +190,9 @@ public static class AtomListBuiltins
             Resume = (e, _) => Attempt(e, isResume: true);
         }
 
-        public bool Start(Engine engine) => Attempt(engine, isResume: false);
+        public bool Start(Activation engine) => Attempt(engine, isResume: false);
 
-        private bool Attempt(Engine engine, bool isResume)
+        private bool Attempt(Activation engine, bool isResume)
         {
             int n = _elems.Count;
             int splitIdx = _splitIdx;
@@ -231,7 +231,7 @@ public static class AtomListBuiltins
     {
         private readonly int _returnPc;
         private int _k;
-        public readonly Func<Engine, int, bool> Resume;
+        public readonly Func<Activation, int, bool> Resume;
 
         public AppendOpenCursor(int returnPc)
         {
@@ -240,9 +240,9 @@ public static class AtomListBuiltins
             Resume = (e, _) => Attempt(e, isResume: true);
         }
 
-        public bool Start(Engine engine) => Attempt(engine, isResume: false);
+        public bool Start(Activation engine) => Attempt(engine, isResume: false);
 
-        private bool Attempt(Engine engine, bool isResume)
+        private bool Attempt(Activation engine, bool isResume)
         {
             int k = _k;
             // Always re-arm for k+1 — the solution set is unbounded.
@@ -286,7 +286,7 @@ public static class AtomListBuiltins
     }
 
     private static int BuildListFromCells(
-        Engine engine, IReadOnlyList<Cell> elems, int start, int end, Cell finalTail)
+        Activation engine, IReadOnlyList<Cell> elems, int start, int end, Cell finalTail)
     {
         int count = end - start;
         if (count == 0)
@@ -315,7 +315,7 @@ public static class AtomListBuiltins
     /// <item>(-, +): build the atom by interning the string from
     ///   a list of integer character codes.</item>
     /// </list></summary>
-    public static bool AtomCodes(Engine engine)
+    public static bool AtomCodes(Activation engine)
     {
         Cell atomCell = Resolve(engine, engine.GetRegister(0));
         Cell codesCell = Resolve(engine, engine.GetRegister(1));
@@ -338,7 +338,7 @@ public static class AtomListBuiltins
         throw new PrologRuntimeException("type_error", "atom");
     }
 
-    private static int BuildIntCodesList(Engine engine, string s)
+    private static int BuildIntCodesList(Activation engine, string s)
     {
         if (s.Length == 0)
         {
@@ -359,7 +359,7 @@ public static class AtomListBuiltins
         return start;
     }
 
-    private static string ReadCodesString(Engine engine, Cell codesCell)
+    private static string ReadCodesString(Activation engine, Cell codesCell)
     {
         var sb = new StringBuilder();
         Cell cursor = Resolve(engine, codesCell);
@@ -401,7 +401,7 @@ public static class AtomListBuiltins
     ///   runtime CP (chunk 56). Each backtrack moves the split one
     ///   character to the right.</item>
     /// </list></summary>
-    public static bool AtomConcat(Engine engine)
+    public static bool AtomConcat(Activation engine)
     {
         Cell aCell = Resolve(engine, engine.GetRegister(0));
         Cell bCell = Resolve(engine, engine.GetRegister(1));
@@ -447,7 +447,7 @@ public static class AtomListBuiltins
         private readonly string _cName;
         private readonly int _returnPc;
         private int _splitIdx;
-        public readonly Func<Engine, int, bool> Resume;
+        public readonly Func<Activation, int, bool> Resume;
 
         public AtomConcatSplitCursor(string cName, int returnPc)
         {
@@ -457,9 +457,9 @@ public static class AtomListBuiltins
             Resume = (e, _) => Attempt(e, isResume: true);
         }
 
-        public bool Start(Engine engine) => Attempt(engine, isResume: false);
+        public bool Start(Activation engine) => Attempt(engine, isResume: false);
 
-        private bool Attempt(Engine engine, bool isResume)
+        private bool Attempt(Activation engine, bool isResume)
         {
             int splitIdx = _splitIdx;
             if (splitIdx > _cName.Length) return false;
@@ -483,7 +483,7 @@ public static class AtomListBuiltins
 
     // ---------- Helpers ----------
 
-    private static Cell Resolve(Engine engine, Cell c)
+    private static Cell Resolve(Activation engine, Cell c)
     {
         if (c.Tag != Tag.Ref) return c;
         int addr = engine.Deref(c.AsHeapIndex);

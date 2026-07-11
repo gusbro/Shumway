@@ -23,14 +23,14 @@ public static class ChoicePointTrace
     private const string TraceSymbol = "SHUMWAY_CP_TRACE";
 
     [Conditional(TraceSymbol)]
-    public static void DumpAtSite(Engine engine, string label)
+    public static void DumpAtSite(Activation engine, string label)
     {
         Console.Error.WriteLine($"[cp] === {label} ===");
         int depth = 0;
         foreach (var (stackB, savedBp, arity) in engine.EnumerateChoicePoints())
         {
             string bpDesc;
-            if (savedBp == Engine.IlChoicePointSentinelBp)
+            if (savedBp == Activation.IlChoicePointSentinelBp)
                 bpDesc = "[il-sentinel]";
             else if (engine.ResolveAddressToLabel is { } resolve)
                 bpDesc = resolve(savedBp) ?? $"@0x{savedBp:X}";

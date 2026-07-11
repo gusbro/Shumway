@@ -32,6 +32,6 @@ public enum TrailType : byte
     /// <see cref="ExtraTrailEntry.HeapIdx"/> field carries the catch-frame
     /// index and <see cref="ExtraTrailEntry.OldValue"/> the operation to
     /// reverse, so backtracking past a catch/3 restores the frame stack —
-    /// see <see cref="Engine"/>'s catch-frame methods.</summary>
+    /// see <see cref="Activation"/>'s catch-frame methods.</summary>
     CatchFrame = 64,
 }

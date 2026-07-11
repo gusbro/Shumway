@@ -38,7 +38,7 @@ namespace Shumway.Compile;
 /// the others — every error is reported, the exit code reflects the
 /// worst outcome.</para>
 /// </summary>
-internal static class Program
+internal static class CompileCli
 {
     private const int ExitOk = 0;
     private const int ExitCompileError = 1;

@@ -8,7 +8,7 @@ namespace Shumway.Embedding;
 /// boilerplate per call.
 ///
 /// <para>The decorated method's C# signature must be
-/// <c>bool Method(Shumway.Core.Engine engine)</c> — the same shape
+/// <c>bool Method(Shumway.Core.Activation engine)</c> — the same shape
 /// as a native Shumway builtin. Arguments are read from
 /// <c>engine.GetRegister(0..arity-1)</c> and results are unified
 /// via the engine's APIs. A return of <c>true</c> means the
@@ -40,7 +40,7 @@ public sealed class PrologPredicateAttribute : Attribute
     public string? Name { get; }
 
     /// <summary>Predicate arity. Always present — the C# method
-    /// signature is fixed at <c>bool(Engine)</c>, so arity can't be
+    /// signature is fixed at <c>bool(Activation)</c>, so arity can't be
     /// inferred from parameter count.</summary>
     public int Arity { get; }
 

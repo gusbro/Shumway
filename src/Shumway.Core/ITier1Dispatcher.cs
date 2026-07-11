@@ -19,7 +19,7 @@ public interface ITier1Dispatcher
     /// <c>null</c> when there's no replacement yet (perhaps because the
     /// invocation counter hasn't reached the promotion threshold). The
     /// implementation may compile lazily on this call.</summary>
-    Func<Engine, bool>? OnDispatch(int targetAddress);
+    Func<Activation, bool>? OnDispatch(int targetAddress);
 
     /// <summary>Phase 16 threaded dispatch: returns the IL delegate
     /// already bound to the given functor id, or <c>null</c> if none
@@ -28,5 +28,5 @@ public interface ITier1Dispatcher
     /// caller's continuation address) to re-enter the calling
     /// delegate at the forward-resume cursor without creating a
     /// recursive C# stack frame.</summary>
-    Func<Engine, int, bool>? ResolveByFunctorId(int functorId);
+    Func<Activation, int, bool>? ResolveByFunctorId(int functorId);
 }

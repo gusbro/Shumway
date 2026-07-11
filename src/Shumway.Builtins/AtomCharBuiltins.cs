@@ -27,7 +27,7 @@ public static class AtomCharBuiltins
 {
     // ---------- atom_length/2 ----------
 
-    public static bool AtomLength(Engine engine)
+    public static bool AtomLength(Activation engine)
     {
         Cell atomCell = Resolve(engine, engine.GetRegister(0));
         // ISO §8.16.1.3: Atom var → instantiation_error; not atom → type_error(atom, Atom).
@@ -45,7 +45,7 @@ public static class AtomCharBuiltins
     /// ↔ PSTR conversion. Either argument may be ground; given an atom
     /// the PSTR is built from the atom's name, and given a PSTR the
     /// atom is interned from its characters.</summary>
-    public static bool AtomString(Engine engine)
+    public static bool AtomString(Activation engine)
     {
         Cell atomCell = Resolve(engine, engine.GetRegister(0));
         if (atomCell.Tag == Tag.Atom)
@@ -74,7 +74,7 @@ public static class AtomCharBuiltins
 
     // ---------- atom_chars/2 ----------
 
-    public static bool AtomChars(Engine engine)
+    public static bool AtomChars(Activation engine)
     {
         Cell atomCell = Resolve(engine, engine.GetRegister(0));
         Cell charsCell = Resolve(engine, engine.GetRegister(1));
@@ -104,7 +104,7 @@ public static class AtomCharBuiltins
 
     // ---------- char_code/2 ----------
 
-    public static bool CharCode(Engine engine)
+    public static bool CharCode(Activation engine)
     {
         Cell charCell = Resolve(engine, engine.GetRegister(0));
         Cell codeCell = Resolve(engine, engine.GetRegister(1));
@@ -152,15 +152,15 @@ public static class AtomCharBuiltins
 
     // ---------- number_codes/2 ----------
 
-    public static bool NumberCodes(Engine engine) => NumberConversion(
+    public static bool NumberCodes(Activation engine) => NumberConversion(
         engine, asCodes: true, builtinName: "number_codes/2");
 
     // ---------- number_chars/2 ----------
 
-    public static bool NumberChars(Engine engine) => NumberConversion(
+    public static bool NumberChars(Activation engine) => NumberConversion(
         engine, asCodes: false, builtinName: "number_chars/2");
 
-    private static bool NumberConversion(Engine engine, bool asCodes, string builtinName)
+    private static bool NumberConversion(Activation engine, bool asCodes, string builtinName)
     {
         Cell numCell = Resolve(engine, engine.GetRegister(0));
         Cell strCell = Resolve(engine, engine.GetRegister(1));
@@ -234,7 +234,7 @@ public static class AtomCharBuiltins
     /// text is not a number (caller raises
     /// <c>syntax_error(illegal_number)</c>).</summary>
     internal static bool TryBuildPrologNumber(
-        Engine engine, string s, out Cell cell, out int floatIdx)
+        Activation engine, string s, out Cell cell, out int floatIdx)
     {
         cell = default;
         floatIdx = -1;
@@ -315,7 +315,7 @@ public static class AtomCharBuiltins
     }
 
     private static bool FinishInteger(
-        Engine engine, System.Numerics.BigInteger value, ref Cell cell)
+        Activation engine, System.Numerics.BigInteger value, ref Cell cell)
     {
         cell = value >= long.MinValue && value <= long.MaxValue
             ? Cell.Int((long)value)
@@ -411,7 +411,7 @@ public static class AtomCharBuiltins
     /// atom and the number it denotes. Unlike <c>number_codes/2</c> this
     /// <em>fails</em> (rather than raising a syntax error) when the atom is
     /// not numeric, matching the conventional <c>atom_number/2</c>.</summary>
-    public static bool AtomNumber(Engine engine)
+    public static bool AtomNumber(Activation engine)
     {
         Cell atomCell = Resolve(engine, engine.GetRegister(0));
         if (atomCell.Tag == Tag.Atom)
@@ -446,7 +446,7 @@ public static class AtomCharBuiltins
     /// <summary><c>number_string(?Number, ?String)</c> — converts between a
     /// number and its string representation, failing when the string is not
     /// numeric.</summary>
-    public static bool NumberString(Engine engine)
+    public static bool NumberString(Activation engine)
     {
         Cell strCell = Resolve(engine, engine.GetRegister(1));
         if (strCell.Tag == Tag.Pstr)
@@ -477,7 +477,7 @@ public static class AtomCharBuiltins
 
     /// <summary>The decimal text of an integer or float cell; null when the
     /// cell is neither.</summary>
-    private static string? NumberText(Engine engine, Cell numCell)
+    private static string? NumberText(Activation engine, Cell numCell)
     {
         if (numCell.Tag == Tag.Int)
             return numCell.AsInt.ToString(CultureInfo.InvariantCulture);
@@ -500,7 +500,7 @@ public static class AtomCharBuiltins
     /// </list>
     /// Non-deterministic enumeration of every match is deferred to the
     /// chunk that wires call/N choice-points.</summary>
-    public static bool SubAtom(Engine engine)
+    public static bool SubAtom(Activation engine)
     {
         Cell atomC = Resolve(engine, engine.GetRegister(0));
         // ISO §8.16.10.3: Atom var → instantiation_error; not atom → type_error.
@@ -551,7 +551,7 @@ public static class AtomCharBuiltins
 
     // ---------- List-building helpers ----------
 
-    private static int BuildIntCodesList(Engine engine, string s)
+    private static int BuildIntCodesList(Activation engine, string s)
     {
         if (s.Length == 0)
         {
@@ -571,7 +571,7 @@ public static class AtomCharBuiltins
         return start;
     }
 
-    private static int BuildCharAtomList(Engine engine, string s)
+    private static int BuildCharAtomList(Activation engine, string s)
     {
         if (s.Length == 0)
         {
@@ -601,7 +601,7 @@ public static class AtomCharBuiltins
 
     // ---------- List-reading helpers ----------
 
-    private static string ReadCodesToString(Engine engine, Cell codesCell, string builtinName)
+    private static string ReadCodesToString(Activation engine, Cell codesCell, string builtinName)
     {
         var sb = new StringBuilder();
         Cell cursor = Resolve(engine, codesCell);
@@ -636,7 +636,7 @@ public static class AtomCharBuiltins
         return sb.ToString();
     }
 
-    private static string ReadCharAtomsToString(Engine engine, Cell charsCell)
+    private static string ReadCharAtomsToString(Activation engine, Cell charsCell)
     {
         var sb = new StringBuilder();
         Cell cursor = Resolve(engine, charsCell);
@@ -673,7 +673,7 @@ public static class AtomCharBuiltins
         return sb.ToString();
     }
 
-    private static Cell Resolve(Engine engine, Cell c)
+    private static Cell Resolve(Activation engine, Cell c)
     {
         if (c.Tag != Tag.Ref) return c;
         int addr = engine.Deref(c.AsHeapIndex);

@@ -74,7 +74,7 @@ public partial class C246Greeter
 /// <c>[PrologPredicate]</c>. Plain parameter = <c>+</c>, <c>out</c>
 /// = <c>-</c>, <c>ref</c> = <c>?</c>. The generator emits per-mode
 /// decode + unify-after-call so the user method can be written
-/// declaratively (no <c>Engine</c> argument, no manual register
+/// declaratively (no <c>Activation</c> argument, no manual register
 /// fiddling).
 /// </summary>
 public class Chunk246Tests

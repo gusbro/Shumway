@@ -19,13 +19,13 @@ public sealed class NonDetForeignCursor<T>
     private readonly IEnumerator<T> _iter;
     private readonly int _returnPc;
     private readonly PrologEngine _host;
-    private readonly Func<PrologEngine, Engine, T, bool> _unifyCurrent;
-    public readonly Func<Engine, int, bool> Resume;
+    private readonly Func<PrologEngine, Activation, T, bool> _unifyCurrent;
+    public readonly Func<Activation, int, bool> Resume;
     public readonly Action OnPrune;
 
     public NonDetForeignCursor(
         IEnumerator<T> iter, int returnPc, PrologEngine host,
-        Func<PrologEngine, Engine, T, bool> unifyCurrent)
+        Func<PrologEngine, Activation, T, bool> unifyCurrent)
     {
         _iter = iter;
         _returnPc = returnPc;
@@ -37,9 +37,9 @@ public sealed class NonDetForeignCursor<T>
 
     /// <summary>The first step (from the foreign bridge body); returns into the
     /// normal post-builtin flow, so it does not call ResumeAtReturnPc.</summary>
-    public bool Start(Engine engine) => Advance(engine, isResume: false);
+    public bool Start(Activation engine) => Advance(engine, isResume: false);
 
-    private bool Advance(Engine engine, bool isResume)
+    private bool Advance(Activation engine, bool isResume)
     {
         if (!_iter.MoveNext())
         {

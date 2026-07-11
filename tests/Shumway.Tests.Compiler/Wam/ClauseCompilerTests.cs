@@ -163,7 +163,7 @@ public class ClauseCompilerTests
         // Patch the call's target operand (offset clauseStart) at position callPosition+1.
         BytecodeIO.WriteInt32(full, callPosition + 1, clauseStart);
 
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(full, 0));
         Assert.Equal(Cell.Atom(atomA), engine.GetRegister(0));
@@ -188,7 +188,7 @@ public class ClauseCompilerTests
         Array.Copy(cc.Bytecode, 0, full, prefix.Length, cc.Bytecode.Length);
         BytecodeIO.WriteInt32(full, callPos + 1, clauseStart);
 
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Failed, interp.Run(full, 0));
     }
@@ -213,7 +213,7 @@ public class ClauseCompilerTests
         Array.Copy(cc.Bytecode, 0, full, prefix.Length, cc.Bytecode.Length);
         BytecodeIO.WriteInt32(full, callPos + 1, clauseStart);
 
-        var engine = new Engine();
+        var engine = new Activation();
         var interp = new BytecodeInterpreter(engine);
         Assert.Equal(InterpreterResult.Halted, interp.Run(full, 0));
 

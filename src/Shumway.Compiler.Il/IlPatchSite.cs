@@ -54,7 +54,7 @@ public sealed class IlPatchSite
 
     /// <summary>The forward-resume cursor — only meaningful for
     /// <see cref="IlPatchKind.ResumeMarker"/>. Combined with the runtime
-    /// functor id via <c>Engine.EncodeResumeMarker</c> to compute the
+    /// functor id via <c>Activation.EncodeResumeMarker</c> to compute the
     /// runtime marker value.</summary>
     public int Cursor { get; init; }
 

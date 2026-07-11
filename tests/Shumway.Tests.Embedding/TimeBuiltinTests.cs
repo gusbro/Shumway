@@ -15,7 +15,7 @@ namespace Shumway.Tests.Embedding;
 /// </summary>
 public class TimeBuiltinTests
 {
-    private static (PrologEngine Engine, StringWriter Out) Engine(string program = "")
+    private static (PrologEngine Activation, StringWriter Out) Activation(string program = "")
     {
         var e = new PrologEngine();
         var sw = new StringWriter();
@@ -27,7 +27,7 @@ public class TimeBuiltinTests
     [Fact]
     public void Time_Transparent_BindingsAndSuccess()
     {
-        var (e, _) = Engine("p(41).\n");
+        var (e, _) = Activation("p(41).\n");
         var sol = e.Query("time(p(X)).");
         Assert.True(sol.Success);
         Assert.Equal("41", sol["X"]!.ToString());
@@ -36,7 +36,7 @@ public class TimeBuiltinTests
     [Fact]
     public void Time_PrintsReportLine()
     {
-        var (e, sw) = Engine("p(1).\n");
+        var (e, sw) = Activation("p(1).\n");
         Assert.True(e.Query("time(p(_)).").Success);
         string outp = sw.ToString();
         Assert.Contains("inferences,", outp);
@@ -49,7 +49,7 @@ public class TimeBuiltinTests
     [Fact]
     public void Time_NonDeterminism_Preserved_ReportPerAnswer()
     {
-        var (e, sw) = Engine();
+        var (e, sw) = Activation();
         var all = System.Linq.Enumerable.ToList(
             e.QueryAll("time(member(X, [a, b, c]))."));
         Assert.Equal(3, all.Count);
@@ -61,7 +61,7 @@ public class TimeBuiltinTests
     [Fact]
     public void Time_GoalFails_ReportsThenFails()
     {
-        var (e, sw) = Engine();
+        var (e, sw) = Activation();
         Assert.False(e.Query("time(fail).").Success);
         Assert.Contains("inferences,", sw.ToString());
     }
@@ -71,7 +71,7 @@ public class TimeBuiltinTests
     {
         // The cut inside the timed goal must not cut the caller: q/1 still
         // enumerates both branches of the outer disjunction.
-        var (e, _) = Engine("r(1).\nr(2).\n");
+        var (e, _) = Activation("r(1).\nr(2).\n");
         var all = System.Linq.Enumerable.ToList(
             e.QueryAll("( time((r(X), !)) ; X = outer )."));
         Assert.Equal(2, all.Count);
@@ -84,7 +84,7 @@ public class TimeBuiltinTests
     {
         // A bigger workload must report (weakly) more inferences than a tiny
         // one — parse both reports' leading counts.
-        var (e, sw) = Engine(
+        var (e, sw) = Activation(
             "count(0) :- !.\ncount(N) :- M is N - 1, count(M).\n");
         Assert.True(e.Query("time(count(5)).").Success);
         Assert.True(e.Query("time(count(5000)).").Success);

@@ -6,7 +6,7 @@ namespace Shumway.Embedding;
 /// <summary>
 /// Adapter that exposes a <see cref="OperatorTable"/> through the
 /// <see cref="IOperatorLookup"/> interface that Core ships. Used by the
-/// engine renderer (via <see cref="Engine.Operators"/>) to decide
+/// engine renderer (via <see cref="Activation.Operators"/>) to decide
 /// between operator-form and canonical-form output without forcing
 /// Shumway.Core or Shumway.Builtins to depend on the parser assembly.
 /// </summary>

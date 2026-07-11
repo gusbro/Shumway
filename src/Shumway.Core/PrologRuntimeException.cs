@@ -54,14 +54,14 @@ public sealed class PrologRuntimeException : Exception
 
     /// <summary>Constructor that snapshots the offending <paramref name="cell"/>
     /// into <see cref="Value"/> by going through the
-    /// <see cref="Engine.MaterializeCellToTerm"/> callback (set by the
+    /// <see cref="Activation.MaterializeCellToTerm"/> callback (set by the
     /// embedding layer). Materialisation is eager so the value
-    /// survives sub-engine teardown — the per-query <see cref="Engine"/>
+    /// survives sub-engine teardown — the per-query <see cref="Activation"/>
     /// instance is typically gone by the time a parent's
     /// <c>catch/3</c> handler runs. Pass <c>null</c> for engine to
     /// keep the value slot anonymous; this is the path Builtins-side
-    /// throws use when an Engine reference isn't handy.</summary>
-    public PrologRuntimeException(string kind, string detail, Engine? engine, Cell cell)
+    /// throws use when an Activation reference isn't handy.</summary>
+    public PrologRuntimeException(string kind, string detail, Activation? engine, Cell cell)
         : this(kind, detail)
     {
         if (engine?.MaterializeCellToTerm is { } materialize)

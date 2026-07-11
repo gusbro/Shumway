@@ -7,7 +7,7 @@ namespace Shumway.Tests.Embedding;
 /// Chunk 119 (Phase 8, ADR-015 chunk E): amortised program growth.
 ///
 /// <para>Chunk C appends a freshly recompiled dynamic predicate to the
-/// program buffer on each mid-query modification. <c>Engine.AppendCode</c>
+/// program buffer on each mid-query modification. <c>Activation.AppendCode</c>
 /// used to re-copy the whole (growing) buffer every append — O(n³) for a
 /// query that asserts-then-calls a dynamic predicate in a loop. Capacity
 /// doubling makes the append amortised O(1); the worst case is now O(n²),

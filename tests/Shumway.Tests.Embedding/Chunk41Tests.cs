@@ -86,7 +86,7 @@ public class Chunk41Tests
     [Fact]
     public void IlChoicePoint_PushPopRestoresHeapTop()
     {
-        var engine = new Engine();
+        var engine = new Activation();
 
         int heapBefore = engine.HeapTop;
         engine.PushIlChoicePoint((eng, cursor) => true, nextCursor: 1, arity: 0);
@@ -107,7 +107,7 @@ public class Chunk41Tests
     [Fact]
     public void IlChoicePoint_PreservesRegistersAcrossBacktrack()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         // X[0] = atom 'before'; X[1] = atom 'foo' captured by CP arity 2.
         int beforeId = AtomTable.Intern("before", permanent: true).Id;
         int afterId = AtomTable.Intern("after", permanent: true).Id;
@@ -129,7 +129,7 @@ public class Chunk41Tests
     [Fact]
     public void IlChoicePoint_MultipleStacked()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         engine.PushIlChoicePoint((e, c) => true, nextCursor: 1, arity: 0);
         Assert.True(engine.TopChoicePointIsIl);
         engine.PushIlChoicePoint((e, c) => true, nextCursor: 2, arity: 0);
@@ -147,7 +147,7 @@ public class Chunk41Tests
     [Fact]
     public void IlChoicePoint_PopWhenNotIl_Throws()
     {
-        var engine = new Engine();
+        var engine = new Activation();
         // Push a regular bytecode CP — pop must throw, the side table
         // doesn't claim it.
         engine.PushChoicePoint(arity: 0, nextClauseAddr: 0x100);
@@ -169,7 +169,7 @@ public class Chunk41Tests
         //   color(red).
         //   color(green).
         //   color(blue).
-        // — but written manually as a Func<Engine,int,bool> the way the
+        // — but written manually as a Func<Activation,int,bool> the way the
         // future IL emitter will lay it out.
         var engine = new PrologEngine();
         engine.ConsultString(":- public color/1.\ncolor(red).\ncolor(green).\ncolor(blue).");
@@ -180,7 +180,7 @@ public class Chunk41Tests
         int greenId = AtomTable.Intern("green", permanent: true).Id;
         int blueId = AtomTable.Intern("blue", permanent: true).Id;
 
-        Func<Engine, int, bool>? colorIl = null;
+        Func<Activation, int, bool>? colorIl = null;
         colorIl = (eng, cursor) =>
         {
             switch (cursor)
@@ -212,11 +212,11 @@ public class Chunk41Tests
         // We need to plug the dispatcher into a query's BytecodeInterpreter.
         // The cleanest path is via a custom PrologEngine subclass, but we
         // don't have a hook for that today. Instead we exercise the
-        // delegate directly through Engine + a bare interpreter.
+        // delegate directly through Activation + a bare interpreter.
 
         // Build a bare engine for this test, since we don't need the
         // full PrologEngine plumbing — just the IL CP path.
-        var rawEngine = new Engine();
+        var rawEngine = new Activation();
         int varAddr = rawEngine.AllocateHeapUnbound();
         rawEngine.SetRegister(0, Cell.Ref(varAddr));
 
@@ -250,13 +250,13 @@ public class Chunk41Tests
     /// promotion store (which still rejects multi-clause).</summary>
     private sealed class HandcraftedDispatcher : ITier1Dispatcher
     {
-        private readonly Func<Engine, int, bool> _del;
-        public HandcraftedDispatcher(Func<Engine, int, bool> del, string name, int arity)
+        private readonly Func<Activation, int, bool> _del;
+        public HandcraftedDispatcher(Func<Activation, int, bool> del, string name, int arity)
         {
             _del = del;
         }
-        public Func<Engine, bool>? OnDispatch(int targetAddress) =>
+        public Func<Activation, bool>? OnDispatch(int targetAddress) =>
             engine => _del(engine, 0);
-        public Func<Engine, int, bool>? ResolveByFunctorId(int functorId) => null;
+        public Func<Activation, int, bool>? ResolveByFunctorId(int functorId) => null;
     }
 }

@@ -40,11 +40,11 @@ public class IlIntegerOpcodeTests
         var pred = CompileFromSource("answer(42).");
         var del = new IlPredicateCompiler().Compile(pred);
 
-        var engine = new Engine();
+        var engine = new Activation();
         engine.SetRegister(0, Cell.Int(42));
         Assert.True(del(engine, 0));
 
-        var engine2 = new Engine();
+        var engine2 = new Activation();
         engine2.SetRegister(0, Cell.Int(99));
         Assert.False(del(engine2, 0));
     }
@@ -55,7 +55,7 @@ public class IlIntegerOpcodeTests
         var pred = CompileFromSource("answer(42).");
         var del = new IlPredicateCompiler().Compile(pred);
 
-        var engine = new Engine();
+        var engine = new Activation();
         int h = engine.AllocateHeapUnbound();
         engine.SetRegister(0, Cell.Ref(h));
 
@@ -74,19 +74,19 @@ public class IlIntegerOpcodeTests
         var del = new IlPredicateCompiler().Compile(pred);
 
         // Both match.
-        var engine1 = new Engine();
+        var engine1 = new Activation();
         engine1.SetRegister(0, Cell.Atom(nameId));
         engine1.SetRegister(1, Cell.Int(7));
         Assert.True(del(engine1, 0));
 
         // Atom mismatch.
-        var engine2 = new Engine();
+        var engine2 = new Activation();
         engine2.SetRegister(0, Cell.Atom(otherId));
         engine2.SetRegister(1, Cell.Int(7));
         Assert.False(del(engine2, 0));
 
         // Integer mismatch.
-        var engine3 = new Engine();
+        var engine3 = new Activation();
         engine3.SetRegister(0, Cell.Atom(nameId));
         engine3.SetRegister(1, Cell.Int(99));
         Assert.False(del(engine3, 0));

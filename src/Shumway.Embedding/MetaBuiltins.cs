@@ -366,7 +366,7 @@ public static class MetaBuiltins
             Database, "save",
             "Snapshots the current user dynamic database (all dynamic "
             + "predicates' clauses) in memory, replacing any previous save/0 "
-            + "snapshot. Engine-internal ($-prefixed) dynamics are excluded. "
+            + "snapshot. System-internal ($-prefixed) dynamics are excluded. "
             + "Restore with restore/0. Arity-Prolog compatible builtin.");
         BuiltinsRegistry.Register("save", 1, Save1,
             Database, "save(+File)",
@@ -663,10 +663,10 @@ public static class MetaBuiltins
     /// handle's metadata; the stream arg is bound to a Foreign cell
     /// wrapping the underlying <see cref="Shumway.Core.StreamHandle"/>.
     /// (Chunk 140b.)</summary>
-    public static bool CurrentStream(Engine engine)
+    public static bool CurrentStream(Activation engine)
     {
         var registry = engine.Streams
-            ?? throw new InvalidOperationException("Engine has no stream registry.");
+            ?? throw new InvalidOperationException("Activation has no stream registry.");
         var handles = registry.All().ToArray();
         int returnPc = engine.BuiltinReturnPc;
         // arity 3 (current_stream/3): save the arg registers so a wrapping
@@ -677,7 +677,7 @@ public static class MetaBuiltins
     }
 
     private static bool CurrentStreamUnify(
-        Engine engine, Shumway.Core.StreamHandle[] handles, int idx)
+        Activation engine, Shumway.Core.StreamHandle[] handles, int idx)
     {
         var h = handles[idx];
         string fnText = h.Filename ?? h.Alias ?? "";
@@ -696,10 +696,10 @@ public static class MetaBuiltins
     /// Properties: <c>file_name(F)</c>, <c>mode(M)</c>,
     /// <c>alias(A)</c>, <c>input</c>, <c>output</c>,
     /// <c>end_of_stream(at|not)</c>. (Chunk 140b.)</summary>
-    public static bool StreamProperty(Engine engine)
+    public static bool StreamProperty(Activation engine)
     {
         var registry = engine.Streams
-            ?? throw new InvalidOperationException("Engine has no stream registry.");
+            ?? throw new InvalidOperationException("Activation has no stream registry.");
         var pairs = new List<(Shumway.Core.StreamHandle Handle, Term Property)>();
         foreach (var h in registry.All())
         {
@@ -732,7 +732,7 @@ public static class MetaBuiltins
     }
 
     private static bool StreamPropertyUnify(
-        Engine engine, (Shumway.Core.StreamHandle Handle, Term Property)[] pairs, int idx)
+        Activation engine, (Shumway.Core.StreamHandle Handle, Term Property)[] pairs, int idx)
     {
         var (h, prop) = pairs[idx];
         Cell streamCell = engine.MakeForeign(h);
@@ -787,7 +787,7 @@ public static class MetaBuiltins
     /// base stream, discarding the StreamReader's read-ahead buffer,
     /// and re-consuming N characters — O(N), but exact for any
     /// encoding. (Chunk 140d; Phase 33 ISO audit.)</summary>
-    public static bool SetStreamPosition(Engine engine)
+    public static bool SetStreamPosition(Activation engine)
     {
         var h = Shumway.Builtins.StreamBuiltins.ResolveStream(
             engine, engine.GetRegister(0));
@@ -824,7 +824,7 @@ public static class MetaBuiltins
         return true;
     }
 
-    private static Cell MaterializeRegisterAsCell(Engine engine, int reg)
+    private static Cell MaterializeRegisterAsCell(Activation engine, int reg)
     {
         Cell c = engine.GetRegister(reg);
         if (c.Tag != Tag.Ref) return c;
@@ -836,25 +836,25 @@ public static class MetaBuiltins
     /// <c>.</c> followed by whitespace or EOF, parses the buffer as a
     /// Prolog term, and unifies the result with <c>Term</c>. Hits EOF
     /// before any text yields the atom <c>end_of_file</c>.</summary>
-    public static bool ReadTermFromStream(Engine engine) =>
+    public static bool ReadTermFromStream(Activation engine) =>
         ReadOneTermInto(engine,
             ResolveTextReader(engine, engine.GetRegister(0)), regOut: 1);
 
     /// <summary><c>read/1</c> — ISO §8.14.2. Reads one term from the
     /// current input stream. (Chunk 143.)</summary>
-    public static bool Read1(Engine engine)
+    public static bool Read1(Activation engine)
     {
         var h = engine.Streams?.CurrentInput
-            ?? throw new InvalidOperationException("Engine has no stream registry.");
+            ?? throw new InvalidOperationException("Activation has no stream registry.");
         return ReadOneTermInto(engine, ResolveTextReaderFromHandle(h), regOut: 0);
     }
 
     /// <summary><c>read(+Stream, -Term)</c> — ISO §8.14.2.</summary>
-    public static bool Read2(Engine engine) =>
+    public static bool Read2(Activation engine) =>
         ReadOneTermInto(engine,
             ResolveTextReader(engine, engine.GetRegister(0)), regOut: 1);
 
-    private static System.IO.TextReader ResolveTextReader(Engine engine, Cell streamArg)
+    private static System.IO.TextReader ResolveTextReader(Activation engine, Cell streamArg)
     {
         var h = Shumway.Builtins.StreamBuiltins.ResolveStream(engine, streamArg);
         return ResolveTextReaderFromHandle(h);
@@ -862,7 +862,7 @@ public static class MetaBuiltins
 
     /// <summary>Chunk 257 — mirror of <see cref="ResolveTextReader"/>
     /// for write-mode streams. Used by <c>portray_clause/2</c>.</summary>
-    private static System.IO.TextWriter ResolveTextWriter(Engine engine, Cell streamArg)
+    private static System.IO.TextWriter ResolveTextWriter(Activation engine, Cell streamArg)
     {
         var h = Shumway.Builtins.StreamBuiltins.ResolveStream(engine, streamArg);
         if (!h.IsWriter)
@@ -888,7 +888,7 @@ public static class MetaBuiltins
     private static bool IsGraphicChar(char c) => c is '#' or '$' or '&' or '*' or '+'
         or '-' or '.' or '/' or ':' or '<' or '=' or '>' or '?' or '@' or '^' or '~' or '\\';
 
-    private static bool ReadOneTermInto(Engine engine, System.IO.TextReader reader, int regOut)
+    private static bool ReadOneTermInto(Activation engine, System.IO.TextReader reader, int regOut)
     {
         Term? parsed = ParseOneTerm(engine, reader);
         if (parsed is null)
@@ -905,7 +905,7 @@ public static class MetaBuiltins
     /// it with the engine's live operator table. Returns the parsed AST, or
     /// <c>null</c> when only layout/comments remained before end-of-file (the
     /// <c>end_of_file</c> case).</summary>
-    private static Term? ParseOneTerm(Engine engine, System.IO.TextReader reader)
+    private static Term? ParseOneTerm(Activation engine, System.IO.TextReader reader)
     {
         // Phase 33 (PrologToC corpus) — the old accumulation rule was "stop
         // at any '.' followed by whitespace", which sliced `?X =.. ?Y` in
@@ -1029,7 +1029,7 @@ public static class MetaBuiltins
     /// The option-list variables share the returned term's variable cells
     /// (built via a wrapper compound so the materializer ties same-named
     /// variables together).</summary>
-    public static bool ReadTermWithOptions(Engine engine)
+    public static bool ReadTermWithOptions(Activation engine)
     {
         var reader = ResolveTextReader(engine, engine.GetRegister(0));
         Term? parsed = ParseOneTerm(engine, reader);
@@ -1133,7 +1133,7 @@ public static class MetaBuiltins
     /// with the value at the corresponding heap index. Unknown options are
     /// skipped; a partial or non-list tail simply ends the walk.</summary>
     private static bool UnifyReadOptions(
-        Engine engine, int optReg, int vnIdx, int singIdx, int varsIdx)
+        Activation engine, int optReg, int vnIdx, int singIdx, int varsIdx)
     {
         Cell node = ResolveLocal(engine, engine.GetRegister(optReg));
         while (node.Tag == Tag.Lis)
@@ -1165,8 +1165,8 @@ public static class MetaBuiltins
 
     /// <summary>The engine's live operator table (runtime `op/3` additions
     /// included) — the table every term-READING builtin must parse with; the
-    /// static default only as the bare-Engine-test fallback.</summary>
-    private static Shumway.Compiler.Parsing.OperatorTable LiveOperators(Engine engine)
+    /// static default only as the bare-Activation-test fallback.</summary>
+    private static Shumway.Compiler.Parsing.OperatorTable LiveOperators(Activation engine)
         => (engine.Host as PrologEngine)?.Operators
            ?? Shumway.Compiler.Parsing.OperatorTable.Default();
 
@@ -1175,7 +1175,7 @@ public static class MetaBuiltins
     /// <c>syntax_error</c> instead of letting a raw .NET exception escape (ISO
     /// §7.10.3 — a malformed term read is a syntax error, catchable by the
     /// program).</summary>
-    private static Term ParseClauseText(Engine engine, string source)
+    private static Term ParseClauseText(Activation engine, string source)
     {
         try
         {
@@ -1224,7 +1224,7 @@ public static class MetaBuiltins
     /// engine spawned for <c>Goal</c> uses the redirected sink for the
     /// duration of the call; the parent's <see cref="PrologEngine.Out"/>
     /// is untouched.</summary>
-    public static bool WithOutputTo(Engine engine)
+    public static bool WithOutputTo(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -1282,7 +1282,7 @@ public static class MetaBuiltins
     /// <c>Atom</c>'s text as a Prolog term, unifies the result with
     /// <c>Term</c>, and unifies <c>Bindings</c> with a list of
     /// <c>'='(Name, Var)</c> compounds for each named variable.</summary>
-    public static bool AtomToTerm(Engine engine)
+    public static bool AtomToTerm(Activation engine)
     {
         Cell atomCell = ResolveLocal(engine, engine.GetRegister(0));
         if (atomCell.Tag != Tag.Atom)
@@ -1364,7 +1364,7 @@ public static class MetaBuiltins
     /// Setting <c>double_quotes</c> takes effect for the next parse —
     /// either a query, an <c>assertz</c> of a clause carrying a string
     /// literal, or a <c>:- consult</c> reading more source.</summary>
-    public static bool SetPrologFlag(Engine engine)
+    public static bool SetPrologFlag(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -1507,7 +1507,7 @@ public static class MetaBuiltins
     /// </list>
     /// With Flag unbound, every flag is enumerated on backtracking
     /// (ISO §8.17.2; Phase 33 ISO audit).</summary>
-    public static bool CurrentPrologFlag(Engine engine)
+    public static bool CurrentPrologFlag(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -1601,7 +1601,7 @@ public static class MetaBuiltins
         "compile_mode",
     };
 
-    private static bool PrologFlagUnify(Engine engine, PrologEngine host, int idx)
+    private static bool PrologFlagUnify(Activation engine, PrologEngine host, int idx)
     {
         if (!UnifyAtom(engine, 0, EnumerableFlags[idx])) return false;
         // Register 0's variable is now bound to the flag name, so
@@ -1622,7 +1622,7 @@ public static class MetaBuiltins
         return acc;
     }
 
-    private static bool UnifyAtom(Engine engine, int register, string name)
+    private static bool UnifyAtom(Activation engine, int register, string name)
     {
         int aid = AtomTable.Intern(name, permanent: true).Id;
         return engine.UnifyRegisterWithCell(register, Cell.Atom(aid));
@@ -1641,7 +1641,7 @@ public static class MetaBuiltins
     /// <c>file_search_path</c>) — those need the
     /// <c>file_search_path/2</c> registry and a small option
     /// parser. Add when a program actually needs them.</para></summary>
-    public static bool AbsoluteFileName2(Engine engine)
+    public static bool AbsoluteFileName2(Activation engine)
     {
         if (!TryGetStringArg(engine, 0, out string spec))
             return false;
@@ -1675,7 +1675,7 @@ public static class MetaBuiltins
     /// is the empty atom.</item>
     /// </list>
     /// Other combinations raise <c>instantiation_error</c>.</summary>
-    public static bool FileNameExtension3(Engine engine)
+    public static bool FileNameExtension3(Activation engine)
     {
         Cell baseCell = ResolveLocal(engine, engine.GetRegister(0));
         Cell extCell = ResolveLocal(engine, engine.GetRegister(1));
@@ -1717,7 +1717,7 @@ public static class MetaBuiltins
     /// one-character atom whose code is an ASCII digit. SICStus and
     /// older SWI versions ship it; Blint.pl uses it inside
     /// number-parsing helpers.</summary>
-    public static bool IsDigit1(Engine engine)
+    public static bool IsDigit1(Activation engine)
     {
         Cell cell = ResolveLocal(engine, engine.GetRegister(0));
         if (cell.Tag == Tag.Ref || cell.Tag == Tag.AttVar)
@@ -1732,7 +1732,7 @@ public static class MetaBuiltins
     /// an atom); when <c>New</c> is bound and different, changes
     /// the host process's CWD to it. The idiomatic read-only call
     /// is <c>working_directory(D, D)</c>.</summary>
-    public static bool WorkingDirectory2(Engine engine)
+    public static bool WorkingDirectory2(Activation engine)
     {
         string oldCwd = Directory.GetCurrentDirectory();
         // Ensure a trailing separator so it matches SWI's convention.
@@ -1767,7 +1767,7 @@ public static class MetaBuiltins
     /// <summary>Reads register <paramref name="register"/> as a
     /// string: a bound atom (its name) or a PSTR (its content).
     /// Unbound → instantiation error; other types → type_error.</summary>
-    private static bool TryGetStringArg(Engine engine, int register, out string value)
+    private static bool TryGetStringArg(Activation engine, int register, out string value)
     {
         value = "";
         Cell cell = ResolveLocal(engine, engine.GetRegister(register));
@@ -1802,7 +1802,7 @@ public static class MetaBuiltins
     /// effect immediately for subsequent parses (queries, asserted
     /// clauses, read_term_from_atom). Errors mirror ISO: instantiation
     /// when any arg is unbound, type_error when one's the wrong shape.</summary>
-    public static bool Op(Engine engine)
+    public static bool Op(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -1865,7 +1865,7 @@ public static class MetaBuiltins
     /// the three args optionally constraining the search. Uses the
     /// standard PushBuiltinChoicePoint pattern for the multi-solution
     /// dispatch (chunk 138).</summary>
-    public static bool CurrentOp(Engine engine)
+    public static bool CurrentOp(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -1880,7 +1880,7 @@ public static class MetaBuiltins
     }
 
     private static bool CurrentOpUnify(
-        Engine engine,
+        Activation engine,
         (int Precedence, Shumway.Compiler.Parsing.OperatorType Type, string Name)[] ops,
         int idx)
     {
@@ -1911,7 +1911,7 @@ public static class MetaBuiltins
     /// mapping. An identity mapping (<c>InChar == OutChar</c>) removes
     /// the entry. Both arguments must be one-character atoms (chunk
     /// 152).</summary>
-    public static bool CharConversion(Engine engine)
+    public static bool CharConversion(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -1942,7 +1942,7 @@ public static class MetaBuiltins
     /// ISO §8.14.10. Enumerates the active char-conversion table on
     /// backtracking. The Phase-9 PushBuiltinChoicePoint pattern drives
     /// the multi-solution dispatch (chunk 152).</summary>
-    public static bool CurrentCharConversion(Engine engine)
+    public static bool CurrentCharConversion(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -1957,7 +1957,7 @@ public static class MetaBuiltins
     }
 
     private static bool CurrentCharConversionUnify(
-        Engine engine, (char In, char Out)[] entries, int idx)
+        Activation engine, (char In, char Out)[] entries, int idx)
     {
         var (ic, oc) = entries[idx];
         int inAtomId = AtomTable.Intern(ic.ToString(), permanent: true).Id;
@@ -1972,7 +1972,7 @@ public static class MetaBuiltins
     /// <c>Term</c>. The full ISO <c>read_term/2</c> reads from an
     /// arbitrary stream — Phase 1 only handles the in-memory atom case,
     /// which is the use the embedding API actually needs.</summary>
-    public static bool ReadTermFromAtom(Engine engine)
+    public static bool ReadTermFromAtom(Activation engine)
     {
         Cell atomCell = ResolveLocal(engine, engine.GetRegister(0));
         if (atomCell.Tag != Tag.Atom)
@@ -1989,7 +1989,7 @@ public static class MetaBuiltins
     /// SWI / GProlog compat. The options list is accepted but
     /// currently ignored (no read-time options affect the parser
     /// yet). Chunk 145.</summary>
-    public static bool ReadTermFromAtom3(Engine engine)
+    public static bool ReadTermFromAtom3(Activation engine)
     {
         Cell atomCell = ResolveLocal(engine, engine.GetRegister(0));
         if (atomCell.Tag != Tag.Atom)
@@ -2007,7 +2007,7 @@ public static class MetaBuiltins
     /// list of character codes for its print form. With second arg
     /// bound, tries to parse the codes as a number first; on
     /// parse-failure interns as an atom. Chunk 145.</summary>
-    public static bool NameBuiltin(Engine engine)
+    public static bool NameBuiltin(Activation engine)
     {
         Cell firstCell = ResolveLocal(engine, engine.GetRegister(0));
         if (firstCell.Tag == Tag.Atom)
@@ -2043,7 +2043,7 @@ public static class MetaBuiltins
         throw new PrologRuntimeException("type_error", "atomic");
     }
 
-    private static bool UnifyCodesList(Engine engine, int regOut, string text)
+    private static bool UnifyCodesList(Activation engine, int regOut, string text)
     {
         if (text.Length == 0)
         {
@@ -2062,7 +2062,7 @@ public static class MetaBuiltins
         return engine.UnifyRegisterWithHeapAt(regOut, baseIdx);
     }
 
-    private static string ReadCodesAsString(Engine engine, Cell codesCell)
+    private static string ReadCodesAsString(Activation engine, Cell codesCell)
     {
         var sb = new System.Text.StringBuilder();
         Cell cur = ResolveLocal(engine, codesCell);
@@ -2081,7 +2081,7 @@ public static class MetaBuiltins
 
     /// <summary><c>get_time(-Time)</c> — current wall-clock time in
     /// seconds since the Unix epoch, as a float. SWI-compat. Chunk 145.</summary>
-    public static bool GetTime(Engine engine)
+    public static bool GetTime(Activation engine)
     {
         double now = (DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc))
             .TotalSeconds;
@@ -2096,7 +2096,7 @@ public static class MetaBuiltins
     /// <c>local</c>; any other atom is treated as the local zone
     /// (full IANA-name lookup isn't worth the System.TimeZoneInfo
     /// wiring for the typical caller). Chunk 145.</summary>
-    public static bool StampDateTime(Engine engine)
+    public static bool StampDateTime(Activation engine)
     {
         Cell stampCell = ResolveLocal(engine, engine.GetRegister(0));
         Cell tzCell = ResolveLocal(engine, engine.GetRegister(2));
@@ -2147,7 +2147,7 @@ public static class MetaBuiltins
     /// With <c>Term</c> unbound and <c>Name</c> + <c>Arity</c> ground,
     /// builds a fresh compound with <c>Arity</c> anonymous unbound
     /// arguments.</summary>
-    public static bool Functor(Engine engine)
+    public static bool Functor(Activation engine)
     {
         Cell t = ResolveLocal(engine, engine.GetRegister(0));
 
@@ -2210,7 +2210,7 @@ public static class MetaBuiltins
     /// <summary><c>arg(N, Term, Arg)</c> — the N-th argument (1-indexed)
     /// of a compound term. Fails when N is out of range or <c>Term</c>
     /// isn't a compound.</summary>
-    public static bool Arg(Engine engine)
+    public static bool Arg(Activation engine)
     {
         Cell nCell = ResolveLocal(engine, engine.GetRegister(0));
         Cell tCell = ResolveLocal(engine, engine.GetRegister(1));
@@ -2254,7 +2254,7 @@ public static class MetaBuiltins
         }
     }
 
-    public static bool Univ(Engine engine)
+    public static bool Univ(Activation engine)
     {
         Cell t = ResolveLocal(engine, engine.GetRegister(0));
 
@@ -2367,7 +2367,7 @@ public static class MetaBuiltins
     /// cell values. Same layout pattern as <c>SortBuiltins.BuildList</c>:
     /// 2N + 1 contiguous cells, alternating Lis / head pairs terminated
     /// by the empty-list atom.</summary>
-    private static int BuildListFromCells(Engine engine, IReadOnlyList<Cell> elements)
+    private static int BuildListFromCells(Activation engine, IReadOnlyList<Cell> elements)
     {
         if (elements.Count == 0)
         {
@@ -2393,7 +2393,7 @@ public static class MetaBuiltins
     /// (via the standard <see cref="Shumway.Builtins.TermRenderer"/> output)
     /// and the result interned as an atom. With <c>Atom</c> ground the atom
     /// text is parsed as a Prolog term via <see cref="Parser"/>.</summary>
-    public static bool TermToAtom(Engine engine)
+    public static bool TermToAtom(Activation engine)
     {
         Cell atomCell = ResolveLocal(engine, engine.GetRegister(1));
 
@@ -2430,7 +2430,7 @@ public static class MetaBuiltins
         return engine.UnifyRegisterWithCell(1, Cell.Atom(newAtomId));
     }
 
-    private static Cell ResolveLocal(Engine engine, Cell c)
+    private static Cell ResolveLocal(Activation engine, Cell c)
     {
         if (c.Tag != Tag.Ref) return c;
         return engine.GetHeap(engine.Deref(c.AsHeapIndex));
@@ -2450,7 +2450,7 @@ public static class MetaBuiltins
     /// bound variables and non-variable subterms pass through unchanged.
     /// Mostly used to make terms presentable before printing or
     /// asserting.</para></summary>
-    public static bool NumberVars(Engine engine)
+    public static bool NumberVars(Activation engine)
     {
         Cell startC = engine.GetRegister(1);
         Cell startDeref = startC.Tag == Tag.Ref
@@ -2481,7 +2481,7 @@ public static class MetaBuiltins
     /// arg 2 with the list of distinct unbound variables of arg 1, in
     /// first-occurrence (depth-first, left-to-right) order. Shared and cyclic
     /// subterms are visited once (a <c>visited</c> address set).</summary>
-    public static bool TermVariables(Engine engine)
+    public static bool TermVariables(Activation engine)
     {
         int rootSlot = engine.AllocateHeap(1);
         engine.SetHeap(rootSlot, engine.GetRegister(0));
@@ -2502,7 +2502,7 @@ public static class MetaBuiltins
     }
 
     private static void CollectVars(
-        Engine engine, int heapIdx, HashSet<int> visited, List<int> vars)
+        Activation engine, int heapIdx, HashSet<int> visited, List<int> vars)
     {
         int addr = engine.Deref(heapIdx);
         if (!visited.Add(addr)) return;
@@ -2533,7 +2533,7 @@ public static class MetaBuiltins
     }
 
     private static void WalkAndNumber(
-        Engine engine, int heapIdx, HashSet<int> visited, ref long counter)
+        Activation engine, int heapIdx, HashSet<int> visited, ref long counter)
     {
         int addr = engine.Deref(heapIdx);
         if (!visited.Add(addr)) return;
@@ -2592,7 +2592,7 @@ public static class MetaBuiltins
     /// across candidates via <c>member/2</c>, so backtracking through
     /// matching clauses happens via the standard WAM choice-point
     /// machinery rather than through builtin-internal state.</para></summary>
-    public static bool AllClausesOf(Engine engine)
+    public static bool AllClausesOf(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -2642,7 +2642,7 @@ public static class MetaBuiltins
     /// <para>The first register (Head) is used only to find the functor; the
     /// actual unification is against the pair in the second register, so the
     /// shared <c>Head</c> variable binds consistently from there.</para></summary>
-    public static bool ClauseEnum(Engine engine)
+    public static bool ClauseEnum(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -2661,7 +2661,7 @@ public static class MetaBuiltins
             (e, i) => ClauseEnumUnify(e, candidates[i]));
     }
 
-    private static bool ClauseEnumUnify(Engine engine, Clause candidate)
+    private static bool ClauseEnumUnify(Activation engine, Clause candidate)
     {
         Term head = candidate.Kind == ClauseKind.Rule
             ? ((CompoundTerm)candidate.Term).Args[0]
@@ -2681,7 +2681,7 @@ public static class MetaBuiltins
     /// knows about: builtins, dynamic functors, and static predicates
     /// from every loaded module. The prelude's <c>current_predicate/1</c>
     /// uses this helper to back-enumerate via <c>member/2</c>.</summary>
-    public static bool AllPredicateIndicators(Engine engine)
+    public static bool AllPredicateIndicators(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -2717,7 +2717,7 @@ public static class MetaBuiltins
     /// over the snapshot), instead of building the whole O(n) indicator list
     /// on the heap up front for <c>member/2</c> to walk. Indicators are ground,
     /// so the per-step unification just filters against a bound <c>PI</c>.</summary>
-    public static bool CurrentPredicateEnum(Engine engine)
+    public static bool CurrentPredicateEnum(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -2748,7 +2748,7 @@ public static class MetaBuiltins
     /// <c>pi(Name, Arity, Dynamic)</c> term where <c>Dynamic</c> is
     /// <c>true</c> or <c>false</c>. Builtins and the library predicates of
     /// <c>$prelude</c> / <c>clpfd</c> are excluded.</summary>
-    public static bool ListablePredicates(Engine engine)
+    public static bool ListablePredicates(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -2798,7 +2798,7 @@ public static class MetaBuiltins
     /// <para>Output layout mirrors the prelude's portray_clause:
     /// facts on one line, rules with the head and an indented body
     /// line per goal.</para></summary>
-    public static bool ListingPredSource(Engine engine)
+    public static bool ListingPredSource(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -2874,7 +2874,7 @@ public static class MetaBuiltins
     /// Clause to the engine's current output using the standard
     /// portray layout (head + indented body goals, synthetic
     /// variables renumbered to A, B, C, …).</summary>
-    public static bool PortrayClause1(Engine engine)
+    public static bool PortrayClause1(Activation engine)
     {
         Term term = MaterializeRegister(engine, 0);
         ClausePortrayer.Print(engine.Out, term);
@@ -2886,7 +2886,7 @@ public static class MetaBuiltins
     /// output stream. The stream must be a Foreign cell bound to
     /// a write-mode handle (the same shape current_output / open
     /// produce).</summary>
-    public static bool PortrayClause2(Engine engine)
+    public static bool PortrayClause2(Activation engine)
     {
         TextWriter writer = ResolveTextWriter(engine, engine.GetRegister(0));
         Term term = MaterializeRegister(engine, 1);
@@ -2898,7 +2898,7 @@ public static class MetaBuiltins
     /// of the named dynamic predicate and unregisters it so subsequent
     /// assertions raise the "not declared dynamic" error until a new
     /// <c>:- dynamic</c> declaration arrives.</summary>
-    public static bool Abolish(Engine engine)
+    public static bool Abolish(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -2926,7 +2926,7 @@ public static class MetaBuiltins
     /// in the bytecode. The dispatch cost of subsequent calls then
     /// drops from O(ever-asserted) back to O(live). The dead-clause
     /// bytecode is left orphaned; the program buffer doesn't shrink.</summary>
-    public static bool GarbageCollectClauses0(Engine engine)
+    public static bool GarbageCollectClauses0(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -2938,7 +2938,7 @@ public static class MetaBuiltins
 
     /// <summary><c>garbage_collect_clauses(+Name/Arity)</c> — chunk 150.
     /// Same as the 0-arg form but restricted to a single predicate.</summary>
-    public static bool GarbageCollectClauses1(Engine engine)
+    public static bool GarbageCollectClauses1(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -2969,7 +2969,7 @@ public static class MetaBuiltins
     /// callers should invoke compaction periodically (e.g. after a
     /// large batch of mutations) rather than per-mutation.
     /// </summary>
-    public static bool CompactDynamicBuffer(Engine engine)
+    public static bool CompactDynamicBuffer(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -2988,7 +2988,7 @@ public static class MetaBuiltins
     /// predicate compaction isn't feasible without partial-relink
     /// support — the API surface is per-predicate as a forward-
     /// compatibility hint.</summary>
-    public static bool CompactDynamicBuffer1(Engine engine)
+    public static bool CompactDynamicBuffer1(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -3017,7 +3017,7 @@ public static class MetaBuiltins
     /// each property in turn, so a bound <c>Property</c> acts as a filter. Head
     /// must be instantiated (ISO instantiation_error / type_error(callable)).
     /// Enough for the SWI/GNU-style introspection Logtalk's compiler relies on.</summary>
-    public static bool PredicateProperty(Engine engine)
+    public static bool PredicateProperty(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -3175,7 +3175,7 @@ public static class MetaBuiltins
     /// <summary><c>throw(Error)</c> — raises <see cref="ShumwayPrologException"/>
     /// carrying <c>Error</c>'s materialised term. Propagates up the C# stack
     /// until a <c>catch/3</c> or the engine's top-level intercepts it.</summary>
-    public static bool Throw(Engine engine)
+    public static bool Throw(Activation engine)
     {
         Term error = MaterializeRegister(engine, 0);
         // Chunk 136: ISO §7.8.10.3.a — an unbound ball is
@@ -3202,7 +3202,7 @@ public static class MetaBuiltins
     /// MetaTransform rewrite of catch/3 as the first goal of the goal
     /// helper, so the engine reads the recovery continuation off that
     /// helper's environment header.</summary>
-    public static bool CatchBegin(Engine engine)
+    public static bool CatchBegin(Activation engine)
     {
         int catcherSlot = engine.AllocateHeap(1);
         engine.SetHeap(catcherSlot, engine.GetRegister(0));
@@ -3216,7 +3216,7 @@ public static class MetaBuiltins
     /// the guarded goal has produced a solution, so the catch frame is
     /// deactivated and a throw from the continuation will no longer be
     /// caught here. Backtracking into the guarded goal re-activates it.</summary>
-    public static bool CatchEnd(Engine engine)
+    public static bool CatchEnd(Activation engine)
     {
         engine.DeactivateTopCatchFrame();
         return true;
@@ -3227,7 +3227,7 @@ public static class MetaBuiltins
     /// convention) with the bound value materialised onto the caller's
     /// heap. Returns <c>false</c> at the first unification failure so the
     /// outer builtin can give up its current iteration.</summary>
-    private static bool BindBack(Engine engine, IReadOnlyDictionary<string, Term> bindings)
+    private static bool BindBack(Activation engine, IReadOnlyDictionary<string, Term> bindings)
     {
         foreach (var (name, value) in bindings)
         {
@@ -3245,20 +3245,20 @@ public static class MetaBuiltins
     // call/N — runtime meta-call via sub-engine + bind-back of input vars
     // ============================================================================
 
-    public static bool Call1(Engine engine) => CallN(engine, totalArity: 1);
-    public static bool Call2(Engine engine) => CallN(engine, totalArity: 2);
-    public static bool Call3(Engine engine) => CallN(engine, totalArity: 3);
-    public static bool Call4(Engine engine) => CallN(engine, totalArity: 4);
-    public static bool Call5(Engine engine) => CallN(engine, totalArity: 5);
-    public static bool Call6(Engine engine) => CallN(engine, totalArity: 6);
-    public static bool Call7(Engine engine) => CallN(engine, totalArity: 7);
-    public static bool Call8(Engine engine) => CallN(engine, totalArity: 8);
+    public static bool Call1(Activation engine) => CallN(engine, totalArity: 1);
+    public static bool Call2(Activation engine) => CallN(engine, totalArity: 2);
+    public static bool Call3(Activation engine) => CallN(engine, totalArity: 3);
+    public static bool Call4(Activation engine) => CallN(engine, totalArity: 4);
+    public static bool Call5(Activation engine) => CallN(engine, totalArity: 5);
+    public static bool Call6(Activation engine) => CallN(engine, totalArity: 6);
+    public static bool Call7(Activation engine) => CallN(engine, totalArity: 7);
+    public static bool Call8(Activation engine) => CallN(engine, totalArity: 8);
 
     /// <summary><c>'$call'(Goal, Barrier)</c> — the cut-barrier-carrying
     /// meta-call (chunk 88). It is intercepted by the bytecode interpreter
     /// exactly like <c>call/N</c> and never reaches this body; the entry
     /// exists only so the compiler emits a <c>call_builtin</c> for it.</summary>
-    public static bool CallWithBarrier(Engine engine) =>
+    public static bool CallWithBarrier(Activation engine) =>
         throw new InvalidOperationException(
             "'$call'/2 must be dispatched by the interpreter, not invoked directly.");
 
@@ -3282,7 +3282,7 @@ public static class MetaBuiltins
     /// solution. This is what makes <c>maplist</c>, <c>forall</c>, and
     /// other prelude predicates that meta-call backtracking goals work
     /// correctly when the goal has more than one solution.</para></summary>
-    private static bool CallN(Engine engine, int totalArity)
+    private static bool CallN(Activation engine, int totalArity)
     {
         // DEAD PATH — must never run. call/N is dispatched IN THE LIVE ENGINE:
         // the call_builtin opcode handler sees the builtin's IsCall flag and
@@ -3310,7 +3310,7 @@ public static class MetaBuiltins
     /// success path advances PC by 9 (the opcode's size) so we don't
     /// need to set it ourselves. Subsequent invocations (from a
     /// backtrack-popped CP) <em>do</em> need to set PC explicitly via
-    /// <see cref="Engine.ResumeAtReturnPc"/> because the
+    /// <see cref="Activation.ResumeAtReturnPc"/> because the
     /// PopIlChoicePointAndRestore path would otherwise drop us at the
     /// outer continuation (the saved Cp), not the next instruction
     /// after the original call_builtin.
@@ -3325,13 +3325,13 @@ public static class MetaBuiltins
     /// <summary><c>garbage_collect/0</c> (ADR-016) — mark-compacts the
     /// heap. A no-op when attributed variables are in use (the collector
     /// bails) or when there is nothing to reclaim.</summary>
-    public static bool GarbageCollect(Engine engine)
+    public static bool GarbageCollect(Activation engine)
     {
         engine.CollectHeap();
         return true;
     }
 
-    public static bool Repeat(Engine engine)
+    public static bool Repeat(Activation engine)
     {
         ArmRepeat(engine, engine.BuiltinReturnPc);
         return true;
@@ -3340,7 +3340,7 @@ public static class MetaBuiltins
     /// <summary>ADR-022 — runs the embedded native block named by argument 0,
     /// with its Prolog variables in registers 1.. (see the registration in
     /// <see cref="EnsureRegistered"/>).</summary>
-    public static bool NativeRun(Engine engine)
+    public static bool NativeRun(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new System.InvalidOperationException("'$native_run' requires a PrologEngine host.");
@@ -3378,7 +3378,7 @@ public static class MetaBuiltins
     /// path materialized a <c>'$foreign'(Id)</c> CompoundTerm+IntTerm per call just
     /// to extract the id, on the hottest cursor builtins (fill_par/reftype_term/
     /// make_c_string/make_prolog_string).</summary>
-    private static TermSlot? ReadSlot(Engine engine, int reg)
+    private static TermSlot? ReadSlot(Activation engine, int reg)
     {
         Cell c = RegisterMarshalling.DerefRegisterCell(engine, reg);
         return c.Tag == Tag.Foreign ? engine.AsForeign<TermSlot>(c) : null;
@@ -3388,13 +3388,13 @@ public static class MetaBuiltins
     /// Foreign cell) to argument 0. Used to obtain a reftype where a `:- c`
     /// region's <c>reftype</c> global isn't available (tests, and any predicate
     /// that needs an ad-hoc slot).</summary>
-    public static bool NewReftypeSlot(Engine engine)
+    public static bool NewReftypeSlot(Activation engine)
         => engine.UnifyRegisterWithCell(0, engine.MakeForeign(new TermSlot()));
 
     /// <summary>ADR-024 — <c>fill_par(Term, RefType)</c>: store the Prolog term in
     /// the slot (term → cursor). Zero-copy at the AST level — the term is read as
     /// it currently stands.</summary>
-    public static bool FillPar(Engine engine)
+    public static bool FillPar(Activation engine)
     {
         var slot = ReadSlot(engine, 1);
         if (slot is null) return false;
@@ -3405,7 +3405,7 @@ public static class MetaBuiltins
     /// <summary>ADR-024 — <c>reftype_term(Term, RefType)</c>: materialize the
     /// slot's cursor to a Prolog term and unify it with argument 0 (cursor →
     /// term).</summary>
-    public static bool ReftypeTerm(Engine engine)
+    public static bool ReftypeTerm(Activation engine)
     {
         var slot = ReadSlot(engine, 1);
         if (slot is null) return false;
@@ -3414,11 +3414,11 @@ public static class MetaBuiltins
 
     /// <summary>ADR-024 — <c>preftype(RefType)</c>: succeeds when argument 0 is a
     /// valid reftype slot.</summary>
-    public static bool Preftype(Engine engine) => ReadSlot(engine, 0) is not null;
+    public static bool Preftype(Activation engine) => ReadSlot(engine, 0) is not null;
 
     /// <summary>ADR-024 — <c>reftype_term(Term, Type, RefType)</c>: the /2 form with
     /// an extra type-tag argument (ignored; the slot knows its own shape).</summary>
-    public static bool ReftypeTerm3(Engine engine)
+    public static bool ReftypeTerm3(Activation engine)
     {
         var slot = ReadSlot(engine, 2);
         if (slot is null) return false;
@@ -3427,7 +3427,7 @@ public static class MetaBuiltins
 
     /// <summary>ADR-024 — <c>fill_reftype(Term, Type, RefType)</c>: store the Prolog
     /// term in the slot (the type-tag argument is ignored).</summary>
-    public static bool FillReftype3(Engine engine)
+    public static bool FillReftype3(Activation engine)
     {
         var slot = ReadSlot(engine, 2);
         if (slot is null) return false;
@@ -3440,16 +3440,16 @@ public static class MetaBuiltins
     /// fills don't alias their Prolog values). When the first argument is a plain
     /// atom (a value, not a holder), it degrades to identity <c>arg0 = arg2</c>.
     /// The max-length / actual-length arguments are vestigial in .NET.</summary>
-    public static bool MakeCString4(Engine engine) => CStringMove(engine, holderReg: 0, valueReg: 2);
+    public static bool MakeCString4(Activation engine) => CStringMove(engine, holderReg: 0, valueReg: 2);
 
     /// <summary>ADR-024 — <c>make_prolog_string(Source, Var)</c> /
     /// <c>make_prolog_string_c</c>: read the source into the Prolog variable. When
     /// Source is a holder slot, Var gets the holder's current value; when Source is
     /// a plain atom (value), it is identity <c>arg0 = arg1</c>.</summary>
-    public static bool MakePrologString2(Engine engine) => PrologStringMove(engine, sourceReg: 0, varReg: 1);
+    public static bool MakePrologString2(Activation engine) => PrologStringMove(engine, sourceReg: 0, varReg: 1);
 
     // Holder → a TermSlot wrapped as a Foreign cell; an atom → a value.
-    private static bool CStringMove(Engine engine, int holderReg, int valueReg)
+    private static bool CStringMove(Activation engine, int holderReg, int valueReg)
     {
         var holder = ReadSlot(engine, holderReg);
         var value = RegisterMarshalling.ReadRegisterAsTerm(engine, valueReg);
@@ -3458,7 +3458,7 @@ public static class MetaBuiltins
         return UnifyAtomPair(engine, holderReg, valueReg);
     }
 
-    private static bool PrologStringMove(Engine engine, int sourceReg, int varReg)
+    private static bool PrologStringMove(Activation engine, int sourceReg, int varReg)
     {
         var holder = ReadSlot(engine, sourceReg);
         if (holder is not null)
@@ -3478,7 +3478,7 @@ public static class MetaBuiltins
 
     /// <summary>The value-mode identity: unify the two registers, requiring the
     /// shared value to be an atom (the body of <c>p(S, S) :- atom(S)</c>).</summary>
-    private static bool UnifyAtomPair(Engine engine, int r0, int r1)
+    private static bool UnifyAtomPair(Activation engine, int r0, int r1)
     {
         var t0 = RegisterMarshalling.ReadRegisterAsTerm(engine, r0);
         var t1 = RegisterMarshalling.ReadRegisterAsTerm(engine, r1);
@@ -3490,7 +3490,7 @@ public static class MetaBuiltins
     /// <summary>ADR-024 — <c>quote_str(X, XR)</c>: XR is X rendered in writeq
     /// (quoted) form, as an atom. (prlg_ifce.pl does this through C string buffers;
     /// the cursor model renders directly.)</summary>
-    public static bool QuoteStr(Engine engine)
+    public static bool QuoteStr(Activation engine)
     {
         using var sw = new System.IO.StringWriter();
         Shumway.Builtins.TermRenderer.Render(engine, engine.GetRegister(0), sw,
@@ -3499,7 +3499,7 @@ public static class MetaBuiltins
         return engine.UnifyRegisterWithCell(1, Shumway.Core.Cell.Atom(id));
     }
 
-    private static void ArmRepeat(Engine engine, int returnPc)
+    private static void ArmRepeat(Activation engine, int returnPc)
     {
         // The CP re-arms with ONE cached delegate (held on the cursor) rather
         // than a fresh closure per backtrack — repeat drives unbounded
@@ -3513,7 +3513,7 @@ public static class MetaBuiltins
     private sealed class RepeatCursor
     {
         private readonly int _returnPc;
-        public readonly Func<Engine, int, bool> Resume;
+        public readonly Func<Activation, int, bool> Resume;
 
         public RepeatCursor(int returnPc)
         {
@@ -3521,7 +3521,7 @@ public static class MetaBuiltins
             Resume = Step;
         }
 
-        private bool Step(Engine engine, int _)
+        private bool Step(Activation engine, int _)
         {
             engine.PushBuiltinChoicePoint(Resume, arity: 0);   // re-arm, same delegate
             engine.ResumeAtReturnPc(_returnPc);
@@ -3554,7 +3554,7 @@ public static class MetaBuiltins
     /// <c>type_error(atom, _)</c> for a non-atom, and
     /// <c>existence_error(source_sink, _)</c> when the path doesn't
     /// exist.</summary>
-    public static bool Consult(Engine engine)
+    public static bool Consult(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -3584,7 +3584,7 @@ public static class MetaBuiltins
     /// compatibility library (<c>dcgs</c>, <c>format</c>, <c>dif</c>, and the
     /// prelude-covered no-ops — see <see cref="CompatLibraries"/>). With an
     /// atom, behaves like <see cref="Consult"/>.</summary>
-    public static bool UseModule(Engine engine)
+    public static bool UseModule(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -3628,7 +3628,7 @@ public static class MetaBuiltins
     /// builtin. Writes a snapshot of the engine's state (consult
     /// history + dynamic clauses) to <c>File</c>. See
     /// <see cref="PrologEngine.SaveState"/>.</summary>
-    public static bool SaveState1(Engine engine)
+    public static bool SaveState1(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -3640,7 +3640,7 @@ public static class MetaBuiltins
 
     /// <summary><c>save_state(+File, +Options)</c> — option-list variant.
     /// Currently recognises <c>dynamic_only(true)</c>.</summary>
-    public static bool SaveState2(Engine engine)
+    public static bool SaveState2(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -3655,7 +3655,7 @@ public static class MetaBuiltins
     /// <summary><c>save/0</c> — Arity-compatible: snapshots the user dynamic
     /// database in memory (replacing any previous snapshot). See
     /// <see cref="PrologEngine.SaveDb"/>.</summary>
-    public static bool Save0(Engine engine)
+    public static bool Save0(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -3667,7 +3667,7 @@ public static class MetaBuiltins
     /// <summary><c>save(+File)</c> — Arity-compatible: writes the dynamic-
     /// database snapshot to <c>File</c>. See
     /// <see cref="PrologEngine.SaveDbToFile"/>.</summary>
-    public static bool Save1(Engine engine)
+    public static bool Save1(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -3682,7 +3682,7 @@ public static class MetaBuiltins
     /// <c>save/0</c> snapshot (no snapshot = wipe only). Declarations and
     /// static predicates are untouched. See
     /// <see cref="PrologEngine.RestoreDb"/>.</summary>
-    public static bool Restore0(Engine engine)
+    public static bool Restore0(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -3694,7 +3694,7 @@ public static class MetaBuiltins
     /// <summary><c>restore(+File)</c> — <c>restore/0</c> semantics with the
     /// snapshot read from <c>File</c> (written by <c>save/1</c>). See
     /// <see cref="PrologEngine.RestoreDbFromFile"/>.</summary>
-    public static bool Restore1(Engine engine)
+    public static bool Restore1(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -3715,7 +3715,7 @@ public static class MetaBuiltins
     /// <summary><c>restore_state(+File)</c> — loads a snapshot previously
     /// written by <c>save_state/1,2</c>. See
     /// <see cref="PrologEngine.RestoreState"/>.</summary>
-    public static bool RestoreState1(Engine engine)
+    public static bool RestoreState1(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -3733,7 +3733,7 @@ public static class MetaBuiltins
         return true;
     }
 
-    private static string RequireAtomPath(Engine engine, int register, string builtin)
+    private static string RequireAtomPath(Activation engine, int register, string builtin)
     {
         Cell cell = MaterializeRegisterAsCell(engine, register);
         if (cell.Tag == Tag.Ref || cell.Tag == Tag.AttVar)
@@ -3771,7 +3771,7 @@ public static class MetaBuiltins
     /// <c>File</c> in the target module, then loads <c>File</c>. Argument
     /// validation and error shapes are identical to
     /// <see cref="Consult"/>.</summary>
-    public static bool Reconsult(Engine engine)
+    public static bool Reconsult(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -3797,10 +3797,10 @@ public static class MetaBuiltins
     // assertz / asserta / retract
     // ============================================================================
 
-    public static bool Assertz(Engine engine) => AssertImpl(engine, prepend: false);
-    public static bool Asserta(Engine engine) => AssertImpl(engine, prepend: true);
+    public static bool Assertz(Activation engine) => AssertImpl(engine, prepend: false);
+    public static bool Asserta(Activation engine) => AssertImpl(engine, prepend: true);
 
-    private static bool AssertImpl(Engine engine, bool prepend)
+    private static bool AssertImpl(Activation engine, bool prepend)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -3840,7 +3840,7 @@ public static class MetaBuiltins
     /// undefined (retractall is a no-op), and raises
     /// <c>permission_error(modify, static_procedure)</c> for a static procedure
     /// or builtin.</summary>
-    public static bool RetractAllModifiable(Engine engine)
+    public static bool RetractAllModifiable(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -3850,7 +3850,7 @@ public static class MetaBuiltins
         return host.IsRetractAllModifiable(fid);
     }
 
-    public static bool Retract(Engine engine)
+    public static bool Retract(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -3906,7 +3906,7 @@ public static class MetaBuiltins
     /// <see cref="ExtractHeadFunctorIdFromClause"/> but avoids the
     /// Term AST allocation — for retract's hot path the heap shape
     /// is sufficient.</summary>
-    private static int ReadPatternHeadFunctorId(Engine engine, int patternHeap)
+    private static int ReadPatternHeadFunctorId(Activation engine, int patternHeap)
     {
         int idx = engine.Deref(patternHeap);
         Cell c = engine.GetHeap(idx);
@@ -3932,7 +3932,7 @@ public static class MetaBuiltins
         return ReadFunctorIdFromCell(engine, c);
     }
 
-    private static int ReadFunctorIdFromCell(Engine engine, Cell c)
+    private static int ReadFunctorIdFromCell(Activation engine, Cell c)
     {
         if (c.Tag == Tag.Atom)
             return FunctorTable.Intern(c.AsAtomId, 0);
@@ -3956,7 +3956,7 @@ public static class MetaBuiltins
     /// completes). When later candidates remain it leaves a choice point
     /// whose resume retracts the following match — that is what makes
     /// <c>retract/1</c> enumerate every matching clause on backtracking.</summary>
-    private static bool RetractStep(Engine engine, PrologEngine host,
+    private static bool RetractStep(Activation engine, PrologEngine host,
         int patternFid, IReadOnlyList<Clause> candidates, int returnPc,
         int patternHeap)
     {
@@ -4042,7 +4042,7 @@ public static class MetaBuiltins
         private readonly int _snapCount;
         private readonly int _returnPc;
         private int _startIndex;
-        public readonly Func<Engine, int, bool> Resume;
+        public readonly Func<Activation, int, bool> Resume;
         public readonly Action OnPrune;
 
         public RetractCursor(PrologEngine host, int patternFid, Clause[] snap,
@@ -4058,7 +4058,7 @@ public static class MetaBuiltins
             OnPrune = () => _host.ReturnRetractSnapshot(_snap, _snapCount);
         }
 
-        private bool Step(Engine engine)
+        private bool Step(Activation engine)
         {
             // ADR-016: re-read the pattern from register 0. The choice point
             // was pushed with arity 1, so the WAM CP machinery saved
@@ -4137,7 +4137,7 @@ public static class MetaBuiltins
     /// functors at the same position) with zero allocation; only candidates
     /// it cannot refute pay the materialise-and-unify trial.</para></summary>
     private static int FindRetractMatch(
-        Engine engine, IReadOnlyList<Clause> candidates, int startIndex,
+        Activation engine, IReadOnlyList<Clause> candidates, int startIndex,
         int endExclusive, int patternHeap)
     {
         // chunk 431: endExclusive bounds the scan explicitly — a resume's
@@ -4175,7 +4175,7 @@ public static class MetaBuiltins
     /// float table, partial strings, foreigns, depth exhausted — returns
     /// false and the caller falls back to the real materialise-and-unify
     /// trial, so this can only SKIP work, never change the outcome.</summary>
-    private static bool DefiniteMismatch(Engine engine, int heapIdx, Term ast, int depth)
+    private static bool DefiniteMismatch(Activation engine, int heapIdx, Term ast, int depth)
     {
         if (depth <= 0 || ast is VarTerm) return false;
         int idx = engine.Deref(heapIdx);
@@ -4278,7 +4278,7 @@ public static class MetaBuiltins
     /// following <see cref="Materializer.MaterializeAsCell"/> call uses a
     /// fresh var-name → heap-index map, so each <c>_GN</c> resolves to a new
     /// unbound — and shared occurrences in the AST keep sharing.</para></summary>
-    public static bool CopyTerm(Engine engine)
+    public static bool CopyTerm(Activation engine)
     {
         // Phase 33 I2: heap-to-heap copy — no intermediate managed AST tree
         // (was MaterializeRegister + MaterializeAsCell, ~1.3 KB garbage/call).
@@ -4297,7 +4297,7 @@ public static class MetaBuiltins
     /// prelude's <c>copy_term/3</c> then runs <c>attribute_goals/4</c>
     /// over the triples, and the residual goals come out expressed over
     /// <c>Copy</c>'s variables.</summary>
-    public static bool CopyTerm3Prep(Engine engine)
+    public static bool CopyTerm3Prep(Activation engine)
     {
         // Distinct attributed variables reachable from the term at X[0].
         var attvars = new System.Collections.Generic.List<int>();
@@ -4340,7 +4340,7 @@ public static class MetaBuiltins
     /// <summary>Collects the distinct heap addresses of attributed
     /// variables reachable from <paramref name="cell"/>. The shared
     /// visited set also guards against a cyclic term looping.</summary>
-    private static void CollectAttvars(Engine engine, Cell cell,
+    private static void CollectAttvars(Activation engine, Cell cell,
         System.Collections.Generic.List<int> addrs,
         System.Collections.Generic.HashSet<int> seen)
     {
@@ -4388,7 +4388,7 @@ public static class MetaBuiltins
     /// representation — variable identity is preserved via the synthetic
     /// <c>_GN</c> names <see cref="TermReader"/> assigns, which is why the
     /// substitution step at the end works.</para></summary>
-    public static bool Findall(Engine engine)
+    public static bool Findall(Activation engine)
     {
         var results = CollectSolutions(engine, stripExistentials: false);
         return BindList(engine, results);
@@ -4398,7 +4398,7 @@ public static class MetaBuiltins
     /// solution buffer on the engine's findall stack. Emitted by the
     /// MetaTransform rewrite of <c>findall/3</c> as the first goal of the
     /// collect loop.</summary>
-    public static bool FindallPush(Engine engine)
+    public static bool FindallPush(Activation engine)
     {
         FindallHost(engine).PushFindallFrame();
         return true;
@@ -4409,7 +4409,7 @@ public static class MetaBuiltins
     /// heap so backtracking can't unwind it) into the open findall
     /// buffer, then succeeds so the trailing <c>fail</c> drives
     /// enumeration on to the goal's next solution.</summary>
-    public static bool FindallRecord(Engine engine)
+    public static bool FindallRecord(Activation engine)
     {
         FindallHost(engine).RecordFindallSolution(MaterializeRegister(engine, 0));
         return true;
@@ -4423,7 +4423,7 @@ public static class MetaBuiltins
     /// returns null and we fall back to the AST path. bagof/setof keep the
     /// AST-only <see cref="FindallRecord"/> because they inspect the recorded
     /// terms for witness grouping.</summary>
-    public static bool FindallRecordSnapshot(Engine engine)
+    public static bool FindallRecordSnapshot(Activation engine)
     {
         Cell[]? snap = FindallSnapshot.TrySnapshotRegister(engine, 0);
         if (snap != null)
@@ -4437,7 +4437,7 @@ public static class MetaBuiltins
     /// open findall buffer and unifies <c>List</c> with its collected
     /// solutions. Each solution is materialised with its own variable map
     /// so distinct solutions never accidentally share a variable.</summary>
-    public static bool FindallCollect(Engine engine)
+    public static bool FindallCollect(Activation engine)
     {
         var frame = FindallHost(engine).PopFindallFrame();
         Cell list = Cell.Atom(AtomTable.EmptyListId);
@@ -4456,7 +4456,7 @@ public static class MetaBuiltins
         return engine.UnifyRegisterWithCell(0, list);
     }
 
-    private static PrologEngine FindallHost(Engine engine) =>
+    private static PrologEngine FindallHost(Activation engine) =>
         engine.Host as PrologEngine
         ?? throw new InvalidOperationException(
             "The in-engine findall builtins require a PrologEngine host.");
@@ -4467,7 +4467,7 @@ public static class MetaBuiltins
     /// <c>Witness-Bag</c> pairs that bagof/3 backtracks over: one pair per
     /// distinct witness, in standard order of the witness, each bag holding
     /// its solutions in generation order.</summary>
-    public static bool BagofCollect(Engine engine)
+    public static bool BagofCollect(Activation engine)
     {
         var frame = FindallHost(engine).PopFindallFrame();
         Cell groups = Materializer.MaterializeAsCell(
@@ -4479,7 +4479,7 @@ public static class MetaBuiltins
     /// <see cref="BagofCollect"/>, but each bag is sorted into standard order
     /// and stripped of duplicates — the only difference between bagof/3 and
     /// setof/3.</summary>
-    public static bool SetofCollect(Engine engine)
+    public static bool SetofCollect(Activation engine)
     {
         var frame = FindallHost(engine).PopFindallFrame();
         Cell groups = Materializer.MaterializeAsCell(
@@ -4683,7 +4683,7 @@ public static class MetaBuiltins
     /// a variable bound at run time, and keeps the pre-chunk-84 behaviour —
     /// "findall + fail-on-empty", no witness grouping. <c>Var^Goal</c>
     /// existential wrappers are stripped.</summary>
-    public static bool Bagof(Engine engine)
+    public static bool Bagof(Activation engine)
     {
         var results = CollectSolutions(engine, stripExistentials: true);
         if (results.Count == 0) return false;
@@ -4696,7 +4696,7 @@ public static class MetaBuiltins
     /// pre-chunk-84 no-grouping behaviour; the compile-time path with full
     /// witness grouping is the MetaTransform rewrite. The sort runs at the AST
     /// level via <see cref="TermStandardOrder.Compare"/>.</summary>
-    public static bool Setof(Engine engine)
+    public static bool Setof(Activation engine)
     {
         var results = CollectSolutions(engine, stripExistentials: true);
         if (results.Count == 0) return false;
@@ -4724,12 +4724,12 @@ public static class MetaBuiltins
     /// goal, runs it in a peer engine, and projects each solution's
     /// bindings through Template. The result list is built by the
     /// per-builtin tail logic (which decides what to do on empty).</summary>
-    private static List<Term> CollectSolutions(Engine engine, bool stripExistentials)
+    private static List<Term> CollectSolutions(Activation engine, bool stripExistentials)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
                 "Collection meta-builtins require the engine to be hosted by "
-                + "a PrologEngine. Engine.Host is "
+                + "a PrologEngine. Activation.Host is "
                 + (engine.Host?.GetType().Name ?? "null") + ".");
 
         Term template = MaterializeRegister(engine, 0);
@@ -4752,7 +4752,7 @@ public static class MetaBuiltins
 
     /// <summary>Builds a Prolog list from the collected results and unifies
     /// it with the caller's third argument.</summary>
-    private static bool BindList(Engine engine, IReadOnlyList<Term> results)
+    private static bool BindList(Activation engine, IReadOnlyList<Term> results)
     {
         Term listTerm = new AtomTerm("[]");
         for (int i = results.Count - 1; i >= 0; i--)
@@ -4779,7 +4779,7 @@ public static class MetaBuiltins
     /// briefly so the existing <see cref="TermReader.Materialize"/> can do its
     /// REF-chasing work uniformly — for atomic registers this costs one
     /// throwaway heap cell.</summary>
-    private static Term MaterializeRegister(Engine engine, int regIdx)
+    private static Term MaterializeRegister(Activation engine, int regIdx)
     {
         int slot = engine.AllocateHeap(1);
         engine.SetHeap(slot, engine.GetRegister(regIdx));
@@ -4792,7 +4792,7 @@ public static class MetaBuiltins
     /// equal term. The tabling driver uses it as an O(1) duplicate-answer
     /// test, which is what makes the semi-naive fixpoint sub-quadratic —
     /// the alternative, scanning the asserted answers, is O(n) per check.</summary>
-    public static bool TableSeen(Engine engine)
+    public static bool TableSeen(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -4806,7 +4806,7 @@ public static class MetaBuiltins
     /// <summary><c>'$tbl_seen_clear'/0</c> (chunk 107) — empties the
     /// engine's tabling key set, so a later re-derivation of a subgoal is
     /// not deduplicated against answers from before a table invalidation.</summary>
-    public static bool TableSeenClear(Engine engine)
+    public static bool TableSeenClear(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -4821,7 +4821,7 @@ public static class MetaBuiltins
     /// table is first abolished, so the negated subgoal's fixpoint is
     /// computed in full and in isolation — which is what makes <c>\+</c>
     /// over a tabled goal sound for a stratified program.</summary>
-    public static bool TableSolveComplete(Engine engine)
+    public static bool TableSolveComplete(Activation engine)
     {
         if (engine.Host is not PrologEngine host)
             throw new InvalidOperationException(
@@ -4904,10 +4904,10 @@ public static class MetaBuiltins
     // See RecordedDatabase.cs for the storage layer.
     // ============================================================================
 
-    public static bool Recorda3(Engine engine) => RecordImpl(engine, atFront: true);
-    public static bool Recordz3(Engine engine) => RecordImpl(engine, atFront: false);
+    public static bool Recorda3(Activation engine) => RecordImpl(engine, atFront: true);
+    public static bool Recordz3(Activation engine) => RecordImpl(engine, atFront: false);
 
-    private static bool RecordImpl(Engine engine, bool atFront)
+    private static bool RecordImpl(Activation engine, bool atFront)
     {
         PrologEngine host = RequireHost(engine, atFront ? "recorda/3" : "recordz/3");
         var (atomId, keyTerm) = ReadRecordedKey(engine, 0, atFront ? "recorda/3" : "recordz/3");
@@ -4942,7 +4942,7 @@ public static class MetaBuiltins
     // resume are visible to the continuation (the lazy snapshot reads the
     // live chain then) — the drain idiom RELIES on seeing its own erasures;
     // the old eager snapshot hid them until the next fresh call.
-    public static bool Recorded3(Engine engine)
+    public static bool Recorded3(Activation engine)
     {
         PrologEngine host = RequireHost(engine, "recorded/3");
         var (atomId, keyTerm) = ReadRecordedKey(engine, 0, "recorded/3");
@@ -4964,7 +4964,7 @@ public static class MetaBuiltins
         private List<(long Ref, Term Term)>? _snapshot;
         private int _snapIdx;
         private long _lastYieldedRef = -1;
-        public readonly Func<Engine, int, bool> Resume;
+        public readonly Func<Activation, int, bool> Resume;
 
         public RecordedCursor(PrologEngine host, int atomId, Term? key, int returnPc)
         {
@@ -4987,9 +4987,9 @@ public static class MetaBuiltins
             return _chain;
         }
 
-        public bool Start(Engine engine) => Attempt(engine, isResume: false);
+        public bool Start(Activation engine) => Attempt(engine, isResume: false);
 
-        private bool Attempt(Engine engine, bool isResume)
+        private bool Attempt(Activation engine, bool isResume)
         {
             if (isResume && _snapshot is null)
             {
@@ -5046,7 +5046,7 @@ public static class MetaBuiltins
 
         /// <summary>Prefilter + rolled-back trial unify of the V pattern
         /// against a stored term — the FindRetractMatch shape.</summary>
-        private static bool TrialUnifies(Engine engine, int patSlot, Term stored)
+        private static bool TrialUnifies(Activation engine, int patSlot, Term stored)
         {
             if (DefiniteMismatch(engine, patSlot, stored, depth: 6)) return false;
             int savedHeapTop = engine.HeapTop;
@@ -5065,7 +5065,7 @@ public static class MetaBuiltins
         }
 
         private bool YieldCandidate(
-            Engine engine, (long Ref, Term Term) cand, bool isResume)
+            Activation engine, (long Ref, Term Term) cand, bool isResume)
         {
             // Push the re-satisfaction CP FIRST so the real bindings roll
             // back cleanly on backtrack (arity 3 — the registers must be
@@ -5079,14 +5079,14 @@ public static class MetaBuiltins
         }
     }
 
-    public static bool Erase1(Engine engine)
+    public static bool Erase1(Activation engine)
     {
         PrologEngine host = RequireHost(engine, "erase/1");
         long @ref = RequireIntRef(engine, register: 0, builtin: "erase/1");
         return host.Records.Erase(@ref);
     }
 
-    public static bool EraseAll1(Engine engine)
+    public static bool EraseAll1(Activation engine)
     {
         PrologEngine host = RequireHost(engine, "eraseall/1");
         var (atomId, keyTerm) = ReadRecordedKey(engine, 0, "eraseall/1");
@@ -5095,7 +5095,7 @@ public static class MetaBuiltins
         return true;
     }
 
-    public static bool Instance2(Engine engine)
+    public static bool Instance2(Activation engine)
     {
         PrologEngine host = RequireHost(engine, "instance/2");
         long @ref = RequireIntRef(engine, register: 0, builtin: "instance/2");
@@ -5105,7 +5105,7 @@ public static class MetaBuiltins
         return engine.UnifyRegisterWithCell(1, c);
     }
 
-    public static bool KeyCount2(Engine engine)
+    public static bool KeyCount2(Activation engine)
     {
         PrologEngine host = RequireHost(engine, "key_count/2");
         var (atomId, keyTerm) = ReadRecordedKey(engine, 0, "key_count/2");
@@ -5115,7 +5115,7 @@ public static class MetaBuiltins
         return engine.UnifyRegisterWithCell(1, Cell.Int(count));
     }
 
-    public static bool Keys1(Engine engine)
+    public static bool Keys1(Activation engine)
     {
         PrologEngine host = RequireHost(engine, "keys/1");
         Cell keyCell = MaterializeRegisterAsCell(engine, 0);
@@ -5135,20 +5135,20 @@ public static class MetaBuiltins
             (e, i) => KeysUnify(e, keys, i));
     }
 
-    private static bool KeysUnify(Engine engine, List<Term> keys, int index)
+    private static bool KeysUnify(Activation engine, List<Term> keys, int index)
     {
         Cell c = Materializer.MaterializeAsCell(engine, keys[index]);
         return engine.UnifyRegisterWithCell(0, c);
     }
 
-    public static bool Ref1(Engine engine)
+    public static bool Ref1(Activation engine)
     {
         PrologEngine host = RequireHost(engine, "ref/1");
         Cell cell = MaterializeRegisterAsCell(engine, 0);
         return cell.Tag == Tag.Int && host.Records.ContainsRef(cell.AsInt);
     }
 
-    public static bool Replace2(Engine engine)
+    public static bool Replace2(Activation engine)
     {
         PrologEngine host = RequireHost(engine, "replace/2");
         long @ref = RequireIntRef(engine, register: 0, builtin: "replace/2");
@@ -5156,7 +5156,7 @@ public static class MetaBuiltins
         return host.Records.Replace(@ref, newTerm);
     }
 
-    public static bool Nref2(Engine engine)
+    public static bool Nref2(Activation engine)
     {
         PrologEngine host = RequireHost(engine, "nref/2");
         long @ref = RequireIntRef(engine, register: 0, builtin: "nref/2");
@@ -5165,7 +5165,7 @@ public static class MetaBuiltins
         return engine.UnifyRegisterWithCell(1, Cell.Int(next.Value));
     }
 
-    public static bool Pref2(Engine engine)
+    public static bool Pref2(Activation engine)
     {
         PrologEngine host = RequireHost(engine, "pref/2");
         long @ref = RequireIntRef(engine, register: 0, builtin: "pref/2");
@@ -5174,7 +5174,7 @@ public static class MetaBuiltins
         return engine.UnifyRegisterWithCell(1, Cell.Int(prev.Value));
     }
 
-    public static bool RecordAfter3(Engine engine)
+    public static bool RecordAfter3(Activation engine)
     {
         PrologEngine host = RequireHost(engine, "record_after/3");
         long @ref = RequireIntRef(engine, register: 0, builtin: "record_after/3");
@@ -5184,7 +5184,7 @@ public static class MetaBuiltins
         return engine.UnifyRegisterWithCell(2, Cell.Int(newRef.Value));
     }
 
-    public static bool RecordBefore3(Engine engine)
+    public static bool RecordBefore3(Activation engine)
     {
         PrologEngine host = RequireHost(engine, "record_before/3");
         long @ref = RequireIntRef(engine, register: 0, builtin: "record_before/3");
@@ -5196,7 +5196,7 @@ public static class MetaBuiltins
 
     // ---- shared validation helpers ----
 
-    private static PrologEngine RequireHost(Engine engine, string builtin)
+    private static PrologEngine RequireHost(Activation engine, string builtin)
         => engine.Host as PrologEngine
             ?? throw new InvalidOperationException(
                 $"{builtin} requires the engine to be hosted by a PrologEngine.");
@@ -5211,7 +5211,7 @@ public static class MetaBuiltins
     /// DB keys on structural equality, and a VarTerm compares by its generated
     /// name, so a non-ground key would store under a never-again-equal key and
     /// silently fail every lookup.</summary>
-    private static (int AtomId, Term? Term) ReadRecordedKey(Engine engine, int register, string builtin)
+    private static (int AtomId, Term? Term) ReadRecordedKey(Activation engine, int register, string builtin)
     {
         Cell cell = MaterializeRegisterAsCell(engine, register);
         if (cell.Tag == Tag.Ref || cell.Tag == Tag.AttVar)
@@ -5243,7 +5243,7 @@ public static class MetaBuiltins
         return true;
     }
 
-    private static long RequireIntRef(Engine engine, int register, string builtin)
+    private static long RequireIntRef(Activation engine, int register, string builtin)
     {
         Cell cell = MaterializeRegisterAsCell(engine, register);
         if (cell.Tag == Tag.Ref || cell.Tag == Tag.AttVar)
@@ -5260,7 +5260,7 @@ public static class MetaBuiltins
     // user_input/user_output. get/get0/put/skip operate on character codes.
     // ============================================================================
 
-    public static bool See1(Engine engine)
+    public static bool See1(Activation engine)
     {
         PrologEngine host = RequireHost(engine, "see/1");
         string path = RequireAtomPath(engine, register: 0, builtin: "see/1");
@@ -5303,7 +5303,7 @@ public static class MetaBuiltins
         return true;
     }
 
-    public static bool Seeing1(Engine engine)
+    public static bool Seeing1(Activation engine)
     {
         var streams = engine.Streams!;
         Cell nameCell = ReferenceEquals(streams.CurrentInput, streams.UserInput)
@@ -5313,7 +5313,7 @@ public static class MetaBuiltins
         return engine.UnifyRegisterWithCell(0, nameCell);
     }
 
-    public static bool Seen0(Engine engine)
+    public static bool Seen0(Activation engine)
     {
         var streams = engine.Streams!;
         if (!ReferenceEquals(streams.CurrentInput, streams.UserInput))
@@ -5322,7 +5322,7 @@ public static class MetaBuiltins
         return true;
     }
 
-    public static bool Tell1(Engine engine)
+    public static bool Tell1(Activation engine)
     {
         PrologEngine host = RequireHost(engine, "tell/1");
         string path = RequireAtomPath(engine, register: 0, builtin: "tell/1");
@@ -5359,7 +5359,7 @@ public static class MetaBuiltins
         return true;
     }
 
-    public static bool Telling1(Engine engine)
+    public static bool Telling1(Activation engine)
     {
         var streams = engine.Streams!;
         Cell nameCell = ReferenceEquals(streams.CurrentOutput, streams.UserOutput)
@@ -5369,7 +5369,7 @@ public static class MetaBuiltins
         return engine.UnifyRegisterWithCell(0, nameCell);
     }
 
-    public static bool Told0(Engine engine)
+    public static bool Told0(Activation engine)
     {
         var streams = engine.Streams!;
         if (!ReferenceEquals(streams.CurrentOutput, streams.UserOutput))
@@ -5387,16 +5387,16 @@ public static class MetaBuiltins
 
     // ---- get / get0 / put / skip — character-code I/O ----
 
-    public static bool Get1(Engine engine) => ReadPrintableCodeImpl(engine, useStreamReg: false);
-    public static bool Get2(Engine engine) => ReadPrintableCodeImpl(engine, useStreamReg: true);
-    public static bool Get0_1(Engine engine) => ReadAnyCodeImpl(engine, useStreamReg: false);
-    public static bool Get0_2(Engine engine) => ReadAnyCodeImpl(engine, useStreamReg: true);
-    public static bool Put1(Engine engine) => WriteCodeImpl(engine, useStreamReg: false);
-    public static bool Put2(Engine engine) => WriteCodeImpl(engine, useStreamReg: true);
-    public static bool Skip1(Engine engine) => SkipImpl(engine, useStreamReg: false);
-    public static bool Skip2(Engine engine) => SkipImpl(engine, useStreamReg: true);
+    public static bool Get1(Activation engine) => ReadPrintableCodeImpl(engine, useStreamReg: false);
+    public static bool Get2(Activation engine) => ReadPrintableCodeImpl(engine, useStreamReg: true);
+    public static bool Get0_1(Activation engine) => ReadAnyCodeImpl(engine, useStreamReg: false);
+    public static bool Get0_2(Activation engine) => ReadAnyCodeImpl(engine, useStreamReg: true);
+    public static bool Put1(Activation engine) => WriteCodeImpl(engine, useStreamReg: false);
+    public static bool Put2(Activation engine) => WriteCodeImpl(engine, useStreamReg: true);
+    public static bool Skip1(Activation engine) => SkipImpl(engine, useStreamReg: false);
+    public static bool Skip2(Activation engine) => SkipImpl(engine, useStreamReg: true);
 
-    private static StreamHandle ResolveInputStream(Engine engine, bool fromStreamArg)
+    private static StreamHandle ResolveInputStream(Activation engine, bool fromStreamArg)
     {
         if (!fromStreamArg)
             return engine.Streams!.CurrentInput;
@@ -5414,7 +5414,7 @@ public static class MetaBuiltins
             "type_error(stream, _)");
     }
 
-    private static StreamHandle ResolveOutputStream(Engine engine, bool fromStreamArg)
+    private static StreamHandle ResolveOutputStream(Activation engine, bool fromStreamArg)
     {
         if (!fromStreamArg)
             return engine.Streams!.CurrentOutput;
@@ -5432,7 +5432,7 @@ public static class MetaBuiltins
             "type_error(stream, _)");
     }
 
-    private static bool ReadPrintableCodeImpl(Engine engine, bool useStreamReg)
+    private static bool ReadPrintableCodeImpl(Activation engine, bool useStreamReg)
     {
         var h = ResolveInputStream(engine, useStreamReg);
         if (!h.IsReader)
@@ -5445,7 +5445,7 @@ public static class MetaBuiltins
         return engine.UnifyRegisterWithCell(regOut, Cell.Int(code));
     }
 
-    private static bool ReadAnyCodeImpl(Engine engine, bool useStreamReg)
+    private static bool ReadAnyCodeImpl(Activation engine, bool useStreamReg)
     {
         var h = ResolveInputStream(engine, useStreamReg);
         if (!h.IsReader)
@@ -5455,7 +5455,7 @@ public static class MetaBuiltins
         return engine.UnifyRegisterWithCell(regOut, Cell.Int(code));
     }
 
-    private static bool WriteCodeImpl(Engine engine, bool useStreamReg)
+    private static bool WriteCodeImpl(Activation engine, bool useStreamReg)
     {
         var h = ResolveOutputStream(engine, useStreamReg);
         if (!h.IsWriter)
@@ -5474,7 +5474,7 @@ public static class MetaBuiltins
         return true;
     }
 
-    private static bool SkipImpl(Engine engine, bool useStreamReg)
+    private static bool SkipImpl(Activation engine, bool useStreamReg)
     {
         var h = ResolveInputStream(engine, useStreamReg);
         if (!h.IsReader)
@@ -5492,7 +5492,7 @@ public static class MetaBuiltins
         return true;
     }
 
-    public static bool Tab2(Engine engine)
+    public static bool Tab2(Activation engine)
     {
         var h = ResolveOutputStream(engine, fromStreamArg: true);
         if (!h.IsWriter)
@@ -5513,10 +5513,10 @@ public static class MetaBuiltins
     // term_to_atom/2, plus a backtrackable substring search.
     // ============================================================================
 
-    public static bool StringTerm2(Engine engine) => StringTermImpl(engine, quoted: false);
-    public static bool StringTermq2(Engine engine) => StringTermImpl(engine, quoted: true);
+    public static bool StringTerm2(Activation engine) => StringTermImpl(engine, quoted: false);
+    public static bool StringTermq2(Activation engine) => StringTermImpl(engine, quoted: true);
 
-    private static bool StringTermImpl(Engine engine, bool quoted)
+    private static bool StringTermImpl(Activation engine, bool quoted)
     {
         Cell atomCell = ResolveLocal(engine, engine.GetRegister(0));
 
@@ -5563,14 +5563,14 @@ public static class MetaBuiltins
         return engine.UnifyRegisterWithCell(0, Cell.Atom(newAtomId));
     }
 
-    public static bool StringSearch3(Engine engine)
+    public static bool StringSearch3(Activation engine)
         => StringSearchImpl(engine, subReg: 0, hayReg: 1, locReg: 2, arity: 3,
             StringComparison.Ordinal);
 
     /// <summary>Arity <c>string_search(+Case, +SubString, +String, -Location)</c>:
     /// Case = 0 → case-sensitive, Case = 1 → case-insensitive. Locations are
     /// 0-based (per ARITY.HLP) and enumerate on backtracking.</summary>
-    public static bool StringSearch4(Engine engine)
+    public static bool StringSearch4(Activation engine)
     {
         Cell caseCell = MaterializeRegisterAsCell(engine, 0);
         if (caseCell.Tag == Tag.Ref || caseCell.Tag == Tag.AttVar)
@@ -5582,7 +5582,7 @@ public static class MetaBuiltins
         return StringSearchImpl(engine, subReg: 1, hayReg: 2, locReg: 3, arity: 4, cmp);
     }
 
-    private static bool StringSearchImpl(Engine engine, int subReg, int hayReg,
+    private static bool StringSearchImpl(Activation engine, int subReg, int hayReg,
         int locReg, int arity, StringComparison cmp)
     {
         Cell subCell = MaterializeRegisterAsCell(engine, subReg);
@@ -5621,7 +5621,7 @@ public static class MetaBuiltins
     // existence / permission failures so catch/3 can match them.
     // ============================================================================
 
-    public static bool Mkdir1(Engine engine)
+    public static bool Mkdir1(Activation engine)
     {
         string path = RequireAtomPath(engine, register: 0, builtin: "mkdir/1");
         try { System.IO.Directory.CreateDirectory(path); }
@@ -5638,7 +5638,7 @@ public static class MetaBuiltins
         return true;
     }
 
-    public static bool Rmdir1(Engine engine)
+    public static bool Rmdir1(Activation engine)
     {
         string path = RequireAtomPath(engine, register: 0, builtin: "rmdir/1");
         if (!System.IO.Directory.Exists(path))
@@ -5658,7 +5658,7 @@ public static class MetaBuiltins
         return true;
     }
 
-    public static bool Delete1(Engine engine)
+    public static bool Delete1(Activation engine)
     {
         string path = RequireAtomPath(engine, register: 0, builtin: "delete/1");
         if (!System.IO.File.Exists(path))
@@ -5678,7 +5678,7 @@ public static class MetaBuiltins
         return true;
     }
 
-    public static bool Rename2(Engine engine)
+    public static bool Rename2(Activation engine)
     {
         string from = RequireAtomPath(engine, register: 0, builtin: "rename/2");
         string to = RequireAtomPath(engine, register: 1, builtin: "rename/2");
@@ -5702,7 +5702,7 @@ public static class MetaBuiltins
         return true;
     }
 
-    public static bool ExistsFile1(Engine engine)
+    public static bool ExistsFile1(Activation engine)
     {
         string path = RequireAtomPath(engine, register: 0, builtin: "exists_file/1");
         return System.IO.File.Exists(path);
@@ -5712,7 +5712,7 @@ public static class MetaBuiltins
     // the environment variable's contents, or FAIL (not error) when unset —
     // callers rely on the failure branch for defaults:
     // `(getenv('X', V) ; V = default)`.
-    public static bool GetEnv2(Engine engine)
+    public static bool GetEnv2(Activation engine)
     {
         string name = RequireAtomPath(engine, register: 0, builtin: "getenv/2");
         string? value = Environment.GetEnvironmentVariable(name);
@@ -5721,7 +5721,7 @@ public static class MetaBuiltins
         return engine.UnifyRegisterWithCell(1, c);
     }
 
-    public static bool ExistsDirectory1(Engine engine)
+    public static bool ExistsDirectory1(Activation engine)
     {
         string path = RequireAtomPath(engine, register: 0, builtin: "exists_directory/1");
         return System.IO.Directory.Exists(path);
@@ -5756,20 +5756,20 @@ public static class MetaBuiltins
         }
     }
 
-    public static bool Shell1(Engine engine)
+    public static bool Shell1(Activation engine)
     {
         string command = RequireAtomPath(engine, register: 0, builtin: "shell/1");
         return RunShell(command) == 0;
     }
 
-    public static bool Shell2(Engine engine)
+    public static bool Shell2(Activation engine)
     {
         string command = RequireAtomPath(engine, register: 0, builtin: "shell/2");
         int status = RunShell(command);
         return engine.UnifyRegisterWithCell(1, Cell.Int(status));
     }
 
-    public static bool Pid1(Engine engine)
+    public static bool Pid1(Activation engine)
         => engine.UnifyRegisterWithCell(
             0, Cell.Int(Environment.ProcessId));
 
@@ -5779,10 +5779,10 @@ public static class MetaBuiltins
     /// the goal left a choice point (the determinism test backing the
     /// prelude's <c>call_det/2</c>, used by lgtunit's <c>deterministic/1,2</c>).
     /// Internal — not an ISO/public builtin.</summary>
-    public static bool ChoiceLevel1(Engine engine)
+    public static bool ChoiceLevel1(Activation engine)
         => engine.UnifyRegisterWithCell(0, Cell.Int(engine.B));
 
-    public static bool Sleep1(Engine engine)
+    public static bool Sleep1(Activation engine)
     {
         Cell c = MaterializeRegisterAsCell(engine, 0);
         double seconds = c.Tag switch
@@ -5797,7 +5797,7 @@ public static class MetaBuiltins
         return true;
     }
 
-    public static bool FileSize2(Engine engine)
+    public static bool FileSize2(Activation engine)
     {
         string path = RequireAtomPath(engine, register: 0, builtin: "file_size/2");
         var info = new System.IO.FileInfo(path);
@@ -5807,7 +5807,7 @@ public static class MetaBuiltins
         return engine.UnifyRegisterWithCell(1, Cell.Int(info.Length));
     }
 
-    public static bool FileModificationTime2(Engine engine)
+    public static bool FileModificationTime2(Activation engine)
     {
         string path = RequireAtomPath(engine, register: 0, builtin: "file_modification_time/2");
         var info = new System.IO.FileInfo(path);
@@ -5818,7 +5818,7 @@ public static class MetaBuiltins
         return engine.UnifyRegisterWithCell(1, Cell.Int(epoch));
     }
 
-    public static bool DirectoryFiles2(Engine engine)
+    public static bool DirectoryFiles2(Activation engine)
     {
         string path = RequireAtomPath(engine, register: 0, builtin: "directory_files/2");
         if (!System.IO.Directory.Exists(path))
@@ -5841,7 +5841,7 @@ public static class MetaBuiltins
     // Phase 24 chunk 272 — pseudo-random generation.
     // ============================================================================
 
-    public static bool Randomize1(Engine engine)
+    public static bool Randomize1(Activation engine)
     {
         PrologEngine host = RequireHost(engine, "randomize/1");
         Cell c = MaterializeRegisterAsCell(engine, 0);
@@ -5860,7 +5860,7 @@ public static class MetaBuiltins
     /// reseed the generator with it, and return it — a later
     /// <c>set_seed(Seed)</c> then reproduces exactly the sequence that
     /// follows this call.</summary>
-    public static bool GetSeed1(Engine engine)
+    public static bool GetSeed1(Activation engine)
     {
         PrologEngine host = RequireHost(engine, "get_seed/1");
         int seed = host.Random.Next();
@@ -5871,7 +5871,7 @@ public static class MetaBuiltins
     /// <summary><c>set_seed(+Seed)</c> — reseeds the engine's random
     /// generator; alias of <c>randomize/1</c> under the name Logtalk's
     /// backend_random object expects.</summary>
-    public static bool SetSeed1(Engine engine)
+    public static bool SetSeed1(Activation engine)
     {
         PrologEngine host = RequireHost(engine, "set_seed/1");
         Cell c = MaterializeRegisterAsCell(engine, 0);
@@ -5884,7 +5884,7 @@ public static class MetaBuiltins
         return true;
     }
 
-    public static bool Random1(Engine engine)
+    public static bool Random1(Activation engine)
     {
         PrologEngine host = RequireHost(engine, "random/1");
         double v = host.Random.NextDouble();
@@ -5892,7 +5892,7 @@ public static class MetaBuiltins
         return engine.UnifyRegisterWithCell(0, c);
     }
 
-    public static bool RandomBetween3(Engine engine)
+    public static bool RandomBetween3(Activation engine)
     {
         PrologEngine host = RequireHost(engine, "random_between/3");
         Cell loCell = MaterializeRegisterAsCell(engine, 0);
@@ -5918,7 +5918,7 @@ public static class MetaBuiltins
     // Phase 24 chunk 273 — expand_term/2 (DCG expansion exposed).
     // ============================================================================
 
-    public static bool ExpandTerm2(Engine engine)
+    public static bool ExpandTerm2(Activation engine)
     {
         Term input = MaterializeRegister(engine, 0);
         Term result;
@@ -5945,7 +5945,7 @@ public static class MetaBuiltins
     // Phase 24 chunk 274 — file_list/1,2 (Arity-Prolog database dump).
     // ============================================================================
 
-    public static bool FileList1(Engine engine)
+    public static bool FileList1(Activation engine)
     {
         PrologEngine host = RequireHost(engine, "file_list/1");
         string path = RequireAtomPath(engine, register: 0, builtin: "file_list/1");
@@ -5954,7 +5954,7 @@ public static class MetaBuiltins
         return true;
     }
 
-    public static bool FileList2(Engine engine)
+    public static bool FileList2(Activation engine)
     {
         PrologEngine host = RequireHost(engine, "file_list/2");
         string path = RequireAtomPath(engine, register: 0, builtin: "file_list/2");
@@ -6048,7 +6048,7 @@ public static class MetaBuiltins
         }
     }
 
-    public static bool Directory6(Engine engine)
+    public static bool Directory6(Activation engine)
     {
         string path = RequireAtomPath(engine, register: 0, builtin: "directory/6");
         if (!System.IO.Directory.Exists(path))
@@ -6065,7 +6065,7 @@ public static class MetaBuiltins
     }
 
     private static bool Directory6Unify(
-        Engine engine, List<System.IO.FileSystemInfo> entries, int index)
+        Activation engine, List<System.IO.FileSystemInfo> entries, int index)
     {
         var info = entries[index];
         // Arity-style mode bits: ReadOnly=1, Hidden=2, System=4,

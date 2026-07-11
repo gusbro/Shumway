@@ -22,7 +22,7 @@ public static class RegisterMarshalling
     /// BigInt / String / Foreign / Pstr id cell) still stages through one
     /// throwaway heap cell so <see cref="TermReader.Materialize"/> can walk it
     /// uniformly.</summary>
-    public static Term ReadRegisterAsTerm(Engine engine, int regIdx)
+    public static Term ReadRegisterAsTerm(Activation engine, int regIdx)
     {
         Cell c = engine.GetRegister(regIdx);
         switch (c.Tag)
@@ -45,7 +45,7 @@ public static class RegisterMarshalling
     /// materializing a Term: an unbound register comes back as its self-REF cell.
     /// The zero-allocation primitive for interop call sites that only need a
     /// scalar / Foreign payload.</summary>
-    public static Cell DerefRegisterCell(Engine engine, int regIdx)
+    public static Cell DerefRegisterCell(Activation engine, int regIdx)
     {
         Cell c = engine.GetRegister(regIdx);
         if (c.Tag == Tag.Ref)
@@ -60,7 +60,7 @@ public static class RegisterMarshalling
     /// An unbound register raises the same instantiation_error the bridge
     /// raised; anything else (BigInt, wrong type) falls back to the exact
     /// FromTerm semantics so error text and range behavior are unchanged.</summary>
-    public static long ReadInt64Register(Engine engine, PrologEngine host, int regIdx)
+    public static long ReadInt64Register(Activation engine, PrologEngine host, int regIdx)
     {
         Cell c = DerefRegisterCell(engine, regIdx);
         if (c.Tag == Tag.Int) return c.AsInt;
@@ -72,7 +72,7 @@ public static class RegisterMarshalling
     /// <summary>As <see cref="ReadInt64Register"/> for an <c>int</c> parameter;
     /// an in-range Int cell is zero-allocation, everything else (incl. out of
     /// int range) falls back to FromTerm&lt;int&gt; for exact semantics.</summary>
-    public static int ReadInt32Register(Engine engine, PrologEngine host, int regIdx)
+    public static int ReadInt32Register(Activation engine, PrologEngine host, int regIdx)
     {
         Cell c = DerefRegisterCell(engine, regIdx);
         if (c.Tag == Tag.Int)
@@ -90,7 +90,7 @@ public static class RegisterMarshalling
     /// register <paramref name="regIdx"/>. Returns the unification
     /// outcome — the bridge passes it straight back as the
     /// builtin's success / failure value.</summary>
-    public static bool UnifyRegisterWithTerm(Engine engine, int regIdx, Term term)
+    public static bool UnifyRegisterWithTerm(Activation engine, int regIdx, Term term)
     {
         Cell cell = Materializer.MaterializeAsCell(engine, term);
         return engine.UnifyRegisterWithCell(regIdx, cell);
