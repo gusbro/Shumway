@@ -657,35 +657,44 @@ questions from Phase 11's deferred list:
   `retract` / `assertz` — and avoids redundant `TryDescribe*`
   attempts that were already rejecting the shape.
 
-**Phase 33 — Audit remediation, round 1 (waves 1–5)** — 🚧 **In flight.**
+**Phase 33 — Audit remediation + real-program rounds + the cut/tail-call arc** — ✅ **Complete** (tagged `phase-33`; closure summary in [`docs/phase-33-closure.md`](docs/phase-33-closure.md)).
 
-Driven by the exhaustive six-way audit of 2026-06-30 (errors / interpreter / WAM
-codegen / IL / LTO / four interop boundaries, Arity-compat lens). The master
-backlog with every finding and its status lives in
-[`docs/phase-33-backlog.md`](docs/phase-33-backlog.md) — items are checked off
-as they land; later rounds continue until every item is attacked. This phase
-covers the first pass, in wave order:
+Opened as audit remediation round 1 — five waves attacking the six-way audit
+of 2026-06-30 (backlog closed 65/66 in
+[`docs/phase-33-backlog.md`](docs/phase-33-backlog.md); the one open item is
+the dump-armed intermittent native AV, whose likeliest cause —
+`_emitOwnerFid` plain-static under concurrent compiles — was found and
+fixed) — and grew into the largest phase to date (138 commits):
 
-1. **Wave 1 — correctness critical**: native-memory exception safety (E1),
-   HGlobal-path free-of-foreign-pointer corruption (E2), `string_term/2`
-   operator-table asymmetry (E3), reftype int truncation detection (E4),
-   encoding guard (E6), recorded-DB deep ground keys (E7), parse guard (E8),
-   EnginePool reset (E9), `{...}` silent-success (E10), minor batch (E11/E5).
-2. **Wave 2 — interop hot path**: register-read scalar fast path (A2/A3),
-   unboxed converters + compiled convention delegates (C1/C2), typed P/Invoke
-   invoker (D2), pooled string/scalar marshalling (D3/D4), per-block plan (A1),
-   reftype materialize pooling (D1), remainder (A4/C3/C4/C5/D5).
-3. **Wave 3 — WAM codegen**: `once`/snips rewrite (W1), neck-cut after inline
-   guards (W2), assert fast-path (W3), Tier-0 ITE inline (W4), DCG disjunction
-   (W5), `execute_builtin` fusion (W6), string-literal pool stability (W7),
-   cut-barrier register threading (W8), minors (W9).
-4. **Wave 4 — IL dispatch/promotion**: Stage B.4 runtime Call→CallIl (L1),
-   background promotion (L2), churn re-arm (L5), 16KB cap lift (L3), region
-   member widening (L6), a_int kind specialization (L7), baked index graphs
-   (L8), minors (L9).
-5. **Wave 5 — LTO/startup/size**: prelude pruning (T1), bundle compression
-   (T2), process-wide persisted-IL cache (T3), baked WAM link (T4), prelude IL
-   (L4), unfold widening (T5), representation slimming (T6/T7), minors (T8).
+- ✓ **Waves 1–5**: correctness-critical E-series; interop hot path; WAM
+  codegen (once/snips, neck-cut, assert fast-path, Tier-0 ITE, DCG
+  disjunction, `execute_builtin` fusion); IL dispatch/promotion (runtime
+  Call→CallIl, background promotion, churn re-arm, baked index graphs);
+  LTO/startup/size (`--prune-prelude` −94%, bundle compression, persisted-IL
+  cache). Plus the user-directed profile-driven IL round 2.
+- ✓ **Real-program rounds**: Logtalk 3.101.0 (random 457/457, term_io 87/87,
+  types 148/149, many testers 100%; benchmark parity-or-better vs GProlog on
+  every shape except nrev); Djota 32/32 (six standard-DCG fixes + fail-fast
+  DCG lowering, −15.3% heap/render); the GProlog-doc ISO predicate audit
+  (all gaps fixed).
+- ✓ **ADR-027/028**: second-level (sub-argument) indexing — bounded 2-hop
+  paths (list head / struct sub-arg / token stream) — and sibling-arg +
+  structure-keyed indexing inside value buckets, all three tiers.
+- ✓ **The cut/tail-call arc (ADRs 029–034)**, census-driven end to end:
+  029 epilogue fusion; 030 redundant-cut elision (det greatest fixpoint,
+  intra-module + linker whole-program closure); **031 CP-free guard commit
+  default ON through every tier** (A/B/G/G2/G3, staging + callee-cut
+  widenings, lazy CP under wakeups) **including INDEXED BUCKETS** (the lazy
+  bucket CP via the per-member `idxnext` local — test/ 724→2,796 accepted,
+  testGen/ 601→3,014, measured 1.58× end-to-end on dispatch-then-validate);
+  032 soft-rejected; 033 guard continuation stack prototype (shared copies,
+  cross-tail LCO composition, deep-G3 tail cycles via the pure-tail-segment
+  rule); **034 sound stable-dynamic inlining default ON** (fixed the shipped
+  LUV bug — snapshots inlined into caller IL with no eviction path — plus
+  the Call→CallIl hardening and per-query `IlByFunctorId` staleness
+  variants; empty-dynamic-as-fail measured then rejected on runtime-cost
+  grounds). Two latent soundness fixes shipped along the way (lazy-CP
+  clobbered-register patch via `SetTopCpArgRegister`; the mixed-cycle rule).
 
 **Phase 32 — ADR-024 materializer ↔ dematerializer tier** — ✅ **Complete** (tagged `phase-32`; closure summary in [`docs/phase-32-closure.md`](docs/phase-32-closure.md)).
 
