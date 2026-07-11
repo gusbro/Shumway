@@ -1765,6 +1765,22 @@ public sealed partial class Engine
     public bool IsDynMutated(int functorId)
         => MutatedDynamicFids is { Count: > 0 } s && s.Contains(functorId);
 
+    /// <summary>Goal-dispatch counter for <c>time/1</c> — incremented once
+    /// per Tier-0 interpreter dispatch (Call / Execute / CallBuiltin and
+    /// their Il/Bytecode/Builtin variants): the Shumway analogue of SWI's
+    /// "inferences". A plain field increment, cheap enough to stay always-on
+    /// (A/B-verified). Under Tier-1 promotion the count UNDERCOUNTS —
+    /// intra-region calls are raw branches that never pass the interpreter —
+    /// so it is honest for the (Tier-0 by default) REPL prototyping loop
+    /// time/1 exists for.</summary>
+    public long Inferences;
+
+    /// <summary><c>time/1</c> marks — (wall ms, heap cells, inferences) at
+    /// start / last report; index = the mark handle bound by
+    /// <c>'$time_start'</c>. Engine-lifetime (one query), so the list stays
+    /// tiny and needs no cleanup.</summary>
+    public System.Collections.Generic.List<(double WallMs, long Cells, long Inferences)>? TimeMarks;
+
     // ----- Meta-call route cache (chunk 416) -----
     //
     // Shared by the bytecode interpreter's DispatchCall and Tier-1's

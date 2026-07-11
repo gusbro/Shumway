@@ -44,6 +44,54 @@ public static class ControlBuiltins
         return engine.UnifyRegisterWithHeapAt(0, engine.MakeFloat(ms));
     }
 
+    /// <summary><c>'$time_start'(-Mark)</c> — time/1 support: records the
+    /// current wall clock (Stopwatch, sub-µs), heap-cells-allocated and
+    /// inference (goal-dispatch) counters in an engine-side mark and binds
+    /// <c>Mark</c> to its index. The mark is updated by each
+    /// <c>'$time_report'</c>, so successive reports show per-answer
+    /// deltas (SWI-style).</summary>
+    public static bool TimeStart(Engine engine)
+    {
+        var marks = engine.TimeMarks ??= new List<(double, long, long)>();
+        double ms = System.Diagnostics.Stopwatch.GetTimestamp()
+            * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        marks.Add((ms, engine.CellsAllocated, engine.Inferences));
+        return engine.UnifyRegisterWithCell(0, Cell.Int(marks.Count - 1));
+    }
+
+    /// <summary><c>'$time_report'(+Mark)</c> — time/1 support: prints the
+    /// SWI-style resource line for the deltas since <c>Mark</c> (or since
+    /// its previous report) to the engine's output, then re-arms the mark:
+    /// <c>% N inferences, S seconds, C heap cells (L Lips)</c>.</summary>
+    public static bool TimeReport(Engine engine)
+    {
+        Cell c = engine.GetRegister(0);
+        if (c.Tag == Tag.Ref)
+            c = engine.GetHeap(engine.Deref(c.AsHeapIndex));
+        if (c.Tag != Tag.Int)
+            throw new PrologRuntimeException("type_error", "integer");
+        int idx = (int)c.AsInt;
+        var marks = engine.TimeMarks;
+        if (marks is null || idx < 0 || idx >= marks.Count)
+            throw new PrologRuntimeException("domain_error", "time_mark");
+
+        var (t0, cells0, inf0) = marks[idx];
+        double now = System.Diagnostics.Stopwatch.GetTimestamp()
+            * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        long cells = engine.CellsAllocated;
+        long inf = engine.Inferences;
+        double secs = (now - t0) / 1000.0;
+        long dInf = inf - inf0;
+        long dCells = cells - cells0;
+        double lips = dInf / (secs > 1e-9 ? secs : 1e-9);
+        engine.Out.WriteLine(string.Format(
+            System.Globalization.CultureInfo.InvariantCulture,
+            "% {0:N0} inferences, {1:0.000} seconds, {2:N0} heap cells ({3:N0} Lips)",
+            dInf, secs, dCells, lips));
+        marks[idx] = (now, cells, inf);
+        return true;
+    }
+
     /// <summary><c>halt/0</c> — terminates execution with exit code 0.
     /// Implemented by throwing <see cref="PrologHaltException"/>, which
     /// the outer <c>Query</c> path intercepts and converts into a

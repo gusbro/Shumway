@@ -472,6 +472,7 @@ public sealed class BytecodeInterpreter
                 // (Call and CallIl share width and operand offsets).
                 case Opcode.CallIl:
                 {
+                    _engine.Inferences++;   // time/1 goal-dispatch counter
                     if (!FlushPendingWakeups(code))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
@@ -527,6 +528,7 @@ public sealed class BytecodeInterpreter
                 // boundary safe point and jumps.
                 case Opcode.CallBytecode:
                 {
+                    _engine.Inferences++;   // time/1 goal-dispatch counter
                     if (!FlushPendingWakeups(code))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
@@ -556,6 +558,7 @@ public sealed class BytecodeInterpreter
                 // IlByFunctorId — no OnDispatch.
                 case Opcode.ExecuteIl:
                 {
+                    _engine.Inferences++;   // time/1 goal-dispatch counter
                     if (!FlushPendingWakeups(code))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
@@ -593,6 +596,7 @@ public sealed class BytecodeInterpreter
                 // the absolute target address. Skips OnDispatch entirely.
                 case Opcode.ExecuteBytecode:
                 {
+                    _engine.Inferences++;   // time/1 goal-dispatch counter
                     if (!FlushPendingWakeups(code))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
@@ -624,6 +628,7 @@ public sealed class BytecodeInterpreter
                 // Pc = Cp to return to the caller's continuation.
                 case Opcode.ExecuteBuiltin:
                 {
+                    _engine.Inferences++;   // time/1 goal-dispatch counter
                     if (!FlushPendingWakeups(code))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
@@ -1782,6 +1787,7 @@ public sealed class BytecodeInterpreter
 
                 case Opcode.CallBuiltin:
                 {
+                    _engine.Inferences++;   // time/1 goal-dispatch counter
                     if (!FlushPendingWakeups(code))
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
@@ -2180,6 +2186,7 @@ public sealed class BytecodeInterpreter
     /// without bouncing through bytecode (chunk 47).</summary>
     private void DispatchToTier1OrBytecode(int target)
     {
+        _engine.Inferences++;   // time/1 goal-dispatch counter (Call + Execute)
         // A resume marker (not a real bytecode address) names an IL-only
         // predicate by functor id — e.g. a --strip-wam predicate reached via
         // a runtime meta-call (CurrentFunctorAddresses maps it to the marker).

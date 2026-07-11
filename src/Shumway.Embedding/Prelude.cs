@@ -69,6 +69,7 @@ internal static class Prelude
         :- public false/0.
         :- public once/1.
         :- public ignore/1.
+        :- public time/1.
         :- public chdir/1.
         :- public append/2.
         :- public ':'/2.
@@ -518,6 +519,15 @@ internal static class Prelude
 
         %! ignore(:Goal) | Control | Runs Goal, succeeding whether or not Goal does.
         ignore(Goal) :- ( call(Goal) -> true ; true ).
+
+        %! time(:Goal) | Control | Calls Goal like call/1 and prints a per-answer resource report (SWI-style): inferences (Tier-0 goal dispatches), elapsed seconds, heap cells allocated, and Lips. Non-determinism is preserved - each further answer prints the cost since the previous one, and exhausting Goal prints a final report before failing. Under Tier-1 IL promotion the inference count undercounts (intra-region calls are raw branches); the REPL's default Tier-0 execution reports exact numbers.
+        time(Goal) :-
+            '$time_start'(Mark),
+            (   call(Goal),
+                '$time_report'(Mark)
+            ;   '$time_report'(Mark),
+                fail
+            ).
 
         %! chdir(?Path) | Input / output | Arity-Prolog 1-arg form of working_directory/2. With Path unbound, returns the current directory; with Path bound, changes to it.
         chdir(Path) :- var(Path), !, working_directory(Path, Path).
