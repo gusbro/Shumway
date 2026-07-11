@@ -5408,7 +5408,7 @@ public sealed class IlPredicateCompiler
                             selfFunctorId: predicate.FunctorId,
                             selfTailLabel: selfEntry,
                             forceLeafRuleInline: isGuardSlice,
-                            localSalt: isGuardSlice ? $"_idxg{i}" : null,
+                            localSalt: isGuardSlice ? $"_idxg{i}" : "",
                             guardContCtx: gcCtx);
                     },
                     predicate.BytecodeUnfused, info.Clauses[i].Start, info.Clauses[i].End,
