@@ -2417,6 +2417,17 @@ public sealed partial class Engine
         _stack[b + CpCeOffset(arity)] = Cell.RawInt(entryE);
     }
 
+    /// <summary>ADR-031 rare path — overwrites the just-pushed choice
+    /// point's saved argument register <paramref name="index"/> with the
+    /// clause-ENTRY value. A binding/call guard may have clobbered the live
+    /// register with call staging by the time the lazy CP materializes at
+    /// the commit; the CP's saved args must be ENTRY state (the contract
+    /// <see cref="PushIlChoicePointWithMarks"/> documents) or a failing
+    /// wakeup hook backtracks the next clause/bucket-node into the guard's
+    /// staging values.</summary>
+    public void SetTopCpArgRegister(int index, Cell value)
+        => _stack[_b + CpArg1Offset + index] = value;
+
     /// <summary>Sets the engine's PC to <paramref name="returnPc"/> and
     /// flags an IL-style tail call so the interpreter, on this
     /// retry-success, leaves PC alone instead of overriding it with

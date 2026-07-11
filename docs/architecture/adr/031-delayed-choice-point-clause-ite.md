@@ -175,9 +175,40 @@ ISO 277.
   2929 / Compiler 351 / Core 436 / Interpreter 105 / ISO 277.
 - **Deferred — beyond G2:** callees needing a TRUE dynamic fail-continuation
   (transient CPs, non-tail body calls, mutual recursion, > 4 clauses) — the
-  engine continuation-stack design (ADR-032, soft-rejected); indexed-dispatch
-  bucket chains (`try`/`retry` nodes — tier B/G machinery at the indexed emit
-  sites); a_eval comparison guards (1 corpus pred).
+  engine continuation-stack design (ADR-032, soft-rejected; ADR-033 shipped
+  the same-method prototype); a_eval comparison guards (1 corpus pred).
+- **INDEXED BUCKETS SHIPPED (default ON; `SHUMWAY_CPFREE_IDXBUCKET=0`
+  disables) — the arc's largest extension.** Indexed predicates were 100%
+  invisible to the chain-driver machinery; the census
+  (`SHUMWAY_CPFREE_IDXCENSUS=1`) sized them at test/ 20 934 bucket-CP nodes /
+  14 294 cut-shaped / 6 359 recognizer-acceptable (testGen 35 182 / 20 962 /
+  7 445) — ~9-12× everything the chains accept. Mechanism ("lazy bucket
+  CP"): a chain node whose clause is an accepted guard skips its
+  `PushIlChoicePoint` — it stores the next node's ENGINE cursor in a
+  per-member IL local (`idxnext`, −1 for a chain tail) and branches to the
+  clause's ONE shared guard block; guard failure restores and dispatches on
+  the local (an IL `switch` over the method's cursor labels — the −1
+  sentinel falls through the unsigned switch to the method fail), replacing
+  the push + engine round trip. The rare paths (pending-wakeup lazy CP,
+  ADR-034 staleness fallback) materialize the skipped CP FROM the local,
+  skipping the push on the sentinel. ONE local per indexed member suffices:
+  its live range is [node entry → guard resolution] and fail-direct guards
+  never re-enter a node (an indexed callee is not fail-direct-describable),
+  so the windows cannot nest — if guards ever accept indexed callees this
+  must graduate to the ADR-033 continuation stack. Var-head clauses (one
+  node per chain) share the guard block; only the 1-instruction cursor
+  store is per-node. **Whole-program links: test/ 724 → 2 796 accepted
+  (tierB 253 → 2 065 — the dispatch-then-validate idiom), testGen/ 601 →
+  3 014 (5×); bundles +9-12% (the shared guard blocks + stubs).**
+  **Shipped with a LATENT CASE-B/G FIX the extension exposed
+  (`Chunk339Tests` / clpfd): the lazy-CP rare path pushed the CP with the
+  CURRENT registers — already clobbered by the guard's staging
+  (`choose(X,[V|_]) :- X = V, !.` clobbers A1 via `unify_variable_x`); a
+  failing wakeup hook then backtracked the next clause/node into staging
+  values. `Engine.SetTopCpArgRegister` now patches the CP's saved args back
+  to the clause-entry values (the cf_r locals) right after the push —
+  chain drivers had the same hole, unhit because no chain-shaped test
+  clobbered args under a failing wakeup.**
 - **Known emission-quality debt — the inlined callee is a LINEAR chain, not an
   IL switch.** `EmitFailDirectCalleeInline` tries the callee's clauses
   sequentially (nested test-and-branch), discarding the callee's own index.

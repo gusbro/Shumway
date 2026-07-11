@@ -268,6 +268,10 @@ public sealed class IlPredicateCompiler
     // ADR-034 — the clause-entry staleness test for inlined dynamic snapshots.
     private static readonly MethodInfo EngineIsDynMutatedMethod =
         typeof(Engine).GetMethod(nameof(Engine.IsDynMutated), new[] { typeof(int) })!;
+    // ADR-031 rare path — patch the lazy CP's saved args back to clause entry.
+    private static readonly MethodInfo EngineSetTopCpArgRegisterMethod =
+        typeof(Engine).GetMethod(nameof(Engine.SetTopCpArgRegister),
+            new[] { typeof(int), typeof(Cell) })!;
     // Chunk 215 — deep cut (get_level + cut). GetLevel stashes the
     // procedure-entry barrier (_b0) into a Y slot; CutToLevel reads it
     // back and commits. Both are plain engine calls — the CP / _b0
@@ -1611,7 +1615,7 @@ public sealed class IlPredicateCompiler
                     failLabel, member.CallSites, emitSelfDelegate: effectiveSelf,
                     calleeMap: calleeMap, regionCtx: ctx);
             else if (TryDescribeIndexed(member, calleeMap, out var idxInfo))
-                EmitRegionIndexedMember(emit, member, mi, idxInfo!, ctx, effectiveSelf, calleeMap);
+                EmitRegionIndexedMember(emit, member, mi, idxInfo!, ctx, effectiveSelf, calleeMap, gcCtx);
             else
                 EmitRegionMultiClauseMember(emit, member, mi, ctx, effectiveSelf, calleeMap, gcCtx);
         }
@@ -1798,10 +1802,15 @@ public sealed class IlPredicateCompiler
     private static void EmitRegionIndexedMember(
         Sigil.Emit<PredicateDelegate> emit, CompiledPredicate member, int mi,
         IlIndexedDispatchInfo info, RegionEmitContext ctx, SelfDelegateEmitter emitSelf,
-        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap,
+        GuardContEmitContext? gcCtx = null)
     {
         if (CpFreeIndexedCensus)
             AnalyzeIndexedBucketGuards(member, info, calleeMap);
+        // ADR-031 indexed buckets — see EmitIndexedDispatchBody's twin. The
+        // idxnext local holds the next node's REGION cursor (the same value
+        // the bucket CP carries), -1 for a chain tail.
+        var guardPlan = PlanIndexedGuards(member, info, calleeMap);
         int K = info.Nodes.Count;
         int N = info.Clauses.Count;
         string salt = $"_rm{mi}";
@@ -1833,12 +1842,21 @@ public sealed class IlPredicateCompiler
             emit.Branch(ctx.FailLabel);   // unreachable: resolver returns a valid node
         }
 
-        // ---- Chain nodes: push the next-node region CP (if any), run the body. ----
+        // ---- Chain nodes: push the next-node region CP (if any), run the body.
+        //      ADR-031 indexed buckets: a guard clause's node stores the next
+        //      node's region cursor in idxnext instead (-1 for a tail). ----
+        Sigil.Local? idxNext = guardPlan is not null
+            ? emit.DeclareLocal<int>($"idxnext{salt}") : null;
         for (int n = 0; n < K; n++)
         {
             emit.MarkLabel(nodeLabels[n]);
             int next = info.Nodes[n].NextCursor;
-            if (next >= 0)
+            if (guardPlan is not null && guardPlan.GuardOk[info.Nodes[n].ClauseIndex])
+            {
+                emit.LoadConstant(next >= 0 ? ctx.IndexNodeCursor[(mi, next)] : -1);
+                emit.StoreLocal(idxNext!);
+            }
+            else if (next >= 0)
             {
                 emit.LoadArgument(0);                            // engine
                 emitSelf(emit);                                 // → region delegate
@@ -1853,6 +1871,101 @@ public sealed class IlPredicateCompiler
         for (int i = 0; i < N; i++)
         {
             emit.MarkLabel(bodyLabels[i]);
+            if (guardPlan is not null && guardPlan.GuardOk[i])
+            {
+                var ginfo = guardPlan.Info[i];
+                int guardEnd = ginfo.CutPc;
+                int i0 = i;
+                var dynFids = ginfo.EmbeddedDynamicFids;
+                Sigil.Label? dynFb = null, dynBody = null;
+                if (dynFids is { Count: > 0 })
+                {
+                    dynFb = emit.DefineLabel($"ridx_dynfb{salt}_{i}");
+                    dynBody = emit.DefineLabel($"ridx_dynbody{salt}_{i}");
+                    foreach (int df in dynFids)
+                    {
+                        emit.LoadArgument(0);
+                        EmitFunctorId(emit, df);
+                        emit.Call(EngineIsDynMutatedMethod);
+                        emit.BranchIfTrue(dynFb);
+                    }
+                }
+                EmitCpFreeGuardClause(emit,
+                    (s, e, fl) =>
+                    {
+                        if (e <= guardEnd)
+                            EmitClauseBody(
+                                emit, member.BytecodeUnfused, s, e, fl, member.CallSites,
+                                emitSelfDelegate: emitSelf, calleeMap: calleeMap,
+                                forceLeafRuleInline: true,
+                                localSalt: $"_ridx{mi}g{i0}",
+                                guardContCtx: gcCtx);
+                        else
+                        {
+                            if (dynBody is not null)
+                                emit.MarkLabel(dynBody);
+                            EmitClauseBody(
+                                emit, member.BytecodeUnfused, s, e, fl, member.CallSites,
+                                emitSelfDelegate: emitSelf, calleeMap: calleeMap,
+                                regionCtx: ctx);
+                        }
+                    },
+                    member.BytecodeUnfused, info.Clauses[i].Start, info.Clauses[i].End,
+                    ginfo,
+                    ctx.FailLabel /* unused: dynamic dispatch */, ctx.FailLabel,
+                    emitSelf, 0 /* unused */, member.Arity,
+                    salt: $"_ridx{mi}_{i}",
+                    markDeadCursors: dynFids is { Count: > 0 } ? (Action?)null : () =>
+                    {
+                        // The plan allocated forward-resume cursors for the
+                        // guard's (now inlined) Call sites — mark them dead
+                        // (the fallback, when present, uses them instead).
+                        int pc2 = info.Clauses[i0].Start;
+                        byte[] code2 = member.BytecodeUnfused;
+                        while (pc2 < guardEnd)
+                        {
+                            if ((Opcode)code2[pc2] == Opcode.Call
+                                && ctx.CursorBySite.TryGetValue((mi, pc2), out int deadCur))
+                                emit.MarkLabel(ctx.CursorLabels[deadCur]);
+                            pc2 += (Opcode)code2[pc2] == Opcode.Meta
+                                ? 6 : OpcodeTable.Get(code2[pc2]).Size;
+                        }
+                    },
+                    dynamicFailDispatch: () =>
+                    {
+                        // Guard failed: dispatch on the region cursor in
+                        // idxnext (the region-wide label table — the same
+                        // mapping the method's cursor switch uses); the tail
+                        // sentinel (-1) falls through to the region fail.
+                        emit.LoadLocal(idxNext!);
+                        emit.Switch(ctx.CursorLabels);
+                        emit.Branch(ctx.FailLabel);
+                    },
+                    dynamicCursor: e2 => e2.LoadLocal(idxNext!));
+                if (dynFb is not null)
+                {
+                    emit.MarkLabel(dynFb);
+                    var skipPush = emit.DefineLabel($"ridx_dynfb_nopush{salt}_{i}");
+                    emit.LoadLocal(idxNext!);
+                    emit.LoadConstant(0);
+                    emit.BranchIfLess(skipPush);
+                    emit.LoadArgument(0);
+                    emitSelf(emit);
+                    emit.LoadLocal(idxNext!);
+                    emit.LoadConstant(member.Arity);
+                    emit.Call(EnginePushIlCpMethod);
+                    emit.MarkLabel(skipPush);
+                    int cutSz = OpcodeTable.Get(
+                        (Opcode)member.BytecodeUnfused[guardEnd]).Size;
+                    EmitClauseBody(emit, member.BytecodeUnfused,
+                        info.Clauses[i].Start, guardEnd + cutSz,
+                        ctx.FailLabel, member.CallSites, emitSelfDelegate: emitSelf,
+                        calleeMap: calleeMap, regionCtx: ctx,
+                        localSalt: $"_ridxfb{mi}_{i}");
+                    emit.Branch(dynBody!);
+                }
+                continue;
+            }
             EmitClauseBody(emit, member.BytecodeUnfused, info.Clauses[i].Start, info.Clauses[i].End,
                 ctx.FailLabel, member.CallSites, emitSelfDelegate: emitSelf,
                 calleeMap: calleeMap, regionCtx: ctx);
@@ -5141,7 +5254,13 @@ public sealed class IlPredicateCompiler
             AnalyzeIndexedBucketGuards(predicate, info, calleeMap);
         int K = info.Nodes.Count;
         int N = info.Clauses.Count;
-        int totalCallSites = CountNonTailCallOpcodes(predicate.BytecodeUnfused);
+        // ADR-031 indexed buckets — recognise the CP-free guard clauses once
+        // (per clause; every node of an accepted clause routes through its
+        // shared guard block via the idxnext local).
+        var guardPlan = PlanIndexedGuards(predicate, info, calleeMap);
+        var gcCtx = guardPlan is not null ? new GuardContEmitContext() : null;
+        int totalCallSites = CountNonTailCallOpcodes(predicate.BytecodeUnfused)
+            + (guardPlan?.ExtraDynSites ?? 0);
         // Cursor layout: 0 = initial (resolve); 1..K = chain node
         // (cursor = nodeIndex + 1); K+1.. = call-site forward resumes.
         int callBase = K + 1;
@@ -5220,12 +5339,23 @@ public sealed class IlPredicateCompiler
             emit.Branch(failLabel);   // unreachable: resolver always returns a valid node
         }
 
-        // ---- Chain nodes: push the next-node CP (if any), run the clause body. ----
+        // ---- Chain nodes: push the next-node CP (if any), run the clause body.
+        //      ADR-031 indexed buckets: a node whose clause is an accepted
+        //      guard skips the push — it stores the next node's ENGINE cursor
+        //      (-1 for a chain tail) in the idxnext local; the shared guard
+        //      block's fail stub dispatches on it. ----
+        Sigil.Local? idxNext = guardPlan is not null
+            ? emit.DeclareLocal<int>("idxnext") : null;
         for (int n = 0; n < K; n++)
         {
             emit.MarkLabel(nodeLabels[n]);
             int next = info.Nodes[n].NextCursor;
-            if (next >= 0)
+            if (guardPlan is not null && guardPlan.GuardOk[info.Nodes[n].ClauseIndex])
+            {
+                emit.LoadConstant(next >= 0 ? next + 1 : -1);
+                emit.StoreLocal(idxNext!);
+            }
+            else if (next >= 0)
             {
                 emit.LoadArgument(0);            // engine
                 effectiveSelf(emit);             // → PredicateDelegate (chunk-426 hoisted local)
@@ -5241,6 +5371,95 @@ public sealed class IlPredicateCompiler
         for (int i = 0; i < N; i++)
         {
             emit.MarkLabel(bodyLabels[i]);
+            if (guardPlan is not null && guardPlan.GuardOk[i])
+            {
+                var ginfo = guardPlan.Info[i];
+                int guardEnd = ginfo.CutPc;
+                // ADR-034 — the guard embeds dynamic snapshots: staleness
+                // tests + a fallback (CP materialized from idxnext + plain
+                // guard slice + jump into the shared post-commit body).
+                var dynFids = ginfo.EmbeddedDynamicFids;
+                Sigil.Label? dynFb = null, dynBody = null;
+                if (dynFids is { Count: > 0 })
+                {
+                    dynFb = emit.DefineLabel($"idx_dynfb_{i}");
+                    dynBody = emit.DefineLabel($"idx_dynbody_{i}");
+                    foreach (int df in dynFids)
+                    {
+                        emit.LoadArgument(0);
+                        EmitFunctorId(emit, df);
+                        emit.Call(EngineIsDynMutatedMethod);
+                        emit.BranchIfTrue(dynFb);
+                    }
+                }
+                EmitCpFreeGuardClause(emit,
+                    (s, e, fl) =>
+                    {
+                        bool isGuardSlice = e <= guardEnd;
+                        if (dynBody is not null && !isGuardSlice)
+                            emit.MarkLabel(dynBody);
+                        EmitClauseBody(
+                            emit, predicate.BytecodeUnfused, s, e, fl, predicate.CallSites,
+                            callSiteIndexCounter: () => ++siteCounter,
+                            resumeLabels: resumeLabels,
+                            emitSelfDelegate: effectiveSelf,
+                            calleeMap: calleeMap,
+                            cursorBase: callBase,
+                            selfFunctorId: predicate.FunctorId,
+                            selfTailLabel: selfEntry,
+                            forceLeafRuleInline: isGuardSlice,
+                            localSalt: isGuardSlice ? $"_idxg{i}" : null,
+                            guardContCtx: gcCtx);
+                    },
+                    predicate.BytecodeUnfused, info.Clauses[i].Start, info.Clauses[i].End,
+                    ginfo,
+                    failLabel /* unused: dynamic dispatch */, failLabel,
+                    effectiveSelf, 0 /* unused */, predicate.Arity,
+                    salt: $"_idx{i}",
+                    dynamicFailDispatch: () =>
+                    {
+                        // Guard failed: continue at the chain's next node —
+                        // the engine cursor in idxnext indexes the SAME label
+                        // array the method's cursor dispatch uses; the tail
+                        // sentinel (-1) falls through the unsigned switch.
+                        emit.LoadLocal(idxNext!);
+                        emit.Switch(cursorLabels);
+                        emit.Branch(failLabel);
+                    },
+                    dynamicCursor: e2 => e2.LoadLocal(idxNext!));
+                if (dynFb is not null)
+                {
+                    emit.MarkLabel(dynFb);
+                    // Materialize the skipped bucket CP (unless chain tail),
+                    // then the plain un-inlined guard + cut, then join the
+                    // shared post-commit body.
+                    var skipPush = emit.DefineLabel($"idx_dynfb_nopush_{i}");
+                    emit.LoadLocal(idxNext!);
+                    emit.LoadConstant(0);
+                    emit.BranchIfLess(skipPush);
+                    emit.LoadArgument(0);
+                    effectiveSelf(emit);
+                    emit.LoadLocal(idxNext!);
+                    emit.LoadConstant(predicate.Arity);
+                    emit.Call(EnginePushIlCpMethod);
+                    emit.MarkLabel(skipPush);
+                    int cutSz = OpcodeTable.Get(
+                        (Opcode)predicate.BytecodeUnfused[guardEnd]).Size;
+                    EmitClauseBody(emit, predicate.BytecodeUnfused,
+                        info.Clauses[i].Start, guardEnd + cutSz,
+                        failLabel, predicate.CallSites,
+                        callSiteIndexCounter: () => ++siteCounter,
+                        resumeLabels: resumeLabels,
+                        emitSelfDelegate: effectiveSelf,
+                        calleeMap: calleeMap,
+                        cursorBase: callBase,
+                        selfFunctorId: predicate.FunctorId,
+                        selfTailLabel: selfEntry,
+                        localSalt: $"_idxfb{i}");
+                    emit.Branch(dynBody!);
+                }
+                continue;
+            }
             EmitClauseBody(emit, predicate.BytecodeUnfused, info.Clauses[i].Start, info.Clauses[i].End,
                 failLabel, predicate.CallSites,
                 callSiteIndexCounter: () => ++siteCounter,
@@ -5251,6 +5470,9 @@ public sealed class IlPredicateCompiler
                 selfFunctorId: predicate.FunctorId,
                 selfTailLabel: selfEntry);
         }
+
+        if (gcCtx is not null)
+            EmitGuardContEpilogues(emit, gcCtx, calleeMap, failLabel);   // ADR-033
 
         emit.MarkLabel(failLabel);
         emit.LoadConstant(false);
@@ -5590,6 +5812,24 @@ public sealed class IlPredicateCompiler
     public static bool CpFreeGuardContinuations { get; set; } =
         System.Environment.GetEnvironmentVariable("SHUMWAY_CPFREE_CONT") == "1";
 
+    /// <summary>ADR-031 indexed buckets — CP-free guard commit inside INDEXED
+    /// dispatch (default ON; <c>SHUMWAY_CPFREE_IDXBUCKET=0</c> disables). A
+    /// chain node whose clause is an accepted CP-free guard skips its bucket
+    /// choice-point push: the node stores the next node's cursor in a
+    /// per-member IL local (<c>-1</c> for a chain tail) and branches to the
+    /// clause's SHARED guard block; guard failure restores and dispatches on
+    /// the local (an IL <c>switch</c> — out-of-range <c>-1</c> falls through
+    /// to the method fail), replacing the push + engine-backtrack round trip.
+    /// The rare paths (pending-wakeup lazy CP, ADR-034 stale-snapshot
+    /// fallback) materialize the skipped CP FROM the local, skipping the push
+    /// on the tail sentinel. ONE local per indexed member suffices: its live
+    /// range is [node entry → guard resolution], and fail-direct guards never
+    /// re-enter a node (an indexed callee is not fail-direct-describable), so
+    /// the windows cannot nest — if guards ever accept indexed callees, this
+    /// must graduate to the ADR-033 continuation stack.</summary>
+    public static bool CpFreeIndexedBuckets { get; set; } =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_CPFREE_IDXBUCKET") != "0";
+
     /// <summary>ADR-031 indexed-bucket sizing census, opt-in
     /// (<c>SHUMWAY_CPFREE_IDXCENSUS=1</c>): at the two indexed emit sites,
     /// replay the CP-free recognizer over every bucket chain node that
@@ -5620,6 +5860,61 @@ public sealed class IlPredicateCompiler
                 System.Threading.Interlocked.Increment(
                     ref CpFreeGuardStats.IndexedBucketAccept);
         }
+    }
+
+    /// <summary>ADR-031 indexed buckets — the per-predicate guard plan: which
+    /// clauses are accepted CP-free guards (recognised ONCE per clause; every
+    /// node referencing the clause routes through its shared guard block),
+    /// and the extra forward-resume cursors the ADR-034 fallbacks need
+    /// (standalone sizing).</summary>
+    private sealed class IndexedGuardPlan
+    {
+        public required bool[] GuardOk;
+        public required CpFreeGuardInfo[] Info;
+        public int ExtraDynSites;
+    }
+
+    private static IndexedGuardPlan? PlanIndexedGuards(
+        CompiledPredicate pred, IlIndexedDispatchInfo info,
+        IReadOnlyDictionary<int, CompiledPredicate>? calleeMap)
+    {
+        if (!CpFreeIndexedBuckets || !CpFreeGuardCommit) return null;
+        int N = info.Clauses.Count;
+        // Only clauses referenced by at least one CP-pushing node profit —
+        // a clause reached solely through chain tails has no push to skip.
+        var hasCpNode = new bool[N];
+        foreach (var node in info.Nodes)
+            if (node.NextCursor >= 0) hasCpNode[node.ClauseIndex] = true;
+        var plan = new IndexedGuardPlan
+        {
+            GuardOk = new bool[N],
+            Info = new CpFreeGuardInfo[N],
+        };
+        byte[] code = pred.BytecodeUnfused;
+        bool any = false;
+        for (int i = 0; i < N; i++)
+        {
+            if (!hasCpNode[i]) continue;
+            var (s, e) = info.Clauses[i];
+            if (!TryGetCpFreeGuard(code, s, e, pred.Arity, calleeMap,
+                    pred.CallSites, out plan.Info[i]))
+                continue;
+            plan.GuardOk[i] = true;
+            any = true;
+            if (plan.Info[i].EmbeddedDynamicFids is { Count: > 0 })
+            {
+                // The ADR-034 fallback re-emits the guard's Call sites as
+                // threaded calls — each takes an extra resume cursor.
+                int pc = s;
+                while (pc < plan.Info[i].CutPc)
+                {
+                    if ((Opcode)code[pc] == Opcode.Call) plan.ExtraDynSites++;
+                    pc += (Opcode)code[pc] == Opcode.Meta
+                        ? 6 : OpcodeTable.Get(code[pc]).Size;
+                }
+            }
+        }
+        return any ? plan : null;
     }
 
     // Empty-dynamic-as-fail: MEASURED AND REJECTED (2026-07-10). Inlining a
@@ -7034,12 +7329,20 @@ public sealed class IlPredicateCompiler
         byte[] code, int clauseStart, int clauseEnd, CpFreeGuardInfo g,
         Sigil.Label nextClauseLabel, Sigil.Label failLabel,
         SelfDelegateEmitter self, int lazyCpCursor, int arity, string salt,
-        Action? markDeadCursors = null)
+        Action? markDeadCursors = null,
+        Action? dynamicFailDispatch = null,
+        Action<Sigil.Emit<PredicateDelegate>>? dynamicCursor = null)
     {
+        // ADR-031 indexed buckets — dynamicFailDispatch replaces the static
+        // guard-fail branch (the stub ends with a switch over the per-member
+        // next-node local instead of `br nextClauseLabel`), and dynamicCursor
+        // replaces the constant lazy-CP cursor with a load of that local
+        // (value -1 = chain tail → the rare paths SKIP the CP push).
         Sigil.Local? bt = null, xt = null, h = null, hb = null, ee = null;
         Sigil.Local[]? regs = null;
         Sigil.Label guardFail = nextClauseLabel;
-        bool needsStub = g.NeedsSnapshot || g.NeedsRegSave || g.Framed;
+        bool needsStub = g.NeedsSnapshot || g.NeedsRegSave || g.Framed
+            || dynamicFailDispatch is not null;
         if (g.NeedsRegSave && arity > 0)
         {
             regs = new Sigil.Local[arity];
@@ -7098,9 +7401,20 @@ public sealed class IlPredicateCompiler
         { emit.LoadArgument(0); emit.LoadLocal(hb!); emit.Call(EngineCommitIlGuardMethod); }
         emit.Branch(after);
         emit.MarkLabel(rare);
+        Sigil.Label? rareNoCp = null;
+        if (dynamicCursor is not null)
+        {
+            // Chain-tail sentinel (-1): no CP existed to materialize — the
+            // wakeup flush + cut still run (a goal boundary), CP-less.
+            rareNoCp = emit.DefineLabel($"cf_rarenocp{salt}");
+            dynamicCursor(emit);
+            emit.LoadConstant(-1);
+            emit.BranchIfEqual(rareNoCp);
+        }
         emit.LoadArgument(0);
         self(emit);
-        emit.LoadConstant(lazyCpCursor);
+        if (dynamicCursor is not null) dynamicCursor(emit);
+        else emit.LoadConstant(lazyCpCursor);
         emit.LoadConstant(arity);
         if (g.NeedsSnapshot)
         {
@@ -7112,6 +7426,26 @@ public sealed class IlPredicateCompiler
         {
             emit.Call(EnginePushIlCpMethod);
         }
+        // The push saved the CURRENT registers — but the guard may have
+        // clobbered argument registers with call staging (regSave). Patch the
+        // CP's saved args back to the clause-ENTRY values so a failing wakeup
+        // hook backtracks the next clause/bucket-node into entry state, not
+        // the guard's staging. (Latent since case B shipped; exposed by the
+        // indexed-bucket extension on `choose(X,[V|_]) :- X = V, !.` — the
+        // guard's unify_variable_x clobbers A1 with the list head, and the
+        // clpfd wakeup's failure then re-entered the sibling node with
+        // A1 = 9 instead of the list.)
+        if (regs is not null)
+        {
+            for (int r = 0; r < arity; r++)
+            {
+                emit.LoadArgument(0);
+                emit.LoadConstant(r);
+                emit.LoadLocal(regs[r]);
+                emit.Call(EngineSetTopCpArgRegisterMethod);
+            }
+        }
+        if (rareNoCp is not null) emit.MarkLabel(rareNoCp);
         emit.LoadArgument(0);
         emit.Call(EngineFlushWakeupsForIlCutMethod);
         emit.BranchIfFalse(failLabel);
@@ -7154,7 +7488,8 @@ public sealed class IlPredicateCompiler
                     emit.Call(EngineSetRegisterMethod);
                 }
             }
-            emit.Branch(nextClauseLabel);
+            if (dynamicFailDispatch is not null) dynamicFailDispatch();
+            else emit.Branch(nextClauseLabel);
         }
     }
 
