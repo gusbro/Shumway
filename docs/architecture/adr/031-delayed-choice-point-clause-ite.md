@@ -200,6 +200,11 @@ ISO 277.
   store is per-node. **Whole-program links: test/ 724 → 2 796 accepted
   (tierB 253 → 2 065 — the dispatch-then-validate idiom), testGen/ 601 →
   3 014 (5×); bundles +9-12% (the shared guard blocks + stubs).**
+  **A/B (same binary, ABBA ×4, min-of-4, `SHUMWAY_IL_PROMOTE=32`): a 20 M
+  iteration dispatch-then-validate loop (3-guard bucket; ~0.56 guard fails
+  plus one always-saved entry push per iteration) runs 4 353 vs 6 860 ms —
+  1.58× end-to-end, ~1.7× on the loop net of constant startup; every ON
+  sample beat every OFF sample.**
   **Shipped with a LATENT CASE-B/G FIX the extension exposed
   (`Chunk339Tests` / clpfd): the lazy-CP rare path pushed the CP with the
   CURRENT registers — already clobbered by the guard's staging
