@@ -1781,6 +1781,37 @@ public sealed partial class Activation
     /// tiny and needs no cleanup.</summary>
     public System.Collections.Generic.List<(double WallMs, long Cells, long Inferences)>? TimeMarks;
 
+    /// <summary>Heap-buffer pooling — replaces the ctor-allocated heap with a
+    /// buffer recycled from a previous activation, skipping the doubling
+    /// ladder (each doubling is an alloc + copy; a query peaking at N cells
+    /// re-pays ~log2(N/64K) of them from a cold buffer). Only legal before
+    /// the activation has allocated anything (<see cref="HeapTop"/> == 0 —
+    /// the host adopts right after construction, before query setup
+    /// materializes the goal). A buffer smaller than the configured initial
+    /// heap is ignored. The stale cell contents are never read: nothing
+    /// reads the heap at or above <see cref="HeapTop"/>.</summary>
+    public void AdoptHeapBuffer(Cell[] buffer)
+    {
+        if (_heapTop != 0)
+            throw new InvalidOperationException(
+                "AdoptHeapBuffer: the activation has already allocated heap.");
+        if (buffer.Length < _heap.Length) return;
+        _heap = buffer;
+    }
+
+    /// <summary>Heap-buffer pooling — surrenders the heap buffer to the host
+    /// when the activation dies (its solution enumeration completed or was
+    /// disposed; solutions hold materialized AST terms, never heap
+    /// references). The activation keeps an empty heap so any accidental
+    /// post-mortem allocation fails loudly instead of silently resurrecting
+    /// the recycled buffer.</summary>
+    public Cell[] DetachHeapBuffer()
+    {
+        var buffer = _heap;
+        _heap = System.Array.Empty<Cell>();
+        return buffer;
+    }
+
     // ----- Meta-call route cache (chunk 416) -----
     //
     // Shared by the bytecode interpreter's DispatchCall and Tier-1's

@@ -116,6 +116,57 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// the process — re-linking or re-promotion is the way back).</summary>
     private readonly HashSet<int> _mutatedDynamicFids = new();
 
+    // ----- Heap-buffer pool (one slot) -----
+    //
+    // A big query grows the activation heap by doubling (alloc + copy per
+    // step: a 300M-cell peak from the 64K initial = 13 reallocations copying
+    // ~2 GB), and the fully-grown buffer died with the activation — so
+    // REPEATING the query re-paid the whole ladder, and the dead 4 GB array
+    // lingered as GC-retained LOH. The host now recycles the buffer across
+    // activations: at most ONE pooled buffer (overlapping activations — a
+    // suspended QueryAll plus a nested query — allocate fresh as before),
+    // handed to the next activation at setup, taken back when an activation's
+    // solution enumeration dies.
+    //
+    // Retention policy (user-designed): a decayed usage peak.
+    //   recentUse = max(thisActivationUse, recentUse / 2)   per death
+    // The buffer is kept only while its capacity ≤ max(4 × recentUse, floor):
+    // repeating big queries keeps it hot; a big spike followed by small
+    // queries halves the peak each query and the oversized buffer is dropped
+    // (geometric descent — a returning big query pays one ladder, once).
+    // Trimming at the boundary is free: the heap is logically empty, so
+    // "trim" is just not keeping the reference.
+    private Shumway.Core.Cell[]? _pooledHeap;
+    private long _recentHeapUseCells;
+    private const long PooledHeapFloorCells = 1L << 20;   // 8 MB — always OK to keep
+
+    /// <summary>Hands the pooled heap buffer (if any) to a fresh activation.
+    /// Must run before query setup materializes anything onto the heap.</summary>
+    private void AdoptPooledHeap(Activation activation)
+    {
+        var buffer = _pooledHeap;
+        if (buffer is null) return;
+        _pooledHeap = null;
+        activation.AdoptHeapBuffer(buffer);
+    }
+
+    /// <summary>Takes a dead activation's heap buffer back into the pool,
+    /// applying the decayed-peak retention policy. CellsAllocated (cumulative
+    /// allocations, capped at capacity) proxies the activation's usage.</summary>
+    private void ReturnHeapBuffer(Activation activation)
+    {
+        var buffer = activation.DetachHeapBuffer();
+        long used = Math.Min(activation.CellsAllocated, buffer.LongLength);
+        _recentHeapUseCells = Math.Max(used, _recentHeapUseCells / 2);
+        long keepCap = Math.Max(4 * _recentHeapUseCells, PooledHeapFloorCells);
+        if (buffer.LongLength > keepCap) return;   // decayed workload no longer justifies it
+        if (_pooledHeap is null || _pooledHeap.Length < buffer.Length)
+            _pooledHeap = buffer;
+    }
+
+    /// <summary>Test hook — the pooled buffer's capacity in cells (0 = empty).</summary>
+    internal long PooledHeapCapacityCells => _pooledHeap?.LongLength ?? 0;
+
     /// <summary>ADR-015 chunk C step 4: per-dynamic-functor chain state
     /// — one entry per clause currently in <see cref="_dynamicClauses"/>,
     /// in the same order, carrying the absolute byte position of the
@@ -342,6 +393,47 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         _persistentLength = engine.ProgramLength;
     }
 
+    /// <summary>Root fix for the suspended-activation stale-append-position
+    /// corruption. An activation suspended mid-enumeration while ANOTHER
+    /// activation extended the shared persistent buffer still believes the
+    /// content length from its own setup — its next <c>AppendCode</c> would
+    /// land ON the newer live entries and overwrite them; the tail patch
+    /// that follows then writes the new entry's own address into its own
+    /// <c>&lt;next&gt;</c> operand (the self-pointing <c>retry_me_else</c>
+    /// observed as an unbreakable dispatch/walk cycle). Every in-place
+    /// mutation entry point brings an owner's append position forward to
+    /// the host's synced persistent length first; appends then extend
+    /// instead of overwriting, and the in-place fast path stays valid.
+    /// Non-owners (buffer since rebuilt) are untouched — their mutations
+    /// already invalidate the host buffer.</summary>
+    private void ResyncOwnerAppendPosition(Activation engine)
+    {
+        if (EngineOwnsHostBuffer(engine) && engine.ProgramLength < _persistentLength)
+            engine.SetInitialProgramLength(_persistentLength);
+    }
+
+    /// <summary>Corruption tripwire — an in-place dynamic-chain patch was
+    /// about to write through addresses that don't fit the live buffer's
+    /// content (a stale chain record, a stale append position, or a reused
+    /// chunk swallowing a live slot). Writing would splice the chain into
+    /// itself — the self-pointing <c>retry_me_else</c> observed as an
+    /// unbreakable dispatch/walk cycle. Report loudly (this is a
+    /// should-never-happen event worth a bug report) and rebuild the
+    /// predicate's dispatch from the clause store, which is authoritative
+    /// — the running query then sees the correct clause set.</summary>
+    private void ChainCorruptionRecover(
+        string site, Activation engine, int functorId, string detail)
+    {
+        var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(functorId);
+        Console.Error.WriteLine(
+            $"shumway: dynamic-chain tripwire at {site} for "
+            + $"{Shumway.Core.AtomTable.GetById(atomId)?.Name}/{arity} ({detail}); "
+            + "rebuilding the predicate's dispatch from the clause store.");
+        if (_inFidViewRebuild) return;   // already repairing this view
+        InvalidatePersistent();
+        RebuildEngineFidChainView(engine, functorId);
+    }
+
     // ====================================================================
     // Chunk 155b — runtime in-place extension of extensible-indexed
     // dynamic predicates (chunk 155a layout).
@@ -424,9 +516,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     {
         int cur = chainHead;
         bool isHead = true;
+        // A chain instruction is ≥5 bytes, so a well-formed chain has at
+        // most prog.Length/5 distinct entries — more steps than that means
+        // the <next> operands form a cycle (corrupted buffer). Returning -1
+        // sends the caller to the rebuild fallback instead of spinning.
+        int stepsLeft = prog.Length / 5 + 1;
         while (true)
         {
-            if (cur < 0 || cur + 5 > prog.Length) return -1;
+            if (cur < 0 || cur + 5 > prog.Length || --stepsLeft < 0) return -1;
             var op = (Shumway.Core.Opcode)prog[cur];
             if (isHead)
             {
@@ -638,6 +735,23 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             }
         }
 
+        // Corruption tripwire — every tail slot we're about to patch must
+        // lie inside this activation's believed content length. A slot at
+        // or beyond ProgramLength means the chain in the shared buffer
+        // extends past this activation's append position (a stale
+        // ProgramLength): AppendCode would OVERWRITE those live entries and
+        // the tail patch would then write the new entry's own address into
+        // its own <next> operand — the self-pointing retry_me_else cycle.
+        // Rebuild from the store instead of writing the corruption.
+        foreach (int tn in chainTailNexts)
+            if (tn + sizeof(int) > engine.ProgramLength)
+            {
+                ChainCorruptionRecover(
+                    "assertz-indexed", engine, functorId,
+                    $"tail slot {tn} beyond content length {engine.ProgramLength}");
+                return true;   // the rebuild absorbed the store (new clause included)
+            }
+
         // Compile the new clause (transforms identical to the chain
         // path; chunk 427 — shared helper with a fact fast path).
         var compiledClause = CompileRuntimeAssertClause(engine, functorId, newClause);
@@ -710,6 +824,19 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         {
             int newEntry = AppendNonHeadEntry(bodyAddr);
             prog = engine.CurrentProgram!;
+            // Tripwire: a fresh append always lands beyond every existing
+            // chain slot. newEntry at or below the slot being patched means
+            // the append position was stale and the write would splice the
+            // chain into itself. (The pre-append ProgramLength check above
+            // makes this unreachable; keep it as the last line of defense —
+            // the write below is the one that creates the dispatch cycle.)
+            if (newEntry <= tailNext)
+            {
+                ChainCorruptionRecover(
+                    "assertz-indexed-patch", engine, functorId,
+                    $"new entry {newEntry} at/below tail slot {tailNext}");
+                return true;
+            }
             Shumway.Core.BytecodeIO.WriteInt32(prog, tailNext, newEntry);
         }
 
@@ -804,9 +931,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         int failStub = engine.DynamicFailStubAddr;
         int cur = varChainHead;
         int idx = 0;
+        // Cycle guard — same bound as WalkChainToTailNextOperand: a
+        // corrupted <next> cycle must terminate the walk, not hang it.
+        int stepsLeft = prog.Length / 5 + 1;
         while (true)
         {
-            if (cur < 0 || cur + 27 > prog.Length) break;
+            if (cur < 0 || cur + 27 > prog.Length || --stepsLeft < 0) break;
             int chainHeaderSize = ChainEntryHeaderSize(prog, cur);
             int execOpPos = cur + chainHeaderSize + 17;
             if (execOpPos + 5 > prog.Length) break;
@@ -2855,6 +2985,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// </list></summary>
     private void MaterializeDynamicTrampoline(Activation engine, int fid)
     {
+        // Root fix: never append at a stale owner position (see
+        // ResyncOwnerAppendPosition).
+        ResyncOwnerAppendPosition(engine);
         // Phase 33 — capture buffer ownership before AppendCode (growth
         // reallocation changes the engine's reference).
         bool ownsHost = EngineOwnsHostBuffer(engine);
@@ -4999,30 +5132,42 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         Activation engine,
         BytecodeInterpreter interp)
     {
-        InterpreterResult result;
-        bool halted = false;
-        // Choice-point level before the query runs. After a solution, if
-        // the engine's B has fallen back to (or below) this, no
-        // query-local choice point remains — the solution is the last
-        // one. Lets the top-level skip the `;` prompt + trailing
-        // `false` for a deterministic goal, matching other Prologs.
-        int baseB = engine.B;
-        try { result = host.RunCatching(interp, program, engine, () => interp.Run(program, 0)); }
-        catch (PrologHaltException hex) { halted = true; host.LastHaltExitCode = hex.ExitCode; result = InterpreterResult.Failed; }
-        catch (ShumwayPrologException) { { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; throw; } }
-        catch (PrologRuntimeException) { { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; throw; } }
-
-        while (!halted && result == InterpreterResult.Halted)
+        // Heap-buffer pool: the finally runs exactly when the activation
+        // dies — enumeration completed, disposed early (foreach break /
+        // Query taking one solution), or unwound by an exception — and NOT
+        // on suspension between yields. Solutions hold materialized AST
+        // terms, never references into the surrendered buffer.
+        try
         {
-            bool isLast = engine.B <= baseB;
-            yield return BuildSolution(varNames, varHeapIndices, engine, isLast, host);
-            // A known-last solution: don't backtrack — there's nothing
-            // to find and re-running would just confirm failure.
-            if (isLast) break;
-            try { result = host.RunCatching(interp, program, engine, () => interp.Backtrack(program)); }
-            catch (PrologHaltException hex) { halted = true; host.LastHaltExitCode = hex.ExitCode; break; }
+            InterpreterResult result;
+            bool halted = false;
+            // Choice-point level before the query runs. After a solution, if
+            // the engine's B has fallen back to (or below) this, no
+            // query-local choice point remains — the solution is the last
+            // one. Lets the top-level skip the `;` prompt + trailing
+            // `false` for a deterministic goal, matching other Prologs.
+            int baseB = engine.B;
+            try { result = host.RunCatching(interp, program, engine, () => interp.Run(program, 0)); }
+            catch (PrologHaltException hex) { halted = true; host.LastHaltExitCode = hex.ExitCode; result = InterpreterResult.Failed; }
             catch (ShumwayPrologException) { { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; throw; } }
             catch (PrologRuntimeException) { { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; throw; } }
+
+            while (!halted && result == InterpreterResult.Halted)
+            {
+                bool isLast = engine.B <= baseB;
+                yield return BuildSolution(varNames, varHeapIndices, engine, isLast, host);
+                // A known-last solution: don't backtrack — there's nothing
+                // to find and re-running would just confirm failure.
+                if (isLast) break;
+                try { result = host.RunCatching(interp, program, engine, () => interp.Backtrack(program)); }
+                catch (PrologHaltException hex) { halted = true; host.LastHaltExitCode = hex.ExitCode; break; }
+                catch (ShumwayPrologException) { { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; throw; } }
+                catch (PrologRuntimeException) { { var st = host.CaptureStackTrace(engine); host.LastErrorStackTrace = st.Plain; host.LastErrorStackTraceWithPositions = st.WithPositions; throw; } }
+            }
+        }
+        finally
+        {
+            host.ReturnHeapBuffer(engine);
         }
     }
 
@@ -8449,6 +8594,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // reference so baked staleness tests see mutations live.
             MutatedDynamicFids = _mutatedDynamicFids,
         };
+        // Heap-buffer pool: seed the fresh activation with the recycled
+        // buffer (if any) BEFORE anything materializes onto the heap.
+        AdoptPooledHeap(engine);
         // Chunk 151b: the persistent buffer is over-allocated, so the
         // engine's ProgramLength must reflect the live region (not the
         // raw byte[] capacity) for AppendCode's offset accounting. The
@@ -8987,6 +9135,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private void AppendDynamicClauseIncrementalCore(
         Activation engine, int functorId, Clause newClause)
     {
+        // Root fix: a suspended owner resuming after a sibling extended the
+        // shared buffer must append AFTER that content, not over it.
+        ResyncOwnerAppendPosition(engine);
         // Chunk 155b: try the new extensible-indexed in-place
         // extension first. If the predicate uses the chunk-155
         // layout (enter_dynamic + switch_on_term + try_me_else
@@ -9051,8 +9202,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // never fire — a table only ever describes its own engine's
         // buffer — but if it does, fall back to the store (authoritative),
         // force a host rebuild, and repair this engine's live view.
+        // NB: checked against ProgramLength (content), not CurrentProgram
+        // .Length (capacity) — a chain reaching past this activation's
+        // believed content end means its append position is stale and an
+        // in-place extend would overwrite live entries.
         if (DynChainAddressesStale(
-                chain, engine.CurrentProgram.Length, engine.DynamicFailStubAddr)
+                chain, engine.ProgramLength, engine.DynamicFailStubAddr)
             || !IsChainInstructionAt(engine.CurrentProgram, chain.TailNextAddr - 1))
         {
             InvalidatePersistent();
@@ -9080,8 +9235,21 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         byte[] chunk = emitter.ToBytes();
 
         // Chunk 150: try the free-list (chunks reclaimed by a prior
-        // GC) before extending the program buffer.
+        // GC) before extending the program buffer. Tripwire: a reused
+        // chunk must not contain the tail slot we're about to patch —
+        // copying into it would destroy the live tail and the patch below
+        // would write the chunk's own address into its own <next> operand
+        // (a self-referential chain = an unbreakable dispatch cycle).
         int chunkAddr = TryReuseFreeChunk(chainTable.FreeChunks, chunk.Length);
+        if (chunkAddr >= 0
+            && chain.TailNextAddr >= chunkAddr
+            && chain.TailNextAddr < chunkAddr + chunk.Length)
+        {
+            ChainCorruptionRecover(
+                "assertz-chain-reuse", engine, functorId,
+                $"reused chunk [{chunkAddr}..{chunkAddr + chunk.Length}) contains tail slot {chain.TailNextAddr}");
+            return;
+        }
         if (chunkAddr >= 0)
             Array.Copy(chunk, 0, engine.CurrentProgram!, chunkAddr, chunk.Length);
         else
@@ -9101,7 +9269,18 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
 
         // Link the new clause into the chain: previous tail's <next> now
-        // points at our chunk's chain instruction.
+        // points at our chunk's chain instruction. Tripwire: writing the
+        // chunk's own address into a slot inside the chunk itself is the
+        // self-cycle — unreachable given the staleness check above, kept
+        // as the last line of defense before the corrupting write.
+        if (chain.TailNextAddr >= chunkAddr
+            && chain.TailNextAddr < chunkAddr + chunk.Length)
+        {
+            ChainCorruptionRecover(
+                "assertz-chain-patch", engine, functorId,
+                $"chunk {chunkAddr} would self-splice at tail slot {chain.TailNextAddr}");
+            return;
+        }
         Shumway.Core.BytecodeIO.WriteInt32(program, chain.TailNextAddr, chunkAddr);
 
         // Update chain state.
@@ -9174,6 +9353,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private void PrependDynamicClauseIncrementalCore(
         Activation engine, int functorId, Clause newClause)
     {
+        // Root fix: a suspended owner resuming after a sibling extended the
+        // shared buffer must append AFTER that content, not over it.
+        ResyncOwnerAppendPosition(engine);
         // Chunk 155f: try in-place asserta for chunk-155a layout.
         if (TryPrependToIndexedDynamic(engine, functorId, newClause))
             return;
@@ -9215,9 +9397,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // past the live buffer or into an unrelated instruction). With
         // per-engine chain tables this should never fire; if it does, fall
         // back to the store, force a host rebuild, and repair the view.
-        if (chain.TrampolineExecuteOperandAddr + sizeof(long) > engine.CurrentProgram.Length
+        // NB: checked against ProgramLength (content), not capacity —
+        // see the assertz path for the stale-append-position rationale.
+        if (chain.TrampolineExecuteOperandAddr + sizeof(long) > engine.ProgramLength
             || DynChainAddressesStale(
-                   chain, engine.CurrentProgram.Length, engine.DynamicFailStubAddr)
+                   chain, engine.ProgramLength, engine.DynamicFailStubAddr)
             || (chain.HeadClauseAddr >= 0
                 && !IsChainInstructionAt(engine.CurrentProgram, chain.HeadClauseAddr)))
         {
@@ -9250,7 +9434,19 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         byte[] chunk = emitter.ToBytes();
 
         // Chunk 150: try the free-list before extending the program.
+        // Tripwire (mirrors the assertz path): a reused chunk must not
+        // contain the trampoline operand or the old head we patch below.
         int chunkAddr = TryReuseFreeChunk(chainTable.FreeChunks, chunk.Length);
+        if (chunkAddr >= 0
+            && ((chain.TrampolineExecuteOperandAddr >= chunkAddr
+                 && chain.TrampolineExecuteOperandAddr < chunkAddr + chunk.Length)
+                || (oldHead >= chunkAddr && oldHead < chunkAddr + chunk.Length)))
+        {
+            ChainCorruptionRecover(
+                "asserta-chain-reuse", engine, functorId,
+                $"reused chunk [{chunkAddr}..{chunkAddr + chunk.Length}) overlaps live patch slots");
+            return;
+        }
         if (chunkAddr >= 0)
             Array.Copy(chunk, 0, engine.CurrentProgram!, chunkAddr, chunk.Length);
         else

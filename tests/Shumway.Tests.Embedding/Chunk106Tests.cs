@@ -42,7 +42,11 @@ public class Chunk106Tests
         sw.Stop();
 
         Assert.Equal(n - 1, count);
-        Assert.True(sw.Elapsed.TotalSeconds < 20,
+        // ~2s standalone; the bound exists to catch a regression to naive
+        // evaluation (minutes at n=500), so it's deliberately loose — at 20s
+        // it flaked under full-suite 16-way parallel CPU contention
+        // (20.5-30s observed on a green run, 2026-07-11).
+        Assert.True(sw.Elapsed.TotalSeconds < 40,
             $"deep-chain closure took {sw.Elapsed.TotalSeconds:F2}s");
     }
 

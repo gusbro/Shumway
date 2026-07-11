@@ -805,6 +805,15 @@ public sealed class BytecodeInterpreter
                 {
                     Shumway.Core.Profiler.RetryAt(pc);
                     int nextClause = ReadI32(code, codeArr, pc + 1);   // chunk 429
+                    // Corruption guard — a retry_me_else whose <next> is its
+                    // own address would re-enter itself on every backtrack:
+                    // an unbreakable dispatch loop (a mid-chain self-splice
+                    // from a bad in-place patch). Fail loudly instead, per
+                    // the bytecode-corruption invariant.
+                    if (nextClause == pc)
+                        throw new Shumway.Core.PrologRuntimeException(
+                            "system_error",
+                            $"corrupted dynamic chain: retry_me_else at {pc} points at itself");
                     _engine.RetryMeElse(nextClause);
                     // A demoted chain head (asserta's in-place
                     // try_me_else -> retry_me_else demotion) is a 5-byte
