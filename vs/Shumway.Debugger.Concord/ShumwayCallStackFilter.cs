@@ -42,24 +42,16 @@ namespace Shumway.Debugger.Concord
             // D0 legs 1+2: on the first interpreter frame of each walk, run the
             // one-time debuggee probe (func-eval + pinned channel + server handoff)
             // and prepend a diagnostic frame reporting probe/channel state.
-            DkmStackWalkFrame? diagnostic = null;
-            if (data.ReplacedFrames == 1)
-            {
+            bool firstFrame = data.ReplacedFrames == 1;
+            if (firstFrame)
                 ShumwayDebuggeeProbe.RunOnce(stackContext, input);
-                var probe = ShumwayDebuggeeProbe.GetState(input.Process);
-                string report = probe.ProbeReport + " | " + ShumwayDebuggeeProbe.ReadStatus(input.Process);
-                diagnostic = DkmStackWalkFrame.Create(
-                    stackContext.Thread, null, input.FrameBase, 0,
-                    DkmStackWalkFrameFlags.None,
-                    $"[Shumway spike] {report}",
-                    null, null);
-            }
 
             // Two synthetic frames per replaced interpreter frame: proves frame
             // multiplicity (one physical Dispatch frame -> N logical Prolog frames).
             // Leg 5: once the custom runtime exists, the frames carry OUR runtime's
             // instruction addresses (Offset = pretend source line) so stepping
             // arbitration routes F10/F11 to our IDkmRuntimeStepper.
+            bool addressed = false;
             DkmInstructionAddress? MakeAddress(int line)
             {
                 var runtime = input.Process.GetRuntimeInstances()
@@ -70,6 +62,7 @@ namespace Shumway.Debugger.Concord
                     .FirstOrDefault();
                 if (runtime == null || module == null)
                     return null;
+                addressed = true;
                 return DkmCustomInstructionAddress.Create(
                     runtime, module, EntityId: null, Offset: (ulong)line,
                     AdditionalData: null, CPUInstruction: null);
@@ -95,9 +88,23 @@ namespace Shumway.Debugger.Concord
                 null,
                 null);
 
-            return diagnostic != null
-                ? new[] { diagnostic, callee, caller }
-                : new[] { callee, caller };
+            if (!firstFrame)
+                return new[] { callee, caller };
+
+            var probe = ShumwayDebuggeeProbe.GetState(input.Process);
+            string report = probe.ProbeReport
+                + " | " + ShumwayDebuggeeProbe.ReadStatus(input.Process)
+                + " addr=" + (addressed ? "OURS" : "none");
+            var diagnostic = DkmStackWalkFrame.Create(
+                stackContext.Thread, null, input.FrameBase, 0,
+                DkmStackWalkFrameFlags.None,
+                $"[Shumway spike] {report}",
+                null, null);
+            // The diagnostic frame goes BELOW the Prolog frames on purpose: it is
+            // annotated (no instruction address), and an address-less TOP frame
+            // makes the stepping manager fall back to the CLR runtime instead of
+            // consulting our IDkmRuntimeStepper.
+            return new[] { callee, caller, diagnostic };
         }
     }
 }
