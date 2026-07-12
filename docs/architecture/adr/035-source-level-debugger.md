@@ -221,10 +221,78 @@ method name + memory), so the VS pieces live outside the main solution:
   binding; stack filter + EE routing on VS 2026; step arbitration) before any
   engine work.
 - **D1** — Engine debug core (metadata, `Break`, `debug_lastcall`, ports,
-  DebugService + channel, `disable_debug`, tests, REPL tracer).
+  DebugService + channel, `disable_debug`, tests, REPL tracer). ✅ **Done** —
+  see *What D1 settled* below.
 - **D2** — Concord read side (stack, locals, watches).
 - **D3** — Concord control side (F9 binding, stepping).
 - **D4** — VSIX + F5 command (`IVsDebugger4.LaunchDebugTargets4`) + the
   arity-compat interop E2E gate + `docs/debugger.md`.
 - **D5 (deferred)** — conditional breakpoints, side-effect watches (opt-in),
   debug tables in stripped bundles, VS Code/vsdbg exploration, project system.
+
+## What D1 settled
+
+Six things were decided by building them, and each is a place where the obvious
+design was wrong.
+
+**Stepping is by PORT, and depth is read, never counted.** A step runs until the
+next port satisfying the step's condition — into: the next port, however deep;
+over: the next port no deeper than the goal we were on; out: shallower than it.
+The condition is stated in the machine's logical call depth, and that depth is
+recomputed from the environment chain at every port rather than incremented and
+decremented, because counting drifts the moment anything changes the depth without
+going through a port: last-call optimisation reusing a frame, a cut discarding
+choice points, an opaque predicate running goals that report nothing. Reading the
+chain cannot drift, because the chain IS the depth.
+
+The rule is `EnvDepth + 1` at every port, and it is one fact seen from either end:
+at a call port the callee has not allocated its frame yet, and at an exit port the
+frame is already gone. LCO falls out for free — it reclaims the caller's frame
+*before* the call, so the callee reads the caller's own depth, which is exactly
+right, since it has taken the caller's place.
+
+**A step over lands on the exit port of the goal stepped over**, as it does in
+SWI, and this is not a compromise: in a port model there is no depth that
+separates "this goal exited" from "the next goal is called". They are siblings.
+
+**Two ports need the machine asked properly.** At the *redo* port the machine is
+still standing in the computation that FAILED — `P`, the environment chain and
+`Cp` all describe it — while what the user must see is the one about to be
+retried, which the choice point carries (`Activation.PendingRedoEnvDepth` /
+`TopChoicePointContext`). And a retry address does not point at a clause: it points
+at a chain link (`trust 72`), which in an indexed predicate sits ahead of every
+clause body, so it precedes all the predicate's source sites. Two hops get to the
+clause and then to its site.
+
+**A clause's stop site sits AFTER head unification.** That is what makes the
+variables readable (the frame exists, the arguments are matched), and it means a
+clause whose head does not match is never stopped in — the user asked to stop when
+this clause RUNS, not when it is tried and rejected. A *rule* gets no entry site at
+all: with the head matched, the next instruction is its first goal's, and one point
+in the machine deserves one stop. A breakpoint on a rule's head line snaps forward
+to it — but only within the clause it lands in, so a breakpoint in a
+`:- disable_debug.` region stays hollow rather than silently arming a line the user
+was not looking at.
+
+**Debug codegen initialises the frame.** Making every named variable permanent and
+never trimming is what lets a debugger show them; *initialising* them is what stops
+it from lying. A Y slot the machine has not written yet holds stack garbage, and
+garbage can look exactly like a valid heap reference — so an uninitialised slot
+would not fail loudly, it would print a plausible value. Every slot the head did
+not bind gets a fresh unbound variable.
+
+**The prelude and the CLP libraries are implicitly `:- disable_debug.`** — and
+this must be *recorded*, not inferred from the flag at compile time, because a
+library's clauses are re-compiled at query setup, by which point `compile_mode` is
+whatever the user's program set. Marking the library's own predicates is not
+enough either: MetaTransform lowers its control constructs into generated helpers
+that are not in the clause list but do carry the library's source positions.
+Compiling a module is what makes its predicates — if the module is not debuggable,
+neither is anything it made.
+
+**The channel writes before it notifies.** Every stop is: serialise the whole stop
+into pinned memory; call `ShumwayDebugHelper.Notify` (where the debugger stops the
+process and reads that memory); drain the commands it wrote back. Nothing runs in
+the debuggee while it is stopped, because the answer was already there before the
+question could be asked — which is what keeps a func-eval out of
+breakpoint-notification context, where it deadlocks.
