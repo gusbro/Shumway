@@ -92,37 +92,42 @@ impact** is a hard requirement, verified by A/B.
    mode carries the tables.
 2. **`Break` opcode** — takes the reserved `ReservedExtension` slot.
 
-   > **Amended in implementation (D1-c).** The sketch above had `Break` be a
-   > 1-byte opcode *patched over* an existing instruction, with a side table
-   > holding `id → (pc, original byte)` and a restore-step-repatch dance on
-   > resume. Two things ruled that out once the code was in front of us:
+   > **As implemented (D1-c).** The sketch above is right, and the shape it
+   > describes is what shipped — but the *resume* mechanism it proposed is not
+   > needed, and dropping it is what makes the whole thing sound.
    >
-   > - **The code space is shared.** Several activations coexist over one
-   >   engine's code, and compiled predicates are shared across engines through
-   >   the global caches. Patching a byte to arm a breakpoint is a write into
-   >   code another activation may be executing — and the restore-step-repatch
-   >   window is exactly where a second activation would run the *un*-patched
-   >   instruction. Nothing about the single-threaded-per-activation invariant
-   >   saves us here; the sharing is across activations, not within one.
-   > - **We already own debug codegen.** `compile_mode=debug` compiles the
-   >   program differently anyway (frames, `debug_lastcall`), so a stop site can
-   >   simply *be an instruction*. Debug code pays one dispatch per goal;
-   >   release code never contains the opcode at all.
+   > **No restore-step-repatch.** On reaching a `Break`, the interpreter does
+   > **not** put the original byte back and single-step over it. It reads the
+   > original opcode out of the engine's breakpoint table and **dispatches that
+   > opcode at the same pc**, with the operands untouched — `Break` overwrites
+   > only the opcode byte, so the original instruction's operands are still
+   > exactly where it left them. The patched byte is never disturbed.
    >
-   > So `Break` is a real, always-present, 5-byte instruction emitted at every
-   > clause entry and before every body goal, and its operand is an **interned
-   > site id** (`DebugSiteTable`: file/line/column) rather than a pc. That
-   > second choice matters as much as the first: every offset in this compiler
-   > is relocated at least twice — clause into predicate, predicate into
-   > program — so an offset-keyed side table would have to be understood by all
-   > four predicate-assembly paths *and* the linker. An interned id is invariant
-   > under all of it. It is the same argument that makes atom and functor ids
-   > global.
+   > This matters because **the code space is shared**: several activations
+   > coexist over one engine's code. A restore-step-repatch sequence is a window
+   > in which a second activation runs the *un*-patched instruction and misses
+   > the breakpoint. Re-dispatching from the table has no such window. (This is
+   > the JVM's model — its `breakpoint` bytecode stands in for the original,
+   > which the method keeps — and it is why the "always-emit a stop instruction
+   > instead" alternative was rejected: a dispatch per goal in every debug
+   > program is a cost no real VM pays.)
    >
-   > Whether a given site is armed is the session's business, not the
-   > interpreter's: `IDebugSession.OnBreak(engine, siteId)` fires at every site
-   > and the session decides. A source breakpoint binds through
-   > `DebugSiteTable.SitesOnLine(file, line)`.
+   > **Debug codegen emits nothing extra.** It *records*, per clause, the
+   > bytecode **offsets** a debugger may stop at (the clause entry, and the first
+   > instruction of each body goal) paired with the interned source site
+   > (`DebugSiteTable`: file/line/column) each one corresponds to. Those offsets
+   > ride the same clause → predicate → program relocation as the clause's call
+   > sites. So debug-compiled code with no breakpoints armed runs exactly the
+   > instructions release code would.
+   >
+   > **The armed source site is the truth; the byte patches are derived.** They
+   > are re-applied whenever the code space changes (relink, compaction,
+   > consult), so a breakpoint set once keeps working across queries rather than
+   > pointing at whatever moved into its old address. Binding is decided against
+   > *this engine's* compiled code, not against the process-wide site table:
+   > `PrologEngine.AddBreakpoint(file, line)` returns how many sites bound, and
+   > zero is how a debugger learns to draw a hollow breakpoint (a blank line, a
+   > comment, or a `:- disable_debug.` region).
    >
    > Prerequisite discovered here: **source positions did not survive the
    > pipeline.** `ModuleRewrite` rebuilds every term it mangles and
