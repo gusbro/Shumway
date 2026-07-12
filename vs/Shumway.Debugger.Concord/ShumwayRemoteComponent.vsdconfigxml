@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Shumway debugger - server-level Concord component (ADR-035).
+  ComponentLevel 40501 < 100,000 => loads on the debug-monitor side (same box
+  for local debugging, msvsmon when remote). Owns runtime breakpoints.
+-->
+<Configuration xmlns="http://schemas.microsoft.com/vstudio/vsdconfig/2008">
+
+  <ManagedComponent
+    ComponentId="cf493d87-b43e-43db-9740-c5888f7002ec"
+    ComponentLevel="40501"
+    AssemblyName="Shumway.Debugger.Concord">
+
+    <Class Name="Shumway.Debugger.Concord.ShumwayRemoteComponent">
+      <Implements>
+        <InterfaceGroup>
+          <Filter>
+            <SourceId RequiredValue="d451a420-0546-456d-911d-411363b9e55a"/>
+          </Filter>
+          <Interface Name="IDkmCustomMessageForwardReceiver"/>
+        </InterfaceGroup>
+        <InterfaceGroup>
+          <Filter>
+            <SourceId RequiredValue="a21369e2-7531-4158-953d-5f95790402cf"/>
+          </Filter>
+          <Interface Name="IDkmRuntimeBreakpointReceived"/>
+        </InterfaceGroup>
+      </Implements>
+    </Class>
+
+  </ManagedComponent>
+</Configuration>

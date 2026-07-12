@@ -26,14 +26,23 @@ public sealed class BytecodeInterpreter
 {
     public void Dispatch()
     {
+        // Managed busy loop — deliberately NO Thread.Sleep on this thread: a
+        // thread stopped inside native code can't be func-eval'd, and the real
+        // engine's Dispatch is a managed loop too. One tick ≈ 250 ms.
         long ticks = 0;
+        long spin = 0;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         while (true)
         {
-            ticks++;
-            SpikeDebugHelper.WriteSnapshot(ticks);
-            if (ticks % 20 == 0)
-                SpikeDebugHelper.Notify(1); // simulated Prolog-breakpoint stop signal (leg 2)
-            Thread.Sleep(250);
+            spin++;
+            if ((spin & 0x3FFF) == 0 && sw.ElapsedMilliseconds >= 250)
+            {
+                sw.Restart();
+                ticks++;
+                SpikeDebugHelper.WriteSnapshot(ticks);
+                if (ticks % 8 == 0)
+                    SpikeDebugHelper.Notify(1); // simulated Prolog-breakpoint stop signal (leg 2)
+            }
         }
     }
 }

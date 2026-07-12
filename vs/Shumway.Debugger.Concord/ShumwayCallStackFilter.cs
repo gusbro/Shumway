@@ -36,6 +36,22 @@ namespace Shumway.Debugger.Concord
             var data = ShumwayStackDataItem.GetInstance(stackContext);
             data.ReplacedFrames++;
 
+            // D0 legs 1+2: on the first interpreter frame of each walk, run the
+            // one-time debuggee probe (func-eval + pinned channel + server handoff)
+            // and prepend a diagnostic frame reporting probe/channel state.
+            DkmStackWalkFrame? diagnostic = null;
+            if (data.ReplacedFrames == 1)
+            {
+                ShumwayDebuggeeProbe.RunOnce(stackContext, input);
+                var probe = ShumwayDebuggeeProbe.GetState(input.Process);
+                string report = probe.ProbeReport + " | " + ShumwayDebuggeeProbe.ReadStatus(input.Process);
+                diagnostic = DkmStackWalkFrame.Create(
+                    stackContext.Thread, null, input.FrameBase, 0,
+                    DkmStackWalkFrameFlags.None,
+                    $"[Shumway spike] {report}",
+                    null, null);
+            }
+
             // Two synthetic frames per replaced interpreter frame: proves frame
             // multiplicity (one physical Dispatch frame -> N logical Prolog frames).
             var callee = DkmStackWalkFrame.Create(
@@ -58,7 +74,9 @@ namespace Shumway.Debugger.Concord
                 null,
                 null);
 
-            return new[] { callee, caller };
+            return diagnostic != null
+                ? new[] { diagnostic, callee, caller }
+                : new[] { callee, caller };
         }
     }
 }

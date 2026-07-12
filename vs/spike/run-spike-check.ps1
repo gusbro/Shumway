@@ -84,29 +84,61 @@ try {
     Invoke-WithRetry { $target.Attach() } 15 3000
     Start-Sleep -Seconds 5
 
-    Write-Host "[5/5] Break All + dumping call stack..."
+    function Get-Frames {
+        Invoke-WithRetry {
+            $f = @($dte.Debugger.CurrentThread.StackFrames) | ForEach-Object { $_.FunctionName }
+            if (-not $f) { throw "no frames yet" }
+            $f
+        } 10 2000
+    }
+
+    Write-Host "[5/5] Break #1 (probe) ..."
     Invoke-WithRetry { $dte.Debugger.Break($true) } 15 3000
     Start-Sleep -Seconds 3
+    $frames1 = Get-Frames
+    Write-Host ""
+    Write-Host "=== call stack, break #1 ==="
+    $frames1 | ForEach-Object { Write-Host "  $_" }
+    Write-Host "============================"
 
-    $frames = Invoke-WithRetry {
-        $f = @($dte.Debugger.CurrentThread.StackFrames) | ForEach-Object { $_.FunctionName }
-        if (-not $f) { throw "no frames yet" }
-        $f
-    } 10 2000
+    Write-Host "continuing 8s so the notify bp can hit + the debuggee echoes the command byte..."
+    $dte.Debugger.Go($false)
+    Start-Sleep -Seconds 8
+
+    Write-Host "Break #2 (channel status) ..."
+    Invoke-WithRetry { $dte.Debugger.Break($true) } 15 3000
+    Start-Sleep -Seconds 3
+    $frames2 = Get-Frames
+    Write-Host ""
+    Write-Host "=== call stack, break #2 ==="
+    $frames2 | ForEach-Object { Write-Host "  $_" }
+    Write-Host "============================"
+
+    $diag1 = @($frames1 | Where-Object { $_ -like "*Shumway spike*" }) | Select-Object -First 1
+    $diag2 = @($frames2 | Where-Object { $_ -like "*Shumway spike*" }) | Select-Object -First 1
+    $prolog   = @($frames2 | Where-Object { $_ -like "*Prolog]*" })
+    $physical = @($frames2 | Where-Object { $_ -like "*BytecodeInterpreter.Dispatch*" })
 
     Write-Host ""
-    Write-Host "=== call stack ==="
-    $frames | ForEach-Object { Write-Host "  $_" }
-    Write-Host "=================="
+    Write-Host "--- leg results ---"
+    $leg4 = ($prolog.Count -ge 2 -and $physical.Count -eq 0)
+    Write-Host ("leg4 stack-filter        : " + $(if ($leg4) { "PASS" } else { "FAIL" }))
+    $leg1a = ($diag1 -like "*funceval=OK*")
+    Write-Host ("leg1 func-eval in filter : " + $(if ($leg1a) { "PASS" } else { "FAIL -> $diag1" }))
+    $leg1b = ($diag1 -like "*magic=OK*")
+    Write-Host ("leg1 ReadMemory (pinned) : " + $(if ($leg1b) { "PASS" } else { "FAIL" }))
+    $leg1c = ($diag2 -like "*echo=OK*")
+    Write-Host ("leg1 WriteMemory (echo)  : " + $(if ($leg1c) { "PASS" } else { "FAIL" }))
+    $leg2armed = ($diag2 -like "*server=ARMED*")
+    $leg2hits = $false
+    if ($diag2 -match "hits=(\d+)") { $leg2hits = ([int]$Matches[1] -ge 1) }
+    Write-Host ("leg2 notify bp armed     : " + $(if ($leg2armed) { "PASS" } else { "FAIL -> $diag2" }))
+    Write-Host ("leg2 notify bp hits>=1   : " + $(if ($leg2hits) { "PASS" } else { "FAIL" }))
 
-    $prolog   = @($frames | Where-Object { $_ -like "*Prolog*" })
-    $physical = @($frames | Where-Object { $_ -like "*BytecodeInterpreter.Dispatch*" })
-    if ($prolog.Count -ge 2 -and $physical.Count -eq 0) {
-        Write-Host "RESULT: PASS - $($prolog.Count) synthesized [Prolog] frames, physical Dispatch frame replaced."
-    } elseif ($prolog.Count -gt 0) {
-        Write-Host "RESULT: PARTIAL - [Prolog] frames present but Dispatch also visible ($($physical.Count))."
+    if ($leg4 -and $leg1a -and $leg1b -and $leg1c -and $leg2armed -and $leg2hits) {
+        Write-Host "RESULT: PASS - legs 1, 2 and 4 all green."
     } else {
-        Write-Host "RESULT: FAIL - no [Prolog] frames; filter did not run or did not match."
+        Write-Host "RESULT: FAIL - see legs above."
     }
 }
 finally {

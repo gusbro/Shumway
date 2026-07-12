@@ -27,6 +27,19 @@ cross-platform code.
 The Concord components reference **no Shumway project** — they talk to the
 debuggee engine via a pinned-memory channel + func-eval by name (see ADR-035).
 
+## Updating the extension in the Exp hive
+
+After reinstalling the VSIX (`VSIXInstaller /rootSuffix:Exp /quiet /uninstall:<id>`
+then install), **always run**:
+
+```
+devenv /rootsuffix Exp /updateconfiguration
+```
+
+The Exp hive caches component registrations by path; a reinstall lands in a new
+random directory and the stale cache silently drops the extension (no error —
+the debugger just behaves as if the components don't exist).
+
 ## Try it (experimental instance)
 
 Build, then F5 on Shumway.Debugger.Vsix (launches `devenv /rootsuffix Exp`), or
