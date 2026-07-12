@@ -158,6 +158,15 @@ public static class MetaBuiltins
             "Mark-compacts the heap, reclaiming cells unreachable from the live "
             + "machine state (ADR-016). Always succeeds.");
 
+        // ADR-035 — the four-port tracer.
+        BuiltinsRegistry.Register("trace", 0, Trace,
+            Control, "trace",
+            "Turns on the four-port tracer: from here on, every goal prints a line "
+            + "at its call, exit, redo and fail ports. Takes effect immediately, "
+            + "including for the goals remaining in the current query.");
+        BuiltinsRegistry.Register("notrace", 0, NoTrace,
+            Control, "notrace", "Turns the four-port tracer off.");
+
         BuiltinsRegistry.Register("throw", 1, Throw,
             Control, "throw(+Exception)", "Throws an exception term, unwinding to the nearest catch/3.");
         // catch/3 is a prelude predicate built on the chunk-85 catch-frame
@@ -3328,6 +3337,30 @@ public static class MetaBuiltins
     public static bool GarbageCollect(Activation engine)
     {
         engine.CollectHeap();
+        return true;
+    }
+
+    /// <summary><c>trace/0</c> (ADR-035) — attaches the four-port tracer. It is
+    /// attached to the running activation as well as to the engine, so tracing
+    /// starts with the very next goal of the query that called <c>trace</c>
+    /// rather than at the next query.</summary>
+    public static bool Trace(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException("trace/0 requires a PrologEngine host.");
+        host.SetTracing(true, engine.Out);
+        engine.Debug = host.DebugSession;
+        return true;
+    }
+
+    /// <summary><c>notrace/0</c> (ADR-035) — detaches the tracer, from the
+    /// running activation as well as the engine.</summary>
+    public static bool NoTrace(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException("notrace/0 requires a PrologEngine host.");
+        host.SetTracing(false);
+        engine.Debug = null;
         return true;
     }
 

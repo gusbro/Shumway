@@ -3517,6 +3517,22 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// terms that mention library operators.</summary>
     public OperatorTable Operators => _operators;
 
+    /// <summary>ADR-035 — the debug session every query's activation is born
+    /// with, or <c>null</c> (the normal case) for an undebugged engine. Set by
+    /// <see cref="SetTracing"/> today; a Concord debug session will set it
+    /// too.</summary>
+    internal Shumway.Core.IDebugSession? DebugSession { get; private set; }
+
+    /// <summary>True while a four-port tracer is attached (<c>trace/0</c>).</summary>
+    public bool Tracing => DebugSession is Debugging.DebugTracer;
+
+    /// <summary>Turns the four-port tracer on or off (the engine side of
+    /// <c>trace/0</c> / <c>notrace/0</c>). Port lines go to
+    /// <paramref name="output"/>, defaulting to the engine's own output sink so
+    /// a hosted engine's trace lands wherever its program's writes do.</summary>
+    public void SetTracing(bool on, System.IO.TextWriter? output = null)
+        => DebugSession = on ? new Debugging.DebugTracer(this, output ?? Out) : null;
+
     /// <summary>Adds an operator to the engine's parser table. Used by the
     /// runtime <c>op/3</c> builtin so user code can introduce operators
     /// that subsequent queries (and asserted clauses) will recognise.</summary>
@@ -4986,6 +5002,21 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         LastHaltExitCode = null;
         var setup = SetupQueryFromTerm(goal);
         return RunIterationCancellable(setup, cancellationToken);
+    }
+
+    /// <summary>ADR-035: names the predicate whose entry point is exactly
+    /// <paramref name="address"/> — the shape a call/execute operand has, so a
+    /// dictionary probe is enough and no containment search is needed. Returns
+    /// <c>null</c> for an address that is not a predicate entry (the synthetic
+    /// <c>__query__</c> wrapper included), which a debug session reads as "not
+    /// a goal worth reporting".</summary>
+    internal (string Name, int Arity)? LookupPredicateByAddress(int address)
+    {
+        var map = _currentPredicatesByAddress;
+        if (map is null || !map.TryGetValue(address, out var pred)) return null;
+        var (atomId, arity) = FunctorTable.Lookup(pred.FunctorId);
+        string name = AtomTable.GetById(atomId)?.Name ?? "?";
+        return name == "__query__" ? null : (name, arity);
     }
 
     /// <summary>Translates each address in <paramref name="addresses"/>
@@ -8593,6 +8624,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // ADR-034 — the host-lifetime mutated-dynamics set, shared by
             // reference so baked staleness tests see mutations live.
             MutatedDynamicFids = _mutatedDynamicFids,
+            // ADR-035 — the debug seam. Null unless a session is attached
+            // (trace/0, or a debugger), in which case the Tier-0 interpreter
+            // raises the four Prolog ports on it.
+            Debug = DebugSession,
         };
         // Heap-buffer pool: seed the fresh activation with the recycled
         // buffer (if any) BEFORE anything materializes onto the heap.
@@ -8792,12 +8827,16 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         {
             for (int i = 0; i < varHeapIndices.Length; i++) markCell(varHeapIndices[i]);
             foreach (var (_, cell) in globals.All()) markReferents(cell);
+            // ADR-035: an attached debug session holds heap indices too (the
+            // open goals' argument cells).
+            engine.Debug?.MarkHeapRoots(markCell);
         };
         engine.OnGcRelocate = (relocIndex, relocCell) =>
         {
             for (int i = 0; i < varHeapIndices.Length; i++)
                 varHeapIndices[i] = relocIndex(varHeapIndices[i]);
             globals.RelocateCells(relocCell);
+            engine.Debug?.RelocateHeapRoots(relocIndex);
         };
 
         // Tier-0 deterministic benchmark metric: keep a reference to the

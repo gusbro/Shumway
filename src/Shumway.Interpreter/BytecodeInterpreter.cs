@@ -407,6 +407,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
+                    _engine.Debug?.OnExit(_engine);            // ADR-035 exit port
                     int returnPc = _engine.Cp;
                     if (returnPc < 0)
                         return InterpreterResult.Halted;       // returned past the top
@@ -437,7 +438,7 @@ public sealed class BytecodeInterpreter
                     _engine.TrimEnv(numLivePerms);
                     _engine.SetCp(pc + 9);  // Call is 9 bytes (opcode + addr + count)
                     _engine.SetB0(_engine.B);   // capture _b at procedure entry for neck_cut
-                    DispatchToTier1OrBytecode(target);
+                    DispatchToTier1OrBytecode(target, tailCall: false);
                     break;
                 }
 
@@ -457,7 +458,7 @@ public sealed class BytecodeInterpreter
                     }
                     Shumway.Core.Profiler.Call(target);
                     _engine.SetB0(_engine.B);   // tail call still enters a new procedure
-                    DispatchToTier1OrBytecode(target);
+                    DispatchToTier1OrBytecode(target, tailCall: true);
                     break;
                 }
 
@@ -481,6 +482,7 @@ public sealed class BytecodeInterpreter
                     int functorId = ReadI32(code, codeArr, pc + 1);   // chunk 429
                     int numLivePerms = ReadI32(code, codeArr, pc + 5);
                     Shumway.Core.Profiler.Call(functorId);
+                    _engine.Debug?.OnCallFunctor(_engine, functorId, false);   // ADR-035
                     _engine.TrimEnv(numLivePerms);
                     _engine.SetCp(pc + 9);  // CallIl is 9 bytes, same as Call
                     _engine.SetB0(_engine.B);
@@ -543,6 +545,7 @@ public sealed class BytecodeInterpreter
                         break;
                     }
                     Shumway.Core.Profiler.Call(target);
+                    _engine.Debug?.OnCallAddress(_engine, target, false);   // ADR-035
                     _engine.TrimEnv(numLivePerms);
                     _engine.SetCp(pc + 9);  // CallBytecode is 9 bytes, same as Call
                     _engine.SetB0(_engine.B);
@@ -566,6 +569,7 @@ public sealed class BytecodeInterpreter
                     }
                     int functorId = ReadI32(code, codeArr, pc + 1);   // chunk 429
                     Shumway.Core.Profiler.Call(functorId);
+                    _engine.Debug?.OnCallFunctor(_engine, functorId, true);   // ADR-035
                     _engine.SetB0(_engine.B);  // tail call still enters a new procedure
                     _engine.MaybeCollectHeap();
                     var table = IlByFunctorId;
@@ -610,6 +614,7 @@ public sealed class BytecodeInterpreter
                         break;
                     }
                     Shumway.Core.Profiler.Call(target);
+                    _engine.Debug?.OnCallAddress(_engine, target, true);   // ADR-035
                     _engine.SetB0(_engine.B);
                     _engine.MaybeCollectHeap();
                     _engine.SetPc(target);
@@ -645,6 +650,9 @@ public sealed class BytecodeInterpreter
                     _engine.BuiltinReturnPc = _engine.Cp;
                     bool implOk;
                     Shumway.Core.Profiler.BuiltinEnter(builtinId);
+                    // ADR-035 call port — tail: this builtin returns to the
+                    // caller's continuation, not to our clause.
+                    _engine.Debug?.OnCallBuiltin(_engine, builtinId, true);
                     try { implOk = entry.Impl(_engine); }
                     catch (PrologRuntimeException re)
                     {
@@ -655,6 +663,7 @@ public sealed class BytecodeInterpreter
                     {
                         Shumway.Core.Profiler.BuiltinExit(builtinId);
                     }
+                    _engine.Debug?.OnBuiltinResult(_engine, builtinId, implOk);
                     if (!implOk)
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
@@ -735,7 +744,7 @@ public sealed class BytecodeInterpreter
                     }
                     Shumway.Core.Profiler.Call(target);
                     _engine.SetB0(_engine.B);   // tail call enters a new procedure
-                    DispatchToTier1OrBytecode(target);
+                    DispatchToTier1OrBytecode(target, tailCall: true);
                     break;
                 }
 
@@ -1868,6 +1877,11 @@ public sealed class BytecodeInterpreter
                     _engine.BuiltinReturnPc = pc + 9;
                     bool implOk;
                     Shumway.Core.Profiler.BuiltinEnter(builtinId);
+                    // ADR-035 call port. Deliberately below the IsCall /
+                    // IsDollarCall arms above: a meta-call wrapper is not a
+                    // goal the user wrote — the goal it dispatches reports
+                    // itself through DispatchToTier1OrBytecode.
+                    _engine.Debug?.OnCallBuiltin(_engine, builtinId, false);
                     try
                     {
                         implOk = entry.Impl(_engine);
@@ -1881,6 +1895,7 @@ public sealed class BytecodeInterpreter
                     {
                         Shumway.Core.Profiler.BuiltinExit(builtinId);
                     }
+                    _engine.Debug?.OnBuiltinResult(_engine, builtinId, implOk);
                     if (!implOk)
                     {
                         if (!TryBacktrack()) return InterpreterResult.Failed;
@@ -2193,7 +2208,7 @@ public sealed class BytecodeInterpreter
     /// repeats the dispatch on the new target — so a chain of IL
     /// predicates that each tail-call another stays entirely in IL
     /// without bouncing through bytecode (chunk 47).</summary>
-    private void DispatchToTier1OrBytecode(int target)
+    private void DispatchToTier1OrBytecode(int target, bool tailCall)
     {
         _engine.Inferences++;   // time/1 goal-dispatch counter (Call + Execute)
         // A resume marker (not a real bytecode address) names an IL-only
@@ -2204,9 +2219,13 @@ public sealed class BytecodeInterpreter
         // delegate via IlByFunctorId.
         if (Activation.IsResumeMarker(target))
         {
+            _engine.Debug?.OnCallFunctor(                            // ADR-035 call port
+                _engine, Activation.DecodeResumeMarker(target).FunctorId, tailCall);
             _engine.SetPc(target);
             return;
         }
+
+        _engine.Debug?.OnCallAddress(_engine, target, tailCall);     // ADR-035 call port
 
         while (true)
         {
@@ -2687,7 +2706,10 @@ public sealed class BytecodeInterpreter
         else if (following != Opcode.Proceed)
             _engine.SetCp(pc + 9);             // non-last: resume after the call
         _engine.SetB0(_engine.B);
-        DispatchToTier1OrBytecode(address);
+        // Cp untouched (Deallocate / Proceed follows) => the goal returns
+        // straight to our caller: a tail call, for the debug ports (ADR-035).
+        bool tail = following == Opcode.Deallocate || following == Opcode.Proceed;
+        DispatchToTier1OrBytecode(address, tail);
         return true;
     }
 
@@ -3184,6 +3206,13 @@ public sealed class BytecodeInterpreter
                 // they pay nothing here. Counter-throttled → negligible per-pop
                 // cost even for Tier-1 IL clause backtracking.
                 _engine.BacktrackSafePoint();
+                // ADR-035 redo port for an IL choice point — under a debug
+                // session that means a backtrackable builtin re-satisfying
+                // (between/3, repeat/0, clause/2, …), since debuggable code
+                // runs Tier-0. There is no bytecode retry address to report;
+                // what the session needs is the reconciliation point, and B
+                // still names the CP being resumed here.
+                _engine.Debug?.OnRedo(_engine, -1);
                 var (del, cursor) = _engine.PopIlChoicePointAndRestore();
                 if (del(_engine, cursor))
                 {
@@ -3204,9 +3233,14 @@ public sealed class BytecodeInterpreter
             }
             int arity = (int)_engine.GetStack(_engine.B + Activation.CpArityOffset).Data;
             int bp = (int)_engine.GetStack(_engine.B + Activation.CpBpOffset(arity)).Data;
+            // ADR-035 redo port. Raised BEFORE the jump, while B still names
+            // the choice point being resumed — the session identifies which
+            // goals died (those called after this CP was pushed) from it.
+            _engine.Debug?.OnRedo(_engine, bp);
             _engine.SetPc(bp);
             return true;
         }
+        _engine.Debug?.OnFail(_engine);   // ADR-035 fail port: no CP left
         return false;
     }
 

@@ -113,10 +113,12 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `halt` | Halts the engine with exit code 0. |
 | `halt(+Status)` | Halts the engine with the given exit code. |
 | `ignore(:Goal)` | Runs Goal, succeeding whether or not Goal does. |
+| `notrace` | Turns the four-port tracer off. |
 | `once(:Goal)` | Succeeds at most once — commits to the first solution of Goal. |
 | `repeat` | Succeeds, and succeeds again on every backtrack — an unbounded choice point. |
 | `throw(+Exception)` | Throws an exception term, unwinding to the nearest catch/3. |
 | `time(:Goal)` | Calls Goal like call/1 and prints a per-answer resource report (SWI-style): inferences (Tier-0 goal dispatches), elapsed seconds, heap cells allocated, and Lips. Non-determinism is preserved - each further answer prints the cost since the previous one, and exhausting Goal prints a final report before failing. Under Tier-1 IL promotion the inference count undercounts (intra-region calls are raw branches); the REPL's default Tier-0 execution reports exact numbers. |
+| `trace` | Turns on the four-port tracer: from here on, every goal prints a line at its call, exit, redo and fail ports. Takes effect immediately, including for the goals remaining in the current query. |
 | `true` | Always succeeds. |
 
 ## Findall & aggregation

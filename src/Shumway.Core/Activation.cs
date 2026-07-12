@@ -154,6 +154,14 @@ public sealed partial class Activation
     /// <c>null</c> means "no operator-form rendering, always canonical".</summary>
     public IOperatorLookup? Operators { get; set; }
 
+    /// <summary>The attached debug session (ADR-035), or <c>null</c> when the
+    /// activation is not being debugged or traced — the overwhelmingly common
+    /// case. The Tier-0 interpreter raises the four Prolog ports (call, exit,
+    /// redo, fail) on it as it runs. When null, each port site costs one
+    /// predicted-not-taken null test and nothing else, so a release run pays
+    /// no measurable price for the seam.</summary>
+    public IDebugSession? Debug { get; set; }
+
     // ----- Activation registers (per ADR-005) -----
     // -1 means "none yet" for E, B, and B0. P and CP track the program counter and
     // continuation point; they are set when the interpreter is hooked up. B0 is
