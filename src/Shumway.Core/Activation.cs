@@ -176,6 +176,28 @@ public sealed partial class Activation
     /// flip it mid-session.</para></summary>
     public bool LastCallOptimisation { get; set; } = true;
 
+    /// <summary>ADR-035 — for each program address whose opcode byte has been
+    /// patched to <see cref="Opcode.Break"/>, the byte that was there. Owned by
+    /// the debug service (which does the patching) and shared by reference, so a
+    /// breakpoint set while a query is running is visible to it. Null when nothing
+    /// is armed, which is the only state the interpreter's hot path can be in
+    /// without a <c>Break</c> byte existing to reach it.</summary>
+    public IReadOnlyDictionary<int, byte>? BreakpointOriginals { get; set; }
+
+    /// <summary>ADR-035 — the opcode a <see cref="Opcode.Break"/> byte at
+    /// <paramref name="pc"/> is standing in for. A Break with no table entry means
+    /// the code and the breakpoint table have gone out of step, which would send
+    /// the interpreter off a cliff — so it fails loudly instead.</summary>
+    public byte BreakpointOriginalAt(int pc)
+    {
+        if (BreakpointOriginals is not null
+            && BreakpointOriginals.TryGetValue(pc, out byte original))
+            return original;
+        throw new InvalidOperationException(
+            $"break opcode at PC=0x{pc:X4} with no breakpoint recorded — "
+            + "the code space and the breakpoint table are out of step.");
+    }
+
     // ----- Activation registers (per ADR-005) -----
     // -1 means "none yet" for E, B, and B0. P and CP track the program counter and
     // continuation point; they are set when the interpreter is hooked up. B0 is

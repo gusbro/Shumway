@@ -3540,6 +3540,124 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     public void SetTracing(bool on, System.IO.TextWriter? output = null)
         => DebugSession = on ? new Debugging.DebugTracer(this, output ?? Out) : null;
 
+    // ----- ADR-035: breakpoints -----
+    //
+    // The armed SOURCE SITES are the truth. The byte patches in the program are
+    // derived from them, and are re-derived whenever the code space changes (a
+    // relink, a compaction, a consult) — which is why a breakpoint set once keeps
+    // working across queries instead of pointing at whatever moved into its old
+    // address.
+
+    private readonly HashSet<int> _breakpointSites = new();
+    private readonly Dictionary<int, byte> _breakpointPatches = new();
+    private HashSet<int> _compiledSites = new();
+    private byte[]? _patchedProgram;
+
+    /// <summary>ADR-035 — the source sites currently armed
+    /// (<see cref="Shumway.Core.DebugSiteTable"/> ids).</summary>
+    public IReadOnlyCollection<int> Breakpoints => _breakpointSites;
+
+    /// <summary>ADR-035 — arms every stop site on this source line, and returns how
+    /// many bound. Zero means the breakpoint cannot bind: the line has no code — it
+    /// is blank, it is a comment, it belongs to a predicate compiled without debug
+    /// (<c>:- disable_debug.</c>), or the program is not debug-compiled at all. A
+    /// debugger renders that as a hollow breakpoint rather than pretending it took.
+    ///
+    /// <para>Binding is decided against THIS engine's compiled code, not against the
+    /// global site table: the table is process-wide, so two engines that both
+    /// consulted a string source share its site ids, and only the code that is
+    /// actually loaded here can be stopped in. Forces the code space to link if it
+    /// has not yet, since before that there is nothing to answer with.</para></summary>
+    public int AddBreakpoint(string file, int line)
+    {
+        EnsureCodeLinked();
+        var sites = Shumway.Core.DebugSiteTable.SitesOnLine(
+            Shumway.Core.DebugSiteTable.InternFile(file), line);
+        int bound = 0;
+        foreach (int id in sites)
+        {
+            if (!_compiledSites.Contains(id)) continue;
+            _breakpointSites.Add(id);
+            bound++;
+        }
+        if (bound > 0) RefreshBreakpoints();
+        return bound;
+    }
+
+    /// <summary>ADR-035 — disarms every stop site on this source line.</summary>
+    public void RemoveBreakpoint(string file, int line)
+    {
+        foreach (int id in Shumway.Core.DebugSiteTable.SitesOnLine(
+                     Shumway.Core.DebugSiteTable.InternFile(file), line))
+            _breakpointSites.Remove(id);
+        RefreshBreakpoints();
+    }
+
+    /// <summary>ADR-035 — links the code space if no query has yet done so, which is
+    /// what makes the engine's stop sites known. A trivial goal is the cheapest way
+    /// to ask for exactly the work a query's setup does.</summary>
+    private void EnsureCodeLinked()
+    {
+        if (_currentPredicatesByAddress is not null) return;
+        foreach (var _ in QueryAll("true.")) break;
+    }
+
+    public void ClearBreakpoints()
+    {
+        _breakpointSites.Clear();
+        RefreshBreakpoints();
+    }
+
+    /// <summary>ADR-035 — re-applies the patches to the program that is loaded right
+    /// now, so a breakpoint set while a query is stopped takes effect on that same
+    /// query. A no-op before the first query, where the next
+    /// <see cref="SetupQueryFromTerm"/> will do it anyway.</summary>
+    private void RefreshBreakpoints()
+    {
+        if (_patchedProgram is null) return;
+        SyncBreakpoints(_patchedProgram);
+    }
+
+    /// <summary>ADR-035 — makes <paramref name="program"/>'s patched bytes agree
+    /// with the armed sites. Un-patches what it patched before (only if this is the
+    /// same array — a rebuilt code space is freshly copied from the compiled
+    /// predicates, which are never patched), then patches what is armed now,
+    /// recording each original byte for the interpreter to re-dispatch.</summary>
+    private void SyncBreakpoints(byte[] program)
+    {
+        if (ReferenceEquals(_patchedProgram, program))
+            foreach (var (pc, original) in _breakpointPatches)
+                program[pc] = original;
+        _breakpointPatches.Clear();
+        _patchedProgram = program;
+
+        if (_breakpointSites.Count == 0 || _currentPredicatesByAddress is null) return;
+        foreach (var (predAddr, pred) in _currentPredicatesByAddress)
+        {
+            foreach (var stop in pred.DebugStops)
+            {
+                if (!_breakpointSites.Contains(stop.SiteId)) continue;
+                int pc = predAddr + stop.Offset;
+                if ((uint)pc >= (uint)program.Length) continue;
+                if (_breakpointPatches.ContainsKey(pc)) continue;   // one site, many clauses
+                _breakpointPatches[pc] = program[pc];
+                program[pc] = (byte)Shumway.Core.Opcode.Break;
+            }
+        }
+    }
+
+    /// <summary>ADR-035 — the source site a stopped-at program address belongs to,
+    /// so a session that gets <c>OnBreak(pc)</c> can say where it is. Returns -1 if
+    /// the address is not an armed breakpoint.</summary>
+    public int SiteAt(int pc)
+    {
+        if (_currentPredicatesByAddress is null) return -1;
+        foreach (var (predAddr, pred) in _currentPredicatesByAddress)
+            foreach (var stop in pred.DebugStops)
+                if (predAddr + stop.Offset == pc) return stop.SiteId;
+        return -1;
+    }
+
     /// <summary>ADR-035 — attaches a debug session (or <c>null</c> to detach).
     /// Every query's activation is born with it, and it receives the four Prolog
     /// ports plus the stop sites of any debug-compiled code. This is what a real
@@ -8900,6 +9018,23 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // reporting (chunk 51) can translate the engine's PC and env-
         // chain return addresses into Name/Arity stack frames.
         _currentPredicatesByAddress = linkResult.PredicatesByAddress;
+
+        // ADR-035 — which source sites this engine's code actually contains (what a
+        // breakpoint can bind to), then (re)apply the armed ones to the program this
+        // query will run. Addresses are derived, not stored: the source site is the
+        // truth, and the code space it maps into can be relinked or compacted
+        // between queries. Both loops are skipped entirely unless something was
+        // compiled debuggable, so release queries pay nothing.
+        if (_flags.DebugCodegen || _compiledSites.Count > 0)
+        {
+            var sites = new HashSet<int>();
+            foreach (var pred in _currentPredicatesByAddress.Values)
+                foreach (var stop in pred.DebugStops)
+                    sites.Add(stop.SiteId);
+            _compiledSites = sites;
+        }
+        SyncBreakpoints(program);
+        engine.BreakpointOriginals = _breakpointPatches.Count == 0 ? null : _breakpointPatches;
 
         int[] varHeapIndices = new int[varNames.Count];
         for (int i = 0; i < varNames.Count; i++)

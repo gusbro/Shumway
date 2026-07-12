@@ -75,16 +75,20 @@ public sealed class ClauseCompiler
     /// being compiled came from. Only read under <see cref="DebugCodegen"/>.</summary>
     public int DebugFileId { get; set; }
 
-    /// <summary>ADR-035 — emit a stop site for this source position, if we are
-    /// compiling debuggable code. A position of 0:0 (a synthetic term the
+    /// <summary>ADR-035 — record that a debugger may stop at the instruction about
+    /// to be emitted. NOTHING is emitted: a stop site is a note about an offset,
+    /// not an instruction. Debug code that nobody is stopping in therefore runs at
+    /// full speed, and arming a breakpoint later is a one-byte patch — which is
+    /// what every real VM does. A position of 0:0 (a synthetic term one of the
     /// transforms produced, with no source of its own) gets no site: a debugger
     /// must not offer to stop somewhere the user cannot see.</summary>
     private bool _suppressBreaks;
 
-    private void EmitBreakAt(CompileState s, Shumway.Compiler.Lexer.SourcePosition pos)
+    private void MarkStop(CompileState s, Shumway.Compiler.Lexer.SourcePosition pos)
     {
         if (!DebugCodegen || _suppressBreaks || pos.Line <= 0) return;
-        s.Emitter.EmitBreak(DebugSiteTable.Intern(DebugFileId, pos.Line, pos.Column));
+        s.DebugStops.Add(new DebugStop(
+            s.Emitter.Position, DebugSiteTable.Intern(DebugFileId, pos.Line, pos.Column)));
     }
 
 
@@ -223,7 +227,7 @@ public sealed class ClauseCompiler
         // ADR-035 — the clause's entry site, first thing in its bytecode. This is
         // the stop a breakpoint on a FACT's line resolves to, and the one a
         // rule's head line resolves to; the body goals get their own below.
-        EmitBreakAt(state, headTerm.Position);
+        MarkStop(state, headTerm.Position);
 
         // Chunk 220 — fuse the common Allocate+GetLevel prologue when both
         // are emitted; otherwise emit individually.
@@ -286,7 +290,7 @@ public sealed class ClauseCompiler
                 bool isLast = i == goals.Count - 1;
                 Term goal = goals[i];
 
-                EmitBreakAt(state, goal.Position);   // ADR-035 — this goal's stop site
+                MarkStop(state, goal.Position);   // ADR-035 — this goal's stop site
 
                 if (goal is AtomTerm { Name: "!" })
                 {
@@ -334,7 +338,8 @@ public sealed class ClauseCompiler
             state.Xs.RegisterCount,
             state.PermanentCount,
             state.CallSites,
-            state.DispatchSites.Count == 0 ? null : state.DispatchSites);
+            state.DispatchSites.Count == 0 ? null : state.DispatchSites,
+            state.DebugStops.Count == 0 ? null : state.DebugStops);
     }
 
     /// <summary>ADR-025 — adds every named variable occurring inside an inline
@@ -2202,6 +2207,10 @@ public sealed class ClauseCompiler
         /// <summary>ADR-025 — clause-local address-operand offsets from the
         /// inline if-then-else lowering (see CompiledClause.DispatchSites).</summary>
         public List<int> DispatchSites { get; } = new();
+
+        /// <summary>ADR-035 — clause-local stop-site offsets (see
+        /// CompiledClause.DebugStops). Empty unless compiling debuggable code.</summary>
+        public List<DebugStop> DebugStops { get; } = new();
 
         /// <summary>Clause arity — the argument-register range [0, Arity).</summary>
         public int Arity { get; }

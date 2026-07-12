@@ -252,8 +252,11 @@ public static class OpcodeTable
         Set(Opcode.DebugLastCall, 9, "debug_lastcall",
             OperandKind.Address, OperandKind.Count);
 
-        // ADR-035 — operand is a DebugSiteTable id (relocation-invariant).
-        Set(Opcode.Break, 5, "break", OperandKind.Count);
+        // ADR-035 — one byte, patched over another opcode. Its "size" is never
+        // used to advance the pc (the interpreter re-dispatches the original
+        // instruction, which has its own size), but it must be > 0 so that any
+        // bytecode walker treats it as a real instruction.
+        Set(Opcode.Break, 1, "break");
 
         Set(Opcode.ReservedExtension, 1, "reserved_extension");
     }

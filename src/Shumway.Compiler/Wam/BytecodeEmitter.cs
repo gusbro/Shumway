@@ -51,15 +51,6 @@ public sealed class BytecodeEmitter
         EmitInt(numLivePermanents);
     }
 
-    /// <summary>ADR-035 — a stop site. The operand is a
-    /// <see cref="DebugSiteTable"/> id, not an offset, so nothing downstream has
-    /// to relocate it.</summary>
-    public void EmitBreak(int siteId)
-    {
-        _bytes.Add((byte)Opcode.Break);
-        EmitInt(siteId);
-    }
-
     public void EmitCallBuiltin(int builtinId, int numLivePermanents)
     {
         _bytes.Add((byte)Opcode.CallBuiltin);

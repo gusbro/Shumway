@@ -44,6 +44,16 @@ public sealed class CompiledClause
     /// program-absolute. Empty for clauses without inline control flow.</summary>
     public IReadOnlyList<int> DispatchSites { get; }
 
+    /// <summary>ADR-035 — the places a debugger may stop inside this clause: its
+    /// entry, and the first instruction of each body goal. Recorded under
+    /// <c>compile_mode=debug</c> only, and EMPTY OF BYTECODE — a stop site is a
+    /// note about an offset, not an instruction. Arming a breakpoint patches the
+    /// opcode byte at that offset to <c>Break</c> and remembers what was there;
+    /// nothing is emitted, so debug code that nobody is stopping in runs at full
+    /// speed. Offsets are clause-local and are shifted into predicate-local ones
+    /// exactly like <see cref="CallSites"/>.</summary>
+    public IReadOnlyList<DebugStop> DebugStops { get; }
+
     public CompiledClause(
         byte[] bytecode,
         int functorId,
@@ -51,7 +61,8 @@ public sealed class CompiledClause
         int registerCount,
         int permanentCount,
         IReadOnlyList<CallSite> callSites,
-        IReadOnlyList<int>? dispatchSites = null)
+        IReadOnlyList<int>? dispatchSites = null,
+        IReadOnlyList<DebugStop>? debugStops = null)
     {
         Bytecode = bytecode;
         FunctorId = functorId;
@@ -60,8 +71,14 @@ public sealed class CompiledClause
         PermanentCount = permanentCount;
         CallSites = callSites;
         DispatchSites = dispatchSites ?? Array.Empty<int>();
+        DebugStops = debugStops ?? Array.Empty<DebugStop>();
     }
 }
+
+/// <summary>ADR-035 — a place a debugger may stop: the bytecode offset of the
+/// instruction it precedes, and the id of the source location
+/// (<see cref="Shumway.Core.DebugSiteTable"/>) it corresponds to.</summary>
+public readonly record struct DebugStop(int Offset, int SiteId);
 
 /// <summary>
 /// A reference from a clause's bytecode to another predicate. The opcode at

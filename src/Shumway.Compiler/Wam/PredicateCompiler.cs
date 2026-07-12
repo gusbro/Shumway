@@ -217,7 +217,10 @@ public sealed class PredicateCompiler
                     switchTables: Array.Empty<SwitchTable>(),
                     switchTableIdSites: Array.Empty<int>(),
                     sourcePosition: clauses[0].Position,
-                    clauseSourcePositions: clausePositions);
+                    clauseSourcePositions: clausePositions)
+                {
+                    DebugStops = ShiftDebugStops(compiledClauses[0], clauseStart),   // ADR-035
+                };
             }
             return new CompiledPredicate(
                 compiledClauses[0].Bytecode,
@@ -232,7 +235,10 @@ public sealed class PredicateCompiler
                 switchTables: Array.Empty<SwitchTable>(),
                 switchTableIdSites: Array.Empty<int>(),
                 sourcePosition: clauses[0].Position,
-                clauseSourcePositions: clausePositions);
+                clauseSourcePositions: clausePositions)
+            {
+                DebugStops = compiledClauses[0].DebugStops,   // ADR-035 — no prefix, no shift
+            };
         }
 
         // Decide whether indexing pays off. ADR-007's Phase-1 model only
@@ -345,6 +351,7 @@ public sealed class PredicateCompiler
         var emitter = new BytecodeEmitter();
         var callSites = new List<CallSite>();
         var dispatchSites = new List<int>();
+        var debugStops = new List<DebugStop>();   // ADR-035
         if (isDynamic) emitter.EmitEnterDynamic();
         if (dynamicChain)
         {
@@ -393,13 +400,17 @@ public sealed class PredicateCompiler
             foreach (var site in compiledClauses[i].CallSites)
                 callSites.Add(new CallSite(
                     clauseStart + site.OpcodeOffset, site.CalleeFunctorId, site.IsExecute));
+            debugStops.AddRange(ShiftDebugStops(compiledClauses[i], clauseStart));   // ADR-035
             MergeClauseDispatchSites(emitter, compiledClauses[i], clauseStart, dispatchSites);
         }
 
         return new CompiledPredicate(
             emitter.ToBytes(), functorId, arity, n, callSites, dispatchSites,
             Array.Empty<SwitchTable>(), Array.Empty<int>(), position,
-            clausePositions);
+            clausePositions)
+        {
+            DebugStops = debugStops,   // ADR-035
+        };
     }
 
     private static int DispatchSizeFor(int clauseIndex, int totalClauses, bool dynamicChain = false) =>
@@ -414,6 +425,19 @@ public sealed class PredicateCompiler
     /// dispatch sites: each site offset shifts by the clause's placement, and the
     /// operand VALUE is rebased from clause-local to predicate-local (the linker
     /// then shifts it to program-absolute like any other dispatch site).</summary>
+    /// <summary>ADR-035 — a clause's stop sites, shifted from clause-local offsets
+    /// to predicate-local ones by where the clause was placed. Same treatment as
+    /// its call sites, and for the same reason.</summary>
+    private static IReadOnlyList<DebugStop> ShiftDebugStops(CompiledClause clause, int clauseStart)
+    {
+        if (clause.DebugStops.Count == 0) return Array.Empty<DebugStop>();
+        var shifted = new DebugStop[clause.DebugStops.Count];
+        for (int i = 0; i < shifted.Length; i++)
+            shifted[i] = new DebugStop(
+                clauseStart + clause.DebugStops[i].Offset, clause.DebugStops[i].SiteId);
+        return shifted;
+    }
+
     private static void MergeClauseDispatchSites(
         BytecodeEmitter emitter, CompiledClause clause, int clauseStart, List<int> dispatchSites)
     {
@@ -1108,6 +1132,7 @@ public sealed class PredicateCompiler
         var emitter = new BytecodeEmitter();
         var callSites = new List<CallSite>();
         var dispatchSites = new List<int>();
+        var debugStops = new List<DebugStop>();   // ADR-035
         var switchTableIdSites = new List<int>();
 
         // ADR-027: emit a sub-switch region — the switch opcode followed by its
@@ -1274,13 +1299,17 @@ public sealed class PredicateCompiler
             foreach (var site in compiledClauses[i].CallSites)
                 callSites.Add(new CallSite(
                     clauseStart + site.OpcodeOffset, site.CalleeFunctorId, site.IsExecute));
+            debugStops.AddRange(ShiftDebugStops(compiledClauses[i], clauseStart));   // ADR-035
             MergeClauseDispatchSites(emitter, compiledClauses[i], clauseStart, dispatchSites);
         }
 
         return new CompiledPredicate(
             emitter.ToBytes(), functorId, arity, n,
             callSites, dispatchSites, switchTables, switchTableIdSites, position,
-            clausePositions);
+            clausePositions)
+        {
+            DebugStops = debugStops,   // ADR-035
+        };
     }
 
     /// <summary>Emits a <c>try</c> / (zero or more <c>retry</c>) / <c>trust</c>
@@ -1561,6 +1590,7 @@ public sealed class PredicateCompiler
         var emitter = new BytecodeEmitter();
         var callSites = new List<CallSite>();
         var dispatchSites = new List<int>();
+        var debugStops = new List<DebugStop>();   // ADR-035
         var switchTableIdSites = new List<int>();
 
         emitter.EmitEnterDynamic();
@@ -1666,13 +1696,17 @@ public sealed class PredicateCompiler
             foreach (var site in compiledClauses[i].CallSites)
                 callSites.Add(new CallSite(
                     clauseStart + site.OpcodeOffset, site.CalleeFunctorId, site.IsExecute));
+            debugStops.AddRange(ShiftDebugStops(compiledClauses[i], clauseStart));   // ADR-035
             MergeClauseDispatchSites(emitter, compiledClauses[i], clauseStart, dispatchSites);
         }
 
         return new CompiledPredicate(
             emitter.ToBytes(), functorId, arity, n,
             callSites, dispatchSites, switchTables, switchTableIdSites, position,
-            clausePositions);
+            clausePositions)
+        {
+            DebugStops = debugStops,   // ADR-035
+        };
     }
 
     /// <summary>Per-level bucket / chain bookkeeping for the multi-arg

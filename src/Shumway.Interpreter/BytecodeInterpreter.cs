@@ -383,6 +383,7 @@ public sealed class BytecodeInterpreter
                 System.Console.Error.WriteLine(
                     $"[t] pc={pc,7} {(Opcode)opByte,-18} b={_engine.B} cp={_engine.Cp}");
 #endif
+        dispatch:
             switch ((Opcode)opByte)
             {
                 case Opcode.ReservedInvalid:
@@ -442,16 +443,22 @@ public sealed class BytecodeInterpreter
                     break;
                 }
 
-                // ADR-035 — a place a debugger may stop. Present in debug-compiled
-                // code before every body goal and at every clause entry; with no
-                // session attached it is a null test and a 5-byte step.
+                // ADR-035 — an armed breakpoint: one byte the debugger wrote over
+                // the opcode of the instruction we are about to run. Report the
+                // stop, then run that instruction — read from the engine's
+                // breakpoint table, at this same pc, with its operands untouched.
+                //
+                // The byte is never restored. Restoring it, stepping, and putting
+                // it back would open a window in which another activation over the
+                // same shared code space runs the un-patched instruction and misses
+                // the breakpoint; re-dispatching from the table has no such window.
+                // This branch is unreachable in code with no breakpoints armed, so
+                // debugging costs nothing until someone actually sets one.
                 case Opcode.Break:
                 {
-                    if (_engine.Debug is { } dbg)
-                        dbg.OnBreak(_engine, ReadI32(code, codeArr, pc + 1));
-                    _engine.SetPc(pc + 5);
-                    inClause = true;
-                    break;
+                    opByte = _engine.BreakpointOriginalAt(pc);
+                    _engine.Debug?.OnBreak(_engine, pc);
+                    goto dispatch;
                 }
 
                 // ADR-035 — the debuggable last call. One of Call or Execute,

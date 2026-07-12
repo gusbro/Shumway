@@ -152,6 +152,14 @@ public sealed class CompiledPredicate
     /// a bundle blob produced before chunk 55).</summary>
     public IReadOnlyList<SourcePosition> ClauseSourcePositions { get; }
 
+    /// <summary>ADR-035 — the places a debugger may stop inside this predicate,
+    /// with offsets already shifted from clause-local to predicate-local (the
+    /// linker shifts them once more, by the predicate's base, when it lays the
+    /// program out). Empty unless the predicate was compiled debuggable.
+    /// A settable property rather than a constructor parameter because the four
+    /// assembly paths already thread nine of those.</summary>
+    public IReadOnlyList<DebugStop> DebugStops { get; set; } = Array.Empty<DebugStop>();
+
     public CompiledPredicate(
         byte[] bytecode,
         int functorId,

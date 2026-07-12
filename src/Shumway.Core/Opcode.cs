@@ -301,17 +301,19 @@ public enum Opcode : byte
     // real stack frame to show variables from; see Activation.LastCallOptimisation.
     DebugLastCall = 0x63,
 
-    // ADR-035 — a place a debugger may stop. Emitted under compile_mode=debug
-    // before every body goal and at every clause entry; the operand is a
-    // DebugSiteTable id, so it survives every offset relocation the compiler and
-    // linker perform without any of them knowing about it.
+    // ADR-035 — an ARMED breakpoint. Never emitted by the compiler: the debugger
+    // patches this single byte over the opcode of the instruction it wants to stop
+    // before, and the engine remembers what was there. Debug code that nobody is
+    // stopping in therefore costs nothing at all — the same trade every real VM
+    // makes (the JVM's `breakpoint` bytecode, gdb's INT3).
     //
-    // Deliberately a REAL instruction rather than a byte patched over the code:
-    // the code space is shared across activations (and across engines), so
-    // self-modifying dispatch would race, and a breakpoint hit would have to
-    // restore-step-repatch under a live interpreter. An always-present Break that
-    // asks the session what to do costs one dispatch per goal — in debug code
-    // only, which release never contains.
+    // On dispatch the interpreter reports the stop and then executes the ORIGINAL
+    // opcode at the same pc, read from the engine's breakpoint table. It never
+    // restores the byte: a restore-step-repatch sequence would be a window in
+    // which another activation over the same shared code runs the un-patched
+    // instruction. The operands are untouched — Break replaces only the opcode
+    // byte, so the original instruction's operands are still right where it left
+    // them.
     Break = 0x64,
 
     // Extension escape — reserved, never dispatched.

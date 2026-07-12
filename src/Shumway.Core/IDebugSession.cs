@@ -71,14 +71,13 @@ public interface IDebugSession
     /// itself fails.</summary>
     void OnFail(Activation engine);
 
-    /// <summary>A <see cref="Opcode.Break"/> instruction was reached: control is
-    /// about to enter the goal (or clause) at source site
-    /// <paramref name="siteId"/> (a <see cref="DebugSiteTable"/> id). Every such
-    /// site in debug-compiled code reports here — whether it is a breakpoint the
-    /// user armed, or a step should complete on it, is the session's call. Runs
-    /// before the goal, so the session sees the arguments as they were passed.
-    /// </summary>
-    void OnBreak(Activation engine, int siteId);
+    /// <summary>An armed breakpoint was reached at program address
+    /// <paramref name="pc"/>: the instruction there — a clause entry or the start
+    /// of a body goal — is about to run, and has not yet. The session armed it, so
+    /// it knows which source site the address belongs to. Only ARMED addresses
+    /// report here; a debug-compiled program with no breakpoints raises this
+    /// never, and costs nothing.</summary>
+    void OnBreak(Activation engine, int pc);
 
     /// <summary>ADR-016 mark phase: a session that holds heap indices of its own
     /// (a tracer keeps each open goal's argument cells so it can show what the

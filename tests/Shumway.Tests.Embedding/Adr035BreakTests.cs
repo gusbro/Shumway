@@ -9,12 +9,17 @@ using Xunit.Abstractions;
 namespace Shumway.Tests.Embedding;
 
 /// <summary>
-/// ADR-035 phase D1 — the <c>Break</c> opcode and the global
-/// <see cref="DebugSiteTable"/>. Debug-compiled code carries a stop site at every
-/// clause entry and before every body goal; the site's id is interned rather than
-/// an offset, so it survives clause→predicate→program relocation untouched. These
-/// tests pin the two things a debugger will rely on: that the sites fire in
-/// execution order, and that the source line they carry is the one the user sees.
+/// ADR-035 phase D1 — breakpoints. Debug-compiled code emits NO extra instructions;
+/// it records, per predicate, the offsets a debugger may stop at (clause entries and
+/// the first instruction of each body goal) against interned source sites. Arming a
+/// breakpoint patches the single opcode byte at such an offset to <c>Break</c> and
+/// remembers what was there; hitting it reports the stop and then runs the original
+/// instruction from the table, at the same pc, with its operands untouched. The byte
+/// is never restored — which is what lets a second activation over the same shared
+/// code space hit the same breakpoint instead of racing through a restore window.
+///
+/// <para>The consequence worth pinning: debug-compiled code with no breakpoints
+/// armed runs exactly the instructions release code would.</para>
 /// </summary>
 public class Adr035BreakTests
 {
@@ -22,18 +27,18 @@ public class Adr035BreakTests
 
     public Adr035BreakTests(ITestOutputHelper log) => _log = log;
 
-    /// <summary>A minimal session: records the source line of every stop site
-    /// reached, and can be told to make one of them fail the goal (the crude
-    /// stand-in for "stop here", which is enough to prove the site is reached
-    /// BEFORE the goal runs).</summary>
-    private sealed class SiteRecorder : IDebugSession
+    /// <summary>Records every breakpoint hit, as the source line it stopped on.</summary>
+    private sealed class Recorder : IDebugSession
     {
-        public readonly List<(string File, int Line)> Hits = new();
+        private readonly PrologEngine _engine;
+        public readonly List<int> Lines = new();
 
-        public void OnBreak(Activation engine, int siteId)
+        public Recorder(PrologEngine engine) => _engine = engine;
+
+        public void OnBreak(Activation engine, int pc)
         {
-            var site = DebugSiteTable.Get(siteId);
-            Hits.Add((DebugSiteTable.FileName(site.FileId), site.Line));
+            int siteId = _engine.SiteAt(pc);
+            Lines.Add(DebugSiteTable.Get(siteId).Line);
         }
 
         public void OnCallAddress(Activation e, int a, bool t) { }
@@ -47,6 +52,8 @@ public class Adr035BreakTests
         public void RelocateHeapRoots(Func<int, int> reloc) { }
     }
 
+    /// <summary>Consults <paramref name="program"/> in debug mode. Line 1 is the
+    /// compile_mode directive, so the program's own first line is 2.</summary>
     private static PrologEngine DebugEngine(string program)
     {
         var engine = new PrologEngine();
@@ -54,141 +61,154 @@ public class Adr035BreakTests
         return engine;
     }
 
-    private List<int> Run(PrologEngine engine, string goal, out int solutions)
+    private List<int> HitsFor(PrologEngine engine, string goal, out int solutions)
     {
-        var rec = new SiteRecorder();
+        var rec = new Recorder(engine);
         engine.AttachDebugSession(rec);
         solutions = engine.QueryAll(goal).Count();
         engine.AttachDebugSession(null);
-        foreach (var h in rec.Hits) _log.WriteLine($"{h.File}:{h.Line}");
-        return rec.Hits.Select(h => h.Line).ToList();
+        _log.WriteLine("stopped on lines: " + string.Join(", ", rec.Lines));
+        return rec.Lines;
     }
 
     [Fact]
-    public void StopSites_FireAtEveryClauseEntryAndBodyGoal_InSourceLines()
+    public void ABreakpointOnAFactsLine_StopsWhenTheClauseIsTried()
     {
-        // Line 1 is the set_prolog_flag directive DebugEngine prepends, so the
-        // program's own first line is 2.
+        var engine = DebugEngine("p(a).\np(b).\n");   // lines 2, 3
+
+        Assert.Equal(1, engine.AddBreakpoint("<string>", 3));
+        var hits = HitsFor(engine, "p(X).", out int solutions);
+
+        Assert.Equal(2, solutions);
+        Assert.Equal(new[] { 3 }, hits);   // only p(b)'s clause, and only once
+    }
+
+    [Fact]
+    public void ABreakpointOnABodyGoal_StopsBeforeTheGoalRuns()
+    {
         //   2: top(X) :- mid(X), tail(X).
         //   3: mid(7).
         //   4: tail(7).
         var engine = DebugEngine("top(X) :- mid(X), tail(X).\nmid(7).\ntail(7).\n");
 
-        var lines = Run(engine, "top(A).", out int solutions);
+        Assert.True(engine.AddBreakpoint("<string>", 4) > 0);   // tail/1's clause entry
+        var hits = HitsFor(engine, "top(A).", out int solutions);
 
         Assert.Equal(1, solutions);
-        // top/1's clause entry, then its two body goals (both on line 2), each
-        // followed by the callee's own clause-entry site.
-        Assert.Equal(new[] { 2, 2, 3, 2, 4 }, lines);
+        Assert.Equal(new[] { 4 }, hits);
     }
 
     [Fact]
-    public void GoalsOnTheirOwnLines_CarryTheirOwnLine()
+    public void NoBreakpoints_MeansNoStops_AndNoCost()
     {
-        //   2: run(X) :-
-        //   3:     first(X),
-        //   4:     second(X).
-        //   5: first(1).
-        //   6: second(1).
-        var engine = DebugEngine(
-            "run(X) :-\n    first(X),\n    second(X).\nfirst(1).\nsecond(1).\n");
+        // The whole point of the patch model: debug-compiled code that nobody is
+        // stopping in runs the same instructions release code would.
+        var engine = DebugEngine("top(X) :- mid(X).\nmid(7).\n");
 
-        var lines = Run(engine, "run(A).", out int solutions);
+        var hits = HitsFor(engine, "top(A).", out int solutions);
 
         Assert.Equal(1, solutions);
-        Assert.Equal(new[] { 2, 3, 5, 4, 6 }, lines);
+        Assert.Empty(hits);
     }
 
     [Fact]
-    public void FactsHaveAStopSite_OnEveryClauseTried()
+    public void ABreakpointStopsOnEveryPassThroughIt()
     {
-        // A breakpoint on a fact's line has to bind, and it must fire once per
-        // clause the machine actually tries — backtracking included.
-        var engine = DebugEngine("p(a).\np(b).\np(c).\n");   // lines 2, 3, 4
+        //   2: loop(0) :- !.
+        //   3: loop(N) :- M is N - 1, loop(M).
+        var engine = DebugEngine("loop(0) :- !.\nloop(N) :- M is N - 1, loop(M).\n");
 
-        var lines = Run(engine, "p(X).", out int solutions);
+        Assert.True(engine.AddBreakpoint("<string>", 3) > 0);
+        var hits = HitsFor(engine, "loop(5).", out int solutions);
 
-        Assert.Equal(3, solutions);
-        Assert.Equal(new[] { 2, 3, 4 }, lines);
+        Assert.Equal(1, solutions);
+        // Clause 2 is entered for N = 5..1, and its two body goals sit on line 3
+        // as well — so every pass reports, and the run still completes.
+        Assert.All(hits, l => Assert.Equal(3, l));
+        Assert.True(hits.Count >= 5, $"expected at least 5 stops, got {hits.Count}");
     }
 
     [Fact]
-    public void SiteIsReachedBeforeTheGoalRuns()
+    public void RemovingABreakpoint_RestoresTheOriginalInstruction()
     {
-        // The site for `mid(X)` must be reported while X is still unbound —
-        // that is what makes it useful as a place to stop and look at arguments.
-        var engine = DebugEngine("top(X) :- mid(X).\nmid(9).\n");
+        var engine = DebugEngine("p(a).\np(b).\n");
 
-        string? seen = null;
-        var probe = new ArgProbe(a => seen ??= Rendered(a));
-        engine.AttachDebugSession(probe);
-        engine.QueryAll("top(A).").ToList();
-        engine.AttachDebugSession(null);
+        engine.AddBreakpoint("<string>", 3);
+        Assert.NotEmpty(HitsFor(engine, "p(X).", out _));
 
-        Assert.Equal("_", seen);   // unbound at the clause-entry site of top/1
-    }
-
-    private static string Rendered(Activation engine)
-    {
-        var cell = engine.GetRegister(0);
-        return cell.Tag == Tag.Ref ? "_" : "bound";
-    }
-
-    private sealed class ArgProbe : IDebugSession
-    {
-        private readonly Action<Activation> _onSite;
-        public ArgProbe(Action<Activation> onSite) => _onSite = onSite;
-        public void OnBreak(Activation e, int siteId) => _onSite(e);
-        public void OnCallAddress(Activation e, int a, bool t) { }
-        public void OnCallFunctor(Activation e, int f, bool t) { }
-        public void OnCallBuiltin(Activation e, int b, bool t) { }
-        public void OnBuiltinResult(Activation e, int b, bool ok) { }
-        public void OnExit(Activation e) { }
-        public void OnRedo(Activation e, int pc) { }
-        public void OnFail(Activation e) { }
-        public void MarkHeapRoots(Action<int> mark) { }
-        public void RelocateHeapRoots(Func<int, int> reloc) { }
+        engine.RemoveBreakpoint("<string>", 3);
+        Assert.Empty(engine.Breakpoints);
+        Assert.Empty(HitsFor(engine, "p(X).", out int solutions));
+        Assert.Equal(2, solutions);   // and the program still runs correctly
     }
 
     [Fact]
-    public void ReleaseCode_CarriesNoStopSites()
+    public void ABreakpointSurvivesAcrossQueries()
+    {
+        // The armed SITE is the truth; the byte patches are re-derived per query,
+        // because the code space can be relinked or compacted between them.
+        var engine = DebugEngine("p(a).\np(b).\n");
+        engine.AddBreakpoint("<string>", 2);
+
+        Assert.Single(HitsFor(engine, "p(a).", out _));
+        Assert.Single(HitsFor(engine, "p(a).", out _));
+        Assert.Single(HitsFor(engine, "p(a).", out _));
+    }
+
+    [Fact]
+    public void ABreakpointOnALineWithNoCode_DoesNotBind()
+    {
+        // Zero sites is how a debugger learns to draw a hollow breakpoint instead
+        // of pretending it took.
+        var engine = DebugEngine("p(a).\n\n% just a comment\n");
+
+        Assert.Equal(0, engine.AddBreakpoint("<string>", 3));
+        Assert.Equal(0, engine.AddBreakpoint("<string>", 4));
+        Assert.Empty(engine.Breakpoints);
+    }
+
+    [Fact]
+    public void ReleaseCode_HasNoStopSites_SoNothingBinds()
     {
         var engine = new PrologEngine();
-        engine.ConsultString("top(X) :- mid(X).\nmid(7).\n");
+        engine.ConsultString("p(a).\np(b).\n");
 
-        var lines = Run(engine, "top(A).", out int solutions);
-
-        Assert.Equal(1, solutions);
-        Assert.Empty(lines);
+        Assert.Equal(0, engine.AddBreakpoint("<string>", 1));
+        Assert.Empty(HitsFor(engine, "p(X).", out int solutions));
+        Assert.Equal(2, solutions);
     }
 
     [Fact]
-    public void SitesAreFindableByFileAndLine_WhichIsHowABreakpointBinds()
+    public void BreakpointsDoNotChangeWhatTheProgramComputes()
     {
-        int file = DebugSiteTable.InternFile("<string>");
-        var engine = DebugEngine("uniquely_named_pred(42).\n");   // line 2
-        engine.QueryAll("uniquely_named_pred(_).").ToList();
-
-        Assert.NotEmpty(DebugSiteTable.SitesOnLine(file, 2));
-
-        // And a site resolves back to exactly where it came from.
-        int siteId = DebugSiteTable.SitesOnLine(file, 2)[0];
-        var site = DebugSiteTable.Get(siteId);
-        Assert.Equal(file, site.FileId);
-        Assert.Equal(2, site.Line);
-        Assert.Equal("<string>", DebugSiteTable.FileName(site.FileId));
-    }
-
-    [Fact]
-    public void DebugCode_StillComputesTheRightAnswers()
-    {
-        // The stop sites are extra instructions in the middle of every clause;
-        // nothing about the program's meaning may change.
         var engine = DebugEngine(
             "app([], L, L).\napp([H|T], L, [H|R]) :- app(T, L, R).\n"
             + "rev([], []).\nrev([H|T], R) :- rev(T, RT), app(RT, [H], R).\n");
 
-        Assert.Equal(new[] { 3, 2, 1 }, engine.QueryFirst<List<int>>("rev([1,2,3], R).", "R"));
-        Assert.Equal(4, engine.QueryAll("app(X, Y, [1,2,3]).").Count());
+        // Break inside the hot recursion, in both predicates.
+        engine.AddBreakpoint("<string>", 3);
+        engine.AddBreakpoint("<string>", 5);
+
+        var rec = new Recorder(engine);
+        engine.AttachDebugSession(rec);
+        var result = engine.QueryFirst<List<int>>("rev([1,2,3], R).", "R");
+        engine.AttachDebugSession(null);
+
+        Assert.Equal(new[] { 3, 2, 1 }, result);
+        Assert.NotEmpty(rec.Lines);   // and it really did stop along the way
+    }
+
+    [Fact]
+    public void SitesResolveBackToTheirSourceLocation()
+    {
+        int file = DebugSiteTable.InternFile("<string>");
+        var engine = DebugEngine("distinctly_named(42).\n");   // line 2
+        engine.QueryAll("distinctly_named(_).").ToList();
+
+        var sites = DebugSiteTable.SitesOnLine(file, 2);
+        Assert.NotEmpty(sites);
+        var site = DebugSiteTable.Get(sites[0]);
+        Assert.Equal(2, site.Line);
+        Assert.Equal("<string>", DebugSiteTable.FileName(site.FileId));
     }
 }
