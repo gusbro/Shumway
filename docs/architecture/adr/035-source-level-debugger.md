@@ -90,12 +90,46 @@ impact** is a hard requirement, verified by A/B.
    Debug codegen forces named source variables into Y slots, disables
    environment trimming and redundant-cut elision. `.shmo`/`.shum` Debug build
    mode carries the tables.
-2. **`Break` opcode** — takes the reserved `ReservedExtension` 1-byte slot (no
-   renumbering). Side table id→(pc, original byte); on hit the DebugService
-   decides (breakpoint / step spec), notifies, and on resume restores the
-   byte, single-dispatches, re-patches. Patching is done by the engine
-   in-process (commands arrive via the channel), so there are no remote-write
-   or GC-array-move hazards.
+2. **`Break` opcode** — takes the reserved `ReservedExtension` slot.
+
+   > **Amended in implementation (D1-c).** The sketch above had `Break` be a
+   > 1-byte opcode *patched over* an existing instruction, with a side table
+   > holding `id → (pc, original byte)` and a restore-step-repatch dance on
+   > resume. Two things ruled that out once the code was in front of us:
+   >
+   > - **The code space is shared.** Several activations coexist over one
+   >   engine's code, and compiled predicates are shared across engines through
+   >   the global caches. Patching a byte to arm a breakpoint is a write into
+   >   code another activation may be executing — and the restore-step-repatch
+   >   window is exactly where a second activation would run the *un*-patched
+   >   instruction. Nothing about the single-threaded-per-activation invariant
+   >   saves us here; the sharing is across activations, not within one.
+   > - **We already own debug codegen.** `compile_mode=debug` compiles the
+   >   program differently anyway (frames, `debug_lastcall`), so a stop site can
+   >   simply *be an instruction*. Debug code pays one dispatch per goal;
+   >   release code never contains the opcode at all.
+   >
+   > So `Break` is a real, always-present, 5-byte instruction emitted at every
+   > clause entry and before every body goal, and its operand is an **interned
+   > site id** (`DebugSiteTable`: file/line/column) rather than a pc. That
+   > second choice matters as much as the first: every offset in this compiler
+   > is relocated at least twice — clause into predicate, predicate into
+   > program — so an offset-keyed side table would have to be understood by all
+   > four predicate-assembly paths *and* the linker. An interned id is invariant
+   > under all of it. It is the same argument that makes atom and functor ids
+   > global.
+   >
+   > Whether a given site is armed is the session's business, not the
+   > interpreter's: `IDebugSession.OnBreak(engine, siteId)` fires at every site
+   > and the session decides. A source breakpoint binds through
+   > `DebugSiteTable.SitesOnLine(file, line)`.
+   >
+   > Prerequisite discovered here: **source positions did not survive the
+   > pipeline.** `ModuleRewrite` rebuilds every term it mangles and
+   > `Term.Position` is init-only, so a module's goals reached the compiler at
+   > 0:0 — which is every goal in every program, since predicates are
+   > module-local by default. Mangling changes a name, not a place; the rebuilt
+   > terms now carry the position of what they replace.
 3. **`debug_lastcall` opcode** (appended at the dense-block end) — **LCO is
    runtime-toggleable under debug**: reads the per-engine LCO flag at
    dispatch; on → classic deallocate+execute; off → a normal call that
@@ -108,7 +142,7 @@ impact** is a hard requirement, verified by A/B.
    Call/Execute/Proceed/backtrack dispatch sites, active only with a session.
    Step depth is recomputed from the environment chain at each port, never
    incrementally counted.
-5. **`:- disable_debug.` module directive** — the Prolog equivalent of
+5. **`:- disable_debug.` / `:- enable_debug.`** — the Prolog equivalent of
    Just-My-Code "external code". A marked module keeps FULL release
    compilation under debug (Tier-1 IL, regions, LCO, CP-free guards) and
    appears in the call stack as ONE collapsed "semi-native" frame (its entry
@@ -119,6 +153,21 @@ impact** is a hard requirement, verified by A/B.
    behaves as step-through (opaque modules emit no ports). F9 there does not
    bind. Under a debug session, Tier-1 promotion exclusion is therefore
    **per-module**, not global. **The prelude is implicitly `disable_debug`.**
+
+   > **Amended in implementation (D1-c), at the user's request.** The two
+   > directives are **positional**, not file-scoped declarations: each sets the
+   > debuggability of the clauses that *follow* it, until the next one or the
+   > end of the file. Debuggability is therefore a property of a **predicate**,
+   > not of a module — a file can hand the debugger the predicates worth
+   > stepping through and keep the rest compiled for speed. A non-debuggable
+   > predicate gets no stop sites, no forced frames and no `debug_lastcall`;
+   > it is release code.
+   >
+   > The coherence requirement falls out rather than being engineered: an opaque
+   > predicate that calls a debuggable one resumes normal frame-by-frame
+   > debugging, because the two compile independently and the environment chain
+   > runs through both either way. That is precisely why the design is
+   > per-predicate rather than a mode the whole engine is in.
 6. **REPL `trace/0` port tracer** over the same DebugService — the
    intermediate deliverable that validates ports/stepping with no VS in the
    loop, and a useful feature in itself.
@@ -148,7 +197,9 @@ method name + memory), so the VS pieces live outside the main solution:
 
 ## Invariants touched
 
-- **New opcodes**: `Break` in the `ReservedExtension` slot; `debug_lastcall`
+- **New opcodes** (both emitted ONLY under `compile_mode=debug`; release bytecode
+  contains neither, and the deterministic `--alloc` metric is unchanged on all ten
+  Van Roy benchmarks): `Break` in the `ReservedExtension` slot; `debug_lastcall`
   appended at the end of the dense dispatch block (contiguity preserved).
   Both are this ADR's sanctioned additions per the CLAUDE.md major-decision
   rule.
