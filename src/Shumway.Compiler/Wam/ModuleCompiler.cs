@@ -26,6 +26,11 @@ public sealed class ModuleCompiler
     /// .shmo's bytecode carries no debug bytes at all.</summary>
     public bool EmitDebugInfo { get; set; } = true;
 
+    /// <summary>ADR-035 — propagated to
+    /// <see cref="PredicateCompiler.DebugCodegen"/>: frames on every rule clause
+    /// and a runtime-switchable last call.</summary>
+    public bool DebugCodegen { get; set; }
+
     /// <summary>ADR-030 — when set, run <see cref="DeterminismAnalysis"/> over the
     /// whole clause set (which this compiler already sees in full) and drop the
     /// redundant trailing top-level cut from each static predicate's last clause
@@ -156,7 +161,8 @@ public sealed class ModuleCompiler
         var bigIntLiterals = pools.BigInts;
 
         var predicates = new List<CompiledPredicate>(order.Count);
-        var predicateCompiler = new PredicateCompiler { EmitDebugInfo = EmitDebugInfo };
+        var predicateCompiler = new PredicateCompiler
+            { EmitDebugInfo = EmitDebugInfo, DebugCodegen = DebugCodegen };
         foreach (int fid in order)
         {
             if (cache is not null

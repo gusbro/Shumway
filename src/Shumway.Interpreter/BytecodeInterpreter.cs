@@ -442,6 +442,51 @@ public sealed class BytecodeInterpreter
                     break;
                 }
 
+                // ADR-035 — the debuggable last call. One of Call or Execute,
+                // chosen per dispatch by the activation's LCO flag, so a
+                // debugger can turn last-call optimisation off (and back on)
+                // mid-session without recompiling. Only ever emitted under
+                // compile_mode=debug, and only for a clause that has a frame —
+                // with no frame there would be nothing to retain, and the
+                // return stub could not restore Cp.
+                case Opcode.DebugLastCall:
+                {
+                    if (!FlushPendingWakeups(code))
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    int target = ReadI32(code, codeArr, pc + 1);
+                    target = ResolveTargetMaybeAutoPromoted(target);
+                    if (target == UnknownFailTarget)   // chunk 417: unknown=fail
+                    {
+                        if (!TryBacktrack()) return InterpreterResult.Failed;
+                        break;
+                    }
+                    Shumway.Core.Profiler.Call(target);
+                    bool lco = _engine.LastCallOptimisation;
+                    if (lco)
+                    {
+                        // Pop the frame ourselves — the deallocate that would
+                        // have preceded an Execute now lives in the stub AFTER
+                        // us, which this path skips. Deallocate also restores Cp
+                        // from the frame, which is exactly the tail-call
+                        // continuation.
+                        _engine.Deallocate();
+                    }
+                    else
+                    {
+                        // Keep the frame and return through the stub sitting
+                        // right after us (deallocate_proceed). Deliberately no
+                        // TrimEnv: the frame's Y slots are what a debugger reads
+                        // the clause's variables from.
+                        _engine.SetCp(pc + 9);
+                    }
+                    _engine.SetB0(_engine.B);
+                    DispatchToTier1OrBytecode(target, tailCall: lco);
+                    break;
+                }
+
                 case Opcode.Execute:
                 {
                     if (!FlushPendingWakeups(code))
@@ -717,6 +762,7 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
+                    _engine.Debug?.OnExit(_engine);            // ADR-035 exit port
                     int returnPc = _engine.Cp;
                     if (returnPc < 0) return InterpreterResult.Halted;
                     _engine.SetPc(returnPc);
@@ -762,6 +808,7 @@ public sealed class BytecodeInterpreter
                     int cutSlot = ReadI32(code, codeArr, pc + 1);
                     _engine.Cut((int)_engine.GetY(cutSlot).Data);
                     _engine.Deallocate();
+                    _engine.Debug?.OnExit(_engine);            // ADR-035 exit port
                     int retPc = _engine.Cp;
                     if (retPc < 0) return InterpreterResult.Halted;
                     _engine.SetPc(retPc);
@@ -779,6 +826,7 @@ public sealed class BytecodeInterpreter
                     }
                     int cpSlot = ReadI32(code, codeArr, pc + 1);
                     _engine.Cut((int)_engine.GetY(cpSlot).Data);
+                    _engine.Debug?.OnExit(_engine);            // ADR-035 exit port
                     int rpc = _engine.Cp;
                     if (rpc < 0) return InterpreterResult.Halted;
                     _engine.SetPc(rpc);

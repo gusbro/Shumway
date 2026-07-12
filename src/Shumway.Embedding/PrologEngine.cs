@@ -3016,7 +3016,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         var rewritten = transformed.Select(c => ModuleRewrite.Rewrite(c, dynCtx)).ToList();
 
         var predicate = new Shumway.Compiler.Wam.PredicateCompiler
-            { EmitDebugInfo = _flags.EmitDebugInfo }.Compile(
+            { EmitDebugInfo = _flags.EmitDebugInfo, DebugCodegen = _flags.DebugCodegen }.Compile(
             rewritten,
             _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts,
             enableIndexing: false,
@@ -3169,6 +3169,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             var module = new Shumway.Compiler.Wam.ModuleCompiler
                 {
                     EmitDebugInfo = _flags.EmitDebugInfo,
+                    DebugCodegen = _flags.DebugCodegen,               // ADR-035
                     ElideRedundantCuts = _flags.ElideRedundantCuts,   // ADR-030
                 }.Compile(
                 rewritten, cache: null, unindexedFunctors: null,
@@ -3318,8 +3319,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 break;
             case "compile_mode":
                 // Takes effect for predicates compiled later in this consult.
-                if (valueName == "debug") _flags.EmitDebugInfo = true;
-                else if (valueName == "release") _flags.EmitDebugInfo = false;
+                if (valueName == "debug") _flags.EmitDebugInfo = _flags.DebugCodegen = true;
+                else if (valueName == "release") _flags.EmitDebugInfo = _flags.DebugCodegen = false;
                 break;
             // double_quotes is handled by ClauseReader's directive
             // pre-pass (it has to take effect during lexing of the
@@ -8239,6 +8240,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         var module = new ModuleCompiler
         {
             EmitDebugInfo = _flags.EmitDebugInfo,
+            DebugCodegen = _flags.DebugCodegen,               // ADR-035
             ElideRedundantCuts = _flags.ElideRedundantCuts,   // ADR-030
         }.Compile(
             allRewritten, skipCompileCache, unindexedFunctors, _literalPools,
@@ -8628,6 +8630,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // (trace/0, or a debugger), in which case the Tier-0 interpreter
             // raises the four Prolog ports on it.
             Debug = DebugSession,
+            // ADR-035 — inert unless the program was compiled under
+            // compile_mode=debug (only then does any debug_lastcall exist).
+            LastCallOptimisation = _flags.DebugLco,
         };
         // Heap-buffer pool: seed the fresh activation with the recycled
         // buffer (if any) BEFORE anything materializes onto the heap.
@@ -8949,7 +8954,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         foreach (int fid in order!)
         {
             var pred = new Shumway.Compiler.Wam.PredicateCompiler
-                { EmitDebugInfo = _flags.EmitDebugInfo }.Compile(
+                { EmitDebugInfo = _flags.EmitDebugInfo, DebugCodegen = _flags.DebugCodegen }.Compile(
                 groups[fid],
                 _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts,
                 enableIndexing: false,

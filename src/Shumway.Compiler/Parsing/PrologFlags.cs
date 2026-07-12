@@ -130,6 +130,27 @@ public sealed class PrologFlags
     /// <c>--debug</c>/<c>--release</c>.</summary>
     public bool EmitDebugInfo { get; set; } = false;
 
+    /// <summary>ADR-035 — set alongside <see cref="EmitDebugInfo"/> by
+    /// <c>compile_mode=debug</c>. Predicates compiled while it is on keep a frame
+    /// on every rule clause and emit <c>debug_lastcall</c> for the clause's final
+    /// call, which is what makes last-call optimisation a runtime switch (see
+    /// <c>debug_lco</c>) and gives a debugger a frame per active goal.</summary>
+    public bool DebugCodegen { get; set; } = false;
+
+    /// <summary>ADR-035 — the <c>debug_lco</c> prolog flag: whether the
+    /// <c>debug_lastcall</c> sites in debug-compiled code perform last-call
+    /// optimisation. Default <c>true</c>, i.e. debug-compiled code runs exactly
+    /// like release code until a debugger (or the user) turns LCO off to get the
+    /// full call stack back. Pinned at construction by the
+    /// <c>SHUMWAY_DEBUG_LCO</c> environment variable (<c>on</c> / <c>off</c>) when
+    /// it is set.</summary>
+    public bool DebugLco { get; set; } =
+        System.Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_LCO") switch
+        {
+            "off" or "false" or "0" => false,
+            _ => true,
+        };
+
     /// <summary>ADR-030 — redundant-cut elimination. When set, whole-module
     /// consult compilation drops the redundant trailing top-level cut from each
     /// static predicate's last clause whose prefix goals are all deterministic

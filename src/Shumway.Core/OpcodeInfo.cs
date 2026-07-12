@@ -247,6 +247,11 @@ public static class OpcodeTable
         // sub-byte + 4-byte entry id). Disassembler dispatches on the sub-byte to recover
         // the actual structure when future sub-opcodes are added.
         Set(Opcode.Meta, 6, "meta");
+
+        // ADR-035 — Call-shaped on purpose (see Opcode.DebugLastCall).
+        Set(Opcode.DebugLastCall, 9, "debug_lastcall",
+            OperandKind.Address, OperandKind.Count);
+
         Set(Opcode.ReservedExtension, 1, "reserved_extension");
     }
 

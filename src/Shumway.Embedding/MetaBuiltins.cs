@@ -1455,7 +1455,20 @@ public static class MetaBuiltins
             if (valueName != "debug" && valueName != "release")
                 throw new ShumwayPrologException(
                     IsoError.DomainError("flag_value", new AtomTerm(valueName)));
-            host.Flags.EmitDebugInfo = valueName == "debug";
+            host.Flags.EmitDebugInfo = host.Flags.DebugCodegen = valueName == "debug";
+            return true;
+        }
+        if (flagName == "debug_lco")
+        {
+            // ADR-035 — last-call optimisation for debug-compiled code. Takes
+            // effect immediately, on the running activation as well as on later
+            // queries: flipping it is the whole point (a debugger does it from
+            // the Immediate window mid-session).
+            if (valueName != "on" && valueName != "off")
+                throw new ShumwayPrologException(
+                    IsoError.DomainError("flag_value", new AtomTerm(valueName)));
+            host.Flags.DebugLco = valueName == "on";
+            engine.LastCallOptimisation = host.Flags.DebugLco;
             return true;
         }
         if (flagName == "char_conversion")
@@ -1581,6 +1594,9 @@ public static class MetaBuiltins
             case "compile_mode":
                 return UnifyAtom(engine, 1, host.Flags.EmitDebugInfo ? "debug" : "release");
 
+            case "debug_lco":   // ADR-035
+                return UnifyAtom(engine, 1, host.Flags.DebugLco ? "on" : "off");
+
             case "char_conversion":
                 return UnifyAtom(engine, 1, host.Flags.CharConversionEnabled ? "on" : "off");
 
@@ -1607,7 +1623,7 @@ public static class MetaBuiltins
         "bounded", "max_arity", "integer_rounding_function",
         "double_quotes", "unknown", "occurs_check", "char_conversion",
         "debug", "dialect", "argv", "implicit_dynamic", "arity_compat",
-        "compile_mode",
+        "compile_mode", "debug_lco",
     };
 
     private static bool PrologFlagUnify(Activation engine, PrologEngine host, int idx)

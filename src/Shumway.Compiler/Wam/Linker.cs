@@ -123,6 +123,23 @@ public sealed class Linker
                     BytecodeIO.WriteInt32(program, off + 1, builtinId);
                     continue;
                 }
+                if (existing == (byte)Opcode.DebugLastCall)
+                {
+                    // ADR-035 — the reason debug_lastcall is Call-shaped: a
+                    // last goal that turns out to be a builtin rewrites in
+                    // place to CallBuiltin (both 9 bytes). The return stub
+                    // behind it (deallocate_proceed) is exactly the epilogue a
+                    // CallBuiltin in last position wants, so the site keeps
+                    // working — it just loses the ability to tail-call, which
+                    // for a builtin costs nothing a debugger cares about.
+                    program[off] = (byte)Opcode.CallBuiltin;
+                    BytecodeIO.WriteInt32(program, off + 1, builtinId);
+                    // -1 is CallBuiltin's no-trim sentinel — what the compiler
+                    // itself emits for a builtin in last position. Trimming here
+                    // would discard the very Y slots the frame was kept for.
+                    BytecodeIO.WriteInt32(program, off + 5, -1);
+                    continue;
+                }
                 if (existing == (byte)Opcode.Execute)
                 {
                     // Chunk 248 — tail-call rewrite. ExecuteBuiltin

@@ -40,6 +40,17 @@ public sealed class BytecodeEmitter
         EmitInt(targetAddress);
     }
 
+    /// <summary>ADR-035 — the debuggable last call. Call-shaped (address + live
+    /// permanent count) so the linker's in-place Call → CallBuiltin rewrite fits
+    /// it; the caller must emit the return stub (deallocate_proceed) right
+    /// after.</summary>
+    public void EmitDebugLastCall(int targetAddress, int numLivePermanents)
+    {
+        _bytes.Add((byte)Opcode.DebugLastCall);
+        EmitInt(targetAddress);
+        EmitInt(numLivePermanents);
+    }
+
     public void EmitCallBuiltin(int builtinId, int numLivePermanents)
     {
         _bytes.Add((byte)Opcode.CallBuiltin);

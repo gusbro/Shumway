@@ -57,6 +57,20 @@ public sealed class ClauseCompiler
     private LiteralPool<double> _floatLiterals = new();
     private LiteralPool<System.Numerics.BigInteger> _bigIntLiterals = new();
 
+    /// <summary>ADR-035 debug codegen (<c>compile_mode=debug</c>). Two changes,
+    /// both in service of a debuggable call stack:
+    /// <list type="bullet">
+    /// <item>every rule clause gets a frame, even one the WAM would happily run
+    /// frameless — with no frame there is nothing for a debugger to show, and no
+    /// way to turn the last call into a non-tail one;</item>
+    /// <item>the clause's final user-predicate call is emitted as
+    /// <see cref="Opcode.DebugLastCall"/> plus a return stub, instead of
+    /// <c>deallocate; execute</c> — so last-call optimisation becomes a runtime
+    /// switch rather than a property of the compiled code.</item>
+    /// </list>
+    /// Off by default: this is not what release code should look like.</summary>
+    public bool DebugCodegen { get; set; }
+
 
     public CompiledClause Compile(Clause clause)
         => Compile(clause,
@@ -177,6 +191,14 @@ public sealed class ClauseCompiler
         if (!needFrame)
             for (int i = 0; i < goals.Count - 1; i++)
                 if (!IsInlineBodyGoal(goals[i])) { needFrame = true; break; }
+        // ADR-035 — under debug codegen every rule clause gets a frame, even the
+        // frameless shapes above (a chain rule `p :- q.`, or inline goals then a
+        // single tail call). Without one there is no environment for a debugger
+        // to attribute to the clause, and the last call could not be made
+        // non-tail: debug_lastcall's LCO-off path returns through a stub that
+        // needs the frame to restore Cp from.
+        if (DebugCodegen && goals.Count > 0)
+            needFrame = true;
         // Chunk 220 — fuse the common Allocate+GetLevel prologue when both
         // are emitted; otherwise emit individually.
         if (needFrame && needsDeepCut)
@@ -1645,7 +1667,19 @@ public sealed class ClauseCompiler
             return;
         }
 
-        if (isLast)
+        if (isLast && DebugCodegen && hasFrame)
+        {
+            // ADR-035 — leave the choice of last-call optimisation to the
+            // runtime. The stub behind the opcode is the return path the
+            // LCO-off dispatch points Cp at; the LCO-on dispatch deallocates
+            // and jumps straight past it, which is byte-for-byte the behaviour
+            // of the `deallocate; execute` below.
+            int dlcPos = s.Emitter.Position;
+            s.Emitter.EmitDebugLastCall(targetAddress: 0, numLivePermanents: livePermsAfter);
+            s.Emitter.EmitDeallocateProceed();
+            s.CallSites.Add(new CallSite(dlcPos, functorId, IsExecute: false));
+        }
+        else if (isLast)
         {
             // Last-call optimization: deallocate (if a frame is live) then execute.
             if (hasFrame)

@@ -49,6 +49,14 @@ public sealed class PredicateCompiler
     /// every existing caller (PrologEngine consult, tests).</summary>
     public bool EmitDebugInfo { get; set; } = true;
 
+    /// <summary>ADR-035 — debug codegen: every rule clause keeps a frame, and its
+    /// last call becomes <see cref="Opcode.DebugLastCall"/> so last-call
+    /// optimisation is a runtime switch. Set by the engine's consult path from
+    /// <c>compile_mode=debug</c>. Deliberately a separate option from
+    /// <see cref="EmitDebugInfo"/>, which defaults to <c>true</c> here and would
+    /// otherwise change codegen for every existing caller.</summary>
+    public bool DebugCodegen { get; set; }
+
     /// <summary>ADR-029 — clause-epilogue peephole fusion. When set, the final
     /// bytecode of every compiled predicate has each `cut; deallocate_proceed`
     /// and `cut; proceed` pair collapsed into one dispatched opcode (same total
@@ -139,7 +147,7 @@ public sealed class PredicateCompiler
 
         // Compile each clause independently.
         var compiledClauses = new List<CompiledClause>(clauses.Count);
-        var compiler = new ClauseCompiler();
+        var compiler = new ClauseCompiler { DebugCodegen = DebugCodegen };
         foreach (var c in clauses)
             compiledClauses.Add(compiler.Compile(c, stringLiterals, floatLiterals, bigIntLiterals));
 

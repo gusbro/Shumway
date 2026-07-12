@@ -162,6 +162,20 @@ public sealed partial class Activation
     /// no measurable price for the seam.</summary>
     public IDebugSession? Debug { get; set; }
 
+    /// <summary>ADR-035 — whether last-call optimisation is in effect for the
+    /// <see cref="Opcode.DebugLastCall"/> sites this activation runs. True (the
+    /// default) makes them behave exactly as the <c>deallocate; execute</c> pair
+    /// they replaced; false keeps the caller's frame alive across its final
+    /// goal, so every predicate has a real exit port and a real frame to read
+    /// variables from — at the cost of a control stack that grows with the
+    /// logical call depth.
+    ///
+    /// <para>Only code compiled under <c>compile_mode=debug</c> carries
+    /// <c>debug_lastcall</c> at all, so this is inert for release code. It is
+    /// read per dispatch rather than baked in, which is what lets a debugger
+    /// flip it mid-session.</para></summary>
+    public bool LastCallOptimisation { get; set; } = true;
+
     // ----- Activation registers (per ADR-005) -----
     // -1 means "none yet" for E, B, and B0. P and CP track the program counter and
     // continuation point; they are set when the interpreter is hooked up. B0 is

@@ -16,13 +16,13 @@ namespace Shumway.Core;
 /// <list type="bullet">
 ///   <item>0x00: <see cref="ReservedInvalid"/> — catches PC corruption when dispatched.
 ///     Must stay 0x00 (zeroed memory dispatches as corruption).</item>
-///   <item>0x01..0x5E: every opcode the interpreter dispatches, grouped by category
+///   <item>0x01..0x63: every opcode the interpreter dispatches, grouped by category
 ///     (get, put, unify, control, choice points, indexing, cut, builtin call,
-///     consolidated/fused, PSTR, arithmetic), ending with <see cref="Meta"/> — the
-///     dense jump-table block.</item>
-///   <item>0x5F: <see cref="ReservedExtension"/> — escape mechanism for a
+///     consolidated/fused, PSTR, arithmetic, meta), ending with
+///     <see cref="DebugLastCall"/> — the dense jump-table block.</item>
+///   <item>0x64: <see cref="ReservedExtension"/> — escape mechanism for a
 ///     hypothetical extended encoding (no dispatch case).</item>
-///   <item>0x60..0x69: reserved specialised-builtin opcodes (never emitted, no
+///   <item>0x65..: reserved specialised-builtin opcodes (never emitted, no
 ///     dispatch case).</item>
 /// </list>
 /// </summary>
@@ -285,26 +285,39 @@ public enum Opcode : byte
     CutDeallocateProceed = 0x60,
     CutProceed = 0x61,
 
-    // Meta — last member of the dense dispatched block (chunk 429).
     Meta = 0x62,
 
+    // ADR-035 — the debuggable last call. Emitted under compile_mode=debug in
+    // place of `deallocate; execute <target>`, followed by the return stub
+    // (`deallocate_proceed`) that the LCO-on path skips. Call-shaped (9 bytes,
+    // address + live-permanent count) rather than Execute-shaped on purpose:
+    // it shares Call's width, so the linker's in-place Call → CallBuiltin
+    // rewrite still fits when the last goal turns out to be a builtin.
+    //
+    // Which of the two it behaves as is decided at RUNTIME, per activation:
+    //   LCO on  → deallocate, then jump with Cp untouched  (= execute)
+    //   LCO off → Cp = the stub, jump with the frame retained  (= call)
+    // Keeping the frame is what gives every predicate a real exit port and a
+    // real stack frame to show variables from; see Activation.LastCallOptimisation.
+    DebugLastCall = 0x63,
+
     // Extension escape — reserved, never dispatched.
-    ReservedExtension = 0x63,
+    ReservedExtension = 0x64,
 
     // Reserved specialised-builtin opcodes. Defined in OpcodeTable but
     // never emitted by the compiler and never dispatched by the
     // interpreter; parked after ReservedExtension so the dispatched
     // block stays hole-free (chunk 429).
-    UnifyEq = 0x64,
-    IsOp = 0x65,
-    LessThan = 0x66,
-    GreaterThan = 0x67,
-    LessEq = 0x68,
-    GreaterEq = 0x69,
-    ArithEq = 0x6A,
-    ArithNotEq = 0x6B,
-    StructEq = 0x6C,
-    StructNotEq = 0x6D,
+    UnifyEq = 0x65,
+    IsOp = 0x66,
+    LessThan = 0x67,
+    GreaterThan = 0x68,
+    LessEq = 0x69,
+    GreaterEq = 0x6A,
+    ArithEq = 0x6B,
+    ArithNotEq = 0x6C,
+    StructEq = 0x6D,
+    StructNotEq = 0x6E,
 }
 
 /// <summary>Sub-opcodes for <see cref="Opcode.Meta"/>. Only <see cref="DbgInfo"/> exists in v1.</summary>
