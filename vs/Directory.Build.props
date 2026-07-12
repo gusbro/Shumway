@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Shields vs\ from the repo root Directory.Build.props (net10.0 TargetFramework,
+     ImplicitUsings, diagnostics DefineConstants...). The VS debugger projects have
+     their own framework/lang requirements (netstandard2.0 Concord component,
+     net472 classic VSIX project) and are built ONLY by desktop MSBuild on Windows.
+     MSBuild stops at the first Directory.Build.props found walking up, so this
+     empty file isolates everything under vs\. -->
+<Project>
+</Project>

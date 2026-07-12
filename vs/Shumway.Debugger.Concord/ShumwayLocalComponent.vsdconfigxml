@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Shumway debugger - IDE-level Concord component (ADR-035).
+  Compiled by vsdconfigtool.exe into Shumway.Debugger.Concord.vsdconfig at build.
+
+  ComponentLevel 1999000 = IDE side (levels > 100,000 load in devenv; < 100,000
+  load in the debug monitor). Same level PTVS uses for its local component.
+-->
+<Configuration xmlns="http://schemas.microsoft.com/vstudio/vsdconfig/2008">
+
+  <ManagedComponent
+    ComponentId="775f8710-e0fa-4781-aafb-0161cbf514b9"
+    ComponentLevel="1999000"
+    AssemblyName="Shumway.Debugger.Concord">
+
+    <Class Name="Shumway.Debugger.Concord.ShumwayCallStackFilter">
+      <Implements>
+        <InterfaceGroup>
+          <NoFilter/>
+          <Interface Name="IDkmCallStackFilter"/>
+        </InterfaceGroup>
+      </Implements>
+    </Class>
+
+  </ManagedComponent>
+</Configuration>

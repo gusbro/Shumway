@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Shumway.Debugger.Concord</RootNamespace>
+    <AssemblyName>Shumway.Debugger.Concord</AssemblyName>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <!-- The VSDConfigTool build step compiles every VsdConfigXmlFiles item into this
+         single binary manifest, deployed next to the DLL and read by Concord's
+         component loader (see the ConcordExtensibilitySamples wiki,
+         "Component discovery and configuration"). -->
+    <VsdConfigFile>bin\$(Configuration)\$(TargetFramework)\Shumway.Debugger.Concord.vsdconfig</VsdConfigFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Known-good pair from the MIT ConcordExtensibilitySamples (Iris/HelloWorld).
+         VS 2026 supports the 17.x API surface; revisit the pin if a v18 package line
+         appears. -->
+    <PackageReference Include="Microsoft.VisualStudio.Debugger.Engine" Version="17.0.2012801" />
+    <PackageReference Include="Microsoft.VSSDK.Debugger.VSDConfigTool" Version="17.0.2012801">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <VsdConfigXmlFiles Include="ShumwayLocalComponent.vsdconfigxml" />
+  </ItemGroup>
+
+</Project>
