@@ -54,6 +54,20 @@ public sealed class CompiledClause
     /// exactly like <see cref="CallSites"/>.</summary>
     public IReadOnlyList<DebugStop> DebugStops { get; }
 
+    /// <summary>ADR-035 — the clause's source variables and the Y slots they live in,
+    /// which is what lets a debugger show them. Recorded under
+    /// <c>compile_mode=debug</c> only, where every named variable is made permanent
+    /// precisely so that this map can exist: a variable left in an X register is gone
+    /// the moment the next call overwrites it.</summary>
+    public IReadOnlyList<DebugVariable> DebugVariables { get; }
+
+    /// <summary>Whether the clause allocates an environment frame. A debugger needs to
+    /// know: the frames on the environment chain are exactly the clauses that have one,
+    /// so this is what aligns a stack frame with the environment its variables live in.
+    /// A clause with no frame has no variables to show — there is nowhere to put
+    /// them.</summary>
+    public bool HasFrame { get; }
+
     public CompiledClause(
         byte[] bytecode,
         int functorId,
@@ -62,8 +76,11 @@ public sealed class CompiledClause
         int permanentCount,
         IReadOnlyList<CallSite> callSites,
         IReadOnlyList<int>? dispatchSites = null,
-        IReadOnlyList<DebugStop>? debugStops = null)
+        IReadOnlyList<DebugStop>? debugStops = null,
+        IReadOnlyList<DebugVariable>? debugVariables = null,
+        bool hasFrame = false)
     {
+        HasFrame = hasFrame;
         Bytecode = bytecode;
         FunctorId = functorId;
         Arity = arity;
@@ -72,8 +89,18 @@ public sealed class CompiledClause
         CallSites = callSites;
         DispatchSites = dispatchSites ?? Array.Empty<int>();
         DebugStops = debugStops ?? Array.Empty<DebugStop>();
+        DebugVariables = debugVariables ?? Array.Empty<DebugVariable>();
     }
 }
+
+/// <summary>ADR-035 — a source variable of a clause, and the Y slot holding it.</summary>
+public readonly record struct DebugVariable(string Name, int Slot);
+
+/// <summary>ADR-035 — one clause of a compiled predicate, as a debugger sees it: the
+/// half-open span of bytecode it occupies, whether it has an environment frame, and
+/// the source variables in that frame.</summary>
+public readonly record struct DebugClauseFrame(
+    int Start, int End, bool HasFrame, IReadOnlyList<DebugVariable> Variables);
 
 /// <summary>ADR-035 — a place a debugger may stop: the bytecode offset of the
 /// instruction it precedes, and the id of the source location

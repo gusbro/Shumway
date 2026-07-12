@@ -1932,7 +1932,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // that ride the standard WAM choice-point machinery instead of
         // faking backtracking inside a single-shot builtin.
         if (consultPrelude)
+        {
             ConsultStringInner(Prelude.Source, recordInHistory: false);
+            MarkModuleNonDebuggable(Prelude.ModuleName);   // ADR-035
+        }
     }
 
     /// <summary>Loads a bundle into a fresh engine, using the bundle's BAKED
@@ -1970,7 +1973,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         foreach (var e in bundle.Entries)
             if (e.ModuleName == Prelude.ModuleName) { bundleHasPrelude = true; break; }
         if (!bundleHasPrelude)
+        {
             engine.ConsultStringInner(Prelude.Source, recordInHistory: false);
+            engine.MarkModuleNonDebuggable(Prelude.ModuleName);   // ADR-035
+        }
         engine.LoadBundleCore(bundle, bundleDir);
         return engine;
     }
@@ -3558,10 +3564,15 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     public IReadOnlyCollection<int> Breakpoints => _breakpointSites;
 
     /// <summary>ADR-035 — arms every stop site on this source line, and returns how
-    /// many bound. Zero means the breakpoint cannot bind: the line has no code — it
-    /// is blank, it is a comment, it belongs to a predicate compiled without debug
+    /// many bound. Zero means the breakpoint cannot bind ANYWHERE below the line: the
+    /// file has no code left — or it belongs to a predicate compiled without debug
     /// (<c>:- disable_debug.</c>), or the program is not debug-compiled at all. A
     /// debugger renders that as a hollow breakpoint rather than pretending it took.
+    ///
+    /// <para>A line with no stop site of its own — blank, a comment, or a rule's head,
+    /// whose "clause entered" point IS its first goal's — snaps FORWARD to the next
+    /// line that has one, which is what every debugger does with a breakpoint set on a
+    /// line that is not code. <see cref="BoundLine"/> reports where it landed.</para>
     ///
     /// <para>Binding is decided against THIS engine's compiled code, not against the
     /// global site table: the table is process-wide, so two engines that both
@@ -3571,10 +3582,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     public int AddBreakpoint(string file, int line)
     {
         EnsureCodeLinked();
-        var sites = Shumway.Core.DebugSiteTable.SitesOnLine(
-            Shumway.Core.DebugSiteTable.InternFile(file), line);
+        int fileId = Shumway.Core.DebugSiteTable.InternFile(file);
+
+        int target = SnapToCompiledLine(fileId, line);
+        if (target < 0) return 0;
+
         int bound = 0;
-        foreach (int id in sites)
+        foreach (int id in Shumway.Core.DebugSiteTable.SitesOnLine(fileId, target))
         {
             if (!_compiledSites.Contains(id)) continue;
             _breakpointSites.Add(id);
@@ -3582,6 +3596,60 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
         if (bound > 0) RefreshBreakpoints();
         return bound;
+    }
+
+    /// <summary>ADR-035 — the line an <see cref="AddBreakpoint"/> for this line would
+    /// actually bind at, or -1 if none. A debugger moves the red dot there.</summary>
+    public int BoundLine(string file, int line)
+    {
+        EnsureCodeLinked();
+        return SnapToCompiledLine(Shumway.Core.DebugSiteTable.InternFile(file), line);
+    }
+
+    // The source span of every debuggable clause: where its head is written, and the
+    // first and last lines it can be stopped at. Built alongside _stopPcs.
+    private readonly List<(int FileId, int HeadLine, int FirstLine, int LastLine)>
+        _clauseLines = new();
+
+    /// <summary>ADR-035 — the line a breakpoint on <paramref name="line"/> binds at, or
+    /// -1 for a hollow one.
+    ///
+    /// <para>A line with a stop site binds where it is. A line without one binds forward
+    /// to the next site OF THE CLAUSE IT IS IN — which is how a breakpoint on a rule's
+    /// head (whose entry point IS its first goal's) or on a blank line inside a body
+    /// finds its code. It does NOT wander past the end of that clause: a breakpoint on a
+    /// blank line between predicates, or inside a <c>:- disable_debug.</c> region, has
+    /// nothing to bind to, and saying so is better than silently arming a line the user
+    /// was not looking at.</para></summary>
+    private int SnapToCompiledLine(int fileId, int line)
+    {
+        foreach (int id in _compiledSites)
+        {
+            var site = Shumway.Core.DebugSiteTable.Get(id);
+            if (site.FileId == fileId && site.Line == line) return line;
+        }
+
+        int best = -1;
+        foreach (var clause in _clauseLines)
+        {
+            if (clause.FileId != fileId) continue;
+            if (line < clause.HeadLine || line > clause.LastLine) continue;
+            int target = FirstSiteLineAtOrAfter(fileId, Math.Max(line, clause.FirstLine));
+            if (target > 0 && (best < 0 || target < best)) best = target;
+        }
+        return best;
+    }
+
+    private int FirstSiteLineAtOrAfter(int fileId, int line)
+    {
+        int best = -1;
+        foreach (int id in _compiledSites)
+        {
+            var site = Shumway.Core.DebugSiteTable.Get(id);
+            if (site.FileId != fileId || site.Line < line) continue;
+            if (best < 0 || site.Line < best) best = site.Line;
+        }
+        return best;
     }
 
     /// <summary>ADR-035 — disarms every stop site on this source line.</summary>
@@ -3672,9 +3740,28 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return i >= 0 ? _stopSiteIds[i] : -1;
     }
 
-    /// <summary>ADR-035 — one entry of the Prolog call stack.</summary>
+    // Every debuggable clause in the loaded program, by program address, sorted.
+    // Built alongside _stopPcs; empty unless something was compiled debuggable.
+    private int[] _clauseStarts = Array.Empty<int>();
+    private Shumway.Compiler.Wam.DebugClauseFrame[] _clauseFrames
+        = Array.Empty<Shumway.Compiler.Wam.DebugClauseFrame>();
+
+    /// <summary>ADR-035 — the clause executing at this program address.</summary>
+    private Shumway.Compiler.Wam.DebugClauseFrame? ClauseAt(int pc)
+    {
+        if (_clauseStarts.Length == 0 || pc < 0) return null;
+        int i = Array.BinarySearch(_clauseStarts, pc);
+        if (i < 0) i = ~i - 1;
+        if (i < 0) return null;
+        var clause = _clauseFrames[i];
+        return pc < clause.End ? clause : null;
+    }
+
+    /// <summary>ADR-035 — one entry of the Prolog call stack, with the variables of the
+    /// clause it is running, rendered as the user wrote them.</summary>
     public readonly record struct DebugFrame(
-        string Name, int Arity, string File, int Line, int Pc)
+        string Name, int Arity, string File, int Line, int Pc,
+        IReadOnlyList<(string Name, string Value)> Variables)
     {
         public override string ToString() => $"{Name}/{Arity} at {File}:{Line}";
     }
@@ -3691,7 +3778,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     public IReadOnlyList<DebugFrame> CaptureFrames(Activation engine)
     {
         ArgumentNullException.ThrowIfNull(engine);
-        return CaptureFrames(engine, engine.P, engine.EnumerateCallReturnAddresses());
+        return CaptureFrames(engine, engine.P, engine.E, engine.Cp);
     }
 
     /// <summary>ADR-035 — the call stack of a computation the machine is not standing
@@ -3702,26 +3789,34 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     public IReadOnlyList<DebugFrame> CaptureFrames(Activation engine, int pc, int e, int cp)
     {
         ArgumentNullException.ThrowIfNull(engine);
-        return CaptureFrames(engine, pc, engine.EnumerateCallReturnAddresses(e, cp));
-    }
-
-    private IReadOnlyList<DebugFrame> CaptureFrames(
-        Activation engine, int pc, IEnumerable<int> returnAddresses)
-    {
         var frames = new List<DebugFrame>();
-        AddFrame(frames, pc);
-        foreach (int returnPc in returnAddresses)
+
+        // The environment chain holds exactly the clauses that HAVE a frame, innermost
+        // first. Only the clause we are standing in can be frameless (a frameless
+        // clause makes no non-tail call, so it can never be a caller waiting to
+        // resume) — and if it is, the first environment on the chain is already its
+        // caller's. That one question decides the whole alignment.
+        var envs = new List<int>();
+        foreach (int env in engine.EnumerateEnvChain(e)) envs.Add(env);
+        bool ownFrame = ClauseAt(pc)?.HasFrame ?? false;
+
+        AddFrame(engine, frames, pc, ownFrame && envs.Count > 0 ? envs[0] : -1);
+
+        int envIndex = ownFrame ? 1 : 0;
+        foreach (int returnPc in engine.EnumerateCallReturnAddresses(e, cp))
         {
             // A return address points at the instruction AFTER the call, which is
             // where the NEXT goal's code begins — so looking its line up directly
             // would blame a caller for the goal it has not run yet. Step back a byte
             // to land inside the call itself, the goal the frame is really waiting on.
-            AddFrame(frames, returnPc - 1);
+            AddFrame(engine, frames, returnPc - 1,
+                envIndex < envs.Count ? envs[envIndex] : -1);
+            envIndex++;
         }
         return frames;
     }
 
-    private void AddFrame(List<DebugFrame> frames, int pc)
+    private void AddFrame(Activation engine, List<DebugFrame> frames, int pc, int env)
     {
         if (_currentPredicatesByAddress is null || pc < 0) return;
         var entries = SortedPredicateEntries();
@@ -3740,7 +3835,52 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         string file = siteId >= 0
             ? Shumway.Core.DebugSiteTable.FileName(site.FileId)
             : "";
-        frames.Add(new DebugFrame(name, arity, file, siteId >= 0 ? site.Line : 0, pc));
+        frames.Add(new DebugFrame(
+            name, arity, file, siteId >= 0 ? site.Line : 0, pc, ReadVariables(engine, pc, env)));
+    }
+
+    /// <summary>ADR-035 — the variables of the clause running at <paramref name="pc"/>,
+    /// read out of the environment frame at <paramref name="env"/> and rendered the way
+    /// the user wrote them. An unbound variable renders as <c>_</c> plus its heap cell,
+    /// which is how it will keep printing until something binds it.
+    ///
+    /// <para>Empty when the clause has no frame, or was not compiled debuggable: its
+    /// variables live in X registers the next call overwrites, and there is no honest
+    /// answer to give. Debug codegen exists precisely to stop that from happening —
+    /// it makes every named variable permanent.</para></summary>
+    private IReadOnlyList<(string Name, string Value)> ReadVariables(
+        Activation engine, int pc, int env)
+    {
+        if (env < 0) return Array.Empty<(string, string)>();
+        var clause = ClauseAt(pc);
+        if (clause is null || clause.Value.Variables.Count == 0)
+            return Array.Empty<(string, string)>();
+
+        var result = new List<(string, string)>(clause.Value.Variables.Count);
+        foreach (var v in clause.Value.Variables)
+        {
+            string value;
+            try
+            {
+                // Materialization reads from the heap, and a Y slot is on the stack, so
+                // the cell is staged into one fresh heap cell first — the same copy the
+                // tracer makes of an argument register. Copying the CELL keeps sharing
+                // intact: an unbound variable stays a reference to the same variable,
+                // and a compound still points at the same structure.
+                int h = engine.AllocateHeap(1);
+                engine.SetHeap(h, engine.GetY(env, v.Slot));
+                Term term = TermReader.Materialize(engine, h);
+                value = AstTermRenderer.Render(term, 999, Operators);
+            }
+            catch (Exception)
+            {
+                // Reading a frame is best-effort by nature: a debugger must never take
+                // the program down because it could not render something.
+                value = "<unavailable>";
+            }
+            result.Add((v.Name, value));
+        }
+        return result;
     }
 
     /// <summary>ADR-035 — the source site of the clause a choice point's retry address
@@ -5641,7 +5781,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// <c>ins</c> — and their operators available to subsequently consulted
     /// source and queries. CLP(FD) is opt-in: an engine that never calls
     /// this carries none of the library's weight.</summary>
-    public void UseClpfd() => ConsultString(Clpfd.Source);
+    public void UseClpfd()
+    {
+        ConsultString(Clpfd.Source);
+        MarkModuleNonDebuggable(Clpfd.ModuleName);   // ADR-035 — a library, not the user's code
+    }
 
     /// <summary>Loads the CLP(R) constraint library (chunk 99) into this
     /// engine, making linear-equality constraints over the reals available
@@ -5651,7 +5795,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// <para>CLP(R) and CLP(FD) both define a <c>verify_attributes/4</c>
     /// hook as a public predicate, so for now only one of the two may be
     /// loaded into a given engine.</para></summary>
-    public void UseClpr() => ConsultString(Clpr.Source);
+    public void UseClpr()
+    {
+        ConsultString(Clpr.Source);
+        MarkModuleNonDebuggable(Clpr.ModuleName);   // ADR-035 — a library, not the user's code
+    }
 
     // Compatibility libraries loaded on demand by use_module(library(Name)),
     // tracked so a repeated import (or a program that imports the same library
@@ -6278,6 +6426,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             InvalidatePersistent();
             _consultHistory.Clear();
             ConsultStringInner(Prelude.Source, recordInHistory: false);
+            MarkModuleNonDebuggable(Prelude.ModuleName);   // ADR-035
             foreach (var src in snap.ConsultHistory)
                 ConsultString(src);
         }
@@ -6389,6 +6538,29 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// directive was read — so both spellings are interned and the set holds
     /// whichever the compiler ends up grouping by. Interning a functor that never
     /// gets used costs an int.</summary>
+    /// <summary>ADR-035 — every predicate of a module the user did not write is
+    /// implicitly <c>:- disable_debug.</c>: the prelude, the CLP libraries. Stepping
+    /// into <c>append/3</c> and landing in library source nobody asked to see is the
+    /// oldest annoyance in debugging, and the library is not what the user is debugging.
+    ///
+    /// <para>This has to be recorded rather than inferred from the flag at compile time,
+    /// because the library's clauses are RE-compiled at query setup, by which point the
+    /// engine's <c>compile_mode</c> is whatever the user's program set — so without this
+    /// the library would silently become debuggable, take stop sites, and attribute them
+    /// to the user's file.</para></summary>
+    private void MarkModuleNonDebuggable(string moduleName)
+    {
+        _nonDebuggableModules.Add(moduleName);
+        if (!_modules.TryGetValue(moduleName, out var module)) return;
+        var specs = new HashSet<(string Name, int Arity)>();
+        foreach (var clause in module.Clauses)
+            if (TryReadClauseHead(clause, out var spec))
+                specs.Add(spec);
+        _nonDebuggableFunctors.UnionWith(ResolveNonDebuggableFids(specs, moduleName));
+    }
+
+    private readonly HashSet<string> _nonDebuggableModules = new();
+
     private static HashSet<int> ResolveNonDebuggableFids(
         HashSet<(string Name, int Arity)> specs, string moduleName)
     {
@@ -8395,8 +8567,23 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 moduleLocalsCache[name] = locals;
 
                 var ctx = new ModuleRewrite.Context(name, locals, _dynamicFunctors);
+                // ADR-035 — a library's HELPERS are library code too. MetaTransform
+                // lowers control constructs into generated predicates ('$call_conj' and
+                // friends), which are not in manifest.Clauses and so cannot be marked at
+                // consult time — but they are right here, in `transformed`, and they
+                // carry the library's source positions. Left debuggable they would take
+                // stop sites at the library's line numbers and attribute them to the
+                // user's file. Compiling a module is what makes its predicates; if the
+                // module is not debuggable, neither is anything it made.
+                bool opaqueModule = _nonDebuggableModules.Contains(name);
                 foreach (var clause in transformed)
-                    allRewritten.Add(ModuleRewrite.Rewrite(clause, ctx));
+                {
+                    var rewritten = ModuleRewrite.Rewrite(clause, ctx);
+                    allRewritten.Add(rewritten);
+                    if (opaqueModule && TryReadClauseHead(rewritten, out var spec))
+                        _nonDebuggableFunctors.Add(FunctorTable.Intern(
+                            AtomTable.Intern(spec.Name, permanent: true).Id, spec.Arity));
+                }
             }
             rewrittenHeadFids = new HashSet<int>();
             foreach (var c in allRewritten)
@@ -9202,17 +9389,52 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         {
             var sites = new HashSet<int>();
             var byPc = new SortedDictionary<int, int>();
+            var frames = new SortedDictionary<int, Shumway.Compiler.Wam.DebugClauseFrame>();
+            _clauseLines.Clear();
             foreach (var (predAddr, pred) in _currentPredicatesByAddress)
+            {
                 foreach (var stop in pred.DebugStops)
                 {
                     sites.Add(stop.SiteId);
                     byPc[predAddr + stop.Offset] = stop.SiteId;
                 }
+                // The clause frame maps take the same second relocation as the stop
+                // sites: clause-local, then predicate-local, then program-absolute.
+                for (int i = 0; i < pred.DebugFrames.Count; i++)
+                {
+                    var f = pred.DebugFrames[i];
+                    frames[predAddr + f.Start] = new Shumway.Compiler.Wam.DebugClauseFrame(
+                        predAddr + f.Start, predAddr + f.End, f.HasFrame, f.Variables);
+
+                    // The clause's source span: from where its head is written down to
+                    // the last line it can be stopped at. What a breakpoint on a line
+                    // with no code of its own snaps within, and no further.
+                    int fileId = -1, first = int.MaxValue, last = -1;
+                    foreach (var stop in pred.DebugStops)
+                    {
+                        if (stop.Offset < f.Start || stop.Offset >= f.End) continue;
+                        var site = Shumway.Core.DebugSiteTable.Get(stop.SiteId);
+                        fileId = site.FileId;
+                        if (site.Line < first) first = site.Line;
+                        if (site.Line > last) last = site.Line;
+                    }
+                    if (last < 0) continue;
+                    int headLine = i < pred.ClauseSourcePositions.Count
+                        ? pred.ClauseSourcePositions[i].Line
+                        : first;
+                    _clauseLines.Add((fileId, Math.Min(headLine, first), first, last));
+                }
+            }
             _compiledSites = sites;
             _stopPcs = new int[byPc.Count];
             _stopSiteIds = new int[byPc.Count];
             byPc.Keys.CopyTo(_stopPcs, 0);
             byPc.Values.CopyTo(_stopSiteIds, 0);
+
+            _clauseStarts = new int[frames.Count];
+            _clauseFrames = new Shumway.Compiler.Wam.DebugClauseFrame[frames.Count];
+            frames.Keys.CopyTo(_clauseStarts, 0);
+            frames.Values.CopyTo(_clauseFrames, 0);
         }
         SyncBreakpoints(program);
         engine.BreakpointOriginals = _breakpointPatches.Count == 0 ? null : _breakpointPatches;

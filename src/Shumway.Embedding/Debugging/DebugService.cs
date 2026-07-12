@@ -36,14 +36,20 @@ public enum StepMode
     Out,
 }
 
-/// <summary>Everything a debugger needs to know about one stop.</summary>
+/// <summary>Everything a debugger needs to know about one stop. Each frame carries its
+/// own variables, so <c>Frames[0].Variables</c> is what a Locals window shows.</summary>
 public sealed record DebugStopEvent(
     StopReason Reason,
     string Goal,
     string File,
     int Line,
     int Depth,
-    IReadOnlyList<PrologEngine.DebugFrame> Frames);
+    IReadOnlyList<PrologEngine.DebugFrame> Frames)
+{
+    /// <summary>The variables of the clause we are stopped in.</summary>
+    public IReadOnlyList<(string Name, string Value)> Variables =>
+        Frames.Count > 0 ? Frames[0].Variables : Array.Empty<(string, string)>();
+}
 
 /// <summary>
 /// ADR-035 — the engine-side debug session: breakpoints, port-based stepping, and

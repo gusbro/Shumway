@@ -84,24 +84,27 @@ public class Adr035SteppingTests
     public void StepInto_TakesTheNextPort_HoweverDeep()
     {
         var engine = DebugEngine(Nested);
-        engine.AddBreakpoint("<string>", 2);   // clause entry of top/1
+        // Line 2 is `top(X) :-` — a head, whose "clause entered" point IS its first
+        // goal's. So it snaps forward to line 3, the call to mid/1, and stops there.
+        Assert.Equal(3, engine.BoundLine("<string>", 2));
+        engine.AddBreakpoint("<string>", 2);
 
         var stops = Walk(engine, "top(A).",
             StepMode.Into, StepMode.Into, StepMode.Into, StepMode.Into);
 
-        // Down through both calls, then back up through both exits: the four ports
-        // of a nested deterministic call, in the order the machine reaches them.
+        // Down into both calls, then back up through both exits: the ports of a nested
+        // deterministic call, in the order the machine reaches them.
         Assert.Equal(new[]
         {
-            "Breakpoint top/1",
-            "Call mid/1",
-            "Call leaf/1",
+            "Breakpoint top/1",   // stopped in top/1, about to call mid/1 (line 3)
+            "Call leaf/1",        // into mid/1, which calls leaf/1
             "Exit leaf/1",
             "Exit mid/1",
+            "Call tail/1",        // back in top/1, on to its second goal
         }, Ports(stops));
 
-        // And each one is a level deeper than the last, then a level shallower.
-        Assert.Equal(new[] { 0, 1, 2, 2, 1 },
+        // Into mid/1 is a level deeper; into leaf/1 deeper still; then back out.
+        Assert.Equal(new[] { 0, 1, 1, 0, 0 },
             stops.Select(s => s.Depth - stops[0].Depth));
     }
 
@@ -272,16 +275,38 @@ public class Adr035SteppingTests
     // ---------- the model, pinned ----------
 
     [Fact]
-    public void ALineHoldingBothAHeadAndAGoalBindsBothOfThem()
+    public void ABreakpointOnALineWithNoCodeOfItsOwnSnapsForward()
     {
-        // A source line is not a port. `top(X) :- mid(X).` holds two: entering top/1,
-        // and calling mid/1. A breakpoint on that line binds both, and stops at both —
-        // the same way a breakpoint on a line with a lambda binds every body on it.
-        var engine = DebugEngine("top(X) :- mid(X).\nmid(7).\n");
-        int bound = engine.AddBreakpoint("<string>", 2);
+        //   2: top(X) :-
+        //   3:
+        //   4:     % nothing here either
+        //   5:     mid(X).
+        //   6: mid(7).
+        var engine = DebugEngine(
+            "top(X) :-\n\n    % nothing here either\n    mid(X).\nmid(7).\n");
 
-        Assert.Equal(2, bound);
-        Assert.Equal(2, Walk(engine, "top(A).").Count);
+        // None of lines 2, 3, 4 is a place the machine can stop: 3 and 4 have no code,
+        // and 2 is a head, whose entry point IS the first goal's. All three snap to 5.
+        Assert.Equal(5, engine.BoundLine("<string>", 2));
+        Assert.Equal(5, engine.BoundLine("<string>", 3));
+        Assert.Equal(5, engine.BoundLine("<string>", 4));
+
+        Assert.Equal(1, engine.AddBreakpoint("<string>", 3));
+        var stops = Walk(engine, "top(A).");
+        Assert.Single(stops);
+        Assert.Equal(5, stops[0].Line);
+    }
+
+    [Fact]
+    public void ABreakpointPastTheEndOfTheCodeDoesNotBind()
+    {
+        // A hollow breakpoint: there is nothing at or after this line to stop in, and
+        // saying so is better than pretending it took.
+        var engine = DebugEngine("top(X) :-\n    mid(X).\nmid(7).\n");
+
+        Assert.Equal(-1, engine.BoundLine("<string>", 99));
+        Assert.Equal(0, engine.AddBreakpoint("<string>", 99));
+        Assert.Empty(engine.Breakpoints);
     }
 
     [Fact]

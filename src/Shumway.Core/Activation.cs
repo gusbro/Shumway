@@ -605,6 +605,30 @@ public sealed partial class Activation
         return _stack[_e + EnvY1Offset + slot];
     }
 
+    /// <summary>ADR-035 — a Y slot of a NAMED environment, rather than the current one:
+    /// a debugger reads the variables of every frame on the stack, not just the
+    /// innermost.</summary>
+    public Cell GetY(int env, int slot)
+    {
+        if (env < 0) ThrowNoEnv();
+        return _stack[env + EnvY1Offset + slot];
+    }
+
+    /// <summary>ADR-035 — the environment chain from <paramref name="e"/> outwards,
+    /// innermost first. These are exactly the clauses that have a frame, in call order,
+    /// which is what lets a debugger line each stack frame up with the environment its
+    /// variables live in.</summary>
+    public IEnumerable<int> EnumerateEnvChain(int e)
+    {
+        while (e >= 0)
+        {
+            yield return e;
+            int prevE = (int)_stack[e + EnvCeOffset].Data;
+            if (prevE == e || prevE < 0) yield break;
+            e = prevE;
+        }
+    }
+
     /// <summary>Writes the <c>Y(k+1)</c> slot of the current environment frame.</summary>
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]

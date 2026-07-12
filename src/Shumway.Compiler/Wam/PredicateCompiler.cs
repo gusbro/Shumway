@@ -220,6 +220,7 @@ public sealed class PredicateCompiler
                     clauseSourcePositions: clausePositions)
                 {
                     DebugStops = ShiftDebugStops(compiledClauses[0], clauseStart),   // ADR-035
+                    DebugFrames = ClauseFrames(compiledClauses[0], clauseStart),     // ADR-035
                 };
             }
             return new CompiledPredicate(
@@ -238,6 +239,7 @@ public sealed class PredicateCompiler
                 clauseSourcePositions: clausePositions)
             {
                 DebugStops = compiledClauses[0].DebugStops,   // ADR-035 — no prefix, no shift
+                DebugFrames = ClauseFrames(compiledClauses[0], 0),
             };
         }
 
@@ -352,6 +354,7 @@ public sealed class PredicateCompiler
         var callSites = new List<CallSite>();
         var dispatchSites = new List<int>();
         var debugStops = new List<DebugStop>();   // ADR-035
+        var debugFrames = new List<DebugClauseFrame>();   // ADR-035
         if (isDynamic) emitter.EmitEnterDynamic();
         if (dynamicChain)
         {
@@ -401,6 +404,7 @@ public sealed class PredicateCompiler
                 callSites.Add(new CallSite(
                     clauseStart + site.OpcodeOffset, site.CalleeFunctorId, site.IsExecute));
             debugStops.AddRange(ShiftDebugStops(compiledClauses[i], clauseStart));   // ADR-035
+            debugFrames.AddRange(ClauseFrames(compiledClauses[i], clauseStart));     // ADR-035
             MergeClauseDispatchSites(emitter, compiledClauses[i], clauseStart, dispatchSites);
         }
 
@@ -410,6 +414,7 @@ public sealed class PredicateCompiler
             clausePositions)
         {
             DebugStops = debugStops,   // ADR-035
+            DebugFrames = debugFrames,   // ADR-035
         };
     }
 
@@ -425,6 +430,23 @@ public sealed class PredicateCompiler
     /// dispatch sites: each site offset shifts by the clause's placement, and the
     /// operand VALUE is rebased from clause-local to predicate-local (the linker
     /// then shifts it to program-absolute like any other dispatch site).</summary>
+    /// <summary>ADR-035 — a clause's frame map, placed where the clause was placed.
+    /// The span is what takes a debugger from a program address back to the clause
+    /// executing there, and so to the names of the variables in its frame.</summary>
+    private static IReadOnlyList<DebugClauseFrame> ClauseFrames(
+        CompiledClause clause, int clauseStart)
+    {
+        if (clause.DebugStops.Count == 0) return Array.Empty<DebugClauseFrame>();
+        return new[]
+        {
+            new DebugClauseFrame(
+                clauseStart,
+                clauseStart + clause.Bytecode.Length,
+                clause.HasFrame,
+                clause.DebugVariables),
+        };
+    }
+
     /// <summary>ADR-035 — a clause's stop sites, shifted from clause-local offsets
     /// to predicate-local ones by where the clause was placed. Same treatment as
     /// its call sites, and for the same reason.</summary>
@@ -1133,6 +1155,7 @@ public sealed class PredicateCompiler
         var callSites = new List<CallSite>();
         var dispatchSites = new List<int>();
         var debugStops = new List<DebugStop>();   // ADR-035
+        var debugFrames = new List<DebugClauseFrame>();   // ADR-035
         var switchTableIdSites = new List<int>();
 
         // ADR-027: emit a sub-switch region — the switch opcode followed by its
@@ -1300,6 +1323,7 @@ public sealed class PredicateCompiler
                 callSites.Add(new CallSite(
                     clauseStart + site.OpcodeOffset, site.CalleeFunctorId, site.IsExecute));
             debugStops.AddRange(ShiftDebugStops(compiledClauses[i], clauseStart));   // ADR-035
+            debugFrames.AddRange(ClauseFrames(compiledClauses[i], clauseStart));     // ADR-035
             MergeClauseDispatchSites(emitter, compiledClauses[i], clauseStart, dispatchSites);
         }
 
@@ -1309,6 +1333,7 @@ public sealed class PredicateCompiler
             clausePositions)
         {
             DebugStops = debugStops,   // ADR-035
+            DebugFrames = debugFrames,   // ADR-035
         };
     }
 
@@ -1591,6 +1616,7 @@ public sealed class PredicateCompiler
         var callSites = new List<CallSite>();
         var dispatchSites = new List<int>();
         var debugStops = new List<DebugStop>();   // ADR-035
+        var debugFrames = new List<DebugClauseFrame>();   // ADR-035
         var switchTableIdSites = new List<int>();
 
         emitter.EmitEnterDynamic();
@@ -1697,6 +1723,7 @@ public sealed class PredicateCompiler
                 callSites.Add(new CallSite(
                     clauseStart + site.OpcodeOffset, site.CalleeFunctorId, site.IsExecute));
             debugStops.AddRange(ShiftDebugStops(compiledClauses[i], clauseStart));   // ADR-035
+            debugFrames.AddRange(ClauseFrames(compiledClauses[i], clauseStart));     // ADR-035
             MergeClauseDispatchSites(emitter, compiledClauses[i], clauseStart, dispatchSites);
         }
 
@@ -1706,6 +1733,7 @@ public sealed class PredicateCompiler
             clausePositions)
         {
             DebugStops = debugStops,   // ADR-035
+            DebugFrames = debugFrames,   // ADR-035
         };
     }
 

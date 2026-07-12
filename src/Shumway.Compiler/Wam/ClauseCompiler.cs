@@ -150,6 +150,15 @@ public sealed class ClauseCompiler
         // appears in. Chunk 0 = head + first goal; chunk i >= 1 = goal i.
         var permanents = ClassifyPermanents(headArgs, goals);
 
+        // ADR-035 — under debug codegen EVERY named source variable is permanent, not
+        // just the ones that outlive a call. A variable the WAM leaves in an X register
+        // is unreadable a moment later: the next call overwrites it. A debugger has to
+        // be able to show `X` for as long as the clause is on the stack, so debug code
+        // pays a Y slot for every one of them. This is the whole reason release code
+        // and debug code are not the same code.
+        if (DebugCodegen && !_suppressBreaks)
+            permanents = AllNamedVariables(headArgs, goals, permanents);
+
         // Chunk 405 register-allocator survey (ADR-021), diag builds only —
         // see DiagYSurvey. Stripped from normal builds (chunk 414).
         DiagYSurvey(name, headArgs, goals, permanents);
@@ -224,10 +233,6 @@ public sealed class ClauseCompiler
         // needs the frame to restore Cp from.
         if (DebugCodegen && goals.Count > 0)
             needFrame = true;
-        // ADR-035 — the clause's entry site, first thing in its bytecode. This is
-        // the stop a breakpoint on a FACT's line resolves to, and the one a
-        // rule's head line resolves to; the body goals get their own below.
-        MarkStop(state, headTerm.Position);
 
         // Chunk 220 — fuse the common Allocate+GetLevel prologue when both
         // are emitted; otherwise emit individually.
@@ -260,6 +265,43 @@ public sealed class ClauseCompiler
         DrainPendingCompounds(state);
         state.CseActive = false;
 
+        // ADR-035 — initialise the frame. The WAM writes a Y slot at the variable's
+        // first occurrence and not before, so until then the slot holds whatever the
+        // stack happened to contain. Running code never looks, but a debugger does —
+        // and stack garbage can look exactly like a valid heap reference, so it would
+        // not fail loudly, it would print a plausible lie. Every source variable the
+        // head did not already bind therefore gets a fresh unbound variable here, and
+        // reports itself honestly as unbound until something binds it. (The body's own
+        // put_variable overwrites this; the cost is debug-only and buys the guarantee
+        // that every slot a debugger can read is a slot the machine has written.)
+        if (DebugCodegen && !_suppressBreaks && needFrame)
+        {
+            int scratch = -1;
+            foreach (var (varName, slot) in state.Ys)
+            {
+                if (varName.Length == 0 || varName[0] == '_') continue;
+                if (state.YsInitialized.Contains(varName)) continue;
+                if (scratch < 0) scratch = state.Xs.AllocateAnonymousSlot();
+                state.Emitter.EmitPutVariableY(slot, scratch);
+            }
+        }
+
+        // ADR-035 — a FACT's stop site, placed after the head has matched rather than at
+        // the clause's first byte. Two things fall out of that, both of them what a
+        // debugger wants: a clause whose head does not match is never stopped in (the
+        // user asked to stop when THIS clause runs, not when it is tried and rejected),
+        // and by the time we stop, the head arguments are bound — so the fact's
+        // variables can be read.
+        //
+        // A RULE gets no entry site, because it would not be a place of its own: with
+        // the head matched, the very next instruction is the first body goal's, and that
+        // goal has a site already. "The clause was entered" and "the first goal is about
+        // to run" are the same point in the machine, and one point deserves one stop. A
+        // breakpoint on a rule's head line snaps forward to it (AddBreakpoint), the way
+        // a breakpoint on a line with no code of its own always has.
+        if (goals.Count == 0)
+            MarkStop(state, headTerm.Position);
+
         // ----- Pre-body preparation -----
         // First, bump the anonymous-slot counter so any temp register handed
         // out during body emission lives outside the body's argument range
@@ -278,10 +320,22 @@ public sealed class ClauseCompiler
         // indexed by goal position.
         int[] liveAfter = ComputeLivePermsAfterEachGoal(
             goals, state.Ys, cutSlot, state.PermanentCount, iteBarrierSlot);
+        // ADR-035 — debug codegen does not trim. Trimming discards the Y slots a call
+        // does not need afterwards, which is exactly the debugger's problem: a variable
+        // the clause is done with is still one the user can see on the line they are
+        // stopped at. So every call keeps the whole frame.
+        if (DebugCodegen && !_suppressBreaks)
+            for (int i = 0; i < liveAfter.Length; i++) liveAfter[i] = state.PermanentCount;
+
         if (goals.Count == 0)
         {
-            // Pure fact / trivial-body rule.
-            state.Emitter.EmitProceed();
+            // Pure fact / trivial-body rule. Under debug codegen a fact whose head has
+            // variables now HAS a frame (they were made permanent so the debugger can
+            // read them), and a frame that is allocated must be deallocated: leaving it
+            // would hand the caller a stale E, and it would read its own Y slots out of
+            // the wrong environment.
+            if (needFrame) state.Emitter.EmitDeallocateProceed();
+            else state.Emitter.EmitProceed();
         }
         else
         {
@@ -331,6 +385,20 @@ public sealed class ClauseCompiler
         }
 
         int functorId = InternFunctor(name, headArgs.Length);
+
+        // ADR-035 — the frame map: which Y slot each source variable ended up in. Only
+        // the ones the source named; the cut barrier and the if-then-else barriers also
+        // live in Y slots, but they are the machine's, not the user's.
+        List<DebugVariable>? debugVars = null;
+        if (DebugCodegen && !_suppressBreaks && needFrame)
+        {
+            debugVars = new List<DebugVariable>();
+            foreach (var (varName, slot) in state.Ys)
+                if (varName.Length > 0 && varName[0] != '_')
+                    debugVars.Add(new DebugVariable(varName, slot));
+            debugVars.Sort((a, b) => a.Slot.CompareTo(b.Slot));
+        }
+
         return new CompiledClause(
             state.Emitter.ToBytes(),
             functorId,
@@ -339,7 +407,9 @@ public sealed class ClauseCompiler
             state.PermanentCount,
             state.CallSites,
             state.DispatchSites.Count == 0 ? null : state.DispatchSites,
-            state.DebugStops.Count == 0 ? null : state.DebugStops);
+            state.DebugStops.Count == 0 ? null : state.DebugStops,
+            debugVars is { Count: > 0 } ? debugVars : null,
+            hasFrame: needFrame);
     }
 
     /// <summary>ADR-025 — adds every named variable occurring inside an inline
@@ -607,6 +677,40 @@ public sealed class ClauseCompiler
         foreach (string name in order)
             if (occurs[name].Count >= 2)
                 perms.Add(name);
+        return perms;
+    }
+
+    /// <summary>ADR-035 — every named variable in the clause, in first-occurrence
+    /// order, with the ones <see cref="ClassifyPermanents"/> already chose keeping
+    /// their slots. Debug codegen makes them all permanent so a debugger can read them
+    /// out of the frame; <c>_</c> and <c>_Foo</c> are left out, being the two spellings
+    /// of "I do not care about this one".</summary>
+    private static List<string> AllNamedVariables(
+        Term[] headArgs, List<Term> goals, List<string> already)
+    {
+        var perms = new List<string>(already);
+        var have = new HashSet<string>(already);
+        var stack = new Stack<Term>();
+
+        void Visit(Term root)
+        {
+            stack.Push(root);
+            while (stack.Count > 0)
+            {
+                switch (stack.Pop())
+                {
+                    case VarTerm v when v.Name.Length > 0 && v.Name[0] != '_' && have.Add(v.Name):
+                        perms.Add(v.Name);
+                        break;
+                    case CompoundTerm c:
+                        for (int i = c.Args.Length - 1; i >= 0; i--) stack.Push(c.Args[i]);
+                        break;
+                }
+            }
+        }
+
+        foreach (Term arg in headArgs) Visit(arg);
+        foreach (Term goal in goals) Visit(goal);
         return perms;
     }
 

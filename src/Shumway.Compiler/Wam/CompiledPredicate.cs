@@ -160,6 +160,14 @@ public sealed class CompiledPredicate
     /// assembly paths already thread nine of those.</summary>
     public IReadOnlyList<DebugStop> DebugStops { get; set; } = Array.Empty<DebugStop>();
 
+    /// <summary>ADR-035 — one entry per clause: the span of bytecode it occupies, and
+    /// the variables in its frame. What a debugger reads to answer "which clause is
+    /// this address in, and what are its variables called". Offsets are predicate-local
+    /// and get the same second shift, by the predicate's base, that
+    /// <see cref="DebugStops"/> do. Empty unless compiled debuggable.</summary>
+    public IReadOnlyList<DebugClauseFrame> DebugFrames { get; set; }
+        = Array.Empty<DebugClauseFrame>();
+
     public CompiledPredicate(
         byte[] bytecode,
         int functorId,
