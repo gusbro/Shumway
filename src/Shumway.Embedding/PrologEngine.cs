@@ -3646,16 +3646,188 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
     }
 
-    /// <summary>ADR-035 — the source site a stopped-at program address belongs to,
-    /// so a session that gets <c>OnBreak(pc)</c> can say where it is. Returns -1 if
-    /// the address is not an armed breakpoint.</summary>
+    // Every stop site in the loaded program, by program address, sorted. Built
+    // alongside _compiledSites; empty unless something was compiled debuggable.
+    private int[] _stopPcs = Array.Empty<int>();
+    private int[] _stopSiteIds = Array.Empty<int>();
+
+    /// <summary>ADR-035 — the source site AT this program address, or -1 if the
+    /// address is not a stop site. What a session that receives <c>OnBreak(pc)</c>
+    /// uses to say where it stopped.</summary>
     public int SiteAt(int pc)
     {
-        if (_currentPredicatesByAddress is null) return -1;
-        foreach (var (predAddr, pred) in _currentPredicatesByAddress)
-            foreach (var stop in pred.DebugStops)
-                if (predAddr + stop.Offset == pc) return stop.SiteId;
-        return -1;
+        int i = Array.BinarySearch(_stopPcs, pc);
+        return i >= 0 ? _stopSiteIds[i] : -1;
+    }
+
+    /// <summary>ADR-035 — the source site this program address is INSIDE: the last
+    /// stop site at or before it. A pc in the middle of a goal's instructions —
+    /// which is where the four ports find it — belongs to the goal whose site
+    /// precedes it. Returns -1 before the first site in the program.</summary>
+    public int SiteAtOrBefore(int pc)
+    {
+        if (_stopPcs.Length == 0) return -1;
+        int i = Array.BinarySearch(_stopPcs, pc);
+        if (i < 0) i = ~i - 1;
+        return i >= 0 ? _stopSiteIds[i] : -1;
+    }
+
+    /// <summary>ADR-035 — one entry of the Prolog call stack.</summary>
+    public readonly record struct DebugFrame(
+        string Name, int Arity, string File, int Line, int Pc)
+    {
+        public override string ToString() => $"{Name}/{Arity} at {File}:{Line}";
+    }
+
+    /// <summary>ADR-035 — the Prolog call stack, innermost frame first, recomposed
+    /// from the activation's environment chain. Never from the C# stack: the Tier-0
+    /// interpreter runs the whole program inside one <c>Dispatch</c> frame, so the
+    /// C# stack says nothing about where Prolog is.
+    ///
+    /// <para>What the machine reclaims, the debugger cannot show. A predicate whose
+    /// frame last-call optimisation has already popped is not on this list — which
+    /// is exactly why debug code compiles its last call as
+    /// <c>debug_lastcall</c> and a debugger turns <c>debug_lco</c> off.</para></summary>
+    public IReadOnlyList<DebugFrame> CaptureFrames(Activation engine)
+    {
+        ArgumentNullException.ThrowIfNull(engine);
+        return CaptureFrames(engine, engine.P, engine.EnumerateCallReturnAddresses());
+    }
+
+    /// <summary>ADR-035 — the call stack of a computation the machine is not standing
+    /// in. At the redo port the machine has not yet restored the choice point, so
+    /// <c>P</c> and the environment chain still describe the computation that just
+    /// failed; the stack the debugger must show is the one the retried clause will run
+    /// in, which the choice point carries.</summary>
+    public IReadOnlyList<DebugFrame> CaptureFrames(Activation engine, int pc, int e, int cp)
+    {
+        ArgumentNullException.ThrowIfNull(engine);
+        return CaptureFrames(engine, pc, engine.EnumerateCallReturnAddresses(e, cp));
+    }
+
+    private IReadOnlyList<DebugFrame> CaptureFrames(
+        Activation engine, int pc, IEnumerable<int> returnAddresses)
+    {
+        var frames = new List<DebugFrame>();
+        AddFrame(frames, pc);
+        foreach (int returnPc in returnAddresses)
+        {
+            // A return address points at the instruction AFTER the call, which is
+            // where the NEXT goal's code begins — so looking its line up directly
+            // would blame a caller for the goal it has not run yet. Step back a byte
+            // to land inside the call itself, the goal the frame is really waiting on.
+            AddFrame(frames, returnPc - 1);
+        }
+        return frames;
+    }
+
+    private void AddFrame(List<DebugFrame> frames, int pc)
+    {
+        if (_currentPredicatesByAddress is null || pc < 0) return;
+        var entries = SortedPredicateEntries();
+        int i = Array.BinarySearch(entries, pc);
+        if (i < 0) i = ~i - 1;
+        if (i < 0) return;
+        var pred = _currentPredicatesByAddress[entries[i]];
+        var (atomId, arity) = FunctorTable.Lookup(pred.FunctorId);
+        string name = DemangleLocalName(AtomTable.GetById(atomId)?.Name ?? "?");
+        if (name == "__query__") return;   // the wrapper the engine put the goal in
+
+        int siteId = SiteAtOrBefore(pc);
+        var site = siteId >= 0
+            ? Shumway.Core.DebugSiteTable.Get(siteId)
+            : default;
+        string file = siteId >= 0
+            ? Shumway.Core.DebugSiteTable.FileName(site.FileId)
+            : "";
+        frames.Add(new DebugFrame(name, arity, file, siteId >= 0 ? site.Line : 0, pc));
+    }
+
+    /// <summary>ADR-035 — the source site of the clause a choice point's retry address
+    /// will actually run.
+    ///
+    /// <para>A retry address does not point at a clause. It points at the link of a
+    /// dispatch chain — <c>trust 72</c>, say — and in an indexed predicate the whole
+    /// chain sits ahead of every clause body, so the retry address precedes all the
+    /// predicate's source sites and asking which site it is <i>inside</i> answers
+    /// "none". Two hops get there: the link names its clause (an <c>address</c>
+    /// operand) or the clause simply follows it; and the clause's site sits a few
+    /// bytes past its first instruction, behind the <c>meta dbg_info</c>. Returns the
+    /// address of the site, so a frame built on it lands on the right line.</para>
+    /// </summary>
+    internal int RetryClauseSite(int retryPc)
+    {
+        var program = _patchedProgram;
+        if (program is null || retryPc < 0 || retryPc >= program.Length) return retryPc;
+
+        byte opByte = OpcodeAt(program, retryPc);
+        var op = (Shumway.Core.Opcode)opByte;
+        int body = op switch
+        {
+            // try / retry / trust carry the clause address as their first operand.
+            Shumway.Core.Opcode.Try or Shumway.Core.Opcode.Retry or Shumway.Core.Opcode.Trust
+                => BitConverter.ToInt32(program, retryPc + 1),
+            // try_me_else / retry_me_else / trust_me name the NEXT clause; their own
+            // clause is the code that follows them.
+            _ => retryPc + Shumway.Core.OpcodeTable.Get(opByte).Size,
+        };
+        if (body < 0 || body >= program.Length) return retryPc;
+
+        // The first site at or after the clause's first instruction — but not past the
+        // end of the predicate, or a clause with no site of its own (one the compiler
+        // built, or a predicate compiled without debug) would borrow the next
+        // predicate's line.
+        if (_stopPcs.Length == 0) return body;
+        int i = Array.BinarySearch(_stopPcs, body);
+        if (i < 0) i = ~i;
+        if (i >= _stopPcs.Length) return body;
+
+        var entries = SortedPredicateEntries();
+        int j = Array.BinarySearch(entries, body);
+        if (j < 0) j = ~j - 1;
+        int endOfPredicate = j >= 0 && j + 1 < entries.Length ? entries[j + 1] : int.MaxValue;
+
+        return _stopPcs[i] < endOfPredicate ? _stopPcs[i] : body;
+    }
+
+    /// <summary>The opcode really at <paramref name="pc"/> — an armed breakpoint has
+    /// overwritten the byte with <c>Break</c>, and the original is in the table.</summary>
+    private byte OpcodeAt(byte[] program, int pc)
+    {
+        byte b = program[pc];
+        return b == (byte)Shumway.Core.Opcode.Break
+               && _breakpointPatches.TryGetValue(pc, out byte original)
+            ? original
+            : b;
+    }
+
+    /// <summary>ADR-035 — the predicate an address falls INSIDE, as opposed to
+    /// <see cref="LookupPredicateByAddress"/>, which only recognises an entry point.
+    /// The redo port needs it: a choice point's retry address points into the middle
+    /// of a clause chain, never at its head.</summary>
+    internal (string Name, int Arity)? PredicateContaining(int address)
+    {
+        if (_currentPredicatesByAddress is null || address < 0) return null;
+        var entries = SortedPredicateEntries();
+        int i = Array.BinarySearch(entries, address);
+        if (i < 0) i = ~i - 1;
+        if (i < 0) return null;
+        var pred = _currentPredicatesByAddress[entries[i]];
+        var (atomId, arity) = FunctorTable.Lookup(pred.FunctorId);
+        string name = DemangleLocalName(AtomTable.GetById(atomId)?.Name ?? "?");
+        return name == "__query__" ? null : (name, arity);
+    }
+
+    private int[]? _sortedPredEntries;
+
+    private int[] SortedPredicateEntries()
+    {
+        if (_sortedPredEntries is not null) return _sortedPredEntries;
+        var keys = new int[_currentPredicatesByAddress!.Count];
+        int n = 0;
+        foreach (int addr in _currentPredicatesByAddress.Keys) keys[n++] = addr;
+        Array.Sort(keys);
+        return _sortedPredEntries = keys;
     }
 
     /// <summary>ADR-035 — attaches a debug session (or <c>null</c> to detach).
@@ -9025,13 +9197,22 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // truth, and the code space it maps into can be relinked or compacted
         // between queries. Both loops are skipped entirely unless something was
         // compiled debuggable, so release queries pay nothing.
+        _sortedPredEntries = null;   // the layout may have moved
         if (_flags.DebugCodegen || _compiledSites.Count > 0)
         {
             var sites = new HashSet<int>();
-            foreach (var pred in _currentPredicatesByAddress.Values)
+            var byPc = new SortedDictionary<int, int>();
+            foreach (var (predAddr, pred) in _currentPredicatesByAddress)
                 foreach (var stop in pred.DebugStops)
+                {
                     sites.Add(stop.SiteId);
+                    byPc[predAddr + stop.Offset] = stop.SiteId;
+                }
             _compiledSites = sites;
+            _stopPcs = new int[byPc.Count];
+            _stopSiteIds = new int[byPc.Count];
+            byPc.Keys.CopyTo(_stopPcs, 0);
+            byPc.Values.CopyTo(_stopSiteIds, 0);
         }
         SyncBreakpoints(program);
         engine.BreakpointOriginals = _breakpointPatches.Count == 0 ? null : _breakpointPatches;

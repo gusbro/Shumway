@@ -2167,22 +2167,81 @@ public sealed partial class Activation
         }
     }
 
-    public IEnumerable<int> EnumerateCallReturnAddresses()
+    /// <summary>ADR-035 — how many environment frames are live: the logical call
+    /// depth. A step controller recomputes this at every port rather than counting
+    /// calls and returns incrementally, because it must stay right across last-call
+    /// optimisation, cuts, and the opaque predicates a <c>:- disable_debug.</c>
+    /// region compiles — all of which change the depth without telling anyone.</summary>
+    public int EnvDepth => EnvDepthFrom(_e);
+
+    /// <summary>ADR-035 — the environment depth the machine will be at once the top
+    /// choice point is resumed. The redo port fires before the retry instruction has
+    /// restored anything, so the depth of the computation that just <i>failed</i>
+    /// (which can be arbitrarily deeper) says nothing about the goal being retried.
+    /// The choice point itself carries the environment its clause will run in, so
+    /// read the depth from there instead. An IL choice point (a backtrackable builtin
+    /// re-satisfying) does not restore an environment, so the current one stands.
+    /// </summary>
+    public int PendingRedoEnvDepth
+    {
+        get
+        {
+            if (_b < 0 || TopChoicePointIsIl) return EnvDepth;
+            int arity = (int)_stack[_b + CpArityOffset].Data;
+            return EnvDepthFrom((int)_stack[_b + CpCeOffset(arity)].Data);
+        }
+    }
+
+    private int EnvDepthFrom(int e)
+    {
+        int depth = 0;
+        while (e >= 0)
+        {
+            depth++;
+            int prevE = (int)_stack[e + EnvCeOffset].Data;
+            if (prevE == e || prevE < 0) break;
+            e = prevE;
+        }
+        return depth;
+    }
+
+    public IEnumerable<int> EnumerateCallReturnAddresses() =>
+        EnumerateCallReturnAddresses(_e, _cp);
+
+    /// <summary>The return-address chain as it stands in a given environment /
+    /// continuation pair, rather than the current one. ADR-035 uses it at the redo
+    /// port, where the machine is still standing in the computation that failed but
+    /// what the debugger must show is the one about to be retried — the choice point
+    /// carries the environment its clause will run in.</summary>
+    public IEnumerable<int> EnumerateCallReturnAddresses(int e, int cp)
     {
         // The first frame to surface is the IMMEDIATE return target —
-        // _cp is the caller's "next instruction after Call". After that
+        // cp is the caller's "next instruction after Call". After that
         // we walk env frames; each frame stores the *caller's* CP at
         // EnvCpOffset, and EnvCeOffset chains back to the next frame
         // up the call tree.
-        if (_cp >= 0) yield return _cp;
-        int e = _e;
+        if (cp >= 0) yield return cp;
         while (e >= 0)
         {
-            int cp = (int)_stack[e + EnvCpOffset].Data;
-            if (cp >= 0 && cp != _cp) yield return cp;
+            int frameCp = (int)_stack[e + EnvCpOffset].Data;
+            if (frameCp >= 0 && frameCp != cp) yield return frameCp;
             int prevE = (int)_stack[e + EnvCeOffset].Data;
             if (prevE == e || prevE < 0) yield break;
             e = prevE;
+        }
+    }
+
+    /// <summary>The environment and continuation the top choice point will restore —
+    /// the state its retried clause runs in. See <see cref="PendingRedoEnvDepth"/>.
+    /// Returns the current pair for an IL choice point, which restores neither.</summary>
+    public (int E, int Cp) TopChoicePointContext
+    {
+        get
+        {
+            if (_b < 0 || TopChoicePointIsIl) return (_e, _cp);
+            int arity = (int)_stack[_b + CpArityOffset].Data;
+            return ((int)_stack[_b + CpCeOffset(arity)].Data,
+                    (int)_stack[_b + CpCpOffset(arity)].Data);
         }
     }
 
