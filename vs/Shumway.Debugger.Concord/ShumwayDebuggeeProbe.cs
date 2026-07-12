@@ -13,7 +13,9 @@ using System.Globalization;
 using System.Text;
 using Microsoft.VisualStudio.Debugger;
 using Microsoft.VisualStudio.Debugger.CallStack;
+using Microsoft.VisualStudio.Debugger.CustomRuntimes;
 using Microsoft.VisualStudio.Debugger.Evaluation;
+using Microsoft.VisualStudio.Debugger.Symbols;
 
 namespace Shumway.Debugger.Concord
 {
@@ -83,13 +85,32 @@ namespace Shumway.Debugger.Concord
                 int token = (int)ParseLong(tokenText);
                 report.Append(" token=0x").Append(token.ToString("X8"));
 
-                // 5) Hand off to the server component to arm the notify breakpoint.
+                // 5) The consulted-script path (leg 3).
+                string? pathText = FuncEval(stackContext, frame,
+                    "SpikeDebuggee.SpikeDebugHelper.ScriptPath", out evalError);
+                if (pathText == null)
+                {
+                    report.Append(" script=FAIL(").Append(evalError).Append(')');
+                    return;
+                }
+                // The C# EE renders strings quoted; strip the quotes.
+                string path = pathText.Trim();
+                if (path.Length >= 2 && path[0] == '"' && path[path.Length - 1] == '"')
+                    path = path.Substring(1, path.Length - 2).Replace("\\\\", "\\");
+                ShumwayLocalSymbols.KnownScriptPath = path;
+
+                // 6) Hand (channel, token, script path) to the server component: it
+                //    arms the notify breakpoint, and creates the custom runtime +
+                //    module at the first notify hit. Both are MONITOR-side APIs, and
+                //    Dkm object creation must happen in a real event context — doing
+                //    it from this stack-walk filter throws ObjectDisposedException
+                //    ('DkmDataContainer'), because the walk's container is transient.
                 DkmCustomMessage.Create(
                         frame.Process.Connection, frame.Process,
                         ShumwayGuids.MessageSource, ShumwayGuids.MsgArmNotifyBreakpoint,
-                        addr, token)
+                        addr, token, path, null)
                     .SendLower();
-                report.Append(" msg=SENT");
+                report.Append(" msg=SENT(").Append(System.IO.Path.GetFileName(path)).Append(')');
             }
             catch (Exception ex)
             {
@@ -118,13 +139,19 @@ namespace Shumway.Debugger.Concord
                 int hits = BitConverter.ToInt32(buf, Channel.OffHits);
                 byte serverStatus = buf[Channel.OffServerStatus];
                 long ticks = BitConverter.ToInt64(buf, Channel.OffTicks);
+                int f9Line = BitConverter.ToInt32(buf, Channel.OffF9Line);
+                byte f9Flag = buf[Channel.OffF9Flag];
+                byte stepFlag = buf[Channel.OffStepFlag];
 
                 var sb = new StringBuilder("status:");
                 sb.Append(" ticks=").Append(ticks);
                 sb.Append(" echo=").Append(echo == 0xAB ? "OK" : ("0x" + echo.ToString("X2")));
                 sb.Append(" hits=").Append(hits);
+                sb.Append(" f9=").Append(f9Flag == 1 ? f9Line.ToString() : "none");
+                sb.Append(" step=").Append(stepFlag == 1 ? "SEEN" : "none");
                 sb.Append(" server=").Append(
-                    serverStatus == Channel.StatusArmed ? "ARMED"
+                    serverStatus == Channel.StatusRuntimeReady ? "RUNTIME"
+                    : serverStatus == Channel.StatusArmed ? "ARMED"
                     : serverStatus == 0 ? "SILENT"
                     : "ERR" + (serverStatus - Channel.StatusErrorBase).ToString());
                 if (serverStatus >= Channel.StatusErrorBase)

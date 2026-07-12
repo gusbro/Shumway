@@ -2,7 +2,8 @@
 <!--
   Shumway debugger - server-level Concord component (ADR-035).
   ComponentLevel 40501 < 100,000 => loads on the debug-monitor side (same box
-  for local debugging, msvsmon when remote). Owns runtime breakpoints.
+  for local debugging, msvsmon when remote). Owns the custom runtime/module
+  objects, runtime breakpoints and stepping.
 -->
 <Configuration xmlns="http://schemas.microsoft.com/vstudio/vsdconfig/2008">
 
@@ -13,18 +14,29 @@
 
     <Class Name="Shumway.Debugger.Concord.ShumwayRemoteComponent">
       <Implements>
+
         <InterfaceGroup>
           <Filter>
             <SourceId RequiredValue="d451a420-0546-456d-911d-411363b9e55a"/>
           </Filter>
           <Interface Name="IDkmCustomMessageForwardReceiver"/>
         </InterfaceGroup>
+
         <InterfaceGroup>
           <Filter>
             <SourceId RequiredValue="a21369e2-7531-4158-953d-5f95790402cf"/>
           </Filter>
           <Interface Name="IDkmRuntimeBreakpointReceived"/>
         </InterfaceGroup>
+
+        <InterfaceGroup>
+          <Filter>
+            <RuntimeId RequiredValue="3cd5801d-96c7-47d4-b4c4-a796b8fe7de9"/>
+          </Filter>
+          <Interface Name="IDkmRuntimeMonitorBreakpointHandler"/>
+          <Interface Name="IDkmRuntimeStepper"/>
+        </InterfaceGroup>
+
       </Implements>
     </Class>
 

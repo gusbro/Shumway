@@ -1,10 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Shumway debugger - IDE-level Concord component (ADR-035).
+  Shumway debugger - IDE-level call stack filter (ADR-035).
   Compiled by vsdconfigtool.exe into Shumway.Debugger.Concord.vsdconfig at build.
 
   ComponentLevel 1999000 = IDE side (levels > 100,000 load in devenv; < 100,000
   load in the debug monitor). Same level PTVS uses for its local component.
+
+  NOTE: exactly ONE <ManagedComponent> (with ONE <Class>) per .vsdconfigxml —
+  the schema rejects a second one, and all files still compile into a single
+  .vsdconfig. One file per component.
 -->
 <Configuration xmlns="http://schemas.microsoft.com/vstudio/vsdconfig/2008">
 

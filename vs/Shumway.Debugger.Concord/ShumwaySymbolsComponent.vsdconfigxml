@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Shumway debugger - IDE-level symbol provider for .pl files (ADR-035).
+  Routed to us by the SymbolProviderId carried in every Shumway DkmModuleId,
+  which is what lets VS bind F9 breakpoints in a file type it knows nothing
+  about, and navigate to source from a synthesized frame.
+-->
+<Configuration xmlns="http://schemas.microsoft.com/vstudio/vsdconfig/2008">
+
+  <ManagedComponent
+    ComponentId="62d567ca-b489-47d7-ac39-e9371533a6a0"
+    ComponentLevel="1999001"
+    AssemblyName="Shumway.Debugger.Concord">
+
+    <Class Name="Shumway.Debugger.Concord.ShumwayLocalSymbols">
+      <Implements>
+        <InterfaceGroup>
+          <Filter>
+            <SymbolProviderId RequiredValue="3aa934bc-02d7-4855-a05b-68a4fdb50918"/>
+          </Filter>
+          <Interface Name="IDkmSymbolCompilerIdQuery"/>
+          <Interface Name="IDkmSymbolDocumentCollectionQuery"/>
+          <Interface Name="IDkmSymbolDocumentSpanQuery"/>
+          <Interface Name="IDkmSymbolQuery"/>
+        </InterfaceGroup>
+      </Implements>
+    </Class>
+
+  </ManagedComponent>
+</Configuration>

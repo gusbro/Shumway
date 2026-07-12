@@ -25,6 +25,7 @@
 
   <ItemGroup>
     <VsdConfigXmlFiles Include="ShumwayLocalComponent.vsdconfigxml" />
+    <VsdConfigXmlFiles Include="ShumwaySymbolsComponent.vsdconfigxml" />
     <VsdConfigXmlFiles Include="ShumwayRemoteComponent.vsdconfigxml" />
   </ItemGroup>
 

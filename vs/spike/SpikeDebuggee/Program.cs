@@ -15,8 +15,10 @@ public static class Program
 {
     public static void Main()
     {
+        SpikeDebugHelper.WriteScriptFile();
         Console.WriteLine($"SpikeDebuggee pid={Environment.ProcessId}");
         Console.WriteLine($"channel address=0x{SpikeDebugHelper.Attach():X}  (magic 'SHDB' + tick counter at +8)");
+        Console.WriteLine($"script={SpikeDebugHelper.ScriptPath}");
         Console.WriteLine("Attach the VS managed debugger and Break All to see the [Prolog] frames.");
         new BytecodeInterpreter().Dispatch();
     }
@@ -88,6 +90,23 @@ public static class SpikeDebugHelper
     /// <summary>Func-eval round-trip probe (leg 1).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static string Ping() => "shumway-spike-pong";
+
+    /// <summary>The "consulted" Prolog source (leg 3) — written next to the exe
+    /// at startup so F9 binding has a real file to resolve.</summary>
+    public static string ScriptPath { get; } =
+        Path.Combine(AppContext.BaseDirectory, "spike.pl");
+
+    public static void WriteScriptFile()
+    {
+        File.WriteAllText(ScriptPath,
+            "% D0 spike \"consulted\" file\n" +
+            "parent(tom, bob).\n" +
+            "parent(bob, ann).\n" +
+            "\n" +
+            "grandparent(X, Z) :-\n" +
+            "    parent(X, Y),\n" +
+            "    parent(Y, Z).\n");
+    }
 
     public static void WriteSnapshot(long ticks)
     {

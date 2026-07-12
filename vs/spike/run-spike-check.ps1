@@ -6,6 +6,10 @@
 # Run from Windows PowerShell 5.1 (COM ROT access). First Exp-hive launch of
 # devenv can take a couple of minutes.
 
+param(
+    [switch]$SkipPlBreakpoint   # isolate: run legs 1/2/4 without the .pl breakpoint
+)
+
 $ErrorActionPreference = 'Stop'
 
 $devenv   = "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\devenv.exe"
@@ -75,6 +79,19 @@ try {
     Invoke-WithRetry { $null = $dte.Solution } 30 2000
     Start-Sleep -Seconds 10
 
+    # Leg 3: set the .pl breakpoint BEFORE attaching — it stays pending until our
+    # custom module publishes symbols (SetModule), which is what triggers binding.
+    $scriptPl = Join-Path (Split-Path $debuggee -Parent) "spike.pl"
+    $bpAddOk = $true
+    if ($SkipPlBreakpoint) {
+        Write-Host "skipping .pl breakpoint (isolation run)"
+        $bpAddOk = $false
+    } else {
+        Write-Host "adding pending .pl breakpoint at $scriptPl line 6 ..."
+        try { Invoke-WithRetry { $dte.Debugger.Breakpoints.Add("", $scriptPl, 6) | Out-Null } 10 2000 }
+        catch { $bpAddOk = $false; Write-Host "  Breakpoints.Add threw: $($_.Exception.Message)" }
+    }
+
     Write-Host "[4/5] attaching managed debugger to SpikeDebuggee pid=$($dbgProc.Id)..."
     $target = Invoke-WithRetry {
         $p = @($dte.Debugger.LocalProcesses) | Where-Object { $_.ProcessID -eq $dbgProc.Id }
@@ -102,7 +119,7 @@ try {
     Write-Host "============================"
 
     Write-Host "continuing 8s so the notify bp can hit + the debuggee echoes the command byte..."
-    $dte.Debugger.Go($false)
+    Invoke-WithRetry { $dte.Debugger.Go($false) } 15 2000
     Start-Sleep -Seconds 8
 
     Write-Host "Break #2 (channel status) ..."
@@ -114,8 +131,28 @@ try {
     $frames2 | ForEach-Object { Write-Host "  $_" }
     Write-Host "============================"
 
+    # Leg 5: F10 while the top frame is a synthesized Prolog frame carrying our
+    # runtime's instruction address -> IDkmRuntimeStepper.Step must be consulted.
+    Write-Host "StepOver (leg 5) ..."
+    $stepOk = $true
+    try {
+        Invoke-WithRetry { $dte.Debugger.StepOver($false) } 10 2000
+        Start-Sleep -Seconds 6
+        $mode = Invoke-WithRetry { $dte.Debugger.CurrentMode } 10 2000
+        if ($mode -ne 2) { # 2 = dbgBreakMode
+            Invoke-WithRetry { $dte.Debugger.Break($true) } 10 2000
+        }
+    } catch { $stepOk = $false; Write-Host "  StepOver threw: $($_.Exception.Message)" }
+    Start-Sleep -Seconds 2
+    $frames3 = Get-Frames
+    Write-Host ""
+    Write-Host "=== call stack, after step ==="
+    $frames3 | ForEach-Object { Write-Host "  $_" }
+    Write-Host "=============================="
+
     $diag1 = @($frames1 | Where-Object { $_ -like "*Shumway spike*" }) | Select-Object -First 1
     $diag2 = @($frames2 | Where-Object { $_ -like "*Shumway spike*" }) | Select-Object -First 1
+    $diag3 = @($frames3 | Where-Object { $_ -like "*Shumway spike*" }) | Select-Object -First 1
     $prolog   = @($frames2 | Where-Object { $_ -like "*Prolog]*" })
     $physical = @($frames2 | Where-Object { $_ -like "*BytecodeInterpreter.Dispatch*" })
 
@@ -129,14 +166,21 @@ try {
     Write-Host ("leg1 ReadMemory (pinned) : " + $(if ($leg1b) { "PASS" } else { "FAIL" }))
     $leg1c = ($diag2 -like "*echo=OK*")
     Write-Host ("leg1 WriteMemory (echo)  : " + $(if ($leg1c) { "PASS" } else { "FAIL" }))
-    $leg2armed = ($diag2 -like "*server=ARMED*")
+    # ARMED is the state right after the notify bp is planted; RUNTIME is the
+    # later state (custom runtime + module created at the first hit). Either
+    # proves the breakpoint was armed.
+    $leg2armed = ($diag2 -like "*server=ARMED*" -or $diag2 -like "*server=RUNTIME*")
     $leg2hits = $false
     if ($diag2 -match "hits=(\d+)") { $leg2hits = ([int]$Matches[1] -ge 1) }
     Write-Host ("leg2 notify bp armed     : " + $(if ($leg2armed) { "PASS" } else { "FAIL -> $diag2" }))
     Write-Host ("leg2 notify bp hits>=1   : " + $(if ($leg2hits) { "PASS" } else { "FAIL" }))
+    $leg3 = ($bpAddOk -and ($diag2 -like "*f9=6*" -or $diag3 -like "*f9=6*"))
+    Write-Host ("leg3 .pl F9 binding      : " + $(if ($leg3) { "PASS" } else { "FAIL -> $diag2 / $diag3" }))
+    $leg5 = ($stepOk -and $diag3 -like "*step=SEEN*")
+    Write-Host ("leg5 step arbitration    : " + $(if ($leg5) { "PASS" } else { "FAIL -> $diag3" }))
 
-    if ($leg4 -and $leg1a -and $leg1b -and $leg1c -and $leg2armed -and $leg2hits) {
-        Write-Host "RESULT: PASS - legs 1, 2 and 4 all green."
+    if ($leg4 -and $leg1a -and $leg1b -and $leg1c -and $leg2armed -and $leg2hits -and $leg3 -and $leg5) {
+        Write-Host "RESULT: PASS - all five D0 legs green."
     } else {
         Write-Host "RESULT: FAIL - see legs above."
     }

@@ -27,18 +27,30 @@ cross-platform code.
 The Concord components reference **no Shumway project** — they talk to the
 debuggee engine via a pinned-memory channel + func-eval by name (see ADR-035).
 
-## Updating the extension in the Exp hive
+## Dev loop (read this before touching the Exp hive)
 
-After reinstalling the VSIX (`VSIXInstaller /rootSuffix:Exp /quiet /uninstall:<id>`
-then install), **always run**:
+Use `spike\deploy-exp.ps1` — build, deploy, and it **asserts a single installed
+copy**. Then `spike\run-spike-check.ps1` drives VS end-to-end and prints a
+per-leg PASS/FAIL table.
 
-```
-devenv /rootsuffix Exp /updateconfiguration
-```
+Three traps that cost a full session, all of which fail *silently*:
 
-The Exp hive caches component registrations by path; a reinstall lands in a new
-random directory and the stale cache silently drops the extension (no error —
-the debugger just behaves as if the components don't exist).
+1. **Duplicate installs kill the extension.** The VSIX project's MSBuild targets
+   already deploy to the Exp hive on every build. Running `VSIXInstaller.exe` on
+   top of that adds a second copy under a random directory name, and VS then
+   finds two copies of the same id+version and drops **both** — no error, no
+   activity-log entry, the components simply never load. Only the VSIX installer
+   log says it: *"The conflict cannot be resolved ... we are not adding either
+   copy to the cache"* (`%TEMP%\dd_VSIXInstaller_*.log`). Let the build deploy;
+   never mix in VSIXInstaller.
+2. **`devenv /updateconfiguration` materializes a second (per-publisher) copy** —
+   i.e. it can *create* trap 1. It is not needed after an in-place file update.
+3. **A leftover `devenv.exe` locks the deployed DLL**, so the next build fails
+   with VSSDK1081 and you silently test the previous binary.
+
+Also: keep the `.ps1` files ASCII-only — Windows PowerShell 5.1 reads them as
+CP1252, where a UTF-8 em-dash decodes to a right-double-quote and terminates a
+string literal mid-line.
 
 ## Try it (experimental instance)
 

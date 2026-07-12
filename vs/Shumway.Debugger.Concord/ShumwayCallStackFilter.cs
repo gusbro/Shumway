@@ -12,8 +12,11 @@
 //   C# interop bridges and native frames flow through untouched).
 
 using System;
+using System.Linq;
+using Microsoft.VisualStudio.Debugger;
 using Microsoft.VisualStudio.Debugger.CallStack;
 using Microsoft.VisualStudio.Debugger.ComponentInterfaces;
+using Microsoft.VisualStudio.Debugger.CustomRuntimes;
 
 namespace Shumway.Debugger.Concord
 {
@@ -54,9 +57,27 @@ namespace Shumway.Debugger.Concord
 
             // Two synthetic frames per replaced interpreter frame: proves frame
             // multiplicity (one physical Dispatch frame -> N logical Prolog frames).
+            // Leg 5: once the custom runtime exists, the frames carry OUR runtime's
+            // instruction addresses (Offset = pretend source line) so stepping
+            // arbitration routes F10/F11 to our IDkmRuntimeStepper.
+            DkmInstructionAddress? MakeAddress(int line)
+            {
+                var runtime = input.Process.GetRuntimeInstances()
+                    .OfType<DkmCustomRuntimeInstance>()
+                    .FirstOrDefault(r => r.Id.RuntimeType == ShumwayGuids.RuntimeType);
+                var module = runtime?.GetModuleInstances()
+                    .OfType<DkmCustomModuleInstance>()
+                    .FirstOrDefault();
+                if (runtime == null || module == null)
+                    return null;
+                return DkmCustomInstructionAddress.Create(
+                    runtime, module, EntityId: null, Offset: (ulong)line,
+                    AdditionalData: null, CPUInstruction: null);
+            }
+
             var callee = DkmStackWalkFrame.Create(
                 stackContext.Thread,
-                null,                       // annotated frame: no instruction address (D2: DkmCustomInstructionAddress)
+                MakeAddress(3),
                 input.FrameBase,
                 0,
                 DkmStackWalkFrameFlags.None,
@@ -66,7 +87,7 @@ namespace Shumway.Debugger.Concord
 
             var caller = DkmStackWalkFrame.Create(
                 stackContext.Thread,
-                null,
+                MakeAddress(7),
                 input.FrameBase,
                 0,
                 DkmStackWalkFrameFlags.None,
