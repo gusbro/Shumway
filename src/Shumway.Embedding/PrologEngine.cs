@@ -3016,7 +3016,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         var rewritten = transformed.Select(c => ModuleRewrite.Rewrite(c, dynCtx)).ToList();
 
         var predicate = new Shumway.Compiler.Wam.PredicateCompiler
-            { EmitDebugInfo = _flags.EmitDebugInfo, DebugCodegen = _flags.DebugCodegen }.Compile(
+            {
+                EmitDebugInfo = _flags.EmitDebugInfo,
+                DebugCodegen = _flags.DebugCodegen,
+                DebugFileId = _debugFileId,
+            }.Compile(
             rewritten,
             _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts,
             enableIndexing: false,
@@ -3170,6 +3174,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 {
                     EmitDebugInfo = _flags.EmitDebugInfo,
                     DebugCodegen = _flags.DebugCodegen,               // ADR-035
+                    DebugFileId = _debugFileId,                      // ADR-035
+                    NonDebuggableFunctors = _nonDebuggableFunctors,  // ADR-035
                     ElideRedundantCuts = _flags.ElideRedundantCuts,   // ADR-030
                 }.Compile(
                 rewritten, cache: null, unindexedFunctors: null,
@@ -3533,6 +3539,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// a hosted engine's trace lands wherever its program's writes do.</summary>
     public void SetTracing(bool on, System.IO.TextWriter? output = null)
         => DebugSession = on ? new Debugging.DebugTracer(this, output ?? Out) : null;
+
+    /// <summary>ADR-035 — attaches a debug session (or <c>null</c> to detach).
+    /// Every query's activation is born with it, and it receives the four Prolog
+    /// ports plus the stop sites of any debug-compiled code. This is what a real
+    /// debugger uses; <see cref="SetTracing"/> is the same seam with the tracer
+    /// as the session.</summary>
+    public void AttachDebugSession(Shumway.Core.IDebugSession? session)
+        => DebugSession = session;
 
     /// <summary>Adds an operator to the engine's parser table. Used by the
     /// runtime <c>op/3</c> builtin so user code can introduce operators
@@ -6043,6 +6057,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // nested ConsultFile from an initialization goal must not leak).
         string? prevBase = _consultBaseDir;
         _consultBaseDir = Path.GetDirectoryName(Path.GetFullPath(path));
+        // ADR-035 — stop sites compiled during this consult are stamped with this
+        // file, so a debugger can map a breakpoint in foo.pl back to them.
+        int prevFile = _debugFileId;
+        _debugFileId = DebugSiteTable.InternFile(path);
         try
         {
             ConsultString(File.ReadAllText(path));
@@ -6050,8 +6068,54 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         finally
         {
             _consultBaseDir = prevBase;
+            _debugFileId = prevFile;
         }
     }
+
+    /// <summary>ADR-035 — functors a <c>:- disable_debug.</c> region covered.
+    /// Engine-wide (fids are global) and additive across consults: a predicate is
+    /// either debuggable or it isn't, whichever file it came from.</summary>
+    private readonly HashSet<int> _nonDebuggableFunctors = new();
+
+    /// <summary>ADR-035 — the <c>Name/Arity</c> of a clause's head, or false for
+    /// anything that is not one.</summary>
+    private static bool TryReadClauseHead(Clause clause, out (string Name, int Arity) spec)
+    {
+        Term head = clause.Term is CompoundTerm { Functor: ":-", Args.Length: 2 } rule
+            ? rule.Args[0]
+            : clause.Term;
+        switch (head)
+        {
+            case AtomTerm a: spec = (a.Name, 0); return true;
+            case CompoundTerm c: spec = (c.Functor, c.Args.Length); return true;
+            default: spec = default; return false;
+        }
+    }
+
+    /// <summary>ADR-035 — the functor ids of the predicates a
+    /// <c>:- disable_debug.</c> region covered. A predicate's name is mangled
+    /// (<c>module$name</c>) if it is module-local and left bare if it is public or
+    /// dynamic, and which of those it is has not been decided at the point the
+    /// directive was read — so both spellings are interned and the set holds
+    /// whichever the compiler ends up grouping by. Interning a functor that never
+    /// gets used costs an int.</summary>
+    private static HashSet<int> ResolveNonDebuggableFids(
+        HashSet<(string Name, int Arity)> specs, string moduleName)
+    {
+        var fids = new HashSet<int>();
+        foreach (var (n, a) in specs)
+        {
+            fids.Add(FunctorTable.Intern(AtomTable.Intern(n, permanent: true).Id, a));
+            fids.Add(FunctorTable.Intern(
+                AtomTable.Intern($"{moduleName}${n}", permanent: true).Id, a));
+        }
+        return fids;
+    }
+
+    /// <summary>ADR-035 — the <see cref="DebugSiteTable"/> file the consult in
+    /// progress is reading. Defaults to the synthetic <c>&lt;string&gt;</c> file
+    /// that <see cref="ConsultString"/> sources belong to.</summary>
+    private int _debugFileId = DebugSiteTable.InternFile("<string>");
 
     /// <summary>Runtime <c>consult/1</c> — a consult invoked from a live query.
     /// Same as <see cref="ConsultFile"/> but marks the consult as mid-query so
@@ -6668,18 +6732,33 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // captured `$native_decls` directives), parsed into the C symbol table
         // for the embedded native-block transform below.
         System.Text.StringBuilder? nativeDecls = null;
+        // ADR-035 — `:- disable_debug.` / `:- enable_debug.` are POSITIONAL: each
+        // one sets the debuggability of the clauses that follow it, until the
+        // next such directive or the end of the file. So a module can hand the
+        // debugger the predicates worth stepping through and keep the rest
+        // compiled for speed.
+        bool debuggableHere = true;
+        HashSet<(string Name, int Arity)>? nonDebuggable = null;
 
         foreach (var clause in rawClauses)
         {
             if (clause.Kind != ClauseKind.Directive)
             {
                 clauses.Add(clause);
+                if (!debuggableHere && TryReadClauseHead(clause, out var headSpec))
+                    (nonDebuggable ??= new()).Add(headSpec);
                 continue;
             }
 
             // Strip the leading `:- /1` wrapper to get the directive body.
             if (clause.Term is not CompoundTerm dWrap || dWrap.Args.Length != 1) continue;
             Term body = dWrap.Args[0];
+
+            // ADR-035 — the positional debug switches. Handled here, before every
+            // other directive, because they carry no argument and mean nothing to
+            // the rest of the pipeline.
+            if (body is AtomTerm { Name: "disable_debug" }) { debuggableHere = false; continue; }
+            if (body is AtomTerm { Name: "enable_debug" }) { debuggableHere = true; continue; }
 
             if (TryReadModuleDirective(body, out string? name, out var moduleExports))
             {
@@ -7013,6 +7092,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // _error.
         if (_flags.ImplicitDynamic)
             CollectImplicitDynamics(clauses, publics);
+
+        // ADR-035 — the predicates the `:- disable_debug.` regions covered. The
+        // module name is only settled now (the `:- module` directive may sit
+        // anywhere in the file), and it is what decides how a local predicate's
+        // name is mangled — so the fids are resolved here rather than inline.
+        if (nonDebuggable is not null)
+            _nonDebuggableFunctors.UnionWith(
+                ResolveNonDebuggableFids(nonDebuggable, moduleName));
 
         if (moduleDirectiveSeen || moduleName != DefaultModuleName)
         {
@@ -8241,6 +8328,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         {
             EmitDebugInfo = _flags.EmitDebugInfo,
             DebugCodegen = _flags.DebugCodegen,               // ADR-035
+            DebugFileId = _debugFileId,                      // ADR-035
+            NonDebuggableFunctors = _nonDebuggableFunctors,  // ADR-035
             ElideRedundantCuts = _flags.ElideRedundantCuts,   // ADR-030
         }.Compile(
             allRewritten, skipCompileCache, unindexedFunctors, _literalPools,
@@ -8954,7 +9043,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         foreach (int fid in order!)
         {
             var pred = new Shumway.Compiler.Wam.PredicateCompiler
-                { EmitDebugInfo = _flags.EmitDebugInfo, DebugCodegen = _flags.DebugCodegen }.Compile(
+                {
+                EmitDebugInfo = _flags.EmitDebugInfo,
+                DebugCodegen = _flags.DebugCodegen,
+                DebugFileId = _debugFileId,
+            }.Compile(
                 groups[fid],
                 _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts,
                 enableIndexing: false,

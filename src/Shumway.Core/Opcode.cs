@@ -16,13 +16,13 @@ namespace Shumway.Core;
 /// <list type="bullet">
 ///   <item>0x00: <see cref="ReservedInvalid"/> — catches PC corruption when dispatched.
 ///     Must stay 0x00 (zeroed memory dispatches as corruption).</item>
-///   <item>0x01..0x63: every opcode the interpreter dispatches, grouped by category
+///   <item>0x01..0x64: every opcode the interpreter dispatches, grouped by category
 ///     (get, put, unify, control, choice points, indexing, cut, builtin call,
-///     consolidated/fused, PSTR, arithmetic, meta), ending with
-///     <see cref="DebugLastCall"/> — the dense jump-table block.</item>
-///   <item>0x64: <see cref="ReservedExtension"/> — escape mechanism for a
+///     consolidated/fused, PSTR, arithmetic, meta, debug), ending with
+///     <see cref="Break"/> — the dense jump-table block.</item>
+///   <item>0x65: <see cref="ReservedExtension"/> — escape mechanism for a
 ///     hypothetical extended encoding (no dispatch case).</item>
-///   <item>0x65..: reserved specialised-builtin opcodes (never emitted, no
+///   <item>0x66..: reserved specialised-builtin opcodes (never emitted, no
 ///     dispatch case).</item>
 /// </list>
 /// </summary>
@@ -301,23 +301,36 @@ public enum Opcode : byte
     // real stack frame to show variables from; see Activation.LastCallOptimisation.
     DebugLastCall = 0x63,
 
+    // ADR-035 — a place a debugger may stop. Emitted under compile_mode=debug
+    // before every body goal and at every clause entry; the operand is a
+    // DebugSiteTable id, so it survives every offset relocation the compiler and
+    // linker perform without any of them knowing about it.
+    //
+    // Deliberately a REAL instruction rather than a byte patched over the code:
+    // the code space is shared across activations (and across engines), so
+    // self-modifying dispatch would race, and a breakpoint hit would have to
+    // restore-step-repatch under a live interpreter. An always-present Break that
+    // asks the session what to do costs one dispatch per goal — in debug code
+    // only, which release never contains.
+    Break = 0x64,
+
     // Extension escape — reserved, never dispatched.
-    ReservedExtension = 0x64,
+    ReservedExtension = 0x65,
 
     // Reserved specialised-builtin opcodes. Defined in OpcodeTable but
     // never emitted by the compiler and never dispatched by the
     // interpreter; parked after ReservedExtension so the dispatched
     // block stays hole-free (chunk 429).
-    UnifyEq = 0x65,
-    IsOp = 0x66,
-    LessThan = 0x67,
-    GreaterThan = 0x68,
-    LessEq = 0x69,
-    GreaterEq = 0x6A,
-    ArithEq = 0x6B,
-    ArithNotEq = 0x6C,
-    StructEq = 0x6D,
-    StructNotEq = 0x6E,
+    UnifyEq = 0x66,
+    IsOp = 0x67,
+    LessThan = 0x68,
+    GreaterThan = 0x69,
+    LessEq = 0x6A,
+    GreaterEq = 0x6B,
+    ArithEq = 0x6C,
+    ArithNotEq = 0x6D,
+    StructEq = 0x6E,
+    StructNotEq = 0x6F,
 }
 
 /// <summary>Sub-opcodes for <see cref="Opcode.Meta"/>. Only <see cref="DbgInfo"/> exists in v1.</summary>

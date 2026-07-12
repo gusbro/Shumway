@@ -252,6 +252,9 @@ public static class OpcodeTable
         Set(Opcode.DebugLastCall, 9, "debug_lastcall",
             OperandKind.Address, OperandKind.Count);
 
+        // ADR-035 — operand is a DebugSiteTable id (relocation-invariant).
+        Set(Opcode.Break, 5, "break", OperandKind.Count);
+
         Set(Opcode.ReservedExtension, 1, "reserved_extension");
     }
 

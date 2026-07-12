@@ -57,6 +57,11 @@ public sealed class PredicateCompiler
     /// otherwise change codegen for every existing caller.</summary>
     public bool DebugCodegen { get; set; }
 
+    /// <summary>ADR-035 — the <see cref="DebugSiteTable"/> file id these clauses
+    /// came from; stamped into every stop site emitted under
+    /// <see cref="DebugCodegen"/>.</summary>
+    public int DebugFileId { get; set; }
+
     /// <summary>ADR-029 — clause-epilogue peephole fusion. When set, the final
     /// bytecode of every compiled predicate has each `cut; deallocate_proceed`
     /// and `cut; proceed` pair collapsed into one dispatched opcode (same total
@@ -147,7 +152,8 @@ public sealed class PredicateCompiler
 
         // Compile each clause independently.
         var compiledClauses = new List<CompiledClause>(clauses.Count);
-        var compiler = new ClauseCompiler { DebugCodegen = DebugCodegen };
+        var compiler = new ClauseCompiler
+            { DebugCodegen = DebugCodegen, DebugFileId = DebugFileId };
         foreach (var c in clauses)
             compiledClauses.Add(compiler.Compile(c, stringLiterals, floatLiterals, bigIntLiterals));
 

@@ -442,6 +442,18 @@ public sealed class BytecodeInterpreter
                     break;
                 }
 
+                // ADR-035 — a place a debugger may stop. Present in debug-compiled
+                // code before every body goal and at every clause entry; with no
+                // session attached it is a null test and a 5-byte step.
+                case Opcode.Break:
+                {
+                    if (_engine.Debug is { } dbg)
+                        dbg.OnBreak(_engine, ReadI32(code, codeArr, pc + 1));
+                    _engine.SetPc(pc + 5);
+                    inClause = true;
+                    break;
+                }
+
                 // ADR-035 — the debuggable last call. One of Call or Execute,
                 // chosen per dispatch by the activation's LCO flag, so a
                 // debugger can turn last-call optimisation off (and back on)

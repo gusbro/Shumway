@@ -31,6 +31,18 @@ public sealed class ModuleCompiler
     /// and a runtime-switchable last call.</summary>
     public bool DebugCodegen { get; set; }
 
+    /// <summary>ADR-035 — propagated to
+    /// <see cref="PredicateCompiler.DebugFileId"/>.</summary>
+    public int DebugFileId { get; set; }
+
+    /// <summary>ADR-035 — functors that a <c>:- disable_debug.</c> region covered.
+    /// They compile with full release codegen even while the rest of the program
+    /// is debuggable: no frames forced, no runtime-switchable last call, no stop
+    /// sites. A debugger sees them as one opaque step, and the predicates they
+    /// call are debugged normally — which is the point of being able to switch
+    /// debugging off for part of a module rather than all of it.</summary>
+    public IReadOnlySet<int>? NonDebuggableFunctors { get; set; }
+
     /// <summary>ADR-030 — when set, run <see cref="DeterminismAnalysis"/> over the
     /// whole clause set (which this compiler already sees in full) and drop the
     /// redundant trailing top-level cut from each static predicate's last clause
@@ -162,7 +174,11 @@ public sealed class ModuleCompiler
 
         var predicates = new List<CompiledPredicate>(order.Count);
         var predicateCompiler = new PredicateCompiler
-            { EmitDebugInfo = EmitDebugInfo, DebugCodegen = DebugCodegen };
+        {
+            EmitDebugInfo = EmitDebugInfo,
+            DebugCodegen = DebugCodegen,
+            DebugFileId = DebugFileId,
+        };
         foreach (int fid in order)
         {
             if (cache is not null
@@ -175,6 +191,10 @@ public sealed class ModuleCompiler
             bool enableIndexing = unindexedFunctors is null
                 || !unindexedFunctors.Contains(fid);
             bool isDynamic = dynamicFunctors is not null && dynamicFunctors.Contains(fid);
+            // ADR-035 — debuggability is per predicate, not per module: the
+            // `:- disable_debug.` / `:- enable_debug.` directives are positional.
+            predicateCompiler.DebugCodegen =
+                DebugCodegen && NonDebuggableFunctors?.Contains(fid) != true;
             predicates.Add(predicateCompiler.Compile(
                 groups[fid], stringLiterals, floatLiterals, bigIntLiterals,
                 enableIndexing, isDynamic, failStubAddr));

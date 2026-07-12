@@ -106,6 +106,11 @@ public sealed class DebugTracer : IDebugSession
 
     void IDebugSession.OnExit(Activation engine) => Exit(engine);
 
+    /// <summary>The tracer prints ports, not source lines, and it stops for
+    /// nobody — a stop site is not an event it has anything to say about. The
+    /// debug session that drives Visual Studio is the one that acts on these.</summary>
+    void IDebugSession.OnBreak(Activation engine, int siteId) { }
+
     void IDebugSession.OnRedo(Activation engine, int retryPc)
     {
         // Every goal called after the choice point now at engine.B was pushed

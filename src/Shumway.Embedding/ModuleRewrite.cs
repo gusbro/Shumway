@@ -61,7 +61,7 @@ public static class ModuleRewrite
             Term newBody = RewriteGoal(rule.Args[1], ctx);
             return ReferenceEquals(newHead, rule.Args[0]) && ReferenceEquals(newBody, rule.Args[1])
                 ? term
-                : new CompoundTerm(":-", new[] { newHead, newBody });
+                : new CompoundTerm(":-", new[] { newHead, newBody }) { Position = term.Position };
         }
         // Directive (:- /1 Body) — leave alone; directives are consumed
         // before this pass runs and never end up as compiled predicates.
@@ -72,11 +72,17 @@ public static class ModuleRewrite
         return RewriteHead(term, ctx);
     }
 
+    // ADR-035 — every rebuilt term carries the source position of the term it
+    // replaces. Mangling changes a name, not a place: without this the debug
+    // stop sites (and any future position-driven diagnostics) would see 0:0 for
+    // every goal in a module, which is to say for every goal in every program.
     private static Term RewriteHead(Term head, Context ctx) => head switch
     {
-        AtomTerm a => MangleIfLocal(a.Name, 0, ctx, () => new AtomTerm(MangledName(a.Name, ctx))) ?? a,
+        AtomTerm a => MangleIfLocal(a.Name, 0, ctx,
+            () => new AtomTerm(MangledName(a.Name, ctx)) { Position = a.Position }) ?? a,
         CompoundTerm c => MangleIfLocal(c.Functor, c.Args.Length, ctx,
-            () => new CompoundTerm(MangledName(c.Functor, ctx), c.Args)) ?? c,
+            () => new CompoundTerm(MangledName(c.Functor, ctx), c.Args)
+                { Position = c.Position }) ?? c,
         _ => head,
     };
 
@@ -90,7 +96,7 @@ public static class ModuleRewrite
             // clauses can land from any module via assertz) so call sites
             // skip the mangle just like the head does in MangleIfLocal.
             if (IsLocal(a.Name, 0, ctx) && !IsDynamic(a.Name, 0, ctx))
-                return new AtomTerm(MangledName(a.Name, ctx));
+                return new AtomTerm(MangledName(a.Name, ctx)) { Position = a.Position };
             if (IsBuiltin(a.Name, 0)) return goal;
             return goal;
         }
@@ -113,10 +119,13 @@ public static class ModuleRewrite
                         newArgs[i] = rewritten;
                     }
                 }
-                return newArgs is null ? goal : new CompoundTerm(c.Functor, newArgs);
+                return newArgs is null
+                    ? goal
+                    : new CompoundTerm(c.Functor, newArgs) { Position = c.Position };
             }
             if (IsLocal(c.Functor, c.Args.Length, ctx) && !IsDynamic(c.Functor, c.Args.Length, ctx))
-                return new CompoundTerm(MangledName(c.Functor, ctx), c.Args);
+                return new CompoundTerm(MangledName(c.Functor, ctx), c.Args)
+                    { Position = c.Position };
             if (IsBuiltin(c.Functor, c.Args.Length)) return goal;
             return goal;
         }

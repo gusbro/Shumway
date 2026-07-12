@@ -71,6 +71,22 @@ public sealed class ClauseCompiler
     /// Off by default: this is not what release code should look like.</summary>
     public bool DebugCodegen { get; set; }
 
+    /// <summary>ADR-035 — the <see cref="DebugSiteTable"/> file id the clauses
+    /// being compiled came from. Only read under <see cref="DebugCodegen"/>.</summary>
+    public int DebugFileId { get; set; }
+
+    /// <summary>ADR-035 — emit a stop site for this source position, if we are
+    /// compiling debuggable code. A position of 0:0 (a synthetic term the
+    /// transforms produced, with no source of its own) gets no site: a debugger
+    /// must not offer to stop somewhere the user cannot see.</summary>
+    private bool _suppressBreaks;
+
+    private void EmitBreakAt(CompileState s, Shumway.Compiler.Lexer.SourcePosition pos)
+    {
+        if (!DebugCodegen || _suppressBreaks || pos.Line <= 0) return;
+        s.Emitter.EmitBreak(DebugSiteTable.Intern(DebugFileId, pos.Line, pos.Column));
+    }
+
 
     public CompiledClause Compile(Clause clause)
         => Compile(clause,
@@ -115,6 +131,11 @@ public sealed class ClauseCompiler
     {
         (string name, Term[] headArgs) = DecomposeHead(headTerm);
         List<Term> goals = bodyTerm is null ? new List<Term>() : FlattenConjunction(bodyTerm);
+
+        // ADR-035 — the engine wraps every query in a synthetic __query__ clause.
+        // It is not source the user wrote, so it gets no stop sites: a debugger
+        // stops inside the program, not inside the machinery that launched it.
+        _suppressBreaks = name == "__query__";
 
         // ADR-018: `X is Expr` and the six comparisons compile to the
         // arithmetic instruction set (a_eval_*) in CompileBodyGoal — no term,
@@ -199,6 +220,11 @@ public sealed class ClauseCompiler
         // needs the frame to restore Cp from.
         if (DebugCodegen && goals.Count > 0)
             needFrame = true;
+        // ADR-035 — the clause's entry site, first thing in its bytecode. This is
+        // the stop a breakpoint on a FACT's line resolves to, and the one a
+        // rule's head line resolves to; the body goals get their own below.
+        EmitBreakAt(state, headTerm.Position);
+
         // Chunk 220 — fuse the common Allocate+GetLevel prologue when both
         // are emitted; otherwise emit individually.
         if (needFrame && needsDeepCut)
@@ -259,6 +285,8 @@ public sealed class ClauseCompiler
             {
                 bool isLast = i == goals.Count - 1;
                 Term goal = goals[i];
+
+                EmitBreakAt(state, goal.Position);   // ADR-035 — this goal's stop site
 
                 if (goal is AtomTerm { Name: "!" })
                 {
