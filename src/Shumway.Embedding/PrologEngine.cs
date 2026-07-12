@@ -3670,6 +3670,15 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         foreach (var _ in QueryAll("true.")) break;
     }
 
+    /// <summary>ADR-035 — turns last-call optimisation on or off for queries from here
+    /// on. A debugger turns it OFF, because LCO reclaims a predicate's frame before its
+    /// final goal runs and a frame the machine has reclaimed is a frame the debugger
+    /// cannot show. To change it for the query already running — which is what a
+    /// debugger stopped inside one actually wants — see
+    /// <see cref="Debugging.DebugService.SetLastCallOptimisation"/>, or set the
+    /// <c>debug_lco</c> prolog flag from a goal.</summary>
+    public void SetDebugLastCall(bool on) => _flags.DebugLco = on;
+
     public void ClearBreakpoints()
     {
         _breakpointSites.Clear();

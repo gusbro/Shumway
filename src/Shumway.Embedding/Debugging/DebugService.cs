@@ -104,6 +104,19 @@ public sealed class DebugService : IDebugSession
         _stepDepth = _lastStopDepth;
     }
 
+    /// <summary>The machine we are stopped in. Null between stops.</summary>
+    public Activation? Current { get; private set; }
+
+    /// <summary>Turns last-call optimisation on or off for the query ALREADY RUNNING —
+    /// which is what a debugger stopped inside one wants, and what
+    /// <c>debug_lastcall</c> being an opcode that reads a flag rather than a compiled-in
+    /// decision is for. Frames LCO already reclaimed do not come back, but from the next
+    /// call on, the stack is whole.</summary>
+    public void SetLastCallOptimisation(bool on)
+    {
+        if (Current is not null) Current.LastCallOptimisation = on;
+    }
+
     private int _lastStopDepth;
 
     // ----- ports -----
@@ -186,12 +199,20 @@ public sealed class DebugService : IDebugSession
 
         _mode = StepMode.Continue;
         _lastStopDepth = depth;
+        Current = engine;
         var site = SiteOf(pc);
-        _onStop(this, new DebugStopEvent(
-            StopReason.Redo,
-            pred is null ? _currentGoal : $"{pred.Value.Name}/{pred.Value.Arity}",
-            site.File, site.Line, depth,
-            _engine.CaptureFrames(engine, pc, e, cp)));
+        try
+        {
+            _onStop(this, new DebugStopEvent(
+                StopReason.Redo,
+                pred is null ? _currentGoal : $"{pred.Value.Name}/{pred.Value.Arity}",
+                site.File, site.Line, depth,
+                _engine.CaptureFrames(engine, pc, e, cp)));
+        }
+        finally
+        {
+            Current = null;
+        }
     }
 
     void IDebugSession.OnFail(Activation engine)
@@ -249,11 +270,19 @@ public sealed class DebugService : IDebugSession
     {
         _mode = StepMode.Continue;   // a handler that says nothing lets it run on
         _lastStopDepth = depth;
+        Current = engine;
 
         var frames = _engine.CaptureFrames(engine);
         goal ??= frames.Count > 0 ? $"{frames[0].Name}/{frames[0].Arity}" : "";
 
-        _onStop(this, new DebugStopEvent(reason, goal, site.File, site.Line, depth, frames));
+        try
+        {
+            _onStop(this, new DebugStopEvent(reason, goal, site.File, site.Line, depth, frames));
+        }
+        finally
+        {
+            Current = null;
+        }
     }
 
     private (string File, int Line) SiteOf(int pc)
