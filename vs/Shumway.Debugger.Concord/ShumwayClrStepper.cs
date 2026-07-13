@@ -33,7 +33,11 @@ namespace Shumway.Debugger.Concord
         /// which is the built-in stepper.</summary>
         private static bool Ours(DkmRuntimeInstance runtimeInstance)
         {
-            return ShumwayRemoteComponent.State(runtimeInstance.Process).StoppedAtPort;
+            // Asked of the ENGINE, not of a flag: it is stopped in Prolog, or it is not, and
+            // it says so in the channel. A flag only knows about the stops that went through
+            // our own breakpoint — and debugger_break/0 does not (the program asks the
+            // runtime to break). See ShumwayRemoteComponent.StoppedInProlog.
+            return ShumwayRemoteComponent.StoppedInProlog(runtimeInstance.Process);
         }
 
         bool IDkmRuntimeStepper.OwnsCurrentExecutionLocation(
@@ -41,7 +45,7 @@ namespace Shumway.Debugger.Concord
         {
             ShumwayServerDataItem state = ShumwayRemoteComponent.State(runtimeInstance.Process);
             state.OwnsAsks++;
-            if (state.StoppedAtPort)
+            if (Ours(runtimeInstance))
                 return true;   // it is Prolog we are standing in, whatever the CLR thinks
             throw new NotImplementedException();
         }

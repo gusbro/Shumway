@@ -190,6 +190,18 @@ public sealed class DebugService : IDebugSession
 
     private int _lastStopDepth;
 
+    /// <summary>ADR-035 — record a stop that did not come through <see cref="Stop"/>:
+    /// <c>debugger_break/0</c>, which stops the debugger by asking the runtime rather than by
+    /// tripping our own breakpoint. The DEPTH is the part that matters. A step over or out is
+    /// measured against the depth of the goal you stepped FROM, and without this it would be
+    /// measured against whatever the last real stop left behind — so F10 from a
+    /// <c>debugger_break</c> would run to somewhere arbitrary.</summary>
+    internal void NoteStop(int depth)
+    {
+        _mode = StepMode.Continue;   // a handler that says nothing lets it run on
+        _lastStopDepth = depth;
+    }
+
     // ----- commands from a debugger, while the program is running -----
 
     /// <summary>Called every <see cref="PollInterval"/> ports, so a debugger can arm a
@@ -249,7 +261,42 @@ public sealed class DebugService : IDebugSession
         if (IsInternal(entry.Name)) return;
         _goalKind = GoalKind.Builtin;
         _goalId = builtinId;
+        Current = engine;
+
+        // A FOREIGN builtin is the user's own C#, and they may well have a breakpoint in it.
+        // When Visual Studio stops there, the engine thread is frozen INSIDE this call and
+        // cannot be asked anything — but the Prolog stack under the C# is precisely what the
+        // user came for, and it is a fact right now, on the way in. So publish it here, and
+        // say we are inside; the debugger shows it only for as long as that holds.
+        //
+        // Paid per foreign call, and only while a debugger is listening. It is the one hook
+        // that walks the stack outside a stop; every other port returns before doing any work
+        // (see MaybeStopAtPort) precisely so that running under the debugger stays cheap.
+        if (OnInteropEnter is not null && PrologEngine.IsForeignBuiltin(builtinId))
+        {
+            _interopDepth++;
+            PublishInterop(engine, entry.Name + "/" + entry.Arity);
+        }
     }
+
+    private void PublishInterop(Activation engine, string goal)
+    {
+        var site = SiteOf(engine.P);
+        OnInteropEnter!(new DebugStopEvent(
+            StopReason.Call, goal, site.File, site.Line,
+            PortDepth(engine), _engine.CaptureFrames(engine)));
+    }
+
+    /// <summary>Set by a channel session: the Prolog stack as it stands at the moment control
+    /// crosses into a foreign predicate's C#, and the moment it comes back. Null when nobody
+    /// is listening, which is what keeps the walk above from happening at all.</summary>
+    internal Action<DebugStopEvent>? OnInteropEnter { get; set; }
+
+    internal Action? OnInteropExit { get; set; }
+
+    /// <summary>Foreign calls we are inside, not just how many we have made: a foreign
+    /// predicate may call back into Prolog, which may call another foreign predicate.</summary>
+    private int _interopDepth;
 
     private void OnCall(Activation engine)
     {
@@ -267,7 +314,18 @@ public sealed class DebugService : IDebugSession
         MaybeStopAtPort(engine, StopReason.Call);
     }
 
-    void IDebugSession.OnBuiltinResult(Activation engine, int builtinId, bool succeeded) { }
+    void IDebugSession.OnBuiltinResult(Activation engine, int builtinId, bool succeeded)
+    {
+        // Out of the C# again: the stack we published on the way in is history from here, and
+        // saying so is what stops the debugger showing it at a stop that has nothing to do
+        // with this call. If an OUTER foreign call is still running (it called back into
+        // Prolog, which called this one), the stack it is standing in is not the one we
+        // published either — so re-publish rather than leave the deeper one behind.
+        if (_interopDepth == 0) return;
+        _interopDepth--;
+        if (_interopDepth > 0) PublishInterop(engine, CurrentGoal());
+        else OnInteropExit?.Invoke();
+    }
 
     void IDebugSession.OnExit(Activation engine)
         => MaybeStopAtPort(engine, StopReason.Exit);

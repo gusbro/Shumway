@@ -39,6 +39,14 @@ public sealed class ChannelDebugSession : IDisposable
 
         _service.Poll = PollWhileRunning;
 
+        // The mixed stack. When the debugger stops in a foreign predicate's C#, the engine
+        // thread is frozen inside the call and cannot be asked for anything — so it says
+        // where Prolog is on the way IN, and unsays it on the way out. The buffer stays
+        // marked `running` throughout: the machine is not stopped, our stepper must not claim
+        // the step, and only the interop depth licenses reading the stack.
+        _service.OnInteropEnter = stop => _channel.WriteSnapshot(stop, running: true, interopDepth: 1);
+        _service.OnInteropExit = () => _channel.SetInteropDepth(0);
+
         ShumwayDebugHelper.Channel = _channel;
         ShumwayDebugHelper.Session = this;
         engine.AttachDebugSession(_service);
@@ -321,6 +329,10 @@ public sealed class ChannelDebugSession : IDisposable
             _service.Current = activation;
             DebugStopEvent? here = _service.CaptureNow();
             if (here is null) return;
+
+            // A step taken from here is measured against THIS depth, like a step from any
+            // other stop.
+            _service.NoteStop(here.Depth);
 
             _channel.WriteSnapshot(here);
             System.Diagnostics.Debugger.Break();

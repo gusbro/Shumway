@@ -172,6 +172,22 @@ try {
     $results["A2 debugger_break/0 stops, with its own stack"] =
         ($brk -and @($brkFrames | Where-Object { $_ -match '^marked/0$' }).Count -ge 1)
 
+    # A stop you cannot step from is half a debugger. This failed with "Unable to step.
+    # Operation not supported" -- the component knew about the stops that came through its
+    # own breakpoint and no others, so it declined a step it should have taken, and the CLR
+    # was left trying to step a Prolog frame that is not its code.
+    $stepped = $false
+    if ($brk) {
+        try {
+            Invoke-WithRetry { $dte.Debugger.StepOver($true) } 5 2000
+            Start-Sleep -Seconds 2
+            $after = Prolog-Frames
+            Write-Host "  after F10: $($after[0])"
+            $stepped = ($dte.Debugger.CurrentMode -eq 2)
+        } catch { Write-Host "  F10 threw: $($_.Exception.Message)" }
+    }
+    $results["A3 you can STEP from a debugger_break stop"] = $stepped
+
     Write-Host ""
     # A program that STOPPED and one that never ran look identical from the IDE. The trace
     # says which: the goals leave a mark as they complete.

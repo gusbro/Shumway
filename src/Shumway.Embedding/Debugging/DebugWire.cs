@@ -95,6 +95,17 @@ public sealed class DebugSnapshot
     /// blocked, or finished, or standing in C#.</summary>
     public int Heartbeat { get; set; }
 
+    /// <summary>How many foreign predicates — the user's own C# — the engine is currently
+    /// inside. The one case where <see cref="Running"/> is set and the stack in this buffer
+    /// is nonetheless TRUE: the engine published it on its way into the call it is now
+    /// blocked in, and cannot have moved since without coming back out.
+    ///
+    /// <para>This is what makes a stopped-in-C# stack MIXED: Visual Studio shows the managed
+    /// frames, and these are the Prolog frames underneath them. Without it the debugger has
+    /// to refuse (the buffer holds the last stop, which is not where the program is) and the
+    /// user sees their C# standing on nothing.</para></summary>
+    public int InteropDepth { get; set; }
+
     public StopReason Reason { get; set; }
     public string Goal { get; set; } = "";
     public string File { get; set; } = "";
@@ -145,8 +156,8 @@ public sealed class DebugVariableView
 ///
 /// <para>Layout — little-endian ints, length-prefixed UTF-8 strings:</para>
 /// <code>
-/// snapshot: version, sequence, running, heartbeat, reason, goal, file, line, depth,
-///           breakFile, breakLine,
+/// snapshot: version, sequence, running, heartbeat, interopDepth,
+///           reason, goal, file, line, depth, breakFile, breakLine,
 ///           frameCount, { name, arity, file, line, pc,
 ///                         varCount, { name, value } }
 /// commands: version, count, { kind, file, line, flag }
@@ -156,7 +167,7 @@ public static class DebugWire
 {
     /// <summary>Bumped whenever the layout changes, so a debugger built against an older
     /// engine says so instead of reading nonsense.</summary>
-    public const int FormatVersion = 2;
+    public const int FormatVersion = 3;
 
     /// <summary>Where the <see cref="DebugSnapshot.Running"/> word sits: past the version
     /// and the sequence. The engine pokes it in place when it resumes — telling the
@@ -170,6 +181,12 @@ public static class DebugWire
     /// honour (stop at the next port) and one it cannot (the engine is blocked in a read,
     /// or sitting at the top-level prompt, and no port will ever come).</summary>
     public const int HeartbeatOffset = 12;
+
+    /// <summary>Where the <see cref="DebugSnapshot.InteropDepth"/> word sits. Poked in place
+    /// on the way into and out of a foreign call, like the running word and for the same
+    /// reason: it has to be cheap enough to say at a boundary the program crosses often.
+    /// </summary>
+    public const int InteropDepthOffset = 16;
 
     // ----- primitives -----
 
@@ -233,6 +250,7 @@ public static class DebugWire
             Sequence = ReadInt(buffer, ref at),
             Running = ReadInt(buffer, ref at) != 0,
             Heartbeat = ReadInt(buffer, ref at),
+            InteropDepth = ReadInt(buffer, ref at),
             Reason = (StopReason)ReadInt(buffer, ref at),
             Goal = ReadString(buffer, ref at),
             File = ReadString(buffer, ref at),

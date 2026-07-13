@@ -83,14 +83,22 @@ public sealed class DebugChannel : IDisposable
     /// breakpoint is tripped, so that by the time the debugger is looking, everything it
     /// needs is already there and nothing has to run to produce it. Field order is the
     /// one <see cref="DebugWire.ReadSnapshot"/> expects.</summary>
-    public void WriteSnapshot(DebugStopEvent stop)
+    public void WriteSnapshot(DebugStopEvent stop) => WriteSnapshot(stop, running: false, interopDepth: 0);
+
+    /// <summary>The general form. <paramref name="running"/> and
+    /// <paramref name="interopDepth"/> are what a reader consults BEFORE the stack, to know
+    /// whether it is the stack the program is standing in: a stop (running false), or a
+    /// foreign call the engine is blocked inside and published on its way into (running true,
+    /// depth above zero). See <see cref="DebugSnapshot.InteropDepth"/>.</summary>
+    public void WriteSnapshot(DebugStopEvent stop, bool running, int interopDepth)
     {
         ArgumentNullException.ThrowIfNull(stop);
         int at = 0;
         DebugWire.WriteInt(_snapshot, ref at, DebugWire.FormatVersion);
         DebugWire.WriteInt(_snapshot, ref at, ++Sequence);
-        DebugWire.WriteInt(_snapshot, ref at, 0);   // stopped: this stack is where we ARE
+        DebugWire.WriteInt(_snapshot, ref at, running ? 1 : 0);
         DebugWire.WriteInt(_snapshot, ref at, _heartbeat);
+        DebugWire.WriteInt(_snapshot, ref at, interopDepth);
         DebugWire.WriteInt(_snapshot, ref at, (int)stop.Reason);
         DebugWire.WriteString(_snapshot, ref at, stop.Goal);
         DebugWire.WriteString(_snapshot, ref at, stop.File);
@@ -133,6 +141,16 @@ public sealed class DebugChannel : IDisposable
     {
         int at = DebugWire.RunningOffset;
         DebugWire.WriteInt(_snapshot, ref at, 1);
+    }
+
+    /// <summary>"The engine is inside this many foreign calls." Zero puts the buffer back to
+    /// being the record of a past stop; above zero says the stack in it is the one under the
+    /// C# the debugger is about to be looking at. One word, in place — this is crossed at
+    /// every foreign call.</summary>
+    public void SetInteropDepth(int depth)
+    {
+        int at = DebugWire.InteropDepthOffset;
+        DebugWire.WriteInt(_snapshot, ref at, depth);
     }
 
     private int _heartbeat;

@@ -79,10 +79,10 @@ public class Adr035ChannelTests
         Assert.Equal("mid/2", seen.Goal);
         Assert.Equal(5, seen.Line);
 
-        // The whole stack, with the variables of every frame, came across as bytes. `?-` is
-        // the top-level query the user launched this from — not a predicate (arity -1), and
-        // the bottom of every Prolog stack.
-        Assert.Equal(new[] { "mid/2", "top/1", "?-/-1" },
+        // The whole stack, with the variables of every frame, came across as bytes. The query
+        // the user launched this from is the bottom of every Prolog stack — named by the goal
+        // they typed, and not a predicate (arity -1).
+        Assert.Equal(new[] { "mid/2", "top/1", "?- top(one)/-1" },
             seen.Frames.Select(f => $"{f.Name}/{f.Arity}"));
         Assert.Equal("one", seen.Frames[0].Variables.First(v => v.Name == "In").Value);
         Assert.Equal("one", seen.Frames[1].Variables.First(v => v.Name == "A").Value);
@@ -180,7 +180,7 @@ public class Adr035ChannelTests
         Assert.NotNull(onBreakAll);
         Assert.Equal(StopReason.AsyncBreak, onBreakAll!.Reason);
         // Not a port — but the stack is real, and so are the variables.
-        Assert.Equal(new[] { "mid/2", "top/1", "?-/-1" },
+        Assert.Equal(new[] { "mid/2", "top/1", "?- top(one)/-1" },
             onBreakAll.Frames.Select(f => $"{f.Name}/{f.Arity}"));
         Assert.Equal("one", onBreakAll.Frames[0].Variables.First(v => v.Name == "In").Value);
     }

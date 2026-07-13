@@ -436,7 +436,15 @@ public sealed class PredicateCompiler
     private static IReadOnlyList<DebugClauseFrame> ClauseFrames(
         CompiledClause clause, int clauseStart)
     {
-        if (clause.DebugStops.Count == 0) return Array.Empty<DebugClauseFrame>();
+        // Having somewhere to STOP and having variables to SHOW are different things, and
+        // reading the first as a proxy for the second cost the query frame its variables:
+        // the `__query__` wrapper is deliberately given no stop sites (the user cannot set a
+        // breakpoint on a line they never wrote), so it fell out here — and a debugger
+        // stopped in `?- X = 41, debugger_break.` could not show X, the one variable the user
+        // was looking at. A clause is debuggable if it was COMPILED debuggable, which is what
+        // having either of these says.
+        if (clause.DebugStops.Count == 0 && clause.DebugVariables.Count == 0)
+            return Array.Empty<DebugClauseFrame>();
         return new[]
         {
             new DebugClauseFrame(

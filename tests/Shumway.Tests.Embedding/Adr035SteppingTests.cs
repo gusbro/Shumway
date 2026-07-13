@@ -234,7 +234,9 @@ public class Adr035SteppingTests
         // where the user launched this from and where they are still standing. The C# stack
         // knows none of this — Tier-0 runs the whole program inside a single Dispatch frame —
         // so it can only have come from the machine's own environment chain.
-        Assert.Equal(new[] { "leaf/1", "mid/1", "top/1", "?-/-1" },
+        // The query frame names the goal the user typed — `?- top(A)`, not a bare `?-`,
+        // which would say only "a query is running" to someone who is stopped in one.
+        Assert.Equal(new[] { "leaf/1", "mid/1", "top/1", "?- top(A)/-1" },
             frames.Select(f => $"{f.Name}/{f.Arity}"));
     }
 
@@ -274,8 +276,41 @@ public class Adr035SteppingTests
         // bottom of the stack, where the user launched this from.)
         Assert.Equal(new[] { "leaf/1", "top/1" },
             withLco.Select(f => $"{f.Name}/{f.Arity}"));
-        Assert.Equal(new[] { "leaf/1", "mid/1", "top/1", "?-/-1" },
+        Assert.Equal(new[] { "leaf/1", "mid/1", "top/1", "?- top(A)/-1" },
             withoutLco.Select(f => $"{f.Name}/{f.Arity}"));
+    }
+
+    [Fact]
+    public void ARecursivePredicateShowsOneFramePerLevel()
+    {
+        // It did not. Every frame of a recursive predicate stores the SAME return address —
+        // the instruction after the recursive call — and the env-chain walk was dropping any
+        // frame whose return address matched the one it started from, meaning ALL of them. A
+        // 12-deep recursion showed TWO frames, and the debugger then read the query's
+        // variables out of whichever frame it had landed on instead: it reported the answer
+        // as a loop counter, confidently. The duplicate is only ever the FIRST frame (the
+        // running clause saved the current cp into its own environment at `allocate`), and
+        // that is the only one to skip.
+        var engine = DebugEngine(
+            "down(0) :- mark(bottom).\n"
+            + "down(N) :- N > 0, M is N - 1, down(M).\n"
+            + "mark(_).\n", lco: false);
+        engine.AddBreakpoint("<string>", 2);   // the bottom of the recursion, twelve levels down
+
+        var frames = Walk(engine, "down(12).")[0].Frames;
+        _log.WriteLine("frames: " + string.Join(" <- ", frames.Select(f => $"{f.Name}/{f.Arity}")));
+
+        // down(0), the twelve down/1 frames above it, and under all of it the query.
+        Assert.Equal(13, frames.Count(f => f.Name == "down"));
+        Assert.StartsWith("?-", frames[^1].Name);
+
+        // And each level holds ITS OWN N — which is the whole point of a stack. (down(0)
+        // matched the first clause, which has no N: twelve values, innermost first.)
+        var ns = frames.Where(f => f.Name == "down")
+                       .SelectMany(f => f.Variables.Where(v => v.Name == "N"))
+                       .Select(v => v.Value)
+                       .ToArray();
+        Assert.Equal(new[] { "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12" }, ns);
     }
 
     // ---------- the model, pinned ----------

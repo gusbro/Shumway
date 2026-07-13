@@ -25,7 +25,7 @@ namespace Shumway.Tests.Embedding;
 /// the engine says so when a stack is history rather than current; and it never renders one
 /// unless somebody stopped.</para>
 /// </summary>
-public class Adr035PauseTests
+public partial class Adr035PauseTests
 {
     private readonly ITestOutputHelper _log;
 
@@ -172,16 +172,20 @@ go :- loop(200000).
             _log.WriteLine($"  {f.Name}/{f.Arity}  [{string.Join(", ", f.Variables.Select(v => v.Name + " = " + v.Value))}]");
 
         // The query is on the stack, and it is not dressed up as a predicate: arity -1 says
-        // "this is not a Name/Arity", and the debugger renders it as `?-`.
-        var query = seen.Frames.SingleOrDefault(f => f.Name == "?-");
+        // "this is not a Name/Arity", so the debugger renders it without one.
+        var query = seen.Frames.SingleOrDefault(f => f.Name.StartsWith("?-"));
         Assert.NotNull(query);
         Assert.Equal(-1, query!.Arity);
 
-        // KNOWN GAP: the query frame carries no variables yet — the synthetic wrapper is
-        // compiled without a frame map, so `Answer` cannot be read out of its Y slots. The
-        // top level still prints it as the answer, and every frame BELOW the query (the
-        // user's own predicates) shows its variables. Being on the stack at all is what was
-        // broken, and is what this pins.
+        // And it says WHICH query. A bare `?-` told the user only that a query was running,
+        // which they could see from being stopped in it; the goal they typed is the frame's
+        // identity, the way `loop/1` is a clause's.
+        Assert.Contains("loop(2000)", query.Name);
+
+        // Its variables are readable too — the wrapper is compiled with a frame map like any
+        // other clause. (It gets no BREAK sites: the user cannot set a breakpoint on a line
+        // they never wrote.)
+        Assert.Contains(query.Variables, v => v.Name == "Answer" && v.Value == "42");
     }
 
     [Fact]
@@ -225,5 +229,67 @@ go :- loop(200000).
         Assert.NotNull(snapshot);
         _log.WriteLine($"heartbeat after 200k goals: {snapshot!.Heartbeat}");
         Assert.True(snapshot.Heartbeat > 0);
+    }
+
+    /// <summary>The user's own C#, reachable from Prolog — where a breakpoint in a foreign
+    /// predicate lands the debugger.</summary>
+    public sealed partial class Scaling
+    {
+        public static DebugSnapshot? SnapshotSeenFromInsideTheCall;
+        public static Func<DebugSnapshot?>? Read;
+
+        [PrologPredicate("scale/2")]
+        public static int Scale(int n)
+        {
+            // Stand exactly where Visual Studio stands when it stops on a breakpoint in here:
+            // the engine thread is INSIDE this call and can be asked nothing. Whatever the
+            // debugger can see, it has to already be in the buffer.
+            SnapshotSeenFromInsideTheCall = Read?.Invoke();
+            return n * 2;
+        }
+    }
+
+    [Fact]
+    public void StoppedInsideAForeignPredicate_ThePrologStackUnderTheCSharpIsReadable()
+    {
+        // The point of an interop debugger: ONE stack, the user's C# over the Prolog that
+        // called it. Killing the 50 ms sampler took this away without anyone noticing — the
+        // engine only ever published a stack when it STOPPED, and a breakpoint in C# is not a
+        // stop of the engine's, so the debugger (rightly) refused to show the last one and
+        // the C# stood on nothing. The engine now publishes the stack as it crosses INTO a
+        // foreign call, and says it is inside one.
+        var engine = new PrologEngine();
+        engine.RegisterPredicates(typeof(Scaling));
+        engine.ConsultString(
+            ":- set_prolog_flag(compile_mode, debug).\n"
+            + "run(In, Out) :- step(In, Out).\n"
+            + "step(In, Out) :- scale(In, Out).\n");
+        engine.QueryAll("set_prolog_flag(debug_lco, off).").ToList();
+
+        using var session = new ChannelDebugSession(engine, notify: _ => { });
+        Scaling.Read = () => ReadFromMemory(session.Channel);
+        Scaling.SnapshotSeenFromInsideTheCall = null;
+
+        Assert.Equal(16, engine.QueryFirst<int>("run(8, Out).", "Out"));
+
+        var seen = Scaling.SnapshotSeenFromInsideTheCall;
+        Assert.NotNull(seen);
+        foreach (var f in seen!.Frames) _log.WriteLine($"  {f.Name}/{f.Arity}");
+
+        // RUNNING — the machine has not stopped, and our stepper must not claim a step in
+        // there: it is C#, and the CLR steps its own code. But it IS inside a foreign call,
+        // and that is what licenses the stack.
+        Assert.True(seen.Running);
+        Assert.Equal(1, seen.InteropDepth);
+
+        // And the stack is the real one, the goals that led into this C#.
+        Assert.Equal(new[] { "step", "run" },
+            seen.Frames.Where(f => f.Arity >= 0).Select(f => f.Name).ToArray());
+        Assert.Contains(seen.Frames, f => f.Name.StartsWith("?-"));
+
+        // Out of the call, it is history again — nobody may show it at the next unrelated stop.
+        DebugSnapshot? after = ReadFromMemory(session.Channel);
+        Assert.NotNull(after);
+        Assert.Equal(0, after!.InteropDepth);
     }
 }

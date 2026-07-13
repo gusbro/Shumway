@@ -281,7 +281,7 @@ namespace Shumway.Debugger.Concord
             // keep it: a step there is a C# step, and it is not ours to take.
             ShumwayServerDataItem owner = GetState(runtimeInstance.Process);
             owner.OwnsAsks++;
-            return owner.StoppedAtPort;
+            return StoppedInProlog(runtimeInstance.Process);
         }
 
         void IDkmRuntimeStepper.Step(
@@ -318,6 +318,41 @@ namespace Shumway.Debugger.Concord
         /// The command rides the same idempotent full-state write as everything else.</summary>
         internal static void RequestBreakNow(DkmProcess process, ShumwayServerDataItem state)
             => WriteCommands(process, state);
+
+        /// <summary>Is the machine standing still in Prolog — which is what makes a step
+        /// OURS to take rather than the CLR's?
+        ///
+        /// <para>ASKED OF THE ENGINE, not of a flag we set. We used to answer from
+        /// <see cref="ShumwayServerDataItem.StoppedAtPort"/>, which is turned on when a stop
+        /// arrives through the hidden breakpoint — and so was blind to every stop that comes
+        /// any other way. <c>debugger_break/0</c> is one: the program asks the RUNTIME to
+        /// break, and no breakpoint of ours is involved. We would decline the step, the CLR
+        /// would try to step a synthesized Prolog frame that is not its code, and Visual
+        /// Studio would say "Unable to step. Operation not supported" — which was true, and
+        /// unhelpful.</para>
+        ///
+        /// <para>The engine already publishes the answer: it clears the channel's
+        /// <c>running</c> word for the length of a stop and sets it again when it resumes.
+        /// One memory read, and no flag to keep in step with reality.</para></summary>
+        internal static bool StoppedInProlog(DkmProcess process)
+        {
+            ShumwayServerDataItem state = GetState(process);
+            if (state.SnapshotAddress == 0) return false;
+            try
+            {
+                var header = new byte[DebugWire.RunningOffset + 4];
+                process.ReadMemory((ulong)state.SnapshotAddress, DkmReadMemoryFlags.None, header);
+                int at = 0;
+                if (DebugWire.ReadInt(header, ref at) != DebugWire.FormatVersion)
+                    return false;   // a channel we cannot read is not one we can act on
+                at = DebugWire.RunningOffset;
+                return DebugWire.ReadInt(header, ref at) == 0;   // 0 = stopped, and it is ours
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
 
         private static DebugCommandKind StepKindOf(DkmStepper stepper)
         {

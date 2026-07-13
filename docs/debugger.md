@@ -110,6 +110,10 @@ it back on (to see the stack the release build would really have) with the prolo
 **Locals** show each variable of the selected frame under the name it has in the source,
 rendered as a term. An unbound variable shows as `_G3`.
 
+**The bottom frame is your query** — `?- top(A)`, the goal you typed, with its variables.
+It is not a predicate (it has no `Name/Arity`), and double-clicking it opens nothing: you
+did not write it in a file. It is there because you are standing in it.
+
 ## Interop: one stack across three languages
 
 A program that calls a C# foreign predicate — which may itself P/Invoke into C — debugs as
@@ -121,7 +125,19 @@ ForeignLib.Scaling._Scale_PrologBridge   <- the generated bridge
 step/2                                   <- the Prolog that called it
 run/2
 main/0
+?- main
 ```
+
+The Prolog half of that stack is real, not remembered. While your C# runs, the engine
+thread is frozen inside the call and can be asked nothing — so it writes the stack down on
+its way *into* every foreign predicate, and marks it as no longer current on the way out.
+Stop anywhere else in C# (a thread of your own, a callback the engine did not make) and
+you get no Prolog frames at all, which is the honest answer: the engine is not standing
+there. The cost is one stack walk per foreign call, paid only while a debugger is attached.
+
+Stepping in the C# is the C# debugger's — F10/F11 there behave exactly as they do in any
+.NET program. Step past the end of the foreign predicate and you are back in Prolog, at
+ports.
 
 To make it work, the engine has to be told where the interop assemblies are, exactly as it
 would on the command line. Put them in **Additional arguments**:

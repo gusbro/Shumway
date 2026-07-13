@@ -2244,11 +2244,22 @@ public sealed partial class Activation
         // we walk env frames; each frame stores the *caller's* CP at
         // EnvCpOffset, and EnvCeOffset chains back to the next frame
         // up the call tree.
+        //
+        // The first environment on the chain is the CURRENT clause's, when it has one, and
+        // `allocate` saved cp into it — so its stored CP is the address we have just yielded
+        // and would be a duplicate. Only THAT one is. The test used to be a value comparison
+        // against cp anywhere on the chain, and in a RECURSIVE predicate every frame stores
+        // the same address (the instruction after the recursive call), so every one of them
+        // matched and was dropped: a 500-deep recursion produced a two-frame stack, and the
+        // frame the debugger then paired with the query's variable map belonged to a
+        // stranger. Skip the first if it duplicates; take the rest as they come.
         if (cp >= 0) yield return cp;
+        bool first = true;
         while (e >= 0)
         {
             int frameCp = (int)_stack[e + EnvCpOffset].Data;
-            if (frameCp >= 0 && frameCp != cp) yield return frameCp;
+            if (frameCp >= 0 && !(first && frameCp == cp)) yield return frameCp;
+            first = false;
             int prevE = (int)_stack[e + EnvCeOffset].Data;
             if (prevE == e || prevE < 0) yield break;
             e = prevE;

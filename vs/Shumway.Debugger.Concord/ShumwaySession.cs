@@ -325,7 +325,16 @@ namespace Shumway.Debugger.Concord
                 // there is no Prolog stack, and let the C# the machine really is in speak for
                 // itself. A pause that CAN be answered never gets here — it stops the engine
                 // at a port first (see ShumwayAsyncBreak).
-                if (snapshot != null && snapshot.Running) return null;
+                //
+                // EXCEPT inside a foreign call. There the engine is running by every measure
+                // that matters — it has not stopped, and our stepper must not claim a step —
+                // and yet the stack in the buffer is exactly true: the engine published it as
+                // it crossed into the user's C#, and it is blocked in that call, which is
+                // where the debugger is standing. That is the whole point of the interop
+                // debugger: the C# frames Visual Studio shows, over the Prolog frames that
+                // called them, in ONE stack.
+                if (snapshot != null && snapshot.Running && snapshot.InteropDepth <= 0)
+                    return null;
 
                 return snapshot;
             }

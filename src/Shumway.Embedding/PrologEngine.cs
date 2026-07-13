@@ -3539,6 +3539,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// <summary>True while a four-port tracer is attached (<c>trace/0</c>).</summary>
     public bool Tracing => DebugSession is Debugging.DebugTracer;
 
+    /// <summary>ADR-035 — the goal the running query was set up from, as the user would
+    /// read it back. The <c>__query__</c> wrapper is compiled, not written, so nothing
+    /// downstream of compilation knows what it says; a call stack whose top frame is a bare
+    /// <c>?-</c> tells the user nothing. Captured at query setup (debug sessions only —
+    /// rendering a term is not free, and an undebugged engine has no one to tell).</summary>
+    internal string? CurrentQueryText { get; private set; }
+
     /// <summary>Turns the four-port tracer on or off (the engine side of
     /// <c>trace/0</c> / <c>notrace/0</c>). Port lines go to
     /// <paramref name="output"/>, defaulting to the engine's own output sink so
@@ -3903,6 +3910,19 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return frames;
     }
 
+    /// <summary>Is this address really inside the predicate the binary search landed on, or
+    /// did the search merely CLAMP to it? The search takes the last entry at or before the
+    /// address, so an address past the end of every predicate — a return into the launcher,
+    /// say — comes back named as the last one, which is a guess and not a fact.</summary>
+    private static bool WithinPredicate(
+        Shumway.Compiler.Wam.CompiledPredicate pred, int predicateAddress, int pc)
+        => pc >= predicateAddress && pc < predicateAddress + pred.Bytecode.Length;
+
+    /// <summary>A call stack is a column, not a page: a query long enough to wrap turns the
+    /// whole stack unreadable, and the tail of a goal is not what identifies it.</summary>
+    private static string Ellipsize(string text, int max)
+        => text.Length <= max ? text : text.Substring(0, max - 3) + "...";
+
     private void AddFrame(Activation engine, List<DebugFrame> frames, int pc, int env)
     {
         if (_currentPredicatesByAddress is null || pc < 0) return;
@@ -3923,18 +3943,29 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // not a Name/Arity", and the debugger renders it without one.
         if (name == "__query__")
         {
-            name = "?-";
+            // `?-` on its own says only "a query is running", which the user could see from
+            // the fact that they are stopped. It shows the GOAL — the text they typed —
+            // because that is the frame's identity, the way `step/2` is a clause's.
+            name = CurrentQueryText is null ? "?-" : "?- " + Ellipsize(CurrentQueryText, 120);
             arity = -1;
 
-            // The query's frame does not return INTO a predicate — it returns to the
-            // launcher, an address outside the program entirely, and the search above only
-            // landed here by clamping to the last entry. So find the clause where it
-            // actually is: the wrapper's first (only) clause. Note it is the CLAUSE start we
-            // need, not the predicate's — the frame map is keyed by clause, and a predicate
-            // begins with the dispatch prologue that precedes it.
-            // (Best effort: if the wrapper has no frame map, the query still shows — with no
-            // variables. Being on the stack is the part that matters; an empty stack is what
-            // made the debugger look broken.)
+            // Two different frames wear this name, and only one of them has variables.
+            //
+            // While the query still HAS its environment (debug turns last-call optimisation
+            // off precisely so it does), the address we are looking at is a real return
+            // address INSIDE the wrapper's code, paired with the wrapper's own frame — and
+            // the user's query variables read out of it.
+            //
+            // Once LCO has reclaimed that frame the address is the one the query returns to:
+            // the launcher, outside the program entirely, which the binary search above only
+            // called `__query__` by clamping to the last entry. The environment paired with
+            // it then belongs to somebody else, and reading the wrapper's variable map out of
+            // a stranger's frame produced confident nonsense — `Answer = 1491` where the
+            // program said 42, 1491 being a loop counter in the frame we had wandered into.
+            // The query still shows (the user is standing in it), with no variables, which is
+            // the truth: the machine no longer has them.
+            if (!WithinPredicate(pred, entries[i], pc)) env = -1;
+
             int clause = FirstClauseStartAtOrAfter(entries[i]);
             if (clause >= 0) pc = clause;
         }
@@ -7239,14 +7270,28 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     }
                     // Same method+target — silent no-op, exactly what
                     // BuiltinsRegistry.Register would do anyway.
+                    _foreignBuiltinIds[existingId] = 0;
                     continue;
                 }
 
-                Shumway.Builtins.BuiltinsRegistry.Register(
-                    name, arity, del, attr.Category, attr.Template, attr.Summary);
+                _foreignBuiltinIds[Shumway.Builtins.BuiltinsRegistry.Register(
+                    name, arity, del, attr.Category, attr.Template, attr.Summary)] = 0;
             }
         }
     }
+
+    /// <summary>The builtins that are somebody's C# — a <c>[PrologPredicate]</c> foreign
+    /// predicate rather than an implementation of ours. Global, like the registry itself.
+    ///
+    /// <para>ADR-035 reads it: a foreign call is the one place a debugger can end up stopped
+    /// in code the ENGINE is not standing in, and the Prolog stack under that C# is what
+    /// makes the stack mixed rather than merely managed. The engine cannot be asked for it
+    /// then — it is frozen inside the call — so it publishes it on the way in.</para></summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, byte>
+        _foreignBuiltinIds = new();
+
+    internal static bool IsForeignBuiltin(int builtinId)
+        => _foreignBuiltinIds.ContainsKey(builtinId);
 
     public void ConsultString(string source)
     {
@@ -8622,6 +8667,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 varNames.Select(n => (Term)new VarTerm(n)).ToArray());
         Term clauseTerm = new CompoundTerm(":-", new[] { head, queryTerm });
         var syntheticClause = new Clause(ClauseKind.Rule, clauseTerm, queryTerm.Position);
+
+        // What the user typed, kept for the call stack's query frame (see AddFrame). Only
+        // under a debug session: this renders a term, and nobody else is looking.
+        CurrentQueryText = DebugSession is null
+            ? null
+            : AstTermRenderer.Render(queryTerm, 999, _operators);
 
         // Chunk 417 — the Phase-19+ implicit_dynamic pre-scan is NO
         // LONGER applied to the query body. Pre-declaring an
