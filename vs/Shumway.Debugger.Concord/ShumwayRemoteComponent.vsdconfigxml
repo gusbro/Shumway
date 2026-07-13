@@ -29,12 +29,13 @@
           <Interface Name="IDkmRuntimeBreakpointReceived"/>
         </InterfaceGroup>
 
+        <!-- Every process pause: the one context where creating the custom runtime and
+             the .pl modules reliably works (D0 proved a stack-walk-triggered create
+             throws on the walk's transient container). D3 adds the runtime breakpoint
+             handler and the stepper here, filtered on our RuntimeId. -->
         <InterfaceGroup>
-          <Filter>
-            <RuntimeId RequiredValue="3cd5801d-96c7-47d4-b4c4-a796b8fe7de9"/>
-          </Filter>
-          <Interface Name="IDkmRuntimeMonitorBreakpointHandler"/>
-          <Interface Name="IDkmRuntimeStepper"/>
+          <NoFilter/>
+          <Interface Name="IDkmProcessExecutionNotification"/>
         </InterfaceGroup>
 
       </Implements>

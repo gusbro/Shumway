@@ -70,9 +70,36 @@ internal static class ReplTopLevel
             if (path == "--clpfd") engine.UseClpfd();
             else if (path == "--clpr") engine.UseClpr();
         }
+
+        // ADR-035 — --debug opens a debug session before anything is consulted, because
+        // debuggability is a property of the CODE, decided when it is compiled: an engine
+        // told to debug afterwards would already have thrown away the variable names, the
+        // frames and the source positions the debugger exists to show. --debug-wait also
+        // holds the process at the door until a debugger is actually attached, which is
+        // what a launcher (D4's F5) needs and what an attach-by-hand does not.
+        bool debug = Array.IndexOf(consultFiles, "--debug") >= 0
+            || Array.IndexOf(consultFiles, "--debug-wait") >= 0;
+        if (debug)
+        {
+            engine.Flags.EmitDebugInfo = true;
+            engine.Flags.DebugCodegen = true;
+            engine.Flags.DebugLco = false;   // a reclaimed frame is a frame nobody can show
+            // Held alive by ShumwayDebugHelper.Session — there is one debugger, and the
+            // session it talks to lasts as long as the process.
+            _ = new Shumway.Embedding.Debugging.ChannelDebugSession(engine);
+            Console.WriteLine($"% debug session open (pid {Environment.ProcessId}) — attach a debugger.");
+            if (Array.IndexOf(consultFiles, "--debug-wait") >= 0)
+            {
+                Console.WriteLine("% waiting for a debugger to attach...");
+                while (!System.Diagnostics.Debugger.IsAttached)
+                    System.Threading.Thread.Sleep(100);
+                Console.WriteLine("% attached.");
+            }
+        }
+
         foreach (string path in consultFiles)
         {
-            if (path is "--clpfd" or "--clpr") continue;
+            if (path is "--clpfd" or "--clpr" or "--debug" or "--debug-wait") continue;
             ConsultFile(engine, path);
         }
         if (stopwatch is not null)

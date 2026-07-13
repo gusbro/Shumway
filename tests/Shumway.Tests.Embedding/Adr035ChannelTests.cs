@@ -41,7 +41,9 @@ public class Adr035ChannelTests
     {
         var bytes = new byte[DebugChannel.SnapshotCapacity];
         Marshal.Copy(channel.SnapshotAddress, bytes, 0, bytes.Length);
-        return DebugChannel.ReadSnapshot(bytes);
+        DebugSnapshot? snapshot = DebugChannel.ReadSnapshot(bytes);
+        Assert.NotNull(snapshot);
+        return snapshot;
     }
 
     [Fact]

@@ -1,15 +1,15 @@
-// Shumway debugger - IDE-side symbol provider (ADR-035, D0 spike leg 3).
+// Shumway debugger - IDE-side symbol provider for .pl files (ADR-035, phase D2).
 //
-// Routed to us by the SymbolProviderId in every Shumway DkmModuleId. Spike
-// scope: one known .pl document; F9 on any line resolves to a
-// DkmCustomInstructionSymbol whose Offset encodes the LINE, and
-// GetSourcePosition maps it back — enough to prove VS binds breakpoints in a
-// file type it doesn't know, through our provider, down to the runtime
-// breakpoint handler. D2/D3 replace the line-echo with the engine's real
-// clause/port tables (snap to callable ports, per-goal spans).
+// Routed to us by the SymbolProviderId carried in every Shumway DkmModuleId. This is
+// what lets Visual Studio navigate a file type it knows nothing about: there is no
+// PDB, no sequence points, nothing on disk to read. There doesn't need to be — the
+// engine already knows which line each frame is standing on, and the module IS the
+// file, so a source position is just (module name, offset).
+//
+// D3 replaces FindSymbols's line-echo with the engine's real port table (F9 must snap
+// to a line that can actually be stopped at, which is not every line).
 
 using System;
-using System.Collections.ObjectModel;
 using Microsoft.VisualStudio.Debugger;
 using Microsoft.VisualStudio.Debugger.ComponentInterfaces;
 using Microsoft.VisualStudio.Debugger.CustomRuntimes;
@@ -22,28 +22,25 @@ namespace Shumway.Debugger.Concord
         : IDkmSymbolDocumentCollectionQuery, IDkmSymbolDocumentSpanQuery, IDkmSymbolQuery,
           IDkmSymbolCompilerIdQuery
     {
+        /// <summary>Every Shumway module carries this: it is how the Locals window and
+        /// the frame decoder know to ask US, and not the C# evaluator, about a frame.</summary>
         DkmCompilerId IDkmSymbolCompilerIdQuery.GetCompilerId(
             DkmInstructionSymbol instruction, DkmInspectionSession inspectionSession)
         {
             return new DkmCompilerId(ShumwayGuids.ShumwayVendor, ShumwayGuids.ShumwayLanguage);
         }
 
-        /// <summary>Spike: the consulted .pl path, published by the probe. (The
-        /// real component keys per-process consulted-file tables off DkmProcess
-        /// data items fed by the channel.)</summary>
-        internal static string? KnownScriptPath;
-
+        /// <summary>One module per consulted .pl, named by its full path — so matching a
+        /// document is comparing the module's name with the file the user has open.</summary>
         DkmResolvedDocument[] IDkmSymbolDocumentCollectionQuery.FindDocuments(
             DkmModule module, DkmSourceFileId sourceFileId)
         {
-            string? known = KnownScriptPath;
-            if (known != null
-                && string.Equals(sourceFileId.DocumentName, known, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(module.Name, sourceFileId.DocumentName, StringComparison.OrdinalIgnoreCase))
             {
                 return new[]
                 {
                     DkmResolvedDocument.Create(
-                        module, known, ScriptDocument: null,
+                        module, module.Name, ScriptDocument: null,
                         MatchStrength: DkmDocumentMatchStrength.FullPath,
                         Warning: DkmResolvedDocumentWarning.None,
                         TextRequested: false, DataItem: null)
@@ -57,10 +54,12 @@ namespace Shumway.Debugger.Concord
             out DkmSourcePosition[] symbolLocation)
         {
             int line = textSpan.StartLine;
-            var position = DkmSourcePosition.Create(
-                DkmSourceFileId.Create(resolvedDocument.DocumentName, null, null, null),
-                new DkmTextSpan(line, line, 0, 0));
-            symbolLocation = new[] { position };
+            symbolLocation = new[]
+            {
+                DkmSourcePosition.Create(
+                    DkmSourceFileId.Create(resolvedDocument.DocumentName, null, null, null),
+                    new DkmTextSpan(line, line, 0, 0))
+            };
             return new DkmInstructionSymbol[]
             {
                 DkmCustomInstructionSymbol.Create(
@@ -73,12 +72,12 @@ namespace Shumway.Debugger.Concord
             DkmInstructionSymbol instruction, DkmSourcePositionFlags flags,
             DkmInspectionSession inspectionSession, out bool startOfLine)
         {
-            if (instruction is DkmCustomInstructionSymbol custom && KnownScriptPath != null)
+            if (instruction is DkmCustomInstructionSymbol custom && custom.Module != null)
             {
                 int line = (int)custom.Offset;
                 startOfLine = true;
                 return DkmSourcePosition.Create(
-                    DkmSourceFileId.Create(KnownScriptPath, null, null, null),
+                    DkmSourceFileId.Create(custom.Module.Name, null, null, null),
                     new DkmTextSpan(line, line, 0, 0));
             }
             throw new NotImplementedException();

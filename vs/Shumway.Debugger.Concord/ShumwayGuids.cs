@@ -32,45 +32,19 @@ namespace Shumway.Debugger.Concord
         public static readonly Guid ShumwayLanguage = new Guid("9d7f8a51-0699-4828-99ba-047821c60783");
         public static readonly Guid ShumwayVendor = new Guid("026ae3f6-168e-448c-9518-4ac5d49ce8d1");
 
-        /// <summary>Mvid of the single spike .pl module.</summary>
-        public static readonly Guid SpikeModuleMvid = new Guid("c8221ed8-e029-4f0d-9b0d-56fd127d449e");
-
         /// <summary>Custom message codes (IDE → server).</summary>
-        public const int MsgArmNotifyBreakpoint = 1; // p1 = channel address (long), p2 = Notify metadata token (int)
-        public const int MsgCreateRuntime = 2;       // p1 = full path of the consulted .pl (string)
-    }
+        public const int MsgArmNotifyBreakpoint = 1; // p1 = snapshot address (long), p2 = Notify metadata token (int)
+        public const int MsgEnsureModules = 2;       // p1 = '|'-joined full paths of consulted .pl files
 
-    /// <summary>
-    /// Spike channel layout (mirrors SpikeDebugHelper's pinned buffer):
-    ///   +0  uint  magic 'SHDB' (0x53484442)
-    ///   +8  long  tick counter        (debuggee writes)
-    ///   +16 byte  command byte        (debugger writes — WriteMemory probe)
-    ///   +24 byte  command echo        (debuggee copies +16 here each tick)
-    ///   +32 int   notify-bp hit count (SERVER component writes)
-    ///   +40 byte  server status       (0=silent, 1=bp armed, 0xE0+stage=error)
-    ///   +44 int   .pl F9 breakpoint line (leg 3: EnableRuntimeBreakpoint writes)
-    ///   +48 byte  .pl F9 flag (1 = EnableRuntimeBreakpoint reached us)
-    ///   +49 byte  step flag  (1 = IDkmRuntimeStepper.Step reached us, leg 5)
-    ///   +60 int   server error text length
-    ///   +64 ...   server error text (utf8, max 256)
-    /// </summary>
-    internal static class Channel
-    {
-        public const uint Magic = 0x53484442;
-        public const int OffTicks = 8;
-        public const int OffCommand = 16;
-        public const int OffEcho = 24;
-        public const int OffHits = 32;
-        public const int OffServerStatus = 40;
-        public const int OffF9Line = 44;
-        public const int OffF9Flag = 48;
-        public const int OffStepFlag = 49;
-        public const int OffErrorLen = 60;
-        public const int OffErrorText = 64;
-        public const int MaxErrorText = 256;
-
-        public const byte StatusArmed = 1;
-        public const byte StatusRuntimeReady = 2;
-        public const byte StatusErrorBase = 0xE0;
+        /// <summary>A .pl file has no mvid of its own, and VS needs one to tell two
+        /// modules apart. Derive it from the path: same file, same id, every session —
+        /// which is exactly the property a breakpoint needs to survive a restart.</summary>
+        public static Guid ModuleIdFor(string path)
+        {
+            byte[] bytes;
+            using (var md5 = System.Security.Cryptography.MD5.Create())
+                bytes = md5.ComputeHash(System.Text.Encoding.UTF8.GetBytes(path.ToUpperInvariant()));
+            return new Guid(bytes);
+        }
     }
 }

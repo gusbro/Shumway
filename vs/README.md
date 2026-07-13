@@ -55,9 +55,44 @@ string literal mid-line.
 ## Try it (experimental instance)
 
 Build, then F5 on Shumway.Debugger.Vsix (launches `devenv /rootsuffix Exp`), or
-install `Shumway.Debugger.Vsix\bin\Debug\Shumway.Debugger.vsix`. Run
-`spike\SpikeDebuggee`, attach the managed debugger, Break All — the call stack
-shows synthesized `[Prolog]` frames in place of the `Dispatch` frame.
+install `Shumway.Debugger.Vsix\bin\Debug\Shumway.Debugger.vsix`.
+
+### D2 smoke — the real engine
+
+1. Start the REPL with a debug session open:
+
+   ```
+   src\Shumway.Repl\bin\Debug\net10.0\shumway.exe --debug yourfile.pl
+   ```
+
+   `--debug` compiles in debug mode (named variables kept, frames intact, LCO off)
+   and opens a `ChannelDebugSession`. It prints its pid. (`--debug-wait` also holds
+   the process until a debugger attaches — that is what D4's F5 will use.)
+
+2. In the Exp instance: **Debug → Attach to Process**, pick `shumway.exe`, attach
+   with the **Managed (.NET Core)** code type.
+
+3. Run a query that takes a moment (`?- between(1, 20000000, _), fail.`), then hit
+   **Break All**.
+
+Expect: the call stack shows one frame per Prolog goal on the environment chain —
+`p/1`, `main/0` — where the CLR would have shown a single
+`BytecodeInterpreter.Dispatch`. The engine's own frames are gone; anything else on
+the stack (your C# embedder, a `[PrologPredicate]` bridge, a native frame under a
+P/Invoke) is still there, which is what makes the stack *mixed*. Double-clicking a
+Prolog frame opens the `.pl` at the right line; **Locals** shows that clause's
+variables with their terms rendered by the engine.
+
+If a Prolog frame is grey and not navigable, its `.pl` has no module yet: the
+server creates them at a process pause, so it becomes navigable at the next stop.
+Stopping *at* a Prolog breakpoint is D3 — a port stop currently resumes.
+
+### D0 spike (superseded, kept for re-running the legs)
+
+Run `spike\SpikeDebuggee`, attach, Break All — the call stack shows synthesized
+`[Prolog]` frames in place of the `Dispatch` frame. `spike\run-spike-check.ps1`
+drives it end-to-end. The spike's components have since been rewritten to talk to
+the real engine, so the spike debuggee no longer exercises them.
 
 Licensing: the sample plumbing here is adapted from Microsoft's
 ConcordExtensibilitySamples (MIT) and informed by PTVS (Apache-2.0);

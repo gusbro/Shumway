@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Shumway debugger - IDE-level frame decoder + expression evaluator (ADR-035).
+
+  Routed to us by the LANGUAGE id, which reaches VS through the DkmCompilerId our
+  symbol provider reports for every .pl module: a frame whose module is Prolog gets
+  its name and its Locals from this component instead of from the C# evaluator.
+-->
+<Configuration xmlns="http://schemas.microsoft.com/vstudio/vsdconfig/2008">
+
+  <ManagedComponent
+    ComponentId="0f2f9b9f-9f0a-4a30-9c5f-4b1d6f1a9a2c"
+    ComponentLevel="1999002"
+    AssemblyName="Shumway.Debugger.Concord">
+
+    <Class Name="Shumway.Debugger.Concord.ShumwayExpressionEvaluator">
+      <Implements>
+        <InterfaceGroup>
+          <Filter>
+            <LanguageId RequiredValue="9d7f8a51-0699-4828-99ba-047821c60783"/>
+          </Filter>
+          <Interface Name="IDkmLanguageFrameDecoder"/>
+          <Interface Name="IDkmLanguageExpressionEvaluator"/>
+        </InterfaceGroup>
+      </Implements>
+    </Class>
+
+  </ManagedComponent>
+</Configuration>

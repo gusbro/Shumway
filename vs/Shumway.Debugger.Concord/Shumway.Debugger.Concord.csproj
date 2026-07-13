@@ -24,9 +24,20 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- ADR-035 D2: the channel's wire format, compiled from the ENGINE's source.
+         The debugger cannot reference the engine (net10 vs netstandard2.0), and two
+         copies of a format definition drift silently — a debugger and a debuggee that
+         disagree about the layout of a buffer do not fail loudly, they show the user a
+         plausible, wrong stack. So the file is shared, not duplicated. -->
+    <Compile Include="..\..\src\Shumway.Embedding\Debugging\DebugWire.cs"
+             Link="Shared\DebugWire.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <VsdConfigXmlFiles Include="ShumwayLocalComponent.vsdconfigxml" />
     <VsdConfigXmlFiles Include="ShumwaySymbolsComponent.vsdconfigxml" />
     <VsdConfigXmlFiles Include="ShumwayRemoteComponent.vsdconfigxml" />
+    <VsdConfigXmlFiles Include="ShumwayEvaluatorComponent.vsdconfigxml" />
   </ItemGroup>
 
 </Project>
