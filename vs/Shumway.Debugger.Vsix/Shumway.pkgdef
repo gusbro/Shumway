@@ -1,0 +1,7 @@
+// Shumway debugger - registration that the [Provide*] attributes cannot express.
+//
+// A TextMate grammar REPOSITORY: VS scans the folder, reads each grammar's own fileTypes,
+// and colours those extensions. That is the whole .pl colorizer -- no editor factory, no
+// language service, no content type.
+[$RootKey$\TextMate\Repositories]
+"Shumway"="$PackageFolder$\Grammars"

@@ -21,6 +21,9 @@
     <PackageReference Include="Microsoft.VSSDK.Debugger.VSDConfigTool" Version="17.0.2012801">
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
+    <!-- To read the notify method's token out of the engine DLL on disk, before the process
+         it belongs to has run a single instruction. See ShumwayMetadata. -->
+    <PackageReference Include="System.Reflection.Metadata" Version="6.0.1" />
   </ItemGroup>
 
   <ItemGroup>

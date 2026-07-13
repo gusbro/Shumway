@@ -44,6 +44,7 @@ public static class ShumwayDebugHelper
         set
         {
             _channel = value;
+            PublishChannelFile(value);
             if (value is null)
             {
                 Shumway.Core.Debugging.ShumwayDebugHost.OnAttach = null;
@@ -121,4 +122,63 @@ public static class ShumwayDebugHelper
     /// anything depends on it. Returns <see cref="DebugChannel.FormatVersion"/>.</summary>
     [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
     public static int Ping() => DebugChannel.FormatVersion;
+
+    /// <summary>The .pl files this process was told to consult, published with the channel.
+    /// A breakpoint binds against a module and a module IS a file — and a LAUNCHED process
+    /// has stopped nowhere yet, so the debugger has no frames to learn the file names from.
+    /// It has to be told, before the first goal runs, or the user's breakpoints have nothing
+    /// to attach to. Set before the session opens.</summary>
+    public static string[] SourceFiles { get; set; } = Array.Empty<string>();
+
+    /// <summary>Where a debugger can find this process's channel WITHOUT running a single
+    /// line of its code: <c>%TEMP%\shumway-debug\&lt;pid&gt;.channel</c>.</summary>
+    public static string ChannelFilePath(int processId) => System.IO.Path.Combine(
+        System.IO.Path.GetTempPath(), "shumway-debug",
+        processId.ToString(CultureInfo.InvariantCulture) + ".channel");
+
+    /// <summary>
+    /// ADR-035 D4 — the handshake, in a file.
+    ///
+    /// <para>Reading a static field of the debuggee is still running code in it, in the sense
+    /// that matters here: it needs a THREAD, stopped, in a FRAME whose module can name the
+    /// type. A debugger attaching by hand has that (the user pressed Break All). A debugger
+    /// LAUNCHING the process does not: nothing ever stops, so there was no moment at which
+    /// the channel could be found, so the hidden breakpoint was never armed, so nothing ever
+    /// stopped. The program ran to the end and no breakpoint in it could fire.</para>
+    ///
+    /// <para>So the engine says where its channel is, out loud, the moment the session opens
+    /// — before any code is consulted, let alone run. The debugger reads a file. There is no
+    /// stop to wait for and nothing to evaluate.</para>
+    ///
+    /// <para>Best effort by design: a process with no writable temp directory still debugs
+    /// by attach, which is where this started.</para>
+    /// </summary>
+    private static void PublishChannelFile(DebugChannel? channel)
+    {
+        try
+        {
+            string path = ChannelFilePath(Environment.ProcessId);
+            if (channel is null)
+            {
+                if (System.IO.File.Exists(path)) System.IO.File.Delete(path);
+                return;
+            }
+
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path)!);
+            System.IO.File.WriteAllText(path, string.Format(
+                CultureInfo.InvariantCulture,
+                "v{0};snapshot={1:x},{2};commands={3:x},{4};notify={5};files={6}",
+                DebugChannel.FormatVersion,
+                channel.SnapshotAddress.ToInt64(),
+                DebugChannel.SnapshotCapacity,
+                channel.CommandAddress.ToInt64(),
+                DebugChannel.CommandCapacity,
+                Shumway.Core.Debugging.ShumwayDebugHost.NotifyMetadataToken,
+                string.Join("|", SourceFiles)));
+        }
+        catch (Exception)
+        {
+            // Attach-by-hand still works; the launch path is what loses.
+        }
+    }
 }

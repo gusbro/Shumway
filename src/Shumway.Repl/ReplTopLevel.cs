@@ -86,21 +86,48 @@ internal static class ReplTopLevel
             engine.Flags.DebugLco = false;   // a reclaimed frame is a frame nobody can show
             // Held alive by ShumwayDebugHelper.Session — there is one debugger, and the
             // session it talks to lasts as long as the process.
-            _ = new Shumway.Embedding.Debugging.ChannelDebugSession(engine);
+            // The files we are ABOUT to consult, said before we consult them: a breakpoint the
+            // user drew before pressing the button binds against a module, a module is a .pl
+            // file, and a launched process has stopped nowhere yet — so there are no frames
+            // for the debugger to learn the names from.
+            Shumway.Embedding.Debugging.ShumwayDebugHelper.SourceFiles = consultFiles
+                .Where(f => f is not ("--clpfd" or "--clpr" or "--debug" or "--debug-wait"))
+                .Select(System.IO.Path.GetFullPath)
+                .ToArray();
+            var session = new Shumway.Embedding.Debugging.ChannelDebugSession(engine);
             Console.WriteLine($"% debug session open (pid {Environment.ProcessId}) — attach a debugger.");
             if (Array.IndexOf(consultFiles, "--debug-wait") >= 0)
             {
                 Console.WriteLine("% waiting for a debugger to attach...");
                 while (!System.Diagnostics.Debugger.IsAttached)
                     System.Threading.Thread.Sleep(100);
-                Console.WriteLine("% attached.");
+
+                // Attached is not ready: the debugger still has to find the channel and arm
+                // the breakpoints the user set before pressing the button. Consulting now
+                // would run the program straight past them. Wait for it to say something.
+                bool ready = session.WaitForDebuggerCommands(10_000);
+                Console.WriteLine(ready
+                    ? "% attached."
+                    : "% attached (the debugger said nothing; running anyway).");
             }
         }
 
         foreach (string path in consultFiles)
         {
             if (path is "--clpfd" or "--clpr" or "--debug" or "--debug-wait") continue;
-            ConsultFile(engine, path);
+            try
+            {
+                ConsultFile(engine, path);
+            }
+            catch (Shumway.Core.PrologHaltException halted)
+            {
+                // A file whose `:- initialization` goal halted has already done its work.
+                // This is the whole shape of a program launched by the IDE (D4's F5): a .pl
+                // that runs and ends, with no top-level in sight.
+                MaybeDumpIlStats(engine);
+                MaybeDumpProfile(engine);
+                return halted.ExitCode;
+            }
         }
         if (stopwatch is not null)
             setupMsAtGoalStart = stopwatch.ElapsedMilliseconds;
@@ -305,6 +332,14 @@ internal static class ReplTopLevel
                 engine.ConsultFile(path);
                 Console.WriteLine($"% consulted {path}");
             }
+        }
+        catch (Shumway.Core.PrologHaltException)
+        {
+            // `:- initialization(main)` where main halts: the program HAS run, and it asked
+            // to end. Falling through to the top-level prompt here would leave a program
+            // that said halt sitting at a `?- ` nobody typed at — which is what happened
+            // until the engine learned to re-raise a halt out of a load.
+            throw;
         }
         catch (Exception ex)
         {

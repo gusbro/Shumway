@@ -1,0 +1,81 @@
+{
+  "name": "Prolog",
+  "scopeName": "source.prolog",
+  "fileTypes": ["pl", "pro", "prolog"],
+  "patterns": [
+    { "include": "#comment-line" },
+    { "include": "#comment-block" },
+    { "include": "#quoted-atom" },
+    { "include": "#string" },
+    { "include": "#back-quoted" },
+    { "include": "#char-code" },
+    { "include": "#directive" },
+    { "include": "#number" },
+    { "include": "#builtin" },
+    { "include": "#variable" },
+    { "include": "#cut" },
+    { "include": "#operator" },
+    { "include": "#functor" }
+  ],
+  "repository": {
+    "comment-line": {
+      "name": "comment.line.percentage.prolog",
+      "match": "%.*$"
+    },
+    "comment-block": {
+      "name": "comment.block.prolog",
+      "begin": "/\\*",
+      "end": "\\*/"
+    },
+    "quoted-atom": {
+      "name": "string.quoted.single.prolog",
+      "begin": "'",
+      "end": "'",
+      "patterns": [{ "name": "constant.character.escape.prolog", "match": "\\\\.|''" }]
+    },
+    "string": {
+      "name": "string.quoted.double.prolog",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [{ "name": "constant.character.escape.prolog", "match": "\\\\.|\"\"" }]
+    },
+    "back-quoted": {
+      "name": "string.quoted.other.prolog",
+      "begin": "`",
+      "end": "`",
+      "patterns": [{ "name": "constant.character.escape.prolog", "match": "\\\\.|``" }]
+    },
+    "char-code": {
+      "name": "constant.character.prolog",
+      "match": "0'(\\\\.|.)"
+    },
+    "directive": {
+      "name": "keyword.control.directive.prolog",
+      "match": "^\\s*:-\\s*(module|use_module|dynamic|discontiguous|public|local|initialization|table|ensure_linked|native|visible|op|set_prolog_flag|include|mode|multifile|c|disable_debug|enable_debug)\\b"
+    },
+    "number": {
+      "name": "constant.numeric.prolog",
+      "match": "\\b(0x[0-9a-fA-F]+|0o[0-7]+|0b[01]+|\\d+(\\.\\d+([eE][-+]?\\d+)?)?)\\b"
+    },
+    "builtin": {
+      "name": "support.function.prolog",
+      "match": "\\b(is|assert|asserta|assertz|retract|retractall|findall|bagof|setof|forall|between|call|catch|throw|functor|arg|copy_term|atom_codes|atom_chars|number_codes|atom_length|atom_concat|sub_atom|msort|sort|length|append|member|memberchk|nb_getval|nb_setval|write|writeq|print|nl|read|read_term|format|halt|true|fail|not|once|ignore|var|nonvar|atom|number|integer|float|atomic|compound|callable|is_list|ground)(?=\\s*[\\(,\\.]|\\s|$)"
+    },
+    "variable": {
+      "name": "variable.other.prolog",
+      "match": "\\b([A-Z_][a-zA-Z0-9_]*)\\b"
+    },
+    "cut": {
+      "name": "keyword.control.cut.prolog",
+      "match": "!"
+    },
+    "operator": {
+      "name": "keyword.operator.prolog",
+      "match": "(:-|-->|\\?-|;|->|\\*->|\\\\\\+|=\\.\\.|==|\\\\==|@<|@>|@=<|@>=|=:=|=\\\\=|<|>|=<|>=|\\+|-|\\*|//|/|\\bmod\\b|\\brem\\b|\\bdiv\\b|\\^|=)"
+    },
+    "functor": {
+      "name": "entity.name.function.prolog",
+      "match": "\\b([a-z][a-zA-Z0-9_]*)(?=\\()"
+    }
+  }
+}

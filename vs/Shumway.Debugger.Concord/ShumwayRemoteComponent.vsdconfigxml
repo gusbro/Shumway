@@ -37,6 +37,16 @@
           <Interface Name="IDkmProcessExecutionNotification"/>
         </InterfaceGroup>
 
+        <!-- D4: the engine's module loading is where a LAUNCHED session starts. Nothing has
+             stopped (and nothing will, until a breakpoint is armed, which is what this does),
+             so it is the only moment before the program runs. -->
+        <InterfaceGroup>
+          <Filter>
+            <RuntimeId RequiredValue="DkmRuntimeId.Clr"/>
+          </Filter>
+          <Interface Name="IDkmModuleInstanceLoadNotification"/>
+        </InterfaceGroup>
+
         <!-- D3: F9 in a .pl and F10/F11 in a Prolog frame are routed to us by the
              RuntimeId of the custom runtime the frames belong to. -->
         <InterfaceGroup>

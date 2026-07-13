@@ -95,8 +95,54 @@ namespace Shumway.Debugger.Concord
     public sealed class ShumwayRemoteComponent
         : IDkmCustomMessageForwardReceiver, IDkmRuntimeBreakpointReceived,
           IDkmProcessExecutionNotification, IDkmRuntimeMonitorBreakpointHandler,
-          IDkmRuntimeStepper
+          IDkmRuntimeStepper, IDkmModuleInstanceLoadNotification
     {
+        /// <summary>The engine's own module loading is the earliest moment at which a Shumway
+        /// process can be recognised — and, under a LAUNCH, the only one that comes before the
+        /// program runs. Nothing has stopped and nothing will: no user breakpoint is armed
+        /// yet, so there is nothing to stop AT. So this is where the session starts.
+        ///
+        /// <para>The channel is read from the file the engine published when it opened its
+        /// session (see ShumwayChannelFile), which is why this needs neither a stopped thread
+        /// nor a frame nor an expression evaluation — none of which exist here.</para></summary>
+        void IDkmModuleInstanceLoadNotification.OnModuleInstanceLoad(
+            DkmModuleInstance moduleInstance, DkmWorkList workList,
+            DkmEventDescriptorS eventDescriptor)
+        {
+            ShumwayLog.Write("module load: " + moduleInstance.Name);
+            if (!string.Equals(moduleInstance.Name, ShumwaySession.EngineModule,
+                    StringComparison.OrdinalIgnoreCase))
+                return;
+
+            DkmProcess process = moduleInstance.Process;
+            ShumwayServerDataItem state = GetState(process);
+            if (state.NotifyBreakpoint != null)
+                return;
+
+            int? processId = process.LivePart?.Id;
+            if (processId == null)
+            {
+                ShumwayLog.Write("  the engine's module loaded, but the process has no live part");
+                return;
+            }
+
+            // The channel almost certainly does NOT exist yet: this event fires before the
+            // engine's first instruction, and the session it publishes is opened by code that
+            // has not run. That is fine. The one thing we cannot get later is a chance to arm
+            // the breakpoint BEFORE the program runs — so we arm it now, with the token read
+            // from the DLL on disk, and pick the channel up at the first stop it gives us.
+            int token = ShumwayMetadata.FindNotifyToken(moduleInstance.FullName);
+            if (token == 0)
+            {
+                ShumwayLog.Write("  no ShumwayDebugHost.Notify in " + moduleInstance.FullName);
+                return;
+            }
+
+            LoadChannel(process, state);   // in case the session opened before we got here
+            ArmNotifyBreakpoint(process, state, token);
+            ShumwayLog.Write("  armed at module load (token " + token + "): " + Status(state));
+        }
+
         DkmCustomMessage? IDkmCustomMessageForwardReceiver.SendLower(DkmCustomMessage customMessage)
         {
             DkmProcess process = customMessage.Process;
@@ -169,6 +215,7 @@ namespace Shumway.Debugger.Concord
             ShumwayServerDataItem state = GetState(runtimeBreakpoint.Process);
             state.Breakpoints[ShumwayServerDataItem.Key(file, line)] = runtimeBreakpoint;
             WriteCommands(runtimeBreakpoint.Process, state);
+            ShumwayLog.Write("breakpoint enabled at " + file + ":" + line + " -> " + Status(state));
         }
 
         void IDkmRuntimeMonitorBreakpointHandler.DisableRuntimeBreakpoint(
@@ -317,6 +364,15 @@ namespace Shumway.Debugger.Concord
             ShumwayServerDataItem state = GetState(process);
             state.Stops++;
 
+            // The FIRST stop of a launched session is one the engine gives us on purpose,
+            // while it waits at the door (--debug-wait): the breakpoint was armed from the
+            // DLL on disk, before the engine had opened its session, so this is where we
+            // finally learn where its channel is — and which files it is about to consult,
+            // which is what a breakpoint needs to bind against.
+            LoadChannel(process, state);
+            ShumwayLog.Write("stop #" + state.Stops + " (hello=" + state.NeedHello
+                + ") " + Status(state));
+
             // THE ONE CONTEXT where creating the .pl modules works (D0 established this the
             // hard way: from a stack walk it throws on the walk's transient container, and at
             // a process pause the monitor returns E_FAIL). Which is why the first stop is one
@@ -439,6 +495,36 @@ namespace Shumway.Debugger.Concord
         }
 
         // ---- the channel ----
+
+        /// <summary>Picks up the channel the engine published, once it has. Idempotent, and
+        /// called at every moment where it might newly exist: the engine's module load (where
+        /// it usually does not yet) and every stop (where it does).
+        ///
+        /// <para>It also brings the SOURCE FILES the engine is about to consult. Those matter
+        /// before a single goal runs: a breakpoint binds against a module, a module is a .pl
+        /// file, and until the debugger knows the file names there is nothing for the user's
+        /// red dot to attach to. Under a launch nobody has stopped anywhere yet, so there are
+        /// no frames to learn them from — the engine simply says.</para></summary>
+        private static void LoadChannel(DkmProcess process, ShumwayServerDataItem state)
+        {
+            if (state.SnapshotAddress != 0) return;
+
+            int? processId = process.LivePart?.Id;
+            if (processId == null) return;
+
+            ShumwayChannelInfo? channel = ShumwayChannelFile.Read(processId.Value);
+            if (channel == null || !channel.Usable) return;
+
+            state.SnapshotAddress = channel.SnapshotAddress;
+            state.CommandAddress = channel.CommandAddress;
+            foreach (string file in channel.Files)
+            {
+                if (file.Length > 0 && !state.CreatedFiles.Contains(file)
+                    && !state.PendingFiles.Contains(file))
+                    state.PendingFiles.Add(file);
+            }
+            ShumwayLog.Write("  channel found: " + Status(state));
+        }
 
         private static DebugSnapshot? ReadSnapshot(DkmProcess process, ShumwayServerDataItem state)
         {

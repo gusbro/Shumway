@@ -19,11 +19,25 @@
     <RootNamespace>Shumway.Debugger.Vsix</RootNamespace>
     <AssemblyName>Shumway.Debugger.Vsix</AssemblyName>
     <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
-    <GeneratePkgDefFile>false</GeneratePkgDefFile>
-    <IncludeAssemblyInVSIXContainer>false</IncludeAssemblyInVSIXContainer>
+    <!-- A classic csproj defaults to C# 7.3 and references nothing. Both have to be said. -->
+    <LangVersion>latest</LangVersion>
+    <Nullable>annotations</Nullable>
+    <!-- D4: the VSIX now carries a real VS PACKAGE (the "Debug Prolog File" command and its
+         options page), not just the debugger's vsdconfig. So the assembly ships, and a
+         .pkgdef is generated from the [Provide*] attributes on it. -->
+    <GeneratePkgDefFile>true</GeneratePkgDefFile>
+    <!-- Register the package by CODEBASE, not by assembly name. Without this the pkgdef says
+         only "Assembly"="Shumway.Debugger.Vsix, Version=0.1.0.0...", so VS looks for it along
+         its own probing paths (which is not where an extension's assembly lives) and the load
+         fails with a FileNotFoundException naming an assembly that is sitting right there on
+         disk. -->
+    <UseCodebase>true</UseCodebase>
+    <IncludeAssemblyInVSIXContainer>true</IncludeAssemblyInVSIXContainer>
     <IncludeDebugSymbolsInVSIXContainer>false</IncludeDebugSymbolsInVSIXContainer>
     <IncludeDebugSymbolsInLocalVSIXDeployment>false</IncludeDebugSymbolsInLocalVSIXDeployment>
-    <CopyBuildOutputToOutputDirectory>false</CopyBuildOutputToOutputDirectory>
+    <!-- The package assembly must land in the output directory: CreatePkgDef reads it there
+         to generate the .pkgdef from the [Provide*] attributes. -->
+    <CopyBuildOutputToOutputDirectory>true</CopyBuildOutputToOutputDirectory>
     <CopyOutputSymbolsToOutputDirectory>false</CopyOutputSymbolsToOutputDirectory>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
@@ -50,12 +64,46 @@
     <StartArguments>/rootsuffix Exp</StartArguments>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Design" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+  </ItemGroup>
+  <ItemGroup>
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="ShumwayGuids.cs" />
+    <Compile Include="ShumwayOptionsPage.cs" />
+    <Compile Include="ShumwayDebuggerPackage.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <VSCTCompile Include="ShumwayCommands.vsct">
+      <ResourceName>Menus.ctmenu</ResourceName>
+    </VSCTCompile>
+    <!-- MergeWithCTO is what actually puts the compiled command table INTO the assembly. A
+         VSCTCompile item on its own compiles the .vsct and then drops it on the floor. -->
+    <EmbeddedResource Include="VSPackage.resx">
+      <MergeWithCTO>true</MergeWithCTO>
+      <ManifestResourceName>VSPackage</ManifestResourceName>
+      <SubType>Designer</SubType>
+      <Generator></Generator>
+    </EmbeddedResource>
   </ItemGroup>
   <ItemGroup>
     <None Include="source.extension.vsixmanifest">
       <SubType>Designer</SubType>
     </None>
+    <!-- The .pl colorizer: a TextMate grammar, registered as a grammar REPOSITORY by the
+         pkgdef. VS's TextMate engine binds it by the file extensions the grammar itself
+         declares, so there is no editor factory and no language service to write. -->
+    <Content Include="Grammars\prolog.tmLanguage.json">
+      <IncludeInVSIX>true</IncludeInVSIX>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Shumway.pkgdef">
+      <IncludeInVSIX>true</IncludeInVSIX>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.VisualStudio.SDK" Version="17.0.32112.339" ExcludeAssets="runtime" NoWarn="NU1604" />

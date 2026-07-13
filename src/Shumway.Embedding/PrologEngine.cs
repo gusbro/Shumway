@@ -3581,6 +3581,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// has not yet, since before that there is nothing to answer with.</para></summary>
     public int AddBreakpoint(string file, int line)
     {
+        // Remembered whether it binds or not. A breakpoint set on a file that has not been
+        // consulted YET is the normal case under a launch — the user draws it, then starts
+        // the program — and binding it against code that does not exist is not possible, so
+        // for want of this line it was quietly dropped and the program ran clean through
+        // every breakpoint in it. It binds in RebindPendingBreakpoints, when the code
+        // arrives.
+        _requestedBreakpoints.Add((file, line));
+
         EnsureCodeLinked();
         int fileId = Shumway.Core.DebugSiteTable.InternFile(file);
 
@@ -3604,6 +3612,35 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     // first goal). A debugger that has to match a hit back to the red dot it drew needs
     // the line it drew, not the line we bound.
     private readonly Dictionary<int, (int FileId, int Line)> _breakpointRequests = new();
+
+    // Every breakpoint the debugger has ASKED for, bound or not. The armed sites above are
+    // derived from these; these are the truth.
+    private readonly HashSet<(string File, int Line)> _requestedBreakpoints = new();
+
+    /// <summary>ADR-035 D4 — binds the breakpoints that had nowhere to bind. Called when new
+    /// code arrives (a consult), which is the moment a breakpoint set on a file that had not
+    /// been loaded yet finally has something to attach to.
+    ///
+    /// <para>This is what makes a LAUNCH work at all: the user draws the red dot, presses the
+    /// button, and the file is consulted afterwards. Without it the breakpoint is asked for
+    /// against an empty program, binds nothing, and is forgotten — and the program runs to
+    /// completion untouched, which is exactly what it did.</para></summary>
+    private void RebindPendingBreakpoints()
+    {
+        if (_requestedBreakpoints.Count == 0) return;
+
+        // Relink first. The set of sites a breakpoint may bind to (_compiledSites) is rebuilt
+        // when a query is SET UP, not when a file is consulted — so right after a consult it
+        // still describes the program as it was before, and the clauses that just arrived are
+        // invisible. EnsureCodeLinked would not do it: it sees a linked code space and returns
+        // happy. A trivial query is what actually rebuilds the map.
+        foreach (var _ in QueryAll("true.")) break;
+
+        // A copy: AddBreakpoint writes to the set (idempotently — it is a set), and
+        // enumerating a collection one is adding to is not allowed even when nothing changes.
+        foreach ((string file, int line) in _requestedBreakpoints.ToArray())
+            AddBreakpoint(file, line);
+    }
 
     /// <summary>ADR-035 — the breakpoint (as the user asked for it) armed at this
     /// address, or null if the stop is not one.</summary>
@@ -3675,6 +3712,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// on.</summary>
     public void RemoveBreakpoint(string file, int line)
     {
+        _requestedBreakpoints.Remove((file, line));
         int fileId = Shumway.Core.DebugSiteTable.InternFile(file);
         int target = SnapToCompiledLine(fileId, line);
         if (target < 0) target = line;
@@ -3707,6 +3745,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
     public void ClearBreakpoints()
     {
+        _requestedBreakpoints.Clear();
         _breakpointSites.Clear();
         _breakpointRequests.Clear();
         RefreshBreakpoints();
@@ -7716,6 +7755,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             }
         }
 
+        // The code the debugger's breakpoints were waiting for has just arrived. Bind them
+        // BEFORE the initialization goals run — those goals ARE the program, and a breakpoint
+        // bound after them is a breakpoint that never fires.
+        RebindPendingBreakpoints();
+
         // `:- initialization(Goal)` goals run now, after the consult has
         // committed, in source order (SWI load-time semantics). A goal that
         // fails or raises prints a warning and loading continues — matching
@@ -7727,8 +7771,20 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             {
                 try
                 {
+                    LastHaltExitCode = null;
                     bool ok = false;
                     foreach (var sol in QueryAll(g)) { ok = sol.Success; break; }
+
+                    // halt/0-1 does NOT reach us as an exception: QueryAll catches it and
+                    // reports the goal as failed, leaving the code behind in
+                    // LastHaltExitCode. So a goal that halted looked exactly like one that
+                    // failed — the load went on, and the process it was told to end lived
+                    // on to read from stdin. Re-raise it here: halting from an
+                    // initialization goal ends the load, which is what the paragraph above
+                    // has always claimed and what SWI does.
+                    if (LastHaltExitCode is int exitCode)
+                        throw new PrologHaltException(exitCode);
+
                     if (!ok)
                         Console.Error.WriteLine(
                             $"Warning: initialization goal failed: {g}");

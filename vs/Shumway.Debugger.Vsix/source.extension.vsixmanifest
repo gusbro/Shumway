@@ -23,6 +23,11 @@
         <Dependency Id="Microsoft.Framework.NDP" DisplayName="Microsoft .NET Framework" d:Source="Manual" Version="4.5" />
     </Dependencies>
     <Assets>
+        <!-- The debugger itself: the Concord components, loaded by the debug engine. -->
         <Asset Type="DebuggerEngineExtension" Path="Shumway.Debugger.Concord.vsdconfig"/>
+        <!-- The IDE side of it: "Debug Prolog File", the options page, and (through the
+             package's pkgdef) the .pl TextMate grammar. -->
+        <Asset Type="Microsoft.VisualStudio.VsPackage" d:Source="Project"
+               d:ProjectName="%CurrentProject%" Path="|%CurrentProject%;PkgdefProjectOutputGroup|" />
     </Assets>
 </PackageManifest>

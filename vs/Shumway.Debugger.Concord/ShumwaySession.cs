@@ -129,6 +129,39 @@ namespace Shumway.Debugger.Concord
                 return state;
             state.AttachAttempts++;
 
+            // D4 — the channel comes from the FILE the engine published when its session
+            // opened, not from reading its memory through a frame. The frame-based read
+            // worked, but only where there was a frame: a LAUNCHED process never stops, so
+            // it could never be attached to, so no breakpoint could ever be armed in one.
+            // The file is there before the program is.
+            int? processId = frame.Process.LivePart?.Id;
+            ShumwayChannelInfo? channel = processId == null
+                ? null
+                : ShumwayChannelFile.Read(processId.Value);
+            if (channel != null && channel.Usable)
+            {
+                state.SnapshotAddress = channel.SnapshotAddress;
+                state.SnapshotLength = channel.SnapshotLength;
+                state.CommandAddress = channel.CommandAddress;
+                state.CommandLength = channel.CommandLength;
+                state.Diagnostic = "attached";
+                ArmNotifyBreakpoint(frame.Process, state, channel.NotifyMetadataToken);
+                return state;
+            }
+
+            state.Diagnostic = "no debug session in the debuggee "
+                + "(run it with --debug, or construct a ChannelDebugSession)";
+            return state;
+        }
+
+        /// <summary>The old handshake: read the engine's published addresses out of static
+        /// fields, through a frame. Kept because it is the fallback if the channel file cannot
+        /// be written (a process with no writable temp directory) and because it is the only
+        /// thing that would work if the debuggee were on ANOTHER MACHINE, where the file is
+        /// not ours to read. Not currently reached.</summary>
+        private static ShumwaySessionDataItem AttachByEvaluation(
+            DkmStackContext stackContext, DkmStackWalkFrame frame, ShumwaySessionDataItem state)
+        {
             string where = (frame.ModuleInstance?.Name ?? "?")
                 + "!" + (frame.BasicSymbolInfo?.MethodName ?? "?");
             try
@@ -175,8 +208,9 @@ namespace Shumway.Debugger.Concord
                     return state;
                 }
 
-                state.Diagnostic = "attached";
-                ArmNotifyBreakpoint(stackContext, frame, state);
+                state.Diagnostic = "attached (by evaluation)";
+                string? tokenText = Evaluate(stackContext, frame, Host + "NotifyMetadataToken", out _);
+                ArmNotifyBreakpoint(frame.Process, state, ParseInt(tokenText));
             }
             catch (Exception ex)
             {
@@ -207,21 +241,16 @@ namespace Shumway.Debugger.Concord
         /// — no symbol file, no assumption about where the DLL came from) and the address
         /// of the snapshot buffer.</summary>
         private static void ArmNotifyBreakpoint(
-            DkmStackContext stackContext, DkmStackWalkFrame frame, ShumwaySessionDataItem state)
+            DkmProcess process, ShumwaySessionDataItem state, int token)
         {
-            // Read, again — the engine publishes its own token, so the debugger never has to
-            // ask the debuggee to reflect on itself.
-            string? tokenText = Evaluate(stackContext, frame,
-                "Shumway.Core.Debugging.ShumwayDebugHost.NotifyMetadataToken", out string? error);
-            int token = ParseInt(tokenText);
             if (token == 0)
             {
-                state.Diagnostic = "attached (no notify token: " + error + ")";
+                state.Diagnostic = "attached (the engine published no notify token)";
                 return;
             }
 
             DkmCustomMessage.Create(
-                    frame.Process.Connection, frame.Process,
+                    process.Connection, process,
                     ShumwayGuids.MessageSource, ShumwayGuids.MsgArmNotifyBreakpoint,
                     state.SnapshotAddress, token,
                     // The server needs both ends of the channel: the snapshot to read a

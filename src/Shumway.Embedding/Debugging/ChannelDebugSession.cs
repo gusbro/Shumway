@@ -115,6 +115,83 @@ public sealed class ChannelDebugSession : IDisposable
     /// <see cref="ShumwayDebugHelper.Attach"/> hands out.</summary>
     public DebugChannel Channel => _channel;
 
+    /// <summary>
+    /// ADR-035 D4 — hold the door until the debugger has actually SAID something.
+    ///
+    /// <para>"A debugger is attached" is not the same as "a debugger is ready". Under a
+    /// launch, <c>Debugger.IsAttached</c> goes true the instant the process starts, while
+    /// the components on the other side are still finding the channel and arming the
+    /// breakpoints the user drew before pressing the button. Consulting the program in that
+    /// window means running it past every one of them.</para>
+    ///
+    /// <para>So we wait for the first command batch — the debugger writes its whole desired
+    /// state as soon as it is ready, so ANY command is the signal — and apply it. Then the
+    /// program is consulted, with its breakpoints already armed. Returns false on timeout,
+    /// which is not fatal: a debugger that never speaks is one the user attached for a
+    /// different reason, and the program should still run.</para>
+    /// </summary>
+    public bool WaitForDebuggerCommands(int timeoutMs)
+    {
+        long deadline = Environment.TickCount64 + timeoutMs;
+        long nextPing = 0;
+        long quietUntil = 0;      // set once the debugger has said anything at all
+        bool heard = false;
+
+        while (Environment.TickCount64 < deadline)
+        {
+            // The debugger's FIRST word is not its last. It answers the bootstrap stop with
+            // the state it has — which, the first time, is nothing: it has only just learned
+            // which file we are about to consult, and Visual Studio has not yet bound the
+            // breakpoints the user drew on it. Those arrive milliseconds later, and treating
+            // the first batch as "ready" ran the whole program in the gap (measured: 33 ms
+            // early, every breakpoint missed). So we wait for the debugger to go QUIET.
+            if (heard && Environment.TickCount64 >= quietUntil)
+                return true;
+
+            // Give the debugger a STOP to work with. Its hidden breakpoint is armed before we
+            // have run anything (it reads the token out of the DLL on disk — it has to, since
+            // this session did not exist when the assembly loaded), but a breakpoint that is
+            // never reached tells it nothing: the channel, and the names of the files we are
+            // about to consult, are still unread. This is a port that costs nothing and
+            // happens nowhere, whose only purpose is to be stopped at.
+            if (Environment.TickCount64 >= nextPing)
+            {
+                nextPing = Environment.TickCount64 + 200;
+                _notify((int)StopReason.AsyncBreak);
+            }
+
+            var commands = _channel.DrainCommands();
+            if (commands.Count > 0)
+            {
+                foreach (var command in commands)
+                {
+                    // Only breakpoints: a step or a continue here would be one the debugger
+                    // never issued (see PollWhileRunning) — nobody steps a program that has
+                    // not started.
+                    switch (command.Kind)
+                    {
+                        case DebugCommandKind.AddBreakpoint:
+                        case DebugCommandKind.RemoveBreakpoint:
+                        case DebugCommandKind.ClearBreakpoints:
+                        case DebugCommandKind.SetLastCallOptimisation:
+                            Apply(_service, command);
+                            break;
+                    }
+                }
+                heard = true;
+                quietUntil = Environment.TickCount64 + QuietMs;
+            }
+            System.Threading.Thread.Sleep(20);
+        }
+        return heard;
+    }
+
+    /// <summary>How long the debugger has to stay silent before we believe it has finished
+    /// setting up. Long enough for Visual Studio to bind a breakpoint against a module it has
+    /// only just been told about (measured at tens of milliseconds), short enough that a
+    /// program launched under a debugger still starts promptly.</summary>
+    public const int QuietMs = 750;
+
     /// <summary>ADR-035 — writes the CURRENT stack into the channel, at no port at all,
     /// and returns the snapshot's sequence number (0 if nothing is running).
     ///
