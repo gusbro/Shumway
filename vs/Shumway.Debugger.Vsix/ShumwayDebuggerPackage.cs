@@ -28,8 +28,11 @@ namespace Shumway.Debugger.Vsix
     [InstalledProductRegistration("#110", "#112", "0.1")]
     // The resource ids are the ones in VSPackage.resx, which is also where the command table
     // is merged. They are not decoration: a page registered against id 0 has no name to show.
+    // supportsAutomation: the settings are reachable through DTE.Properties, which is how a
+    // script sets them — the E2E smoke has to point the launcher at a foreign assembly, and
+    // clicking through a dialog is not something a smoke test can do.
     [ProvideOptionPage(typeof(ShumwayOptionsPage), "Shumway", "Prolog Debugger",
-        categoryResourceID: 120, pageNameResourceID: 121, supportsAutomation: false)]
+        categoryResourceID: 120, pageNameResourceID: 121, supportsAutomation: true)]
     // Loaded when a solution is open OR not: a .pl file is usually opened on its own, and a
     // command that only appears once you have created a solution for it is a command nobody
     // finds.
@@ -88,7 +91,7 @@ namespace Shumway.Debugger.Vsix
 
             try
             {
-                Launch(engine, file);
+                Launch(engine, file, ShumwayOptionsPage.ResolveArguments(options.ExtraArguments));
             }
             catch (Exception ex)
             {
@@ -100,7 +103,7 @@ namespace Shumway.Debugger.Vsix
         /// a LAUNCH rather than a race: the engine turns on debug codegen, opens its session,
         /// and then waits for a debugger — so the file is consulted, and the goal run, only
         /// once breakpoints can bind.</summary>
-        private void Launch(string enginePath, string prologFile)
+        private void Launch(string enginePath, string prologFile, string? extraArguments)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
 
@@ -108,11 +111,17 @@ namespace Shumway.Debugger.Vsix
             if (debugger == null)
                 throw new InvalidOperationException("the shell debugger is not available");
 
+            string extra = string.IsNullOrWhiteSpace(extraArguments)
+                ? ""
+                : extraArguments!.Trim() + " ";
+
             var target = new VsDebugTargetInfo4
             {
                 dlo = (uint)DEBUG_LAUNCH_OPERATION.DLO_CreateProcess,
                 bstrExe = enginePath,
-                bstrArg = "--debug-wait \"" + prologFile + "\"",
+                // Extra arguments FIRST: --foreign-dll and --native-dll must be registered
+                // before the file that uses them is consulted.
+                bstrArg = "--debug-wait " + extra + "\"" + prologFile + "\"",
                 bstrCurDir = Path.GetDirectoryName(prologFile),
                 guidLaunchDebugEngine = PackageGuids.CoreClrEngine,
                 LaunchFlags = (uint)__VSDBGLAUNCHFLAGS.DBGLAUNCH_StopDebuggingOnEnd,

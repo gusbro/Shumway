@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Debug symbols are the whole point: without them the C# half of the mixed stack has
+         no source to open, and the E2E is only half an answer. -->
+    <DebugType>portable</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\src\Shumway.Embedding\Shumway.Embedding.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Shumway.SourceGen\Shumway.SourceGen.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

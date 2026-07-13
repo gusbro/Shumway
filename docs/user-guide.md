@@ -682,3 +682,11 @@ Under AOT, Tier-1 IL promotion is cleanly skipped (the IL compiler is
 never even constructed) and the engine runs on the bytecode
 interpreter only. See [`native-aot.md`](native-aot.md) for the full
 story, including the Windows toolchain requirements.
+
+## Debugging
+
+On Windows, Shumway has a source-level debugger for Visual Studio 2026:
+breakpoints in your `.pl` files, a call stack of your own predicates, the
+variables of each frame, and stepping through the Prolog ports. A program
+that calls out to C# or native C shows those frames in the *same* stack.
+See [`debugger.md`](debugger.md).

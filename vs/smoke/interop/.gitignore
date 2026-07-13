@@ -1,0 +1,8 @@
+# Build outputs of the E2E corpus: build-interop.ps1 regenerates all of them.
+native.dll
+native.exp
+native.lib
+native.pdb
+native.ilk
+native.obj
+interop-trace.txt

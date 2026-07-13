@@ -47,6 +47,35 @@ internal static class ReplTopLevel
         string[] consultFiles = sep < 0 ? args : args[..sep];
         string[] programArgs = sep < 0 ? Array.Empty<string>() : args[(sep + 1)..];
 
+        // --foreign-dll <path> / --native-dll <path>, repeatable. The linker records these in
+        // a bundle and LoadBundle honours them; consulting SOURCE had no way to say them at
+        // all, which meant a program with interop could only be run compiled — and therefore
+        // could not be debugged, since debugging is a property of source. Same flag names as
+        // shumway-link, on purpose.
+        var foreignDlls = new List<string>();
+        var nativeDlls = new List<string>();
+        var flagArgs = new HashSet<int>();
+        for (int i = 0; i < consultFiles.Length; i++)
+        {
+            string flag = consultFiles[i];
+            if (flag is not ("--foreign-dll" or "--native-dll")) continue;
+            flagArgs.Add(i);
+            if (i + 1 >= consultFiles.Length)
+            {
+                Console.Error.WriteLine($"% {flag} needs a path");
+                continue;
+            }
+            flagArgs.Add(i + 1);
+            (flag == "--foreign-dll" ? foreignDlls : nativeDlls).Add(consultFiles[i + 1]);
+            i++;
+        }
+
+        // The files to consult: everything that is not a flag, and not a flag's value.
+        string[] sourceFiles = consultFiles
+            .Where((a, i) => !flagArgs.Contains(i)
+                && a is not ("--clpfd" or "--clpr" or "--debug" or "--debug-wait"))
+            .ToArray();
+
         var engine = new PrologEngine();
         // Chunk 250: stash the engine reference so the line editor's
         // Tab completer (constructed lazily on first ReadLine) can
@@ -71,6 +100,20 @@ internal static class ReplTopLevel
             else if (path == "--clpr") engine.UseClpr();
         }
 
+        // Interop, before the consult: a `:- native fn/N` directive resolves against a
+        // library that must already be registered, and a foreign predicate must be a known
+        // predicate by the time a clause that calls it is linked.
+        foreach (string dll in nativeDlls)
+        {
+            try { engine.UseNativeLibrary(System.IO.Path.GetFullPath(dll)); }
+            catch (Exception ex) { Console.Error.WriteLine($"% could not load native library {dll}: {ex.Message}"); }
+        }
+        foreach (string dll in foreignDlls)
+        {
+            try { engine.RegisterForeignAssembly(System.IO.Path.GetFullPath(dll)); }
+            catch (Exception ex) { Console.Error.WriteLine($"% could not load foreign assembly {dll}: {ex.Message}"); }
+        }
+
         // ADR-035 — --debug opens a debug session before anything is consulted, because
         // debuggability is a property of the CODE, decided when it is compiled: an engine
         // told to debug afterwards would already have thrown away the variable names, the
@@ -90,10 +133,8 @@ internal static class ReplTopLevel
             // user drew before pressing the button binds against a module, a module is a .pl
             // file, and a launched process has stopped nowhere yet — so there are no frames
             // for the debugger to learn the names from.
-            Shumway.Embedding.Debugging.ShumwayDebugHelper.SourceFiles = consultFiles
-                .Where(f => f is not ("--clpfd" or "--clpr" or "--debug" or "--debug-wait"))
-                .Select(System.IO.Path.GetFullPath)
-                .ToArray();
+            Shumway.Embedding.Debugging.ShumwayDebugHelper.SourceFiles =
+                sourceFiles.Select(System.IO.Path.GetFullPath).ToArray();
             var session = new Shumway.Embedding.Debugging.ChannelDebugSession(engine);
             Console.WriteLine($"% debug session open (pid {Environment.ProcessId}) — attach a debugger.");
             if (Array.IndexOf(consultFiles, "--debug-wait") >= 0)
@@ -112,9 +153,8 @@ internal static class ReplTopLevel
             }
         }
 
-        foreach (string path in consultFiles)
+        foreach (string path in sourceFiles)
         {
-            if (path is "--clpfd" or "--clpr" or "--debug" or "--debug-wait") continue;
             try
             {
                 ConsultFile(engine, path);
