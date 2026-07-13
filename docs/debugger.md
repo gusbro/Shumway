@@ -44,6 +44,32 @@ Locals windows work, and double-clicking a frame navigates to its source.
 
 The command is on the editor context menu and appears only for `.pl` files.
 
+## Attaching to an engine you started yourself
+
+You can also debug a `shumway.exe` (or a host application embedding Shumway) that is
+already running. Two things to get right:
+
+**Start it with `--debug`.**
+
+```
+shumway.exe --debug my-program.pl
+```
+
+Debuggability is a property of the *code*, decided when it is compiled — so the flag is
+read before the first file is consulted. Without it the program compiles the way a release
+build does: there are no stop sites, no breakpoint can bind, and there are no Prolog frames
+to show. Attaching to an engine started without `--debug` looks like a debugger that does
+nothing.
+
+**Attach as managed code.** Debug > Attach to Process, pick the process, and make sure
+"Attach to:" says **Managed (.NET Core)** (press *Select...* if it does not).
+
+There is no "Shumway" entry in that list, and there is not meant to be. Shumway does not
+implement a debug engine: it *extends* the managed one. The Concord components layer onto
+the CLR debug session — which is exactly what makes one mixed Prolog + C# + native stack
+possible, and why the launch command above hands the process to the ordinary CoreCLR
+engine rather than to an engine of ours.
+
 ## What you see
 
 **The call stack** is your predicates — the ones you wrote, with the names you wrote.
