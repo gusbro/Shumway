@@ -21,6 +21,22 @@ extension development" workload):
 
 Double-click the resulting `vs\Shumway.Debugger.Vsix\bin\Release\Shumway.Debugger.vsix`.
 
+**Reinstalling.** The installer compares *versions*, not contents: rebuild the extension
+without touching `source.extension.vsixmanifest` and it will tell you "this extension is
+already installed to all applicable products" and do nothing. Either bump `Version` in the
+manifest, or uninstall first:
+
+```
+"C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\VSIXInstaller.exe" ^
+    /uninstall:Shumway.Debugger.50e1d3f2-52aa-4991-855f-f6426e9ae257
+```
+
+**The extension and the engine are a pair.** They speak a private memory format across the
+process boundary, and a stale extension against a rebuilt engine cannot read it. It says so
+in the call stack — "the engine speaks channel format vN, this extension speaks vM — rebuild
+and reinstall the VSIX" — rather than showing you a wrong stack. When you see that, this is
+what to do.
+
 The `vs\` solution builds with **desktop MSBuild only** — it references the VS SDK, which
 `dotnet build` cannot resolve. It is deliberately not part of `Shumway.slnx`: nothing in
 the engine depends on it, and a Linux build never sees it.
