@@ -28,7 +28,15 @@ public readonly record struct DebugSite(int FileId, int Line, int Column);
 /// </summary>
 public static class DebugSiteTable
 {
-    private static readonly ConcurrentDictionary<string, int> _fileIds = new(StringComparer.Ordinal);
+    /// <summary>A FILE, not a string. Two names for the same file must intern to the same
+    /// id, or a breakpoint binds against a file that has no code in it and is silently never
+    /// hit — which is exactly what happened: the engine was started with
+    /// <c>shumway --debug c:\temp\Blint.pl</c> and the editor opened
+    /// <c>C:\temp\Blint.pl</c>, and those were two different files here. Same for a relative
+    /// path against the absolute one the IDE always uses.</summary>
+    private static readonly ConcurrentDictionary<string, int> _fileIds =
+        new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+
     private static readonly List<string> _fileNames = new();
 
     private static readonly ConcurrentDictionary<DebugSite, int> _siteIds = new();
@@ -45,6 +53,7 @@ public static class DebugSiteTable
     /// <c>&lt;string&gt;</c> for <c>ConsultString</c>.</summary>
     public static int InternFile(string name)
     {
+        name = Canonicalize(name);
         if (_fileIds.TryGetValue(name, out int existing)) return existing;
         lock (_lock)
         {
@@ -54,6 +63,18 @@ public static class DebugSiteTable
             _fileIds[name] = id;
             return id;
         }
+    }
+
+    /// <summary>The one spelling of a file's name. Everything that reaches this table names a
+    /// file twice over — the engine from a command line, the debugger from an editor — and
+    /// they never agree on the drive letter's case, on <c>..</c>, or on whether the path was
+    /// relative. A synthetic name (<c>&lt;string&gt;</c>) is not a path and passes through
+    /// untouched.</summary>
+    private static string Canonicalize(string name)
+    {
+        if (string.IsNullOrEmpty(name) || name[0] == '<') return name;
+        try { return System.IO.Path.GetFullPath(name); }
+        catch (Exception) { return name; }   // not a path we can resolve: take it as given
     }
 
     public static string FileName(int fileId)

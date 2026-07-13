@@ -20,10 +20,17 @@
 // request goes down the command channel; the engine stops at its next port and reports it;
 // the break completes THERE, with a stack that is true.
 //
-// When Prolog is not running at all — the engine is blocked in a read, the query has
-// finished, the thread is deep in someone's C# — no port is ever coming, and honouring the
-// pause that way would hang the IDE. Then we decline, and the CLR freezes the process as it
-// always did: the C# stack is the truth in that case, and Visual Studio already shows it.
+// When Prolog is not running at all — the engine is sitting at its prompt waiting for a
+// query — there is no port coming, and this used to DECLINE (a thrown NotImplementedException,
+// which is how a stepper declines). There is no fallback for that here: Visual Studio put up
+// "Unable to break execution. Not implemented" and the user was left with a dialog instead of
+// a debugger. And declining was never necessary — the engine grants a stop when it is idle
+// too (ChannelDebugSession's idle watcher, which exists so a breakpoint can be set on an
+// engine that has never run a goal). So the request is the same either way: ask, and the stop
+// comes back, with a Prolog stack when there is one and without when there is not.
+//
+// A process with no Shumway session in it is the one case we still decline — and there the
+// throw is right, because there is nothing of ours in the debuggee to ask.
 
 using System;
 using System.Threading;
@@ -51,45 +58,15 @@ namespace Shumway.Debugger.Concord
             if (state.SnapshotAddress == 0 || state.CommandAddress == 0)
                 throw new NotImplementedException();
 
-            if (!PrologIsRunning(process, state))
-            {
-                ShumwayLog.Write("pause: Prolog is not running — leaving the break to the CLR");
-                throw new NotImplementedException();
-            }
-
             state.AsyncBreakPending = true;
             ShumwayRemoteComponent.RequestBreakNow(process, state);
-            ShumwayLog.Write("pause: asked the engine to stop at its next port");
+            ShumwayLog.Write("pause: asked the engine to stop");
 
-            // And that is all. The process keeps running — for microseconds — and the stop
-            // arrives as a notify, where the break is completed against the port it landed
-            // on. See ShumwayRemoteComponent.OnRuntimeBreakpointReceived.
-        }
-
-        /// <summary>Whether the engine is passing goals right now — the question that decides
-        /// whether a pause can be honoured at a port at all. Answered by watching the
-        /// heartbeat the engine bumps as it runs, because there is nothing else to ask: a
-        /// debugger cannot make a running debuggee tell it anything.</summary>
-        private static bool PrologIsRunning(DkmProcess process, ShumwayServerDataItem state)
-        {
-            int before = ReadHeartbeat(process, state);
-            Thread.Sleep(HeartbeatWatchMs);
-            return ReadHeartbeat(process, state) != before;
-        }
-
-        private static int ReadHeartbeat(DkmProcess process, ShumwayServerDataItem state)
-        {
-            try
-            {
-                byte[] header = new byte[DebugWire.HeartbeatOffset + 4];
-                process.ReadMemory((ulong)state.SnapshotAddress, DkmReadMemoryFlags.None, header);
-                int at = DebugWire.HeartbeatOffset;
-                return DebugWire.ReadInt(header, ref at);
-            }
-            catch (Exception)
-            {
-                return 0;
-            }
+            // And that is all. A running engine reaches its next port in microseconds and
+            // stops there, with a real stack; an idle one grants the stop from its watcher,
+            // with no stack, because there is nothing running to have one. Either way the
+            // stop arrives as a notify, and the break is completed there. See
+            // ShumwayRemoteComponent.OnRuntimeBreakpointReceived.
         }
     }
 }

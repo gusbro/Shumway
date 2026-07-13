@@ -26,6 +26,11 @@ one first:
 powershell -ExecutionPolicy Bypass -File vs\install-vsix.ps1 -Configuration Release
 ```
 
+(Build the *Release* VSIX with `/p:DeployExtension=false`. Without it the build also deploys
+into the experimental hive that the smoke scripts use, on top of the Debug copy and with the
+same identity — and Visual Studio resolves that by loading *neither*, with a "could not load
+the extension" dialog and no clue as to why.)
+
 **Do not double-click the .vsix to upgrade.** The installer compares *versions*, not
 contents: rebuild the extension without bumping `Version` in `source.extension.vsixmanifest`
 and it answers "this extension is already installed to all applicable products" and leaves

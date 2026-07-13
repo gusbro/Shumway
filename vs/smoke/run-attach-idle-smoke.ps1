@@ -24,6 +24,15 @@ $program = Join-Path $PSScriptRoot "attach-idle.pl"
 foreach ($f in @($repl, $program)) { if (-not (Test-Path $f)) { throw "missing $f" } }
 $repl    = (Resolve-Path $repl).Path
 $program = (Resolve-Path $program).Path
+
+# THE ENGINE IS GIVEN THE PATH THE WAY A USER TYPES IT -- lower-case drive letter -- while
+# Visual Studio opens the document with the drive the way Windows reports it. Those were two
+# different files to the engine's site table, so a breakpoint bound against the one with no
+# code in it and NEVER HIT: the program ran clean through it and the debugger looked broken.
+# The smoke passed only because it handed the engine a resolved path, which is not what
+# anybody does. It hands it a badly-cased one now.
+$programAsTyped = $program.Substring(0, 1).ToLowerInvariant() + $program.Substring(1)
+
 $tracefile = Join-Path $PSScriptRoot "attach-idle-trace.txt"
 Remove-Item $tracefile -ErrorAction SilentlyContinue
 
@@ -81,7 +90,7 @@ try {
     # which is the whole point: the engine must be IDLE while the debugger gets ready.
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $repl
-    $psi.Arguments = "--debug `"$program`""
+    $psi.Arguments = "--debug `"$programAsTyped`""
     $psi.RedirectStandardInput = $true
     $psi.RedirectStandardOutput = $true
     $psi.UseShellExecute = $false
@@ -97,12 +106,32 @@ try {
 
     Write-Host "[3/6] attaching to the idle engine ..."
     $target = Invoke-WithRetry {
-        $p = @($dte.Debugger.LocalProcesses) | Where-Object { $_.ProcessID -eq $engine.Id }
-        if (-not $p) { throw "the engine is not in LocalProcesses yet" }
+        if ($engine.HasExited) { throw "the engine exited (code $($engine.ExitCode))" }
+        $all = @($dte.Debugger.LocalProcesses)
+        $p = $all | Where-Object { $_.ProcessID -eq $engine.Id }
+        if (-not $p) { throw "engine pid $($engine.Id) not among $($all.Count) local processes yet" }
         $p
-    } 30 2000
+    } 45 2000
     Invoke-WithRetry { $target.Attach() } 15 3000
     Start-Sleep -Seconds 6   # the idle watcher grants the bootstrap stop within ~100ms
+
+    # BREAK ALL WITH NOTHING RUNNING. The engine is sitting at its prompt; no port is coming.
+    # The pause used to be DECLINED here (a thrown NotImplementedException, the way a stepper
+    # declines) -- and there is no fallback for that: Visual Studio put up "Unable to break
+    # execution. Not implemented" and the user got a dialog instead of a debugger. The engine
+    # grants a stop when it is idle, so there was never anything to decline.
+    Write-Host "[3b/6] Break All on an IDLE engine ..."
+    $pausedIdle = $false
+    try {
+        Invoke-WithRetry { $dte.Debugger.Break($false) } 3 2000
+        for ($i = 0; $i -lt 15; $i++) {
+            Start-Sleep -Seconds 1
+            if ((Invoke-WithRetry { $dte.Debugger.CurrentMode } 5 1000) -eq 2) { $pausedIdle = $true; break }
+        }
+        Write-Host "  paused: $pausedIdle"
+        if ($pausedIdle) { Invoke-WithRetry { $dte.Debugger.Go($false) } 5 2000; Start-Sleep -Seconds 2 }
+    } catch { Write-Host "  Break All threw: $($_.Exception.Message)" }
+    $results["A0 Break All on an idle engine pauses (no 'Not implemented')"] = $pausedIdle
 
     Write-Host "[4/6] opening the file and setting a breakpoint -- ON AN IDLE ENGINE ..."
     Invoke-WithRetry {
