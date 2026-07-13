@@ -64,6 +64,10 @@ nothing.
 **Attach as managed code.** Debug > Attach to Process, pick the process, and make sure
 "Attach to:" says **Managed (.NET Core)** (press *Select...* if it does not).
 
+You can attach to an engine that is doing nothing — sitting at the prompt, waiting for a
+query — and set breakpoints on predicates that have never run. They bind, and they are hit
+when you finally run the goal.
+
 There is no "Shumway" entry in that list, and there is not meant to be. Shumway does not
 implement a debug engine: it *extends* the managed one. The Concord components layer onto
 the CLR debug session — which is exactly what makes one mixed Prolog + C# + native stack
@@ -134,6 +138,25 @@ stepping over.
 
 The prelude and the bundled libraries are implicitly `disable_debug`: you step through
 your program, not through `maplist/3`.
+
+## Stopping from the program: `debugger_break/0`
+
+The shortest path from a program to a stopped debugger. Put it in the clause you care
+about:
+
+```prolog
+suspicious(X, Y) :-
+    debugger_break,
+    complicated(X, Y).
+```
+
+Run under `--debug`, attach, and the next time that clause is reached you are standing in
+it, with its stack and its variables. It needs no breakpoint, no symbols and no binding —
+it asks the runtime to break, and the debugger answers.
+
+**With no debugger attached it does nothing and succeeds**, so you can leave it in the
+program. (It does still need the code to have been compiled for debugging — that is what
+gives the stop a stack to show.)
 
 ## Pausing
 

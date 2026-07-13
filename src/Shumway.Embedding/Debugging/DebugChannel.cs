@@ -148,6 +148,11 @@ public sealed class DebugChannel : IDisposable
         DebugWire.WriteInt(_snapshot, ref at, ++_heartbeat);
     }
 
+    /// <summary>The heartbeat as it stands. The engine's own idle watcher reads it for the
+    /// same reason the debugger does: to tell a machine that is passing goals from one that
+    /// is standing still.</summary>
+    public int HeartbeatValue => _heartbeat;
+
     /// <summary>The snapshot as it stands in the pinned buffer, decoded with the very
     /// code the debugger uses.</summary>
     public DebugSnapshot? ReadSnapshot() => DebugWire.ReadSnapshot(_snapshot);

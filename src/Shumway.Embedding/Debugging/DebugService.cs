@@ -154,7 +154,7 @@ public sealed class DebugService : IDebugSession
     /// the next goal, but the debugger wants the stack NOW. It stops the process from
     /// outside and asks (<see cref="CaptureNow"/>), and the answer can only come from
     /// the machine that was last running.</para></summary>
-    public Activation? Current { get; private set; }
+    public Activation? Current { get; internal set; }
 
     /// <summary>ADR-035 — the stack as it stands, right now, at no port at all.
     ///

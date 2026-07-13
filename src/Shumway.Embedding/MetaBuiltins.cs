@@ -167,6 +167,13 @@ public static class MetaBuiltins
         BuiltinsRegistry.Register("notrace", 0, NoTrace,
             Control, "notrace", "Turns the four-port tracer off.");
 
+        BuiltinsRegistry.Register("debugger_break", 0, DebuggerBreak,
+            Control, "debugger_break",
+            "Stops in the attached source-level debugger, here, with this clause's stack "
+            + "and variables. Succeeds without doing anything if no debugger is attached, "
+            + "so it is safe to leave in a program. Requires the code to have been compiled "
+            + "for debugging (shumway --debug).");
+
         BuiltinsRegistry.Register("throw", 1, Throw,
             Control, "throw(+Exception)", "Throws an exception term, unwinding to the nearest catch/3.");
         // catch/3 is a prelude predicate built on the chunk-85 catch-frame
@@ -3366,6 +3373,30 @@ public static class MetaBuiltins
             throw new InvalidOperationException("trace/0 requires a PrologEngine host.");
         host.SetTracing(true, engine.Out);
         engine.Debug = host.DebugSession;
+        return true;
+    }
+
+    /// <summary><c>debugger_break/0</c> (ADR-035) — stop here, if anyone is watching.
+    ///
+    /// <para>The Prolog counterpart of <c>Debugger.Break()</c>, and it is exactly that
+    /// underneath: in a managed process, a break is something the runtime can ask for
+    /// directly, and the debugger honours it without any of the machinery a breakpoint
+    /// needs. Which makes this the shortest path there is from a program to a stopped
+    /// debugger — put it in the clause you care about, run under <c>--debug</c>, attach, and
+    /// the next time that clause is reached you are standing in it.</para>
+    ///
+    /// <para>With no debugger attached it does nothing and succeeds — a program can be left
+    /// with these in it. And the snapshot is written FIRST, so that by the time the debugger
+    /// has the process, the Prolog stack it is about to show is already in memory.</para>
+    /// </summary>
+    public static bool DebuggerBreak(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException("debugger_break/0 requires a PrologEngine host.");
+        if (!System.Diagnostics.Debugger.IsAttached)
+            return true;   // nobody is watching: this is a no-op, by design
+
+        Shumway.Embedding.Debugging.ShumwayDebugHelper.Session?.BreakHere(engine);
         return true;
     }
 

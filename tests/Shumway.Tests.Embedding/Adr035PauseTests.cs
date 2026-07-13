@@ -114,6 +114,52 @@ go :- loop(200000).
     }
 
     [Fact]
+    public void ABreakpointSetOnAnIdleEngine_BeforeAnyQueryHasEverRun_StillHits()
+    {
+        // The ordinary way to debug a program you did not launch from the IDE: the engine
+        // consults it and WAITS at the prompt, you attach, and you set a breakpoint on a
+        // predicate nothing has called yet. Not one goal has run in this engine's life.
+        var engine = new PrologEngine();
+        engine.ConsultString(
+            ":- set_prolog_flag(compile_mode, debug).\n"
+            + "go :- step(1, A), step(A, B), B > 0.\n"
+            + "step(N, Out) :- Out is N * 2.\n");
+
+        int bound = engine.AddBreakpoint("<string>", 3);   // the body of step/2
+        Assert.True(bound > 0, "the breakpoint bound nothing at all");
+
+        DebugSnapshot? seen = null;
+        ChannelDebugSession? session = null;
+        session = new ChannelDebugSession(engine, notify: _ => seen ??= ReadFromMemory(session!.Channel));
+
+        using (session)
+            Assert.True(engine.QueryAll("go.").Any());
+
+        Assert.NotNull(seen);
+        _log.WriteLine($"{seen!.Reason} at {seen.File}:{seen.Line}");
+        Assert.Equal(StopReason.Breakpoint, seen.Reason);
+        Assert.Contains(seen.Frames, f => f.Name == "step");
+    }
+
+    [Fact]
+    public void DebuggerBreak_WithNobodyWatching_IsANoOp()
+    {
+        // The whole value of debugger_break/0 is that you can LEAVE it in the program. A
+        // build with no debugger attached must run straight through it — no stop, no stack
+        // rendered, no cost. (With a debugger attached it calls Debugger.Break(), which is a
+        // thing only a debugger can answer; there is no way to assert that from a test
+        // process that is not being debugged, and pretending otherwise would test the mock.)
+        var engine = DebugEngine();
+        engine.ConsultString("guarded :- debugger_break, true.\n");
+
+        int notifies = 0;
+        using var session = new ChannelDebugSession(engine, notify: _ => notifies++);
+
+        Assert.True(engine.QueryAll("guarded.").Any());
+        Assert.Equal(0, notifies);
+    }
+
+    [Fact]
     public void AProgramNobodyPaused_IsNeverAskedForItsStack()
     {
         var engine = DebugEngine();

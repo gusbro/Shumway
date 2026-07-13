@@ -145,6 +145,17 @@ namespace Shumway.Debugger.Concord
 
             LoadChannel(process, state);   // in case the session opened before we got here
             ArmNotifyBreakpoint(process, state, token);
+
+            // ATTACH. Under a launch the channel does not exist yet and this does nothing —
+            // the commands go down later, when the engine tells us where the channel is. But
+            // when we ATTACH to an engine that has been running for hours, the channel is
+            // already there, and this is the moment the session begins: nothing has stopped,
+            // nothing is going to stop by itself, and until something does there are no
+            // modules for a breakpoint to bind against ("no symbols have been loaded for this
+            // document" — which was the truth). So ask, here, for the one stop that breaks
+            // the circle. The engine grants it even standing still: see
+            // ChannelDebugSession's idle watcher.
+            WriteCommands(process, state);
             ShumwayLog.Write("  armed at module load (token " + token + "): " + Status(state));
         }
 

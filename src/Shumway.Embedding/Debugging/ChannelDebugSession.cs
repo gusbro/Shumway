@@ -42,6 +42,91 @@ public sealed class ChannelDebugSession : IDisposable
         ShumwayDebugHelper.Channel = _channel;
         ShumwayDebugHelper.Session = this;
         engine.AttachDebugSession(_service);
+
+        StartIdleWatcher();
+    }
+
+    // ----- the engine when it is NOT running -----
+
+    private System.Threading.Thread? _idleWatcher;
+    private readonly object _gate = new object();
+    private int _lastHeartbeat = -1;
+
+    /// <summary>ADR-035 — how a debugger gets in when the engine is standing still.
+    ///
+    /// <para>Everything else here happens BETWEEN GOALS: the engine reads the channel as it
+    /// runs. An engine that is not running reads nothing — and an engine waiting at the
+    /// top-level prompt is the ordinary thing to attach to. That was a genuine deadlock, and
+    /// a silent one: the debugger needs a stop in order to build the objects that stand for
+    /// a <c>.pl</c> file, a breakpoint can only bind against those objects, and a stop can
+    /// only come from a breakpoint. Nobody could go first, so nothing loaded, and Visual
+    /// Studio said what it truthfully saw — "no symbols have been loaded for this
+    /// document".</para>
+    ///
+    /// <para>So when the engine is idle, this thread services the channel in its place: it
+    /// obeys the commands the debugger left, and grants the stop it asked for (an empty one
+    /// — there is no Prolog stack when no Prolog is running, and it must not pretend
+    /// otherwise). It runs only while a debugger is attached, only while the heartbeat says
+    /// the engine is NOT passing goals — the running engine services itself, and two of us
+    /// must never do it at once — and it sleeps the rest of the time.</para></summary>
+    private void StartIdleWatcher()
+    {
+        _idleWatcher = new System.Threading.Thread(() =>
+        {
+            while (!_disposed)
+            {
+                System.Threading.Thread.Sleep(IdleTickMs);
+                if (_disposed) break;
+                if (!System.Diagnostics.Debugger.IsAttached) continue;
+
+                // Is the engine running? Only the engine bumps the heartbeat, and it does so
+                // as it passes goals. If it moved, the engine is servicing the channel itself
+                // and this thread must keep its hands off.
+                int beat = _channel.HeartbeatValue;
+                bool running = beat != _lastHeartbeat;
+                _lastHeartbeat = beat;
+                if (running) continue;
+
+                ServiceChannelWhileIdle();
+            }
+        })
+        {
+            IsBackground = true,
+            Name = "shumway-debug-idle",
+        };
+        _idleWatcher.Start();
+    }
+
+    /// <summary>How often the idle engine looks at the channel. Fast enough that setting a
+    /// breakpoint at the prompt feels immediate; slow enough to be nothing at all.</summary>
+    public const int IdleTickMs = 100;
+
+    private void ServiceChannelWhileIdle()
+    {
+        lock (_gate)
+        {
+            bool stopWanted = false;
+            foreach (var command in _channel.DrainCommands())
+            {
+                switch (command.Kind)
+                {
+                    case DebugCommandKind.Hello:
+                    case DebugCommandKind.BreakNow:
+                        stopWanted = true;
+                        break;
+                    default:
+                        Apply(_service, command);
+                        break;
+                }
+            }
+            if (!stopWanted) return;
+
+            // A stop with no stack, because there is no stack: nothing is running. It is
+            // still a REAL stop — which is all the debugger needs it to be, since what it
+            // wants from it is the chance to build its modules and bind its breakpoints.
+            OnStopLocked(new DebugStopEvent(
+                StopReason.AsyncBreak, "", "", 0, 0, Array.Empty<PrologEngine.DebugFrame>()));
+        }
     }
 
     /// <summary>ADR-035 — the channel, worked between goals rather than at a stop. Two jobs.
@@ -206,8 +291,47 @@ public sealed class ChannelDebugSession : IDisposable
         return _channel.Sequence;
     }
 
+    /// <summary>ADR-035 — <c>debugger_break/0</c>: stop the debugger HERE, at this goal.
+    ///
+    /// <para>In a managed process a break is something the program itself can ask the
+    /// runtime for, and the debugger honours it — no breakpoint, no channel, no negotiation.
+    /// So this is the one path into the debugger that needs nothing to have gone right
+    /// first: no symbols loaded, no modules built, no breakpoint bound. Which is exactly
+    /// what makes it the tool for debugging the debugger, as well as the program.</para>
+    ///
+    /// <para>The snapshot goes in first, as at every stop, so the stack is already in memory
+    /// when the debugger takes the process. The command channel is drained afterwards, so a
+    /// step taken from here works like a step taken from anywhere else.</para></summary>
+    internal void BreakHere(Shumway.Core.Activation activation)
+    {
+        lock (_gate)
+        {
+            _service.Current = activation;
+            DebugStopEvent? here = _service.CaptureNow();
+            if (here is null) return;
+
+            _channel.WriteSnapshot(here);
+            System.Diagnostics.Debugger.Break();
+
+            foreach (var command in _channel.DrainCommands())
+                Apply(_service, command);
+            _channel.SetRunning();
+        }
+    }
+
     private void OnStop(DebugService service, DebugStopEvent stop)
     {
+        // The idle watcher answers the channel when the engine is not running. It decides
+        // that by the heartbeat, which cannot be perfectly timed against a query that is
+        // just starting — so the two take turns rather than race.
+        lock (_gate)
+            OnStopLocked(stop);
+    }
+
+    private void OnStopLocked(DebugStopEvent stop)
+    {
+        DebugService service = _service;
+
         // 1. Write, so the answer is there before the question.
         _channel.WriteSnapshot(stop);
 
@@ -266,6 +390,13 @@ public sealed class ChannelDebugSession : IDisposable
         if (_disposed) return;
         _disposed = true;
         _engine.AttachDebugSession(null);
+
+        // The watcher must be gone before the channel it reads is unpinned. It wakes at least
+        // every tick, so this is a short wait; the bound is there because a session that
+        // cannot be disposed is worse than one that leaks a thread.
+        _idleWatcher?.Join(IdleTickMs * 5);
+        _idleWatcher = null;
+
         if (ReferenceEquals(ShumwayDebugHelper.Channel, _channel))
         {
             ShumwayDebugHelper.Channel = null;

@@ -44,6 +44,23 @@ namespace Shumway.Debugger.Concord
         public bool TopEngineFrameIsNotify;
         public DkmStackWalkFrame? Anchor;
 
+        /// <summary>Whether this thread is running the MACHINE — i.e. the bytecode
+        /// interpreter is somewhere below us.
+        ///
+        /// <para>An engine frame is not enough to earn the Prolog stack. Other threads of the
+        /// process sit inside engine code without executing a single goal: the debug
+        /// session's own idle watcher does, sleeping; so would a background compiler or a
+        /// second engine. Splicing the machine's stack onto them puts a program's call stack
+        /// on a thread that is not running it — plausible, and false. The interpreter's
+        /// presence is what makes a thread the one the Prolog stack belongs to.</para></summary>
+        public bool SawMachineFrame;
+
+        /// <summary>The engine frames taken out of the walk so far. They are given BACK,
+        /// unchanged, if the machine turns out not to be on this thread — swallowing a
+        /// thread's frames and then putting nothing in their place would leave it looking
+        /// like it had no stack at all.</summary>
+        public readonly List<DkmStackWalkFrame> Swallowed = new List<DkmStackWalkFrame>();
+
         public static ShumwayStackDataItem GetInstance(DkmStackContext stackContext)
         {
             ShumwayStackDataItem? item = stackContext.GetDataItem<ShumwayStackDataItem>();
@@ -96,9 +113,11 @@ namespace Shumway.Debugger.Concord
                     // End of the walk. If the engine's frames ran all the way to the bottom
                     // of the stack, this is the last chance to put the Prolog stack in their
                     // place.
-                    return walk.SawEngineFrame && !walk.EmittedPrologFrames
+                    if (!walk.SawEngineFrame || walk.EmittedPrologFrames)
+                        return null;
+                    return walk.SawMachineFrame
                         ? Emit(stackContext, walk, null)
-                        : null;
+                        : GiveBack(walk, null);
                 }
                 return Filter(stackContext, walk, input);
             }
@@ -113,6 +132,9 @@ namespace Shumway.Debugger.Concord
         {
             if (ShumwaySession.IsEngineModule(input.ModuleInstance?.Name))
             {
+                if (ShumwaySession.IsMachineModule(input.ModuleInstance?.Name))
+                    walk.SawMachineFrame = true;
+
                 // An engine frame. Every one of them is swallowed — the Prolog stack takes
                 // the place of the whole run — but not yet: the handshake with the debuggee
                 // is a func-eval, a func-eval is evaluated in the context of a FRAME, and a
@@ -142,15 +164,35 @@ namespace Shumway.Debugger.Concord
                     if (walk.Snapshot != null)
                         EnsureModules(input.Process, walk.Snapshot);
                 }
+                walk.Swallowed.Add(input);
                 return Array.Empty<DkmStackWalkFrame>();
             }
 
             // Not an engine frame: the user's own. If the engine's run just ended, the Prolog
-            // stack goes here — above this frame, which is the one that called into it.
+            // stack goes here — above this frame, which is the one that called into it. But
+            // only if the MACHINE was in that run: a thread that merely passed through engine
+            // code without running a goal has no Prolog stack, and must be shown as it is.
             if (walk.SawEngineFrame && !walk.EmittedPrologFrames)
-                return Emit(stackContext, walk, input);
+            {
+                return walk.SawMachineFrame
+                    ? Emit(stackContext, walk, input)
+                    : GiveBack(walk, input);
+            }
 
             return new[] { input };
+        }
+
+        /// <summary>This thread went through engine code without running the machine — the
+        /// debug session's idle watcher, say, asleep in a timer. It has no Prolog stack, and
+        /// it must not be dressed in somebody else's. Its own frames go back exactly as they
+        /// came.</summary>
+        private static DkmStackWalkFrame[] GiveBack(
+            ShumwayStackDataItem walk, DkmStackWalkFrame? below)
+        {
+            walk.EmittedPrologFrames = true;   // decided: nothing more to splice on this walk
+            var frames = new List<DkmStackWalkFrame>(walk.Swallowed);
+            if (below != null) frames.Add(below);
+            return frames.ToArray();
         }
 
         /// <summary>The Prolog stack, in place of the engine frames it replaces, followed by

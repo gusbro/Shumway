@@ -338,6 +338,16 @@ public sealed class Lexer
             {
                 Advance();
             }
+            else if (c == '﻿')
+            {
+                // A byte-order mark. Not whitespace as far as char.IsWhiteSpace is
+                // concerned, and not anything else either — so it used to be a syntax error
+                // on the FIRST character of the file, which is the only place it appears:
+                // a .pl saved as UTF-8-with-BOM (the default in more than one Windows
+                // editor) would not consult, and a goal piped in from a shell that writes
+                // one would not parse. Skipped, like the nothing it is.
+                Advance();
+            }
             else if (c == '%')
             {
                 while (_offset < _source.Length && _source[_offset] != '\n') Advance();

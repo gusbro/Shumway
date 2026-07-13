@@ -94,6 +94,19 @@ namespace Shumway.Debugger.Concord
                 || moduleName.Equals("Shumway.Builtins.dll", StringComparison.OrdinalIgnoreCase);
         }
 
+        /// <summary>The module that IS the machine: the bytecode interpreter. Its presence on
+        /// a thread is what says that thread is running a Prolog program — which is a
+        /// different question from whether the thread is inside engine code, and the one that
+        /// decides who gets the Prolog stack. Other threads sit in engine code without running
+        /// a goal (the debug session's own idle watcher, asleep), and giving them the
+        /// machine's frames would show a program's call stack on a thread that is not running
+        /// it.</summary>
+        public static bool IsMachineModule(string? moduleName)
+        {
+            return !string.IsNullOrEmpty(moduleName)
+                && moduleName!.Equals("Shumway.Interpreter.dll", StringComparison.OrdinalIgnoreCase);
+        }
+
         /// <summary>The session, keyed by the process it belongs to — and kept HERE, not in a
         /// DkmDataItem on the DkmProcess.
         ///
