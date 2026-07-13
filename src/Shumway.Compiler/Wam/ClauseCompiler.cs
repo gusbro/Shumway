@@ -71,8 +71,14 @@ public sealed class ClauseCompiler
     /// Off by default: this is not what release code should look like.</summary>
     public bool DebugCodegen { get; set; }
 
-    /// <summary>ADR-035 — the <see cref="DebugSiteTable"/> file id the clauses
-    /// being compiled came from. Only read under <see cref="DebugCodegen"/>.</summary>
+    /// <summary>ADR-035 — the file to blame when a position does not know its own
+    /// (<see cref="Shumway.Compiler.Lexer.SourcePosition.FileId"/> is 0). Only read under
+    /// <see cref="DebugCodegen"/>.
+    ///
+    /// <para>The position wins whenever it has an answer, and it nearly always does: it was
+    /// stamped by the lexer that read the file. This fallback is for terms nobody parsed —
+    /// a synthetic clause the engine built for a query, say — where the caller's idea of
+    /// "the current file" is as good as it gets.</para></summary>
     public int DebugFileId { get; set; }
 
     /// <summary>ADR-035 — record that a debugger may stop at the instruction about
@@ -87,8 +93,9 @@ public sealed class ClauseCompiler
     private void MarkStop(CompileState s, Shumway.Compiler.Lexer.SourcePosition pos)
     {
         if (!DebugCodegen || _suppressBreaks || pos.Line <= 0) return;
+        int fileId = pos.FileId != 0 ? pos.FileId : DebugFileId;
         s.DebugStops.Add(new DebugStop(
-            s.Emitter.Position, DebugSiteTable.Intern(DebugFileId, pos.Line, pos.Column)));
+            s.Emitter.Position, DebugSiteTable.Intern(fileId, pos.Line, pos.Column)));
     }
 
 

@@ -35,6 +35,14 @@ public enum DebugCommandKind
     RemoveBreakpoint = 6,
     ClearBreakpoints = 7,
     SetLastCallOptimisation = 8,
+
+    /// <summary>"Stop at the next goal, briefly, so I can get my bearings." The debugger's
+    /// bootstrap, and the answer to a genuine deadlock: Visual Studio can only create the
+    /// objects that represent a .pl file — the ones a breakpoint binds against — from inside
+    /// a real stop event; and a stop can only happen once a breakpoint is bound. Neither can
+    /// go first. So the debugger asks for a stop it does not need, takes what it needs from
+    /// it, and lets the program run on.</summary>
+    Hello = 9,
 }
 
 /// <summary>ADR-035 — one command, in the form both sides can build. (The engine's own

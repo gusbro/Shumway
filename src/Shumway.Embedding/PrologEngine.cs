@@ -7213,7 +7213,15 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         else
         {
             rawClauses = new ClauseReader(
-                new Lexer(source, _flags.CharConversionEnabled ? _flags.CharConversion : null),
+                new Lexer(source, _flags.CharConversionEnabled ? _flags.CharConversion : null)
+                {
+                    // ADR-035 — every position this consult produces knows which FILE it came
+                    // from. It has to travel with the position, because the clause is not
+                    // compiled now: compilation happens at query setup, long after the consult
+                    // that read the file is over, and a compiler field saying "the file we are
+                    // reading" says nothing true by then.
+                    FileId = _debugFileId,
+                },
                 _operators, _flags).ReadAll().ToList();
             // First prelude consult in the process: cache its parse (computed
             // with this engine's default operators/flags) for every later one.

@@ -27,6 +27,7 @@ namespace Shumway.Debugger.Concord
         DkmCompilerId IDkmSymbolCompilerIdQuery.GetCompilerId(
             DkmInstructionSymbol instruction, DkmInspectionSession inspectionSession)
         {
+            ShumwayIdeDiag.CompilerIdAsks++;
             return new DkmCompilerId(ShumwayGuids.ShumwayVendor, ShumwayGuids.ShumwayLanguage);
         }
 
@@ -72,6 +73,7 @@ namespace Shumway.Debugger.Concord
             DkmInstructionSymbol instruction, DkmSourcePositionFlags flags,
             DkmInspectionSession inspectionSession, out bool startOfLine)
         {
+            ShumwayIdeDiag.SourcePositionAsks++;
             if (instruction is DkmCustomInstructionSymbol custom && custom.Module != null)
             {
                 int line = (int)custom.Offset;

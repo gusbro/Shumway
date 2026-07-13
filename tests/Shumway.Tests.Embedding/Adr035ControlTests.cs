@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using Shumway.Embedding;
@@ -139,6 +140,46 @@ public class Adr035ControlTests
         _log.WriteLine($"{seen!.Reason} {seen.Goal} at {seen.File}:{seen.Line}");
         Assert.Equal(StopReason.Breakpoint, seen.Reason);
         Assert.Equal("tick/1", seen.Goal);
+    }
+
+    /// <summary>The bug the first Visual Studio run found, and which nothing in this suite
+    /// could have: every test here consults a STRING, so every stop honestly said it came
+    /// from <c>&lt;string&gt;</c> — and so did every clause of every program consulted from a
+    /// real file. Compilation happens at query setup, long after the consult that read the
+    /// file is over, and the compiler was being told "the file we are reading now", which by
+    /// then was nobody's file at all. In VS the symptom was total: not one breakpoint could
+    /// ever bind, because no clause admitted to being in the file the user had open.</summary>
+    [Fact]
+    public void AClauseConsultedFromAFileKnowsWhichFileItCameFrom()
+    {
+        string path = Path.Combine(Path.GetTempPath(), "shumway_adr035_" + Guid.NewGuid().ToString("N") + ".pl");
+        File.WriteAllText(path, "top(A) :-\n    mid(A, B),\n    use(B).\nmid(In, out(In)).\nuse(_).\n");
+        try
+        {
+            var engine = new PrologEngine();
+            engine.Flags.EmitDebugInfo = true;
+            engine.Flags.DebugCodegen = true;
+            engine.ConsultFile(path);
+            engine.QueryAll("set_prolog_flag(debug_lco, off).").ToList();
+
+            Assert.True(engine.AddBreakpoint(path, 4) > 0);   // inside mid/2
+
+            DebugSnapshot? seen = null;
+            ChannelDebugSession? session = null;
+            session = new ChannelDebugSession(engine, notify: _ => seen = ReadFromMemory(session!.Channel));
+            using (session)
+                engine.QueryAll("top(one).").ToList();
+
+            Assert.NotNull(seen);
+            _log.WriteLine($"{seen!.Reason} {seen.Goal} at {seen.File}:{seen.Line}");
+            Assert.Equal(StopReason.Breakpoint, seen.Reason);
+            Assert.Equal(path, seen.File);
+            Assert.Equal(path, seen.Frames[0].File);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 
     [Fact]

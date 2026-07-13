@@ -5,41 +5,69 @@ using System.Runtime.CompilerServices;
 namespace Shumway.Embedding.Debugging;
 
 /// <summary>
-/// ADR-035 — the two-method surface a debugger attaches to.
+/// ADR-035 — the surface a debugger attaches to, and the session's side of it.
 ///
-/// <para><b>Notify</b> is the stop. The debugger plants a hidden breakpoint on it (a
-/// CLR instruction breakpoint, invisible to the user), and the engine calls it once the
-/// snapshot is already written. So the sequence at every stop is: serialise, call
-/// Notify, get stopped by the runtime, be resumed with commands waiting in the channel.
-/// It is deliberately the dullest method in the codebase — no arguments to marshal, no
-/// work to do, nothing that could fail — because everything about it that matters
-/// happens in the debugger, not here.</para>
+/// <para><b>The debugger does not call these methods by these names.</b> It calls
+/// <see cref="Shumway.Core.Debugging.ShumwayDebugHost"/>, which forwards here — because a
+/// debugger evaluates an expression against a FRAME, and a frame can only name types its
+/// own module can see. The frame it stops on is an engine frame, usually the interpreter,
+/// and <c>Shumway.Interpreter</c> does not reference <c>Shumway.Embedding</c>. Core is the
+/// only assembly all of them share, so that is where the door had to be. The work is
+/// here; the handle is there.</para>
 ///
-/// <para><b>Attach</b> is the handshake, and the ONE func-eval the design allows. It
-/// runs at attach time, in a normal execution context where evaluating a function in
-/// the debuggee is safe and supported — not inside breakpoint notification, where it
-/// deadlocks. It hands back the addresses of the pinned channel buffers, and from then
-/// on the debugger only reads and writes memory.</para>
+/// <para><b>Attach</b> is the handshake, and the ONE func-eval the design allows. It runs
+/// at attach time, in a normal execution context where evaluating a function in the
+/// debuggee is safe and supported — not inside breakpoint notification, where it
+/// deadlocks. It hands back the addresses of the pinned channel buffers, and from then on
+/// the debugger only reads and writes memory.</para>
 ///
-/// <para>The addresses come back as a STRING rather than a struct or a pointer: it is
-/// the one return type that crosses a func-eval with no marshalling assumptions on
-/// either side, and this is called once per session, so nothing about it needs to be
-/// fast.</para>
+/// <para>The addresses come back as a STRING rather than a struct or a pointer: it is the
+/// one return type that crosses a func-eval with no marshalling assumptions on either
+/// side, and this is called once per session, so nothing about it needs to be fast.</para>
 /// </summary>
 public static class ShumwayDebugHelper
 {
     private static DebugChannel? _channel;
 
-    /// <summary>Rises on every stop. A debugger that missed a notification can tell.
-    /// Also keeps <see cref="Notify"/> from being optimised into nothing.</summary>
-    public static volatile int NotifyCount;
+    /// <summary>Rises on every stop. See
+    /// <see cref="Shumway.Core.Debugging.ShumwayDebugHost.NotifyCount"/>, which is the one
+    /// that actually counts — this forwards to it.</summary>
+    public static int NotifyCount => Shumway.Core.Debugging.ShumwayDebugHost.NotifyCount;
 
     /// <summary>The channel <see cref="Attach"/> hands out. Set by the session that owns
-    /// it; cleared when the session ends.</summary>
+    /// it; cleared when the session ends. Setting it wires the Core-level door to this
+    /// implementation, and clearing it takes the door away — an attaching debugger is told
+    /// there is no session rather than handed a dead address.</summary>
     internal static DebugChannel? Channel
     {
         get => _channel;
-        set => _channel = value;
+        set
+        {
+            _channel = value;
+            if (value is null)
+            {
+                Shumway.Core.Debugging.ShumwayDebugHost.OnAttach = null;
+                Shumway.Core.Debugging.ShumwayDebugHost.OnCaptureNow = null;
+                Shumway.Core.Debugging.ShumwayDebugHost.SnapshotAddress = 0;
+                Shumway.Core.Debugging.ShumwayDebugHost.CommandAddress = 0;
+                Shumway.Core.Debugging.ShumwayDebugHost.SnapshotLength = 0;
+                Shumway.Core.Debugging.ShumwayDebugHost.CommandLength = 0;
+                // Last, so a debugger that reads the version first never sees a live version
+                // over dead addresses.
+                Shumway.Core.Debugging.ShumwayDebugHost.SessionFormatVersion = 0;
+            }
+            else
+            {
+                Shumway.Core.Debugging.ShumwayDebugHost.OnAttach = Attach;
+                Shumway.Core.Debugging.ShumwayDebugHost.OnCaptureNow = CaptureNow;
+                Shumway.Core.Debugging.ShumwayDebugHost.SnapshotAddress = value.SnapshotAddress.ToInt64();
+                Shumway.Core.Debugging.ShumwayDebugHost.SnapshotLength = DebugChannel.SnapshotCapacity;
+                Shumway.Core.Debugging.ShumwayDebugHost.CommandAddress = value.CommandAddress.ToInt64();
+                Shumway.Core.Debugging.ShumwayDebugHost.CommandLength = DebugChannel.CommandCapacity;
+                // Published last: the version is the flag that says the rest is good.
+                Shumway.Core.Debugging.ShumwayDebugHost.SessionFormatVersion = DebugChannel.FormatVersion;
+            }
+        }
     }
 
     /// <summary>The session <see cref="CaptureNow"/> asks. One per process: there is one
@@ -63,20 +91,12 @@ public static class ShumwayDebugHelper
         return session is null ? 0 : session.CaptureNow();
     }
 
-    /// <summary>The stop. Called by the engine with the snapshot already written; the
-    /// debugger's hidden breakpoint lives on this method.
-    ///
-    /// <para>NoInlining because a breakpoint needs a method to be planted on, and
-    /// NoOptimization because a method that does nothing observable is a method the JIT
-    /// is entitled to make disappear.</para></summary>
-    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
-    public static void Notify(int reason)
-    {
-        NotifyCount++;
-        // The debugger stops the process here. Nothing else belongs in this method:
-        // whatever it needs is in the channel, and it reads that with ReadMemory.
-        GC.KeepAlive(_channel);
-    }
+    /// <summary>The stop. The debugger's hidden breakpoint does NOT live here — it lives on
+    /// <see cref="Shumway.Core.Debugging.ShumwayDebugHost.Notify"/>, for the module-visibility
+    /// reason above. This forwards, so that a caller with only the Embedding surface in hand
+    /// still trips it.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void Notify(int reason) => Shumway.Core.Debugging.ShumwayDebugHost.Notify(reason);
 
     /// <summary>The handshake. Returns the pinned channel addresses as
     /// <c>"v1;snapshot=&lt;addr&gt;,&lt;len&gt;;commands=&lt;addr&gt;,&lt;len&gt;"</c>,

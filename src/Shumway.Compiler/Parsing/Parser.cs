@@ -212,7 +212,7 @@ public sealed class Parser
             int sufCol = tok.Position.Column + len;
             _lookahead.Insert(1, new Token(TokenKind.Atom,
                 new SourcePosition(tok.Position.Line, sufCol,
-                    tok.Position.Offset + len), suffix));
+                    tok.Position.Offset + len, tok.Position.FileId), suffix));
             if (TryApplyInfix(prefix, piPrec, piType, maxPrec, ref left, ref builtPrec))
                 return true;
             // The infix didn't fit (precedence constraint) — undo the

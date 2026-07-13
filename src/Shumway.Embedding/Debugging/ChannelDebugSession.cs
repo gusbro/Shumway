@@ -27,14 +27,14 @@ public sealed class ChannelDebugSession : IDisposable
     private bool _disposed;
 
     /// <param name="notify">What tells the debugger a stop happened. Defaults to
-    /// <see cref="ShumwayDebugHelper.Notify"/>, which is where a real debugger plants its
-    /// hidden breakpoint; a test passes its own, because there is no debugger to stop it
-    /// and it has to play that part itself.</param>
+    /// <see cref="Shumway.Core.Debugging.ShumwayDebugHost.Notify"/>, which is where a real
+    /// debugger plants its hidden breakpoint; a test passes its own, because there is no
+    /// debugger to stop it and it has to play that part itself.</param>
     public ChannelDebugSession(PrologEngine engine, Action<int>? notify = null)
     {
         _engine = engine ?? throw new ArgumentNullException(nameof(engine));
         _channel = new DebugChannel();
-        _notify = notify ?? ShumwayDebugHelper.Notify;
+        _notify = notify ?? Shumway.Core.Debugging.ShumwayDebugHost.Notify;
         _service = new DebugService(engine, OnStop);
 
         _service.Poll = PollWhileRunning;
@@ -44,16 +44,30 @@ public sealed class ChannelDebugSession : IDisposable
         engine.AttachDebugSession(_service);
     }
 
-    /// <summary>ADR-035 — the channel, read between goals rather than at a stop.
+    /// <summary>ADR-035 — the channel, worked between goals rather than at a stop. Two jobs.
     ///
-    /// <para>Setting a breakpoint on a program that is already running is the ordinary
-    /// case (F9 during a long query), and it is the ONLY thing a debugger says while the
-    /// engine is moving. So only breakpoints are obeyed here. A step or a continue read
-    /// off the channel mid-flight would be one the debugger never issued — nobody asks a
-    /// running program to resume — and acting on it would silently change the step mode
-    /// of a query nobody is stopped in.</para></summary>
+    /// <para><b>Commands.</b> Setting a breakpoint on a program that is already running is
+    /// the ordinary case (F9 during a long query), and it is the ONLY thing a debugger says
+    /// while the engine is moving. So only breakpoints are obeyed here. A step or a continue
+    /// read off the channel mid-flight would be one the debugger never issued — nobody asks
+    /// a running program to resume — and acting on it would silently change the step mode of
+    /// a query nobody is stopped in.</para>
+    ///
+    /// <para><b>The asynchronous break.</b> When the user hits Break All the process stops at
+    /// no port, nothing has been reported, and the debugger wants the stack NOW. It cannot
+    /// ask for it: Visual Studio will evaluate a method in the debuggee only on the thread it
+    /// considers current, and refuses outright once that method touches an intrinsic — which
+    /// the capture path does, deep inside the machine. Both of those were learned by running
+    /// it, and together they close the door on asking.</para>
+    ///
+    /// <para>So the engine does not wait to be asked. It leaves a recent answer lying in the
+    /// buffer, refreshed on a CLOCK rather than on a count of goals — so the cost is bounded
+    /// by time, not by how fast the program happens to run. What a Break All shows is a real
+    /// port the machine passed through, at most <see cref="SampleIntervalMs"/> ago; not a
+    /// synthetic mid-unification state, and not a lie.</para></summary>
     private void PollWhileRunning()
     {
+        bool hello = false;
         foreach (var command in _channel.DrainCommands())
         {
             switch (command.Kind)
@@ -64,9 +78,38 @@ public sealed class ChannelDebugSession : IDisposable
                 case DebugCommandKind.SetLastCallOptimisation:
                     Apply(_service, command);
                     break;
+                case DebugCommandKind.Hello:
+                    hello = true;
+                    break;
             }
         }
+
+        if (hello)
+        {
+            // A stop nobody wants, for its side effect: a debugger can only build the things
+            // that represent a source file — the things a breakpoint binds against — from
+            // inside a real stop event, and until it has them no breakpoint can bind, so no
+            // stop can ever happen. One of them has to go first. This is it. See
+            // DebugCommandKind.Hello.
+            OnStop(_service, _service.CaptureNow()
+                ?? new DebugStopEvent(StopReason.AsyncBreak, "", "", 0, 0, Array.Empty<PrologEngine.DebugFrame>()));
+            return;
+        }
+
+        long now = Environment.TickCount64;
+        if (now - _lastSample < SampleIntervalMs) return;
+        _lastSample = now;
+
+        DebugStopEvent? sample = _service.CaptureNow();
+        if (sample is not null) _channel.WriteSnapshot(sample);
     }
+
+    /// <summary>How stale the asynchronous break's answer may be. Short enough that no human
+    /// can tell; long enough that rendering a stack of terms twenty times a second is nothing
+    /// beside what a debug session already costs.</summary>
+    public const int SampleIntervalMs = 50;
+
+    private long _lastSample;
 
     /// <summary>The channel the debugger reads and writes. Its addresses are what
     /// <see cref="ShumwayDebugHelper.Attach"/> hands out.</summary>

@@ -36,6 +36,12 @@ namespace Shumway.Debugger.Concord
         public const int MsgArmNotifyBreakpoint = 1; // p1 = snapshot address (long), p2 = Notify metadata token (int)
         public const int MsgEnsureModules = 2;       // p1 = '|'-joined full paths of consulted .pl files
 
+        /// <summary>Ask the server what it has managed to do. The monitor side is otherwise
+        /// invisible from the IDE — it has no output of its own, and when module creation or
+        /// breakpoint arming fails there, the only symptom is that nothing happens. Replies
+        /// with a status string in Parameter1.</summary>
+        public const int MsgServerStatus = 3;
+
         /// <summary>A .pl file has no mvid of its own, and VS needs one to tell two
         /// modules apart. Derive it from the path: same file, same id, every session —
         /// which is exactly the property a breakpoint needs to survive a restart.</summary>

@@ -32,9 +32,17 @@ namespace Shumway.Debugger.Concord
     /// <summary>Per-stack-walk state (the walk is one frame at a time, top-down).</summary>
     internal sealed class ShumwayStackDataItem : DkmDataItem
     {
-        public bool SawFirstFrame;
         public bool EmittedPrologFrames;
         public DebugSnapshot? Snapshot;
+
+        /// <summary>The engine frames seen so far in this walk, and whether the topmost of
+        /// them was Notify (which is what makes this a port stop rather than a Break All).
+        /// The Prolog stack takes their place, but not until the run of them ENDS: any one of
+        /// them might be the frame that can answer the handshake, and we cannot know which
+        /// until we have tried.</summary>
+        public bool SawEngineFrame;
+        public bool TopEngineFrameIsNotify;
+        public DkmStackWalkFrame? Anchor;
 
         public static ShumwayStackDataItem GetInstance(DkmStackContext stackContext)
         {
@@ -79,66 +87,129 @@ namespace Shumway.Debugger.Concord
         DkmStackWalkFrame[]? IDkmCallStackFilter.FilterNextFrame(
             DkmStackContext stackContext, DkmStackWalkFrame input)
         {
-            if (input == null)
-                return null; // end of walk
-
             try
             {
-                return Filter(stackContext, input);
+                ShumwayStackDataItem walk = ShumwayStackDataItem.GetInstance(stackContext);
+
+                if (input == null)
+                {
+                    // End of the walk. If the engine's frames ran all the way to the bottom
+                    // of the stack, this is the last chance to put the Prolog stack in their
+                    // place.
+                    return walk.SawEngineFrame && !walk.EmittedPrologFrames
+                        ? Emit(stackContext, walk, null)
+                        : null;
+                }
+                return Filter(stackContext, walk, input);
             }
             catch (Exception)
             {
-                return new[] { input };
+                return input == null ? null : new[] { input };
             }
         }
 
         private static DkmStackWalkFrame[] Filter(
-            DkmStackContext stackContext, DkmStackWalkFrame input)
+            DkmStackContext stackContext, ShumwayStackDataItem walk, DkmStackWalkFrame input)
         {
-            ShumwayStackDataItem walk = ShumwayStackDataItem.GetInstance(stackContext);
-
-            // The top frame decides how we learn where the machine is. If it is the
-            // engine's Notify, this is a PORT STOP: the engine already wrote the
-            // snapshot, on its own terms, before tripping the breakpoint — read it.
-            // Anything else is an ASYNCHRONOUS break (the user hit Break All, or
-            // stopped on some C# breakpoint of their own): the machine is at no port,
-            // the buffer holds the last stop, and believing it would be a lie. Ask.
-            if (!walk.SawFirstFrame)
+            if (ShumwaySession.IsEngineModule(input.ModuleInstance?.Name))
             {
-                walk.SawFirstFrame = true;
-                ShumwaySessionDataItem session = ShumwaySession.Attach(stackContext, input);
-                if (session.Attached)
+                // An engine frame. Every one of them is swallowed — the Prolog stack takes
+                // the place of the whole run — but not yet: the handshake with the debuggee
+                // is a func-eval, a func-eval is evaluated in the context of a FRAME, and a
+                // frame can only name what its own module can see. So we do not get to pick
+                // which engine frame answers it. We try each in turn until one does.
+                if (!walk.SawEngineFrame)
                 {
-                    if (!IsNotifyFrame(input))
-                        ShumwaySession.CaptureNow(stackContext, input);
+                    walk.SawEngineFrame = true;
+                    // The TOP engine frame decides how we learn where the machine is: if it
+                    // is Notify, this is a PORT STOP and the engine has already written the
+                    // snapshot on its own terms. Anything else is an asynchronous break, and
+                    // the buffer holds the last stop — which would be a lie.
+                    walk.TopEngineFrameIsNotify = IsNotifyFrame(input);
+                    walk.Anchor = input;
+                }
+
+                ShumwaySessionDataItem session = ShumwaySession.Attach(stackContext, input);
+                if (session.Attached && walk.Snapshot == null)
+                {
+                    // Just read. At a port stop the engine wrote the snapshot before it
+                    // tripped the breakpoint; at a Break All it has been leaving a fresh one
+                    // every few dozen milliseconds. Either way the answer is already there,
+                    // and nothing runs in the debuggee to produce it — which is the only way
+                    // it CAN work: Visual Studio refuses to evaluate a method that touches an
+                    // intrinsic, and the engine's capture path is full of them.
                     walk.Snapshot = ShumwaySession.ReadSnapshot(input.Process, session);
                     if (walk.Snapshot != null)
                         EnsureModules(input.Process, walk.Snapshot);
                 }
+                return Array.Empty<DkmStackWalkFrame>();
             }
 
-            if (!ShumwaySession.IsEngineModule(input.ModuleInstance?.Name))
-                return new[] { input }; // the user's own frames: not ours to touch
+            // Not an engine frame: the user's own. If the engine's run just ended, the Prolog
+            // stack goes here — above this frame, which is the one that called into it.
+            if (walk.SawEngineFrame && !walk.EmittedPrologFrames)
+                return Emit(stackContext, walk, input);
 
-            // An engine frame. The first one is where the Prolog stack belongs; the
-            // rest of the machinery is swallowed. (A nested activation — a foreign
-            // predicate that queries the engine again — reports the innermost stack,
-            // which is the one the user stopped in; its outer engine frames are
-            // dropped with the rest.)
-            if (walk.EmittedPrologFrames)
-                return Array.Empty<DkmStackWalkFrame>();
+            return new[] { input };
+        }
+
+        /// <summary>The Prolog stack, in place of the engine frames it replaces, followed by
+        /// whatever called into the engine (null at the bottom of the stack).</summary>
+        private static DkmStackWalkFrame[] Emit(
+            DkmStackContext stackContext, ShumwayStackDataItem walk, DkmStackWalkFrame? below)
+        {
             walk.EmittedPrologFrames = true;
+            DkmStackWalkFrame anchor = walk.Anchor!;
 
+            var frames = new List<DkmStackWalkFrame>();
             if (walk.Snapshot == null || walk.Snapshot.Frames.Count == 0)
             {
-                ShumwaySessionDataItem session = ShumwaySession.GetState(input.Process);
-                return new[] { Annotated(stackContext, input, "[Shumway] " + session.Diagnostic) };
+                ShumwaySessionDataItem session = ShumwaySession.GetState(anchor.Process);
+                frames.Add(Annotated(stackContext, anchor, "[Shumway] " + session.Diagnostic));
+            }
+            else
+            {
+                for (int i = 0; i < walk.Snapshot.Frames.Count; i++)
+                    frames.Add(Synthesize(stackContext, anchor, walk.Snapshot.Frames[i], i));
             }
 
-            var frames = new List<DkmStackWalkFrame>(walk.Snapshot.Frames.Count);
-            for (int i = 0; i < walk.Snapshot.Frames.Count; i++)
-                frames.Add(Synthesize(stackContext, input, walk.Snapshot.Frames[i], i));
+            // The monitor side has no voice of its own: when it fails to create a module or
+            // arm the notify breakpoint, the only symptom in the IDE is that nothing happens.
+            // SHUMWAY_DEBUG_DIAG=1 in the environment devenv was started with makes it speak.
+            if (Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_DIAG") == "1")
+            {
+                ShumwaySessionDataItem session = ShumwaySession.GetState(anchor.Process);
+                frames.Add(Annotated(stackContext, anchor,
+                    "[Shumway diag] ide: " + session.Diagnostic
+                    + " || asked: " + ShumwayIdeDiag.Summary
+                    + " || snap: " + Describe(walk.Snapshot)
+                    + " || server: " + ShumwaySession.ServerStatus(anchor.Process)));
+            }
+
+            if (below != null)
+                frames.Add(below);
             return frames.ToArray();
+        }
+
+        /// <summary>What the engine actually said — reason, frames, and how many variables
+        /// each frame carries. When the Locals window is empty there are exactly two
+        /// possibilities, and they look identical from the IDE: the engine sent no variables,
+        /// or it sent them and we never got asked for them. This tells them apart.</summary>
+        private static string Describe(DebugSnapshot? snapshot)
+        {
+            if (snapshot == null) return "(none)";
+            var text = new System.Text.StringBuilder();
+            text.Append(snapshot.Reason).Append(" seq=").Append(snapshot.Sequence)
+                .Append(' ').Append(snapshot.File).Append(':').Append(snapshot.Line)
+                .Append(" [");
+            for (int i = 0; i < snapshot.Frames.Count; i++)
+            {
+                if (i > 0) text.Append(", ");
+                DebugSnapshotFrame frame = snapshot.Frames[i];
+                text.Append(frame.Name).Append('/').Append(frame.Arity)
+                    .Append(':').Append(frame.Variables.Count).Append("vars");
+            }
+            return text.Append(']').ToString();
         }
 
         private static bool IsNotifyFrame(DkmStackWalkFrame frame)
@@ -155,15 +226,23 @@ namespace Shumway.Debugger.Concord
             DkmStackContext stackContext, DkmStackWalkFrame input,
             DebugSnapshotFrame source, int index)
         {
+            // Registers and annotations are the ANCHOR's — the engine frame this one stands in
+            // for. They are not decoration: they are how Visual Studio knows a frame is a real
+            // execution location rather than a label. Without them the frame renders, and is
+            // navigable, and is invisible to everything that matters — no language is asked
+            // for, so no expression evaluator is routed to it (Locals come up empty), and no
+            // runtime claims it, so a step is never offered to us. Both were dead in exactly
+            // this way until the frames carried them. (PTVS does the same, from the native
+            // frame it replaces.)
             return DkmStackWalkFrame.Create(
                 stackContext.Thread,
                 MakeAddress(input.Process, source, index),
                 input.FrameBase,
-                0,
+                input.FrameSize,
                 DkmStackWalkFrameFlags.None,
                 source.Name + "/" + source.Arity,
-                null,
-                null);
+                input.Registers,
+                input.Annotations);
         }
 
         /// <summary>The address is what makes a synthesized frame navigable: the module

@@ -289,7 +289,13 @@ public sealed class Lexer
 
     // ---------- Position / advance helpers ----------
 
-    private SourcePosition CurrentPosition() => new(_line, _column, _offset);
+    /// <summary>ADR-035 — the file this source came from (a
+    /// <c>Shumway.Core.DebugSiteTable</c> id; 0 = unknown). Every position the lexer makes
+    /// carries it, so every term, every clause and every transform's rebuilt copy knows
+    /// which file it is from without anyone having to remember.</summary>
+    public int FileId { get; set; }
+
+    private SourcePosition CurrentPosition() => new(_line, _column, _offset, FileId);
 
     private char Peek(int ahead = 0)
     {

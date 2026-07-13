@@ -30,7 +30,13 @@ namespace Shumway.Debugger.Concord
     /// <summary>Per-process session state, hung off the DkmProcess.</summary>
     internal sealed class ShumwaySessionDataItem : DkmDataItem
     {
-        public bool AttachAttempted;
+        /// <summary>How many frames we have asked to do the handshake. It is not a given
+        /// that any particular one CAN: a func-eval is evaluated in the context of a frame,
+        /// and a frame can only name what its own module can see (and some carry no symbols
+        /// at all). So we try the engine frames in turn — but a handful, not fifty, because
+        /// each attempt runs code in the debuggee.</summary>
+        public int AttachAttempts;
+        public const int MaxAttachAttempts = 8;
         public long SnapshotAddress;
         public int SnapshotLength;
         public long CommandAddress;
@@ -44,11 +50,35 @@ namespace Shumway.Debugger.Concord
         public bool Attached => SnapshotAddress != 0;
     }
 
+    /// <summary>What Visual Studio has actually ASKED us, on the IDE side. A frame that shows
+    /// no variables and takes no step looks identical whether we answered badly or were never
+    /// asked — and the difference is the whole diagnosis. These say which. Counted per
+    /// devenv, not per process: they are about the routing, and the routing is global.</summary>
+    internal static class ShumwayIdeDiag
+    {
+        public static int CompilerIdAsks;
+        public static int SourcePositionAsks;
+        public static int FrameNameAsks;
+        public static int FrameLocalsAsks;
+        public static int EvaluateAsks;
+        public static string LastLocals = "-";
+
+        public static string Summary =>
+            "compilerid=" + CompilerIdAsks
+            + " srcpos=" + SourcePositionAsks
+            + " framename=" + FrameNameAsks
+            + " locals=" + FrameLocalsAsks + "(" + LastLocals + ")"
+            + " eval=" + EvaluateAsks;
+    }
+
     internal static class ShumwaySession
     {
-        /// <summary>The engine assembly — where the helper lives, and the module the
-        /// hidden notify breakpoint is planted in.</summary>
-        public const string EngineModule = "Shumway.Embedding.dll";
+        /// <summary>The module the hidden notify breakpoint is planted in — and the module
+        /// whose types the debugger names when it func-evals. Core, not Embedding: a frame
+        /// can only name what its own module references, and the frame we stop on is an
+        /// engine frame (often the interpreter), which does not reference Embedding. Core is
+        /// the one assembly all of them share.</summary>
+        public const string EngineModule = "Shumway.Core.dll";
 
         /// <summary>Modules whose frames ARE the Prolog machine, and which the user
         /// therefore must not see: the interpreter runs the whole program inside one
@@ -64,15 +94,29 @@ namespace Shumway.Debugger.Concord
                 || moduleName.Equals("Shumway.Builtins.dll", StringComparison.OrdinalIgnoreCase);
         }
 
+        /// <summary>The session, keyed by the process it belongs to — and kept HERE, not in a
+        /// DkmDataItem on the DkmProcess.
+        ///
+        /// <para>A data item is not as shared as it looks. The stack filter attached, wrote the
+        /// channel addresses into one, and the expression evaluator — same assembly, same
+        /// devenv, same process — read back a data item with nothing in it, decided no session
+        /// existed, and showed an empty Locals window with no error to show for it. Data items
+        /// are per-component; these two are different components. This dictionary is not.</para></summary>
+        private static readonly Dictionary<Guid, ShumwaySessionDataItem> Sessions =
+            new Dictionary<Guid, ShumwaySessionDataItem>();
+
         public static ShumwaySessionDataItem GetState(DkmProcess process)
         {
-            ShumwaySessionDataItem? state = process.GetDataItem<ShumwaySessionDataItem>();
-            if (state == null)
+            lock (Sessions)
             {
-                state = new ShumwaySessionDataItem();
-                process.SetDataItem(DkmDataCreationDisposition.CreateNew, state);
+                ShumwaySessionDataItem? state;
+                if (!Sessions.TryGetValue(process.UniqueId, out state))
+                {
+                    state = new ShumwaySessionDataItem();
+                    Sessions[process.UniqueId] = state;
+                }
+                return state;
             }
-            return state;
         }
 
         /// <summary>The handshake, once per process. Never throws: a filter that throws
@@ -81,39 +125,56 @@ namespace Shumway.Debugger.Concord
             DkmStackContext stackContext, DkmStackWalkFrame frame)
         {
             ShumwaySessionDataItem state = GetState(frame.Process);
-            if (state.AttachAttempted) return state;
-            state.AttachAttempted = true;
+            if (state.Attached || state.AttachAttempts >= ShumwaySessionDataItem.MaxAttachAttempts)
+                return state;
+            state.AttachAttempts++;
 
+            string where = (frame.ModuleInstance?.Name ?? "?")
+                + "!" + (frame.BasicSymbolInfo?.MethodName ?? "?");
             try
             {
-                string? handshake = FuncEval(stackContext, frame,
-                    "Shumway.Embedding.Debugging.ShumwayDebugHelper.Attach()", out string? error);
-                if (handshake == null)
+                // FIELD READS, not a method call. Reading a field inspects memory; calling a
+                // method runs code in the debuggee, on a thread — and Visual Studio will not
+                // run code on a thread that is not the current one. The engine's thread very
+                // often is not (a Break All lands the current thread wherever it likes), and
+                // the first run of this in VS proved it: the same frame that could read
+                // ShumwayDebugHost.NotifyCount could not call ShumwayDebugHost.Attach().
+                const string Host = "Shumway.Core.Debugging.ShumwayDebugHost.";
+
+                string? versionText = Evaluate(stackContext, frame, Host + "SessionFormatVersion", out string? error);
+                if (versionText == null)
                 {
-                    state.Diagnostic = "attach failed: " + error;
+                    state.Diagnostic = "cannot read the engine's debug state at " + where + ": " + error;
                     return state;
                 }
-
-                // The C# expression evaluator renders a string quoted; strip it.
-                handshake = handshake.Trim();
-                if (handshake.Length >= 2 && handshake[0] == '"'
-                    && handshake[handshake.Length - 1] == '"')
-                {
-                    handshake = handshake.Substring(1, handshake.Length - 2);
-                }
-                if (handshake.Length == 0)
+                int version = ParseInt(versionText);
+                if (version == 0)
                 {
                     state.Diagnostic = "no debug session in the debuggee "
-                        + "(nothing called ChannelDebugSession)";
+                        + "(run it with --debug, or construct a ChannelDebugSession)";
+                    return state;
+                }
+                if (version != DebugWire.FormatVersion)
+                {
+                    // Engine and debugger built from different sources. Say so: reading the
+                    // buffer anyway would produce a plausible, wrong stack.
+                    state.Diagnostic = "the engine speaks debug format v" + version
+                        + ", this debugger speaks v" + DebugWire.FormatVersion;
                     return state;
                 }
 
-                // "v1;snapshot=<hex>,<len>;commands=<hex>,<len>"
-                if (!ParseHandshake(handshake, state, out string? parseError))
+                state.SnapshotAddress = ParseLong(Evaluate(stackContext, frame, Host + "SnapshotAddress", out _));
+                state.SnapshotLength = ParseInt(Evaluate(stackContext, frame, Host + "SnapshotLength", out _));
+                state.CommandAddress = ParseLong(Evaluate(stackContext, frame, Host + "CommandAddress", out _));
+                state.CommandLength = ParseInt(Evaluate(stackContext, frame, Host + "CommandLength", out _));
+
+                if (state.SnapshotAddress == 0 || state.SnapshotLength == 0)
                 {
-                    state.Diagnostic = "attach: " + parseError + " [" + handshake + "]";
+                    state.Diagnostic = "the engine published no channel address";
+                    state.SnapshotAddress = 0;
                     return state;
                 }
+
                 state.Diagnostic = "attached";
                 ArmNotifyBreakpoint(stackContext, frame, state);
             }
@@ -124,40 +185,20 @@ namespace Shumway.Debugger.Concord
             return state;
         }
 
-        private static bool ParseHandshake(
-            string handshake, ShumwaySessionDataItem state, out string? error)
+        private static int ParseInt(string? text)
         {
-            error = null;
-            string[] parts = handshake.Split(';');
-            if (parts.Length < 3 || !parts[0].StartsWith("v", StringComparison.Ordinal))
-            {
-                error = "malformed handshake";
-                return false;
-            }
-            if (parts[0] != "v" + DebugWire.FormatVersion.ToString(CultureInfo.InvariantCulture))
-            {
-                // The engine and the debugger were built from different sources. Say so:
-                // reading the buffer anyway would produce a plausible, wrong stack.
-                error = "engine speaks " + parts[0] + ", this debugger speaks v"
-                    + DebugWire.FormatVersion;
-                return false;
-            }
+            int value;
+            return text != null
+                && int.TryParse(text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out value)
+                ? value : 0;
+        }
 
-            foreach (string part in parts)
-            {
-                int eq = part.IndexOf('=');
-                if (eq < 0) continue;
-                string key = part.Substring(0, eq);
-                string[] pair = part.Substring(eq + 1).Split(',');
-                if (pair.Length != 2) continue;
-
-                long address = long.Parse(pair[0], NumberStyles.HexNumber, CultureInfo.InvariantCulture);
-                int length = int.Parse(pair[1], NumberStyles.Integer, CultureInfo.InvariantCulture);
-                if (key == "snapshot") { state.SnapshotAddress = address; state.SnapshotLength = length; }
-                else if (key == "commands") { state.CommandAddress = address; state.CommandLength = length; }
-            }
-            if (state.SnapshotAddress == 0) { error = "no snapshot address"; return false; }
-            return true;
+        private static long ParseLong(string? text)
+        {
+            long value;
+            return text != null
+                && long.TryParse(text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out value)
+                ? value : 0;
         }
 
         /// <summary>The hidden breakpoint on ShumwayDebugHelper.Notify is what turns a
@@ -168,16 +209,17 @@ namespace Shumway.Debugger.Concord
         private static void ArmNotifyBreakpoint(
             DkmStackContext stackContext, DkmStackWalkFrame frame, ShumwaySessionDataItem state)
         {
-            string? tokenText = FuncEval(stackContext, frame,
-                "typeof(Shumway.Embedding.Debugging.ShumwayDebugHelper)"
-                + ".GetMethod(\"Notify\").MetadataToken", out string? error);
-            if (tokenText == null)
+            // Read, again — the engine publishes its own token, so the debugger never has to
+            // ask the debuggee to reflect on itself.
+            string? tokenText = Evaluate(stackContext, frame,
+                "Shumway.Core.Debugging.ShumwayDebugHost.NotifyMetadataToken", out string? error);
+            int token = ParseInt(tokenText);
+            if (token == 0)
             {
                 state.Diagnostic = "attached (no notify token: " + error + ")";
                 return;
             }
 
-            int token = int.Parse(tokenText.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture);
             DkmCustomMessage.Create(
                     frame.Process.Connection, frame.Process,
                     ShumwayGuids.MessageSource, ShumwayGuids.MsgArmNotifyBreakpoint,
@@ -186,6 +228,24 @@ namespace Shumway.Debugger.Concord
                     // stop, and the command region to answer it.
                     state.CommandAddress.ToString(CultureInfo.InvariantCulture), null)
                 .SendLower();
+        }
+
+        /// <summary>What the server component has managed to do. It runs on the monitor side
+        /// and has no output of its own; this is a round trip to ask it.</summary>
+        public static string ServerStatus(DkmProcess process)
+        {
+            try
+            {
+                DkmCustomMessage? reply = DkmCustomMessage.Create(
+                        process.Connection, process, ShumwayGuids.MessageSource,
+                        ShumwayGuids.MsgServerStatus, null, null)
+                    .SendLower();
+                return reply?.Parameter1 as string ?? "(no reply)";
+            }
+            catch (Exception ex)
+            {
+                return "(status failed: " + ex.Message + ")";
+            }
         }
 
         /// <summary>The stop, read out of the debuggee's memory. Nothing runs over
@@ -206,16 +266,24 @@ namespace Shumway.Debugger.Concord
             }
         }
 
-        /// <summary>The asynchronous break: the user stopped the process at no port at
-        /// all, so ask the engine where it actually is.</summary>
-        public static void CaptureNow(DkmStackContext stackContext, DkmStackWalkFrame frame)
-        {
-            FuncEval(stackContext, frame,
-                "Shumway.Embedding.Debugging.ShumwayDebugHelper.CaptureNow()", out _);
-        }
+        // THE ASYNCHRONOUS BREAK used to live here, as a func-eval: ask the engine where it
+        // is, since at a Break All it is at no port and has reported nothing. Visual Studio
+        // will not have it. It runs code in the debuggee only on the thread it considers
+        // current — and the engine's thread very often is not — and it refuses outright once
+        // the method touches an intrinsic, which the capture path does, deep inside the
+        // machine ("Evaluation of native methods in this context is not supported").
+        //
+        // So the engine no longer waits to be asked: while it runs, it leaves a fresh
+        // snapshot in the buffer every few dozen milliseconds (ChannelDebugSession's sample
+        // clock). A Break All just reads it. Which means this component now does exactly two
+        // things to the debuggee — read its memory, and write commands into it — and never
+        // runs a line of its code. That is a better design than the one it replaced, and it
+        // was VS that insisted on it.
 
-        /// <summary>Synchronous func-eval of a C# expression against a CLR frame.</summary>
-        private static string? FuncEval(
+        /// <summary>Synchronous evaluation of a C# expression against a CLR frame. A field
+        /// read only inspects memory; a method CALL runs code in the debuggee and is only
+        /// permitted on the current thread. Both come through here.</summary>
+        private static string? Evaluate(
             DkmStackContext stackContext, DkmStackWalkFrame frame,
             string expression, out string? error)
         {

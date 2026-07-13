@@ -44,6 +44,7 @@ namespace Shumway.Debugger.Concord
             DkmStackWalkFrame frame, DkmVariableInfoFlags argumentFlags,
             DkmCompletionRoutine<DkmGetFrameNameAsyncResult> completionRoutine)
         {
+            ShumwayIdeDiag.FrameNameAsks++;
             completionRoutine(new DkmGetFrameNameAsyncResult(frame.Description ?? "<prolog>"));
         }
 
@@ -63,6 +64,7 @@ namespace Shumway.Debugger.Concord
             DkmStackWalkFrame frame,
             DkmCompletionRoutine<DkmGetFrameLocalsAsyncResult> completionRoutine)
         {
+            ShumwayIdeDiag.FrameLocalsAsks++;
             IReadOnlyList<DebugVariableView> variables = VariablesOf(frame);
             var enumContext = DkmEvaluationResultEnumContext.Create(
                 variables.Count, frame, inspectionContext,
@@ -108,6 +110,7 @@ namespace Shumway.Debugger.Concord
             DkmLanguageExpression expression, DkmStackWalkFrame stackFrame,
             DkmCompletionRoutine<DkmEvaluateExpressionAsyncResult> completionRoutine)
         {
+            ShumwayIdeDiag.EvaluateAsks++;
             string text = (expression.Text ?? string.Empty).Trim();
 
             // v1: a watch names a variable of the frame. Evaluating an arbitrary GOAL is
@@ -171,8 +174,18 @@ namespace Shumway.Debugger.Concord
                 ShumwaySessionDataItem session = ShumwaySession.GetState(frame.Process);
                 DebugSnapshot? snapshot = ShumwaySession.ReadSnapshot(frame.Process, session);
                 if (snapshot != null && index < snapshot.Frames.Count)
-                    return snapshot.Frames[index].Variables;
+                {
+                    IReadOnlyList<DebugVariableView> found = snapshot.Frames[index].Variables;
+                    ShumwayIdeDiag.LastLocals = "idx=" + index + " n=" + found.Count;
+                    return found;
+                }
+                ShumwayIdeDiag.LastLocals = "idx=" + index + " snapshot="
+                    + (snapshot == null ? "null" : snapshot.Frames.Count + "frames");
+                return new List<DebugVariableView>();
             }
+            ShumwayIdeDiag.LastLocals = "no frame id on "
+                + (frame.InstructionAddress == null ? "a frame with no address"
+                    : frame.InstructionAddress.GetType().Name);
             return new List<DebugVariableView>();
         }
 

@@ -2,9 +2,15 @@
 <!--
   Shumway debugger - IDE-level frame decoder + expression evaluator (ADR-035).
 
-  Routed to us by the LANGUAGE id, which reaches VS through the DkmCompilerId our
-  symbol provider reports for every .pl module: a frame whose module is Prolog gets
-  its name and its Locals from this component instead of from the C# evaluator.
+  Routed to us by the RUNTIME id of the frame — NOT by the language id.
+
+  That distinction cost a day. Filtering on LanguageId looks obviously right (the module
+  reports a Prolog DkmCompilerId; surely a Prolog frame gets the Prolog evaluator) and it
+  is silently, completely wrong: Visual Studio never asks a frame's compiler id at all
+  (our GetCompilerId counter stayed at zero through every run while GetSourcePosition
+  climbed), so no evaluator was ever routed and the Locals window came up empty with no
+  error anywhere. An evaluator is chosen by WHOSE RUNTIME the frame belongs to. PTVS does
+  the same, and uses LanguageId for exactly one thing: intrinsic-function evaluation.
 -->
 <Configuration xmlns="http://schemas.microsoft.com/vstudio/vsdconfig/2008">
 
@@ -17,7 +23,7 @@
       <Implements>
         <InterfaceGroup>
           <Filter>
-            <LanguageId RequiredValue="9d7f8a51-0699-4828-99ba-047821c60783"/>
+            <RuntimeId RequiredValue="3cd5801d-96c7-47d4-b4c4-a796b8fe7de9"/>
           </Filter>
           <Interface Name="IDkmLanguageFrameDecoder"/>
           <Interface Name="IDkmLanguageExpressionEvaluator"/>

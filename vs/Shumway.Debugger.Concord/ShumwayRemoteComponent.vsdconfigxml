@@ -50,5 +50,23 @@
       </Implements>
     </Class>
 
+    <!-- Stepping, taken from the CLR. In a MANAGED debuggee the step is never offered to
+         the custom runtime the Prolog frames belong to: the physical thread is stopped in
+         engine C#, the CLR owns that location, and VS does not arbitrate (our custom
+         stepper's OwnsCurrentExecutionLocation was called zero times across every smoke
+         run, while F11 quietly did a C# step instead). AboveNormal puts us ahead of the
+         built-in stepper; when we are not stopped at a Prolog port we decline, and C#
+         stepping is exactly as it was. -->
+    <Class Name="Shumway.Debugger.Concord.ShumwayClrStepper">
+      <Implements>
+        <InterfaceGroup Priority="AboveNormal">
+          <Filter>
+            <RuntimeId RequiredValue="DkmRuntimeId.Clr"/>
+          </Filter>
+          <Interface Name="IDkmRuntimeStepper"/>
+        </InterfaceGroup>
+      </Implements>
+    </Class>
+
   </ManagedComponent>
 </Configuration>

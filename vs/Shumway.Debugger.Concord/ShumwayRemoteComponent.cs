@@ -65,6 +65,29 @@ namespace Shumway.Debugger.Concord
         public readonly HashSet<string> CreatedFiles =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>What went wrong, and how many stops we have seen. The monitor side has no
+        /// other voice: when it fails, the only symptom in the IDE is that nothing
+        /// happens.</summary>
+        public string LastError = "";
+        public int Stops;
+
+        /// <summary>How many times Visual Studio ASKED us about a step — whether it thinks
+        /// the Prolog runtime owns where we are, and whether it handed us the step. A step
+        /// that does nothing looks the same from the IDE whether it never reached us or
+        /// reached us and the engine ignored it.</summary>
+        public int OwnsAsks;
+        public int StepCalls;
+
+        /// <summary>How many times the process has been let go. If a "step" resumes the
+        /// process and stops it again without ever asking us, the step was taken by SOMEONE
+        /// ELSE'S runtime — which is a different bug from a step that did nothing.</summary>
+        public int Resumes;
+
+        /// <summary>Until the engine has stopped once, we have nowhere to create the .pl
+        /// modules from — and without them no breakpoint can bind, so it will never stop. So
+        /// we ask it to stop once for nothing. Cleared by the first stop.</summary>
+        public bool NeedHello = true;
+
         public static string Key(string file, int line) =>
             file + "|" + line.ToString(CultureInfo.InvariantCulture);
     }
@@ -87,20 +110,50 @@ namespace Shumway.Debugger.Concord
                         (string)customMessage.Parameter3, CultureInfo.InvariantCulture);
                     ArmNotifyBreakpoint(process, state, (int)customMessage.Parameter2);
                     // A breakpoint the user set before we were listening is already bound;
-                    // this is the first moment we can tell the engine about it.
+                    // this is the first moment we can tell the engine about it. It also
+                    // carries the Hello — the stop we need in order to be able to stop.
                     WriteCommands(process, state);
                     break;
 
                 case ShumwayGuids.MsgEnsureModules:
+                    // Record them; do NOT create them here. This message is sent from inside a
+                    // stack walk, and creating Dkm objects there half-works, which is worse
+                    // than not working: the module gets created and then SetModule throws on
+                    // the walk's transient container — and the retry, in a context that would
+                    // have succeeded, fails because the module id is already taken. It cost an
+                    // hour to see. The Hello stop is where creation happens, and the only
+                    // place it happens.
                     foreach (string path in ((string)customMessage.Parameter1).Split('|'))
                     {
-                        if (path.Length > 0 && !state.CreatedFiles.Contains(path))
+                        if (path.Length > 0 && !state.CreatedFiles.Contains(path)
+                            && !state.PendingFiles.Contains(path))
                             state.PendingFiles.Add(path);
                     }
-                    EnsureModules(process, state); // may fail here; retried at the next pause
                     break;
+
+                case ShumwayGuids.MsgServerStatus:
+                    return DkmCustomMessage.Create(
+                        process.Connection, process, ShumwayGuids.MessageSource,
+                        ShumwayGuids.MsgServerStatus, Status(state), null);
             }
             return null;
+        }
+
+        private static string Status(ShumwayServerDataItem state)
+        {
+            return "notify=" + (state.NotifyBreakpoint != null ? "armed" : "NOT-ARMED")
+                + " modules=" + state.CreatedFiles.Count
+                + " pending=" + state.PendingFiles.Count
+                + " bps=" + state.Breakpoints.Count
+                + " cmdaddr=0x" + state.CommandAddress.ToString("X")
+                + " stops=" + state.Stops
+                + " atport=" + state.StoppedAtPort
+                + " ownsasks=" + state.OwnsAsks
+                + " steps=" + state.StepCalls
+                + " resumes=" + state.Resumes
+                + " pendingstep=" + state.PendingStep
+                + (state.PendingFiles.Count > 0 ? " next='" + state.PendingFiles[0] + "'" : "")
+                + (state.LastError.Length > 0 ? " ERR[" + state.LastError + "]" : "");
         }
 
         // ---- breakpoints ----
@@ -163,19 +216,38 @@ namespace Shumway.Debugger.Concord
             // Only when the machine is stopped at a port. Anywhere else — inside a builtin,
             // mid-unification, in the user's own C# — the CLR owns the location and should
             // keep it: a step there is a C# step, and it is not ours to take.
-            return GetState(runtimeInstance.Process).StoppedAtPort;
+            ShumwayServerDataItem owner = GetState(runtimeInstance.Process);
+            owner.OwnsAsks++;
+            return owner.StoppedAtPort;
         }
 
         void IDkmRuntimeStepper.Step(
             DkmRuntimeInstance runtimeInstance, DkmStepper stepper, DkmStepArbitrationReason reason)
         {
-            ShumwayServerDataItem state = GetState(runtimeInstance.Process);
+            BeginStep(runtimeInstance.Process, stepper);
+        }
+
+        /// <summary>Take a step. Shared with <see cref="ShumwayClrStepper"/>, which is where
+        /// the step actually arrives in a managed debuggee — the mechanism is the same
+        /// wherever Visual Studio chooses to offer it.</summary>
+        internal static void BeginStep(DkmProcess process, DkmStepper stepper)
+        {
+            ShumwayServerDataItem state = GetState(process);
+            state.StepCalls++;
             state.Stepper = stepper;
             state.PendingStep = StepKindOf(stepper);
-            WriteCommands(runtimeInstance.Process, state);
+            WriteCommands(process, state);
             // Nothing else to arrange. VS resumes the process; the engine reads the mode
             // out of the channel and stops at the first port that satisfies it, which
             // comes back to us as a notify.
+        }
+
+        internal static void CancelStep(DkmProcess process)
+        {
+            ShumwayServerDataItem state = GetState(process);
+            state.Stepper = null;
+            state.PendingStep = DebugCommandKind.None;
+            WriteCommands(process, state);
         }
 
         private static DebugCommandKind StepKindOf(DkmStepper stepper)
@@ -190,10 +262,7 @@ namespace Shumway.Debugger.Concord
 
         void IDkmRuntimeStepper.StopStep(DkmRuntimeInstance runtimeInstance, DkmStepper stepper)
         {
-            ShumwayServerDataItem state = GetState(runtimeInstance.Process);
-            state.Stepper = null;
-            state.PendingStep = DebugCommandKind.None;
-            WriteCommands(runtimeInstance.Process, state);
+            CancelStep(runtimeInstance.Process);
         }
 
         void IDkmRuntimeStepper.BeforeEnableNewStepper(
@@ -246,11 +315,21 @@ namespace Shumway.Debugger.Concord
 
             DkmProcess process = thread.Process;
             ShumwayServerDataItem state = GetState(process);
-            EnsureModules(process, state); // a real event context
+            state.Stops++;
+
+            // THE ONE CONTEXT where creating the .pl modules works (D0 established this the
+            // hard way: from a stack walk it throws on the walk's transient container, and at
+            // a process pause the monitor returns E_FAIL). Which is why the first stop is one
+            // we asked for ourselves, and why we stop asking now.
+            bool wasHello = state.NeedHello;
+            state.NeedHello = false;
+            EnsureModules(process, state);
+            if (wasHello)
+                WriteCommands(process, state);   // take the Hello back out of the channel
 
             DebugSnapshot? snapshot = ReadSnapshot(process, state);
-            if (snapshot == null)
-                return; // nothing to report: let it run on
+            if (snapshot == null || wasHello)
+                return; // the bootstrap stop is not the user's: let it run on
 
             state.StoppedAtPort = true;
 
@@ -291,13 +370,16 @@ namespace Shumway.Debugger.Concord
         void IDkmProcessExecutionNotification.OnProcessPause(
             DkmProcess process, DkmProcessExecutionCounters processCounters)
         {
-            EnsureModules(process, GetState(process));
+            // Not a place to create modules either (the monitor returns E_FAIL). Only a real
+            // breakpoint event is, which is what the Hello is for.
         }
 
         void IDkmProcessExecutionNotification.OnProcessResume(
             DkmProcess process, DkmProcessExecutionCounters processCounters)
         {
-            GetState(process).StoppedAtPort = false;
+            ShumwayServerDataItem state = GetState(process);
+            state.Resumes++;
+            state.StoppedAtPort = false;
         }
 
         /// <summary>One module per .pl. The module IS the file — that identity is what
@@ -307,25 +389,31 @@ namespace Shumway.Debugger.Concord
         {
             if (state.PendingFiles.Count == 0)
                 return;
+
+            int stage = 0;
             try
             {
+                stage = 1;
                 DkmCustomRuntimeInstance? runtime = process.GetRuntimeInstances()
                     .OfType<DkmCustomRuntimeInstance>()
                     .FirstOrDefault(r => r.Id.RuntimeType == ShumwayGuids.RuntimeType);
                 if (runtime == null)
                 {
+                    stage = 2;
                     runtime = DkmCustomRuntimeInstance.Create(
                         process, new DkmRuntimeInstanceId(ShumwayGuids.RuntimeType, 0), null);
                 }
 
                 foreach (string path in state.PendingFiles.ToArray())
                 {
+                    stage = 3;
                     var module = DkmModule.Create(
                         new DkmModuleId(ShumwayGuids.ModuleIdFor(path), ShumwayGuids.SymbolProvider),
                         path,
                         new DkmCompilerId(ShumwayGuids.ShumwayVendor, ShumwayGuids.ShumwayLanguage),
                         process.Connection, null);
 
+                    stage = 4;
                     var moduleInstance = DkmCustomModuleInstance.Create(
                         System.IO.Path.GetFileName(path), path,
                         0, runtime, null, null,
@@ -335,16 +423,18 @@ namespace Shumway.Debugger.Concord
                     // Create WITHOUT the module, then SetModule: that raises the
                     // symbols-loaded notification, which is what makes VS re-evaluate
                     // pending breakpoints against our symbol provider.
+                    stage = 5;
                     moduleInstance.SetModule(module, true);
 
                     state.CreatedFiles.Add(path);
                     state.PendingFiles.Remove(path);
                 }
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 // Wrong context (the stack-walk case). The files stay pending and the next
-                // process pause picks them up.
+                // real stop picks them up.
+                state.LastError = "modules@" + stage + ": " + ex.GetType().Name + ": " + ex.Message;
             }
         }
 
@@ -390,6 +480,8 @@ namespace Shumway.Debugger.Concord
             }
             if (state.PendingStep != DebugCommandKind.None)
                 commands.Add(new DebugWireCommand { Kind = state.PendingStep });
+            if (state.NeedHello)
+                commands.Add(new DebugWireCommand { Kind = DebugCommandKind.Hello });
 
             try
             {
@@ -442,13 +534,16 @@ namespace Shumway.Debugger.Concord
                 bp.Enable();
                 state.NotifyBreakpoint = bp;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                // Without the notify breakpoint there are no Prolog stops at all — but
-                // Break All still works (the IDE asks the engine directly), so the session
-                // is degraded, not dead. Never take a debug session down from here.
+                // Without the notify breakpoint there are no Prolog stops at all — but the
+                // stack still works (the engine leaves a fresh snapshot while it runs), so
+                // the session is degraded, not dead. Never take one down from here.
+                state.LastError = "notify-bp: " + ex.GetType().Name + ": " + ex.Message;
             }
         }
+
+        internal static ShumwayServerDataItem State(DkmProcess process) => GetState(process);
 
         private static ShumwayServerDataItem GetState(DkmProcess process)
         {
