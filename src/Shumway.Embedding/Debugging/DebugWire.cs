@@ -23,6 +23,31 @@ public enum StopReason
     AsyncBreak = 5,
 }
 
+/// <summary>ADR-035 — what the debugger asked the engine to do next.</summary>
+public enum DebugCommandKind
+{
+    None = 0,
+    Continue = 1,
+    StepInto = 2,
+    StepOver = 3,
+    StepOut = 4,
+    AddBreakpoint = 5,
+    RemoveBreakpoint = 6,
+    ClearBreakpoints = 7,
+    SetLastCallOptimisation = 8,
+}
+
+/// <summary>ADR-035 — one command, in the form both sides can build. (The engine's own
+/// <c>DebugCommand</c> is a record struct, which the debugger's target framework cannot
+/// have; this is the shape that crosses.)</summary>
+public sealed class DebugWireCommand
+{
+    public DebugCommandKind Kind { get; set; }
+    public string File { get; set; } = "";
+    public int Line { get; set; }
+    public bool Flag { get; set; }
+}
+
 /// <summary>ADR-035 — a stop, as the debugger reads it back out of the channel.</summary>
 public sealed class DebugSnapshot
 {
@@ -32,6 +57,15 @@ public sealed class DebugSnapshot
     public string File { get; set; } = "";
     public int Line { get; set; }
     public int Depth { get; set; }
+
+    /// <summary>The breakpoint that fired, AS THE USER SET IT — which is not always where
+    /// the code turned out to be (a breakpoint on a rule's head binds at its first goal).
+    /// A debugger has to match a hit against the line it drew the red dot on, and
+    /// <see cref="Line"/> cannot answer that: it says where the machine IS. Empty unless
+    /// <see cref="Reason"/> is <see cref="StopReason.Breakpoint"/>.</summary>
+    public string BreakFile { get; set; } = "";
+    public int BreakLine { get; set; }
+
     public IReadOnlyList<DebugSnapshotFrame> Frames { get; set; }
         = Array.Empty<DebugSnapshotFrame>();
 }
@@ -68,7 +102,7 @@ public sealed class DebugVariableView
 ///
 /// <para>Layout — little-endian ints, length-prefixed UTF-8 strings:</para>
 /// <code>
-/// snapshot: version, sequence, reason, goal, file, line, depth,
+/// snapshot: version, sequence, reason, goal, file, line, depth, breakFile, breakLine,
 ///           frameCount, { name, arity, file, line, pc,
 ///                         varCount, { name, value } }
 /// commands: version, count, { kind, file, line, flag }
@@ -145,6 +179,8 @@ public static class DebugWire
             File = ReadString(buffer, ref at),
             Line = ReadInt(buffer, ref at),
             Depth = ReadInt(buffer, ref at),
+            BreakFile = ReadString(buffer, ref at),
+            BreakLine = ReadInt(buffer, ref at),
         };
 
         int frameCount = ReadInt(buffer, ref at);
@@ -174,5 +210,37 @@ public static class DebugWire
         }
         snapshot.Frames = frames;
         return snapshot;
+    }
+
+    // ----- the commands -----
+
+    /// <summary>Encodes the command region. The debugger writes the result with
+    /// <c>WriteMemory</c>, in ONE call: the engine drains the region between goals while
+    /// it is running (so a breakpoint set on a running process takes effect), and a
+    /// command list written in pieces could be read half-formed.
+    ///
+    /// <para>The debugger writes the WHOLE desired state each time — clear, then every
+    /// armed breakpoint — rather than an incremental edit. There is no acknowledgement in
+    /// this channel and none is wanted: a full state is idempotent, so it does not matter
+    /// whether the engine drained the last one.</para></summary>
+    public static byte[] EncodeCommands(IList<DebugWireCommand> commands)
+    {
+        var buffer = new byte[8192];
+        int at = 0;
+        WriteInt(buffer, ref at, FormatVersion);
+        WriteInt(buffer, ref at, commands == null ? 0 : commands.Count);
+        if (commands != null)
+        {
+            foreach (DebugWireCommand c in commands)
+            {
+                WriteInt(buffer, ref at, (int)c.Kind);
+                WriteString(buffer, ref at, c.File);
+                WriteInt(buffer, ref at, c.Line);
+                WriteInt(buffer, ref at, c.Flag ? 1 : 0);
+            }
+        }
+        var exact = new byte[at];
+        Buffer.BlockCopy(buffer, 0, exact, 0, at);
+        return exact;
     }
 }

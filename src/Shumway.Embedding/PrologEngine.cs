@@ -3592,10 +3592,27 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         {
             if (!_compiledSites.Contains(id)) continue;
             _breakpointSites.Add(id);
+            _breakpointRequests[id] = (fileId, line);
             bound++;
         }
         if (bound > 0) RefreshBreakpoints();
         return bound;
+    }
+
+    // Which breakpoint each armed site belongs to — the line the USER asked for, which
+    // is not always the line the code is on (a breakpoint on a rule's head binds at its
+    // first goal). A debugger that has to match a hit back to the red dot it drew needs
+    // the line it drew, not the line we bound.
+    private readonly Dictionary<int, (int FileId, int Line)> _breakpointRequests = new();
+
+    /// <summary>ADR-035 — the breakpoint (as the user asked for it) armed at this
+    /// address, or null if the stop is not one.</summary>
+    internal (string File, int Line)? BreakpointRequestAt(int pc)
+    {
+        int siteId = SiteAt(pc);
+        if (siteId >= 0 && _breakpointRequests.TryGetValue(siteId, out var request))
+            return (Shumway.Core.DebugSiteTable.FileName(request.FileId), request.Line);
+        return null;
     }
 
     /// <summary>ADR-035 — the line an <see cref="AddBreakpoint"/> for this line would
@@ -3652,12 +3669,21 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return best;
     }
 
-    /// <summary>ADR-035 — disarms every stop site on this source line.</summary>
+    /// <summary>ADR-035 — disarms the breakpoint the user set on this source line. The
+    /// line is snapped exactly as <see cref="AddBreakpoint"/> snapped it, or a breakpoint
+    /// set on a rule's head could never be removed from the head line it is drawn
+    /// on.</summary>
     public void RemoveBreakpoint(string file, int line)
     {
-        foreach (int id in Shumway.Core.DebugSiteTable.SitesOnLine(
-                     Shumway.Core.DebugSiteTable.InternFile(file), line))
+        int fileId = Shumway.Core.DebugSiteTable.InternFile(file);
+        int target = SnapToCompiledLine(fileId, line);
+        if (target < 0) target = line;
+
+        foreach (int id in Shumway.Core.DebugSiteTable.SitesOnLine(fileId, target))
+        {
             _breakpointSites.Remove(id);
+            _breakpointRequests.Remove(id);
+        }
         RefreshBreakpoints();
     }
 
@@ -3682,6 +3708,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     public void ClearBreakpoints()
     {
         _breakpointSites.Clear();
+        _breakpointRequests.Clear();
         RefreshBreakpoints();
     }
 
@@ -9474,7 +9501,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             frames.Values.CopyTo(_clauseFrames, 0);
         }
         SyncBreakpoints(program);
-        engine.BreakpointOriginals = _breakpointPatches.Count == 0 ? null : _breakpointPatches;
+        // Shared BY REFERENCE, and shared even when it is empty: a breakpoint can be armed
+        // on a query that is already running (F9 during a long goal), and the Break byte it
+        // patches into the program is reached by an activation that was set up before the
+        // table had anything in it. Handing over null when the table happened to be empty
+        // would leave that activation with a Break it cannot decode.
+        engine.BreakpointOriginals = _breakpointPatches;
 
         int[] varHeapIndices = new int[varNames.Count];
         for (int i = 0; i < varNames.Count; i++)

@@ -178,10 +178,10 @@ public sealed partial class Activation
 
     /// <summary>ADR-035 — for each program address whose opcode byte has been
     /// patched to <see cref="Opcode.Break"/>, the byte that was there. Owned by
-    /// the debug service (which does the patching) and shared by reference, so a
-    /// breakpoint set while a query is running is visible to it. Null when nothing
-    /// is armed, which is the only state the interpreter's hot path can be in
-    /// without a <c>Break</c> byte existing to reach it.</summary>
+    /// the debug service (which does the patching) and shared BY REFERENCE — which is
+    /// what lets a breakpoint armed while this query is already running be decoded by
+    /// it. Null only when there is no debug session at all; an empty table is not the
+    /// same thing as no table, because the next port may fill it.</summary>
     public IReadOnlyDictionary<int, byte>? BreakpointOriginals { get; set; }
 
     /// <summary>ADR-035 — the opcode a <see cref="Opcode.Break"/> byte at

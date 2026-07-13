@@ -37,9 +37,35 @@ public sealed class ChannelDebugSession : IDisposable
         _notify = notify ?? ShumwayDebugHelper.Notify;
         _service = new DebugService(engine, OnStop);
 
+        _service.Poll = PollWhileRunning;
+
         ShumwayDebugHelper.Channel = _channel;
         ShumwayDebugHelper.Session = this;
         engine.AttachDebugSession(_service);
+    }
+
+    /// <summary>ADR-035 — the channel, read between goals rather than at a stop.
+    ///
+    /// <para>Setting a breakpoint on a program that is already running is the ordinary
+    /// case (F9 during a long query), and it is the ONLY thing a debugger says while the
+    /// engine is moving. So only breakpoints are obeyed here. A step or a continue read
+    /// off the channel mid-flight would be one the debugger never issued — nobody asks a
+    /// running program to resume — and acting on it would silently change the step mode
+    /// of a query nobody is stopped in.</para></summary>
+    private void PollWhileRunning()
+    {
+        foreach (var command in _channel.DrainCommands())
+        {
+            switch (command.Kind)
+            {
+                case DebugCommandKind.AddBreakpoint:
+                case DebugCommandKind.RemoveBreakpoint:
+                case DebugCommandKind.ClearBreakpoints:
+                case DebugCommandKind.SetLastCallOptimisation:
+                    Apply(_service, command);
+                    break;
+            }
+        }
     }
 
     /// <summary>The channel the debugger reads and writes. Its addresses are what

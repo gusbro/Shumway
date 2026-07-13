@@ -35,6 +35,14 @@ public sealed record DebugStopEvent(
     int Depth,
     IReadOnlyList<PrologEngine.DebugFrame> Frames)
 {
+    /// <summary>ADR-035 — the breakpoint that fired, as the USER set it. Not the same
+    /// question as <see cref="File"/>/<see cref="Line"/>, which say where the machine is:
+    /// a breakpoint on a rule's head binds at its first goal, so the two differ by design,
+    /// and a debugger matching a hit to the red dot it drew needs this one. Empty for
+    /// every stop that is not a breakpoint.</summary>
+    public string BreakFile { get; init; } = "";
+    public int BreakLine { get; init; }
+
     /// <summary>The variables of the clause we are stopped in.</summary>
     public IReadOnlyList<(string Name, string Value)> Variables =>
         Frames.Count > 0 ? Frames[0].Variables : Array.Empty<(string, string)>();
@@ -137,6 +145,21 @@ public sealed class DebugService : IDebugSession
 
     private int _lastStopDepth;
 
+    // ----- commands from a debugger, while the program is running -----
+
+    /// <summary>Called every <see cref="PollInterval"/> ports, so a debugger can arm a
+    /// breakpoint on a program that is already running. Everything else it might say
+    /// (step, continue) is said at a stop, where the engine reads the channel anyway; a
+    /// breakpoint is the one thing that has to arrive mid-flight.</summary>
+    public Action? Poll { get; set; }
+
+    /// <summary>Ports between polls. Small enough that F9 feels immediate on any real
+    /// program, large enough that the check is lost in the noise of a port that is
+    /// already walking an environment chain.</summary>
+    public const int PollInterval = 512;
+
+    private int _pollTick;
+
     // ----- ports -----
 
     void IDebugSession.OnBreak(Activation engine, int pc)
@@ -144,7 +167,14 @@ public sealed class DebugService : IDebugSession
         Current = engine;
         // A breakpoint always stops, whatever the step mode: it is the one thing the
         // user asked for by name.
+        //
+        // The stop says where the machine IS, as every stop does. It ALSO says which
+        // breakpoint fired, as the user set it — a different question with a different
+        // answer, since a breakpoint on a rule's head binds at its first goal, and a
+        // debugger has to match the hit to the red dot it drew.
+        _breakRequest = _engine.BreakpointRequestAt(pc);
         Stop(engine, StopReason.Breakpoint, PortDepth(engine), SiteOf(pc), goal: null);
+        _breakRequest = null;
         _reportedCallSite = _engine.SiteAtOrBefore(pc);
     }
 
@@ -256,6 +286,16 @@ public sealed class DebugService : IDebugSession
         // later knows which machine to ask. One field store per goal.
         Current = engine;
 
+        // A breakpoint can be set on a program that is already RUNNING — F9 during a long
+        // query is the ordinary case, not an exotic one — and the engine only ever looks
+        // at the channel when it stops. So it looks here too, between goals, rarely
+        // enough to cost nothing and often enough that the user does not notice the wait.
+        if (Poll is not null && ++_pollTick >= PollInterval)
+        {
+            _pollTick = 0;
+            Poll();
+        }
+
         if (_mode == StepMode.Continue) return;
 
         bool stop = _mode switch
@@ -291,8 +331,15 @@ public sealed class DebugService : IDebugSession
         var frames = _engine.CaptureFrames(engine);
         goal ??= frames.Count > 0 ? $"{frames[0].Name}/{frames[0].Arity}" : "";
 
-        _onStop(this, new DebugStopEvent(reason, goal, site.File, site.Line, depth, frames));
+        _onStop(this, new DebugStopEvent(reason, goal, site.File, site.Line, depth, frames)
+        {
+            BreakFile = _breakRequest?.File ?? "",
+            BreakLine = _breakRequest?.Line ?? 0,
+        });
     }
+
+    // The breakpoint being reported, for the length of one stop. See OnBreak.
+    private (string File, int Line)? _breakRequest;
 
     private (string File, int Line) SiteOf(int pc)
     {

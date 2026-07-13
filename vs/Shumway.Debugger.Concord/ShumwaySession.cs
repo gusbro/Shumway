@@ -181,7 +181,10 @@ namespace Shumway.Debugger.Concord
             DkmCustomMessage.Create(
                     frame.Process.Connection, frame.Process,
                     ShumwayGuids.MessageSource, ShumwayGuids.MsgArmNotifyBreakpoint,
-                    state.SnapshotAddress, token, null, null)
+                    state.SnapshotAddress, token,
+                    // The server needs both ends of the channel: the snapshot to read a
+                    // stop, and the command region to answer it.
+                    state.CommandAddress.ToString(CultureInfo.InvariantCulture), null)
                 .SendLower();
         }
 

@@ -4,19 +4,8 @@ using System.Runtime.InteropServices;
 
 namespace Shumway.Embedding.Debugging;
 
-/// <summary>ADR-035 — what the debugger asked the engine to do next.</summary>
-public enum DebugCommandKind
-{
-    None = 0,
-    Continue = 1,
-    StepInto = 2,
-    StepOver = 3,
-    StepOut = 4,
-    AddBreakpoint = 5,
-    RemoveBreakpoint = 6,
-    ClearBreakpoints = 7,
-    SetLastCallOptimisation = 8,
-}
+// DebugCommandKind lives in DebugWire.cs — the debugger compiles that file too, and it
+// is the side that decides what a command is.
 
 /// <summary>ADR-035 — one command from the debugger. <see cref="File"/> /
 /// <see cref="Line"/> carry a breakpoint; <see cref="Flag"/> carries a switch.</summary>
@@ -94,6 +83,8 @@ public sealed class DebugChannel : IDisposable
         DebugWire.WriteString(_snapshot, ref at, stop.File);
         DebugWire.WriteInt(_snapshot, ref at, stop.Line);
         DebugWire.WriteInt(_snapshot, ref at, stop.Depth);
+        DebugWire.WriteString(_snapshot, ref at, stop.BreakFile);
+        DebugWire.WriteInt(_snapshot, ref at, stop.BreakLine);
 
         DebugWire.WriteInt(_snapshot, ref at, stop.Frames.Count);
         foreach (var f in stop.Frames)
