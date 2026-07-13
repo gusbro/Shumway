@@ -548,6 +548,13 @@ internal static class ReplTopLevel
             return;
         }
 
+        // ADR-035 — the goal the engine is about to run is not the goal the user typed: it
+        // is theirs wrapped in a copy_term/3 so residual constraints can be shown. A
+        // debugger names the query frame after what it was handed, so tell it what was
+        // actually typed, or the user reads their query back with the top level's plumbing
+        // stapled to it.
+        engine.QueryLabel = query.TrimEnd().TrimEnd('.');
+
         // The search runs on this thread; an ESC keypress (watched on a
         // background thread) aborts a long-running query at the next engine
         // safe point. Not instantaneous, but responsive.

@@ -114,6 +114,15 @@ rendered as a term. An unbound variable shows as `_G3`.
 It is not a predicate (it has no `Name/Arity`), and double-clicking it opens nothing: you
 did not write it in a file. It is there because you are standing in it.
 
+**Stepping stays in your program.** The prelude, the libraries and the top level's own
+plumbing are `:- disable_debug`: they run, they just never stop you. So F10 over a goal
+that calls `member/2` steps *over* it, and never leaves you standing in `copy_term/3`
+wondering how you got there.
+
+**Stepping past the end of the query** is not a stop: the query hands back its answer and
+stands still, no port is coming, and the debugger drops the step and lets the program run
+on. Type `;` at the prompt for the next solution — your breakpoints are still armed.
+
 ## Interop: one stack across three languages
 
 A program that calls a C# foreign predicate — which may itself P/Invoke into C — debugs as

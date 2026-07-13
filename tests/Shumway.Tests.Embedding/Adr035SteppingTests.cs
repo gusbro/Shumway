@@ -313,6 +313,106 @@ public class Adr035SteppingTests
         Assert.Equal(new[] { "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12" }, ns);
     }
 
+    [Fact]
+    public void SteppingPastTheEndOfTheQuery_AbandonsTheStep_InsteadOfLeavingItInFlight()
+    {
+        // The user's report, reduced: a query with a choice point in it, stopped in the
+        // middle, then F10 F10. The second one steps past the last goal -- the query
+        // SUCCEEDS, hands its answer back, and stands still waiting to be asked for another.
+        // No port is ever coming, so the step can never be satisfied.
+        //
+        // Visual Studio waited for it forever: it believed the program was still running, and
+        // answered every key after that with "Unable to step. Operation not supported." The
+        // engine now says the step is over, and the debugger cancels it. There is no honest
+        // alternative -- stopping the user in the host's C# would be showing them a place
+        // they did not ask to see, and where their program is not.
+        var engine = DebugEngine(
+            "pick(X) :- member(X, [a,b,c]).\n"
+            + "shout(X) :- writeln(X).\n", lco: false);
+        engine.AddBreakpoint("<string>", 3);   // shout/1's body
+
+        var stops = Walk(engine, "pick(X), shout(X).",
+            StepMode.Over, StepMode.Over, StepMode.Over);
+
+        // Stopped in shout/1; step over its body; step over its exit -- which lands on the
+        // exit port of the QUERY, the last port there is. Step again and the query is done:
+        // it hands back X = a and stands still. That third step has nowhere to land, and the
+        // engine says so -- not with a stop to look at (there is no stack: the machine is not
+        // in the program), with a message.
+        Assert.Equal(
+            new[] { StopReason.Breakpoint, StopReason.Exit, StopReason.Exit, StopReason.StepAbandoned },
+            stops.Take(4).Select(s => s.Reason));
+        Assert.Empty(stops[3].Frames);
+
+        // Once per departure -- and once only. (The walk goes on to enumerate the other
+        // solutions, and the breakpoint fires again on each: a step is over, the breakpoints
+        // are not.)
+        Assert.Single(stops, s => s.Reason == StopReason.StepAbandoned);
+    }
+
+    [Fact]
+    public void TheQueryIsOnTheStackExactlyOnce()
+    {
+        // It was on there TWICE. Past the query's own frame lies the address it RETURNS to --
+        // the top level's code, which no Prolog frame describes -- and the search that names
+        // an address takes the last predicate at or before it, so that address came back
+        // named `__query__` as well. The user saw their query twice, the second copy with no
+        // variables. A query is not recursive: once it is on the stack, the walk is over.
+        var engine = DebugEngine(Nested, lco: false);
+        engine.AddBreakpoint("<string>", 7);
+
+        var frames = Walk(engine, "top(A).")[0].Frames;
+        Assert.Single(frames, f => f.Name.StartsWith("?-"));
+        Assert.StartsWith("?-", frames[^1].Name);   // and it is the BOTTOM
+    }
+
+    [Fact]
+    public void SteppingStaysInTheUsersProgram_AndDoesNotWanderIntoTheLibrary()
+    {
+        // What the user actually hit. Their query calls member/2 -- the PRELUDE's -- and the
+        // top level wraps every query in a copy_term/3 of its own. Both are
+        // `:- disable_debug`, and both are compiled that way; but a PORT is raised by the
+        // interpreter at every call and every proceed regardless of what the code was
+        // compiled from, so a step honoured them. Two F10s and the user was standing in
+        // `copy_term/3`, then in `$prelude$$attr_goals_of/2`: code they did not write, cannot
+        // open, and did not ask to step through.
+        var engine = DebugEngine(
+            "pick(X) :- member(X, [a,b,c]).\n"
+            + "shout(X) :- writeln(X).\n"
+            + "go(X) :- pick(X), shout(X).\n", lco: false);
+        engine.AddBreakpoint("<string>", 4);   // go/1's body
+
+        var stops = Walk(engine, "go(A).",
+            StepMode.Into, StepMode.Into, StepMode.Into, StepMode.Into, StepMode.Into);
+
+        // Every stop names a predicate of theirs (or their query). member/2 runs -- it just
+        // does not stop anyone; its solutions arrive at pick/1's exit port, which is the
+        // user's code and does.
+        foreach (var s in stops)
+            Assert.DoesNotContain("$prelude$", s.Goal);
+        Assert.DoesNotContain(stops, s => s.Goal.StartsWith("member/"));
+        Assert.DoesNotContain(stops, s => s.Goal.StartsWith("copy_term/"));
+        Assert.Contains(stops, s => s.Goal == "pick/1");
+    }
+
+    [Fact]
+    public void AQueryNobodyIsSteppingThrough_SaysNothingWhenItEnds()
+    {
+        // The other half: the message exists for a debugger waiting on a step. A program
+        // running under a session with nobody stepping must produce no stop at all -- an
+        // engine that announced the end of every query would stop the user's world on every
+        // solution of every goal they ever ran.
+        var engine = DebugEngine(Nested, lco: false);
+
+        var stops = new List<DebugStopEvent>();
+        var svc = new DebugService(engine, (s, e) => stops.Add(e));
+        engine.AttachDebugSession(svc);
+        engine.QueryAll("top(A).").ToList();
+        engine.AttachDebugSession(null);
+
+        Assert.Empty(stops);
+    }
+
     // ---------- the model, pinned ----------
 
     [Fact]

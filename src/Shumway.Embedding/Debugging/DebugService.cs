@@ -239,6 +239,10 @@ public sealed class DebugService : IDebugSession
     {
         // A dictionary probe, and no port for an address that names no predicate.
         if (_engine.LookupPredicateByAddress(address) is null) return;
+        // Nor for one the user cannot see into: the prelude, the libraries, and the top
+        // level's own wrapper goals are `:- disable_debug`. See IsDebuggableAddress —
+        // stepping must stay in the program the user wrote.
+        if (!_engine.IsDebuggableAddress(address)) return;
         _goalKind = GoalKind.Address;
         _goalId = address;
         OnCall(engine);
@@ -247,6 +251,7 @@ public sealed class DebugService : IDebugSession
     void IDebugSession.OnCallFunctor(Activation engine, int functorId, bool tailCall)
     {
         if (FunctorGoalName(functorId) is null) return;   // an engine helper: not a goal
+        if (!_engine.IsDebuggableFunctor(functorId)) return;
         _goalKind = GoalKind.Functor;
         _goalId = functorId;
         OnCall(engine);
@@ -353,6 +358,11 @@ public sealed class DebugService : IDebugSession
         // -1 is a backtrackable builtin re-satisfying (between/3, repeat/0, clause/2):
         // there is no bytecode clause to point at, so the goal we are in stands.
         int pc = retryPc >= 0 ? _engine.RetryClauseSite(retryPc) : engine.P;
+
+        // Retrying a clause of the prelude's, or a library's: not the user's program, and not
+        // theirs to be stopped in. (Same rule as the exit port — see MaybeStopAtPort.)
+        if (!_engine.IsDebuggableAddress(pc)) return;
+
         var pred = _engine.PredicateContaining(pc);
 
         _mode = StepMode.Continue;
@@ -367,6 +377,21 @@ public sealed class DebugService : IDebugSession
 
     void IDebugSession.OnFail(Activation engine)
         => MaybeStopAtPort(engine, StopReason.Fail);
+
+    void IDebugSession.OnLeaveProlog(Activation engine)
+    {
+        // Nobody is stepping: there is nothing to abandon, and the fact that the query
+        // finished is not news to anyone.
+        if (_mode == StepMode.Continue) return;
+        _mode = StepMode.Continue;
+
+        // Not a stop to LOOK at — the machine is not in the program, and the frames the
+        // debugger would draw are the host's C#. It is a message: the step you are waiting
+        // on cannot be satisfied, stop waiting.
+        _onStop(this, new DebugStopEvent(
+            StopReason.StepAbandoned, "", "", 0, 0,
+            Array.Empty<PrologEngine.DebugFrame>()));
+    }
 
     void IDebugSession.MarkHeapRoots(Action<int> markCell) { }
     void IDebugSession.RelocateHeapRoots(Func<int, int> relocIndex) { }
@@ -412,6 +437,18 @@ public sealed class DebugService : IDebugSession
         // depth: a 300k-deep tail recursion never came back. Ask only when the answer
         // is used.
         if (_mode == StepMode.Continue) return;
+
+        // The exit or fail of code the user did not write — the prelude, a library, the top
+        // level's own wrapper goals. A port fires there like anywhere else (the interpreter
+        // raises one at every proceed, whatever the code was compiled from), and a step that
+        // honoured it left the user standing in `$prelude$$attr_goals_of/2` wondering what
+        // they had done.
+        //
+        // Exit and fail only. At a CALL port the machine is still in the CALLER, and the
+        // question is about the CALLEE — which OnCallAddress / OnCallFunctor already asked,
+        // and had to: the user's own predicate, called from inside maplist/3, is theirs to
+        // stop in, however unwritable the caller is.
+        if (reason != StopReason.Call && !_engine.IsDebuggableAddress(engine.P)) return;
 
         int depth = PortDepth(engine);
         bool stop = _mode switch

@@ -79,6 +79,17 @@ public interface IDebugSession
     /// never, and costs nothing.</summary>
     void OnBreak(Activation engine, int pc);
 
+    /// <summary>Control is leaving Prolog and going back to whoever asked for a
+    /// solution — the query has produced one, or run out of them. There is no port
+    /// here and nothing to show: the machine is not in the program any more.
+    ///
+    /// <para>It matters because a STEP is a promise to stop at the next port that
+    /// satisfies it, and past this line no port is coming. A step nobody can satisfy
+    /// has to be abandoned, and said to be abandoned — a debugger left waiting for a
+    /// stop that will never arrive believes the program is still running, and every
+    /// key the user presses after that is answered with an error.</para></summary>
+    void OnLeaveProlog(Activation engine) { }
+
     /// <summary>ADR-016 mark phase: a session that holds heap indices of its own
     /// (a tracer keeps each open goal's argument cells so it can show what the
     /// goal bound when it exits) must mark them, or the collector will treat

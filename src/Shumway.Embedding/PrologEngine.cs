@@ -3546,6 +3546,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// rendering a term is not free, and an undebugged engine has no one to tell).</summary>
     internal string? CurrentQueryText { get; private set; }
 
+    /// <summary>What to CALL the running query in a debugger, when the goal the engine was
+    /// handed is not the goal the user typed. A top level wraps what you type (Shumway's own
+    /// wraps it in a <c>copy_term/3</c> so it can show residual constraints), and rendering
+    /// that back produced a frame named after machinery the user never wrote. Set it to what
+    /// they typed; the engine falls back to rendering the goal when it is not set.</summary>
+    public string? QueryLabel { get; set; }
+
     /// <summary>Turns the four-port tracer on or off (the engine side of
     /// <c>trace/0</c> / <c>notrace/0</c>). Port lines go to
     /// <paramref name="output"/>, defaulting to the engine's own output sink so
@@ -3894,7 +3901,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         foreach (int env in engine.EnumerateEnvChain(e)) envs.Add(env);
         bool ownFrame = ClauseAt(pc)?.HasFrame ?? false;
 
-        AddFrame(engine, frames, pc, ownFrame && envs.Count > 0 ? envs[0] : -1);
+        if (AddFrame(engine, frames, pc, ownFrame && envs.Count > 0 ? envs[0] : -1))
+            return frames;
 
         int envIndex = ownFrame ? 1 : 0;
         foreach (int returnPc in engine.EnumerateCallReturnAddresses(e, cp))
@@ -3903,8 +3911,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // where the NEXT goal's code begins — so looking its line up directly
             // would blame a caller for the goal it has not run yet. Step back a byte
             // to land inside the call itself, the goal the frame is really waiting on.
-            AddFrame(engine, frames, returnPc - 1,
-                envIndex < envs.Count ? envs[envIndex] : -1);
+            //
+            // The query is the BOTTOM of the stack, and it is not recursive: once it is on
+            // the list, the walk is done. What lies past it is the address the query returns
+            // to — the top level's own code, which no Prolog frame describes — and it looked
+            // enough like the wrapper to be named `?-` a second time. One query, one frame.
+            if (AddFrame(engine, frames, returnPc - 1,
+                    envIndex < envs.Count ? envs[envIndex] : -1))
+                break;
             envIndex++;
         }
         return frames;
@@ -3923,13 +3937,15 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private static string Ellipsize(string text, int max)
         => text.Length <= max ? text : text.Substring(0, max - 3) + "...";
 
-    private void AddFrame(Activation engine, List<DebugFrame> frames, int pc, int env)
+    /// <summary>Adds the frame at <paramref name="pc"/>. Returns true when it was the
+    /// QUERY's — the bottom of the stack, and the end of the walk.</summary>
+    private bool AddFrame(Activation engine, List<DebugFrame> frames, int pc, int env)
     {
-        if (_currentPredicatesByAddress is null || pc < 0) return;
+        if (_currentPredicatesByAddress is null || pc < 0) return false;
         var entries = SortedPredicateEntries();
         int i = Array.BinarySearch(entries, pc);
         if (i < 0) i = ~i - 1;
-        if (i < 0) return;
+        if (i < 0) return false;
         var pred = _currentPredicatesByAddress[entries[i]];
         var (atomId, arity) = FunctorTable.Lookup(pred.FunctorId);
         string name = DemangleLocalName(AtomTable.GetById(atomId)?.Name ?? "?");
@@ -3941,7 +3957,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // debugger showed an empty stack and looked broken. It shows the query now — as
         // `?-`, which is what the user typed, and NOT as a predicate: arity -1 says "this is
         // not a Name/Arity", and the debugger renders it without one.
-        if (name == "__query__")
+        bool isQuery = name == "__query__";
+        if (isQuery)
         {
             // `?-` on its own says only "a query is running", which the user could see from
             // the fact that they are stopped. It shows the GOAL — the text they typed —
@@ -3949,21 +3966,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             name = CurrentQueryText is null ? "?-" : "?- " + Ellipsize(CurrentQueryText, 120);
             arity = -1;
 
-            // Two different frames wear this name, and only one of them has variables.
-            //
-            // While the query still HAS its environment (debug turns last-call optimisation
-            // off precisely so it does), the address we are looking at is a real return
-            // address INSIDE the wrapper's code, paired with the wrapper's own frame — and
-            // the user's query variables read out of it.
-            //
-            // Once LCO has reclaimed that frame the address is the one the query returns to:
-            // the launcher, outside the program entirely, which the binary search above only
-            // called `__query__` by clamping to the last entry. The environment paired with
-            // it then belongs to somebody else, and reading the wrapper's variable map out of
-            // a stranger's frame produced confident nonsense — `Answer = 1491` where the
-            // program said 42, 1491 being a loop counter in the frame we had wandered into.
-            // The query still shows (the user is standing in it), with no variables, which is
-            // the truth: the machine no longer has them.
+            // The environment of a query whose frame last-call optimisation has already
+            // reclaimed belongs to somebody else by now, and reading the wrapper's variable
+            // map out of a stranger's frame produced confident nonsense — the answer reported
+            // as a loop counter. If this address is not really inside the wrapper's code (the
+            // search only landed here by clamping), there are no variables to be had.
             if (!WithinPredicate(pred, entries[i], pc)) env = -1;
 
             int clause = FirstClauseStartAtOrAfter(entries[i]);
@@ -3979,6 +3986,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             : "";
         frames.Add(new DebugFrame(
             name, arity, file, siteId >= 0 ? site.Line : 0, pc, ReadVariables(engine, pc, env)));
+        return isQuery;
     }
 
     /// <summary>ADR-035 — the variables of the clause running at <paramref name="pc"/>,
@@ -5634,6 +5642,29 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return name == "__query__" ? null : (name, arity);
     }
 
+    /// <summary>ADR-035 — is this predicate one a debugger may stop IN?
+    ///
+    /// <para>The prelude and the libraries are implicitly <c>:- disable_debug</c>, and they
+    /// are compiled that way — but a PORT is raised by the interpreter at every call and
+    /// every proceed, whatever the callee was compiled from. So a step landed in
+    /// <c>copy_term/3</c>, in <c>$prelude$$attr_goals_of/2</c>, in the top level's own
+    /// wrapper goals: code the user did not write, cannot see, and did not ask to step
+    /// through. Stepping has to stay in THEIR program, which means a port in code that is
+    /// not theirs must not stop it.</para></summary>
+    internal bool IsDebuggableAddress(int address)
+    {
+        if (_currentPredicatesByAddress is null || address < 0) return false;
+        var entries = SortedPredicateEntries();
+        int i = Array.BinarySearch(entries, address);
+        if (i < 0) i = ~i - 1;
+        if (i < 0) return false;
+        return !_nonDebuggableFunctors.Contains(
+            _currentPredicatesByAddress[entries[i]].FunctorId);
+    }
+
+    internal bool IsDebuggableFunctor(int functorId)
+        => !_nonDebuggableFunctors.Contains(functorId);
+
     /// <summary>Translates each address in <paramref name="addresses"/>
     /// to the <c>Name/Arity</c> of the predicate that *contains* it
     /// (the largest predicate-entry address ≤ the given address) via
@@ -5801,6 +5832,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             while (!halted && result == InterpreterResult.Halted)
             {
                 bool isLast = engine.B <= baseB;
+                // ADR-035 — the machine is about to hand the answer back and stand still.
+                // A step still in flight can never be satisfied from here (no port is
+                // coming until somebody asks for another solution), and a debugger left
+                // waiting for it thinks the program is running.
+                host.DebugSession?.OnLeaveProlog(engine);
                 yield return BuildSolution(varNames, varHeapIndices, engine, isLast, host);
                 // A known-last solution: don't backtrack — there's nothing
                 // to find and re-running would just confirm failure.
@@ -5813,6 +5849,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
         finally
         {
+            // The activation is dead — the query failed, ran out of solutions, or the
+            // caller stopped asking. Same as a yield, and more final.
+            host.DebugSession?.OnLeaveProlog(engine);
             host.ReturnHeapBuffer(engine);
         }
     }
@@ -8669,10 +8708,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         var syntheticClause = new Clause(ClauseKind.Rule, clauseTerm, queryTerm.Position);
 
         // What the user typed, kept for the call stack's query frame (see AddFrame). Only
-        // under a debug session: this renders a term, and nobody else is looking.
+        // under a debug session: this renders a term, and nobody else is looking. A host that
+        // wrapped the goal says so with QueryLabel — rendering ITS wrapper back would name
+        // the frame after machinery the user never wrote.
         CurrentQueryText = DebugSession is null
             ? null
-            : AstTermRenderer.Render(queryTerm, 999, _operators);
+            : QueryLabel ?? AstTermRenderer.Render(queryTerm, 999, _operators);
 
         // Chunk 417 — the Phase-19+ implicit_dynamic pre-scan is NO
         // LONGER applied to the query body. Pre-declaring an

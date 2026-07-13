@@ -444,6 +444,30 @@ namespace Shumway.Debugger.Concord
             if (snapshot == null || wasHello)
                 return; // the bootstrap stop is not the user's: let it run on
 
+            // THE STEP THAT CANNOT BE SATISFIED. Control has left Prolog — the query gave up
+            // its answer, or ran out of answers — and no port is coming. A step is a promise
+            // to stop at the next port that satisfies it, and there is none to keep it with.
+            //
+            // So we CANCEL it and let the program run on, rather than stop the user in the
+            // host's C# (they stepped past the end of their program; there is nothing there
+            // they asked to see). Leaving it in flight is what broke: Visual Studio waited
+            // for a stop that would never arrive, believed the program was still running, and
+            // answered every key with "Unable to step. Operation not supported."
+            if (snapshot.Reason == StopReason.StepAbandoned)
+            {
+                DkmStepper? orphan = state.Stepper;
+                state.Stepper = null;
+                state.PendingStep = DebugCommandKind.None;
+                state.StoppedAtPort = false;
+                if (orphan != null)
+                {
+                    ShumwayLog.Write("  step abandoned: control left Prolog");
+                    try { orphan.CancelStepper(runtimeBreakpoint.RuntimeInstance); }
+                    catch (Exception ex) { ShumwayLog.Write("  cancel threw: " + ex.Message); }
+                }
+                return;
+            }
+
             state.StoppedAtPort = true;
 
             if (snapshot.Reason == StopReason.Breakpoint)

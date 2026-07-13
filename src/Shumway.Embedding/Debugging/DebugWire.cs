@@ -21,6 +21,18 @@ public enum StopReason
     /// port it reached. A real stop, at a real point in the program — see
     /// <see cref="DebugCommandKind.BreakNow"/>.</summary>
     AsyncBreak = 5,
+
+    /// <summary>A step was in flight and control left Prolog: the query produced its
+    /// answer, or ran out of answers. No port can satisfy the step now, so it is over.
+    /// This is NOT a stop to show the user — there is nothing to show, the machine is not
+    /// in the program — it is the engine telling the debugger to CANCEL the step it is
+    /// waiting on. The debugger cancels and lets the program run on.
+    ///
+    /// <para>Without it: F10 past the last goal of a query left Visual Studio waiting
+    /// forever for a stop that was never coming. It believed the program was still
+    /// running, and every key after that answered "Unable to step. Operation not
+    /// supported."</para></summary>
+    StepAbandoned = 6,
 }
 
 /// <summary>ADR-035 — what the debugger asked the engine to do next.</summary>
