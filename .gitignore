@@ -483,3 +483,6 @@ $RECYCLE.BIN/
 
 # Claude Code per-user config
 .claude/
+
+# smoke-run artifacts
+vs/smoke/*-trace.txt

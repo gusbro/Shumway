@@ -1,7 +1,0 @@
-started
-tick(1,2)
-tick(2,4)
-tick(3,6)
-tick(4,8)
-tick(5,10)
-done
