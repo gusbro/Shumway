@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
-using System.Text;
 
 namespace Shumway.Embedding.Debugging;
 
@@ -40,7 +39,8 @@ public readonly record struct DebugCommand(
 ///
 /// <para>The buffers are pinned for the life of the session: the addresses are handed
 /// to the debugger once, at attach, and a moving GC would otherwise leave it reading
-/// somewhere else.</para>
+/// somewhere else. The format lives in <see cref="DebugWire"/>, which the debugger
+/// compiles too — one definition, so the two cannot disagree.</para>
 /// </summary>
 public sealed class DebugChannel : IDisposable
 {
@@ -49,9 +49,8 @@ public sealed class DebugChannel : IDisposable
     public const int SnapshotCapacity = 256 * 1024;
     public const int CommandCapacity = 16 * 1024;
 
-    /// <summary>Bumped whenever the layout below changes, so a debugger built against
-    /// an older engine says so instead of reading nonsense.</summary>
-    public const int FormatVersion = 1;
+    /// <summary>The wire format both sides speak. See <see cref="DebugWire"/>.</summary>
+    public const int FormatVersion = DebugWire.FormatVersion;
 
     private readonly byte[] _snapshot = new byte[SnapshotCapacity];
     private readonly byte[] _commands = new byte[CommandCapacity];
@@ -82,75 +81,47 @@ public sealed class DebugChannel : IDisposable
 
     /// <summary>Serialises a stop into the pinned buffer. Called BEFORE the notify
     /// breakpoint is tripped, so that by the time the debugger is looking, everything it
-    /// needs is already there and nothing has to run to produce it.</summary>
+    /// needs is already there and nothing has to run to produce it. Field order is the
+    /// one <see cref="DebugWire.ReadSnapshot"/> expects.</summary>
     public void WriteSnapshot(DebugStopEvent stop)
     {
         ArgumentNullException.ThrowIfNull(stop);
-        var w = new Writer(_snapshot);
-        w.Int(FormatVersion);
-        w.Int(++Sequence);
-        w.Int((int)stop.Reason);
-        w.Str(stop.Goal);
-        w.Str(stop.File);
-        w.Int(stop.Line);
-        w.Int(stop.Depth);
+        int at = 0;
+        DebugWire.WriteInt(_snapshot, ref at, DebugWire.FormatVersion);
+        DebugWire.WriteInt(_snapshot, ref at, ++Sequence);
+        DebugWire.WriteInt(_snapshot, ref at, (int)stop.Reason);
+        DebugWire.WriteString(_snapshot, ref at, stop.Goal);
+        DebugWire.WriteString(_snapshot, ref at, stop.File);
+        DebugWire.WriteInt(_snapshot, ref at, stop.Line);
+        DebugWire.WriteInt(_snapshot, ref at, stop.Depth);
 
-        w.Int(stop.Frames.Count);
+        DebugWire.WriteInt(_snapshot, ref at, stop.Frames.Count);
         foreach (var f in stop.Frames)
         {
-            w.Str(f.Name);
-            w.Int(f.Arity);
-            w.Str(f.File);
-            w.Int(f.Line);
-            w.Int(f.Pc);
-            w.Int(f.Variables.Count);
+            DebugWire.WriteString(_snapshot, ref at, f.Name);
+            DebugWire.WriteInt(_snapshot, ref at, f.Arity);
+            DebugWire.WriteString(_snapshot, ref at, f.File);
+            DebugWire.WriteInt(_snapshot, ref at, f.Line);
+            DebugWire.WriteInt(_snapshot, ref at, f.Pc);
+            DebugWire.WriteInt(_snapshot, ref at, f.Variables.Count);
             foreach (var (name, value) in f.Variables)
             {
-                w.Str(name);
-                w.Str(value);
+                DebugWire.WriteString(_snapshot, ref at, name);
+                DebugWire.WriteString(_snapshot, ref at, value);
             }
         }
-        w.Terminate();
+        // Zero the next word, so a reader that walks off the end of what was just
+        // written finds an empty count rather than the tail of an older, longer stop.
+        DebugWire.WriteInt(_snapshot, ref at, 0);
     }
 
-    /// <summary>Reads a snapshot back. The debugger does this across process boundaries
-    /// with ReadMemory; in-process this is the same decode, and is what the tests use to
-    /// prove the two agree.</summary>
-    public static DebugSnapshot ReadSnapshot(ReadOnlySpan<byte> buffer)
-    {
-        var r = new Reader(buffer);
-        int version = r.Int();
-        if (version != FormatVersion)
-            throw new InvalidOperationException(
-                $"Debug channel format {version}; this debugger speaks {FormatVersion}.");
+    /// <summary>The snapshot as it stands in the pinned buffer, decoded with the very
+    /// code the debugger uses.</summary>
+    public DebugSnapshot? ReadSnapshot() => DebugWire.ReadSnapshot(_snapshot);
 
-        int sequence = r.Int();
-        var reason = (StopReason)r.Int();
-        string goal = r.Str();
-        string file = r.Str();
-        int line = r.Int();
-        int depth = r.Int();
-
-        int frameCount = r.Int();
-        var frames = new List<DebugSnapshotFrame>(frameCount);
-        for (int i = 0; i < frameCount; i++)
-        {
-            string name = r.Str();
-            int arity = r.Int();
-            string frameFile = r.Str();
-            int frameLine = r.Int();
-            int pc = r.Int();
-            int varCount = r.Int();
-            var vars = new List<(string, string)>(varCount);
-            for (int v = 0; v < varCount; v++)
-                vars.Add((r.Str(), r.Str()));
-            frames.Add(new DebugSnapshotFrame(name, arity, frameFile, frameLine, pc, vars));
-        }
-        return new DebugSnapshot(sequence, reason, goal, file, line, depth, frames);
-    }
-
-    /// <summary>The snapshot as it stands in the pinned buffer.</summary>
-    public DebugSnapshot ReadSnapshot() => ReadSnapshot(_snapshot);
+    /// <summary>Decodes bytes read from the pinned buffer — the debugger's path, and
+    /// what the tests use to prove the two agree.</summary>
+    public static DebugSnapshot? ReadSnapshot(byte[] buffer) => DebugWire.ReadSnapshot(buffer);
 
     // ----- commands: debugger writes, engine reads -----
 
@@ -159,41 +130,37 @@ public sealed class DebugChannel : IDisposable
     public void WriteCommands(params DebugCommand[] commands)
     {
         ArgumentNullException.ThrowIfNull(commands);
-        var w = new Writer(_commands);
-        w.Int(FormatVersion);
-        w.Int(commands.Length);
+        int at = 0;
+        DebugWire.WriteInt(_commands, ref at, DebugWire.FormatVersion);
+        DebugWire.WriteInt(_commands, ref at, commands.Length);
         foreach (var c in commands)
         {
-            w.Int((int)c.Kind);
-            w.Str(c.File);
-            w.Int(c.Line);
-            w.Int(c.Flag ? 1 : 0);
+            DebugWire.WriteInt(_commands, ref at, (int)c.Kind);
+            DebugWire.WriteString(_commands, ref at, c.File);
+            DebugWire.WriteInt(_commands, ref at, c.Line);
+            DebugWire.WriteInt(_commands, ref at, c.Flag ? 1 : 0);
         }
-        w.Terminate();
     }
 
     /// <summary>Takes everything the debugger left, and empties the region — a command
     /// is obeyed once. The engine does this before it resumes.</summary>
     public IReadOnlyList<DebugCommand> DrainCommands()
     {
-        var r = new Reader(_commands);
-        if (_commands[0] == 0 && _commands[1] == 0 && _commands[2] == 0 && _commands[3] == 0)
-            return Array.Empty<DebugCommand>();
+        int at = 0;
+        int version = DebugWire.ReadInt(_commands, ref at);
+        if (version != DebugWire.FormatVersion) return Array.Empty<DebugCommand>();
 
-        int version = r.Int();
-        if (version != FormatVersion) return Array.Empty<DebugCommand>();
-
-        int count = r.Int();
-        var commands = new List<DebugCommand>(count);
+        int count = DebugWire.ReadInt(_commands, ref at);
+        var commands = new List<DebugCommand>(Math.Max(0, count));
         for (int i = 0; i < count; i++)
         {
-            var kind = (DebugCommandKind)r.Int();
-            string file = r.Str();
-            int line = r.Int();
-            bool flag = r.Int() != 0;
+            var kind = (DebugCommandKind)DebugWire.ReadInt(_commands, ref at);
+            string file = DebugWire.ReadString(_commands, ref at);
+            int line = DebugWire.ReadInt(_commands, ref at);
+            bool flag = DebugWire.ReadInt(_commands, ref at) != 0;
             commands.Add(new DebugCommand(kind, file, line, flag));
         }
-        Array.Clear(_commands, 0, 8);   // consumed
+        Array.Clear(_commands, 0, 8);   // consumed: a step asked for once is taken once
         return commands;
     }
 
@@ -204,92 +171,4 @@ public sealed class DebugChannel : IDisposable
         if (_snapshotPin.IsAllocated) _snapshotPin.Free();
         if (_commandsPin.IsAllocated) _commandsPin.Free();
     }
-
-    // ----- the wire format: little-endian ints, length-prefixed UTF-8 -----
-
-    private ref struct Writer
-    {
-        private readonly Span<byte> _buffer;
-        private int _at;
-
-        public Writer(Span<byte> buffer)
-        {
-            _buffer = buffer;
-            _at = 0;
-        }
-
-        public void Int(int value)
-        {
-            if (_at + 4 > _buffer.Length) return;   // truncate: the address must not move
-            _buffer[_at++] = (byte)value;
-            _buffer[_at++] = (byte)(value >> 8);
-            _buffer[_at++] = (byte)(value >> 16);
-            _buffer[_at++] = (byte)(value >> 24);
-        }
-
-        public void Str(string value)
-        {
-            int bytes = Encoding.UTF8.GetByteCount(value);
-            if (_at + 4 + bytes > _buffer.Length) { Int(0); return; }
-            Int(bytes);
-            Encoding.UTF8.GetBytes(value, _buffer.Slice(_at, bytes));
-            _at += bytes;
-        }
-
-        /// <summary>Zeroes the next word, so a reader that walks off the end of what was
-        /// written finds an empty count rather than the tail of an older, longer
-        /// snapshot.</summary>
-        public void Terminate() => Int(0);
-    }
-
-    private ref struct Reader
-    {
-        private readonly ReadOnlySpan<byte> _buffer;
-        private int _at;
-
-        public Reader(ReadOnlySpan<byte> buffer)
-        {
-            _buffer = buffer;
-            _at = 0;
-        }
-
-        public int Int()
-        {
-            if (_at + 4 > _buffer.Length) return 0;
-            int value = _buffer[_at]
-                | (_buffer[_at + 1] << 8)
-                | (_buffer[_at + 2] << 16)
-                | (_buffer[_at + 3] << 24);
-            _at += 4;
-            return value;
-        }
-
-        public string Str()
-        {
-            int length = Int();
-            if (length <= 0 || _at + length > _buffer.Length) return "";
-            string value = Encoding.UTF8.GetString(_buffer.Slice(_at, length));
-            _at += length;
-            return value;
-        }
-    }
 }
-
-/// <summary>ADR-035 — a stop, as the debugger reads it back out of the channel.</summary>
-public sealed record DebugSnapshot(
-    int Sequence,
-    StopReason Reason,
-    string Goal,
-    string File,
-    int Line,
-    int Depth,
-    IReadOnlyList<DebugSnapshotFrame> Frames);
-
-/// <summary>ADR-035 — one frame of a <see cref="DebugSnapshot"/>.</summary>
-public sealed record DebugSnapshotFrame(
-    string Name,
-    int Arity,
-    string File,
-    int Line,
-    int Pc,
-    IReadOnlyList<(string Name, string Value)> Variables);

@@ -38,12 +38,30 @@ public sealed class ChannelDebugSession : IDisposable
         _service = new DebugService(engine, OnStop);
 
         ShumwayDebugHelper.Channel = _channel;
+        ShumwayDebugHelper.Session = this;
         engine.AttachDebugSession(_service);
     }
 
     /// <summary>The channel the debugger reads and writes. Its addresses are what
     /// <see cref="ShumwayDebugHelper.Attach"/> hands out.</summary>
     public DebugChannel Channel => _channel;
+
+    /// <summary>ADR-035 — writes the CURRENT stack into the channel, at no port at all,
+    /// and returns the snapshot's sequence number (0 if nothing is running).
+    ///
+    /// <para>This is the asynchronous break. The user hits Break All; the process stops
+    /// wherever it happens to be, which is nowhere in particular; the channel still holds
+    /// the last real stop, and showing that would be a lie. So the debugger asks — by
+    /// func-eval, which is safe here because this is a normal stop and not the
+    /// breakpoint-notification context where a func-eval deadlocks — and the engine
+    /// answers from the machine that was last running.</para></summary>
+    public int CaptureNow()
+    {
+        DebugStopEvent? stop = _service.CaptureNow();
+        if (stop is null) return 0;
+        _channel.WriteSnapshot(stop);
+        return _channel.Sequence;
+    }
 
     private void OnStop(DebugService service, DebugStopEvent stop)
     {
@@ -100,7 +118,10 @@ public sealed class ChannelDebugSession : IDisposable
         _disposed = true;
         _engine.AttachDebugSession(null);
         if (ReferenceEquals(ShumwayDebugHelper.Channel, _channel))
+        {
             ShumwayDebugHelper.Channel = null;
+            ShumwayDebugHelper.Session = null;
+        }
         _channel.Dispose();
     }
 }

@@ -42,6 +42,27 @@ public static class ShumwayDebugHelper
         set => _channel = value;
     }
 
+    /// <summary>The session <see cref="CaptureNow"/> asks. One per process: there is one
+    /// debugger.</summary>
+    internal static ChannelDebugSession? Session { get; set; }
+
+    /// <summary>The asynchronous break. The user hit Break All, the process stopped
+    /// wherever it happened to be — at no port, so nothing has been reported — and the
+    /// channel still holds the last real stop, which would be a lie. This writes the
+    /// truth: the stack as it stands right now. Returns the new sequence number, or 0 if
+    /// no query is running.
+    ///
+    /// <para>The SECOND (and last) func-eval the design allows, and it is safe for the
+    /// same reason Attach is: a Break All is a normal stop, not the
+    /// breakpoint-notification context where evaluating a function deadlocks.</para>
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
+    public static int CaptureNow()
+    {
+        ChannelDebugSession? session = Session;
+        return session is null ? 0 : session.CaptureNow();
+    }
+
     /// <summary>The stop. Called by the engine with the snapshot already written; the
     /// debugger's hidden breakpoint lives on this method.
     ///

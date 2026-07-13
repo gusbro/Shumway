@@ -4760,6 +4760,34 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 AddInt(c.CalleeFunctorId);
                 AddInt(c.IsExecute ? 1 : 0);
             }
+            // ADR-035 — the debug metadata is part of the identity, even though it is
+            // not part of the bytecode. Two programs can compile to byte-identical code
+            // and be written on entirely different LINES: the stop sites and the frame
+            // maps are what tell them apart. Leaving them out of the key let one
+            // program's link be handed to another, which then reported its neighbour's
+            // source positions — a debugger showing the wrong file, with no error
+            // anywhere. Debug programs are also exactly the case this cache was never
+            // for (it exists so a pool can load one bundle N times), so the extra
+            // hashing costs nothing that matters.
+            AddInt(p.DebugStops.Count);
+            foreach (var s in p.DebugStops)
+            {
+                AddInt(s.Offset);
+                AddInt(s.SiteId);
+            }
+            AddInt(p.DebugFrames.Count);
+            foreach (var f in p.DebugFrames)
+            {
+                AddInt(f.Start);
+                AddInt(f.End);
+                AddInt(f.HasFrame ? 1 : 0);
+                AddInt(f.Variables.Count);
+                foreach (var v in f.Variables)
+                {
+                    AddInt(v.Slot);
+                    sha.AppendData(System.Text.Encoding.UTF8.GetBytes(v.Name));
+                }
+            }
         }
         return Convert.ToHexString(sha.GetHashAndReset());
     }

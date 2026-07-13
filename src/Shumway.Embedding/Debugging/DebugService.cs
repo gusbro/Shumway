@@ -4,20 +4,9 @@ using Shumway.Core;
 
 namespace Shumway.Embedding.Debugging;
 
-/// <summary>Why execution stopped.</summary>
-public enum StopReason
-{
-    /// <summary>An armed breakpoint was reached.</summary>
-    Breakpoint,
-    /// <summary>A goal is about to run.</summary>
-    Call,
-    /// <summary>A goal succeeded.</summary>
-    Exit,
-    /// <summary>A goal that had succeeded is being retried for another solution.</summary>
-    Redo,
-    /// <summary>A goal ran out of solutions.</summary>
-    Fail,
-}
+// StopReason lives in DebugWire.cs — the debugger compiles that file too, and a
+// debugger and a debuggee that disagree about an enum's values do not fail loudly,
+// they show the user a plausible, wrong stack.
 
 /// <summary>What the debugger wants next. The handler sets this before returning
 /// from a stop; execution resumes accordingly.</summary>
@@ -104,8 +93,37 @@ public sealed class DebugService : IDebugSession
         _stepDepth = _lastStopDepth;
     }
 
-    /// <summary>The machine we are stopped in. Null between stops.</summary>
+    /// <summary>The machine this session is watching — set at every port, and left set
+    /// between them.
+    ///
+    /// <para>It has to survive between ports for the asynchronous break: when the user
+    /// hits Break All, the engine is not at a port and never will be until it reaches
+    /// the next goal, but the debugger wants the stack NOW. It stops the process from
+    /// outside and asks (<see cref="CaptureNow"/>), and the answer can only come from
+    /// the machine that was last running.</para></summary>
     public Activation? Current { get; private set; }
+
+    /// <summary>ADR-035 — the stack as it stands, right now, at no port at all.
+    ///
+    /// <para>A Break All lands wherever the machine happened to be — mid-head-unification,
+    /// inside a builtin, anywhere. There is no port, so nothing has been reported and the
+    /// channel holds whatever the last stop left, which would be a lie. This builds the
+    /// truth on demand: the same frames, from the same environment chain, at the pc the
+    /// machine is standing on. Safe to call precisely because the process is stopped —
+    /// the activation is not running while the debugger is looking at it.</para>
+    ///
+    /// <para>Returns null if nothing is running (between queries).</para></summary>
+    public DebugStopEvent? CaptureNow()
+    {
+        Activation? engine = Current;
+        if (engine is null) return null;
+
+        var frames = _engine.CaptureFrames(engine);
+        string goal = frames.Count > 0 ? $"{frames[0].Name}/{frames[0].Arity}" : _currentGoal;
+        var site = SiteOf(engine.P);
+        return new DebugStopEvent(
+            StopReason.AsyncBreak, goal, site.File, site.Line, PortDepth(engine), frames);
+    }
 
     /// <summary>Turns last-call optimisation on or off for the query ALREADY RUNNING —
     /// which is what a debugger stopped inside one wants, and what
@@ -123,6 +141,7 @@ public sealed class DebugService : IDebugSession
 
     void IDebugSession.OnBreak(Activation engine, int pc)
     {
+        Current = engine;
         // A breakpoint always stops, whatever the step mode: it is the one thing the
         // user asked for by name.
         Stop(engine, StopReason.Breakpoint, PortDepth(engine), SiteOf(pc), goal: null);
@@ -175,6 +194,7 @@ public sealed class DebugService : IDebugSession
 
     void IDebugSession.OnRedo(Activation engine, int retryPc)
     {
+        Current = engine;
         if (_mode == StepMode.Continue) return;
 
         // The machine is standing in the computation that just FAILED — P, the
@@ -199,20 +219,12 @@ public sealed class DebugService : IDebugSession
 
         _mode = StepMode.Continue;
         _lastStopDepth = depth;
-        Current = engine;
         var site = SiteOf(pc);
-        try
-        {
-            _onStop(this, new DebugStopEvent(
-                StopReason.Redo,
-                pred is null ? _currentGoal : $"{pred.Value.Name}/{pred.Value.Arity}",
-                site.File, site.Line, depth,
-                _engine.CaptureFrames(engine, pc, e, cp)));
-        }
-        finally
-        {
-            Current = null;
-        }
+        _onStop(this, new DebugStopEvent(
+            StopReason.Redo,
+            pred is null ? _currentGoal : $"{pred.Value.Name}/{pred.Value.Arity}",
+            site.File, site.Line, depth,
+            _engine.CaptureFrames(engine, pc, e, cp)));
     }
 
     void IDebugSession.OnFail(Activation engine)
@@ -240,6 +252,10 @@ public sealed class DebugService : IDebugSession
 
     private void MaybeStopAtPort(Activation engine, StopReason reason, int depth, string? goal)
     {
+        // Every port, whether we stop at it or not: this is how an asynchronous break
+        // later knows which machine to ask. One field store per goal.
+        Current = engine;
+
         if (_mode == StepMode.Continue) return;
 
         bool stop = _mode switch
@@ -275,14 +291,7 @@ public sealed class DebugService : IDebugSession
         var frames = _engine.CaptureFrames(engine);
         goal ??= frames.Count > 0 ? $"{frames[0].Name}/{frames[0].Arity}" : "";
 
-        try
-        {
-            _onStop(this, new DebugStopEvent(reason, goal, site.File, site.Line, depth, frames));
-        }
-        finally
-        {
-            Current = null;
-        }
+        _onStop(this, new DebugStopEvent(reason, goal, site.File, site.Line, depth, frames));
     }
 
     private (string File, int Line) SiteOf(int pc)

@@ -149,6 +149,50 @@ public class Adr035ChannelTests
     }
 
     [Fact]
+    public void AnAsynchronousBreakAsksTheEngineWhereItIs()
+    {
+        // Break All lands wherever the machine happens to be — at no port, so nothing
+        // has been reported, and the channel holds whatever the last stop left. Showing
+        // that would be a lie. So the debugger asks, and the engine answers from the
+        // machine that was last running. This is the one thing the port model cannot do
+        // on its own, and the reason DebugService.Current outlives a stop.
+        var engine = DebugEngine(
+            "top(A) :-\n    mid(A, B),\n    use(B).\nmid(In, out(In)).\nuse(_).\n");
+        engine.AddBreakpoint("<string>", 5);   // inside mid/2
+
+        DebugSnapshot? onBreakAll = null;
+        ChannelDebugSession? session = null;
+        session = new ChannelDebugSession(engine, notify: _ =>
+        {
+            // Stand in for the user hitting Break All a moment later: ask, then read
+            // exactly what a debugger would read, from the address.
+            int sequence = ShumwayDebugHelper.CaptureNow();
+            Assert.True(sequence > 0);
+            onBreakAll = ReadFromMemory(session!.Channel);
+        });
+        using (session)
+            engine.QueryAll("top(one).").ToList();
+
+        Assert.NotNull(onBreakAll);
+        Assert.Equal(StopReason.AsyncBreak, onBreakAll!.Reason);
+        // Not a port — but the stack is real, and so are the variables.
+        Assert.Equal(new[] { "mid/2", "top/1" },
+            onBreakAll.Frames.Select(f => $"{f.Name}/{f.Arity}"));
+        Assert.Equal("one", onBreakAll.Frames[0].Variables.First(v => v.Name == "In").Value);
+    }
+
+    [Fact]
+    public void AnAsynchronousBreakWithNothingRunningSaysSo()
+    {
+        var engine = DebugEngine("p(1).\n");
+        using var session = new ChannelDebugSession(engine, notify: _ => { });
+
+        // Between queries there is no machine to ask, and inventing one would be worse
+        // than saying nothing.
+        Assert.Equal(0, ShumwayDebugHelper.CaptureNow());
+    }
+
+    [Fact]
     public void AttachSaysSoWhenNoSessionIsRunning()
     {
         ShumwayDebugHelper.Channel = null;

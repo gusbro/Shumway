@@ -310,6 +310,28 @@ public class Adr035SteppingTests
     }
 
     [Fact]
+    public void TwoProgramsWithIdenticalCodeOnDifferentLinesDoNotShareEachOthersPositions()
+    {
+        // The static link is cached process-wide, keyed by a hash of the BYTECODE — so
+        // that a pool loading one bundle N times links it once. These two programs are
+        // byte-identical and written on entirely different lines, which is exactly the
+        // collision: without the debug metadata in that key, the second engine gets the
+        // first one's link, and reports its neighbour's source positions. A debugger
+        // showing the wrong lines, with no error anywhere.
+        var first = DebugEngine("q(X) :-\n    r(X).\nr(1).\n");                     // goal on 3
+        var second = DebugEngine("\n\n\n\nq(X) :-\n    r(X).\nr(1).\n");            // goal on 7
+
+        Assert.Equal(3, first.BoundLine("<string>", 3));
+        Assert.Equal(7, second.BoundLine("<string>", 7));
+
+        second.AddBreakpoint("<string>", 7);
+        var stops = Walk(second, "q(A).");
+
+        Assert.Single(stops);
+        Assert.Equal(7, stops[0].Line);
+    }
+
+    [Fact]
     public void SteppingDoesNotChangeWhatTheProgramComputes()
     {
         var engine = DebugEngine("app([], L, L).\napp([H|T], L, [H|R]) :-\n    app(T, L, R).\n");
