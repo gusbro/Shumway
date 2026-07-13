@@ -286,7 +286,19 @@ namespace Shumway.Debugger.Concord
             {
                 var bytes = new byte[state.SnapshotLength];
                 process.ReadMemory((ulong)state.SnapshotAddress, DkmReadMemoryFlags.None, bytes);
-                return DebugWire.ReadSnapshot(bytes);
+                DebugSnapshot? snapshot = DebugWire.ReadSnapshot(bytes);
+
+                // The engine is RUNNING, so this is the record of a stop that is over, not a
+                // description of where the program is — and the process was frozen from
+                // outside (a raw Break All we declined, a breakpoint in the user's C#, an
+                // exception). Showing the last Prolog stack here would not be a stale answer,
+                // it would be a wrong one: the program is not standing in those frames. Say
+                // there is no Prolog stack, and let the C# the machine really is in speak for
+                // itself. A pause that CAN be answered never gets here — it stops the engine
+                // at a port first (see ShumwayAsyncBreak).
+                if (snapshot != null && snapshot.Running) return null;
+
+                return snapshot;
             }
             catch (Exception ex)
             {

@@ -135,12 +135,33 @@ stepping over.
 The prelude and the bundled libraries are implicitly `disable_debug`: you step through
 your program, not through `maplist/3`.
 
+## Pausing
+
+Break All does not freeze the engine where it stands. It asks it to stop at the **next
+goal**, and stops there — which is microseconds away in a running program, and is the first
+point at which a Prolog call stack exists at all. A machine caught at an arbitrary
+instruction is halfway through a unification or three levels inside a builtin: it has no
+stack to show, and the last one it had is not where it is.
+
+So the stack you get from a pause is a real one, at a real point in your program, and you
+can step from it.
+
+If Prolog is not running when you pause — the engine is blocked in a read, the query is
+over, the thread is deep in your own C# — no goal is coming, and Visual Studio freezes the
+process as it normally would. You then see the C# stack, which in that case is the truth.
+No Prolog frames are invented for it.
+
 ## What the debugger costs
 
 Nothing, when it is not running. The port hooks are behind a per-engine flag; a release
-build has no debug metadata and never tests it. Under a session the engine runs Tier-0
-(the bytecode interpreter) for debuggable modules, which is slower than the IL it would
-otherwise promote to — that is the price of being able to stop between two goals.
+build has no debug metadata and never tests it.
+
+Under `--debug` the engine runs Tier-0 (the bytecode interpreter) for debuggable modules,
+keeps every environment frame (LCO off), and passes a port at every goal — measured at
+roughly 1.5–2× the release time on a real program. That is the price of being able to stop
+between two goals, and it is bounded: nothing is rendered, walked, or captured unless
+somebody actually stops. If a run under the debugger is *dramatically* slower than that,
+it is a bug — say so.
 
 ## Known limits
 

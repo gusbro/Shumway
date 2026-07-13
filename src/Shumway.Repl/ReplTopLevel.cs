@@ -126,7 +126,11 @@ internal static class ReplTopLevel
         {
             engine.Flags.EmitDebugInfo = true;
             engine.Flags.DebugCodegen = true;
-            engine.Flags.DebugLco = false;   // a reclaimed frame is a frame nobody can show
+            // A reclaimed frame is a frame nobody can show, so a debug session wants LCO off
+            // — but SHUMWAY_DEBUG_LCO is a PIN, and a pin that the code overrides is not one.
+            // (PrologFlags already read it; only the unpinned case is ours to decide.)
+            if (Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_LCO") is null)
+                engine.Flags.DebugLco = false;
             // Held alive by ShumwayDebugHelper.Session — there is one debugger, and the
             // session it talks to lasts as long as the process.
             // The files we are ABOUT to consult, said before we consult them: a breakpoint the

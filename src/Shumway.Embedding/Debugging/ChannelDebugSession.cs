@@ -53,21 +53,25 @@ public sealed class ChannelDebugSession : IDisposable
     /// a running program to resume — and acting on it would silently change the step mode of
     /// a query nobody is stopped in.</para>
     ///
-    /// <para><b>The asynchronous break.</b> When the user hits Break All the process stops at
-    /// no port, nothing has been reported, and the debugger wants the stack NOW. It cannot
-    /// ask for it: Visual Studio will evaluate a method in the debuggee only on the thread it
-    /// considers current, and refuses outright once that method touches an intrinsic — which
-    /// the capture path does, deep inside the machine. Both of those were learned by running
-    /// it, and together they close the door on asking.</para>
-    ///
-    /// <para>So the engine does not wait to be asked. It leaves a recent answer lying in the
-    /// buffer, refreshed on a CLOCK rather than on a count of goals — so the cost is bounded
-    /// by time, not by how fast the program happens to run. What a Break All shows is a real
-    /// port the machine passed through, at most <see cref="SampleIntervalMs"/> ago; not a
-    /// synthetic mid-unification state, and not a lie.</para></summary>
+    /// <para><b>The pause.</b> When the user hits Break All, the answer is NOT to freeze the
+    /// process and describe wherever it landed. A Prolog machine stopped mid-instruction is
+    /// halfway through a unification or inside a builtin: it has no call stack to show, and
+    /// the last one it had is not where it is. So a pause is a REQUEST
+    /// (<see cref="DebugCommandKind.BreakNow"/>): the engine reads it here, between goals,
+    /// and stops at the next port — a real stop, microseconds later, with a stack that is
+    /// true. That is what every interpreter's debugger does with a pause, and it is why the
+    /// engine no longer keeps a rendered stack lying around "just in case" (it did, on a
+    /// 50 ms clock; rendering the whole environment chain twenty times a second is what made
+    /// a real program under the debugger never finish).</para></summary>
     private void PollWhileRunning()
     {
-        bool hello = false;
+        // Prolog is moving, and a debugger that wants to pause needs to know it — otherwise
+        // it cannot tell "stop at the next port, it is microseconds away" from "no port is
+        // ever coming, freeze the process". One word per poll.
+        _channel.Heartbeat();
+
+        bool stopNow = false;
+        StopReason reason = StopReason.AsyncBreak;
         foreach (var command in _channel.DrainCommands())
         {
             switch (command.Kind)
@@ -78,38 +82,31 @@ public sealed class ChannelDebugSession : IDisposable
                 case DebugCommandKind.SetLastCallOptimisation:
                     Apply(_service, command);
                     break;
+
+                // The user asked to pause. Stop at THIS port: we are standing on one.
+                case DebugCommandKind.BreakNow:
+                    stopNow = true;
+                    reason = StopReason.AsyncBreak;
+                    break;
+
+                // A stop nobody wants, for its side effect: a debugger can only build the
+                // things that represent a source file — the things a breakpoint binds
+                // against — from inside a real stop event, and until it has them no
+                // breakpoint can bind, so no stop can ever happen. One of them has to go
+                // first. This is it. See DebugCommandKind.Hello.
                 case DebugCommandKind.Hello:
-                    hello = true;
+                    stopNow = true;
+                    reason = StopReason.AsyncBreak;
                     break;
             }
         }
 
-        if (hello)
-        {
-            // A stop nobody wants, for its side effect: a debugger can only build the things
-            // that represent a source file — the things a breakpoint binds against — from
-            // inside a real stop event, and until it has them no breakpoint can bind, so no
-            // stop can ever happen. One of them has to go first. This is it. See
-            // DebugCommandKind.Hello.
-            OnStop(_service, _service.CaptureNow()
-                ?? new DebugStopEvent(StopReason.AsyncBreak, "", "", 0, 0, Array.Empty<PrologEngine.DebugFrame>()));
-            return;
-        }
+        if (!stopNow) return;
 
-        long now = Environment.TickCount64;
-        if (now - _lastSample < SampleIntervalMs) return;
-        _lastSample = now;
-
-        DebugStopEvent? sample = _service.CaptureNow();
-        if (sample is not null) _channel.WriteSnapshot(sample);
+        DebugStopEvent? here = _service.CaptureNow();
+        OnStop(_service, here ?? new DebugStopEvent(
+            reason, "", "", 0, 0, Array.Empty<PrologEngine.DebugFrame>()));
     }
-
-    /// <summary>How stale the asynchronous break's answer may be. Short enough that no human
-    /// can tell; long enough that rendering a stack of terms twenty times a second is nothing
-    /// beside what a debug session already costs.</summary>
-    public const int SampleIntervalMs = 50;
-
-    private long _lastSample;
 
     /// <summary>The channel the debugger reads and writes. Its addresses are what
     /// <see cref="ShumwayDebugHelper.Attach"/> hands out.</summary>
@@ -221,6 +218,12 @@ public sealed class ChannelDebugSession : IDisposable
         // 3. Drain. Whatever the debugger decided while we were stopped is now waiting.
         foreach (var command in _channel.DrainCommands())
             Apply(service, command);
+
+        // 4. Say that the stack in the buffer is now HISTORY. From here until the next stop
+        //    there is no Prolog stack to show, and a debugger that freezes the process (a
+        //    raw Break All, a breakpoint in C#) must not be handed the last one as if it
+        //    were current.
+        _channel.SetRunning();
     }
 
     private void Apply(DebugService service, DebugCommand command)

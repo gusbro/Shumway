@@ -78,5 +78,20 @@
       </Implements>
     </Class>
 
+    <!-- The pause. Break All must not freeze a Prolog machine where it stands: at an
+         arbitrary instruction it is mid-unification, inside a builtin, between frames, and
+         it has NO call stack to show. Taking the request ahead of the built-in handler lets
+         us ask the engine to stop at its next port instead - microseconds away, and a point
+         where the stack is true. When Prolog is not running we decline, and the CLR freezes
+         the process exactly as it did before. -->
+    <Class Name="Shumway.Debugger.Concord.ShumwayAsyncBreak">
+      <Implements>
+        <InterfaceGroup Priority="AboveNormal">
+          <NoFilter/>
+          <Interface Name="IDkmAsyncBreak"/>
+        </InterfaceGroup>
+      </Implements>
+    </Class>
+
   </ManagedComponent>
 </Configuration>

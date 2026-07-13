@@ -17,9 +17,9 @@ public enum StopReason
     Redo = 3,
     /// <summary>A goal ran out of solutions.</summary>
     Fail = 4,
-    /// <summary>Not a port at all: the debugger stopped the process from outside (Break
-    /// All) and asked the engine where it was. See
-    /// <see cref="ShumwayDebugHelper.CaptureNow"/>.</summary>
+    /// <summary>The user asked to pause (Break All), and the engine stopped at the next
+    /// port it reached. A real stop, at a real point in the program — see
+    /// <see cref="DebugCommandKind.BreakNow"/>.</summary>
     AsyncBreak = 5,
 }
 
@@ -43,6 +43,20 @@ public enum DebugCommandKind
     /// go first. So the debugger asks for a stop it does not need, takes what it needs from
     /// it, and lets the program run on.</summary>
     Hello = 9,
+
+    /// <summary>"Pause." — and pause means STOP AT THE NEXT PORT, not freeze wherever the
+    /// process happens to be.
+    ///
+    /// <para>A Prolog machine frozen mid-instruction has no call stack to show: it is
+    /// halfway through a unification, in the middle of a builtin, between two frames. The
+    /// only way to answer honestly is to let it reach the next goal — a point where the
+    /// stack MEANS something — and stop it there. That is microseconds away in any running
+    /// program, and it is what every interpreter's debugger does with a pause.</para>
+    ///
+    /// <para>The engine reads this while running (the poll between goals) and turns it into
+    /// a genuine stop, with a genuine stack, reported as
+    /// <see cref="StopReason.AsyncBreak"/>.</para></summary>
+    BreakNow = 10,
 }
 
 /// <summary>ADR-035 — one command, in the form both sides can build. (The engine's own
@@ -60,6 +74,27 @@ public sealed class DebugWireCommand
 public sealed class DebugSnapshot
 {
     public int Sequence { get; set; }
+
+    /// <summary>Whether the engine is RUNNING — in which case everything else here is
+    /// history, the record of the last stop, and there is no current Prolog stack at all.
+    ///
+    /// <para>Without this the debugger cannot tell a stack that is TRUE from one that
+    /// merely WAS: it reads the same buffer either way. A frozen process (the CLR's raw
+    /// Break All, or a stop in C# or native code) must not be shown Prolog frames from the
+    /// last breakpoint — that is not a slightly stale stack, it is a stack the program is
+    /// not standing in. When this is set, the debugger shows no Prolog frames; the C# it is
+    /// actually stopped in is the truth, and Visual Studio already shows that.</para>
+    ///
+    /// <para>Set by the engine when it resumes; cleared by the snapshot of every stop.</para>
+    /// </summary>
+    public bool Running { get; set; }
+
+    /// <summary>Rises as the engine passes goals. Nothing reads its value — only whether it
+    /// CHANGED between two looks, which is how a debugger tells a running Prolog machine
+    /// (pause it at the next port) from one that will never reach another port because it is
+    /// blocked, or finished, or standing in C#.</summary>
+    public int Heartbeat { get; set; }
+
     public StopReason Reason { get; set; }
     public string Goal { get; set; } = "";
     public string File { get; set; } = "";
@@ -110,7 +145,8 @@ public sealed class DebugVariableView
 ///
 /// <para>Layout — little-endian ints, length-prefixed UTF-8 strings:</para>
 /// <code>
-/// snapshot: version, sequence, reason, goal, file, line, depth, breakFile, breakLine,
+/// snapshot: version, sequence, running, heartbeat, reason, goal, file, line, depth,
+///           breakFile, breakLine,
 ///           frameCount, { name, arity, file, line, pc,
 ///                         varCount, { name, value } }
 /// commands: version, count, { kind, file, line, flag }
@@ -120,7 +156,20 @@ public static class DebugWire
 {
     /// <summary>Bumped whenever the layout changes, so a debugger built against an older
     /// engine says so instead of reading nonsense.</summary>
-    public const int FormatVersion = 1;
+    public const int FormatVersion = 2;
+
+    /// <summary>Where the <see cref="DebugSnapshot.Running"/> word sits: past the version
+    /// and the sequence. The engine pokes it in place when it resumes — telling the
+    /// debugger "what is in here is history now" has to be cheap enough to do at every
+    /// stop, and rewriting the whole stack to say so is not.</summary>
+    public const int RunningOffset = 8;
+
+    /// <summary>Where the <see cref="DebugSnapshot.Heartbeat"/> word sits, right after it.
+    /// The engine bumps it as it passes goals; a debugger reads it twice to find out
+    /// whether Prolog is actually MOVING — which is the difference between a pause it can
+    /// honour (stop at the next port) and one it cannot (the engine is blocked in a read,
+    /// or sitting at the top-level prompt, and no port will ever come).</summary>
+    public const int HeartbeatOffset = 12;
 
     // ----- primitives -----
 
@@ -182,6 +231,8 @@ public static class DebugWire
         var snapshot = new DebugSnapshot
         {
             Sequence = ReadInt(buffer, ref at),
+            Running = ReadInt(buffer, ref at) != 0,
+            Heartbeat = ReadInt(buffer, ref at),
             Reason = (StopReason)ReadInt(buffer, ref at),
             Goal = ReadString(buffer, ref at),
             File = ReadString(buffer, ref at),

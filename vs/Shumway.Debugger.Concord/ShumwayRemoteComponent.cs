@@ -88,6 +88,11 @@ namespace Shumway.Debugger.Concord
         /// we ask it to stop once for nothing. Cleared by the first stop.</summary>
         public bool NeedHello = true;
 
+        /// <summary>The user asked to pause, and we asked the engine to stop at its next
+        /// port rather than letting the process be frozen where it stood. Set when the pause
+        /// is taken, cleared when the port arrives and the break is completed.</summary>
+        public bool AsyncBreakPending;
+
         public static string Key(string file, int line) =>
             file + "|" + line.ToString(CultureInfo.InvariantCulture);
     }
@@ -297,6 +302,12 @@ namespace Shumway.Debugger.Concord
             WriteCommands(process, state);
         }
 
+        /// <summary>Ask the engine to stop at its next port. This is the pause — see
+        /// <see cref="ShumwayAsyncBreak"/> for why a pause is a request and not a freeze.
+        /// The command rides the same idempotent full-state write as everything else.</summary>
+        internal static void RequestBreakNow(DkmProcess process, ShumwayServerDataItem state)
+            => WriteCommands(process, state);
+
         private static DebugCommandKind StepKindOf(DkmStepper stepper)
         {
             switch (stepper.StepKind)
@@ -405,6 +416,20 @@ namespace Shumway.Debugger.Concord
                 // An engine-side breakpoint nobody drew (the REPL's own, a stale arm).
                 // Not ours to stop on.
                 state.StoppedAtPort = false;
+                return;
+            }
+
+            // The pause the user asked for has landed. It landed at a PORT — a real point in
+            // the program, with a real stack — which is the whole reason we did not simply
+            // let Visual Studio freeze the process where it stood: a Prolog machine caught
+            // mid-unification has no stack to show, and the last one it had is not where it
+            // is. Completing the break (rather than reporting a breakpoint hit) is what tells
+            // VS that the pause it requested is the thing that happened.
+            if (state.AsyncBreakPending && snapshot.Reason == StopReason.AsyncBreak)
+            {
+                state.AsyncBreakPending = false;
+                ShumwayLog.Write("  async break landed at " + snapshot.File + ":" + snapshot.Line);
+                process.OnAsyncBreakComplete(DkmAsyncBreakStatus.ActiveBreak, thread);
                 return;
             }
 
@@ -568,6 +593,8 @@ namespace Shumway.Debugger.Concord
                 commands.Add(new DebugWireCommand { Kind = state.PendingStep });
             if (state.NeedHello)
                 commands.Add(new DebugWireCommand { Kind = DebugCommandKind.Hello });
+            if (state.AsyncBreakPending)
+                commands.Add(new DebugWireCommand { Kind = DebugCommandKind.BreakNow });
 
             try
             {

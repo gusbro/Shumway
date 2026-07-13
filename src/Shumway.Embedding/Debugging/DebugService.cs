@@ -78,7 +78,52 @@ public sealed class DebugService : IDebugSession
 
     // The callee named by the last call port. Only a call port knows the name of the
     // goal it is about to run; every other stop reads it back off the frame it is in.
-    private string _currentGoal = "";
+    //
+    // Held as the ID the port reported, NOT as a name: naming it means a demangle and a
+    // "name/arity" — two allocations per goal, for a string almost every port throws away.
+    // A stop is rare; a port is not. Resolve at the stop.
+    private GoalKind _goalKind;
+    private int _goalId;
+
+    private enum GoalKind : byte { None, Address, Functor, Builtin }
+
+    /// <summary>The goal the last call port reported, named. Only called at a stop.</summary>
+    private string CurrentGoal()
+    {
+        switch (_goalKind)
+        {
+            case GoalKind.Address:
+                var pred = _engine.LookupPredicateByAddress(_goalId);
+                return pred is null
+                    ? ""
+                    : $"{PrologEngine.DemangleLocalName(pred.Value.Name)}/{pred.Value.Arity}";
+            case GoalKind.Functor:
+                return FunctorGoalName(_goalId) ?? "";
+            case GoalKind.Builtin:
+                var entry = Shumway.Builtins.BuiltinsRegistry.GetById(_goalId);
+                return $"{entry.Name}/{entry.Arity}";
+            default:
+                return "";
+        }
+    }
+
+    // Whether a functor is one of the engine's own helpers ($-prefixed once demangled),
+    // and what it is called if it is not — decided ONCE per functor. Functor ids are
+    // stable for the life of the process, and the answer is a property of the name, so
+    // the second call port on the same predicate costs a dictionary probe and nothing
+    // else. (Null = internal: raise no port for it.)
+    private readonly Dictionary<int, string?> _functorGoalNames = new();
+
+    private string? FunctorGoalName(int functorId)
+    {
+        if (_functorGoalNames.TryGetValue(functorId, out string? cached)) return cached;
+
+        var (atomId, arity) = FunctorTable.Lookup(functorId);
+        string name = PrologEngine.DemangleLocalName(AtomTable.GetById(atomId)?.Name ?? "?");
+        string? goal = IsInternal(name) ? null : $"{name}/{arity}";
+        _functorGoalNames[functorId] = goal;
+        return goal;
+    }
 
     // ADR-035 — the site of a breakpoint we just stopped at, if the code there is
     // about to CALL something. The call port that follows is the same event as the
@@ -127,7 +172,7 @@ public sealed class DebugService : IDebugSession
         if (engine is null) return null;
 
         var frames = _engine.CaptureFrames(engine);
-        string goal = frames.Count > 0 ? $"{frames[0].Name}/{frames[0].Arity}" : _currentGoal;
+        string goal = frames.Count > 0 ? $"{frames[0].Name}/{frames[0].Arity}" : CurrentGoal();
         var site = SiteOf(engine.P);
         return new DebugStopEvent(
             StopReason.AsyncBreak, goal, site.File, site.Line, PortDepth(engine), frames);
@@ -180,18 +225,19 @@ public sealed class DebugService : IDebugSession
 
     void IDebugSession.OnCallAddress(Activation engine, int address, bool tailCall)
     {
-        var pred = _engine.LookupPredicateByAddress(address);
-        if (pred is null) return;
-        OnCall(engine,
-            $"{PrologEngine.DemangleLocalName(pred.Value.Name)}/{pred.Value.Arity}");
+        // A dictionary probe, and no port for an address that names no predicate.
+        if (_engine.LookupPredicateByAddress(address) is null) return;
+        _goalKind = GoalKind.Address;
+        _goalId = address;
+        OnCall(engine);
     }
 
     void IDebugSession.OnCallFunctor(Activation engine, int functorId, bool tailCall)
     {
-        var (atomId, arity) = FunctorTable.Lookup(functorId);
-        string name = PrologEngine.DemangleLocalName(AtomTable.GetById(atomId)?.Name ?? "?");
-        if (IsInternal(name)) return;
-        OnCall(engine, $"{name}/{arity}");
+        if (FunctorGoalName(functorId) is null) return;   // an engine helper: not a goal
+        _goalKind = GoalKind.Functor;
+        _goalId = functorId;
+        OnCall(engine);
     }
 
     void IDebugSession.OnCallBuiltin(Activation engine, int builtinId, bool tailCall)
@@ -201,26 +247,30 @@ public sealed class DebugService : IDebugSession
         // worth it: it is what a stop immediately after them should be blamed on.
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
         if (IsInternal(entry.Name)) return;
-        _currentGoal = $"{entry.Name}/{entry.Arity}";
+        _goalKind = GoalKind.Builtin;
+        _goalId = builtinId;
     }
 
-    private void OnCall(Activation engine, string goal)
+    private void OnCall(Activation engine)
     {
-        _currentGoal = goal;
-
         // The breakpoint we just reported was ON this call. Do not report it twice.
-        int site = _engine.SiteAtOrBefore(engine.P);
-        bool alreadyReported = site >= 0 && site == _reportedCallSite;
-        _reportedCallSite = -1;
-        if (alreadyReported) return;
+        // Only worth asking right after a breakpoint stop — the rest of the time there is
+        // nothing to be equal to, and this is a binary search over every stop site.
+        if (_reportedCallSite >= 0)
+        {
+            int site = _engine.SiteAtOrBefore(engine.P);
+            bool alreadyReported = site == _reportedCallSite;
+            _reportedCallSite = -1;
+            if (alreadyReported) return;
+        }
 
-        MaybeStopAtPort(engine, StopReason.Call, PortDepth(engine), goal);
+        MaybeStopAtPort(engine, StopReason.Call);
     }
 
     void IDebugSession.OnBuiltinResult(Activation engine, int builtinId, bool succeeded) { }
 
     void IDebugSession.OnExit(Activation engine)
-        => MaybeStopAtPort(engine, StopReason.Exit, PortDepth(engine), goal: null);
+        => MaybeStopAtPort(engine, StopReason.Exit);
 
     void IDebugSession.OnRedo(Activation engine, int retryPc)
     {
@@ -252,13 +302,13 @@ public sealed class DebugService : IDebugSession
         var site = SiteOf(pc);
         _onStop(this, new DebugStopEvent(
             StopReason.Redo,
-            pred is null ? _currentGoal : $"{pred.Value.Name}/{pred.Value.Arity}",
+            pred is null ? CurrentGoal() : $"{pred.Value.Name}/{pred.Value.Arity}",
             site.File, site.Line, depth,
             _engine.CaptureFrames(engine, pc, e, cp)));
     }
 
     void IDebugSession.OnFail(Activation engine)
-        => MaybeStopAtPort(engine, StopReason.Fail, PortDepth(engine), goal: null);
+        => MaybeStopAtPort(engine, StopReason.Fail);
 
     void IDebugSession.MarkHeapRoots(Action<int> markCell) { }
     void IDebugSession.RelocateHeapRoots(Func<int, int> relocIndex) { }
@@ -280,7 +330,7 @@ public sealed class DebugService : IDebugSession
 
     // ----- the step condition -----
 
-    private void MaybeStopAtPort(Activation engine, StopReason reason, int depth, string? goal)
+    private void MaybeStopAtPort(Activation engine, StopReason reason)
     {
         // Every port, whether we stop at it or not: this is how an asynchronous break
         // later knows which machine to ask. One field store per goal.
@@ -296,8 +346,16 @@ public sealed class DebugService : IDebugSession
             Poll();
         }
 
+        // Nobody is stepping, so nothing below this line can change what happens next —
+        // and this is where a port must cost nothing. The depth in particular: it is
+        // read by WALKING the environment chain, which under a debugger (LCO off, every
+        // frame retained) is as long as the recursion is deep. Computing it at every
+        // port of a running program made the cost of running one QUADRATIC in its call
+        // depth: a 300k-deep tail recursion never came back. Ask only when the answer
+        // is used.
         if (_mode == StepMode.Continue) return;
 
+        int depth = PortDepth(engine);
         bool stop = _mode switch
         {
             // Into: the next port, however deep.
@@ -314,7 +372,10 @@ public sealed class DebugService : IDebugSession
         };
         if (!stop) return;
 
-        Stop(engine, reason, depth, SiteOf(engine.P), goal);
+        // Only a call port knows the goal it is about to run; the others are read back
+        // off the frame the machine is stopped in.
+        Stop(engine, reason, depth, SiteOf(engine.P),
+            goal: reason == StopReason.Call ? CurrentGoal() : null);
     }
 
     /// <param name="goal">The goal to name, when the port knows it (only a call port
