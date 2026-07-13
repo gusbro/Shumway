@@ -19,23 +19,25 @@ extension development" workload):
     vs\Shumway.Debugger.sln /p:Configuration=Release
 ```
 
-Double-click the resulting `vs\Shumway.Debugger.Vsix\bin\Release\Shumway.Debugger.vsix`.
-
-**Reinstalling.** The installer compares *versions*, not contents: rebuild the extension
-without touching `source.extension.vsixmanifest` and it will tell you "this extension is
-already installed to all applicable products" and do nothing. Either bump `Version` in the
-manifest, or uninstall first:
+Then install it — **with Visual Studio closed** — using the script, which uninstalls the old
+one first:
 
 ```
-"C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\VSIXInstaller.exe" ^
-    /uninstall:Shumway.Debugger.50e1d3f2-52aa-4991-855f-f6426e9ae257
+powershell -ExecutionPolicy Bypass -File vs\install-vsix.ps1 -Configuration Release
 ```
 
-**The extension and the engine are a pair.** They speak a private memory format across the
-process boundary, and a stale extension against a rebuilt engine cannot read it. It says so
-in the call stack — "the engine speaks channel format vN, this extension speaks vM — rebuild
-and reinstall the VSIX" — rather than showing you a wrong stack. When you see that, this is
-what to do.
+**Do not double-click the .vsix to upgrade.** The installer compares *versions*, not
+contents: rebuild the extension without bumping `Version` in `source.extension.vsixmanifest`
+and it answers "this extension is already installed to all applicable products" and leaves
+the old one in place. That is the single most common way to end up debugging with a mismatched
+pair.
+
+**The extension and the engine are a pair, and they must be rebuilt together.** They talk
+over a shared memory buffer whose layout both sides compile in, so an extension that predates
+an engine change cannot read it — no Prolog call stack, no breakpoints arming, just the
+engine's own C#. The extension says so in the call stack when it can ("the engine speaks
+channel format vN, this extension speaks vM — rebuild and reinstall the VSIX"). If you are
+looking at C# where you expected Prolog, reinstall the VSIX first and ask questions after.
 
 The `vs\` solution builds with **desktop MSBuild only** — it references the VS SDK, which
 `dotnet build` cannot resolve. It is deliberately not part of `Shumway.slnx`: nothing in
