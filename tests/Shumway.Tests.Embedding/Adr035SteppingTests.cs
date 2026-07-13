@@ -229,10 +229,12 @@ public class Adr035SteppingTests
         _log.WriteLine("frames: " + string.Join(" <- ",
             frames.Select(f => $"{f.Name}/{f.Arity} at {f.File}:{f.Line}")));
 
-        // Innermost first: leaf, called by mid, called by top. The C# stack knows none
-        // of this — Tier-0 runs the whole program inside a single Dispatch frame — so
-        // this can only have come from the machine's own environment chain.
-        Assert.Equal(new[] { "leaf/1", "mid/1", "top/1" },
+        // Innermost first: leaf, called by mid, called by top — and under all of it the
+        // top-level query itself (`?-`, arity -1: it is not a predicate), because that is
+        // where the user launched this from and where they are still standing. The C# stack
+        // knows none of this — Tier-0 runs the whole program inside a single Dispatch frame —
+        // so it can only have come from the machine's own environment chain.
+        Assert.Equal(new[] { "leaf/1", "mid/1", "top/1", "?-/-1" },
             frames.Select(f => $"{f.Name}/{f.Arity}"));
     }
 
@@ -267,8 +269,12 @@ public class Adr035SteppingTests
         // forgotten mid — there is nothing left to show. top/1 survives, because it
         // still has tail(X) to run and so kept its frame. The debugger can only show
         // what the machine still has; turning LCO off is what makes it keep it all.
-        Assert.Equal(new[] { "leaf/1", "top/1" }, withLco.Select(f => $"{f.Name}/{f.Arity}"));
-        Assert.Equal(new[] { "leaf/1", "mid/1", "top/1" },
+        // (The query's own frame goes the same way, and for the same reason: its last goal
+        // was top(A), so LCO reclaimed it before top ran. With LCO off it is there — the
+        // bottom of the stack, where the user launched this from.)
+        Assert.Equal(new[] { "leaf/1", "top/1" },
+            withLco.Select(f => $"{f.Name}/{f.Arity}"));
+        Assert.Equal(new[] { "leaf/1", "mid/1", "top/1", "?-/-1" },
             withoutLco.Select(f => $"{f.Name}/{f.Arity}"));
     }
 

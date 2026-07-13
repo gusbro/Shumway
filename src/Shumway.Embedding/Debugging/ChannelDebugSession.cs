@@ -103,7 +103,15 @@ public sealed class ChannelDebugSession : IDisposable
 
     private void ServiceChannelWhileIdle()
     {
-        lock (_gate)
+        // TRY for the gate; never wait for it. The engine holds it for the WHOLE of a stop —
+        // it is stopped inside the lock, and does not come back until the user says so — and
+        // a thread that blocks on it therefore blocks for as long as the user stares at the
+        // screen. That is not a lock, it is a deadlock with good manners: the watcher hangs
+        // in Monitor.Enter, in a debuggee that is stopped, and the debugger stops with it.
+        // If the engine holds the gate it is already talking to the debugger, and there is
+        // nothing here to do anyway. Skip the tick.
+        if (!System.Threading.Monitor.TryEnter(_gate)) return;
+        try
         {
             bool stopWanted = false;
             foreach (var command in _channel.DrainCommands())
@@ -126,6 +134,10 @@ public sealed class ChannelDebugSession : IDisposable
             // wants from it is the chance to build its modules and bind its breakpoints.
             OnStopLocked(new DebugStopEvent(
                 StopReason.AsyncBreak, "", "", 0, 0, Array.Empty<PrologEngine.DebugFrame>()));
+        }
+        finally
+        {
+            System.Threading.Monitor.Exit(_gate);
         }
     }
 

@@ -142,6 +142,49 @@ go :- loop(200000).
     }
 
     [Fact]
+    public void TheTopLevelQueryIsAFrame_BecauseTheUserIsStandingInIt()
+    {
+        // `?- writeln(uno), debugger_break, writeln(dos).` calls no predicate of the user's:
+        // it is builtins and nothing else, so the only thing on the environment chain is the
+        // wrapper the engine puts a query in. That wrapper is hidden from error traces —
+        // rightly, the user did not write it — and hiding it from the DEBUGGER meant stopping
+        // in a query showed an EMPTY STACK. The debugger looked broken; it had simply been
+        // told there was nothing there.
+        var engine = new PrologEngine();
+        engine.ConsultString(
+            ":- set_prolog_flag(compile_mode, debug).\n"
+            + "loop(0) :- !.\n"
+            + "loop(N) :- N1 is N - 1, loop(N1).\n");
+        engine.QueryAll("set_prolog_flag(debug_lco, off).").ToList();
+
+        DebugSnapshot? seen = null;
+        ChannelDebugSession? session = null;
+        session = new ChannelDebugSession(engine, notify: _ => seen ??= ReadFromMemory(session!.Channel));
+
+        using (session)
+        {
+            session.Channel.WriteCommands(new DebugCommand(DebugCommandKind.BreakNow));
+            engine.QueryAll("Answer = 42, loop(2000), write(Answer).").ToList();
+        }
+
+        Assert.NotNull(seen);
+        foreach (var f in seen!.Frames)
+            _log.WriteLine($"  {f.Name}/{f.Arity}  [{string.Join(", ", f.Variables.Select(v => v.Name + " = " + v.Value))}]");
+
+        // The query is on the stack, and it is not dressed up as a predicate: arity -1 says
+        // "this is not a Name/Arity", and the debugger renders it as `?-`.
+        var query = seen.Frames.SingleOrDefault(f => f.Name == "?-");
+        Assert.NotNull(query);
+        Assert.Equal(-1, query!.Arity);
+
+        // KNOWN GAP: the query frame carries no variables yet — the synthetic wrapper is
+        // compiled without a frame map, so `Answer` cannot be read out of its Y slots. The
+        // top level still prints it as the answer, and every frame BELOW the query (the
+        // user's own predicates) shows its variables. Being on the stack at all is what was
+        // broken, and is what this pins.
+    }
+
+    [Fact]
     public void DebuggerBreak_WithNobodyWatching_IsANoOp()
     {
         // The whole value of debugger_break/0 is that you can LEAVE it in the program. A

@@ -3821,6 +3821,18 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private Shumway.Compiler.Wam.DebugClauseFrame[] _clauseFrames
         = Array.Empty<Shumway.Compiler.Wam.DebugClauseFrame>();
 
+    /// <summary>ADR-035 — the first clause at or after a predicate's entry address. A
+    /// predicate does not begin with its clause: the dispatch prologue comes first, and the
+    /// frame map is keyed by CLAUSE. Used for the top-level query, whose own address is the
+    /// only thing we know about it.</summary>
+    private int FirstClauseStartAtOrAfter(int predicateAddress)
+    {
+        if (_clauseStarts.Length == 0) return -1;
+        int i = Array.BinarySearch(_clauseStarts, predicateAddress);
+        if (i < 0) i = ~i;                       // the first clause that starts after it
+        return i < _clauseStarts.Length ? _clauseStarts[i] : -1;
+    }
+
     /// <summary>ADR-035 — the clause executing at this program address.</summary>
     private Shumway.Compiler.Wam.DebugClauseFrame? ClauseAt(int pc)
     {
@@ -3901,7 +3913,31 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         var pred = _currentPredicatesByAddress[entries[i]];
         var (atomId, arity) = FunctorTable.Lookup(pred.FunctorId);
         string name = DemangleLocalName(AtomTable.GetById(atomId)?.Name ?? "?");
-        if (name == "__query__") return;   // the wrapper the engine put the goal in
+
+        // The wrapper the engine puts the goal in. An error's stack trace hides it, and
+        // rightly — the user did not write it. A DEBUGGER may not: stopped inside a
+        // top-level query the user IS standing there, and a query of nothing but builtins
+        // (`?- writeln(uno), debugger_break, writeln(dos).`) has no other frame at all. The
+        // debugger showed an empty stack and looked broken. It shows the query now — as
+        // `?-`, which is what the user typed, and NOT as a predicate: arity -1 says "this is
+        // not a Name/Arity", and the debugger renders it without one.
+        if (name == "__query__")
+        {
+            name = "?-";
+            arity = -1;
+
+            // The query's frame does not return INTO a predicate — it returns to the
+            // launcher, an address outside the program entirely, and the search above only
+            // landed here by clamping to the last entry. So find the clause where it
+            // actually is: the wrapper's first (only) clause. Note it is the CLAUSE start we
+            // need, not the predicate's — the frame map is keyed by clause, and a predicate
+            // begins with the dispatch prologue that precedes it.
+            // (Best effort: if the wrapper has no frame map, the query still shows — with no
+            // variables. Being on the stack is the part that matters; an empty stack is what
+            // made the debugger look broken.)
+            int clause = FirstClauseStartAtOrAfter(entries[i]);
+            if (clause >= 0) pc = clause;
+        }
 
         int siteId = SiteAtOrBefore(pc);
         var site = siteId >= 0

@@ -79,8 +79,10 @@ public class Adr035ChannelTests
         Assert.Equal("mid/2", seen.Goal);
         Assert.Equal(5, seen.Line);
 
-        // The whole stack, with the variables of every frame, came across as bytes.
-        Assert.Equal(new[] { "mid/2", "top/1" },
+        // The whole stack, with the variables of every frame, came across as bytes. `?-` is
+        // the top-level query the user launched this from — not a predicate (arity -1), and
+        // the bottom of every Prolog stack.
+        Assert.Equal(new[] { "mid/2", "top/1", "?-/-1" },
             seen.Frames.Select(f => $"{f.Name}/{f.Arity}"));
         Assert.Equal("one", seen.Frames[0].Variables.First(v => v.Name == "In").Value);
         Assert.Equal("one", seen.Frames[1].Variables.First(v => v.Name == "A").Value);
@@ -178,7 +180,7 @@ public class Adr035ChannelTests
         Assert.NotNull(onBreakAll);
         Assert.Equal(StopReason.AsyncBreak, onBreakAll!.Reason);
         // Not a port — but the stack is real, and so are the variables.
-        Assert.Equal(new[] { "mid/2", "top/1" },
+        Assert.Equal(new[] { "mid/2", "top/1", "?-/-1" },
             onBreakAll.Frames.Select(f => $"{f.Name}/{f.Arity}"));
         Assert.Equal("one", onBreakAll.Frames[0].Variables.First(v => v.Name == "In").Value);
     }
@@ -248,7 +250,7 @@ public class Adr035ChannelTests
         }
 
         _log.WriteLine($"frames: {string.Join(" then ", depths)}");
-        Assert.Equal(1, depths[0]);   // leaf/1 alone — LCO reclaimed mid/1 and top/1
-        Assert.Equal(3, depths[1]);   // leaf/1, mid/1, top/1 — the whole stack
+        Assert.Equal(1, depths[0]);   // leaf/1 alone — LCO reclaimed mid/1, top/1 and the query
+        Assert.Equal(4, depths[1]);   // leaf/1, mid/1, top/1, ?- — the whole stack
     }
 }

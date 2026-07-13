@@ -282,7 +282,9 @@ namespace Shumway.Debugger.Concord
                 input.FrameBase,
                 input.FrameSize,
                 DkmStackWalkFrameFlags.None,
-                source.Name + "/" + source.Arity,
+                // A goal is Name/Arity. The top-level query is not a goal the user wrote a
+                // head for, and the engine says so with arity -1: it shows as `?-`.
+                source.Arity >= 0 ? source.Name + "/" + source.Arity : source.Name,
                 input.Registers,
                 input.Annotations);
         }

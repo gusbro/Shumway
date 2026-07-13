@@ -299,6 +299,22 @@ namespace Shumway.Debugger.Concord
             {
                 var bytes = new byte[state.SnapshotLength];
                 process.ReadMemory((ulong)state.SnapshotAddress, DkmReadMemoryFlags.None, bytes);
+
+                // A debugger and a debuggee that disagree about the layout of this buffer do
+                // not fail loudly — they show a plausible, wrong stack, or none. So say it.
+                // The two are built together and shipped apart: an engine rebuilt after the
+                // extension was installed is the ordinary way to end up here, and "no symbols"
+                // or an empty stack is a terrible way to be told.
+                int at = 0;
+                int version = DebugWire.ReadInt(bytes, ref at);
+                if (version != DebugWire.FormatVersion)
+                {
+                    state.Diagnostic = "the Shumway debugger extension is out of date: the "
+                        + "engine speaks channel format v" + version + ", this extension speaks v"
+                        + DebugWire.FormatVersion + " — rebuild and reinstall the VSIX";
+                    return null;
+                }
+
                 DebugSnapshot? snapshot = DebugWire.ReadSnapshot(bytes);
 
                 // The engine is RUNNING, so this is the record of a stop that is over, not a

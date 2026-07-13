@@ -143,9 +143,15 @@ public sealed class ClauseCompiler
         (string name, Term[] headArgs) = DecomposeHead(headTerm);
         List<Term> goals = bodyTerm is null ? new List<Term>() : FlattenConjunction(bodyTerm);
 
-        // ADR-035 — the engine wraps every query in a synthetic __query__ clause.
-        // It is not source the user wrote, so it gets no stop sites: a debugger
-        // stops inside the program, not inside the machinery that launched it.
+        // ADR-035 — the engine wraps every query in a synthetic __query__ clause. It gets no
+        // STOP SITES: there is no source file to stop in, and a debugger stops inside the
+        // program, not inside the machinery that launched it.
+        //
+        // Its VARIABLES are a different matter, and conflating the two was a bug. `X` in
+        // `?- X = 41, debugger_break.` is the user's variable — the top level itself prints
+        // it as the answer — and a debugger stopped in the query must show it. So the
+        // variable machinery below (permanence, frame initialisation, no trimming, the frame
+        // map) applies to a query exactly as it does to a clause; only the stop sites do not.
         _suppressBreaks = name == "__query__";
 
         // ADR-018: `X is Expr` and the six comparisons compile to the
@@ -163,7 +169,7 @@ public sealed class ClauseCompiler
         // be able to show `X` for as long as the clause is on the stack, so debug code
         // pays a Y slot for every one of them. This is the whole reason release code
         // and debug code are not the same code.
-        if (DebugCodegen && !_suppressBreaks)
+        if (DebugCodegen)
             permanents = AllNamedVariables(headArgs, goals, permanents);
 
         // Chunk 405 register-allocator survey (ADR-021), diag builds only —
@@ -281,7 +287,7 @@ public sealed class ClauseCompiler
         // reports itself honestly as unbound until something binds it. (The body's own
         // put_variable overwrites this; the cost is debug-only and buys the guarantee
         // that every slot a debugger can read is a slot the machine has written.)
-        if (DebugCodegen && !_suppressBreaks && needFrame)
+        if (DebugCodegen && needFrame)
         {
             int scratch = -1;
             foreach (var (varName, slot) in state.Ys)
@@ -331,7 +337,7 @@ public sealed class ClauseCompiler
         // does not need afterwards, which is exactly the debugger's problem: a variable
         // the clause is done with is still one the user can see on the line they are
         // stopped at. So every call keeps the whole frame.
-        if (DebugCodegen && !_suppressBreaks)
+        if (DebugCodegen)
             for (int i = 0; i < liveAfter.Length; i++) liveAfter[i] = state.PermanentCount;
 
         if (goals.Count == 0)
@@ -397,7 +403,7 @@ public sealed class ClauseCompiler
         // the ones the source named; the cut barrier and the if-then-else barriers also
         // live in Y slots, but they are the machine's, not the user's.
         List<DebugVariable>? debugVars = null;
-        if (DebugCodegen && !_suppressBreaks && needFrame)
+        if (DebugCodegen && needFrame)
         {
             debugVars = new List<DebugVariable>();
             foreach (var (varName, slot) in state.Ys)
