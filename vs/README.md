@@ -85,7 +85,23 @@ variables with their terms rendered by the engine.
 
 If a Prolog frame is grey and not navigable, its `.pl` has no module yet: the
 server creates them at a process pause, so it becomes navigable at the next stop.
-Stopping *at* a Prolog breakpoint is D3 — a port stop currently resumes.
+
+### D3 smoke — breakpoints and stepping
+
+Same setup. Once attached, open the `.pl` in the Exp instance and press **F9** on a
+goal — before the query runs, or *during* it: the engine drains the command channel
+between goals, so a breakpoint set on a running program takes effect within a few
+hundred goals.
+
+Expect: execution stops on that line, with the Prolog stack, the source caret and the
+Locals of the clause you are in. **F11** steps into the next goal, **F10** over it
+(landing on its exit port, as in SWI — in a port model no depth separates "this goal
+exited" from "the next is called"), **Shift-F11** out of the current predicate. **F5**
+runs on to the next breakpoint.
+
+A breakpoint on a rule's *head* binds forward to its first goal (a rule's entry point
+*is* its first goal), and VS still shows the red dot where you put it — the snapshot
+carries both lines for exactly that reason.
 
 ### D0 spike (superseded, kept for re-running the legs)
 
