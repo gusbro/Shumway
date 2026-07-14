@@ -116,6 +116,14 @@ namespace Shumway.Debugger.Concord
         public static string Canonical(string? path)
         {
             if (string.IsNullOrEmpty(path)) return "";
+
+            // A RELATIVE NAME IS LEFT ALONE. Resolving it would resolve it against Visual
+            // Studio's working directory, which has nothing to do with the debuggee's — the
+            // engine consulted `Blint.pl` from c:\temp, and devenv would have made that
+            // c:\Program Files\...\Blint.pl and matched no module at all. The engine sends
+            // absolute paths for exactly this reason; anything else is passed through as the
+            // name it is, and compared as one.
+            if (!System.IO.Path.IsPathRooted(path)) return path!;
             try { return System.IO.Path.GetFullPath(path); }
             catch (Exception) { return path!; }
         }

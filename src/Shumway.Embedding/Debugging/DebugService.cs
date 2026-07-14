@@ -359,7 +359,19 @@ public sealed class DebugService : IDebugSession
         bool stop = _mode switch
         {
             StepMode.Into => true,
-            StepMode.Over => depth <= _stepDepth,
+
+            // A REDO AT THE STEP'S OWN DEPTH IS INSIDE THE GOAL YOU STEPPED OVER. Retrying a
+            // clause of the callee does not deepen the environment chain — the callee's frame
+            // is not allocated until the clause runs — so its redo port reads at exactly the
+            // depth of the call that started it. Stopping there is stopping in the middle of
+            // the thing the user said to skip: F10 over `blint_pred_name1(Pred, Pred1)` landed
+            // on line 842, another clause of blint_pred_name1, which they had asked not to see.
+            // ("Se para en la salida de cada subgoal previo.")
+            //
+            // So a step over stops at a redo only when it belongs to an ENCLOSING goal —
+            // strictly shallower — which is the same rule the exit port already follows, and
+            // for the same reason: that is the clause you are in, not the one you skipped.
+            StepMode.Over => depth < _stepDepth,
             StepMode.Out => depth < _stepDepth,
             _ => false,
         };

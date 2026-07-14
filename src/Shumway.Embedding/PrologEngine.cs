@@ -6826,7 +6826,19 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // ADR-035 — stop sites compiled during this consult are stamped with this
         // file, so a debugger can map a breakpoint in foo.pl back to them.
         int prevFile = _debugFileId;
-        _debugFileId = DebugSiteTable.InternFile(path);
+
+        // THE FULL PATH, resolved against the ENGINE's directory — which is the only process
+        // that knows it. `shumway --debug Blint.pl` run in c:\temp consults c:\temp\Blint.pl,
+        // and if a frame says only "Blint.pl" the debugger has to guess where that is: it
+        // resolves it against ITS OWN directory (Visual Studio's), finds no such file, matches
+        // no module, and shows the frame grey — no language, no source, nothing to click. The
+        // engine knows; it should say. (DebugSiteTable identifies a file by its base name, so
+        // a breakpoint the editor sets still binds — but the NAME it reports is now one anybody
+        // can find.)
+        string debugPath = path;
+        try { debugPath = Path.GetFullPath(path); }
+        catch (Exception) { /* unresolvable — the name as given is the best we have */ }
+        _debugFileId = DebugSiteTable.InternFile(debugPath);
 
         // And the debugger is TOLD about the file, now, whether or not anything ever stops in
         // it. A breakpoint binds against a module and a module IS a file: until the debugger

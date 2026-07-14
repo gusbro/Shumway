@@ -141,12 +141,48 @@ try {
     $results["M1 the first break in a top-level consult says Prolog"] =
         ($first.Count -gt 0 -and @($first | Where-Object { $_.Language -ne "Prolog" }).Count -eq 0)
 
-    Write-Host "[4/4] and again ..."
+    Write-Host "[4/5] and again ..."
     Invoke-WithRetry { $dte.Debugger.Go($false) } 5 2000
     Start-Sleep -Seconds 3
     $second = Break-And-Report "second break" $dte "^later_"
     $results["M2 and so does the next one"] =
         ($second.Count -gt 0 -and @($second | Where-Object { $_.Language -ne "Prolog" }).Count -eq 0)
+
+    # M3 -- THE FILE NAMED RELATIVELY, from the directory the ENGINE was run in.
+    # `shumway --debug Blint.pl` in c:\temp consults c:\temp\Blint.pl -- and if the frames say
+    # only "Blint.pl", the debugger resolves that against ITS OWN directory (Visual Studio's),
+    # finds nothing, matches no module, and shows the stack grey. The engine is the only process
+    # that knows where it was standing, so it is the one that has to say.
+    Write-Host "[5/5] a second engine, started as `"--debug pause-spin.pl`" from the smoke dir ..."
+    Invoke-WithRetry { $dte.Debugger.DetachAll() } 5 2000
+    Start-Sleep -Seconds 2
+    try { if (-not $engine.HasExited) { $engine.Kill() } } catch {}
+
+    $psi2 = New-Object System.Diagnostics.ProcessStartInfo
+    $psi2.FileName = $repl
+    $psi2.Arguments = "--debug pause-spin.pl"          # RELATIVE
+    $psi2.WorkingDirectory = $PSScriptRoot             # ...to here
+    $psi2.RedirectStandardInput = $true
+    $psi2.RedirectStandardOutput = $true
+    $psi2.UseShellExecute = $false
+    $engine = [System.Diagnostics.Process]::Start($psi2)
+    Start-Sleep -Seconds 3
+
+    $target2 = Invoke-WithRetry {
+        if ($engine.HasExited) { throw "the engine exited" }
+        $p = @($dte.Debugger.LocalProcesses) | Where-Object { $_.ProcessID -eq $engine.Id }
+        if (-not $p) { throw "engine pid $($engine.Id) not in LocalProcesses yet" }
+        $p
+    } 30 2000
+    Invoke-WithRetry { $target2.Attach() } 15 3000
+    Start-Sleep -Seconds 6
+    $engine.StandardInput.WriteLine("go.")
+    $engine.StandardInput.Flush()
+    Start-Sleep -Seconds 5
+
+    $third = Break-And-Report "break in a relatively-named file" $dte '^(spin|work|go)/\d'
+    $results["M3 a file named relatively says Prolog too"] =
+        ($third.Count -gt 0 -and @($third | Where-Object { $_.Language -ne "Prolog" }).Count -eq 0)
 
     if (Test-Path $componentLog) {
         Write-Host ""

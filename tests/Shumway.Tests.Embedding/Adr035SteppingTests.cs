@@ -454,6 +454,42 @@ public class Adr035SteppingTests
     }
 
     [Fact]
+    public void StepOverDoesNotStopInsideTheGoalItIsSkipping_WhenThatGoalBacktracks()
+    {
+        // THE REPORT: "F10 y en vez de irme parando en cada subgoal me para en la salida de
+        // cada subgoal previo." Stepping over a goal that tries a second clause stopped at the
+        // REDO port of that goal -- on a line in the middle of the predicate the user had just
+        // said to skip.
+        //
+        // A callee's frame is not allocated until its clause runs, so retrying a clause of it
+        // reads at exactly the depth of the CALL that started it. Depth alone cannot tell "the
+        // goal I skipped is trying another clause" from "the clause I am in has moved on" --
+        // but the reason can: a redo at the step's own depth is always inside the goal that was
+        // skipped, so a step over honours a redo only from an ENCLOSING goal. Which is the rule
+        // the exit port already followed.
+        //
+        //   2: pick(X) :-
+        //   3:     choose(X),      <- stopped here; choose/1 has two clauses
+        //   4:     check(X).
+        //   5: choose(1).
+        //   6: choose(2).
+        //   7: check(2).
+        var engine = DebugEngine(
+            "pick(X) :-\n    choose(X),\n    check(X).\nchoose(1).\nchoose(2).\ncheck(2).\n",
+            lco: false);
+        engine.AddBreakpoint("<string>", 3);
+
+        var stops = Walk(engine, "pick(A).", StepMode.Over, StepMode.Over, StepMode.Over);
+
+        // choose(1) succeeds, check(1) FAILS, choose/1 is retried with its second clause -- all
+        // of it inside the goal the user stepped over. What they see is the next goal of their
+        // clause, and then their clause failing or ending, never the inside of choose/1.
+        Assert.DoesNotContain(stops, s => s.Reason == StopReason.Redo);
+        Assert.DoesNotContain(stops, s => s.Goal == "choose/1" && s.Reason != StopReason.Call);
+        Assert.Contains(stops, s => s.Goal == "check/1" && s.Reason == StopReason.Call);
+    }
+
+    [Fact]
     public void ADeepStackShowsBothEnds_AndSaysHowMuchOfTheMiddleItLeftOut()
     {
         // Nobody reads three hundred frames of the same clause. What a user reads is the top
