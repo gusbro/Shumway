@@ -4017,13 +4017,40 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             string value;
             try
             {
+                // A VARIABLE WHOSE TURN HAS NOT COME. `allocate` leaves the Y slots
+                // untouched — RawInt(0), a control word, not a term — because standard WAM
+                // codegen writes a permanent at its FIRST occurrence and never reads it
+                // before. So a clause stopped at its second goal has real values in the
+                // variables the first goal touched and nothing at all in the rest, and the
+                // debugger stops in the middle of clauses for a living.
+                //
+                // It is a plain unbound variable as far as the user is concerned — it has no
+                // value yet — and that is what we show. (It used to be a NotSupportedException
+                // out of the materializer, caught and rendered "<unavailable>": true, useless,
+                // and it printed a first-chance exception into the Output window of every
+                // Break All.)
+                Cell slot = engine.GetY(env, v.Slot);
+                if (slot.Tag == Tag.RawInt)
+                {
+                    result.Add((v.Name, "_"));
+                    continue;
+                }
+                if (slot.Tag == Tag.PstrBuffer)
+                {
+                    // Not a term at all — the raw backing store of a partial string, which no
+                    // variable is ever bound TO. Same rule as above: say what it is, and do
+                    // not throw for it.
+                    result.Add((v.Name, "<internal>"));
+                    continue;
+                }
+
                 // Materialization reads from the heap, and a Y slot is on the stack, so
                 // the cell is staged into one fresh heap cell first — the same copy the
                 // tracer makes of an argument register. Copying the CELL keeps sharing
                 // intact: an unbound variable stays a reference to the same variable,
                 // and a compound still points at the same structure.
                 int h = engine.AllocateHeap(1);
-                engine.SetHeap(h, engine.GetY(env, v.Slot));
+                engine.SetHeap(h, slot);
                 Term term = TermReader.Materialize(engine, h);
 
                 // Ellipsized, and not as a nicety. A real program binds real data: a Blint

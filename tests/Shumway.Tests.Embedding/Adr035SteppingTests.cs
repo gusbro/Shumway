@@ -418,6 +418,42 @@ public class Adr035SteppingTests
     }
 
     [Fact]
+    public void AVariableWhoseTurnHasNotComeShowsAsUnbound_NotAsAnError()
+    {
+        // NO STOP RENDERS A VARIABLE AS AN ERROR. `allocate` does not touch the Y slots -- a
+        // permanent is written at its FIRST occurrence, and running code never reads one
+        // before -- so a slot the machine has not reached yet holds a control word, not a
+        // term. Debug codegen initialises the ones it knows the names of, precisely so a
+        // debugger never reads garbage; anything the walk reaches that is NOT a term (a
+        // control word, an internal cell) is a variable with no value yet, which is what an
+        // unbound variable IS, and it shows as one.
+        //
+        // It used to let the materializer throw and caught the exception -- which works, and
+        // is LOUD: a caught exception is invisible from outside and a line in the Output
+        // window from inside Visual Studio. Every Break All printed "Exception thrown:
+        // 'System.NotSupportedException' in Shumway.Embedding.dll", which is not an error and
+        // reads exactly like one.
+        //
+        //   2: p(X) :-
+        //   3:     q(X),          <- stopped here; r/1's argument has not been built
+        //   4:     r(_Later).
+        var engine = DebugEngine(
+            "p(X) :-\n    q(X),\n    r(_Later).\nq(_).\nr(_).\ngo :-\n    p(1).\n",
+            lco: false);
+        engine.AddBreakpoint("<string>", 3);
+
+        var stop = Walk(engine, "go.")[0];
+        foreach (var f in stop.Frames)
+            _log.WriteLine($"  {f.Name}/{f.Arity}: "
+                + string.Join(", ", f.Variables.Select(v => $"{v.Name} = {v.Value}")));
+
+        Assert.Equal("p/1", stop.Goal);
+        Assert.Equal("1", stop.Variables.First(v => v.Name == "X").Value);
+        foreach (var f in stop.Frames)
+            Assert.DoesNotContain(f.Variables, v => v.Value.Contains("unavailable"));
+    }
+
+    [Fact]
     public void AQueryNobodyIsSteppingThrough_SaysNothingWhenItEnds()
     {
         // The other half: the message exists for a debugger waiting on a step. A program

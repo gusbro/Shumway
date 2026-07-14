@@ -200,6 +200,15 @@ public static class TermReader
                 results.Add(new StringTerm(engine.AsPstrString(derefAddr)));
                 break;
 
+            // A STRING cell is a string too — the whole string, held in the engine's table,
+            // rather than the PSTR's heap-resident run of characters. The engine can make one
+            // (Activation.MakeString) and compare it (==/2 handles the tag), and the
+            // materializer could not read it back: a cell the engine can build and cannot show
+            // is a NotSupportedException waiting for the first program that builds one.
+            case Tag.String:
+                results.Add(new StringTerm(engine.AsString(cell)));
+                break;
+
             // Foreign cells round-trip as `'$foreign'(N)` compounds — the
             // payload's identity (the engine's foreign table entry) is exposed
             // as the integer id. Mostly visible when a stream handle ends up in

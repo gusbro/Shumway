@@ -126,6 +126,29 @@ internal static class ReplTopLevel
         {
             engine.Flags.EmitDebugInfo = true;
             engine.Flags.DebugCodegen = true;
+
+            // SHUMWAY_DEBUG_DIAG=1 — every exception the engine THROWS, whether or not it
+            // catches it, with its stack. An exception that is caught is invisible from
+            // outside and loud from inside a debugger: Visual Studio prints "Exception thrown"
+            // into the Output window for each one, and the user cannot tell a handled
+            // house-keeping throw from the bug they are hunting. This says which.
+            if (Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_DIAG") == "1")
+            {
+                string trace = System.IO.Path.Combine(
+                    System.IO.Path.GetTempPath(), "shumway-debug", "engine-exceptions.log");
+                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(trace)!);
+                AppDomain.CurrentDomain.FirstChanceException += (_, e) =>
+                {
+                    try
+                    {
+                        System.IO.File.AppendAllText(trace,
+                            DateTime.Now.ToString("HH:mm:ss.fff") + "  "
+                            + e.Exception.GetType().Name + ": " + e.Exception.Message + "\n"
+                            + e.Exception.StackTrace + "\n\n");
+                    }
+                    catch (Exception) { /* a diagnostic must never be the thing that fails */ }
+                };
+            }
             // A reclaimed frame is a frame nobody can show, so a debug session wants LCO off
             // — but SHUMWAY_DEBUG_LCO is a PIN, and a pin that the code overrides is not one.
             // (PrologFlags already read it; only the unpinned case is ours to decide.)
