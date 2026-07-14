@@ -28,15 +28,26 @@ public readonly record struct DebugSite(int FileId, int Line, int Column);
 /// </summary>
 public static class DebugSiteTable
 {
-    /// <summary>A FILE, not a string. Two names for the same file must intern to the same
-    /// id, or a breakpoint binds against a file that has no code in it and is silently never
-    /// hit — which is exactly what happened: the engine was started with
-    /// <c>shumway --debug c:\temp\Blint.pl</c> and the editor opened
-    /// <c>C:\temp\Blint.pl</c>, and those were two different files here. Same for a relative
-    /// path against the absolute one the IDE always uses.</summary>
+    /// <summary>Keyed by the file's NAME — <c>blint.pl</c> — not by the path somebody reached
+    /// it through, and without regard to case.
+    ///
+    /// <para>That is not a shortcut, it is the identity Shumway already uses: a source file
+    /// IS a module, and a module takes its name from the file's name with the directory
+    /// dropped. Two files called <c>utils.pl</c> in two directories are one module to this
+    /// engine long before they are one file to this table.</para>
+    ///
+    /// <para>Keying by the string as given was the bug: the engine was started with
+    /// <c>shumway --debug c:\temp\Blint.pl</c> and the editor opened <c>C:\temp\Blint.pl</c>,
+    /// and those were two different files here — so the breakpoint bound against the one with
+    /// no code in it and was silently never hit. Canonicalising the PATH would have fixed
+    /// that one spelling and left every other: a relative consult against the IDE's absolute
+    /// path, a mapped drive against a UNC share, a copy of the file somewhere else.</para>
+    /// </summary>
     private static readonly ConcurrentDictionary<string, int> _fileIds =
-        new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        new(StringComparer.OrdinalIgnoreCase);
 
+    // Indexed by id: the fullest name we have been given for the file, which is what a
+    // debugger needs in order to OPEN it. The key identifies; this one navigates.
     private static readonly List<string> _fileNames = new();
 
     private static readonly ConcurrentDictionary<DebugSite, int> _siteIds = new();
@@ -53,28 +64,41 @@ public static class DebugSiteTable
     /// <c>&lt;string&gt;</c> for <c>ConsultString</c>.</summary>
     public static int InternFile(string name)
     {
-        name = Canonicalize(name);
-        if (_fileIds.TryGetValue(name, out int existing)) return existing;
+        string key = Key(name);
+        if (_fileIds.TryGetValue(key, out int existing))
+        {
+            // A better name for a file we already know: the engine consulted `blint.pl` from
+            // the working directory and the debugger has now named it in full, or the other
+            // way round. Keep the one that can be opened.
+            if (name.Length > _fileNames[existing].Length)
+                lock (_lock) _fileNames[existing] = name;
+            return existing;
+        }
         lock (_lock)
         {
-            if (_fileIds.TryGetValue(name, out existing)) return existing;
+            if (_fileIds.TryGetValue(key, out existing)) return existing;
             int id = _fileNames.Count;
             _fileNames.Add(name);
-            _fileIds[name] = id;
+            _fileIds[key] = id;
             return id;
         }
     }
 
-    /// <summary>The one spelling of a file's name. Everything that reaches this table names a
-    /// file twice over — the engine from a command line, the debugger from an editor — and
-    /// they never agree on the drive letter's case, on <c>..</c>, or on whether the path was
-    /// relative. A synthetic name (<c>&lt;string&gt;</c>) is not a path and passes through
-    /// untouched.</summary>
-    private static string Canonicalize(string name)
+    /// <summary>What identifies the file: its name, with the directory dropped and case
+    /// ignored — the same identity a module has. A synthetic name (<c>&lt;string&gt;</c>) is
+    /// not a path and is its own key.</summary>
+    private static string Key(string name)
     {
         if (string.IsNullOrEmpty(name) || name[0] == '<') return name;
-        try { return System.IO.Path.GetFullPath(name); }
-        catch (Exception) { return name; }   // not a path we can resolve: take it as given
+        try
+        {
+            string file = System.IO.Path.GetFileName(name);
+            return file.Length == 0 ? name : file;
+        }
+        catch (Exception)
+        {
+            return name;   // not a path we can take apart: take it as given
+        }
     }
 
     public static string FileName(int fileId)
