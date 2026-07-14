@@ -51,6 +51,11 @@ public sealed class BytecodeEmitter
         EmitInt(numLivePermanents);
     }
 
+    /// <summary>ADR-035 — the port an inline goal (`!`, `is`, `=`, a comparison)
+    /// otherwise never raises. One byte, emitted in front of the goal's code,
+    /// compile_mode=debug only.</summary>
+    public void EmitDebugPort() => _bytes.Add((byte)Opcode.DebugPort);
+
     public void EmitCallBuiltin(int builtinId, int numLivePermanents)
     {
         _bytes.Add((byte)Opcode.CallBuiltin);

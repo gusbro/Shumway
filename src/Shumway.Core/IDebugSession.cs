@@ -1,11 +1,11 @@
-using System;
+﻿using System;
 
 namespace Shumway.Core;
 
 /// <summary>
 /// The engine-side debug seam (ADR-035). An <see cref="Activation"/> with a
-/// non-null <see cref="Activation.Debug"/> reports the Prolog four ports —
-/// <c>call</c>, <c>exit</c>, <c>redo</c>, <c>fail</c> — to the session as it
+/// non-null <see cref="Activation.Debug"/> reports the Prolog four ports â€”
+/// <c>call</c>, <c>exit</c>, <c>redo</c>, <c>fail</c> â€” to the session as it
 /// runs, and the session decides what to do with them (print a trace line,
 /// stop at a breakpoint, complete a step).
 ///
@@ -16,7 +16,7 @@ namespace Shumway.Core;
 /// debugger) lives in <c>Shumway.Embedding</c>.</para>
 ///
 /// <para><b>Cost when disarmed:</b> one null check per goal dispatch, on the
-/// branch the CPU predicts not-taken — the same shape as the ESC-cancel flag.
+/// branch the CPU predicts not-taken â€” the same shape as the ESC-cancel flag.
 /// Nothing is allocated and no state is tracked unless a session is attached.</para>
 ///
 /// <para><b>Identity of the called goal.</b> Tier-0 dispatch does not carry a
@@ -60,32 +60,39 @@ public interface IDebugSession
 
     /// <summary>Redo port: backtracking is about to resume the choice point
     /// currently named by <c>engine.B</c>, whose next alternative starts at
-    /// <paramref name="retryPc"/> (<c>-1</c> for an IL choice point — a
-    /// backtrackable builtin re-satisfying — which has no bytecode retry
+    /// <paramref name="retryPc"/> (<c>-1</c> for an IL choice point â€” a
+    /// backtrackable builtin re-satisfying â€” which has no bytecode retry
     /// address). Raised before the CP is popped, so <c>engine.B</c> still
     /// identifies it: every goal called after that CP was pushed has just
     /// failed, and the session works out which from it.</summary>
     void OnRedo(Activation engine, int retryPc);
 
-    /// <summary>Fail port: backtracking found no choice point left — the query
+    /// <summary>Fail port: backtracking found no choice point left â€” the query
     /// itself fails.</summary>
     void OnFail(Activation engine);
 
     /// <summary>An armed breakpoint was reached at program address
-    /// <paramref name="pc"/>: the instruction there — a clause entry or the start
-    /// of a body goal — is about to run, and has not yet. The session armed it, so
+    /// <paramref name="pc"/>: the instruction there â€” a clause entry or the start
+    /// of a body goal â€” is about to run, and has not yet. The session armed it, so
     /// it knows which source site the address belongs to. Only ARMED addresses
     /// report here; a debug-compiled program with no breakpoints raises this
     /// never, and costs nothing.</summary>
     void OnBreak(Activation engine, int pc);
 
+    /// <summary>ADR-035 - a goal that compiles INLINE (a <c>!</c>, an <c>is/2</c>, an
+    /// <c>=/2</c>, a comparison) is about to run. Those goals emit no call, so no other
+    /// port ever fires for them - and a step walked straight over the <c>!</c> the user
+    /// wanted to stand at, variables in hand, before it commits. Raised by the
+    /// <c>debug_port</c> opcode, which only compile_mode=debug code contains, one byte
+    /// before each inline body goal.</summary>
+    void OnInlineGoal(Activation engine) { }
     /// <summary>Control is leaving Prolog and going back to whoever asked for a
-    /// solution — the query has produced one, or run out of them. There is no port
+    /// solution â€” the query has produced one, or run out of them. There is no port
     /// here and nothing to show: the machine is not in the program any more.
     ///
     /// <para>It matters because a STEP is a promise to stop at the next port that
     /// satisfies it, and past this line no port is coming. A step nobody can satisfy
-    /// has to be abandoned, and said to be abandoned — a debugger left waiting for a
+    /// has to be abandoned, and said to be abandoned â€” a debugger left waiting for a
     /// stop that will never arrive believes the program is still running, and every
     /// key the user presses after that is answered with an error.</para></summary>
     void OnLeaveProlog(Activation engine) { }
@@ -97,6 +104,6 @@ public interface IDebugSession
     void MarkHeapRoots(Action<int> markCell);
 
     /// <summary>ADR-016 relocate phase: rewrite every heap index the session
-    /// holds through <paramref name="relocIndex"/> (old index → new).</summary>
+    /// holds through <paramref name="relocIndex"/> (old index â†’ new).</summary>
     void RelocateHeapRoots(Func<int, int> relocIndex);
 }

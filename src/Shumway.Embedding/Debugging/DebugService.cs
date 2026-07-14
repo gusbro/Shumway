@@ -343,6 +343,18 @@ public sealed class DebugService : IDebugSession
         else OnInteropExit?.Invoke();
     }
 
+    void IDebugSession.OnInlineGoal(Activation engine)
+    {
+        // A `!`, an `is/2`, an `=/2`, a comparison: a goal the user wrote, about to run,
+        // with no call of its own — the debug_port opcode in front of it raises what the
+        // dispatch never will. It is a landing like any call port (the same rules, the
+        // same breakpoint dedup: a breakpoint armed ON the goal patches the port's own
+        // byte, reports first, and this fires right after it at the same site). The goal
+        // has no callee to name, so the stop names the frame it is standing in.
+        _goalKind = GoalKind.None;
+        OnCall(engine);
+    }
+
     void IDebugSession.OnExit(Activation engine)
         => MaybeStopAtPort(engine, StopReason.Exit);
 
@@ -540,7 +552,10 @@ public sealed class DebugService : IDebugSession
         Current = engine;
 
         var frames = _engine.CaptureFrames(engine);
-        goal ??= frames.Count > 0 ? $"{frames[0].Name}/{frames[0].Arity}" : "";
+        // "" is CurrentGoal()'s answer for a port with no callee to name (an inline
+        // goal's) — the frame the machine is standing in is the honest name then too.
+        if (string.IsNullOrEmpty(goal))
+            goal = frames.Count > 0 ? $"{frames[0].Name}/{frames[0].Arity}" : "";
 
         _onStop(this, new DebugStopEvent(reason, goal, site.File, site.Line, depth, frames)
         {

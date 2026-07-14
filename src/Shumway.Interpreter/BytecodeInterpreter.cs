@@ -461,6 +461,17 @@ public sealed class BytecodeInterpreter
                     goto dispatch;
                 }
 
+                // ADR-035 — a step's landing at a goal that compiles inline (a `!`, an
+                // `is/2`, an `=/2`, a comparison): those goals emit no call, so no other
+                // port ever fires for them. One byte, compile_mode=debug code only; with
+                // no session attached it is a null check and a fall-through.
+                case Opcode.DebugPort:
+                {
+                    _engine.Debug?.OnInlineGoal(_engine);
+                    _engine.SetPc(pc + 1); inClause = true;
+                    break;
+                }
+
                 // ADR-035 — the debuggable last call. One of Call or Execute,
                 // chosen per dispatch by the activation's LCO flag, so a
                 // debugger can turn last-call optimisation off (and back on)

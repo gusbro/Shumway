@@ -316,23 +316,32 @@ public enum Opcode : byte
     // them.
     Break = 0x64,
 
+    // ADR-035 — a step's landing at a goal that compiles INLINE. A `!`, an
+    // `is/2`, an `=/2` or a comparison emits no call, so it raises no port —
+    // and a step walked straight over all of them, which is precisely where a
+    // user wants to stand and look at the variables before the `!` commits or
+    // the guard fails. Emitted under compile_mode=debug only, one byte in
+    // front of each inline body goal; dispatch is a null check when no session
+    // is attached, and release code never contains it at all.
+    DebugPort = 0x65,
+
     // Extension escape — reserved, never dispatched.
-    ReservedExtension = 0x65,
+    ReservedExtension = 0x66,
 
     // Reserved specialised-builtin opcodes. Defined in OpcodeTable but
     // never emitted by the compiler and never dispatched by the
     // interpreter; parked after ReservedExtension so the dispatched
     // block stays hole-free (chunk 429).
-    UnifyEq = 0x66,
-    IsOp = 0x67,
-    LessThan = 0x68,
-    GreaterThan = 0x69,
-    LessEq = 0x6A,
-    GreaterEq = 0x6B,
-    ArithEq = 0x6C,
-    ArithNotEq = 0x6D,
-    StructEq = 0x6E,
-    StructNotEq = 0x6F,
+    UnifyEq = 0x67,
+    IsOp = 0x68,
+    LessThan = 0x69,
+    GreaterThan = 0x6A,
+    LessEq = 0x6B,
+    GreaterEq = 0x6C,
+    ArithEq = 0x6D,
+    ArithNotEq = 0x6E,
+    StructEq = 0x6F,
+    StructNotEq = 0x70,
 }
 
 /// <summary>Sub-opcodes for <see cref="Opcode.Meta"/>. Only <see cref="DbgInfo"/> exists in v1.</summary>

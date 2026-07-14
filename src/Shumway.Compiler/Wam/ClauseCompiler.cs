@@ -359,6 +359,17 @@ public sealed class ClauseCompiler
 
                 MarkStop(state, goal.Position);   // ADR-035 — this goal's stop site
 
+                // ADR-035 — an INLINE goal (`!`, `is`, `=`, a comparison) emits no call
+                // and so raises no port: a step walked straight over it, and the user
+                // could never stand at the `!` and look at the variables before it
+                // commits. Under debug codegen each one gets a one-byte port of its own.
+                // Placed AFTER the stop site so a breakpoint armed on this goal patches
+                // the debug_port byte: the Break reports first, the re-dispatched port is
+                // deduplicated as the same stop (see DebugService's reported-call-site).
+                // (Not in the __query__ wrapper — its goals have no source to stand on.)
+                if (DebugCodegen && !_suppressBreaks && IsInlineBodyGoal(goal))
+                    state.Emitter.EmitDebugPort();
+
                 if (goal is AtomTerm { Name: "!" })
                 {
                     // Cut emission. Neck cut — position 0, or preceded only by

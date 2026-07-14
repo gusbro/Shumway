@@ -258,6 +258,11 @@ public static class OpcodeTable
         // bytecode walker treats it as a real instruction.
         Set(Opcode.Break, 1, "break");
 
+        // ADR-035 — one byte in front of each inline body goal (`!`, `is`, `=`,
+        // comparisons), compile_mode=debug only: the port those goals otherwise
+        // never raise, so a step can land on them.
+        Set(Opcode.DebugPort, 1, "debug_port");
+
         Set(Opcode.ReservedExtension, 1, "reserved_extension");
     }
 

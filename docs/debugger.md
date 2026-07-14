@@ -167,7 +167,9 @@ the last goal, or Step Out, and you land on the next goal an enclosing clause ru
 many clause-ends unwind in between. A *fail* does stop you — a goal running out of
 solutions is the thing that just happened, and there is no next goal to show instead.
 Builtins are goals like any other: `X is N - 1` and `writeln(X)` are stops, and there is
-nothing inside them to step into.
+nothing inside them to step into. So are the goals that compile inline — `!`, `is`, `=` and
+the comparisons: a step lands on the `!` *before* it commits and on the guard *before* it
+fails, which is when you want to be looking at the variables.
 
 **Stepping past the end of the query** is not a stop: the query hands back its answer and
 stands still, no port is coming, and the debugger drops the step and lets the program run

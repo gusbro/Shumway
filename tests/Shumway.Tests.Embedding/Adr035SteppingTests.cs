@@ -199,22 +199,25 @@ public class Adr035SteppingTests
         var engine = DebugEngine("p(1).\np(2).\nt :-\n    p(X),\n    X > 1.\n");
         engine.AddBreakpoint("<string>", 5);   // the goal p(X)
 
-        var stops = Walk(engine, "t.", StepMode.Into, StepMode.Into, StepMode.Into);
+        var stops = Walk(engine, "t.",
+            StepMode.Into, StepMode.Into, StepMode.Into, StepMode.Into);
 
         // p/1 succeeds with 1, the guard X > 1 fails, and p/1 is REDONE for 2. There
         // is no return address to step over here — the machine is going BACKWARDS into
         // a goal that had already succeeded. Only a port model can say this.
         Assert.Contains(stops, s => s.Reason == StopReason.Redo);
 
-        // p/1's EXIT is not stopped at — a step lands on the next GOAL, and the exit port
-        // would put the caret on p(1)'s clause, which is not where the program is going. The
-        // guard `X > 1` compiles inline (ADR-018: no call, no port), so the next thing that
-        // happens to this program IS the redo.
-        Assert.Equal("Redo p/1", Ports(stops)[1]);
+        // p/1's EXIT is not stopped at — a step lands on the next GOAL: the guard
+        // `X > 1`, which compiles inline (ADR-018, no call) and stops through its
+        // debug_port. It fails with X = 1, and the next thing that happens to this
+        // program is the redo.
+        Assert.Equal(6, stops[1].Line);
+        Assert.Equal(StopReason.Call, stops[1].Reason);
+        Assert.Equal("Redo p/1", Ports(stops)[2]);
         // And it names the clause about to be retried — p(2), on line 3 — not the
         // guard that failed, which is where the machine happens to be standing.
-        Assert.Equal(3, stops[1].Line);
-        Assert.Equal("p/1", $"{stops[1].Frames[0].Name}/{stops[1].Frames[0].Arity}");
+        Assert.Equal(3, stops[2].Line);
+        Assert.Equal("p/1", $"{stops[2].Frames[0].Name}/{stops[2].Frames[0].Arity}");
     }
 
     [Fact]
@@ -490,6 +493,53 @@ public class Adr035SteppingTests
         Assert.DoesNotContain(stops, s => s.Reason == StopReason.Redo);
         Assert.DoesNotContain(stops, s => s.Goal == "choose/1" && s.Reason != StopReason.Call);
         Assert.Contains(stops, s => s.Goal == "check/1" && s.Reason == StopReason.Call);
+    }
+
+    [Fact]
+    public void AStepLandsOnInlineGoalsToo_TheCutTheGuardAndTheIs()
+    {
+        // "Si estoy haciendo STEP te salteas tanto los ! como los fail." A `!`, an
+        // `is/2`, an `=/2` and the comparisons compile INLINE (ADR-018 / the cut
+        // opcode): no call, so no port, so a step walked straight over them -- and the
+        // whole point of stopping at a `!` is to look at the variables BEFORE it
+        // commits. Under debug codegen each inline goal now carries a one-byte
+        // debug_port in front of its code, and a step lands on it like on any call.
+        //
+        //   2: p(X) :-
+        //   3:     q(X),
+        //   4:     X > 1,
+        //   5:     Y is X * 2,
+        //   6:     !,
+        //   7:     r(Y).
+        //   8: t(X) :-
+        //   9:     p(X),
+        //  10:     fail.
+        //  11: t(_).
+        //  12: q(5).
+        //  13: r(_).
+        var engine = DebugEngine(
+            "p(X) :-\n    q(X),\n    X > 1,\n    Y is X * 2,\n    !,\n    r(Y).\n"
+            + "t(X) :-\n    p(X),\n    fail.\nt(_).\nq(5).\nr(_).\n", lco: false);
+        engine.AddBreakpoint("<string>", 3);
+
+        var stops = Walk(engine, "t(A).",
+            StepMode.Into, StepMode.Into, StepMode.Into, StepMode.Into, StepMode.Into);
+        var lines = stops.Take(6).Select(s => s.Line).ToArray();
+
+        // Every line of the clause, in order: the guard, the is, the CUT -- stopped at
+        // with Y already bound and the choice points still alive -- then r(Y), then the
+        // fail the caller wrote (a builtin goal, a port of its own).
+        Assert.Equal(new[] { 3, 4, 5, 6, 7, 10 }, lines);
+        // An inline goal has no callee to name, so its stop names the frame it stands
+        // in (p/1); the real calls name their goal.
+        Assert.All(stops.Skip(1).Take(3), s => Assert.Equal("p/1", s.Goal));
+        Assert.Equal("r/1", stops[4].Goal);
+
+        // Standing AT the `!` (line 6), the clause's variables are inspectable and Y is
+        // already 10 -- which is what stopping before the commit is FOR.
+        var atCut = stops[3];
+        Assert.Equal("10", atCut.Variables.First(v => v.Name == "Y").Value);
+        Assert.Equal("5", atCut.Variables.First(v => v.Name == "X").Value);
     }
 
     [Fact]
