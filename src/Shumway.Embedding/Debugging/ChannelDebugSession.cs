@@ -343,6 +343,20 @@ public sealed class ChannelDebugSession : IDisposable
         }
     }
 
+    /// <summary>ADR-035 — "I have just consulted a file you have not heard of." A stop nobody
+    /// asked for and nobody sees: the debugger reads the new file list, builds the module for
+    /// it (which it can only do from inside a real stop), and lets the program straight on.
+    ///
+    /// <para>Only when a debugger is actually there — a program consulting a hundred files at
+    /// its own top level must not trip a hundred stops for nobody.</para></summary>
+    internal void SourceFileConsulted()
+    {
+        if (_disposed || !System.Diagnostics.Debugger.IsAttached) return;
+        lock (_gate)
+            OnStopLocked(new DebugStopEvent(
+                StopReason.SourcesChanged, "", "", 0, 0, Array.Empty<PrologEngine.DebugFrame>()));
+    }
+
     private void OnStop(DebugService service, DebugStopEvent stop)
     {
         // The idle watcher answers the channel when the engine is not running. It decides

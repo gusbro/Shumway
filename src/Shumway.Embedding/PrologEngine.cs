@@ -3890,8 +3890,60 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     public IReadOnlyList<DebugFrame> CaptureFrames(Activation engine, int pc, int e, int cp)
     {
         ArgumentNullException.ThrowIfNull(engine);
-        var frames = new List<DebugFrame>();
 
+        // TWO PASSES, and the reason is the deep stack. A recursion 2 700 frames deep is a
+        // real thing to be stopped in, and nobody reads 2 700 frames: what they read is the
+        // few at the top (where they are) and the few at the bottom (how they got in). Between
+        // them is the same clause 2 600 times.
+        //
+        // Building all of them means rendering every variable of every one — the expensive
+        // part of a stop by far — and then not showing most of them, because the stack has to
+        // cross a fixed-size buffer. So the first pass finds the frames and NOTHING else
+        // (a binary search apiece), and the second builds only the ones that will be seen,
+        // with one synthetic frame in the middle saying how many are not.
+        var sites = new List<(int Pc, int Env)>();
+        CollectFrameSites(engine, sites, pc, e, cp);
+
+        var frames = new List<DebugFrame>();
+        if (sites.Count <= MaxFrames)
+        {
+            foreach (var (framePc, frameEnv) in sites)
+                AddFrame(engine, frames, framePc, frameEnv);
+            return frames;
+        }
+
+        for (int i = 0; i < HeadFrames; i++)
+            AddFrame(engine, frames, sites[i].Pc, sites[i].Env);
+
+        int omitted = sites.Count - HeadFrames - TailFrames;
+        frames.Add(new DebugFrame(
+            omitted == 1 ? "... 1 frame omitted ..." : $"... {omitted:N0} frames omitted ...",
+            OmittedFramesArity, "", 0, -1, Array.Empty<(string, string)>()));
+
+        for (int i = sites.Count - TailFrames; i < sites.Count; i++)
+            AddFrame(engine, frames, sites[i].Pc, sites[i].Env);
+        return frames;
+    }
+
+    /// <summary>How many frames a stop carries before it starts leaving some out, and how
+    /// they are divided when it does: the innermost <see cref="HeadFrames"/> — where the
+    /// machine is — and the outermost <see cref="TailFrames"/> — how it got there. What lies
+    /// between is the middle of a recursion, and it is the same clause over and over.</summary>
+    private const int MaxFrames = 120;
+    private const int HeadFrames = 80;
+    private const int TailFrames = 20;
+
+    /// <summary>The arity of the "... N frames omitted ..." frame — not a predicate, and not
+    /// the query either (which is -1). A debugger renders a negative arity as no arity at
+    /// all, so it shows as the sentence it is.</summary>
+    private const int OmittedFramesArity = -2;
+
+    /// <summary>Pass one: WHERE the frames are — a (pc, environment) pair each — without
+    /// building any of them. Same walk, same rules, same stopping condition (the query is the
+    /// bottom of every stack).</summary>
+    private void CollectFrameSites(
+        Activation engine, List<(int Pc, int Env)> sites, int pc, int e, int cp)
+    {
         // The environment chain holds exactly the clauses that HAVE a frame, innermost
         // first. Only the clause we are standing in can be frameless (a frameless
         // clause makes no non-tail call, so it can never be a caller waiting to
@@ -3901,8 +3953,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         foreach (int env in engine.EnumerateEnvChain(e)) envs.Add(env);
         bool ownFrame = ClauseAt(pc)?.HasFrame ?? false;
 
-        if (AddFrame(engine, frames, pc, ownFrame && envs.Count > 0 ? envs[0] : -1))
-            return frames;
+        if (AddSite(sites, pc, ownFrame && envs.Count > 0 ? envs[0] : -1))
+            return;
 
         int envIndex = ownFrame ? 1 : 0;
         foreach (int returnPc in engine.EnumerateCallReturnAddresses(e, cp))
@@ -3916,12 +3968,39 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // the list, the walk is done. What lies past it is the address the query returns
             // to — the top level's own code, which no Prolog frame describes — and it looked
             // enough like the wrapper to be named `?-` a second time. One query, one frame.
-            if (AddFrame(engine, frames, returnPc - 1,
-                    envIndex < envs.Count ? envs[envIndex] : -1))
+            if (AddSite(sites, returnPc - 1, envIndex < envs.Count ? envs[envIndex] : -1))
                 break;
             envIndex++;
         }
-        return frames;
+    }
+
+    /// <summary>Records one frame's site, if the address names a predicate at all. Returns
+    /// true when it was the QUERY's — the bottom of the stack, and the end of the walk.
+    /// </summary>
+    private bool AddSite(List<(int Pc, int Env)> sites, int pc, int env)
+    {
+        int i = IndexOfPredicateAt(pc);
+        if (i < 0) return false;
+        sites.Add((pc, env));
+        return IsQueryEntry(i);
+    }
+
+    /// <summary>The predicate whose code contains <paramref name="pc"/>, as an index into
+    /// <see cref="SortedPredicateEntries"/>; -1 when the address names none.</summary>
+    private int IndexOfPredicateAt(int pc)
+    {
+        if (_currentPredicatesByAddress is null || pc < 0) return -1;
+        var entries = SortedPredicateEntries();
+        int i = Array.BinarySearch(entries, pc);
+        if (i < 0) i = ~i - 1;
+        return i;
+    }
+
+    private bool IsQueryEntry(int entryIndex)
+    {
+        var pred = _currentPredicatesByAddress![SortedPredicateEntries()[entryIndex]];
+        var (atomId, _) = FunctorTable.Lookup(pred.FunctorId);
+        return DemangleLocalName(AtomTable.GetById(atomId)?.Name ?? "?") == "__query__";
     }
 
     /// <summary>Is this address really inside the predicate the binary search landed on, or
@@ -6748,6 +6827,16 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // file, so a debugger can map a breakpoint in foo.pl back to them.
         int prevFile = _debugFileId;
         _debugFileId = DebugSiteTable.InternFile(path);
+
+        // And the debugger is TOLD about the file, now, whether or not anything ever stops in
+        // it. A breakpoint binds against a module and a module IS a file: until the debugger
+        // knows the name, the frames of that file have no module, so they are grey, carry no
+        // language, and open nothing when clicked. It used to learn the names only from the
+        // command line (a launch) or from the frames of a stop that had already happened — so
+        // a file consulted from the top level (`?- [blint].`) was invisible until the SECOND
+        // time the program stopped. The engine knows which files it loaded; it should say so.
+        if (DebugSession is not null)
+            Debugging.ShumwayDebugHelper.NoteSourceFile(path);
         try
         {
             ConsultString(File.ReadAllText(path));

@@ -454,6 +454,42 @@ public class Adr035SteppingTests
     }
 
     [Fact]
+    public void ADeepStackShowsBothEnds_AndSaysHowMuchOfTheMiddleItLeftOut()
+    {
+        // Nobody reads three hundred frames of the same clause. What a user reads is the top
+        // (where the machine is) and the bottom (how it got in) -- and the middle is a
+        // recursion, which they can see is a recursion from the two frames of it either side.
+        // So the stack shows both ends and SAYS how many frames it left out, rather than
+        // running to a length no window can show and no buffer can carry.
+        var engine = DebugEngine(
+            "down(0) :-\n    !,\n    bottom.\ndown(N) :-\n    N1 is N - 1,\n    down(N1).\nbottom.\n",
+            lco: false);
+        engine.AddBreakpoint("<string>", 4);   // bottom/0, 300 frames down
+
+        var frames = Walk(engine, "down(300).")[0].Frames;
+        _log.WriteLine($"{frames.Count} frames");
+        foreach (var f in frames.Take(2).Concat(frames.Skip(78).Take(4)))
+            _log.WriteLine($"  {f.Name}/{f.Arity} :{f.Line}");
+
+        // 80 innermost, the sentence, 20 outermost -- and the whole recursion is there in the
+        // count, not thrown away in silence.
+        Assert.Equal(101, frames.Count);
+        var omitted = frames[80];
+        Assert.Matches(@"^\.\.\. [\d,\.]+ frames omitted \.\.\.$", omitted.Name);
+        Assert.True(omitted.Arity < 0);            // not a predicate: rendered without an arity
+        Assert.Empty(omitted.Variables);
+
+        // The ends are real frames, with their variables (the innermost down/1 is the one that
+        // reached zero), and the bottom of the stack is still the query.
+        Assert.Equal("... 202 frames omitted ...", omitted.Name);
+        Assert.Equal("down/1", $"{frames[0].Name}/{frames[0].Arity}");
+        Assert.Equal(4, frames[0].Line);                    // stopped on the call to bottom/0
+        Assert.Equal("down/1", $"{frames[^2].Name}/{frames[^2].Arity}");
+        Assert.StartsWith("?-", frames[^1].Name);
+        Assert.Equal("300", frames[^2].Variables.First(v => v.Name == "N").Value);
+    }
+
+    [Fact]
     public void AQueryNobodyIsSteppingThrough_SaysNothingWhenItEnds()
     {
         // The other half: the message exists for a debugger waiting on a step. A program

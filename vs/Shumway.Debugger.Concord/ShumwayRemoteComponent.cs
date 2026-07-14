@@ -185,8 +185,9 @@ namespace Shumway.Debugger.Concord
                     // have succeeded, fails because the module id is already taken. It cost an
                     // hour to see. The Hello stop is where creation happens, and the only
                     // place it happens.
-                    foreach (string path in ((string)customMessage.Parameter1).Split('|'))
+                    foreach (string raw in ((string)customMessage.Parameter1).Split('|'))
                     {
+                        string path = ShumwaySession.Canonical(raw);
                         if (path.Length > 0 && !state.CreatedFiles.Contains(path)
                             && !state.PendingFiles.Contains(path))
                             state.PendingFiles.Add(path);
@@ -483,6 +484,16 @@ namespace Shumway.Debugger.Concord
             if (snapshot == null || wasHello)
                 return; // the bootstrap stop is not the user's: let it run on
 
+            // THE ENGINE HAS CONSULTED A FILE. Not a stop: a fact, delivered the only way a
+            // module can be built (from inside a stop event). EnsureModules, just above, has
+            // already built it — from the file list we re-read out of the channel. Say nothing
+            // to the user and let the program go on.
+            if (snapshot.Reason == StopReason.SourcesChanged)
+            {
+                state.StoppedAtPort = false;
+                return;
+            }
+
             // THE STEP THAT CANNOT BE SATISFIED. Control has left Prolog — the query gave up
             // its answer, or ran out of answers — and no port is coming. A step is a promise
             // to stop at the next port that satisfies it, and there is none to keep it with.
@@ -641,23 +652,35 @@ namespace Shumway.Debugger.Concord
         /// no frames to learn them from — the engine simply says.</para></summary>
         private static void LoadChannel(DkmProcess process, ShumwayServerDataItem state)
         {
-            if (state.SnapshotAddress != 0) return;
-
             int? processId = process.LivePart?.Id;
             if (processId == null) return;
 
             ShumwayChannelInfo? channel = ShumwayChannelFile.Read(processId.Value);
             if (channel == null || !channel.Usable) return;
 
+            bool first = state.SnapshotAddress == 0;
             state.SnapshotAddress = channel.SnapshotAddress;
             state.CommandAddress = channel.CommandAddress;
-            foreach (string file in channel.Files)
+
+            // RE-READ, at every stop, not once. The engine rewrites this file as it consults —
+            // and which files a program is made of is not settled when it starts: a top level
+            // consults on demand. A file we have not heard of has no module, and a frame in it
+            // is grey: no language, no source, nothing to click.
+            int learned = 0;
+            foreach (string raw in channel.Files)
             {
+                string file = ShumwaySession.Canonical(raw);
                 if (file.Length > 0 && !state.CreatedFiles.Contains(file)
                     && !state.PendingFiles.Contains(file))
+                {
                     state.PendingFiles.Add(file);
+                    learned++;
+                }
             }
-            ShumwayLog.Write("  channel found: " + Status(state));
+            if (first)
+                ShumwayLog.Write("  channel found: " + Status(state));
+            else if (learned > 0)
+                ShumwayLog.Write("  " + learned + " newly consulted file(s): " + Status(state));
         }
 
         private static DebugSnapshot? ReadSnapshot(DkmProcess process, ShumwayServerDataItem state)

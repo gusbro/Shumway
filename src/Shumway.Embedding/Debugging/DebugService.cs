@@ -355,7 +355,7 @@ public sealed class DebugService : IDebugSession
         // environment chain and Cp all still describe it. None of that is what the
         // user needs to see: the redo port is about the goal being retried, which the
         // choice point describes and the retry address points into.
-        int depth = engine.PendingRedoEnvDepth + 1;
+        int depth = engine.PendingRedoEnvDepthCapped(_stepDepth + 1) + 1;   // capped: see MaybeStopAtPort
         bool stop = _mode switch
         {
             StepMode.Into => true,
@@ -364,6 +364,7 @@ public sealed class DebugService : IDebugSession
             _ => false,
         };
         if (!stop) return;
+        depth = engine.PendingRedoEnvDepth + 1;   // exact, now that it is going to be shown
 
         var (e, cp) = engine.TopChoicePointContext;
         // -1 is a backtrackable builtin re-satisfying (between/3, repeat/0, clause/2):
@@ -421,6 +422,12 @@ public sealed class DebugService : IDebugSession
     /// call, so the callee reads the caller's own depth — which is exactly right, since
     /// it has taken the caller's place.</para></summary>
     private static int PortDepth(Activation engine) => engine.EnvDepth + 1;
+
+    /// <summary>The same depth, counted no further than <paramref name="cap"/> — exact while
+    /// it is at most that, and greater than it when it is deeper, which is the only other
+    /// thing a step condition asks. See <see cref="Activation.EnvDepthCapped"/>.</summary>
+    private static int PortDepthCapped(Activation engine, int cap)
+        => engine.EnvDepthCapped(Math.Max(cap, 1)) + 1;
 
     // ----- the step condition -----
 
@@ -481,7 +488,14 @@ public sealed class DebugService : IDebugSession
         // the useless one.
         bool landing = reason == StopReason.Call || reason == StopReason.Fail;
 
-        int depth = PortDepth(engine);
+        // CAPPED, and that is the whole cost of stepping. Every condition below compares the
+        // depth against the depth the step was taken from, so a port deeper than that is
+        // uninteresting whatever its exact depth — but ASKING costs a walk of the environment
+        // chain, and a step over a goal that runs for a while passes millions of ports at
+        // whatever depth that goal reaches. Blint: 140 seconds to step over a goal that runs
+        // in 20 without a debugger, all of it counting frames nobody asked about. The exact
+        // depth is computed once, at a stop, where one walk is nothing.
+        int depth = PortDepthCapped(engine, _stepDepth + 1);
         bool stop = _mode switch
         {
             // Into: the next goal, however deep — the first goal of the callee, if it has one.
@@ -498,7 +512,7 @@ public sealed class DebugService : IDebugSession
 
         // Only a call port knows the goal it is about to run; the others are read back
         // off the frame the machine is stopped in.
-        Stop(engine, reason, depth, SiteOf(engine.P),
+        Stop(engine, reason, PortDepth(engine), SiteOf(engine.P),
             goal: reason == StopReason.Call ? CurrentGoal() : null);
     }
 

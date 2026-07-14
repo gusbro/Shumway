@@ -115,7 +115,20 @@ it back on (to see the stack the release build would really have) with the prolo
 ```
 
 **Locals** show each variable of the selected frame under the name it has in the source,
-rendered as a term. An unbound variable shows as `_G3`.
+rendered as a term. An unbound variable shows as `_G3`; a variable whose goal has not run yet
+shows as `_`, because it has no value yet. A long term is cut off after 512 characters — the
+Locals window shows one line, and a variable holding a parsed file is not readable there
+anyway.
+
+**A deep stack shows both ends.** Stopped two thousand frames into a recursion you get the
+innermost eighty (where the machine is), a line saying `... 1,900 frames omitted ...`, and the
+outermost twenty (how the program got in). Nobody reads two thousand frames of the same clause,
+and rendering them all is the expensive part of a stop.
+
+**The files are the engine's, not the editor's.** Every `.pl` the engine consults — on the
+command line, from a `:- consult`, or typed at the top level — is announced to the debugger as
+it happens, so its frames are navigable and its breakpoints bind the first time you stop. You
+never have to open a file by hand to make the debugger notice it.
 
 **The bottom frame is your query** — `?- top(A)`, the goal you typed, with its variables.
 It is not a predicate (it has no `Name/Arity`), and double-clicking it opens nothing: you

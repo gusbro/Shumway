@@ -2206,22 +2206,41 @@ public sealed partial class Activation
     /// read the depth from there instead. An IL choice point (a backtrackable builtin
     /// re-satisfying) does not restore an environment, so the current one stands.
     /// </summary>
-    public int PendingRedoEnvDepth
+    public int PendingRedoEnvDepth => PendingRedoEnvDepthCapped(int.MaxValue - 1);
+
+    /// <summary>The redo port's depth, counted no further than <paramref name="cap"/> — see
+    /// <see cref="EnvDepthCapped"/>. A step in flight asks this at every backtrack, and a
+    /// program that backtracks hard backtracks deep.</summary>
+    public int PendingRedoEnvDepthCapped(int cap)
     {
-        get
-        {
-            if (_b < 0 || TopChoicePointIsIl) return EnvDepth;
-            int arity = (int)_stack[_b + CpArityOffset].Data;
-            return EnvDepthFrom((int)_stack[_b + CpCeOffset(arity)].Data);
-        }
+        if (_b < 0 || TopChoicePointIsIl) return EnvDepthFrom(_e, cap);
+        int arity = (int)_stack[_b + CpArityOffset].Data;
+        return EnvDepthFrom((int)_stack[_b + CpCeOffset(arity)].Data, cap);
     }
 
-    private int EnvDepthFrom(int e)
+    /// <summary>ADR-035 — the depth, but never counted past <paramref name="cap"/>: the
+    /// answer is exact while it is at most <paramref name="cap"/>, and <c>cap + 1</c> for
+    /// anything deeper.
+    ///
+    /// <para>Which is all a step needs, and the difference between a debugger and a
+    /// stopwatch. A step's condition compares the depth against the depth it was taken FROM,
+    /// so every port deeper than that is uninteresting — but counting it costs a walk of the
+    /// whole environment chain, and a step over a goal that runs for a while passes millions
+    /// of ports at whatever depth that goal reaches. Stepping over one Blint goal took 140
+    /// seconds against 20 without a debugger: not the program, the counting. Walking from the
+    /// top and stopping at the cap makes the cost the STEP's depth (four or five frames),
+    /// not the program's.</para></summary>
+    public int EnvDepthCapped(int cap) => EnvDepthFrom(_e, cap);
+
+    private int EnvDepthFrom(int e) => EnvDepthFrom(e, int.MaxValue - 1);
+
+    private int EnvDepthFrom(int e, int cap)
     {
         int depth = 0;
         while (e >= 0)
         {
             depth++;
+            if (depth > cap) return depth;   // deeper than anybody asked about
             int prevE = (int)_stack[e + EnvCeOffset].Data;
             if (prevE == e || prevE < 0) break;
             e = prevE;

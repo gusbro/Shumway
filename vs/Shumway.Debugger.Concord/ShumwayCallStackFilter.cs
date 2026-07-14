@@ -304,9 +304,11 @@ namespace Shumway.Debugger.Concord
             DkmCustomRuntimeInstance? runtime = process.GetRuntimeInstances()
                 .OfType<DkmCustomRuntimeInstance>()
                 .FirstOrDefault(r => r.Id.RuntimeType == ShumwayGuids.RuntimeType);
+            string wanted = ShumwaySession.Canonical(source.File);
             DkmCustomModuleInstance? module = runtime?.GetModuleInstances()
                 .OfType<DkmCustomModuleInstance>()
-                .FirstOrDefault(m => string.Equals(m.FullName, source.File, StringComparison.OrdinalIgnoreCase));
+                .FirstOrDefault(m => string.Equals(
+                    ShumwaySession.Canonical(m.FullName), wanted, StringComparison.OrdinalIgnoreCase));
             if (runtime == null || module == null)
                 return null;
 
@@ -337,10 +339,11 @@ namespace Shumway.Debugger.Concord
             var fresh = new List<string>();
             foreach (DebugSnapshotFrame frame in snapshot.Frames)
             {
-                if (string.IsNullOrEmpty(frame.File)) continue;
-                if (session.KnownFiles.Contains(frame.File)) continue;
-                session.KnownFiles.Add(frame.File);
-                fresh.Add(frame.File);
+                string file = ShumwaySession.Canonical(frame.File);
+                if (file.Length == 0) continue;
+                if (session.KnownFiles.Contains(file)) continue;
+                session.KnownFiles.Add(file);
+                fresh.Add(file);
             }
             if (fresh.Count == 0)
                 return;

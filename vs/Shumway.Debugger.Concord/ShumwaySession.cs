@@ -107,6 +107,19 @@ namespace Shumway.Debugger.Concord
                 && moduleName!.Equals("Shumway.Interpreter.dll", StringComparison.OrdinalIgnoreCase);
         }
 
+        /// <summary>ONE SPELLING OF A PATH. A module is identified by its file, and a file
+        /// arrives spelled several ways: the engine's command line, a `consult('c:/x/y.pl')`
+        /// the user typed with forward slashes, the name a frame reports. Compared as strings,
+        /// those are three different files — so a frame ended up matched against no module at
+        /// all, and showed grey, with no language and nothing to click. Compared as PATHS they
+        /// are one.</summary>
+        public static string Canonical(string? path)
+        {
+            if (string.IsNullOrEmpty(path)) return "";
+            try { return System.IO.Path.GetFullPath(path); }
+            catch (Exception) { return path!; }
+        }
+
         /// <summary>The session, keyed by the process it belongs to — and kept HERE, not in a
         /// DkmDataItem on the DkmProcess.
         ///

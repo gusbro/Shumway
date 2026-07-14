@@ -33,6 +33,18 @@ public enum StopReason
     /// running, and every key after that answered "Unable to step. Operation not
     /// supported."</para></summary>
     StepAbandoned = 6,
+
+    /// <summary>The program has just consulted a source file the debugger has not heard of.
+    ///
+    /// <para>Not a stop to show — the engine resumes the instant the debugger has read it, and
+    /// the user never sees it. It exists because everything the debugger does with a file
+    /// (bind a breakpoint, colour a frame, open it when clicked) goes through a MODULE; a
+    /// module can only be created from inside a real stop event; and which files a program is
+    /// made of is not settled when it starts, because a top level consults on demand. Without
+    /// it the debugger learned the file at the next stop the user made — so their first break
+    /// in that file showed grey, sourceless frames, and they had to break a second time.</para>
+    /// </summary>
+    SourcesChanged = 7,
 }
 
 /// <summary>ADR-035 — what the debugger asked the engine to do next.</summary>

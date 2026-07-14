@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Runtime.CompilerServices;
 
 namespace Shumway.Embedding.Debugging;
@@ -128,7 +130,55 @@ public static class ShumwayDebugHelper
     /// has stopped nowhere yet, so the debugger has no frames to learn the file names from.
     /// It has to be told, before the first goal runs, or the user's breakpoints have nothing
     /// to attach to. Set before the session opens.</summary>
-    public static string[] SourceFiles { get; set; } = Array.Empty<string>();
+    public static string[] SourceFiles
+    {
+        get { lock (_sourceFiles) return _sourceFiles.ToArray(); }
+        set
+        {
+            lock (_sourceFiles)
+            {
+                _sourceFiles.Clear();
+                foreach (string file in value ?? Array.Empty<string>())
+                    _sourceFiles.Add(Full(file));
+            }
+            PublishChannelFile(_channel);
+        }
+    }
+
+    private static readonly List<string> _sourceFiles = new();
+
+    /// <summary>ADR-035 — "I have just consulted this file." Published to the debugger the
+    /// moment it happens, rather than only at session open.
+    ///
+    /// <para>Which files a program is made of is not settled when it starts: a top level
+    /// consults on demand (<c>?- [blint].</c>), and everything the debugger does with a file
+    /// — bind a breakpoint, name a frame's language, open it when the user clicks — needs a
+    /// module, and a module needs the NAME. Learning it from a stop that has already happened
+    /// is one stop too late, which is exactly what the user saw: grey frames on the first
+    /// break, real ones on the second.</para></summary>
+    public static void NoteSourceFile(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return;
+        string full = Full(path);
+        lock (_sourceFiles)
+        {
+            if (_sourceFiles.Contains(full, StringComparer.OrdinalIgnoreCase)) return;
+            _sourceFiles.Add(full);
+        }
+        PublishChannelFile(_channel);
+
+        // Published is not the same as READ. The debugger can only build the module that
+        // stands for a file from inside a stop, so give it one — a stop that shows nothing,
+        // resumes at once, and means the user's first break in this file is a break in a file
+        // the debugger already knows.
+        Session?.SourceFileConsulted();
+    }
+
+    private static string Full(string path)
+    {
+        try { return System.IO.Path.GetFullPath(path); }
+        catch (Exception) { return path; }
+    }
 
     /// <summary>Where a debugger can find this process's channel WITHOUT running a single
     /// line of its code: <c>%TEMP%\shumway-debug\&lt;pid&gt;.channel</c>.</summary>
