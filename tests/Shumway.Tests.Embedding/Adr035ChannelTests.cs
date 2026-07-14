@@ -116,6 +116,79 @@ public class Adr035ChannelTests
     }
 
     [Fact]
+    public void AStackTooBigForTheBufferIsTruncated_AndSaysHowManyFramesItReallyCarries()
+    {
+        // The Blint bug, in one test. A real program's stack is 239 frames deep and its
+        // variables hold the file it is reading, so the stop did not fit — and the writer
+        // wrote the TRUE frame count and then silently dropped what would not fit, leaving
+        // the tail of an OLDER stop in the buffer behind it. The reader walked 239 frames
+        // through bytes that were not frames, read an old string's bytes as a variable count,
+        // and asked for a list of two billion. It died of an OutOfMemoryException inside the
+        // stop handler, so the pause the user asked for was never completed and Visual Studio
+        // waited for it for ever while the program ran on.
+        using var channel = new DebugChannel();
+
+        var big = new List<PrologEngine.DebugFrame>();
+        for (int i = 0; i < 400; i++)
+        {
+            var variables = new List<(string, string)>();
+            for (int v = 0; v < 8; v++)
+                variables.Add(($"V{v}", new string('x', 500)));   // ~4 KB of variables a frame
+            big.Add(new PrologEngine.DebugFrame($"deep{i}", 1, "big.pl", i, i, variables));
+        }
+
+        // Something WAS in the buffer before: the tail of a longer stop is exactly what the
+        // reader used to walk into.
+        channel.WriteSnapshot(new DebugStopEvent(
+            StopReason.Breakpoint, "old/0", "big.pl", 1, 1, big));
+        channel.WriteSnapshot(new DebugStopEvent(
+            StopReason.AsyncBreak, "deep0/1", "big.pl", 0, 400, big));
+
+        DebugSnapshot snapshot = ReadFromMemory(channel);
+        _log.WriteLine($"{big.Count} frames offered, {snapshot.Frames.Count} carried");
+
+        // Truncated — and honest about it: every frame it claims is really there, whole.
+        Assert.True(snapshot.Frames.Count > 0);
+        Assert.True(snapshot.Frames.Count < big.Count);
+        Assert.Equal(StopReason.AsyncBreak, snapshot.Reason);
+        for (int i = 0; i < snapshot.Frames.Count; i++)
+        {
+            Assert.Equal($"deep{i}", snapshot.Frames[i].Name);
+            Assert.Equal(8, snapshot.Frames[i].Variables.Count);
+            Assert.Equal(500, snapshot.Frames[i].Variables[0].Value.Length);
+        }
+    }
+
+    [Fact]
+    public void ACorruptCountIsNotBelieved()
+    {
+        // The other half of the same defence, at the reader. Whatever is in these bytes — an
+        // engine of another version, a torn write, a buffer nobody has written yet — a count
+        // read out of them is four bytes, not a promise, and the debugger must not size an
+        // allocation from it.
+        var bytes = new byte[1024];
+        int at = 0;
+        DebugWire.WriteInt(bytes, ref at, DebugWire.FormatVersion);
+        DebugWire.WriteInt(bytes, ref at, 1);          // sequence
+        DebugWire.WriteInt(bytes, ref at, 0);          // running
+        DebugWire.WriteInt(bytes, ref at, 0);          // heartbeat
+        DebugWire.WriteInt(bytes, ref at, 0);          // interop depth
+        DebugWire.WriteInt(bytes, ref at, (int)StopReason.AsyncBreak);
+        DebugWire.WriteString(bytes, ref at, "g/0");
+        DebugWire.WriteString(bytes, ref at, "f.pl");
+        DebugWire.WriteInt(bytes, ref at, 1);          // line
+        DebugWire.WriteInt(bytes, ref at, 1);          // depth
+        DebugWire.WriteString(bytes, ref at, "");
+        DebugWire.WriteInt(bytes, ref at, 0);
+        DebugWire.WriteInt(bytes, ref at, int.MaxValue);   // "two billion frames follow"
+
+        DebugSnapshot? snapshot = DebugChannel.ReadSnapshot(bytes);   // must not throw
+        Assert.NotNull(snapshot);
+        Assert.Empty(snapshot!.Frames);
+        Assert.Equal(StopReason.AsyncBreak, snapshot.Reason);
+    }
+
+    [Fact]
     public void TheSequenceNumberRisesOnEveryStop_SoAMissedOneShows()
     {
         var engine = DebugEngine("p(1).\np(2).\np(3).\n");

@@ -181,6 +181,11 @@ public static class DebugWire
     /// engine says so instead of reading nonsense.</summary>
     public const int FormatVersion = 3;
 
+    /// <summary>The size of the snapshot region — declared HERE, with the format, because the
+    /// debugger has to know it: it reads the region whole (a prefix of a snapshot is not a
+    /// snapshot), and it is the other side of the writer's truncation rule.</summary>
+    public const int SnapshotCapacity = 256 * 1024;
+
     /// <summary>Where the <see cref="DebugSnapshot.Running"/> word sits: past the version
     /// and the sequence. The engine pokes it in place when it resumes — telling the
     /// debugger "what is in here is history now" has to be cheap enough to do at every
@@ -272,8 +277,18 @@ public static class DebugWire
             BreakLine = ReadInt(buffer, ref at),
         };
 
+        // A COUNT READ OUT OF A BUFFER IS NOT A PROMISE. It is four bytes that came from
+        // another process, and if the writer truncated, or the buffer holds the tail of an
+        // older stop, or a debugger of one version is reading an engine of another, then it is
+        // whatever those bytes happen to say. Sizing a list from it is how the debugger died
+        // of an OutOfMemoryException on a 239-frame Blint stack, silently, in the middle of
+        // completing an asynchronous break — and Visual Studio waited for it for ever.
+        //
+        // So: grow the lists as the elements actually arrive, and stop at anything that cannot
+        // be in a buffer this size (each frame is at least six ints, each variable two).
         int frameCount = ReadInt(buffer, ref at);
-        var frames = new List<DebugSnapshotFrame>(Math.Max(0, frameCount));
+        if (frameCount < 0 || frameCount > buffer.Length / 24) frameCount = 0;
+        var frames = new List<DebugSnapshotFrame>();
         for (int i = 0; i < frameCount; i++)
         {
             var frame = new DebugSnapshotFrame
@@ -285,7 +300,8 @@ public static class DebugWire
                 Pc = ReadInt(buffer, ref at),
             };
             int varCount = ReadInt(buffer, ref at);
-            var variables = new List<DebugVariableView>(Math.Max(0, varCount));
+            if (varCount < 0 || varCount > (buffer.Length - at) / 8) varCount = 0;
+            var variables = new List<DebugVariableView>();
             for (int v = 0; v < varCount; v++)
             {
                 variables.Add(new DebugVariableView

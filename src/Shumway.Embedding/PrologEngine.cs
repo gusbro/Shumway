@@ -3937,6 +3937,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private static string Ellipsize(string text, int max)
         => text.Length <= max ? text : text.Substring(0, max - 3) + "...";
 
+    /// <summary>How much of a variable's value a frame carries. A stack is a hundred frames
+    /// of a few variables each, and it has to fit in one buffer; a single term big enough to
+    /// fill it on its own would take the rest of the stack with it.</summary>
+    private const int MaxVariableChars = 512;
+
     /// <summary>Adds the frame at <paramref name="pc"/>. Returns true when it was the
     /// QUERY's — the bottom of the stack, and the end of the walk.</summary>
     private bool AddFrame(Activation engine, List<DebugFrame> frames, int pc, int env)
@@ -4020,7 +4025,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 int h = engine.AllocateHeap(1);
                 engine.SetHeap(h, engine.GetY(env, v.Slot));
                 Term term = TermReader.Materialize(engine, h);
-                value = AstTermRenderer.Render(term, 999, Operators);
+
+                // Ellipsized, and not as a nicety. A real program binds real data: a Blint
+                // variable holds the parsed contents of the file it is linting, and rendering
+                // it whole put a megabyte of text into a variable the Locals window shows on
+                // one line — which nobody can read, and which overran the channel that had to
+                // carry the WHOLE stack. (Seeing inside a big term is what expanding it in the
+                // Locals window is for; that is a func-eval, and it is on the D5 list.)
+                value = Ellipsize(AstTermRenderer.Render(term, 999, Operators), MaxVariableChars);
             }
             catch (Exception)
             {

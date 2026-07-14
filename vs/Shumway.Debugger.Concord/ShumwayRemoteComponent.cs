@@ -410,6 +410,41 @@ namespace Shumway.Debugger.Concord
             DkmRuntimeBreakpoint runtimeBreakpoint, DkmThread thread,
             bool hasException, DkmEventDescriptorS eventDescriptor)
         {
+            // A THROW HERE IS A HANG. Concord swallows it, the debuggee is resumed, and
+            // whatever the user was waiting for — a pause, a step — is waited for for ever,
+            // because the one event that could have completed it was this one. (An
+            // OutOfMemoryException out of a snapshot reader that trusted a frame count is how
+            // we found that out: Break All on Blint left Visual Studio "breaking" while the
+            // program ran happily to its answer.) So: catch, say so, and still answer the
+            // question that was asked.
+            try
+            {
+                OnStop(runtimeBreakpoint, thread, eventDescriptor);
+            }
+            catch (Exception ex)
+            {
+                ShumwayLog.Write("  STOP HANDLER THREW: " + ex);
+                ShumwayServerDataItem broken = GetState(thread.Process);
+                if (broken.AsyncBreakPending)
+                {
+                    broken.AsyncBreakPending = false;
+                    try
+                    {
+                        thread.Process.OnAsyncBreakComplete(
+                            DkmAsyncBreakStatus.ActiveBreak, thread);
+                    }
+                    catch (Exception inner)
+                    {
+                        ShumwayLog.Write("  and completing the break threw: " + inner.Message);
+                    }
+                }
+            }
+        }
+
+        private static void OnStop(
+            DkmRuntimeBreakpoint runtimeBreakpoint, DkmThread thread,
+            DkmEventDescriptorS eventDescriptor)
+        {
             if (runtimeBreakpoint.SourceId != ShumwayGuids.NotifyBreakpointSource)
                 return;
 
@@ -441,6 +476,10 @@ namespace Shumway.Debugger.Concord
                 WriteCommands(process, state);   // take the Hello back out of the channel
 
             DebugSnapshot? snapshot = ReadSnapshot(process, state);
+            ShumwayLog.Write("  snapshot: " + (snapshot == null ? "NULL"
+                : snapshot.Reason + " seq=" + snapshot.Sequence + " running=" + snapshot.Running
+                  + " frames=" + snapshot.Frames.Count + " goal=" + snapshot.Goal
+                  + " pendingBreak=" + state.AsyncBreakPending));
             if (snapshot == null || wasHello)
                 return; // the bootstrap stop is not the user's: let it run on
 
@@ -626,12 +665,21 @@ namespace Shumway.Debugger.Concord
             if (state.SnapshotAddress == 0) return null;
             try
             {
-                var bytes = new byte[64 * 1024];
+                // THE WHOLE REGION. Reading a prefix of it was a quiet bug of its own: a stack
+                // longer than the prefix came back with its frames cut off — and a reader that
+                // walks a frame count through bytes it does not have is a reader that reads
+                // rubbish. The buffer is a fixed size, the engine says so, and it is small.
+                var bytes = new byte[DebugWire.SnapshotCapacity];
                 process.ReadMemory((ulong)state.SnapshotAddress, DkmReadMemoryFlags.None, bytes);
-                return DebugWire.ReadSnapshot(bytes);
+                DebugSnapshot? snapshot = DebugWire.ReadSnapshot(bytes);
+                if (snapshot == null)
+                    ShumwayLog.Write("  snapshot unreadable (format v"
+                        + (bytes[0] | (bytes[1] << 8)) + "?)");
+                return snapshot;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                ShumwayLog.Write("  snapshot read threw: " + ex.GetType().Name + ": " + ex.Message);
                 return null;
             }
         }

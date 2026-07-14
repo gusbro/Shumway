@@ -15,3 +15,24 @@ work(N) :-
 
 go :-
     work(20000).
+
+% A STACK WITH REAL DATA ON IT -- the shape that broke. Blint pauses 200+ frames deep with
+% variables holding the file it is reading, and the whole stop has to cross a fixed-size
+% buffer. It did not fit; the snapshot was truncated but claimed the full count; the
+% debugger walked the missing frames through the tail of an older stop, read rubbish as a
+% variable count, and died of it inside the stop handler -- so the pause was never
+% completed and Visual Studio waited for it for ever, while the program ran happily on.
+big(0, []) :- !.
+big(N, [N|T]) :-
+    N1 is N - 1,
+    big(N1, T).
+
+deep(0, _) :- !.
+deep(N, Data) :-
+    spin(1000),
+    N1 is N - 1,
+    deep(N1, Data).
+
+heavy :-
+    big(500, Data),
+    deep(2000, Data).

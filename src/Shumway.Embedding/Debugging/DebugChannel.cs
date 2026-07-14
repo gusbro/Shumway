@@ -34,8 +34,9 @@ public readonly record struct DebugCommand(
 public sealed class DebugChannel : IDisposable
 {
     // Big enough for a deep stack with variables; a snapshot that would overflow is
-    // truncated rather than reallocated, because the address must not move.
-    public const int SnapshotCapacity = 256 * 1024;
+    // truncated rather than reallocated, because the address must not move. The size lives in
+    // DebugWire, with the format: the debugger reads the region whole, so both sides need it.
+    public const int SnapshotCapacity = DebugWire.SnapshotCapacity;
     public const int CommandCapacity = 16 * 1024;
 
     /// <summary>The wire format both sides speak. See <see cref="DebugWire"/>.</summary>
@@ -107,9 +108,24 @@ public sealed class DebugChannel : IDisposable
         DebugWire.WriteString(_snapshot, ref at, stop.BreakFile);
         DebugWire.WriteInt(_snapshot, ref at, stop.BreakLine);
 
-        DebugWire.WriteInt(_snapshot, ref at, stop.Frames.Count);
+        // A STACK THAT DOES NOT FIT IS TRUNCATED, AND SAYS SO. The count is written last,
+        // over a placeholder, and it is the number of frames actually IN the buffer — not the
+        // number the program has.
+        //
+        // Writing the real count and then running out of room was the bug: the field writers
+        // drop what will not fit (the address must not move), so the tail of the buffer stayed
+        // as the PREVIOUS stop had left it, and a reader walking N frames through it read old
+        // bytes as a length. It asked for a list of two billion variables and died of it —
+        // and the debugger, whose call it was, silently let the program run on while Visual
+        // Studio waited for a break that had already happened. A 239-frame Blint stack was
+        // all it took.
+        int frameCountAt = at;
+        DebugWire.WriteInt(_snapshot, ref at, 0);
+
+        int written = 0;
         foreach (var f in stop.Frames)
         {
+            if (!Fits(at, f)) break;
             DebugWire.WriteString(_snapshot, ref at, f.Name);
             DebugWire.WriteInt(_snapshot, ref at, f.Arity);
             DebugWire.WriteString(_snapshot, ref at, f.File);
@@ -121,11 +137,29 @@ public sealed class DebugChannel : IDisposable
                 DebugWire.WriteString(_snapshot, ref at, name);
                 DebugWire.WriteString(_snapshot, ref at, value);
             }
+            written++;
         }
+
+        int patch = frameCountAt;
+        DebugWire.WriteInt(_snapshot, ref patch, written);
+
         // Zero the next word, so a reader that walks off the end of what was just
         // written finds an empty count rather than the tail of an older, longer stop.
         DebugWire.WriteInt(_snapshot, ref at, 0);
     }
+
+    /// <summary>Whether this frame, whole, still fits — measured before a byte of it is
+    /// written, because a half-written frame is worse than a missing one.</summary>
+    private static bool Fits(int at, PrologEngine.DebugFrame frame)
+    {
+        int need = 4 + Utf8Length(frame.Name) + 4 + 4 + Utf8Length(frame.File) + 4 + 4 + 4;
+        foreach (var (name, value) in frame.Variables)
+            need += 4 + Utf8Length(name) + 4 + Utf8Length(value);
+        return at + need + 4 <= SnapshotCapacity;   // + the terminating zero word
+    }
+
+    private static int Utf8Length(string? text)
+        => text is null ? 0 : System.Text.Encoding.UTF8.GetByteCount(text);
 
     /// <summary>Says that the program is running again, so that what the buffer holds is
     /// the record of a stop that is OVER.

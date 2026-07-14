@@ -144,6 +144,49 @@ try {
     }
     $results["P2 F5 lets it run on"] = $ranOn
 
+    # P3 -- A DEEP STACK CARRYING REAL DATA. The Blint shape: 200+ frames whose variables hold
+    # the data the program is working on. The whole stop crosses one fixed-size buffer, and a
+    # stack that does not fit has to be TRUNCATED HONESTLY -- claim the full count and the
+    # debugger walks the frames it never got through the tail of an older stop, reads rubbish
+    # as a variable count, and dies of it inside the stop handler. Which is silent: Visual
+    # Studio waits for a pause that has already happened, and the program runs on to its
+    # answer. This leg is the one that would have caught it.
+    Write-Host "[6/6] the same, on a DEEP stack with data on it ..."
+    $engine.StandardInput.WriteLine("heavy.")
+    $engine.StandardInput.Flush()
+    Start-Sleep -Seconds 6
+
+    $deepPaused = $false
+    $deepFrames = @()
+    try {
+        Invoke-WithRetry { $dte.Debugger.Break($false) } 3 2000
+        for ($i = 0; $i -lt 25; $i++) {
+            Assert-Time "waiting for the deep break to land"
+            Start-Sleep -Seconds 1
+            if ((Invoke-WithRetry { $dte.Debugger.CurrentMode } 5 1000) -eq 2) { $deepPaused = $true; break }
+        }
+    } catch { Write-Host "  Break All threw: $($_.Exception.Message)" }
+    Write-Host "  paused: $deepPaused"
+
+    if ($deepPaused) {
+        $deepFrames = Invoke-WithRetry {
+            $out = @()
+            foreach ($t in @($dte.Debugger.CurrentProgram.Threads)) {
+                $names = @($t.StackFrames) | ForEach-Object { $_.FunctionName }
+                if (@($names | Where-Object { $_ -match '^(deep|spin|big|heavy)/' }).Count -gt 0) {
+                    $dte.Debugger.CurrentThread = $t
+                    $out = $names
+                    break
+                }
+            }
+            $out
+        } 5 2000
+        Write-Host ("  frames: {0}, top: {1}" -f $deepFrames.Count, $deepFrames[0])
+        try { Invoke-WithRetry { $dte.Debugger.Go($false) } 5 2000 } catch {}
+    }
+    $results["P3 Break All on a DEEP stack with data"] =
+        ($deepPaused -and @($deepFrames | Where-Object { $_ -match '^(deep|spin)/' }).Count -gt 0)
+
     if (Test-Path $componentLog) {
         Write-Host ""
         Write-Host "--- component log (last 12) ---"
