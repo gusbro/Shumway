@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Shumway.Compiler.Ast;
 using Shumway.Core;
 
 namespace Shumway.Embedding.Debugging;
@@ -202,6 +203,176 @@ public sealed class DebugService : IDebugSession
         _lastStopDepth = depth;
     }
 
+    // ----- the Immediate window: evaluate a goal against the live engine -----
+
+    /// <summary>An evaluation is in flight: the goal typed in the Immediate window is
+    /// running in its own activation while the user's query stands suspended.</summary>
+    private bool _evalActive;
+
+    internal bool EvaluationInFlight => _evalActive;
+    private Activation? _evalOuter;
+    private IReadOnlyList<PrologEngine.DebugFrame> _evalOuterFrames
+        = Array.Empty<PrologEngine.DebugFrame>();
+    private string _evalGoalText = "";
+    private Action? _evalDisarmTimeout;
+
+    /// <summary>ADR-035 — the fallback: an evaluation that must not stop. With it set, a
+    /// breakpoint (or <c>debugger_break/0</c>) reached by the evaluated goal is ignored
+    /// rather than reported — for a host whose nested break states misbehave, or a user
+    /// who wants evals to just run. Default off: a breakpoint the user set is a breakpoint
+    /// the user set, whoever reaches it.</summary>
+    public static bool SuppressStopsDuringEvaluation { get; set; }
+        = Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_EVAL_QUIET") == "1";
+
+    /// <summary>How long an evaluated goal may run before it is cancelled — UNTIL its
+    /// first stop: a goal standing at a breakpoint is the user's to resume or abort, for
+    /// as long as they care to look, and a timer that fired under them would abort the
+    /// evaluation they were in the middle of inspecting.</summary>
+    public static TimeSpan EvaluationTimeout { get; set; } = TimeSpan.FromSeconds(15);
+
+    /// <summary>ADR-035 — the Immediate window. Parses <paramref name="goalText"/>,
+    /// substitutes each of its variables that names a variable of display frame
+    /// <paramref name="frameIndex"/> with that variable's CURRENT value, and runs the
+    /// result as a real query — a new activation over the live engine, database effects
+    /// and all, with the exact semantics of any nested mid-query activation. Returns the
+    /// first solution's bindings ("X = 5, Y = out(5)"), "true", "false", or an error
+    /// sentence.</summary>
+    public string EvaluateGoal(int frameIndex, string goalText)
+    {
+        Activation? outer = Current;
+        if (outer is null) return "nothing is stopped: no frame to evaluate against";
+        if (_evalActive) return "an evaluation is already running";
+        if (string.IsNullOrWhiteSpace(goalText)) return "nothing to evaluate";
+
+        // Parse first — nothing is saved or run for a goal that does not read.
+        Term goal;
+        IReadOnlyList<string> names;
+        try
+        {
+            string text = goalText.Trim();
+            if (!text.EndsWith(".", StringComparison.Ordinal)) text += ".";
+            (goal, names) = _engine.ParseGoal(text);
+        }
+        catch (Exception ex)
+        {
+            return "syntax error: " + ex.Message;
+        }
+
+        // The frame's variables, as terms. The goal's variables that match by name are
+        // substituted; the rest stay free and come back as the answer's bindings.
+        var substituted = new HashSet<string>(StringComparer.Ordinal);
+        if (_engine.TryGetDisplayFrameContext(outer, frameIndex, out int pc, out int env))
+        {
+            foreach (var (name, value) in _engine.MaterializeFrameVariables(outer, pc, env))
+            {
+                if (!names.Contains(name)) continue;
+                goal = SubstituteVariable(goal, name, value);
+                substituted.Add(name);
+            }
+        }
+        var report = new List<string>();
+        foreach (string n in names)
+            if (!substituted.Contains(n) && !report.Contains(n)) report.Add(n);
+
+        // THE BRACKET. The outer stack is captured NOW — the eval's query setup rebuilds
+        // the per-query tables, and after that the suspended query's frames cannot be
+        // walked correctly until they are put back. Everything saved here is restored in
+        // the finally, stop or no stop, error or no error.
+        _evalActive = true;
+        _evalOuter = outer;
+        _evalGoalText = Ellipsize(goalText.Trim(), 80);
+        _evalOuterFrames = _engine.CaptureFrames(outer);
+        var scope = _engine.BeginDebugEvaluation();
+        int savedDepth = _lastStopDepth;
+        var savedMode = _mode;
+        _mode = StepMode.Continue;
+
+        using var timeout = new System.Threading.CancellationTokenSource(EvaluationTimeout);
+        bool sawStop = false;
+        _evalDisarmTimeout = () =>
+        {
+            // The goal reached a breakpoint: it is the user's now, for as long as they
+            // want to look. Only the RUNNING part of an evaluation is on the clock.
+            sawStop = true;
+            try { timeout.CancelAfter(System.Threading.Timeout.InfiniteTimeSpan); }
+            catch (ObjectDisposedException) { }
+        };
+
+        try
+        {
+            Solution? first = null;
+            foreach (var solution in _engine.QueryAll(goal, timeout.Token))
+            {
+                first = solution;
+                break;   // the Immediate window is one-shot: the first solution
+            }
+            if (first is null) return "false";
+            if (report.Count == 0) return "true";
+
+            var text = new System.Text.StringBuilder();
+            foreach (string n in report)
+            {
+                if (text.Length > 0) text.Append(",\n");
+                Term? value = first[n];
+                text.Append(n).Append(" = ").Append(value is null
+                    ? "_"
+                    : Ellipsize(AstTermRenderer.Render(value, 999, _engine.Operators), 2048));
+            }
+            return text.ToString();
+        }
+        catch (OperationCanceledException)
+        {
+            return sawStop
+                ? "the evaluation was aborted"
+                : $"timed out after {EvaluationTimeout.TotalSeconds:0.#} s "
+                    + "(the goal was still running)";
+        }
+        catch (Exception ex)
+        {
+            return "error: " + ex.Message;
+        }
+        finally
+        {
+            _evalDisarmTimeout = null;
+            _engine.EndDebugEvaluation(scope);
+            _evalActive = false;
+            _evalOuter = null;
+            _evalOuterFrames = Array.Empty<PrologEngine.DebugFrame>();
+            _evalGoalText = "";
+            // The machine the debugger is watching is the SUSPENDED one again, and the
+            // step the user takes next is from the stop they were at.
+            Current = outer;
+            _lastStopDepth = savedDepth;
+            _mode = savedMode;
+        }
+    }
+
+    /// <summary>Replaces every occurrence of the named variable in the goal with the
+    /// frame's value for it.</summary>
+    private static Term SubstituteVariable(Term goal, string name, Term value)
+    {
+        switch (goal)
+        {
+            case VarTerm v when v.Name == name:
+                return value;
+            case CompoundTerm c:
+                Term[]? parts = null;
+                for (int i = 0; i < c.Args.Length; i++)
+                {
+                    Term arg = SubstituteVariable(c.Args[i], name, value);
+                    if (!ReferenceEquals(arg, c.Args[i]) && parts is null)
+                    {
+                        parts = new Term[c.Args.Length];
+                        Array.Copy(c.Args, parts, c.Args.Length);
+                    }
+                    if (parts is not null) parts[i] = arg;
+                }
+                return parts is null ? goal : new CompoundTerm(c.Functor, parts);
+            default:
+                return goal;
+        }
+    }
+
     // ----- commands from a debugger, while the program is running -----
 
     /// <summary>Called every <see cref="PollInterval"/> ports, so a debugger can arm a
@@ -221,6 +392,10 @@ public sealed class DebugService : IDebugSession
 
     void IDebugSession.OnBreak(Activation engine, int pc)
     {
+        // The suppression fallback: an evaluation that must not stop runs straight
+        // through its breakpoints. See SuppressStopsDuringEvaluation.
+        if (_evalActive && SuppressStopsDuringEvaluation) return;
+
         Current = engine;
         // A breakpoint always stops, whatever the step mode: it is the one thing the
         // user asked for by name.
@@ -408,7 +583,7 @@ public sealed class DebugService : IDebugSession
             StopReason.Redo,
             pred is null ? CurrentGoal() : $"{pred.Value.Name}/{pred.Value.Arity}",
             site.File, site.Line, depth,
-            _engine.CaptureFrames(engine, pc, e, cp)));
+            WithEvalBoundary(engine, _engine.CaptureFrames(engine, pc, e, cp))));
     }
 
     void IDebugSession.OnFail(Activation engine)
@@ -551,7 +726,7 @@ public sealed class DebugService : IDebugSession
         _lastStopDepth = depth;
         Current = engine;
 
-        var frames = _engine.CaptureFrames(engine);
+        var frames = WithEvalBoundary(engine, _engine.CaptureFrames(engine));
         // "" is CurrentGoal()'s answer for a port with no callee to name (an inline
         // goal's) — the frame the machine is standing in is the honest name then too.
         if (string.IsNullOrEmpty(goal))
@@ -566,6 +741,33 @@ public sealed class DebugService : IDebugSession
 
     // The breakpoint being reported, for the length of one stop. See OnBreak.
     private (string File, int Line)? _breakRequest;
+
+    /// <summary>ADR-035 — the mixed stack of a stop INSIDE an Immediate-window evaluation:
+    /// the evaluated goal's frames, a boundary saying where they came from, and under it
+    /// the suspended query the user was stopped in — captured when the evaluation began,
+    /// which is exact: the suspended activation cannot move while its thread runs the
+    /// eval. (C# shows a bare <c>[Function Evaluation]</c> cut here; the engine knows both
+    /// activations, so it shows both stacks.) Also the moment the evaluation's timeout is
+    /// disarmed: a goal standing at a breakpoint is the user's, for as long as they
+    /// care to look.</summary>
+    private IReadOnlyList<PrologEngine.DebugFrame> WithEvalBoundary(
+        Activation engine, IReadOnlyList<PrologEngine.DebugFrame> frames)
+    {
+        if (!_evalActive || ReferenceEquals(engine, _evalOuter)) return frames;
+        _evalDisarmTimeout?.Invoke();
+
+        var mixed = new List<PrologEngine.DebugFrame>(
+            frames.Count + 1 + _evalOuterFrames.Count);
+        mixed.AddRange(frames);
+        mixed.Add(new PrologEngine.DebugFrame(
+            $"[Immediate: {_evalGoalText}]", -2, "", 0, -1,
+            Array.Empty<(string, string)>()));
+        mixed.AddRange(_evalOuterFrames);
+        return mixed;
+    }
+
+    private static string Ellipsize(string text, int max)
+        => text.Length <= max ? text : text.Substring(0, max - 3) + "...";
 
     private (string File, int Line) SiteOf(int pc)
     {

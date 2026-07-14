@@ -1,10 +1,10 @@
-// Shumway debugger - IDE-side session state (ADR-035, phase D2).
+﻿// Shumway debugger - IDE-side session state (ADR-035, phase D2).
 //
 // The debuggee's half of this conversation is DebugChannel + ShumwayDebugHelper. The
 // contract, in full:
 //
 //   * ONCE, at attach, we func-eval ShumwayDebugHelper.Attach(). It hands back the
-//     addresses of two pinned buffers. A func-eval is safe here — this is a normal
+//     addresses of two pinned buffers. A func-eval is safe here â€” this is a normal
 //     stop, not the breakpoint-notification context where evaluating a function in the
 //     debuggee is documented to deadlock (ConcordExtensibilitySamples #61).
 //
@@ -14,7 +14,7 @@
 //
 //   * At an ASYNCHRONOUS BREAK (the user hit Break All), the machine is at no port and
 //     the buffer holds the last real stop, which would be a lie. So we ask:
-//     CaptureNow() — again a func-eval, again from a normal stop, and the engine writes
+//     CaptureNow() â€” again a func-eval, again from a normal stop, and the engine writes
 //     the truth.
 
 using System;
@@ -33,7 +33,7 @@ namespace Shumway.Debugger.Concord
         /// <summary>How many frames we have asked to do the handshake. It is not a given
         /// that any particular one CAN: a func-eval is evaluated in the context of a frame,
         /// and a frame can only name what its own module can see (and some carry no symbols
-        /// at all). So we try the engine frames in turn — but a handful, not fifty, because
+        /// at all). So we try the engine frames in turn â€” but a handful, not fifty, because
         /// each attempt runs code in the debuggee.</summary>
         public int AttachAttempts;
         public const int MaxAttachAttempts = 8;
@@ -43,16 +43,23 @@ namespace Shumway.Debugger.Concord
         public int CommandLength;
         public string Diagnostic = "not attached";
 
-        /// <summary>.pl files the engine has named in a frame — one DkmModule each.</summary>
+        /// <summary>.pl files the engine has named in a frame â€” one DkmModule each.</summary>
         public readonly HashSet<string> KnownFiles =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        public bool Attached => SnapshotAddress != 0;
-    }
+        /// <summary>ADR-035 - the top ENGINE frame of each thread's last stack walk: a REAL
+        /// CLR frame (at a port stop, ShumwayDebugHost.Notify itself). The Immediate
+        /// window's goal evaluation func-evals against it - the C# evaluator wants a frame
+        /// it walked itself, not one we fabricate (a fabricated CLR-addressed frame came
+        /// back "not implemented"). Refreshed at every walk of that thread.</summary>
+        public readonly Dictionary<Guid, DkmStackWalkFrame> EvalAnchors =
+            new Dictionary<Guid, DkmStackWalkFrame>();
+
+        public bool Attached => SnapshotAddress != 0;    }
 
     /// <summary>What Visual Studio has actually ASKED us, on the IDE side. A frame that shows
     /// no variables and takes no step looks identical whether we answered badly or were never
-    /// asked — and the difference is the whole diagnosis. These say which. Counted per
+    /// asked â€” and the difference is the whole diagnosis. These say which. Counted per
     /// devenv, not per process: they are about the routing, and the routing is global.</summary>
     internal static class ShumwayIdeDiag
     {
@@ -73,7 +80,7 @@ namespace Shumway.Debugger.Concord
 
     internal static class ShumwaySession
     {
-        /// <summary>The module the hidden notify breakpoint is planted in — and the module
+        /// <summary>The module the hidden notify breakpoint is planted in â€” and the module
         /// whose types the debugger names when it func-evals. Core, not Embedding: a frame
         /// can only name what its own module references, and the frame we stop on is an
         /// engine frame (often the interpreter), which does not reference Embedding. Core is
@@ -95,7 +102,7 @@ namespace Shumway.Debugger.Concord
         }
 
         /// <summary>The module that IS the machine: the bytecode interpreter. Its presence on
-        /// a thread is what says that thread is running a Prolog program — which is a
+        /// a thread is what says that thread is running a Prolog program â€” which is a
         /// different question from whether the thread is inside engine code, and the one that
         /// decides who gets the Prolog stack. Other threads sit in engine code without running
         /// a goal (the debug session's own idle watcher, asleep), and giving them the
@@ -110,7 +117,7 @@ namespace Shumway.Debugger.Concord
         /// <summary>ONE SPELLING OF A PATH. A module is identified by its file, and a file
         /// arrives spelled several ways: the engine's command line, a `consult('c:/x/y.pl')`
         /// the user typed with forward slashes, the name a frame reports. Compared as strings,
-        /// those are three different files — so a frame ended up matched against no module at
+        /// those are three different files â€” so a frame ended up matched against no module at
         /// all, and showed grey, with no language and nothing to click. Compared as PATHS they
         /// are one.</summary>
         public static string Canonical(string? path)
@@ -118,7 +125,7 @@ namespace Shumway.Debugger.Concord
             if (string.IsNullOrEmpty(path)) return "";
 
             // A RELATIVE NAME IS LEFT ALONE. Resolving it would resolve it against Visual
-            // Studio's working directory, which has nothing to do with the debuggee's — the
+            // Studio's working directory, which has nothing to do with the debuggee's â€” the
             // engine consulted `Blint.pl` from c:\temp, and devenv would have made that
             // c:\Program Files\...\Blint.pl and matched no module at all. The engine sends
             // absolute paths for exactly this reason; anything else is passed through as the
@@ -128,12 +135,12 @@ namespace Shumway.Debugger.Concord
             catch (Exception) { return path!; }
         }
 
-        /// <summary>The session, keyed by the process it belongs to — and kept HERE, not in a
+        /// <summary>The session, keyed by the process it belongs to â€” and kept HERE, not in a
         /// DkmDataItem on the DkmProcess.
         ///
         /// <para>A data item is not as shared as it looks. The stack filter attached, wrote the
-        /// channel addresses into one, and the expression evaluator — same assembly, same
-        /// devenv, same process — read back a data item with nothing in it, decided no session
+        /// channel addresses into one, and the expression evaluator â€” same assembly, same
+        /// devenv, same process â€” read back a data item with nothing in it, decided no session
         /// existed, and showed an empty Locals window with no error to show for it. Data items
         /// are per-component; these two are different components. This dictionary is not.</para></summary>
         private static readonly Dictionary<Guid, ShumwaySessionDataItem> Sessions =
@@ -163,7 +170,7 @@ namespace Shumway.Debugger.Concord
                 return state;
             state.AttachAttempts++;
 
-            // D4 — the channel comes from the FILE the engine published when its session
+            // D4 â€” the channel comes from the FILE the engine published when its session
             // opened, not from reading its memory through a frame. The frame-based read
             // worked, but only where there was a frame: a LAUNCHED process never stops, so
             // it could never be attached to, so no breakpoint could ever be armed in one.
@@ -201,14 +208,14 @@ namespace Shumway.Debugger.Concord
             try
             {
                 // FIELD READS, not a method call. Reading a field inspects memory; calling a
-                // method runs code in the debuggee, on a thread — and Visual Studio will not
+                // method runs code in the debuggee, on a thread â€” and Visual Studio will not
                 // run code on a thread that is not the current one. The engine's thread very
                 // often is not (a Break All lands the current thread wherever it likes), and
                 // the first run of this in VS proved it: the same frame that could read
                 // ShumwayDebugHost.NotifyCount could not call ShumwayDebugHost.Attach().
                 const string Host = "Shumway.Core.Debugging.ShumwayDebugHost.";
 
-                string? versionText = Evaluate(stackContext, frame, Host + "SessionFormatVersion", out string? error);
+                string? versionText = EvaluateCSharp(stackContext.Thread, frame, Host + "SessionFormatVersion", allowSideEffects: false, timeoutMs: 5000, out string? error);
                 if (versionText == null)
                 {
                     state.Diagnostic = "cannot read the engine's debug state at " + where + ": " + error;
@@ -230,10 +237,10 @@ namespace Shumway.Debugger.Concord
                     return state;
                 }
 
-                state.SnapshotAddress = ParseLong(Evaluate(stackContext, frame, Host + "SnapshotAddress", out _));
-                state.SnapshotLength = ParseInt(Evaluate(stackContext, frame, Host + "SnapshotLength", out _));
-                state.CommandAddress = ParseLong(Evaluate(stackContext, frame, Host + "CommandAddress", out _));
-                state.CommandLength = ParseInt(Evaluate(stackContext, frame, Host + "CommandLength", out _));
+                state.SnapshotAddress = ParseLong(EvaluateCSharp(stackContext.Thread, frame, Host + "SnapshotAddress", false, 5000, out _));
+                state.SnapshotLength = ParseInt(EvaluateCSharp(stackContext.Thread, frame, Host + "SnapshotLength", false, 5000, out _));
+                state.CommandAddress = ParseLong(EvaluateCSharp(stackContext.Thread, frame, Host + "CommandAddress", false, 5000, out _));
+                state.CommandLength = ParseInt(EvaluateCSharp(stackContext.Thread, frame, Host + "CommandLength", false, 5000, out _));
 
                 if (state.SnapshotAddress == 0 || state.SnapshotLength == 0)
                 {
@@ -243,7 +250,7 @@ namespace Shumway.Debugger.Concord
                 }
 
                 state.Diagnostic = "attached (by evaluation)";
-                string? tokenText = Evaluate(stackContext, frame, Host + "NotifyMetadataToken", out _);
+                string? tokenText = EvaluateCSharp(stackContext.Thread, frame, Host + "NotifyMetadataToken", false, 5000, out _);
                 ArmNotifyBreakpoint(frame.Process, state, ParseInt(tokenText));
             }
             catch (Exception ex)
@@ -272,7 +279,7 @@ namespace Shumway.Debugger.Concord
         /// <summary>The hidden breakpoint on ShumwayDebugHelper.Notify is what turns a
         /// port into a stop. Planting it is a monitor-side act, so the IDE only supplies
         /// the coordinates: the method's metadata token (read out of the debuggee itself
-        /// — no symbol file, no assumption about where the DLL came from) and the address
+        /// â€” no symbol file, no assumption about where the DLL came from) and the address
         /// of the snapshot buffer.</summary>
         private static void ArmNotifyBreakpoint(
             DkmProcess process, ShumwaySessionDataItem state, int token)
@@ -322,7 +329,7 @@ namespace Shumway.Debugger.Concord
                 process.ReadMemory((ulong)state.SnapshotAddress, DkmReadMemoryFlags.None, bytes);
 
                 // A debugger and a debuggee that disagree about the layout of this buffer do
-                // not fail loudly — they show a plausible, wrong stack, or none. So say it.
+                // not fail loudly â€” they show a plausible, wrong stack, or none. So say it.
                 // The two are built together and shipped apart: an engine rebuilt after the
                 // extension was installed is the ordinary way to end up here, and "no symbols"
                 // or an empty stack is a terrible way to be told.
@@ -332,23 +339,23 @@ namespace Shumway.Debugger.Concord
                 {
                     state.Diagnostic = "the Shumway debugger extension is out of date: the "
                         + "engine speaks channel format v" + version + ", this extension speaks v"
-                        + DebugWire.FormatVersion + " — rebuild and reinstall the VSIX";
+                        + DebugWire.FormatVersion + " â€” rebuild and reinstall the VSIX";
                     return null;
                 }
 
                 DebugSnapshot? snapshot = DebugWire.ReadSnapshot(bytes);
 
                 // The engine is RUNNING, so this is the record of a stop that is over, not a
-                // description of where the program is — and the process was frozen from
+                // description of where the program is â€” and the process was frozen from
                 // outside (a raw Break All we declined, a breakpoint in the user's C#, an
                 // exception). Showing the last Prolog stack here would not be a stale answer,
                 // it would be a wrong one: the program is not standing in those frames. Say
                 // there is no Prolog stack, and let the C# the machine really is in speak for
-                // itself. A pause that CAN be answered never gets here — it stops the engine
+                // itself. A pause that CAN be answered never gets here â€” it stops the engine
                 // at a port first (see ShumwayAsyncBreak).
                 //
                 // EXCEPT inside a foreign call. There the engine is running by every measure
-                // that matters — it has not stopped, and our stepper must not claim a step —
+                // that matters â€” it has not stopped, and our stepper must not claim a step â€”
                 // and yet the stack in the buffer is exactly true: the engine published it as
                 // it crossed into the user's C#, and it is blocked in that call, which is
                 // where the debugger is standing. That is the whole point of the interop
@@ -369,39 +376,55 @@ namespace Shumway.Debugger.Concord
         // THE ASYNCHRONOUS BREAK used to live here, as a func-eval: ask the engine where it
         // is, since at a Break All it is at no port and has reported nothing. Visual Studio
         // will not have it. It runs code in the debuggee only on the thread it considers
-        // current — and the engine's thread very often is not — and it refuses outright once
+        // current â€” and the engine's thread very often is not â€” and it refuses outright once
         // the method touches an intrinsic, which the capture path does, deep inside the
         // machine ("Evaluation of native methods in this context is not supported").
         //
         // So the engine no longer waits to be asked: while it runs, it leaves a fresh
         // snapshot in the buffer every few dozen milliseconds (ChannelDebugSession's sample
         // clock). A Break All just reads it. Which means this component now does exactly two
-        // things to the debuggee — read its memory, and write commands into it — and never
+        // things to the debuggee â€” read its memory, and write commands into it â€” and never
         // runs a line of its code. That is a better design than the one it replaced, and it
         // was VS that insisted on it.
 
         /// <summary>Synchronous evaluation of a C# expression against a CLR frame. A field
         /// read only inspects memory; a method CALL runs code in the debuggee and is only
-        /// permitted on the current thread. Both come through here.</summary>
-        private static string? Evaluate(
-            DkmStackContext stackContext, DkmStackWalkFrame frame,
-            string expression, out string? error)
+        /// permitted on the current thread. Both come through here.
+        ///
+        /// <para><paramref name="allowSideEffects"/> is the Immediate window's case: the
+        /// expression is a real call (the engine's goal evaluator), made because the USER
+        /// asked, and a breakpoint it reaches is allowed to stop â€” the nested break state,
+        /// exactly as a C# call from the Immediate window behaves.</para></summary>
+        internal static string? EvaluateCSharp(
+            DkmThread thread, DkmStackWalkFrame frame,
+            string expression, bool allowSideEffects, int timeoutMs, out string? error,
+            DkmInspectionSession? existingSession = null)
         {
             error = null;
             DkmLanguage language = DkmLanguage.Create(
                 "C#", new DkmCompilerId(ShumwayGuids.MicrosoftVendor, ShumwayGuids.CSharpLanguage));
-            DkmInspectionSession session = DkmInspectionSession.Create(frame.Process, null);
+            // A METHOD CALL needs a func-eval, and a func-eval needs the inspection session
+            // Visual Studio built for this break state — a session we create ourselves can
+            // read fields but answers a call with "not implemented". The Immediate window
+            // hands us its session via the inspection context; forward it. (Field-read
+            // callers pass none and get a private session, which is enough for them.)
+            DkmInspectionSession session =
+                existingSession ?? DkmInspectionSession.Create(frame.Process, null);
+            bool ownSession = existingSession == null;
             try
             {
+                DkmEvaluationFlags evalFlags = allowSideEffects
+                    ? DkmEvaluationFlags.EnableExtendedSideEffects
+                    : DkmEvaluationFlags.None;
                 DkmInspectionContext inspection = DkmInspectionContext.Create(
-                    session, frame.RuntimeInstance, stackContext.Thread,
-                    Timeout: 5000,
-                    EvaluationFlags: DkmEvaluationFlags.None,
+                    session, frame.RuntimeInstance, thread,
+                    Timeout: (uint)timeoutMs,
+                    EvaluationFlags: evalFlags,
                     FuncEvalFlags: DkmFuncEvalFlags.None,
                     Radix: 10, Language: language, ReturnValue: null);
 
                 using (DkmLanguageExpression expr = DkmLanguageExpression.Create(
-                    language, DkmEvaluationFlags.None, expression, null))
+                    language, evalFlags, expression, null))
                 {
                     string? value = null;
                     string? failure = null;
@@ -431,8 +454,84 @@ namespace Shumway.Debugger.Concord
             }
             finally
             {
-                session.Close();
+                if (ownSession) session.Close();   // a borrowed session is the IDE's to close
             }
+        }
+
+        /// <summary>The ASYNC evaluation — chained onto the caller's own work list, which
+        /// is the one way a func-eval can happen at all: a method call resumes the
+        /// debuggee's thread, and the debugger will not do that while a synchronous
+        /// component call is in progress (evaluated inline it answered "not implemented";
+        /// completed from a free thread it answered "Error in the application"). Chained
+        /// on the dispatcher that called us, it is the composition the API is built
+        /// for.</summary>
+        internal static void EvaluateCSharpAsync(
+            DkmWorkList workList, DkmInspectionSession session, DkmThread thread,
+            DkmStackWalkFrame frame, string expression, int timeoutMs,
+            Action<string?, string?> done)
+        {
+            DkmLanguage language = DkmLanguage.Create(
+                "C#", new DkmCompilerId(ShumwayGuids.MicrosoftVendor, ShumwayGuids.CSharpLanguage));
+
+            // ForceRealFuncEval IS THE WHOLE THING, and a diagnostic ladder was needed to
+            // find it. A method call in a stopped process does not necessarily RUN: given
+            // the choice, the CLR would rather INTERPRET the method's IL than hijack the
+            // debuggee's thread to execute it. For a property getter that is invisible. For
+            // us it was fatal, and it lied about why — a trivial probe (`Ping()`, one
+            // ldsfld) interpreted fine and answered, so func-eval looked available, while
+            // the real call ran a Prolog query, reached an identity hash (an FCall: native,
+            // and the interpreter cannot leave IL) and came back "evaluation of native
+            // methods in this context is not supported", or simply timed out, because
+            // interpreting a resolution engine is as slow as it sounds.
+            //
+            // So: no interpretation. Run it on the thread, the way the Immediate window runs
+            // a C# call. That is also what lets a breakpoint INSIDE the evaluated goal fire
+            // at all — an interpreted method executes no breakpoints.
+            const DkmEvaluationFlags evalFlags =
+                DkmEvaluationFlags.EnableExtendedSideEffects | DkmEvaluationFlags.ForceRealFuncEval;
+
+            // AllowStoppingEvents is the OTHER half, and it is what makes this behave like
+            // the C# Immediate window rather than like a sandbox: without it a breakpoint
+            // reached by the evaluated goal is swallowed (the evaluation runs on past it, or
+            // is aborted), and a debugger you cannot stop inside is not much of one. With
+            // it, the goal that reaches a breakpoint STOPS THERE — a nested break state, on
+            // top of the one the user was already in. RunAllThreads is deliberately NOT set:
+            // the engine is single-threaded, and letting its idle watcher service the
+            // channel underneath a running evaluation is a race, not a feature.
+            DkmInspectionContext inspection = DkmInspectionContext.Create(
+                session, frame.RuntimeInstance, thread,
+                Timeout: (uint)timeoutMs,
+                EvaluationFlags: evalFlags,
+                FuncEvalFlags: DkmFuncEvalFlags.AllowStoppingEvents,
+                Radix: 10, Language: language, ReturnValue: null);
+
+            DkmLanguageExpression expr = DkmLanguageExpression.Create(
+                language, evalFlags, expression, null);
+
+            inspection.EvaluateExpression(workList, expr, frame, result =>
+            {
+                string? value = null;
+                string? failure = null;
+                try
+                {
+                    if (result.ErrorCode == 0 && result.ResultObject is DkmSuccessEvaluationResult ok)
+                        value = ok.Value;
+                    else if (result.ResultObject is DkmFailedEvaluationResult bad)
+                        failure = bad.ErrorMessage;
+                    else
+                        failure = "hr=0x" + result.ErrorCode.ToString("X8");
+                    result.ResultObject?.Close();
+                }
+                catch (Exception ex)
+                {
+                    failure = ex.Message;
+                }
+                finally
+                {
+                    try { expr.Close(); } catch (Exception) { }
+                }
+                done(value, failure);
+            });
         }
     }
 }

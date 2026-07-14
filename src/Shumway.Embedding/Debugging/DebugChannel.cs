@@ -244,6 +244,24 @@ public sealed class DebugChannel : IDisposable
     /// is standing still.</summary>
     public int HeartbeatValue => _heartbeat;
 
+    /// <summary>ADR-035 — the snapshot region, byte for byte, so an Immediate-window
+    /// evaluation can put back the stop it interrupted. The eval's own stops overwrite
+    /// the buffer; when it finishes, Visual Studio returns the user to the ORIGINAL break
+    /// state, whose Locals still read from this buffer — and they must find the frames
+    /// they were reading, not the evaluated goal's.</summary>
+    public byte[] SaveSnapshotBytes()
+    {
+        var saved = new byte[SnapshotCapacity];
+        Buffer.BlockCopy(_snapshot, 0, saved, 0, SnapshotCapacity);
+        return saved;
+    }
+
+    public void RestoreSnapshotBytes(byte[] saved)
+    {
+        ArgumentNullException.ThrowIfNull(saved);
+        Buffer.BlockCopy(saved, 0, _snapshot, 0, Math.Min(saved.Length, SnapshotCapacity));
+    }
+
     /// <summary>The snapshot as it stands in the pinned buffer, decoded with the very
     /// code the debugger uses.</summary>
     public DebugSnapshot? ReadSnapshot() => DebugWire.ReadSnapshot(_snapshot);

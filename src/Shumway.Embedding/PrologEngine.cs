@@ -3595,30 +3595,36 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// has not yet, since before that there is nothing to answer with.</para></summary>
     public int AddBreakpoint(string file, int line)
     {
-        // Remembered whether it binds or not. A breakpoint set on a file that has not been
-        // consulted YET is the normal case under a launch — the user draws it, then starts
-        // the program — and binding it against code that does not exist is not possible, so
-        // for want of this line it was quietly dropped and the program ran clean through
-        // every breakpoint in it. It binds in RebindPendingBreakpoints, when the code
-        // arrives.
-        _requestedBreakpoints.Add((file, line));
-
-        EnsureCodeLinked();
-        int fileId = Shumway.Core.DebugSiteTable.InternFile(file);
-
-        int target = SnapToCompiledLine(fileId, line);
-        if (target < 0) return 0;
-
-        int bound = 0;
-        foreach (int id in Shumway.Core.DebugSiteTable.SitesOnLine(fileId, target))
+        // Serialized against query setup — the session's idle watcher calls this from
+        // its own thread, and F9 landing exactly as a query starts raced the setup's
+        // table rebuild. See SetupQueryFromTerm.
+        lock (_debugArmGate)
         {
-            if (!_compiledSites.Contains(id)) continue;
-            _breakpointSites.Add(id);
-            _breakpointRequests[id] = (fileId, line);
-            bound++;
+            // Remembered whether it binds or not. A breakpoint set on a file that has not
+            // been consulted YET is the normal case under a launch — the user draws it,
+            // then starts the program — and binding it against code that does not exist is
+            // not possible, so for want of this line it was quietly dropped and the program
+            // ran clean through every breakpoint in it. It binds in
+            // RebindPendingBreakpoints, when the code arrives.
+            _requestedBreakpoints.Add((file, line));
+
+            EnsureCodeLinked();
+            int fileId = Shumway.Core.DebugSiteTable.InternFile(file);
+
+            int target = SnapToCompiledLine(fileId, line);
+            if (target < 0) return 0;
+
+            int bound = 0;
+            foreach (int id in Shumway.Core.DebugSiteTable.SitesOnLine(fileId, target))
+            {
+                if (!_compiledSites.Contains(id)) continue;
+                _breakpointSites.Add(id);
+                _breakpointRequests[id] = (fileId, line);
+                bound++;
+            }
+            if (bound > 0) RefreshBreakpoints();
+            return bound;
         }
-        if (bound > 0) RefreshBreakpoints();
-        return bound;
     }
 
     // Which breakpoint each armed site belongs to — the line the USER asked for, which
@@ -3726,17 +3732,20 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// on.</summary>
     public void RemoveBreakpoint(string file, int line)
     {
-        _requestedBreakpoints.Remove((file, line));
-        int fileId = Shumway.Core.DebugSiteTable.InternFile(file);
-        int target = SnapToCompiledLine(fileId, line);
-        if (target < 0) target = line;
-
-        foreach (int id in Shumway.Core.DebugSiteTable.SitesOnLine(fileId, target))
+        lock (_debugArmGate)   // vs query setup: see AddBreakpoint
         {
-            _breakpointSites.Remove(id);
-            _breakpointRequests.Remove(id);
+            _requestedBreakpoints.Remove((file, line));
+            int fileId = Shumway.Core.DebugSiteTable.InternFile(file);
+            int target = SnapToCompiledLine(fileId, line);
+            if (target < 0) target = line;
+
+            foreach (int id in Shumway.Core.DebugSiteTable.SitesOnLine(fileId, target))
+            {
+                _breakpointSites.Remove(id);
+                _breakpointRequests.Remove(id);
+            }
+            RefreshBreakpoints();
         }
-        RefreshBreakpoints();
     }
 
     /// <summary>ADR-035 — links the code space if no query has yet done so, which is
@@ -3759,10 +3768,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
     public void ClearBreakpoints()
     {
-        _requestedBreakpoints.Clear();
-        _breakpointSites.Clear();
-        _breakpointRequests.Clear();
-        RefreshBreakpoints();
+        lock (_debugArmGate)   // vs query setup: see AddBreakpoint
+        {
+            _requestedBreakpoints.Clear();
+            _breakpointSites.Clear();
+            _breakpointRequests.Clear();
+            RefreshBreakpoints();
+        }
     }
 
     /// <summary>ADR-035 — re-applies the patches to the program that is loaded right
@@ -3938,6 +3950,140 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         for (int i = sites.Count - TailFrames; i < sites.Count; i++)
             AddFrame(engine, frames, sites[i].Pc, sites[i].Env, bag);
         return frames;
+    }
+
+    /// <summary>ADR-035 — the (pc, environment) behind one frame of the CURRENT stop's
+    /// display list, by the index the debugger's frames carry. Mirrors
+    /// <see cref="CaptureFrames(Activation, int, int, int)"/>'s head/tail selection exactly,
+    /// omitted-frames sentence included (that index answers false: it is not a frame).
+    /// What the Immediate window's goal evaluation resolves a frame index against.</summary>
+    internal bool TryGetDisplayFrameContext(
+        Activation engine, int displayIndex, out int pc, out int env)
+    {
+        pc = -1;
+        env = -1;
+        if (displayIndex < 0) return false;
+        var sites = new List<(int Pc, int Env)>();
+        CollectFrameSites(engine, sites, engine.P, engine.E, engine.Cp);
+
+        if (sites.Count <= MaxFrames)
+        {
+            if (displayIndex >= sites.Count) return false;
+            (pc, env) = sites[displayIndex];
+            return true;
+        }
+        if (displayIndex < HeadFrames)
+        {
+            (pc, env) = sites[displayIndex];
+            return true;
+        }
+        if (displayIndex == HeadFrames) return false;   // "... N frames omitted ..."
+        int tail = displayIndex - HeadFrames - 1;
+        if (tail >= TailFrames) return false;
+        (pc, env) = sites[sites.Count - TailFrames + tail];
+        return true;
+    }
+
+    /// <summary>ADR-035 — the variables of one frame as TERMS, not renderings: what the
+    /// Immediate window substitutes into a goal. A variable whose slot has not been
+    /// written yet (or holds something that is not a term) is simply absent — the goal's
+    /// variable of that name stays free.</summary>
+    internal IReadOnlyList<(string Name, Term Value)> MaterializeFrameVariables(
+        Activation engine, int pc, int env)
+    {
+        var clause = ClauseAt(pc);
+        if (env < 0 || clause is null || clause.Value.Variables.Count == 0)
+            return Array.Empty<(string, Term)>();
+
+        var result = new List<(string, Term)>();
+        foreach (var v in clause.Value.Variables)
+        {
+            try
+            {
+                Cell cell = engine.GetY(env, v.Slot);
+                if (cell.Tag is Tag.RawInt or Tag.PstrBuffer) continue;
+                int at;
+                if (cell.Tag == Tag.Ref)
+                {
+                    at = engine.Deref(cell.AsHeapIndex);
+                }
+                else
+                {
+                    at = engine.AllocateHeap(1);
+                    engine.SetHeap(at, cell);
+                }
+                result.Add((v.Name, TermReader.Materialize(engine, at)));
+            }
+            catch (Exception)
+            {
+                // Best-effort, like every frame read: a value that cannot be materialized
+                // leaves its variable free rather than failing the whole evaluation.
+            }
+        }
+        return result;
+    }
+
+    /// <summary>ADR-035 — everything a nested Immediate-window evaluation clobbers.
+    ///
+    /// <para>An evaluated goal runs as a REAL query — <c>SetupQueryFromTerm</c>, a fresh
+    /// activation, the live database — which is exactly the semantics asked for
+    /// (an <c>assertz</c> persists like any mid-query nested activation's). But query setup
+    /// also rebuilds the per-query debug tables and the address→predicate map, and the
+    /// SUSPENDED query — the one the user is stopped in, and will resume with F5 — still
+    /// needs its own: its wrapper's addresses are not in the new map, and a stack walk
+    /// through them after the eval would mislabel the bottom of the user's stack. So the
+    /// eval brackets itself: save these, run, put them back. The code space itself is
+    /// append-only; nothing the eval linked invalidates the suspended query's
+    /// addresses.</para></summary>
+    internal sealed class DebugEvalScope
+    {
+        public IReadOnlyDictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? Predicates;
+        public int[]? SortedEntries;
+        public HashSet<int> CompiledSites = new();
+        public int[] StopPcs = Array.Empty<int>();
+        public int[] StopSiteIds = Array.Empty<int>();
+        public int[] ClauseStarts = Array.Empty<int>();
+        public Shumway.Compiler.Wam.DebugClauseFrame[] ClauseFrames
+            = Array.Empty<Shumway.Compiler.Wam.DebugClauseFrame>();
+        public (int, int, int, int)[] ClauseLines = Array.Empty<(int, int, int, int)>();
+        public string? QueryText;
+        public string? Label;
+        public Activation? LastEngine;
+    }
+
+    internal DebugEvalScope BeginDebugEvaluation()
+    {
+        var scope = new DebugEvalScope
+        {
+            Predicates = _currentPredicatesByAddress,
+            SortedEntries = _sortedPredEntries,
+            CompiledSites = _compiledSites,
+            StopPcs = _stopPcs,
+            StopSiteIds = _stopSiteIds,
+            ClauseStarts = _clauseStarts,
+            ClauseFrames = _clauseFrames,
+            ClauseLines = _clauseLines.ToArray(),
+            QueryText = CurrentQueryText,
+            Label = QueryLabel,
+            LastEngine = _lastQueryEngine,
+        };
+        return scope;
+    }
+
+    internal void EndDebugEvaluation(DebugEvalScope scope)
+    {
+        _currentPredicatesByAddress = scope.Predicates;
+        _sortedPredEntries = scope.SortedEntries;
+        _compiledSites = scope.CompiledSites;
+        _stopPcs = scope.StopPcs;
+        _stopSiteIds = scope.StopSiteIds;
+        _clauseStarts = scope.ClauseStarts;
+        _clauseFrames = scope.ClauseFrames;
+        _clauseLines.Clear();
+        _clauseLines.AddRange(scope.ClauseLines);
+        CurrentQueryText = scope.QueryText;
+        QueryLabel = scope.Label;
+        _lastQueryEngine = scope.LastEngine;
     }
 
     /// <summary>How many frames a stop carries before it starts leaving some out, and how
@@ -8941,6 +9087,28 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
              int[] VarHeapIndices,
              Activation Activation,
              BytecodeInterpreter Interp) SetupQueryFromTerm(Term queryTerm)
+    {
+        // ADR-035 — serialized against the debug session's own thread. A breakpoint can
+        // arrive while the engine is IDLE (F9 at the prompt), and the session's idle
+        // watcher applies it from its own thread — which raced this method's table
+        // rebuild the moment a query started at the same instant, and a Dictionary read
+        // concurrent with a write throws ConcurrentOperationsNotSupported (seen live: F9
+        // followed immediately by a query). Uncontended cost is a fenced check; the
+        // watcher takes the same gate in AddBreakpoint/RemoveBreakpoint/ClearBreakpoints.
+        lock (_debugArmGate)
+            return SetupQueryFromTermUnderGate(queryTerm);
+    }
+
+    /// <summary>Cross-thread gate for the debug-table surface: query setup rebuilds the
+    /// per-query tables on the engine's thread, and the session's idle watcher arms
+    /// breakpoints from its own. See <see cref="SetupQueryFromTerm"/>.</summary>
+    private readonly object _debugArmGate = new();
+
+    private (Shumway.Core.ProgramView Program,
+             List<string> VarNames,
+             int[] VarHeapIndices,
+             Activation Activation,
+             BytecodeInterpreter Interp) SetupQueryFromTermUnderGate(Term queryTerm)
     {
         // Phase 12 chunk 158: auto-compaction. When the accumulated
         // mutation count crosses the watermark, invalidate the

@@ -51,6 +51,7 @@ public static class ShumwayDebugHelper
             {
                 Shumway.Core.Debugging.ShumwayDebugHost.OnAttach = null;
                 Shumway.Core.Debugging.ShumwayDebugHost.OnCaptureNow = null;
+                Shumway.Core.Debugging.ShumwayDebugHost.OnEvaluateGoal = null;
                 Shumway.Core.Debugging.ShumwayDebugHost.SnapshotAddress = 0;
                 Shumway.Core.Debugging.ShumwayDebugHost.CommandAddress = 0;
                 Shumway.Core.Debugging.ShumwayDebugHost.SnapshotLength = 0;
@@ -63,6 +64,7 @@ public static class ShumwayDebugHelper
             {
                 Shumway.Core.Debugging.ShumwayDebugHost.OnAttach = Attach;
                 Shumway.Core.Debugging.ShumwayDebugHost.OnCaptureNow = CaptureNow;
+                Shumway.Core.Debugging.ShumwayDebugHost.OnEvaluateGoal = EvaluateGoal;
                 Shumway.Core.Debugging.ShumwayDebugHost.SnapshotAddress = value.SnapshotAddress.ToInt64();
                 Shumway.Core.Debugging.ShumwayDebugHost.SnapshotLength = DebugChannel.SnapshotCapacity;
                 Shumway.Core.Debugging.ShumwayDebugHost.CommandAddress = value.CommandAddress.ToInt64();
@@ -76,6 +78,17 @@ public static class ShumwayDebugHelper
     /// <summary>The session <see cref="CaptureNow"/> asks. One per process: there is one
     /// debugger.</summary>
     internal static ChannelDebugSession? Session { get; set; }
+
+    /// <summary>ADR-035 — the Immediate window's goal evaluation, plain-text side (the
+    /// base64 wrapping lives in <see cref="Shumway.Core.Debugging.ShumwayDebugHost"/>,
+    /// where the func-eval lands).</summary>
+    public static string EvaluateGoal(int frameIndex, string goalText)
+    {
+        ChannelDebugSession? session = Session;
+        return session is null
+            ? "no debug session is running"
+            : session.EvaluateGoal(frameIndex, goalText);
+    }
 
     /// <summary>The asynchronous break. The user hit Break All, the process stopped
     /// wherever it happened to be — at no port, so nothing has been reported — and the

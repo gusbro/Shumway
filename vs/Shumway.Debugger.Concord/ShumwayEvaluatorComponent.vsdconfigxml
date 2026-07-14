@@ -1,8 +1,8 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <!--
   Shumway debugger - IDE-level frame decoder + expression evaluator (ADR-035).
 
-  Routed to us by the RUNTIME id of the frame — NOT by the language id.
+  Routed to us by the RUNTIME id of the frame â€” NOT by the language id.
 
   That distinction cost a day. Filtering on LanguageId looks obviously right (the module
   reports a Prolog DkmCompilerId; surely a Prolog frame gets the Prolog evaluator) and it
@@ -14,9 +14,16 @@
 -->
 <Configuration xmlns="http://schemas.microsoft.com/vstudio/vsdconfig/2008">
 
+  <!-- ComponentLevel 9999900, deliberately ABOVE the C# expression evaluator: a Dkm call
+       dispatches only to components at LOWER levels than the caller, and the Immediate
+       window's goal evaluation asks the C# evaluator to func-eval the engine's
+       ShumwayDebugHost.EvaluateGoal. At the old 1999002 the call had no implementor below
+       it and every evaluation answered "The method or operation is not implemented" -
+       instantly, with nothing in any log. Being high costs nothing on the inbound side:
+       VS's own calls into us originate above everything. -->
   <ManagedComponent
     ComponentId="0f2f9b9f-9f0a-4a30-9c5f-4b1d6f1a9a2c"
-    ComponentLevel="1999002"
+    ComponentLevel="9999900"
     AssemblyName="Shumway.Debugger.Concord">
 
     <Class Name="Shumway.Debugger.Concord.ShumwayExpressionEvaluator">

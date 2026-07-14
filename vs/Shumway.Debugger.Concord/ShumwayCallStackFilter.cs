@@ -150,6 +150,12 @@ namespace Shumway.Debugger.Concord
                     // the buffer holds the last stop — which would be a lie.
                     walk.TopEngineFrameIsNotify = IsNotifyFrame(input);
                     walk.Anchor = input;
+
+                    // Kept for the Immediate window: a goal evaluation func-evals against
+                    // this frame — a REAL CLR frame of the thread's break state, which is
+                    // what the C# evaluator accepts. Refreshed at every walk.
+                    ShumwaySession.GetState(input.Process)
+                        .EvalAnchors[stackContext.Thread.UniqueId] = input;
                 }
 
                 ShumwaySessionDataItem session = ShumwaySession.Attach(stackContext, input);

@@ -1,4 +1,4 @@
-// Shumway debugger - IDE-side frame decoder + expression evaluator (ADR-035, phase D2).
+﻿// Shumway debugger - IDE-side frame decoder + expression evaluator (ADR-035, phase D2).
 //
 // Routed here by the language id on the frame's module. Two jobs:
 //
@@ -7,14 +7,14 @@
 //   * Show the frame's VARIABLES. These are not C# values and cannot be read out of
 //     memory by the debugger: a Prolog variable is a heap cell that may be a chain of
 //     references ending in an unbound cell, a compound, a partial string. Rendering one
-//     is an engine act — it happens inside the debuggee, at the stop, into the snapshot
+//     is an engine act â€” it happens inside the debuggee, at the stop, into the snapshot
 //     (name and rendered value). By the time the Locals window asks, the answer already
 //     exists. We hand it over. That is the whole reason the snapshot carries variables
 //     rather than addresses.
 //
 // Everything here reads only what the engine wrote. No func-eval on the stop path.
 // D5's watch-a-goal (evaluating an arbitrary Prolog term) is the one thing that will
-// need one, and it is user-initiated — the context where func-eval is supported.
+// need one, and it is user-initiated â€” the context where func-eval is supported.
 
 using System;
 using System.Collections.Generic;
@@ -113,10 +113,7 @@ namespace Shumway.Debugger.Concord
             ShumwayIdeDiag.EvaluateAsks++;
             string text = (expression.Text ?? string.Empty).Trim();
 
-            // v1: a watch names a variable of the frame. Evaluating an arbitrary GOAL is
-            // a different thing entirely — it would run Prolog inside the debuggee, with
-            // side effects, on a machine stopped mid-resolution — and it is deliberately
-            // deferred (ADR-035, D5) rather than half-done here.
+            // A bare variable name answers from the snapshot â€” free, no code runs.
             foreach (DebugVariableView v in VariablesOf(stackFrame))
             {
                 if (string.Equals(v.Name, text, StringComparison.Ordinal))
@@ -127,11 +124,82 @@ namespace Shumway.Debugger.Concord
                 }
             }
 
-            completionRoutine(new DkmEvaluateExpressionAsyncResult(
-                DkmFailedEvaluationResult.Create(
-                    inspectionContext, stackFrame, text, text,
-                    "no variable '" + text + "' in this clause",
-                    DkmEvaluationResultFlags.Invalid, null)));
+            // ANYTHING ELSE IS A GOAL, and a goal RUNS â€” in a fresh activation over the
+            // live engine, with this frame's variables substituted by their current
+            // values, database side effects and all. This is the func-eval the design
+            // reserves for user-initiated evaluation: the user typed it into the
+            // Immediate window, at a normal stop.
+            //
+            // CHAINED ON THE CALLER'S WORK LIST, and that is not a style choice: a method
+            // call is a func-eval, a func-eval resumes the debuggee's thread, and the
+            // debugger will not do that while a synchronous component call is in progress.
+            // Evaluated inline it answered "not implemented"; completed from a free thread
+            // it answered "Error in the application". Scheduled on the dispatcher that
+            // called us, it is the composition the API is built for.
+            void Fail(string message)
+            {
+                ShumwayLog.Write("immediate: '" + text + "' -> " + message);
+                completionRoutine(new DkmEvaluateExpressionAsyncResult(
+                    DkmFailedEvaluationResult.Create(
+                        inspectionContext, stackFrame, text, text, message,
+                        DkmEvaluationResultFlags.Invalid, null)));
+            }
+
+            try
+            {
+                if (!ShumwayFrameId.TryDecode(stackFrame, out int frameIndex))
+                {
+                    Fail("no variable '" + text + "' in this clause, "
+                        + "and this frame has no evaluation context");
+                    return;
+                }
+
+                ShumwaySessionDataItem session = ShumwaySession.GetState(stackFrame.Process);
+                DkmStackWalkFrame? clrFrame;
+                if (!session.EvalAnchors.TryGetValue(stackFrame.Thread.UniqueId, out clrFrame))
+                    clrFrame = null;
+                if (clrFrame == null)
+                {
+                    Fail("no CLR frame to evaluate against");
+                    return;
+                }
+
+                string b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(text));
+                string call =
+                    "Shumway.Core.Debugging.ShumwayDebugHost.EvaluateGoal("
+                    + frameIndex + ", \"" + b64 + "\")";
+
+                ShumwaySession.EvaluateCSharpAsync(
+                    workList, inspectionContext.InspectionSession, stackFrame.Thread,
+                    clrFrame, call, timeoutMs: 60_000,
+                    (raw, csError) =>
+                    {
+                        try
+                        {
+                            if (raw == null)
+                            {
+                                Fail("evaluation failed: " + (csError ?? "no result"));
+                                return;
+                            }
+                            string trimmed = raw.Trim();
+                            if (trimmed.Length >= 2 && trimmed[0] == '"'
+                                && trimmed[trimmed.Length - 1] == '"')
+                                trimmed = trimmed.Substring(1, trimmed.Length - 2);
+                            string answer = System.Text.Encoding.UTF8.GetString(
+                                Convert.FromBase64String(trimmed));
+                            completionRoutine(new DkmEvaluateExpressionAsyncResult(
+                                Success(inspectionContext, stackFrame, text, answer)));
+                        }
+                        catch (Exception ex)
+                        {
+                            Fail("evaluation failed: " + ex.Message);
+                        }
+                    });
+            }
+            catch (Exception ex)
+            {
+                Fail("evaluation failed: " + ex.GetType().Name + ": " + ex.Message);
+            }
         }
 
         string IDkmLanguageExpressionEvaluator.GetUnderlyingString(DkmEvaluationResult result)
@@ -146,7 +214,7 @@ namespace Shumway.Debugger.Concord
         {
             // A term is rendered whole by the engine, at the stop. Expanding a compound
             // lazily (the [+] in the Locals window) means asking the engine for a
-            // subterm, which is a func-eval, which is a D5 problem — and a leaf answer
+            // subterm, which is a func-eval, which is a D5 problem â€” and a leaf answer
             // is honest, where a fabricated child list would not be.
             var empty = DkmEvaluationResultEnumContext.Create(
                 0, result.StackFrame, inspectionContext, null);
@@ -165,7 +233,7 @@ namespace Shumway.Debugger.Concord
 
         /// <summary>The frame's variables, as the ENGINE rendered them at the stop. The
         /// frame carries only its index in the snapshot (see ShumwayFrameId); the values
-        /// are read back out of the debuggee's buffer, which is still exactly as it was —
+        /// are read back out of the debuggee's buffer, which is still exactly as it was â€”
         /// the process is stopped.</summary>
         private static IReadOnlyList<DebugVariableView> VariablesOf(DkmStackWalkFrame frame)
         {

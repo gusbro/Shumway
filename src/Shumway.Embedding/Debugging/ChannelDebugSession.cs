@@ -336,6 +336,10 @@ public sealed class ChannelDebugSession : IDisposable
     /// step taken from here works like a step taken from anywhere else.</para></summary>
     internal void BreakHere(Shumway.Core.Activation activation)
     {
+        // The suppression fallback covers debugger_break/0 inside an evaluated goal too.
+        if (_service.EvaluationInFlight && DebugService.SuppressStopsDuringEvaluation)
+            return;
+
         lock (_gate)
         {
             _service.Current = activation;
@@ -352,6 +356,25 @@ public sealed class ChannelDebugSession : IDisposable
             foreach (var command in _channel.DrainCommands())
                 Apply(_service, command);
             _channel.SetRunning();
+        }
+    }
+
+    /// <summary>ADR-035 — the Immediate window's goal evaluation, bracketed by the channel:
+    /// the eval's own stops overwrite the snapshot buffer, and when it finishes Visual
+    /// Studio returns the user to the ORIGINAL break state — whose Locals must find the
+    /// frames they were reading, not the evaluated goal's. Runs on the engine's own
+    /// stopped thread (a func-eval), which already holds the stop gate — the nested
+    /// stops re-enter it reentrantly, same thread.</summary>
+    internal string EvaluateGoal(int frameIndex, string goalText)
+    {
+        byte[] saved = _channel.SaveSnapshotBytes();
+        try
+        {
+            return _service.EvaluateGoal(frameIndex, goalText);
+        }
+        finally
+        {
+            _channel.RestoreSnapshotBytes(saved);
         }
     }
 

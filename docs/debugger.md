@@ -175,6 +175,64 @@ fails, which is when you want to be looking at the variables.
 stands still, no port is coming, and the debugger drops the step and lets the program run
 on. Type `;` at the prompt for the next solution — your breakpoints are still armed.
 
+## Running goals: the Immediate window
+
+Stopped anywhere, you can **run a goal**. Type it into the Immediate window:
+
+```prolog
+double(N, R)
+R = 42
+```
+
+The goal runs *in the engine you are debugging*, in a fresh activation, with the variables
+of the **selected frame** substituted by their current values — `N` above is not a name the
+goal happened to share, it is the `N` you can see in Locals, and it went in as `21`. The
+answer is the first solution's bindings; a goal with nothing to bind answers `true` or
+`false`. Select a different frame and the same goal means something different, because the
+variables do.
+
+It is a real query against the live database, so **side effects are real**:
+
+```prolog
+assertz(seen(N))
+true
+seen(Q)
+Q = 21
+```
+
+That clause is now in the database. It is still there when you press F5 and the program runs
+on — which is the point: you can plant a fact, retract one, or run a diagnostic predicate,
+and then watch the program take the path that follows from it. It has the semantics of a
+query started at that moment, because that is what it is.
+
+**A breakpoint inside the goal stops you inside the goal.** If what you run reaches a
+breakpoint, the debugger stops there — a *nested* break, on top of the one you were already
+in, exactly as a C# call from the Immediate window behaves. The call stack shows the whole
+thing at once:
+
+```
+inventory:step(21)!1          <- where the evaluated goal is now
+inventory:run(21)!1
+inventory:go!1
+[Immediate: go]               <- the goal you typed
+inventory:step(21)!1          <- where you were when you typed it
+inventory:run(21)!1
+inventory:go!1
+?- go
+```
+
+The `[Immediate: ...]` frame is the boundary: above it is the goal you asked for, below it is
+the program you interrupted. Step around up there as you would anywhere. F5 releases the
+nested stop, the goal runs on to its answer, and you are back where you started.
+
+A goal that never finishes is not a hang: the evaluation gives up after **15 seconds** and
+says so, and the program is where it was. If you would rather a goal never stop — a
+diagnostic that walks over your own breakpoints — set `SHUMWAY_DEBUG_EVAL_QUIET=1` in the
+debuggee's environment and breakpoints reached *during an evaluation* are ignored.
+
+Typing a bare variable name still just shows its value, and costs nothing: that answer was
+already in the snapshot, and no code runs to produce it.
+
 ## Interop: one stack across three languages
 
 A program that calls a C# foreign predicate — which may itself P/Invoke into C — debugs as
