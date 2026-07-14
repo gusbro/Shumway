@@ -140,12 +140,15 @@ that calls `member/2` steps *over* it, and never leaves you standing in `copy_te
 wondering how you got there.
 
 **A step lands on a goal** — the next thing your program is about to *do*, at the line you
-wrote it on. Not on a goal's exit: an exit fires with the machine standing inside the
-predicate that just succeeded, so stopping there would jump the caret to the last line of
-some other clause, which is what "F10 stops at the end of a clause I was not looking at"
-was. The exit of an *enclosing* clause does stop you, because that clause is one you were
-stepping through. Builtins are goals like any other: `X is N - 1` and `writeln(X)` are
-stops, and there is nothing inside them to step into.
+wrote it on — and only on a goal: an exit port never stops a step. An exit fires with the
+machine still standing in the clause that just finished, so stopping there leaves the caret
+on a line that already ran — the last line of some other clause (the first report), or the
+same line you were on when you pressed F10 on a clause's last goal (the second). Step over
+the last goal, or Step Out, and you land on the next goal an enclosing clause runs, however
+many clause-ends unwind in between. A *fail* does stop you — a goal running out of
+solutions is the thing that just happened, and there is no next goal to show instead.
+Builtins are goals like any other: `X is N - 1` and `writeln(X)` are stops, and there is
+nothing inside them to step into.
 
 **Stepping past the end of the query** is not a stop: the query hands back its answer and
 stands still, no port is coming, and the debugger drops the step and lets the program run

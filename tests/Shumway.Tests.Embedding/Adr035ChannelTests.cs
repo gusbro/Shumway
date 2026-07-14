@@ -189,6 +189,50 @@ public class Adr035ChannelTests
     }
 
     [Fact]
+    public void AStepTakenAtABreakAllStops_HoweverDeepThePauseLanded()
+    {
+        // THE REPORT: Break All deep in a long program, the stack looks right, F10 -- and it
+        // runs to completion without ever stopping again.
+        //
+        // A step is measured against the depth of the stop it was taken AT, and an
+        // asynchronous break did not record its depth: it comes through its own path (the
+        // poll between goals), not through the service's Stop(). So the F10 was measured
+        // against whatever the last REAL stop left behind -- or zero, if there had never been
+        // one -- and paused 60 frames deep it waited for a port at depth <= 0. No port
+        // qualifies; the program runs out; the step is abandoned. If the machine is shallower
+        // than where the step was taken, the step MUST stop.
+        var engine = DebugEngine(
+            "down(0) :- !.\ndown(N) :-\n    N > 0,\n    N1 is N - 1,\n    down(N1),\n    tick(N).\ntick(_).\n");
+
+        var stops = new List<DebugSnapshot>();
+        ChannelDebugSession? session = null;
+        session = new ChannelDebugSession(engine, notify: _ =>
+        {
+            stops.Add(ReadFromMemory(session!.Channel));
+            session.Channel.WriteCommands(new DebugCommand(
+                stops.Count == 1 ? DebugCommandKind.StepOver : DebugCommandKind.Continue));
+        });
+        using (session)
+        {
+            // Pause it mid-run: the command is already in the channel when the query starts,
+            // so the poll finds it a few hundred goals in -- genuinely deep in the recursion.
+            session.Channel.WriteCommands(new DebugCommand(DebugCommandKind.BreakNow));
+            engine.QueryAll("down(600).").ToList();
+        }
+
+        _log.WriteLine(string.Join("\n", stops.Select(s => $"{s.Reason} {s.Goal} depth={s.Depth}")));
+
+        // The pause landed at a port, deep; the step taken there STOPPED -- at the next goal,
+        // at or above the pause's depth -- instead of letting the program run to its end.
+        Assert.Equal(StopReason.AsyncBreak, stops[0].Reason);
+        Assert.True(stops[0].Depth > 10, $"the pause should land deep, landed at {stops[0].Depth}");
+        Assert.True(stops.Count >= 2, "the step never stopped: the program ran to completion");
+        Assert.Equal(StopReason.Call, stops[1].Reason);
+        Assert.True(stops[1].Depth <= stops[0].Depth,
+            $"the step went {stops[0].Depth} -> {stops[1].Depth}");
+    }
+
+    [Fact]
     public void TheSequenceNumberRisesOnEveryStop_SoAMissedOneShows()
     {
         var engine = DebugEngine("p(1).\np(2).\np(3).\n");

@@ -480,24 +480,23 @@ public sealed class DebugService : IDebugSession
         // stop in, however unwritable the caller is.
         if (reason != StopReason.Call && !_engine.IsDebuggableAddress(engine.P)) return;
 
-        // A STEP LANDS ON A GOAL — the next thing the user's program is about to DO.
+        // A STEP LANDS ON A GOAL — the next thing the user's program is about to DO — and
+        // ONLY on a goal. An EXIT port never stops a step.
         //
-        // It used to land on the goal's EXIT port, which is where a port tracer would put you
-        // and where SWI does, and it was wrong here: the exit port fires with the machine
-        // standing in the CALLEE, at its `proceed`, so the caret jumped to the last line of
-        // whatever clause happened to succeed — not to the next goal of the clause you were
-        // stepping through. "Step over and it stops at the end of some other clause" is the
-        // report, and it is exactly what the model said to do.
+        // Both halves were learned from a user's F10. First "step over stops at the end of
+        // some other clause": the exit of the goal STEPPED OVER fires with the machine at the
+        // callee's proceed, so the caret jumped to the last line of whatever clause succeeded.
+        // Then, with only ENCLOSING exits honoured, "F10 on the last goal stays where it is,
+        // and Step Out stops on the last goal of the clause I am leaving": the enclosing
+        // clause's own exit ALSO shows the callee's last line — the machine is standing there
+        // — so the caret did not move. An exit port never points at anything the program is
+        // about to do; the call port of the next goal that runs comes right after it and
+        // does. However many clause-ends unwind in between, the step lands there.
         //
-        // So a call port is what a step stops at, and an exit or fail only when it belongs to
-        // an ENCLOSING frame (depth < the step's) — that is the end of the clause you are in,
-        // which is a place you did ask to see. A goal's own exit is not: the next goal's call
-        // port comes immediately after it, at the same depth, and it says the same thing about
-        // the program while pointing at a line the user wrote.
-        // A FAIL is not an exit. It stops like a call does — a goal that ran out of solutions
-        // is the thing that just happened, there is no "next goal" to show instead, and the
-        // machine is standing where it failed. Only the EXIT of a goal we stepped through is
-        // the useless one.
+        // A FAIL is different: a goal that ran out of solutions is the thing that just
+        // happened, there is no "next goal" to show instead, and the machine is standing
+        // where it failed. It lands like a call.
+        if (reason == StopReason.Exit) return;
         bool landing = reason == StopReason.Call || reason == StopReason.Fail;
 
         // CAPPED, and that is the whole cost of stepping. Every condition below compares the
@@ -511,13 +510,14 @@ public sealed class DebugService : IDebugSession
         bool stop = _mode switch
         {
             // Into: the next goal, however deep — the first goal of the callee, if it has one.
-            StepMode.Into => landing || depth < _stepDepth,
-            // Over: the next goal of THIS clause. Everything the goal we stepped over does
-            // inside itself is deeper, and is skipped.
-            StepMode.Over => (landing && depth <= _stepDepth) || depth < _stepDepth,
-            // Out: out of the goal we were on entirely — the clause that called it, wherever
-            // it has got to.
-            StepMode.Out => depth < _stepDepth,
+            StepMode.Into => landing,
+            // Over: the next goal at this clause's depth or shallower. Everything the goal we
+            // stepped over does inside itself is deeper, and is skipped; if this clause has no
+            // next goal, the caller's next goal (depth < ours) is where the program goes.
+            StepMode.Over => landing && depth <= _stepDepth,
+            // Out: out of the goal we were on entirely — the next goal of an enclosing
+            // clause, wherever the unwind lands.
+            StepMode.Out => landing && depth < _stepDepth,
             _ => false,
         };
         if (!stop) return;

@@ -90,23 +90,22 @@ public class Adr035SteppingTests
         engine.AddBreakpoint("<string>", 2);
 
         var stops = Walk(engine, "top(A).",
-            StepMode.Into, StepMode.Into, StepMode.Into, StepMode.Into);
+            StepMode.Into, StepMode.Into, StepMode.Into);
 
         // A step lands on a GOAL — the next thing the program is about to do — and, going
-        // down, that is the first goal of the clause we stepped into. Coming back up, the
-        // exit of an ENCLOSING clause is a place the user asked to see (their clause is
-        // finished); the exit of the goal they just stepped through is not, because the next
-        // goal's call port says the same thing and points at a line they wrote. leaf/1 is a
-        // fact — there is nothing inside it to step into — so the step surfaces at mid/1's
-        // end rather than stopping on leaf's own `proceed`.
+        // down, that is the first goal of the clause we stepped into. leaf/1 is a fact —
+        // there is nothing inside it to step into — so the next thing the program does is
+        // tail(X), back in top/1, and that is where the step surfaces: no stop on leaf's own
+        // `proceed`, none on mid/1's, because an exit port never points at anything the
+        // program is about to do. And past tail/1 the query is finished — the last step has
+        // nowhere to land, and says so instead of leaving the debugger waiting.
         Assert.Equal(new[]
         {
             "Breakpoint top/1",   // stopped in top/1, about to call mid/1 (line 3)
             "Call leaf/1",        // into mid/1, which calls leaf/1
-            "Exit mid/1",         // leaf/1 is a fact: mid/1 is done
-            "Call tail/1",        // back in top/1, on to its second goal
-            "Exit top/1",
-        }, Ports(stops));
+            "Call tail/1",        // leaf and mid are done: the next goal, back in top/1
+        }, Ports(stops).Take(3));
+        Assert.Equal(StopReason.StepAbandoned, stops[3].Reason);
     }
 
     [Fact]
@@ -139,28 +138,34 @@ public class Adr035SteppingTests
         // But an exit port fires with the machine standing in the CALLEE, at its `proceed`,
         // so the caret jumped to the last line of whichever clause of mid/1 happened to
         // succeed. "Step over and it stops at the end of some other clause" was the report,
-        // and it was exactly what the model said to do.
+        // and it was exactly what the model said to do. Step over tail(X) — the LAST goal —
+        // and the clause is done, the query with it: nothing left to land on, and the step
+        // says so rather than stopping the caret on a line that already ran.
         Assert.Equal(new[]
         {
             "Breakpoint top/1",
             "Call tail/1",     // line 4 — the next goal, in the clause we are stepping
-            "Exit top/1",      // and then this clause is done
-        }, Ports(stops));
+        }, Ports(stops).Take(2));
+        Assert.Equal(StopReason.StepAbandoned, stops[2].Reason);
         Assert.Equal(4, stops[1].Line);
         Assert.DoesNotContain(stops, s => s.Goal == "leaf/1");
     }
 
     [Fact]
-    public void StepOut_RunsToTheEndOfTheGoalWeAreIn()
+    public void StepOut_LandsOnTheNextGoalOfAnEnclosingClause()
     {
         var engine = DebugEngine(Nested);
         engine.AddBreakpoint("<string>", 6);   // the goal leaf(X), inside mid/1
 
         var stops = Walk(engine, "top(A).", StepMode.Out);
 
-        // Out of leaf/1 entirely: not its exit (that is still leaf's depth), but the
-        // exit of the predicate that called it.
-        Assert.Equal(new[] { "Breakpoint mid/1", "Exit mid/1" }, Ports(stops));
+        // Out of the goal we are standing on, and onto the next goal an enclosing clause
+        // runs: tail(X), back in top/1. NOT mid/1's exit — that stop put the caret on the
+        // last line of the clause being LEFT ("step out stops on the last goal of the
+        // predicate I asked to leave" was the report), because an exit port fires with the
+        // machine still standing there. Where the program goes next is a goal, and the step
+        // lands on it, however many clause-ends unwind in between.
+        Assert.Equal(new[] { "Breakpoint mid/1", "Call tail/1" }, Ports(stops));
         Assert.True(stops[1].Depth < stops[0].Depth,
             $"stepping out must surface: depth went {stops[0].Depth} -> {stops[1].Depth}");
     }
@@ -340,18 +345,16 @@ public class Adr035SteppingTests
             + "shout(X) :- writeln(X).\n", lco: false);
         engine.AddBreakpoint("<string>", 3);   // shout/1's body
 
-        var stops = Walk(engine, "pick(X), shout(X).",
-            StepMode.Over, StepMode.Over, StepMode.Over);
+        var stops = Walk(engine, "pick(X), shout(X).", StepMode.Over);
 
-        // Stopped in shout/1; step over its body; step over its exit -- which lands on the
-        // exit port of the QUERY, the last port there is. Step again and the query is done:
-        // it hands back X = a and stands still. That third step has nowhere to land, and the
-        // engine says so -- not with a stop to look at (there is no stack: the machine is not
-        // in the program), with a message.
+        // Stopped in shout/1, on the last goal the query will run. Step over it and the
+        // query is done: it hands back X = a and stands still. The step has nowhere to land,
+        // and the engine says so -- not with a stop to look at (there is no stack: the
+        // machine is not in the program), with a message.
         Assert.Equal(
-            new[] { StopReason.Breakpoint, StopReason.Exit, StopReason.Exit, StopReason.StepAbandoned },
-            stops.Take(4).Select(s => s.Reason));
-        Assert.Empty(stops[3].Frames);
+            new[] { StopReason.Breakpoint, StopReason.StepAbandoned },
+            stops.Take(2).Select(s => s.Reason));
+        Assert.Empty(stops[1].Frames);
 
         // Once per departure -- and once only. (The walk goes on to enumerate the other
         // solutions, and the breakpoint fires again on each: a step is over, the breakpoints

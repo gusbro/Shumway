@@ -140,6 +140,7 @@ public sealed class ChannelDebugSession : IDisposable
             // A stop with no stack, because there is no stack: nothing is running. It is
             // still a REAL stop — which is all the debugger needs it to be, since what it
             // wants from it is the chance to build its modules and bind its breakpoints.
+            _service.NoteStop(0);
             OnStopLocked(new DebugStopEvent(
                 StopReason.AsyncBreak, "", "", 0, 0, Array.Empty<PrologEngine.DebugFrame>()));
         }
@@ -209,6 +210,15 @@ public sealed class ChannelDebugSession : IDisposable
         if (!stopNow) return;
 
         DebugStopEvent? here = _service.CaptureNow();
+
+        // THIS STOP IS WHERE THE NEXT STEP IS FROM. A step is measured against the depth of
+        // the stop it was taken at, and this stop does not go through the service's own Stop()
+        // — so without this, an F10 at a Break All was measured against whatever the LAST real
+        // stop left behind (or zero, if there had never been one). Paused 200 frames deep,
+        // the step waited for a port at depth ≤ 0: the program ran to completion and never
+        // stopped again.
+        _service.NoteStop(here?.Depth ?? 0);
+
         OnStop(_service, here ?? new DebugStopEvent(
             reason, "", "", 0, 0, Array.Empty<PrologEngine.DebugFrame>()));
     }
@@ -307,6 +317,8 @@ public sealed class ChannelDebugSession : IDisposable
     {
         DebugStopEvent? stop = _service.CaptureNow();
         if (stop is null) return 0;
+        // A step taken from this stop is measured against THIS depth — see PollWhileRunning.
+        _service.NoteStop(stop.Depth);
         _channel.WriteSnapshot(stop);
         return _channel.Sequence;
     }
