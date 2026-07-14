@@ -259,9 +259,6 @@ public sealed class DebugService : IDebugSession
 
     void IDebugSession.OnCallBuiltin(Activation engine, int builtinId, bool tailCall)
     {
-        // Builtins are not stepped into — there is no Prolog inside them to show, and
-        // they run to completion within the one dispatch. Recording the name is still
-        // worth it: it is what a stop immediately after them should be blamed on.
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
         if (IsInternal(entry.Name)) return;
         _goalKind = GoalKind.Builtin;
@@ -282,6 +279,20 @@ public sealed class DebugService : IDebugSession
             _interopDepth++;
             PublishInterop(engine, entry.Name + "/" + entry.Arity);
         }
+
+        // A BUILTIN IS A GOAL, and a step stops at the next goal. Half a clause is builtins —
+        // `X is N - 1`, `writeln(X)`, `atom_codes(A, C)` — and a stepper that skipped them
+        // stepped over four lines at a time, landing wherever the next user predicate happened
+        // to be. Stopping here is stopping BEFORE it runs, at the goal's own line, which is
+        // what the user asked to see. (Stepping INTO one is still not a thing: there is no
+        // Prolog inside it. The next step goes on to the goal after.)
+        //
+        // Where the CALLER is is what decides it, not the builtin: a builtin has no source of
+        // its own, and its call port fires with the machine standing on the goal's line in the
+        // clause that wrote it. So a `succ_or_zero/1` deep in the prelude does not stop
+        // anybody, and `X is N - 1` in the user's clause does.
+        if (!_engine.IsDebuggableAddress(engine.P)) return;
+        OnCall(engine);
     }
 
     private void PublishInterop(Activation engine, string goal)
@@ -450,18 +461,36 @@ public sealed class DebugService : IDebugSession
         // stop in, however unwritable the caller is.
         if (reason != StopReason.Call && !_engine.IsDebuggableAddress(engine.P)) return;
 
+        // A STEP LANDS ON A GOAL — the next thing the user's program is about to DO.
+        //
+        // It used to land on the goal's EXIT port, which is where a port tracer would put you
+        // and where SWI does, and it was wrong here: the exit port fires with the machine
+        // standing in the CALLEE, at its `proceed`, so the caret jumped to the last line of
+        // whatever clause happened to succeed — not to the next goal of the clause you were
+        // stepping through. "Step over and it stops at the end of some other clause" is the
+        // report, and it is exactly what the model said to do.
+        //
+        // So a call port is what a step stops at, and an exit or fail only when it belongs to
+        // an ENCLOSING frame (depth < the step's) — that is the end of the clause you are in,
+        // which is a place you did ask to see. A goal's own exit is not: the next goal's call
+        // port comes immediately after it, at the same depth, and it says the same thing about
+        // the program while pointing at a line the user wrote.
+        // A FAIL is not an exit. It stops like a call does — a goal that ran out of solutions
+        // is the thing that just happened, there is no "next goal" to show instead, and the
+        // machine is standing where it failed. Only the EXIT of a goal we stepped through is
+        // the useless one.
+        bool landing = reason == StopReason.Call || reason == StopReason.Fail;
+
         int depth = PortDepth(engine);
         bool stop = _mode switch
         {
-            // Into: the next port, however deep.
-            StepMode.Into => true,
-            // Over: the next port no deeper than the goal we were on — its own exit or
-            // fail included. Everything the goal does *inside* itself is deeper, and is
-            // skipped. (In a port model there is no depth that separates "this goal
-            // exited" from "the next goal is called": they are siblings. So a step over
-            // lands on the exit port of the goal stepped over, as it does in SWI.)
-            StepMode.Over => depth <= _stepDepth,
-            // Out: shallower than the goal we were on — i.e. out of it entirely.
+            // Into: the next goal, however deep — the first goal of the callee, if it has one.
+            StepMode.Into => landing || depth < _stepDepth,
+            // Over: the next goal of THIS clause. Everything the goal we stepped over does
+            // inside itself is deeper, and is skipped.
+            StepMode.Over => (landing && depth <= _stepDepth) || depth < _stepDepth,
+            // Out: out of the goal we were on entirely — the clause that called it, wherever
+            // it has got to.
             StepMode.Out => depth < _stepDepth,
             _ => false,
         };

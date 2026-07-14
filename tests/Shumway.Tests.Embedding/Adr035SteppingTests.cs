@@ -92,20 +92,21 @@ public class Adr035SteppingTests
         var stops = Walk(engine, "top(A).",
             StepMode.Into, StepMode.Into, StepMode.Into, StepMode.Into);
 
-        // Down into both calls, then back up through both exits: the ports of a nested
-        // deterministic call, in the order the machine reaches them.
+        // A step lands on a GOAL — the next thing the program is about to do — and, going
+        // down, that is the first goal of the clause we stepped into. Coming back up, the
+        // exit of an ENCLOSING clause is a place the user asked to see (their clause is
+        // finished); the exit of the goal they just stepped through is not, because the next
+        // goal's call port says the same thing and points at a line they wrote. leaf/1 is a
+        // fact — there is nothing inside it to step into — so the step surfaces at mid/1's
+        // end rather than stopping on leaf's own `proceed`.
         Assert.Equal(new[]
         {
             "Breakpoint top/1",   // stopped in top/1, about to call mid/1 (line 3)
             "Call leaf/1",        // into mid/1, which calls leaf/1
-            "Exit leaf/1",
-            "Exit mid/1",
+            "Exit mid/1",         // leaf/1 is a fact: mid/1 is done
             "Call tail/1",        // back in top/1, on to its second goal
+            "Exit top/1",
         }, Ports(stops));
-
-        // Into mid/1 is a level deeper; into leaf/1 deeper still; then back out.
-        Assert.Equal(new[] { 0, 1, 1, 0, 0 },
-            stops.Select(s => s.Depth - stops[0].Depth));
     }
 
     [Fact]
@@ -124,24 +125,28 @@ public class Adr035SteppingTests
     }
 
     [Fact]
-    public void StepOver_SkipsWhatTheGoalDoesInside_AndLandsOnItsExit()
+    public void StepOver_LandsOnTheNextGoalOfTheClause_NotOnTheEndOfSomeOtherOne()
     {
         var engine = DebugEngine(Nested);
         engine.AddBreakpoint("<string>", 3);   // the goal mid(X)
 
         var stops = Walk(engine, "top(A).", StepMode.Over, StepMode.Over);
 
-        // Nothing inside mid/1 — no leaf/1 port — but mid/1's own exit is not skipped:
-        // in a port model there is no depth that separates "mid exited" from "tail is
-        // called", because they are siblings. So a step over lands on the exit port of
-        // the goal stepped over, as it does in SWI. The step after that reaches tail/1.
+        // Step over mid(X) and you are on tail(X) — the next goal of the clause you are
+        // stepping through, on the line you are looking at.
+        //
+        // It used to land on mid/1's EXIT port, which is where a port tracer would put you.
+        // But an exit port fires with the machine standing in the CALLEE, at its `proceed`,
+        // so the caret jumped to the last line of whichever clause of mid/1 happened to
+        // succeed. "Step over and it stops at the end of some other clause" was the report,
+        // and it was exactly what the model said to do.
         Assert.Equal(new[]
         {
             "Breakpoint top/1",
-            "Exit mid/1",
-            "Call tail/1",
+            "Call tail/1",     // line 4 — the next goal, in the clause we are stepping
+            "Exit top/1",      // and then this clause is done
         }, Ports(stops));
-        Assert.Equal(4, stops[2].Line);
+        Assert.Equal(4, stops[1].Line);
         Assert.DoesNotContain(stops, s => s.Goal == "leaf/1");
     }
 
@@ -195,12 +200,16 @@ public class Adr035SteppingTests
         // is no return address to step over here — the machine is going BACKWARDS into
         // a goal that had already succeeded. Only a port model can say this.
         Assert.Contains(stops, s => s.Reason == StopReason.Redo);
-        Assert.Equal("Exit p/1", Ports(stops)[1]);
-        Assert.Equal("Redo p/1", Ports(stops)[2]);
+
+        // p/1's EXIT is not stopped at — a step lands on the next GOAL, and the exit port
+        // would put the caret on p(1)'s clause, which is not where the program is going. The
+        // guard `X > 1` compiles inline (ADR-018: no call, no port), so the next thing that
+        // happens to this program IS the redo.
+        Assert.Equal("Redo p/1", Ports(stops)[1]);
         // And it names the clause about to be retried — p(2), on line 3 — not the
         // guard that failed, which is where the machine happens to be standing.
-        Assert.Equal(3, stops[2].Line);
-        Assert.Equal("p/1", $"{stops[2].Frames[0].Name}/{stops[2].Frames[0].Arity}");
+        Assert.Equal(3, stops[1].Line);
+        Assert.Equal("p/1", $"{stops[1].Frames[0].Name}/{stops[1].Frames[0].Arity}");
     }
 
     [Fact]
@@ -376,23 +385,36 @@ public class Adr035SteppingTests
         // compiled from, so a step honoured them. Two F10s and the user was standing in
         // `copy_term/3`, then in `$prelude$$attr_goals_of/2`: code they did not write, cannot
         // open, and did not ask to step through.
+        //   2: pick(X) :-
+        //   3:     member(X, [a,b,c]).
+        //   4: shout(X) :-
+        //   5:     writeln(X).
+        //   6: go(X) :-
+        //   7:     pick(X),
+        //   8:     shout(X).
         var engine = DebugEngine(
-            "pick(X) :- member(X, [a,b,c]).\n"
-            + "shout(X) :- writeln(X).\n"
-            + "go(X) :- pick(X), shout(X).\n", lco: false);
-        engine.AddBreakpoint("<string>", 4);   // go/1's body
+            "pick(X) :-\n    member(X, [a,b,c]).\n"
+            + "shout(X) :-\n    writeln(X).\n"
+            + "go(X) :-\n    pick(X),\n    shout(X).\n", lco: false);
+        engine.AddBreakpoint("<string>", 3);   // pick/1's body: the call to member/2
 
         var stops = Walk(engine, "go(A).",
             StepMode.Into, StepMode.Into, StepMode.Into, StepMode.Into, StepMode.Into);
 
         // Every stop names a predicate of theirs (or their query). member/2 runs -- it just
-        // does not stop anyone; its solutions arrive at pick/1's exit port, which is the
-        // user's code and does.
+        // does not stop anyone; control comes back to the user's program at pick/1's caller,
+        // and THAT is where the step lands.
         foreach (var s in stops)
             Assert.DoesNotContain("$prelude$", s.Goal);
         Assert.DoesNotContain(stops, s => s.Goal.StartsWith("member/"));
         Assert.DoesNotContain(stops, s => s.Goal.StartsWith("copy_term/"));
-        Assert.Contains(stops, s => s.Goal == "pick/1");
+
+        // Stopped inside pick/1 (on the member/2 goal it wrote), and five steps later the
+        // user is still walking their own three predicates: shout/1, and the writeln/1 goal
+        // inside it -- a builtin the user wrote, which is a goal like any other.
+        Assert.Equal("pick/1", stops[0].Goal);
+        Assert.Contains(stops, s => s.Goal == "shout/1");
+        Assert.Contains(stops, s => s.Goal == "writeln/1");
     }
 
     [Fact]

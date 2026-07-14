@@ -126,6 +126,14 @@ plumbing are `:- disable_debug`: they run, they just never stop you. So F10 over
 that calls `member/2` steps *over* it, and never leaves you standing in `copy_term/3`
 wondering how you got there.
 
+**A step lands on a goal** — the next thing your program is about to *do*, at the line you
+wrote it on. Not on a goal's exit: an exit fires with the machine standing inside the
+predicate that just succeeded, so stopping there would jump the caret to the last line of
+some other clause, which is what "F10 stops at the end of a clause I was not looking at"
+was. The exit of an *enclosing* clause does stop you, because that clause is one you were
+stepping through. Builtins are goals like any other: `X is N - 1` and `writeln(X)` are
+stops, and there is nothing inside them to step into.
+
 **Stepping past the end of the query** is not a stop: the query hands back its answer and
 stands still, no port is coming, and the debugger drops the step and lets the program run
 on. Type `;` at the prompt for the next solution — your breakpoints are still armed.

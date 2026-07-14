@@ -5,3 +5,16 @@
 // language service, no content type.
 [$RootKey$\TextMate\Repositories]
 "Shumway"="$PackageFolder$\Grammars"
+
+// The NAME of the language, for the Call Stack window's Language column (and everywhere else
+// Visual Studio prints one). Our frames carry a DkmCompilerId -- a (language, vendor) pair of
+// GUIDs -- and that is all Concord needs to route the expression evaluator. But a GUID is not
+// a name: with nothing registered here the Call Stack said "unknown", which is a fair summary
+// of what the IDE knew about it.
+//
+// The key is (language GUID, vendor GUID), matching ShumwayGuids.ShumwayLanguage and
+// ShumwayGuids.ShumwayVendor. Do not let these drift apart: nothing fails, the column just
+// goes back to saying "unknown".
+[$RootKey$\AD7Metrics\ExpressionEvaluator\{9d7f8a51-0699-4828-99ba-047821c60783}\{026ae3f6-168e-448c-9518-4ac5d49ce8d1}]
+"Language"="Prolog"
+"Name"="Prolog"

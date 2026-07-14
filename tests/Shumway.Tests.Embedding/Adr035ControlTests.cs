@@ -207,6 +207,12 @@ public class Adr035ControlTests
         _log.WriteLine(string.Join("\n", stops.Select(s => $"{s.Reason} {s.Goal} :{s.Line}")));
         Assert.Equal(2, stops.Count);                       // the breakpoint, then the step
         Assert.Equal(StopReason.Breakpoint, stops[0].Reason);
-        Assert.Equal("mid/2", stops[1].Goal);               // stepped INTO the goal
+
+        // Stopped on the goal mid(A, B) and stepped into it — and mid/2 is a FACT, so there
+        // is nothing inside it to be in. The step lands on the next goal of the clause,
+        // use(B), which is where the program actually goes. (It used to land on mid/2's exit
+        // port, which put the caret on mid/2's own clause: not where the program is going,
+        // and not a line the user was stepping through.)
+        Assert.Equal("use/1", stops[1].Goal);
     }
 }

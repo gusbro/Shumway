@@ -107,12 +107,12 @@ public class Adr035ChannelTests
         using (session)
             engine.QueryAll("top(one).").ToList();
 
-        // Two stops: the breakpoint, then where the step over landed — the exit port of
-        // the goal that was stepped over. The command went in as bytes, through memory,
-        // and the engine obeyed it.
-        Assert.Equal(new[] { StopReason.Breakpoint, StopReason.Exit },
+        // Two stops: the breakpoint, then where the step over landed — the NEXT GOAL of the
+        // clause being stepped through. The command went in as bytes, through memory, and the
+        // engine obeyed it.
+        Assert.Equal(new[] { StopReason.Breakpoint, StopReason.Call },
             stops.Select(s => s.Reason));
-        Assert.Equal("mid/2", stops[1].Goal);
+        Assert.Equal("use/1", stops[1].Goal);
     }
 
     [Fact]

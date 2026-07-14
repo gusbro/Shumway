@@ -200,6 +200,19 @@ try {
     $engine   = @($frames | Where-Object { $_ -like "*BytecodeInterpreter*" -or $_ -like "*Activation*" })
     $results["D2-1 prolog frames replace the engine"] = ($prolog.Count -ge 1 -and $engine.Count -eq 0)
 
+    # --- D2-1b: and the Call Stack window calls them PROLOG ---
+    # The Language column reads the frame's DkmCompilerId back out of the registry
+    # (AD7Metrics\ExpressionEvaluator\<language>\<vendor>). With nothing registered there the
+    # frames were right and the column said "unknown", which is what the user saw.
+    $langs = Invoke-WithRetry {
+        @($dte.Debugger.CurrentThread.StackFrames) |
+            Where-Object { $_.FunctionName -match "^(main|tick|loop)/\d" } |
+            ForEach-Object { $_.Language }
+    } 10 2000
+    Write-Host ("  languages: {0}" -f ($langs -join ", "))
+    $results["D2-1b the language column says Prolog"] =
+        ($langs.Count -ge 1 -and @($langs | Where-Object { $_ -ne "Prolog" }).Count -eq 0)
+
     # --- D3-1 / D3-2: F9 in the .pl, stop there, open it there ---
     Write-Host "[5/6] setting a breakpoint at smoke.pl:$bpLine ..."
     $bpAdded = $true
