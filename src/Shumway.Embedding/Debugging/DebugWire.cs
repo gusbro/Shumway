@@ -156,6 +156,17 @@ public sealed class DebugSnapshotFrame
     public string File { get; set; } = "";
     public int Line { get; set; }
     public int Pc { get; set; }
+
+    /// <summary>The head's arguments with their current values, parenthesised —
+    /// <c>(120, foo/2, _G5)</c> — or empty when the frame is not a call (the query, the
+    /// omitted-frames sentence) or was not compiled debuggable. What lets the Call Stack
+    /// show <c>module:pred(args)!clause</c> instead of <c>pred/arity</c>.</summary>
+    public string HeadArgs { get; set; } = "";
+
+    /// <summary>Which clause of its predicate is running, 1-based in source order; zero
+    /// when unknown.</summary>
+    public int ClauseNumber { get; set; }
+
     public IReadOnlyList<DebugVariableView> Variables { get; set; }
         = Array.Empty<DebugVariableView>();
 }
@@ -182,16 +193,20 @@ public sealed class DebugVariableView
 /// <code>
 /// snapshot: version, sequence, running, heartbeat, interopDepth,
 ///           reason, goal, file, line, depth, breakFile, breakLine,
-///           frameCount, { name, arity, file, line, pc,
-///                         varCount, { name, value } }
+///           stringCount, { string },
+///           frameCount, { nameId, arity, fileId, line, pc, headArgsId, clauseNumber,
+///                         varCount, { nameId, valueId } }
 /// commands: version, count, { kind, file, line, flag }
 /// </code>
 /// </summary>
 public static class DebugWire
 {
     /// <summary>Bumped whenever the layout changes, so a debugger built against an older
-    /// engine says so instead of reading nonsense.</summary>
-    public const int FormatVersion = 3;
+    /// engine says so instead of reading nonsense. v4: the string table — every string of
+    /// the snapshot (names, files, variable names, variable VALUES) written once, frames
+    /// carrying indices; the level of indirection that lets a hundred frames sharing a
+    /// binding share its bytes.</summary>
+    public const int FormatVersion = 4;
 
     /// <summary>The size of the snapshot region — declared HERE, with the format, because the
     /// debugger has to know it: it reads the region whole (a prefix of a snapshot is not a
@@ -297,7 +312,16 @@ public static class DebugWire
         // completing an asynchronous break — and Visual Studio waited for it for ever.
         //
         // So: grow the lists as the elements actually arrive, and stop at anything that cannot
-        // be in a buffer this size (each frame is at least six ints, each variable two).
+        // be in a buffer this size. Same rule for the ids: an id outside the table resolves to
+        // "" rather than an exception.
+        int stringCount = ReadInt(buffer, ref at);
+        if (stringCount < 0 || stringCount > buffer.Length / 4) stringCount = 0;
+        var strings = new List<string>();
+        for (int i = 0; i < stringCount && at < buffer.Length; i++)
+            strings.Add(ReadString(buffer, ref at));
+
+        string At(int id) => id >= 0 && id < strings.Count ? strings[id] : "";
+
         int frameCount = ReadInt(buffer, ref at);
         if (frameCount < 0 || frameCount > buffer.Length / 24) frameCount = 0;
         var frames = new List<DebugSnapshotFrame>();
@@ -305,21 +329,25 @@ public static class DebugWire
         {
             var frame = new DebugSnapshotFrame
             {
-                Name = ReadString(buffer, ref at),
+                Name = At(ReadInt(buffer, ref at)),
                 Arity = ReadInt(buffer, ref at),
-                File = ReadString(buffer, ref at),
+                File = At(ReadInt(buffer, ref at)),
                 Line = ReadInt(buffer, ref at),
                 Pc = ReadInt(buffer, ref at),
+                HeadArgs = At(ReadInt(buffer, ref at)),
+                ClauseNumber = ReadInt(buffer, ref at),
             };
             int varCount = ReadInt(buffer, ref at);
             if (varCount < 0 || varCount > (buffer.Length - at) / 8) varCount = 0;
             var variables = new List<DebugVariableView>();
             for (int v = 0; v < varCount; v++)
             {
+                // The indirection survives decoding: two variables that shared an id come
+                // back sharing the very string instance, which is what the table is FOR.
                 variables.Add(new DebugVariableView
                 {
-                    Name = ReadString(buffer, ref at),
-                    Value = ReadString(buffer, ref at),
+                    Name = At(ReadInt(buffer, ref at)),
+                    Value = At(ReadInt(buffer, ref at)),
                 });
             }
             frame.Variables = variables;

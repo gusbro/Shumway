@@ -167,7 +167,7 @@ try {
             Start-Sleep -Seconds 3
             foreach ($t in @($dte.Debugger.CurrentProgram.Threads)) {
                 $names = @($t.StackFrames) | ForEach-Object { $_.FunctionName }
-                if (@($names | Where-Object { $_ -match '^\[Shumway|^\w+/\d+$|Shumway\.' }).Count -gt 0) {
+                if (@($names | Where-Object { $_ -match '^\[Shumway|^\w+/\d+$|Shumway\.' -or $_ -match '!\d+$' }).Count -gt 0) {
                     Write-Host "  --- thread $($t.ID) ---"
                     $names | ForEach-Object { Write-Host "    $_" }
                 }
@@ -182,7 +182,7 @@ try {
         $chosen = $null
         foreach ($t in @($dte.Debugger.CurrentProgram.Threads)) {
             $names = @($t.StackFrames) | ForEach-Object { $_.FunctionName }
-            if (@($names | Where-Object { $_ -match '^\w+/\d+$' -or $_ -match '^\[Shumway' }).Count -gt 0) {
+            if (@($names | Where-Object { $_ -match '^\w+/\d+$' -or $_ -match '!\d+$' -or $_ -match '^\[Shumway' }).Count -gt 0) {
                 $chosen = $t; break
             }
         }
@@ -193,7 +193,7 @@ try {
         $frames | ForEach-Object { Write-Host "  $_" }
         Write-Host "===================================="
     }
-    $prolog = @($frames | Where-Object { $_ -match "^(main|tick)/\d" })
+    $prolog = @($frames | Where-Object { $_ -match '(^|:)(main|tick)([(/!]|$)' })
     $results["D4-4 the Prolog stack is there"] = ($prolog.Count -ge 1)
 
     Write-Host "[5/5] Continue, and let it finish ..."

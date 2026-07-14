@@ -100,11 +100,30 @@ engine rather than to an engine of ours.
 ## What you see
 
 **The call stack** is your predicates — the ones you wrote, with the names you wrote.
-Module-local predicates are mangled internally (`interop$step/2`); the stack shows
-`step/2`.
+Each frame shows the *call it is*:
+
+```
+inventory:total([item(book, 25) | []], 10, _G5)!2
+inventory:total([item(pen, 10) | [item(book, 25)]], 0, _G5)!2
+inventory:main(_G5)!1
+?- main(T)
+```
+
+`inventory` is the module — the file's base name, without the `.pl`. The arguments are the
+head's, with their **current values**: they instantiate as the clause runs, so stepping is
+visible in the stack itself. An argument the head wrote as `_` shows as `_`; one nobody has
+bound yet shows as `_Gn` — and a variable shared between frames (the `Total` threaded through
+the recursion above) shows the same `_Gn` in every one of them, because it *is* the same
+variable. `!2` says the predicate's **second clause** is the one being evaluated, counting
+from 1 in source order. Each argument is cut to 64 characters for the stack line; the full
+value (up to 512) is in Locals. A frame whose code was not compiled debuggable falls back to
+`pred/arity`. Module-local predicates are mangled internally (`interop$step/2`); the stack
+shows `step`.
 
 The stack is recomposed from the engine's own environment chain, not from the C# frames of
-the interpreter, so it is a *Prolog* stack, one frame per active predicate.
+the interpreter, so it is a *Prolog* stack, one frame per active predicate. Bindings shared
+between frames are rendered once and serialized once — a deep recursion sharing a big term
+costs the term once, not once per frame.
 
 **Last-call optimisation is off by default under the debugger**, which is why a
 tail-recursive predicate shows the frames that led to it instead of a single frame. Turn

@@ -110,7 +110,7 @@ try {
             $out = @()
             foreach ($t in @($dte.Debugger.CurrentProgram.Threads)) {
                 $names = @($t.StackFrames) | ForEach-Object { $_.FunctionName }
-                if (@($names | Where-Object { $_ -match '^(\w+/-?\d+|\?- )' }).Count -gt 0) {
+                if (@($names | Where-Object { $_ -match '^(\w+/-?\d+|\?- )' -or $_ -match '!\d+$' }).Count -gt 0) {
                     $dte.Debugger.CurrentThread = $t
                     $out = $names
                     break

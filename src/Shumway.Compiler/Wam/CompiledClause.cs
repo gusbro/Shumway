@@ -68,6 +68,13 @@ public sealed class CompiledClause
     /// them.</summary>
     public bool HasFrame { get; }
 
+    /// <summary>ADR-035 — the head's argument terms, as written. What lets a debugger show
+    /// a stack frame as the CALL it is — <c>total([item(book,25)], 10, _G5)</c> — rather
+    /// than a bare <c>total/3</c>: each argument is the head skeleton with the clause's
+    /// variables substituted by their CURRENT values, so the display instantiates as the
+    /// clause runs. Recorded under <c>compile_mode=debug</c> only; null otherwise.</summary>
+    public IReadOnlyList<Shumway.Compiler.Ast.Term>? DebugHeadArgs { get; }
+
     public CompiledClause(
         byte[] bytecode,
         int functorId,
@@ -78,7 +85,8 @@ public sealed class CompiledClause
         IReadOnlyList<int>? dispatchSites = null,
         IReadOnlyList<DebugStop>? debugStops = null,
         IReadOnlyList<DebugVariable>? debugVariables = null,
-        bool hasFrame = false)
+        bool hasFrame = false,
+        IReadOnlyList<Shumway.Compiler.Ast.Term>? debugHeadArgs = null)
     {
         HasFrame = hasFrame;
         Bytecode = bytecode;
@@ -90,6 +98,7 @@ public sealed class CompiledClause
         DispatchSites = dispatchSites ?? Array.Empty<int>();
         DebugStops = debugStops ?? Array.Empty<DebugStop>();
         DebugVariables = debugVariables ?? Array.Empty<DebugVariable>();
+        DebugHeadArgs = debugHeadArgs;
     }
 }
 
@@ -100,7 +109,16 @@ public readonly record struct DebugVariable(string Name, int Slot);
 /// half-open span of bytecode it occupies, whether it has an environment frame, and
 /// the source variables in that frame.</summary>
 public readonly record struct DebugClauseFrame(
-    int Start, int End, bool HasFrame, IReadOnlyList<DebugVariable> Variables);
+    int Start, int End, bool HasFrame, IReadOnlyList<DebugVariable> Variables)
+{
+    /// <summary>ADR-035 — the head's argument terms (see
+    /// <see cref="CompiledClause.DebugHeadArgs"/>); null unless compiled debuggable.</summary>
+    public IReadOnlyList<Shumway.Compiler.Ast.Term>? HeadArgs { get; init; }
+
+    /// <summary>ADR-035 — which clause of its predicate this is, 1-based, in source order.
+    /// The <c>!2</c> of the debugger's <c>total(...)!2</c>. Zero when unknown.</summary>
+    public int ClauseNumber { get; init; }
+}
 
 /// <summary>ADR-035 — a place a debugger may stop: the bytecode offset of the
 /// instruction it precedes, and the id of the source location

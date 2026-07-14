@@ -156,7 +156,7 @@ try {
             $chosen = $null
             foreach ($t in @($dte.Debugger.CurrentProgram.Threads)) {
                 $names = @($t.StackFrames) | ForEach-Object { $_.FunctionName }
-                if (@($names | Where-Object { $_ -match '^\w+/\d+$' }).Count -gt 0) { $chosen = $t; break }
+                if (@($names | Where-Object { $_ -match '^\w+/\d+$' -or $_ -match '!\d+$' }).Count -gt 0) { $chosen = $t; break }
             }
             if (-not $chosen) { throw "no thread with Prolog frames yet" }
             $dte.Debugger.CurrentThread = $chosen
@@ -178,7 +178,7 @@ try {
         Write-Host "==============================="
     }
     $results["A1 a breakpoint set on an IDLE engine binds and hits"] =
-        ($hit -and @($frames | Where-Object { $_ -match '^step/2$' }).Count -ge 1)
+        ($hit -and @($frames | Where-Object { $_ -match '(^|:)step([(/!]|$)' }).Count -ge 1)
 
     Write-Host "[6/6] debugger_break/0 ..."
     $brk = $false
@@ -199,7 +199,7 @@ try {
         }
     } catch { Write-Host "  debugger_break threw: $($_.Exception.Message)" }
     $results["A2 debugger_break/0 stops, with its own stack"] =
-        ($brk -and @($brkFrames | Where-Object { $_ -match '^marked/0$' }).Count -ge 1)
+        ($brk -and @($brkFrames | Where-Object { $_ -match '(^|:)marked([(/!]|$)' }).Count -ge 1)
 
     # A stop you cannot step from is half a debugger. This failed with "Unable to step.
     # Operation not supported" -- the component knew about the stops that came through its

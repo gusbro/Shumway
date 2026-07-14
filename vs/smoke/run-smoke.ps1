@@ -131,7 +131,7 @@ try {
                 # it matches any frame containing an 's' or an 'a' -- which is every frame in
                 # the process, and it quietly picked the wrong thread for two runs.
                 $hit = @($names | Where-Object {
-                    $_ -match '^\w+/\d+$' -or $_ -match 'BytecodeInterpreter|PrologEngine' `
+                    $_ -match '^\w+/\d+$' -or $_ -match '!\d+$' -or $_ -match 'BytecodeInterpreter|PrologEngine' `
                         -or $_ -match '^\[Shumway'
                 })
                 if ($hit.Count -gt 0) { $chosen = $t; break }
@@ -196,7 +196,7 @@ try {
     Show-Frames "call stack, break #2" $frames
 
     # --- D2-1: Prolog frames, and none of the engine's own ---
-    $prolog   = @($frames | Where-Object { $_ -match "^(main|tick|loop)/\d" })
+    $prolog   = @($frames | Where-Object { $_ -match '(^|:)(main|tick|loop)([(/!]|$)' })
     $engine   = @($frames | Where-Object { $_ -like "*BytecodeInterpreter*" -or $_ -like "*Activation*" })
     $results["D2-1 prolog frames replace the engine"] = ($prolog.Count -ge 1 -and $engine.Count -eq 0)
 
@@ -206,7 +206,7 @@ try {
     # frames were right and the column said "unknown", which is what the user saw.
     $langs = Invoke-WithRetry {
         @($dte.Debugger.CurrentThread.StackFrames) |
-            Where-Object { $_.FunctionName -match "^(main|tick|loop)/\d" } |
+            Where-Object { $_.FunctionName -match '(^|:)(main|tick|loop)([(/!]|$)' } |
             ForEach-Object { $_.Language }
     } 10 2000
     Write-Host ("  languages: {0}" -f ($langs -join ", "))
@@ -240,7 +240,7 @@ try {
         # Doubled (not yet) -- the engine renders both; nothing here can.
         try {
             $plFrame = @($dte.Debugger.CurrentThread.StackFrames) |
-                Where-Object { $_.FunctionName -match '^tick/\d' } | Select-Object -First 1
+                Where-Object { $_.FunctionName -match '(^|:)tick[(/!]' } | Select-Object -First 1
             if ($plFrame) {
                 $dte.Debugger.CurrentStackFrame = $plFrame
                 Start-Sleep -Seconds 2

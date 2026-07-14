@@ -114,7 +114,7 @@ try {
             $out = @()
             foreach ($t in @($dte.Debugger.CurrentProgram.Threads)) {
                 $names = @($t.StackFrames) | ForEach-Object { $_.FunctionName }
-                if (@($names | Where-Object { $_ -match '^(\w+/-?\d+|\?- )' }).Count -gt 0) {
+                if (@($names | Where-Object { $_ -match '^(\w+/-?\d+|\?- )' -or $_ -match '!\d+$' }).Count -gt 0) {
                     $dte.Debugger.CurrentThread = $t
                     $out = $names
                     break
@@ -129,7 +129,7 @@ try {
     # A pause with no Prolog stack is not a pause, it is a freeze: the whole point is that the
     # engine stops at a PORT, where a stack exists.
     $results["P1 Break All stops a RUNNING engine, at a port"] =
-        ($paused -and @($frames | Where-Object { $_ -match '^(spin|work|go)/' }).Count -gt 0)
+        ($paused -and @($frames | Where-Object { $_ -match '(^|:)(spin|work|go)([(/!]|$)' }).Count -gt 0)
 
     Write-Host "[5/5] F5, and let it finish ..."
     $ranOn = $false
@@ -173,7 +173,7 @@ try {
             $out = @()
             foreach ($t in @($dte.Debugger.CurrentProgram.Threads)) {
                 $names = @($t.StackFrames) | ForEach-Object { $_.FunctionName }
-                if (@($names | Where-Object { $_ -match '^(deep|spin|big|heavy)/' }).Count -gt 0) {
+                if (@($names | Where-Object { $_ -match '(^|:)(deep|spin|big|heavy)([(/!]|$)' }).Count -gt 0) {
                     $dte.Debugger.CurrentThread = $t
                     $out = $names
                     break
@@ -185,7 +185,7 @@ try {
         try { Invoke-WithRetry { $dte.Debugger.Go($false) } 5 2000 } catch {}
     }
     $results["P3 Break All on a DEEP stack with data"] =
-        ($deepPaused -and @($deepFrames | Where-Object { $_ -match '^(deep|spin)/' }).Count -gt 0)
+        ($deepPaused -and @($deepFrames | Where-Object { $_ -match '(^|:)(deep|spin)([(/!]|$)' }).Count -gt 0)
 
     if (Test-Path $componentLog) {
         Write-Host ""

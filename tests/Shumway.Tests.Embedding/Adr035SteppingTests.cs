@@ -493,6 +493,119 @@ public class Adr035SteppingTests
     }
 
     [Fact]
+    public void AFrameIsTheCallItIs_ArgumentsClauseNumberAndAll()
+    {
+        // The call stack the user asked for: module:pred(Args)!ClauseNbr. Each frame shows
+        // the head's arguments with their CURRENT values -- and they instantiate as the
+        // clause runs, so stepping is visible in the stack itself.
+        //
+        //   2: total([], Acc, Acc).
+        //   3: total([item(_, Price)|T], Acc, Total) :-
+        //   4:     Acc1 is Acc + Price,
+        //   5:     total(T, Acc1, Total).
+        //   6: main(Total) :-
+        //   7:     total([item(pen,10), item(book,25)], 0, Total).
+        var engine = DebugEngine(
+            "total([], Acc, Acc).\n"
+            + "total([item(_, Price)|T], Acc, Total) :-\n"
+            + "    Acc1 is Acc + Price,\n"
+            + "    total(T, Acc1, Total).\n"
+            + "main(Total) :-\n"
+            + "    total([item(pen,10), item(book,25)], 0, Total).\n", lco: false);
+        engine.AddBreakpoint("<string>", 5);   // the recursive call
+
+        var stops = Walk(engine, "main(T).", StepMode.Continue);
+        var frames = stops[1].Frames;   // the SECOND hit: one level of recursion below
+        foreach (var f in frames)
+            _log.WriteLine($"  {f.Name}{f.HeadArgs}!{f.ClauseNumber}");
+
+        // Innermost: the second item's clause -- clause 2 of total/3, arguments as they
+        // stand right now (head unification already bound the tail, so the list shows
+        // whole). Below it the first item's frame, same clause, ITS OWN arguments -- a
+        // different acc, a different list. Then main/1, clause 1. The head skeleton is the
+        // head as written: `_` where it wrote `_`, the price where it named Price.
+        Assert.Matches(@"^\(\[item\(_, 25\) \| \[\]\], 10, _G\d+\)$", frames[0].HeadArgs);
+        Assert.Equal(2, frames[0].ClauseNumber);
+        Assert.StartsWith("([item(_, 10) | [item(book, 25)]], 0, ", frames[1].HeadArgs);
+        Assert.Equal(2, frames[1].ClauseNumber);
+        Assert.Equal("total", frames[1].Name);
+        Assert.Equal(1, frames[2].ClauseNumber);
+        Assert.Equal("main", frames[2].Name);
+
+        // Total is ONE variable, threaded through all three calls -- so all three lines end
+        // in the same `_G`: the bag gives a shared binding one identity, visibly.
+        string totalVar = System.Text.RegularExpressions.Regex
+            .Match(frames[0].HeadArgs, @"_G\d+\)$").Value;
+        Assert.NotEqual("", totalVar);
+        Assert.EndsWith(totalVar, frames[1].HeadArgs);
+        Assert.Equal("(" + totalVar, frames[2].HeadArgs);
+
+        // The query is not a call: no arguments, no clause number.
+        Assert.Equal("", frames[^1].HeadArgs);
+        Assert.Equal(0, frames[^1].ClauseNumber);
+    }
+
+    [Fact]
+    public void SteppingInstantiatesTheArgumentsInTheStack()
+    {
+        //   2: mid(X, Y) :-
+        //   3:     make(X, Y),
+        //   4:     use(Y).
+        //   5: make(X, out(X)).
+        //   6: use(_).
+        var engine = DebugEngine(
+            "mid(X, Y) :-\n    make(X, Y),\n    use(Y).\nmake(X, out(X)).\nuse(_).\n",
+            lco: false);
+        engine.AddBreakpoint("<string>", 3);
+
+        var stops = Walk(engine, "mid(5, R).", StepMode.Over);
+
+        // Stopped on make/2: Y has no value yet. One F10 and the SAME frame's second
+        // argument has become out(5) -- the stack reflects what the clause has done so far,
+        // which is the point of showing arguments instead of an arity.
+        Assert.Equal("Breakpoint", stops[0].Reason.ToString());
+        Assert.Matches(@"^\(5, _G\d+\)$", stops[0].Frames[0].HeadArgs);
+        Assert.Equal("Call", stops[1].Reason.ToString());
+        Assert.Equal("(5, out(5))", stops[1].Frames[0].HeadArgs);
+    }
+
+    [Fact]
+    public void FramesSharingABindingShareItsRendering_TheVeryInstance()
+    {
+        // The value bag. A call stack is mostly the same bindings seen from different
+        // clauses: the caller passed Data down, so every frame of the recursion holds the
+        // same heap cell. Rendering it per frame did the expensive part of a stop once per
+        // frame instead of once -- and serialized the same characters once per frame too.
+        // One capture, one bag, keyed by the dereferenced cell: same cell, same STRING
+        // INSTANCE, which is what lets the channel write it once and point at it.
+        //
+        //   2: walk([], _) :-
+        //   3:     stop_here.
+        //   4: walk([_|T], Data) :-
+        //   5:     walk(T, Data).
+        //   6: stop_here.
+        var engine = DebugEngine(
+            "walk([], _) :-\n    stop_here.\nwalk([_|T], Data) :-\n    walk(T, Data).\n"
+            + "stop_here.\n", lco: false);
+        engine.AddBreakpoint("<string>", 3);
+
+        var frames = Walk(engine, "walk([a,b,c,d], payload(1,2,3)).")[0].Frames;
+
+        // Every walk/2 frame on the way down holds Data -- the same payload, the same cell.
+        var data = frames.Where(f => f.Name == "walk")
+                         .SelectMany(f => f.Variables.Where(v => v.Name == "Data"))
+                         .Select(v => v.Value)
+                         .ToArray();
+        Assert.Equal(4, data.Length);
+        Assert.All(data, v => Assert.Equal("payload(1, 2, 3)", v));
+        Assert.All(data, v => Assert.Same(data[0], v));   // ONE rendering, shared
+
+        // An unbound variable shares its identity the same way: T in the innermost walk and
+        // the [] the outer levels consumed are gone, but the sharing rule is per-cell, so
+        // any two frames looking at one cell say one thing.
+    }
+
+    [Fact]
     public void ADeepStackShowsBothEnds_AndSaysHowMuchOfTheMiddleItLeftOut()
     {
         // Nobody reads three hundred frames of the same clause. What a user reads is the top

@@ -21,6 +21,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Text;
 using Microsoft.VisualStudio.Debugger;
 using Microsoft.VisualStudio.Debugger.CallStack;
 using Microsoft.VisualStudio.Debugger.ComponentInterfaces;
@@ -282,11 +283,37 @@ namespace Shumway.Debugger.Concord
                 input.FrameBase,
                 input.FrameSize,
                 DkmStackWalkFrameFlags.None,
-                // A goal is Name/Arity. The top-level query is not a goal the user wrote a
-                // head for, and the engine says so with arity -1: it shows as `?-`.
-                source.Arity >= 0 ? source.Name + "/" + source.Arity : source.Name,
+                FrameTitle(source),
                 input.Registers,
                 input.Annotations);
+        }
+
+        /// <summary>What the Call Stack window prints for one Prolog frame:
+        /// <c>module:pred(Arg1, ..., ArgN)!clause</c> — the module is the file's base name,
+        /// the arguments carry their CURRENT values (they instantiate as the clause runs),
+        /// and <c>!clause</c> says which clause of the predicate is being evaluated, 1-based.
+        /// A frame with no head skeleton (not compiled debuggable) falls back to
+        /// <c>pred/arity</c>; the query (arity -1, <c>?- goal</c>) and the omitted-frames
+        /// sentence are not calls and show as themselves.</summary>
+        private static string FrameTitle(DebugSnapshotFrame source)
+        {
+            if (source.Arity < 0) return source.Name;
+
+            string module = "";
+            string file = source.File ?? "";
+            if (file.Length > 0 && file[0] != '<')
+            {
+                try { module = System.IO.Path.GetFileNameWithoutExtension(file); }
+                catch (Exception) { module = ""; }
+            }
+
+            var title = new StringBuilder();
+            if (module.Length > 0) title.Append(module).Append(':');
+            title.Append(source.Name);
+            if (source.HeadArgs.Length > 0) title.Append(source.HeadArgs);
+            else if (source.Arity > 0) title.Append('/').Append(source.Arity);
+            if (source.ClauseNumber > 0) title.Append('!').Append(source.ClauseNumber);
+            return title.ToString();
         }
 
         /// <summary>The address is what makes a synthesized frame navigable: the module

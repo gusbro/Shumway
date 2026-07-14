@@ -220,7 +220,7 @@ public sealed class PredicateCompiler
                     clauseSourcePositions: clausePositions)
                 {
                     DebugStops = ShiftDebugStops(compiledClauses[0], clauseStart),   // ADR-035
-                    DebugFrames = ClauseFrames(compiledClauses[0], clauseStart),     // ADR-035
+                    DebugFrames = ClauseFrames(compiledClauses[0], clauseStart, 1),  // ADR-035
                 };
             }
             return new CompiledPredicate(
@@ -239,7 +239,7 @@ public sealed class PredicateCompiler
                 clauseSourcePositions: clausePositions)
             {
                 DebugStops = compiledClauses[0].DebugStops,   // ADR-035 — no prefix, no shift
-                DebugFrames = ClauseFrames(compiledClauses[0], 0),
+                DebugFrames = ClauseFrames(compiledClauses[0], 0, 1),
             };
         }
 
@@ -404,7 +404,7 @@ public sealed class PredicateCompiler
                 callSites.Add(new CallSite(
                     clauseStart + site.OpcodeOffset, site.CalleeFunctorId, site.IsExecute));
             debugStops.AddRange(ShiftDebugStops(compiledClauses[i], clauseStart));   // ADR-035
-            debugFrames.AddRange(ClauseFrames(compiledClauses[i], clauseStart));     // ADR-035
+            debugFrames.AddRange(ClauseFrames(compiledClauses[i], clauseStart, i + 1));   // ADR-035
             MergeClauseDispatchSites(emitter, compiledClauses[i], clauseStart, dispatchSites);
         }
 
@@ -434,7 +434,7 @@ public sealed class PredicateCompiler
     /// The span is what takes a debugger from a program address back to the clause
     /// executing there, and so to the names of the variables in its frame.</summary>
     private static IReadOnlyList<DebugClauseFrame> ClauseFrames(
-        CompiledClause clause, int clauseStart)
+        CompiledClause clause, int clauseStart, int clauseNumber)
     {
         // Having somewhere to STOP and having variables to SHOW are different things, and
         // reading the first as a proxy for the second cost the query frame its variables:
@@ -451,7 +451,11 @@ public sealed class PredicateCompiler
                 clauseStart,
                 clauseStart + clause.Bytecode.Length,
                 clause.HasFrame,
-                clause.DebugVariables),
+                clause.DebugVariables)
+            {
+                HeadArgs = clause.DebugHeadArgs,
+                ClauseNumber = clauseNumber,
+            },
         };
     }
 
@@ -1331,7 +1335,7 @@ public sealed class PredicateCompiler
                 callSites.Add(new CallSite(
                     clauseStart + site.OpcodeOffset, site.CalleeFunctorId, site.IsExecute));
             debugStops.AddRange(ShiftDebugStops(compiledClauses[i], clauseStart));   // ADR-035
-            debugFrames.AddRange(ClauseFrames(compiledClauses[i], clauseStart));     // ADR-035
+            debugFrames.AddRange(ClauseFrames(compiledClauses[i], clauseStart, i + 1));   // ADR-035
             MergeClauseDispatchSites(emitter, compiledClauses[i], clauseStart, dispatchSites);
         }
 
@@ -1731,7 +1735,7 @@ public sealed class PredicateCompiler
                 callSites.Add(new CallSite(
                     clauseStart + site.OpcodeOffset, site.CalleeFunctorId, site.IsExecute));
             debugStops.AddRange(ShiftDebugStops(compiledClauses[i], clauseStart));   // ADR-035
-            debugFrames.AddRange(ClauseFrames(compiledClauses[i], clauseStart));     // ADR-035
+            debugFrames.AddRange(ClauseFrames(compiledClauses[i], clauseStart, i + 1));   // ADR-035
             MergeClauseDispatchSites(emitter, compiledClauses[i], clauseStart, dispatchSites);
         }
 

@@ -108,58 +108,97 @@ public sealed class DebugChannel : IDisposable
         DebugWire.WriteString(_snapshot, ref at, stop.BreakFile);
         DebugWire.WriteInt(_snapshot, ref at, stop.BreakLine);
 
-        // A STACK THAT DOES NOT FIT IS TRUNCATED, AND SAYS SO. The count is written last,
-        // over a placeholder, and it is the number of frames actually IN the buffer — not the
-        // number the program has.
+        // EVERY STRING ONCE. A stack's frames mostly repeat each other: the same file on
+        // every frame, the same predicate down a recursion, the same variable names level
+        // after level — and, above all, the same VALUES, because a call stack is mostly the
+        // same bindings seen from different clauses (the engine's per-capture bag hands the
+        // same string instance to every frame that shares a term). So the snapshot carries a
+        // string TABLE, and the frames carry indices into it. A 2 700-frame recursion whose
+        // frames share their data serialises the data once, not 2 700 times.
         //
-        // Writing the real count and then running out of room was the bug: the field writers
-        // drop what will not fit (the address must not move), so the tail of the buffer stayed
-        // as the PREVIOUS stop had left it, and a reader walking N frames through it read old
-        // bytes as a length. It asked for a list of two billion variables and died of it —
-        // and the debugger, whose call it was, silently let the program run on while Visual
-        // Studio waited for a break that had already happened. A 239-frame Blint stack was
-        // all it took.
-        int frameCountAt = at;
-        DebugWire.WriteInt(_snapshot, ref at, 0);
+        // A STACK THAT DOES NOT FIT IS STILL TRUNCATED, AND STILL SAYS SO. Each frame is
+        // priced before a byte of it is written — its fixed fields plus the strings the table
+        // does not already hold — and the counts written are the counts actually in the
+        // buffer. (Writing the real count and then running out of room was the bug that hung
+        // Break All on Blint: the reader walked missing frames through the tail of an OLDER
+        // stop, read old bytes as a length, and died of an OutOfMemoryException inside the
+        // one event that could have completed the pause.)
+        var table = new List<string>();
+        var index = new Dictionary<string, int>();
+        var accepted = new List<PrologEngine.DebugFrame>();
 
-        int written = 0;
+        // The header is already written; everything after `at` must fit in what remains,
+        // including both counts and the terminating zero word.
+        int budget = SnapshotCapacity - at - 12;
         foreach (var f in stop.Frames)
         {
-            if (!Fits(at, f)) break;
-            DebugWire.WriteString(_snapshot, ref at, f.Name);
+            int cost = FrameCost(f, index, out var newStrings);
+            if (cost > budget) break;
+            budget -= cost;
+            foreach (string s in newStrings)
+            {
+                index[s] = table.Count;
+                table.Add(s);
+            }
+            accepted.Add(f);
+        }
+
+        DebugWire.WriteInt(_snapshot, ref at, table.Count);
+        foreach (string s in table)
+            DebugWire.WriteString(_snapshot, ref at, s);
+
+        DebugWire.WriteInt(_snapshot, ref at, accepted.Count);
+        foreach (var f in accepted)
+        {
+            DebugWire.WriteInt(_snapshot, ref at, index[f.Name ?? ""]);
             DebugWire.WriteInt(_snapshot, ref at, f.Arity);
-            DebugWire.WriteString(_snapshot, ref at, f.File);
+            DebugWire.WriteInt(_snapshot, ref at, index[f.File ?? ""]);
             DebugWire.WriteInt(_snapshot, ref at, f.Line);
             DebugWire.WriteInt(_snapshot, ref at, f.Pc);
+            DebugWire.WriteInt(_snapshot, ref at, index[f.HeadArgs ?? ""]);
+            DebugWire.WriteInt(_snapshot, ref at, f.ClauseNumber);
             DebugWire.WriteInt(_snapshot, ref at, f.Variables.Count);
             foreach (var (name, value) in f.Variables)
             {
-                DebugWire.WriteString(_snapshot, ref at, name);
-                DebugWire.WriteString(_snapshot, ref at, value);
+                DebugWire.WriteInt(_snapshot, ref at, index[name ?? ""]);
+                DebugWire.WriteInt(_snapshot, ref at, index[value ?? ""]);
             }
-            written++;
         }
-
-        int patch = frameCountAt;
-        DebugWire.WriteInt(_snapshot, ref patch, written);
 
         // Zero the next word, so a reader that walks off the end of what was just
         // written finds an empty count rather than the tail of an older, longer stop.
         DebugWire.WriteInt(_snapshot, ref at, 0);
     }
 
-    /// <summary>Whether this frame, whole, still fits — measured before a byte of it is
-    /// written, because a half-written frame is worse than a missing one.</summary>
-    private static bool Fits(int at, PrologEngine.DebugFrame frame)
+    /// <summary>What adding this frame costs: its fixed fields, plus the strings the table
+    /// does not hold yet — returned so the caller can commit them only if the frame is
+    /// accepted. A frame rejected for size must leave no strings behind.</summary>
+    private static int FrameCost(
+        PrologEngine.DebugFrame frame, Dictionary<string, int> index, out List<string> newStrings)
     {
-        int need = 4 + Utf8Length(frame.Name) + 4 + 4 + Utf8Length(frame.File) + 4 + 4 + 4;
-        foreach (var (name, value) in frame.Variables)
-            need += 4 + Utf8Length(name) + 4 + Utf8Length(value);
-        return at + need + 4 <= SnapshotCapacity;   // + the terminating zero word
-    }
+        var fresh = new List<string>();
+        // nameId arity fileId line pc headArgsId clauseNumber varCount + per-var ids.
+        int cost = 8 * 4 + frame.Variables.Count * 8;
 
-    private static int Utf8Length(string? text)
-        => text is null ? 0 : System.Text.Encoding.UTF8.GetByteCount(text);
+        int StringCost(string? s)
+        {
+            s ??= "";
+            if (index.ContainsKey(s) || fresh.Contains(s)) return 0;
+            fresh.Add(s);
+            return 4 + System.Text.Encoding.UTF8.GetByteCount(s);
+        }
+
+        cost += StringCost(frame.Name);
+        cost += StringCost(frame.File);
+        cost += StringCost(frame.HeadArgs);
+        foreach (var (name, value) in frame.Variables)
+        {
+            cost += StringCost(name);
+            cost += StringCost(value);
+        }
+        newStrings = fresh;
+        return cost;
+    }
 
     /// <summary>Says that the program is running again, so that what the buffer holds is
     /// the record of a stop that is OVER.

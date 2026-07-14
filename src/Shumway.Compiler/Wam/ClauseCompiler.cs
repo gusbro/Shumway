@@ -422,7 +422,10 @@ public sealed class ClauseCompiler
             state.DispatchSites.Count == 0 ? null : state.DispatchSites,
             state.DebugStops.Count == 0 ? null : state.DebugStops,
             debugVars is { Count: > 0 } ? debugVars : null,
-            hasFrame: needFrame);
+            hasFrame: needFrame,
+            // ADR-035 — the head skeleton, so a stack frame can show the call with its
+            // arguments' CURRENT values. Debug-only: release keeps no AST behind.
+            debugHeadArgs: DebugCodegen && headArgs.Length > 0 ? headArgs : null);
     }
 
     /// <summary>ADR-025 — adds every named variable occurring inside an inline

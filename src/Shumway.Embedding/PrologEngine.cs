@@ -3864,6 +3864,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         string Name, int Arity, string File, int Line, int Pc,
         IReadOnlyList<(string Name, string Value)> Variables)
     {
+        /// <summary>ADR-035 — the frame as the CALL it is: the head's arguments with their
+        /// CURRENT values, parenthesised and ready to display — <c>(120, foo/2, _G5)</c> —
+        /// instantiating as the clause runs. Empty when the clause was not compiled
+        /// debuggable (there is no head skeleton to fill in), and for the query and the
+        /// omitted-frames sentence, which are not calls.</summary>
+        public string HeadArgs { get; init; } = "";
+
+        /// <summary>ADR-035 — which clause of its predicate this frame is running, 1-based,
+        /// in source order: the <c>!2</c> of <c>total(...)!2</c>. Zero when unknown.</summary>
+        public int ClauseNumber { get; init; }
+
         public override string ToString() => $"{Name}/{Arity} at {File}:{Line}";
     }
 
@@ -3904,16 +3915,20 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         var sites = new List<(int Pc, int Env)>();
         CollectFrameSites(engine, sites, pc, e, cp);
 
+        // One bag per capture: the frames of one stop share their bindings, and their
+        // renderings — see DebugValueBag.
+        var bag = new DebugValueBag(this, engine);
+
         var frames = new List<DebugFrame>();
         if (sites.Count <= MaxFrames)
         {
             foreach (var (framePc, frameEnv) in sites)
-                AddFrame(engine, frames, framePc, frameEnv);
+                AddFrame(engine, frames, framePc, frameEnv, bag);
             return frames;
         }
 
         for (int i = 0; i < HeadFrames; i++)
-            AddFrame(engine, frames, sites[i].Pc, sites[i].Env);
+            AddFrame(engine, frames, sites[i].Pc, sites[i].Env, bag);
 
         int omitted = sites.Count - HeadFrames - TailFrames;
         frames.Add(new DebugFrame(
@@ -3921,7 +3936,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             OmittedFramesArity, "", 0, -1, Array.Empty<(string, string)>()));
 
         for (int i = sites.Count - TailFrames; i < sites.Count; i++)
-            AddFrame(engine, frames, sites[i].Pc, sites[i].Env);
+            AddFrame(engine, frames, sites[i].Pc, sites[i].Env, bag);
         return frames;
     }
 
@@ -4023,7 +4038,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
     /// <summary>Adds the frame at <paramref name="pc"/>. Returns true when it was the
     /// QUERY's — the bottom of the stack, and the end of the walk.</summary>
-    private bool AddFrame(Activation engine, List<DebugFrame> frames, int pc, int env)
+    private bool AddFrame(
+        Activation engine, List<DebugFrame> frames, int pc, int env, DebugValueBag bag)
     {
         if (_currentPredicatesByAddress is null || pc < 0) return false;
         var entries = SortedPredicateEntries();
@@ -4057,8 +4073,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // search only landed here by clamping), there are no variables to be had.
             if (!WithinPredicate(pred, entries[i], pc)) env = -1;
 
-            int clause = FirstClauseStartAtOrAfter(entries[i]);
-            if (clause >= 0) pc = clause;
+            int firstClause = FirstClauseStartAtOrAfter(entries[i]);
+            if (firstClause >= 0) pc = firstClause;
         }
 
         int siteId = SiteAtOrBefore(pc);
@@ -4068,8 +4084,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         string file = siteId >= 0
             ? Shumway.Core.DebugSiteTable.FileName(site.FileId)
             : "";
+        var clause = ClauseAt(pc);
         frames.Add(new DebugFrame(
-            name, arity, file, siteId >= 0 ? site.Line : 0, pc, ReadVariables(engine, pc, env)));
+            name, arity, file, siteId >= 0 ? site.Line : 0, pc,
+            ReadVariables(engine, pc, env, bag))
+        {
+            HeadArgs = isQuery ? "" : RenderHeadArgs(engine, clause, env, bag),
+            ClauseNumber = isQuery ? 0 : clause?.ClauseNumber ?? 0,
+        });
         return isQuery;
     }
 
@@ -4082,8 +4104,71 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// variables live in X registers the next call overwrites, and there is no honest
     /// answer to give. Debug codegen exists precisely to stop that from happening —
     /// it makes every named variable permanent.</para></summary>
+    /// <summary>ADR-035 — the frame's head arguments with their current values, rendered
+    /// for the call-stack line: <c>total([item(_, 25)|T], Acc, Total)</c> shown as
+    /// <c>([item(_, 25)], 10, _G5)</c>. The skeleton is the head as WRITTEN; each named
+    /// variable in it is substituted by its current value (through the capture's bag, so a
+    /// term shared with the Locals list is rendered once), an anonymous or not-yet-written
+    /// one by <c>_</c>. Each argument is cut to <see cref="MaxHeadArgChars"/> — a stack line
+    /// is read at a glance; the full value is in Locals.</summary>
+    private string RenderHeadArgs(
+        Activation engine, Shumway.Compiler.Wam.DebugClauseFrame? clause, int env,
+        DebugValueBag bag)
+    {
+        if (clause?.HeadArgs is not { Count: > 0 } args) return "";
+
+        var slots = clause.Value.Variables;
+        Term Substitute(Term t)
+        {
+            switch (t)
+            {
+                case VarTerm v:
+                    if (v.Name.Length == 0 || v.Name[0] == '_') return new VarTerm("_");
+                    if (env >= 0)
+                    {
+                        foreach (var s in slots)
+                            if (s.Name == v.Name)
+                                return new VarTerm(bag.Render(engine.GetY(env, s.Slot)));
+                    }
+                    return new VarTerm("_");
+                case CompoundTerm c:
+                    var parts = new Term[c.Args.Length];
+                    for (int i = 0; i < parts.Length; i++) parts[i] = Substitute(c.Args[i]);
+                    return new CompoundTerm(c.Functor, parts);
+                default:
+                    return t;
+            }
+        }
+
+        try
+        {
+            var text = new System.Text.StringBuilder("(");
+            for (int i = 0; i < args.Count; i++)
+            {
+                if (i > 0) text.Append(", ");
+                // The substituted values arrive as VarTerms NAMED by their rendering — the
+                // renderer prints a variable's name verbatim, which splices an already
+                // rendered (and already capped) value into the skeleton without
+                // materializing anything twice.
+                text.Append(Ellipsize(
+                    AstTermRenderer.Render(Substitute(args[i]), 999, Operators),
+                    MaxHeadArgChars));
+            }
+            return text.Append(')').ToString();
+        }
+        catch (Exception)
+        {
+            return "";   // best-effort, like every frame read
+        }
+    }
+
+    /// <summary>One argument of a call-stack line. The LINE has to be read at a glance —
+    /// the whole call, clause number and all, in a window column; a variable's full value
+    /// (itself capped at <see cref="MaxVariableChars"/>) belongs to the Locals window.</summary>
+    private const int MaxHeadArgChars = 64;
+
     private IReadOnlyList<(string Name, string Value)> ReadVariables(
-        Activation engine, int pc, int env)
+        Activation engine, int pc, int env, DebugValueBag bag)
     {
         if (env < 0) return Array.Empty<(string, string)>();
         var clause = ClauseAt(pc);
@@ -4092,45 +4177,79 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
         var result = new List<(string, string)>(clause.Value.Variables.Count);
         foreach (var v in clause.Value.Variables)
+            result.Add((v.Name, bag.Render(engine.GetY(env, v.Slot))));
+        return result;
+    }
+
+    /// <summary>
+    /// ADR-035 — one rendering per VALUE, however many frames hold it.
+    ///
+    /// <para>A call stack is mostly the same bindings seen from different clauses: the
+    /// caller passed <c>Data</c> down, so every frame of the recursion holds the same term
+    /// — the same heap cell. Rendering it per frame did the expensive part of a stop (walk
+    /// the term, build the AST, print it) once per frame instead of once, and serialised
+    /// the same characters once per frame too. This bag lives for ONE capture (bindings
+    /// change between stops) and keys on the dereferenced cell: same cell, same string —
+    /// the very instance, which is what lets the channel write it once and point at it.</para>
+    /// </summary>
+    private sealed class DebugValueBag
+    {
+        private readonly PrologEngine _host;
+        private readonly Activation _engine;
+        private readonly Dictionary<(Tag, long), string> _byCell = new();
+
+        public DebugValueBag(PrologEngine host, Activation engine)
         {
-            string value;
+            _host = host;
+            _engine = engine;
+        }
+
+        /// <summary>The rendering of whatever this cell is bound to right now — shared with
+        /// every other variable bound to the same thing.</summary>
+        public string Render(Cell slot)
+        {
             try
             {
                 // A VARIABLE WHOSE TURN HAS NOT COME. `allocate` leaves the Y slots
                 // untouched — RawInt(0), a control word, not a term — because standard WAM
                 // codegen writes a permanent at its FIRST occurrence and never reads it
-                // before. So a clause stopped at its second goal has real values in the
-                // variables the first goal touched and nothing at all in the rest, and the
-                // debugger stops in the middle of clauses for a living.
-                //
-                // It is a plain unbound variable as far as the user is concerned — it has no
-                // value yet — and that is what we show. (It used to be a NotSupportedException
-                // out of the materializer, caught and rendered "<unavailable>": true, useless,
-                // and it printed a first-chance exception into the Output window of every
-                // Break All.)
-                Cell slot = engine.GetY(env, v.Slot);
-                if (slot.Tag == Tag.RawInt)
-                {
-                    result.Add((v.Name, "_"));
-                    continue;
-                }
-                if (slot.Tag == Tag.PstrBuffer)
-                {
-                    // Not a term at all — the raw backing store of a partial string, which no
-                    // variable is ever bound TO. Same rule as above: say what it is, and do
-                    // not throw for it.
-                    result.Add((v.Name, "<internal>"));
-                    continue;
-                }
+                // before. It is a plain unbound variable as far as the user is concerned —
+                // it has no value yet. (Handing it to the materializer instead threw a
+                // NotSupportedException — caught, but printed into Visual Studio's Output
+                // window at every Break All.)
+                if (slot.Tag == Tag.RawInt) return "_";
 
-                // Materialization reads from the heap, and a Y slot is on the stack, so
-                // the cell is staged into one fresh heap cell first — the same copy the
-                // tracer makes of an argument register. Copying the CELL keeps sharing
-                // intact: an unbound variable stays a reference to the same variable,
-                // and a compound still points at the same structure.
-                int h = engine.AllocateHeap(1);
-                engine.SetHeap(h, slot);
-                Term term = TermReader.Materialize(engine, h);
+                // Not a term at all — the raw backing store of a partial string, which no
+                // variable is ever bound TO.
+                if (slot.Tag == Tag.PstrBuffer) return "<internal>";
+
+                // THE KEY IS THE DEREFERENCED CELL. Two variables bound to the same term
+                // dereference to the same cell — same tag, same payload — wherever their own
+                // slots live. An unbound variable's identity is its final Ref cell, so the
+                // same variable shows the same `_G` in every frame that shares it, by
+                // construction. (Equal-but-distinct terms in different cells do NOT share —
+                // the bag dedups sharing, not equality; the channel's string table catches
+                // the equal-content case at serialisation.)
+                Cell cell = slot;
+                int at = -1;
+                if (cell.Tag == Tag.Ref)
+                {
+                    at = _engine.Deref(cell.AsHeapIndex);
+                    cell = _engine.GetHeap(at);
+                    if (cell.Tag == Tag.Ref) at = cell.AsHeapIndex;   // unbound: its own address
+                }
+                var key = (cell.Tag, cell.Data);
+                if (_byCell.TryGetValue(key, out string? cached)) return cached;
+
+                // Materialization reads from the heap; a value that is not already there (a
+                // Y slot holding a direct value cell) is staged into one fresh heap cell.
+                // Copying the CELL keeps sharing intact.
+                if (at < 0)
+                {
+                    at = _engine.AllocateHeap(1);
+                    _engine.SetHeap(at, cell);
+                }
+                Term term = TermReader.Materialize(_engine, at);
 
                 // Ellipsized, and not as a nicety. A real program binds real data: a Blint
                 // variable holds the parsed contents of the file it is linting, and rendering
@@ -4138,17 +4257,18 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 // one line — which nobody can read, and which overran the channel that had to
                 // carry the WHOLE stack. (Seeing inside a big term is what expanding it in the
                 // Locals window is for; that is a func-eval, and it is on the D5 list.)
-                value = Ellipsize(AstTermRenderer.Render(term, 999, Operators), MaxVariableChars);
+                string value = Ellipsize(
+                    AstTermRenderer.Render(term, 999, _host.Operators), MaxVariableChars);
+                _byCell[key] = value;
+                return value;
             }
             catch (Exception)
             {
                 // Reading a frame is best-effort by nature: a debugger must never take
                 // the program down because it could not render something.
-                value = "<unavailable>";
+                return "<unavailable>";
             }
-            result.Add((v.Name, value));
         }
-        return result;
     }
 
     /// <summary>ADR-035 — the source site of the clause a choice point's retry address
@@ -9800,7 +9920,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 {
                     var f = pred.DebugFrames[i];
                     frames[predAddr + f.Start] = new Shumway.Compiler.Wam.DebugClauseFrame(
-                        predAddr + f.Start, predAddr + f.End, f.HasFrame, f.Variables);
+                        predAddr + f.Start, predAddr + f.End, f.HasFrame, f.Variables)
+                    {
+                        HeadArgs = f.HeadArgs,
+                        ClauseNumber = f.ClauseNumber,
+                    };
 
                     // The clause's source span: from where its head is written down to
                     // the last line it can be stopped at. What a breakpoint on a line

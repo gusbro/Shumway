@@ -132,7 +132,7 @@ try {
             $chosen = $null
             foreach ($t in @($dte.Debugger.CurrentProgram.Threads)) {
                 $names = @($t.StackFrames) | ForEach-Object { $_.FunctionName }
-                if (@($names | Where-Object { $_ -match '^\w+/\d+$' -or $_ -match '^\[Shumway' -or $_ -match 'Scaling' }).Count -gt 0) {
+                if (@($names | Where-Object { $_ -match '^\w+/\d+$' -or $_ -match '!\d+$' -or $_ -match '^\[Shumway' -or $_ -match 'Scaling' }).Count -gt 0) {
                     $chosen = $t; break
                 }
             }
@@ -155,7 +155,7 @@ try {
         Write-Host "=============================================="
         try {
             $f = @($dte.Debugger.CurrentThread.StackFrames) |
-                Where-Object { $_.FunctionName -match '^step/\d' } | Select-Object -First 1
+                Where-Object { $_.FunctionName -match '(^|:)step[(/!]' } | Select-Object -First 1
             if ($f) {
                 $dte.Debugger.CurrentStackFrame = $f
                 Start-Sleep -Seconds 2
@@ -169,8 +169,8 @@ try {
     $results["E1 a breakpoint binds in a module-local predicate"] = $stoppedInProlog
     # The names the user wrote. A mangled frame would read "interop`$step/2".
     $results["E2 the stack shows the user's names, not mangled"] =
-        (@($frames | Where-Object { $_ -match '^step/2$' }).Count -ge 1 -and
-         @($frames | Where-Object { $_ -match '^run/2$' }).Count -ge 1 -and
+        (@($frames | Where-Object { $_ -match '(^|:)step([(/!]|$)' }).Count -ge 1 -and
+         @($frames | Where-Object { $_ -match '(^|:)run([(/!]|$)' }).Count -ge 1 -and
          @($frames | Where-Object { $_ -match '\$' }).Count -eq 0)
     $results["E3 its variables are there"] = ($localsText -match 'N = ')
 
@@ -195,7 +195,7 @@ try {
     }
     # Mixed = C# frames AND Prolog frames, in one stack, at one stop.
     $hasCSharp = @($mixed | Where-Object { $_ -match 'Scale' }).Count -ge 1
-    $hasProlog = @($mixed | Where-Object { $_ -match '^(step|run|main)/\d' }).Count -ge 1
+    $hasProlog = @($mixed | Where-Object { $_ -match '(^|:)(step|run|main)([(/!]|$)' }).Count -ge 1
     $results["E4 the stack is mixed: C# over Prolog"] = ($hasCSharp -and $hasProlog)
 
     Write-Host "[5/5] continue to the end ..."

@@ -83,7 +83,7 @@ function Get-PrologFrames($dte, [string]$pattern) {
     } 5 2000
 }
 
-function Break-And-Report([string]$what, $dte, [string]$pattern = '^(spin|work|go)/\d') {
+function Break-And-Report([string]$what, $dte, [string]$pattern = '(^|:)(spin|work|go)([(/!]|$)') {
     Invoke-WithRetry { $dte.Debugger.Break($false) } 3 2000
     for ($i = 0; $i -lt 25; $i++) {
         Assert-Time "waiting for the break ($what)"
@@ -137,14 +137,14 @@ try {
     # it. Before that it learned the file names only from a stop that had already happened, so
     # the first break gave grey frames -- no language, no source, nothing to click -- and the
     # user had to open the .pl by hand and break again.
-    $first = Break-And-Report "first break" $dte "^later_"
+    $first = Break-And-Report "first break" $dte "(^|:)later_"
     $results["M1 the first break in a top-level consult says Prolog"] =
         ($first.Count -gt 0 -and @($first | Where-Object { $_.Language -ne "Prolog" }).Count -eq 0)
 
     Write-Host "[4/5] and again ..."
     Invoke-WithRetry { $dte.Debugger.Go($false) } 5 2000
     Start-Sleep -Seconds 3
-    $second = Break-And-Report "second break" $dte "^later_"
+    $second = Break-And-Report "second break" $dte "(^|:)later_"
     $results["M2 and so does the next one"] =
         ($second.Count -gt 0 -and @($second | Where-Object { $_.Language -ne "Prolog" }).Count -eq 0)
 
@@ -180,7 +180,7 @@ try {
     $engine.StandardInput.Flush()
     Start-Sleep -Seconds 5
 
-    $third = Break-And-Report "break in a relatively-named file" $dte '^(spin|work|go)/\d'
+    $third = Break-And-Report "break in a relatively-named file" $dte '(^|:)(spin|work|go)([(/!]|$)'
     $results["M3 a file named relatively says Prolog too"] =
         ($third.Count -gt 0 -and @($third | Where-Object { $_.Language -ne "Prolog" }).Count -eq 0)
 

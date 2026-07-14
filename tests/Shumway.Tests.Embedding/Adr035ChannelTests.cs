@@ -133,7 +133,10 @@ public class Adr035ChannelTests
         {
             var variables = new List<(string, string)>();
             for (int v = 0; v < 8; v++)
-                variables.Add(($"V{v}", new string('x', 500)));   // ~4 KB of variables a frame
+                // DISTINCT content per variable — equal strings would (rightly) share one
+                // string-table entry and the whole stack would fit. Truncation is for the
+                // stack that genuinely does not.
+                variables.Add(($"V{v}", new string('x', 500) + i + "_" + v));
             big.Add(new PrologEngine.DebugFrame($"deep{i}", 1, "big.pl", i, i, variables));
         }
 
@@ -155,8 +158,41 @@ public class Adr035ChannelTests
         {
             Assert.Equal($"deep{i}", snapshot.Frames[i].Name);
             Assert.Equal(8, snapshot.Frames[i].Variables.Count);
-            Assert.Equal(500, snapshot.Frames[i].Variables[0].Value.Length);
+            Assert.Equal(new string('x', 500) + i + "_0", snapshot.Frames[i].Variables[0].Value);
         }
+    }
+
+    [Fact]
+    public void AValueSharedByManyFramesIsSerializedOnce()
+    {
+        // The bag, observed from the outside. A call stack is mostly the same bindings seen
+        // from different clauses -- a 200-frame recursion sharing one big term is the shape
+        // Blint pauses in -- and per-frame serialization made the snapshot's size the value's
+        // size TIMES the depth: 200 x 5 KB would not fit in the 256 KB channel, and the stack
+        // would (honestly, but needlessly) truncate. With the string table it is the value's
+        // size PLUS the depth, so the whole stack fits with room to spare.
+        using var channel = new DebugChannel();
+
+        string shared = new string('d', 5000);   // ~5 KB, the same INSTANCE in every frame
+        var frames = new List<PrologEngine.DebugFrame>();
+        for (int i = 0; i < 200; i++)
+            frames.Add(new PrologEngine.DebugFrame("down", 1, "deep.pl", i, i,
+                new[] { ("Data", shared), ("N", i.ToString()) }));
+
+        channel.WriteSnapshot(new DebugStopEvent(
+            StopReason.Breakpoint, "down/1", "deep.pl", 0, 200, frames));
+
+        DebugSnapshot snapshot = ReadFromMemory(channel);
+        _log.WriteLine($"{snapshot.Frames.Count} frames carried");
+
+        // Nothing was dropped -- 200 x 5 KB never happened -- and every frame still answers
+        // with the whole value. The instance is shared on the reading side too: that is what
+        // the indirection is FOR, and it is also the honest test that one entry backs them all.
+        Assert.Equal(200, snapshot.Frames.Count);
+        Assert.All(snapshot.Frames, f =>
+            Assert.Equal(shared, f.Variables[0].Value));
+        Assert.All(snapshot.Frames, f =>
+            Assert.Same(snapshot.Frames[0].Variables[0].Value, f.Variables[0].Value));
     }
 
     [Fact]
@@ -180,12 +216,20 @@ public class Adr035ChannelTests
         DebugWire.WriteInt(bytes, ref at, 1);          // depth
         DebugWire.WriteString(bytes, ref at, "");
         DebugWire.WriteInt(bytes, ref at, 0);
+        DebugWire.WriteInt(bytes, ref at, 0);              // an empty string table
         DebugWire.WriteInt(bytes, ref at, int.MaxValue);   // "two billion frames follow"
 
         DebugSnapshot? snapshot = DebugChannel.ReadSnapshot(bytes);   // must not throw
         Assert.NotNull(snapshot);
         Assert.Empty(snapshot!.Frames);
         Assert.Equal(StopReason.AsyncBreak, snapshot.Reason);
+
+        // And the same lie told about the STRING TABLE dies just as quietly.
+        int back = at - 8;
+        DebugWire.WriteInt(bytes, ref back, int.MaxValue);   // "two billion strings follow"
+        snapshot = DebugChannel.ReadSnapshot(bytes);
+        Assert.NotNull(snapshot);
+        Assert.Empty(snapshot!.Frames);
     }
 
     [Fact]
