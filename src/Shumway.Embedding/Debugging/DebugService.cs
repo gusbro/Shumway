@@ -516,15 +516,8 @@ public sealed class DebugService : IDebugSession
         // through EntryBreak (a managed Debugger.Break, the debugger_break/0 path) rather
         // than a port stop, because at startup no step and no async break is pending, and a
         // port stop VS was not waiting for is silently dropped by the monitor. Fires once.
-        if (_breakAtEntry && _engine.IsDebuggableAddress(engine.P))
+        if (_breakAtEntry)
         {
-            // Fire only once we are executing INSIDE the user's own code — engine.P in a
-            // debuggable predicate — so the stop lands on the entry predicate's own clause.
-            // The FIRST call port is the synthesized query wrapper calling the entry goal
-            // (`?- main` calling main), and the wrapper has no real source line: it maps to
-            // the end of the file (the user saw the caret on line 2485, not main's line 19).
-            // Skipping it lets the entry break land at main's first goal, where a breakpoint
-            // on main's head would bind.
             _breakAtEntry = false;
             _reportedCallSite = -1;
             Current = engine;
