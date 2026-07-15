@@ -109,4 +109,37 @@ public class Adr035CatchRepro
         Assert.Equal(StopReason.Call, stops[1].Reason);
         Assert.Equal(4, stops[1].Line);
     }
+
+    [Fact]
+    public void SteppingThroughADcgRule_LandsEachGoalOnItsOwnLine()
+    {
+        // A DCG body is translated to difference-list goals — a terminal `[x]` becomes a
+        // `S0 = [x|S]` unify, a non-terminal `nt` becomes `nt(S0, S)`. Both are stop sites; a
+        // fresh goal with no position mapped to the wrong line, exactly like the meta-construct
+        // helpers. Each element must keep its own DCG-body line. (A LEADING terminal is peeled
+        // into the head by the fail-fast lowering, so the body starts with a non-terminal here
+        // to keep every element a real, on-its-own-line stop site.)
+        //   2: greet -->
+        //   3:     pre,
+        //   4:     [world],
+        //   5:     post.
+        //   6: pre --> [hello].
+        //   7: post --> [end].
+        var engine = DebugEngine(
+            "greet -->\n    pre,\n    [world],\n    post.\n" +
+            "pre --> [hello].\npost --> [end].\n");
+        engine.AddBreakpoint("<string>", 3);   // the `pre` non-terminal
+
+        var stops = Walk(engine, "phrase(greet, [hello, world, end]).",
+            StepMode.Into, StepMode.Into, StepMode.Into, StepMode.Into, StepMode.Into);
+
+        // Each element of greet's body stops on its OWN line: pre on 3, the [world] terminal on
+        // 4, post on 5 — not all collapsed onto the first. Before the fix, [world]'s unify goal
+        // had no position and reported line 3.
+        var lines = stops.Where(s => s.File == "<string>").Select(s => s.Line).Distinct().ToList();
+        _log.WriteLine("DCG lines: " + string.Join(",", lines));
+        Assert.Contains(3, lines);
+        Assert.Contains(4, lines);
+        Assert.Contains(5, lines);
+    }
 }

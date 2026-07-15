@@ -223,7 +223,7 @@ public static class DcgTransform
         {
             var (left, sMid) = TransformBody(conj.Args[0], sIn, ref counter);
             var (right, sOut) = TransformBody(conj.Args[1], sMid, ref counter);
-            return (new CompoundTerm(",", new[] { left, right }), sOut);
+            return (new CompoundTerm(",", new[] { left, right }) { Position = body.Position }, sOut);
         }
 
         // Empty terminal [] — consume nothing, no goal emitted.
@@ -241,7 +241,8 @@ public static class DcgTransform
         {
             var sOut = FreshState(ref counter);
             Term listWithTail = BuildListWithTail(body, sOut);
-            Term goal = new CompoundTerm("=", new[] { (Term)sIn, listWithTail });
+            Term goal = new CompoundTerm("=", new[] { (Term)sIn, listWithTail })
+                { Position = body.Position };
             return (goal, sOut);
         }
 
@@ -264,7 +265,7 @@ public static class DcgTransform
             Term acc = sOut;
             for (int i = str.Content.Length - 1; i >= 0; i--)
                 acc = new CompoundTerm(".", new Term[] { new IntTerm(str.Content[i]), acc });
-            Term goal = new CompoundTerm("=", new[] { (Term)sIn, acc });
+            Term goal = new CompoundTerm("=", new[] { (Term)sIn, acc }) { Position = body.Position };
             return (goal, sOut);
         }
 
@@ -303,7 +304,7 @@ public static class DcgTransform
                 Term newIte = new CompoundTerm(";", new[] {
                     new CompoundTerm("->", new[] { cond, thenWithMerge }),
                     elseWithMerge
-                });
+                }) { Position = body.Position };
                 return (newIte, sOutMerged);
             }
 
@@ -314,7 +315,8 @@ public static class DcgTransform
             var sOutShared = FreshState(ref counter);
             Term leftMerged = MergeBranchEndpoint(left2, sOutL, sOutShared, sIn);
             Term rightMerged = MergeBranchEndpoint(right2, sOutR, sOutShared, sIn);
-            return (new CompoundTerm(";", new[] { leftMerged, rightMerged }), sOutShared);
+            return (new CompoundTerm(";", new[] { leftMerged, rightMerged })
+                { Position = body.Position }, sOutShared);
         }
 
         // Bare if-then without an else branch: (A -> B). Treated as the
@@ -324,7 +326,7 @@ public static class DcgTransform
         {
             var (cond, sMid) = TransformBody(itoOnly.Args[0], sIn, ref counter);
             var (then, sOut) = TransformBody(itoOnly.Args[1], sMid, ref counter);
-            return (new CompoundTerm("->", new[] { cond, then }), sOut);
+            return (new CompoundTerm("->", new[] { cond, then }) { Position = body.Position }, sOut);
         }
 
         // Negation: `\+ NT` — succeeds iff NT cannot parse from sIn. The
@@ -335,7 +337,7 @@ public static class DcgTransform
         if (body is CompoundTerm { Functor: "\\+" } neg && neg.Args.Length == 1)
         {
             var (inner, _) = TransformBody(neg.Args[0], sIn, ref counter);
-            return (new CompoundTerm("\\+", new[] { inner }), sIn);
+            return (new CompoundTerm("\\+", new[] { inner }) { Position = body.Position }, sIn);
         }
 
         // Meta-call inside a DCG body: `call(G)` is a non-terminal whose
@@ -351,7 +353,7 @@ public static class DcgTransform
             Array.Copy(callForm.Args, newArgs, callForm.Args.Length);
             newArgs[callForm.Args.Length] = sIn;
             newArgs[callForm.Args.Length + 1] = sOut;
-            return (new CompoundTerm("call", newArgs), sOut);
+            return (new CompoundTerm("call", newArgs) { Position = body.Position }, sOut);
         }
 
         // Lookahead: `peek(X)` (chunk 52) — succeeds iff X is the next
@@ -364,7 +366,8 @@ public static class DcgTransform
                 peek.Args[0],
                 new VarTerm("_")
             });
-            Term unifyGoal = new CompoundTerm("=", new[] { (Term)sIn, peekList });
+            Term unifyGoal = new CompoundTerm("=", new[] { (Term)sIn, peekList })
+                { Position = body.Position };
             return (unifyGoal, sIn);
         }
 
@@ -378,7 +381,8 @@ public static class DcgTransform
         {
             var sOut = FreshState(ref counter);
             Term consChain = BuildConsChainEndingIn(pb.Args[0], sIn);
-            Term goal = new CompoundTerm("=", new[] { (Term)sOut, consChain });
+            Term goal = new CompoundTerm("=", new[] { (Term)sOut, consChain })
+                { Position = body.Position };
             return (goal, sOut);
         }
 
@@ -389,7 +393,8 @@ public static class DcgTransform
         if (body is VarTerm)
         {
             var sOut = FreshState(ref counter);
-            Term goal = new CompoundTerm("phrase", new[] { body, (Term)sIn, sOut });
+            Term goal = new CompoundTerm("phrase", new[] { body, (Term)sIn, sOut })
+                { Position = body.Position };
             return (goal, sOut);
         }
 
