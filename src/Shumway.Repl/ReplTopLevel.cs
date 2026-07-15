@@ -124,45 +124,17 @@ internal static class ReplTopLevel
             || Array.IndexOf(consultFiles, "--debug-wait") >= 0;
         if (debug)
         {
-            engine.Flags.EmitDebugInfo = true;
-            engine.Flags.DebugCodegen = true;
-
-            // SHUMWAY_DEBUG_DIAG=1 — every exception the engine THROWS, whether or not it
-            // catches it, with its stack. An exception that is caught is invisible from
-            // outside and loud from inside a debugger: Visual Studio prints "Exception thrown"
-            // into the Output window for each one, and the user cannot tell a handled
-            // house-keeping throw from the bug they are hunting. This says which.
-            if (Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_DIAG") == "1")
+            // The whole of --debug is now one embedding call: it sets the debug flags, turns
+            // LCO off (honouring the SHUMWAY_DEBUG_LCO pin), arms the SHUMWAY_DEBUG_DIAG
+            // exception log, announces the files we are about to consult, and opens the
+            // channel session. It is the SAME entry point a .NET host uses to debug an
+            // embedded engine — the REPL is just the first caller. We keep the wait here so
+            // the console can narrate it (the API's own WaitForAttach is the silent variant
+            // for a host that has no console).
+            var session = engine.EnableDebugging(new Shumway.Embedding.Debugging.DebugOptions
             {
-                string trace = System.IO.Path.Combine(
-                    System.IO.Path.GetTempPath(), "shumway-debug", "engine-exceptions.log");
-                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(trace)!);
-                AppDomain.CurrentDomain.FirstChanceException += (_, e) =>
-                {
-                    try
-                    {
-                        System.IO.File.AppendAllText(trace,
-                            DateTime.Now.ToString("HH:mm:ss.fff") + "  "
-                            + e.Exception.GetType().Name + ": " + e.Exception.Message + "\n"
-                            + e.Exception.StackTrace + "\n\n");
-                    }
-                    catch (Exception) { /* a diagnostic must never be the thing that fails */ }
-                };
-            }
-            // A reclaimed frame is a frame nobody can show, so a debug session wants LCO off
-            // — but SHUMWAY_DEBUG_LCO is a PIN, and a pin that the code overrides is not one.
-            // (PrologFlags already read it; only the unpinned case is ours to decide.)
-            if (Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_LCO") is null)
-                engine.Flags.DebugLco = false;
-            // Held alive by ShumwayDebugHelper.Session — there is one debugger, and the
-            // session it talks to lasts as long as the process.
-            // The files we are ABOUT to consult, said before we consult them: a breakpoint the
-            // user drew before pressing the button binds against a module, a module is a .pl
-            // file, and a launched process has stopped nowhere yet — so there are no frames
-            // for the debugger to learn the names from.
-            Shumway.Embedding.Debugging.ShumwayDebugHelper.SourceFiles =
-                sourceFiles.Select(System.IO.Path.GetFullPath).ToArray();
-            var session = new Shumway.Embedding.Debugging.ChannelDebugSession(engine);
+                SourceFiles = sourceFiles,
+            });
             Console.WriteLine($"% debug session open (pid {Environment.ProcessId}) — attach a debugger.");
             if (Array.IndexOf(consultFiles, "--debug-wait") >= 0)
             {

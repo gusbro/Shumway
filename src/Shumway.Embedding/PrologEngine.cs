@@ -4512,6 +4512,117 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     public void AttachDebugSession(Shumway.Core.IDebugSession? session)
         => DebugSession = session;
 
+    // ADR-035 — set once, when the first debug session's diagnostic logging is armed, so a
+    // second EnableDebugging (after a dispose + re-enable) does not stack a second handler.
+    private static bool _debugDiagLoggingArmed;
+
+    /// <summary>
+    /// ADR-035 — turn on source-level debugging for THIS engine, so a debugger attached to
+    /// this PROCESS can set breakpoints in the <c>.pl</c> files it consults, step, inspect
+    /// the mixed Prolog+C# call stack, and run goals in the Immediate window. It is the
+    /// embedding-API equivalent of the REPL's <c>--debug</c>: the point is to debug Shumway
+    /// when it is one part of a larger .NET application, in that application's own process,
+    /// rather than only in the standalone REPL.
+    ///
+    /// <para>CALL IT BEFORE CONSULTING the code you want to debug. Debuggability is a
+    /// property of the CODE, decided when it is compiled: predicates compiled after this call
+    /// keep their variable names, their frames and their source positions; predicates
+    /// compiled before it already threw those away. (Loading a bundle counts as consulting —
+    /// a bundle that still carries its module sources is re-compiled debuggable, and the
+    /// debugger is pointed at that embedded source; a source-stripped bundle is resolved the
+    /// ordinary way, by module name to a <c>.pl</c> on disk.)</para>
+    ///
+    /// <para>Returns the session; keep it alive for as long as you want to be debuggable, and
+    /// dispose it to end debugging (it unpins the channel and detaches). There is one debug
+    /// session per process — calling this twice without disposing the first throws.</para>
+    /// </summary>
+    public Debugging.ChannelDebugSession EnableDebugging(Debugging.DebugOptions? options = null)
+    {
+        if (Debugging.ShumwayDebugHelper.Session is not null)
+            throw new InvalidOperationException(
+                "a debug session is already active in this process; dispose it before "
+                + "enabling debugging again (there is one debugger per process).");
+
+        options ??= new Debugging.DebugOptions();
+
+        // Debug metadata + debug codegen: named variables kept, frames forced, env trimming
+        // and redundant-cut elision off, per-goal source positions recorded. This is the
+        // switch the REPL's --debug throws; without it the compiler produces release code
+        // with nothing for a debugger to stop at or show.
+        _flags.EmitDebugInfo = true;
+        _flags.DebugCodegen = true;
+
+        // A reclaimed frame is a frame nobody can show, so a debug session wants LCO off — but
+        // SHUMWAY_DEBUG_LCO is a PIN, and a pin the code overrides is not one, so honour it
+        // when set and take the caller's choice only otherwise.
+        if (Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_LCO") is null)
+            _flags.DebugLco = options.LastCallOptimisation;
+
+        // SHUMWAY_DEBUG_DIAG=1 — log every exception the engine THROWS, caught or not, with
+        // its stack. A handled house-keeping throw is invisible from outside and loud from
+        // inside a debugger (Visual Studio prints "Exception thrown" into Output for each);
+        // this tells the bug being hunted from the noise. Armed once for the process.
+        if (!_debugDiagLoggingArmed
+            && Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_DIAG") == "1")
+        {
+            _debugDiagLoggingArmed = true;
+            string trace = Path.Combine(
+                Path.GetTempPath(), "shumway-debug", "engine-exceptions.log");
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(trace)!);
+                AppDomain.CurrentDomain.FirstChanceException += (_, e) =>
+                {
+                    try
+                    {
+                        File.AppendAllText(trace,
+                            DateTime.Now.ToString("HH:mm:ss.fff") + "  "
+                            + e.Exception.GetType().Name + ": " + e.Exception.Message + "\n"
+                            + e.Exception.StackTrace + "\n\n");
+                    }
+                    catch (Exception) { /* a diagnostic must never be the thing that fails */ }
+                };
+            }
+            catch (Exception) { /* no temp dir — run without the log */ }
+        }
+
+        // The files we are ABOUT to consult, said before we consult them: a breakpoint drawn
+        // before the process stops anywhere binds against a module, a module is a .pl file,
+        // and a just-started process has no frames for the debugger to learn the names from.
+        // Optional — every file is also announced as it is consulted.
+        if (options.SourceFiles is { Count: > 0 } files)
+        {
+            var full = new string[files.Count];
+            for (int i = 0; i < files.Count; i++)
+            {
+                try { full[i] = Path.GetFullPath(files[i]); }
+                catch (Exception) { full[i] = files[i]; }
+            }
+            Debugging.ShumwayDebugHelper.SourceFiles = full;
+        }
+
+        var session = new Debugging.ChannelDebugSession(this);
+
+        if (options.WaitForAttach)
+        {
+            int deadline = Environment.TickCount + (int)options.AttachTimeout.TotalMilliseconds;
+            while (!System.Diagnostics.Debugger.IsAttached
+                   && Environment.TickCount < deadline)
+                System.Threading.Thread.Sleep(50);
+
+            // Attached is not ready: the debugger still has to find the channel and arm the
+            // breakpoints the user drew before pressing the button. Consulting now would run
+            // the program straight past them. Wait for it to say something (or time out).
+            if (System.Diagnostics.Debugger.IsAttached)
+            {
+                int left = deadline - Environment.TickCount;
+                session.WaitForDebuggerCommands(left > 0 ? left : 0);
+            }
+        }
+
+        return session;
+    }
+
     /// <summary>Adds an operator to the engine's parser table. Used by the
     /// runtime <c>op/3</c> builtin so user code can introduce operators
     /// that subsequent queries (and asserted clauses) will recognise.</summary>
@@ -4549,6 +4660,38 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// <see cref="PrecompiledClauseCache"/> so subsequent query setups
     /// can skip the WAM compile for those clauses (chunk 53).</summary>
     public void LoadBundle(Bundle bundle) => LoadBundleCore(bundle, bundleDir: null);
+
+    /// <summary>ADR-035 — write a bundle entry's embedded source to a stable file the
+    /// debugger can open, and return its full path. Named for the module so
+    /// <see cref="Shumway.Core.DebugSiteTable"/>'s base-name file identity matches the
+    /// breakpoint a user draws on it; kept in a per-process temp directory so two processes
+    /// debugging the same bundle do not fight over one file. This is the exact text the
+    /// module was compiled from — which is the whole point of preferring it to a
+    /// same-named <c>.pl</c> on disk that may have drifted.</summary>
+    private static string MaterialiseDebugSource(string moduleName, string source)
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "shumway-debug",
+            "src-" + Environment.ProcessId.ToString());
+        Directory.CreateDirectory(dir);
+
+        var safe = new char[moduleName.Length == 0 ? 1 : moduleName.Length];
+        char[] invalid = Path.GetInvalidFileNameChars();
+        if (moduleName.Length == 0) safe[0] = '_';
+        for (int i = 0; i < moduleName.Length; i++)
+            safe[i] = Array.IndexOf(invalid, moduleName[i]) >= 0 ? '_' : moduleName[i];
+        string path = Path.Combine(dir, new string(safe) + ".pl");
+
+        try
+        {
+            // Write once; rewrite only if the text differs (two engines loading the same
+            // module in one process is the same source). A file the debugger already has
+            // open with the same content locks harmlessly — the content is what matters.
+            if (!File.Exists(path) || File.ReadAllText(path) != source)
+                File.WriteAllText(path, source);
+        }
+        catch (IOException) { /* open in the debugger, same content — the path is what we need */ }
+        return path;
+    }
 
     private void LoadBundleCore(Bundle bundle, string? bundleDir)
     {
@@ -4660,12 +4803,35 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 LoadEntryFromBytecode(entry);
                 continue;
             }
-            // Chunk 440 — consult under the entry's module name so a
-            // module-less file keeps the per-file module identity its
-            // .shmo bytecode was compiled (and mangled) with, instead of
-            // merging into the rolling "user" module.
-            ConsultStringInner(entry.Source, recordInHistory: true,
-                moduleNameFallback: entry.ModuleName);
+            // ADR-035 — when debugging a bundle that STILL CARRIES its module source,
+            // show the code FROM that source. The source-stripped entry took the bytecode
+            // branch above; there is nothing to show but the module name, and the debugger
+            // resolves it the ordinary way (by module name to a `<module>.pl` on disk). But
+            // here the exact text the module was compiled from is in hand, so materialise it
+            // to a file the debugger can open and stamp this consult's stop sites with that
+            // path — a breakpoint in the .shum's code then resolves to the code that is IN
+            // the .shum, not a possibly-different .pl someone happens to have on disk.
+            int prevDebugFile = _debugFileId;
+            try
+            {
+                if (_flags.DebugCodegen)
+                {
+                    string materialised = MaterialiseDebugSource(entry.ModuleName, entry.Source);
+                    _debugFileId = Shumway.Core.DebugSiteTable.InternFile(materialised);
+                    if (DebugSession is not null)
+                        Debugging.ShumwayDebugHelper.NoteSourceFile(materialised);
+                }
+                // Chunk 440 — consult under the entry's module name so a
+                // module-less file keeps the per-file module identity its
+                // .shmo bytecode was compiled (and mangled) with, instead of
+                // merging into the rolling "user" module.
+                ConsultStringInner(entry.Source, recordInHistory: true,
+                    moduleNameFallback: entry.ModuleName);
+            }
+            finally
+            {
+                _debugFileId = prevDebugFile;
+            }
         }
 
         // Decode each entry's CompiledModule and stash the predicates

@@ -97,6 +97,50 @@ the CLR debug session — which is exactly what makes one mixed Prolog + C# + na
 possible, and why the launch command above hands the process to the ordinary CoreCLR
 engine rather than to an engine of ours.
 
+## Debugging an engine embedded in your own application
+
+The REPL is only the first caller of one embedding method. When Shumway is one part of a
+larger .NET program — a rules engine, a grammar, a bit of symbolic reasoning inside a system
+that is mostly C# — you turn on debugging on the engine you created, in your own process:
+
+```csharp
+var engine = new PrologEngine();
+using var _ = engine.EnableDebugging();     // BEFORE you consult anything
+engine.ConsultFile("rules.pl");
+// ... your application runs; attach Visual Studio to THIS process (Managed .NET Core)
+```
+
+`EnableDebugging()` is exactly what `--debug` does for the REPL: it turns on debug codegen
+(named variables, a frame per goal, source positions), turns last-call optimisation off so
+the stack is whole, and opens the channel a debugger attaches to. Call it **before you
+consult the code you want to debug** — debuggability is decided when the code is compiled,
+and code compiled before the call has already thrown away what the debugger shows. Keep the
+returned session alive for as long as you want to be debuggable, and dispose it to stop.
+
+There is one debugger per process, so `EnableDebugging` throws if a session is already open.
+`DebugOptions` covers the rest: `LastCallOptimisation` (default off), `WaitForAttach` (block
+until a debugger is attached and ready — for a process launched *in order* to be debugged;
+the REPL's `--debug-wait`), and `SourceFiles` (announce the files you are about to consult,
+so a breakpoint drawn before the process stops anywhere still binds).
+
+**Loading a `.shum` bundle.** A bundle — a `.shum` file, or one embedded in a .NET DLL — is
+debuggable too, if it was built debug and still carries its module sources. Enable debugging
+before you load it:
+
+```csharp
+var engine = new PrologEngine();
+using var _ = engine.EnableDebugging();
+engine.LoadBundle("app.shum");
+```
+
+For each module the bundle still has the source of, the debugger shows the code **from that
+embedded source** — the exact text the module was compiled from, written out to a file
+Visual Studio opens, so a breakpoint resolves to what is really in the bundle and not to a
+`.pl` on your disk that may have drifted. For a module whose source was stripped at build
+time, resolution falls back to the ordinary rule: the module's name is a `.pl` file, found
+on disk by that name. (A release-compiled bundle has no debug information at all and is not
+debuggable, with or without its source — build it debug.)
+
 ## What you see
 
 **The call stack** is your predicates — the ones you wrote, with the names you wrote.
