@@ -56,7 +56,10 @@ public sealed class ChannelDebugSession : IDisposable
         // there must be no break to nobody.
         _service.EntryBreak = act =>
         {
-            if (System.Diagnostics.Debugger.IsAttached) BreakHere(act);
+            bool attached = System.Diagnostics.Debugger.IsAttached;
+            ShumwayDebugHelper.DiagLine(
+                "entry port reached; stopping at the entry point (IsAttached=" + attached + ")");
+            if (attached) BreakHere(act);
         };
 
         ShumwayDebugHelper.Channel = _channel;

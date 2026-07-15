@@ -79,6 +79,17 @@ public static class ShumwayDebugHelper
     /// debugger.</summary>
     internal static ChannelDebugSession? Session { get; set; }
 
+    /// <summary>ADR-035 — a stderr line for the <c>--debug-wait</c> entry path. A user who
+    /// cannot see into the debugger still sees the terminal the exe runs in, so this is how
+    /// they (and we) tell whether the engine armed the entry stop, fired it, and thought a
+    /// debugger was attached when it did. On by default under a wait launch (the path already
+    /// prints a banner); silence it with <c>SHUMWAY_DEBUG_DIAG=0</c>.</summary>
+    public static void DiagLine(string message)
+    {
+        if (Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_DIAG") == "0") return;
+        try { Console.Error.WriteLine("shumway-debug: " + message); } catch (Exception) { }
+    }
+
     /// <summary>ADR-035 — the Immediate window's goal evaluation, plain-text side (the
     /// base64 wrapping lives in <see cref="Shumway.Core.Debugging.ShumwayDebugHost"/>,
     /// where the func-eval lands).</summary>

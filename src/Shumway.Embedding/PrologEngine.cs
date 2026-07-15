@@ -4687,7 +4687,21 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // arm a stop on the first goal of the first query. (Only when actually attached:
             // a wait that timed out with nobody there must let the program run normally.)
             if (System.Diagnostics.Debugger.IsAttached)
+            {
                 session.ArmEntryBreak();
+                Debugging.ShumwayDebugHelper.DiagLine(
+                    "debugger attached; armed stop-at-entry for the first goal");
+            }
+            else
+            {
+                Debugging.ShumwayDebugHelper.DiagLine(
+                    "attach was lost before the entry stop could be armed");
+            }
+        }
+        else
+        {
+            Debugging.ShumwayDebugHelper.DiagLine(
+                "waited for a debugger but none attached before the timeout; running on");
         }
     }
 
