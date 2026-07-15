@@ -156,7 +156,9 @@ shumway-link greet.shmo --goal main --exe greet --debug
 
 The executable runs normally and can be attached to whenever you like. Add `--debug-wait`
 instead of `--debug` to make it **block at startup** until a debugger has attached and armed
-its breakpoints — for the case where you need to stop in the very first goal. Because the
+its breakpoints, then **stop at the entry point** — the first goal of the program — so you
+land there ready to step, without setting a breakpoint first. (`--debug` alone never stops on
+its own; you attach and set breakpoints while it runs.) Because the
 executable shows the source it carries, `--debug` requires the bundle to carry it: compile
 the inputs with `shumway-compile --debug` (release `.shmo` objects are source-stripped) and
 link without `--strip`. The linker checks this before building and fails with a clear message

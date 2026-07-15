@@ -4681,6 +4681,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         {
             int left = deadline - Environment.TickCount;
             session.WaitForDebuggerCommands(left > 0 ? left : 0);
+
+            // A debugger did attach, and --debug-wait's whole promise is that the program
+            // stops when it does — at the entry, not somewhere the user has to guess at. So
+            // arm a stop on the first goal of the first query. (Only when actually attached:
+            // a wait that timed out with nobody there must let the program run normally.)
+            if (System.Diagnostics.Debugger.IsAttached)
+                session.ArmEntryBreak();
         }
     }
 

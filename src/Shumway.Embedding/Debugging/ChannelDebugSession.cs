@@ -48,6 +48,17 @@ public sealed class ChannelDebugSession : IDisposable
         _service.OnInteropEnter = stop => _channel.WriteSnapshot(stop, running: true, interopDepth: 1);
         _service.OnInteropExit = () => _channel.SetInteropDepth(0);
 
+        // ADR-035 — "stop at the entry point" (--debug-wait) rides the debugger_break/0
+        // path: a managed Debugger.Break() is the one stop VS enters break mode for without
+        // a step or async break already pending, which is exactly the startup situation. The
+        // IsAttached guard mirrors debugger_break/0: BreakHere calls Debugger.Break()
+        // unconditionally, so if the debugger detached between arming and the first goal
+        // there must be no break to nobody.
+        _service.EntryBreak = act =>
+        {
+            if (System.Diagnostics.Debugger.IsAttached) BreakHere(act);
+        };
+
         ShumwayDebugHelper.Channel = _channel;
         ShumwayDebugHelper.Session = this;
         engine.AttachDebugSession(_service);
@@ -227,6 +238,12 @@ public sealed class ChannelDebugSession : IDisposable
     /// <summary>The channel the debugger reads and writes. Its addresses are what
     /// <see cref="ShumwayDebugHelper.Attach"/> hands out.</summary>
     public DebugChannel Channel => _channel;
+
+    /// <summary>ADR-035 — arm "stop at the entry point": the first goal of the next query
+    /// stops the debugger, at the program's start. Used by the <c>--debug-wait</c> path once
+    /// a debugger has attached, so the user lands at the entry rather than watching the
+    /// program run past it.</summary>
+    public void ArmEntryBreak() => _service.ArmEntryBreak();
 
     /// <summary>
     /// ADR-035 D4 — hold the door until the debugger has actually SAID something.

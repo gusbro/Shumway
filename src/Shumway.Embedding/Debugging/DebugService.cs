@@ -147,6 +147,26 @@ public sealed class DebugService : IDebugSession
         _stepDepth = _lastStopDepth;
     }
 
+    // ----- stop at the entry point (--debug-wait) -----
+
+    /// <summary>ADR-035 — when the very first goal of the very first query should stop the
+    /// debugger, at the program's entry. Set once a <c>--debug-wait</c> launch has seen a
+    /// debugger attach; cleared the moment it fires.</summary>
+    private bool _breakAtEntry;
+
+    /// <summary>What to do at the entry port. Wired by <see cref="ChannelDebugSession"/> to
+    /// its <c>BreakHere</c> — the <c>debugger_break/0</c> mechanism (a managed
+    /// <c>Debugger.Break()</c>), which is the one stop VS honours WITHOUT a step or an async
+    /// break already pending, and so the only one that can land unbidden at startup. Left as
+    /// a callback so a test can observe the entry port without a real debugger to break
+    /// into.</summary>
+    internal Action<Activation>? EntryBreak { get; set; }
+
+    /// <summary>ADR-035 — arm "stop at the entry point". The next debuggable call port —
+    /// the first goal the program runs — fires <see cref="EntryBreak"/> instead of running
+    /// on. A no-op if no <see cref="EntryBreak"/> is wired.</summary>
+    public void ArmEntryBreak() => _breakAtEntry = true;
+
     /// <summary>The machine this session is watching — set at every port, and left set
     /// between them.
     ///
@@ -491,6 +511,20 @@ public sealed class DebugService : IDebugSession
 
     private void OnCall(Activation engine)
     {
+        // ADR-035 — the entry stop of a --debug-wait launch. This is the first goal the
+        // program runs, and stopping here is what "stop at the entry point" means. It goes
+        // through EntryBreak (a managed Debugger.Break, the debugger_break/0 path) rather
+        // than a port stop, because at startup no step and no async break is pending, and a
+        // port stop VS was not waiting for is silently dropped by the monitor. Fires once.
+        if (_breakAtEntry)
+        {
+            _breakAtEntry = false;
+            _reportedCallSite = -1;
+            Current = engine;
+            EntryBreak?.Invoke(engine);
+            return;
+        }
+
         // The breakpoint we just reported was ON this call. Do not report it twice.
         // Only worth asking right after a breakpoint stop — the rest of the time there is
         // nothing to be equal to, and this is a binary search over every stop site.
