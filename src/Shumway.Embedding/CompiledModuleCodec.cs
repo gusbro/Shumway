@@ -29,9 +29,12 @@ public static class CompiledModuleCodec
     public static readonly byte[] Magic = new byte[] { (byte)'S', (byte)'M', (byte)'C', (byte)'M' };
     /// <summary>v2 adds per-clause source positions for stack traces (chunk
     /// 55). The wire format gains a trailing block per predicate carrying
-    /// each clause's <see cref="Shumway.Compiler.Lexer.SourcePosition"/>;
-    /// v1 readers stop before that block so the new field is purely
-    /// additive on the wire even though the version number bumped.</summary>
+    /// each clause's <see cref="Shumway.Compiler.Lexer.SourcePosition"/>.
+    /// It also carries, per predicate, the ADR-035 debug side tables (stop
+    /// sites + per-clause frames/variables/head-args) — empty for a release
+    /// predicate, populated for one compiled under <c>compile_mode=debug</c>,
+    /// so a debug bundle is debuggable with no re-consult. The version number
+    /// is not bumped for additive pre-release format changes.</summary>
     public const int CurrentVersion = 2;
 
     public static byte[] Encode(CompiledModule module)
@@ -148,6 +151,49 @@ public static class CompiledModuleCodec
             bw.Write(p.Column);
             bw.Write(p.Offset);
         }
+
+        WriteDebugInfo(bw, pred);
+    }
+
+    /// <summary>ADR-035 — the debug side tables, empty for release predicates. A stop's
+    /// <see cref="DebugStop.SiteId"/> is a GLOBAL <see cref="DebugSiteTable"/> id, valid
+    /// only in the process that interned it, so we serialize the RESOLVED
+    /// <c>(file, line, column)</c> and re-intern at decode — the same name-relative trick
+    /// the atom/functor operands use. A module is one source file, so a single file name
+    /// covers all of a predicate's stops.</summary>
+    private static void WriteDebugInfo(BinaryWriter bw, CompiledPredicate pred)
+    {
+        bw.Write(pred.DebugStops.Count);
+        if (pred.DebugStops.Count > 0)
+        {
+            var firstSite = DebugSiteTable.Get(pred.DebugStops[0].SiteId);
+            WriteString(bw, DebugSiteTable.FileName(firstSite.FileId));
+            foreach (var s in pred.DebugStops)
+            {
+                var site = DebugSiteTable.Get(s.SiteId);
+                bw.Write(s.Offset);
+                bw.Write(site.Line);
+                bw.Write(site.Column);
+            }
+        }
+
+        bw.Write(pred.DebugFrames.Count);
+        foreach (var f in pred.DebugFrames)
+        {
+            bw.Write(f.Start);
+            bw.Write(f.End);
+            bw.Write(f.HasFrame);
+            bw.Write(f.ClauseNumber);
+            bw.Write(f.Variables.Count);
+            foreach (var v in f.Variables) { WriteString(bw, v.Name); bw.Write(v.Slot); }
+            if (f.HeadArgs is null) bw.Write(false);
+            else
+            {
+                bw.Write(true);
+                bw.Write(f.HeadArgs.Count);
+                foreach (var t in f.HeadArgs) TermCodec.WriteTerm(bw, t);
+            }
+        }
     }
 
     private static CompiledPredicate ReadPredicate(BinaryReader br)
@@ -213,12 +259,74 @@ public static class CompiledModuleCodec
             clausePositions[i] = new Shumway.Compiler.Lexer.SourcePosition(line, column, offset);
         }
 
+        var (debugStops, debugFrames) = ReadDebugInfo(br);
+
         int functorId = FunctorTable.Intern(
             AtomTable.Intern(name, permanent: true).Id, arity);
-        return new CompiledPredicate(
+        var pred = new CompiledPredicate(
             bytecode, functorId, arity, clauseCount,
             callSites, dispatchSites, switchTables, switchTableIdSites,
             predicatePosition, clausePositions);
+        pred.DebugStops = debugStops;
+        pred.DebugFrames = debugFrames;
+        return pred;
+    }
+
+    /// <summary>ADR-035 — read the debug side tables, re-interning each stop's
+    /// <c>(file, line, column)</c> into THIS process's <see cref="DebugSiteTable"/> so its
+    /// ids are valid here and its lines are registered for breakpoint binding. Returns
+    /// empty arrays for a release predicate.</summary>
+    private static (IReadOnlyList<DebugStop> Stops, IReadOnlyList<DebugClauseFrame> Frames)
+        ReadDebugInfo(BinaryReader br)
+    {
+        int stopCount = br.ReadInt32();
+        DebugStop[] stops = System.Array.Empty<DebugStop>();
+        if (stopCount > 0)
+        {
+            string file = ReadString(br);
+            int fileId = DebugSiteTable.InternFile(file);
+            stops = new DebugStop[stopCount];
+            for (int i = 0; i < stopCount; i++)
+            {
+                int off = br.ReadInt32();
+                int line = br.ReadInt32();
+                int col = br.ReadInt32();
+                int siteId = DebugSiteTable.Intern(fileId, line, col);
+                stops[i] = new DebugStop(off, siteId);
+            }
+        }
+
+        int frameCount = br.ReadInt32();
+        var frames = new DebugClauseFrame[frameCount];
+        for (int i = 0; i < frameCount; i++)
+        {
+            int start = br.ReadInt32();
+            int end = br.ReadInt32();
+            bool hasFrame = br.ReadBoolean();
+            int clauseNumber = br.ReadInt32();
+            int varCount = br.ReadInt32();
+            var vars = new DebugVariable[varCount];
+            for (int j = 0; j < varCount; j++)
+            {
+                string vname = ReadString(br);
+                int slot = br.ReadInt32();
+                vars[j] = new DebugVariable(vname, slot);
+            }
+            IReadOnlyList<Shumway.Compiler.Ast.Term>? headArgs = null;
+            if (br.ReadBoolean())
+            {
+                int haCount = br.ReadInt32();
+                var ha = new Shumway.Compiler.Ast.Term[haCount];
+                for (int j = 0; j < haCount; j++) ha[j] = TermCodec.ReadTerm(br);
+                headArgs = ha;
+            }
+            frames[i] = new DebugClauseFrame(start, end, hasFrame, vars)
+            {
+                HeadArgs = headArgs,
+                ClauseNumber = clauseNumber,
+            };
+        }
+        return (stops, frames);
     }
 
     // ---------- Switch tables ----------

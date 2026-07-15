@@ -663,9 +663,21 @@ public static class ShmoCompiler
         // all — that's what `-r` promises and IP-protection workflows
         // rely on. Debug keeps the markers so stack-trace mapping
         // continues to work in dev builds.
+        // ADR-035 — the Debuggable build mode bakes the debuggable WAM (frames on every
+        // rule clause, every named var in a Y slot, no trimming, no cut-elision, runtime-
+        // switchable last call, stop sites + var maps) straight into the .shmo, so a debug
+        // bundle is debuggable with NO re-consult at load. DebugFileId blames the module's
+        // own file (by base name, the identity DebugSiteTable uses) for any position that
+        // doesn't carry its own — matching the <module>.pl the load path materialises for
+        // display. Plain Debug (source-retention only) stays release-shape.
+        bool debugBuild = buildMode == ShmoBuildMode.Debuggable;
         var moduleCompiler = new ModuleCompiler
         {
             EmitDebugInfo = buildMode != ShmoBuildMode.Release,
+            DebugCodegen = debugBuild,
+            DebugFileId = debugBuild
+                ? Shumway.Core.DebugSiteTable.InternFile(moduleName + ".pl")
+                : 0,
         };
         var module = moduleCompiler.Compile(rewritten);
         byte[] bytecode = CompiledModuleCodec.Encode(module);

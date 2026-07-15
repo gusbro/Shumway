@@ -120,4 +120,15 @@ public enum ShmoBuildMode : byte
 {
     Release = 0,
     Debug = 1,
+
+    /// <summary>ADR-035 — everything <see cref="Debug"/> keeps (source string +
+    /// per-clause stack-trace markers, release-shape WAM) PLUS the full
+    /// source-level debug codegen: frames on every rule clause, every named
+    /// source variable in a Y slot, no environment trimming, no redundant-cut
+    /// elision, a runtime-switchable last call, and the debug side tables (stop
+    /// sites + per-clause frames/variables/head-args) baked in. A bundle built
+    /// this way is debuggable at load with NO re-consult from source. Plain
+    /// <see cref="Debug"/> stays release-shape — it exists only to retain source
+    /// for the linker's source-bearing paths and for stack-trace mapping.</summary>
+    Debuggable = 2,
 }
