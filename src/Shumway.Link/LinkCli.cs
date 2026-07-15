@@ -544,6 +544,14 @@ internal static class LinkCli
                 + "removes that source.");
             return null;
         }
+        if (opts.Debug && (opts.IncludeCompiledIl || opts.StripWam))
+        {
+            Console.Error.WriteLine(
+                "shumway-link: --debug is Tier-0 (interpreted) source-level debugging; it is "
+                + "incompatible with --with-compiled-il / --strip-wam (Tier-1 IL, which has no "
+                + "debug stop sites). Drop the IL flags for a debug build.");
+            return null;
+        }
         if (!string.IsNullOrEmpty(opts.ExePath) && !string.IsNullOrEmpty(opts.DllPath))
         {
             Console.Error.WriteLine(

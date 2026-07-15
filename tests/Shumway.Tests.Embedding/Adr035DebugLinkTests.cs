@@ -134,4 +134,41 @@ public sealed class Adr035DebugLinkTests
         // And the program runs.
         Assert.Single(engine.QueryAll("run(1).").ToList());
     }
+
+    [Fact]
+    public void FromBundleWithDebug_OnADebuggableBundle_TakesTheBakedWamPath()
+    {
+        // The exact path shumway-link --exe --debug's generated Main takes: FromBundle(bundle,
+        // DebugOptions) enables the debug session BEFORE loading, and a Debuggable bundle then
+        // loads from its baked WAM — no re-consult, breakpoints bind.
+        const string prog =
+            ":- public run/1.\n" +   // 1
+            "run(X) :-\n" +          // 2
+            "    step(X).\n" +       // 3
+            "step(_).\n";            // 4
+        var obj = ShmoCompiler.CompileSource(prog, "demo", ShmoBuildMode.Debuggable);
+        byte[] bytes = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { obj },
+            EntryPoints = new[] { new PredicateRef("run", 1) },
+            BakePrelude = false,
+            IncludeCompiledIl = false,
+        }).Bytes!;
+
+        PrologEngine engine = PrologEngine.FromBundle(
+            BundleReader.FromBytes(bytes), new DebugOptions());
+        try
+        {
+            Assert.True(engine.Flags.DebugCodegen);
+            Assert.Contains("demo", engine.PrecompiledModules.Keys);   // baked WAM, not re-consult
+            Assert.True(engine.AddBreakpoint("demo.pl", 3) > 0);
+            Assert.Single(engine.QueryAll("run(1).").ToList());
+        }
+        finally
+        {
+            // FromBundle discards the session (rooted in the process-wide static); release it
+            // so the one-debugger-per-process slot is free for the next test.
+            ShumwayDebugHelper.Session?.Dispose();
+        }
+    }
 }

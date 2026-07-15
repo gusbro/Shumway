@@ -53,7 +53,7 @@ public static class ShmoReader
                 + $"{bytecodeLength} bytes, got {bytecode.Length}).");
 
         byte mode = br.ReadByte();
-        if (mode > (byte)ShmoBuildMode.Debug)
+        if (mode > (byte)ShmoBuildMode.Debuggable)
             throw new InvalidDataException(
                 $".shmo: unknown build-mode code {mode}.");
         ShmoBuildMode buildMode = (ShmoBuildMode)mode;

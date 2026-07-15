@@ -463,7 +463,12 @@ internal static class CompileCli
 
                 case "--debug":
                 case "-d":
-                    opts.BuildMode = ShmoBuildMode.Debug;
+                    // ADR-035 — --debug means source-level DEBUGGABLE: keep the source AND
+                    // bake the debug-shape WAM (frames, Y-slots, no trimming/LCO, stop sites,
+                    // variable/frame maps) into the .shmo, so a bundle built from it is
+                    // debuggable at load with no re-consult. (Plain ShmoBuildMode.Debug —
+                    // source retention, release-shape WAM — stays an internal linker mode.)
+                    opts.BuildMode = ShmoBuildMode.Debuggable;
                     break;
 
                 case "--release":
@@ -573,9 +578,12 @@ internal static class CompileCli
             + "                       input with the extension replaced.\n"
             + "  -r, --release        Build in release mode (default). The source text is\n"
             + "                       not embedded in the .shmo.\n"
-            + "  -d, --debug          Build in debug mode: keeps the source text, for\n"
-            + "                       better error reporting and listing/1 output from\n"
-            + "                       the linked program.\n"
+            + "  -d, --debug          Build a source-level DEBUGGABLE object: keeps the\n"
+            + "                       source text AND bakes the debug-shape WAM (stop sites,\n"
+            + "                       variable maps) so a bundle/exe built from it can be\n"
+            + "                       debugged at load with no re-consult. Slower/larger than\n"
+            + "                       release; use for dev builds and `shumway-link --exe\n"
+            + "                       --debug`.\n"
             + "  -v, --verbose        Verbose progress to stderr (lists every exported\n"
             + "                       and dynamic predicate per file).\n"
             + "      --dump-wam       Write a human-readable disassembly of each\n"
