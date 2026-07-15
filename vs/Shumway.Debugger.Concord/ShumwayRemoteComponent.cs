@@ -115,8 +115,9 @@ namespace Shumway.Debugger.Concord
             DkmEventDescriptorS eventDescriptor)
         {
             ShumwayLog.Write("module load: " + moduleInstance.Name);
-            if (!string.Equals(moduleInstance.Name, ShumwaySession.EngineModule,
-                    StringComparison.OrdinalIgnoreCase))
+            // Matched WITHOUT regard to the .dll suffix: a single-file --exe reports the engine
+            // as "Shumway.Core", a multi-file build as "Shumway.Core.dll". See NormalizeModule.
+            if (!ShumwaySession.IsSameModule(moduleInstance.Name, ShumwaySession.EngineModule))
                 return;
 
             DkmProcess process = moduleInstance.Process;
@@ -131,19 +132,36 @@ namespace Shumway.Debugger.Concord
                 return;
             }
 
-            // The channel almost certainly does NOT exist yet: this event fires before the
-            // engine's first instruction, and the session it publishes is opened by code that
-            // has not run. That is fine. The one thing we cannot get later is a chance to arm
-            // the breakpoint BEFORE the program runs — so we arm it now, with the token read
-            // from the DLL on disk, and pick the channel up at the first stop it gives us.
+            // The token names the method the hidden breakpoint goes on. The normal source is
+            // the DLL on disk — the one thing available before the engine has run a line, which
+            // is what a LAUNCH needs (the channel does not exist yet). But a shumway-link --exe
+            // is a SINGLE-FILE bundle: Shumway.Core.dll is embedded in the executable, there is
+            // no file at moduleInstance.FullName to read, and FindNotifyToken comes back 0. When
+            // we are ATTACHING, though, the engine has already opened its session and PUBLISHED
+            // its channel file, and that file carries the token. So: read the channel first (it
+            // is harmless if absent), try the disk, and fall back to the channel file's token.
+            // Without this an attach to a --exe never armed the notify breakpoint — no bootstrap
+            // stop, so the stack filter never attached (the user saw the raw C# engine stack)
+            // and Break All found no channel ("not implemented").
+            LoadChannel(process, state);
             int token = ShumwayMetadata.FindNotifyToken(moduleInstance.FullName);
             if (token == 0)
             {
-                ShumwayLog.Write("  no ShumwayDebugHost.Notify in " + moduleInstance.FullName);
+                ShumwayChannelInfo? channel = ShumwayChannelFile.Read(processId.Value);
+                if (channel != null && channel.NotifyMetadataToken != 0)
+                {
+                    token = channel.NotifyMetadataToken;
+                    ShumwayLog.Write("  no on-disk metadata (single-file exe?); "
+                        + "took the notify token from the channel file: " + token);
+                }
+            }
+            if (token == 0)
+            {
+                ShumwayLog.Write("  no ShumwayDebugHost.Notify token (disk or channel) for "
+                    + moduleInstance.FullName);
                 return;
             }
 
-            LoadChannel(process, state);   // in case the session opened before we got here
             ArmNotifyBreakpoint(process, state, token);
 
             // ATTACH. Under a launch the channel does not exist yet and this does nothing —
@@ -764,8 +782,7 @@ namespace Shumway.Debugger.Concord
 
                 DkmClrModuleInstance module = clr.GetModuleInstances()
                     .OfType<DkmClrModuleInstance>()
-                    .First(m => string.Equals(m.Name, ShumwaySession.EngineModule,
-                        StringComparison.OrdinalIgnoreCase));
+                    .First(m => ShumwaySession.IsSameModule(m.Name, ShumwaySession.EngineModule));
 
                 DkmClrInstructionAddress address;
                 try

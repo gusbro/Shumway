@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
     <Metadata>
-        <Identity Id="Shumway.Debugger.50e1d3f2-52aa-4991-855f-f6426e9ae257" Version="0.9" Language="en-US" Publisher="Shumway" />
+        <Identity Id="Shumway.Debugger.50e1d3f2-52aa-4991-855f-f6426e9ae257" Version="0.11" Language="en-US" Publisher="Shumway" />
         <DisplayName>Shumway Prolog Debugger</DisplayName>
         <Description xml:space="preserve">Source-level debugger for Shumway Prolog: mixed Prolog + C# + native call stack, breakpoints in .pl files, port-based stepping (ADR-035).</Description>
     </Metadata>

@@ -263,8 +263,7 @@ namespace Shumway.Debugger.Concord
 
         private static bool IsNotifyFrame(DkmStackWalkFrame frame)
         {
-            if (!string.Equals(frame.ModuleInstance?.Name, ShumwaySession.EngineModule,
-                    StringComparison.OrdinalIgnoreCase))
+            if (!ShumwaySession.IsSameModule(frame.ModuleInstance?.Name, ShumwaySession.EngineModule))
                 return false;
             string? method = frame.BasicSymbolInfo?.MethodName;
             return method != null && method.IndexOf("Notify", StringComparison.Ordinal) >= 0;

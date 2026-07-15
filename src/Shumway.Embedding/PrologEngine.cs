@@ -4669,39 +4669,35 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     internal void WaitForDebuggerReady(
         Debugging.ChannelDebugSession session, TimeSpan timeout)
     {
-        int deadline = Environment.TickCount + (int)timeout.TotalMilliseconds;
-        while (!System.Diagnostics.Debugger.IsAttached
-               && Environment.TickCount < deadline)
+        // --debug-wait means WAIT. The whole reason to launch a program this way is to debug
+        // it from its first goal, so there is NO deadline on the attach itself: a user who
+        // takes a minute to open Visual Studio and attach still lands at the entry, rather
+        // than finding the program already run to the end. (A program launched to be debugged
+        // that runs on without a debugger is useless; hanging until Ctrl-C is the honest
+        // behaviour. The old 10 s timeout is what made it "wait, then run past me".)
+        Debugging.ShumwayDebugHelper.DiagLine("waiting for a debugger to attach...");
+        while (!System.Diagnostics.Debugger.IsAttached)
             System.Threading.Thread.Sleep(50);
 
         // Attached is not ready: the debugger still has to find the channel and arm the
-        // breakpoints the user drew before pressing the button. Consulting now would run
-        // the program straight past them. Wait for it to say something (or time out).
+        // breakpoints the user drew before pressing the button. Consulting now would run the
+        // program straight past them. This wait IS bounded — it is the "has it gone quiet"
+        // wait (milliseconds), not the "will anyone ever come" wait above.
+        int quietMs = (int)timeout.TotalMilliseconds;
+        session.WaitForDebuggerCommands(quietMs > 0 ? quietMs : 0);
+
+        // --debug-wait's other promise: the program stops when the debugger is ready — at the
+        // entry, not somewhere the user has to guess at. Arm a stop on the first goal.
         if (System.Diagnostics.Debugger.IsAttached)
         {
-            int left = deadline - Environment.TickCount;
-            session.WaitForDebuggerCommands(left > 0 ? left : 0);
-
-            // A debugger did attach, and --debug-wait's whole promise is that the program
-            // stops when it does — at the entry, not somewhere the user has to guess at. So
-            // arm a stop on the first goal of the first query. (Only when actually attached:
-            // a wait that timed out with nobody there must let the program run normally.)
-            if (System.Diagnostics.Debugger.IsAttached)
-            {
-                session.ArmEntryBreak();
-                Debugging.ShumwayDebugHelper.DiagLine(
-                    "debugger attached; armed stop-at-entry for the first goal");
-            }
-            else
-            {
-                Debugging.ShumwayDebugHelper.DiagLine(
-                    "attach was lost before the entry stop could be armed");
-            }
+            session.ArmEntryBreak();
+            Debugging.ShumwayDebugHelper.DiagLine(
+                "debugger attached; armed stop-at-entry for the first goal");
         }
         else
         {
             Debugging.ShumwayDebugHelper.DiagLine(
-                "waited for a debugger but none attached before the timeout; running on");
+                "attach was lost before the entry stop could be armed");
         }
     }
 

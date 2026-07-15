@@ -87,18 +87,39 @@ namespace Shumway.Debugger.Concord
         /// the one assembly all of them share.</summary>
         public const string EngineModule = "Shumway.Core.dll";
 
+        /// <summary>A module name with the <c>.dll</c> a multi-file build carries and a
+        /// SINGLE-FILE bundle does not. In a <c>shumway-link --exe</c> the engine assemblies
+        /// are embedded in the executable, and the debugger reports them as "Shumway.Core",
+        /// not "Shumway.Core.dll" — so every comparison against a module name has to meet in
+        /// the middle, or the whole session fails to recognise its own engine (the notify
+        /// breakpoint never arms, the stack filter never fires, and the user sees the raw C#).
+        /// </summary>
+        public static string NormalizeModule(string? name)
+        {
+            if (string.IsNullOrEmpty(name)) return "";
+            return name!.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
+                ? name.Substring(0, name.Length - 4)
+                : name;
+        }
+
+        /// <summary>Two module names for the same module, whether or not either carries the
+        /// <c>.dll</c> suffix (multi-file vs single-file — see <see cref="NormalizeModule"/>).</summary>
+        public static bool IsSameModule(string? a, string? b) =>
+            NormalizeModule(a).Equals(NormalizeModule(b), StringComparison.OrdinalIgnoreCase);
+
         /// <summary>Modules whose frames ARE the Prolog machine, and which the user
         /// therefore must not see: the interpreter runs the whole program inside one
         /// Dispatch frame, and the debug plumbing above it is ours, not theirs. They are
         /// replaced, in one go, by the frames the engine reports.</summary>
         public static bool IsEngineModule(string? moduleName)
         {
-            if (string.IsNullOrEmpty(moduleName)) return false;
-            return moduleName!.Equals("Shumway.Interpreter.dll", StringComparison.OrdinalIgnoreCase)
-                || moduleName.Equals("Shumway.Core.dll", StringComparison.OrdinalIgnoreCase)
-                || moduleName.Equals("Shumway.Embedding.dll", StringComparison.OrdinalIgnoreCase)
-                || moduleName.Equals("Shumway.Compiler.dll", StringComparison.OrdinalIgnoreCase)
-                || moduleName.Equals("Shumway.Builtins.dll", StringComparison.OrdinalIgnoreCase);
+            string n = NormalizeModule(moduleName);
+            if (n.Length == 0) return false;
+            return n.Equals("Shumway.Interpreter", StringComparison.OrdinalIgnoreCase)
+                || n.Equals("Shumway.Core", StringComparison.OrdinalIgnoreCase)
+                || n.Equals("Shumway.Embedding", StringComparison.OrdinalIgnoreCase)
+                || n.Equals("Shumway.Compiler", StringComparison.OrdinalIgnoreCase)
+                || n.Equals("Shumway.Builtins", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>The module that IS the machine: the bytecode interpreter. Its presence on
@@ -109,10 +130,8 @@ namespace Shumway.Debugger.Concord
         /// machine's frames would show a program's call stack on a thread that is not running
         /// it.</summary>
         public static bool IsMachineModule(string? moduleName)
-        {
-            return !string.IsNullOrEmpty(moduleName)
-                && moduleName!.Equals("Shumway.Interpreter.dll", StringComparison.OrdinalIgnoreCase);
-        }
+            => NormalizeModule(moduleName).Equals(
+                "Shumway.Interpreter", StringComparison.OrdinalIgnoreCase);
 
         /// <summary>ONE SPELLING OF A PATH. A module is identified by its file, and a file
         /// arrives spelled several ways: the engine's command line, a `consult('c:/x/y.pl')`
