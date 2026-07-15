@@ -889,20 +889,29 @@ public static class ShmoLinker
                 if (promotionsByModule.TryGetValue(obj.ModuleName, out var promoted)
                     && !string.IsNullOrEmpty(entrySource))
                 {
+                    // ADR-035 — APPEND the `:- public` declarations after the source,
+                    // never prepend. ShmoCompiler collects visibility directives in a
+                    // first pass over ALL clauses regardless of position, so appending
+                    // declares the same visibility WITHOUT shifting any existing line
+                    // number — a prepend moves every clause down N lines, which under a
+                    // debug build would slide the stop sites off the source the debugger
+                    // opens. The appended directive lines carry no stop sites of their own.
                     var sb = new System.Text.StringBuilder();
+                    sb.Append(entrySource);
+                    if (entrySource.Length > 0 && entrySource[^1] != '\n') sb.Append('\n');
                     foreach (var pr in promoted)
                         sb.Append(":- public ").Append(pr.Name).Append('/')
                           .Append(pr.Arity).Append(".\n");
-                    sb.Append(entrySource);
                     string augmented = sb.ToString();
-                    // Recompile augmented source so the bundled bytecode
-                    // matches what LoadBundle's ConsultString would
-                    // produce on it. Without this the precompiled-cache
-                    // substitution at SetupQueryFromTerm would slot in
-                    // bytecode that still has the entry mangled.
+                    // Recompile augmented source so the bundled bytecode matches what
+                    // LoadBundle's ConsultString would produce on it. Without this the
+                    // precompiled-cache substitution at SetupQueryFromTerm would slot in
+                    // bytecode that still has the entry mangled. Recompile in the object's
+                    // OWN build mode so a Debuggable object keeps its debug-shape WAM (a
+                    // hardcoded Debug here would silently drop the debug codegen).
                     var recompiled = ShmoCompiler.CompileSource(
                         augmented, obj.ModuleName,
-                        config.StripSource ? ShmoBuildMode.Release : ShmoBuildMode.Debug);
+                        config.StripSource ? ShmoBuildMode.Release : obj.BuildMode);
                     entrySource = config.StripSource ? "" : augmented;
                     entryBytecode = recompiled.Bytecode.Length > 0
                         ? recompiled.Bytecode : null;
@@ -1294,6 +1303,16 @@ public static class ShmoLinker
         var result = new List<ShmoObject>(objects.Count);
         foreach (var obj in objects)
         {
+            // ADR-035 — a Debuggable object's WAM IS the debug-shape code the debugger reads,
+            // and its stop sites are keyed to the source the debugger opens. Rewriting its
+            // call sites (meta-wrapper unfold) would reshape that WAM and desync the mapping,
+            // so it is passed through untouched. (It still contributed its public wrappers to
+            // the registry above, so release modules can still unfold against it.)
+            if (obj.BuildMode == ShmoBuildMode.Debuggable)
+            {
+                result.Add(obj);
+                continue;
+            }
             if (!decoded.TryGetValue(obj.ModuleName, out var raw))
             {
                 result.Add(obj);
@@ -1428,6 +1447,14 @@ public static class ShmoLinker
         var result = new List<ShmoObject>(objects.Count);
         foreach (var obj in objects)
         {
+            // ADR-035 — never elide cuts in a Debuggable object. Debug codegen deliberately
+            // keeps every cut so the user can stand on a `!` and see the state before it
+            // commits, and recompiling would reshape its debug WAM. Passed through untouched.
+            if (obj.BuildMode == ShmoBuildMode.Debuggable)
+            {
+                result.Add(obj);
+                continue;
+            }
             if (!decoded.TryGetValue(obj.ModuleName, out var raw))
             {
                 result.Add(obj);
