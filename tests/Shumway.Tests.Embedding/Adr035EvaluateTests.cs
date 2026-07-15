@@ -261,6 +261,57 @@ public class Adr035EvaluateTests
     }
 
     [Fact]
+    public void ABreakpointSetWhileStopped_IsArmedForTheEvaluation()
+    {
+        // The bug the user hit: in BREAK state nothing drains the command channel until the
+        // engine resumes — the engine thread is parked inside the notify — so a breakpoint
+        // drawn with F9 WHILE STOPPED sits unread, and an Immediate-window evaluation runs
+        // straight past it. A breakpoint set BEFORE the stop is already armed and does stop.
+        // The evaluation now drains and applies the pending breakpoint FIRST, so the two
+        // cases are the same. This test goes through the real channel, because that is where
+        // the pending command lives.
+        var engine = DebugEngine(Program);
+        engine.AddBreakpoint("<string>", 4);          // the OUTER stop, inside p(7)
+
+        ChannelDebugSession? session = null;
+        var stopLines = new List<int>();
+        string evalResult = "";
+        bool acted = false;
+        session = new ChannelDebugSession(engine, notify: _ =>
+        {
+            stopLines.Add(ReadStopLine(session!));
+            if (acted) return;                        // the nested stop: record it and go on
+            acted = true;
+
+            // The user draws a breakpoint on double/2 (line 7) WHILE STOPPED. It goes down
+            // the command channel and sits there unread — the engine is parked in this very
+            // notify and will not drain until it resumes.
+            session!.Channel.WriteCommands(
+                new DebugCommand(DebugCommandKind.AddBreakpoint, "<string>", 7));
+
+            // Now evaluate a goal that reaches it. Before the fix this ran to "R = 10" with
+            // no stop; now it stops at the just-set breakpoint.
+            evalResult = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(
+                Shumway.Core.Debugging.ShumwayDebugHost.EvaluateGoal(
+                    0, Convert.ToBase64String(
+                        System.Text.Encoding.UTF8.GetBytes("double(5, R)")))));
+        });
+        using (session)
+            engine.QueryAll("p(7).").ToList();
+
+        Assert.Equal("R = 10", evalResult);           // the goal still answers
+        Assert.Equal(2, stopLines.Count);             // the outer stop, then the evaluation's
+        Assert.Equal(7, stopLines[1]);                // which stopped at the breakpoint just set
+    }
+
+    private static int ReadStopLine(ChannelDebugSession session)
+    {
+        var bytes = new byte[DebugChannel.SnapshotCapacity];
+        Marshal.Copy(session.Channel.SnapshotAddress, bytes, 0, bytes.Length);
+        return DebugChannel.ReadSnapshot(bytes)!.Line;
+    }
+
+    [Fact]
     public void TheChannelSnapshotIsPutBack_SoLocalsStillReadTheOriginalStop()
     {
         // The debugger's Locals read the snapshot buffer, and Visual Studio returns the

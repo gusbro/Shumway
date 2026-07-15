@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace Shumway.Embedding.Debugging;
 
@@ -367,6 +368,15 @@ public sealed class ChannelDebugSession : IDisposable
     /// stops re-enter it reentrantly, same thread.</summary>
     internal string EvaluateGoal(int frameIndex, string goalText)
     {
+        // A breakpoint the user drew WHILE STOPPED is not armed yet. In break state the
+        // engine thread is parked inside the notify holding the gate, and the channel is
+        // drained only when it RESUMES — so an F9 the user set a moment ago sits unread in
+        // the command region, and the goal we are about to run would sail straight past it.
+        // Apply it first, exactly as a step would (a step's own resume drains the channel
+        // before it runs). Then a breakpoint set at the stop is honoured by the evaluation,
+        // the same as one set before it.
+        ApplyPendingBreakpointCommands();
+
         byte[] saved = _channel.SaveSnapshotBytes();
         try
         {
@@ -376,6 +386,37 @@ public sealed class ChannelDebugSession : IDisposable
         {
             _channel.RestoreSnapshotBytes(saved);
         }
+    }
+
+    /// <summary>Drain the command region and apply the breakpoint changes in it NOW, so code
+    /// that runs from a stop before the normal resume-time drain — an Immediate-window
+    /// evaluation — sees the breakpoints the user has set while stopped.
+    ///
+    /// <para>Only breakpoint and LCO commands are obeyed; a step, a continue, or a pause is
+    /// written back untouched, because it belongs to the resume that the outer break has not
+    /// taken yet — draining is not the same as consuming someone else's command. (In
+    /// practice none is present: a user typing in the Immediate window has not asked to
+    /// resume. The write-back is the belt to that braces.)</para></summary>
+    private void ApplyPendingBreakpointCommands()
+    {
+        List<DebugCommand>? deferred = null;
+        foreach (var command in _channel.DrainCommands())
+        {
+            switch (command.Kind)
+            {
+                case DebugCommandKind.AddBreakpoint:
+                case DebugCommandKind.RemoveBreakpoint:
+                case DebugCommandKind.ClearBreakpoints:
+                case DebugCommandKind.SetLastCallOptimisation:
+                    Apply(_service, command);
+                    break;
+                default:
+                    (deferred ??= new List<DebugCommand>()).Add(command);
+                    break;
+            }
+        }
+        if (deferred != null)
+            _channel.WriteCommands(deferred.ToArray());
     }
 
     /// <summary>ADR-035 — "I have just consulted a file you have not heard of." A stop nobody

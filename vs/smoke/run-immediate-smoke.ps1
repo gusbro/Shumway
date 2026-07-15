@@ -59,6 +59,86 @@ function Invoke-WithRetry([scriptblock]$Action, [int]$Attempts = 30, [int]$Delay
     }
 }
 
+# Evaluate a goal from the Immediate window ON ANOTHER THREAD. A goal that reaches a
+# breakpoint stops inside itself -- a nested break -- and the call that started it does not
+# return until that break is released, exactly as a C# Immediate-window call does not return
+# while you are stopped inside it. So this script cannot be the one to make the call, or it
+# would block on its own nested stop with no hand free to press F5. A second process makes
+# it (re-finding the same devenv by pid through the running-object table) and blocks; this
+# one stays free to look at the nested stack and continue.
+function Start-EvalJob([int]$VsPid, [string]$Goal) {
+    Start-Job -ArgumentList $VsPid, $Goal -ScriptBlock {
+        param($vsPid, $goal)
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+public static class RotFinder9J
+{
+    [DllImport("ole32.dll")] private static extern int GetRunningObjectTable(int r, out IRunningObjectTable p);
+    [DllImport("ole32.dll")] private static extern int CreateBindCtx(int r, out IBindCtx p);
+    public static object FindDte(int pid)
+    {
+        IRunningObjectTable rot; GetRunningObjectTable(0, out rot);
+        IEnumMoniker e; rot.EnumRunning(out e);
+        IMoniker[] m = new IMoniker[1];
+        string suffix = ":" + pid;
+        while (e.Next(1, m, IntPtr.Zero) == 0)
+        {
+            IBindCtx bc; CreateBindCtx(0, out bc);
+            string name; m[0].GetDisplayName(bc, null, out name);
+            if (name.StartsWith("!VisualStudio.DTE.") && name.EndsWith(suffix))
+            { object dte; rot.GetObject(m[0], out dte); return dte; }
+        }
+        return null;
+    }
+}
+'@
+        for ($i = 0; $i -lt 30; $i++) {
+            try {
+                $d = [RotFinder9J]::FindDte($vsPid)
+                if ($d) { return $d.Debugger.GetExpression($goal, $true, 90000).Value }
+            } catch { }
+            Start-Sleep -Milliseconds 1000
+        }
+        return "<the job never reached the IDE>"
+    }
+}
+
+# A nested stop cannot be observed from this thread while the func-eval is in flight -- the
+# IDE's automation channel is closed ("call rejected") for the whole time the evaluation
+# holds. So a nested break is asserted against the COMPONENT LOG, the debugger's own record
+# of the stop it was handed: wait for a snapshot naming <goal> with at least <minFrames>
+# frames (the mixed stack -- the evaluated goal's frames, the boundary, and the outer ones
+# under it), then release it with F5 and collect the job's answer.
+function Wait-NestedStopThenContinue([string]$GoalName, [int]$MinFrames, $Job) {
+    $seen = $false
+    for ($i = 0; $i -lt 25; $i++) {
+        Assert-Time "waiting for the nested break at $GoalName"
+        Start-Sleep -Seconds 1
+        $log = if (Test-Path $componentLog) { Get-Content $componentLog } else { @() }
+        foreach ($line in $log) {
+            if ($line -match "snapshot: Breakpoint .*frames=(\d+) goal=$GoalName" -and [int]$Matches[1] -ge $MinFrames) {
+                $seen = $true; break
+            }
+        }
+        if ($seen) { break }
+    }
+    # F5: release the nested stop; the goal runs on to its answer. Go can transiently refuse
+    # ("Unable to execute method at this time") while the func-eval is mid-transition, so
+    # retry it a few times, but never let it kill the run -- the answer coming back from the
+    # job is the real proof the stop released.
+    for ($g = 0; $g -lt 10; $g++) {
+        try { $mode = $dte.Debugger.CurrentMode } catch { $mode = -1 }
+        Write-Host ("  releasing nested stop (mode={0}) ..." -f $mode)
+        try { $dte.Debugger.Go($false); break } catch { Start-Sleep -Seconds 2 }
+    }
+    $answer = "<no answer>"
+    if (Wait-Job $Job -Timeout 90) { $answer = (Receive-Job $Job | Select-Object -Last 1) }
+    Remove-Job $Job -Force -ErrorAction SilentlyContinue
+    return [pscustomobject]@{ Stopped = $seen; Answer = $answer }
+}
+
 $vsProc = $null
 $engine = $null
 $results = [ordered]@{}
@@ -139,103 +219,28 @@ try {
     $results["I2 assertz persists and reads back"] =
         ($r2a.Value -match "true" -and $r2b.Value -match "Q = 21")
 
-    Write-Host "[6/6] I3: a goal that reaches the breakpoint stops -- nested break ..."
-    # `go` runs run(21) -> step(21) -> the armed breakpoint, NESTED: the evaluation stops
-    # inside itself, on top of the stop we are already in. Which means the call that
-    # STARTED it does not return -- exactly as a C# call from the Immediate window does not
-    # return while you are stopped inside it.
-    #
-    # So it cannot be this thread that makes the call. A second process drives the
-    # evaluation and blocks on it; this one is left free to do what the user would do --
-    # look at the nested stack, and then press F5 to let the evaluation finish.
-    $evalJob = Start-Job -ArgumentList $vsProc.Id -ScriptBlock {
-        param($vsPid)
-        Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-using System.Runtime.InteropServices.ComTypes;
-public static class RotFinder9J
-{
-    [DllImport("ole32.dll")] private static extern int GetRunningObjectTable(int r, out IRunningObjectTable p);
-    [DllImport("ole32.dll")] private static extern int CreateBindCtx(int r, out IBindCtx p);
-    public static object FindDte(int pid)
-    {
-        IRunningObjectTable rot; GetRunningObjectTable(0, out rot);
-        IEnumMoniker e; rot.EnumRunning(out e);
-        IMoniker[] m = new IMoniker[1];
-        string suffix = ":" + pid;
-        while (e.Next(1, m, IntPtr.Zero) == 0)
-        {
-            IBindCtx bc; CreateBindCtx(0, out bc);
-            string name; m[0].GetDisplayName(bc, null, out name);
-            if (name.StartsWith("!VisualStudio.DTE.") && name.EndsWith(suffix))
-            { object dte; rot.GetObject(m[0], out dte); return dte; }
-        }
-        return null;
-    }
-}
-'@
-        for ($i = 0; $i -lt 30; $i++) {
-            try {
-                $d = [RotFinder9J]::FindDte($vsPid)
-                if ($d) { return $d.Debugger.GetExpression("go", $true, 90000).Value }
-            } catch { }
-            Start-Sleep -Milliseconds 1000
-        }
-        return "<the job never reached the IDE>"
-    }
-
-    # POLL for the nested stop -- and expect NOT to see it from here. While a func-eval is
-    # in flight the IDE's automation channel is closed (every DTE call comes back "call
-    # rejected"), so this script cannot ask VS what its stack looks like at the moment the
-    # nested break holds; it gets the last stack it managed to read, which is the OUTER one.
-    # That is a property of DTE, not of the debugger, and the Call Stack window shows the
-    # nested stack perfectly well to a human sitting in front of it.
-    #
-    # So the assertion below is made against the COMPONENT LOG instead: the debugger's own
-    # record of the stop it was handed and the stack it read out of the engine. Same claim,
-    # read through a channel that is open. (The exact frame composition -- the boundary
-    # frame, the evaluated frames above it, the outer frames below -- is pinned by
-    # Adr035EvaluateTests, which does not need an IDE at all.)
-    $nestedFrames = @()
-    $nestedMode = 0
-    $dteErrors = 0
-    for ($i = 0; $i -lt 25; $i++) {
-        Assert-Time "waiting for the nested break"
-        Start-Sleep -Seconds 1
-        try {
-            $nestedMode = $dte.Debugger.CurrentMode
-            $f = @($dte.Debugger.CurrentThread.StackFrames) | ForEach-Object { $_.FunctionName }
-            if (@($f | Where-Object { $_ -match '\[Immediate: go' }).Count -ge 1) { $nestedFrames = $f; break }
-            $nestedFrames = $f
-        } catch { $dteErrors++ }
-    }
-    if ($dteErrors -gt 0) { Write-Host "  ($dteErrors DTE calls rejected -- the IDE is busy in the func-eval)" }
-    Write-Host "=== stack at the nested stop ==="
-    $nestedFrames | Select-Object -First 8 | ForEach-Object { Write-Host "   $_" }
-    Write-Host "================================"
-    # The debugger was handed a THIRD stop -- one the user never asked for and the program
-    # would never have reached on its own -- while the evaluation was running, and the stack
-    # it read at that stop is the deep mixed one (the evaluated goal's frames, the boundary,
-    # and the outer frames underneath: 9, against the 4 of the stop we were sitting in).
-    $log = if (Test-Path $componentLog) { Get-Content $componentLog } else { @() }
-    $nestedStop = @($log | Where-Object { $_ -match 'snapshot: Breakpoint seq=3' -and $_ -match 'frames=(\d+)' -and [int]$Matches[1] -ge 8 }).Count -ge 1
-    $results["I3 the evaluated goal stops at the breakpoint, stack mixed"] = $nestedStop
-
-    # F5: the nested stop releases, the evaluation runs to its answer, and we are back at
-    # the ORIGINAL stop -- still in break mode, exactly where we were before we asked.
-    Invoke-WithRetry { $dte.Debugger.Go($false) } 5 2000
-    Start-Sleep -Seconds 6
-    $afterMode = Invoke-WithRetry { $dte.Debugger.CurrentMode } 10 1000
-    $evalAnswer = "<no answer>"
-    if (Wait-Job $evalJob -Timeout 60) { $evalAnswer = (Receive-Job $evalJob | Select-Object -Last 1) }
-    Remove-Job $evalJob -Force -ErrorAction SilentlyContinue
-    Write-Host ("  after F5: mode={0}  the evaluation answered: {1}" -f $afterMode, $evalAnswer)
-    # What matters is that releasing the nested stop RELEASES IT: the goal runs on to its
-    # answer and hands it back. (Whether the IDE then sits in break mode or run mode is
-    # DTE's business -- pressing F5 twice in a row is a continue, and this script cannot
-    # tell the second one from the first.)
-    $results["I4 F5 finishes the evaluation, which answers"] = ($evalAnswer -match "true")
+    # I3: THE USER'S BUG, and the nested-break case in one. Stopped at step/1, draw a NEW
+    # breakpoint on double/2 (line 8) -- which goes down the command channel and sits there
+    # unread, the engine being parked in this stop -- then evaluate a goal that reaches it.
+    # Before the fix the evaluation ran straight past the breakpoint (nothing had applied it
+    # yet, and only a breakpoint set BEFORE the stop worked); now the evaluation drains and
+    # applies the pending breakpoint FIRST, and stops there -- a nested break, on top of the
+    # one we were already in. (It subsumes the pre-set-breakpoint nested break the previous
+    # run checked: same mechanism, harder case. This is the LAST nested-eval leg because
+    # releasing it with Go lets the outer `go.` query run on to completion.)
+    Write-Host "[6/6] I3: a breakpoint set WHILE STOPPED stops the evaluation -- nested break ..."
+    Invoke-WithRetry { $dte.Debugger.Breakpoints.Add("", $program, 8) | Out-Null } 10 2000
+    Start-Sleep -Seconds 1
+    $bpEvalJob = Start-EvalJob $vsProc.Id "double(21, R)"
+    # A stop whose goal is double/2 at all is the nested one -- every outer stop is step/1.
+    # 5 keeps it clear of the 4-frame outer stack without over-fitting the query wrapper.
+    $r2c = Wait-NestedStopThenContinue "double/2" 5 $bpEvalJob
+    Write-Host ("  stopped at the just-set breakpoint: {0}   answer: {1}" -f $r2c.Stopped, $r2c.Answer)
+    $results["I3 a breakpoint set while stopped stops the evaluation (nested break)"] =
+        $r2c.Stopped
+    # I4: releasing the nested stop RELEASED it -- the goal ran on to its answer and handed
+    # it back (Wait-NestedStopThenContinue pressed F5 and collected it).
+    $results["I4 the released evaluation answers"] = ($r2c.Answer -match "R = 42")
 
     if (Test-Path $componentLog) {
         Write-Host ""
