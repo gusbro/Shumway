@@ -2,6 +2,7 @@ using System.Linq;
 using Shumway.Compiler.Wam;
 using Shumway.Core;
 using Shumway.Embedding;
+using Shumway.Embedding.Debugging;
 using Xunit;
 
 namespace Shumway.Tests.Embedding;
@@ -94,5 +95,43 @@ public sealed class Adr035DebugLinkTests
         // would land on line 2.
         Assert.Contains(2, lines);
         Assert.Contains(3, lines);
+    }
+
+    [Fact]
+    public void DebuggableBundle_LoadsFromBakedWam_WithoutReconsult_AndBreakpointsBind()
+    {
+        // Task 4a — the payoff: a Debuggable bundle loaded under a debug session runs its
+        // BAKED debug WAM directly (no re-consult from source, zero recompile at load), and its
+        // baked stop sites still bind breakpoints.
+        const string prog =
+            ":- public run/1.\n" +   // 1
+            "run(X) :-\n" +          // 2
+            "    step(X).\n" +       // 3
+            "step(_).\n";            // 4
+        var obj = ShmoCompiler.CompileSource(prog, "demo", ShmoBuildMode.Debuggable);
+        byte[] bytes = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new[] { obj },
+            EntryPoints = new[] { new PredicateRef("run", 1) },
+            BakePrelude = false,
+            IncludeCompiledIl = false,
+        }).Bytes!;
+        var bundle = BundleReader.FromBytes(bytes);
+
+        var engine = new PrologEngine();
+        using ChannelDebugSession session = engine.EnableDebugging();
+
+        engine.LoadBundle(bundle);
+
+        // The baked-WAM path ran (LoadEntryFromBytecode populates PrecompiledModules); a
+        // re-consult would not have.
+        Assert.Contains("demo", engine.PrecompiledModules.Keys);
+
+        // The stop site on line 3 survived compile -> link -> load and binds.
+        Assert.True(engine.AddBreakpoint("demo.pl", 3) > 0,
+            "a breakpoint in the baked debug WAM should bind");
+
+        // And the program runs.
+        Assert.Single(engine.QueryAll("run(1).").ToList());
     }
 }

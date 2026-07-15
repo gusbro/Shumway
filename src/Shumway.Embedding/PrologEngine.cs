@@ -4754,6 +4754,25 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return path;
     }
 
+    /// <summary>ADR-035 — does this entry's bytecode carry the baked debug side tables (was it
+    /// compiled <see cref="ShmoBuildMode.Debuggable"/>)? Decodes the module and looks for any
+    /// stop site — a real module compiled debuggable always has some (even a fact gets one).
+    /// Only ever called on the debug-session load path, so the decode cost is never on a
+    /// release load; the decode re-interns the sites, which is idempotent with the load that
+    /// follows.</summary>
+    private static bool EntryCarriesDebugWam(BundleEntry entry)
+    {
+        if (entry.CompiledBytecode is not { Length: > 0 }) return false;
+        try
+        {
+            var module = CompiledModuleCodec.Decode(entry.CompiledBytecode);
+            foreach (var pred in module.Predicates)
+                if (pred.DebugStops.Count > 0) return true;
+        }
+        catch (Exception) { /* undecodable → not a debug entry we can use directly */ }
+        return false;
+    }
+
     private void LoadBundleCore(Bundle bundle, string? bundleDir)
     {
         ArgumentNullException.ThrowIfNull(bundle);
@@ -4864,14 +4883,34 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 LoadEntryFromBytecode(entry);
                 continue;
             }
-            // ADR-035 — when debugging a bundle that STILL CARRIES its module source,
-            // show the code FROM that source. The source-stripped entry took the bytecode
-            // branch above; there is nothing to show but the module name, and the debugger
-            // resolves it the ordinary way (by module name to a `<module>.pl` on disk). But
-            // here the exact text the module was compiled from is in hand, so materialise it
-            // to a file the debugger can open and stamp this consult's stop sites with that
-            // path — a breakpoint in the .shum's code then resolves to the code that is IN
-            // the .shum, not a possibly-different .pl someone happens to have on disk.
+            // ADR-035 — a Debuggable bundle bakes the debug-shape WAM (frames, Y-slots, no
+            // trimming/LCO, stop sites + frame/variable maps) straight into its bytecode. Under
+            // a debug session we run THAT directly — no re-consult, zero recompile at load — and
+            // materialise the embedded source only for the debugger to open. The baked stop
+            // sites already reference "<module>.pl" (by base name), and the materialised file
+            // has that base name, so interning its full path upgrades the site's file to an
+            // openable one; the stop sites then flow into the query-setup breakpoint index
+            // (SetupQueryFromTerm) exactly as a fresh debug consult's would.
+            if (_flags.DebugCodegen && entry.CompiledBytecode is { Length: > 0 }
+                && entry.Defined.Count > 0 && EntryCarriesDebugWam(entry))
+            {
+                string dbgFile = MaterialiseDebugSource(entry.ModuleName, entry.Source);
+                Shumway.Core.DebugSiteTable.InternFile(dbgFile);   // upgrade to an openable path
+                if (DebugSession is not null)
+                    Debugging.ShumwayDebugHelper.NoteSourceFile(dbgFile);
+                LoadEntryFromBytecode(entry);
+                continue;
+            }
+
+            // Otherwise (a non-Debuggable source-bearing entry): when debugging, show the code
+            // FROM that source. The source-stripped entry took the bytecode branch above; there
+            // is nothing to show but the module name, and the debugger resolves it the ordinary
+            // way (by module name to a `<module>.pl` on disk). But here the exact text the
+            // module was compiled from is in hand, so materialise it to a file the debugger can
+            // open and stamp this consult's stop sites with that path — a breakpoint in the
+            // .shum's code then resolves to the code that is IN the .shum, not a possibly-
+            // different .pl someone happens to have on disk. (This re-consult path is the
+            // fallback for a Debug — not Debuggable — bundle loaded under a debug session.)
             int prevDebugFile = _debugFileId;
             try
             {
