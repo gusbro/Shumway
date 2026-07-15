@@ -181,9 +181,15 @@ public static class LibraryEmitter
         public static Shumway.Embedding.Bundle GetBundle() => _bundle ??= LoadEmbeddedBundle();
 
         /// <summary>A Prolog engine with the embedded program already loaded
-        /// (fast path — the bundle's baked, precompiled prelude is used).</summary>
-        public static Shumway.Embedding.PrologEngine CreateEngine()
-            => Shumway.Embedding.PrologEngine.FromBundle(GetBundle());
+        /// (fast path — the bundle's baked, precompiled prelude is used).
+        /// Pass <c>debug: true</c> to make it source-level debuggable: attach a
+        /// debugger to this process and set breakpoints in the bundled modules
+        /// (shown from the source embedded in the bundle). One debugger per
+        /// process — a second <c>CreateEngine(debug: true)</c> throws.</summary>
+        public static Shumway.Embedding.PrologEngine CreateEngine(bool debug = false)
+            => Shumway.Embedding.PrologEngine.FromBundle(
+                GetBundle(),
+                debug ? new Shumway.Embedding.Debugging.DebugOptions() : null);
 
         private static Shumway.Embedding.Bundle LoadEmbeddedBundle()
         {{

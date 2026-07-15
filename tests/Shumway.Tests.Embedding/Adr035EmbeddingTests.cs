@@ -93,6 +93,42 @@ public class Adr035EmbeddingTests
     }
 
     [Fact]
+    public void FromBundleWithDebug_ProducesADebuggableEngine()
+    {
+        // What the `shumway-link --dll` factory's CreateEngine(debug: true) calls: the
+        // create-and-load path enables debugging on the fresh engine BEFORE it consults the
+        // bundle, so the modules load debuggable — a host that only has the generated factory
+        // can still debug.
+        PrologEngine engine = PrologEngine.FromBundle(
+            new Bundle(new[] { new BundleEntry(ModuleName, Source) }),
+            new DebugOptions());
+        try
+        {
+            Assert.True(engine.Flags.DebugCodegen);
+            Assert.True(engine.AddBreakpoint(ModuleName + ".pl", 3) > 0);
+            Assert.Single(engine.QueryAll("run(1).").ToList());
+        }
+        finally
+        {
+            // FromBundle discards the session (rooted in the process-wide static); the
+            // instance path returns it to dispose, but here the test must release it so the
+            // one-debugger-per-process slot is free for the next test.
+            ShumwayDebugHelper.Session?.Dispose();
+        }
+    }
+
+    [Fact]
+    public void FromBundleWithoutDebug_IsUnchanged()
+    {
+        // The default overload stays release: no session, no debug codegen.
+        PrologEngine engine = PrologEngine.FromBundle(
+            new Bundle(new[] { new BundleEntry(ModuleName, Source) }));
+        Assert.False(engine.Flags.DebugCodegen);
+        Assert.Null(ShumwayDebugHelper.Session);
+        Assert.Single(engine.QueryAll("run(1).").ToList());
+    }
+
+    [Fact]
     public void WithoutEnableDebugging_TheSameBundleIsNotDebuggable()
     {
         // The control: no debug session, so the module compiles release — no stop sites, and

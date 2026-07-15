@@ -1951,6 +1951,20 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return LoadBundleBare(bundle, bundleDir: null);
     }
 
+    /// <summary>ADR-035 — <see cref="FromBundle(Bundle)"/> for a host that wants the engine
+    /// DEBUGGABLE. Passing a non-null <paramref name="debug"/> turns debugging on BEFORE the
+    /// bundle's modules are consulted — which is the only moment it can matter, since
+    /// debuggability is decided when code is compiled — so the modules load debuggable and a
+    /// module that still carries its source is shown from that embedded source. This is what
+    /// the <c>shumway-link --dll</c> factory's <c>CreateEngine(debug: true)</c> calls; there
+    /// is one debugger per process, so a second debuggable engine in the same process
+    /// throws.</summary>
+    public static PrologEngine FromBundle(Bundle bundle, Debugging.DebugOptions? debug)
+    {
+        ArgumentNullException.ThrowIfNull(bundle);
+        return LoadBundleBare(bundle, bundleDir: null, debug);
+    }
+
     /// <summary>File-path overload of <see cref="FromBundle(Bundle)"/>.</summary>
     public static PrologEngine FromBundle(string path)
     {
@@ -1959,9 +1973,26 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(path)));
     }
 
-    private static PrologEngine LoadBundleBare(Bundle bundle, string? bundleDir)
+    /// <summary>Debuggable file-path overload — see <see cref="FromBundle(Bundle,
+    /// Debugging.DebugOptions)"/>.</summary>
+    public static PrologEngine FromBundle(string path, Debugging.DebugOptions? debug)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        return LoadBundleBare(BundleReader.ReadFromFile(path),
+            System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(path)), debug);
+    }
+
+    private static PrologEngine LoadBundleBare(
+        Bundle bundle, string? bundleDir, Debugging.DebugOptions? debug = null)
     {
         var engine = new PrologEngine(consultPrelude: false);
+        // ADR-035 — a host that asked for a debuggable engine gets the switch thrown BEFORE
+        // any module is consulted (debuggability is a compile-time property), exactly as when
+        // the host builds the engine by hand. The prelude below is consulted and marked
+        // non-debuggable afterward, so it stays opaque either way; the bundle's own modules,
+        // loaded by LoadBundleCore, compile debuggable and materialise their embedded source.
+        if (debug is not null)
+            engine.EnableDebugging(debug);
         // The prelude must be present BEFORE the bundle's entries load — a
         // persisted-IL entry resolves its call targets / region-member aliases
         // against the prelude's functors at load, and the same prelude-then-

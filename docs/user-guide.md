@@ -507,6 +507,21 @@ are single-threaded, so use one per thread (or an `EnginePool`). The bundle
 itself is parsed once and cached; `GetBundle()` exposes that shared
 `Shumway.Embedding.Bundle` if you want to load it into engines yourself.
 
+**Debugging the bundled program.** Pass `debug: true` to get a source-level
+debuggable engine — the same as `shumway --debug`, but for the code embedded
+in your DLL:
+
+```csharp
+var engine = Greeter.Bundle.CreateEngine(debug: true);
+```
+
+Attach a debugger to your process (as Managed .NET Core) and set breakpoints
+in the bundled modules; a module that still carries its source is shown from
+that embedded source. Enable it only if the bundle was built debuggable
+(`shumway-compile --debug`); there is one debugger per process, so a second
+`CreateEngine(debug: true)` throws. See [the debugger guide](debugger.md) for
+the full picture.
+
 **Naming the factory.** By default the namespace is inferred from the DLL
 filename (`Greeter.dll` → namespace `Greeter`) and the class is `Bundle`.
 Override either with:
