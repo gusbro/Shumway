@@ -1,4 +1,5 @@
 using Shumway.Compiler.Ast;
+using Shumway.Compiler.Lexer;
 
 namespace Shumway.Compiler.Parsing;
 
@@ -121,6 +122,22 @@ public static class MetaTransform
                 $"[cutfix] {(head is CompoundTerm hc ? hc.Functor + "/" + hc.Args.Length : head is AtomTerm ha ? ha.Name + "/0" : "?")} at {ruleTerm.Position}");
     }
 
+    /// <summary>A copy of <paramref name="term"/> carrying <paramref name="position"/>.
+    ///
+    /// <para>The control-construct rewrites (catch, \+, once/ignore, the disjunction helper)
+    /// each replace a body goal with a call to a freshly synthesised helper — and a fresh
+    /// <see cref="CompoundTerm"/> / <see cref="AtomTerm"/> has no source position. Spliced into
+    /// the caller's body that way, the helper call had no debug site of its own and the debug
+    /// compiler mapped it to the PREVIOUS goal's line: stepping onto the construct left the
+    /// caret where it was, so the step looked like it had done nothing (ADR-035). The
+    /// replacement must carry the position of the goal it replaces.</para></summary>
+    private static Term WithPosition(Term term, SourcePosition position) => term switch
+    {
+        CompoundTerm c => new CompoundTerm(c.Functor, c.Args) { Position = position },
+        AtomTerm a => new AtomTerm(a.Name) { Position = position },
+        _ => term,
+    };
+
     private static Term TransformGoal(Term goal, ref int counter, List<Clause> helpers,
         string? cutK = null)
     {
@@ -159,7 +176,8 @@ public static class MetaTransform
             && (ct.Functor == "\\+" || ct.Functor == "not")
             && (ct.Args[0] is AtomTerm || ct.Args[0] is CompoundTerm))
         {
-            return SynthesizeNegationHelper(ct.Args[0], ref counter, helpers);
+            return WithPosition(
+                SynthesizeNegationHelper(ct.Args[0], ref counter, helpers), goal.Position);
         }
         // \+ G with a var / non-callable G — rewrite to
         // ( call(G) -> fail ; true ). call/1's runtime dispatch
@@ -199,8 +217,10 @@ public static class MetaTransform
             && onceCt.Args.Length == 1
             && (onceCt.Args[0] is AtomTerm || onceCt.Args[0] is CompoundTerm))
         {
-            return SynthesizeOnceHelper(
-                onceCt.Args[0], ref counter, helpers, ignoreMode: onceCt.Functor == "ignore");
+            return WithPosition(
+                SynthesizeOnceHelper(
+                    onceCt.Args[0], ref counter, helpers, ignoreMode: onceCt.Functor == "ignore"),
+                goal.Position);
         }
 
         // findall(Template, Goal, List) with a syntactically-callable
@@ -288,7 +308,9 @@ public static class MetaTransform
             && ca.Args[0] is not VarTerm
             && ca.Args[2] is not VarTerm)
         {
-            return RewriteCatch(ca.Args[0], ca.Args[1], ca.Args[2], ref counter, helpers);
+            return WithPosition(
+                RewriteCatch(ca.Args[0], ca.Args[1], ca.Args[2], ref counter, helpers),
+                goal.Position);
         }
 
         // Phase 19 chunk 205 — static call/N rewrite. `call(Goal, X1, ..., Xn)`
@@ -354,7 +376,9 @@ public static class MetaTransform
 
             // Otherwise: a two-clause helper that the standard try_me_else /
             // trust_me dispatch then handles.
-            return SynthesizeDisjunctionHelper(disj.Args[0], disj.Args[1], ref counter, helpers, cutK);
+            return WithPosition(
+                SynthesizeDisjunctionHelper(disj.Args[0], disj.Args[1], ref counter, helpers, cutK),
+                goal.Position);
         }
 
         return goal;
@@ -774,7 +798,7 @@ public static class MetaTransform
                 new CompoundTerm("-", new[] { Witness(), bag }),
                 groups,
             }),
-        });
+        }) { Position = position };
     }
 
     /// <summary>Returns a copy of <paramref name="term"/> with every anonymous
