@@ -2770,6 +2770,28 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return mangled.Substring(sep + 1);
     }
 
+    /// <summary>ADR-035 — the debugger-facing name of a synthesised control-construct helper.
+    ///
+    /// <para><see cref="Shumway.Compiler.Parsing.MetaTransform"/> rewrites a control construct
+    /// into a call to a fresh helper predicate — <c>catch/3</c> becomes <c>'$catchgoal_N'</c>,
+    /// <c>\+</c> becomes <c>'$neg_N'</c>, <c>once/1</c> / <c>ignore/1</c> become
+    /// <c>'$once_N'</c> / <c>'$ign_N'</c>, a disjunction becomes <c>'$disj_N'</c>. A debugger
+    /// stopped on (or showing a frame for) one of these should name the construct the USER
+    /// wrote, not the internal helper it was lowered to. Given the demangled helper name (and
+    /// its helper arity), returns the construct's <c>(Name, Arity)</c>; anything unrecognised is
+    /// returned unchanged.</para></summary>
+    internal static (string Name, int Arity) DebugConstructName(string demangled, int arity)
+    {
+        if (demangled.StartsWith("$catchgoal_", StringComparison.Ordinal)
+            || demangled.StartsWith("$catchrec_", StringComparison.Ordinal))
+            return ("catch", 3);
+        if (demangled.StartsWith("$neg_", StringComparison.Ordinal)) return ("\\+", 1);
+        if (demangled.StartsWith("$once_", StringComparison.Ordinal)) return ("once", 1);
+        if (demangled.StartsWith("$ign_", StringComparison.Ordinal)) return ("ignore", 1);
+        if (demangled.StartsWith("$disj_", StringComparison.Ordinal)) return (";", 2);
+        return (demangled, arity);
+    }
+
     /// <summary>Chunk 255 — for a source-stripped bundle the engine
     /// has no AST to print, but it does have the
     /// <see cref="Shumway.Compiler.Wam.CompiledPredicate"/>
@@ -4275,6 +4297,22 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             if (firstClause >= 0) pc = firstClause;
         }
 
+        // ADR-035 — a synthesised control-construct helper ('$catchgoal_N', '$neg_N', …) shows
+        // as the construct the user wrote (catch/3, \+/1, …), not the lowered helper. Its head
+        // args are the helper's free variables, which do not correspond to the construct's
+        // surface arguments, so they are not rendered.
+        bool isConstruct = false;
+        if (!isQuery)
+        {
+            var mapped = DebugConstructName(name, arity);
+            if (!ReferenceEquals(mapped.Name, name) && mapped.Name != name)
+            {
+                name = mapped.Name;
+                arity = mapped.Arity;
+                isConstruct = true;
+            }
+        }
+
         int siteId = SiteAtOrBefore(pc);
         var site = siteId >= 0
             ? Shumway.Core.DebugSiteTable.Get(siteId)
@@ -4287,8 +4325,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             name, arity, file, siteId >= 0 ? site.Line : 0, pc,
             ReadVariables(engine, pc, env, bag))
         {
-            HeadArgs = isQuery ? "" : RenderHeadArgs(engine, clause, env, bag),
-            ClauseNumber = isQuery ? 0 : clause?.ClauseNumber ?? 0,
+            HeadArgs = isQuery || isConstruct ? "" : RenderHeadArgs(engine, clause, env, bag),
+            ClauseNumber = isQuery || isConstruct ? 0 : clause?.ClauseNumber ?? 0,
         });
         return isQuery;
     }

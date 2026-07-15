@@ -95,9 +95,10 @@ public sealed class DebugService : IDebugSession
         {
             case GoalKind.Address:
                 var pred = _engine.LookupPredicateByAddress(_goalId);
-                return pred is null
-                    ? ""
-                    : $"{PrologEngine.DemangleLocalName(pred.Value.Name)}/{pred.Value.Arity}";
+                if (pred is null) return "";
+                var (aName, aArity) = PrologEngine.DebugConstructName(
+                    PrologEngine.DemangleLocalName(pred.Value.Name), pred.Value.Arity);
+                return $"{aName}/{aArity}";
             case GoalKind.Functor:
                 return FunctorGoalName(_goalId) ?? "";
             case GoalKind.Builtin:

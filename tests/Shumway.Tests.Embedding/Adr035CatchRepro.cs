@@ -72,6 +72,10 @@ public class Adr035CatchRepro
         // the fix this reported line 3, so the caret never moved.
         Assert.Equal(StopReason.Call, stops[1].Reason);
         Assert.Equal(4, stops[1].Line);
+
+        // And it is named for the construct the user wrote — catch/3 — not the '$catchgoal_N'
+        // helper the meta transform lowered it to.
+        Assert.Equal("catch/3", stops[1].Goal);
     }
 
     [Fact]
@@ -108,6 +112,149 @@ public class Adr035CatchRepro
 
         Assert.Equal(StopReason.Call, stops[1].Reason);
         Assert.Equal(4, stops[1].Line);
+    }
+
+    [Fact]
+    public void StepOut_FromInsideACatchGoal_StopsAtTheNextGoal_NotRunToEnd()
+    {
+        //   2: main :-
+        //   3:     writeln(hello),
+        //   4:     catch(work, _E, recover),
+        //   5:     done.
+        //   6: work :-
+        //   7:     inner(V),
+        //   8:     use(V).
+        //   9: inner(V) :-
+        //  10:     leaf(V).
+        //  11: leaf(1).
+        //  12: use(_).
+        //  13: recover.
+        //  14: done.
+        var engine = DebugEngine(
+            "main :-\n    writeln(hello),\n    catch(work, _E, recover),\n    done.\n" +
+            "work :-\n    inner(V),\n    use(V).\n" +
+            "inner(V) :-\n    leaf(V).\n" +
+            "leaf(1).\nuse(_).\nrecover.\ndone.\n");
+        engine.AddBreakpoint("<string>", 10);   // leaf(V), inside inner, inside work, inside catch
+
+        var stops = Walk(engine, "main.", StepMode.Out);
+
+        _log.WriteLine("PORTS: " + string.Join(" | ", stops.Select(s => $"{s.Reason} {s.Goal}@{s.Line}")));
+
+        // Stopped on leaf(V) (line 10) inside inner/1. Step Out leaves inner/1 and lands on the
+        // next goal an ENCLOSING clause runs — use(V), line 8, back in work/1. Before the fix
+        // it ran to the end of the program (the catch helper frames confused the depth walk).
+        Assert.True(stops.Count >= 2, "Step Out must stop somewhere, not run to the end");
+        Assert.Equal(StopReason.Call, stops[1].Reason);
+        Assert.Equal(8, stops[1].Line);
+    }
+
+    [Fact]
+    public void StepOut_FromInsideAnInlineCatchConjunction_StopsAtTheNextGoal()
+    {
+        // The Blint shape: catch wraps an INLINE conjunction, so its goals are compiled INTO
+        // the '$catchgoal' helper (not a separate predicate). Stepping into one of them and
+        // then Step Out must land on the NEXT goal of that conjunction, not run to the end.
+        //   2: main :-
+        //   3:     writeln(hello),
+        //   4:     catch((first(V), second(V)), _E, recover),
+        //   5:     done.
+        //   6: first(V) :-
+        //   7:     leaf(V).
+        //   8: leaf(1).
+        //   9: second(_).
+        //  10: recover.
+        //  11: done.
+        var engine = DebugEngine(
+            "main :-\n    writeln(hello),\n    catch((first(V), second(V)), _E, recover),\n    done.\n" +
+            "first(V) :-\n    leaf(V).\n" +
+            "leaf(1).\nsecond(_).\nrecover.\ndone.\n");
+        engine.AddBreakpoint("<string>", 7);   // leaf(V), inside first, inside the catch conjunction
+
+        var stops = Walk(engine, "main.", StepMode.Out);
+
+        _log.WriteLine("PORTS: " + string.Join(" | ", stops.Select(s => $"{s.Reason} {s.Goal}@{s.Line}")));
+
+        // Step Out of first/1 lands on second(V) — the next goal of the catch's conjunction.
+        // The bug report: it ran the whole program instead.
+        Assert.True(stops.Count >= 2, "Step Out must stop at the next goal, not run to the end");
+        Assert.Equal("second/1", stops[1].Goal);
+    }
+
+    [Fact]
+    public void StepOut_FromInsideTheLastCatchGoal_CrossesCatchEnd_AndStopsAfterTheCatch()
+    {
+        // Step Out from inside the LAST goal of the catch conjunction: after it, the only thing
+        // left in the '$catchgoal' helper is the internal '$catch_end', then control returns to
+        // main's next goal. Step Out must cross that internal boundary and stop on done, not run
+        // to the end.
+        //   2: main :-
+        //   3:     writeln(hello),
+        //   4:     catch((first(V), last(V)), _E, recover),
+        //   5:     done.
+        //   6: first(V) :-
+        //   7:     V = 1.
+        //   8: last(V) :-
+        //   9:     leaf(V).
+        //  10: leaf(1).
+        //  11: recover.
+        //  12: done.
+        var engine = DebugEngine(
+            "main :-\n    writeln(hello),\n    catch((first(V), last(V)), _E, recover),\n    done.\n" +
+            "first(V) :-\n    V = 1.\n" +
+            "last(V) :-\n    leaf(V).\n" +
+            "leaf(1).\nrecover.\ndone.\n");
+        engine.AddBreakpoint("<string>", 9);   // leaf(V), inside last — the catch's final goal
+
+        var stops = Walk(engine, "main.", StepMode.Out);
+
+        _log.WriteLine("PORTS: " + string.Join(" | ", stops.Select(s => $"{s.Reason} {s.Goal}@{s.Line}")));
+
+        Assert.True(stops.Count >= 2, "Step Out must stop after the catch, not run to the end");
+        Assert.Equal("done/0", stops[1].Goal);
+        Assert.Equal(5, stops[1].Line);
+    }
+
+    [Fact]
+    public void F10ToCatch_ThenF11IntoIt_ThenStepOut_FollowsTheStackBackOut()
+    {
+        // Mirrors the user's keystrokes exactly: F10 to the catch, F11 into it and down through
+        // a nested goal (concat), then Step Out from inside concat. Step Out must follow the
+        // stack back to the goal after concat — it must not run to the end.
+        //   2: main :-
+        //   3:     writeln(hello),
+        //   4:     catch(body, _E, recover),
+        //   5:     done.
+        //   6: body :-
+        //   7:     concat(a, b, _R),
+        //   8:     after.
+        //   9: concat(_, _, r) :-
+        //  10:     join.
+        //  11: join.
+        //  12: after.
+        //  13: recover.
+        //  14: done.
+        var engine = DebugEngine(
+            "main :-\n    writeln(hello),\n    catch(body, _E, recover),\n    done.\n" +
+            "body :-\n    concat(a, b, _R),\n    after.\n" +
+            "concat(_, _, r) :-\n    join.\njoin.\nafter.\nrecover.\ndone.\n");
+        engine.AddBreakpoint("<string>", 3);   // writeln(hello)
+
+        var stops = Walk(engine, "main.",
+            StepMode.Over,   // [0]->[1] to catch (catch/3, line 4)
+            StepMode.Into,   // [1]->[2] into catch -> body (line 4)
+            StepMode.Into,   // [2]->[3] into body -> concat (line 7)
+            StepMode.Into,   // [3]->[4] into concat -> join (line 10, INSIDE concat)
+            StepMode.Out);   // [4]->[5] STEP OUT from inside concat
+
+        _log.WriteLine("PORTS: " + string.Join("\n       ",
+            stops.Select((s, i) => $"[{i}] {s.Reason} {s.Goal}@{s.Line}")));
+
+        // The keystrokes visit catch/3, body, concat, join; Step Out then lands on after/1 —
+        // the goal after concat, back in body — not run-to-end.
+        Assert.Equal("catch/3", stops[1].Goal);
+        Assert.True(stops.Count >= 6, "Step Out from inside concat must stop, not run to the end");
+        Assert.Equal("after/0", stops[5].Goal);
     }
 
     [Fact]
