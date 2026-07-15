@@ -39,18 +39,68 @@ public sealed class Adr035EntryBreakTests
 
         var service = new DebugService(engine, (_, _) => { });
         int fired = 0;
-        Activation? at = null;
-        service.EntryBreak = act => { fired++; at = act; };
+        string topFrameAtFire = "";
+        // Resolve the stack AT FIRE TIME: the activation's P moves on as the query runs, so
+        // reading it after QueryAll would see wherever execution ended, not the entry stop.
+        service.EntryBreak = act =>
+        {
+            fired++;
+            var frames = engine.CaptureFrames(act);
+            topFrameAtFire = frames.Count > 0 ? frames[0].Name : "";
+        };
         engine.AttachDebugSession(service);
         service.ArmEntryBreak();
 
         Assert.True(engine.QueryAll("go.").Any());
 
         // Exactly once — the first goal the program ran, and no later port re-triggers it
-        // (there are several: first/1, second/1). And it hands over the running activation,
-        // which is what BreakHere needs to render the entry stack.
+        // (there are several: first/1, second/1).
         Assert.Equal(1, fired);
-        Assert.NotNull(at);
+
+        // And it fired from INSIDE the user's own predicate (go), not at the synthesized
+        // top-level wrapper that calls it. The wrapper is a disable_debug goal whose port maps
+        // to the end of the file — landing there put the caret on the last source line instead
+        // of the first goal.
+        Assert.Equal("go", topFrameAtFire);
+    }
+
+    [Fact]
+    public void ArmEntryBreak_FiresInsideTheEntryPredicate_OnTheBundleLoadPath()
+    {
+        // The linked --exe path: a bundle loaded with debug codegen on (what
+        // shumway-link --exe --debug produces and PrologEngine.LoadBundle rehydrates). A linked
+        // exe builds its predicate-address map differently from a ConsultString engine, so the
+        // caller-side gate — "fire only once engine.P is a debuggable address" — has to be
+        // proven here too, not just in-process: this is where a bad gate would either never
+        // fire (program runs past the entry) or fire at the wrapper's end-of-file port.
+        var engine = new PrologEngine();
+        engine.Flags.EmitDebugInfo = true;
+        engine.Flags.DebugCodegen = true;
+        engine.LoadBundle(new Bundle(new[]
+        {
+            new BundleEntry("dbg",
+                ":- public main/0.\n" +
+                "main :- greet(hello), greet(world).\n" +
+                "greet(_).\n"),
+        }));
+
+        var service = new DebugService(engine, (_, _) => { });
+        int fired = 0;
+        string topFrameAtFire = "";
+        service.EntryBreak = act =>
+        {
+            fired++;
+            var frames = engine.CaptureFrames(act);
+            topFrameAtFire = frames.Count > 0 ? frames[0].Name : "";
+        };
+        engine.AttachDebugSession(service);
+        service.ArmEntryBreak();
+
+        Assert.True(engine.QueryAll("main.").Any());
+
+        Assert.Equal(1, fired);
+        // On the bundle-load path too, the entry break lands inside main, not the wrapper.
+        Assert.Equal("main", topFrameAtFire);
     }
 
     [Fact]

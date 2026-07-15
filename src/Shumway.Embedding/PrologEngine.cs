@@ -6339,6 +6339,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     internal bool IsDebuggableFunctor(int functorId)
         => !_nonDebuggableFunctors.Contains(functorId);
 
+    /// <summary>ADR-035 — is <paramref name="pc"/> inside the synthetic <c>__query__</c>
+    /// wrapper the engine puts a top-level goal in? The wrapper is compiled user query code,
+    /// so it is a DEBUGGABLE address — but it is not code the user wrote, and its call port to
+    /// the entry goal maps to the end of the source (it has no line of its own). "Stop at the
+    /// entry point" must skip it and land in the entry predicate itself.</summary>
+    internal bool IsQueryWrapperAddress(int pc)
+    {
+        int i = IndexOfPredicateAt(pc);
+        return i >= 0 && IsQueryEntry(i);
+    }
+
     /// <summary>Translates each address in <paramref name="addresses"/>
     /// to the <c>Name/Arity</c> of the predicate that *contains* it
     /// (the largest predicate-entry address ≤ the given address) via

@@ -516,7 +516,16 @@ public sealed class DebugService : IDebugSession
         // through EntryBreak (a managed Debugger.Break, the debugger_break/0 path) rather
         // than a port stop, because at startup no step and no async break is pending, and a
         // port stop VS was not waiting for is silently dropped by the monitor. Fires once.
-        if (_breakAtEntry)
+        // Fire only once execution is INSIDE the user's own code — engine.P in a debuggable
+        // predicate that is NOT the synthetic `__query__` wrapper. The first call port is the
+        // wrapper (`?- main`) calling the entry goal; the wrapper is compiled query code, so it
+        // IS a debuggable address, but it has no source line of its own — its port maps to the
+        // end of the file (the caret landed on Blint.pl's last line, not main's). Skipping it
+        // lands the entry break at main's first goal — the first thing the program is about to
+        // DO — which is what "stop at the entry" means.
+        if (_breakAtEntry
+            && _engine.IsDebuggableAddress(engine.P)
+            && !_engine.IsQueryWrapperAddress(engine.P))
         {
             _breakAtEntry = false;
             _reportedCallSite = -1;
