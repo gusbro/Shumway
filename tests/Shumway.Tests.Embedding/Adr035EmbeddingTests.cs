@@ -80,13 +80,17 @@ public class Adr035EmbeddingTests
         int bound = engine.AddBreakpoint(ModuleName + ".pl", 3);
         Assert.True(bound > 0, "a breakpoint in the bundle's own source should bind");
 
-        // And the source really was written out, byte for byte — that is what the debugger
-        // opens, not a possibly-drifted .pl someone has on disk.
+        // And the source really was written out — that is what the debugger opens, not a
+        // possibly-drifted .pl someone has on disk. Line endings are normalised to a single
+        // consistent style (CRLF) so the editor never reports a mixed-EOL file, but every line
+        // boundary — and therefore every breakpoint line — is preserved.
         string materialised = Path.Combine(
             Path.GetTempPath(), "shumway-debug",
             "src-" + Environment.ProcessId, ModuleName + ".pl");
         Assert.True(File.Exists(materialised), "the embedded source should be materialised");
-        Assert.Equal(Source, File.ReadAllText(materialised));
+        string materialisedText = File.ReadAllText(materialised);
+        Assert.Equal(Source.Replace("\r\n", "\n").Replace("\n", "\r\n"), materialisedText);
+        Assert.DoesNotContain('\n', materialisedText.Replace("\r\n", ""));   // no lone LF: consistent CRLF
 
         // The code runs, too — enabling debug did not break it.
         Assert.Single(engine.QueryAll("run(1).").ToList());

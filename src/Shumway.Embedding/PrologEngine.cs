@@ -4759,13 +4759,20 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             safe[i] = Array.IndexOf(invalid, moduleName[i]) >= 0 ? '_' : moduleName[i];
         string path = Path.Combine(dir, new string(safe) + ".pl");
 
+        // ADR-035 — write CONSISTENT line endings. The embedded source can carry mixed
+        // CRLF/LF (a file edited on more than one platform), and the debugger's editor flags
+        // that on open. Normalising CRLF -> LF -> CRLF removes the mix without moving any line:
+        // every `\n` boundary the compiler counted the stop-site lines against is preserved, so
+        // breakpoints and the entry stop still land where they should.
+        string normalised = source.Replace("\r\n", "\n").Replace("\n", "\r\n");
+
         try
         {
             // Write once; rewrite only if the text differs (two engines loading the same
             // module in one process is the same source). A file the debugger already has
             // open with the same content locks harmlessly — the content is what matters.
-            if (!File.Exists(path) || File.ReadAllText(path) != source)
-                File.WriteAllText(path, source);
+            if (!File.Exists(path) || File.ReadAllText(path) != normalised)
+                File.WriteAllText(path, normalised);
         }
         catch (IOException) { /* open in the debugger, same content — the path is what we need */ }
         return path;
