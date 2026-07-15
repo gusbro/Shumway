@@ -1991,8 +1991,24 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // the host builds the engine by hand. The prelude below is consulted and marked
         // non-debuggable afterward, so it stays opaque either way; the bundle's own modules,
         // loaded by LoadBundleCore, compile debuggable and materialise their embedded source.
+        Debugging.ChannelDebugSession? debugSession = null;
+        bool waitForAttach = debug is { WaitForAttach: true };
         if (debug is not null)
-            engine.EnableDebugging(debug);
+        {
+            // If a wait-for-attach was requested, DON'T let EnableDebugging block here — the
+            // bundle's modules have not loaded yet, so the source the debugger needs is not
+            // materialised or announced. Enable debug codegen now; wait AFTER LoadBundleCore.
+            var enableNow = waitForAttach
+                ? new Debugging.DebugOptions
+                {
+                    SourceFiles = debug.SourceFiles,
+                    LastCallOptimisation = debug.LastCallOptimisation,
+                    WaitForAttach = false,
+                    AttachTimeout = debug.AttachTimeout,
+                }
+                : debug;
+            debugSession = engine.EnableDebugging(enableNow);
+        }
         // The prelude must be present BEFORE the bundle's entries load — a
         // persisted-IL entry resolves its call targets / region-member aliases
         // against the prelude's functors at load, and the same prelude-then-
@@ -2009,6 +2025,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             engine.MarkModuleNonDebuggable(Prelude.ModuleName);   // ADR-035
         }
         engine.LoadBundleCore(bundle, bundleDir);
+
+        // Now the bundle's modules are consulted (and their source materialised + announced),
+        // so an attach-to-debug-from-the-first-goal launcher can safely wait for the debugger.
+        if (waitForAttach && debugSession is not null)
+            engine.WaitForDebuggerReady(debugSession, debug!.AttachTimeout);
         return engine;
     }
 
@@ -4635,23 +4656,32 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         var session = new Debugging.ChannelDebugSession(this);
 
         if (options.WaitForAttach)
-        {
-            int deadline = Environment.TickCount + (int)options.AttachTimeout.TotalMilliseconds;
-            while (!System.Diagnostics.Debugger.IsAttached
-                   && Environment.TickCount < deadline)
-                System.Threading.Thread.Sleep(50);
-
-            // Attached is not ready: the debugger still has to find the channel and arm the
-            // breakpoints the user drew before pressing the button. Consulting now would run
-            // the program straight past them. Wait for it to say something (or time out).
-            if (System.Diagnostics.Debugger.IsAttached)
-            {
-                int left = deadline - Environment.TickCount;
-                session.WaitForDebuggerCommands(left > 0 ? left : 0);
-            }
-        }
+            WaitForDebuggerReady(session, options.AttachTimeout);
 
         return session;
+    }
+
+    /// <summary>ADR-035 — block until a debugger has attached to this process AND finished
+    /// arming its breakpoints, or <paramref name="timeout"/> elapses. Split out of
+    /// <see cref="EnableDebugging"/> so a bundle-loading path can defer the wait until AFTER
+    /// its modules have been consulted (that consult materialises + announces their source,
+    /// which is what an attaching debugger must find before the goal runs).</summary>
+    internal void WaitForDebuggerReady(
+        Debugging.ChannelDebugSession session, TimeSpan timeout)
+    {
+        int deadline = Environment.TickCount + (int)timeout.TotalMilliseconds;
+        while (!System.Diagnostics.Debugger.IsAttached
+               && Environment.TickCount < deadline)
+            System.Threading.Thread.Sleep(50);
+
+        // Attached is not ready: the debugger still has to find the channel and arm the
+        // breakpoints the user drew before pressing the button. Consulting now would run
+        // the program straight past them. Wait for it to say something (or time out).
+        if (System.Diagnostics.Debugger.IsAttached)
+        {
+            int left = deadline - Environment.TickCount;
+            session.WaitForDebuggerCommands(left > 0 ? left : 0);
+        }
     }
 
     /// <summary>Adds an operator to the engine's parser table. Used by the

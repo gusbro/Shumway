@@ -141,6 +141,27 @@ time, resolution falls back to the ordinary rule: the module's name is a `.pl` f
 on disk by that name. (A release-compiled bundle has no debug information at all and is not
 debuggable, with or without its source — build it debug.)
 
+**A stand-alone `--exe`.** `shumway-link --exe` bakes a program into a single executable
+that runs one goal at startup. Pass `--debug` and that executable is built debuggable: its
+modules compile debuggable and it materialises their embedded source at launch, so a
+debugger attached to the running process sets breakpoints and steps exactly as the REPL
+does — the Prolog is just one part of a shipped binary.
+
+```
+shumway-compile --debug greet.pl -o greet.shmo
+shumway-link greet.shmo --goal main --exe greet --debug
+./greet            # runs normally; prints "shumway: debug mode active."
+                   # attach Visual Studio to the process at any time to debug it
+```
+
+The executable runs normally and can be attached to whenever you like. Add `--debug-wait`
+instead of `--debug` to make it **block at startup** until a debugger has attached and armed
+its breakpoints — for the case where you need to stop in the very first goal. Because the
+executable shows the source it carries, `--debug` requires the bundle to carry it: compile
+the inputs with `shumway-compile --debug` (release `.shmo` objects are source-stripped) and
+link without `--strip`. The linker checks this before building and fails with a clear message
+otherwise, rather than ship an undebuggable "debug" exe.
+
 ## What you see
 
 **The call stack** is your predicates — the ones you wrote, with the names you wrote.

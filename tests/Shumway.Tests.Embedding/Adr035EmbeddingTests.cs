@@ -129,6 +129,35 @@ public class Adr035EmbeddingTests
     }
 
     [Fact]
+    public void ExeDebug_OnASourceStrippedBundle_FailsThePrecondition()
+    {
+        // ADR-035 --exe --debug: a debuggable exe materialises its modules' embedded source
+        // at startup for the debugger to open. A source-stripped bundle has none, so the
+        // link-time precondition must fail loudly — BEFORE any dotnet-publish — rather than
+        // ship an undebuggable "debug" exe. (Cheap: Emit returns at the precondition.)
+        var full = new Bundle(new[] { new BundleEntry("m", ":- public go/0.\ngo.\n") });
+        byte[] withBc = BundleWriter.ToBytes(full, includeCompiledBytecode: true);
+        Bundle readBack = BundleReader.FromBytes(withBc);
+
+        // Rebuild each entry keeping the compiled bytecode but dropping the source — exactly
+        // what a --strip link (or --release .shmo inputs) produces.
+        var stripped = readBack.Entries
+            .Select(e => new BundleEntry(e.ModuleName, "",
+                compiledBytecode: e.CompiledBytecode, defined: e.Defined))
+            .ToArray();
+        byte[] strippedBytes = BundleWriter.ToBytes(new Bundle(stripped));
+
+        string exePath = Path.Combine(Path.GetTempPath(), "shumway-dbg-precond-" +
+            Guid.NewGuid().ToString("N") + ".exe");
+        ExecutableEmitResult res = ExecutableEmitter.Emit(
+            strippedBytes, goal: "go", outputPath: exePath, debug: true);
+
+        Assert.False(res.Success);
+        Assert.Contains(res.Diagnostics, d => d.Code == "debug_no_source");
+        Assert.False(File.Exists(exePath), "no exe should be produced when the precondition fails");
+    }
+
+    [Fact]
     public void WithoutEnableDebugging_TheSameBundleIsNotDebuggable()
     {
         // The control: no debug session, so the module compiles release — no stop sites, and

@@ -233,7 +233,9 @@ internal static class LinkCli
                 mode: mode,
                 verboseOut: opts.Verbose ? Console.Error : null,
                 foreignDllPaths: opts.ForeignDlls,
-                nativeDllPaths: opts.NativeDlls);
+                nativeDllPaths: opts.NativeDlls,
+                debug: opts.Debug,
+                debugWait: opts.DebugWait);
             foreach (var d in exeResult.Diagnostics)
             {
                 var stream = d.Severity == LinkSeverity.Error
@@ -292,6 +294,12 @@ internal static class LinkCli
         public string ExePath { get; set; } = "";
         public string Goal { get; set; } = "";
         public bool SelfContained { get; set; }
+        // ADR-035 — --debug builds a --exe whose modules are compiled debuggable and whose
+        // embedded source is materialised at startup, so a debugger attached to the process
+        // can set breakpoints / step. --debug-wait additionally blocks at startup until a
+        // debugger has attached and armed its breakpoints (implies --debug).
+        public bool Debug { get; set; }
+        public bool DebugWait { get; set; }
         // Phase 31 — --dll: emit a .NET class library embedding the bundle, with a
         // generated factory (Namespace.Class.CreateEngine()) a host app calls. No
         // Prolog goal entry point. Namespace defaults to the inferred DLL file name,
@@ -416,6 +424,15 @@ internal static class LinkCli
                     opts.SelfContained = true;
                     break;
 
+                case "--debug":
+                    opts.Debug = true;
+                    break;
+
+                case "--debug-wait":
+                    opts.Debug = true;
+                    opts.DebugWait = true;
+                    break;
+
                 case "--dll":
                 case "-d":
                     if (++i >= args.Length) { ReportMissing(arg); return null; }
@@ -511,6 +528,20 @@ internal static class LinkCli
         {
             Console.Error.WriteLine(
                 "shumway-link: --self-contained only makes sense with --exe.");
+            return null;
+        }
+        if (opts.Debug && string.IsNullOrEmpty(opts.ExePath))
+        {
+            Console.Error.WriteLine(
+                "shumway-link: --debug / --debug-wait only make sense with --exe.");
+            return null;
+        }
+        if (opts.Debug && opts.StripSource)
+        {
+            Console.Error.WriteLine(
+                "shumway-link: --debug and --strip are contradictory — a debug executable "
+                + "materialises its embedded source for the debugger to open, but --strip "
+                + "removes that source.");
             return null;
         }
         if (!string.IsNullOrEmpty(opts.ExePath) && !string.IsNullOrEmpty(opts.DllPath))
@@ -699,6 +730,16 @@ internal static class LinkCli
             + "                           executable (~70 MB, runs on a machine with\n"
             + "                           nothing installed). Default is framework-\n"
             + "                           dependent (~5-10 MB, needs the .NET runtime).\n"
+            + "      --debug              With --exe, build the executable in debug mode:\n"
+            + "                           its modules compile debuggable and materialise\n"
+            + "                           their embedded source at startup, so a debugger\n"
+            + "                           attached to the process can set breakpoints and\n"
+            + "                           step. Requires the bundle to carry source (compile\n"
+            + "                           the inputs with --debug; not with --strip).\n"
+            + "      --debug-wait         Like --debug, but the executable also blocks at\n"
+            + "                           startup until a debugger has attached and armed\n"
+            + "                           its breakpoints — so the first goal can be stopped\n"
+            + "                           in. Implies --debug.\n"
             + "  -d, --dll <path>         Produce a .NET class library (.dll) embedding the\n"
             + "                           bundle, with a generated factory a host app calls:\n"
             + "                           `var e = Ns.Class.CreateEngine();`. No Prolog goal —\n"

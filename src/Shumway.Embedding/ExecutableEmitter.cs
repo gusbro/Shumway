@@ -132,7 +132,9 @@ public static class ExecutableEmitter
         ExecutableDeploymentMode mode = ExecutableDeploymentMode.FrameworkDependent,
         TextWriter? verboseOut = null,
         IReadOnlyList<string>? foreignDllPaths = null,
-        IReadOnlyList<string>? nativeDllPaths = null)
+        IReadOnlyList<string>? nativeDllPaths = null,
+        bool debug = false,
+        bool debugWait = false)
     {
         ArgumentNullException.ThrowIfNull(bundleBytes);
         ArgumentNullException.ThrowIfNull(goal);
@@ -144,6 +146,40 @@ public static class ExecutableEmitter
             diagnostics.Add(new LinkDiagnostic(LinkSeverity.Error,
                 "invalid_goal", validateError!));
             return new ExecutableEmitResult(false, null, diagnostics);
+        }
+
+        // ADR-035 — a debuggable executable can only show source it carries: at startup it
+        // materialises each module's embedded source to a file the debugger opens. If the
+        // bundle is source-stripped (inputs compiled --release, or a --strip link) there is
+        // nothing to open, so fail loudly at link time rather than ship an undebuggable
+        // "debug" exe. At least one non-prelude module must carry source.
+        if (debug)
+        {
+            Bundle inspected;
+            try { inspected = BundleReader.FromBytes(bundleBytes); }
+            catch (Exception ex)
+            {
+                diagnostics.Add(new LinkDiagnostic(LinkSeverity.Error,
+                    "debug_bundle_unreadable",
+                    "cannot inspect the bundle for --debug: " + ex.Message));
+                return new ExecutableEmitResult(false, null, diagnostics);
+            }
+            bool anySource = false;
+            foreach (var e in inspected.Entries)
+            {
+                if (e.ModuleName == Prelude.ModuleName) continue;
+                if (!string.IsNullOrEmpty(e.Source)) { anySource = true; break; }
+            }
+            if (!anySource)
+            {
+                diagnostics.Add(new LinkDiagnostic(LinkSeverity.Error,
+                    "debug_no_source",
+                    "--debug requires the bundle to carry module source, but every module in "
+                    + "it is source-stripped. Compile the inputs with `shumway-compile --debug` "
+                    + "(release .shmo objects are source-stripped) and link without --strip, so "
+                    + "the executable can materialise the source the debugger opens."));
+                return new ExecutableEmitResult(false, null, diagnostics);
+            }
         }
 
         string finalPath = AdjustExecutableSuffix(outputPath);
@@ -158,7 +194,7 @@ public static class ExecutableEmitter
 
             // Write wrapper sources.
             File.WriteAllText(Path.Combine(tempDir, "Program.cs"),
-                GenerateProgramSource(normalisedGoal));
+                GenerateProgramSource(normalisedGoal, debug, debugWait));
             File.WriteAllBytes(Path.Combine(tempDir, "bundle.shum"), bundleBytes);
             File.WriteAllText(Path.Combine(tempDir, $"{assemblyName}.csproj"),
                 GenerateProjectFile(assemblyName, rid, mode));
@@ -264,11 +300,24 @@ public static class ExecutableEmitter
 
     // ----- Wrapper source generation -----
 
-    private static string GenerateProgramSource(string goalWithTrailingDot)
+    private static string GenerateProgramSource(
+        string goalWithTrailingDot, bool debug, bool debugWait)
     {
         // Escape for a C# string literal (verbatim form so backslashes
         // pass through cleanly).
         string escaped = goalWithTrailingDot.Replace("\"", "\"\"");
+
+        // ADR-035 — a --debug exe compiles its modules debuggable and materialises their
+        // embedded source, so a debugger attached to the process (at any time) can set
+        // breakpoints and step. --debug-wait additionally blocks at startup until a debugger
+        // has attached and armed its breakpoints, so the very first goal can be stopped in.
+        string engineConstruction = debug
+            ? $@"System.Console.Error.WriteLine(
+                ""shumway: debug mode active{(debugWait ? "; waiting for a debugger to attach..." : ".")}"");
+            var engine = PrologEngine.FromBundle(LoadEmbeddedBundle(),
+                new Shumway.Embedding.Debugging.DebugOptions {{ WaitForAttach = {(debugWait ? "true" : "false")} }});"
+            : @"var engine = PrologEngine.FromBundle(LoadEmbeddedBundle());";
+
         return $@"using Shumway.Embedding;
 using System.IO;
 using System.Reflection;
@@ -283,7 +332,7 @@ internal static class Program
             // prelude (shumway-link --exe bakes it) instead of parsing +
             // compiling the ~780-line prelude at runtime; falls back to
             // consulting it if the bundle carries none.
-            var engine = PrologEngine.FromBundle(LoadEmbeddedBundle());
+            {engineConstruction}
             // Chunk 173: opt-in Tier-1 IL with per-opcode debug markers.
             // Set SHUMWAY_IL_PROMOTE=N (N>=1) to enable promotion,
             // optionally SHUMWAY_IL_DEBUG=1 to inject post-opcode
