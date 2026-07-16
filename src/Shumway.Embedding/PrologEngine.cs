@@ -375,39 +375,6 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     {
         if (ownedHostBuffer) SyncPersistentFromEngine(engine);
         else InvalidatePersistent();
-        FollowPatchedProgram(engine);
-    }
-
-    /// <summary>ADR-035 — keep <see cref="_patchedProgram"/> — the buffer the breakpoint
-    /// machinery restores and re-patches — pinned to the array the DEBUGGED activation actually
-    /// executes.
-    ///
-    /// <para>A mid-query <c>assertz</c> that grows the buffer (Blint's directive processing does
-    /// this constantly) reallocates <see cref="Activation.CurrentProgram"/> via
-    /// <see cref="Activation.AppendCode"/>, copying the whole buffer — INCLUDING the patched
-    /// <see cref="Shumway.Core.Opcode.Break"/> bytes — into a larger array at the same offsets,
-    /// and the activation switches to it. The offset→original patch table
-    /// (<see cref="_breakpointPatches"/>, shared with the activation as
-    /// <see cref="Activation.BreakpointOriginals"/>) stays valid because offsets are preserved,
-    /// but <see cref="_patchedProgram"/> would keep pointing at the abandoned array. A later
-    /// <c>ClearBreakpoints</c>/<c>RemoveBreakpoint</c> (the user disabling the breakpoint) would
-    /// then restore the DEAD buffer and clear the table while the live buffer still carried the
-    /// Break byte — and the next call reaching that site reads Break with an empty table and
-    /// throws "the code space and the breakpoint table are out of step".</para>
-    ///
-    /// <para>This catches BOTH mutation branches: the owner path (<see cref="SyncPersistentFromEngine"/>,
-    /// where <c>_patchedProgram</c> tracked <see cref="_persistentProgram"/>) and — the one the
-    /// original fix missed and Blint hits — the non-owner path (<see cref="InvalidatePersistent"/>,
-    /// entered once a prior mutation has nulled <c>_persistentProgram</c> by changing the
-    /// dynamic-functor set), where <c>SyncPersistentFromEngine</c> never runs. Only the debugged
-    /// activation carries breakpoints, so a mutation by an undebugged sub-engine leaves
-    /// <c>_patchedProgram</c> alone.</para></summary>
-    private void FollowPatchedProgram(Activation engine)
-    {
-        if (engine.Debug is null || _patchedProgram is null || engine.CurrentProgram is null)
-            return;
-        if (!ReferenceEquals(_patchedProgram, engine.CurrentProgram))
-            _patchedProgram = engine.CurrentProgram;
     }
 
     /// <summary>Chunk 151b — synchronises <see cref="_persistentProgram"/>
@@ -3884,26 +3851,62 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
     }
 
-    /// <summary>ADR-035 — re-applies the patches to the program that is loaded right
-    /// now, so a breakpoint set while a query is stopped takes effect on that same
-    /// query. A no-op before the first query, where the next
-    /// <see cref="SetupQueryFromTerm"/> will do it anyway.</summary>
+    /// <summary>ADR-035 — re-applies the patches to the buffer the debugged activation is
+    /// executing RIGHT NOW, so a breakpoint set or cleared while a query is stopped takes effect
+    /// on that same query. A no-op before the first query, where the next
+    /// <see cref="SetupQueryFromTerm"/> will do it anyway.
+    ///
+    /// <para>The buffer comes from the LIVE activation, never from a cached reference: a
+    /// mid-query <c>assertz</c> can reallocate the bytecode array (grow-and-copy), and the
+    /// activation then runs the NEW array. Un-patching a stale cached array would restore a dead
+    /// buffer and leave the live one with an orphaned <c>Break</c> byte — the crash this replaces.
+    /// Whatever the activation runs now is the one and only buffer to touch; if it did not change,
+    /// it is the same array, and if it did, it is the new one.</para></summary>
     private void RefreshBreakpoints()
     {
-        if (_patchedProgram is null) return;
-        SyncBreakpoints(_patchedProgram);
+        // _lastQueryEngine is the activation of the query in flight (or the one just stopped),
+        // and it is saved/restored around an Immediate-window evaluation, so this is the buffer
+        // the code the user is looking at actually runs — following a mid-query realloc.
+        byte[]? live = _lastQueryEngine?.CurrentProgram ?? _patchedProgram;
+        if (live is null) return;
+        // A live buffer already carries our Break bytes (a realloc copies them), so un-patching
+        // it must find a Break at every recorded pc — anything else is real drift, not the
+        // routine fresh-rebuild case (which only happens at query setup).
+        SyncBreakpoints(live, bufferCarriesOurPatches: true);
     }
 
-    /// <summary>ADR-035 — makes <paramref name="program"/>'s patched bytes agree
-    /// with the armed sites. Un-patches what it patched before (only if this is the
-    /// same array — a rebuilt code space is freshly copied from the compiled
-    /// predicates, which are never patched), then patches what is armed now,
-    /// recording each original byte for the interpreter to re-dispatch.</summary>
-    private void SyncBreakpoints(byte[] program)
+    /// <summary>ADR-035 — makes <paramref name="program"/>'s patched bytes agree with the armed
+    /// sites. First removes the patches this engine applied before, then patches what is armed
+    /// now, recording each original byte for the interpreter to re-dispatch a <c>Break</c>.
+    ///
+    /// <para><paramref name="bufferCarriesOurPatches"/> says whether <paramref name="program"/>
+    /// is the buffer our recorded patches live in — true for the buffer the activation runs
+    /// (same array or a grow-and-copy of it, which carries the <c>Break</c> bytes) and for a
+    /// REUSED persistent buffer at setup; false only for a FRESHLY-REBUILT one, which was linked
+    /// clean from the compiled predicates and never carried a Break, so there is nothing to
+    /// remove and the recorded originals (from the now-dead buffer) must not be written into
+    /// it.</para></summary>
+    private void SyncBreakpoints(byte[] program, bool bufferCarriesOurPatches)
     {
-        if (ReferenceEquals(_patchedProgram, program))
+        if (bufferCarriesOurPatches)
             foreach (var (pc, original) in _breakpointPatches)
-                program[pc] = original;
+            {
+                if ((uint)pc < (uint)program.Length
+                    && program[pc] == (byte)Shumway.Core.Opcode.Break)
+                    program[pc] = original;
+                else
+                {
+                    // We recorded a Break at this pc but the buffer the activation runs has none.
+                    // The guard above keeps us from writing a stale original over live code, but
+                    // this should NEVER happen — it means the breakpoint table drifted from the
+                    // executed buffer, exactly the class of bug this design exists to prevent, so
+                    // surface it loudly for investigation rather than papering over it.
+                    string msg = $"breakpoint table out of step: recorded a Break at pc={pc} but "
+                        + $"the live buffer holds 0x{(pc < program.Length ? program[pc] : 0):X2}";
+                    Debugging.ShumwayDebugHelper.DiagLine("[Shumway diag] " + msg);
+                    System.Diagnostics.Debug.Fail(msg);
+                }
+            }
         _breakpointPatches.Clear();
         _patchedProgram = program;
 
@@ -3916,36 +3919,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 int pc = predAddr + stop.Offset;
                 if ((uint)pc >= (uint)program.Length) continue;
                 if (_breakpointPatches.ContainsKey(pc)) continue;   // one site, many clauses
-
-                // The original opcode this Break stands in for. Normally the byte sitting here
-                // now — but if the buffer has drifted and already carries a STALE Break at this
-                // pc (a prior mid-query realloc left one behind), recording that would poison the
-                // table with Break-as-original; recover the true original from the durable map
-                // instead. The durable map is keyed by absolute pc, which is stable for static
-                // predicates, so it is always right and is never cleared.
-                byte cur = program[pc];
-                byte original;
-                if (cur == (byte)Shumway.Core.Opcode.Break)
-                {
-                    if (!_breakpointOriginalsDurable.TryGetValue(pc, out original))
-                        continue;   // nothing to recover from — do not arm a Break we can't decode
-                }
-                else
-                {
-                    original = cur;
-                    _breakpointOriginalsDurable[pc] = original;   // fresh clean byte: the durable truth
-                }
-                _breakpointPatches[pc] = original;
+                _breakpointPatches[pc] = program[pc];
                 program[pc] = (byte)Shumway.Core.Opcode.Break;
             }
         }
     }
-
-    /// <summary>ADR-035 — a durable, never-cleared pc→original-opcode map handed to every
-    /// activation as <see cref="Activation.BreakpointOriginalsFallback"/>. See that property:
-    /// the opcode at a static predicate's address is invariant, so this is the safety net that
-    /// keeps a drifted breakpoint table from ever crashing the interpreter "out of step".</summary>
-    private readonly Dictionary<int, byte> _breakpointOriginalsDurable = new();
 
     // Every stop site in the loaded program, by program address, sorted. Built
     // alongside _compiledSites; empty unless something was compiled debuggable.
@@ -10870,16 +10848,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             frames.Keys.CopyTo(_clauseStarts, 0);
             frames.Values.CopyTo(_clauseFrames, 0);
         }
-        SyncBreakpoints(program);
+        // A freshly-rebuilt persistent buffer carries no Break bytes and the recorded originals
+        // belong to the now-dead one; a reused buffer still carries them. Only un-patch when the
+        // buffer actually holds our patches. (RefreshBreakpoints, mid-query, follows the live
+        // activation via _lastQueryEngine — set just below — so a realloc is tracked there.)
+        SyncBreakpoints(program, bufferCarriesOurPatches: !builtPersistentNow);
         // Shared BY REFERENCE, and shared even when it is empty: a breakpoint can be armed
         // on a query that is already running (F9 during a long goal), and the Break byte it
         // patches into the program is reached by an activation that was set up before the
         // table had anything in it. Handing over null when the table happened to be empty
         // would leave that activation with a Break it cannot decode.
         engine.BreakpointOriginals = _breakpointPatches;
-        // The durable safety net (never cleared): decodes a Break byte even if the live table
-        // above has drifted from the buffer this activation runs. Also shared by reference.
-        engine.BreakpointOriginalsFallback = _breakpointOriginalsDurable;
 
         int[] varHeapIndices = new int[varNames.Count];
         for (int i = 0; i < varNames.Count; i++)

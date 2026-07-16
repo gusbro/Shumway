@@ -184,32 +184,18 @@ public sealed partial class Activation
     /// same thing as no table, because the next port may fill it.</summary>
     public IReadOnlyDictionary<int, byte>? BreakpointOriginals { get; set; }
 
-    /// <summary>ADR-035 — a DURABLE, never-cleared pc→original-opcode map that outlives the live
-    /// <see cref="BreakpointOriginals"/> table. The opcode at a static predicate's address is
-    /// invariant across buffer reallocations (offsets are preserved when the buffer grows) and
-    /// stable across queries (the static region links at a fixed load offset), so once the true
-    /// original at a pc is recorded it is always correct. This is the interpreter's safety net:
-    /// if the live table ever falls out of step with the buffer this activation executes — a
-    /// mid-query <c>assertz</c> reallocated the buffer and the patch table was rebuilt against a
-    /// different copy — a <see cref="Opcode.Break"/> byte can be decoded from here instead of
-    /// crashing the whole process. Shared BY REFERENCE, like the live table.</summary>
-    public IReadOnlyDictionary<int, byte>? BreakpointOriginalsFallback { get; set; }
-
     /// <summary>ADR-035 — the opcode a <see cref="Opcode.Break"/> byte at
-    /// <paramref name="pc"/> is standing in for. Tries the live breakpoint table first, then the
-    /// durable fallback (<see cref="BreakpointOriginalsFallback"/>) — which always has the true
-    /// original for any pc that was ever armed, so the interpreter never runs off a cliff even if
-    /// the live table and the executed buffer have drifted apart. Only a Break byte at a pc that
-    /// was NEVER armed (genuine memory corruption) has no record anywhere, and that still fails
-    /// loudly.</summary>
+    /// <paramref name="pc"/> is standing in for. A Break with no table entry means
+    /// the code and the breakpoint table have gone out of step, which would send
+    /// the interpreter off a cliff — so it fails loudly instead. It should never happen:
+    /// the debug service always un-patches the buffer this activation actually runs, so a
+    /// removed breakpoint's Break byte is gone from the live buffer, not merely from a stale
+    /// copy of the table.</summary>
     public byte BreakpointOriginalAt(int pc)
     {
         if (BreakpointOriginals is not null
             && BreakpointOriginals.TryGetValue(pc, out byte original))
             return original;
-        if (BreakpointOriginalsFallback is not null
-            && BreakpointOriginalsFallback.TryGetValue(pc, out byte durable))
-            return durable;
         throw new InvalidOperationException(
             $"break opcode at PC=0x{pc:X4} with no breakpoint recorded — "
             + "the code space and the breakpoint table are out of step.");

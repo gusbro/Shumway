@@ -168,45 +168,28 @@ public class EngineStateTests
         Assert.Throws<ArgumentOutOfRangeException>(() => engine.SetHbForTesting(badHb));
     }
 
-    // ADR-035 — the breakpoint Break-byte decoder. The live table is the fast path; the durable
-    // fallback is the safety net that keeps a drifted table (a mid-query realloc rebuilt it
-    // against a different buffer copy) from crashing the interpreter "out of step".
+    // ADR-035 — the breakpoint Break-byte decoder. The live table decodes a Break; a miss means
+    // the code space and the table drifted (a bug), so it fails loudly rather than run on.
 
     [Fact]
-    public void BreakpointOriginalAt_PrefersTheLiveTable()
+    public void BreakpointOriginalAt_ReturnsTheRecordedOriginal()
     {
         var engine = new Activation
         {
             BreakpointOriginals = new System.Collections.Generic.Dictionary<int, byte> { [0x100] = 0x2A },
-            BreakpointOriginalsFallback = new System.Collections.Generic.Dictionary<int, byte> { [0x100] = 0x99 },
         };
-        Assert.Equal(0x2A, engine.BreakpointOriginalAt(0x100));   // live table wins
+        Assert.Equal(0x2A, engine.BreakpointOriginalAt(0x100));
     }
 
     [Fact]
-    public void BreakpointOriginalAt_FallsBackToTheDurableMap_WhenTheLiveTableMisses()
+    public void BreakpointOriginalAt_ThrowsWhenTheTableHasNoEntry()
     {
-        // The out-of-step case: the live table was rebuilt against a buffer this activation no
-        // longer runs, so it has NO entry for the Break byte the activation is standing on. The
-        // durable map — never cleared, keyed by the stable static pc — still has the original,
-        // so the interpreter decodes it instead of throwing.
-        var engine = new Activation
-        {
-            BreakpointOriginals = new System.Collections.Generic.Dictionary<int, byte>(),   // empty: drifted
-            BreakpointOriginalsFallback = new System.Collections.Generic.Dictionary<int, byte> { [0x739C] = 0x1B },
-        };
-        Assert.Equal(0x1B, engine.BreakpointOriginalAt(0x739C));
-    }
-
-    [Fact]
-    public void BreakpointOriginalAt_ThrowsOnlyWhenNoRecordExistsAnywhere()
-    {
-        // A Break byte at a pc that was never armed in either map is genuine corruption — that
-        // still fails loudly rather than dispatching a wrong opcode.
+        // A Break byte at a pc with no table entry is drift/corruption — it fails loudly rather
+        // than dispatch a wrong opcode. The debug service prevents this by always un-patching the
+        // buffer the activation actually runs, so a removed breakpoint leaves no orphan Break.
         var engine = new Activation
         {
             BreakpointOriginals = new System.Collections.Generic.Dictionary<int, byte>(),
-            BreakpointOriginalsFallback = new System.Collections.Generic.Dictionary<int, byte>(),
         };
         Assert.Throws<System.InvalidOperationException>(() => engine.BreakpointOriginalAt(0x739C));
     }
