@@ -304,6 +304,99 @@ public class Adr035EvaluateTests
         Assert.Equal(7, stopLines[1]);                // which stopped at the breakpoint just set
     }
 
+    [Fact]
+    public void MultipleSolutions_AreWalkedWithSemicolon_LikeTheRepl()
+    {
+        // member(X, [a,b,c]) has three solutions. The first EvaluateGoal gives the first; a bare
+        // ";" gives each next; when they run out, "no more solutions".
+        var engine = DebugEngine(Program);
+        engine.AddBreakpoint("<string>", 4);
+
+        var results = new List<string>();
+        bool done = false;
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            if (done) return;
+            done = true;
+            results.Add(s.EvaluateGoal(0, "member(E, [a,b,c])"));   // E: free, not a frame var
+            results.Add(s.EvaluateGoal(0, ";"));
+            results.Add(s.EvaluateGoal(0, ";"));
+            results.Add(s.EvaluateGoal(0, ";"));   // exhausted
+        });
+        engine.AttachDebugSession(svc);
+        engine.QueryAll("p(7).").ToList();
+        engine.AttachDebugSession(null);
+
+        Assert.Equal(new[] { "E = a", "E = b", "E = c", "no more solutions" }, results);
+    }
+
+    [Fact]
+    public void ASemicolonWithNothingParked_SaysSo()
+    {
+        var engine = DebugEngine(Program);
+        engine.AddBreakpoint("<string>", 4);
+        var (result, _) = EvalAtBreak(engine, "p(7).", ";");
+        Assert.Contains("no evaluation to continue", result);
+    }
+
+    [Fact]
+    public void ANewGoalAbandonsThePreviousBacktracking()
+    {
+        // Halfway through walking member/2, evaluating a different goal starts fresh; a ";"
+        // afterwards continues the NEW goal, not the abandoned one.
+        var engine = DebugEngine(Program);
+        engine.AddBreakpoint("<string>", 4);
+
+        var results = new List<string>();
+        bool done = false;
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            if (done) return;
+            done = true;
+            results.Add(s.EvaluateGoal(0, "member(E, [a,b,c])"));   // E = a
+            results.Add(s.EvaluateGoal(0, ";"));                    // E = b
+            results.Add(s.EvaluateGoal(0, "member(F, [m,n])"));     // fresh: F = m
+            results.Add(s.EvaluateGoal(0, ";"));                    // F = n
+            results.Add(s.EvaluateGoal(0, ";"));                    // no more
+        });
+        engine.AttachDebugSession(svc);
+        engine.QueryAll("p(7).").ToList();
+        engine.AttachDebugSession(null);
+
+        Assert.Equal(new[] { "E = a", "E = b", "F = m", "F = n", "no more solutions" }, results);
+    }
+
+    [Fact]
+    public void SteppingAbandonsTheParkedEvaluation_AndTheStepIsCorrect()
+    {
+        // A goal parked mid-backtracking must not derail the next step: the suspended query's
+        // depth and tables are restored before the step, so it lands on the next goal exactly
+        // as TheSuspendedQueryResumesUndamaged shows for a single eval.
+        var engine = DebugEngine(Program);
+        engine.AddBreakpoint("<string>", 3);   // the call to q/2; r/1 is next
+
+        var stops = new List<DebugStopEvent>();
+        bool acted = false;
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            stops.Add(e);
+            if (acted) return;
+            acted = true;
+            s.EvaluateGoal(0, "member(E, [a,b,c])");   // park mid-backtracking
+            s.EvaluateGoal(0, ";");                     // one more, still parked
+            s.Resume(StepMode.Over);                    // now step — abandons the eval
+        });
+        engine.AttachDebugSession(svc);
+        var solutions = engine.QueryAll("p(7).").ToList();
+        engine.AttachDebugSession(null);
+
+        Assert.Single(solutions);
+        Assert.Equal(2, stops.Count);
+        Assert.Equal(StopReason.Call, stops[1].Reason);
+        Assert.Equal("r/1", stops[1].Goal);
+        Assert.StartsWith("?-", stops[1].Frames[^1].Name);
+    }
+
     private static int ReadStopLine(ChannelDebugSession session)
     {
         var bytes = new byte[DebugChannel.SnapshotCapacity];

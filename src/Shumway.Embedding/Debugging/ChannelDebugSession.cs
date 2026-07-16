@@ -523,6 +523,7 @@ public sealed class ChannelDebugSession : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _service.CancelEvaluation();   // drop any goal parked mid-backtracking
         _engine.AttachDebugSession(null);
 
         // The watcher must be gone before the channel it reads is unpinned. It wakes at least

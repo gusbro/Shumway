@@ -144,6 +144,10 @@ public sealed class DebugService : IDebugSession
     /// says nothing lets the program run on.</summary>
     public void Resume(StepMode mode)
     {
+        // Stepping or continuing the real program abandons any parked Immediate-window
+        // evaluation — it restores the suspended query's depth/tables first, so the step below
+        // is measured from the stop the user is actually leaving.
+        AbandonPendingEvaluation();
         _mode = mode;
         _stepDepth = _lastStopDepth;
         _stepFromRedo = _lastStopWasRedo;
@@ -244,8 +248,9 @@ public sealed class DebugService : IDebugSession
 
     // ----- the Immediate window: evaluate a goal against the live engine -----
 
-    /// <summary>An evaluation is in flight: the goal typed in the Immediate window is
-    /// running in its own activation while the user's query stands suspended.</summary>
+    /// <summary>An evaluation is in flight OR parked: the goal typed in the Immediate window
+    /// owns the engine's per-query tables — either running right now, or suspended between
+    /// solutions waiting for the user to ask for the next with <c>;</c>.</summary>
     private bool _evalActive;
 
     internal bool EvaluationInFlight => _evalActive;
@@ -254,6 +259,26 @@ public sealed class DebugService : IDebugSession
         = Array.Empty<PrologEngine.DebugFrame>();
     private string _evalGoalText = "";
     private Action? _evalDisarmTimeout;
+
+    // ----- a parked, resumable evaluation (member(X,[a,b,c]) ; ; ...) -----
+    //
+    // The Immediate window is one call per line, so backtracking across lines means keeping the
+    // eval's enumerator ALIVE between calls: the first line runs the goal to its first solution
+    // and PARKS the enumerator; a bare ";" line pumps MoveNext for the next. While parked, the
+    // engine's debug tables are swapped BACK to the suspended query's (double-buffered in
+    // _outerScope / _evalTables) so the Call Stack and Locals still show where the user is
+    // stopped, not the eval — the enumerator is invisibly suspended underneath.
+    private bool _evalPumping;                                   // inside MoveNext right now
+    private bool _evalParked;                                    // a solution is shown, ; resumes
+    private System.Collections.Generic.IEnumerator<Solution>? _pendingEnum;
+    private List<string>? _pendingReport;                        // var names to render per solution
+    private PrologEngine.DebugEvalScope? _outerScope;            // the suspended query's tables
+    private PrologEngine.DebugEvalScope? _evalTables;            // the eval's tables, while parked
+    private System.Threading.CancellationTokenSource? _pendingCts;
+    private int _pendingSavedDepth;
+    private StepMode _pendingSavedMode;
+    private bool _pendingSavedRedo;
+    private int _pendingSolutionCount;
 
     /// <summary>ADR-035 — the fallback: an evaluation that must not stop. With it set, a
     /// breakpoint (or <c>debugger_break/0</c>) reached by the evaluated goal is ignored
@@ -275,20 +300,40 @@ public sealed class DebugService : IDebugSession
     /// result as a real query — a new activation over the live engine, database effects
     /// and all, with the exact semantics of any nested mid-query activation. Returns the
     /// first solution's bindings ("X = 5, Y = out(5)"), "true", "false", or an error
-    /// sentence.</summary>
+    /// sentence.
+    ///
+    /// <para>A goal with more than one solution can be walked like the REPL: after the first
+    /// solution the evaluation is PARKED, and a line consisting only of "<c>;</c>" asks for the
+    /// next. Any other line abandons the parked evaluation and starts fresh; so does stepping
+    /// or continuing the program. While parked the debugger shows the SUSPENDED query as
+    /// usual — the parked enumerator is invisible until the next <c>;</c>.</para></summary>
     public string EvaluateGoal(int frameIndex, string goalText)
     {
+        if (_evalPumping) return "an evaluation is already running";
+
+        string trimmed = goalText?.Trim() ?? "";
+
+        // A bare ";" continues the parked evaluation — the next solution, as in the REPL.
+        if (trimmed is ";" or ";.")
+        {
+            if (_pendingEnum is null)
+                return "no evaluation to continue — type a goal first";
+            return PumpPendingEvaluation();
+        }
+
+        // A real goal abandons any parked evaluation and starts a new one.
+        AbandonPendingEvaluation();
+
         Activation? outer = Current;
         if (outer is null) return "nothing is stopped: no frame to evaluate against";
-        if (_evalActive) return "an evaluation is already running";
-        if (string.IsNullOrWhiteSpace(goalText)) return "nothing to evaluate";
+        if (string.IsNullOrWhiteSpace(trimmed)) return "nothing to evaluate";
 
         // Parse first — nothing is saved or run for a goal that does not read.
         Term goal;
         IReadOnlyList<string> names;
         try
         {
-            string text = goalText.Trim();
+            string text = trimmed;
             if (!text.EndsWith(".", StringComparison.Ordinal)) text += ".";
             (goal, names) = _engine.ParseGoal(text);
         }
@@ -313,78 +358,166 @@ public sealed class DebugService : IDebugSession
         foreach (string n in names)
             if (!substituted.Contains(n) && !report.Contains(n)) report.Add(n);
 
-        // THE BRACKET. The outer stack is captured NOW — the eval's query setup rebuilds
-        // the per-query tables, and after that the suspended query's frames cannot be
-        // walked correctly until they are put back. Everything saved here is restored in
-        // the finally, stop or no stop, error or no error.
+        // THE BRACKET. The outer stack is captured NOW — the eval's query setup rebuilds the
+        // per-query tables, and after that the suspended query's frames cannot be walked
+        // correctly until they are put back. _outerScope holds the suspended query's tables for
+        // the whole life of the (possibly parked) evaluation; AbandonPendingEvaluation restores
+        // them, on exhaustion, error, a new goal, or a step.
         _evalActive = true;
         _evalOuter = outer;
-        _evalGoalText = Ellipsize(goalText.Trim(), 80);
+        _evalGoalText = Ellipsize(trimmed, 80);
         _evalOuterFrames = _engine.CaptureFrames(outer);
-        var scope = _engine.BeginDebugEvaluation();
-        int savedDepth = _lastStopDepth;
-        var savedMode = _mode;
+        _outerScope = _engine.BeginDebugEvaluation();
+        _pendingSavedDepth = _lastStopDepth;
+        _pendingSavedMode = _mode;
+        _pendingSavedRedo = _lastStopWasRedo;
         _mode = StepMode.Continue;
 
-        using var timeout = new System.Threading.CancellationTokenSource(EvaluationTimeout);
+        // GetEnumerator does not run the query yet — the first MoveNext (in PumpPendingEvaluation)
+        // does — so the eval's tables do not overwrite the outer's until we are ready.
+        _pendingCts = new System.Threading.CancellationTokenSource();
+        _pendingEnum = _engine.QueryAll(goal, _pendingCts.Token).GetEnumerator();
+        _pendingReport = report;
+        _pendingSolutionCount = 0;
+        return PumpPendingEvaluation();
+    }
+
+    /// <summary>Advance the parked evaluation by one solution and re-park (or clean up when it
+    /// is exhausted / times out / errors). Renders the solution's bindings the way the first
+    /// call does. Restores the eval's own tables before pumping and swaps the suspended query's
+    /// back after, so the debugger's view is correct whenever we return to the user.</summary>
+    private string PumpPendingEvaluation()
+    {
+        _evalPumping = true;
         bool sawStop = false;
         _evalDisarmTimeout = () =>
         {
-            // The goal reached a breakpoint: it is the user's now, for as long as they
-            // want to look. Only the RUNNING part of an evaluation is on the clock.
+            // The goal reached a breakpoint: it is the user's now, for as long as they want to
+            // look. Only the RUNNING part of an evaluation is on the clock.
             sawStop = true;
-            try { timeout.CancelAfter(System.Threading.Timeout.InfiniteTimeSpan); }
+            try { _pendingCts?.CancelAfter(System.Threading.Timeout.InfiniteTimeSpan); }
             catch (ObjectDisposedException) { }
         };
-
         try
         {
-            Solution? first = null;
-            foreach (var solution in _engine.QueryAll(goal, timeout.Token))
+            // Resuming a parked eval: put its tables back before it runs again.
+            if (_evalParked)
             {
-                first = solution;
-                break;   // the Immediate window is one-shot: the first solution
+                _engine.EndDebugEvaluation(_evalTables!);
+                _evalParked = false;
             }
-            if (first is null) return "false";
-            if (report.Count == 0) return "true";
+            try { _pendingCts!.CancelAfter(EvaluationTimeout); }
+            catch (ObjectDisposedException) { }
 
-            var text = new System.Text.StringBuilder();
-            foreach (string n in report)
+            bool has;
+            try { has = _pendingEnum!.MoveNext(); }
+            catch (OperationCanceledException)
             {
-                if (text.Length > 0) text.Append(",\n");
-                Term? value = first[n];
-                text.Append(n).Append(" = ").Append(value is null
-                    ? "_"
-                    : Ellipsize(AstTermRenderer.Render(value, 999, _engine.Operators), 2048));
+                AbandonPendingEvaluation();
+                return sawStop
+                    ? "the evaluation was aborted"
+                    : $"timed out after {EvaluationTimeout.TotalSeconds:0.#} s "
+                        + "(the goal was still running)";
             }
-            return text.ToString();
-        }
-        catch (OperationCanceledException)
-        {
-            return sawStop
-                ? "the evaluation was aborted"
-                : $"timed out after {EvaluationTimeout.TotalSeconds:0.#} s "
-                    + "(the goal was still running)";
-        }
-        catch (Exception ex)
-        {
-            return "error: " + ex.Message;
+            catch (Exception ex)
+            {
+                AbandonPendingEvaluation();
+                return "error: " + ex.Message;
+            }
+
+            if (!has)
+            {
+                bool any = _pendingSolutionCount > 0;
+                AbandonPendingEvaluation();
+                return any ? "no more solutions" : "false";
+            }
+
+            _pendingSolutionCount++;
+            var report = _pendingReport!;
+            // Render BEFORE swapping tables — the value terms live on the eval activation's heap
+            // and the render reads the operator table, all of which is still current here.
+            string rendered;
+            if (report.Count == 0)
+            {
+                rendered = "true";
+            }
+            else
+            {
+                var solution = _pendingEnum!.Current;
+                var text = new System.Text.StringBuilder();
+                foreach (string n in report)
+                {
+                    if (text.Length > 0) text.Append(",\n");
+                    Term? value = solution[n];
+                    text.Append(n).Append(" = ").Append(value is null
+                        ? "_"
+                        : Ellipsize(AstTermRenderer.Render(value, 999, _engine.Operators), 2048));
+                }
+                rendered = text.ToString();
+            }
+
+            ParkPendingEvaluation();
+            return rendered;
         }
         finally
         {
             _evalDisarmTimeout = null;
-            _engine.EndDebugEvaluation(scope);
-            _evalActive = false;
-            _evalOuter = null;
-            _evalOuterFrames = Array.Empty<PrologEngine.DebugFrame>();
-            _evalGoalText = "";
-            // The machine the debugger is watching is the SUSPENDED one again, and the
-            // step the user takes next is from the stop they were at.
-            Current = outer;
-            _lastStopDepth = savedDepth;
-            _mode = savedMode;
+            _evalPumping = false;
         }
     }
+
+    /// <summary>Suspend the evaluation between solutions: snapshot its tables, put the suspended
+    /// query's tables back so the debugger's view is the user's stop again, show that query, and
+    /// stop the clock while we wait for the next <c>;</c>.</summary>
+    private void ParkPendingEvaluation()
+    {
+        _evalTables = _engine.BeginDebugEvaluation();   // the eval's tables, to restore on resume
+        _engine.EndDebugEvaluation(_outerScope!);        // the suspended query's, for now
+        _evalParked = true;
+        Current = _evalOuter;
+        try { _pendingCts!.CancelAfter(System.Threading.Timeout.InfiniteTimeSpan); }
+        catch (ObjectDisposedException) { }
+    }
+
+    /// <summary>End the parked evaluation for good — exhausted, abandoned for a new goal, or
+    /// dropped because the user stepped on. Tears down the enumerator, restores the suspended
+    /// query's tables and view, and clears all pending state. Idempotent.</summary>
+    private void AbandonPendingEvaluation()
+    {
+        if (_outerScope is null && _pendingEnum is null) return;
+
+        try { _pendingEnum?.Dispose(); } catch { /* teardown of the eval activation */ }
+        try { _pendingCts?.Dispose(); } catch { }
+
+        // Authoritatively restore the suspended query's tables, whether we were parked (already
+        // swapped) or mid-pump (still the eval's).
+        if (_outerScope is not null) _engine.EndDebugEvaluation(_outerScope);
+
+        Activation? outer = _evalOuter;
+        _pendingEnum = null;
+        _pendingReport = null;
+        _pendingCts = null;
+        _outerScope = null;
+        _evalTables = null;
+        _evalParked = false;
+        _evalActive = false;
+        _evalOuter = null;
+        _evalOuterFrames = Array.Empty<PrologEngine.DebugFrame>();
+        _evalGoalText = "";
+
+        // The machine the debugger is watching is the SUSPENDED one again, and the step the
+        // user takes next is from the stop they were at.
+        Current = outer;
+        _lastStopDepth = _pendingSavedDepth;
+        _lastStopWasRedo = _pendingSavedRedo;
+        _mode = _pendingSavedMode;
+    }
+
+    /// <summary>ADR-035 — drop any parked Immediate-window evaluation and restore the suspended
+    /// query's view. Called on detach so a goal left mid-backtracking (evaluated but never
+    /// walked to the end with <c>;</c>, then the debugger detached) does not leak its
+    /// activation. A no-op when nothing is parked.</summary>
+    public void CancelEvaluation() => AbandonPendingEvaluation();
 
     /// <summary>Replaces every occurrence of the named variable in the goal with the
     /// frame's value for it.</summary>
