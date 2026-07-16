@@ -3916,11 +3916,36 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 int pc = predAddr + stop.Offset;
                 if ((uint)pc >= (uint)program.Length) continue;
                 if (_breakpointPatches.ContainsKey(pc)) continue;   // one site, many clauses
-                _breakpointPatches[pc] = program[pc];
+
+                // The original opcode this Break stands in for. Normally the byte sitting here
+                // now — but if the buffer has drifted and already carries a STALE Break at this
+                // pc (a prior mid-query realloc left one behind), recording that would poison the
+                // table with Break-as-original; recover the true original from the durable map
+                // instead. The durable map is keyed by absolute pc, which is stable for static
+                // predicates, so it is always right and is never cleared.
+                byte cur = program[pc];
+                byte original;
+                if (cur == (byte)Shumway.Core.Opcode.Break)
+                {
+                    if (!_breakpointOriginalsDurable.TryGetValue(pc, out original))
+                        continue;   // nothing to recover from — do not arm a Break we can't decode
+                }
+                else
+                {
+                    original = cur;
+                    _breakpointOriginalsDurable[pc] = original;   // fresh clean byte: the durable truth
+                }
+                _breakpointPatches[pc] = original;
                 program[pc] = (byte)Shumway.Core.Opcode.Break;
             }
         }
     }
+
+    /// <summary>ADR-035 — a durable, never-cleared pc→original-opcode map handed to every
+    /// activation as <see cref="Activation.BreakpointOriginalsFallback"/>. See that property:
+    /// the opcode at a static predicate's address is invariant, so this is the safety net that
+    /// keeps a drifted breakpoint table from ever crashing the interpreter "out of step".</summary>
+    private readonly Dictionary<int, byte> _breakpointOriginalsDurable = new();
 
     // Every stop site in the loaded program, by program address, sorted. Built
     // alongside _compiledSites; empty unless something was compiled debuggable.
@@ -10852,6 +10877,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // table had anything in it. Handing over null when the table happened to be empty
         // would leave that activation with a Break it cannot decode.
         engine.BreakpointOriginals = _breakpointPatches;
+        // The durable safety net (never cleared): decodes a Break byte even if the live table
+        // above has drifted from the buffer this activation runs. Also shared by reference.
+        engine.BreakpointOriginalsFallback = _breakpointOriginalsDurable;
 
         int[] varHeapIndices = new int[varNames.Count];
         for (int i = 0; i < varNames.Count; i++)
