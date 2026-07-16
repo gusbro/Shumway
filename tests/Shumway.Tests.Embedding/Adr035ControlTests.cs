@@ -190,8 +190,11 @@ public class Adr035ControlTests
     /// <c>_patchedProgram</c>, the buffer <c>SyncBreakpoints</c> restores, kept pointing at the
     /// abandoned one. Removing the breakpoint restored the DEAD buffer and cleared the table
     /// while the live buffer kept the Break byte; the next call re-hit it with an empty table
-    /// and threw. Here <c>grow/1</c> asserts enough to force a reallocation before the
-    /// breakpoint is ever hit, then <c>each/1</c> hits it repeatedly.</summary>
+    /// and threw.
+    ///
+    /// <para>This is the portable OWNER-path shape (<c>seen/2</c> declared dynamic, so the
+    /// asserts stay on the host buffer). <see cref="Adr035BlintDisableBp"/> covers the non-owner
+    /// path against the real program.</para></summary>
     [Fact]
     public void RemovingABreakpointAfterAMidQueryBufferGrowth_KeepsTheCodeSpaceInStep()
     {

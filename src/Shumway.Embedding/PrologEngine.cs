@@ -375,6 +375,39 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     {
         if (ownedHostBuffer) SyncPersistentFromEngine(engine);
         else InvalidatePersistent();
+        FollowPatchedProgram(engine);
+    }
+
+    /// <summary>ADR-035 — keep <see cref="_patchedProgram"/> — the buffer the breakpoint
+    /// machinery restores and re-patches — pinned to the array the DEBUGGED activation actually
+    /// executes.
+    ///
+    /// <para>A mid-query <c>assertz</c> that grows the buffer (Blint's directive processing does
+    /// this constantly) reallocates <see cref="Activation.CurrentProgram"/> via
+    /// <see cref="Activation.AppendCode"/>, copying the whole buffer — INCLUDING the patched
+    /// <see cref="Shumway.Core.Opcode.Break"/> bytes — into a larger array at the same offsets,
+    /// and the activation switches to it. The offset→original patch table
+    /// (<see cref="_breakpointPatches"/>, shared with the activation as
+    /// <see cref="Activation.BreakpointOriginals"/>) stays valid because offsets are preserved,
+    /// but <see cref="_patchedProgram"/> would keep pointing at the abandoned array. A later
+    /// <c>ClearBreakpoints</c>/<c>RemoveBreakpoint</c> (the user disabling the breakpoint) would
+    /// then restore the DEAD buffer and clear the table while the live buffer still carried the
+    /// Break byte — and the next call reaching that site reads Break with an empty table and
+    /// throws "the code space and the breakpoint table are out of step".</para>
+    ///
+    /// <para>This catches BOTH mutation branches: the owner path (<see cref="SyncPersistentFromEngine"/>,
+    /// where <c>_patchedProgram</c> tracked <see cref="_persistentProgram"/>) and — the one the
+    /// original fix missed and Blint hits — the non-owner path (<see cref="InvalidatePersistent"/>,
+    /// entered once a prior mutation has nulled <c>_persistentProgram</c> by changing the
+    /// dynamic-functor set), where <c>SyncPersistentFromEngine</c> never runs. Only the debugged
+    /// activation carries breakpoints, so a mutation by an undebugged sub-engine leaves
+    /// <c>_patchedProgram</c> alone.</para></summary>
+    private void FollowPatchedProgram(Activation engine)
+    {
+        if (engine.Debug is null || _patchedProgram is null || engine.CurrentProgram is null)
+            return;
+        if (!ReferenceEquals(_patchedProgram, engine.CurrentProgram))
+            _patchedProgram = engine.CurrentProgram;
     }
 
     /// <summary>Chunk 151b — synchronises <see cref="_persistentProgram"/>
@@ -389,21 +422,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private void SyncPersistentFromEngine(Activation engine)
     {
         if (engine.CurrentProgram is null) return;
-        byte[]? previous = _persistentProgram;
         _persistentProgram = engine.CurrentProgram;
         _persistentLength = engine.ProgramLength;
-
-        // ADR-035 — the breakpoint patch table (_breakpointPatches, shared with the
-        // activation as BreakpointOriginals) describes Break-byte offsets into the buffer
-        // the activation actually executes. A mid-query assertz that GROWS the buffer copies
-        // those patched bytes into the new array at the same offsets — so the table stays
-        // valid — and the activation switches to the new array. _patchedProgram, the buffer
-        // SyncBreakpoints restores/re-patches, must follow: otherwise a later
-        // Clear/RemoveBreakpoint restores the ABANDONED buffer and clears the table, leaving
-        // the live buffer with a Break byte whose original is no longer recorded — the "code
-        // space and breakpoint table are out of step" crash on the next Continue.
-        if (_patchedProgram is not null && ReferenceEquals(_patchedProgram, previous))
-            _patchedProgram = engine.CurrentProgram;
     }
 
     /// <summary>Root fix for the suspended-activation stale-append-position
