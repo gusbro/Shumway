@@ -389,8 +389,21 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private void SyncPersistentFromEngine(Activation engine)
     {
         if (engine.CurrentProgram is null) return;
+        byte[]? previous = _persistentProgram;
         _persistentProgram = engine.CurrentProgram;
         _persistentLength = engine.ProgramLength;
+
+        // ADR-035 — the breakpoint patch table (_breakpointPatches, shared with the
+        // activation as BreakpointOriginals) describes Break-byte offsets into the buffer
+        // the activation actually executes. A mid-query assertz that GROWS the buffer copies
+        // those patched bytes into the new array at the same offsets — so the table stays
+        // valid — and the activation switches to the new array. _patchedProgram, the buffer
+        // SyncBreakpoints restores/re-patches, must follow: otherwise a later
+        // Clear/RemoveBreakpoint restores the ABANDONED buffer and clears the table, leaving
+        // the live buffer with a Break byte whose original is no longer recorded — the "code
+        // space and breakpoint table are out of step" crash on the next Continue.
+        if (_patchedProgram is not null && ReferenceEquals(_patchedProgram, previous))
+            _patchedProgram = engine.CurrentProgram;
     }
 
     /// <summary>Root fix for the suspended-activation stale-append-position

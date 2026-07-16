@@ -182,6 +182,66 @@ public class Adr035ControlTests
         }
     }
 
+    /// <summary>The Blint bug the user hit in real VS: stop at a breakpoint, DISABLE it, press
+    /// Continue → "break opcode at PC=0x… with no breakpoint recorded — the code space and the
+    /// breakpoint table are out of step." Root cause: a mid-query <c>assertz</c> (Blint's
+    /// directive processing does exactly this) grows the persistent buffer, so the running
+    /// activation switches to a new array with the Break bytes copied in — but
+    /// <c>_patchedProgram</c>, the buffer <c>SyncBreakpoints</c> restores, kept pointing at the
+    /// abandoned one. Removing the breakpoint restored the DEAD buffer and cleared the table
+    /// while the live buffer kept the Break byte; the next call re-hit it with an empty table
+    /// and threw. Here <c>grow/1</c> asserts enough to force a reallocation before the
+    /// breakpoint is ever hit, then <c>each/1</c> hits it repeatedly.</summary>
+    [Fact]
+    public void RemovingABreakpointAfterAMidQueryBufferGrowth_KeepsTheCodeSpaceInStep()
+    {
+        //   2: :- dynamic(seen/2).
+        //   3: run :- grow(4000), each(4).
+        //   4: grow(0) :- !.
+        //   5: grow(N) :- N > 0, assertz(seen(N, [N,N,N,N,N,N,N,N,N,N])), M is N - 1, grow(M).
+        //   6: each(0) :- !.
+        //   7: each(N) :- N > 0, step(N), M is N - 1, each(M).
+        //   8: step(N) :- work(N).
+        //   9: work(_).
+        //
+        // grow/1 appends thousands of chunky dynamic clauses — far more than the persistent
+        // buffer's doubling slack (which scales with the baked prelude), so a reallocation is
+        // guaranteed BEFORE the breakpoint in step/1 is first hit.
+        var engine = DebugEngine(
+            ":- dynamic(seen/2).\n" +
+            "run :- grow(4000), each(4).\n" +
+            "grow(0) :- !.\n" +
+            "grow(N) :- N > 0, assertz(seen(N, [N,N,N,N,N,N,N,N,N,N])), M is N - 1, grow(M).\n" +
+            "each(0) :- !.\n" +
+            "each(N) :- N > 0, step(N), M is N - 1, each(M).\n" +
+            "step(N) :- work(N).\n" +
+            "work(_).\n");
+
+        Assert.True(engine.AddBreakpoint("<string>", 8) > 0);   // inside step/1
+
+        int stops = 0;
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            stops++;
+            if (stops == 1) engine.RemoveBreakpoint("<string>", 8);   // the "disable"
+            s.Resume(StepMode.Continue);
+        });
+        engine.AttachDebugSession(svc);
+
+        List<Solution> solutions;
+        try
+        {
+            solutions = engine.QueryAll("run.").ToList();   // used to throw on the 2nd step/1 hit
+        }
+        finally
+        {
+            engine.AttachDebugSession(null);
+        }
+
+        Assert.Single(solutions);   // ran to completion, no "out of step"
+        Assert.Equal(1, stops);     // hit once; after removal the following step/1 calls are clean
+    }
+
     [Fact]
     public void AStepWrittenAtAStopIsTakenOnce()
     {
