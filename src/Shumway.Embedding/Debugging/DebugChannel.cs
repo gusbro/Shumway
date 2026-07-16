@@ -8,9 +8,12 @@ namespace Shumway.Embedding.Debugging;
 // is the side that decides what a command is.
 
 /// <summary>ADR-035 — one command from the debugger. <see cref="File"/> /
-/// <see cref="Line"/> carry a breakpoint; <see cref="Flag"/> carries a switch.</summary>
+/// <see cref="Line"/> carry a breakpoint; <see cref="Flag"/> carries a switch;
+/// <see cref="Condition"/> carries a conditional breakpoint's goal (empty =
+/// unconditional).</summary>
 public readonly record struct DebugCommand(
-    DebugCommandKind Kind, string File = "", int Line = 0, bool Flag = false);
+    DebugCommandKind Kind, string File = "", int Line = 0, bool Flag = false,
+    string Condition = "");
 
 /// <summary>
 /// ADR-035 — the pinned-memory channel between the engine and the debugger.
@@ -107,6 +110,7 @@ public sealed class DebugChannel : IDisposable
         DebugWire.WriteInt(_snapshot, ref at, stop.Depth);
         DebugWire.WriteString(_snapshot, ref at, stop.BreakFile);
         DebugWire.WriteInt(_snapshot, ref at, stop.BreakLine);
+        DebugWire.WriteString(_snapshot, ref at, stop.ConditionError);
 
         // EVERY STRING ONCE. A stack's frames mostly repeat each other: the same file on
         // every frame, the same predicate down a recursion, the same variable names level
@@ -286,6 +290,7 @@ public sealed class DebugChannel : IDisposable
             DebugWire.WriteString(_commands, ref at, c.File);
             DebugWire.WriteInt(_commands, ref at, c.Line);
             DebugWire.WriteInt(_commands, ref at, c.Flag ? 1 : 0);
+            DebugWire.WriteString(_commands, ref at, c.Condition);
         }
     }
 
@@ -305,7 +310,8 @@ public sealed class DebugChannel : IDisposable
             string file = DebugWire.ReadString(_commands, ref at);
             int line = DebugWire.ReadInt(_commands, ref at);
             bool flag = DebugWire.ReadInt(_commands, ref at) != 0;
-            commands.Add(new DebugCommand(kind, file, line, flag));
+            string condition = DebugWire.ReadString(_commands, ref at);
+            commands.Add(new DebugCommand(kind, file, line, flag, condition));
         }
         Array.Clear(_commands, 0, 8);   // consumed: a step asked for once is taken once
         return commands;

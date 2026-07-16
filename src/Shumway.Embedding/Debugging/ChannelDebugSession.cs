@@ -501,7 +501,11 @@ public sealed class ChannelDebugSession : IDisposable
                 service.Resume(StepMode.Out);
                 break;
             case DebugCommandKind.AddBreakpoint:
-                _engine.AddBreakpoint(command.File, command.Line);
+                // The condition rides the add (empty = unconditional): the debugger's
+                // full-state rewrites make setting, changing and clearing a condition
+                // the same idempotent operation.
+                _engine.AddBreakpoint(command.File, command.Line,
+                    command.Condition.Length == 0 ? null : command.Condition);
                 break;
             case DebugCommandKind.RemoveBreakpoint:
                 _engine.RemoveBreakpoint(command.File, command.Line);

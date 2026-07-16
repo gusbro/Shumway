@@ -92,6 +92,12 @@ public sealed class DebugWireCommand
     public string File { get; set; } = "";
     public int Line { get; set; }
     public bool Flag { get; set; }
+
+    /// <summary>ADR-035 D5 — the Prolog goal a conditional breakpoint carries; empty for an
+    /// unconditional one (and for every other command kind). Rides
+    /// <see cref="DebugCommandKind.AddBreakpoint"/>, whose full-state rewrites make
+    /// setting, changing and clearing a condition the same operation.</summary>
+    public string Condition { get; set; } = "";
 }
 
 /// <summary>ADR-035 — a stop, as the debugger reads it back out of the channel.</summary>
@@ -144,6 +150,11 @@ public sealed class DebugSnapshot
     public string BreakFile { get; set; } = "";
     public int BreakLine { get; set; }
 
+    /// <summary>ADR-035 D5 — why a conditional breakpoint stopped even though its condition
+    /// did not succeed: the condition could not run (syntax error, exception, timeout).
+    /// Empty for every ordinary stop. See <c>DebugStopEvent.ConditionError</c>.</summary>
+    public string ConditionError { get; set; } = "";
+
     public IReadOnlyList<DebugSnapshotFrame> Frames { get; set; }
         = Array.Empty<DebugSnapshotFrame>();
 }
@@ -192,11 +203,11 @@ public sealed class DebugVariableView
 /// <para>Layout — little-endian ints, length-prefixed UTF-8 strings:</para>
 /// <code>
 /// snapshot: version, sequence, running, heartbeat, interopDepth,
-///           reason, goal, file, line, depth, breakFile, breakLine,
+///           reason, goal, file, line, depth, breakFile, breakLine, conditionError,
 ///           stringCount, { string },
 ///           frameCount, { nameId, arity, fileId, line, pc, headArgsId, clauseNumber,
 ///                         varCount, { nameId, valueId } }
-/// commands: version, count, { kind, file, line, flag }
+/// commands: version, count, { kind, file, line, flag, condition }
 /// </code>
 /// </summary>
 public static class DebugWire
@@ -205,8 +216,9 @@ public static class DebugWire
     /// engine says so instead of reading nonsense. v4: the string table — every string of
     /// the snapshot (names, files, variable names, variable VALUES) written once, frames
     /// carrying indices; the level of indirection that lets a hundred frames sharing a
-    /// binding share its bytes.</summary>
-    public const int FormatVersion = 4;
+    /// binding share its bytes. v5: conditional breakpoints — a condition string on the
+    /// AddBreakpoint command, a conditionError string on the snapshot.</summary>
+    public const int FormatVersion = 5;
 
     /// <summary>The size of the snapshot region — declared HERE, with the format, because the
     /// debugger has to know it: it reads the region whole (a prefix of a snapshot is not a
@@ -302,6 +314,7 @@ public static class DebugWire
             Depth = ReadInt(buffer, ref at),
             BreakFile = ReadString(buffer, ref at),
             BreakLine = ReadInt(buffer, ref at),
+            ConditionError = ReadString(buffer, ref at),
         };
 
         // A COUNT READ OUT OF A BUFFER IS NOT A PROMISE. It is four bytes that came from
@@ -382,6 +395,7 @@ public static class DebugWire
                 WriteString(buffer, ref at, c.File);
                 WriteInt(buffer, ref at, c.Line);
                 WriteInt(buffer, ref at, c.Flag ? 1 : 0);
+                WriteString(buffer, ref at, c.Condition);
             }
         }
         var exact = new byte[at];

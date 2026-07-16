@@ -44,6 +44,13 @@ public sealed record DebugStopEvent(
     public string BreakFile { get; init; } = "";
     public int BreakLine { get; init; }
 
+    /// <summary>ADR-035 D5 — why a CONDITIONAL breakpoint stopped even though its condition
+    /// did not succeed: the condition could not run (a syntax error, an exception, a
+    /// timeout). Empty for every ordinary stop — including a conditional breakpoint whose
+    /// condition simply held. A debugger shows this to the user; the alternative was a
+    /// broken condition silently swallowing its breakpoint, which is undiagnosable.</summary>
+    public string ConditionError { get; init; } = "";
+
     /// <summary>The variables of the clause we are stopped in.</summary>
     public IReadOnlyList<(string Name, string Value)> Variables =>
         Frames.Count > 0 ? Frames[0].Variables : Array.Empty<(string, string)>();
@@ -573,11 +580,30 @@ public sealed class DebugService : IDebugSession
 
     void IDebugSession.OnBreak(Activation engine, int pc)
     {
+        // A breakpoint reached by a CONDITION's own goal is never a stop — the condition
+        // is the debugger's plumbing, not the program, and stopping inside it would
+        // recurse into evaluating it again. Checked first, before anything else runs.
+        if (_conditionEval) return;
+
         // The suppression fallback: an evaluation that must not stop runs straight
         // through its breakpoints. See SuppressStopsDuringEvaluation.
         if (_evalActive && SuppressStopsDuringEvaluation) return;
 
         Current = engine;
+
+        // ADR-035 D5 — a conditional breakpoint: the condition goal decides, HERE, on the
+        // engine's own thread, before any debugger hears about the hit. A condition that
+        // fails means the program runs on — no notify, no cross-process round trip, which
+        // is what makes a hot conditional breakpoint affordable. A condition that cannot
+        // run stops WITH its error: silence would swallow the breakpoint undiagnosably.
+        string conditionError = "";
+        if (_engine.BreakpointConditionAt(pc) is string condition)
+        {
+            if (!EvaluateBreakpointCondition(engine, condition, out string? error))
+                return;
+            conditionError = error ?? "";
+        }
+
         // A breakpoint always stops, whatever the step mode: it is the one thing the
         // user asked for by name.
         //
@@ -586,9 +612,99 @@ public sealed class DebugService : IDebugSession
         // answer, since a breakpoint on a rule's head binds at its first goal, and a
         // debugger has to match the hit to the red dot it drew.
         _breakRequest = _engine.BreakpointRequestAt(pc);
+        _conditionError = conditionError;
         Stop(engine, StopReason.Breakpoint, PortDepth(engine), SiteOf(pc), goal: null);
+        _conditionError = "";
         _breakRequest = null;
         _reportedCallSite = _engine.SiteAtOrBefore(pc);
+    }
+
+    // The condition-eval bracket flag and the error being reported, for the length of one
+    // stop — same lifetime discipline as _breakRequest.
+    private bool _conditionEval;
+    private string _conditionError = "";
+
+    /// <summary>ADR-035 D5 — evaluates a conditional breakpoint's goal in the frame the
+    /// breakpoint fired in. Returns whether the breakpoint STOPS; when it stops because
+    /// the condition could not run, <paramref name="error"/> says why (null for a
+    /// condition that simply held).
+    ///
+    /// <para>The recipe is the Immediate window's (<see cref="EvaluateGoal"/>): parse,
+    /// substitute the frame's variables by name, resolve module qualification against the
+    /// frame's module, run as a real nested query over the live engine. The differences
+    /// are the differences between plumbing and a user at a prompt: only the FIRST
+    /// solution matters (the enumerator is disposed right after, cutting the rest); no
+    /// parking; nothing the condition reaches may stop (breakpoints inside it are skipped
+    /// via <see cref="_conditionEval"/>, ports via the saved <see cref="StepMode.Continue"/>);
+    /// and a runaway condition is cancelled at <see cref="EvaluationTimeout"/> rather than
+    /// hanging the program. Bindings the condition makes do not leak — the substituted
+    /// values are materialised copies, and the eval runs in its own activation. Database
+    /// side effects (an <c>assertz</c>) persist, exactly as a C# breakpoint condition
+    /// with side effects would; conditions are expected to be tests.</para></summary>
+    private bool EvaluateBreakpointCondition(Activation engine, string text, out string? error)
+    {
+        error = null;
+
+        Term goal;
+        IReadOnlyList<string> names;
+        try
+        {
+            string t = text.Trim();
+            if (!t.EndsWith(".", StringComparison.Ordinal)) t += ".";
+            (goal, names) = _engine.ParseGoal(t);
+        }
+        catch (Exception ex)
+        {
+            error = "breakpoint condition syntax error: " + ex.Message;
+            return true;
+        }
+
+        // The frame the breakpoint fired in is frame 0 of the stop the user would see.
+        string? frameModule = null;
+        if (_engine.TryGetDisplayFrameContext(engine, 0, out int framePc, out int frameEnv))
+        {
+            frameModule = _engine.ModuleForFrame(framePc);
+            foreach (var (name, value) in _engine.MaterializeFrameVariables(engine, framePc, frameEnv))
+                if (names.Contains(name))
+                    goal = SubstituteVariable(goal, name, value);
+        }
+        goal = _engine.ResolveGoalModule(goal, frameModule);
+
+        // The bracket, exactly as the Immediate window's: the eval's query setup rebuilds
+        // the per-query tables, and the suspended query needs its own back afterwards.
+        var savedMode = _mode;
+        var savedDepth = _lastStopDepth;
+        var savedRedo = _lastStopWasRedo;
+        var savedCurrent = Current;
+        _mode = StepMode.Continue;
+        _conditionEval = true;
+        var scope = _engine.BeginDebugEvaluation();
+        try
+        {
+            using var cts = new System.Threading.CancellationTokenSource(EvaluationTimeout);
+            using var solutions = _engine.QueryAll(goal, cts.Token).GetEnumerator();
+            return solutions.MoveNext();
+        }
+        catch (OperationCanceledException)
+        {
+            error = $"breakpoint condition timed out after {EvaluationTimeout.TotalSeconds:0.#} s: "
+                + Ellipsize(text, 80);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = "breakpoint condition error: " + ex.Message;
+            return true;
+        }
+        finally
+        {
+            _engine.EndDebugEvaluation(scope);
+            _conditionEval = false;
+            _mode = savedMode;
+            _lastStopDepth = savedDepth;
+            _lastStopWasRedo = savedRedo;
+            Current = savedCurrent;
+        }
     }
 
     void IDebugSession.OnCallAddress(Activation engine, int address, bool tailCall)
@@ -957,6 +1073,7 @@ public sealed class DebugService : IDebugSession
         {
             BreakFile = _breakRequest?.File ?? "",
             BreakLine = _breakRequest?.Line ?? 0,
+            ConditionError = _conditionError,
         });
     }
 

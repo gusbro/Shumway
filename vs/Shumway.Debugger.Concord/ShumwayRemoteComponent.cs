@@ -53,6 +53,15 @@ namespace Shumway.Debugger.Concord
         public readonly Dictionary<string, DkmRuntimeBreakpoint> Breakpoints =
             new Dictionary<string, DkmRuntimeBreakpoint>(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>ADR-035 D5 — the Prolog condition each breakpoint carries, keyed by the
+        /// runtime breakpoint's UniqueId. Filled by ParseCondition (the moment Visual Studio
+        /// tells us what the user typed in the breakpoint's settings), read by WriteCommands
+        /// when it rewrites the engine's full breakpoint state. Keyed by INSTANCE, not by
+        /// file:line, because VS tears a breakpoint down and recreates it when its settings
+        /// change — a recreated breakpoint without a condition must not inherit the old
+        /// one's.</summary>
+        public readonly Dictionary<Guid, string> ConditionsByBp = new Dictionary<Guid, string>();
+
         /// <summary>The step in flight, if any. Completed by the port that satisfies it.</summary>
         public DkmStepper? Stepper;
         public DebugCommandKind PendingStep = DebugCommandKind.None;
@@ -100,7 +109,8 @@ namespace Shumway.Debugger.Concord
     public sealed class ShumwayRemoteComponent
         : IDkmCustomMessageForwardReceiver, IDkmRuntimeBreakpointReceived,
           IDkmProcessExecutionNotification, IDkmRuntimeMonitorBreakpointHandler,
-          IDkmRuntimeStepper, IDkmModuleInstanceLoadNotification
+          IDkmRuntimeStepper, IDkmModuleInstanceLoadNotification,
+          IDkmLanguageConditionEvaluator
     {
         /// <summary>The engine's own module loading is the earliest moment at which a Shumway
         /// process can be recognised — and, under a LAUNCH, the only one that comes before the
@@ -261,6 +271,7 @@ namespace Shumway.Debugger.Concord
 
             ShumwayServerDataItem state = GetState(runtimeBreakpoint.Process);
             state.Breakpoints.Remove(ShumwayServerDataItem.Key(file, line));
+            state.ConditionsByBp.Remove(runtimeBreakpoint.UniqueId);
             WriteCommands(runtimeBreakpoint.Process, state);
         }
 
@@ -288,6 +299,82 @@ namespace Shumway.Debugger.Concord
                 return true;
             }
             return false;
+        }
+
+        // ---- conditional breakpoints (ADR-035 D5) ----
+        //
+        // The condition is a PROLOG GOAL, and the engine is where Prolog runs — so the
+        // engine evaluates it, at the Break opcode, BEFORE deciding to notify anyone: a
+        // hit whose condition fails resumes without a single cross-process round trip,
+        // which is what makes a hot conditional breakpoint affordable, and nothing here
+        // ever func-evals in breakpoint context (the documented hang, samples issue #61).
+        //
+        // Visual Studio's part is the UI: the user types the condition in the breakpoint's
+        // settings, VS wraps it in a DkmEvaluationBreakpointCondition whose language is the
+        // breakpoint's (ours, via the module's DkmCompilerId), and routes it here by the
+        // vsdconfig LanguageId filter. ParseCondition is the moment we LEARN the text —
+        // there is no property on the runtime breakpoint to read it from — so we record it
+        // and rewrite the engine's full breakpoint state, condition attached.
+
+        void IDkmLanguageConditionEvaluator.ParseCondition(
+            DkmEvaluationBreakpointCondition evaluationCondition, out string errorText)
+        {
+            // Accepted without parsing: the parser lives in the engine, and the engine is
+            // the debuggee — there is nothing here that can read Prolog. A condition that
+            // does not parse stops at its first hit and says why (the snapshot's
+            // conditionError), which is also what a C# condition that throws does.
+            errorText = null!;
+            try
+            {
+                // Source.Text is what the user typed; Source.Operator distinguishes "is
+                // true" from "has changed". Only the former is a Prolog goal; "when
+                // changed" needs last-value tracking the engine does not do (yet), and
+                // saying so HERE puts the message on the breakpoint's settings window.
+                if (evaluationCondition.Source.Operator
+                    != DkmBreakpointConditionOperator.BreakWhenTrue)
+                {
+                    errorText = "Shumway breakpoints support 'Is true' conditions only";
+                    return;
+                }
+                DkmRuntimeBreakpoint bp = evaluationCondition.RuntimeBreakpoint;
+                ShumwayServerDataItem state = GetState(bp.Process);
+                state.ConditionsByBp[bp.UniqueId] = evaluationCondition.Source.Text ?? "";
+                WriteCommands(bp.Process, state);
+                ShumwayLog.Write("condition parsed for bp " + bp.UniqueId + ": '"
+                    + evaluationCondition.Source.Text + "' -> " + Status(state));
+            }
+            catch (Exception ex)
+            {
+                ShumwayLog.Write("ParseCondition threw: " + ex);
+            }
+        }
+
+        void IDkmLanguageConditionEvaluator.EvaluateCondition(
+            DkmEvaluationBreakpointCondition evaluationCondition,
+            Microsoft.VisualStudio.Debugger.CallStack.DkmStackWalkFrame stackFrame,
+            out bool stop, out string errorText)
+        {
+            // The engine already decided: a hit that reached OnHit is one whose condition
+            // held — or could not run, in which case the snapshot says why and the stop
+            // must happen WITH the message (a broken condition that silently swallowed its
+            // breakpoint would be undiagnosable). Nothing runs in the debuggee here; the
+            // answer is read out of the pinned snapshot like everything else.
+            stop = true;
+            errorText = null!;
+            try
+            {
+                ShumwayServerDataItem state = GetState(stackFrame.Process);
+                DebugSnapshot? snapshot = ReadSnapshot(stackFrame.Process, state);
+                if (snapshot != null && snapshot.ConditionError.Length != 0)
+                {
+                    errorText = snapshot.ConditionError;
+                    ShumwayLog.Write("condition error surfaced: " + errorText);
+                }
+            }
+            catch (Exception ex)
+            {
+                ShumwayLog.Write("EvaluateCondition threw: " + ex);
+            }
         }
 
         // ---- stepping ----
@@ -761,11 +848,14 @@ namespace Shumway.Debugger.Concord
             foreach (KeyValuePair<string, DkmRuntimeBreakpoint> entry in state.Breakpoints)
             {
                 int bar = entry.Key.LastIndexOf('|');
+                string condition;
+                state.ConditionsByBp.TryGetValue(entry.Value.UniqueId, out condition);
                 commands.Add(new DebugWireCommand
                 {
                     Kind = DebugCommandKind.AddBreakpoint,
                     File = entry.Key.Substring(0, bar),
                     Line = int.Parse(entry.Key.Substring(bar + 1), CultureInfo.InvariantCulture),
+                    Condition = condition ?? "",
                 });
             }
             if (state.PendingStep != DebugCommandKind.None)

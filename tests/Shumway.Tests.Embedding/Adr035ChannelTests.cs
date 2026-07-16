@@ -214,8 +214,9 @@ public class Adr035ChannelTests
         DebugWire.WriteString(bytes, ref at, "f.pl");
         DebugWire.WriteInt(bytes, ref at, 1);          // line
         DebugWire.WriteInt(bytes, ref at, 1);          // depth
-        DebugWire.WriteString(bytes, ref at, "");
-        DebugWire.WriteInt(bytes, ref at, 0);
+        DebugWire.WriteString(bytes, ref at, "");          // breakFile
+        DebugWire.WriteInt(bytes, ref at, 0);              // breakLine
+        DebugWire.WriteString(bytes, ref at, "");          // conditionError
         DebugWire.WriteInt(bytes, ref at, 0);              // an empty string table
         DebugWire.WriteInt(bytes, ref at, int.MaxValue);   // "two billion frames follow"
 
@@ -377,11 +378,52 @@ public class Adr035ChannelTests
         Assert.Equal(DebugCommandKind.AddBreakpoint, drained[0].Kind);
         Assert.Equal("foo.pl", drained[0].File);
         Assert.Equal(12, drained[0].Line);
+        Assert.Equal("", drained[0].Condition);   // unconditional: the field crosses empty
         Assert.Equal(DebugCommandKind.StepInto, drained[1].Kind);
 
         // Draining empties the region: a step the debugger asked for once must not be
         // taken again at the next stop.
         Assert.Empty(channel.DrainCommands());
+    }
+
+    [Fact]
+    public void ABreakpointConditionCrossesTheChannel()
+    {
+        // ADR-035 D5 — the condition rides the AddBreakpoint command; both directions of
+        // the codec must agree on it, or a conditional breakpoint set from Visual Studio
+        // silently arrives unconditional.
+        using var channel = new DebugChannel();
+        channel.WriteCommands(
+            new DebugCommand(DebugCommandKind.AddBreakpoint, "foo.pl", 12,
+                Condition: "X > 3, interesting(X)"));
+
+        var drained = channel.DrainCommands();
+        Assert.Single(drained);
+        Assert.Equal("X > 3, interesting(X)", drained[0].Condition);
+    }
+
+    [Fact]
+    public void AConditionErrorCrossesTheSnapshot()
+    {
+        // The stop that reports a condition that could not run carries WHY — the debugger
+        // shows it, since silence would swallow the breakpoint undiagnosably.
+        using var channel = new DebugChannel();
+        channel.WriteSnapshot(new DebugStopEvent(
+            StopReason.Breakpoint, "use/1", "foo.pl", 4, 3,
+            System.Array.Empty<PrologEngine.DebugFrame>())
+        {
+            ConditionError = "breakpoint condition syntax error: unexpected ')'",
+        });
+
+        var snapshot = ReadFromMemory(channel);
+        Assert.Equal("breakpoint condition syntax error: unexpected ')'",
+            snapshot.ConditionError);
+
+        // And an ordinary stop crosses with it empty.
+        channel.WriteSnapshot(new DebugStopEvent(
+            StopReason.Breakpoint, "use/1", "foo.pl", 4, 3,
+            System.Array.Empty<PrologEngine.DebugFrame>()));
+        Assert.Equal("", ReadFromMemory(channel).ConditionError);
     }
 
     [Fact]
@@ -413,5 +455,43 @@ public class Adr035ChannelTests
         _log.WriteLine($"frames: {string.Join(" then ", depths)}");
         Assert.Equal(1, depths[0]);   // leaf/1 alone — LCO reclaimed mid/1, top/1 and the query
         Assert.Equal(4, depths[1]);   // leaf/1, mid/1, top/1, ?- — the whole stack
+    }
+
+    [Fact]
+    public void AConditionalBreakpointSetThroughTheChannel_StopsOnlyWhenItHolds()
+    {
+        // ADR-035 D5, end to end the way Visual Studio drives it: the debugger writes its
+        // commands while the engine is STOPPED (the engine drains them before resuming),
+        // and the condition rides the AddBreakpoint command — the same-key rewrite is how a
+        // condition is set, changed and cleared. The engine evaluates it at the Break, and
+        // only the hits where it holds reach the notify afterwards.
+        var engine = DebugEngine(
+            "run :-\n    between(1, 5, X),\n    use(X),\n    fail.\nrun.\nuse(_).\n");
+        engine.AddBreakpoint("<string>", 4);   // unconditional at first, like a fresh F9
+
+        var stops = new List<DebugSnapshot>();
+        ChannelDebugSession? session = null;
+        session = new ChannelDebugSession(engine, notify: _ =>
+        {
+            stops.Add(ReadFromMemory(session!.Channel));
+            // At the FIRST stop the user opens the breakpoint's settings and types the
+            // condition: the debugger rewrites the breakpoint, condition attached.
+            session!.Channel.WriteCommands(
+                stops.Count == 1
+                    ? new[]
+                    {
+                        new DebugCommand(DebugCommandKind.AddBreakpoint, "<string>", 4,
+                            Condition: "X > 3"),
+                        new DebugCommand(DebugCommandKind.Continue),
+                    }
+                    : new[] { new DebugCommand(DebugCommandKind.Continue) });
+        });
+        using (session)
+            engine.QueryAll("run.").ToList();
+
+        // X = 1 stopped unconditionally; the condition then filtered X = 2, 3 out.
+        Assert.Equal(3, stops.Count);
+        Assert.All(stops, s => Assert.Equal(StopReason.Breakpoint, s.Reason));
+        Assert.All(stops, s => Assert.Equal("", s.ConditionError));
     }
 }

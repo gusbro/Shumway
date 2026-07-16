@@ -3681,7 +3681,19 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// consulted a string source share its site ids, and only the code that is
     /// actually loaded here can be stopped in. Forces the code space to link if it
     /// has not yet, since before that there is nothing to answer with.</para></summary>
-    public int AddBreakpoint(string file, int line)
+    public int AddBreakpoint(string file, int line) => AddBreakpoint(file, line, null);
+
+    /// <summary>ADR-035 D5 — a CONDITIONAL breakpoint: <paramref name="condition"/> is a
+    /// Prolog goal evaluated when the breakpoint is reached, in the frame it fired in
+    /// (its variables substituted by name, like the Immediate window's). The breakpoint
+    /// stops only when the goal SUCCEEDS; a goal that fails lets the program run on as if
+    /// the breakpoint were not there. A condition that cannot run — a syntax error, an
+    /// exception, a timeout — STOPS and says why (see
+    /// <see cref="DebugStopEvent.ConditionError"/>): a broken condition that silently
+    /// swallowed its breakpoint would be undiagnosable. Null (the 2-arg overload) means
+    /// unconditional — and REPLACES any previous condition on this breakpoint, because
+    /// the debugger writes its whole desired state each time.</summary>
+    public int AddBreakpoint(string file, int line, string? condition)
     {
         // Serialized against query setup — the session's idle watcher calls this from
         // its own thread, and F9 landing exactly as a query starts raced the setup's
@@ -3695,6 +3707,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // ran clean through every breakpoint in it. It binds in
             // RebindPendingBreakpoints, when the code arrives.
             _requestedBreakpoints.Add((file, line));
+            if (string.IsNullOrWhiteSpace(condition))
+                _breakpointConditions.Remove((file, line));
+            else
+                _breakpointConditions[(file, line)] = condition!;
 
             EnsureCodeLinked();
             int fileId = Shumway.Core.DebugSiteTable.InternFile(file);
@@ -3725,6 +3741,25 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     // derived from these; these are the truth.
     private readonly HashSet<(string File, int Line)> _requestedBreakpoints = new();
 
+    // ADR-035 D5 — the condition each requested breakpoint carries, keyed like the request.
+    // Absent = unconditional (the ordinary case pays one failed lookup per hit, nothing more).
+    private readonly Dictionary<(string File, int Line), string> _breakpointConditions = new();
+
+    /// <summary>ADR-035 D5 — the condition of the breakpoint armed at this address, or null
+    /// when the breakpoint is unconditional (or the stop is not a breakpoint's). Looked up
+    /// through the same site→request map a hit is reported through, so the condition follows
+    /// the breakpoint wherever its line actually bound.</summary>
+    internal string? BreakpointConditionAt(int pc)
+    {
+        int siteId = SiteAt(pc);
+        if (siteId >= 0 && _breakpointRequests.TryGetValue(siteId, out var request)
+            && _breakpointConditions.TryGetValue(
+                (Shumway.Core.DebugSiteTable.FileName(request.FileId), request.Line),
+                out string? condition))
+            return condition;
+        return null;
+    }
+
     /// <summary>ADR-035 D4 — binds the breakpoints that had nowhere to bind. Called when new
     /// code arrives (a consult), which is the moment a breakpoint set on a file that had not
     /// been loaded yet finally has something to attach to.
@@ -3746,8 +3781,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
         // A copy: AddBreakpoint writes to the set (idempotently — it is a set), and
         // enumerating a collection one is adding to is not allowed even when nothing changes.
+        // The rebind re-asks for the breakpoint AS THE USER SET IT — condition included; the
+        // 2-arg overload would silently strip it.
         foreach ((string file, int line) in _requestedBreakpoints.ToArray())
-            AddBreakpoint(file, line);
+            AddBreakpoint(file, line,
+                _breakpointConditions.TryGetValue((file, line), out string? c) ? c : null);
     }
 
     /// <summary>ADR-035 — the breakpoint (as the user asked for it) armed at this
@@ -3823,6 +3861,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         lock (_debugArmGate)   // vs query setup: see AddBreakpoint
         {
             _requestedBreakpoints.Remove((file, line));
+            _breakpointConditions.Remove((file, line));
             int fileId = Shumway.Core.DebugSiteTable.InternFile(file);
             int target = SnapToCompiledLine(fileId, line);
             if (target < 0) target = line;
@@ -3859,6 +3898,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         lock (_debugArmGate)   // vs query setup: see AddBreakpoint
         {
             _requestedBreakpoints.Clear();
+            _breakpointConditions.Clear();
             _breakpointSites.Clear();
             _breakpointRequests.Clear();
             RefreshBreakpoints();

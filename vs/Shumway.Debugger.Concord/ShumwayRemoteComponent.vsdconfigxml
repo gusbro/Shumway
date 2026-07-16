@@ -57,6 +57,19 @@
           <Interface Name="IDkmRuntimeStepper"/>
         </InterfaceGroup>
 
+        <!-- D5: conditional breakpoints. The condition the user types on a .pl breakpoint
+             is a Prolog goal; VS wraps it in a DkmEvaluationBreakpointCondition whose
+             language is the breakpoint's (ours) and routes it here. ParseCondition is the
+             moment we LEARN the text (recorded + forwarded to the engine through the
+             channel; the ENGINE evaluates it at the Break, before notifying anyone);
+             EvaluateCondition answers from the pinned snapshot — never a func-eval. -->
+        <InterfaceGroup>
+          <Filter>
+            <LanguageId RequiredValue="9d7f8a51-0699-4828-99ba-047821c60783"/>
+          </Filter>
+          <Interface Name="IDkmLanguageConditionEvaluator"/>
+        </InterfaceGroup>
+
       </Implements>
     </Class>
 
