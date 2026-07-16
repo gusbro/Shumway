@@ -146,7 +146,24 @@ public sealed class DebugService : IDebugSession
     {
         _mode = mode;
         _stepDepth = _lastStopDepth;
+        _stepFromRedo = _lastStopWasRedo;
     }
+
+    /// <summary>Whether the stop this step is being taken FROM was a redo port. It changes
+    /// Step Out by one: a redo port reports the retried goal's CALL depth (a retried clause
+    /// does not deepen the environment chain — see <see cref="IDebugSession.OnRedo"/>), which
+    /// is one shallower than the goal's body. So the goal's continuation — the next sibling,
+    /// where "out of this goal" lands — sits at the SAME depth as the redo, not below it. Step
+    /// Out from a redo therefore stops at <c>depth &lt;= _stepDepth</c>, where a call/breakpoint
+    /// stop (whose depth IS the goal's own) uses the strict <c>depth &lt; _stepDepth</c>. Without
+    /// this, stepping out of a goal shown at a redo port skips its whole continuation and runs
+    /// on out of the ENCLOSING clause — "runs the whole program" from inside a backtracking
+    /// predicate.</summary>
+    private bool _stepFromRedo;
+
+    /// <summary>Whether the last reported stop was a redo port. Read by <see cref="Resume"/>
+    /// into <see cref="_stepFromRedo"/>.</summary>
+    private bool _lastStopWasRedo;
 
     // ----- stop at the entry point (--debug-wait) -----
 
@@ -222,6 +239,7 @@ public sealed class DebugService : IDebugSession
     {
         _mode = StepMode.Continue;   // a handler that says nothing lets it run on
         _lastStopDepth = depth;
+        _lastStopWasRedo = false;
     }
 
     // ----- the Immediate window: evaluate a goal against the live engine -----
@@ -622,6 +640,7 @@ public sealed class DebugService : IDebugSession
 
         _mode = StepMode.Continue;
         _lastStopDepth = depth;
+        _lastStopWasRedo = true;   // a step taken from here is measured against the CALL depth
         var site = SiteOf(pc);
         _onStop(this, new DebugStopEvent(
             StopReason.Redo,
@@ -747,8 +766,10 @@ public sealed class DebugService : IDebugSession
             // next goal, the caller's next goal (depth < ours) is where the program goes.
             StepMode.Over => landing && depth <= _stepDepth,
             // Out: out of the goal we were on entirely — the next goal of an enclosing
-            // clause, wherever the unwind lands.
-            StepMode.Out => landing && depth < _stepDepth,
+            // clause, wherever the unwind lands. From a REDO port the base depth is the
+            // retried goal's CALL depth (one shallower than its body), so its continuation
+            // sits at that same depth — <= rather than < — see _stepFromRedo.
+            StepMode.Out => landing && (_stepFromRedo ? depth <= _stepDepth : depth < _stepDepth),
             _ => false,
         };
         if (!stop) return;
@@ -768,6 +789,7 @@ public sealed class DebugService : IDebugSession
     {
         _mode = StepMode.Continue;   // a handler that says nothing lets it run on
         _lastStopDepth = depth;
+        _lastStopWasRedo = false;    // call / breakpoint / fail: depth IS the goal's own
         Current = engine;
 
         var frames = WithEvalBoundary(engine, _engine.CaptureFrames(engine));
