@@ -259,6 +259,10 @@ public static class MetaTransform
                 collectLoop,
                 (Term)new CompoundTerm("$findall_collect", new[] { fa.Args[2] }),
             }) { Position = goal.Position };
+            // ADR-035 — name the collect-loop's $disj helper for the meta-predicate
+            // it stands for, so the debugger shows/stops on it as findall/3 (a real
+            // user goal) rather than a transparent user ';'.
+            _nextHelperKind = "findall";
             return TransformGoal(rewritten, ref counter, helpers);
         }
 
@@ -273,6 +277,8 @@ public static class MetaTransform
         {
             Term rewritten = RewriteBagof(
                 bs.Functor, bs.Args[0], bs.Args[1], bs.Args[2], ref counter);
+            // ADR-035 — the inner collect-loop ';' is bagof/setof, not a user ';'.
+            _nextHelperKind = bs.Functor;
             return TransformGoal(rewritten, ref counter, helpers);
         }
 
@@ -296,6 +302,9 @@ public static class MetaTransform
             {
                 Position = goal.Position,
             };
+            // ADR-035 — the outer '\+' IS the forall/2 goal (its inner '\+ Action'
+            // stays a plain $neg). Name it so the debugger shows/stops on forall/2.
+            _nextHelperKind = "forall";
             return TransformGoal(rewritten, ref counter, helpers);
         }
 
@@ -372,7 +381,12 @@ public static class MetaTransform
             // Parts are plain by eligibility, so there is nothing to transform
             // inside them.
             if (InlineIteEnabled && Shumway.Compiler.InlineIte.IsEligible(disj))
+            {
+                // Inlined, so no helper is synthesised here — drop any pending
+                // aggregation kind rather than leak it onto a later ;/\+ (ADR-035).
+                _nextHelperKind = null;
                 return disj;
+            }
 
             // Otherwise: a two-clause helper that the standard try_me_else /
             // trust_me dispatch then handles.
@@ -421,8 +435,37 @@ public static class MetaTransform
         set => _helperPrefix = value;
     }
 
+    /// <summary>ADR-035 (Camino B) — the meta-predicate a synthesised
+    /// disjunction / negation helper actually STANDS FOR. findall/bagof/setof
+    /// lower to a <c>;</c> collect loop and forall to a <c>\+</c>, all of which
+    /// otherwise become an indistinguishable <c>$disj_N</c> / <c>$neg_N</c> —
+    /// the same helpers a user-written <c>;</c> / <c>\+</c> produces. For the
+    /// debugger those user constructs are TRANSPARENT control flow, but a
+    /// findall IS a goal the user wrote and must stop / show as <c>findall/3</c>.
+    /// So the rewrite sets this to the meta-predicate's kind right before it
+    /// TransformGoal's the construct, and <see cref="HelperName"/> stamps it onto
+    /// the OUTERMOST synthesised helper (the first one built — its HelperName runs
+    /// before the recursion into the goal), then clears it so nested user
+    /// constructs keep their plain <c>disj</c>/<c>neg</c> kind. Debug-recognised
+    /// via <see cref="PrologEngine.DebugConstructName"/>; codegen-neutral bar the
+    /// helper's atom name (pre-release, no format concern).</summary>
+    [ThreadStatic] private static string? _nextHelperKind;
+    public static string? NextHelperKind
+    {
+        get => _nextHelperKind;
+        set => _nextHelperKind = value;
+    }
+
     private static string HelperName(string kind, ref int counter)
     {
+        // The aggregation rewrites tag only their OUTER ;/\+ — consumed once, so
+        // the disjunction/negation helper that carries the meta-predicate's line
+        // is named for it, and everything synthesised afterwards is plain again.
+        if ((kind == "disj" || kind == "neg") && _nextHelperKind is { } k)
+        {
+            _nextHelperKind = null;
+            kind = k;
+        }
         int id = _helperIdProvider is { } p ? p() : ++counter;
         return $"{_helperPrefix}${kind}_{id}";
     }

@@ -596,9 +596,11 @@ public sealed class DebugService : IDebugSession
         // A dictionary probe, and no port for an address that names no predicate.
         if (_engine.LookupPredicateByAddress(address) is null) return;
         // Nor for one the user cannot see into: the prelude, the libraries, and the top
-        // level's own wrapper goals are `:- disable_debug`. See IsDebuggableAddress —
-        // stepping must stay in the program the user wrote.
-        if (!_engine.IsDebuggableAddress(address)) return;
+        // level's own wrapper goals are `:- disable_debug` — and a ,/;/-> control construct
+        // is flow, not a goal. This is the CALLEE question (does a call HERE stop?), so it
+        // uses IsDebuggableCallee, which refuses transparent control; stepping passes
+        // straight through a $disj_N / $call_* helper to the real goal it dispatches.
+        if (!_engine.IsDebuggableCallee(address)) return;
         _goalKind = GoalKind.Address;
         _goalId = address;
         OnCall(engine);
@@ -774,9 +776,12 @@ public sealed class DebugService : IDebugSession
         // there is no bytecode clause to point at, so the goal we are in stands.
         int pc = retryPc >= 0 ? _engine.RetryClauseSite(retryPc) : engine.P;
 
-        // Retrying a clause of the prelude's, or a library's: not the user's program, and not
-        // theirs to be stopped in. (Same rule as the exit port — see MaybeStopAtPort.)
-        if (!_engine.IsDebuggableAddress(pc)) return;
+        // Retrying a clause of the prelude's or a library's — not the user's program — or of a
+        // TRANSPARENT control construct: backtracking into a ;/-> to try its other branch is
+        // flow, not a goal (the branch goals' own redos are what the user sees). This is the
+        // "should a redo OF this predicate stop?" question, so it uses the callee check, which
+        // refuses both. (Same spirit as the exit port — see MaybeStopAtPort.)
+        if (!_engine.IsDebuggableCallee(pc)) return;
 
         var pred = _engine.PredicateContaining(pc);
 
@@ -784,9 +789,17 @@ public sealed class DebugService : IDebugSession
         _lastStopDepth = depth;
         _lastStopWasRedo = true;   // a step taken from here is measured against the CALL depth
         var site = SiteOf(pc);
+        // Name a surviving meta-construct helper for what the user wrote ($findall_N → findall/3,
+        // $catchgoal_N → catch/3), as the frame walk does — never the raw lowered helper.
+        string redoGoal = CurrentGoal();
+        if (pred is { } p)
+        {
+            var (cn, ca) = PrologEngine.DebugConstructName(p.Name, p.Arity);
+            redoGoal = $"{cn}/{ca}";
+        }
         _onStop(this, new DebugStopEvent(
             StopReason.Redo,
-            pred is null ? CurrentGoal() : $"{pred.Value.Name}/{pred.Value.Arity}",
+            redoGoal,
             site.File, site.Line, depth,
             WithEvalBoundary(engine, _engine.CaptureFrames(engine, pc, e, cp))));
     }

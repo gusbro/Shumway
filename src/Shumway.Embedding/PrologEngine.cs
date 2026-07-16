@@ -2788,6 +2788,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         if (demangled.StartsWith("$neg_", StringComparison.Ordinal)) return ("\\+", 1);
         if (demangled.StartsWith("$once_", StringComparison.Ordinal)) return ("once", 1);
         if (demangled.StartsWith("$ign_", StringComparison.Ordinal)) return ("ignore", 1);
+        // ADR-035 (Camino B) — the all-solutions meta-predicates lower to a $disj /
+        // $neg collect loop tagged with their own kind (MetaTransform.NextHelperKind),
+        // so they show and stop as the goal the user actually wrote, not a transparent
+        // ';'. A genuine user ';'/'->' stays a $disj_N and is rendered transparent.
+        if (demangled.StartsWith("$findall_", StringComparison.Ordinal)) return ("findall", 3);
+        if (demangled.StartsWith("$bagof_", StringComparison.Ordinal)) return ("bagof", 3);
+        if (demangled.StartsWith("$setof_", StringComparison.Ordinal)) return ("setof", 3);
+        if (demangled.StartsWith("$forall_", StringComparison.Ordinal)) return ("forall", 2);
         if (demangled.StartsWith("$disj_", StringComparison.Ordinal)) return (";", 2);
         return (demangled, arity);
     }
@@ -3227,7 +3235,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         bool ownsHost = EngineOwnsHostBuffer(engine);
 
         // --- SAME transform pipeline as the setup static branch --------
-        var unfolded = MetaWrapperUnfold.Apply(newStaticClauses);
+        // ADR-035 — keep the wrapper a real predicate for a debuggable module
+        // (see the setup branch: the unfold would erase its stop sites and
+        // scatter anonymous control frames over the caller).
+        bool opaqueModule = _nonDebuggableModules.Contains(moduleName);
+        var unfolded = (_flags.DebugCodegen && !opaqueModule)
+            ? newStaticClauses
+            : MetaWrapperUnfold.Apply(newStaticClauses);
         var transformed = ClausePipeline.Apply(
             unfolded, Modes, inlineIte: EnableInlineIte,
             helperIdProvider: NextMetaHelperId);
@@ -4375,6 +4389,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     {
         int i = IndexOfPredicateAt(pc);
         if (i < 0) return false;
+        // ADR-035 fully-transparent control: a ,/;/-> construct (or its lowered
+        // $disj_N / $call_* plumbing) is flow, not a goal — it takes NO frame in
+        // the call stack. Skip it but keep walking; the caller advances envIndex
+        // regardless, so the next real frame still pairs with its own environment.
+        if (IsTransparentControlFunctor(
+                _currentPredicatesByAddress![SortedPredicateEntries()[i]].FunctorId))
+            return false;
         sites.Add((pc, env));
         return IsQueryEntry(i);
     }
@@ -6749,18 +6770,69 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// through. Stepping has to stay in THEIR program, which means a port in code that is
     /// not theirs must not stop it.</para></summary>
     internal bool IsDebuggableAddress(int address)
+        => FunctorAtAddress(address) is int fid && !_nonDebuggableFunctors.Contains(fid);
+
+    /// <summary>ADR-035 — the functor whose compiled code contains <paramref name="address"/>,
+    /// or null if the address names none. Shared by the CONTAINER check
+    /// (<see cref="IsDebuggableAddress"/> — "is the code I am standing in the user's?") and the
+    /// CALLEE check (<see cref="IsDebuggableCallee"/> — "should a call to here stop?").</summary>
+    private int? FunctorAtAddress(int address)
     {
-        if (_currentPredicatesByAddress is null || address < 0) return false;
+        if (_currentPredicatesByAddress is null || address < 0) return null;
         var entries = SortedPredicateEntries();
         int i = Array.BinarySearch(entries, address);
         if (i < 0) i = ~i - 1;
-        if (i < 0) return false;
-        return !_nonDebuggableFunctors.Contains(
-            _currentPredicatesByAddress[entries[i]].FunctorId);
+        if (i < 0) return null;
+        return _currentPredicatesByAddress[entries[i]].FunctorId;
     }
 
+    /// <summary>ADR-035 — should a CALL landing at <paramref name="address"/> stop? Unlike
+    /// <see cref="IsDebuggableAddress"/> (the CONTAINER question) this also refuses a
+    /// TRANSPARENT control construct: calling a <c>$disj_N</c> / <c>$call_*</c> helper is
+    /// flow, not a goal, so the step passes straight through it to the real callee. The
+    /// distinction matters because a <c>$disj_N</c> region CONTAINS user goals — it is a valid
+    /// place to be standing (a user goal in a disjunction branch), just not a valid thing to
+    /// stop ON when it is the callee.</summary>
+    internal bool IsDebuggableCallee(int address)
+        => FunctorAtAddress(address) is int fid && IsDebuggableFunctor(fid);
+
     internal bool IsDebuggableFunctor(int functorId)
-        => !_nonDebuggableFunctors.Contains(functorId);
+        => !_nonDebuggableFunctors.Contains(functorId)
+           && !IsTransparentControlFunctor(functorId);
+
+    /// <summary>ADR-035 — is this functor a pure CONTROL CONSTRUCT (or its lowered
+    /// plumbing), which the debugger renders TRANSPARENTLY: no stop port and no
+    /// call-stack frame? A standard Prolog tracer (SWI, GProlog) never surfaces
+    /// <c>,</c> / <c>;</c> / <c>-&gt;</c> / <c>*-&gt;</c> as goals — they are flow,
+    /// not calls — so stepping goes straight from a clause to the real user goals.
+    /// The <em>meta</em>-predicates the user invoked by name (<c>catch/3</c>,
+    /// <c>once/1</c>, <c>ignore/1</c>, <c>\+</c>) are NOT control constructs: they
+    /// stay visible (see <see cref="DebugConstructName"/>).
+    ///
+    /// <para>What is transparent: the bare operators (never normally reached as a
+    /// predicate, but harmless to list); the synthesised disjunction / if-then-else
+    /// helper (<c>$disj_N</c>, covering both <c>(A;B)</c> and <c>(C-&gt;T;E)</c>);
+    /// and the prelude runtime meta-dispatch helpers that re-enter call dispatch
+    /// for a variable goal (<c>$call</c>, <c>$call_conj</c>, <c>$call_disj</c>,
+    /// <c>$call_arrow</c>). <c>$call_neg</c> is deliberately left visible — it is
+    /// the runtime form of <c>\+</c>, a meta-goal.</para></summary>
+    internal bool IsTransparentControlFunctor(int functorId)
+    {
+        var (atomId, arity) = FunctorTable.Lookup(functorId);
+        var name = AtomTable.GetById(atomId)?.Name;
+        return name is not null && IsTransparentControlName(DemangleLocalName(name), arity);
+    }
+
+    private static bool IsTransparentControlName(string demangled, int arity)
+    {
+        switch (demangled)
+        {
+            case "," or ";" or "->" or "*->" when arity == 2:
+            case "$call" or "$call_conj" or "$call_disj" or "$call_arrow":
+                return true;
+        }
+        return demangled.StartsWith("$disj_", StringComparison.Ordinal);
+    }
 
     /// <summary>ADR-035 — is <paramref name="pc"/> inside the synthetic <c>__query__</c>
     /// wrapper the engine puts a top-level goal in? The wrapper is compiled user query code,
@@ -9954,6 +10026,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             moduleLocalsCache = new Dictionary<string, HashSet<int>>();
             foreach (var (name, manifest) in _modules)
             {
+                // ADR-035 — the meta-wrapper unfold (below) erases the call to a
+                // user control wrapper (ifthenelse/3, ifthen/2), inlining its body as
+                // raw ->/;/\+ at the CALLER's position. Under a debug session that is
+                // doubly wrong: the wrapper's own clauses take no stop site (nothing
+                // ever calls them), so a breakpoint in ifthenelse/3 never binds; and
+                // the caller sprouts anonymous control-construct frames (";/2", ",")
+                // at its own line instead of a clean step-into. So for a DEBUGGABLE
+                // module we keep the wrapper as a real predicate. Opaque modules
+                // (prelude, :- disable_debug) run without stop sites anyway, so they
+                // still get the optimization.
+                bool opaqueModule = _nonDebuggableModules.Contains(name);
                 // Chunk 407 — module-local meta-wrapper unfold (ifthen/2-style user
                 // control wrappers called with statically-known goals become inline
                 // if-then-else, eliminating the goal-term build + wrapper frame +
@@ -9961,7 +10044,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 // lowers the inserted control constructs. manifest.Clauses is the
                 // STATIC clause set (dynamic-head clauses were routed to
                 // _dynamicClauses), so a detected wrapper is immutable by invariant.
-                var unfolded = MetaWrapperUnfold.Apply(manifest.Clauses);
+                var unfolded = (_flags.DebugCodegen && !opaqueModule)
+                    ? manifest.Clauses
+                    : MetaWrapperUnfold.Apply(manifest.Clauses);
                 var transformed = ClausePipeline.Apply(unfolded, modeTable, inlineIte: EnableInlineIte, helperIdProvider: NextMetaHelperId);
 
                 var locals = ComputeLocalFunctors(transformed, manifest.PublicFunctors);
@@ -9983,7 +10068,6 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 // stop sites at the library's line numbers and attribute them to the
                 // user's file. Compiling a module is what makes its predicates; if the
                 // module is not debuggable, neither is anything it made.
-                bool opaqueModule = _nonDebuggableModules.Contains(name);
                 foreach (var clause in transformed)
                 {
                     var rewritten = ModuleRewrite.Rewrite(clause, ctx);
