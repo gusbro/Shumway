@@ -633,8 +633,14 @@ namespace Shumway.Debugger.Concord
                         process.Connection, null);
 
                     stage = 4;
+                    // The name here is what the Call Stack "Module" column shows. Use the base
+                    // name WITHOUT the .pl extension (and without a doubled ".pl" from an embedded
+                    // "<module>.pl.pl" materialisation), so a frame reads "Blint!blint(...)", the
+                    // module named ONCE — not "Blint.pl!Blint:blint(...)" with the file and the
+                    // qualifier both spelling it out. Navigation is unaffected: it matches on the
+                    // DkmModule's name (the full path), not this display name.
                     var moduleInstance = DkmCustomModuleInstance.Create(
-                        System.IO.Path.GetFileName(path), path,
+                        ModuleDisplayName(path), path,
                         0, runtime, null, null,
                         DkmModuleFlags.None, DkmModuleMemoryLayout.Unknown,
                         0, 0, 0, "Shumway Prolog", false, null, null, null);
@@ -655,6 +661,20 @@ namespace Shumway.Debugger.Concord
                 // real stop picks them up.
                 state.LastError = "modules@" + stage + ": " + ex.GetType().Name + ": " + ex.Message;
             }
+        }
+
+        /// <summary>The module's Call-Stack display name: its base name with the <c>.pl</c>
+        /// extension removed (and any that remain from an embedded <c>&lt;module&gt;.pl.pl</c>
+        /// materialisation). Mirrors <c>ShumwayCallStackFilter</c>'s module derivation so the
+        /// column and the frame agree.</summary>
+        private static string ModuleDisplayName(string path)
+        {
+            string name;
+            try { name = System.IO.Path.GetFileNameWithoutExtension(path); }
+            catch (Exception) { name = path; }
+            while (name.EndsWith(".pl", StringComparison.OrdinalIgnoreCase))
+                name = name.Substring(0, name.Length - 3);
+            return name.Length > 0 ? name : System.IO.Path.GetFileName(path);
         }
 
         // ---- the channel ----

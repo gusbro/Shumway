@@ -294,34 +294,22 @@ namespace Shumway.Debugger.Concord
         }
 
         /// <summary>What the Call Stack window prints for one Prolog frame:
-        /// <c>module:pred(Arg1, ..., ArgN)!clause</c> — the module is the file's base name,
-        /// the arguments carry their CURRENT values (they instantiate as the clause runs),
-        /// and <c>!clause</c> says which clause of the predicate is being evaluated, 1-based.
-        /// A frame with no head skeleton (not compiled debuggable) falls back to
-        /// <c>pred/arity</c>; the query (arity -1, <c>?- goal</c>) and the omitted-frames
-        /// sentence are not calls and show as themselves.</summary>
+        /// <c>pred(Arg1, ..., ArgN)!clause</c> — the arguments carry their CURRENT values (they
+        /// instantiate as the clause runs), and <c>!clause</c> says which clause of the predicate
+        /// is being evaluated, 1-based. A frame with no head skeleton (not compiled debuggable)
+        /// falls back to <c>pred/arity</c>; the query (arity -1, <c>?- goal</c>) and the
+        /// omitted-frames sentence are not calls and show as themselves.
+        ///
+        /// <para>The module is NOT repeated here: Visual Studio already prints it in the Call
+        /// Stack's "Module" column (the module instance's display name — see
+        /// <c>ShumwayRemoteComponent.ModuleDisplayName</c>), so a <c>module:</c> prefix would read
+        /// "Blint!Blint:blint(...)", spelling the module out twice. Just the predicate here, the
+        /// module once in its own column.</para></summary>
         private static string FrameTitle(DebugSnapshotFrame source)
         {
             if (source.Arity < 0) return source.Name;
 
-            string module = "";
-            string file = source.File ?? "";
-            if (file.Length > 0 && file[0] != '<')
-            {
-                try { module = System.IO.Path.GetFileNameWithoutExtension(file); }
-                catch (Exception) { module = ""; }
-
-                // An embedded bundle materialises its source as "<module>.pl", and if the module
-                // name it was compiled with already ended in ".pl" the file is "<module>.pl.pl"
-                // — one strip leaves a trailing ".pl" on the module. Strip any that remain so the
-                // Call Stack reads "blint:", matching the REPL, not "blint.pl:". Display only;
-                // breakpoint binding uses source.File, not this.
-                while (module.EndsWith(".pl", StringComparison.OrdinalIgnoreCase))
-                    module = module.Substring(0, module.Length - 3);
-            }
-
             var title = new StringBuilder();
-            if (module.Length > 0) title.Append(module).Append(':');
             title.Append(source.Name);
             if (source.HeadArgs.Length > 0) title.Append(source.HeadArgs);
             else if (source.Arity > 0) title.Append('/').Append(source.Arity);
