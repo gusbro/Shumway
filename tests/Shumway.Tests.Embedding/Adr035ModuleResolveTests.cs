@@ -114,6 +114,95 @@ public class Adr035ModuleResolveTests
     }
 
     [Fact]
+    public void AtTheEntryBreak_StoppedInPublicMain_ResolvesTheModulesLocals()
+    {
+        // The user's exact scenario: attach, the entry break stops at `main` (public), and a bare
+        // `show_usage` typed in the Immediate window must resolve — before any F11 steps into a
+        // local predicate.
+        var src =
+            ":- module(blint).\n:- public(main/0).\nmain :- helper.\n"
+            + "helper :- true.\nshow_usage :- true.\n";
+        var engine = new PrologEngine();
+        engine.ConsultString(":- set_prolog_flag(compile_mode, debug).\n" + src);
+        engine.QueryAll("set_prolog_flag(debug_lco, off).").ToList();
+
+        string result = "";
+        var svc = new DebugService(engine, (_, _) => { });
+        svc.EntryBreak = _ => { result = svc.EvaluateGoal(0, "show_usage"); };
+        engine.AttachDebugSession(svc);
+        svc.ArmEntryBreak();
+        engine.QueryAll("main.").ToList();
+        engine.AttachDebugSession(null);
+
+        _log.WriteLine("entry eval: " + result);
+        Assert.Equal("true", result);
+    }
+
+    [Fact]
+    public void AtTheEntryBreak_OnTheBundleLoadPath_ResolvesTheModulesLocals()
+    {
+        // The real --exe path: a Debuggable bundle whose module is "Blint" (the file base name,
+        // no `:- module` directive), a PUBLIC main, and a local show_usage. Stopped at the entry
+        // break in main, a bare `show_usage` must resolve.
+        var engine = new PrologEngine();
+        engine.Flags.EmitDebugInfo = true;
+        engine.Flags.DebugCodegen = true;
+        engine.LoadBundle(new Bundle(new[]
+        {
+            new BundleEntry("Blint",
+                ":- public main/0.\n" +
+                "main :- helper.\n" +
+                "helper :- true.\n" +
+                "show_usage :- true.\n"),
+        }));
+        engine.QueryAll("set_prolog_flag(debug_lco, off).").ToList();
+
+        string result = "";
+        var svc = new DebugService(engine, (_, _) => { });
+        svc.EntryBreak = _ => { result = svc.EvaluateGoal(0, "show_usage"); };
+        engine.AttachDebugSession(svc);
+        svc.ArmEntryBreak();
+        engine.QueryAll("main.").ToList();
+        engine.AttachDebugSession(null);
+
+        _log.WriteLine("bundle entry eval: " + result);
+        Assert.Equal("true", result);
+    }
+
+    [Fact]
+    public void MultiModule_EntryBreakInPublicMain_ResolvesViaTheUniqueDefiningModule()
+    {
+        // TWO modules, so neither the frame's own prefix (public main), nor the source file
+        // (ConsultString is "<string>"), nor the single-module shortcut applies — the module can
+        // NOT be pinned. `show_usage` is defined in exactly ONE module, so it still resolves; a
+        // name defined in neither stays undefined.
+        var engine = new PrologEngine();
+        engine.ConsultString(
+            ":- set_prolog_flag(compile_mode, debug).\n:- module(other).\n:- public(o/0).\n"
+            + "o :- true.\nsecondary :- true.\n");
+        engine.ConsultString(
+            ":- module(blint).\n:- public(main/0).\nmain :- helper.\n"
+            + "helper :- true.\nshow_usage :- true.\n");
+        engine.QueryAll("set_prolog_flag(debug_lco, off).").ToList();
+
+        string usage = "", missing = "";
+        var svc = new DebugService(engine, (_, _) => { });
+        svc.EntryBreak = _ =>
+        {
+            usage = svc.EvaluateGoal(0, "show_usage");     // unique to blint
+            missing = svc.EvaluateGoal(0, "not_anywhere"); // in no module
+        };
+        engine.AttachDebugSession(svc);
+        svc.ArmEntryBreak();
+        engine.QueryAll("main.").ToList();
+        engine.AttachDebugSession(null);
+
+        _log.WriteLine($"usage={usage} missing={missing}");
+        Assert.Equal("true", usage);
+        Assert.Contains("existence_error", missing);
+    }
+
+    [Fact]
     public void AGenuinelyUndefinedPredicate_StillErrors()
     {
         var engine = DebugEngine();

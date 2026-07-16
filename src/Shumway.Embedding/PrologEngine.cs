@@ -4848,7 +4848,6 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
     private Term MangleModuleLeaf(Term g, string? mod)
     {
-        if (mod is null) return g;
         string name;
         int arity;
         switch (g)
@@ -4858,9 +4857,36 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             default: return g;
         }
         if (name.Length == 0 || name[0] == '$') return g;   // already mangled / a helper
-        string mangled = mod + "$" + name;
-        if (!HasDefinedPredicate(mangled, arity)) return g;  // no such local — leave it global
-        return g is AtomTerm ? new AtomTerm(mangled) : new CompoundTerm(mangled, ((CompoundTerm)g).Args);
+
+        // The frame's module, when it is known: a local shadows a global of the same name, so
+        // this is the precise answer. Not found there → the name is a global / public predicate
+        // or a builtin, left as written.
+        if (mod is not null)
+            return HasDefinedPredicate(mod + "$" + name, arity) ? Remangle(g, mod + "$" + name) : g;
+
+        // The frame's module could NOT be determined (a public predicate or a lowered helper in a
+        // multi-module program, whose file did not name a module either). Fall back to the module
+        // that UNIQUELY defines this name: it is the only module the call could mean. Ambiguous
+        // (two modules define it) or absent → leave it global.
+        string? unique = UniqueModuleDefining(name, arity);
+        return unique is not null ? Remangle(g, unique + "$" + name) : g;
+    }
+
+    private static Term Remangle(Term g, string mangled)
+        => g is AtomTerm ? new AtomTerm(mangled) : new CompoundTerm(mangled, ((CompoundTerm)g).Args);
+
+    /// <summary>The one module whose <c>module$name/arity</c> is defined, or null when none is or
+    /// more than one is (ambiguous — not ours to guess).</summary>
+    private string? UniqueModuleDefining(string name, int arity)
+    {
+        string? found = null;
+        foreach (var m in DefinedModulePrefixes())
+            if (HasDefinedPredicate(m + "$" + name, arity))
+            {
+                if (found is not null) return null;
+                found = m;
+            }
+        return found;
     }
 
     private string ResolveTypedModule(string typed, string? frameModule)
