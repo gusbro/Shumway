@@ -4006,23 +4006,18 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         var bag = new DebugValueBag(this, engine);
 
         var frames = new List<DebugFrame>();
-        if (sites.Count <= MaxFrames)
+        var plan = BuildFramePlan(sites);
+        for (int k = 0; k < plan.Shown.Length; k++)
         {
-            foreach (var (framePc, frameEnv) in sites)
-                AddFrame(engine, frames, framePc, frameEnv, bag);
-            return frames;
+            if (plan.OmittedCount > 0 && k == plan.OmitAfter)
+                frames.Add(new DebugFrame(
+                    plan.OmittedCount == 1
+                        ? "... 1 frame omitted ..."
+                        : $"... {plan.OmittedCount:N0} frames omitted ...",
+                    OmittedFramesArity, "", 0, -1, Array.Empty<(string, string)>()));
+            int idx = plan.Shown[k];
+            AddFrame(engine, frames, sites[idx].Pc, sites[idx].Env, bag);
         }
-
-        for (int i = 0; i < HeadFrames; i++)
-            AddFrame(engine, frames, sites[i].Pc, sites[i].Env, bag);
-
-        int omitted = sites.Count - HeadFrames - TailFrames;
-        frames.Add(new DebugFrame(
-            omitted == 1 ? "... 1 frame omitted ..." : $"... {omitted:N0} frames omitted ...",
-            OmittedFramesArity, "", 0, -1, Array.Empty<(string, string)>()));
-
-        for (int i = sites.Count - TailFrames; i < sites.Count; i++)
-            AddFrame(engine, frames, sites[i].Pc, sites[i].Env, bag);
         return frames;
     }
 
@@ -4040,21 +4035,22 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         var sites = new List<(int Pc, int Env)>();
         CollectFrameSites(engine, sites, engine.P, engine.E, engine.Cp);
 
-        if (sites.Count <= MaxFrames)
+        var plan = BuildFramePlan(sites);
+        if (plan.OmittedCount <= 0)
         {
-            if (displayIndex >= sites.Count) return false;
-            (pc, env) = sites[displayIndex];
+            if (displayIndex >= plan.Shown.Length) return false;
+            (pc, env) = sites[plan.Shown[displayIndex]];
             return true;
         }
-        if (displayIndex < HeadFrames)
+        if (displayIndex < plan.OmitAfter)
         {
-            (pc, env) = sites[displayIndex];
+            (pc, env) = sites[plan.Shown[displayIndex]];
             return true;
         }
-        if (displayIndex == HeadFrames) return false;   // "... N frames omitted ..."
-        int tail = displayIndex - HeadFrames - 1;
-        if (tail >= TailFrames) return false;
-        (pc, env) = sites[sites.Count - TailFrames + tail];
+        if (displayIndex == plan.OmitAfter) return false;   // "... N frames omitted ..."
+        int si = displayIndex - 1;                          // past the sentence
+        if (si >= plan.Shown.Length) return false;
+        (pc, env) = sites[plan.Shown[si]];
         return true;
     }
 
@@ -4168,10 +4164,137 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private const int HeadFrames = 80;
     private const int TailFrames = 20;
 
+    /// <summary>The longest cycle the recursion detector looks for — a period of predicates
+    /// that repeats down the stack (1 = plain recursion, 2 = mutual, and so on).</summary>
+    private const int MaxCyclePeriod = 8;
+
     /// <summary>The arity of the "... N frames omitted ..." frame — not a predicate, and not
     /// the query either (which is -1). A debugger renders a negative arity as no arity at
     /// all, so it shows as the sentence it is.</summary>
     private const int OmittedFramesArity = -2;
+
+    /// <summary>ADR-035 — which site indices a stop displays, and where the
+    /// "... N frames omitted ..." sentence falls among them. <see cref="Shown"/> lists the
+    /// site indices to render, in display order (innermost first); <see cref="OmitAfter"/> is
+    /// how many of them precede the sentence (-1 when nothing is elided); <see cref="OmittedCount"/>
+    /// is how many sites the sentence stands for.</summary>
+    private readonly record struct FramePlan(int[] Shown, int OmitAfter, int OmittedCount);
+
+    /// <summary>ADR-035 — the display plan for a captured stack: the single place that decides
+    /// which frames to show and which to elide, so <see cref="CaptureFrames(Activation, int, int, int)"/>
+    /// and <see cref="TryGetDisplayFrameContext"/> can never disagree about it.
+    ///
+    /// <para>Under <see cref="MaxFrames"/> every frame shows. Over it the middle is left out —
+    /// but a stack that deep is almost always a RECURSION, the same short cycle of predicates
+    /// repeated hundreds of times, and a blind head/tail cut slices through the middle of a
+    /// cycle at each edge. <see cref="TryBuildCyclePlan"/> keeps the SAME budget — the innermost
+    /// <see cref="HeadFrames"/> and outermost <see cref="TailFrames"/>, so the display never
+    /// shrinks below ~100 frames — but SNAPS each cut to a cycle boundary, so both ends show
+    /// whole cycles: the innermost (where the machine is) and the outermost (where the recursion
+    /// STARTED, together with the non-recursive frames that led into it). A cut may keep a few
+    /// frames more than the budget to reach the boundary; that is deliberate. Seeing the origin
+    /// end whole is what lets a user read where the chain came from and Run-to-cursor onto the
+    /// goal after it. Falls back to a blind head/tail cut when there is no cycle spanning the
+    /// cut region.</para></summary>
+    private static FramePlan BuildFramePlan(IReadOnlyList<(int Pc, int Env)> sites)
+    {
+        int n = sites.Count;
+        if (n <= MaxFrames)
+        {
+            var all = new int[n];
+            for (int i = 0; i < n; i++) all[i] = i;
+            return new FramePlan(all, -1, 0);
+        }
+
+        if (TryBuildCyclePlan(sites, out var cyclePlan)) return cyclePlan;
+
+        // Fallback: innermost HeadFrames + the sentence + outermost TailFrames.
+        var shown = new int[HeadFrames + TailFrames];
+        for (int i = 0; i < HeadFrames; i++) shown[i] = i;
+        for (int i = 0; i < TailFrames; i++) shown[HeadFrames + i] = n - TailFrames + i;
+        return new FramePlan(shown, HeadFrames, n - HeadFrames - TailFrames);
+    }
+
+    /// <summary>Detect the dominant repeating cycle in the stack and build a plan that cuts on
+    /// its boundaries. The signature of a frame is its code position (<c>Pc</c>): the same pc
+    /// is the same clause resumed at the same call site, so a recursion — however its clauses
+    /// are selected — reads as a run of identical pcs (plain recursion, period 1) or a run that
+    /// repeats every P frames (mutual recursion, period P). Returns false when no cycle is long
+    /// enough to elide, or when the frames OUTSIDE the cycle are themselves too many to show.</summary>
+    private static bool TryBuildCyclePlan(
+        IReadOnlyList<(int Pc, int Env)> sites, out FramePlan plan)
+    {
+        plan = default;
+        int n = sites.Count;
+
+        // The longest contiguous block that repeats with a period of at most MaxCyclePeriod.
+        int bestStart = -1, bestPeriod = 0, bestLen = 0;
+        for (int p = 1; p <= MaxCyclePeriod; p++)
+        {
+            int i = 0;
+            while (i < n)
+            {
+                int runStart = i;
+                while (i + p < n && sites[i].Pc == sites[i + p].Pc) i++;
+                if (i > runStart)
+                {
+                    int len = (i - runStart) + p;   // periodic block [runStart, runStart+len)
+                    if (len > bestLen) { bestLen = len; bestStart = runStart; bestPeriod = p; }
+                }
+                i++;
+            }
+        }
+
+        if (bestStart < 0) return false;
+
+        int fullCycles = bestLen / bestPeriod;
+        if (fullCycles < 2) return false;           // not a recursion worth cutting on
+
+        int bandStart = bestStart;
+        int bandEnd = bestStart + fullCycles * bestPeriod;   // exclusive, whole cycles
+
+        // Keep the head/tail BUDGET, but move each cut onto a cycle boundary of the band so the
+        // two ends show whole cycles. The inner cut rounds UP (>= HeadFrames), the outer cut
+        // rounds DOWN (leaves >= TailFrames), so the display stays at least HeadFrames+TailFrames.
+        int innerCut = SnapUpToCycle(HeadFrames, bandStart, bandEnd, bestPeriod);
+        int outerCut = SnapDownToCycle(n - TailFrames, bandStart, bandEnd, bestPeriod);
+
+        int omitted = outerCut - innerCut;
+        if (omitted < bestPeriod) return false;     // the band does not span the cut — head/tail
+
+        // Shown = [0, innerCut) ++ [outerCut, n): the innermost budget (ending on a boundary),
+        // then everything from the outer boundary — the outermost whole cycles AND the
+        // non-recursive frames that started the chain.
+        int shownCount = innerCut + (n - outerCut);
+        var shown = new int[shownCount];
+        int k = 0;
+        for (int i = 0; i < innerCut; i++) shown[k++] = i;
+        for (int i = outerCut; i < n; i++) shown[k++] = i;
+
+        plan = new FramePlan(shown, innerCut, omitted);
+        return true;
+    }
+
+    /// <summary>The smallest cycle boundary at or after <paramref name="x"/> within the band
+    /// [<paramref name="bandStart"/>, <paramref name="bandEnd"/>); <paramref name="x"/> itself
+    /// when it is before the band (nothing to snap), <paramref name="bandEnd"/> when past it.</summary>
+    private static int SnapUpToCycle(int x, int bandStart, int bandEnd, int period)
+    {
+        if (x <= bandStart) return x;
+        if (x >= bandEnd) return bandEnd;
+        int m = (x - bandStart + period - 1) / period;   // ceil
+        return Math.Min(bandStart + m * period, bandEnd);
+    }
+
+    /// <summary>The largest cycle boundary at or before <paramref name="x"/> within the band;
+    /// clamped to the band's ends.</summary>
+    private static int SnapDownToCycle(int x, int bandStart, int bandEnd, int period)
+    {
+        if (x <= bandStart) return bandStart;
+        if (x >= bandEnd) return bandEnd;
+        int m = (x - bandStart) / period;                // floor
+        return bandStart + m * period;
+    }
 
     /// <summary>Pass one: WHERE the frames are — a (pc, environment) pair each — without
     /// building any of them. Same walk, same rules, same stopping condition (the query is the
