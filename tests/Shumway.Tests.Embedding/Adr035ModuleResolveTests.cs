@@ -40,6 +40,10 @@ public class Adr035ModuleResolveTests
 
     /// <summary>Break at line 5 (inside blint$helper), run each goal, collect the results.</summary>
     private List<string> EvalAtBreak(PrologEngine engine, params string[] goals)
+        => EvalAtLine(engine, 5, goals);
+
+    /// <summary>Break at <paramref name="line"/>, run each goal from the innermost frame.</summary>
+    private List<string> EvalAtLine(PrologEngine engine, int line, params string[] goals)
     {
         var results = new List<string>();
         bool done = false;
@@ -50,7 +54,7 @@ public class Adr035ModuleResolveTests
             foreach (var g in goals) results.Add(s.EvaluateGoal(0, g));
         });
         engine.AttachDebugSession(svc);
-        engine.AddBreakpoint("<string>", 5);
+        engine.AddBreakpoint("<string>", line);
         engine.QueryAll("run.").ToList();
         engine.AttachDebugSession(null);
         _log.WriteLine(string.Join(" | ", results));
@@ -63,6 +67,17 @@ public class Adr035ModuleResolveTests
         var engine = DebugEngine();
         // `show_usage` is local to module blint; stopped inside blint$helper, it resolves.
         Assert.Equal(new[] { "true" }, EvalAtBreak(engine, "show_usage"));
+    }
+
+    [Fact]
+    public void StoppedInAPublicPredicate_StillResolvesTheModulesLocals()
+    {
+        // `run/0` (the `:- set_prolog_flag` prepend shifts it to line 4) is PUBLIC — compiled
+        // global, no module prefix of its own. The single-module program still resolves
+        // `show_usage` against blint (the sole user module), as a user stopped anywhere in Blint
+        // expects.
+        var engine = DebugEngine();
+        Assert.Equal(new[] { "true" }, EvalAtLine(engine, 4, "show_usage"));
     }
 
     [Fact]

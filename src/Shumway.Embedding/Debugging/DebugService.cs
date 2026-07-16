@@ -348,7 +348,7 @@ public sealed class DebugService : IDebugSession
         var substituted = new HashSet<string>(StringComparer.Ordinal);
         if (_engine.TryGetDisplayFrameContext(outer, frameIndex, out int pc, out int env))
         {
-            frameModule = _engine.ModulePrefixAt(pc);
+            frameModule = _engine.ModuleForFrame(pc);
             foreach (var (name, value) in _engine.MaterializeFrameVariables(outer, pc, env))
             {
                 if (!names.Contains(name)) continue;

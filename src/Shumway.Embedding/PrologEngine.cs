@@ -4725,6 +4725,58 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return sep > 0 ? mangled.Substring(0, sep) : null;
     }
 
+    /// <summary>ADR-035 — the module to resolve an unqualified Immediate-window goal against,
+    /// for the frame stopped at <paramref name="pc"/>. Three ways, most precise first:
+    /// <list type="number">
+    /// <item>the frame's OWN module, when it is running a module-local predicate
+    /// (<see cref="ModulePrefixAt"/>);</item>
+    /// <item>otherwise the module of the frame's SOURCE FILE — a public predicate is compiled
+    /// global (no prefix) and a control-construct helper (<c>$catchgoal_N</c>) is global too, but
+    /// both were compiled from a module's <c>.pl</c>, whose base name names the module;</item>
+    /// <item>otherwise, when the whole program has exactly ONE user module, that one — the
+    /// common single-file case, where "the module" is unambiguous however the frame is compiled
+    /// (a public predicate, a lowered helper, a builtin frame).</item>
+    /// </list>
+    /// Null when none applies (a multi-module program stopped in code with no module of its own).</summary>
+    internal string? ModuleForFrame(int pc)
+    {
+        string? own = ModulePrefixAt(pc);
+        if (own is not null) return own;
+
+        var prefixes = DefinedModulePrefixes();
+
+        int siteId = SiteAtOrBefore(pc);
+        if (siteId >= 0)
+        {
+            var site = Shumway.Core.DebugSiteTable.Get(siteId);
+            string file = Shumway.Core.DebugSiteTable.FileName(site.FileId);
+            string? fromFile = MatchModuleToFile(prefixes, file);
+            if (fromFile is not null) return fromFile;
+        }
+
+        if (prefixes.Count == 1)
+            foreach (var only in prefixes) return only;
+        return null;
+    }
+
+    /// <summary>The module whose <c>.pl</c> base name matches <paramref name="file"/> (a trailing
+    /// <c>.pl</c> and case forgiven), or null. A synthetic file (<c>&lt;string&gt;</c>) or one
+    /// naming no defined module resolves to nothing.</summary>
+    private static string? MatchModuleToFile(HashSet<string> prefixes, string file)
+    {
+        if (string.IsNullOrEmpty(file) || file[0] == '<') return null;
+        string baseName;
+        try { baseName = System.IO.Path.GetFileNameWithoutExtension(file); }
+        catch { return null; }
+        while (baseName.EndsWith(".pl", StringComparison.OrdinalIgnoreCase))
+            baseName = baseName.Substring(0, baseName.Length - 3);
+        if (baseName.Length == 0) return null;
+        if (prefixes.Contains(baseName)) return baseName;
+        foreach (var p in prefixes)
+            if (string.Equals(p, baseName, StringComparison.OrdinalIgnoreCase)) return p;
+        return null;
+    }
+
     /// <summary>ADR-035 — is <paramref name="mangledName"/>/<paramref name="arity"/> a defined
     /// predicate in the current code space? Decides whether a module-qualified name resolves
     /// before falling back to the plain (global / builtin) name.</summary>
