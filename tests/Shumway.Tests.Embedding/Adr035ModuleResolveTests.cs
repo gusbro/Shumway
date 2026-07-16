@@ -203,6 +203,36 @@ public class Adr035ModuleResolveTests
     }
 
     [Fact]
+    public void TwoModulesDefineTheSameName_ResolvesToTheStoppedFramesModule()
+    {
+        // `tag/1` is local to BOTH alpha and beta, so the unique-module fallback is ambiguous —
+        // the only thing that can pick one is the FRAME's module, taken from the call-stack line's
+        // file (alpha.pl). Stopped in alpha's amain, `tag(R)` must be alpha's.
+        var engine = new PrologEngine();
+        engine.Flags.EmitDebugInfo = true;
+        engine.Flags.DebugCodegen = true;
+        engine.LoadBundle(new Bundle(new[]
+        {
+            new BundleEntry("alpha",
+                ":- public amain/0.\namain :- ahelper.\nahelper :- true.\ntag(from_alpha).\n"),
+            new BundleEntry("beta",
+                ":- public bmain/0.\nbmain :- true.\ntag(from_beta).\n"),
+        }));
+        engine.QueryAll("set_prolog_flag(debug_lco, off).").ToList();
+
+        string tag = "";
+        var svc = new DebugService(engine, (_, _) => { });
+        svc.EntryBreak = _ => { tag = svc.EvaluateGoal(0, "tag(R)"); };
+        engine.AttachDebugSession(svc);
+        svc.ArmEntryBreak();
+        engine.QueryAll("amain.").ToList();
+        engine.AttachDebugSession(null);
+
+        _log.WriteLine("tag=" + tag);
+        Assert.Equal("R = from_alpha", tag);
+    }
+
+    [Fact]
     public void AGenuinelyUndefinedPredicate_StillErrors()
     {
         var engine = DebugEngine();

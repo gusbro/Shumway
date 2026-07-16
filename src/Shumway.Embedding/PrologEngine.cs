@@ -4725,44 +4725,38 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return sep > 0 ? mangled.Substring(0, sep) : null;
     }
 
-    /// <summary>ADR-035 — the module to resolve an unqualified Immediate-window goal against,
-    /// for the frame stopped at <paramref name="pc"/>. Three ways, most precise first:
+    /// <summary>ADR-035 — the module the current frame is in, the way the CALL STACK LINE names
+    /// it: the same source-file base name the frame decoder prints (<c>Blint:main</c> comes from
+    /// <c>Blint.pl</c>). Two ways, most precise first:
     /// <list type="number">
-    /// <item>the frame's OWN module, when it is running a module-local predicate
+    /// <item>the frame's OWN mangled module prefix, when it is running a module-local predicate
     /// (<see cref="ModulePrefixAt"/>);</item>
-    /// <item>otherwise the module of the frame's SOURCE FILE — a public predicate is compiled
+    /// <item>otherwise the base name of the frame's SOURCE FILE — a public predicate is compiled
     /// global (no prefix) and a control-construct helper (<c>$catchgoal_N</c>) is global too, but
-    /// both were compiled from a module's <c>.pl</c>, whose base name names the module;</item>
-    /// <item>otherwise, when the whole program has exactly ONE user module, that one — the
-    /// common single-file case, where "the module" is unambiguous however the frame is compiled
-    /// (a public predicate, a lowered helper, a builtin frame).</item>
+    /// the call-stack line still shows the module of the <c>.pl</c> they came from, and so do we.
+    /// This is returned as-is (not filtered against the known modules): whether it truly defines
+    /// the goal is decided at resolution, which falls back to the unique defining module when the
+    /// file's name — e.g. a filename that differs from a <c>:- module</c> name — does not.</item>
     /// </list>
-    /// Null when none applies (a multi-module program stopped in code with no module of its own).</summary>
+    /// Null only when the frame has no source file (a synthetic <c>&lt;string&gt;</c> consult).</summary>
     internal string? ModuleForFrame(int pc)
     {
         string? own = ModulePrefixAt(pc);
         if (own is not null) return own;
 
-        var prefixes = DefinedModulePrefixes();
-
         int siteId = SiteAtOrBefore(pc);
         if (siteId >= 0)
         {
             var site = Shumway.Core.DebugSiteTable.Get(siteId);
-            string file = Shumway.Core.DebugSiteTable.FileName(site.FileId);
-            string? fromFile = MatchModuleToFile(prefixes, file);
-            if (fromFile is not null) return fromFile;
+            return ModuleNameFromFile(Shumway.Core.DebugSiteTable.FileName(site.FileId));
         }
-
-        if (prefixes.Count == 1)
-            foreach (var only in prefixes) return only;
         return null;
     }
 
-    /// <summary>The module whose <c>.pl</c> base name matches <paramref name="file"/> (a trailing
-    /// <c>.pl</c> and case forgiven), or null. A synthetic file (<c>&lt;string&gt;</c>) or one
-    /// naming no defined module resolves to nothing.</summary>
-    private static string? MatchModuleToFile(HashSet<string> prefixes, string file)
+    /// <summary>The module name a file's base name gives — the same <c>GetFileNameWithoutExtension</c>
+    /// the call-stack frame decoder uses, with any trailing <c>.pl</c> stripped (a materialised
+    /// <c>Blint.pl.pl</c> reads as <c>Blint</c>). Null for a synthetic file (<c>&lt;string&gt;</c>).</summary>
+    private static string? ModuleNameFromFile(string file)
     {
         if (string.IsNullOrEmpty(file) || file[0] == '<') return null;
         string baseName;
@@ -4770,11 +4764,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         catch { return null; }
         while (baseName.EndsWith(".pl", StringComparison.OrdinalIgnoreCase))
             baseName = baseName.Substring(0, baseName.Length - 3);
-        if (baseName.Length == 0) return null;
-        if (prefixes.Contains(baseName)) return baseName;
-        foreach (var p in prefixes)
-            if (string.Equals(p, baseName, StringComparison.OrdinalIgnoreCase)) return p;
-        return null;
+        return baseName.Length == 0 ? null : baseName;
     }
 
     /// <summary>ADR-035 — is <paramref name="mangledName"/>/<paramref name="arity"/> a defined
@@ -4858,16 +4848,15 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         }
         if (name.Length == 0 || name[0] == '$') return g;   // already mangled / a helper
 
-        // The frame's module, when it is known: a local shadows a global of the same name, so
-        // this is the precise answer. Not found there → the name is a global / public predicate
-        // or a builtin, left as written.
-        if (mod is not null)
-            return HasDefinedPredicate(mod + "$" + name, arity) ? Remangle(g, mod + "$" + name) : g;
+        // The frame's module first — the module named on the current call-stack line. A local
+        // there shadows a global of the same name, so it is the precise answer.
+        if (mod is not null && HasDefinedPredicate(mod + "$" + name, arity))
+            return Remangle(g, mod + "$" + name);
 
-        // The frame's module could NOT be determined (a public predicate or a lowered helper in a
-        // multi-module program, whose file did not name a module either). Fall back to the module
-        // that UNIQUELY defines this name: it is the only module the call could mean. Ambiguous
-        // (two modules define it) or absent → leave it global.
+        // The frame's module did not define it (or could not be determined — a public predicate
+        // or a lowered helper whose file named no module). Fall back to the module that UNIQUELY
+        // defines the name: the only module the unqualified call could mean. Ambiguous (two
+        // modules) or absent → leave it global (a public predicate or a builtin).
         string? unique = UniqueModuleDefining(name, arity);
         return unique is not null ? Remangle(g, unique + "$" + name) : g;
     }
