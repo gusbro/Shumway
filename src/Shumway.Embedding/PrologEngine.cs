@@ -4705,6 +4705,125 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return name == "__query__" ? null : (name, arity);
     }
 
+    /// <summary>ADR-035 — the module a compiled predicate belongs to: the prefix of its MANGLED
+    /// name before the <c>$</c> (a module-local predicate is compiled as <c>module$name</c>).
+    /// Null for a global/public predicate, a builtin, a synthesised helper, or the query wrapper
+    /// — none carry a module prefix. Read straight off the code the frame is running, so it is
+    /// the exact string the mangling used, whatever it is; the debugger's module resolution then
+    /// does not depend on how that string was derived at compile time.</summary>
+    internal string? ModulePrefixAt(int address)
+    {
+        if (_currentPredicatesByAddress is null || address < 0) return null;
+        var entries = SortedPredicateEntries();
+        int i = Array.BinarySearch(entries, address);
+        if (i < 0) i = ~i - 1;
+        if (i < 0) return null;
+        var pred = _currentPredicatesByAddress[entries[i]];
+        var (atomId, _) = FunctorTable.Lookup(pred.FunctorId);
+        string mangled = AtomTable.GetById(atomId)?.Name ?? "";
+        int sep = mangled.IndexOf('$');
+        return sep > 0 ? mangled.Substring(0, sep) : null;
+    }
+
+    /// <summary>ADR-035 — is <paramref name="mangledName"/>/<paramref name="arity"/> a defined
+    /// predicate in the current code space? Decides whether a module-qualified name resolves
+    /// before falling back to the plain (global / builtin) name.</summary>
+    internal bool HasDefinedPredicate(string mangledName, int arity)
+    {
+        if (_currentPredicatesByAddress is null) return false;
+        foreach (var pred in _currentPredicatesByAddress.Values)
+        {
+            var (atomId, ar) = FunctorTable.Lookup(pred.FunctorId);
+            if (ar != arity) continue;
+            if ((AtomTable.GetById(atomId)?.Name ?? "") == mangledName) return true;
+        }
+        return false;
+    }
+
+    /// <summary>ADR-035 — every module prefix present in the current code space (the
+    /// <c>$</c>-prefix of a mangled local). Lets a typed module name be matched to the real one,
+    /// forgiving a trailing <c>.pl</c> and case.</summary>
+    internal HashSet<string> DefinedModulePrefixes()
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        if (_currentPredicatesByAddress is not null)
+            foreach (var pred in _currentPredicatesByAddress.Values)
+            {
+                var (atomId, _) = FunctorTable.Lookup(pred.FunctorId);
+                string mangled = AtomTable.GetById(atomId)?.Name ?? "";
+                int sep = mangled.IndexOf('$');
+                if (sep > 0) set.Add(mangled.Substring(0, sep));
+            }
+        return set;
+    }
+
+    /// <summary>ADR-035 — resolve module qualification in an Immediate-window goal.
+    /// <list type="bullet">
+    /// <item><c>Module:Goal</c> runs Goal in Module (predicates addressed as <c>Module$name</c>).
+    /// A typed Module that differs from a real one only by a trailing <c>.pl</c> or case is
+    /// matched to it; an unknown Module falls back to the stopped frame's.</item>
+    /// <item>An unqualified goal is tried in <paramref name="frameModule"/> first — the module of
+    /// the frame the user is stopped in — so a module-local predicate is callable by the name the
+    /// source uses (<c>show_usage</c>, not <c>blint$show_usage</c>); if no such local exists it is
+    /// left as written, a global / public predicate or a builtin.</item>
+    /// </list>
+    /// Control constructs (<c>,</c> <c>;</c> <c>-&gt;</c> <c>*-&gt;</c> <c>\+</c> <c>not</c>
+    /// <c>once</c> <c>ignore</c> <c>call</c>) are transparent: their goal arguments are resolved,
+    /// they themselves are not.</summary>
+    internal Term ResolveGoalModule(Term goal, string? frameModule)
+        => RewriteModuleGoal(goal, frameModule);
+
+    private Term RewriteModuleGoal(Term g, string? mod)
+    {
+        if (g is CompoundTerm c)
+        {
+            if (c.Functor == ":" && c.Args.Length == 2 && c.Args[0] is AtomTerm mAtom)
+                return RewriteModuleGoal(c.Args[1], ResolveTypedModule(mAtom.Name, mod));
+
+            if (c.Args.Length == 2 && c.Functor is "," or ";" or "->" or "*->")
+                return new CompoundTerm(c.Functor,
+                    new[] { RewriteModuleGoal(c.Args[0], mod), RewriteModuleGoal(c.Args[1], mod) });
+
+            if (c.Args.Length >= 1 && c.Functor is "\\+" or "not" or "once" or "ignore" or "call")
+            {
+                var args = (Term[])c.Args.Clone();
+                args[0] = RewriteModuleGoal(args[0], mod);
+                return new CompoundTerm(c.Functor, args);
+            }
+        }
+        return MangleModuleLeaf(g, mod);
+    }
+
+    private Term MangleModuleLeaf(Term g, string? mod)
+    {
+        if (mod is null) return g;
+        string name;
+        int arity;
+        switch (g)
+        {
+            case AtomTerm a: name = a.Name; arity = 0; break;
+            case CompoundTerm c: name = c.Functor; arity = c.Args.Length; break;
+            default: return g;
+        }
+        if (name.Length == 0 || name[0] == '$') return g;   // already mangled / a helper
+        string mangled = mod + "$" + name;
+        if (!HasDefinedPredicate(mangled, arity)) return g;  // no such local — leave it global
+        return g is AtomTerm ? new AtomTerm(mangled) : new CompoundTerm(mangled, ((CompoundTerm)g).Args);
+    }
+
+    private string ResolveTypedModule(string typed, string? frameModule)
+    {
+        var prefixes = DefinedModulePrefixes();
+        if (prefixes.Contains(typed)) return typed;
+        foreach (var p in prefixes)
+            if (string.Equals(StripPl(p), StripPl(typed), StringComparison.OrdinalIgnoreCase))
+                return p;
+        return frameModule ?? typed;
+
+        static string StripPl(string s)
+            => s.EndsWith(".pl", StringComparison.OrdinalIgnoreCase) ? s.Substring(0, s.Length - 3) : s;
+    }
+
     private int[]? _sortedPredEntries;
 
     private int[] SortedPredicateEntries()

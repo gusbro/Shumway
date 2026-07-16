@@ -344,9 +344,11 @@ public sealed class DebugService : IDebugSession
 
         // The frame's variables, as terms. The goal's variables that match by name are
         // substituted; the rest stay free and come back as the answer's bindings.
+        string? frameModule = null;
         var substituted = new HashSet<string>(StringComparer.Ordinal);
         if (_engine.TryGetDisplayFrameContext(outer, frameIndex, out int pc, out int env))
         {
+            frameModule = _engine.ModulePrefixAt(pc);
             foreach (var (name, value) in _engine.MaterializeFrameVariables(outer, pc, env))
             {
                 if (!names.Contains(name)) continue;
@@ -357,6 +359,13 @@ public sealed class DebugService : IDebugSession
         var report = new List<string>();
         foreach (string n in names)
             if (!substituted.Contains(n) && !report.Contains(n)) report.Add(n);
+
+        // Resolve module qualification: an explicit Module:Goal, and an unqualified predicate
+        // against the module of the frame the user is stopped in — so a module-local predicate
+        // (Blint's `show_usage`) is callable by the name the source uses, not only by its mangled
+        // `blint$show_usage`. Done here, while the outer query's code space is still the current
+        // one (the eval's own setup has not run yet).
+        goal = _engine.ResolveGoalModule(goal, frameModule);
 
         // THE BRACKET. The outer stack is captured NOW — the eval's query setup rebuilds the
         // per-query tables, and after that the suspended query's frames cannot be walked

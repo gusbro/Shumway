@@ -310,6 +310,14 @@ namespace Shumway.Debugger.Concord
             {
                 try { module = System.IO.Path.GetFileNameWithoutExtension(file); }
                 catch (Exception) { module = ""; }
+
+                // An embedded bundle materialises its source as "<module>.pl", and if the module
+                // name it was compiled with already ended in ".pl" the file is "<module>.pl.pl"
+                // — one strip leaves a trailing ".pl" on the module. Strip any that remain so the
+                // Call Stack reads "blint:", matching the REPL, not "blint.pl:". Display only;
+                // breakpoint binding uses source.File, not this.
+                while (module.EndsWith(".pl", StringComparison.OrdinalIgnoreCase))
+                    module = module.Substring(0, module.Length - 3);
             }
 
             var title = new StringBuilder();
