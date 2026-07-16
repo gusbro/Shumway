@@ -64,36 +64,68 @@ public class Adr035EmbeddingTests
         Assert.True(engine.Flags.DebugLco);
     }
 
+    /// <summary>Load the bundle debuggable, stop at line 3, and return the materialised source
+    /// path the debugger's own frame names — the exact file it would open.</summary>
+    private static string MaterialisedFileAtBreak()
+    {
+        var engine = new PrologEngine();
+        engine.Flags.EmitDebugInfo = true;
+        engine.Flags.DebugCodegen = true;
+        engine.LoadBundle(new Bundle(new[] { new BundleEntry(ModuleName, Source) }));
+        engine.QueryAll("set_prolog_flag(debug_lco, off).").ToList();
+
+        string file = "";
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            if (file == "" && e.Frames.Count > 0) file = e.Frames[0].File;
+            s.Resume(StepMode.Continue);
+        });
+        engine.AttachDebugSession(svc);
+        Assert.True(engine.AddBreakpoint(ModuleName + ".pl", 3) > 0,
+            "a breakpoint in the bundle's own source should bind");
+        Assert.Single(engine.QueryAll("run(1).").ToList());   // and the code still runs
+        engine.AttachDebugSession(null);
+        return file;
+    }
+
     [Fact]
     public void ASourceCarryingBundleLoadedUnderDebug_IsDebuggable_FromItsEmbeddedSource()
     {
-        // The .shum case: a bundle that still carries its module source. Enabling debug
-        // BEFORE loading it makes the load re-compile the module debuggable, and the source
-        // is materialised to a file the debugger can open — the exact text that was compiled.
-        var engine = new PrologEngine();
-        using ChannelDebugSession session = engine.EnableDebugging();
-
-        engine.LoadBundle(new Bundle(new[] { new BundleEntry(ModuleName, Source) }));
-
-        // The body goal on line 3 is a real stop site: a breakpoint there binds. Identity is
-        // by base name, so the module's file name is enough.
-        int bound = engine.AddBreakpoint(ModuleName + ".pl", 3);
-        Assert.True(bound > 0, "a breakpoint in the bundle's own source should bind");
-
-        // And the source really was written out — that is what the debugger opens, not a
-        // possibly-drifted .pl someone has on disk. Line endings are normalised to a single
-        // consistent style (CRLF) so the editor never reports a mixed-EOL file, but every line
-        // boundary — and therefore every breakpoint line — is preserved.
-        string materialised = Path.Combine(
-            Path.GetTempPath(), "shumway-debug",
-            "src-" + Environment.ProcessId, ModuleName + ".pl");
+        // The .shum case: a bundle that still carries its module source. Loading it debuggable
+        // materialises the source to a file the debugger can open — the exact text that was
+        // compiled, not a possibly-drifted .pl someone has on disk.
+        string materialised = MaterialisedFileAtBreak();
+        Assert.NotEqual("", materialised);
         Assert.True(File.Exists(materialised), "the embedded source should be materialised");
-        string materialisedText = File.ReadAllText(materialised);
-        Assert.Equal(Source.Replace("\r\n", "\n").Replace("\n", "\r\n"), materialisedText);
-        Assert.DoesNotContain('\n', materialisedText.Replace("\r\n", ""));   // no lone LF: consistent CRLF
 
-        // The code runs, too — enabling debug did not break it.
-        Assert.Single(engine.QueryAll("run(1).").ToList());
+        // Line endings are normalised to one consistent style (CRLF) so the editor never
+        // reports a mixed-EOL file, but every line boundary — and so every breakpoint line — is
+        // preserved.
+        string expectedText = Source.Replace("\r\n", "\n").Replace("\n", "\r\n");
+        string text = File.ReadAllText(materialised);
+        Assert.Equal(expectedText, text);
+        Assert.DoesNotContain('\n', text.Replace("\r\n", ""));   // no lone LF: consistent CRLF
+
+        // No hot relinking, so the materialised source is READ-ONLY — an edit there could not
+        // reach the running code.
+        Assert.True(File.GetAttributes(materialised).HasFlag(FileAttributes.ReadOnly),
+            "the materialised source should be read-only");
+    }
+
+    [Fact]
+    public void ReMaterialisingTheSameSource_ReusesTheSamePath_AndStaysReadOnly()
+    {
+        // Re-running the same binary (here: a second load in the same process, same executable)
+        // must land on the SAME materialised path so the debugger reuses its window and keeps its
+        // breakpoints — instead of a second identical window that orphans them. And
+        // re-materialising over the now-read-only file must not throw.
+        string first = MaterialisedFileAtBreak();
+        Assert.NotEqual("", first);
+        Assert.True(File.GetAttributes(first).HasFlag(FileAttributes.ReadOnly));
+
+        string second = MaterialisedFileAtBreak();   // the "re-run" — no throw over the read-only file
+        Assert.Equal(first, second);                 // SAME path — the debugger reuses its window
+        Assert.True(File.GetAttributes(second).HasFlag(FileAttributes.ReadOnly));
     }
 
     [Fact]

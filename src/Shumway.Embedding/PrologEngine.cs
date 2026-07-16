@@ -5089,14 +5089,34 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// <summary>ADR-035 — write a bundle entry's embedded source to a stable file the
     /// debugger can open, and return its full path. Named for the module so
     /// <see cref="Shumway.Core.DebugSiteTable"/>'s base-name file identity matches the
-    /// breakpoint a user draws on it; kept in a per-process temp directory so two processes
-    /// debugging the same bundle do not fight over one file. This is the exact text the
-    /// module was compiled from — which is the whole point of preferring it to a
-    /// same-named <c>.pl</c> on disk that may have drifted.</summary>
+    /// breakpoint a user draws on it. This is the exact text the module was compiled from —
+    /// which is the whole point of preferring it to a same-named <c>.pl</c> on disk that may
+    /// have drifted.
+    ///
+    /// <para>All of a program's modules share ONE directory, keyed by the EXECUTABLE (not the
+    /// process id): re-running the same binary materialises to the SAME paths, so the debugger
+    /// reuses its source windows and the breakpoints bound to those paths survive the new run —
+    /// instead of opening a second identical window per module and orphaning every breakpoint
+    /// (which is what a per-process directory did). One directory per program, N files for N
+    /// modules — not N directories.</para>
+    ///
+    /// <para>The file is made READ-ONLY. There is no hot relinking — an edit here could not
+    /// reach the running code, so it would only diverge silently from what executes. (The day
+    /// we can reload edited source, drop the read-only flag.) If the module's source changed
+    /// since a prior run (a recompile), the file is rewritten in place at the same path.</para></summary>
     private static string MaterialiseDebugSource(string moduleName, string source)
     {
-        string dir = Path.Combine(Path.GetTempPath(), "shumway-debug",
-            "src-" + Environment.ProcessId.ToString());
+        // ADR-035 — write CONSISTENT line endings. The embedded source can carry mixed
+        // CRLF/LF (a file edited on more than one platform), and the debugger's editor flags
+        // that on open. Normalising CRLF -> LF -> CRLF removes the mix without moving any line:
+        // every `\n` boundary the compiler counted the stop-site lines against is preserved, so
+        // breakpoints and the entry stop still land where they should.
+        string normalised = source.Replace("\r\n", "\n").Replace("\n", "\r\n");
+
+        // One directory for the whole program, keyed by the executable path; the FILE keeps its
+        // clean "<module>.pl" name — the window title, and the base name the DebugSiteTable
+        // matches stop sites against.
+        string dir = Path.Combine(Path.GetTempPath(), "shumway-debug", ProgramKey());
         Directory.CreateDirectory(dir);
 
         var safe = new char[moduleName.Length == 0 ? 1 : moduleName.Length];
@@ -5106,23 +5126,43 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             safe[i] = Array.IndexOf(invalid, moduleName[i]) >= 0 ? '_' : moduleName[i];
         string path = Path.Combine(dir, new string(safe) + ".pl");
 
-        // ADR-035 — write CONSISTENT line endings. The embedded source can carry mixed
-        // CRLF/LF (a file edited on more than one platform), and the debugger's editor flags
-        // that on open. Normalising CRLF -> LF -> CRLF removes the mix without moving any line:
-        // every `\n` boundary the compiler counted the stop-site lines against is preserved, so
-        // breakpoints and the entry stop still land where they should.
-        string normalised = source.Replace("\r\n", "\n").Replace("\n", "\r\n");
-
         try
         {
-            // Write once; rewrite only if the text differs (two engines loading the same
-            // module in one process is the same source). A file the debugger already has
-            // open with the same content locks harmlessly — the content is what matters.
-            if (!File.Exists(path) || File.ReadAllText(path) != normalised)
+            bool exists = File.Exists(path);
+            // Rewrite only when the text actually changed (a recompile) — a read of a read-only
+            // file is fine; the write needs the flag cleared first.
+            if (!exists || File.ReadAllText(path) != normalised)
+            {
+                if (exists)
+                {
+                    var a = File.GetAttributes(path);
+                    if ((a & FileAttributes.ReadOnly) != 0)
+                        File.SetAttributes(path, a & ~FileAttributes.ReadOnly);
+                }
                 File.WriteAllText(path, normalised);
+            }
+
+            var attrs = File.GetAttributes(path);
+            if ((attrs & FileAttributes.ReadOnly) == 0)
+                File.SetAttributes(path, attrs | FileAttributes.ReadOnly);
         }
         catch (IOException) { /* open in the debugger, same content — the path is what we need */ }
+        catch (UnauthorizedAccessException) { /* already read-only from a prior run */ }
         return path;
+    }
+
+    /// <summary>A short, STABLE (cross-process) key for the program, so all of its modules share
+    /// one materialised-source directory that re-runs of the same binary reuse. The executable
+    /// path (SHA-256, not <see cref="string.GetHashCode"/> — that is randomised per process, so
+    /// it would give a different directory every run and defeat the whole point).</summary>
+    private static string ProgramKey()
+    {
+        string exe = Environment.ProcessPath ?? AppContext.BaseDirectory ?? "shumway";
+        byte[] hash = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(exe));
+        var sb = new System.Text.StringBuilder(16);
+        for (int i = 0; i < 8; i++) sb.Append(hash[i].ToString("x2"));
+        return sb.ToString();
     }
 
     /// <summary>ADR-035 — does this entry's bytecode carry the baked debug side tables (was it
