@@ -284,9 +284,18 @@ public sealed class ClauseCompiler
         // and stack garbage can look exactly like a valid heap reference, so it would
         // not fail loudly, it would print a plausible lie. Every source variable the
         // head did not already bind therefore gets a fresh unbound variable here, and
-        // reports itself honestly as unbound until something binds it. (The body's own
-        // put_variable overwrites this; the cost is debug-only and buys the guarantee
-        // that every slot a debugger can read is a slot the machine has written.)
+        // reports itself honestly as unbound until something binds it.
+        //
+        // The pre-initialised cell IS the variable from here on: the names are added to
+        // YsInitialized below, so the body's first occurrence compiles as the VALUE
+        // flavour (put_value / set_value / unify_value) against this cell instead of
+        // put_variable allocating a fresh one. Semantically identical — either way the
+        // goal receives an unbound heap cell — but it makes the cell the debugger shows
+        // in Locals the cell the program actually uses, with two consequences that
+        // matter: a variable keeps ONE identity across its life (no _G rename when the
+        // first occurrence executes), and a binding the debugger commits INTO the frame
+        // before the first occurrence (ADR-035 D5+ bind-into-frame) is seen by the
+        // program instead of being orphaned by put_variable's fresh cell.
         if (DebugCodegen && needFrame)
         {
             int scratch = -1;
@@ -296,6 +305,7 @@ public sealed class ClauseCompiler
                 if (state.YsInitialized.Contains(varName)) continue;
                 if (scratch < 0) scratch = state.Xs.AllocateAnonymousSlot();
                 state.Emitter.EmitPutVariableY(slot, scratch);
+                state.YsInitialized.Add(varName);
             }
         }
 

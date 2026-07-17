@@ -279,6 +279,27 @@ public sealed class DebugService : IDebugSession
     private bool _evalParked;                                    // a solution is shown, ; resumes
     private System.Collections.Generic.IEnumerator<Solution>? _pendingEnum;
     private List<string>? _pendingReport;                        // var names to render per solution
+
+    /// <summary>ADR-035 D5+ — one frame variable a solution may bind INTO the suspended
+    /// frame: the name the user wrote, the name its substituted variable carries in the
+    /// solution, and the frame cell's heap address on the suspended activation.</summary>
+    private readonly record struct CommitVar(string FrameName, string SolutionKey, int FrameAddr);
+
+    private List<CommitVar>? _pendingCommit;      // free frame vars the goal mentions
+    private string? _pendingCommitRefusal;        // attvar note, when binding is disabled
+    private bool _commitLocked;                   // a solution committed: ';' is over
+
+    /// <summary>ADR-035 D5+ — a commit changed the suspended frame's bindings: the stop
+    /// snapshot is stale and must be RE-CAPTURED, not restored (the channel session's
+    /// post-eval bracket consumes this via <see cref="TakeFrameStateChanged"/>).</summary>
+    internal bool FrameStateChanged { get; private set; }
+
+    internal bool TakeFrameStateChanged()
+    {
+        bool v = FrameStateChanged;
+        FrameStateChanged = false;
+        return v;
+    }
     private PrologEngine.DebugEvalScope? _outerScope;            // the suspended query's tables
     private PrologEngine.DebugEvalScope? _evalTables;            // the eval's tables, while parked
     private System.Threading.CancellationTokenSource? _pendingCts;
@@ -323,6 +344,9 @@ public sealed class DebugService : IDebugSession
         // A bare ";" continues the parked evaluation — the next solution, as in the REPL.
         if (trimmed is ";" or ";.")
         {
+            if (_commitLocked)
+                return "the previous solution's bindings were committed to the frame; "
+                    + "re-solving is disabled (undoing them would need the frame unbound)";
             if (_pendingEnum is null)
                 return "no evaluation to continue — type a goal first";
             return PumpPendingEvaluation();
@@ -351,21 +375,43 @@ public sealed class DebugService : IDebugSession
 
         // The frame's variables, as terms. The goal's variables that match by name are
         // substituted; the rest stay free and come back as the answer's bindings.
+        //
+        // ADR-035 D5+ — BIND-INTO-FRAME. A frame variable that is FREE substitutes as a
+        // bare VarTerm (named _G<addr>, its own heap cell's identity): the goal runs with a
+        // fresh variable exactly as before, but now we REMEMBER the pairing — frame name,
+        // the solution key that variable will carry, and the frame cell's heap ADDRESS —
+        // and when a solution arrives, its value for that key is unified back INTO the
+        // suspended frame (see TryCommitSolutionToFrame). The user's design: run the goal
+        // as always, then commit what it bound.
         string? frameModule = null;
         var substituted = new HashSet<string>(StringComparer.Ordinal);
+        List<CommitVar>? commit = null;
+        string? commitRefusal = null;
         if (_engine.TryGetDisplayFrameContext(outer, frameIndex, out int pc, out int env))
         {
             frameModule = _engine.ModuleForFrame(pc);
-            foreach (var (name, value) in _engine.MaterializeFrameVariables(outer, pc, env))
+            foreach (var (name, value, addr, isAttVar)
+                in _engine.MaterializeFrameVariablesWithAddresses(outer, pc, env))
             {
                 if (!names.Contains(name)) continue;
                 goal = SubstituteVariable(goal, name, value);
                 substituted.Add(name);
+                if (value is VarTerm vt && addr >= 0)
+                {
+                    if (isAttVar)
+                        commitRefusal = " [" + name + " is an attributed variable: "
+                            + "binding into the frame is disabled]";
+                    else
+                        (commit ??= new List<CommitVar>()).Add(new CommitVar(name, vt.Name, addr));
+                }
             }
         }
         var report = new List<string>();
         foreach (string n in names)
             if (!substituted.Contains(n) && !report.Contains(n)) report.Add(n);
+        _pendingCommit = commitRefusal is null ? commit : null;
+        _pendingCommitRefusal = commitRefusal;
+        _commitLocked = false;
 
         // Resolve module qualification: an explicit Module:Goal, and an unqualified predicate
         // against the module of the frame the user is stopped in — so a module-local predicate
@@ -472,6 +518,25 @@ public sealed class DebugService : IDebugSession
                 rendered = text.ToString();
             }
 
+            // ADR-035 D5+ — commit this solution's bindings INTO THE SUSPENDED FRAME. Read
+            // here, while the eval's tables and heap are still current (the solution's
+            // terms materialize off the eval activation); the unification itself touches
+            // only the OUTER activation's heap and trail, which no table swap affects.
+            // A commit that instantiated at least one frame variable ends the walk: the
+            // frame is bound to THIS solution now, and walking to the next would need it
+            // unbound — so the parked choice points die with the enumerator, and ';' says
+            // why. A commit that bound nothing (or rolled back) leaves ';' available.
+            var (committed, note) = TryCommitSolutionToFrame(_pendingEnum!.Current);
+            if (note is not null) rendered += note;
+            if (_pendingCommitRefusal is not null) rendered += _pendingCommitRefusal;
+            if (committed > 0)
+            {
+                FrameStateChanged = true;
+                AbandonPendingEvaluation();
+                _commitLocked = true;
+                return rendered;
+            }
+
             ParkPendingEvaluation();
             return rendered;
         }
@@ -480,6 +545,136 @@ public sealed class DebugService : IDebugSession
             _evalDisarmTimeout = null;
             _evalPumping = false;
         }
+    }
+
+    /// <summary>ADR-035 D5+ — unify this solution's bindings into the SUSPENDED frame.
+    ///
+    /// <para>The user's design, and the reason it is one mechanism and not a special case:
+    /// the goal ran exactly as always (frame variables substituted — the free ones by a
+    /// bare variable), and now whatever the solution SAYS those variables are is unified
+    /// against the frame's own heap cells, on the suspended activation, with real trailing.
+    /// So <c>X = f(1)</c> commits a structure, <c>member(X, Xs)</c> commits the member
+    /// found, <c>X = Y</c> commits an ALIASING (both frame cells end up sharing), and a
+    /// solution that contradicts the frame's own aliasing rolls back whole: the marks
+    /// below make the commit transactional.</para>
+    ///
+    /// <para>Trailing gives the honest semantics: the bindings behave exactly as if the
+    /// program had executed the unification at the stop point — a later backtrack past
+    /// this point undoes them, like any binding made here.</para></summary>
+    private (int Committed, string? Note) TryCommitSolutionToFrame(Solution solution)
+    {
+        if (_pendingCommit is not { Count: > 0 } commit || _evalOuter is not { } outer)
+            return (0, null);
+
+        // 1. The solution's values for the committed keys, materialized off the EVAL
+        //    activation's heap — which is why this runs before the tables swap back.
+        //    A key the solution cannot answer is skipped, not fabricated.
+        var values = new Term?[commit.Count];
+        for (int i = 0; i < commit.Count; i++)
+        {
+            try { values[i] = solution[commit[i].SolutionKey]; }
+            catch (Exception) { values[i] = null; }
+        }
+
+        // 2. Seed the sharing map. A value that is a BARE variable is a frame variable
+        //    that stayed free or got ALIASED: its solution-side name must resolve to the
+        //    frame's own cell, so that the same name embedded inside another value
+        //    (X = f(Y)) builds a reference to the REAL Y, not a copy.
+        var shared = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (int i = 0; i < commit.Count; i++)
+            if (values[i] is VarTerm vt) shared.TryAdd(vt.Name, commit[i].FrameAddr);
+
+        // 3. Build + unify, transactionally, on the OUTER activation only.
+        int bMark = outer.BindingTrailTop;
+        int eMark = outer.ExtraTrailTop;
+        int hMark = outer.HeapTop;
+        var derefBefore = new int[commit.Count];
+        var unboundBefore = new bool[commit.Count];
+        for (int i = 0; i < commit.Count; i++)
+        {
+            derefBefore[i] = outer.Deref(commit[i].FrameAddr);
+            unboundBefore[i] = IsUnboundAt(outer, commit[i].FrameAddr);
+        }
+
+        bool ok = true;
+        try
+        {
+            for (int i = 0; i < commit.Count && ok; i++)
+            {
+                Term? v = values[i];
+                if (v is null) continue;
+                // The variable "stayed itself": nothing to unify (and unifying a cell
+                // with itself is a no-op anyway — this just skips the allocation).
+                if (v is VarTerm self && shared.TryGetValue(self.Name, out int mapped)
+                    && mapped == commit[i].FrameAddr)
+                    continue;
+                Cell built = Materializer.MaterializeAsCellSharing(outer, v, shared);
+                ok = outer.Unify(commit[i].FrameAddr, HeapAddrOf(outer, built));
+            }
+        }
+        catch (Exception)
+        {
+            ok = false;
+        }
+
+        if (!ok)
+        {
+            outer.UnwindTrails(bMark, eMark);
+            outer.SetHeapTop(hMark);
+            return (0, "\n[this solution does not unify with the frame's own bindings — "
+                + "nothing was committed]");
+        }
+
+        // 4. What actually CHANGED, frame-visibly: a variable whose dereference moved
+        //    (bound to a value, or aliased to another cell). A commit that changed
+        //    nothing releases its trial cells and leaves the ';' walk available.
+        int committed = 0;
+        var text = new System.Text.StringBuilder();
+        for (int i = 0; i < commit.Count; i++)
+        {
+            int after = outer.Deref(commit[i].FrameAddr);
+            bool changed = after != derefBefore[i]
+                || (unboundBefore[i] && !IsUnboundAt(outer, commit[i].FrameAddr));
+            if (!changed) continue;
+            committed++;
+            string val;
+            try
+            {
+                val = AstTermRenderer.Render(
+                    TermReader.Materialize(outer, after), 999, _engine.Operators);
+            }
+            catch (Exception) { val = "_"; }
+            text.Append('\n').Append(commit[i].FrameName).Append(" = ")
+                .Append(Ellipsize(val, 2048));
+        }
+        if (committed == 0)
+        {
+            outer.UnwindTrails(bMark, eMark);
+            outer.SetHeapTop(hMark);
+            return (0, null);
+        }
+        text.Append("\n(").Append(committed)
+            .Append(committed == 1 ? " binding" : " bindings")
+            .Append(" committed to the frame)");
+        return (committed, text.ToString());
+    }
+
+    private static bool IsUnboundAt(Activation outer, int addr)
+    {
+        int d = outer.Deref(addr);
+        Cell c = outer.GetHeap(d);
+        return c.Tag == Tag.Ref && c.AsHeapIndex == d;
+    }
+
+    /// <summary>A heap address <see cref="Activation.Unify"/> can take, for any cell
+    /// <see cref="Materializer"/> returns: a Ref is already an address; a value cell
+    /// (atom, int, inline list/struct reference) gets one allocated to hold it.</summary>
+    private static int HeapAddrOf(Activation outer, Cell built)
+    {
+        if (built.Tag == Tag.Ref) return built.AsHeapIndex;
+        int a = outer.AllocateHeap(1);
+        outer.SetHeap(a, built);
+        return a;
     }
 
     /// <summary>Suspend the evaluation between solutions: snapshot its tables, put the suspended
@@ -512,6 +707,7 @@ public sealed class DebugService : IDebugSession
         Activation? outer = _evalOuter;
         _pendingEnum = null;
         _pendingReport = null;
+        _pendingCommit = null;
         _pendingCts = null;
         _outerScope = null;
         _evalTables = null;

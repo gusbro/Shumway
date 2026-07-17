@@ -56,6 +56,18 @@ public static class Materializer
         }
     }
 
+    /// <summary>ADR-035 — like <see cref="MaterializeAsCell(Activation, Term)"/>, but
+    /// SHARING variables with pre-existing heap cells: <paramref name="sharedVars"/> maps a
+    /// variable name to the heap address it must resolve to. The debugger's bind-into-frame
+    /// commit seeds it with the suspended frame's own variables, so a term built here and
+    /// unified against the frame creates REAL sharing rather than fresh copies. Variables
+    /// the term introduces beyond the seeded ones allocate fresh cells and are added to the
+    /// map — repeated calls against the same map preserve identity across a whole
+    /// solution's worth of values.</summary>
+    internal static Cell MaterializeAsCellSharing(
+        Activation engine, Term term, Dictionary<string, int> sharedVars)
+        => MaterializeAsCell(engine, term, sharedVars);
+
     private static Cell MaterializeAsCell(
         Activation engine, Term term, Dictionary<string, int> varMap)
     {

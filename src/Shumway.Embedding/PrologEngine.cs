@@ -4151,11 +4151,27 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     internal IReadOnlyList<(string Name, Term Value)> MaterializeFrameVariables(
         Activation engine, int pc, int env)
     {
+        var result = new List<(string, Term)>();
+        foreach (var (name, value, _, _) in MaterializeFrameVariablesWithAddresses(engine, pc, env))
+            result.Add((name, value));
+        return result;
+    }
+
+    /// <summary>ADR-035 D5+ — the frame's variables as terms AND as heap ADDRESSES on the
+    /// suspended activation, which is what the bind-into-frame commit needs: the address is
+    /// the real cell a committed binding unifies against, where the term is only a copy.
+    /// <c>Addr</c> is the DEREFERENCED slot address for a heap-referencing slot, or -1 when
+    /// the slot holds an inline value (bound immediate — nothing to bind into) or could not
+    /// be read. <c>IsAttVar</c> flags an attributed variable (bind-into-frame refuses those:
+    /// unifying one schedules hook wakeups the suspended machine is in no state to run).</summary>
+    internal IReadOnlyList<(string Name, Term Value, int Addr, bool IsAttVar)>
+        MaterializeFrameVariablesWithAddresses(Activation engine, int pc, int env)
+    {
         var clause = ClauseAt(pc);
         if (env < 0 || clause is null || clause.Value.Variables.Count == 0)
-            return Array.Empty<(string, Term)>();
+            return Array.Empty<(string, Term, int, bool)>();
 
-        var result = new List<(string, Term)>();
+        var result = new List<(string, Term, int, bool)>();
         foreach (var v in clause.Value.Variables)
         {
             try
@@ -4163,16 +4179,19 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 Cell cell = engine.GetY(env, v.Slot);
                 if (cell.Tag is Tag.RawInt or Tag.PstrBuffer) continue;
                 int at;
+                int addr = -1;
                 if (cell.Tag == Tag.Ref)
                 {
                     at = engine.Deref(cell.AsHeapIndex);
+                    addr = at;
                 }
                 else
                 {
                     at = engine.AllocateHeap(1);
                     engine.SetHeap(at, cell);
                 }
-                result.Add((v.Name, TermReader.Materialize(engine, at)));
+                bool isAttVar = addr >= 0 && engine.GetHeap(addr).Tag == Tag.AttVar;
+                result.Add((v.Name, TermReader.Materialize(engine, at), addr, isAttVar));
             }
             catch (Exception)
             {
