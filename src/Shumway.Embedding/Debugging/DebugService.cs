@@ -599,9 +599,19 @@ public sealed class DebugService : IDebugSession
         string conditionError = "";
         if (_engine.BreakpointConditionAt(pc) is string condition)
         {
-            if (!EvaluateBreakpointCondition(engine, condition, out string? error))
-                return;
+            bool stops = EvaluateBreakpointCondition(engine, condition, out string? error);
+            if (ShumwayDebugHelper.DiagEnabled)
+                ShumwayDebugHelper.DiagLine("breakpoint condition '" + condition + "' -> "
+                    + (error is not null ? "ERROR: " + error : stops ? "holds (stop)" : "fails (run on)"));
+            if (!stops) return;
             conditionError = error ?? "";
+        }
+        else if (ShumwayDebugHelper.DiagEnabled)
+        {
+            // Diag-only: the routing answer. A breakpoint the user set a condition on that
+            // reports "no condition" here means the condition never reached the engine —
+            // the VS-side capture (ParseCondition) did not fire or did not forward.
+            ShumwayDebugHelper.DiagLine("breakpoint hit (no condition attached): stop");
         }
 
         // A breakpoint always stops, whatever the step mode: it is the one thing the
@@ -687,7 +697,13 @@ public sealed class DebugService : IDebugSession
                 frameModule = _engine.ModuleForFrame(framePc);
                 foreach (var (name, value) in _engine.MaterializeFrameVariables(engine, framePc, frameEnv))
                     if (names.Contains(name))
+                    {
                         goal = SubstituteVariable(goal, name, value);
+                        if (ShumwayDebugHelper.DiagEnabled)
+                            ShumwayDebugHelper.DiagLine(
+                                "  condition var " + name + " := "
+                                + Ellipsize(value.ToString() ?? "", 120));
+                    }
             }
             goal = _engine.ResolveGoalModule(goal, frameModule);
 

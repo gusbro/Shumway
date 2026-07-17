@@ -83,9 +83,15 @@ public static class ShumwayDebugHelper
     /// whether the engine armed the entry stop, fired it, and thought a debugger was attached
     /// when it did. OPT-IN: only when <c>SHUMWAY_DEBUG_DIAG=1</c> — the same switch the Concord
     /// components' log uses — so an ordinary debug run's output is not littered with it.</summary>
+    /// <summary>Whether the diagnostic channel is on — read once, so a hot call site can
+    /// guard an expensive message BUILD (a rendered term, a concatenation per hit) behind
+    /// it rather than paying for a line nobody will see.</summary>
+    public static bool DiagEnabled { get; } =
+        Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_DIAG") == "1";
+
     public static void DiagLine(string message)
     {
-        if (Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_DIAG") != "1") return;
+        if (!DiagEnabled) return;
         try { Console.Error.WriteLine("shumway-debug: " + message); } catch (Exception) { }
     }
 
