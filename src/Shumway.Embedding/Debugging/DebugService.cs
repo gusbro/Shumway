@@ -659,17 +659,6 @@ public sealed class DebugService : IDebugSession
             return true;
         }
 
-        // The frame the breakpoint fired in is frame 0 of the stop the user would see.
-        string? frameModule = null;
-        if (_engine.TryGetDisplayFrameContext(engine, 0, out int framePc, out int frameEnv))
-        {
-            frameModule = _engine.ModuleForFrame(framePc);
-            foreach (var (name, value) in _engine.MaterializeFrameVariables(engine, framePc, frameEnv))
-                if (names.Contains(name))
-                    goal = SubstituteVariable(goal, name, value);
-        }
-        goal = _engine.ResolveGoalModule(goal, frameModule);
-
         // The bracket, exactly as the Immediate window's: the eval's query setup rebuilds
         // the per-query tables, and the suspended query needs its own back afterwards.
         var savedMode = _mode;
@@ -681,6 +670,27 @@ public sealed class DebugService : IDebugSession
         var scope = _engine.BeginDebugEvaluation();
         try
         {
+            // EVERYTHING from here runs inside the protection, the frame-variable
+            // substitution included. This method is called from INSIDE the outer query's
+            // dispatch loop: an exception that escaped it would land in the outer
+            // RunCatching, where the PROGRAM's own catch/3 would eat it (the program
+            // takes an error path it never takes without a debugger) or, uncaught, kill
+            // the query outright — which is exactly how the first Blint crash presented.
+            // Nothing the condition machinery does may ever leak into the program.
+
+            // The frame the breakpoint fired in is frame 0 of the stop the user would
+            // see. Substituted BEFORE the nested query's setup swaps the tables — these
+            // reads walk the outer query's own.
+            string? frameModule = null;
+            if (_engine.TryGetDisplayFrameContext(engine, 0, out int framePc, out int frameEnv))
+            {
+                frameModule = _engine.ModuleForFrame(framePc);
+                foreach (var (name, value) in _engine.MaterializeFrameVariables(engine, framePc, frameEnv))
+                    if (names.Contains(name))
+                        goal = SubstituteVariable(goal, name, value);
+            }
+            goal = _engine.ResolveGoalModule(goal, frameModule);
+
             using var cts = new System.Threading.CancellationTokenSource(EvaluationTimeout);
             using var solutions = _engine.QueryAll(goal, cts.Token).GetEnumerator();
             return solutions.MoveNext();

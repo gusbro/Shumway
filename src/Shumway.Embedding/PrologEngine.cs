@@ -4227,11 +4227,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             Label = QueryLabel,
             LastEngine = _lastQueryEngine,
         };
+        _debugEvalDepth++;
         return scope;
     }
 
     internal void EndDebugEvaluation(DebugEvalScope scope)
     {
+        _debugEvalDepth--;
         _currentPredicatesByAddress = scope.Predicates;
         _sortedPredEntries = scope.SortedEntries;
         _compiledSites = scope.CompiledSites;
@@ -4245,6 +4247,23 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         QueryLabel = scope.Label;
         _lastQueryEngine = scope.LastEngine;
     }
+
+    /// <summary>ADR-035 D5 — how many debug evaluations (Immediate-window goals, breakpoint
+    /// conditions) are running right now. While one is, the OUTER query is suspended
+    /// mid-flight — its activation, its Break bytes, its in-flight choice points all live in
+    /// the current code space — so a nested query's setup must not treat itself as the safe
+    /// point it usually is: no auto-compaction (chunk 158's "no in-flight choice points hold
+    /// addresses into it" premise is false here; the compaction is merely deferred to the
+    /// next real query), and no breakpoint re-sync (the armed table describes the OUTER
+    /// query's buffer and must keep doing so).</summary>
+    private int _debugEvalDepth;
+
+    /// <summary>ADR-035 D5 — the persistent buffer was REBUILT by a debug evaluation's
+    /// nested setup (the outer query had already invalidated it), which skips the breakpoint
+    /// sync: the fresh buffer never received the armed Break bytes. The next real setup
+    /// consumes this to pass <c>bufferCarriesOurPatches: false</c> for a buffer it would
+    /// otherwise assume it had patched.</summary>
+    private bool _persistentRebuiltPatchFree;
 
     /// <summary>How many frames a stop carries before it starts leaving some out, and how
     /// they are divided when it does: the innermost <see cref="HeadFrames"/> — where the
@@ -9951,7 +9970,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // persistent buffer here at query setup (the safe point —
         // no in-flight choice points hold addresses into it). The
         // rebuild that follows below picks up the trim automatically.
-        if (_persistentMutationsSinceCompact >= CompactWatermark)
+        //
+        // ADR-035 D5 — except during a DEBUG EVALUATION (an Immediate-window goal, a
+        // breakpoint condition): that nested query's setup is NOT a safe point — the outer
+        // query is suspended mid-flight and everything it holds points into the current
+        // buffers. Compaction is paused, not skipped: the counter keeps accumulating and
+        // the next real query's setup does the deferred work.
+        if (_debugEvalDepth == 0 && _persistentMutationsSinceCompact >= CompactWatermark)
             CompactDynamicCodeBuffer();
 
         // Phase 33 — live-linked-consult forward-reference sites now live on
@@ -10976,7 +11001,25 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // belong to the now-dead one; a reused buffer still carries them. Only un-patch when the
         // buffer actually holds our patches. (RefreshBreakpoints, mid-query, follows the live
         // activation via _lastQueryEngine — set just below — so a realloc is tracked there.)
-        SyncBreakpoints(program, bufferCarriesOurPatches: !builtPersistentNow);
+        //
+        // ADR-035 D5 — a DEBUG EVALUATION's nested query does not touch the sync at all: the
+        // armed table describes the OUTER query's buffer, which is where the machine returns
+        // when the evaluation is done, and re-deriving it here would point it at the eval's.
+        // The usual case reuses the outer's buffer anyway (patches in place, table already
+        // right); in the rare rebuilt-under-eval case the fresh buffer simply runs without
+        // Break bytes — an eval's stops are suppressed regardless — and the flag below tells
+        // the NEXT real setup that this persistent buffer never received its patches, so its
+        // per-byte un-patch must not expect to find them (a false "drift" alarm otherwise).
+        if (_debugEvalDepth == 0)
+        {
+            SyncBreakpoints(program,
+                bufferCarriesOurPatches: !builtPersistentNow && !_persistentRebuiltPatchFree);
+            _persistentRebuiltPatchFree = false;
+        }
+        else if (builtPersistentNow)
+        {
+            _persistentRebuiltPatchFree = true;
+        }
         // Shared BY REFERENCE, and shared even when it is empty: a breakpoint can be armed
         // on a query that is already running (F9 during a long goal), and the Break byte it
         // patches into the program is reached by an activation that was set up before the

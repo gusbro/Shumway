@@ -192,6 +192,128 @@ public class Adr035ConditionalBreakpointTests
     }
 
     [Fact]
+    public void ConditionEvaluation_UnderHeavyAssertz_DoesNotDerailTheOuterQuery()
+    {
+        // The Blint crash. A condition is evaluated at EVERY hit, and each evaluation is a
+        // nested query whose setup used to run the chunk-158 auto-compaction when the
+        // accumulated assertz count crossed the watermark — "the safe point: no in-flight
+        // choice points hold addresses into it", said the comment. False for a NESTED
+        // debug evaluation: the OUTER query is in flight, its Break bytes live in the old
+        // buffer, and the compaction re-linked the breakpoint table against the new one —
+        // so the outer query's next Break dispatched against a table that no longer
+        // described it, and the whole program died of "code space out of step".
+        //
+        //  2: :- dynamic(d/1).
+        //  3: run :-
+        //  4:     between(1, N, X),
+        //  5:     assertz(d(X)),
+        //  6:     use(X),
+        //  7:     fail.
+        //  8: run.
+        //  9: use(_).
+        var engine = DebugEngine(
+            ":- dynamic(d/1).\n" +
+            "run :-\n" +
+            "    between(1, 2000, X),\n" +
+            "    assertz(d(X)),\n" +
+            "    use(X),\n" +
+            "    fail.\n" +
+            "run.\n" +
+            "use(_).\n");
+        // 2000 mutations cross the default watermark (1000) mid-query, guaranteed.
+        Assert.True(engine.AddBreakpoint("<string>", 6, "X > 1995") > 0);
+
+        var stops = Run(engine);   // asserts the query still yields its solution
+
+        Assert.Equal(5, stops.Count);   // X = 1996..2000 — and nothing crashed
+        Assert.All(stops, s => Assert.Equal("", s.ConditionError));
+    }
+
+    [Fact]
+    public void ConditionEvaluation_WithUndeclaredDynamicAsserts_DoesNotDerailTheOuterQuery()
+    {
+        // The other half of the Blint shape: the asserted predicate is UNDECLARED, so its
+        // implicit_dynamic auto-promotion mid-query takes the NON-OWNER invalidation path
+        // (the persistent buffer is nulled while the outer query flies). Every condition
+        // evaluation's nested setup then finds nothing to reuse and must rebuild — and the
+        // rebuilt buffer must not steal the breakpoint table from the outer query's.
+        //
+        //  2: run :-
+        //  3:     between(1, 40, X),
+        //  4:     assertz(und(X)),
+        //  5:     use(X),
+        //  6:     fail.
+        //  7: run.
+        //  8: use(_).
+        var engine = DebugEngine(
+            "run :-\n" +
+            "    between(1, 40, X),\n" +
+            "    assertz(und(X)),\n" +
+            "    use(X),\n" +
+            "    fail.\n" +
+            "run.\n" +
+            "use(_).\n");
+        Assert.True(engine.AddBreakpoint("<string>", 5, "X > 35") > 0);
+
+        var stops = Run(engine);
+
+        Assert.Equal(5, stops.Count);   // X = 36..40
+        Assert.All(stops, s => Assert.Equal("", s.ConditionError));
+
+        // And the asserted facts are all there — the outer query ran to completion sound.
+        var xs = engine.Query<List<int>>("findall(X, und(X), Xs).", "Xs").Single();
+        Assert.Equal(40, xs.Count);
+    }
+
+    [Fact]
+    public void AnErroringCondition_NeverLeaksIntoTheProgramsOwnCatch()
+    {
+        // The Blint crash's other face. The condition machinery runs INSIDE the outer
+        // query's dispatch loop: an exception that escaped it would land in the outer
+        // RunCatching — where the PROGRAM's own catch/3 would eat it, sending the program
+        // down an error path it never takes without a debugger (or, uncaught, killing the
+        // query with the RunCatching→Query→Main stack the user saw). The condition's error
+        // must surface ONLY as ConditionError on the stop.
+        //
+        //  2: main(R) :-
+        //  3:     catch(work, E, recover(E, R)).
+        //  4: work :-
+        //  5:     between(1, 5, X),
+        //  6:     use(X),
+        //  7:     fail.
+        //  8: work.
+        //  9: use(_).
+        // 10: recover(E, caught(E)).
+        var engine = DebugEngine(
+            "main(R) :-\n" +
+            "    catch(work, E, recover(E, R)).\n" +
+            "work :-\n" +
+            "    between(1, 5, X),\n" +
+            "    use(X),\n" +
+            "    fail.\n" +
+            "work.\n" +
+            "use(_).\n" +
+            "recover(E, caught(E)).\n");
+        // Y is unbound in the frame → is/2 raises → the condition ERRORS at every hit.
+        Assert.True(engine.AddBreakpoint("<string>", 6, "Z is Y + 1, Z > 0") > 0);
+
+        var stops = new List<DebugStopEvent>();
+        var svc = new DebugService(engine, (s, e) => { stops.Add(e); s.Resume(StepMode.Continue); });
+        engine.AttachDebugSession(svc);
+        var sols = engine.QueryAll("main(R).").ToList();
+        engine.AttachDebugSession(null);
+
+        // The program's catch/3 never fired: main succeeded through work's second clause,
+        // leaving R unbound — NOT bound to caught(...).
+        Assert.Single(sols);
+        Assert.DoesNotContain("caught", sols[0]["R"]?.ToString() ?? "");
+
+        // The error surfaced where it belongs: on every stop, as ConditionError.
+        Assert.Equal(5, stops.Count);
+        Assert.All(stops, s => Assert.Contains("condition error", s.ConditionError));
+    }
+
+    [Fact]
     public void ConditionSideEffectsPersist_LikeAnImmediateWindowGoal()
     {
         // Conditions run in the live engine (the C# debugger contract: a condition CAN
