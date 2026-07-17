@@ -58,14 +58,18 @@
         </InterfaceGroup>
 
         <!-- D5: conditional breakpoints. The condition the user types on a .pl breakpoint
-             is a Prolog goal; VS wraps it in a DkmEvaluationBreakpointCondition whose
-             language is the breakpoint's (ours) and routes it here. ParseCondition is the
-             moment we LEARN the text (recorded + forwarded to the engine through the
-             channel; the ENGINE evaluates it at the Break, before notifying anyone);
-             EvaluateCondition answers from the pinned snapshot — never a func-eval. -->
+             is a Prolog goal; VS wraps it in a DkmEvaluationBreakpointCondition and routes
+             it here. ParseCondition is the moment we LEARN the text (recorded + forwarded
+             to the engine through the channel; the ENGINE evaluates it at the Break, before
+             notifying anyone); EvaluateCondition answers from the pinned snapshot — never a
+             func-eval. Filtered by the RUNTIME, not the language: the condition is created
+             for a breakpoint of OUR custom runtime, which is unambiguous, whereas its
+             CompilerId is however VS derived the document's language — Guid.Empty
+             ("unspecified") for a .pl with no language service, and an empty id matches no
+             LanguageId filter, silently unrouting every condition. -->
         <InterfaceGroup>
           <Filter>
-            <LanguageId RequiredValue="9d7f8a51-0699-4828-99ba-047821c60783"/>
+            <RuntimeId RequiredValue="3cd5801d-96c7-47d4-b4c4-a796b8fe7de9"/>
           </Filter>
           <Interface Name="IDkmLanguageConditionEvaluator"/>
         </InterfaceGroup>
