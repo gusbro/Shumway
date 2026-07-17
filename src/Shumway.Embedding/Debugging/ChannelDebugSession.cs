@@ -371,6 +371,10 @@ public sealed class ChannelDebugSession : IDisposable
     /// answers from the machine that was last running.</para></summary>
     public int CaptureNow()
     {
+        // Diag: the OTHER spontaneous func-eval that runs engine code (the async-break
+        // stack refresh). Capturing frames renders real terms, and rendering can throw
+        // internally — named here so an out-of-nowhere first-chance has an owner.
+        ShumwayDebugHelper.DiagLine("CaptureNow asked (func-eval)");
         DebugStopEvent? stop = _service.CaptureNow();
         if (stop is null) return 0;
         // A step taken from this stop is measured against THIS depth — see PollWhileRunning.
@@ -423,6 +427,15 @@ public sealed class ChannelDebugSession : IDisposable
     /// stops re-enter it reentrantly, same thread.</summary>
     internal string EvaluateGoal(int frameIndex, string goalText)
     {
+        // Diag: WHO is evaluating WHAT. Anything that reaches here came through the EE as
+        // a func-eval — a user's Immediate goal, a watch refresh, or something Visual
+        // Studio decided to evaluate on its own (a DataTip, an extension). When
+        // first-chance exceptions appear "out of nowhere" at a stop, this line names the
+        // expression that caused them, and the first-chance logger names the thrower.
+        if (ShumwayDebugHelper.DiagEnabled)
+            ShumwayDebugHelper.DiagLine(
+                "goal evaluation asked (frame " + frameIndex + "): '" + goalText + "'");
+
         // A breakpoint the user drew WHILE STOPPED is not armed yet. In break state the
         // engine thread is parked inside the notify holding the gate, and the channel is
         // drained only when it RESUMES — so an F9 the user set a moment ago sits unread in
