@@ -124,11 +124,33 @@ namespace Shumway.Debugger.Concord
                 }
             }
 
-            // ANYTHING ELSE IS A GOAL, and a goal RUNS â€” in a fresh activation over the
+            // ANYTHING ELSE IS A GOAL, and a goal RUNS. But only when the user ASKED.
+            // An IMPLICIT evaluation -- a DataTip under the mouse, an automatic watch
+            // refresh on focus regain -- arrives with NoSideEffects, and honouring it is
+            // not optional politeness: hovering an atom in the source would EXECUTE it
+            // (hover `main`, run the program), and the harmless-looking case was the
+            // user's mystery -- a caret parked on a predicate name made every focus
+            // switch re-evaluate the DataTip, run the token as a goal, and spray
+            // first-chance existence_errors into the Output. Same answer C# gives for a
+            // method call in a DataTip: refuse, with the click-to-evaluate button
+            // (CanEvaluateNow) for the user who really means it.
+            if ((inspectionContext.EvaluationFlags & DkmEvaluationFlags.NoSideEffects) != 0)
+            {
+                ShumwayLog.Write("implicit eval refused (NoSideEffects): '" + text + "'");
+                completionRoutine(new DkmEvaluateExpressionAsyncResult(
+                    DkmFailedEvaluationResult.Create(
+                        inspectionContext, stackFrame, text, text,
+                        "a Prolog goal runs only when asked explicitly -- "
+                        + "use the Immediate window, or click to evaluate",
+                        DkmEvaluationResultFlags.SideEffect
+                        | DkmEvaluationResultFlags.CanEvaluateNow, null)));
+                return;
+            }
+
+            // Explicit from here on -- the user typed it into the Immediate window, or
+            // pressed the evaluate button: the goal runs in a fresh activation over the
             // live engine, with this frame's variables substituted by their current
-            // values, database side effects and all. This is the func-eval the design
-            // reserves for user-initiated evaluation: the user typed it into the
-            // Immediate window, at a normal stop.
+            // values, database side effects and all.
             //
             // CHAINED ON THE CALLER'S WORK LIST, and that is not a style choice: a method
             // call is a func-eval, a func-eval resumes the debuggee's thread, and the

@@ -182,11 +182,21 @@ try {
     Start-Sleep -Seconds 3
     Select-PrologThread | Out-Null
 
-    $bpFile = $pl
+    # The single-file exe serves a MATERIALIZED copy of the source; F9 must target that
+    # file. ActiveDocument names it when the stop navigation opened it — but a freshly
+    # reset window layout may leave no active document, so fall back to finding the
+    # materialized copy itself (%TEMP%\shumway-debug\<exe-hash>\wsapp.pl, newest).
+    $bpFile = $null
     try {
         $doc = $dte.ActiveDocument
         if ($doc -and $doc.FullName -match 'wsapp\.pl$') { $bpFile = $doc.FullName }
     } catch { }
+    if (-not $bpFile) {
+        $mat = Get-ChildItem (Join-Path $env:TEMP "shumway-debug\*\wsapp.pl") -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if ($mat) { $bpFile = $mat.FullName }
+    }
+    if (-not $bpFile) { $bpFile = $pl }
     Write-Host "  breakpoint file: $bpFile"
 
     # --- the user's flow, step 1: unconditional breakpoint on line A; F5; stop there ---
