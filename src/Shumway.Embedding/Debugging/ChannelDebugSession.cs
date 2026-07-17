@@ -36,6 +36,10 @@ public sealed class ChannelDebugSession : IDisposable
         _engine = engine ?? throw new ArgumentNullException(nameof(engine));
         _channel = new DebugChannel();
         _notify = notify ?? Shumway.Core.Debugging.ShumwayDebugHost.Notify;
+        // The real transport stops FOR a native debugger, so "no debugger attached" at a
+        // stop means it detached (see OnStopLocked). A test's session brings its own
+        // notify and never has one — for it the check must stay off.
+        _detachAware = notify is null;
         _service = new DebugService(engine, OnStop);
 
         _service.Poll = PollWhileRunning;
@@ -103,6 +107,11 @@ public sealed class ChannelDebugSession : IDisposable
     private EventHandler<System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs>?
         _firstChance;
     [ThreadStatic] private static bool _inFirstChance;
+
+    /// <summary>Whether a stop with no native debugger attached means DETACH (the real
+    /// transport) rather than business as usual (a test's own notify). See
+    /// <see cref="OnStopLocked"/>.</summary>
+    private readonly bool _detachAware;
 
     // ----- the engine when it is NOT running -----
 
@@ -514,12 +523,39 @@ public sealed class ChannelDebugSession : IDisposable
     {
         DebugService service = _service;
 
+        // THE DEBUGGER MAY BE GONE. Detach — or closing Visual Studio outright — resumes
+        // the process and leaves everything the session armed exactly as it was: the Break
+        // bytes in the code space, the whole stop pipeline. The program then "runs", but
+        // every breakpoint hit still captures a stack, serialises a snapshot and notifies a
+        // debugger that no longer exists — an endless train of stops nobody asked for (the
+        // user watched "breakpoint hit ... stop" scroll forever, and paid the capture cost
+        // for each). A hit with no debugger attached means the debugger LEFT before it:
+        // disarm and run free. The breakpoints are not lost — they live in Visual Studio,
+        // and a re-attach re-sends the full set (the full-state write every attach begins
+        // with).
+        if (DebuggerHasDetached())
+        {
+            DisarmAfterDetach();
+            return;
+        }
+
         // 1. Write, so the answer is there before the question.
         _channel.WriteSnapshot(stop);
 
         // 2. Notify. A debugger is attached: this is where the process stops, and it
-        //    does not come back until the debugger says so.
+        //    does not come back until the debugger says so — OR until it DETACHES, which
+        //    also resumes us. Telling the two apart is the check right after.
         _notify((int)stop.Reason);
+
+        // The debugger resumed us BY LEAVING (detach, or Visual Studio closing): clean up
+        // now, before the query runs on, so not even one more breakpoint fires the pipeline.
+        // (Detach mid-run, without a stop to catch it here, is caught by the entry check
+        // above on the next hit — this is the no-extra-hit fast path, not the only one.)
+        if (DebuggerHasDetached())
+        {
+            DisarmAfterDetach();
+            return;
+        }
 
         // 3. Drain. Whatever the debugger decided while we were stopped is now waiting.
         foreach (var command in _channel.DrainCommands())
@@ -529,6 +565,23 @@ public sealed class ChannelDebugSession : IDisposable
         //    there is no Prolog stack to show, and a debugger that freezes the process (a
         //    raw Break All, a breakpoint in C#) must not be handed the last one as if it
         //    were current.
+        _channel.SetRunning();
+    }
+
+    /// <summary>A stop reached with no native debugger attached — on the real transport,
+    /// where a stop exists only to hand control to one. A test session brings its own
+    /// notify and never has a debugger; for it "none attached" is normal, not a detach.</summary>
+    private bool DebuggerHasDetached()
+        => _detachAware && !System.Diagnostics.Debugger.IsAttached;
+
+    /// <summary>The debugger left while we were stopped (or before this hit). Un-patch the
+    /// Break bytes so the program runs full-speed, and mark the buffer history so a stale
+    /// snapshot is never mistaken for a live stop. Idempotent — a second orphaned stop,
+    /// were one to slip through, clears an already-empty set.</summary>
+    private void DisarmAfterDetach()
+    {
+        ShumwayDebugHelper.DiagLine("debugger detached: clearing breakpoints, running free");
+        _engine.ClearBreakpoints();
         _channel.SetRunning();
     }
 

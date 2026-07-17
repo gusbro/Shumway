@@ -458,6 +458,41 @@ public class Adr035ChannelTests
     }
 
     [Fact]
+    public void ADetachedDebuggerLeavesNoArmedBreakpointsBehind()
+    {
+        // The user's report: stop at a breakpoint, DETACH (or close Visual Studio) — the
+        // program runs on, but every subsequent hit still ran the whole stop pipeline
+        // (capture, snapshot, notify to nobody) and scrolled "breakpoint hit ... stop"
+        // forever. A stop on the REAL transport with no native debugger attached means the
+        // debugger LEFT: the session clears the armed breakpoints and the program runs
+        // free. (The breakpoints are Visual Studio's; a re-attach re-sends them all.)
+        //
+        // This test IS the real-transport shape: a default-notify session in a test
+        // process has no native debugger — exactly what a detached debuggee looks like —
+        // so the FIRST hit takes the detach path and disarms everything.
+        //
+        //  2: run :-
+        //  3:     between(1, 50, X),
+        //  4:     use(X),
+        //  5:     fail.
+        //  6: run.
+        //  7: use(_).
+        var engine = DebugEngine(
+            "run :-\n    between(1, 50, X),\n    use(X),\n    fail.\nrun.\nuse(_).\n");
+        Assert.True(engine.AddBreakpoint("<string>", 4) > 0);
+
+        using (var session = new ChannelDebugSession(engine))   // default notify: detach-aware
+        {
+            var sols = engine.QueryAll("run.").ToList();
+            Assert.Single(sols);                                // ran to completion, unblocked
+        }
+
+        // The first orphaned stop cleared every armed breakpoint — 49 later hits never
+        // entered the stop pipeline at all.
+        Assert.Empty(engine.Breakpoints);
+    }
+
+    [Fact]
     public void AConditionalBreakpointSetThroughTheChannel_StopsOnlyWhenItHolds()
     {
         // ADR-035 D5, end to end the way Visual Studio drives it: the debugger writes its
