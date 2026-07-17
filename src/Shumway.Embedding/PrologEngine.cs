@@ -3840,6 +3840,47 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return best;
     }
 
+    /// <summary>ADR-035 D5+ (Set Next Statement) — every stop site of the clause that
+    /// contains <paramref name="pc"/>, as (site pc, source line): the positions the
+    /// next-statement pointer can point at. Empty when the pc names no debuggable
+    /// clause.</summary>
+    internal IReadOnlyList<(int Pc, int Line)> ClauseSites(int pc)
+    {
+        if (_clauseStarts.Length == 0 || _stopPcs.Length == 0 || pc < 0)
+            return Array.Empty<(int, int)>();
+        int i = Array.BinarySearch(_clauseStarts, pc);
+        if (i < 0) i = ~i - 1;
+        if (i < 0) return Array.Empty<(int, int)>();
+        int start = _clauseStarts[i];
+        int end = i + 1 < _clauseStarts.Length ? _clauseStarts[i + 1] : int.MaxValue;
+
+        var result = new List<(int, int)>();
+        int j = Array.BinarySearch(_stopPcs, start);
+        if (j < 0) j = ~j;
+        for (; j < _stopPcs.Length && _stopPcs[j] < end; j++)
+        {
+            var site = Shumway.Core.DebugSiteTable.Get(_stopSiteIds[j]);
+            result.Add((_stopPcs[j], site.Line));
+        }
+        return result;
+    }
+
+    /// <summary>ADR-035 D5+ — the source span of the debuggable clause that contains
+    /// <paramref name="line"/> in <paramref name="fileId"/>: where its head is written and
+    /// the first/last stoppable lines. Used to recognise a Set Next Statement aimed at the
+    /// HEAD (a line in [HeadLine, FirstLine)) as the back-to-head rewind. Null when no
+    /// clause spans the line.</summary>
+    internal (int HeadLine, int FirstLine, int LastLine)? ClauseLineSpan(int fileId, int line)
+    {
+        foreach (var c in _clauseLines)
+        {
+            if (c.FileId != fileId) continue;
+            if (line >= c.HeadLine && line <= c.LastLine)
+                return (c.HeadLine, c.FirstLine, c.LastLine);
+        }
+        return null;
+    }
+
     private int FirstSiteLineAtOrAfter(int fileId, int line)
     {
         int best = -1;
@@ -10772,6 +10813,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // (trace/0, or a debugger), in which case the Tier-0 interpreter
             // raises the four Prolog ports on it.
             Debug = DebugSession,
+            // ADR-035 D5+ — with a session watching, trail EVERY binding (the HB
+            // optimisation's untrailed young-var bindings are unrecoverable, and Set
+            // Next Statement rewinds by unwinding the trail to a recorded mark).
+            TrailEverything = DebugSession is not null,
             // ADR-035 — inert unless the program was compiled under
             // compile_mode=debug (only then does any debug_lastcall exist).
             LastCallOptimisation = _flags.DebugLco,

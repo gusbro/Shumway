@@ -408,7 +408,13 @@ public sealed class BytecodeInterpreter
                         if (!TryBacktrack()) return InterpreterResult.Failed;
                         break;
                     }
-                    _engine.Debug?.OnExit(_engine);            // ADR-035 exit port
+                    if (_engine.Debug is { } dbgProceed)
+                    {
+                        dbgProceed.OnExit(_engine);            // ADR-035 exit port
+                        // A Set Next Statement during the stop moved P: honour it
+                        // instead of returning through the stale continuation.
+                        if (_engine.TakeDebugPcRedirect()) { inClause = false; continue; }
+                    }
                     int returnPc = _engine.Cp;
                     if (returnPc < 0)
                         return InterpreterResult.Halted;       // returned past the top
@@ -458,6 +464,9 @@ public sealed class BytecodeInterpreter
                 {
                     opByte = _engine.BreakpointOriginalAt(pc);
                     _engine.Debug?.OnBreak(_engine, pc);
+                    // Set Next Statement during the stop: the pending instruction (held in
+                    // the LOCALS pc/opByte) is abandoned; the loop re-enters at the moved P.
+                    if (_engine.TakeDebugPcRedirect()) { inClause = false; continue; }
                     goto dispatch;
                 }
 
@@ -468,6 +477,7 @@ public sealed class BytecodeInterpreter
                 case Opcode.DebugPort:
                 {
                     _engine.Debug?.OnInlineGoal(_engine);
+                    if (_engine.TakeDebugPcRedirect()) { inClause = false; continue; }
                     _engine.SetPc(pc + 1); inClause = true;
                     break;
                 }
@@ -558,6 +568,7 @@ public sealed class BytecodeInterpreter
                     int numLivePerms = ReadI32(code, codeArr, pc + 5);
                     Shumway.Core.Profiler.Call(functorId);
                     _engine.Debug?.OnCallFunctor(_engine, functorId, false);   // ADR-035
+                    if (_engine.TakeDebugPcRedirect()) { inClause = false; continue; }
                     _engine.TrimEnv(numLivePerms);
                     _engine.SetCp(pc + 9);  // CallIl is 9 bytes, same as Call
                     _engine.SetB0(_engine.B);
@@ -621,6 +632,7 @@ public sealed class BytecodeInterpreter
                     }
                     Shumway.Core.Profiler.Call(target);
                     _engine.Debug?.OnCallAddress(_engine, target, false);   // ADR-035
+                    if (_engine.TakeDebugPcRedirect()) { inClause = false; continue; }
                     _engine.TrimEnv(numLivePerms);
                     _engine.SetCp(pc + 9);  // CallBytecode is 9 bytes, same as Call
                     _engine.SetB0(_engine.B);
@@ -645,6 +657,7 @@ public sealed class BytecodeInterpreter
                     int functorId = ReadI32(code, codeArr, pc + 1);   // chunk 429
                     Shumway.Core.Profiler.Call(functorId);
                     _engine.Debug?.OnCallFunctor(_engine, functorId, true);   // ADR-035
+                    if (_engine.TakeDebugPcRedirect()) { inClause = false; continue; }
                     _engine.SetB0(_engine.B);  // tail call still enters a new procedure
                     _engine.MaybeCollectHeap();
                     var table = IlByFunctorId;
@@ -690,6 +703,7 @@ public sealed class BytecodeInterpreter
                     }
                     Shumway.Core.Profiler.Call(target);
                     _engine.Debug?.OnCallAddress(_engine, target, true);   // ADR-035
+                    if (_engine.TakeDebugPcRedirect()) { inClause = false; continue; }
                     _engine.SetB0(_engine.B);
                     _engine.MaybeCollectHeap();
                     _engine.SetPc(target);
@@ -728,6 +742,11 @@ public sealed class BytecodeInterpreter
                     // ADR-035 call port — tail: this builtin returns to the
                     // caller's continuation, not to our clause.
                     _engine.Debug?.OnCallBuiltin(_engine, builtinId, true);
+                    if (_engine.TakeDebugPcRedirect())
+                    {
+                        Shumway.Core.Profiler.BuiltinExit(builtinId);
+                        inClause = false; continue;   // SNS during the stop: skip the builtin
+                    }
                     try { implOk = entry.Impl(_engine); }
                     catch (PrologRuntimeException re)
                     {
@@ -793,6 +812,7 @@ public sealed class BytecodeInterpreter
                         break;
                     }
                     _engine.Debug?.OnExit(_engine);            // ADR-035 exit port
+                    if (_engine.TakeDebugPcRedirect()) { inClause = false; continue; }
                     int returnPc = _engine.Cp;
                     if (returnPc < 0) return InterpreterResult.Halted;
                     _engine.SetPc(returnPc);
@@ -839,6 +859,7 @@ public sealed class BytecodeInterpreter
                     _engine.Cut((int)_engine.GetY(cutSlot).Data);
                     _engine.Deallocate();
                     _engine.Debug?.OnExit(_engine);            // ADR-035 exit port
+                    if (_engine.TakeDebugPcRedirect()) { inClause = false; continue; }
                     int retPc = _engine.Cp;
                     if (retPc < 0) return InterpreterResult.Halted;
                     _engine.SetPc(retPc);
@@ -857,6 +878,7 @@ public sealed class BytecodeInterpreter
                     int cpSlot = ReadI32(code, codeArr, pc + 1);
                     _engine.Cut((int)_engine.GetY(cpSlot).Data);
                     _engine.Debug?.OnExit(_engine);            // ADR-035 exit port
+                    if (_engine.TakeDebugPcRedirect()) { inClause = false; continue; }
                     int rpc = _engine.Cp;
                     if (rpc < 0) return InterpreterResult.Halted;
                     _engine.SetPc(rpc);
@@ -1960,6 +1982,11 @@ public sealed class BytecodeInterpreter
                     // goal the user wrote — the goal it dispatches reports
                     // itself through DispatchToTier1OrBytecode.
                     _engine.Debug?.OnCallBuiltin(_engine, builtinId, false);
+                    if (_engine.TakeDebugPcRedirect())
+                    {
+                        Shumway.Core.Profiler.BuiltinExit(builtinId);
+                        inClause = false; continue;   // SNS during the stop: skip the builtin
+                    }
                     try
                     {
                         implOk = entry.Impl(_engine);
@@ -2299,11 +2326,15 @@ public sealed class BytecodeInterpreter
         {
             _engine.Debug?.OnCallFunctor(                            // ADR-035 call port
                 _engine, Activation.DecodeResumeMarker(target).FunctorId, tailCall);
+            // SNS during the stop: P was moved and must not be overwritten with the
+            // callee; the outer loop re-enters at the redirected position.
+            if (_engine.TakeDebugPcRedirect()) return;
             _engine.SetPc(target);
             return;
         }
 
         _engine.Debug?.OnCallAddress(_engine, target, tailCall);     // ADR-035 call port
+        if (_engine.TakeDebugPcRedirect()) return;                   // SNS during the stop
 
         while (true)
         {

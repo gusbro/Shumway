@@ -293,6 +293,31 @@ public sealed partial class Activation
     public int HeapCapacity => _heap.Length;
     public int Hb => _hb;
 
+    /// <summary>ADR-035 D5+ (Set Next Statement) — trail EVERY binding, not only those the
+    /// HB check requires for backtracking. The HB optimisation skips trailing a binding to
+    /// a variable younger than the newest choice point (backtracking discards that heap
+    /// wholesale, so undoing is pointless) — which also makes such bindings UNRECOVERABLE
+    /// for anyone else. A debugger that rewinds execution to an earlier goal restores state
+    /// by unwinding the trail to a recorded mark, and that only restores everything if
+    /// everything was trailed. Implemented by PINNING <see cref="Hb"/> at
+    /// <see cref="int.MaxValue"/> (every write to it goes through <see cref="AssignHb"/>):
+    /// the per-bind hot path keeps its single <c>addr &lt; _hb</c> compare — zero new
+    /// branches — and only the cold per-choice-point assignments pay a predicted branch.
+    /// Set by the debug session for the queries it watches; extra trail growth is a
+    /// debug-only cost.</summary>
+    public bool TrailEverything
+    {
+        get => _trailEverything;
+        set
+        {
+            _trailEverything = value;
+            if (value) _hb = int.MaxValue;
+        }
+    }
+    private bool _trailEverything;
+
+    private void AssignHb(int value) => _hb = _trailEverything ? int.MaxValue : value;
+
     /// <summary>Monotonic count of WAM heap cells reserved over this engine's
     /// lifetime (never decremented by backtracking). A deterministic,
     /// wall-clock-independent metric for allocation-affecting changes.</summary>
@@ -477,7 +502,7 @@ public sealed partial class Activation
         // makes to an older cell must be trailed to be reversible. The
         // pre-catch _hb is kept in the frame's snapshot and restored on a
         // catch (UnwindToCatchFrame).
-        _hb = _heapTop;
+        AssignHb(_heapTop);
     }
 
     /// <summary>Deactivates the top-most still-active catch frame: control
@@ -515,7 +540,7 @@ public sealed partial class Activation
         CatchFrame f = _catchFrames[index];
         UnwindTrails(f.SnapBindingTrailTop, f.SnapExtraTrailTop);
         _heapTop = f.SnapHeapTop;
-        _hb = f.SnapHb;
+        AssignHb(f.SnapHb);
         _b = f.SnapB;
         // ADR-033 — drop guard-continuation entries the guarded goal pushed.
         _guardContTop = f.SnapGuardContTop;
@@ -737,7 +762,7 @@ public sealed partial class Activation
 
         _stackTop = newB + size;
         _b = newB;
-        _hb = _heapTop;
+        AssignHb(_heapTop);
     }
 
     /// <summary>
@@ -752,7 +777,7 @@ public sealed partial class Activation
         if (_b < 0)
             throw new InvalidOperationException("RetryMeElse called without an active choice point.");
         int arity = RestoreCommonFromCurrentCp();
-        _hb = _heapTop;
+        AssignHb(_heapTop);
         _stack[_b + CpBpOffset(arity)] = Cell.RawInt(nextClauseAddr);
     }
 
@@ -767,7 +792,7 @@ public sealed partial class Activation
         if (_b < 0)
             throw new InvalidOperationException("TrustMe called without an active choice point.");
         int arity = RestoreCommonFromCurrentCp();
-        _hb = (int)_stack[_b + CpHbOffset(arity)].Data;
+        AssignHb((int)_stack[_b + CpHbOffset(arity)].Data);
         int oldB = _b;
         _b = (int)_stack[_b + CpBOffset(arity)].Data;
         _stackTop = oldB;
@@ -2576,7 +2601,7 @@ public sealed partial class Activation
     public int BeginIlGuard()
     {
         int old = _hb;
-        _hb = _heapTop;
+        AssignHb(_heapTop);
         return old;
     }
 
@@ -2584,7 +2609,7 @@ public sealed partial class Activation
     /// <see cref="Hb"/> to the heap boundary of the (unchanged) current top
     /// choice point. The guard's bindings stay; nothing was pushed, so the
     /// cut itself has nothing to tear down.</summary>
-    public void CommitIlGuard(int savedHb) => _hb = savedHb;
+    public void CommitIlGuard(int savedHb) => AssignHb(savedHb);
 
     /// <summary>Fails a CP-free binding guard (ADR-031): undoes every binding
     /// the guard trailed, discards its heap allocations, restores
@@ -2596,7 +2621,7 @@ public sealed partial class Activation
     {
         UnwindTrails(bindingTop, extraTop);
         _heapTop = heapTop;
-        _hb = savedHb;
+        AssignHb(savedHb);
         _pendingWakeups.Clear();
     }
 
@@ -2680,7 +2705,7 @@ public sealed partial class Activation
             System.Console.Error.WriteLine($"[cp-stack] pop-il _b={_b} _e_before_restore={_e} _stackTop_before={_stackTop} saved_e={_stack[_b + CpCeOffset((int)_stack[_b + CpArityOffset].Data)].Data}");
         int arity = RestoreCommonFromCurrentCp();
         Diagnostics.PopRestoreTrace.PostRestore(this, arity);
-        _hb = (int)_stack[_b + CpHbOffset(arity)].Data;
+        AssignHb((int)_stack[_b + CpHbOffset(arity)].Data);
         int oldB = _b;
         _b = (int)_stack[_b + CpBOffset(arity)].Data;
         _stackTop = oldB;
@@ -4214,6 +4239,10 @@ public sealed partial class Activation
     /// be reversible via <see cref="UnwindTrails"/>.</summary>
     public void SetHb(int hb)
     {
+        // Pinned mode (TrailEverything): the value is irrelevant — everything trails
+        // whatever Hb says — and a caller restoring a saved Hb of int.MaxValue must not
+        // trip the range check.
+        if (_trailEverything) { _hb = int.MaxValue; return; }
         if (hb < 0 || hb > _heapTop) throw new ArgumentOutOfRangeException(nameof(hb));
         _hb = hb;
     }
@@ -4537,6 +4566,57 @@ public sealed partial class Activation
     /// (loaded into the process without InternalsVisibleTo) can call it from
     /// emitted IL.</summary>
     public void SetB0(int b0) => _b0 = b0;
+
+    /// <summary>ADR-035 D5+ (Set Next Statement) — restore <c>B</c> to a choice point
+    /// recorded earlier, discarding every newer one, exactly as a backtrack into it would
+    /// (minus taking the alternative). Only for the debugger's rewind, which has validated
+    /// the target with <see cref="IsChoicePointInChain"/> first.</summary>
+    public void SetB(int b) => _b = b;
+
+    /// <summary>ADR-035 D5+ — the debugger moved the next-statement pointer DURING a stop.
+    /// The interpreter's dispatch loop holds the stopped instruction in LOCALS (pc,
+    /// opByte): without this flag it would execute that instruction anyway when the stop
+    /// returns, clobbering the move. Every port-hook site checks it right after the hook
+    /// and, when set, abandons the pending instruction and re-enters the loop at the
+    /// redirected <c>P</c>. Set via <see cref="RedirectPc"/>, consumed via
+    /// <see cref="TakeDebugPcRedirect"/>.</summary>
+    public bool DebugPcRedirected { get; private set; }
+
+    public void RedirectPc(int pc)
+    {
+        _p = pc;
+        DebugPcRedirected = true;
+    }
+
+    public bool TakeDebugPcRedirect()
+    {
+        if (!DebugPcRedirected) return false;
+        DebugPcRedirected = false;
+        return true;
+    }
+
+    /// <summary>ADR-035 D5+ — restore <c>E</c> to an ancestor frame (the debugger's
+    /// back-to-head rewind pops the current frame by returning to its caller's recorded
+    /// goal). The frames above become dead stack, reclaimed by the next allocate.</summary>
+    public void SetE(int e) => _e = e;
+
+    /// <summary>ADR-035 D5+ — is <paramref name="b"/> still on the live choice-point
+    /// chain (or the no-choice-point sentinel below it)? A rewind may only restore
+    /// <c>B</c> to a choice point that still exists: one discarded by a cut since the
+    /// mark was recorded is gone, and the rewind that would resurrect it is refused.</summary>
+    public bool IsChoicePointInChain(int b)
+    {
+        int cursor = _b;
+        while (cursor >= 0)
+        {
+            if (cursor == b) return true;
+            int arity = (int)_stack[cursor + CpArityOffset].Data;
+            int prev = (int)_stack[cursor + CpBOffset(arity)].Data;
+            if (prev == cursor) return false;   // self-pointing corruption guard
+            cursor = prev;
+        }
+        return b == cursor;   // the no-choice-points sentinel (-1) matches itself
+    }
 
     /// <summary>Sets the write/read mode flag directly. The interpreter writes this
     /// from get_structure/put_structure/get_list/put_list. Exposed for tests that

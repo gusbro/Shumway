@@ -205,6 +205,12 @@ public sealed partial class Activation
             : (int)System.Math.Max(next, floor);
     }
 
+    /// <summary>ADR-035 D5+ — how many collections have actually run (compacting the heap
+    /// and rewriting the trail). The debugger's rewind history records this per mark: a
+    /// mark taken before a collection indexes a heap and a trail that no longer exist,
+    /// and matching the count is how such marks are recognised and refused.</summary>
+    public int HeapGcCount { get; private set; }
+
     /// <summary>Runs a mark-compact collection of the heap. Returns the
     /// number of cells reclaimed (0 if the collector bailed). Safe to
     /// call only at a safe point — between WAM instructions — where the
@@ -221,6 +227,7 @@ public sealed partial class Activation
 
         int oldTop = _heapTop;
         if (oldTop == 0) return 0;
+        HeapGcCount++;
 
         // ---- Phase 1: mark every cell reachable from the roots. ----
         bool[] marked = _gcMarked is { } m && m.Length >= oldTop ? m : (_gcMarked = new bool[oldTop]);

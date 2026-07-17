@@ -659,6 +659,179 @@ public sealed class DebugService : IDebugSession
         return (committed, text.ToString());
     }
 
+    // ---- ADR-035 D5+ — Set Next Statement ----
+
+    /// <summary>One recorded call-port mark: everything a rewind needs to put the machine
+    /// back to "about to run this goal". With <see cref="Activation.TrailEverything"/> on,
+    /// unwinding the two trails to the recorded tops restores EVERY binding made since —
+    /// the trail is the note-taking; no goal re-executes, no side effect repeats.</summary>
+    private readonly record struct PortMark(
+        Activation Engine, int P, int E, int BindingTrailTop, int ExtraTrailTop,
+        int HeapTop, int B, int B0, int GcCount);
+
+    private readonly List<PortMark> _portMarks = new();
+    private const int PortMarkCapacity = 2048;
+
+    /// <summary>Record the machine's position at a call port. STACK DISCIPLINE keeps the
+    /// list honest without bookkeeping: control standing at frame E means every mark of a
+    /// DEEPER frame is dead (that frame returned, or backtracking discarded it), and a
+    /// mark whose trail top exceeds the current one was undone by backtracking — both are
+    /// popped here, lazily, before the new mark goes on. A mark of another activation (a
+    /// previous query) is likewise dead.</summary>
+    private void RecordPortMark(Activation engine)
+    {
+        if (_evalActive || _conditionEval) return;   // evaluations are not rewind targets
+
+        var marks = _portMarks;
+        while (marks.Count > 0)
+        {
+            var top = marks[^1];
+            if (!ReferenceEquals(top.Engine, engine)
+                || top.E > engine.E
+                || top.BindingTrailTop > engine.BindingTrailTop
+                || top.ExtraTrailTop > engine.ExtraTrailTop)
+            {
+                marks.RemoveAt(marks.Count - 1);
+                continue;
+            }
+            break;
+        }
+        if (marks.Count >= PortMarkCapacity) marks.RemoveAt(0);   // oldest target lost
+        marks.Add(new PortMark(
+            engine, engine.P, engine.E, engine.BindingTrailTop, engine.ExtraTrailTop,
+            engine.HeapTop, engine.B, engine.B0, engine.HeapGcCount));
+    }
+
+    /// <summary>ADR-035 D5+ — move the next-statement pointer of the TOP frame.
+    ///
+    /// <para>FORWARD (a later goal of the same clause): the pointer moves, the skipped
+    /// goals never run — C# semantics, bindings they would have made do not happen.</para>
+    ///
+    /// <para>BACKWARD (an earlier goal): the machine REWINDS to the recorded mark of that
+    /// goal's call port — B restored (newer choice points discarded), both trails unwound
+    /// to the recorded tops (undoing every binding made since; TrailEverything makes that
+    /// complete), heap top restored. Nothing re-executes: the user asked to stand there
+    /// again and run forward themselves. Refused — with the list of lines that WOULD be
+    /// accepted — when no valid mark exists for the target: the goal never ran in this
+    /// frame instance, a cut discarded the choice point the mark saved, or a heap
+    /// collection rewrote the world since.</para>
+    ///
+    /// <para>THE HEAD LINE (or the blank span between head and first goal) rewinds to the
+    /// CALLER's mark for the call that created this frame: the frame is popped, and
+    /// continuing re-runs the call — dispatch, head unification and all. Head matching is
+    /// pure, so re-running it is safe.</para>
+    ///
+    /// <para>Returns "" on success, or a message explaining the refusal.</para></summary>
+    private StopReason _lastStopReason = StopReason.AsyncBreak;
+
+    public string SetNextStatement(int frameIndex, int targetLine)
+    {
+        if (Current is not { } outer) return "nothing is stopped";
+        if (frameIndex != 0) return "Set Next Statement is supported on the top frame only";
+        if (_lastStopReason is StopReason.Redo or StopReason.Fail)
+            return "Set Next Statement is not available at a redo/fail stop "
+                + "(the machine is mid-backtrack)";
+        if (!_engine.TryGetDisplayFrameContext(outer, 0, out int pc, out int env))
+            return "this frame has no statement context";
+        if (outer.LastCallOptimisation)
+            return "Set Next Statement needs last-call optimisation off "
+                + "(set_prolog_flag(debug_lco, off))";
+
+        var sites = _engine.ClauseSites(pc);
+        if (sites.Count == 0) return "this clause has no statement positions";
+
+        int currentSite = _engine.SiteAtOrBefore(outer.P);
+        var currentInfo = currentSite >= 0
+            ? Shumway.Core.DebugSiteTable.Get(currentSite) : default;
+
+        // The head span means "restart the clause body": rewind to the FIRST goal's mark.
+        // Head-unification bindings are BELOW that mark, so they survive — the same
+        // meaning C#'s Set Next Statement to a method's first line has (parameters keep
+        // their values). Re-matching the head itself would be a cross-frame rewind into
+        // the caller; deferred.
+        var span = _engine.ClauseLineSpan(currentInfo.FileId, targetLine);
+        if (span is { } s && targetLine >= s.HeadLine && targetLine < s.FirstLine
+            && s.FirstLine == sites[0].Line)
+            targetLine = sites[0].Line;
+
+        // Resolve the target line to a site of THIS clause.
+        int targetPc = -1;
+        foreach (var (sitePc, line) in sites)
+            if (line == targetLine) { targetPc = sitePc; break; }
+        if (targetPc < 0)
+            return "line " + targetLine + " is not a statement of this clause; "
+                + "statements are at: " + string.Join(", ",
+                    sites.Select(x => x.Line).Distinct().OrderBy(x => x));
+
+        int currentPc = outer.P;
+        if (targetPc == currentPc) return "";
+        if (targetPc > currentPc)
+        {
+            // FORWARD: just move. The skipped goals do not run.
+            outer.RedirectPc(targetPc);
+            FrameStateChanged = true;
+            return "";
+        }
+
+        // BACKWARD: find the newest valid mark for that site in this frame.
+        var candidate = FindMark(outer, env, targetPc);
+        if (candidate is not { } mark)
+        {
+            var acceptable = AcceptableRewindLines(outer, env);
+            return "cannot rewind to line " + targetLine
+                + (acceptable.Count > 0
+                    ? "; rewindable lines are: " + string.Join(", ", acceptable)
+                    : "; no rewindable position is recorded for this frame");
+        }
+
+        RestoreMark(outer, mark, targetPc);
+        return "";
+    }
+
+    private PortMark? FindMark(Activation outer, int env, int targetPc)
+    {
+        int targetSite = _engine.SiteAt(targetPc);
+        for (int i = _portMarks.Count - 1; i >= 0; i--)
+        {
+            var m = _portMarks[i];
+            if (!ReferenceEquals(m.Engine, outer) || m.E != env) continue;
+            if (_engine.SiteAtOrBefore(m.P) != targetSite) continue;
+            if (!MarkIsValid(outer, m)) continue;
+            return m;
+        }
+        return null;
+    }
+
+    private bool MarkIsValid(Activation outer, PortMark m)
+        => m.GcCount == outer.HeapGcCount
+           && m.BindingTrailTop <= outer.BindingTrailTop
+           && m.ExtraTrailTop <= outer.ExtraTrailTop
+           && m.HeapTop <= outer.HeapTop
+           && outer.IsChoicePointInChain(m.B);
+
+    private List<int> AcceptableRewindLines(Activation outer, int env)
+    {
+        var lines = new SortedSet<int>();
+        foreach (var m in _portMarks)
+        {
+            if (!ReferenceEquals(m.Engine, outer) || m.E != env) continue;
+            if (!MarkIsValid(outer, m)) continue;
+            int site = _engine.SiteAtOrBefore(m.P);
+            if (site >= 0) lines.Add(Shumway.Core.DebugSiteTable.Get(site).Line);
+        }
+        return lines.ToList();
+    }
+
+    private void RestoreMark(Activation outer, PortMark mark, int targetPc)
+    {
+        outer.SetB(mark.B);
+        outer.UnwindTrails(mark.BindingTrailTop, mark.ExtraTrailTop);
+        outer.SetHeapTop(mark.HeapTop);
+        outer.SetB0(mark.B0);
+        outer.RedirectPc(targetPc);
+        FrameStateChanged = true;
+    }
+
     private static bool IsUnboundAt(Activation outer, int addr)
     {
         int d = outer.Deref(addr);
@@ -931,6 +1104,7 @@ public sealed class DebugService : IDebugSession
 
     void IDebugSession.OnCallAddress(Activation engine, int address, bool tailCall)
     {
+        RecordPortMark(engine);   // ADR-035 D5+ — every goal is a rewind target
         // A dictionary probe, and no port for an address that names no predicate.
         if (_engine.LookupPredicateByAddress(address) is null) return;
         // Nor for one the user cannot see into: the prelude, the libraries, and the top
@@ -946,6 +1120,7 @@ public sealed class DebugService : IDebugSession
 
     void IDebugSession.OnCallFunctor(Activation engine, int functorId, bool tailCall)
     {
+        RecordPortMark(engine);   // ADR-035 D5+
         if (FunctorGoalName(functorId) is null) return;   // an engine helper: not a goal
         if (!_engine.IsDebuggableFunctor(functorId)) return;
         _goalKind = GoalKind.Functor;
@@ -955,6 +1130,7 @@ public sealed class DebugService : IDebugSession
 
     void IDebugSession.OnCallBuiltin(Activation engine, int builtinId, bool tailCall)
     {
+        RecordPortMark(engine);   // ADR-035 D5+
         var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
         if (IsInternal(entry.Name)) return;
         _goalKind = GoalKind.Builtin;
@@ -1064,6 +1240,7 @@ public sealed class DebugService : IDebugSession
 
     void IDebugSession.OnInlineGoal(Activation engine)
     {
+        RecordPortMark(engine);   // ADR-035 D5+
         // A `!`, an `is/2`, an `=/2`, a comparison: a goal the user wrote, about to run,
         // with no call of its own — the debug_port opcode in front of it raises what the
         // dispatch never will. It is a landing like any call port (the same rules, the
@@ -1126,6 +1303,7 @@ public sealed class DebugService : IDebugSession
         _mode = StepMode.Continue;
         _lastStopDepth = depth;
         _lastStopWasRedo = true;   // a step taken from here is measured against the CALL depth
+        _lastStopReason = StopReason.Redo;   // ADR-035 D5+ — SNS refused here
         var site = SiteOf(pc);
         // Name a surviving meta-construct helper for what the user wrote ($findall_N → findall/3,
         // $catchgoal_N → catch/3), as the frame walk does — never the raw lowered helper.
@@ -1161,7 +1339,14 @@ public sealed class DebugService : IDebugSession
     }
 
     void IDebugSession.MarkHeapRoots(Action<int> markCell) { }
-    void IDebugSession.RelocateHeapRoots(Func<int, int> relocIndex) { }
+    void IDebugSession.RelocateHeapRoots(Func<int, int> relocIndex)
+    {
+        // ADR-035 D5+ — a compaction moved the heap and rewrote the trail: every recorded
+        // rewind mark indexes a world that no longer exists. Dropping them (rather than
+        // relocating trail positions, which the collector does not expose) makes those
+        // targets refuse honestly; the GcCount check is the belt to this suspender.
+        _portMarks.Clear();
+    }
 
     // ----- depth -----
 
@@ -1283,6 +1468,7 @@ public sealed class DebugService : IDebugSession
         _mode = StepMode.Continue;   // a handler that says nothing lets it run on
         _lastStopDepth = depth;
         _lastStopWasRedo = false;    // call / breakpoint / fail: depth IS the goal's own
+        _lastStopReason = reason;    // ADR-035 D5+ — SNS is refused at redo/fail stops
         Current = engine;
 
         var frames = WithEvalBoundary(engine, _engine.CaptureFrames(engine));
