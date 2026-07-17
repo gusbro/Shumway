@@ -175,8 +175,35 @@ try {
     $results["R-0 stopped at the breakpoint"] = $stopped
     Select-PrologThread | Out-Null
 
-    # Baseline BEFORE the delete: how many exception lines are already there.
     $exRegex = "Exception thrown: 'Shumway\.Core\.PrologRuntimeException'"
+
+    # --- R-3: the WATCH refresh. Visual Studio re-evaluates every Watch/QuickWatch
+    # expression whenever its debugger UI reactivates (the user's focus-switch repro).
+    # GetExpression takes exactly that path: our EE -> func-eval -> the goal runs in the
+    # engine. An expression that ERRORS in Prolog (a bare variable goal, an unknown
+    # predicate) throws inside the engine -- first-chance lines in the Output, one batch
+    # PER REFRESH. With the new SHUMWAY_DEBUG_DIAG first-chance logger, the debuggee's
+    # stderr now carries the FULL C# stack of each, naming the thrower.
+    $watchBase = ([regex]::Matches((Get-DebugOutputText), $exRegex)).Count
+    Write-Host "  [R-3] evaluating watch-style expression 'LineNo' twice (focus-switch repro) ..."
+    $watchText = ""
+    try {
+        $expr = $dte.Debugger.GetExpression("LineNo", $true, 10000)
+        $watchText = "$($expr.Value)"
+        $null = $dte.Debugger.GetExpression("LineNo", $true, 10000)
+    } catch { Write-Host "  GetExpression threw: $($_.Exception.Message)" }
+    Start-Sleep -Seconds 3
+    $watchAfter = ([regex]::Matches((Get-DebugOutputText), $exRegex)).Count
+    $watchNew = $watchAfter - $watchBase
+    Write-Host "  watch value: '$watchText'; new exception lines from 2 evaluations: $watchNew"
+    # INFORMATIONAL, not asserted: what this leg shows depends on the host VS's func-eval
+    # mode. With ForceRealFuncEval (the user's VS) the goal really runs and an erroring
+    # expression logs first-chance exceptions per refresh — the focus-switch spam. In a
+    # bare hive the IMPLICIT evaluation runs under the func-eval INTERPRETER, which dies at
+    # the first internal call (System.Array.Clear in DrainCommands) before the goal runs.
+    $results["R-3 watch-eval leg ran (informational)"] = $true
+
+    # Baseline BEFORE the delete: how many exception lines are already there.
     $before = ([regex]::Matches((Get-DebugOutputText), $exRegex)).Count
     Write-Host "  exception lines before delete: $before"
 
@@ -231,8 +258,8 @@ finally {
 
 Start-Sleep -Seconds 2
 Write-Host ""
-Write-Host "=== engine stderr (tail) ==="
-if (Test-Path $stderrLog) { Get-Content $stderrLog | Select-Object -Last 10 | ForEach-Object { Write-Host "  $_" } }
+Write-Host "=== engine stderr (tail: first-chance stacks + condition lines) ==="
+if (Test-Path $stderrLog) { Get-Content $stderrLog | Select-Object -Last 40 | ForEach-Object { Write-Host "  $_" } }
 
 Write-Host ""
 Write-Host "--- results ---"

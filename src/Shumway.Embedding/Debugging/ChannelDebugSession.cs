@@ -66,8 +66,43 @@ public sealed class ChannelDebugSession : IDisposable
         ShumwayDebugHelper.Session = this;
         engine.AttachDebugSession(_service);
 
+        // ADR-035 diagnostics — under SHUMWAY_DEBUG_DIAG, every first-chance Prolog
+        // exception prints its FULL C# stack to the debuggee's stderr. Visual Studio's
+        // Output says only "Exception thrown: 'Shumway.Core.PrologRuntimeException'" —
+        // which reads as an engine defect when it is really a Prolog throw doing its job
+        // (this engine IMPLEMENTS Prolog exceptions as C# exceptions, so the program's own
+        // catch/throw, a watch expression that errors, an Immediate goal's
+        // existence_error — all log first-chance lines while a debugger watches). The
+        // stack names the thrower, ending the guesswork. Opt-in: a run's worth of Blint
+        // internals would flood an ordinary session's stderr.
+        if (ShumwayDebugHelper.DiagEnabled)
+        {
+            _firstChance = (_, e) =>
+            {
+                // The handler runs on the THROWING thread, inside the throw itself: a
+                // throw of our own here would recurse. Guard, and never let one out.
+                if (_inFirstChance) return;
+                _inFirstChance = true;
+                try
+                {
+                    Exception ex = e.Exception;
+                    if (ex is Shumway.Core.PrologRuntimeException or ShumwayPrologException)
+                        ShumwayDebugHelper.DiagLine(
+                            "first-chance " + ex.GetType().Name + ": " + ex.Message
+                            + Environment.NewLine + (ex.StackTrace ?? "(no stack)"));
+                }
+                catch (Exception) { }
+                finally { _inFirstChance = false; }
+            };
+            AppDomain.CurrentDomain.FirstChanceException += _firstChance;
+        }
+
         StartIdleWatcher();
     }
+
+    private EventHandler<System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs>?
+        _firstChance;
+    [ThreadStatic] private static bool _inFirstChance;
 
     // ----- the engine when it is NOT running -----
 
@@ -527,6 +562,11 @@ public sealed class ChannelDebugSession : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        if (_firstChance is not null)
+        {
+            AppDomain.CurrentDomain.FirstChanceException -= _firstChance;
+            _firstChance = null;
+        }
         _service.CancelEvaluation();   // drop any goal parked mid-backtracking
         _engine.AttachDebugSession(null);
 
