@@ -246,9 +246,84 @@ namespace Shumway.Debugger.Concord
         void IDkmLanguageExpressionEvaluator.SetValueAsString(
             DkmEvaluationResult result, string value, int timeout, out string? errorText)
         {
-            // Binding a variable from the debugger would have to unify, trail, and
-            // possibly wake attributed-variable hooks. Not a setter.
-            errorText = "Prolog variables cannot be assigned from the debugger.";
+            // ADR-035 D5+ — editing a variable's value in Locals/Watch IS unification:
+            // "<var> = (<term>)" goes through the exact evaluation the Immediate window
+            // uses, and the engine commits the solution's bindings into the suspended
+            // frame (trailed, transactional — see DebugService.TryCommitSolutionToFrame).
+            // A free variable binds; a bound one only "changes" if the term unifies with
+            // it, which for a ground value means: not at all — and the error says so
+            // instead of pretending.
+            //
+            // SetValueAsString is SYNCHRONOUS, and a func-eval will not run while a
+            // synchronous component call holds the dispatcher — the same lesson
+            // EvaluateExpression learned. So the call gets its OWN work list, executed
+            // to completion right here.
+            errorText = null;
+            try
+            {
+                if (!ShumwayFrameId.TryDecode(result.StackFrame, out int frameIndex))
+                {
+                    errorText = "this frame has no evaluation context";
+                    return;
+                }
+                ShumwaySessionDataItem session =
+                    ShumwaySession.GetState(result.StackFrame.Process);
+                DkmStackWalkFrame? clrFrame;
+                if (!session.EvalAnchors.TryGetValue(
+                        result.StackFrame.Thread.UniqueId, out clrFrame)
+                    || clrFrame == null)
+                {
+                    errorText = "no CLR frame to evaluate against";
+                    return;
+                }
+
+                string goalText = result.Name + " = (" + value + ")";
+                string b64 = Convert.ToBase64String(
+                    System.Text.Encoding.UTF8.GetBytes(goalText));
+                string call = "Shumway.Core.Debugging.ShumwayDebugHost.EvaluateGoal("
+                    + frameIndex + ", \"" + b64 + "\")";
+
+                string? answer = null;
+                string? csError = null;
+                DkmWorkList workList = DkmWorkList.Create(null);
+                ShumwaySession.EvaluateCSharpAsync(
+                    workList, result.InspectionContext.InspectionSession,
+                    result.StackFrame.Thread, clrFrame, call,
+                    timeoutMs: Math.Max(timeout, 10_000),
+                    (raw, err) =>
+                    {
+                        try
+                        {
+                            if (raw == null) { csError = err; return; }
+                            string trimmed = raw.Trim();
+                            if (trimmed.Length >= 2 && trimmed[0] == '"'
+                                && trimmed[trimmed.Length - 1] == '"')
+                                trimmed = trimmed.Substring(1, trimmed.Length - 2);
+                            answer = System.Text.Encoding.UTF8.GetString(
+                                Convert.FromBase64String(trimmed));
+                        }
+                        catch (Exception ex) { csError = ex.Message; }
+                    });
+                workList.Execute();
+
+                ShumwayLog.Write("set value: '" + goalText + "' -> "
+                    + (answer ?? ("ERROR " + csError)));
+                if (answer == null)
+                {
+                    errorText = "evaluation failed: " + (csError ?? "no result");
+                    return;
+                }
+                if (answer.IndexOf("committed to the frame", StringComparison.Ordinal) < 0)
+                {
+                    errorText = answer.StartsWith("false", StringComparison.Ordinal)
+                        ? "the term does not unify with the variable's value"
+                        : "nothing was bound: " + answer.Replace('\n', ' ');
+                }
+            }
+            catch (Exception ex)
+            {
+                errorText = "set value failed: " + ex.Message;
+            }
         }
 
         // ---- shared ----
@@ -283,10 +358,14 @@ namespace Shumway.Debugger.Concord
             DkmInspectionContext inspectionContext, DkmStackWalkFrame frame,
             string name, string value)
         {
+            // NOT ReadOnly (ADR-035 D5+): editing a value in Locals/Watch routes to
+            // SetValueAsString, which UNIFIES the typed term into the suspended frame —
+            // the Prolog meaning of assignment. ReadOnly made Visual Studio refuse the
+            // edit up front ("Operation not supported") without ever asking us.
             return DkmSuccessEvaluationResult.Create(
                 inspectionContext, frame, name, name,
-                DkmEvaluationResultFlags.ReadOnly, value,
-                EditableValue: null, Type: "term",
+                DkmEvaluationResultFlags.None, value,
+                EditableValue: value, Type: "term",
                 Category: DkmEvaluationResultCategory.Data,
                 Access: DkmEvaluationResultAccessType.None,
                 StorageType: DkmEvaluationResultStorageType.None,

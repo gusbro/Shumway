@@ -461,7 +461,21 @@ public sealed class ChannelDebugSession : IDisposable
         }
         finally
         {
-            _channel.RestoreSnapshotBytes(saved);
+            // The bracket restores the ORIGINAL stop's snapshot — the eval's own nested
+            // stops must not linger — EXCEPT when the evaluation COMMITTED bindings into
+            // the suspended frame (ADR-035 D5+): then the original snapshot is the stale
+            // one, and restoring it would show Locals the unbound variables the frame no
+            // longer has. Re-capture the stop as it stands instead.
+            if (_service.TakeFrameStateChanged())
+            {
+                DebugStopEvent? fresh = _service.CaptureNow();
+                if (fresh is not null) _channel.WriteSnapshot(fresh);
+                else _channel.RestoreSnapshotBytes(saved);
+            }
+            else
+            {
+                _channel.RestoreSnapshotBytes(saved);
+            }
         }
     }
 
