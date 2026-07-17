@@ -52,6 +52,7 @@ public static class ShumwayDebugHelper
                 Shumway.Core.Debugging.ShumwayDebugHost.OnAttach = null;
                 Shumway.Core.Debugging.ShumwayDebugHost.OnCaptureNow = null;
                 Shumway.Core.Debugging.ShumwayDebugHost.OnEvaluateGoal = null;
+                Shumway.Core.Debugging.ShumwayDebugHost.OnSetNextStatement = null;
                 Shumway.Core.Debugging.ShumwayDebugHost.SnapshotAddress = 0;
                 Shumway.Core.Debugging.ShumwayDebugHost.CommandAddress = 0;
                 Shumway.Core.Debugging.ShumwayDebugHost.SnapshotLength = 0;
@@ -65,6 +66,7 @@ public static class ShumwayDebugHelper
                 Shumway.Core.Debugging.ShumwayDebugHost.OnAttach = Attach;
                 Shumway.Core.Debugging.ShumwayDebugHost.OnCaptureNow = CaptureNow;
                 Shumway.Core.Debugging.ShumwayDebugHost.OnEvaluateGoal = EvaluateGoal;
+                Shumway.Core.Debugging.ShumwayDebugHost.OnSetNextStatement = SetNextStatement;
                 Shumway.Core.Debugging.ShumwayDebugHost.SnapshotAddress = value.SnapshotAddress.ToInt64();
                 Shumway.Core.Debugging.ShumwayDebugHost.SnapshotLength = DebugChannel.SnapshotCapacity;
                 Shumway.Core.Debugging.ShumwayDebugHost.CommandAddress = value.CommandAddress.ToInt64();
@@ -104,6 +106,15 @@ public static class ShumwayDebugHelper
         return session is null
             ? "no debug session is running"
             : session.EvaluateGoal(frameIndex, goalText);
+    }
+
+    /// <summary>ADR-035 D5+ — Set Next Statement, plain-text side.</summary>
+    public static string SetNextStatement(int frameIndex, int targetLine)
+    {
+        ChannelDebugSession? session = Session;
+        return session is null
+            ? "no debug session is running"
+            : session.SetNextStatement(frameIndex, targetLine);
     }
 
     /// <summary>The asynchronous break. The user hit Break All, the process stopped

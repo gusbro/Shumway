@@ -146,6 +146,31 @@ public static class ShumwayDebugHost
         }
     }
 
+    /// <summary>Set by the debug session. See <see cref="SetNextStatement"/>.</summary>
+    public static Func<int, int, string>? OnSetNextStatement;
+
+    /// <summary>ADR-035 D5+ — Set Next Statement (Ctrl+Shift+F10): move the top frame's
+    /// next-statement pointer to <paramref name="targetLine"/>. Forward skips; backward
+    /// rewinds to the recorded mark (see DebugService.SetNextStatement). Returns "" on
+    /// success or the refusal message, base64-encoded UTF-8 (same rationale as
+    /// <see cref="EvaluateGoal"/>). A func-eval, user-initiated from a break state.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
+    public static string SetNextStatement(int frameIndex, int targetLine)
+    {
+        Func<int, int, string>? handler = OnSetNextStatement;
+        string answer;
+        if (handler is null)
+        {
+            answer = "no debug session is running";
+        }
+        else
+        {
+            try { answer = handler(frameIndex, targetLine); }
+            catch (Exception ex) { answer = "set next statement failed: " + ex.Message; }
+        }
+        return Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(answer));
+    }
+
     /// <summary>The asynchronous break. The user hit Break All; the process stopped wherever
     /// it happened to be, which is at no port at all, so nothing has been reported and the
     /// channel still holds the last real stop — which would be a lie. This writes the truth:

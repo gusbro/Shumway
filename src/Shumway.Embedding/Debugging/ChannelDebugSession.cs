@@ -479,6 +479,21 @@ public sealed class ChannelDebugSession : IDisposable
         }
     }
 
+    /// <summary>ADR-035 D5+ — Set Next Statement, bracketed by the channel: a successful
+    /// move changed the frame's position (and, for a rewind, its bindings), so the stop
+    /// snapshot is re-captured for the debugger's re-walk — same rule as a bind-into-frame
+    /// commit.</summary>
+    internal string SetNextStatement(int frameIndex, int targetLine)
+    {
+        string result = _service.SetNextStatement(frameIndex, targetLine);
+        if (_service.TakeFrameStateChanged())
+        {
+            DebugStopEvent? fresh = _service.CaptureNow();
+            if (fresh is not null) _channel.WriteSnapshot(fresh);
+        }
+        return result;
+    }
+
     /// <summary>Drain the command region and apply the breakpoint changes in it NOW, so code
     /// that runs from a stop before the normal resume-time drain — an Immediate-window
     /// evaluation — sees the breakpoints the user has set while stopped.
