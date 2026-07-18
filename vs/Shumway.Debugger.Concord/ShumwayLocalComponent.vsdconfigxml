@@ -23,6 +23,13 @@
           <NoFilter/>
           <Interface Name="IDkmCallStackFilter"/>
         </InterfaceGroup>
+        <!-- D5+: IDkmSetNextStatementQuery must live in the engine (IDE) process. We accept
+             for any target inside our custom runtime and let the engine's actual move
+             decide (a rewind's validity is live machine state). -->
+        <InterfaceGroup>
+          <NoFilter/>
+          <Interface Name="IDkmSetNextStatementQuery"/>
+        </InterfaceGroup>
       </Implements>
     </Class>
 

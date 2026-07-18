@@ -55,6 +55,10 @@
           </Filter>
           <Interface Name="IDkmRuntimeMonitorBreakpointHandler"/>
           <Interface Name="IDkmRuntimeStepper"/>
+          <!-- D5+: Ctrl+Shift+F10 moves the top frame's next-statement pointer via a
+               func-eval of ShumwayDebugHost.SetNextStatement (forward jump / backward
+               rewind to a recorded port mark). -->
+          <Interface Name="IDkmRuntimeSetNextStatement"/>
         </InterfaceGroup>
 
         <!-- D5: conditional breakpoints. The condition the user types on a .pl breakpoint

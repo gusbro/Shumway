@@ -100,8 +100,30 @@ namespace Shumway.Debugger.Concord
         }
     }
 
-    public sealed class ShumwayCallStackFilter : IDkmCallStackFilter
+    public sealed class ShumwayCallStackFilter
+        : IDkmCallStackFilter, IDkmSetNextStatementQuery
     {
+        // ADR-035 D5+ — whether Ctrl+Shift+F10 is offered. IDkmSetNextStatementQuery lives
+        // in the engine (IDE) process by contract. We accept for any target within our
+        // custom runtime and let the engine decide for real when the move is attempted
+        // (a rewind's validity depends on live machine state — choice points, marks — that
+        // only the debuggee knows): S_OK here, and IDkmRuntimeSetNextStatement throws with
+        // the reason if the engine refuses. Greying the command out would need a round trip
+        // per caret move; a refused move with a clear message is the better trade.
+        uint IDkmSetNextStatementQuery.CanSetNextStatement(
+            DkmStackWalkFrame frame, DkmInstructionAddress newStatement)
+        {
+            const uint S_OK = 0;
+            const uint E_FAIL = 0x80004005;
+            bool ok = frame.InstructionAddress is DkmCustomInstructionAddress
+                && newStatement is DkmCustomInstructionAddress;
+            ShumwayLog.Write("CanSetNextStatement: frameAddr="
+                + (frame.InstructionAddress?.GetType().Name ?? "null")
+                + " newStatement=" + (newStatement?.GetType().Name ?? "null")
+                + " -> " + (ok ? "S_OK" : "E_FAIL"));
+            return ok ? S_OK : E_FAIL;
+        }
+
         DkmStackWalkFrame[]? IDkmCallStackFilter.FilterNextFrame(
             DkmStackContext stackContext, DkmStackWalkFrame input)
         {

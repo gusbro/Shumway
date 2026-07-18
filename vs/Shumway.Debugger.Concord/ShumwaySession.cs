@@ -417,7 +417,7 @@ namespace Shumway.Debugger.Concord
         internal static string? EvaluateCSharp(
             DkmThread thread, DkmStackWalkFrame frame,
             string expression, bool allowSideEffects, int timeoutMs, out string? error,
-            DkmInspectionSession? existingSession = null)
+            DkmInspectionSession? existingSession = null, bool forceRealFuncEval = false)
         {
             error = null;
             DkmLanguage language = DkmLanguage.Create(
@@ -435,11 +435,18 @@ namespace Shumway.Debugger.Concord
                 DkmEvaluationFlags evalFlags = allowSideEffects
                     ? DkmEvaluationFlags.EnableExtendedSideEffects
                     : DkmEvaluationFlags.None;
+                // ForceRealFuncEval (see EvaluateCSharpAsync): run the call on the thread
+                // rather than let the CLR interpret its IL — the interpreter cannot leave
+                // IL for a native FCall, and a Set Next Statement rewind reaches engine
+                // internals that do. AllowStoppingEvents mirrors the async path so a
+                // breakpoint the move's re-capture path would touch behaves.
+                if (forceRealFuncEval) evalFlags |= DkmEvaluationFlags.ForceRealFuncEval;
                 DkmInspectionContext inspection = DkmInspectionContext.Create(
                     session, frame.RuntimeInstance, thread,
                     Timeout: (uint)timeoutMs,
                     EvaluationFlags: evalFlags,
-                    FuncEvalFlags: DkmFuncEvalFlags.None,
+                    FuncEvalFlags: forceRealFuncEval
+                        ? DkmFuncEvalFlags.AllowStoppingEvents : DkmFuncEvalFlags.None,
                     Radix: 10, Language: language, ReturnValue: null);
 
                 using (DkmLanguageExpression expr = DkmLanguageExpression.Create(

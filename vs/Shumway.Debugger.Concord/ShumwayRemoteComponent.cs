@@ -31,6 +31,7 @@ using System.Globalization;
 using System.Linq;
 using Microsoft.VisualStudio.Debugger;
 using Microsoft.VisualStudio.Debugger.Breakpoints;
+using Microsoft.VisualStudio.Debugger.CallStack;
 using Microsoft.VisualStudio.Debugger.Clr;
 using Microsoft.VisualStudio.Debugger.ComponentInterfaces;
 using Microsoft.VisualStudio.Debugger.CustomRuntimes;
@@ -110,7 +111,7 @@ namespace Shumway.Debugger.Concord
         : IDkmCustomMessageForwardReceiver, IDkmRuntimeBreakpointReceived,
           IDkmProcessExecutionNotification, IDkmRuntimeMonitorBreakpointHandler,
           IDkmRuntimeStepper, IDkmModuleInstanceLoadNotification,
-          IDkmLanguageConditionEvaluator
+          IDkmLanguageConditionEvaluator, IDkmRuntimeSetNextStatement
     {
         /// <summary>The engine's own module loading is the earliest moment at which a Shumway
         /// process can be recognised — and, under a LAUNCH, the only one that comes before the
@@ -375,6 +376,61 @@ namespace Shumway.Debugger.Concord
             {
                 ShumwayLog.Write("EvaluateCondition threw: " + ex);
             }
+        }
+
+        // ---- Set Next Statement (ADR-035 D5+) ----
+        //
+        // Ctrl+Shift+F10. VS resolves the clicked line to one of OUR custom instruction
+        // symbols (Offset = line, from ShumwayLocalSymbols.FindSymbols) and hands it here
+        // as newStatement. The MOVE is engine work — forward jump, or a backward rewind of
+        // the machine to a recorded port mark — so it goes through a func-eval of
+        // ShumwayDebugHost.SetNextStatement, the same user-initiated-at-a-stop mechanism
+        // the Immediate window uses. The move must apply NOW (a rewind changes Locals), and
+        // while stopped only a func-eval runs engine code — a channel command would not be
+        // drained until resume. A refusal (past a cut, a non-statement line) comes back in
+        // the answer; we surface it by throwing, which is how VS reports a failed SNS.
+
+        void IDkmRuntimeSetNextStatement.SetNextStatement(
+            DkmStackWalkFrame frame, DkmInstructionAddress newStatement)
+        {
+            int targetLine = -1;
+            if (newStatement is DkmCustomInstructionAddress custom)
+                targetLine = (int)custom.Offset;
+            if (targetLine < 0)
+                throw new DkmException(DkmExceptionCode.E_FAIL);
+
+            // The leaf frame is always frame 0 — SNS targets it (the engine enforces
+            // top-frame-only too). A frame index off the custom address, if present, wins.
+            int frameIndex = 0;
+            if (ShumwayFrameId.TryDecode(frame, out int decoded)) frameIndex = decoded;
+
+            string call = "Shumway.Core.Debugging.ShumwayDebugHost.SetNextStatement("
+                + frameIndex + ", " + targetLine + ")";
+            string? answer = ShumwaySession.EvaluateCSharp(
+                frame.Thread, frame, call, allowSideEffects: true, timeoutMs: 20000,
+                out string? error, existingSession: null, forceRealFuncEval: true);
+
+            string decodedAnswer = "";
+            if (answer != null)
+            {
+                try
+                {
+                    string t = answer.Trim();
+                    if (t.Length >= 2 && t[0] == '"' && t[t.Length - 1] == '"')
+                        t = t.Substring(1, t.Length - 2);
+                    decodedAnswer = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(t));
+                }
+                catch (Exception) { decodedAnswer = answer; }
+            }
+            ShumwayLog.Write("set next statement -> line " + targetLine + " => "
+                + (answer == null ? "FUNC-EVAL FAILED: " + error : "'" + decodedAnswer + "'"));
+
+            if (answer == null)
+                throw new DkmException(DkmExceptionCode.E_FAIL);
+            if (decodedAnswer.Length != 0)
+                // The engine refused (past a cut, a non-statement line, redo/fail stop). VS
+                // shows the SNS error dialog when this throws; the log carries the reason.
+                throw new DkmException(DkmExceptionCode.E_FAIL);
         }
 
         // ---- stepping ----
