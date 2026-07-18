@@ -51,6 +51,11 @@ public sealed record DebugStopEvent(
     /// broken condition silently swallowing its breakpoint, which is undiagnosable.</summary>
     public string ConditionError { get; init; } = "";
 
+    /// <summary>ADR-035 D5+ — the source lines Set Next Statement would ACCEPT at this stop
+    /// (see <see cref="DebugService.ValidSetNextLines"/>). Carried in the snapshot so the
+    /// debugger can validate Ctrl+Shift+F10 synchronously — it cannot func-eval to ask.</summary>
+    public IReadOnlyList<int> SetNextLines { get; init; } = Array.Empty<int>();
+
     /// <summary>The variables of the clause we are stopped in.</summary>
     public IReadOnlyList<(string Name, string Value)> Variables =>
         Frames.Count > 0 ? Frames[0].Variables : Array.Empty<(string, string)>();
@@ -225,7 +230,10 @@ public sealed class DebugService : IDebugSession
         string goal = frames.Count > 0 ? $"{frames[0].Name}/{frames[0].Arity}" : CurrentGoal();
         var site = SiteOf(engine.P);
         return new DebugStopEvent(
-            StopReason.AsyncBreak, goal, site.File, site.Line, PortDepth(engine), frames);
+            StopReason.AsyncBreak, goal, site.File, site.Line, PortDepth(engine), frames)
+        {
+            SetNextLines = ValidSetNextLines(),   // ADR-035 D5+
+        };
     }
 
     /// <summary>Turns last-call optimisation on or off for the query ALREADY RUNNING —
@@ -786,6 +794,56 @@ public sealed class DebugService : IDebugSession
 
         RestoreMark(outer, mark, targetPc);
         return "";
+    }
+
+    /// <summary>ADR-035 D5+ — the source lines Set Next Statement would ACCEPT at the
+    /// current stop, published in every stop's snapshot so the debugger can validate a
+    /// Ctrl+Shift+F10 SYNCHRONOUSLY (its CanSetNextStatement) and move the arrow / show a
+    /// reason without a func-eval it cannot make. Forward: every later statement of the
+    /// clause. Backward: an earlier statement with a live recorded mark. The head span maps
+    /// to the first goal. Empty at a redo/fail stop, with LCO on, or off a frame with no
+    /// statement context.</summary>
+    public IReadOnlyList<int> ValidSetNextLines()
+    {
+        if (Current is not { } outer
+            || _lastStopReason is StopReason.Redo or StopReason.Fail
+            || outer.LastCallOptimisation
+            || !_engine.TryGetDisplayFrameContext(outer, 0, out int pc, out int env))
+            return Array.Empty<int>();
+
+        var sites = _engine.ClauseSites(pc);
+        if (sites.Count == 0) return Array.Empty<int>();
+        int currentPc = outer.P;
+
+        var lines = new SortedSet<int>();
+        bool firstGoalReachable = false;
+        foreach (var (sitePc, line) in sites)
+        {
+            // Forward: always. The CURRENT statement: a no-op move, accepted — exactly as
+            // C# accepts Set Next Statement to the line the arrow is on. Backward: only
+            // with a live recorded mark.
+            bool reachable = sitePc >= currentPc
+                || FindMark(outer, env, sitePc) is not null;
+            if (!reachable) continue;
+            lines.Add(line);
+            if (sitePc == sites[0].Pc) firstGoalReachable = true;
+        }
+        // The clause HEAD span (head line .. first goal line) restarts the body — offer it
+        // whenever the first goal is reachable: rewindable from deeper in, or simply the
+        // CURRENT position (stopped at the top of the body, "back to the head" is a no-op
+        // — refusing it there was just confusing).
+        if (firstGoalReachable)
+        {
+            int firstSite = _engine.SiteAtOrBefore(sites[0].Pc);
+            if (firstSite >= 0)
+            {
+                var fi = Shumway.Core.DebugSiteTable.Get(firstSite);
+                var span = _engine.ClauseLineSpan(fi.FileId, fi.Line);
+                if (span is { } s)
+                    for (int hl = s.HeadLine; hl < s.FirstLine; hl++) lines.Add(hl);
+            }
+        }
+        return lines.ToList();
     }
 
     private PortMark? FindMark(Activation outer, int env, int targetPc)
@@ -1482,8 +1540,16 @@ public sealed class DebugService : IDebugSession
             BreakFile = _breakRequest?.File ?? "",
             BreakLine = _breakRequest?.Line ?? 0,
             ConditionError = _conditionError,
+            // ADR-035 D5+ — the Set Next Statement targets valid HERE, so the debugger's
+            // synchronous CanSetNextStatement can accept/refuse a Ctrl+Shift+F10 and name
+            // the reason without a func-eval.
+            SetNextLines = ValidSetNextLines(),
         });
     }
+
+    /// <summary>ADR-035 D5+ — expose the current stop's valid SNS lines to the channel
+    /// session's snapshot writer (CaptureNow builds its own DebugStopEvent).</summary>
+    internal IReadOnlyList<int> CurrentValidSetNextLines() => ValidSetNextLines();
 
     // The breakpoint being reported, for the length of one stop. See OnBreak.
     private (string File, int Line)? _breakRequest;

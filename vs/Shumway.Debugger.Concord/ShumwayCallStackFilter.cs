@@ -103,25 +103,51 @@ namespace Shumway.Debugger.Concord
     public sealed class ShumwayCallStackFilter
         : IDkmCallStackFilter, IDkmSetNextStatementQuery
     {
-        // ADR-035 D5+ — whether Ctrl+Shift+F10 is offered. IDkmSetNextStatementQuery lives
-        // in the engine (IDE) process by contract. We accept for any target within our
-        // custom runtime and let the engine decide for real when the move is attempted
-        // (a rewind's validity depends on live machine state — choice points, marks — that
-        // only the debuggee knows): S_OK here, and IDkmRuntimeSetNextStatement throws with
-        // the reason if the engine refuses. Greying the command out would need a round trip
-        // per caret move; a refused move with a clear message is the better trade.
+        // ADR-035 D5+ — whether Ctrl+Shift+F10 to THIS line is allowed. Validated
+        // SYNCHRONOUSLY against the snapshot's SetNextLines (the engine publishes them at
+        // every stop precisely because we cannot func-eval to ask): a forward statement,
+        // or a backward one with a live rewind mark, is accepted; anything else is refused
+        // WITH the reason posted to the Output window. The refusal HRESULT matters: the
+        // doc says "a failed HRESULT that the UI can map to an error message", and a raw
+        // E_FAIL maps to the nonsense popup "Operation not supported. Unknown error
+        // 0x80004005" — as if Set Next Statement itself were unsupported, when what is
+        // true is only that THIS target is not reachable from HERE. VS ships a dedicated
+        // code for exactly that: E_CANNOT_SET_NEXT_STATEMENT_GENERAL → "Unable to set the
+        // next statement to this location." The specifics (which lines ARE valid) go to
+        // the Output window, which a popup could not carry anyway. Top frame only.
+        // IDkmSetNextStatementQuery lives in the engine (IDE) process by contract.
         uint IDkmSetNextStatementQuery.CanSetNextStatement(
             DkmStackWalkFrame frame, DkmInstructionAddress newStatement)
         {
             const uint S_OK = 0;
-            const uint E_FAIL = 0x80004005;
-            bool ok = frame.InstructionAddress is DkmCustomInstructionAddress
-                && newStatement is DkmCustomInstructionAddress;
-            ShumwayLog.Write("CanSetNextStatement: frameAddr="
-                + (frame.InstructionAddress?.GetType().Name ?? "null")
-                + " newStatement=" + (newStatement?.GetType().Name ?? "null")
-                + " -> " + (ok ? "S_OK" : "E_FAIL"));
-            return ok ? S_OK : E_FAIL;
+            uint cannotSetHere = unchecked(
+                (uint)DkmExceptionCode.E_CANNOT_SET_NEXT_STATEMENT_GENERAL);
+            if (!(frame.InstructionAddress is DkmCustomInstructionAddress)
+                || !(newStatement is DkmCustomInstructionAddress target))
+                return cannotSetHere;
+
+            int line = (int)target.Offset;
+            try
+            {
+                ShumwaySessionDataItem session = ShumwaySession.GetState(frame.Process);
+                DebugSnapshot? snap = ShumwaySession.ReadSnapshot(frame.Process, session);
+                var valid = snap?.SetNextLines;
+                if (valid != null && valid.Contains(line))
+                    return S_OK;
+
+                string targets = (valid == null || valid.Count == 0)
+                    ? "none at this stop"
+                    : string.Join(", ", valid);
+                ShumwayLog.Output(frame.Process,
+                    "cannot set next statement to line " + line
+                    + " — valid targets: " + targets);
+                return cannotSetHere;
+            }
+            catch (Exception ex)
+            {
+                ShumwayLog.Write("CanSetNextStatement threw: " + ex.Message);
+                return cannotSetHere;
+            }
         }
 
         DkmStackWalkFrame[]? IDkmCallStackFilter.FilterNextFrame(

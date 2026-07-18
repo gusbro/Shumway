@@ -13,6 +13,7 @@
 using System;
 using System.Globalization;
 using System.IO;
+using Microsoft.VisualStudio.Debugger;
 
 namespace Shumway.Debugger.Concord
 {
@@ -20,6 +21,29 @@ namespace Shumway.Debugger.Concord
     {
         private static readonly bool Enabled =
             Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_DIAG") == "1";
+
+        /// <summary>ADR-035 D5+ — a line to the DEBUG OUTPUT WINDOW, ALWAYS (not gated on
+        /// the diag file): user-facing feedback for an action VS itself gives none for —
+        /// Set Next Statement's result, above all, where the user needs to see the move
+        /// took or why it was refused. Best-effort; a debugger that cannot post a message
+        /// still debugs. Also mirrored to the diag file when it is on.</summary>
+        public static void Output(DkmProcess process, string message)
+        {
+            Write(message);
+            try
+            {
+                DkmUserMessage.Create(
+                    process.Connection, process,
+                    DkmUserMessageOutputKind.UnfilteredOutputWindowMessage,
+                    "Shumway: " + message + Environment.NewLine,
+                    MessageBoxFlags.MB_OK, 0).Post();
+            }
+            catch (Exception)
+            {
+                // No Output window here (a headless run, a context that forbids it): the
+                // diag file line above is the fallback.
+            }
+        }
 
         private static readonly object Gate = new object();
 

@@ -217,6 +217,7 @@ public class Adr035ChannelTests
         DebugWire.WriteString(bytes, ref at, "");          // breakFile
         DebugWire.WriteInt(bytes, ref at, 0);              // breakLine
         DebugWire.WriteString(bytes, ref at, "");          // conditionError
+        DebugWire.WriteInt(bytes, ref at, 0);              // setNextLines count (empty)
         DebugWire.WriteInt(bytes, ref at, 0);              // an empty string table
         DebugWire.WriteInt(bytes, ref at, int.MaxValue);   // "two billion frames follow"
 
@@ -528,6 +529,145 @@ public class Adr035ChannelTests
         Assert.Equal(3, stops.Count);
         Assert.All(stops, s => Assert.Equal(StopReason.Breakpoint, s.Reason));
         Assert.All(stops, s => Assert.Equal("", s.ConditionError));
+    }
+
+    [Fact]
+    public void AFramedClauseShowsOneFrame_AfterAPredicateCallReturnedMidBody()
+    {
+        // The user's report (prueba.pl fuzzy/0): after stepping past member/2, the call
+        // stack showed fuzzy/0 TWICE — the current goal plus a ghost at the goal that had
+        // already returned. Root cause: the frame walk yielded the Cp REGISTER, which
+        // between two calls of a body still holds the PREVIOUS completed call's return
+        // address (a real predicate call sets Cp where a builtin does not — so it took a
+        // two-clause helper exiting with its choice point alive to expose it). With the
+        // fix, the live walk takes the environment chain's saved continuations only.
+        //
+        //  2: run :- helper(X), use(X), done.     [3=helper 4=use 5=done — one per line]
+        //  6: helper(1).
+        //  7: helper(2).
+        //  8: use(_).
+        //  9: done.
+        var engine = DebugEngine(
+            "run :-\n    helper(X),\n    use(X),\n    done.\nhelper(1).\nhelper(2).\nuse(_).\ndone.\n");
+        engine.AddBreakpoint("<string>", 4);   // use(X) — helper returned, its CP alive
+
+        DebugSnapshot? snap = null;
+        ChannelDebugSession? session = null;
+        session = new ChannelDebugSession(engine, notify: _ =>
+        {
+            snap ??= ReadFromMemory(session!.Channel);
+            session!.Channel.WriteCommands(new DebugCommand(DebugCommandKind.Continue));
+        });
+        using (session)
+            engine.QueryAll("run.").ToList();
+
+        Assert.NotNull(snap);
+        foreach (var f in snap!.Frames)
+            _log.WriteLine($"frame: {f.Name}/{f.Arity} at line {f.Line}");
+        // Exactly one run/0 frame (at the current goal), then the query — no ghost.
+        Assert.Equal(2, snap.Frames.Count);
+        Assert.Equal("run", snap.Frames[0].Name);
+        Assert.Equal(4, snap.Frames[0].Line);
+        Assert.StartsWith("?-", snap.Frames[1].Name);
+    }
+
+    [Fact]
+    public void PatchStopLine_RewritesTheStopAndTopFrameLine()
+    {
+        // ADR-035 D5+ — the in-place line patch that moves VS's arrow the instant of
+        // Ctrl+Shift+F10 (the engine's real move is deferred to resume). Encode a stop with
+        // a frame, patch the line, decode: both the stop line and the top frame's line are
+        // the new value, everything else intact.
+        using var channel = new DebugChannel();
+        var frame = new PrologEngine.DebugFrame("go", 1, "f.pl", 10, 0,
+            new[] { ("X", "42") }) { HeadArgs = "", ClauseNumber = 1 };
+        channel.WriteSnapshot(new DebugStopEvent(
+            StopReason.Breakpoint, "go/1", "f.pl", 10, 3, new[] { frame })
+        {
+            SetNextLines = new[] { 11, 12 },
+        });
+
+        var bytes = new byte[DebugChannel.SnapshotCapacity];
+        System.Runtime.InteropServices.Marshal.Copy(channel.SnapshotAddress, bytes, 0, bytes.Length);
+        Assert.True(DebugWire.TryPatchStopLine(bytes, 12));
+
+        DebugSnapshot? s = DebugWire.ReadSnapshot(bytes);
+        Assert.NotNull(s);
+        Assert.Equal(12, s!.Line);                     // stop line moved
+        Assert.Equal(12, s.Frames[0].Line);            // top frame line moved
+        Assert.Equal("go", s.Frames[0].Name);          // everything else intact
+        Assert.Equal(new[] { 11, 12 }, s.SetNextLines.ToArray());
+        Assert.Equal("42", s.Frames[0].Variables[0].Value);
+    }
+
+    [Fact]
+    public void TheSnapshotCarriesTheValidSetNextLines()
+    {
+        // ADR-035 D5+ — the debugger validates Ctrl+Shift+F10 synchronously off the
+        // snapshot (it cannot func-eval to ask), so every stop must publish which lines
+        // Set Next Statement accepts. With the prepended compile_mode line the program's
+        // own lines are: 4=run head, 5=one(A), 6=two(B), 7=three(C), 8=Out=t(...). Stopped
+        // at line 7 (three's call, one+two already ran): forward = 8, backward = 5 and 6
+        // (their marks are live), the CURRENT line 7 is a no-op accept (as in C#), and the
+        // head line 4 is offered because the first goal is reachable.
+        var engine = DebugEngine(
+            ":- dynamic(c/1).\nc(0).\n" +
+            "run(Out) :-\n    one(A),\n    two(B),\n    three(C),\n    Out = t(A, B, C).\n" +
+            "one(A) :- retract(c(A0)), A is A0 + 1, assertz(c(A)).\ntwo(20).\nthree(30).\n");
+        engine.AddBreakpoint("<string>", 7);   // three(C) — one and two have run
+
+        DebugSnapshot? snap = null;
+        ChannelDebugSession? session = null;
+        session = new ChannelDebugSession(engine, notify: _ =>
+        {
+            snap ??= ReadFromMemory(session!.Channel);
+            session!.Channel.WriteCommands(new DebugCommand(DebugCommandKind.Continue));
+        });
+        using (session)
+            engine.QueryAll("run(Out).").ToList();
+
+        Assert.NotNull(snap);
+        _log.WriteLine("valid SNS lines: " + string.Join(", ", snap!.SetNextLines));
+        Assert.Contains(8, snap.SetNextLines);   // forward: Out = ...
+        Assert.Contains(5, snap.SetNextLines);   // backward: one(A), mark live
+        Assert.Contains(6, snap.SetNextLines);   // backward: two(B), mark live
+        Assert.Contains(7, snap.SetNextLines);   // the current line: no-op accept
+        Assert.Contains(4, snap.SetNextLines);   // the head: first goal reachable
+    }
+
+    [Fact]
+    public void StoppedAtTheFirstGoal_TheHeadAndCurrentLineAreValidTargets()
+    {
+        // The user's report (prueba.pl fuzzy/0): stopped at the FIRST body goal, Set Next
+        // Statement to the head line — or to the very line the arrow is on — was refused
+        // ("valid targets: 18, 19, ...", forward only). Both are no-op moves and must be
+        // offered, exactly as C# accepts a jump to the method's first line or the current
+        // one. Same program as above, breakpoint on line 5 (one(A), the first goal —
+        // nothing has run in the clause yet): head 4 and current 5 are valid, plus all
+        // forward lines; nothing else.
+        var engine = DebugEngine(
+            ":- dynamic(c/1).\nc(0).\n" +
+            "run(Out) :-\n    one(A),\n    two(B),\n    three(C),\n    Out = t(A, B, C).\n" +
+            "one(A) :- retract(c(A0)), A is A0 + 1, assertz(c(A)).\ntwo(20).\nthree(30).\n");
+        engine.AddBreakpoint("<string>", 5);
+
+        DebugSnapshot? snap = null;
+        ChannelDebugSession? session = null;
+        session = new ChannelDebugSession(engine, notify: _ =>
+        {
+            snap ??= ReadFromMemory(session!.Channel);
+            session!.Channel.WriteCommands(new DebugCommand(DebugCommandKind.Continue));
+        });
+        using (session)
+            engine.QueryAll("run(Out).").ToList();
+
+        Assert.NotNull(snap);
+        _log.WriteLine("valid SNS lines at first goal: " + string.Join(", ", snap!.SetNextLines));
+        Assert.Contains(4, snap.SetNextLines);   // head: no-op restart of an unstarted body
+        Assert.Contains(5, snap.SetNextLines);   // current line: no-op
+        Assert.Contains(6, snap.SetNextLines);
+        Assert.Contains(7, snap.SetNextLines);
+        Assert.Contains(8, snap.SetNextLines);
     }
 
     [Fact]

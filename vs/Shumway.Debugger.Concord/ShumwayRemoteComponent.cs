@@ -410,15 +410,34 @@ namespace Shumway.Debugger.Concord
             // self-created inspection session answers "not implemented" (the wall
             // EvaluateGoal documented — that popup was exactly this). So we record the
             // target and let the engine apply it the instant it resumes (see
-            // DebugCommandKind.SetNextStatement): forward skips, backward rewinds. VS moves
-            // its own IP arrow to newStatement's line on return; the engine's actual move
-            // lands on F5. A refusal (past a cut, a non-statement line) is logged
-            // engine-side — there is no synchronous channel back for it.
+            // DebugCommandKind.SetNextStatement): forward skips, backward rewinds. The
+            // target was already validated by CanSetNextStatement against the snapshot's
+            // SetNextLines, so this is an accepted move.
             ShumwayServerDataItem state = GetState(frame.Process);
             state.PendingSetNextLine = targetLine;
             WriteCommands(frame.Process, state);
-            ShumwayLog.Write("set next statement queued -> line " + targetLine
-                + " (applies on resume)");
+
+            // MOVE THE ARROW NOW. The engine's real move is deferred to resume, but VS
+            // re-walks the stack off the pinned snapshot to place the yellow IP arrow — so
+            // patch the snapshot's stop-and-top-frame line in place, and the arrow lands on
+            // the target the instant Ctrl+Shift+F10 is pressed. (A backward rewind's Locals
+            // still refresh at the next stop; the arrow is immediate.)
+            try
+            {
+                if (state.SnapshotAddress != 0)
+                {
+                    var bytes = new byte[DebugWire.SnapshotCapacity];
+                    frame.Process.ReadMemory((ulong)state.SnapshotAddress,
+                        DkmReadMemoryFlags.None, bytes);
+                    if (DebugWire.TryPatchStopLine(bytes, targetLine))
+                        frame.Process.WriteMemory((ulong)state.SnapshotAddress, bytes);
+                }
+            }
+            catch (Exception ex) { ShumwayLog.Write("SNS arrow patch threw: " + ex.Message); }
+
+            ShumwayLog.Output(frame.Process,
+                "set next statement to line " + targetLine
+                + " (the move applies when you continue)");
         }
 
         // ---- stepping ----

@@ -55,9 +55,10 @@
           </Filter>
           <Interface Name="IDkmRuntimeMonitorBreakpointHandler"/>
           <Interface Name="IDkmRuntimeStepper"/>
-          <!-- D5+: Ctrl+Shift+F10 moves the top frame's next-statement pointer via a
-               func-eval of ShumwayDebugHost.SetNextStatement (forward jump / backward
-               rewind to a recorded port mark). -->
+          <!-- D5+: Ctrl+Shift+F10. The move rides the COMMAND CHANNEL (a func-eval from
+               the monitor answers "not implemented"): queued here, applied by the engine
+               on resume (forward jump / backward rewind to a recorded port mark); the
+               snapshot's line is patched in place so the IP arrow moves immediately. -->
           <Interface Name="IDkmRuntimeSetNextStatement"/>
         </InterfaceGroup>
 

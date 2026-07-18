@@ -112,6 +112,12 @@ public sealed class DebugChannel : IDisposable
         DebugWire.WriteInt(_snapshot, ref at, stop.BreakLine);
         DebugWire.WriteString(_snapshot, ref at, stop.ConditionError);
 
+        // ADR-035 D5+ — the Set Next Statement valid lines (small: a clause's statements).
+        var setNext = stop.SetNextLines;
+        DebugWire.WriteInt(_snapshot, ref at, setNext.Count);
+        for (int i = 0; i < setNext.Count; i++)
+            DebugWire.WriteInt(_snapshot, ref at, setNext[i]);
+
         // EVERY STRING ONCE. A stack's frames mostly repeat each other: the same file on
         // every frame, the same predicate down a recursion, the same variable names level
         // after level — and, above all, the same VALUES, because a call stack is mostly the

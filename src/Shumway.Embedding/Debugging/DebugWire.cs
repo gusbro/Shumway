@@ -165,6 +165,10 @@ public sealed class DebugSnapshot
     /// Empty for every ordinary stop. See <c>DebugStopEvent.ConditionError</c>.</summary>
     public string ConditionError { get; set; } = "";
 
+    /// <summary>ADR-035 D5+ — the source lines Set Next Statement accepts at this stop, so
+    /// the debugger validates Ctrl+Shift+F10 synchronously.</summary>
+    public IReadOnlyList<int> SetNextLines { get; set; } = Array.Empty<int>();
+
     public IReadOnlyList<DebugSnapshotFrame> Frames { get; set; }
         = Array.Empty<DebugSnapshotFrame>();
 }
@@ -214,6 +218,7 @@ public sealed class DebugVariableView
 /// <code>
 /// snapshot: version, sequence, running, heartbeat, interopDepth,
 ///           reason, goal, file, line, depth, breakFile, breakLine, conditionError,
+///           setNextCount, { setNextLine },
 ///           stringCount, { string },
 ///           frameCount, { nameId, arity, fileId, line, pc, headArgsId, clauseNumber,
 ///                         varCount, { nameId, valueId } }
@@ -228,7 +233,7 @@ public static class DebugWire
     /// carrying indices; the level of indirection that lets a hundred frames sharing a
     /// binding share its bytes. v5: conditional breakpoints — a condition string on the
     /// AddBreakpoint command, a conditionError string on the snapshot.</summary>
-    public const int FormatVersion = 5;
+    public const int FormatVersion = 6;
 
     /// <summary>The size of the snapshot region — declared HERE, with the format, because the
     /// debugger has to know it: it reads the region whole (a prefix of a snapshot is not a
@@ -327,6 +332,15 @@ public static class DebugWire
             ConditionError = ReadString(buffer, ref at),
         };
 
+        // ADR-035 D5+ — the Set Next Statement valid-line list. Same not-a-promise
+        // discipline as the counts below: a bad count reads as empty.
+        int setNextCount = ReadInt(buffer, ref at);
+        if (setNextCount < 0 || setNextCount > buffer.Length / 4) setNextCount = 0;
+        var setNext = new List<int>();
+        for (int i = 0; i < setNextCount && at + 4 <= buffer.Length; i++)
+            setNext.Add(ReadInt(buffer, ref at));
+        snapshot.SetNextLines = setNext;
+
         // A COUNT READ OUT OF A BUFFER IS NOT A PROMISE. It is four bytes that came from
         // another process, and if the writer truncated, or the buffer holds the tail of an
         // older stop, or a debugger of one version is reading an engine of another, then it is
@@ -378,6 +392,60 @@ public static class DebugWire
         }
         snapshot.Frames = frames;
         return snapshot;
+    }
+
+    /// <summary>ADR-035 D5+ — rewrite the stop's line AND its top frame's line IN PLACE, so
+    /// a Set Next Statement moves Visual Studio's instruction-pointer arrow the instant the
+    /// user presses Ctrl+Shift+F10 — the debugger re-walks the stack off this buffer, and
+    /// the leaf frame's line is where the arrow lands. The engine's ACTUAL move is deferred
+    /// to the resume (it cannot run while stopped); this makes the display agree with where
+    /// the program will continue from. Parses to the two int fields (both sit after
+    /// variable-length strings, so their offsets are not fixed) and overwrites them. A
+    /// no-op that returns false if the buffer is not a snapshot this build understands.</summary>
+    public static bool TryPatchStopLine(byte[] buffer, int newLine)
+    {
+        if (buffer == null || buffer.Length < 8) return false;
+        int at = 0;
+        if (ReadInt(buffer, ref at) != FormatVersion) return false;   // version
+        SkipInt(ref at, 4);                                           // seq running heartbeat interop
+        SkipInt(ref at, 1);                                           // reason
+        SkipString(buffer, ref at);                                   // goal
+        SkipString(buffer, ref at);                                   // file
+        int stopLineAt = at; SkipInt(ref at, 1);                      // <-- stop line
+        SkipInt(ref at, 1);                                           // depth
+        SkipString(buffer, ref at);                                   // breakFile
+        SkipInt(ref at, 1);                                           // breakLine
+        SkipString(buffer, ref at);                                   // conditionError
+        int setNextCount = ReadInt(buffer, ref at);
+        if (setNextCount < 0 || setNextCount > buffer.Length / 4) return false;
+        SkipInt(ref at, setNextCount);
+        int stringCount = ReadInt(buffer, ref at);
+        if (stringCount < 0 || stringCount > buffer.Length / 4) return false;
+        for (int i = 0; i < stringCount; i++) SkipString(buffer, ref at);
+        int frameCount = ReadInt(buffer, ref at);
+        if (frameCount <= 0) { PatchInt(buffer, stopLineAt, newLine); return true; }
+        // frame 0: nameId, arity, fileId, LINE, ...
+        SkipInt(ref at, 3);
+        int frameLineAt = at;
+
+        PatchInt(buffer, stopLineAt, newLine);
+        PatchInt(buffer, frameLineAt, newLine);
+        return true;
+    }
+
+    private static void SkipInt(ref int at, int count) => at += 4 * count;
+    private static void SkipString(byte[] buffer, ref int at)
+    {
+        int len = ReadInt(buffer, ref at);
+        if (len > 0) at += len;
+    }
+    private static void PatchInt(byte[] buffer, int at, int value)
+    {
+        if (at + 4 > buffer.Length) return;
+        buffer[at] = (byte)value;
+        buffer[at + 1] = (byte)(value >> 8);
+        buffer[at + 2] = (byte)(value >> 16);
+        buffer[at + 3] = (byte)(value >> 24);
     }
 
     // ----- the commands -----

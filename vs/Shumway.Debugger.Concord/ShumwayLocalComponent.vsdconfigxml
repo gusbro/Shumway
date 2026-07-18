@@ -23,9 +23,11 @@
           <NoFilter/>
           <Interface Name="IDkmCallStackFilter"/>
         </InterfaceGroup>
-        <!-- D5+: IDkmSetNextStatementQuery must live in the engine (IDE) process. We accept
-             for any target inside our custom runtime and let the engine's actual move
-             decide (a rewind's validity is live machine state). -->
+        <!-- D5+: IDkmSetNextStatementQuery must live in the engine (IDE) process. The
+             target is validated synchronously against the snapshot's SetNextLines (the
+             engine publishes the valid targets at every stop); a refusal returns
+             E_CANNOT_SET_NEXT_STATEMENT_GENERAL and posts the valid lines to the
+             Output window. -->
         <InterfaceGroup>
           <NoFilter/>
           <Interface Name="IDkmSetNextStatementQuery"/>
