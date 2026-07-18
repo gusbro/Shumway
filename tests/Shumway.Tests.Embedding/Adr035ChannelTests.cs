@@ -529,4 +529,53 @@ public class Adr035ChannelTests
         Assert.All(stops, s => Assert.Equal(StopReason.Breakpoint, s.Reason));
         Assert.All(stops, s => Assert.Equal("", s.ConditionError));
     }
+
+    [Fact]
+    public void SetNextStatementThroughTheChannel_MovesThePointerOnResume()
+    {
+        // ADR-035 D5+, the way Ctrl+Shift+F10 actually drives it: while stopped the engine
+        // thread is parked in the notify, so the move CANNOT be a func-eval (a monitor-side
+        // one answers "not implemented" — the popup the user hit). It rides the command
+        // channel like a step: written at the stop, applied by the engine the instant it
+        // resumes, before the parked instruction runs.
+        //
+        //  2: :- dynamic(c/1).
+        //  3: c(0).
+        //  4: run(Out) :-
+        //  5:     one(A),
+        //  6:     two(B),
+        //  7:     Out = pair(A, B).
+        //  8: one(A) :- retract(c(A0)), A is A0 + 1, assertz(c(A)).
+        //  9: two(20).
+        var engine = DebugEngine(
+            ":- dynamic(c/1).\nc(0).\n" +
+            "run(Out) :-\n    one(A),\n    two(B),\n    Out = pair(A, B).\n" +
+            "one(A) :- retract(c(A0)), A is A0 + 1, assertz(c(A)).\ntwo(20).\n");
+        engine.AddBreakpoint("<string>", 6);   // the two(B) call — one(A) has run, A = 1
+
+        int stops = 0;
+        ChannelDebugSession? session = null;
+        session = new ChannelDebugSession(engine, notify: _ =>
+        {
+            stops++;
+            // FORWARD past two(B) to line 7 (Out = pair): two never runs, B stays free.
+            session!.Channel.WriteCommands(
+                stops == 1
+                    ? new[]
+                    {
+                        new DebugCommand(DebugCommandKind.SetNextStatement, "<string>", 7),
+                        new DebugCommand(DebugCommandKind.Continue),
+                    }
+                    : new[] { new DebugCommand(DebugCommandKind.Continue) });
+        });
+        List<Solution> sols;
+        using (session)
+            sols = engine.QueryAll("run(Out).").ToList();
+
+        Assert.Equal(1, stops);
+        Assert.Single(sols);
+        // two(B) was skipped: B is still free in the answer, A carries its bound value.
+        string outText = sols[0]["Out"]!.ToString()!.Replace(" ", "");
+        Assert.Matches(@"^pair\(1,_\w+\)$", outText);
+    }
 }

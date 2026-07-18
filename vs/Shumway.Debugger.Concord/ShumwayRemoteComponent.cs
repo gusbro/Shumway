@@ -103,6 +103,12 @@ namespace Shumway.Debugger.Concord
         /// is taken, cleared when the port arrives and the break is completed.</summary>
         public bool AsyncBreakPending;
 
+        /// <summary>ADR-035 D5+ — a pending Set Next Statement target line for the top frame,
+        /// or -1. Set by IDkmRuntimeSetNextStatement while stopped, written into the command
+        /// region by WriteCommands, applied by the engine on resume, cleared at the next
+        /// stop (a one-shot per break).</summary>
+        public int PendingSetNextLine = -1;
+
         public static string Key(string file, int line) =>
             file + "|" + line.ToString(CultureInfo.InvariantCulture);
     }
@@ -399,38 +405,20 @@ namespace Shumway.Debugger.Concord
             if (targetLine < 0)
                 throw new DkmException(DkmExceptionCode.E_FAIL);
 
-            // The leaf frame is always frame 0 — SNS targets it (the engine enforces
-            // top-frame-only too). A frame index off the custom address, if present, wins.
-            int frameIndex = 0;
-            if (ShumwayFrameId.TryDecode(frame, out int decoded)) frameIndex = decoded;
-
-            string call = "Shumway.Core.Debugging.ShumwayDebugHost.SetNextStatement("
-                + frameIndex + ", " + targetLine + ")";
-            string? answer = ShumwaySession.EvaluateCSharp(
-                frame.Thread, frame, call, allowSideEffects: true, timeoutMs: 20000,
-                out string? error, existingSession: null, forceRealFuncEval: true);
-
-            string decodedAnswer = "";
-            if (answer != null)
-            {
-                try
-                {
-                    string t = answer.Trim();
-                    if (t.Length >= 2 && t[0] == '"' && t[t.Length - 1] == '"')
-                        t = t.Substring(1, t.Length - 2);
-                    decodedAnswer = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(t));
-                }
-                catch (Exception) { decodedAnswer = answer; }
-            }
-            ShumwayLog.Write("set next statement -> line " + targetLine + " => "
-                + (answer == null ? "FUNC-EVAL FAILED: " + error : "'" + decodedAnswer + "'"));
-
-            if (answer == null)
-                throw new DkmException(DkmExceptionCode.E_FAIL);
-            if (decodedAnswer.Length != 0)
-                // The engine refused (past a cut, a non-statement line, redo/fail stop). VS
-                // shows the SNS error dialog when this throws; the log carries the reason.
-                throw new DkmException(DkmExceptionCode.E_FAIL);
+            // The MOVE rides the command channel, NOT a func-eval: while stopped the engine
+            // thread is parked in the notify, and a monitor-side func-eval into a
+            // self-created inspection session answers "not implemented" (the wall
+            // EvaluateGoal documented — that popup was exactly this). So we record the
+            // target and let the engine apply it the instant it resumes (see
+            // DebugCommandKind.SetNextStatement): forward skips, backward rewinds. VS moves
+            // its own IP arrow to newStatement's line on return; the engine's actual move
+            // lands on F5. A refusal (past a cut, a non-statement line) is logged
+            // engine-side — there is no synchronous channel back for it.
+            ShumwayServerDataItem state = GetState(frame.Process);
+            state.PendingSetNextLine = targetLine;
+            WriteCommands(frame.Process, state);
+            ShumwayLog.Write("set next statement queued -> line " + targetLine
+                + " (applies on resume)");
         }
 
         // ---- stepping ----
@@ -617,6 +605,9 @@ namespace Shumway.Debugger.Concord
             DkmProcess process = thread.Process;
             ShumwayServerDataItem state = GetState(process);
             state.Stops++;
+            // A Set Next Statement queued in the previous break was applied on resume and
+            // is done: this is a fresh stop with a fresh position. One-shot per break.
+            state.PendingSetNextLine = -1;
 
             // The FIRST stop of a launched session is one the engine gives us on purpose,
             // while it waits at the door (--debug-wait): the breakpoint was armed from the
@@ -920,6 +911,12 @@ namespace Shumway.Debugger.Concord
                 commands.Add(new DebugWireCommand { Kind = DebugCommandKind.Hello });
             if (state.AsyncBreakPending)
                 commands.Add(new DebugWireCommand { Kind = DebugCommandKind.BreakNow });
+            if (state.PendingSetNextLine >= 0)
+                commands.Add(new DebugWireCommand
+                {
+                    Kind = DebugCommandKind.SetNextStatement,
+                    Line = state.PendingSetNextLine,
+                });
 
             try
             {

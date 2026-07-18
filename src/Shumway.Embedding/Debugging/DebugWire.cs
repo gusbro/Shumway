@@ -81,6 +81,16 @@ public enum DebugCommandKind
     /// a genuine stop, with a genuine stack, reported as
     /// <see cref="StopReason.AsyncBreak"/>.</para></summary>
     BreakNow = 10,
+
+    /// <summary>ADR-035 D5+ — Set Next Statement. <see cref="DebugWireCommand.Line"/> is the
+    /// target source line for the TOP frame. A COMMAND, not a func-eval: while stopped the
+    /// engine thread is parked in the notify and only a func-eval could run its code — but a
+    /// func-eval from the monitor answers "not implemented" (a self-created inspection
+    /// session cannot make a call). So the move rides the channel like a step: written while
+    /// stopped, drained and applied by the engine the instant it resumes, before the
+    /// breakpoint's own instruction runs. Forward skips; backward rewinds to a recorded port
+    /// mark (see DebugService.SetNextStatement). A refusal is logged engine-side.</summary>
+    SetNextStatement = 11,
 }
 
 /// <summary>ADR-035 — one command, in the form both sides can build. (The engine's own
