@@ -6942,6 +6942,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     internal bool IsDebuggableCallee(int address)
         => FunctorAtAddress(address) is int fid && IsDebuggableFunctor(fid);
 
+    /// <summary>ADR-035 — is the code at <paramref name="address"/> a transparent control
+    /// construct's (a <c>$disj_N</c> / <c>$call_*</c> helper)? The one part of the callee
+    /// question that holds regardless of where the CALL SITE is: flow is never a goal.</summary>
+    internal bool IsTransparentCalleeAddress(int address)
+        => FunctorAtAddress(address) is int fid && IsTransparentControlFunctor(fid);
+
     internal bool IsDebuggableFunctor(int functorId)
         => !_nonDebuggableFunctors.Contains(functorId)
            && !IsTransparentControlFunctor(functorId);

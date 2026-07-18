@@ -433,6 +433,30 @@ public static class DebugWire
         return true;
     }
 
+    /// <summary>ADR-035 D5+ — the target line of a Set Next Statement command sitting
+    /// UNDRAINED in the command-region bytes, or -1. The IDE side reads this to know a move
+    /// is queued but not yet applied (the engine only drains at resume), so the Locals
+    /// refresh can apply it eagerly via func-eval and show the post-move state.</summary>
+    public static int PendingSetNextLine(byte[] commandBytes)
+    {
+        if (commandBytes == null || commandBytes.Length < 8) return -1;
+        int at = 0;
+        if (ReadInt(commandBytes, ref at) != FormatVersion) return -1;
+        int count = ReadInt(commandBytes, ref at);
+        if (count < 0 || count > commandBytes.Length / 4) return -1;
+        int pending = -1;
+        for (int i = 0; i < count && at < commandBytes.Length; i++)
+        {
+            int kind = ReadInt(commandBytes, ref at);
+            SkipString(commandBytes, ref at);                 // file
+            int line = ReadInt(commandBytes, ref at);
+            SkipInt(ref at, 1);                               // flag
+            SkipString(commandBytes, ref at);                 // condition
+            if (kind == (int)DebugCommandKind.SetNextStatement) pending = line;
+        }
+        return pending;
+    }
+
     private static void SkipInt(ref int at, int count) => at += 4 * count;
     private static void SkipString(byte[] buffer, ref int at)
     {

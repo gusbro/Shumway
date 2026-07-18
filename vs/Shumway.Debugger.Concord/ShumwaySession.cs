@@ -55,6 +55,13 @@ namespace Shumway.Debugger.Concord
         public readonly Dictionary<Guid, DkmStackWalkFrame> EvalAnchors =
             new Dictionary<Guid, DkmStackWalkFrame>();
 
+        /// <summary>ADR-035 D5+ - the (post-apply snapshot sequence, target line) of the
+        /// last Set Next Statement the Locals refresh applied eagerly, so it is applied
+        /// ONCE per queued move rather than on every Locals read of the same stop. See
+        /// ShumwayExpressionEvaluator.GetFrameLocals.</summary>
+        public int SnsAppliedSeq = -1;
+        public int SnsAppliedLine = -1;
+
         public bool Attached => SnapshotAddress != 0;    }
 
     /// <summary>What Visual Studio has actually ASKED us, on the IDE side. A frame that shows

@@ -572,6 +572,67 @@ public class Adr035ChannelTests
     }
 
     [Fact]
+    public void SteppingStopsAtACallToALibraryPredicate_OnTheUsersLine()
+    {
+        // The user's report (prueba.pl, F11): stopped at writeln(paso1), one step executed
+        // BOTH that goal and the member/2 after it — the member call port never stopped,
+        // because the gate asked whether the CALLEE was debuggable (member is prelude).
+        // The rule is the one builtins always had: where the call is WRITTEN decides.
+        // `member(X, L)` on the user's line is the user's goal; stepping stops there, and
+        // the next step runs member as one unit (no ports inside the prelude).
+        //
+        //  2: run(X) :-
+        //  3:     mark(a),
+        //  4:     member(X, [1, 2]),
+        //  5:     mark(b).
+        //  6: mark(_).
+        var engine = DebugEngine(
+            "run(X) :-\n    mark(a),\n    member(X, [1, 2]),\n    mark(b).\nmark(_).\n");
+        engine.AddBreakpoint("<string>", 3);
+
+        var stops = new List<(string Goal, int Line)>();
+        ChannelDebugSession? session = null;
+        session = new ChannelDebugSession(engine, notify: _ =>
+        {
+            var snap = ReadFromMemory(session!.Channel);
+            stops.Add((snap.Goal, snap.Line));
+            session!.Channel.WriteCommands(new DebugCommand(
+                stops.Count <= 2 ? DebugCommandKind.StepInto : DebugCommandKind.Continue));
+        });
+        using (session)
+            engine.QueryAll("run(X).").ToList();
+
+        foreach (var s in stops) _log.WriteLine($"stop: {s.Goal} at line {s.Line}");
+        // bp at mark(a) (a breakpoint stop names the clause: run/1); F11 → member/2 AT ITS
+        // OWN LINE; F11 → mark(b) (member ran as one unit — no stops inside the prelude).
+        Assert.Equal(("run/1", 3), stops[0]);
+        Assert.Equal(("member/2", 4), stops[1]);
+        Assert.Equal(("mark/1", 5), stops[2]);
+    }
+
+    [Fact]
+    public void PendingSetNextLine_FindsTheQueuedMoveAmongOtherCommands()
+    {
+        // ADR-035 D5+ — the IDE's Locals refresh reads the command region to learn whether
+        // a Set Next Statement is queued but not yet applied (it then applies it eagerly
+        // via func-eval, so Locals show the post-move state). The reader must find the
+        // move among unrelated commands, and answer -1 when there is none.
+        using var channel = new DebugChannel();
+        channel.WriteCommands(
+            new DebugCommand(DebugCommandKind.AddBreakpoint, "f.pl", 3),
+            new DebugCommand(DebugCommandKind.SetNextStatement, "<string>", 21),
+            new DebugCommand(DebugCommandKind.Continue));
+
+        var bytes = new byte[DebugChannel.CommandCapacity];
+        System.Runtime.InteropServices.Marshal.Copy(channel.CommandAddress, bytes, 0, bytes.Length);
+        Assert.Equal(21, DebugWire.PendingSetNextLine(bytes));
+
+        channel.DrainCommands();
+        System.Runtime.InteropServices.Marshal.Copy(channel.CommandAddress, bytes, 0, bytes.Length);
+        Assert.Equal(-1, DebugWire.PendingSetNextLine(bytes));
+    }
+
+    [Fact]
     public void PatchStopLine_RewritesTheStopAndTopFrameLine()
     {
         // ADR-035 D5+ — the in-place line patch that moves VS's arrow the instant of

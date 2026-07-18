@@ -65,11 +65,91 @@ namespace Shumway.Debugger.Concord
             DkmCompletionRoutine<DkmGetFrameLocalsAsyncResult> completionRoutine)
         {
             ShumwayIdeDiag.FrameLocalsAsks++;
+
+            // ADR-035 D5+ — a Set Next Statement queued this stop is applied NOW, so these
+            // locals show the POST-MOVE state (a backward rewind unbinds variables; the
+            // user must see that without taking a step first). The engine can only be run
+            // from a stop by a func-eval carrying Visual Studio's own inspection session —
+            // which is exactly what THIS entry holds and the server-side
+            // IDkmRuntimeSetNextStatement does not (its self-created session answers a
+            // call "not implemented"). So the runtime side queues + patches the arrow, and
+            // the Locals refresh VS issues right after is where the move actually lands.
+            // Idempotent engine-side (a second apply is a no-op: P already at the target),
+            // and memoised per snapshot sequence so one queued move costs one func-eval.
+            try
+            {
+                if (ShumwayFrameId.TryDecode(frame, out _))
+                {
+                    ShumwaySessionDataItem session = ShumwaySession.GetState(frame.Process);
+                    int pending = ReadPendingSetNext(frame.Process, session);
+                    if (pending >= 0
+                        && !(session.SnsAppliedLine == pending
+                             && session.SnsAppliedSeq == SnapshotSeq(frame.Process, session))
+                        && session.EvalAnchors.TryGetValue(
+                               frame.Thread.UniqueId, out DkmStackWalkFrame? clrFrame)
+                        && clrFrame != null)
+                    {
+                        string call = "Shumway.Core.Debugging.ShumwayDebugHost"
+                            + ".SetNextStatement(0, " + pending + ")";
+                        ShumwaySession.EvaluateCSharpAsync(
+                            workList, inspectionContext.InspectionSession, frame.Thread,
+                            clrFrame, call, timeoutMs: 10_000,
+                            (raw, err) =>
+                            {
+                                ShumwayLog.Write("SNS apply-at-locals line " + pending
+                                    + " -> " + (raw ?? "FAILED: " + err));
+                                session.SnsAppliedLine = pending;
+                                session.SnsAppliedSeq = SnapshotSeq(frame.Process, session);
+                                ServeLocals(inspectionContext, frame, completionRoutine);
+                            });
+                        return;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                ShumwayLog.Write("SNS apply-at-locals threw: " + ex.Message);
+            }
+            ServeLocals(inspectionContext, frame, completionRoutine);
+        }
+
+        private static void ServeLocals(
+            DkmInspectionContext inspectionContext, DkmStackWalkFrame frame,
+            DkmCompletionRoutine<DkmGetFrameLocalsAsyncResult> completionRoutine)
+        {
             IReadOnlyList<DebugVariableView> variables = VariablesOf(frame);
             var enumContext = DkmEvaluationResultEnumContext.Create(
                 variables.Count, frame, inspectionContext,
                 new ShumwayEnumDataItem { Variables = variables });
             completionRoutine(new DkmGetFrameLocalsAsyncResult(enumContext));
+        }
+
+        /// <summary>The Set Next Statement command sitting undrained in the engine's
+        /// command region, or -1. Read with ReadMemory — the region is the debugger's own
+        /// writing, so reading it back is safe anywhere.</summary>
+        private static int ReadPendingSetNext(
+            DkmProcess process, ShumwaySessionDataItem session)
+        {
+            if (session.CommandAddress == 0 || session.CommandLength <= 0) return -1;
+            try
+            {
+                var bytes = new byte[session.CommandLength];
+                process.ReadMemory(
+                    (ulong)session.CommandAddress, DkmReadMemoryFlags.None, bytes);
+                return DebugWire.PendingSetNextLine(bytes);
+            }
+            catch (Exception) { return -1; }
+        }
+
+        private static int SnapshotSeq(DkmProcess process, ShumwaySessionDataItem session)
+        {
+            try
+            {
+                DebugSnapshot? snap = ShumwaySession.ReadSnapshot(
+                    process, ShumwaySession.GetState(process));
+                return snap?.Sequence ?? -1;
+            }
+            catch (Exception) { return -1; }
         }
 
         void IDkmLanguageExpressionEvaluator.GetFrameArguments(
