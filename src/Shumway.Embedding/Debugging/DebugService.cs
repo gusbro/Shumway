@@ -690,6 +690,12 @@ public sealed class DebugService : IDebugSession
     {
         if (_evalActive || _conditionEval) return;   // evaluations are not rewind targets
 
+        // A port at any site other than the one Set Next Statement moved to means the
+        // moved-to goal has run: its stop suppression is over. See _snsMovedToSite.
+        if (_snsMovedToSite >= 0
+            && _engine.SiteAtOrBefore(engine.P) != _snsMovedToSite)
+            _snsMovedToSite = -1;
+
         var marks = _portMarks;
         while (marks.Count > 0)
         {
@@ -775,8 +781,22 @@ public sealed class DebugService : IDebugSession
         if (targetPc == currentPc) return "";
         if (targetPc > currentPc)
         {
-            // FORWARD: just move. The skipped goals do not run.
+            // FORWARD: just move. The skipped goals do not run — which is exactly why the
+            // move must leave marks behind: it is PURE, so the machine state at every
+            // skipped site (and at the site being left) IS the current state. Recording a
+            // mark apiece keeps the valid-target set invariant under pure moves — the user
+            // can change their mind and move BACK to any of them before running anything
+            // (the reported case: forward to the clause's fail, then back to the first
+            // goal — refused, because the skipped goals had never fired their ports).
+            int currentSiteStart = -1;
+            foreach (var (sitePc, _) in sites)
+                if (sitePc <= currentPc && sitePc > currentSiteStart) currentSiteStart = sitePc;
+            foreach (var (sitePc, _) in sites)
+                if (sitePc >= currentSiteStart && sitePc < targetPc)
+                    RecordPureMoveMark(outer, env, sitePc);
+
             outer.RedirectPc(targetPc);
+            _snsMovedToSite = _engine.SiteAt(targetPc);
             FrameStateChanged = true;
             return "";
         }
@@ -793,7 +813,34 @@ public sealed class DebugService : IDebugSession
         }
 
         RestoreMark(outer, mark, targetPc);
+        _snsMovedToSite = _engine.SiteAt(targetPc);
         return "";
+    }
+
+    /// <summary>ADR-035 D5+ — the site an applied Set Next Statement moved to. Stop
+    /// decisions AT that site are suppressed — the arrow is already there, and the user's
+    /// next step must EXECUTE the goal under it, not "stop" where they already stand
+    /// (their report: after a move, the first F10/F11 did nothing and only the second ran
+    /// the goal). Covers BOTH decisions the site can raise (its Break byte and its call
+    /// port). Disarmed by <see cref="RecordPortMark"/> at the first port of any OTHER
+    /// site — execution has moved past the goal, normal stopping resumes — which holds
+    /// under F5 too (ports record marks whatever the step mode), so a loop coming back
+    /// around to a breakpoint on the moved-to line stops normally.</summary>
+    private int _snsMovedToSite = -1;
+
+    private bool SnsMoveSuppressesStopAt(Activation engine)
+        => _snsMovedToSite >= 0
+           && _engine.SiteAtOrBefore(engine.P) == _snsMovedToSite;
+
+    /// <summary>A rewind mark for a site a pure move skipped: the mark's position is the
+    /// site, the state is the CURRENT machine state — restoring it unwinds nothing, which
+    /// is correct, because nothing ran.</summary>
+    private void RecordPureMoveMark(Activation outer, int env, int sitePc)
+    {
+        if (_portMarks.Count >= PortMarkCapacity) _portMarks.RemoveAt(0);
+        _portMarks.Add(new PortMark(
+            outer, sitePc, env, outer.BindingTrailTop, outer.ExtraTrailTop,
+            outer.HeapTop, outer.B, outer.B0, outer.HeapGcCount));
     }
 
     /// <summary>ADR-035 D5+ — the source lines Set Next Statement would ACCEPT at the
@@ -1018,6 +1065,12 @@ public sealed class DebugService : IDebugSession
 
         Current = engine;
 
+        // A breakpoint AT the goal a Set Next Statement just moved to does not re-fire
+        // before the goal runs: the user deliberately placed the arrow there; the C#
+        // debugger behaves the same way. One-shot — the loop coming back around to this
+        // site stops normally.
+        if (SnsMoveSuppressesStopAt(engine)) return;
+
         // ADR-035 D5 — a conditional breakpoint: the condition goal decides, HERE, on the
         // engine's own thread, before any debugger hears about the hit. A condition that
         // fails means the program runs on — no notify, no cross-process round trip, which
@@ -1165,12 +1218,19 @@ public sealed class DebugService : IDebugSession
         RecordPortMark(engine);   // ADR-035 D5+ — every goal is a rewind target
         // A dictionary probe, and no port for an address that names no predicate.
         if (_engine.LookupPredicateByAddress(address) is null) return;
-        // Nor for one the user cannot see into: the prelude, the libraries, and the top
-        // level's own wrapper goals are `:- disable_debug` — and a ,/;/-> control construct
-        // is flow, not a goal. This is the CALLEE question (does a call HERE stop?), so it
-        // uses IsDebuggableCallee, which refuses transparent control; stepping passes
-        // straight through a $disj_N / $call_* helper to the real goal it dispatches.
-        if (!_engine.IsDebuggableCallee(address)) return;
+        // A ,/;/-> control construct (or its $disj_N / $call_* plumbing) is flow, not a
+        // goal — never a stop, wherever it is called from.
+        if (_engine.IsTransparentCalleeAddress(address)) return;
+        // WHERE THE CALL IS WRITTEN is what decides the stop — the same rule builtins have
+        // always had (see OnCallBuiltin): `member(X, L)` on the user's line is the user's
+        // goal, whatever member/2 was compiled from, and a stepper that skipped it executed
+        // it fused with the goal before (the prueba.pl F11 report). The callee side still
+        // counts for the OTHER direction: a call into the USER's code from somewhere they
+        // cannot see (prelude meta-dispatch running a findall goal) stops on entry, which
+        // is the one visible port that call has. Skipped only when BOTH ends are invisible
+        // — prelude internals calling prelude internals.
+        if (!_engine.IsDebuggableCallee(address)
+            && !_engine.IsDebuggableAddress(engine.P)) return;
         _goalKind = GoalKind.Address;
         _goalId = address;
         OnCall(engine);
@@ -1180,7 +1240,10 @@ public sealed class DebugService : IDebugSession
     {
         RecordPortMark(engine);   // ADR-035 D5+
         if (FunctorGoalName(functorId) is null) return;   // an engine helper: not a goal
-        if (!_engine.IsDebuggableFunctor(functorId)) return;
+        if (_engine.IsTransparentControlFunctor(functorId)) return;   // flow, not a goal
+        // Same site-or-callee rule as OnCallAddress above.
+        if (!_engine.IsDebuggableFunctor(functorId)
+            && !_engine.IsDebuggableAddress(engine.P)) return;
         _goalKind = GoalKind.Functor;
         _goalId = functorId;
         OnCall(engine);
@@ -1453,6 +1516,11 @@ public sealed class DebugService : IDebugSession
         // depth: a 300k-deep tail recursion never came back. Ask only when the answer
         // is used.
         if (_mode == StepMode.Continue) return;
+
+        // The first port after an applied Set Next Statement fires AT the moved-to goal —
+        // where the arrow already stands. Stopping there would make the user's next step a
+        // no-op; the step must EXECUTE that goal. One-shot, see SnsMoveSuppressesStopAt.
+        if (SnsMoveSuppressesStopAt(engine)) return;
 
         // The exit or fail of code the user did not write — the prelude, a library, the top
         // level's own wrapper goals. A port fires there like anywhere else (the interpreter

@@ -101,6 +101,83 @@ public class Adr035SetNextStatementTests
     }
 
     [Fact]
+    public void AForwardMoveIsPure_SoMovingBackAgainIsAccepted()
+    {
+        // The user's report (prueba.pl): breakpoint at the first goal, Set Next Statement
+        // forward to the clause's last goal — then, BEFORE running anything, back to the
+        // first goal. Refused: "the only valid target is the line you are on". But a
+        // forward move executes nothing, so the machine state at every skipped site IS
+        // the current state — the move records a mark apiece, and the return trip (and
+        // any intermediate hop) stays valid. Both moves answer ""; the counter proves
+        // one/1 then ran exactly once on the real pass.
+        var engine = DebugEngine(Program);
+        Assert.True(engine.AddBreakpoint("<string>", 5) > 0);
+
+        // Stop once at line 5: jump to 8 (skipping one, two, three), then back to 5.
+        var results = new List<string>();
+        int stops = 0;
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            if (stops++ == 0)
+            {
+                results.Add(s.SetNextStatement(0, 8));
+                results.Add(s.SetNextStatement(0, 5));
+            }
+            s.Resume(StepMode.Continue);
+        });
+        engine.AttachDebugSession(svc);
+        var sols = engine.QueryAll("run(Out).").ToList();
+        engine.AttachDebugSession(null);
+
+        Assert.Equal(new[] { "", "" }, results);
+        Assert.Equal(1, stops);
+        Assert.Single(sols);
+        // Back at line 5, the continue ran the whole body: t(1,20,30).
+        Assert.Equal("t(1,20,30)", sols[0]["Out"]!.ToString()!.Replace(" ", ""));
+    }
+
+    [Fact]
+    public void TheFirstStepAfterAMove_ExecutesTheMovedToGoal()
+    {
+        // The user's report: after a Set Next Statement, the first F10/F11 did nothing —
+        // the resume stopped at the moved-to goal's own call port, exactly where the
+        // arrow already stood — and only the second step ran the goal. The first stop
+        // decision AT the moved-to site is suppressed: a step taken from the move
+        // EXECUTES the goal under the arrow and stops at the NEXT one.
+        var engine = DebugEngine(Program);
+        Assert.True(engine.AddBreakpoint("<string>", 5) > 0);
+
+        var stopLines = new List<int>();
+        int stops = 0;
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            stopLines.Add(e.Line);
+            // Stop 0 (bp at 5): move to 6 (two's call), then STEP: two/1 must execute and
+            // the step land on 7 (three's call) — not "stop" at 6 again.
+            if (stops++ == 0)
+            {
+                Assert.Equal("", s.SetNextStatement(0, 6));
+                s.Resume(StepMode.Into);
+            }
+            else
+            {
+                s.Resume(StepMode.Continue);
+            }
+        });
+        engine.AttachDebugSession(svc);
+        var sols = engine.QueryAll("run(Out).").ToList();
+        engine.AttachDebugSession(null);
+
+        _log.WriteLine("stop lines: " + string.Join(", ", stopLines));
+        Assert.Equal(2, stopLines.Count);
+        Assert.Equal(5, stopLines[0]);   // the breakpoint
+        Assert.Equal(7, stopLines[1]);   // the step EXECUTED two/1 and landed on three
+        Assert.Single(sols);
+        // one/1 never ran (skipped by the move): A free, B bound by the executed two/1.
+        Assert.Matches(@"^t\(_\w+,20,30\)$", sols[0]["Out"]!.ToString()!.Replace(" ", ""));
+    }
+
+    [Fact]
     public void Backward_RewindsBindings_AndTheUserRerunsTheGoals()
     {
         // Stop at line 7 (three's call port; one and two already ran, A=1, B=20).
