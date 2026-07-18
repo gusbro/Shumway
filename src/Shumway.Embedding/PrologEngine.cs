@@ -4107,7 +4107,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     public IReadOnlyList<DebugFrame> CaptureFrames(Activation engine)
     {
         ArgumentNullException.ThrowIfNull(engine);
-        return CaptureFrames(engine, engine.P, engine.E, engine.Cp);
+        return CaptureFrames(engine, engine.P, engine.E, engine.Cp, liveTop: true);
     }
 
     /// <summary>ADR-035 — the call stack of a computation the machine is not standing
@@ -4115,7 +4115,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// <c>P</c> and the environment chain still describe the computation that just
     /// failed; the stack the debugger must show is the one the retried clause will run
     /// in, which the choice point carries.</summary>
-    public IReadOnlyList<DebugFrame> CaptureFrames(Activation engine, int pc, int e, int cp)
+    public IReadOnlyList<DebugFrame> CaptureFrames(
+        Activation engine, int pc, int e, int cp, bool liveTop = false)
     {
         ArgumentNullException.ThrowIfNull(engine);
 
@@ -4130,7 +4131,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // (a binary search apiece), and the second builds only the ones that will be seen,
         // with one synthetic frame in the middle saying how many are not.
         var sites = new List<(int Pc, int Env)>();
-        CollectFrameSites(engine, sites, pc, e, cp);
+        CollectFrameSites(engine, sites, pc, e, cp, liveTop);
 
         // One bag per capture: the frames of one stop share their bindings, and their
         // renderings — see DebugValueBag.
@@ -4164,7 +4165,9 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         env = -1;
         if (displayIndex < 0) return false;
         var sites = new List<(int Pc, int Env)>();
-        CollectFrameSites(engine, sites, engine.P, engine.E, engine.Cp);
+        // liveTop, like CaptureFrames(engine): the display indices MUST align with the
+        // stack the debugger shows.
+        CollectFrameSites(engine, sites, engine.P, engine.E, engine.Cp, liveTop: true);
 
         var plan = BuildFramePlan(sites);
         if (plan.OmittedCount <= 0)
@@ -4469,7 +4472,8 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// building any of them. Same walk, same rules, same stopping condition (the query is the
     /// bottom of every stack).</summary>
     private void CollectFrameSites(
-        Activation engine, List<(int Pc, int Env)> sites, int pc, int e, int cp)
+        Activation engine, List<(int Pc, int Env)> sites, int pc, int e, int cp,
+        bool liveTop = false)
     {
         // The environment chain holds exactly the clauses that HAVE a frame, innermost
         // first. Only the clause we are standing in can be frameless (a frameless
@@ -4482,6 +4486,29 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
         if (AddSite(sites, pc, ownFrame && envs.Count > 0 ? envs[0] : -1))
             return;
+
+        // At a LIVE port in a clause whose environment is allocated, the caller chain is
+        // exactly the saved continuations on the environment chain, and the Cp REGISTER is
+        // dead state: between two calls of the body it still holds the PREVIOUS completed
+        // call's return address. Yielding it fabricated a ghost frame — the same clause
+        // shown twice, once at the current goal and once at the goal that already returned
+        // (surfaced by prueba.pl's fuzzy/0 after member/2: a real predicate call sets Cp
+        // where a builtin does not, so it took a prelude RULE mid-body to expose it). The
+        // redo path is different: there pc is the retried clause but its environment does
+        // not exist yet (allocate has not re-run), e/cp are the CALLER's — for that shape
+        // the register IS the continuation, and the legacy walk below stands.
+        if (liveTop && ownFrame && envs.Count > 0)
+        {
+            for (int i = 0; i < envs.Count; i++)
+            {
+                int returnPc = engine.EnvSavedCp(envs[i]);
+                if (returnPc < 0) break;
+                // Step back a byte to land inside the call itself (see below).
+                if (AddSite(sites, returnPc - 1, i + 1 < envs.Count ? envs[i + 1] : -1))
+                    return;
+            }
+            return;
+        }
 
         int envIndex = ownFrame ? 1 : 0;
         foreach (int returnPc in engine.EnumerateCallReturnAddresses(e, cp))

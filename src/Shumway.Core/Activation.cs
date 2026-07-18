@@ -657,6 +657,12 @@ public sealed partial class Activation
         }
     }
 
+    /// <summary>ADR-035 — the return address an environment frame saved at allocate: the
+    /// caller's continuation, authoritative for the frame walk (unlike the Cp REGISTER,
+    /// which between two calls of a clause body still holds the completed previous call's
+    /// return — dead state).</summary>
+    public int EnvSavedCp(int e) => e >= 0 ? (int)_stack[e + EnvCpOffset].Data : -1;
+
     /// <summary>Writes the <c>Y(k+1)</c> slot of the current environment frame.</summary>
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
