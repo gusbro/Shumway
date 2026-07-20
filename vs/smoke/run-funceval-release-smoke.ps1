@@ -10,16 +10,19 @@
 # are proof the injected binding reached the program's own execution.
 #
 # Linked-exe shape. Run from Windows PowerShell 5.1. ASCII only.
+#
+# RELEASE-engine variant of run-bind-into-frame-smoke.ps1: the linked exe embeds
+# OPTIMIZED engine DLLs — historically every func-eval at a stop was refused there
+# ("stopped at a point where garbage collection is impossible") and the EE fell back to
+# IL interpretation, which dies on the first FCall. Fixed by making ShumwayDebugHost.
+# Notify fully interruptible (the zero-iteration loop in its body); this smoke pins that.
 
 $ErrorActionPreference = 'Stop'
 
 $devenv  = "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\devenv.exe"
-$work    = Join-Path $PSScriptRoot "bindframe-work"
-# DEBUG-config CLIs (the Release-engine shape is pinned separately by
-# run-funceval-release-smoke.ps1 — func-eval at a stop works on optimized engine DLLs
-# since ShumwayDebugHost.Notify was made fully interruptible).
-$compile = Join-Path $PSScriptRoot "..\..\src\Shumway.Compile\bin\x64\Debug\net10.0\shumway-compile.exe"
-$link    = Join-Path $PSScriptRoot "..\..\src\Shumway.Link\bin\x64\Debug\net10.0\shumway-link.exe"
+$work    = Join-Path $PSScriptRoot "funceval-rel-work"
+$compile = Join-Path $PSScriptRoot "..\..\src\Shumway.Compile\bin\x64\Release\net10.0\shumway-compile.exe"
+$link    = Join-Path $PSScriptRoot "..\..\src\Shumway.Link\bin\x64\Release\net10.0\shumway-link.exe"
 
 foreach ($f in @($devenv, $compile, $link)) { if (-not (Test-Path $f)) { throw "missing $f" } }
 
@@ -58,8 +61,8 @@ if ($LASTEXITCODE -ne 0) { throw "compile failed" }
 if ($LASTEXITCODE -ne 0) { throw "link failed" }
 $exe = Join-Path $work "bindapp.exe"
 
-$stderrLog = Join-Path $env:TEMP "shumway-bindframe-stderr.log"
-$stdoutLog = Join-Path $env:TEMP "shumway-bindframe-stdout.log"
+$stderrLog = Join-Path $env:TEMP "shumway-funcevalrel-stderr.log"
+$stdoutLog = Join-Path $env:TEMP "shumway-funcevalrel-stdout.log"
 Remove-Item $stderrLog, $stdoutLog -ErrorAction SilentlyContinue
 
 Add-Type -TypeDefinition @'
@@ -67,7 +70,7 @@ using System;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 
-public static class RotFinderBf
+public static class RotFinderFr
 {
     [DllImport("ole32.dll")] private static extern int GetRunningObjectTable(int r, out IRunningObjectTable p);
     [DllImport("ole32.dll")] private static extern int CreateBindCtx(int r, out IBindCtx p);
@@ -111,7 +114,7 @@ try {
     Write-Host "[2/7] starting devenv /rootsuffix Exp + attach ..."
     $vsProc = Start-Process -FilePath $devenv -ArgumentList "/rootsuffix Exp" -PassThru
     Remove-Item Env:\SHUMWAY_DEBUG_DIAG
-    $dte = Invoke-WithRetry { $d = [RotFinderBf]::FindDte($vsProc.Id); if ($null -eq $d) { throw "no DTE yet" }; $d } 90 2000
+    $dte = Invoke-WithRetry { $d = [RotFinderFr]::FindDte($vsProc.Id); if ($null -eq $d) { throw "no DTE yet" }; $d } 90 2000
     Invoke-WithRetry { $null = $dte.Solution } 30 2000
     Start-Sleep -Seconds 10
     $target = Invoke-WithRetry {

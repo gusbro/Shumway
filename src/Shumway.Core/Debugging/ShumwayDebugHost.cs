@@ -82,6 +82,15 @@ public static class ShumwayDebugHost
         NotifyCount++;
         // The debugger stops the process here. Nothing else belongs in this method:
         // whatever it needs is in the channel, and it reads that with ReadMemory.
+        //
+        // The loop below runs ZERO iterations and exists for the JIT, not the program: a
+        // loop with no call in it forces the whole method to carry FULLY-INTERRUPTIBLE GC
+        // info, which makes the breakpoint's IP a GC-safe point even in a Release build.
+        // Without it, a func-eval at this stop (Immediate window, Locals edit) is refused —
+        // "stopped at a point where garbage collection is impossible" — whenever the
+        // engine assemblies are optimized, because MinOpts alone emits only partially-
+        // interruptible code whose safe points are call sites, and this method has none.
+        for (int i = NotifyCount; i > int.MaxValue - 1; i++) { }
     }
 
     /// <summary>The handshake — the ONE func-eval the design allows at attach. Returns the
