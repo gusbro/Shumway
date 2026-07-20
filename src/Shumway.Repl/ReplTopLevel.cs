@@ -603,6 +603,11 @@ internal static class ReplTopLevel
         if (Console.IsInputRedirected)
             return solutions.MoveNext();
 
+        // Keep Ctrl+C on the SIGNAL route while a query runs (a debugger attach/detach
+        // can leave the console delivering it as a keystroke — see LineEditor.ReadLine).
+        try { Console.TreatControlCAsInput = false; }
+        catch { /* no interactive console */ }
+
         using var stop = new ManualResetEventSlim(false);
         var watcher = new Thread(() => WatchForEsc(cts, stop))
         {
@@ -646,7 +651,15 @@ internal static class ReplTopLevel
                         cts.Cancel();
                         return;
                     }
-                    // Non-ESC key during execution → ignore.
+                    // Ctrl+C arriving as a KEYSTROKE (post-debugger console-mode skew —
+                    // see LineEditor.ReadLine): behave as the signal — terminate.
+                    if (k.Key == ConsoleKey.C
+                        && (k.Modifiers & ConsoleModifiers.Control) != 0)
+                    {
+                        Console.WriteLine();
+                        Environment.Exit(0);
+                    }
+                    // Any other key during execution → ignore.
                 }
                 else
                 {

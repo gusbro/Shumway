@@ -68,6 +68,17 @@ public sealed class LineEditor
             return raw;
         }
 
+        // Ctrl+C must terminate the REPL, and normally the CONSOLE delivers it as a
+        // signal (the default handler kills the process). But a Visual Studio debugger
+        // attach/detach cycle can leave the console with processed input OFF — Ctrl+C
+        // then arrives as an ordinary KEYSTROKE, which this editor used to swallow as an
+        // unrecognised key: Ctrl+C silently dead (the user's report; ESC unaffected,
+        // being a plain key either way). Restore the signal route every prompt, and — as
+        // the belt to that suspender — treat a Ctrl+C that still arrives as a key below
+        // exactly like the signal.
+        try { Console.TreatControlCAsInput = false; }
+        catch { /* no interactive console */ }
+
         // Capture the origin row *before* writing the prompt so the
         // view can repaint from the line's true start on every edit.
         int originRow;
@@ -96,6 +107,17 @@ public sealed class LineEditor
                 string composed = buffer.ToString() + (rest ?? "");
                 if (composed.Length > 0) _history.Add(composed);
                 return rest is null ? null : composed;
+            }
+
+            // Ctrl+C delivered as a keystroke (see the prompt-time mode restore above):
+            // behave as the signal would — leave the terminal on a clean line and
+            // terminate the process.
+            if (key.Key == ConsoleKey.C
+                && (key.Modifiers & ConsoleModifiers.Control) != 0)
+            {
+                view.MoveToEnd(buffer.Length);
+                Console.WriteLine();
+                Environment.Exit(0);
             }
 
             switch (key.Key)
