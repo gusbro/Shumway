@@ -150,7 +150,8 @@ does — the Prolog is just one part of a shipped binary.
 ```
 shumway-compile --debug greet.pl -o greet.shmo
 shumway-link greet.shmo --goal main --exe greet --debug
-./greet            # runs normally; prints "shumway: debug mode active."
+./greet            # runs normally (silent; SHUMWAY_DEBUG_DIAG=1 prints
+                   #   "shumway: debug mode active.")
                    # attach Visual Studio to the process at any time to debug it
 ```
 

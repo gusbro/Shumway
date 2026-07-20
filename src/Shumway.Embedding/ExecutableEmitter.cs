@@ -311,9 +311,13 @@ public static class ExecutableEmitter
         // embedded source, so a debugger attached to the process (at any time) can set
         // breakpoints and step. --debug-wait additionally blocks at startup until a debugger
         // has attached and armed its breakpoints, so the very first goal can be stopped in.
+        string debugBanner = debugWait
+            ? @"System.Console.Error.WriteLine(
+                ""shumway: debug mode active; waiting for a debugger to attach..."");"
+            : @"if (System.Environment.GetEnvironmentVariable(""SHUMWAY_DEBUG_DIAG"") == ""1"")
+                System.Console.Error.WriteLine(""shumway: debug mode active."");";
         string engineConstruction = debug
-            ? $@"System.Console.Error.WriteLine(
-                ""shumway: debug mode active{(debugWait ? "; waiting for a debugger to attach..." : ".")}"");
+            ? $@"{debugBanner}
             var engine = PrologEngine.FromBundle(LoadEmbeddedBundle(),
                 new Shumway.Embedding.Debugging.DebugOptions {{ WaitForAttach = {(debugWait ? "true" : "false")} }});"
             : @"var engine = PrologEngine.FromBundle(LoadEmbeddedBundle());";
