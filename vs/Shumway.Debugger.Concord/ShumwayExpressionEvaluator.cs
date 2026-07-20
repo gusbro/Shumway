@@ -354,13 +354,14 @@ namespace Shumway.Debugger.Concord
         void IDkmLanguageExpressionEvaluator.SetValueAsString(
             DkmEvaluationResult result, string value, int timeout, out string? errorText)
         {
-            // ADR-035 D5+ — editing a variable's value in Locals/Watch IS unification:
-            // "<var> = (<term>)" goes through the exact evaluation the Immediate window
-            // uses, and the engine commits the solution's bindings into the suspended
-            // frame (trailed, transactional — see DebugService.TryCommitSolutionToFrame).
-            // A free variable binds; a bound one only "changes" if the term unifies with
-            // it, which for a ground value means: not at all — and the error says so
-            // instead of pretending.
+            // ADR-035 D5+ — editing a variable's value in Locals/Watch is DESTRUCTIVE by
+            // design (the user's spec): a free variable binds; a BOUND one has its value
+            // REPLACED (the old binding is trailed away, so backtracking — and a Set Next
+            // Statement rewind — restores it); and `_` UN-instantiates. The new term may
+            // name the frame's other variables (X = f(Y) aliases the real Y). The
+            // Immediate window deliberately keeps pure, non-destructive unification —
+            // this routes to the engine's SetFrameVariable instead
+            // (DebugService.SetFrameVariable: transactional, attvars refused).
             //
             // SetValueAsString is SYNCHRONOUS, and a func-eval will not run while a
             // synchronous component call holds the dispatcher — the same lesson
@@ -385,11 +386,12 @@ namespace Shumway.Debugger.Concord
                     return;
                 }
 
-                string goalText = result.Name + " = (" + value + ")";
-                string b64 = Convert.ToBase64String(
-                    System.Text.Encoding.UTF8.GetBytes(goalText));
-                string call = "Shumway.Core.Debugging.ShumwayDebugHost.EvaluateGoal("
-                    + frameIndex + ", \"" + b64 + "\")";
+                string nameB64 = Convert.ToBase64String(
+                    System.Text.Encoding.UTF8.GetBytes(result.Name));
+                string termB64 = Convert.ToBase64String(
+                    System.Text.Encoding.UTF8.GetBytes(value));
+                string call = "Shumway.Core.Debugging.ShumwayDebugHost.SetFrameVariable("
+                    + frameIndex + ", \"" + nameB64 + "\", \"" + termB64 + "\")";
 
                 string? answer = null;
                 string? csError = null;
@@ -414,19 +416,16 @@ namespace Shumway.Debugger.Concord
                     });
                 workList.Execute();
 
-                ShumwayLog.Write("set value: '" + goalText + "' -> "
-                    + (answer ?? ("ERROR " + csError)));
+                ShumwayLog.Write("set value: " + result.Name + " := '" + value + "' -> "
+                    + (answer == null ? "ERROR " + csError : answer.Length == 0 ? "ok" : answer));
                 if (answer == null)
                 {
                     errorText = "evaluation failed: " + (csError ?? "no result");
                     return;
                 }
-                if (answer.IndexOf("committed to the frame", StringComparison.Ordinal) < 0)
-                {
-                    errorText = answer.StartsWith("false", StringComparison.Ordinal)
-                        ? "the term does not unify with the variable's value"
-                        : "nothing was bound: " + answer.Replace('\n', ' ');
-                }
+                // "" = the edit took; anything else is the engine's refusal, verbatim.
+                if (answer.Length != 0)
+                    errorText = answer.Replace('\n', ' ');
             }
             catch (Exception ex)
             {

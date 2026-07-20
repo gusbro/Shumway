@@ -226,11 +226,14 @@ public sealed class DebugService : IDebugSession
         Activation? engine = Current;
         if (engine is null) return null;
 
-        var frames = _engine.CaptureFrames(engine);
+        var frames = PresentFrames(engine, _engine.CaptureFrames(engine));
         string goal = frames.Count > 0 ? $"{frames[0].Name}/{frames[0].Arity}" : CurrentGoal();
-        var site = SiteOf(engine.P);
+        // A pending re-enter's stop presents at the chosen head, not the parked caller.
+        var site = engine.DebugClauseEntryArmed
+            ? (_armedPresentation.File, _armedPresentation.HeadLine)
+            : SiteOf(engine.P);
         return new DebugStopEvent(
-            StopReason.AsyncBreak, goal, site.File, site.Line, PortDepth(engine),
+            StopReason.AsyncBreak, goal, site.Item1, site.Item2, PortDepth(engine),
             WithSetNextLines(frames))
         {
             SetNextLines = ValidSetNextLines(),   // ADR-035 D5+
@@ -522,7 +525,8 @@ public sealed class DebugService : IDebugSession
                     Term? value = solution[n];
                     text.Append(n).Append(" = ").Append(value is null
                         ? "_"
-                        : Ellipsize(AstTermRenderer.Render(value, 999, _engine.Operators), 2048));
+                        : Ellipsize(AstTermRenderer.Render(
+                            value, 999, _engine.Operators, quoted: true), 2048));
                 }
                 rendered = text.ToString();
             }
@@ -650,7 +654,7 @@ public sealed class DebugService : IDebugSession
             try
             {
                 val = AstTermRenderer.Render(
-                    TermReader.Materialize(outer, after), 999, _engine.Operators);
+                    TermReader.Materialize(outer, after), 999, _engine.Operators, quoted: true);
             }
             catch (Exception) { val = "_"; }
             text.Append('\n').Append(commit[i].FrameName).Append(" = ")
@@ -666,6 +670,92 @@ public sealed class DebugService : IDebugSession
             .Append(committed == 1 ? " binding" : " bindings")
             .Append(" committed to the frame)");
         return (committed, text.ToString());
+    }
+
+    /// <summary>ADR-035 D5+ — the Watch-window EDIT of a frame variable, and it is
+    /// DESTRUCTIVE by design (the user's spec; the Immediate window deliberately keeps
+    /// pure unification): a bound variable's value is REPLACED — the old binding is
+    /// trailed away (so backtracking and a rewind restore it) and the new term unified
+    /// in — and assigning <c>_</c> UN-instantiates it. The new term may reference the
+    /// frame's other variables by name (X = f(Y) aliases the real Y). Transactional: a
+    /// failed unification leaves the frame exactly as it was. Returns "" or the
+    /// refusal.</summary>
+    public string SetFrameVariable(int frameIndex, string varName, string termText)
+    {
+        if (Current is not { } outer) return "nothing is stopped";
+        if (!_engine.TryGetDisplayFrameContext(outer, frameIndex, out int pc, out int env))
+            return "this frame has no variable context";
+
+        int addr = -1;
+        bool isAttVar = false;
+        bool found = false;
+        var shared = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var (name, _, a, att) in
+                 _engine.MaterializeFrameVariablesWithAddresses(outer, pc, env))
+        {
+            if (a >= 0) shared.TryAdd(name, a);
+            if (name == varName) { addr = a; isAttVar = att; found = true; }
+        }
+        if (!found) return "no variable '" + varName + "' in this frame";
+        if (isAttVar)
+            return "'" + varName + "' is an attributed variable; editing it would "
+                + "schedule unification hooks the suspended machine cannot run";
+        if (addr < 0)
+            return "'" + varName + "' has no editable cell in this frame";
+
+        Term newTerm;
+        try
+        {
+            // The Watch edit box holds a bare term; the parser wants a clause-terminated
+            // one. The SPACE before the period matters: "7." would lex as a float.
+            string text = termText.Trim();
+            if (!text.EndsWith(".", StringComparison.Ordinal)) text += " .";
+            (newTerm, _) = _engine.ParseGoal(text);
+        }
+        catch (Exception ex)
+        {
+            return "cannot parse '" + termText + "': " + ex.Message;
+        }
+
+        int bMark = outer.BindingTrailTop;
+        int eMark = outer.ExtraTrailTop;
+        int hMark = outer.HeapTop;
+
+        // `_` — un-instantiate: clear the binding, trailing the old value. (A no-op on a
+        // variable that is already free.)
+        if (newTerm is VarTerm { Name: "_" })
+        {
+            if (IsUnboundAt(outer, addr)) return "";
+            outer.DebugUnbindCell(addr);
+            FrameStateChanged = true;
+            return "";
+        }
+
+        try
+        {
+            // A bound target is CLEARED first — that is what makes the edit an edit and
+            // not a unification test. The clear is trailed, so the transactional unwind
+            // below (and any later backtrack past this point) restores the original.
+            if (!IsUnboundAt(outer, addr))
+                outer.DebugUnbindCell(addr);
+            Cell built = Materializer.MaterializeAsCellSharing(outer, newTerm, shared);
+            if (outer.Unify(addr, HeapAddrOf(outer, built)))
+            {
+                FrameStateChanged = true;
+                return "";
+            }
+        }
+        catch (Exception ex)
+        {
+            outer.UnwindTrails(bMark, eMark);
+            outer.SetHeapTop(hMark);
+            return "cannot set '" + varName + "': " + ex.Message;
+        }
+
+        outer.UnwindTrails(bMark, eMark);
+        outer.SetHeapTop(hMark);
+        return "the new value does not unify against the frame's other bindings; "
+            + "nothing was changed";
     }
 
     // ---- ADR-035 D5+ — Set Next Statement ----
@@ -764,11 +854,31 @@ public sealed class DebugService : IDebugSession
         if (_lastStopReason is StopReason.Redo or StopReason.Fail)
             return "Set Next Statement is not available at a redo/fail stop "
                 + "(the machine is mid-backtrack)";
-        if (!_engine.TryGetDisplayFrameContext(outer, frameIndex, out int pc, out int env))
-            return "this frame has no statement context";
         if (outer.LastCallOptimisation)
             return "Set Next Statement needs last-call optimisation off "
                 + "(set_prolog_flag(debug_lco, off))";
+
+        // A pending re-enter holds the machine parked at the caller's goal — the entered
+        // predicate is no longer any display frame, but its clause heads REMAIN targets:
+        // the user may change which clause to enter any number of times before resuming
+        // (the report: SNS onto clause 3's head, then — without continuing — back onto
+        // clause 2's, refused). A re-target just replaces the armed choice.
+        if (outer.DebugClauseEntryArmed && frameIndex == 0)
+        {
+            int armedPred = outer.DebugClauseEntryPredicate;
+            foreach (var (cs, _, headLine, firstLine) in _engine.ClauseHeadTargets(armedPred))
+                if (targetLine == headLine
+                    || (targetLine >= headLine && targetLine < firstLine))
+                {
+                    if (!ArmClauseEntry(outer, armedPred, cs))
+                        return "cannot re-enter the call: the chosen clause is unknown";
+                    _snsApplied = (frameIndex, targetLine, true);
+                    return "";
+                }
+        }
+
+        if (!_engine.TryGetDisplayFrameContext(outer, frameIndex, out int pc, out int env))
+            return "this frame has no statement context";
 
         var sites = _engine.ClauseSites(pc);
         if (sites.Count == 0) return "this clause has no statement positions";
@@ -796,9 +906,20 @@ public sealed class DebugService : IDebugSession
         foreach (var (sitePc, line) in sites)
             if (line == targetLine) { targetPc = sitePc; break; }
         if (targetPc < 0)
+        {
+            // A SIBLING clause's head (ADR-035 D5+, the user's case): standing in clause
+            // N of Pred, Set Next Statement onto the head of ANY clause of Pred re-enters
+            // the CALL by that clause — rewind to the caller's goal, re-run its argument
+            // setup, and dispatch straight into the chosen clause.
+            foreach (var (clauseStart, _, headLine, firstLine) in _engine.ClauseHeadTargets(pc))
+                if (targetLine == headLine
+                    || (targetLine >= headLine && targetLine < firstLine))
+                    return ReenterClause(outer, frameIndex, targetLine, pc, clauseStart);
+
             return "line " + targetLine + " is not a statement of this clause; "
                 + "statements are at: " + string.Join(", ",
                     sites.Select(x => x.Line).Distinct().OrderBy(x => x));
+        }
 
         // The start of the site the frame stands on (currentPc may point mid-site).
         int currentSiteStart = -1;
@@ -833,12 +954,19 @@ public sealed class DebugService : IDebugSession
 
             RestoreMark(outer, fm, targetPc);
             outer.SetE(env);
+            outer.DisarmDebugClauseEntry();   // any other move cancels a pending re-enter
             if (targetPc > currentSiteStart)
                 foreach (var (sitePc, _) in sites)
                     if (sitePc >= currentSiteStart && sitePc < targetPc)
                         RecordPureMoveMark(outer, env, sitePc);
             _snsMovedToSite = _engine.SiteAt(targetPc);
             _snsApplied = (frameIndex, targetLine, true);
+            // The move POPPED frames: the depth the next step measures against is the
+            // moved-to frame's, not the stop's (a stale deep reference made the first
+            // F10 after a cross-frame move accept every port inside the next callee —
+            // Step Over behaved as Step Into, once).
+            _lastStopDepth = PortDepth(outer);
+            _lastStopWasRedo = false;
             return "";
         }
 
@@ -856,6 +984,7 @@ public sealed class DebugService : IDebugSession
                 if (sitePc >= currentSiteStart && sitePc < targetPc)
                     RecordPureMoveMark(outer, env, sitePc);
 
+            outer.DisarmDebugClauseEntry();   // any other move cancels a pending re-enter
             outer.RedirectPc(targetPc);
             _snsMovedToSite = _engine.SiteAt(targetPc);
             _snsApplied = (frameIndex, targetLine, true);
@@ -874,6 +1003,7 @@ public sealed class DebugService : IDebugSession
                     : "; no rewindable position is recorded for this frame");
         }
 
+        outer.DisarmDebugClauseEntry();   // any other move cancels a pending re-enter
         RestoreMark(outer, mark, targetPc);
         _snsMovedToSite = _engine.SiteAt(targetPc);
         _snsApplied = (frameIndex, targetLine, true);
@@ -894,6 +1024,145 @@ public sealed class DebugService : IDebugSession
     private bool SnsMoveSuppressesStopAt(Activation engine)
         => _snsMovedToSite >= 0
            && _engine.SiteAtOrBefore(engine.P) == _snsMovedToSite;
+
+    /// <summary>ADR-035 D5+ — Set Next Statement onto a sibling clause's head: rewind to
+    /// the CALLER's mark for the goal that called this predicate, point P at that goal's
+    /// site (its argument setup re-runs — it reads only Y slots and heap), and arm the
+    /// dispatch intercept so the call enters the CHOSEN clause instead of the predicate's
+    /// entry. Committed to that clause — the user picked it; if its head fails to unify,
+    /// the call fails. The caller's own stop decisions are suppressed (the arrow shows
+    /// the chosen head; the next visible stop is inside the chosen clause).</summary>
+    /// <summary>ADR-035 D5+ — the caller anchor a clause re-enter rewinds to: the newest
+    /// valid mark recorded in an ANCESTOR environment of the frame being re-entered —
+    /// the innermost enclosing USER goal. Deliberately not the next display frame: a
+    /// meta-called predicate's direct caller is glue (phrase/2 driving a DCG
+    /// nonterminal, call/N — the user's DCG report), prelude code with no sites, no
+    /// marks, and often no frame at all (tail-call optimised), which also makes the
+    /// display pair its position unreliably. Marks tell the truth: they are recorded
+    /// only in debuggable code, stack discipline keeps them consistent, and the newest
+    /// one in an ancestor env IS the enclosing user goal whose re-run re-derives the
+    /// callee's arguments and re-dispatches the call — where the armed clause entry
+    /// takes over.</summary>
+    private bool TryFindReenterAnchor(
+        Activation outer, int frameIndex,
+        out PortMark mark, out int callerEnv, out int callerSiteStart, out string refusal)
+    {
+        mark = default;
+        callerEnv = -1;
+        callerSiteStart = -1;
+        refusal = "cannot re-enter the call: no enclosing goal with a rewind mark";
+        if (!_engine.TryGetDisplayFrameContext(outer, frameIndex, out _, out int frameEnv))
+            return false;
+
+        var ancestors = new HashSet<int>();
+        bool self = true;
+        foreach (int e in outer.EnumerateEnvChain(frameEnv))
+        {
+            if (self) { self = false; continue; }   // the frame's own env is not a caller
+            ancestors.Add(e);
+        }
+        if (ancestors.Count == 0) return false;
+
+        for (int i = _portMarks.Count - 1; i >= 0; i--)
+        {
+            var m = _portMarks[i];
+            if (!ReferenceEquals(m.Engine, outer) || !ancestors.Contains(m.E)) continue;
+            if (!MarkIsValid(outer, m)) continue;
+            var sites = _engine.ClauseSites(m.P);
+            int start = -1;
+            foreach (var (sitePc, _) in sites)
+                if (sitePc <= m.P && sitePc > start) start = sitePc;
+            if (start < 0) continue;
+            mark = m;
+            callerEnv = m.E;
+            callerSiteStart = start;
+            return true;
+        }
+        return false;
+    }
+
+    private string ReenterClause(
+        Activation outer, int frameIndex, int targetLine, int framePc, int clauseStart)
+    {
+        if (!TryFindReenterAnchor(outer, frameIndex,
+                out var m, out int callerEnv, out int callerSiteStart, out string refusal))
+            return refusal;
+
+        int predAddress = _engine.PredicateAddressOf(framePc);
+        if (predAddress < 0)
+            return "cannot re-enter the call: the predicate's entry is unknown";
+        if (!ArmClauseEntry(outer, predAddress, clauseStart))
+            return "cannot re-enter the call: the chosen clause is unknown";
+
+        RestoreMark(outer, m, callerSiteStart);
+        outer.SetE(callerEnv);
+        _snsMovedToSite = _engine.SiteAt(callerSiteStart);
+        _snsApplied = (frameIndex, targetLine, true);
+        // The rewind parked the machine at the CALLER's goal: the next step measures
+        // against that depth, not the popped frame's (see the cross-frame twin above).
+        _lastStopDepth = PortDepth(outer);
+        _lastStopWasRedo = false;
+        return "";
+    }
+
+    /// <summary>Builds and arms the clause-entry function for a re-enter (or a RE-ARM: a
+    /// second Set Next Statement onto a different clause head while the first is still
+    /// pending — the machine is already parked at the caller's goal, only the choice
+    /// changes). The entry function reproduces STANDARD Prolog clause selection from the
+    /// chosen clause: enter it with a choice point for the ones AFTER it — if the chosen
+    /// clause fails (and did not cut), the following clauses are tried, and when they run
+    /// out the call fails to the caller's older alternatives. Built on the
+    /// builtin-choice-point machinery (state save/restore identical to a bytecode CP; the
+    /// resume delegate re-arms for the clause after and continues at the clause's code),
+    /// so it works for every compiled layout — chain and indexed.</summary>
+    /// <summary>The synthetic top frame a PENDING re-enter presents: the chosen predicate
+    /// at the chosen clause's head line, with no variables (the head has not unified —
+    /// showing anything else would be a lie; the machine truthfully sits at the caller's
+    /// goal). Read only while <see cref="Activation.DebugClauseEntryArmed"/>.</summary>
+    private (string Name, int Arity, string File, int HeadLine) _armedPresentation;
+
+    private bool ArmClauseEntry(Activation outer, int predAddress, int clauseStart)
+    {
+        var clauseTable = _engine.ClauseHeadTargets(predAddress);
+        var clauseCode = new List<int>(clauseTable.Count);
+        int chosenIndex = -1;
+        int chosenFileId = -1, chosenHeadLine = 0;
+        foreach (var (cs, fileId, headLine, _) in clauseTable)
+        {
+            if (cs == clauseStart)
+            {
+                chosenIndex = clauseCode.Count;
+                chosenFileId = fileId;
+                chosenHeadLine = headLine;
+            }
+            clauseCode.Add(cs);
+        }
+        if (chosenIndex < 0) return false;
+        var pred = _engine.PredicateContaining(predAddress);
+        int arity = pred is { } pd ? pd.Arity : 0;
+        _armedPresentation = (
+            pred is { } pn ? pn.Name : "?", arity,
+            chosenFileId >= 0 ? Shumway.Core.DebugSiteTable.FileName(chosenFileId) : "",
+            chosenHeadLine);
+
+        Func<Activation, int, bool> resume = null!;
+        resume = (eng, k) =>
+        {
+            if (k >= clauseCode.Count) return false;   // clauses exhausted: fail onward
+            if (k + 1 < clauseCode.Count)
+                eng.PushIlChoicePoint(resume, k + 1, arity);
+            eng.ResumeAtReturnPc(clauseCode[k]);
+            return true;
+        };
+
+        outer.ArmDebugClauseEntry(predAddress, eng =>
+        {
+            if (chosenIndex + 1 < clauseCode.Count)
+                eng.PushIlChoicePoint(resume, chosenIndex + 1, arity);
+            return clauseCode[chosenIndex];
+        });
+        return true;
+    }
 
     /// <summary>A rewind mark for a site a pure move skipped: the mark's position is the
     /// site, the state is the CURRENT machine state — restoring it unwinds nothing, which
@@ -919,8 +1188,25 @@ public sealed class DebugService : IDebugSession
     {
         if (Current is not { } outer
             || _lastStopReason is StopReason.Redo or StopReason.Fail
-            || outer.LastCallOptimisation
-            || !_engine.TryGetDisplayFrameContext(outer, frameIndex, out int pc, out int env))
+            || outer.LastCallOptimisation)
+            return Array.Empty<int>();
+
+        // The PENDING-re-enter synthetic frame: its valid targets are the armed
+        // predicate's clause heads — the user may change which clause to enter until
+        // they resume. (Single-line clauses count by their one line.)
+        if (frameIndex == 0 && outer.DebugClauseEntryArmed)
+        {
+            var headLines = new SortedSet<int>();
+            foreach (var (_, _, headLine, firstLine)
+                     in _engine.ClauseHeadTargets(outer.DebugClauseEntryPredicate))
+            {
+                headLines.Add(headLine);
+                for (int hl = headLine; hl < firstLine; hl++) headLines.Add(hl);
+            }
+            return headLines.ToList();
+        }
+
+        if (!_engine.TryGetDisplayFrameContext(outer, frameIndex, out int pc, out int env))
             return Array.Empty<int>();
 
         var sites = _engine.ClauseSites(pc);
@@ -968,6 +1254,20 @@ public sealed class DebugService : IDebugSession
                     for (int hl = s.HeadLine; hl < s.FirstLine; hl++) lines.Add(hl);
             }
         }
+
+        // SIBLING clause heads (the re-enter move): every clause of this frame's
+        // predicate is a target when a caller anchor exists — the move rewinds there and
+        // re-dispatches the call into the chosen clause. The anchor walk skips meta-call
+        // glue (phrase/2 over a DCG, call/N), so DCG nonterminals get their siblings too.
+        // A single-line clause (head and body on one line — Blint's
+        // `parse_body(F, [])-->parse_token(F).`) counts by that one line: its head span
+        // is empty, and leaving it out made clause 1 untargetable.
+        if (TryFindReenterAnchor(outer, frameIndex, out _, out _, out _, out _))
+            foreach (var (_, _, headLine, firstLine) in _engine.ClauseHeadTargets(pc))
+            {
+                lines.Add(headLine);
+                for (int hl = headLine; hl < firstLine; hl++) lines.Add(hl);
+            }
         return lines.ToList();
     }
 
@@ -1729,7 +2029,8 @@ public sealed class DebugService : IDebugSession
 
         _snsApplied = default;   // a fresh stop: any queued SNS from the last one is history
         _onStop(this, new DebugStopEvent(
-            reason, goal, site.File, site.Line, depth, WithSetNextLines(frames))
+            reason, goal, site.File, site.Line, depth,
+            WithSetNextLines(PresentFrames(engine, frames)))
         {
             BreakFile = _breakRequest?.File ?? "",
             BreakLine = _breakRequest?.Line ?? 0,
@@ -1744,6 +2045,26 @@ public sealed class DebugService : IDebugSession
     /// <summary>ADR-035 D5+ — expose the current stop's valid SNS lines to the channel
     /// session's snapshot writer (CaptureNow builds its own DebugStopEvent).</summary>
     internal IReadOnlyList<int> CurrentValidSetNextLines() => ValidSetNextLines();
+
+    /// <summary>ADR-035 D5+ — prepend the PENDING-re-enter synthetic frame when one is
+    /// armed (see <see cref="_armedPresentation"/>): the Call Stack shows the chosen
+    /// predicate at the chosen head, Locals show no variables (honest — nothing entered
+    /// yet), and the frames below are the real machine (the caller the rewind parked
+    /// at). <see cref="PrologEngine.TryGetDisplayFrameContext"/> applies the matching
+    /// index shift for every consumer.</summary>
+    private IReadOnlyList<PrologEngine.DebugFrame> PresentFrames(
+        Activation engine, IReadOnlyList<PrologEngine.DebugFrame> frames)
+    {
+        if (!engine.DebugClauseEntryArmed) return frames;
+        var ap = _armedPresentation;
+        var list = new List<PrologEngine.DebugFrame>(frames.Count + 1)
+        {
+            new(ap.Name, ap.Arity, ap.File, ap.HeadLine, -1,
+                Array.Empty<(string, string)>()),
+        };
+        list.AddRange(frames);
+        return list;
+    }
 
     /// <summary>ADR-035 D5+ — decorate each display frame with ITS valid Set Next
     /// Statement lines (cross-frame moves). Capped: a pathological stack does not pay a

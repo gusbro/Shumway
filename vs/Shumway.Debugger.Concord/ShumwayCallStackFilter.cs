@@ -151,12 +151,18 @@ namespace Shumway.Debugger.Concord
                 if (valid != null && valid.Contains(line))
                     return S_OK;
 
+                // The refusal names the SELECTED frame's valid lines and nothing else —
+                // a hundred-frame stack must not flood the Output window with the
+                // targets of frames the user is not standing on.
                 string frameName = snap != null && frameIndex < snap.Frames.Count
                     ? snap.Frames[frameIndex].Name : "?";
+                string targets = valid == null || valid.Count == 0
+                    ? "none at this stop"
+                    : string.Join(", ", valid);
                 ShumwayLog.Output(frame.Process,
                     "cannot set next statement to line " + line
-                    + " on " + frameName + " (frame " + frameIndex + ") — valid targets: "
-                    + ShumwaySnsTarget.DescribeTargets(snap));
+                    + " on " + frameName + " (frame " + frameIndex
+                    + ") — valid lines for this frame: " + targets);
                 return cannotSetHere;
             }
             catch (Exception ex)

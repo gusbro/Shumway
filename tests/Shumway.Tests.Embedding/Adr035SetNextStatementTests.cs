@@ -345,6 +345,364 @@ public class Adr035SetNextStatementTests
         Assert.Equal("t(2,20,30)", sols[0]["Out"]!.ToString()!.Replace(" ", ""));
     }
 
+    // ---- SNS onto a SIBLING clause's head: re-enter the call by the chosen clause ----
+
+    // Two-clause predicate with observable per-clause effects:
+    //  2: :- dynamic(log/1).
+    //  3: rc(Out) :-
+    //  4:     pick(a, V),
+    //  5:     Out = got(V).
+    //  6: pick(a, V) :-
+    //  7:     note(one),
+    //  8:     V = first.
+    //  9: pick(b, V) :-
+    // 10:     note(two),
+    // 11:     V = second.
+    // 12: note(T) :- assertz(log(T)).
+    private const string TwoClauseProgram =
+        ":- dynamic(log/1).\n" +
+        "rc(Out) :-\n    pick(a, V),\n    Out = got(V).\n" +
+        "pick(a, V) :-\n    note(one),\n    V = first.\n" +
+        "pick(b, V) :-\n    note(two),\n    V = second.\n" +
+        "note(T) :- assertz(log(T)).\n";
+
+    [Fact]
+    public void SiblingClauseHead_ReentersTheCallByTheChosenClause()
+    {
+        // Stopped inside pick's FIRST clause (line 7); Set Next Statement onto the head
+        // of the SECOND (and last) clause (line 9). The call rewinds to rc's goal and
+        // re-enters by clause 2 — whose head pick(b, V) does NOT unify with the call
+        // pick(a, V), and there are no clauses AFTER it, so the call FAILS (standard
+        // selection from the chosen clause on). The query fails cleanly and the log is
+        // empty — clause 1's pre-rewind note was rewound away.
+        var engine = DebugEngine(TwoClauseProgram);
+        Assert.True(engine.AddBreakpoint("<string>", 7) > 0);
+
+        var results = new List<string>();
+        int stops = 0;
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            if (stops++ == 0)
+                results.Add(s.SetNextStatement(0, 9));
+            s.Resume(StepMode.Continue);
+        });
+        engine.AttachDebugSession(svc);
+        var sols = engine.QueryAll("rc(Out).").ToList();
+        engine.AttachDebugSession(null);
+
+        Assert.Equal(new[] { "" }, results);
+        Assert.Empty(sols);   // committed to pick(b, _): head mismatch, the call fails
+        Assert.Empty(engine.QueryAll("log(_).").ToList());   // note(one) was rewound; two never ran
+    }
+
+    [Fact]
+    public void SiblingClauseHead_WithMatchingHead_RunsTheChosenClause()
+    {
+        // The same move where the chosen head DOES unify: p/1 has two clauses that both
+        // match; stopped in clause 1, SNS onto clause 2's head runs clause 2's body.
+        //  2: :- dynamic(log/1).
+        //  3: rp(Out) :- p(Out).
+        //  4: p(one) :-
+        //  5:     note(c1).
+        //  6: p(two) :-
+        //  7:     note(c2).
+        //  8: note(T) :- assertz(log(T)).
+        var engine = DebugEngine(
+            ":- dynamic(log/1).\nrp(Out) :- p(Out).\n" +
+            "p(one) :-\n    note(c1).\np(two) :-\n    note(c2).\n" +
+            "note(T) :- assertz(log(T)).\n");
+        Assert.True(engine.AddBreakpoint("<string>", 5) > 0);   // note(c1) in clause 1
+
+        var results = new List<string>();
+        int stops = 0;
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            if (stops++ == 0)
+                results.Add(s.SetNextStatement(0, 6));   // clause 2's head line
+            s.Resume(StepMode.Continue);
+        });
+        engine.AttachDebugSession(svc);
+        var sols = engine.QueryAll("rp(Out).").ToList();
+        engine.AttachDebugSession(null);
+
+        Assert.Equal(new[] { "" }, results);
+        Assert.Single(sols);
+        Assert.Equal("two", sols[0]["Out"]!.ToString());
+        // Clause 2 ran; clause 1's note was rewound away.
+        Assert.Equal(new[] { "c2" },
+            engine.Query<string>("findall(T, log(T), L), atomic_list_concat(L, ',', A).", "A")
+                .Single().Split(','));
+    }
+
+    [Fact]
+    public void SiblingClauseHead_WhenTheChosenHeadFails_TheFollowingClausesAreTried()
+    {
+        // The user's correction: entering by clause M is NOT a commitment — standard
+        // Prolog selection resumes from M. Three clauses; stopped in clause 1, SNS onto
+        // clause 2's head. q(b,...) does not unify with the call q(a,_) — so clause 3
+        // (a variable head, matches anything) runs, exactly as if the call had started
+        // its clause selection at clause 2.
+        //  2: :- dynamic(log/1).
+        //  3: rq(Out) :- q(a, Out).
+        //  4: q(a, first) :-
+        //  5:     note(c1).
+        //  6: q(b, second) :-
+        //  7:     note(c2).
+        //  8: q(_, third) :-
+        //  9:     note(c3).
+        // 10: note(T) :- assertz(log(T)).
+        var engine = DebugEngine(
+            ":- dynamic(log/1).\nrq(Out) :- q(a, Out).\n" +
+            "q(a, first) :-\n    note(c1).\n" +
+            "q(b, second) :-\n    note(c2).\n" +
+            "q(_, third) :-\n    note(c3).\n" +
+            "note(T) :- assertz(log(T)).\n");
+        Assert.True(engine.AddBreakpoint("<string>", 5) > 0);   // note(c1) in clause 1
+
+        var results = new List<string>();
+        int stops = 0;
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            if (stops++ == 0)
+                results.Add(s.SetNextStatement(0, 6));   // clause 2's head line
+            s.Resume(StepMode.Continue);
+        });
+        engine.AttachDebugSession(svc);
+        var sols = engine.QueryAll("rq(Out).").ToList();
+        engine.AttachDebugSession(null);
+
+        Assert.Equal(new[] { "" }, results);
+        Assert.Single(sols);
+        Assert.Equal("third", sols[0]["Out"]!.ToString());
+        // Clause 2's head failed silently, clause 3 ran; clause 1's note was rewound.
+        Assert.Equal(new[] { "c3" },
+            engine.Query<string>("findall(T, log(T), L), atomic_list_concat(L, ',', A).", "A")
+                .Single().Split(','));
+    }
+
+    [Fact]
+    public void SiblingClauseHead_WorksForDcgNonterminals_ThroughPhrase()
+    {
+        // The DCG report: SNS onto another DCG clause's head was refused ("the caller
+        // has no statement context"). Root cause: PhraseTransform expanded
+        // phrase(greet(Out), L) into greet(Out, L, []) WITHOUT the source position, so
+        // the expanded call had no debug stop site — no line for run's frame in the call
+        // stack, and no mark the re-enter could anchor on. Two fixes proven here: the
+        // position rides the expansion, and the anchor search walks the ENV CHAIN's
+        // marks rather than trusting display frame N+1 (a meta-called predicate's
+        // direct caller can be frameless glue). The chosen DCG clause runs with the
+        // ORIGINAL hidden difference-list arguments, re-derived by the re-run.
+        //  2: :- dynamic(log/1).
+        //  3: run(Out) :- phrase(greet(Out), [h,i]).
+        //  4: greet(one) -->
+        //  5:     [h],
+        //  6:     { note(c1) },
+        //  7:     [i].
+        //  8: greet(two) -->
+        //  9:     [h],
+        // 10:     { note(c2) },
+        // 11:     [i].
+        // 12: note(T) :- assertz(log(T)).
+        var engine = DebugEngine(
+            ":- dynamic(log/1).\n" +
+            "run(Out) :- phrase(greet(Out), [h,i]).\n" +
+            "greet(one) -->\n    [h],\n    { note(c1) },\n    [i].\n" +
+            "greet(two) -->\n    [h],\n    { note(c2) },\n    [i].\n" +
+            "note(T) :- assertz(log(T)).\n");
+        Assert.True(engine.AddBreakpoint("<string>", 6) > 0);   // { note(c1) } in clause 1
+
+        IReadOnlyList<int>? valid = null;
+        var results = new List<string>();
+        int stops = 0;
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            if (stops++ == 0)
+            {
+                valid = e.Frames[0].SetNextLines;
+                results.Add(s.SetNextStatement(0, 8));   // clause 2's head line
+            }
+            s.Resume(StepMode.Continue);
+        });
+        engine.AttachDebugSession(svc);
+        var sols = engine.QueryAll("run(Out).").ToList();
+        engine.AttachDebugSession(null);
+
+        _log.WriteLine("frame0 valid: " + string.Join(", ", valid!));
+        Assert.Contains(8, valid!);              // the sibling DCG head is offered
+        Assert.Equal(new[] { "" }, results);
+        Assert.Single(sols);
+        Assert.Equal("two", sols[0]["Out"]!.ToString());   // clause 2 parsed [h,i]
+        Assert.Equal(new[] { "c2" },
+            engine.Query<string>("findall(T, log(T), L), atomic_list_concat(L, ',', A).", "A")
+                .Single().Split(','));           // c1 rewound away, c2 ran
+    }
+
+    [Fact]
+    public void SiblingClauseHead_CanBeRetargeted_BeforeResuming()
+    {
+        // The user's report (Blint parse_body): SNS onto clause 3's head — accepted —
+        // then, WITHOUT continuing, SNS onto clause 2's head: refused. The first
+        // re-enter parks the machine at the caller's goal (the entered predicate is no
+        // longer a display frame), so the second target must resolve against the ARMED
+        // predicate's clause table and just replace the choice. Three clauses that all
+        // match: arm 3, re-target to 2, resume → clause 2 runs first (fall-through then
+        // yields clause 3's solution too — standard selection from clause 2 on).
+        //  2: :- dynamic(log/1).
+        //  3: rp(Out) :- p(Out).
+        //  4: p(one) :-
+        //  5:     note(c1).
+        //  6: p(two) :-
+        //  7:     note(c2).
+        //  8: p(three) :-
+        //  9:     note(c3).
+        // 10: note(T) :- assertz(log(T)).
+        var engine = DebugEngine(
+            ":- dynamic(log/1).\nrp(Out) :- p(Out).\n" +
+            "p(one) :-\n    note(c1).\np(two) :-\n    note(c2).\np(three) :-\n    note(c3).\n" +
+            "note(T) :- assertz(log(T)).\n");
+        Assert.True(engine.AddBreakpoint("<string>", 5) > 0);   // note(c1) in clause 1
+
+        var results = new List<string>();
+        IReadOnlyList<int>? validWhileArmed = null;
+        int stops = 0;
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            if (stops++ == 0)
+            {
+                results.Add(s.SetNextStatement(0, 8));   // clause 3's head: arm
+                validWhileArmed = s.ValidSetNextLines(0);
+                results.Add(s.SetNextStatement(0, 6));   // clause 2's head: RE-TARGET
+            }
+            s.Resume(StepMode.Continue);
+        });
+        engine.AttachDebugSession(svc);
+        var sols = engine.QueryAll("rp(Out).").ToList();
+        engine.AttachDebugSession(null);
+
+        _log.WriteLine("valid while armed: " + string.Join(", ", validWhileArmed!));
+        Assert.Contains(4, validWhileArmed!);   // every head stays a target while armed
+        Assert.Contains(6, validWhileArmed!);
+        Assert.Contains(8, validWhileArmed!);
+        Assert.Equal(new[] { "", "" }, results);
+        // The RE-TARGET won: clause 2 first, then fall-through to clause 3.
+        Assert.Equal(new[] { "two", "three" },
+            sols.Select(x => x["Out"]!.ToString()).ToArray());
+        Assert.Equal(new[] { "c2", "c3" },
+            engine.Query<string>("findall(T, log(T), L), atomic_list_concat(L, ',', A).", "A")
+                .Single().Split(','));
+    }
+
+    [Fact]
+    public void SiblingClauseHead_SingleLineClause_IsTargetableByItsOneLine()
+    {
+        // Blint's parse_body clause 1: `parse_body(F, [])-->parse_token(F).` — head and
+        // body on ONE line, so its head span [HeadLine, FirstLine) is empty and the
+        // clause was untargetable. A single-line clause counts by its one line.
+        //  2: :- dynamic(log/1).
+        //  3: rp(Out) :- p(Out).
+        //  4: p(one) :- note(c1).
+        //  5: p(two) :-
+        //  6:     note(c2).
+        //  7: note(T) :- assertz(log(T)).
+        var engine = DebugEngine(
+            ":- dynamic(log/1).\nrp(Out) :- p(Out).\n" +
+            "p(one) :- note(c1).\np(two) :-\n    note(c2).\n" +
+            "note(T) :- assertz(log(T)).\n");
+        Assert.True(engine.AddBreakpoint("<string>", 6) > 0);   // note(c2) in clause 2
+
+        var results = new List<string>();
+        IReadOnlyList<int>? valid = null;
+        int stops = 0;
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            if (stops++ == 0)
+            {
+                valid = e.Frames[0].SetNextLines;
+                results.Add(s.SetNextStatement(0, 4));   // clause 1's single line
+            }
+            s.Resume(StepMode.Continue);
+        });
+        engine.AttachDebugSession(svc);
+        var sols = engine.QueryAll("rp(Out).").ToList();
+        engine.AttachDebugSession(null);
+
+        _log.WriteLine("valid at stop: " + string.Join(", ", valid!));
+        Assert.Contains(4, valid!);   // the single-line sibling is offered
+        Assert.Equal(new[] { "" }, results);
+        // c1 ran on the natural first pass (sol one), then the re-enter ran clause 1
+        // AGAIN (sol one, log c1 twice) and fell through to clause 2 (sol two, log c2;
+        // the bp there resumes with Continue on the later stops).
+        Assert.Equal(new[] { "one", "one", "two" },
+            sols.Select(x => x["Out"]!.ToString()).ToArray());
+        Assert.Equal(new[] { "c1", "c1", "c2" },
+            engine.Query<string>("findall(T, log(T), L), atomic_list_concat(L, ',', A).", "A")
+                .Single().Split(','));
+    }
+
+    [Fact]
+    public void PendingReenter_PresentsTheChosenHeadAsTheTopFrame()
+    {
+        // While a re-enter is pending (armed, machine parked at the caller's goal), the
+        // presentation must show the CHOSEN state, not the parked one: frame 0 = the
+        // armed predicate at the chosen head line with NO variables (nothing entered
+        // yet), the caller as frame 1 with its own valid lines — and frame 0's valid
+        // lines are exactly the clause heads (still re-targetable).
+        var engine = DebugEngine(
+            ":- dynamic(log/1).\nrp(Out) :- p(Out).\n" +
+            "p(one) :-\n    note(c1).\np(two) :-\n    note(c2).\np(three) :-\n    note(c3).\n" +
+            "note(T) :- assertz(log(T)).\n");
+        Assert.True(engine.AddBreakpoint("<string>", 5) > 0);
+
+        DebugStopEvent? pending = null;
+        int stops = 0;
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            if (stops++ == 0)
+            {
+                Assert.Equal("", s.SetNextStatement(0, 8));   // arm clause 3
+                pending = s.CaptureNow();                     // the re-captured view
+            }
+            s.Resume(StepMode.Continue);
+        });
+        engine.AttachDebugSession(svc);
+        engine.QueryAll("rp(Out).").ToList();
+        engine.AttachDebugSession(null);
+
+        Assert.NotNull(pending);
+        var top = pending!.Frames[0];
+        _log.WriteLine($"pending top: {top.Name}/{top.Arity} at {top.File}:{top.Line}"
+            + $" valid=[{string.Join(",", top.SetNextLines)}]");
+        Assert.Equal(8, top.Line);                    // the chosen head
+        Assert.Equal(1, top.Arity);
+        Assert.Empty(top.Variables);                  // honest: not entered yet
+        Assert.Equal(new[] { 4, 6, 8 }, top.SetNextLines.OrderBy(x => x).ToArray());
+        Assert.True(pending.Frames.Count >= 2);       // the caller chain sits below
+    }
+
+    [Fact]
+    public void SiblingClauseHeads_ArePublishedAsValidTargets()
+    {
+        // Stopped inside pick clause 1 (line 7): both clause heads (6 and 9) are valid
+        // targets on frame 0, because the caller's goal (rc's pick call) has a mark.
+        var engine = DebugEngine(TwoClauseProgram);
+        Assert.True(engine.AddBreakpoint("<string>", 7) > 0);
+
+        IReadOnlyList<int>? lines = null;
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            lines ??= e.Frames.Count > 0 ? e.Frames[0].SetNextLines : null;
+            s.Resume(StepMode.Continue);
+        });
+        engine.AttachDebugSession(svc);
+        engine.QueryAll("rc(Out).").ToList();
+        engine.AttachDebugSession(null);
+
+        Assert.NotNull(lines);
+        _log.WriteLine("frame0 valid: " + string.Join(", ", lines!));
+        Assert.Contains(6, lines!);   // own clause's head
+        Assert.Contains(9, lines!);   // sibling clause's head
+    }
+
     // ---- cross-frame (ADR-035 D5+ generalization): SNS on a LOWER frame of the stack ----
 
     // A caller with observable per-goal effects, and a callee deep enough to stop inside:
@@ -468,6 +826,44 @@ public class Adr035SetNextStatementTests
         Assert.Equal(new[] { "a", "m", "a", "m", "b" },
             engine.Query<string>("findall(T, log(T), L), atomic_list_concat(L, ',', A).", "A")
                 .Single().Split(','));
+    }
+
+    [Fact]
+    public void CrossFrame_TheFirstStepOverAfterTheMove_MeasuresTheNewDepth()
+    {
+        // The user's report: after an SNS onto an INNER frame's goal, the first F10
+        // behaved as Step Into. Step Over measures against the depth of the last STOP —
+        // which happened in the popped (deeper) frame — so every port inside the next
+        // callee passed the depth test. The move now resets the reference to the
+        // moved-to frame's depth: F10 after the move runs tag(a) as ONE unit and lands
+        // on the next caller goal (line 5), not inside tag/1's body (line 11).
+        var engine = DebugEngine(NestedProgram);
+        Assert.True(engine.AddBreakpoint("<string>", 10) > 0);   // V = inner, inside middle
+
+        var stopLines = new List<int>();
+        int stops = 0;
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            stopLines.Add(e.Line);
+            if (stops++ == 0)
+            {
+                Assert.Equal("", s.SetNextStatement(1, 4));   // caller frame, tag(a)
+                s.Resume(StepMode.Over);                      // the reported F10
+            }
+            else
+            {
+                s.Resume(StepMode.Continue);
+            }
+        });
+        engine.AttachDebugSession(svc);
+        var sols = engine.QueryAll("caller(Out).").ToList();
+        engine.AttachDebugSession(null);
+
+        _log.WriteLine("stop lines: " + string.Join(", ", stopLines));
+        Assert.Equal(10, stopLines[0]);   // the breakpoint, inside middle
+        Assert.Equal(5, stopLines[1]);    // F10 stepped OVER tag(a) onto middle's call
+        Assert.Single(sols);
+        Assert.Equal("done(inner)", sols[0]["Out"]!.ToString()!.Replace(" ", ""));
     }
 
     [Fact]

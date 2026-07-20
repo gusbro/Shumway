@@ -3865,6 +3865,49 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         return result;
     }
 
+    /// <summary>ADR-035 D5+ — every clause of the predicate whose code contains
+    /// <paramref name="pc"/>: its entry address (the head-matching code — where a
+    /// re-enter jumps) and its head's source span. What a Set Next Statement aimed at a
+    /// SIBLING clause's head resolves against.</summary>
+    internal IReadOnlyList<(int ClauseStartPc, int FileId, int HeadLine, int FirstLine)>
+        ClauseHeadTargets(int pc)
+    {
+        var result = new List<(int, int, int, int)>();
+        int i = IndexOfPredicateAt(pc);
+        if (i < 0 || _clauseStarts.Length == 0) return result;
+        var entries = SortedPredicateEntries();
+        int predStart = entries[i];
+        var pred = _currentPredicatesByAddress![predStart];
+        if (!WithinPredicate(pred, predStart, pc)) return result;
+        int predEnd = predStart + pred.Bytecode.Length;
+
+        int j = Array.BinarySearch(_clauseStarts, predStart);
+        if (j < 0) j = ~j;
+        for (; j < _clauseStarts.Length && _clauseStarts[j] < predEnd; j++)
+        {
+            int clauseStart = _clauseStarts[j];
+            var sites = ClauseSites(clauseStart);
+            if (sites.Count == 0) continue;
+            int firstSite = SiteAt(sites[0].Pc);
+            if (firstSite < 0) continue;
+            var info = Shumway.Core.DebugSiteTable.Get(firstSite);
+            if (ClauseLineSpan(info.FileId, info.Line) is not { } span) continue;
+            result.Add((clauseStart, info.FileId, span.HeadLine, span.FirstLine));
+        }
+        return result;
+    }
+
+    /// <summary>ADR-035 D5+ — the entry address of the predicate whose code contains
+    /// <paramref name="pc"/>, or -1. The re-enter dispatch intercept matches on it.</summary>
+    internal int PredicateAddressOf(int pc)
+    {
+        int i = IndexOfPredicateAt(pc);
+        if (i < 0) return -1;
+        int predStart = SortedPredicateEntries()[i];
+        return WithinPredicate(_currentPredicatesByAddress![predStart], predStart, pc)
+            ? predStart : -1;
+    }
+
     /// <summary>ADR-035 D5+ — the source span of the debuggable clause that contains
     /// <paramref name="line"/> in <paramref name="fileId"/>: where its head is written and
     /// the first/last stoppable lines. Used to recognise a Set Next Statement aimed at the
@@ -4169,6 +4212,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         pc = -1;
         env = -1;
         if (displayIndex < 0) return false;
+        // ADR-035 D5+ — a PENDING clause re-enter is presented as a synthetic top frame
+        // (the chosen predicate at its chosen head, not yet entered — no machine context
+        // exists for it). Display indices from the debugger include it; the real frames
+        // shift down by one. Centralised HERE because every display-index consumer
+        // (Set Next Statement, the Immediate window's goal evaluation, bind-into-frame)
+        // resolves through this method.
+        if (engine.DebugClauseEntryArmed)
+        {
+            if (displayIndex == 0) return false;
+            displayIndex--;
+        }
         var sites = new List<(int Pc, int Env)>();
         // liveTop, like CaptureFrames(engine): the display indices MUST align with the
         // stack the debugger shows.
@@ -4718,7 +4772,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 // rendered (and already capped) value into the skeleton without
                 // materializing anything twice.
                 text.Append(Ellipsize(
-                    AstTermRenderer.Render(Substitute(args[i]), 999, Operators),
+                    AstTermRenderer.Render(Substitute(args[i]), 999, Operators, quoted: true),
                     MaxHeadArgChars));
             }
             return text.Append(')').ToString();
@@ -4824,8 +4878,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 // one line — which nobody can read, and which overran the channel that had to
                 // carry the WHOLE stack. (Seeing inside a big term is what expanding it in the
                 // Locals window is for; that is a func-eval, and it is on the D5 list.)
+                // QUOTED (writeq-style): a Locals value feeds the Watch-window edit, and
+                // an unquoted atom '1234' round-tripped as the INTEGER 1234.
                 string value = Ellipsize(
-                    AstTermRenderer.Render(term, 999, _host.Operators), MaxVariableChars);
+                    AstTermRenderer.Render(term, 999, _host.Operators, quoted: true),
+                    MaxVariableChars);
                 _byCell[key] = value;
                 return value;
             }

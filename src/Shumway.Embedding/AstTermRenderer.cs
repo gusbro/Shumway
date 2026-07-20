@@ -45,25 +45,34 @@ public static class AstTermRenderer
     /// mention operators introduced at runtime (e.g. CLP(FD)'s
     /// <c>in</c>, <c>..</c>, <c>#=</c>) in their operator form.</summary>
     public static string Render(Term term, int maxPrec, OperatorTable ops)
+        => Render(term, maxPrec, ops, quoted: false);
+
+    /// <summary>ADR-035 D5+ — the <c>writeq</c>-style overload: atoms and canonical
+    /// functor names that would not re-parse to the same term are single-quoted. The
+    /// debugger's displays use this — a Locals value feeds the Watch-window EDIT, and
+    /// showing the atom <c>'1234'</c> as bare <c>1234</c> made the round-tripped value
+    /// an INTEGER. Operator occurrences stay unquoted (they re-parse as written).</summary>
+    public static string Render(Term term, int maxPrec, OperatorTable ops, bool quoted)
     {
         switch (term)
         {
-            case AtomTerm a: return a.Name;
+            case AtomTerm a:
+                return quoted ? Shumway.Builtins.TermRenderer.QuotedAtomName(a.Name) : a.Name;
             case VarTerm v: return v.Name;
             case IntTerm n: return n.Value.ToString(CultureInfo.InvariantCulture);
             case FloatTerm f: return f.Value.ToString("R", CultureInfo.InvariantCulture);
             case StringTerm s: return $"\"{s.Content}\"";
             case BigIntTerm b: return b.Value.ToString(CultureInfo.InvariantCulture);
             case CompoundTerm { Functor: ".", Args.Length: 2 } list:
-                return RenderList(list, ops);
+                return RenderList(list, ops, quoted);
             case CompoundTerm c:
-                return RenderCompound(c, maxPrec, ops);
+                return RenderCompound(c, maxPrec, ops, quoted);
             default:
                 return term.ToString() ?? "?";
         }
     }
 
-    private static string RenderCompound(CompoundTerm c, int maxPrec, OperatorTable ops)
+    private static string RenderCompound(CompoundTerm c, int maxPrec, OperatorTable ops, bool quoted)
     {
         if (c.Args.Length == 2 && ops.TryGetInfix(c.Functor, out int iPrec, out var iType))
         {
@@ -81,29 +90,31 @@ public static class AstTermRenderer
                 _ when IsSymbolic(c.Functor) => c.Functor,
                 _ => $" {c.Functor} ",
             };
-            string body = $"{Render(c.Args[0], leftMax, ops)}{sep}{Render(c.Args[1], rightMax, ops)}";
+            string body = $"{Render(c.Args[0], leftMax, ops, quoted)}{sep}{Render(c.Args[1], rightMax, ops, quoted)}";
             return iPrec > maxPrec ? $"({body})" : body;
         }
         if (c.Args.Length == 1 && ops.TryGetPrefix(c.Functor, out int pPrec, out var pType))
         {
             int argMax = pType == OperatorType.Fy ? pPrec : pPrec - 1;
-            string body = $"{c.Functor} {Render(c.Args[0], argMax, ops)}";
+            string body = $"{c.Functor} {Render(c.Args[0], argMax, ops, quoted)}";
             return pPrec > maxPrec ? $"({body})" : body;
         }
         if (c.Args.Length == 1 && ops.TryGetPostfix(c.Functor, out int sPrec, out var sType))
         {
             int argMax = sType == OperatorType.Yf ? sPrec : sPrec - 1;
             string sep = IsSymbolic(c.Functor) ? c.Functor : $" {c.Functor}";
-            string body = $"{Render(c.Args[0], argMax, ops)}{sep}";
+            string body = $"{Render(c.Args[0], argMax, ops, quoted)}{sep}";
             return sPrec > maxPrec ? $"({body})" : body;
         }
         // Canonical form. Arguments sit at priority 999 (below the
         // argument-comma's 1000) so a comma-term arg gets parenthesised.
-        var sb = new StringBuilder(c.Functor).Append('(');
+        var sb = new StringBuilder(
+            quoted ? Shumway.Builtins.TermRenderer.QuotedAtomName(c.Functor) : c.Functor);
+        sb.Append('(');
         for (int i = 0; i < c.Args.Length; i++)
         {
             if (i > 0) sb.Append(", ");
-            sb.Append(Render(c.Args[i], 999, ops));
+            sb.Append(Render(c.Args[i], 999, ops, quoted));
         }
         return sb.Append(')').ToString();
     }
@@ -116,17 +127,18 @@ public static class AstTermRenderer
         return true;
     }
 
-    private static string RenderList(CompoundTerm cons, OperatorTable ops)
+    private static string RenderList(CompoundTerm cons, OperatorTable ops, bool quoted)
     {
         var elements = new List<string>();
         Term cursor = cons;
         while (cursor is CompoundTerm { Functor: ".", Args.Length: 2 } c)
         {
-            elements.Add(Render(c.Args[0], 999, ops));
+            elements.Add(Render(c.Args[0], 999, ops, quoted));
             cursor = c.Args[1];
         }
         if (cursor is AtomTerm { Name: "[]" })
             return "[" + string.Join(", ", elements) + "]";
-        return "[" + string.Join(", ", elements) + " | " + Render(cursor, 999, ops) + "]";
+        return "[" + string.Join(", ", elements) + " | "
+            + Render(cursor, 999, ops, quoted) + "]";
     }
 }

@@ -494,6 +494,20 @@ public sealed class ChannelDebugSession : IDisposable
         return result;
     }
 
+    /// <summary>ADR-035 D5+ — the Watch-window destructive variable edit, bracketed by the
+    /// channel: a successful edit changed the frame's bindings, so the stop snapshot is
+    /// re-captured for the debugger's refresh — same rule as a bind-into-frame commit.</summary>
+    internal string SetFrameVariable(int frameIndex, string varName, string termText)
+    {
+        string result = _service.SetFrameVariable(frameIndex, varName, termText);
+        if (_service.TakeFrameStateChanged())
+        {
+            DebugStopEvent? fresh = _service.CaptureNow();
+            if (fresh is not null) _channel.WriteSnapshot(fresh);
+        }
+        return result;
+    }
+
     /// <summary>Drain the command region and apply the breakpoint changes in it NOW, so code
     /// that runs from a stop before the normal resume-time drain — an Immediate-window
     /// evaluation — sees the breakpoints the user has set while stopped.

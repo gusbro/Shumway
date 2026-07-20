@@ -149,6 +149,39 @@ public static class ShumwayDebugHost
     /// <summary>Set by the debug session. See <see cref="SetNextStatement"/>.</summary>
     public static Func<int, int, string>? OnSetNextStatement;
 
+    /// <summary>Set by the debug session. See <see cref="SetFrameVariable"/>.</summary>
+    public static Func<int, string, string, string>? OnSetFrameVariable;
+
+    /// <summary>ADR-035 D5+ — the Watch-window EDIT of a frame variable: DESTRUCTIVE
+    /// (replaces an existing binding, trailed so backtracking restores it; the term
+    /// <c>_</c> un-instantiates). Name and term are base64 UTF-8 both ways, same
+    /// rationale as <see cref="EvaluateGoal"/>. A func-eval, user-initiated from a break
+    /// state. The Immediate window deliberately does NOT route here — it keeps pure,
+    /// non-destructive unification.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
+    public static string SetFrameVariable(int frameIndex, string nameBase64, string termBase64)
+    {
+        Func<int, string, string, string>? handler = OnSetFrameVariable;
+        string answer;
+        if (handler is null)
+        {
+            answer = "no debug session is running";
+        }
+        else
+        {
+            try
+            {
+                string name = System.Text.Encoding.UTF8.GetString(
+                    Convert.FromBase64String(nameBase64));
+                string term = System.Text.Encoding.UTF8.GetString(
+                    Convert.FromBase64String(termBase64));
+                answer = handler(frameIndex, name, term);
+            }
+            catch (Exception ex) { answer = "edit failed: " + ex.Message; }
+        }
+        return Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(answer));
+    }
+
     /// <summary>ADR-035 D5+ — Set Next Statement (Ctrl+Shift+F10): move the top frame's
     /// next-statement pointer to <paramref name="targetLine"/>. Forward skips; backward
     /// rewinds to the recorded mark (see DebugService.SetNextStatement). Returns "" on

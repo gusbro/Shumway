@@ -636,6 +636,12 @@ public sealed class BytecodeInterpreter
                     _engine.TrimEnv(numLivePerms);
                     _engine.SetCp(pc + 9);  // CallBytecode is 9 bytes, same as Call
                     _engine.SetB0(_engine.B);
+                    // ADR-035 D5+ — SNS re-enter by a chosen clause: the baked direct
+                    // dispatch must honour it too (Cp is set; entering the clause is
+                    // exactly a call that skips clause selection).
+                    if (_engine.DebugClauseEntryArmed
+                        && _engine.TryTakeDebugClauseEntry(target, out var enterClause))
+                        target = enterClause(_engine);
                     // ADR-016 safe point.
                     _engine.MaybeCollectHeap();
                     _engine.SetPc(target);
@@ -705,6 +711,11 @@ public sealed class BytecodeInterpreter
                     _engine.Debug?.OnCallAddress(_engine, target, true);   // ADR-035
                     if (_engine.TakeDebugPcRedirect()) { inClause = false; continue; }
                     _engine.SetB0(_engine.B);
+                    // ADR-035 D5+ — SNS re-enter by a chosen clause (tail form; Cp is the
+                    // caller's continuation, already correct for a tail call).
+                    if (_engine.DebugClauseEntryArmed
+                        && _engine.TryTakeDebugClauseEntry(target, out var enterClause))
+                        target = enterClause(_engine);
                     _engine.MaybeCollectHeap();
                     _engine.SetPc(target);
                     break;
@@ -2335,6 +2346,15 @@ public sealed class BytecodeInterpreter
 
         _engine.Debug?.OnCallAddress(_engine, target, tailCall);     // ADR-035 call port
         if (_engine.TakeDebugPcRedirect()) return;                   // SNS during the stop
+
+        // ADR-035 D5+ — Set Next Statement onto a SIBLING clause's head: this dispatch is
+        // the re-run of the caller's call after the rewind, and it enters the chosen
+        // clause directly (committed — no clause choice point) instead of the predicate's
+        // entry. One-shot; armed only from a stop, so the armed check costs one field
+        // read on the debug path only.
+        if (_engine.DebugClauseEntryArmed
+            && _engine.TryTakeDebugClauseEntry(target, out var enterClause))
+            target = enterClause(_engine);
 
         while (true)
         {

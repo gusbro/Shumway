@@ -663,6 +663,62 @@ public sealed partial class Activation
     /// return — dead state).</summary>
     public int EnvSavedCp(int e) => e >= 0 ? (int)_stack[e + EnvCpOffset].Data : -1;
 
+    // ADR-035 D5+ — Set Next Statement onto a SIBLING clause's head: after rewinding to
+    // the caller's goal and re-running its argument setup, the next dispatch of that call
+    // enters the CHOSEN clause instead of the predicate's entry. The entry FUNCTION (built
+    // by the debug service, which knows the predicate's clause table) receives the
+    // activation at the dispatch point — arguments loaded, Cp/B0 set — pushes the
+    // clause-alternative choice point for the clauses AFTER the chosen one (standard
+    // Prolog: if the chosen clause fails and did not cut, the following clauses are
+    // tried), and returns the clause's code address. One-shot, consumed at the first
+    // dispatch whatever its target.
+    private int _debugClauseEntryPred = -1;
+    private Func<Activation, int>? _debugClauseEntryEnter;
+
+    public void ArmDebugClauseEntry(int predicateAddress, Func<Activation, int> enter)
+    {
+        _debugClauseEntryPred = predicateAddress;
+        _debugClauseEntryEnter = enter;
+    }
+
+    public bool DebugClauseEntryArmed => _debugClauseEntryPred >= 0;
+
+    /// <summary>The predicate a pending re-enter targets (-1 when none): while a stop
+    /// holds one, its clause heads remain Set Next Statement targets — the user may
+    /// change which clause to enter any number of times before resuming.</summary>
+    public int DebugClauseEntryPredicate => _debugClauseEntryPred;
+
+    /// <summary>Cancels a pending re-enter: any OTHER successful Set Next Statement while
+    /// one is armed means the user changed their mind away from it.</summary>
+    public void DisarmDebugClauseEntry()
+    {
+        _debugClauseEntryPred = -1;
+        _debugClauseEntryEnter = null;
+    }
+
+    /// <summary>ADR-035 D5+ — the debugger's DESTRUCTIVE variable edit: resets the cell at
+    /// <paramref name="addr"/> to an unbound variable, trailing the old value so
+    /// backtracking (and a Set Next Statement rewind) restores the binding the program
+    /// had made. The Watch-window edit builds on this: un-instantiate, or clear-then-bind
+    /// to a new term. Only meaningful while the activation is stopped in a debugger.</summary>
+    public void DebugUnbindCell(int addr)
+    {
+        TrailValueChange(addr, _heap[addr]);
+        _heap[addr] = Cell.Ref(addr);
+    }
+
+    /// <summary>Consumes the armed re-enter. True (with the entry function) when the
+    /// dispatch target IS the armed predicate; the arm is cleared either way — it was
+    /// meant for the very next call, and a different target means the world moved on.</summary>
+    public bool TryTakeDebugClauseEntry(int target, out Func<Activation, int> enter)
+    {
+        enter = _debugClauseEntryEnter!;
+        bool match = target == _debugClauseEntryPred && enter is not null;
+        _debugClauseEntryPred = -1;
+        _debugClauseEntryEnter = null;
+        return match;
+    }
+
     /// <summary>Writes the <c>Y(k+1)</c> slot of the current environment frame.</summary>
     [System.Runtime.CompilerServices.MethodImpl(
         System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]

@@ -244,6 +244,26 @@ public static class TermRenderer
         output.Write('\'');
     }
 
+    /// <summary>ADR-035 — the writeq-style form of an atom name: single-quoted (with
+    /// <c>'</c> and <c>\</c> escaped) unless it needs no quoting. Shared with the
+    /// debugger's AST renderer, whose Locals display must round-trip through the
+    /// Watch-window EDIT: showing the atom <c>'1234'</c> as bare <c>1234</c> made the
+    /// user's re-typed value an INTEGER.</summary>
+    public static string QuotedAtomName(string name)
+    {
+        if (NeedsNoQuoting(name)) return name;
+        var sb = new System.Text.StringBuilder(name.Length + 2);
+        sb.Append('\'');
+        foreach (char c in name)
+        {
+            if (c == '\'') sb.Append("\\'");
+            else if (c == '\\') sb.Append("\\\\");
+            else sb.Append(c);
+        }
+        sb.Append('\'');
+        return sb.ToString();
+    }
+
     /// <summary>A name needs no quoting if it's a non-empty sequence of
     /// alphanumeric / underscore characters starting with a lowercase
     /// letter, a solo punctuation atom (<c>[]</c> / <c>{}</c> / <c>,</c>
