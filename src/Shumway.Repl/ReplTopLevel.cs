@@ -20,6 +20,17 @@ internal static class ReplTopLevel
 {
     private static int Main(string[] args)
     {
+        // -h / --help — only among the REPL's OWN arguments: anything after the `--`
+        // separator belongs to the consulted program (the argv Prolog flag), including
+        // a --help of its own.
+        int helpSep = Array.IndexOf(args, "--");
+        string[] ownArgs = helpSep < 0 ? args : args[..helpSep];
+        if (Array.IndexOf(ownArgs, "--help") >= 0 || Array.IndexOf(ownArgs, "-h") >= 0)
+        {
+            PrintUsage();
+            return 0;
+        }
+
         // SHUMWAY_TIMING=1 prints to stderr a per-phase breakdown of
         // wall time spent in (1) process startup + bundle/consult load
         // versus (2) the actual SHUMWAY_GOAL execution. Lets benchmarks
@@ -672,6 +683,53 @@ internal static class ReplTopLevel
                 return; // console not interactive / disposed
             }
         }
+    }
+
+    /// <summary>The <c>-h / --help</c> text — same conventions as the rest of the tool
+    /// family (shumway-compile, shumway-link, shumway-lib): usage line, a paragraph of
+    /// orientation, then the options. The environment variables are part of the
+    /// interface (benchmark harnesses and the debugger depend on them), so they are
+    /// documented here too.</summary>
+    private static void PrintUsage()
+    {
+        string eof = OperatingSystem.IsWindows() ? "Ctrl-Z" : "Ctrl-D";
+        Console.WriteLine(
+            "Usage: shumway [options] [file.pl | bundle.shum ...] [-- arg ...]\n"
+            + "\n"
+            + "Interactive Shumway Prolog top-level. Consults each file named on the\n"
+            + "command line (a .pl consults source; a .shum loads a linked bundle), then\n"
+            + "reads queries from the console. End a query with '.'; type ';' for more\n"
+            + $"solutions; ESC cancels a running query; 'halt.' or {eof} exits.\n"
+            + "\n"
+            + "Arguments after `--` are not consulted: they reach the program as the argv\n"
+            + "Prolog flag (current_prolog_flag(argv, Argv)) — SWI/GNU convention.\n"
+            + "\n"
+            + "Options:\n"
+            + "  --clpfd               Enable the CLP(FD) library before consulting, so its\n"
+            + "                        operators (#=, in, ..) exist when the files parse.\n"
+            + "  --clpr                Enable the CLP(R) library before consulting.\n"
+            + "                        (clpfd and clpr cannot share one engine.)\n"
+            + "  --foreign-dll <path>  Register a .NET assembly whose [PrologPredicate]\n"
+            + "                        methods become foreign predicates. Repeatable.\n"
+            + "  --native-dll <path>   Load a native C library for `:- native` functions.\n"
+            + "                        Repeatable. Same flag names as shumway-link.\n"
+            + "  --debug               Compile debuggable and open a debug session; prints\n"
+            + "                        the pid so a debugger (VS + the Shumway extension)\n"
+            + "                        can attach.\n"
+            + "  --debug-wait          --debug, plus hold at startup until a debugger has\n"
+            + "                        attached and armed its breakpoints (what an IDE\n"
+            + "                        launcher uses).\n"
+            + "  -h, --help            Show this message.\n"
+            + "\n"
+            + "Environment:\n"
+            + "  SHUMWAY_GOAL=<goal>.     Run one goal at startup, then exit (scripted runs,\n"
+            + "                           profilers that cannot forward stdin).\n"
+            + "  SHUMWAY_IL_PROMOTE=<N>   Promote predicates to Tier-1 IL after N calls\n"
+            + "                           (default: interpreter only).\n"
+            + "  SHUMWAY_TIMING=1         Print a startup-vs-goal wall-clock breakdown to\n"
+            + "                           stderr.\n"
+            + "  SHUMWAY_DEBUG_LCO=on|off Pin last-call optimisation under --debug.\n"
+            + "  SHUMWAY_DEBUG_DIAG=1     Verbose debug-session diagnostics on stderr.");
     }
 
     /// <summary>Builds a Prolog list AST from a sequence of terms.</summary>
