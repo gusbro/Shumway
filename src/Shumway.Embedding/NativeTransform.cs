@@ -186,7 +186,10 @@ internal static class NativeTransform
         callArgs[0] = new AtomTerm(name);
         for (int i = 0; i < vars.Length; i++)
             callArgs[i + 1] = new VarTerm(vars[i].Name);
-        return new CompoundTerm("$native_run", callArgs);
+        // The dispatch goal REPLACES the source `{...}` block: it keeps the block's
+        // position, or the debugger loses the line — no stop site, no line in the call
+        // stack, no Set Next Statement target (the PhraseTransform lesson, ADR-035 D5+).
+        return new CompoundTerm("$native_run", callArgs) { Position = pos };
     }
 
 

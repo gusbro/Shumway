@@ -76,7 +76,8 @@ public static class DcgTransform
             var sFinal = FreshState(ref counter);
             (Term tBody, VarTerm sMid) = TransformBody(body, sStart, ref counter);
             Term consChain = BuildPushbackList(pushBack, sMid);
-            Term link = new CompoundTerm("=", new[] { (Term)sFinal, consChain });
+            Term link = new CompoundTerm("=", new[] { (Term)sFinal, consChain })
+            { Position = pushBack.Position };
             Term nHead = AppendDiffListArgs(realHead, sStart, sFinal);
             Term nBody = new CompoundTerm(",", new[] { tBody, link });
             return new Clause(ClauseKind.Rule,
@@ -194,7 +195,8 @@ public static class DcgTransform
                 newArgs ??= (Term[])hc.Args.Clone();
                 var v = new VarTerm($"$O{counter++}");
                 newArgs[i] = v;
-                deferGoals.Add(new CompoundTerm("=", new[] { (Term)v, hc.Args[i] }));
+                deferGoals.Add(new CompoundTerm("=", new[] { (Term)v, hc.Args[i] })
+                { Position = hc.Position });
             }
         }
         return newArgs is null ? head : new CompoundTerm(hc.Functor, newArgs) { Position = hc.Position };
@@ -427,8 +429,9 @@ public static class DcgTransform
         return new CompoundTerm(",", new[]
         {
             branch,
-            new CompoundTerm("=", new[] { (Term)shared, branchOut }),
-        });
+            new CompoundTerm("=", new[] { (Term)shared, branchOut })
+            { Position = branch.Position },
+        }) { Position = branch.Position };
     }
 
     // Replaces every occurrence of the variable named `from` with `to`.

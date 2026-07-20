@@ -69,17 +69,19 @@ public static class PhraseTransform
                         newArgs[i] = rew;
                     }
                 }
-                return newArgs is null ? goal : new CompoundTerm(c.Functor, newArgs);
+                return newArgs is null
+                    ? goal
+                    : new CompoundTerm(c.Functor, newArgs) { Position = c.Position };
             }
 
             if (c.Functor == "phrase" && c.Args.Length == 2)
             {
-                Term? expanded = ExpandPhrase(c.Args[0], c.Args[1], new AtomTerm("[]"));
+                Term? expanded = ExpandPhrase(c.Args[0], c.Args[1], new AtomTerm("[]"), c);
                 return expanded ?? goal;
             }
             if (c.Functor == "phrase" && c.Args.Length == 3)
             {
-                Term? expanded = ExpandPhrase(c.Args[0], c.Args[1], c.Args[2]);
+                Term? expanded = ExpandPhrase(c.Args[0], c.Args[1], c.Args[2], c);
                 return expanded ?? goal;
             }
         }
@@ -90,14 +92,20 @@ public static class PhraseTransform
     /// isn't a syntactically callable non-terminal (a variable, an empty
     /// list, a cons cell) — in that case the caller should leave the
     /// <c>phrase</c> call alone so the resolver can route it to a
-    /// user-defined <c>phrase/2</c> or <c>phrase/3</c> predicate.</summary>
-    private static Term? ExpandPhrase(Term body, Term list, Term rest)
+    /// user-defined <c>phrase/2</c> or <c>phrase/3</c> predicate.
+    /// <paramref name="origin"/> is the phrase/2,3 call being replaced: its
+    /// source POSITION carries over to the expanded goal — dropping it cost
+    /// the call its debug stop site, which cost the DCG frame its line in
+    /// the call stack and Set Next Statement its caller anchor (ADR-035
+    /// D5+, the DCG sibling-head report).</summary>
+    private static Term? ExpandPhrase(Term body, Term list, Term rest, Term origin)
     {
         switch (body)
         {
             case AtomTerm a when a.Name != "[]":
                 // phrase(a, L, R) → a(L, R).
-                return new CompoundTerm(a.Name, new[] { list, rest });
+                return new CompoundTerm(a.Name, new[] { list, rest })
+                { Position = origin.Position };
             case CompoundTerm bc when IsBodyControlConstruct(bc):
                 // A control construct (`,` `;` `|` `->` `*->` `{}` `\+`) is not
                 // a plain non-terminal: threading the diff-list through its
@@ -112,7 +120,8 @@ public static class PhraseTransform
                 Array.Copy(bc.Args, newArgs, bc.Args.Length);
                 newArgs[bc.Args.Length] = list;
                 newArgs[bc.Args.Length + 1] = rest;
-                return new CompoundTerm(bc.Functor, newArgs);
+                return new CompoundTerm(bc.Functor, newArgs)
+                { Position = origin.Position };
             default:
                 return null;
         }
