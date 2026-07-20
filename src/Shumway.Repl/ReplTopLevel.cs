@@ -761,6 +761,11 @@ internal static class ReplTopLevel
             + "  SHUMWAY_TIMING=1         Print a startup-vs-goal wall-clock breakdown to\n"
             + "                           stderr.\n"
             + "  SHUMWAY_DEBUG_LCO=on|off Pin last-call optimisation under --debug.\n"
+            + "  SHUMWAY_DEBUG_ACTIVATION=attach\n"
+            + "                           Lazy full debug: under --debug the runtime\n"
+            + "                           machinery (ports, trail-everything, LCO off)\n"
+            + "                           stays OFF — near-release speed — until a\n"
+            + "                           debugger actually attaches.\n"
             + "  SHUMWAY_DEBUG_DIAG=1     Verbose debug-session diagnostics on stderr.");
     }
 

@@ -39,6 +39,25 @@ public sealed class DebugOptions
     /// debugger connects whenever it does.</summary>
     public bool WaitForAttach { get; set; } = false;
 
+    /// <summary>LAZY full debug: when true, the session opens with the RUNTIME debug
+    /// machinery off — no ports raised, no trail-everything, last-call optimisation ON —
+    /// so a debug-compiled program runs at near-release Tier-0 speed, and the machinery
+    /// arms itself the moment a debugger actually ATTACHES (or the host calls
+    /// <see cref="ChannelDebugSession.ActivateFullDebug"/>). What arming cannot recover
+    /// is the PAST: frames LCO already reclaimed stay gone, and Set Next Statement can
+    /// only rewind to points recorded after the attach. Code is compiled debuggable
+    /// either way — debuggability of CODE is decided at compile time; this flag decides
+    /// when the runtime starts PAYING for it.
+    ///
+    /// <para>The default comes from the <c>SHUMWAY_DEBUG_ACTIVATION</c> environment
+    /// variable — <c>attach</c> for lazy, anything else (or unset) for full-from-startup
+    /// — so a launcher can flip the default without the host changing code. Setting the
+    /// property explicitly wins over the environment.</para></summary>
+    public bool ActivateOnAttach { get; set; } =
+        string.Equals(
+            Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_ACTIVATION"),
+            "attach", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>How long <see cref="WaitForAttach"/> waits for the debugger to finish
     /// speaking before giving up and letting the program run. Ignored unless
     /// <see cref="WaitForAttach"/> is set.</summary>

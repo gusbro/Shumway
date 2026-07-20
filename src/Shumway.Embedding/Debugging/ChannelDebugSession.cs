@@ -113,6 +113,65 @@ public sealed class ChannelDebugSession : IDisposable
     /// <see cref="OnStopLocked"/>.</summary>
     private readonly bool _detachAware;
 
+    /// <summary>ADR-035 D5+ — LAZY full debug (see
+    /// <see cref="DebugOptions.ActivateOnAttach"/>): the runtime machinery stays off —
+    /// near-release speed — until a debugger attaches (the idle watcher notices) or the
+    /// host calls <see cref="ActivateFullDebug"/>; a detach turns it back off, and a
+    /// re-attach re-arms.</summary>
+    public bool ActivateOnAttach { get; init; }
+
+    /// <summary>Turns the full runtime debug machinery ON, now: ports raised, every
+    /// binding trailed, last-call optimisation as the session resolved it. Future
+    /// queries start armed; a query ALREADY RUNNING arms itself at its next goal
+    /// boundary (the activation applies the request on its own thread — a watcher
+    /// thread must never mutate a running machine). Idempotent. What arming cannot
+    /// recover is the past: frames LCO already reclaimed, bindings made before the
+    /// trail started recording.</summary>
+    public void ActivateFullDebug()
+    {
+        if (_engine.DebugFullyArmed) return;
+        _engine.DebugFullyArmed = true;
+        _engine.SetDebugLastCall(_engine.DebugLcoWhenArmed);
+        ShumwayDebugHelper.DiagLine("full debug ARMED"
+            + (_engine.LiveActivation is null ? "" : " (live query arms at its next goal)"));
+
+        if (_engine.LiveActivation is { } live)
+        {
+            var svc = _service;
+            bool lco = _engine.DebugLcoWhenArmed;
+            live.RequestDebugArm(a =>
+            {
+                a.Debug = svc;
+                a.TrailEverything = true;
+                a.LastCallOptimisation = lco;
+            });
+        }
+    }
+
+    /// <summary>The detach counterpart: machinery off, speed back. The pinned Hb and the
+    /// already-grown trail normalise at the next choice-point boundary; over-trailing in
+    /// the meantime is sound, just unnecessary.</summary>
+    private void DeactivateFullDebug()
+    {
+        if (!ActivateOnAttach || !_engine.DebugFullyArmed) return;
+        _engine.DebugFullyArmed = false;
+        _engine.SetDebugLastCall(true);
+        if (_engine.LiveActivation is { } live)
+        {
+            // Runs on the engine's own thread (the detach is noticed at a stop or by the
+            // idle watcher when nothing runs) — but route through the same safe-point
+            // request as arming so a mid-run detach never mutates a running machine
+            // from the watcher.
+            live.RequestDebugArm(a =>
+            {
+                a.Debug = null;
+                a.TrailEverything = false;
+                a.LastCallOptimisation = true;
+            });
+        }
+        ShumwayDebugHelper.DiagLine("full debug disarmed (debugger detached)");
+    }
+
     // ----- the engine when it is NOT running -----
 
     private System.Threading.Thread? _idleWatcher;
@@ -145,6 +204,12 @@ public sealed class ChannelDebugSession : IDisposable
                 System.Threading.Thread.Sleep(IdleTickMs);
                 if (_disposed) break;
                 if (!System.Diagnostics.Debugger.IsAttached) continue;
+
+                // ADR-035 D5+ — a LAZY session arms itself the moment a debugger is
+                // seen. This tick is the detection; the machinery lands on the engine's
+                // own thread (next query setup, or the live query's next goal boundary).
+                if (ActivateOnAttach && !_engine.DebugFullyArmed)
+                    ActivateFullDebug();
 
                 // Is the engine running? Only the engine bumps the heartbeat, and it does so
                 // as it passes goals. If it moved, the engine is servicing the channel itself
@@ -625,6 +690,7 @@ public sealed class ChannelDebugSession : IDisposable
     {
         ShumwayDebugHelper.DiagLine("debugger detached: clearing breakpoints, running free");
         _engine.ClearBreakpoints();
+        DeactivateFullDebug();   // a lazy session drops back to near-release speed
         _channel.SetRunning();
     }
 

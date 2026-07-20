@@ -163,8 +163,39 @@ public sealed partial class Activation
         // point.
         if (_cancelRequested)
             ThrowQueryCancelled();
+        // ADR-035 D5+ — a lazily-opened debug session arming itself mid-run (a
+        // debugger just attached): applied HERE, on the engine's own thread at a
+        // goal boundary, because the watcher thread that noticed the attach must
+        // never mutate a running activation. Same cost class as the cancel flag.
+        if (_debugArmPending)
+            ApplyDebugArm();
         if (!_gcDiagActive && _heapTop < _gcThreshold) return;
         MaybeCollectHeapSlow();
+    }
+
+    // ADR-035 D5+ — the pending arm. Volatile: set from the session's watcher
+    // thread, read here every safe point.
+    private volatile bool _debugArmPending;
+    private System.Action<Activation>? _debugArmAction;
+
+    /// <summary>Asks this activation to run <paramref name="arm"/> on its OWN thread at
+    /// the next safe point — the one sound way a watcher thread turns full debug on for
+    /// a machine that is mid-run. Harmless on an activation that already finished: the
+    /// flag is simply never consumed.</summary>
+    public void RequestDebugArm(System.Action<Activation> arm)
+    {
+        _debugArmAction = arm;
+        _debugArmPending = true;
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void ApplyDebugArm()
+    {
+        _debugArmPending = false;
+        var arm = _debugArmAction;
+        _debugArmAction = null;
+        arm?.Invoke(this);
     }
 
     [System.Diagnostics.CodeAnalysis.DoesNotReturn]

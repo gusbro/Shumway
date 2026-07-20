@@ -5176,6 +5176,23 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     public void AttachDebugSession(Shumway.Core.IDebugSession? session)
         => DebugSession = session;
 
+    /// <summary>ADR-035 D5+ — whether the RUNTIME debug machinery is on: ports raised,
+    /// every binding trailed, last-call optimisation off. True by default (a session
+    /// attached the classic way debugs from its first goal); a lazily-opened session
+    /// (<see cref="Debugging.DebugOptions.ActivateOnAttach"/>) starts with this FALSE —
+    /// queries run at near-release Tier-0 speed — and flips it when a debugger actually
+    /// attaches. Compile-time debuggability (<c>compile_mode=debug</c>) is independent:
+    /// code is compiled debuggable either way.</summary>
+    internal bool DebugFullyArmed { get; set; } = true;
+
+    /// <summary>The LCO choice full debug applies WHEN it arms (the pin / option
+    /// resolution done once at <see cref="EnableDebugging"/>).</summary>
+    internal bool DebugLcoWhenArmed { get; set; }
+
+    /// <summary>The activation of the query in flight (or the one just stopped) — what a
+    /// lazily-arming debug session must reach to turn the machinery on mid-run.</summary>
+    internal Activation? LiveActivation => _lastQueryEngine;
+
     // ADR-035 — set once, when the first debug session's diagnostic logging is armed, so a
     // second EnableDebugging (after a dispose + re-enable) does not stack a second handler.
     private static bool _debugDiagLoggingArmed;
@@ -5218,9 +5235,21 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
 
         // A reclaimed frame is a frame nobody can show, so a debug session wants LCO off — but
         // SHUMWAY_DEBUG_LCO is a PIN, and a pin the code overrides is not one, so honour it
-        // when set and take the caller's choice only otherwise.
-        if (Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_LCO") is null)
-            _flags.DebugLco = options.LastCallOptimisation;
+        // when set and take the caller's choice only otherwise. Under ActivateOnAttach the
+        // resolved choice applies only WHEN the session arms — until then LCO stays on,
+        // which is most of what makes the lazy mode fast.
+        DebugLcoWhenArmed = Environment.GetEnvironmentVariable("SHUMWAY_DEBUG_LCO") is null
+            ? options.LastCallOptimisation
+            : _flags.DebugLco;
+        if (options.ActivateOnAttach)
+        {
+            DebugFullyArmed = false;
+            _flags.DebugLco = true;
+        }
+        else
+        {
+            _flags.DebugLco = DebugLcoWhenArmed;
+        }
 
         // SHUMWAY_DEBUG_DIAG=1 — log every exception the engine THROWS, caught or not, with
         // its stack. A handled house-keeping throw is invisible from outside and loud from
@@ -5265,7 +5294,10 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             Debugging.ShumwayDebugHelper.SourceFiles = full;
         }
 
-        var session = new Debugging.ChannelDebugSession(this);
+        var session = new Debugging.ChannelDebugSession(this)
+        {
+            ActivateOnAttach = options.ActivateOnAttach,
+        };
 
         if (options.WaitForAttach)
             WaitForDebuggerReady(session, options.AttachTimeout);
@@ -6984,14 +7016,99 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// or null if the address names none. Shared by the CONTAINER check
     /// (<see cref="IsDebuggableAddress"/> — "is the code I am standing in the user's?") and the
     /// CALLEE check (<see cref="IsDebuggableCallee"/> — "should a call to here stop?").</summary>
+    /// <summary>The (address → predicate) mapping the current debug tables were derived
+    /// from — the scale guard's identity snapshot (see the query-setup rebuild).</summary>
+    private Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>? _debugTablesBuiltFor;
+
+    /// <summary>ADR-035 — derives the per-program debug tables (armable stop sites, the
+    /// pc→site arrays, clause frames, clause line spans) from the compiled predicates.
+    /// One pass over each predicate's stops with a TWO-POINTER walk into its frames —
+    /// the old shape re-scanned every stop per frame, quadratic in clause count for
+    /// clause-heavy predicates.</summary>
+    private void RebuildDebugTables()
+    {
+        var sites = new HashSet<int>();
+        var byPc = new SortedDictionary<int, int>();
+        var frames = new SortedDictionary<int, Shumway.Compiler.Wam.DebugClauseFrame>();
+        _clauseLines.Clear();
+        foreach (var (predAddr, pred) in _currentPredicatesByAddress!)
+        {
+            foreach (var stop in pred.DebugStops)
+            {
+                sites.Add(stop.SiteId);
+                byPc[predAddr + stop.Offset] = stop.SiteId;
+            }
+            // The clause frame maps take the same second relocation as the stop
+            // sites: clause-local, then predicate-local, then program-absolute.
+            // Frames and stops are both emitted in ascending offset order; the stop
+            // cursor only ever moves forward.
+            int stopCursor = 0;
+            var stops = pred.DebugStops;
+            for (int i = 0; i < pred.DebugFrames.Count; i++)
+            {
+                var f = pred.DebugFrames[i];
+                frames[predAddr + f.Start] = new Shumway.Compiler.Wam.DebugClauseFrame(
+                    predAddr + f.Start, predAddr + f.End, f.HasFrame, f.Variables)
+                {
+                    HeadArgs = f.HeadArgs,
+                    ClauseNumber = f.ClauseNumber,
+                };
+
+                // The clause's source span: from where its head is written down to
+                // the last line it can be stopped at. What a breakpoint on a line
+                // with no code of its own snaps within, and no further.
+                while (stopCursor < stops.Count && stops[stopCursor].Offset < f.Start)
+                    stopCursor++;
+                int fileId = -1, first = int.MaxValue, last = -1;
+                for (int s = stopCursor; s < stops.Count && stops[s].Offset < f.End; s++)
+                {
+                    var site = Shumway.Core.DebugSiteTable.Get(stops[s].SiteId);
+                    fileId = site.FileId;
+                    if (site.Line < first) first = site.Line;
+                    if (site.Line > last) last = site.Line;
+                }
+                if (last < 0) continue;
+                int headLine = i < pred.ClauseSourcePositions.Count
+                    ? pred.ClauseSourcePositions[i].Line
+                    : first;
+                _clauseLines.Add((fileId, Math.Min(headLine, first), first, last));
+            }
+        }
+        _compiledSites = sites;
+        _stopPcs = new int[byPc.Count];
+        _stopSiteIds = new int[byPc.Count];
+        byPc.Keys.CopyTo(_stopPcs, 0);
+        byPc.Values.CopyTo(_stopSiteIds, 0);
+
+        _clauseStarts = new int[frames.Count];
+        _clauseFrames = new Shumway.Compiler.Wam.DebugClauseFrame[frames.Count];
+        frames.Keys.CopyTo(_clauseStarts, 0);
+        frames.Values.CopyTo(_clauseFrames, 0);
+    }
+
+    // The last predicate RANGE this resolved — a one-entry memo. Ports ask about the
+    // same few addresses in a loop (the same call sites, over and over), so the answer
+    // is almost always the memo, not the binary search. Reset wherever the predicate
+    // layout is rebuilt (_sortedPredEntries invalidation). Engine-thread only, like
+    // every port-path structure (func-evals hijack the same thread).
+    private int _fidMemoLo = int.MaxValue;
+    private int _fidMemoHi = int.MaxValue;
+    private int _fidMemoFid;
+
     private int? FunctorAtAddress(int address)
     {
+        if (address >= _fidMemoLo && address < _fidMemoHi) return _fidMemoFid;
         if (_currentPredicatesByAddress is null || address < 0) return null;
         var entries = SortedPredicateEntries();
         int i = Array.BinarySearch(entries, address);
         if (i < 0) i = ~i - 1;
         if (i < 0) return null;
-        return _currentPredicatesByAddress[entries[i]].FunctorId;
+        // The memo range reproduces the search's clamp semantics exactly: everything
+        // from this predicate's start to the NEXT predicate's start resolves here.
+        _fidMemoLo = entries[i];
+        _fidMemoHi = i + 1 < entries.Length ? entries[i + 1] : int.MaxValue;
+        _fidMemoFid = _currentPredicatesByAddress[entries[i]].FunctorId;
+        return _fidMemoFid;
     }
 
     /// <summary>ADR-035 — should a CALL landing at <paramref name="address"/> stop? Unlike
@@ -7030,11 +7147,19 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// for a variable goal (<c>$call</c>, <c>$call_conj</c>, <c>$call_disj</c>,
     /// <c>$call_arrow</c>). <c>$call_neg</c> is deliberately left visible — it is
     /// the runtime form of <c>\+</c>, a meta-goal.</para></summary>
+    // Transparency is a pure function of the functor's NAME, and functor ids are stable
+    // for the life of the process — but computing it walks functor table → atom table →
+    // demangle → string switch, and the call PORT asked at every goal. Cached forever.
+    private readonly Dictionary<int, bool> _transparentByFid = new();
+
     internal bool IsTransparentControlFunctor(int functorId)
     {
+        if (_transparentByFid.TryGetValue(functorId, out bool cached)) return cached;
         var (atomId, arity) = FunctorTable.Lookup(functorId);
         var name = AtomTable.GetById(atomId)?.Name;
-        return name is not null && IsTransparentControlName(DemangleLocalName(name), arity);
+        bool t = name is not null && IsTransparentControlName(DemangleLocalName(name), arity);
+        _transparentByFid[functorId] = t;
+        return t;
     }
 
     private static bool IsTransparentControlName(string demangled, int arity)
@@ -10906,12 +11031,15 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             MutatedDynamicFids = _mutatedDynamicFids,
             // ADR-035 — the debug seam. Null unless a session is attached
             // (trace/0, or a debugger), in which case the Tier-0 interpreter
-            // raises the four Prolog ports on it.
-            Debug = DebugSession,
+            // raises the four Prolog ports on it. A LAZY session
+            // (ActivateOnAttach, not yet armed) deliberately leaves it null:
+            // the interpreter's existing Debug?-null-checks then cost what
+            // release costs, which is the whole point of the mode.
+            Debug = DebugFullyArmed ? DebugSession : null,
             // ADR-035 D5+ — with a session watching, trail EVERY binding (the HB
             // optimisation's untrailed young-var bindings are unrecoverable, and Set
             // Next Statement rewinds by unwinding the trail to a recorded mark).
-            TrailEverything = DebugSession is not null,
+            TrailEverything = DebugFullyArmed && DebugSession is not null,
             // ADR-035 — inert unless the program was compiled under
             // compile_mode=debug (only then does any debug_lastcall exist).
             LastCallOptimisation = _flags.DebugLco,
@@ -11100,61 +11228,34 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // truth, and the code space it maps into can be relinked or compacted
         // between queries. Both loops are skipped entirely unless something was
         // compiled debuggable, so release queries pay nothing.
-        _sortedPredEntries = null;   // the layout may have moved
+        _sortedPredEntries = null;             // the layout may have moved
+        _fidMemoLo = _fidMemoHi = int.MaxValue;   // and with it the address→functor memo
         if (_flags.DebugCodegen || _compiledSites.Count > 0)
         {
-            var sites = new HashSet<int>();
-            var byPc = new SortedDictionary<int, int>();
-            var frames = new SortedDictionary<int, Shumway.Compiler.Wam.DebugClauseFrame>();
-            _clauseLines.Clear();
-            foreach (var (predAddr, pred) in _currentPredicatesByAddress)
+            // SCALE GUARD: this rebuild costs O(every stop site + clause frame in the
+            // program) — for a codebase of hundreds of modules, paying it at EVERY query
+            // setup dwarfed the query. The derived tables depend only on the
+            // (address → compiled predicate) mapping, so when that mapping is unchanged
+            // — same addresses, same predicate INSTANCES, the common case for every
+            // query between consults/asserts — the previous tables stand. The check is
+            // an O(predicates) reference walk, exact by construction.
+            bool layoutUnchanged = _debugTablesBuiltFor is { } prev
+                && prev.Count == _currentPredicatesByAddress.Count;
+            if (layoutUnchanged)
+                foreach (var (predAddr, pred) in _currentPredicatesByAddress)
+                {
+                    if (_debugTablesBuiltFor!.TryGetValue(predAddr, out var old)
+                        && ReferenceEquals(old, pred)) continue;
+                    layoutUnchanged = false;
+                    break;
+                }
+            if (!layoutUnchanged)
             {
-                foreach (var stop in pred.DebugStops)
-                {
-                    sites.Add(stop.SiteId);
-                    byPc[predAddr + stop.Offset] = stop.SiteId;
-                }
-                // The clause frame maps take the same second relocation as the stop
-                // sites: clause-local, then predicate-local, then program-absolute.
-                for (int i = 0; i < pred.DebugFrames.Count; i++)
-                {
-                    var f = pred.DebugFrames[i];
-                    frames[predAddr + f.Start] = new Shumway.Compiler.Wam.DebugClauseFrame(
-                        predAddr + f.Start, predAddr + f.End, f.HasFrame, f.Variables)
-                    {
-                        HeadArgs = f.HeadArgs,
-                        ClauseNumber = f.ClauseNumber,
-                    };
-
-                    // The clause's source span: from where its head is written down to
-                    // the last line it can be stopped at. What a breakpoint on a line
-                    // with no code of its own snaps within, and no further.
-                    int fileId = -1, first = int.MaxValue, last = -1;
-                    foreach (var stop in pred.DebugStops)
-                    {
-                        if (stop.Offset < f.Start || stop.Offset >= f.End) continue;
-                        var site = Shumway.Core.DebugSiteTable.Get(stop.SiteId);
-                        fileId = site.FileId;
-                        if (site.Line < first) first = site.Line;
-                        if (site.Line > last) last = site.Line;
-                    }
-                    if (last < 0) continue;
-                    int headLine = i < pred.ClauseSourcePositions.Count
-                        ? pred.ClauseSourcePositions[i].Line
-                        : first;
-                    _clauseLines.Add((fileId, Math.Min(headLine, first), first, last));
-                }
+                RebuildDebugTables();
+                _debugTablesBuiltFor =
+                    new Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>(
+                        _currentPredicatesByAddress);
             }
-            _compiledSites = sites;
-            _stopPcs = new int[byPc.Count];
-            _stopSiteIds = new int[byPc.Count];
-            byPc.Keys.CopyTo(_stopPcs, 0);
-            byPc.Values.CopyTo(_stopSiteIds, 0);
-
-            _clauseStarts = new int[frames.Count];
-            _clauseFrames = new Shumway.Compiler.Wam.DebugClauseFrame[frames.Count];
-            frames.Keys.CopyTo(_clauseStarts, 0);
-            frames.Values.CopyTo(_clauseFrames, 0);
         }
         // A freshly-rebuilt persistent buffer carries no Break bytes and the recorded originals
         // belong to the now-dead one; a reused buffer still carries them. Only un-patch when the
