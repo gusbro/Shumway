@@ -657,10 +657,10 @@ public sealed class ChannelDebugSession : IDisposable
                 // instruction it was parked on. A refusal is logged; there is no channel
                 // back to VS for it (a func-eval would be the only synchronous route, and
                 // the monitor cannot make one).
-                string sns = service.SetNextStatement(0, command.Line);
+                string sns = service.SetNextStatement(command.TargetFrame, command.Line);
                 service.TakeFrameStateChanged();   // no stopped snapshot to refresh; resuming
-                ShumwayDebugHelper.DiagLine("set next statement -> line " + command.Line
-                    + " => " + (sns.Length == 0 ? "moved" : sns));
+                ShumwayDebugHelper.DiagLine("set next statement -> frame " + command.TargetFrame
+                    + " line " + command.Line + " => " + (sns.Length == 0 ? "moved" : sns));
                 break;
         }
     }

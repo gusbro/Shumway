@@ -130,17 +130,33 @@ namespace Shumway.Debugger.Concord
             try
             {
                 ShumwaySessionDataItem session = ShumwaySession.GetState(frame.Process);
+                // The frame the move targets: the user's Call Stack SELECTION. VS pins the
+                // frame it passes here to the leaf, so the selection comes from the Locals
+                // tracking (GetFrameLocals — see ShumwaySessionDataItem.SelectedFrame);
+                // when VS's frame does carry a lower index, it IS the selection and wins.
+                // No guessing from the line: under recursion the same clause sits on
+                // several frames at once, and only the selection says which one the user
+                // means.
+                int frameIndex = ShumwayFrameId.TryDecode(frame, out int decoded) && decoded > 0
+                    ? decoded
+                    : session.SelectedFrame;
                 DebugSnapshot? snap = ShumwaySession.ReadSnapshot(frame.Process, session);
-                var valid = snap?.SetNextLines;
+                IReadOnlyList<int>? valid =
+                    snap != null && frameIndex >= 0 && frameIndex < snap.Frames.Count
+                        ? snap.Frames[frameIndex].SetNextLines : null;
+                ShumwayLog.Write("CanSetNextStatement: passed frame " + decoded
+                    + " selected " + session.SelectedFrame + " -> frame " + frameIndex
+                    + " line " + line
+                    + " valid=[" + (valid == null ? "-" : string.Join(",", valid)) + "]");
                 if (valid != null && valid.Contains(line))
                     return S_OK;
 
-                string targets = (valid == null || valid.Count == 0)
-                    ? "none at this stop"
-                    : string.Join(", ", valid);
+                string frameName = snap != null && frameIndex < snap.Frames.Count
+                    ? snap.Frames[frameIndex].Name : "?";
                 ShumwayLog.Output(frame.Process,
                     "cannot set next statement to line " + line
-                    + " — valid targets: " + targets);
+                    + " on " + frameName + " (frame " + frameIndex + ") — valid targets: "
+                    + ShumwaySnsTarget.DescribeTargets(snap));
                 return cannotSetHere;
             }
             catch (Exception ex)

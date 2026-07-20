@@ -108,6 +108,11 @@ public sealed class DebugWireCommand
     /// <see cref="DebugCommandKind.AddBreakpoint"/>, whose full-state rewrites make
     /// setting, changing and clearing a condition the same operation.</summary>
     public string Condition { get; set; } = "";
+
+    /// <summary>ADR-035 D5+ — the display-frame index a Set Next Statement targets
+    /// (0 = top). A move on a lower frame rewinds the frames above it first. Zero for
+    /// every other command kind.</summary>
+    public int TargetFrame { get; set; }
 }
 
 /// <summary>ADR-035 — a stop, as the debugger reads it back out of the channel.</summary>
@@ -192,6 +197,10 @@ public sealed class DebugSnapshotFrame
     /// when unknown.</summary>
     public int ClauseNumber { get; set; }
 
+    /// <summary>ADR-035 D5+ — the source lines Set Next Statement accepts ON THIS FRAME
+    /// (a move on a lower frame rewinds the frames above it first).</summary>
+    public IReadOnlyList<int> SetNextLines { get; set; } = Array.Empty<int>();
+
     public IReadOnlyList<DebugVariableView> Variables { get; set; }
         = Array.Empty<DebugVariableView>();
 }
@@ -221,8 +230,9 @@ public sealed class DebugVariableView
 ///           setNextCount, { setNextLine },
 ///           stringCount, { string },
 ///           frameCount, { nameId, arity, fileId, line, pc, headArgsId, clauseNumber,
+///                         frameSetNextCount, { frameSetNextLine },
 ///                         varCount, { nameId, valueId } }
-/// commands: version, count, { kind, file, line, flag, condition }
+/// commands: version, count, { kind, file, line, flag, condition, targetFrame }
 /// </code>
 /// </summary>
 public static class DebugWire
@@ -232,8 +242,10 @@ public static class DebugWire
     /// the snapshot (names, files, variable names, variable VALUES) written once, frames
     /// carrying indices; the level of indirection that lets a hundred frames sharing a
     /// binding share its bytes. v5: conditional breakpoints — a condition string on the
-    /// AddBreakpoint command, a conditionError string on the snapshot.</summary>
-    public const int FormatVersion = 6;
+    /// AddBreakpoint command, a conditionError string on the snapshot. v6: Set Next
+    /// Statement — the stop's valid target lines on the snapshot, the move command. v7:
+    /// cross-frame moves — per-frame valid lines, a target-frame int per command.</summary>
+    public const int FormatVersion = 7;
 
     /// <summary>The size of the snapshot region — declared HERE, with the format, because the
     /// debugger has to know it: it reads the region whole (a prefix of a snapshot is not a
@@ -374,6 +386,12 @@ public static class DebugWire
                 HeadArgs = At(ReadInt(buffer, ref at)),
                 ClauseNumber = ReadInt(buffer, ref at),
             };
+            int frameSetNext = ReadInt(buffer, ref at);
+            if (frameSetNext < 0 || frameSetNext > (buffer.Length - at) / 4) frameSetNext = 0;
+            var frameLines = new List<int>();
+            for (int l = 0; l < frameSetNext && at + 4 <= buffer.Length; l++)
+                frameLines.Add(ReadInt(buffer, ref at));
+            frame.SetNextLines = frameLines;
             int varCount = ReadInt(buffer, ref at);
             if (varCount < 0 || varCount > (buffer.Length - at) / 8) varCount = 0;
             var variables = new List<DebugVariableView>();
@@ -433,12 +451,14 @@ public static class DebugWire
         return true;
     }
 
-    /// <summary>ADR-035 D5+ — the target line of a Set Next Statement command sitting
-    /// UNDRAINED in the command-region bytes, or -1. The IDE side reads this to know a move
-    /// is queued but not yet applied (the engine only drains at resume), so the Locals
-    /// refresh can apply it eagerly via func-eval and show the post-move state.</summary>
-    public static int PendingSetNextLine(byte[] commandBytes)
+    /// <summary>ADR-035 D5+ — the target (line, display frame) of a Set Next Statement
+    /// command sitting UNDRAINED in the command-region bytes; line -1 when none. The IDE
+    /// side reads this to know a move is queued but not yet applied (the engine only
+    /// drains at resume), so the Locals refresh can apply it eagerly via func-eval and
+    /// show the post-move state.</summary>
+    public static int PendingSetNextLine(byte[] commandBytes, out int targetFrame)
     {
+        targetFrame = 0;
         if (commandBytes == null || commandBytes.Length < 8) return -1;
         int at = 0;
         if (ReadInt(commandBytes, ref at) != FormatVersion) return -1;
@@ -452,9 +472,82 @@ public static class DebugWire
             int line = ReadInt(commandBytes, ref at);
             SkipInt(ref at, 1);                               // flag
             SkipString(commandBytes, ref at);                 // condition
-            if (kind == (int)DebugCommandKind.SetNextStatement) pending = line;
+            int frame = ReadInt(commandBytes, ref at);
+            if (kind == (int)DebugCommandKind.SetNextStatement)
+            {
+                pending = line;
+                targetFrame = frame;
+            }
         }
         return pending;
+    }
+
+    /// <summary>ADR-035 D5+ cross-frame — rewrite the snapshot IN PLACE as the stack a
+    /// Set Next Statement on a lower frame produces: the frames ABOVE the target are
+    /// dropped (the rewind pops them), the target becomes the top frame, and its line —
+    /// and the stop's — becomes the move's target line. Visual Studio re-walks the stack
+    /// off this buffer the instant the SNS returns, BEFORE the engine can apply the real
+    /// move (that lands at the Locals refresh, or on resume) — without this surgery the
+    /// Call Stack kept showing the popped frames and the arrow sat in the wrong clause.
+    /// The string table is untouched (ids stay valid); the surviving frames' bytes slide
+    /// down whole. False if the buffer is not a snapshot this build understands or the
+    /// drop is out of range.</summary>
+    public static bool TryDropLeadingFrames(byte[] buffer, int dropCount, int newTopLine)
+    {
+        if (buffer == null || buffer.Length < 8 || dropCount <= 0) return false;
+        int at = 0;
+        if (ReadInt(buffer, ref at) != FormatVersion) return false;   // version
+        SkipInt(ref at, 4);                                           // seq running heartbeat interop
+        SkipInt(ref at, 1);                                           // reason
+        SkipString(buffer, ref at);                                   // goal
+        SkipString(buffer, ref at);                                   // file
+        int stopLineAt = at; SkipInt(ref at, 1);                      // <-- stop line
+        SkipInt(ref at, 1);                                           // depth
+        SkipString(buffer, ref at);                                   // breakFile
+        SkipInt(ref at, 1);                                           // breakLine
+        SkipString(buffer, ref at);                                   // conditionError
+        int setNextCount = ReadInt(buffer, ref at);
+        if (setNextCount < 0 || setNextCount > buffer.Length / 4) return false;
+        SkipInt(ref at, setNextCount);
+        int stringCount = ReadInt(buffer, ref at);
+        if (stringCount < 0 || stringCount > buffer.Length / 4) return false;
+        for (int i = 0; i < stringCount; i++) SkipString(buffer, ref at);
+
+        int frameCountAt = at;
+        int frameCount = ReadInt(buffer, ref at);
+        if (frameCount < 0 || frameCount > buffer.Length / 4) return false;
+        if (dropCount >= frameCount) return false;
+
+        // Walk the frame records to find where the surviving block starts and ends.
+        int framesStart = at;
+        int survivorStart = -1;
+        for (int f = 0; f < frameCount; f++)
+        {
+            if (f == dropCount) survivorStart = at;
+            SkipInt(ref at, 7);                                       // nameId..clauseNumber
+            int frameSetNext = ReadInt(buffer, ref at);
+            if (frameSetNext < 0 || frameSetNext > (buffer.Length - at) / 4) return false;
+            SkipInt(ref at, frameSetNext);
+            int varCount = ReadInt(buffer, ref at);
+            if (varCount < 0 || varCount > (buffer.Length - at) / 8) return false;
+            SkipInt(ref at, 2 * varCount);
+            if (at > buffer.Length) return false;
+        }
+        int framesEnd = at;
+        if (survivorStart < 0) return false;
+
+        int blockLen = framesEnd - survivorStart;
+        System.Buffer.BlockCopy(buffer, survivorStart, buffer, framesStart, blockLen);
+        PatchInt(buffer, frameCountAt, frameCount - dropCount);
+        // The new top frame's LINE (nameId, arity, fileId, LINE at offset 12) and the
+        // stop's: the move's target.
+        PatchInt(buffer, framesStart + 12, newTopLine);
+        PatchInt(buffer, stopLineAt, newTopLine);
+        // Zero the word after the shortened frame block, per the writer's convention: a
+        // reader walking past the end must find an empty count, not an older stop's tail.
+        if (framesStart + blockLen + 4 <= buffer.Length)
+            PatchInt(buffer, framesStart + blockLen, 0);
+        return true;
     }
 
     private static void SkipInt(ref int at, int count) => at += 4 * count;
@@ -498,6 +591,7 @@ public static class DebugWire
                 WriteInt(buffer, ref at, c.Line);
                 WriteInt(buffer, ref at, c.Flag ? 1 : 0);
                 WriteString(buffer, ref at, c.Condition);
+                WriteInt(buffer, ref at, c.TargetFrame);
             }
         }
         var exact = new byte[at];

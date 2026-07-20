@@ -217,29 +217,31 @@ public class Adr035SetNextStatementTests
     [Fact]
     public void Backward_PastACut_IsRefused()
     {
-        // choice/1 leaves a CP; the cut kills it. Rewinding to line 4 (choice's port)
-        // would need that CP back — refused, and the message lists what IS rewindable.
+        // The genuinely irrecoverable rewind: use(X)'s mark was recorded WHILE choice's
+        // choice point was alive — its saved B IS that CP — and the ! then discarded it.
+        // No trail can bring a dead choice point back, so line 4 is refused, and the
+        // message lists what IS rewindable: line 3 (choice's own port, whose saved B
+        // predates the CP — rewinding THERE is fine, the re-run recreates the CP).
         //  2: runc(Out) :-
-        //  3:     mark(M),
-        //  4:     choice(X),
+        //  3:     choice(X),
+        //  4:     use(X),
         //  5:     !,
-        //  6:     use(X),
-        //  7:     Out = done(M, X).
-        //  8: mark(m).
-        //  9: choice(1).
-        // 10: choice(2).
-        // 11: use(_).
+        //  6:     Out = done(X).
+        //  7: choice(1).
+        //  8: choice(2).
+        //  9: use(_).
         var engine = DebugEngine(
-            "runc(Out) :-\n    mark(M),\n    choice(X),\n    !,\n    use(X),\n" +
-            "    Out = done(M, X).\nmark(m).\nchoice(1).\nchoice(2).\nuse(_).\n");
+            "runc(Out) :-\n    choice(X),\n    use(X),\n    !,\n" +
+            "    Out = done(X).\nchoice(1).\nchoice(2).\nuse(_).\n");
         Assert.True(engine.AddBreakpoint("<string>", 6) > 0);
 
         var (results, _, sols) = Run(engine, "runc(Out).", 4);
 
         _log.WriteLine("refusal: " + results[0]);
         Assert.Contains("cannot rewind to line 4", results[0]);
+        Assert.Contains("3", results[0]);   // what IS rewindable
         Assert.Single(sols);
-        Assert.Equal("done(m,1)", sols[0]["Out"]!.ToString()!.Replace(" ", ""));
+        Assert.Equal("done(1)", sols[0]["Out"]!.ToString()!.Replace(" ", ""));
     }
 
     [Fact]
@@ -280,5 +282,227 @@ public class Adr035SetNextStatementTests
         // two and three re-ran (pure); one did NOT re-run (rewind to 6, not 5): counter 1.
         Assert.Equal("t(1,20,30)", sols[0]["Out"]!.ToString()!.Replace(" ", ""));
         Assert.Equal(1, engine.Query<int>("c(N).", "N").Single());
+    }
+
+    [Fact]
+    public void MarksSurviveHeavyAllocation_TheGcRelocatesThemThroughCompaction()
+    {
+        // The Blint report: after F10-stepping a few goals of a real program, backward
+        // targets had almost all vanished — a watermark heap GC had run mid-step and the
+        // marks were dropped wholesale. The collection now RELOCATES them instead
+        // (IDebugSession.RelocateHeapRoots): the order-preserving slide maps each mark's
+        // saved allocation point through the forwarding count, trailed cells are roots so
+        // the saved trail tops stay true as recorded, and GcCount is refreshed. Here
+        // big/1 allocates far past the default watermark — the GC runs mid-goal — and
+        // the rewind across it still answers "" and re-executes correctly.
+        //  2: run(Out) :- first(A), big(B), Out = done(A, B).
+        //  3: first(1).
+        //  4: big(N) :- numlist(1, 400000, L), length(L, N).
+        var engine = DebugEngine(
+            "run(Out) :-\n    first(A),\n    big(B),\n    Out = done(A, B).\n" +
+            "first(1).\nbig(N) :- numlist(1, 400000, L), length(L, N).\n");
+        Assert.True(engine.AddBreakpoint("<string>", 5) > 0);   // Out = done(A, B)
+
+        var (results, stops, sols) = Run(engine, "run(Out).", 3, -1);
+
+        // Rewinds to first(A)'s line — recorded BEFORE the huge allocation. Continue
+        // re-runs first and big: the query still answers.
+        Assert.Equal("", results[0]);
+        Assert.Equal(2, stops);
+        Assert.Single(sols);
+        Assert.Equal("done(1,400000)", sols[0]["Out"]!.ToString()!.Replace(" ", ""));
+    }
+
+    [Fact]
+    public void MarksSurviveCuts_TrailCompactionStandsDownUnderDebug()
+    {
+        // The Blint report, round two: with the GC relocation in place, backward targets
+        // STILL vanished after stepping a few goals. The killer was cut-time trail
+        // compaction (Warren's optimisation, run at every !): it drops entries no future
+        // backtrack could need — but under TrailEverything those entries are the
+        // DEBUGGER'S HISTORY, and a real program cuts in every clause. The trail
+        // collapsed to a handful of entries and the marks' saved tops read as
+        // "backtracked past" and were purged. Compaction now stands down under a debug
+        // session, like the pinned Hb. Every callee here cuts; the rewind across them
+        // must survive.
+        //  2: :- dynamic(c/1).  3: c(0).
+        //  4: run(Out) :- one(A), two(B), three(C), Out = t(A, B, C).
+        //  5..: one/two/three, each ending in !.
+        var engine = DebugEngine(
+            ":- dynamic(c/1).\nc(0).\n" +
+            "run(Out) :-\n    one(A),\n    two(B),\n    three(C),\n    Out = t(A, B, C).\n" +
+            "one(A) :- retract(c(A0)), A is A0 + 1, assertz(c(A)), !.\n" +
+            "two(20) :- !.\nthree(30) :- !.\n");
+        Assert.True(engine.AddBreakpoint("<string>", 8) > 0);   // Out = t(...)
+
+        var (results, stops, sols) = Run(engine, "run(Out).", 5, -1);
+
+        // Back to one(A)'s line across three cut-committing callees: accepted, and the
+        // re-run bumps the counter to 2 — proving the rewind was real.
+        Assert.Equal("", results[0]);
+        Assert.Equal(2, stops);
+        Assert.Single(sols);
+        Assert.Equal("t(2,20,30)", sols[0]["Out"]!.ToString()!.Replace(" ", ""));
+    }
+
+    // ---- cross-frame (ADR-035 D5+ generalization): SNS on a LOWER frame of the stack ----
+
+    // A caller with observable per-goal effects, and a callee deep enough to stop inside:
+    //  2: :- dynamic(log/1).
+    //  3: caller(Out) :-
+    //  4:     tag(a),
+    //  5:     middle(V),
+    //  6:     tag(b),
+    //  7:     Out = done(V).
+    //  8: middle(V) :-
+    //  9:     tag(m),
+    // 10:     V = inner.
+    // 11: tag(T) :- assertz(log(T)).
+    private const string NestedProgram =
+        ":- dynamic(log/1).\n" +
+        "caller(Out) :-\n" +
+        "    tag(a),\n" +
+        "    middle(V),\n" +
+        "    tag(b),\n" +
+        "    Out = done(V).\n" +
+        "middle(V) :-\n" +
+        "    tag(m),\n" +
+        "    V = inner.\n" +
+        "tag(T) :- assertz(log(T)).\n";
+
+    [Fact]
+    public void CrossFrame_BackwardOnTheCallerFrame_PopsTheCalleeAndRewinds()
+    {
+        // Stopped INSIDE middle/1 (line 10, V = inner — tag(m) has run). SNS on FRAME 1
+        // (caller/1) back to line 4 (tag(a)): the callee frame pops, the trail unwinds to
+        // tag(a)'s mark — V free again — and the continue re-runs the body from tag(a).
+        // The log shows the re-execution: a, m, a, m, b (tag(a) and middle both ran
+        // twice; the bp is one-shot per pass so the second pass stops again — continue).
+        var engine = DebugEngine(NestedProgram);
+        Assert.True(engine.AddBreakpoint("<string>", 10) > 0);
+
+        var results = new List<string>();
+        int stops = 0;
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            if (stops++ == 0)
+                results.Add(s.SetNextStatement(1, 4));
+            s.Resume(StepMode.Continue);
+        });
+        engine.AttachDebugSession(svc);
+        var sols = engine.QueryAll("caller(Out).").ToList();
+        engine.AttachDebugSession(null);
+
+        Assert.Equal(new[] { "" }, results);
+        Assert.Equal(2, stops);   // the second pass hits the bp in middle again
+        Assert.Single(sols);
+        Assert.Equal("done(inner)", sols[0]["Out"]!.ToString()!.Replace(" ", ""));
+        // First pass: a, m (stopped mid-middle, rewound). Second pass: a, m, b.
+        Assert.Equal(new[] { "a", "m", "a", "m", "b" },
+            engine.Query<string>("findall(T, log(T), L), atomic_list_concat(L, ',', A).", "A")
+                .Single().Split(','));
+    }
+
+    [Fact]
+    public void CrossFrame_ForwardOnTheCallerFrame_AbandonsTheCalleeAndSkips()
+    {
+        // Stopped inside middle/1. SNS on FRAME 1 FORWARD to line 7 (Out = done(V)):
+        // rewinds to the caller's current goal (the middle call — undoing tag(m)'s
+        // assert? no: asserts are permanent, but V's binding unwinds), then moves PAST
+        // tag(b) without running it. V stays free (middle never completed), b never logs.
+        var engine = DebugEngine(NestedProgram);
+        Assert.True(engine.AddBreakpoint("<string>", 10) > 0);
+
+        var results = new List<string>();
+        int stops = 0;
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            if (stops++ == 0)
+                results.Add(s.SetNextStatement(1, 7));
+            s.Resume(StepMode.Continue);
+        });
+        engine.AttachDebugSession(svc);
+        var sols = engine.QueryAll("caller(Out).").ToList();
+        engine.AttachDebugSession(null);
+
+        Assert.Equal(new[] { "" }, results);
+        Assert.Equal(1, stops);
+        Assert.Single(sols);
+        // V free (middle abandoned), tag(b) skipped: Out = done(_) and the log is a, m.
+        Assert.Matches(@"^done\(_\w+\)$", sols[0]["Out"]!.ToString()!.Replace(" ", ""));
+        Assert.Equal(new[] { "a", "m" },
+            engine.Query<string>("findall(T, log(T), L), atomic_list_concat(L, ',', A).", "A")
+                .Single().Split(','));
+    }
+
+    [Fact]
+    public void CrossFrame_TheSameMoveAppliedTwice_RunsOnce()
+    {
+        // The eager Locals-refresh apply runs the move, then the resume drain re-applies
+        // the same queued command. Cross-frame that is NOT naturally idempotent: the
+        // first apply pops frames and the indices shift, so "frame 1" would resolve
+        // against a different frame — under recursion, one whose clause accepts the same
+        // line, rewinding twice. The per-stop guard makes the second apply a no-op.
+        var engine = DebugEngine(NestedProgram);
+        Assert.True(engine.AddBreakpoint("<string>", 10) > 0);
+
+        var results = new List<string>();
+        int stops = 0;
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            if (stops++ == 0)
+            {
+                results.Add(s.SetNextStatement(1, 4));   // the eager apply
+                results.Add(s.SetNextStatement(1, 4));   // the drain's re-apply
+            }
+            s.Resume(StepMode.Continue);
+        });
+        engine.AttachDebugSession(svc);
+        var sols = engine.QueryAll("caller(Out).").ToList();
+        engine.AttachDebugSession(null);
+
+        Assert.Equal(new[] { "", "" }, results);   // both answer "", ONE move happened
+        Assert.Single(sols);
+        Assert.Equal("done(inner)", sols[0]["Out"]!.ToString()!.Replace(" ", ""));
+        // One rewind, one re-run: a, m, a, m, b — a double rewind would have logged more.
+        Assert.Equal(new[] { "a", "m", "a", "m", "b" },
+            engine.Query<string>("findall(T, log(T), L), atomic_list_concat(L, ',', A).", "A")
+                .Single().Split(','));
+    }
+
+    [Fact]
+    public void CrossFrame_TheCallerFramePublishesItsOwnValidLines()
+    {
+        // Stopped inside middle/1: frame 0 (middle) and frame 1 (caller) each carry their
+        // own Set Next Statement targets in the stop's frames. middle at line 10: back to
+        // 9 (its mark), current 10 — no forward (10 is its last... V = inner is followed
+        // by nothing) ; caller at line 5: 4 (tag(a)'s mark), 5 (its current goal), and
+        // forward 6, 7 via the rewind-to-current anchor. The head lines ride along.
+        var engine = DebugEngine(NestedProgram);
+        Assert.True(engine.AddBreakpoint("<string>", 10) > 0);
+
+        IReadOnlyList<int>? frame0Lines = null, frame1Lines = null;
+        var svc = new DebugService(engine, (s, e) =>
+        {
+            if (frame0Lines is null && e.Frames.Count >= 2)
+            {
+                frame0Lines = e.Frames[0].SetNextLines;
+                frame1Lines = e.Frames[1].SetNextLines;
+            }
+            s.Resume(StepMode.Continue);
+        });
+        engine.AttachDebugSession(svc);
+        engine.QueryAll("caller(Out).").ToList();
+        engine.AttachDebugSession(null);
+
+        Assert.NotNull(frame0Lines);
+        _log.WriteLine("frame0 (middle): " + string.Join(", ", frame0Lines!));
+        _log.WriteLine("frame1 (caller): " + string.Join(", ", frame1Lines!));
+        Assert.Contains(9, frame0Lines!);    // middle: backward to tag(m)
+        Assert.Contains(10, frame0Lines!);   // middle: its current line
+        Assert.Contains(4, frame1Lines!);    // caller: backward to tag(a)
+        Assert.Contains(5, frame1Lines!);    // caller: its current goal (pop the callee)
+        Assert.Contains(6, frame1Lines!);    // caller: forward past the call
+        Assert.Contains(7, frame1Lines!);    // caller: forward to the last goal
     }
 }

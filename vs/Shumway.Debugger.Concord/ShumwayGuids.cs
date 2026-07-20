@@ -42,6 +42,13 @@ namespace Shumway.Debugger.Concord
         /// with a status string in Parameter1.</summary>
         public const int MsgServerStatus = 3;
 
+        /// <summary>ADR-035 D5+ — the display frame the user has SELECTED in the Call Stack
+        /// window (p1 = index, int). The IDE learns it from GetFrameLocals — Visual Studio
+        /// refreshes Locals with the selected frame, which carries our encoded index — and
+        /// forwards it here so the server-side Set Next Statement targets the frame the
+        /// user is actually standing on, not the leaf VS pins its query to.</summary>
+        public const int MsgSelectedFrame = 4;
+
         /// <summary>A .pl file has no mvid of its own, and VS needs one to tell two
         /// modules apart. Derive it from the path: same file, same id, every session —
         /// which is exactly the property a breakpoint needs to survive a restart.</summary>

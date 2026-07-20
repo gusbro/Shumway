@@ -960,6 +960,16 @@ public sealed partial class Activation
     /// </summary>
     private void CompactTrails(int parentBindingTop, int parentExtraTop, int parentHeapTop)
     {
+        // ADR-035 D5+ — under a debug session the trail IS the debugger's history: Set
+        // Next Statement's rewind marks index positions in it, and TrailEverything grew it
+        // precisely so every binding since any mark can be undone. Cut-time compaction is
+        // a pure optimisation (it drops entries no future BACKTRACK could need) and it
+        // destroyed that history wholesale — a real program cuts constantly (every Blint
+        // clause ends in !), the trail collapsed to a handful of entries, and the marks'
+        // saved tops read as "backtracked past" and were purged. Same trade as the pinned
+        // Hb: the optimisation stands down while a debugger needs the past.
+        if (_trailEverything) return;
+
         // I5 (Phase 33) — fast no-op cut: when nothing was trailed since the
         // parent CP both tops already equal the parent's, so both compaction
         // walks are empty and — since the trail only grows between CPs — no

@@ -10,10 +10,11 @@ namespace Shumway.Embedding.Debugging;
 /// <summary>ADR-035 — one command from the debugger. <see cref="File"/> /
 /// <see cref="Line"/> carry a breakpoint; <see cref="Flag"/> carries a switch;
 /// <see cref="Condition"/> carries a conditional breakpoint's goal (empty =
-/// unconditional).</summary>
+/// unconditional); <see cref="TargetFrame"/> carries a Set Next Statement's display
+/// frame (0 = top; a lower frame rewinds the frames above it first).</summary>
 public readonly record struct DebugCommand(
     DebugCommandKind Kind, string File = "", int Line = 0, bool Flag = false,
-    string Condition = "");
+    string Condition = "", int TargetFrame = 0);
 
 /// <summary>
 /// ADR-035 — the pinned-memory channel between the engine and the debugger.
@@ -167,6 +168,9 @@ public sealed class DebugChannel : IDisposable
             DebugWire.WriteInt(_snapshot, ref at, f.Pc);
             DebugWire.WriteInt(_snapshot, ref at, index[f.HeadArgs ?? ""]);
             DebugWire.WriteInt(_snapshot, ref at, f.ClauseNumber);
+            DebugWire.WriteInt(_snapshot, ref at, f.SetNextLines.Count);
+            foreach (int l in f.SetNextLines)
+                DebugWire.WriteInt(_snapshot, ref at, l);
             DebugWire.WriteInt(_snapshot, ref at, f.Variables.Count);
             foreach (var (name, value) in f.Variables)
             {
@@ -187,8 +191,9 @@ public sealed class DebugChannel : IDisposable
         PrologEngine.DebugFrame frame, Dictionary<string, int> index, out List<string> newStrings)
     {
         var fresh = new List<string>();
-        // nameId arity fileId line pc headArgsId clauseNumber varCount + per-var ids.
-        int cost = 8 * 4 + frame.Variables.Count * 8;
+        // nameId arity fileId line pc headArgsId clauseNumber setNextCount varCount
+        // + per-set-next-line ints + per-var ids.
+        int cost = 9 * 4 + frame.SetNextLines.Count * 4 + frame.Variables.Count * 8;
 
         int StringCost(string? s)
         {
@@ -297,6 +302,7 @@ public sealed class DebugChannel : IDisposable
             DebugWire.WriteInt(_commands, ref at, c.Line);
             DebugWire.WriteInt(_commands, ref at, c.Flag ? 1 : 0);
             DebugWire.WriteString(_commands, ref at, c.Condition);
+            DebugWire.WriteInt(_commands, ref at, c.TargetFrame);
         }
     }
 
@@ -317,7 +323,8 @@ public sealed class DebugChannel : IDisposable
             int line = DebugWire.ReadInt(_commands, ref at);
             bool flag = DebugWire.ReadInt(_commands, ref at) != 0;
             string condition = DebugWire.ReadString(_commands, ref at);
-            commands.Add(new DebugCommand(kind, file, line, flag, condition));
+            int targetFrame = DebugWire.ReadInt(_commands, ref at);
+            commands.Add(new DebugCommand(kind, file, line, flag, condition, targetFrame));
         }
         Array.Clear(_commands, 0, 8);   // consumed: a step asked for once is taken once
         return commands;

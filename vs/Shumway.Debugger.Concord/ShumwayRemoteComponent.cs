@@ -103,11 +103,20 @@ namespace Shumway.Debugger.Concord
         /// is taken, cleared when the port arrives and the break is completed.</summary>
         public bool AsyncBreakPending;
 
-        /// <summary>ADR-035 D5+ — a pending Set Next Statement target line for the top frame,
-        /// or -1. Set by IDkmRuntimeSetNextStatement while stopped, written into the command
-        /// region by WriteCommands, applied by the engine on resume, cleared at the next
-        /// stop (a one-shot per break).</summary>
+        /// <summary>ADR-035 D5+ — a pending Set Next Statement target line, or -1. Set by
+        /// IDkmRuntimeSetNextStatement while stopped, written into the command region by
+        /// WriteCommands, applied by the engine (eagerly at the Locals refresh, or at the
+        /// resume drain), cleared at the next stop (a one-shot per break).
+        /// <see cref="PendingSetNextFrame"/> carries the display frame the move targets
+        /// (0 = top; a lower frame pops the frames above it first).</summary>
         public int PendingSetNextLine = -1;
+        public int PendingSetNextFrame;
+
+        /// <summary>ADR-035 D5+ — the display frame the user has selected in the Call
+        /// Stack window, learned from the IDE side (MsgSelectedFrame — the Locals refresh
+        /// carries the selection; the SNS interfaces do not). Reset to the top frame at
+        /// every stop, as VS's own selection is.</summary>
+        public int SelectedFrame;
 
         public static string Key(string file, int line) =>
             file + "|" + line.ToString(CultureInfo.InvariantCulture);
@@ -210,6 +219,13 @@ namespace Shumway.Debugger.Concord
                     // this is the first moment we can tell the engine about it. It also
                     // carries the Hello — the stop we need in order to be able to stop.
                     WriteCommands(process, state);
+                    break;
+
+                case ShumwayGuids.MsgSelectedFrame:
+                    // ADR-035 D5+ — the IDE side saw Locals refresh for this display
+                    // frame: it is the user's Call Stack selection. Set Next Statement
+                    // targets it (VS pins the frame it hands that interface to the leaf).
+                    state.SelectedFrame = (int)customMessage.Parameter1;
                     break;
 
                 case ShumwayGuids.MsgEnsureModules:
@@ -405,6 +421,17 @@ namespace Shumway.Debugger.Concord
             if (targetLine < 0)
                 throw new DkmException(DkmExceptionCode.E_FAIL);
 
+            // Which DISPLAY FRAME the move targets (ADR-035 D5+ cross-frame): the one the
+            // user has SELECTED in the Call Stack. VS pins the frame it hands this
+            // interface to the leaf, so the selection arrives via the IDE side's Locals
+            // tracking (MsgSelectedFrame) — the same value CanSetNextStatement validated
+            // against, so the two always agree. When VS's frame does carry a lower index,
+            // it IS the selection and wins.
+            ShumwayServerDataItem preState = GetState(frame.Process);
+            int targetFrame = ShumwayFrameId.TryDecode(frame, out int decoded) && decoded > 0
+                ? decoded
+                : preState.SelectedFrame;
+
             // The MOVE rides the command channel, NOT a func-eval: while stopped the engine
             // thread is parked in the notify, and a monitor-side func-eval into a
             // self-created inspection session answers "not implemented" (the wall
@@ -412,16 +439,21 @@ namespace Shumway.Debugger.Concord
             // target and let the engine apply it the instant it resumes (see
             // DebugCommandKind.SetNextStatement): forward skips, backward rewinds. The
             // target was already validated by CanSetNextStatement against the snapshot's
-            // SetNextLines, so this is an accepted move.
-            ShumwayServerDataItem state = GetState(frame.Process);
+            // per-frame SetNextLines, so this is an accepted move.
+            ShumwayServerDataItem state = preState;
             state.PendingSetNextLine = targetLine;
+            state.PendingSetNextFrame = targetFrame;
             WriteCommands(frame.Process, state);
 
-            // MOVE THE ARROW NOW. The engine's real move is deferred to resume, but VS
-            // re-walks the stack off the pinned snapshot to place the yellow IP arrow — so
-            // patch the snapshot's stop-and-top-frame line in place, and the arrow lands on
-            // the target the instant Ctrl+Shift+F10 is pressed. (A backward rewind's Locals
-            // still refresh at the next stop; the arrow is immediate.)
+            // MOVE THE DISPLAY NOW. VS re-walks the stack off the pinned snapshot the
+            // instant this returns — BEFORE the engine can apply the real move (that
+            // lands at the Locals refresh, or on resume) — so the snapshot must already
+            // look like the post-move world. Top frame: patch the stop/top-frame line in
+            // place. CROSS-FRAME: the rewind pops the frames above the target, so the
+            // snapshot's leading frames are DROPPED and the target becomes the top, with
+            // the arrow on the target line (the user's report: the Call Stack kept the
+            // popped frames and the arrow sat in the old clause). The engine's own
+            // re-capture then converges on the same shape.
             try
             {
                 if (state.SnapshotAddress != 0)
@@ -429,7 +461,10 @@ namespace Shumway.Debugger.Concord
                     var bytes = new byte[DebugWire.SnapshotCapacity];
                     frame.Process.ReadMemory((ulong)state.SnapshotAddress,
                         DkmReadMemoryFlags.None, bytes);
-                    if (DebugWire.TryPatchStopLine(bytes, targetLine))
+                    bool patched = targetFrame == 0
+                        ? DebugWire.TryPatchStopLine(bytes, targetLine)
+                        : DebugWire.TryDropLeadingFrames(bytes, targetFrame, targetLine);
+                    if (patched)
                         frame.Process.WriteMemory((ulong)state.SnapshotAddress, bytes);
                 }
             }
@@ -437,6 +472,7 @@ namespace Shumway.Debugger.Concord
 
             ShumwayLog.Output(frame.Process,
                 "set next statement to line " + targetLine
+                + (targetFrame > 0 ? " on frame " + targetFrame : "")
                 + " (the move applies when you continue)");
         }
 
@@ -626,7 +662,10 @@ namespace Shumway.Debugger.Concord
             state.Stops++;
             // A Set Next Statement queued in the previous break was applied on resume and
             // is done: this is a fresh stop with a fresh position. One-shot per break.
+            // The Call Stack selection also resets to the top frame at a fresh stop.
             state.PendingSetNextLine = -1;
+            state.PendingSetNextFrame = 0;
+            state.SelectedFrame = 0;
 
             // The FIRST stop of a launched session is one the engine gives us on purpose,
             // while it waits at the door (--debug-wait): the breakpoint was armed from the
@@ -935,6 +974,7 @@ namespace Shumway.Debugger.Concord
                 {
                     Kind = DebugCommandKind.SetNextStatement,
                     Line = state.PendingSetNextLine,
+                    TargetFrame = state.PendingSetNextFrame,
                 });
 
             try

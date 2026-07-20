@@ -66,6 +66,30 @@ namespace Shumway.Debugger.Concord
         {
             ShumwayIdeDiag.FrameLocalsAsks++;
 
+            // ADR-035 D5+ — THE SELECTION SIGNAL. Visual Studio refreshes Locals with the
+            // frame the user has selected in the Call Stack window, and that frame carries
+            // our display index — the one reliable way to know the selection, which the
+            // Set Next Statement interfaces never receive (VS pins their frame to the
+            // leaf). Tracked here and mirrored to the server component, so a
+            // Ctrl+Shift+F10 targets the frame the user is actually standing on.
+            try
+            {
+                if (ShumwayFrameId.TryDecode(frame, out int selectedIndex))
+                {
+                    ShumwaySessionDataItem sel = ShumwaySession.GetState(frame.Process);
+                    if (sel.SelectedFrame != selectedIndex)
+                    {
+                        sel.SelectedFrame = selectedIndex;
+                        DkmCustomMessage.Create(
+                                frame.Process.Connection, frame.Process,
+                                ShumwayGuids.MessageSource, ShumwayGuids.MsgSelectedFrame,
+                                selectedIndex, null, null, null)
+                            .SendLower();
+                    }
+                }
+            }
+            catch (Exception ex) { ShumwayLog.Write("selected-frame track threw: " + ex.Message); }
+
             // ADR-035 D5+ — a Set Next Statement queued this stop is applied NOW, so these
             // locals show the POST-MOVE state (a backward rewind unbinds variables; the
             // user must see that without taking a step first). The engine can only be run
@@ -81,24 +105,27 @@ namespace Shumway.Debugger.Concord
                 if (ShumwayFrameId.TryDecode(frame, out _))
                 {
                     ShumwaySessionDataItem session = ShumwaySession.GetState(frame.Process);
-                    int pending = ReadPendingSetNext(frame.Process, session);
+                    int pending = ReadPendingSetNext(
+                        frame.Process, session, out int pendingFrame);
                     if (pending >= 0
                         && !(session.SnsAppliedLine == pending
+                             && session.SnsAppliedFrame == pendingFrame
                              && session.SnsAppliedSeq == SnapshotSeq(frame.Process, session))
                         && session.EvalAnchors.TryGetValue(
                                frame.Thread.UniqueId, out DkmStackWalkFrame? clrFrame)
                         && clrFrame != null)
                     {
                         string call = "Shumway.Core.Debugging.ShumwayDebugHost"
-                            + ".SetNextStatement(0, " + pending + ")";
+                            + ".SetNextStatement(" + pendingFrame + ", " + pending + ")";
                         ShumwaySession.EvaluateCSharpAsync(
                             workList, inspectionContext.InspectionSession, frame.Thread,
                             clrFrame, call, timeoutMs: 10_000,
                             (raw, err) =>
                             {
-                                ShumwayLog.Write("SNS apply-at-locals line " + pending
-                                    + " -> " + (raw ?? "FAILED: " + err));
+                                ShumwayLog.Write("SNS apply-at-locals frame " + pendingFrame
+                                    + " line " + pending + " -> " + (raw ?? "FAILED: " + err));
                                 session.SnsAppliedLine = pending;
+                                session.SnsAppliedFrame = pendingFrame;
                                 session.SnsAppliedSeq = SnapshotSeq(frame.Process, session);
                                 ServeLocals(inspectionContext, frame, completionRoutine);
                             });
@@ -128,15 +155,16 @@ namespace Shumway.Debugger.Concord
         /// command region, or -1. Read with ReadMemory — the region is the debugger's own
         /// writing, so reading it back is safe anywhere.</summary>
         private static int ReadPendingSetNext(
-            DkmProcess process, ShumwaySessionDataItem session)
+            DkmProcess process, ShumwaySessionDataItem session, out int targetFrame)
         {
+            targetFrame = 0;
             if (session.CommandAddress == 0 || session.CommandLength <= 0) return -1;
             try
             {
                 var bytes = new byte[session.CommandLength];
                 process.ReadMemory(
                     (ulong)session.CommandAddress, DkmReadMemoryFlags.None, bytes);
-                return DebugWire.PendingSetNextLine(bytes);
+                return DebugWire.PendingSetNextLine(bytes, out targetFrame);
             }
             catch (Exception) { return -1; }
         }

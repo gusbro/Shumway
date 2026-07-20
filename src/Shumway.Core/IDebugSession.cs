@@ -104,6 +104,17 @@ public interface IDebugSession
     void MarkHeapRoots(Action<int> markCell);
 
     /// <summary>ADR-016 relocate phase: rewrite every heap index the session
-    /// holds through <paramref name="relocIndex"/> (old index â†’ new).</summary>
-    void RelocateHeapRoots(Func<int, int> relocIndex);
+    /// holds through <paramref name="relocIndex"/> (old index → new).
+    /// <paramref name="engine"/> is the activation whose heap was compacted —
+    /// session state indexed on OTHER activations' heaps must not be touched.
+    /// <paramref name="relocBoundary"/> maps a saved heap-TOP (an allocation
+    /// point, range [0, oldTop] inclusive) — what a debugger's rewind marks
+    /// record (ADR-035 D5+): the collection RELOCATES them rather than
+    /// invalidating them, so Set Next Statement's backward targets survive a
+    /// GC mid-step. Sound because the slide is order-preserving, trailed
+    /// cells are roots (no trail entry ever points at a collected cell), and
+    /// the trails themselves are relocated in place, never compacted — a
+    /// mark's trail tops stay true as they are.</summary>
+    void RelocateHeapRoots(
+        Activation engine, Func<int, int> relocIndex, Func<int, int> relocBoundary);
 }

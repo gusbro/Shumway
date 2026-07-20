@@ -43,7 +43,8 @@ public class Adr035DisableDebugTests
         public void OnRedo(Activation e, int pc) { }
         public void OnFail(Activation e) { }
         public void MarkHeapRoots(Action<int> mark) { }
-        public void RelocateHeapRoots(Func<int, int> reloc) { }
+        public void RelocateHeapRoots(
+            Shumway.Core.Activation engine, Func<int, int> reloc, Func<int, int> relocBoundary) { }
     }
 
     private static PrologEngine DebugEngine(string program)

@@ -55,12 +55,21 @@ namespace Shumway.Debugger.Concord
         public readonly Dictionary<Guid, DkmStackWalkFrame> EvalAnchors =
             new Dictionary<Guid, DkmStackWalkFrame>();
 
-        /// <summary>ADR-035 D5+ - the (post-apply snapshot sequence, target line) of the
-        /// last Set Next Statement the Locals refresh applied eagerly, so it is applied
-        /// ONCE per queued move rather than on every Locals read of the same stop. See
-        /// ShumwayExpressionEvaluator.GetFrameLocals.</summary>
+        /// <summary>ADR-035 D5+ - the (post-apply snapshot sequence, target frame, target
+        /// line) of the last Set Next Statement the Locals refresh applied eagerly, so it
+        /// is applied ONCE per queued move rather than on every Locals read of the same
+        /// stop. See ShumwayExpressionEvaluator.GetFrameLocals.</summary>
         public int SnsAppliedSeq = -1;
         public int SnsAppliedLine = -1;
+        public int SnsAppliedFrame;
+
+        /// <summary>ADR-035 D5+ - the display frame the user has SELECTED in the Call
+        /// Stack window: the frame of the last GetFrameLocals (Visual Studio refreshes
+        /// Locals with the selection). A fresh stop selects the top frame, and VS's own
+        /// Locals refresh resets this to 0 through the same path. Mirrored to the server
+        /// component via MsgSelectedFrame, because VS pins the frame it hands the Set Next
+        /// Statement interfaces to the LEAF - the selection never arrives there.</summary>
+        public int SelectedFrame;
 
         public bool Attached => SnapshotAddress != 0;    }
 

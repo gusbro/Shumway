@@ -625,11 +625,74 @@ public class Adr035ChannelTests
 
         var bytes = new byte[DebugChannel.CommandCapacity];
         System.Runtime.InteropServices.Marshal.Copy(channel.CommandAddress, bytes, 0, bytes.Length);
-        Assert.Equal(21, DebugWire.PendingSetNextLine(bytes));
+        Assert.Equal(21, DebugWire.PendingSetNextLine(bytes, out int pendingFrame));
+        Assert.Equal(0, pendingFrame);
 
         channel.DrainCommands();
         System.Runtime.InteropServices.Marshal.Copy(channel.CommandAddress, bytes, 0, bytes.Length);
-        Assert.Equal(-1, DebugWire.PendingSetNextLine(bytes));
+        Assert.Equal(-1, DebugWire.PendingSetNextLine(bytes, out _));
+    }
+
+    [Fact]
+    public void PendingSetNextLine_CarriesTheTargetFrame()
+    {
+        // ADR-035 D5+ cross-frame: the queued move names the display frame it targets.
+        using var channel = new DebugChannel();
+        channel.WriteCommands(new DebugCommand(
+            DebugCommandKind.SetNextStatement, "<string>", 4, TargetFrame: 1));
+
+        var bytes = new byte[DebugChannel.CommandCapacity];
+        System.Runtime.InteropServices.Marshal.Copy(channel.CommandAddress, bytes, 0, bytes.Length);
+        Assert.Equal(4, DebugWire.PendingSetNextLine(bytes, out int frame));
+        Assert.Equal(1, frame);
+
+        // And the engine-side drain reads the same command back whole.
+        channel.WriteCommands(new DebugCommand(
+            DebugCommandKind.SetNextStatement, "<string>", 4, TargetFrame: 1));
+        var drained = channel.DrainCommands();
+        Assert.Single(drained);
+        Assert.Equal(1, drained[0].TargetFrame);
+        Assert.Equal(4, drained[0].Line);
+    }
+
+    [Fact]
+    public void DropLeadingFrames_MakesTheTargetFrameTheTop()
+    {
+        // ADR-035 D5+ cross-frame — VS re-walks the stack the instant SetNextStatement
+        // returns, before the engine can apply the move, so the server rewrites the
+        // snapshot as the post-move world: the popped frames are gone, the target frame
+        // is the top, its line (and the stop's) is the move's target. Everything else —
+        // the string table, the surviving frames' names and variables — rides through
+        // untouched.
+        using var channel = new DebugChannel();
+        PrologEngine.DebugFrame F(string name, int line, string var, string val) =>
+            new(name, 1, "f.pl", line, 0, new[] { (var, val) })
+            { HeadArgs = "", ClauseNumber = 1 };
+        channel.WriteSnapshot(new DebugStopEvent(
+            StopReason.Breakpoint, "inner/1", "f.pl", 30, 3,
+            new[]
+            {
+                F("inner", 30, "X", "1") with { SetNextLines = new[] { 30, 31 } },
+                F("middle", 20, "Y", "2") with { SetNextLines = new[] { 19, 20, 21 } },
+                F("outer", 10, "Z", "3") with { SetNextLines = new[] { 9, 10 } },
+            }));
+
+        var bytes = new byte[DebugChannel.SnapshotCapacity];
+        System.Runtime.InteropServices.Marshal.Copy(channel.SnapshotAddress, bytes, 0, bytes.Length);
+        // SNS on frame 1 (middle) to line 19: inner pops, middle becomes the top at 19.
+        Assert.True(DebugWire.TryDropLeadingFrames(bytes, 1, 19));
+
+        DebugSnapshot? s = DebugWire.ReadSnapshot(bytes);
+        Assert.NotNull(s);
+        Assert.Equal(19, s!.Line);
+        Assert.Equal(2, s.Frames.Count);
+        Assert.Equal("middle", s.Frames[0].Name);
+        Assert.Equal(19, s.Frames[0].Line);                       // moved to the target
+        Assert.Equal("2", s.Frames[0].Variables[0].Value);        // vars intact
+        Assert.Equal(new[] { 19, 20, 21 }, s.Frames[0].SetNextLines.ToArray());
+        Assert.Equal("outer", s.Frames[1].Name);
+        Assert.Equal(10, s.Frames[1].Line);
+        Assert.Equal("3", s.Frames[1].Variables[0].Value);
     }
 
     [Fact]

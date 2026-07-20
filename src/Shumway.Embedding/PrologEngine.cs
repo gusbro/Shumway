@@ -4092,6 +4092,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         /// in source order: the <c>!2</c> of <c>total(...)!2</c>. Zero when unknown.</summary>
         public int ClauseNumber { get; init; }
 
+        /// <summary>ADR-035 D5+ — the source lines Set Next Statement accepts ON THIS
+        /// FRAME (cross-frame moves rewind the frames above it first). Filled by the
+        /// debug service when a stop is published; empty otherwise.</summary>
+        public IReadOnlyList<int> SetNextLines { get; init; } = Array.Empty<int>();
+
         public override string ToString() => $"{Name}/{Arity} at {File}:{Line}";
     }
 
@@ -11148,12 +11153,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             // open goals' argument cells).
             engine.Debug?.MarkHeapRoots(markCell);
         };
-        engine.OnGcRelocate = (relocIndex, relocCell) =>
+        engine.OnGcRelocate = (relocIndex, relocCell, relocBoundary) =>
         {
             for (int i = 0; i < varHeapIndices.Length; i++)
                 varHeapIndices[i] = relocIndex(varHeapIndices[i]);
             globals.RelocateCells(relocCell);
-            engine.Debug?.RelocateHeapRoots(relocIndex);
+            engine.Debug?.RelocateHeapRoots(engine, relocIndex, relocBoundary);
         };
 
         // Tier-0 deterministic benchmark metric: keep a reference to the

@@ -45,10 +45,14 @@ public sealed partial class Activation
 
     /// <summary>Relocate-phase counterpart of <see cref="OnGcMark"/>,
     /// invoked after compaction with <c>relocIndex(int)</c> (old heap
-    /// index → new) and <c>relocCell(Cell)</c> (rewrites a value cell's
-    /// heap-index payload). Implementations must write the relocated
+    /// index → new), <c>relocCell(Cell)</c> (rewrites a value cell's
+    /// heap-index payload) and <c>relocBoundary(int)</c> (old heap-TOP
+    /// boundary → new; boundaries range over [0, oldTop] inclusive, one
+    /// past the last cell — a debugger's saved allocation points need this
+    /// form, ADR-035 D5+). Implementations must write the relocated
     /// indices / cells back into their own storage.</summary>
-    public System.Action<System.Func<int, int>, System.Func<Cell, Cell>>? OnGcRelocate { get; set; }
+    public System.Action<System.Func<int, int>, System.Func<Cell, Cell>,
+        System.Func<int, int>>? OnGcRelocate { get; set; }
 
     /// <summary>When true, <see cref="MaybeCollectHeap"/> collects at
     /// every safe point — the ADR-016 fuzz mode used to validate
@@ -227,7 +231,6 @@ public sealed partial class Activation
 
         int oldTop = _heapTop;
         if (oldTop == 0) return 0;
-        HeapGcCount++;
 
         // ---- Phase 1: mark every cell reachable from the roots. ----
         bool[] marked = _gcMarked is { } m && m.Length >= oldTop ? m : (_gcMarked = new bool[oldTop]);
@@ -261,7 +264,10 @@ public sealed partial class Activation
         }
         forward[oldTop] = live;
 
-        if (live == oldTop) return 0;   // nothing to reclaim
+        if (live == oldTop) return 0;   // nothing to reclaim (and nothing moved:
+                                        // debugger marks etc. stay valid as they are,
+                                        // which is why HeapGcCount bumps only below)
+        HeapGcCount++;
 
         // ---- Phase 3: rewrite payloads in place (still at old positions). ----
         for (int i = 0; i < oldTop; i++)
@@ -276,7 +282,10 @@ public sealed partial class Activation
 
         // ---- Phase 5: relocate every external holder of a heap index. ----
         RelocateRoots(forward, oldTop);
-        OnGcRelocate?.Invoke(idx => RelocIndex(idx, forward), c => RelocateCell(c, forward));
+        OnGcRelocate?.Invoke(
+            idx => RelocIndex(idx, forward),
+            c => RelocateCell(c, forward),
+            p => RelocBoundary(p, forward));
 
         _heapTop = live;
         _hb = RelocBoundary(_hb, forward);

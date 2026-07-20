@@ -230,7 +230,8 @@ public sealed class DebugService : IDebugSession
         string goal = frames.Count > 0 ? $"{frames[0].Name}/{frames[0].Arity}" : CurrentGoal();
         var site = SiteOf(engine.P);
         return new DebugStopEvent(
-            StopReason.AsyncBreak, goal, site.File, site.Line, PortDepth(engine), frames)
+            StopReason.AsyncBreak, goal, site.File, site.Line, PortDepth(engine),
+            WithSetNextLines(frames))
         {
             SetNextLines = ValidSetNextLines(),   // ADR-035 D5+
         };
@@ -678,7 +679,7 @@ public sealed class DebugService : IDebugSession
         int HeapTop, int B, int B0, int GcCount);
 
     private readonly List<PortMark> _portMarks = new();
-    private const int PortMarkCapacity = 2048;
+    private const int PortMarkCapacity = 8192;
 
     /// <summary>Record the machine's position at a call port. STACK DISCIPLINE keeps the
     /// list honest without bookkeeping: control standing at frame E means every mark of a
@@ -695,6 +696,14 @@ public sealed class DebugService : IDebugSession
         if (_snsMovedToSite >= 0
             && _engine.SiteAtOrBefore(engine.P) != _snsMovedToSite)
             _snsMovedToSite = -1;
+
+        // Only ports in the USER'S code leave marks: a mark is a Set Next Statement
+        // rewind target, and a target is a statement of a debuggable clause. Prelude and
+        // library internals fire ports too (every call does under a session), and a deep
+        // library recursion — numlist building a 400k list is ONE goal — recorded
+        // hundreds of thousands of useless marks, flooding the capacity and evicting the
+        // user's few precious ones.
+        if (!_engine.IsDebuggableAddress(engine.P)) return;
 
         var marks = _portMarks;
         while (marks.Count > 0)
@@ -738,14 +747,24 @@ public sealed class DebugService : IDebugSession
     /// <para>Returns "" on success, or a message explaining the refusal.</para></summary>
     private StopReason _lastStopReason = StopReason.AsyncBreak;
 
+    /// <summary>One-shot per stop: a Set Next Statement that has ALREADY been applied at
+    /// this stop (the eager Locals-refresh func-eval) must not be applied again by the
+    /// resume drain's copy of the same command. Idempotence by re-running is not enough
+    /// cross-frame: the first apply pops frames, the display indices shift, and the
+    /// re-run would resolve "frame N" against a different frame — under recursion, one
+    /// whose clause happily accepts the same line, rewinding TWICE.</summary>
+    private (int Frame, int Line, bool Set) _snsApplied;
+
     public string SetNextStatement(int frameIndex, int targetLine)
     {
         if (Current is not { } outer) return "nothing is stopped";
-        if (frameIndex != 0) return "Set Next Statement is supported on the top frame only";
+        if (frameIndex < 0) return "not a Prolog frame";
+        if (_snsApplied.Set && _snsApplied.Frame == frameIndex && _snsApplied.Line == targetLine)
+            return "";   // the same move, already applied at this stop
         if (_lastStopReason is StopReason.Redo or StopReason.Fail)
             return "Set Next Statement is not available at a redo/fail stop "
                 + "(the machine is mid-backtrack)";
-        if (!_engine.TryGetDisplayFrameContext(outer, 0, out int pc, out int env))
+        if (!_engine.TryGetDisplayFrameContext(outer, frameIndex, out int pc, out int env))
             return "this frame has no statement context";
         if (outer.LastCallOptimisation)
             return "Set Next Statement needs last-call optimisation off "
@@ -754,15 +773,19 @@ public sealed class DebugService : IDebugSession
         var sites = _engine.ClauseSites(pc);
         if (sites.Count == 0) return "this clause has no statement positions";
 
-        int currentSite = _engine.SiteAtOrBefore(outer.P);
+        // The frame's own position: for the top frame the machine's P; for a lower frame
+        // the call site its display frame stands on (the goal whose callees are the
+        // frames above it).
+        int currentPc = frameIndex == 0 ? outer.P : pc;
+
+        int currentSite = _engine.SiteAtOrBefore(currentPc);
         var currentInfo = currentSite >= 0
             ? Shumway.Core.DebugSiteTable.Get(currentSite) : default;
 
         // The head span means "restart the clause body": rewind to the FIRST goal's mark.
         // Head-unification bindings are BELOW that mark, so they survive — the same
         // meaning C#'s Set Next Statement to a method's first line has (parameters keep
-        // their values). Re-matching the head itself would be a cross-frame rewind into
-        // the caller; deferred.
+        // their values).
         var span = _engine.ClauseLineSpan(currentInfo.FileId, targetLine);
         if (span is { } s && targetLine >= s.HeadLine && targetLine < s.FirstLine
             && s.FirstLine == sites[0].Line)
@@ -777,7 +800,48 @@ public sealed class DebugService : IDebugSession
                 + "statements are at: " + string.Join(", ",
                     sites.Select(x => x.Line).Distinct().OrderBy(x => x));
 
-        int currentPc = outer.P;
+        // The start of the site the frame stands on (currentPc may point mid-site).
+        int currentSiteStart = -1;
+        foreach (var (sitePc, _) in sites)
+            if (sitePc <= currentPc && sitePc > currentSiteStart) currentSiteStart = sitePc;
+
+        if (frameIndex > 0)
+        {
+            // CROSS-FRAME (ADR-035 D5+, the user's generalization): Set Next Statement on
+            // a LOWER frame of the call stack. Every such move first rewinds INTO that
+            // frame — the callee frames above it are popped by restoring one of ITS
+            // recorded marks (B discards the callees' choice points, the trails undo
+            // their bindings, E returns to the frame's own environment) — and from there
+            // the move is the ordinary top-frame algorithm. The frame's marks survived
+            // the callees by stack discipline: only DEEPER marks are purged as ports
+            // fire.
+            //
+            // Backward or current: the target site's own mark is the rewind. Forward: the
+            // rewind is to the frame's CURRENT goal (the call the frames above came
+            // from), then a pure move forward — recording marks for the skipped sites,
+            // same as the top frame.
+            int anchorPc = targetPc <= currentSiteStart ? targetPc : currentSiteStart;
+            var frameMark = FindMark(outer, env, anchorPc);
+            if (frameMark is not { } fm)
+            {
+                var okLines = AcceptableRewindLines(outer, env);
+                return "cannot rewind into this frame at line " + targetLine
+                    + (okLines.Count > 0
+                        ? "; rewindable lines are: " + string.Join(", ", okLines)
+                        : "; no rewindable position is recorded for this frame");
+            }
+
+            RestoreMark(outer, fm, targetPc);
+            outer.SetE(env);
+            if (targetPc > currentSiteStart)
+                foreach (var (sitePc, _) in sites)
+                    if (sitePc >= currentSiteStart && sitePc < targetPc)
+                        RecordPureMoveMark(outer, env, sitePc);
+            _snsMovedToSite = _engine.SiteAt(targetPc);
+            _snsApplied = (frameIndex, targetLine, true);
+            return "";
+        }
+
         if (targetPc == currentPc) return "";
         if (targetPc > currentPc)
         {
@@ -788,15 +852,13 @@ public sealed class DebugService : IDebugSession
             // can change their mind and move BACK to any of them before running anything
             // (the reported case: forward to the clause's fail, then back to the first
             // goal — refused, because the skipped goals had never fired their ports).
-            int currentSiteStart = -1;
-            foreach (var (sitePc, _) in sites)
-                if (sitePc <= currentPc && sitePc > currentSiteStart) currentSiteStart = sitePc;
             foreach (var (sitePc, _) in sites)
                 if (sitePc >= currentSiteStart && sitePc < targetPc)
                     RecordPureMoveMark(outer, env, sitePc);
 
             outer.RedirectPc(targetPc);
             _snsMovedToSite = _engine.SiteAt(targetPc);
+            _snsApplied = (frameIndex, targetLine, true);
             FrameStateChanged = true;
             return "";
         }
@@ -814,6 +876,7 @@ public sealed class DebugService : IDebugSession
 
         RestoreMark(outer, mark, targetPc);
         _snsMovedToSite = _engine.SiteAt(targetPc);
+        _snsApplied = (frameIndex, targetLine, true);
         return "";
     }
 
@@ -844,33 +907,48 @@ public sealed class DebugService : IDebugSession
     }
 
     /// <summary>ADR-035 D5+ — the source lines Set Next Statement would ACCEPT at the
-    /// current stop, published in every stop's snapshot so the debugger can validate a
-    /// Ctrl+Shift+F10 SYNCHRONOUSLY (its CanSetNextStatement) and move the arrow / show a
-    /// reason without a func-eval it cannot make. Forward: every later statement of the
-    /// clause. Backward: an earlier statement with a live recorded mark. The head span maps
-    /// to the first goal. Empty at a redo/fail stop, with LCO on, or off a frame with no
-    /// statement context.</summary>
-    public IReadOnlyList<int> ValidSetNextLines()
+    /// current stop for one display frame, published in every stop's snapshot so the
+    /// debugger can validate a Ctrl+Shift+F10 SYNCHRONOUSLY (its CanSetNextStatement) and
+    /// move the arrow / show a reason without a func-eval it cannot make. Top frame:
+    /// forward and the current statement always, backward with a live recorded mark. A
+    /// LOWER frame: every move rewinds into the frame first, so a target is valid only
+    /// through a mark — its own (backward/current) or the frame's current goal's
+    /// (forward). The head span maps to the first goal. Empty at a redo/fail stop, with
+    /// LCO on, or off a frame with no statement context.</summary>
+    public IReadOnlyList<int> ValidSetNextLines(int frameIndex = 0)
     {
         if (Current is not { } outer
             || _lastStopReason is StopReason.Redo or StopReason.Fail
             || outer.LastCallOptimisation
-            || !_engine.TryGetDisplayFrameContext(outer, 0, out int pc, out int env))
+            || !_engine.TryGetDisplayFrameContext(outer, frameIndex, out int pc, out int env))
             return Array.Empty<int>();
 
         var sites = _engine.ClauseSites(pc);
         if (sites.Count == 0) return Array.Empty<int>();
-        int currentPc = outer.P;
+        int currentPc = frameIndex == 0 ? outer.P : pc;
+        int currentSiteStart = -1;
+        foreach (var (sitePc, _) in sites)
+            if (sitePc <= currentPc && sitePc > currentSiteStart) currentSiteStart = sitePc;
 
         var lines = new SortedSet<int>();
         bool firstGoalReachable = false;
         foreach (var (sitePc, line) in sites)
         {
-            // Forward: always. The CURRENT statement: a no-op move, accepted — exactly as
-            // C# accepts Set Next Statement to the line the arrow is on. Backward: only
-            // with a live recorded mark.
-            bool reachable = sitePc >= currentPc
-                || FindMark(outer, env, sitePc) is not null;
+            bool reachable;
+            if (frameIndex == 0)
+            {
+                // Forward: always. The CURRENT statement: a no-op move, accepted —
+                // exactly as C# accepts Set Next Statement to the line the arrow is on.
+                // Backward: only with a live recorded mark.
+                reachable = sitePc >= currentPc
+                    || FindMark(outer, env, sitePc) is not null;
+            }
+            else
+            {
+                // A lower frame: the anchor mark decides (see SetNextStatement).
+                int anchorPc = sitePc <= currentSiteStart ? sitePc : currentSiteStart;
+                reachable = FindMark(outer, env, anchorPc) is not null;
+            }
             if (!reachable) continue;
             lines.Add(line);
             if (sitePc == sites[0].Pc) firstGoalReachable = true;
@@ -913,6 +991,32 @@ public sealed class DebugService : IDebugSession
            && m.ExtraTrailTop <= outer.ExtraTrailTop
            && m.HeapTop <= outer.HeapTop
            && outer.IsChoicePointInChain(m.B);
+
+    /// <summary>Diagnostic: every recorded mark of the CURRENT stop's activation with its
+    /// site/line and, when invalid, which validity leg failed. Test/diag surface only.</summary>
+    public string DescribeMarks()
+        => Current is { } outer ? DescribeMarks(outer) : "nothing stopped";
+
+    internal string DescribeMarks(Activation outer)
+    {
+        var text = new System.Text.StringBuilder();
+        foreach (var m in _portMarks)
+        {
+            if (!ReferenceEquals(m.Engine, outer)) continue;
+            int site = _engine.SiteAtOrBefore(m.P);
+            int line = site >= 0 ? Shumway.Core.DebugSiteTable.Get(site).Line : -1;
+            string why = m.GcCount != outer.HeapGcCount ? "gc " : "";
+            if (m.BindingTrailTop > outer.BindingTrailTop) why += "btrail ";
+            if (m.ExtraTrailTop > outer.ExtraTrailTop) why += "xtrail ";
+            if (m.HeapTop > outer.HeapTop) why += "heap ";
+            if (!outer.IsChoicePointInChain(m.B)) why += "B-not-in-chain ";
+            text.Append($"line {line} P={m.P} E={m.E} B={m.B} bt={m.BindingTrailTop} " +
+                $"ht={m.HeapTop} gc={m.GcCount} {(why.Length == 0 ? "OK" : "DEAD: " + why)}\n");
+        }
+        text.Append($"now: E={outer.E} B={outer.B} bt={outer.BindingTrailTop} " +
+            $"ht={outer.HeapTop} gc={outer.HeapGcCount} marks={_portMarks.Count}\n");
+        return text.ToString();
+    }
 
     private List<int> AcceptableRewindLines(Activation outer, int env)
     {
@@ -1425,6 +1529,7 @@ public sealed class DebugService : IDebugSession
         _lastStopDepth = depth;
         _lastStopWasRedo = true;   // a step taken from here is measured against the CALL depth
         _lastStopReason = StopReason.Redo;   // ADR-035 D5+ — SNS refused here
+        _snsApplied = default;
         var site = SiteOf(pc);
         // Name a surviving meta-construct helper for what the user wrote ($findall_N → findall/3,
         // $catchgoal_N → catch/3), as the frame walk does — never the raw lowered helper.
@@ -1460,13 +1565,32 @@ public sealed class DebugService : IDebugSession
     }
 
     void IDebugSession.MarkHeapRoots(Action<int> markCell) { }
-    void IDebugSession.RelocateHeapRoots(Func<int, int> relocIndex)
+    void IDebugSession.RelocateHeapRoots(
+        Activation engine, Func<int, int> relocIndex, Func<int, int> relocBoundary)
     {
-        // ADR-035 D5+ — a compaction moved the heap and rewrote the trail: every recorded
-        // rewind mark indexes a world that no longer exists. Dropping them (rather than
-        // relocating trail positions, which the collector does not expose) makes those
-        // targets refuse honestly; the GcCount check is the belt to this suspender.
-        _portMarks.Clear();
+        // ADR-035 D5+ — a compaction moved the heap: RELOCATE the rewind marks through it
+        // rather than dropping them (the original clear made backward Set Next Statement
+        // targets vanish after stepping a few goals of any real program — a mid-step GC
+        // killed them all). The collection's own guarantees make the remap exact:
+        //   - the slide is ORDER-PRESERVING, so a mark's saved allocation point maps
+        //     through the forwarding count (relocBoundary) and still separates
+        //     before-the-mark cells from after-the-mark cells;
+        //   - trailed cells are ROOTS, so no trail entry ever points at a collected cell,
+        //     and the trails are relocated in place, never compacted — the saved trail
+        //     TOPS stay true exactly as recorded;
+        //   - B / B0 / E / P are stack and code positions, untouched by a heap collection.
+        // GcCount is refreshed so MarkIsValid keeps accepting the relocated marks. Marks
+        // of OTHER activations index other heaps: left alone.
+        for (int i = 0; i < _portMarks.Count; i++)
+        {
+            var m = _portMarks[i];
+            if (!ReferenceEquals(m.Engine, engine)) continue;
+            _portMarks[i] = m with
+            {
+                HeapTop = relocBoundary(m.HeapTop),
+                GcCount = engine.HeapGcCount,
+            };
+        }
     }
 
     // ----- depth -----
@@ -1603,7 +1727,9 @@ public sealed class DebugService : IDebugSession
         if (string.IsNullOrEmpty(goal))
             goal = frames.Count > 0 ? $"{frames[0].Name}/{frames[0].Arity}" : "";
 
-        _onStop(this, new DebugStopEvent(reason, goal, site.File, site.Line, depth, frames)
+        _snsApplied = default;   // a fresh stop: any queued SNS from the last one is history
+        _onStop(this, new DebugStopEvent(
+            reason, goal, site.File, site.Line, depth, WithSetNextLines(frames))
         {
             BreakFile = _breakRequest?.File ?? "",
             BreakLine = _breakRequest?.Line ?? 0,
@@ -1618,6 +1744,22 @@ public sealed class DebugService : IDebugSession
     /// <summary>ADR-035 D5+ — expose the current stop's valid SNS lines to the channel
     /// session's snapshot writer (CaptureNow builds its own DebugStopEvent).</summary>
     internal IReadOnlyList<int> CurrentValidSetNextLines() => ValidSetNextLines();
+
+    /// <summary>ADR-035 D5+ — decorate each display frame with ITS valid Set Next
+    /// Statement lines (cross-frame moves). Capped: a pathological stack does not pay a
+    /// per-frame mark scan beyond what a user would ever click. The omitted-frames
+    /// sentence and frames with no context answer empty naturally.</summary>
+    private IReadOnlyList<PrologEngine.DebugFrame> WithSetNextLines(
+        IReadOnlyList<PrologEngine.DebugFrame> frames)
+    {
+        const int Cap = 64;
+        var result = new List<PrologEngine.DebugFrame>(frames.Count);
+        for (int i = 0; i < frames.Count; i++)
+            result.Add(i < Cap
+                ? frames[i] with { SetNextLines = ValidSetNextLines(i) }
+                : frames[i]);
+        return result;
+    }
 
     // The breakpoint being reported, for the length of one stop. See OnBreak.
     private (string File, int Line)? _breakRequest;

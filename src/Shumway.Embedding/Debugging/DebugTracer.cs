@@ -198,7 +198,8 @@ public sealed class DebugTracer : IDebugSession
         }
     }
 
-    void IDebugSession.RelocateHeapRoots(Func<int, int> relocIndex)
+    void IDebugSession.RelocateHeapRoots(
+        Activation engine, Func<int, int> relocIndex, Func<int, int> relocBoundary)
     {
         for (int i = 0; i < _stack.Count; i++)
         {
