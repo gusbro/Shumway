@@ -65,19 +65,25 @@ internal static class ReplTopLevel
         // shumway-link, on purpose.
         var foreignDlls = new List<string>();
         var nativeDlls = new List<string>();
+        string? startupGoalArg = null;   // --goal / -g: run after consulting, then stay
         var flagArgs = new HashSet<int>();
         for (int i = 0; i < consultFiles.Length; i++)
         {
             string flag = consultFiles[i];
-            if (flag is not ("--foreign-dll" or "--native-dll")) continue;
+            if (flag is not ("--foreign-dll" or "--native-dll" or "--goal" or "-g")) continue;
             flagArgs.Add(i);
             if (i + 1 >= consultFiles.Length)
             {
-                Console.Error.WriteLine($"% {flag} needs a path");
+                Console.Error.WriteLine($"% {flag} needs a value");
                 continue;
             }
             flagArgs.Add(i + 1);
-            (flag == "--foreign-dll" ? foreignDlls : nativeDlls).Add(consultFiles[i + 1]);
+            switch (flag)
+            {
+                case "--foreign-dll": foreignDlls.Add(consultFiles[i + 1]); break;
+                case "--native-dll": nativeDlls.Add(consultFiles[i + 1]); break;
+                default: startupGoalArg = consultFiles[i + 1]; break;
+            }
             i++;
         }
 
@@ -212,6 +218,28 @@ internal static class ReplTopLevel
             MaybeDumpIlStats(engine);
             MaybeDumpProfile(engine);
             return engine.LastHaltExitCode ?? 0;
+        }
+
+        // --goal / -g: run one goal exactly as if it were the first query typed at the
+        // prompt — solutions print, a non-deterministic answer offers ';' — and then STAY
+        // in the top level (end the goal with halt to exit instead; SHUMWAY_GOAL above is
+        // the run-and-exit variant). Runs after every file is consulted, and under
+        // --debug-wait after the debugger armed its breakpoints, so a program can be
+        // launched and run under the debugger in one command line.
+        if (!string.IsNullOrWhiteSpace(startupGoalArg))
+        {
+            string goalText = startupGoalArg.Trim();
+            if (!goalText.EndsWith(".", StringComparison.Ordinal)) goalText += " .";
+            Shumway.Core.Profiler.Reset();
+            try { RunQuery(engine, goalText); }
+            catch (Exception ex) { PrintError(engine, ex); }
+            Shumway.Core.Profiler.StopRun();
+            if (engine.LastHaltExitCode is int goalHalt)
+            {
+                MaybeDumpIlStats(engine);
+                MaybeDumpProfile(engine);
+                return goalHalt;
+            }
         }
 
         while (true)
@@ -719,6 +747,10 @@ internal static class ReplTopLevel
             + "  --debug-wait          --debug, plus hold at startup until a debugger has\n"
             + "                        attached and armed its breakpoints (what an IDE\n"
             + "                        launcher uses).\n"
+            + "  -g, --goal <goal>     Run a goal after consulting, as if typed at the\n"
+            + "                        prompt, then stay in the top level (end the goal\n"
+            + "                        with halt to exit instead). With --debug-wait it\n"
+            + "                        runs after the debugger has armed its breakpoints.\n"
             + "  -h, --help            Show this message.\n"
             + "\n"
             + "Environment:\n"
