@@ -658,6 +658,24 @@ questions from Phase 11's deferred list:
   `retract` / `assertz` — and avoids redundant `TryDescribe*`
   attempts that were already rejecting the shape.
 
+**Phase 34 — Source-level debugger: Visual Studio + VS Code (ADR-035 / ADR-036)** — ✅ **Complete** (tagged `phase-34`; closure summary in [`docs/phase-34-closure.md`](docs/phase-34-closure.md)).
+
+One engine-side debug core, two full IDE frontends, every deployment shape (REPL
+`--debug`, embedded `EnableDebugging`, linked `--exe --debug`). **ADR-035** (VS 2026
+via Concord): port-based stepping, conditional breakpoints evaluated engine-side,
+live-engine evaluation + bind-into-frame, destructive Watch edits, Set Next Statement
+(forward/backward/cross-frame/sibling-clause), `:- disable_debug.` semi-native
+predicates, lazy arm-on-attach, func-eval on Release engines. **ADR-036** (VS Code via
+DAP, cross-platform): in-process DAP server over the same session (stop = semaphore, NO
+func-eval), both endpoints coexisting with single-driver arbitration, zero-JS
+declarative extension + `shumway-dap` C# adapter (`runInTerminal` launch, `--dap-wait`
+hold-the-door), Debug Console = Immediate, `setVariable`, Jump to Cursor, logpoints,
+`--dap-port` baked into executables with `SHUMWAY_DAP_PORT` precedence. The launch race
+surfaced and fixed a real arm-vs-consult data race in the core (consult under the
+debug-arm gate). Verified IDE-less by xUnit DAP clients over real sockets in the normal
+gate. Pending: a Linux end-to-end smoke when a box exists (everything is xplat by
+construction); `docs/debugger.md` + `docs/debugger-vscode.md` are the user guides.
+
 **Phase 33 — Audit remediation + real-program rounds + the cut/tail-call arc** — ✅ **Complete** (tagged `phase-33`; closure summary in [`docs/phase-33-closure.md`](docs/phase-33-closure.md)).
 
 Opened as audit remediation round 1 — five waves attacking the six-way audit
@@ -1301,7 +1319,8 @@ When proposing changes:
 | Dynamic guard fail-continuation (engine continuation stack) — SOFT-REJECTED (revisable once CpFreeStats over real corpus quantifies the residual) with ceiling analysis: the fail path intrinsically round-trips the engine (callee CPs are real), so the win is only the commit-side push+cut (~30-40ns) on clauses doing substantial work, at the cost of a per-TryBacktrack check + catch/wakeup/GC/cut interplay. The 81.8% "CrossModule" census class resolves at promotion time (whole-program calleeMap) — the shipped static tiers already reach it. Alternatives: raise fail-direct caps, callee cuts, control shapes, true-G3 nesting | ADR-032 |
 | Guard continuation stack — ONE shared fail-direct callee copy per IL method + engine int stack of packed (ok,fail) continuation cursors, dispatched via a method-end continuation switch (same-method v1; TryBacktrack untouched — deliberately NOT ADR-032). Prototype SHIPPED opt-in (`SHUMWAY_CPFREE_CONT=1`): runtime parity with duplication, catch/3 rebalances the stack; cross-tail composition SHIPPED (LCO `br` into the target's shared copy, last-or-cut-committed position rule + det folding) | ADR-033 (prototype) |
 | Stable-dynamic inlining — SHIPPED default ON (soundness fix + fast path): a rule-bearing dynamic's ADR-023 snapshot may be inlined into caller guards ONLY with a clause-entry staleness test (`Engine.IsDynMutated`) + un-inlined fallback (plain CP + live by-fid call + jump into the shared post-commit body); fact-only dynamics never caller-inlined; DB-mutation builtins never combined with embedded snapshots. Fixed the shipped LUV bug (stale snapshot baked into caller IL — 423/724 of test/'s accepted guards) + two dispatch variants (Call→CallIl hardening of evictable delegates; stale per-query IlByFunctorId slot on mid-query evict). **Empty-dynamic-as-fail: measured (+69/+111% static acceptance) then REJECTED and removed** — in real programs the assert happens, so the steady state is the plain path PLUS a per-entry probe (net runtime cost); the corpus counts were inflated by GX host-interface placeholders (`i_*`) that production links declare as FOREIGN, whose det-ness the guard machinery already derives via `BacktrackableDetector`. Plus the mixed-cycle fix (KEPT): tail back-edges accepted only over pure-tail cycle segments (non-tail-edge count per visiting entry) — entry-point-independent describe | ADR-034 |
-| Source-level debugger — VS 2026 via Concord (NOT AD7/DAP), interpreter-aware: stack filter recomposes Prolog frames from Activation env-chain state; engine-side DebugService (xplat) with pinned-memory channel primary / func-eval secondary; port-based stepping (redo/fail break the frame model); `Break` opcode in the ReservedExtension slot + runtime-toggleable-LCO `debug_lastcall`; `:- disable_debug.` = semi-native modules (Tier-1 under debug, collapsed opaque frames, prelude implicit); opt-in `vs\` build (Linux untouched); licensing MIT/Apache-2.0/VS-SDK-EULA verified | ADR-035 |
+| Source-level debugger — SHIPPED (arc closed 2026-07-20): VS 2026 via Concord (NOT AD7/DAP), interpreter-aware: stack filter recomposes Prolog frames from Activation env-chain state; engine-side DebugService (xplat) with pinned-memory channel primary / func-eval secondary; port-based stepping (redo/fail break the frame model); `Break` opcode in the ReservedExtension slot + runtime-toggleable-LCO `debug_lastcall`; `:- disable_debug.` = semi-native predicates (release codegen under debug, collapsed opaque frames, prelude implicit); conditional bps, live-engine eval + bind-into-frame, destructive Watch edit, Set Next Statement (no-replay: trail-everything + port marks, cross-frame + sibling-clause), lazy arm-on-attach; opt-in `vs\` build (Linux untouched); licensing MIT/Apache-2.0/VS-SDK-EULA verified | ADR-035 |
+| VS Code debugger frontend — SHIPPED (arc closed, phase-34): DAP served IN-PROCESS by the engine (TCP loopback; external-driver seam on ChannelDebugSession; stop blocks on a semaphore; NO func-eval anywhere); both endpoints (Concord channel + DAP port) in one `--debug` build, single-driver arbitration; zero-JS declarative VS Code extension + `shumway-dap` C# adapter CLI (stdio↔TCP, runInTerminal launch, `--dap-wait` hold-the-door); hand-rolled AOT-safe DAP; Debug Console = Immediate, setVariable, Jump to Cursor, logpoints; `--dap-port` bakeable (`SHUMWAY_DAP_PORT` precedence); consult serialized under the debug-arm gate (arm-vs-consult race); known limits: no mixed-runtime stack in one session (compound-session recipe), no cross-runtime stepping, breakpoints silent during console evals; Linux E2E smoke pending a box | ADR-036 |
 | PSTR design | docs/design/pstr-design.md |
 | Debug info | docs/design/debug-info.md |
 | Builtins catalog | docs/design/builtins-catalog.md |
