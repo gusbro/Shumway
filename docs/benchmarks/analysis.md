@@ -40,41 +40,83 @@ measured back-to-back within one run — confirm it:
 The June analysis below is retained as the historical hotspot list; several of
 its targets were exactly what Phases 28–33 attacked.
 
+## June improvement targets — status as of 2026-07-21 (Tier-1 + regions view)
+
+The June list, re-audited against the current code and the T1 numbers. The
+optimization target is now the **shipped Tier-1 region shape**, not the
+interpreter:
+
+1. **"Inline arithmetic in Tier-1 IL"** — ✅ **DONE** (ADR-018 both tiers,
+   Phase 28's try/catch-free IL fast lanes, Phase 33 fusions). Evidence: the
+   arithmetic-heavy trio shows the biggest T1 wins (tak 5.5×, crypt 4.5×,
+   queens 3.3×).
+2. **"`=..` specialisation"** — ✅ **DONE**: the current `Univ` builds the
+   list directly in the heap with a single allocation (no AST↔heap round
+   trip — the thing June criticized). Boyer runs 2.8× faster at T1.
+3. **"Heap-cell allocation fast-path"** — **STILL VALID, now a Tier-1
+   target**: region IL calls `AllocateHeap` / `AllocateHeapUnbound` as
+   out-of-line engine methods (visible in `--dump-il`); inlining the
+   bump-allocation (bounds check + top increment) into the emitted IL is the
+   natural next lever for the allocation-bound shapes (nreverse T1 is ~1.5×
+   off native GProlog; flatten ~3×).
+4. **"Unification specialisation"** — **STILL VALID**: serialize is now the
+   worst T1-vs-native ratio (~4×). Term construction + tree walking runs
+   through generic cell unification helpers in IL.
+
+New observations for the T1 backlog:
+- **zebra** has the weakest T1 win (1.9×): pure structural generate-and-test
+  whose choice points are *real* (no cut to elide) — the CP save/restore cost
+  in IL is inherent to the search; ADR-026 already rejected variable-width
+  CPs at ≤1 % ceiling. Likely little headroom short of smarter indexing.
+- **Harness**: the external engines' startup subtraction uses a single spawn
+  and poisoned cells on a loaded machine (one flatten-GProlog cell read
+  0.45 µs/iter); worth hardening if cross-engine tables are re-generated
+  regularly.
+
 ## Tier-1 (persisted region IL) — measured 2026-07-21
 
 The harness gained a **Shumway T1** engine row: each benchmark compiled + linked
 with `IncludeCompiledIl` (the linker's default **region** layout — what
 `shumway-link --with-compiled-il` bakes into a bundle or `--exe`; runtime
 promotion cannot produce regions), loaded via `LoadBundle` and timed warm
-in-process, symmetric with the T0 cell. T1 speed-up over T0 per benchmark
-(median across the day's runs; the in-process T0↔T1 pair is the stable
-measurement — the external engines' startup subtraction was noisy this day, so
-single external cells below carry more uncertainty than the ratios in the
-2026-07-21 morning table above):
+in-process, symmetric with the T0 cell.
 
-| Benchmark | T0/T1 speed-up | Note |
-|---|---:|---|
-| tak | **~3.8×** | consistent across runs |
-| sendmore | **~3.3×** | consistent |
-| crypt | ~3.5× | 2.9–4.4 spread |
-| nreverse | ~2.2× | 1.7–4.2 spread; best run at **parity with native GProlog** (19 vs 21 µs) |
-| flatten | ~2.2× | |
-| zebra | ~1.7× | consistent |
-| queens | ~1.5× | |
-| serialize | ~1.4× | |
-| boyer | ~1.1× | per-iter already ≤15 µs, noise-dominated |
-| qsort | **~1.0×** | no T1 win, both runs — worth a look (partition-heavy shape) |
+**Definitive T0/T1 numbers** (interleaved min-of-5 in one process, equal N/10
+warmup on both tiers — the repo's measurement discipline; the harness's first
+median-based cells undersold T1, see the artifact note below):
 
-Geometric mean ≈ **2×** over T0. Against native-compiled GProlog that puts the
-shipped Tier-1 shape at roughly **1–4× slower** depending on shape (vs the
-interpreter's ~7.5×): nreverse ~parity, crypt ~1.5×, sendmore ~1.8×, tak ~2.9×,
-zebra ~3×, queens ~4.4×. Versus SWI, T1 is faster on the recursion/backtracking
-shapes (nreverse, tak, sendmore, crypt, queens) and slower on serialize /
-flatten / zebra / qsort.
+| Benchmark | T0 µs/iter | T1 µs/iter | T1 speed-up |
+|---|---:|---:|---:|
+| tak | 36046 | 6550 | **5.5×** |
+| nreverse | 63.8 | 13.5 | **4.7×** |
+| crypt | 4918 | 1089 | **4.5×** |
+| sendmore | 626778 | 168289 | 3.7× |
+| queens | 648 | 197 | 3.3× |
+| qsort | 124.2 | 41.8 | 3.0× |
+| flatten | 48.7 | 17.0 | 2.9× |
+| boyer | 13.2 | 4.7 | 2.8× |
+| serialize | 70.3 | 28.7 | 2.5× |
+| zebra | 5767 | 3121 | 1.9× |
 
-Open questions from this round: qsort's missing T1 win, and hardening the
-harness's external-startup subtraction (a single startup spawn poisoned the
-flatten-GProlog cell in one run).
+**Every benchmark wins, 1.9–5.5×, geometric mean ≈ 3.3×.** Against
+native-compiled GProlog this puts the shipped Tier-1 shape at roughly
+**1–4× slower** by benchmark (vs the interpreter's ~7.5×): qsort ~1.2×,
+nreverse ~1.5×, crypt ~1.6×, zebra/queens/sendmore/tak ~2–2.6×, flatten ~3×,
+serialize ~4× (the worst remaining ratio).
+
+**Measurement artifact, resolved.** The harness's first T1 cells reported
+qsort at ~1.0× (no win) and one run showed boyer T1 "4.5× slower" — both
+false. Each T1 measurement loads the persisted assembly into a fresh engine,
+and **.NET's own tiered JIT re-compiles the region method mid-measurement**
+when the warmup is too small (`bench(1)`); with a loaded machine the medians
+landed on the un-tiered runs (stddev 50–90 % on those cells). Fix shipped in
+the harness: the T1 warmup runs `bench(N/10)` so .NET tiering settles before
+the stopwatch starts. Confirmed by IL inspection along the way: qsort's
+predicates ARE region-compiled (root `qsort/3` absorbing `partition/4`), and a
+cut-partition vs if-then-else-partition A/B showed the cut form is *faster*
+under T1 (0.84×) — no codegen problem existed. Lesson (again): a low-stddev
+cell inside a noisy run is not trustworthy; interleaved min-of-N is the
+discipline.
 
 ---
 

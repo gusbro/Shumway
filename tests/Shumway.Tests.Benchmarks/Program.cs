@@ -774,7 +774,14 @@ public static class VanRoyMultiEngine
         var engine = new PrologEngine();
         engine.LoadBundle(BundleReader.FromBytes(bundle));
         engine.Query("true.");
-        engine.Query("bench(1).");   // let the loaded IL's own JIT settle
+        // Warm HARD: each measurement loads the persisted assembly fresh, and
+        // .NET's own tiered JIT re-compiles the region method in the
+        // background after enough calls — a bench(1) warmup left that
+        // re-JIT landing INSIDE the timed run (the qsort T1 cell measured
+        // 40 µs at its min and 115 µs at its median, stddev 50-90%). A tenth
+        // of the real iteration count pushes every hot method through .NET's
+        // tiering before the stopwatch starts.
+        engine.Query($"bench({Math.Max(iterations / 10, 1)}).");
         var sw = Stopwatch.StartNew();
         var sol = engine.Query($"bench({iterations}).");
         sw.Stop();
