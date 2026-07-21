@@ -204,6 +204,16 @@ public static class VanRoyMultiEngine
                 Record(results, name, "shumway", iters, sStart, Median(sTotals), Stddev(sTotals));
             }
 
+            // Shumway Tier-1: the benchmark linked with persisted region IL
+            // (`--with-compiled-il`, the shipped shape), loaded and timed warm
+            // in-process. See TimeShumwayTier1.
+            {
+                double sStart = TimeShumwayTier1(pl, 0);
+                var sTotals = Enumerable.Range(0, Math.Max(runs, 1))
+                    .Select(_ => TimeShumwayTier1(pl, iters)).ToList();
+                Record(results, name, "shumway-t1", iters, sStart, Median(sTotals), Stddev(sTotals));
+            }
+
             // Compiled GProlog (native exe).
             if (gprologExes.TryGetValue(name, out string? exe))
             {
@@ -350,7 +360,8 @@ public static class VanRoyMultiEngine
         sb.AppendLine();
         sb.AppendLine("| Activation | Version | Mode |");
         sb.AppendLine("|---|---|---|");
-        sb.AppendLine("| Shumway | (this build) | Bytecode interpreter + Tier-1 IL (in-process) |");
+        sb.AppendLine("| Shumway | (this build) | Tier-0 bytecode interpreter (in-process, promotion off) |");
+        sb.AppendLine("| Shumway T1 | (this build) | Persisted Tier-1 region IL (`--with-compiled-il` bundle, loaded + timed warm in-process) |");
         sb.AppendLine("| GNU Prolog | 1.5.0 | Native compiled (`gplc` + MSVC link) |");
         sb.AppendLine("| SWI-Prolog | 9.2.3 | Interpreted (`swipl -g`) |");
         sb.AppendLine();
@@ -359,29 +370,33 @@ public static class VanRoyMultiEngine
         sb.AppendLine();
         sb.AppendLine("## Per-iteration time (µs, lower is better)");
         sb.AppendLine();
-        sb.AppendLine("| Benchmark | Iters | Shumway | GProlog (native) | SWI |");
-        sb.AppendLine("|---|---:|---:|---:|---:|");
+        sb.AppendLine("| Benchmark | Iters | Shumway T0 | Shumway T1 | GProlog (native) | SWI |");
+        sb.AppendLine("|---|---:|---:|---:|---:|---:|");
         foreach (var grp in results.GroupBy(r => r.Benchmark).OrderBy(g =>
             Array.FindIndex(Benchmarks, x => x.Name == g.Key)))
         {
             var sh  = grp.FirstOrDefault(r => r.Activation == "shumway");
+            var s1  = grp.FirstOrDefault(r => r.Activation == "shumway-t1");
             var gp  = grp.FirstOrDefault(r => r.Activation == "gprolog");
             var sw  = grp.FirstOrDefault(r => r.Activation == "swipl");
             int iters = sh?.Iterations ?? 0;
-            sb.AppendLine($"| {grp.Key} | {iters} | {FmtPi(sh)} | {FmtPi(gp)} | {FmtPi(sw)} |");
+            sb.AppendLine($"| {grp.Key} | {iters} | {FmtPi(sh)} | {FmtPi(s1)} | {FmtPi(gp)} | {FmtPi(sw)} |");
         }
         sb.AppendLine();
-        sb.AppendLine("## Ratios vs Shumway (>1.0 means Shumway is slower)");
+        sb.AppendLine("## Ratios (>1.0 means the Shumway tier is slower)");
         sb.AppendLine();
-        sb.AppendLine("| Benchmark | Shumway / GProlog | Shumway / SWI |");
-        sb.AppendLine("|---|---:|---:|");
+        sb.AppendLine("| Benchmark | T0 / GProlog | T1 / GProlog | T0 / SWI | T1 / SWI | T0 / T1 |");
+        sb.AppendLine("|---|---:|---:|---:|---:|---:|");
         foreach (var grp in results.GroupBy(r => r.Benchmark).OrderBy(g =>
             Array.FindIndex(Benchmarks, x => x.Name == g.Key)))
         {
             var sh = PerIterUs(grp.First(r => r.Activation == "shumway"));
+            var s1 = grp.FirstOrDefault(r => r.Activation == "shumway-t1");
             var gp = grp.FirstOrDefault(r => r.Activation == "gprolog");
             var sw = grp.FirstOrDefault(r => r.Activation == "swipl");
-            sb.AppendLine($"| {grp.Key} | {FmtRatio(sh, PerIterUs(gp))} | {FmtRatio(sh, PerIterUs(sw))} |");
+            double? s1Pi = PerIterUs(s1);
+            sb.AppendLine($"| {grp.Key} | {FmtRatio(sh, PerIterUs(gp))} | {FmtRatio(s1Pi, PerIterUs(gp))} "
+                + $"| {FmtRatio(sh, PerIterUs(sw))} | {FmtRatio(s1Pi, PerIterUs(sw))} | {FmtRatio(sh, s1Pi)} |");
         }
         sb.AppendLine();
         sb.AppendLine("## Methodology");
@@ -714,6 +729,58 @@ public static class VanRoyMultiEngine
         if (!sol.Success)
             throw new InvalidOperationException(
                 $"Shumway: bench({iterations}) failed for {Path.GetFileName(plPath)}");
+        return sw.Elapsed.TotalMilliseconds;
+    }
+
+    // Tier-1 timing — the SHIPPED shape, not runtime promotion: each benchmark
+    // is compiled + linked once with persisted Tier-1 IL (the linker's default
+    // REGION layout — a predicate and its local closure share one IL method;
+    // runtime promotion cannot produce regions), exactly what
+    // `shumway-link --with-compiled-il` bakes into a bundle or `--exe`. The
+    // bundle is then loaded into a fresh engine and bench(N) is timed warm and
+    // in-process, symmetric with the Tier-0 cell (a subprocess would add
+    // ~330 ms of JIT-cold .NET startup with ~33% variance — the same reason
+    // Tier-0 is measured in-process).
+    private static readonly Dictionary<string, byte[]> _t1Bundles = new();
+
+    private static byte[] BuildTier1Bundle(string plPath)
+    {
+        string name = Path.GetFileNameWithoutExtension(plPath);
+        if (_t1Bundles.TryGetValue(name, out var cached)) return cached;
+        var result = ShmoLinker.Link(new LinkConfig
+        {
+            Objects = new List<ShmoObject>
+            {
+                ShmoCompiler.CompileSource(File.ReadAllText(plPath), name),
+            },
+            EntryPoints = new List<PredicateRef>
+            {
+                new("bench", 1), new("bench", 0), new("report", 0),
+            },
+            IncludeCompiledIl = true,
+            BakePrelude = true,
+        });
+        if (!result.Success || result.Bytes is null)
+            throw new InvalidOperationException(
+                $"Shumway-T1: link failed for {name}: "
+                + string.Join("; ", result.Diagnostics.Select(d => d.Message)));
+        _t1Bundles[name] = result.Bytes;
+        return result.Bytes;
+    }
+
+    private static double TimeShumwayTier1(string plPath, int iterations)
+    {
+        byte[] bundle = BuildTier1Bundle(plPath);
+        var engine = new PrologEngine();
+        engine.LoadBundle(BundleReader.FromBytes(bundle));
+        engine.Query("true.");
+        engine.Query("bench(1).");   // let the loaded IL's own JIT settle
+        var sw = Stopwatch.StartNew();
+        var sol = engine.Query($"bench({iterations}).");
+        sw.Stop();
+        if (!sol.Success)
+            throw new InvalidOperationException(
+                $"Shumway-T1: bench({iterations}) failed for {Path.GetFileName(plPath)}");
         return sw.Elapsed.TotalMilliseconds;
     }
 
