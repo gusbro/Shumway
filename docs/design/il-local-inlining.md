@@ -1,5 +1,9 @@
 # Tier-1 IL local-predicate inlining (design)
 
+> **Superseded** by [`il-region-compilation.md`](il-region-compilation.md)
+> (regions shipped as the default mechanism); the duplication inliner survives
+> only for the degenerate tiny-wrapper case, as that document records.
+
 **Status:** design / feasibility. No implementation yet. Phased; Phase 1 is the
 bounded first step.
 

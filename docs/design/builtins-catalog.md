@@ -1,5 +1,9 @@
 # Builtins Catalog (v1)
 
+> **Superseded for day-to-day use** by the generated, always-current
+> [`docs/predicates.md`](../predicates.md) (a unit test keeps it in sync with the
+> registry). This file remains the v1 design-time catalogue.
+
 This document enumerates the builtin predicates implemented in Shumway v1. The selection is oriented toward grammar processing, embedded rules engines, and ISO Prolog compatibility.
 
 ## Conventions

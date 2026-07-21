@@ -1,5 +1,9 @@
 # WAM codegen: Shumway vs GProlog (Blint)
 
+> **Measurement snapshot (2026-06, ~ADR-026).** Instruction counts predate the
+> later indexing and peephole ADRs (027–034); the method remains reusable, the
+> numbers are historical.
+
 Tracking doc for a per-predicate comparison of the WAM we generate against
 GProlog's `pl2wam`, on `Blint.pl` (a real ~2570-line vanilla-Prolog program).
 Goal: find where GProlog optimises the WAM and we don't, to drive a WAM codegen

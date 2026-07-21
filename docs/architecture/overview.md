@@ -105,10 +105,15 @@ Tags defined in v1:
 | 0x7 | BIGINT   | Id in per-engine bigint table |
 | 0x8 | STRING   | Id in per-engine string table (opaque, non-list) |
 | 0x9 | FOREIGN  | Id in per-engine foreign object table |
-| 0xA | ATTVAR   | Heap index to own home cell (Phase 4, chunk 77) |
+| 0xA | ATTVAR   | Heap index to own home cell (attributed variables — CLP(FD)/CLP(R) build on these) |
 | 0xB | PSTR     | Partial string (Scryer-style, UTF-16) |
+| 0xC | PSTRBUF  | PSTR buffer cell (4 UTF-16 code units) |
+| 0xD | RAWINT   | Non-heap-reference control word (env/CP fields) — lets the conservative heap-GC scan (ADR-016) distinguish control values from Refs |
 
-The heap is fully blittable. The .NET GC never scans it for references.
+The heap is fully blittable. The .NET GC never scans it for references. Shumway's
+own **heap garbage collector** (ADR-016) — an order-preserving sliding mark-compact
+collector with a conservative stack scan — reclaims it at safe points; a
+watermark triggers it automatically and `garbage_collect/0` on demand.
 
 ## Atom system
 
@@ -144,7 +149,13 @@ Each Prolog source file is one module. Modules have a simple visibility model in
 
 **Static predicates are immutable**. `assertz`/`retract` on a static predicate is an error. This invariant enables aggressive optimization (IL compilation, indexing) without invalidation concerns.
 
-**Dynamic predicates** are declared with `:- dynamic foo/N`. They support `assertz`/`retract` at runtime. They are not indexed in v1 (planned for v2).
+**Dynamic predicates** are declared with `:- dynamic foo/N` (or auto-promoted on
+first `assertz` under the default `implicit_dynamic` flag). They support
+`assertz`/`retract` at runtime with the ISO logical update view (ADR-015:
+persistent code space, per-clause born/died stamps, in-place O(clause) mutation).
+They ARE indexed — first-argument and multi-argument switch dispatch with
+in-place extensible chains (Phases 10–11) — and they even run as Tier-1 IL via
+snapshot-plus-evict-on-mutation (ADR-023) with sound caller inlining (ADR-034).
 
 ## Bundle system
 
@@ -157,7 +168,10 @@ A **bundle** is a self-contained, pre-compiled package of Prolog modules. The Sh
 - Auxiliary literals (bigints, strings).
 - Module metadata.
 - Optional debug info (configurable level).
-- Optional pre-compiled IL (`.dll`, in phase 2).
+- Optional persisted, pre-compiled IL (`shumway-link --with-compiled-il`;
+  `--strip-wam` additionally drops the then-redundant WAM bodies).
+- Optional librarian archive members (`shumway-lib` — the `ar`-style `.shum`
+  library the linker pulls from on demand).
 
 **Bundler reachability rules**:
 
@@ -186,31 +200,33 @@ Shumway uses two tiers:
 
 **Tier 1 — IL compilation**:
 
-- For static predicates.
 - Two emission targets:
   - **Runtime**: `DynamicMethod` + Sigil. Promotion happens in a background thread when a predicate is identified as hot (via invocation count threshold).
-  - **Build time**: `PersistedAssemblyBuilder`. The bundler can produce a `.dll` that the engine loads at startup. Useful for large programs where waiting for runtime promotion would be too slow.
-- Code is **engine-agnostic**: every compiled method takes `Engine` as its first parameter.
-- A **global code cache** keyed by bytecode hash allows compiled code to be shared across engines that have loaded the same predicate.
+  - **Build time**: `PersistedAssemblyBuilder`. `shumway-link --with-compiled-il` produces a bundle whose IL loads at startup — no runtime promotion wait.
+- **Region compilation is the default** (Phase 29, `docs/design/il-region-compilation.md`): a predicate and its local-predicate closure compile into ONE IL method, intra-region calls becoming branches; the linker prunes now-unreachable standalone bodies.
+- Code is **engine-agnostic**: every compiled method takes the activation as a parameter.
+- Non-tail calls thread through the dispatcher via resume markers (Phase 16) — the C# stack stays O(1) in Prolog call depth.
 
-**Tier 1 code does not invalidate** because static predicates are immutable. Dynamic predicates are never compiled to Tier 1.
+**Static Tier-1 code does not invalidate** because static predicates are immutable. **Dynamic predicates also run as Tier-1 IL** via a static-style snapshot that is **evicted on mutation** (ADR-023), preserving the logical update view; a rule-bearing dynamic's snapshot may even inline into caller guards with a clause-entry staleness test (ADR-034).
 
 ## Bytecode
 
 The bytecode is a binary format read by both the interpreter and the IL compiler.
 
-- One byte per opcode (0x00–0xFF range).
+- One byte per opcode, numbered **contiguously** so dispatch compiles to one dense jump table (see `Opcode.cs` for live values — numeric values are deliberately not cited in docs).
 - Operands are unaligned ints, sizes determined by per-opcode table.
 - Opcode 0x00 is reserved as Invalid (detects PC corruption).
-- Opcode 0xFE is the Meta opcode (sub-byte distinguishes Meta kinds; v1 has DbgInfo only).
-- Opcode 0xFF is reserved for future Extension escape.
+- The `Meta` opcode (sub-byte distinguishes kinds; DbgInfo) and `ReservedExtension` sit at the end of the dense block; new opcodes append there.
 
-The instruction set follows the WAM clearly, with the addition of:
-- Consolidations of the most frequent patterns (e.g., `get_constant_a1`, `put_constant_a1`).
-- Direct opcodes for hot builtins (`=/2`, `is/2`, comparisons).
-- Indexing instructions (`switch_on_term`, `switch_on_atom`, `switch_on_integer`, `switch_on_structure`).
-- PSTR-specific instructions (`get_pstr`, `put_pstr`, `unify_pstr`).
+The instruction set follows the WAM closely, with the addition of:
+- The **arithmetic instruction set** (ADR-018): RPN `a_eval_*` over an eval stack plus the fused integer fast-lane `a_int_bin`/`a_int_cmp` — `is/2` and comparisons compile inline, zero heap.
+- Inline nested compound build/match (ADR-019/020: `unify_structure`/`unify_list`, reserve-upfront non-last args).
+- Indexing: `switch_on_term`/`switch_on_atom`/`switch_on_integer`/`switch_on_structure`, multi-argument `switch_on_*_arg`, and second-level sub-argument / structure-keyed variants (ADR-027/028).
+- Dynamic dispatch: `enter_dynamic`/`check_visible` (the ADR-015 logical update view).
+- Fusions: clause-prologue and epilogue superinstructions (`allocate_get_level`, `deallocate_proceed`, `cut;deallocate_proceed`, ADR-029), body `jump` for inline if-then-else (ADR-025).
+- Tiered dispatch baked at link time: `call_il`/`execute_il`/`call_bytecode`/`execute_bytecode`, `call_builtin`/`execute_builtin`.
 - Cut-related instructions (`neck_cut`, `get_level`, `cut`).
+- Debugger support (ADR-035, emitted only under `compile_mode=debug`): `Break` in the reserved-extension slot, `debug_lastcall` (runtime-toggleable LCO), `debug_port`.
 
 Debug information is stored in a side table, indexed from a Meta opcode operand. The compiler emits debug info at configurable levels (None / Basic / Full).
 
@@ -263,6 +279,23 @@ The public API is the surface exposed to .NET application developers. It is shap
 
 **Threading model from the client perspective**: engines are not thread-safe, but they are thread-agile. The client should rent an engine from a pool (or otherwise serialize access) per logical operation. Across operations, the engine may be on a different thread.
 
+## Subsystems with their own living documentation
+
+Shipped subsystems this overview does not detail (each has its own doc):
+
+- **Source-level debugger** — Visual Studio 2026 (Concord) and VS Code (DAP),
+  breakpoints/stepping/eval/Set-Next-Statement over the interpreter:
+  `../debugger.md`, `../debugger-vscode.md`, ADR-035/036.
+- **Embedded native C** (`:- c` prototypes + `{...}` blocks compiled to IL) and
+  **generic term interop** (reftype cursors, the Arity materializer tier,
+  `:- native` P/Invoke): `../embedded-native-c.md`,
+  `../generic-term-interop.md`, ADR-022/024.
+- **CLP(FD) and CLP(R)** — opt-in constraint libraries over attributed
+  variables (`engine.UseClpfd()` / `UseClpr()`).
+- **Tabling** — `:- table p/N`, semi-naive evaluation, well-founded negation.
+- **Separate compilation** — `.pl → .shmo → .shum` via `shumway-compile` /
+  `shumway-link` / `shumway-lib`, `--exe` / `--dll` emitters: `../user-guide.md`.
+
 ## Quick map of files to read for specific topics
 
 | To understand... | Read... |
@@ -270,15 +303,21 @@ The public API is the surface exposed to .NET application developers. It is shap
 | Engine and global tables | ADR-001 |
 | Cell encoding | ADR-002, design/cell-layout-detail.md |
 | Atom GC | ADR-003 |
+| Heap GC | ADR-016 |
 | Trail | ADR-004 |
 | Stack and choice points | ADR-005 |
 | Bytecode format | ADR-006, design/wam-instruction-set.md |
-| Indexing | ADR-007 |
+| Indexing | ADR-007 (first-arg), ADR-027/028 (second-level + bucket) |
+| Inline compounds / arithmetic | ADR-017 / ADR-018 |
 | Modules | ADR-008 |
-| Bundler | ADR-009 |
+| Bundles / linker | ADR-009, ../user-guide.md |
 | Embedding API | ADR-010, design/api-reference.md |
-| IL compiler | ADR-011 |
-| Mode inference | ADR-012 |
+| IL compiler | ADR-011, design/il-region-compilation.md |
+| Dynamic predicates in IL | ADR-023, ADR-034 |
+| Cut / CP-free guard commit | ADR-029..031, ADR-033 |
+| Debugger | ADR-035 (VS), ADR-036 (VS Code) |
 | PSTR | design/pstr-design.md |
-| Debug info | design/debug-info.md |
-| Builtins | design/builtins-catalog.md |
+| Builtins | ../predicates.md (generated, current) |
+
+The full decision index — ADR-001 through ADR-036 — lives in the repository's
+CLAUDE.md quick-reference table and under `adr/`.

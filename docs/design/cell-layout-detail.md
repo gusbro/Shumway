@@ -41,11 +41,21 @@ public enum Tag : byte
     BigInt  = 0x7,
     String  = 0x8,
     Foreign = 0x9,
-    AttVar  = 0xA,   // reserved, not used in v1
+    AttVar  = 0xA,   // attributed variable (Phase 4; CLP(FD)/CLP(R) build on it)
     Pstr    = 0xB,
-    // 0xC..0xF reserved for future use
+    PstrBuffer = 0xC, // PSTR buffer cell: 4 UTF-16 code units
+    RawInt  = 0xD,   // non-heap-ref control word (env/CP fields) — ADR-016 heap-GC scan
+    // 0xE..0xF reserved for future use
 }
 ```
+
+> **Post-v1 note.** This document predates two changes that refine (without
+> breaking) the layout described below: the two extra tags above, and
+> **ADR-017 inline compound references** — a `Lis`/`Str` cell may now sit
+> *inline in a referring slot* (a register, an argument, a structure argument)
+> rather than always behind an on-heap header, and unification is cell-based
+> accordingly. The on-heap layouts described here remain valid; ADR-017 is the
+> authority on where a compound reference may appear.
 
 ## Bit layout overview
 

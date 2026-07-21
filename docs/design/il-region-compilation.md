@@ -1,6 +1,7 @@
 # Tier-1 IL region compilation (flat local code space)
 
-**Status**: proposed design (Phase 29). Supersedes the body-duplication inliner
+**Status**: SHIPPED, default ON (Phase 29; the linker prunes standalone IL by
+default — `--no-region-prune` opts out). Supersedes the body-duplication inliner
 (chunks 358–368) as the mechanism for real programs; the duplication inliner is
 kept for the degenerate tiny case (a single-clause thin wrapper, `a:-b. b:-c.` →
 `a:-c`).

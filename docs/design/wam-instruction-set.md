@@ -1,6 +1,23 @@
 # WAM Instruction Set
 
-This document specifies the complete WAM instruction set used by Shumway. It complements ADR-006 by providing the exact semantics, operands, and bytecode encoding of every instruction.
+This document specifies the core WAM instruction set used by Shumway (as of
+Phase 25 / 2026-05). It complements ADR-006 by providing the exact semantics,
+operands, and bytecode encoding of each instruction it covers.
+
+> **Not exhaustive — `Opcode.cs` is the authority.** Many opcodes were added
+> after this document was written and are specified by their ADRs rather than
+> here: the arithmetic instruction set (`a_eval_*`, `a_int_bin`/`a_int_cmp` —
+> ADR-018), inline nested compound build (`unify_structure`/`unify_list`,
+> reserve-upfront forms — ADR-019/020), body `jump` (ADR-025), second-level and
+> structure-keyed indexing (`switch_on_*_sub`, `switch_on_structure_sub` —
+> ADR-027/028), epilogue fusions (`deallocate_execute`,
+> `cut_deallocate_proceed`, `cut_proceed` — ADR-029), baked tier dispatch
+> (`call_il`/`execute_il`/`call_bytecode`/`execute_bytecode`,
+> `execute_builtin`), inline comparisons (`unify_eq` family), `get_level_b`,
+> and the debugger trio (`break`, `debug_lastcall`, `debug_port` — ADR-035).
+> Numeric opcode values cited below may have shifted (opcodes are renumbered to
+> keep the dense dispatch block contiguous); trust `shumway-disasm` output and
+> `src/Shumway.Core/Opcode.cs` for live values.
 
 ## Conventions
 

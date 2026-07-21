@@ -1,5 +1,9 @@
 # WAM codegen vs GNU Prolog — SWI/van-Roy benchmark set
 
+> **Measurement snapshot (2026-06, ~ADR-026).** Instruction counts predate the
+> later indexing and peephole ADRs (027–034); the method remains reusable, the
+> numbers are historical.
+
 Companion to [`wam-vs-gprolog-blint.md`](wam-vs-gprolog-blint.md). Where that
 doc drove a predicate-by-predicate comparison on one large real program
 (Blint), this one widens the oracle to the **canonical Prolog benchmark set**

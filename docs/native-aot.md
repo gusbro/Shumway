@@ -69,3 +69,13 @@ Two reliable ways to make the link step succeed:
 The ILC (managed → native) step itself has no such dependency; only the
 final native link does. On Linux/macOS the system `clang`/`ld` toolchain
 is used and no equivalent setup is needed.
+
+## Debugging under AOT
+
+The VS Code (DAP) debugging endpoint survives an AOT publish: the DAP layer
+is deliberately reflection-free (hand-rolled JSON over
+`JsonDocument`/`Utf8JsonWriter` — see `Debugging/Dap/DapWire.cs`), so an
+AOT-published binary built from debug-compiled sources still serves
+`--dap` / `SHUMWAY_DAP_PORT`. The Visual Studio (Concord) frontend also
+works — its channel is plain pinned memory — with the usual AOT caveat that
+everything runs Tier-0.

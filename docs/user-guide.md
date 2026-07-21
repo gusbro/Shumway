@@ -36,6 +36,8 @@ Shumway ships as several .NET projects, each with a clear role:
 | `Shumway.Repl` | `shumway` executable | Interactive top-level (REPL). Consults files, prints solutions, exits on `halt.` |
 | `Shumway.Compile` | `shumway-compile` executable | Compiles one `.pl` to a `.shmo` (per-module compiled object). |
 | `Shumway.Link` | `shumway-link` executable | Links one or more `.shmo`s into a `.shum` bundle with reachability + missing-predicate analysis. Also produces standalone executables (`--exe`). |
+| `Shumway.Lib` | `shumway-lib` executable | Librarian: packages `.shmo` objects into a `.shum` **library archive** (the `ar` model — every added object kept, no reachability pruning; `create`/`add`/`delete`/`list`/`extract`). The linker pulls members from such a library on demand, like a C linker pulling from a `.a`. |
+| `Shumway.Dap` | `shumway-dap` executable | Debug adapter for VS Code (ADR-036): the small executable the VS Code extension launches, forwarding the Debug Adapter Protocol to a running Shumway's `--dap` endpoint. Not run by hand. |
 | `Shumway.Disasm` | `shumway-disasm` executable | Diagnostic: prints the WAM bytecode disassembly of each predicate (post-indexing dispatch + clause bodies). For inspecting code generation. |
 
 You typically need only `Shumway.Embedding` plus one or more of the
@@ -103,6 +105,14 @@ from stdin one at a time.
 shumway                            # empty database
 shumway util.pl rules.pl           # consult both files at startup
 ```
+
+Run `shumway --help` for the full flag list. Highlights: `--clpfd` / `--clpr`
+(enable a constraint library before parsing, so its operators are known),
+`--foreign-dll` / `--native-dll` (interop, same names as `shumway-link`),
+`-g goal` / `--goal goal` (run a goal after consulting, then stay at the
+prompt), `--debug` / `--debug-wait` (Visual Studio debugging), and
+`--dap <port>` / `--dap-wait <port>` (VS Code debugging — see
+[`debugger-vscode.md`](debugger-vscode.md)).
 
 ### Using it
 
@@ -365,6 +375,7 @@ shumway-link -o app.shum \
 | `--self-contained` | Used with `--exe`: bake the .NET runtime into the binary (~70 MB exe, runs on machines without .NET). Default is framework-dependent (~5-10 MB exe, requires .NET 10 runtime on the target). |
 | `--debug` | Used with `--exe`: build the executable debuggable — its modules compile debuggable and it materialises their embedded source at startup, so a debugger attached to the process sets breakpoints and steps (see [`docs/debugger.md`](debugger.md)). Requires the bundle to carry source (compile inputs with `shumway-compile --debug`; not with `--strip`). |
 | `--debug-wait` | Like `--debug`, but the executable also blocks at startup until a debugger has attached and armed its breakpoints, so the first goal can be stopped in. Implies `--debug`. |
+| `--dap-port <port>` | With `--exe --debug`: bake a VS Code (DAP) debug endpoint into the executable — it listens on `127.0.0.1:<port>` whenever it runs. At run time `SHUMWAY_DAP_PORT` overrides the baked port (`0` disables). Implies `--debug`. See [`debugger-vscode.md`](debugger-vscode.md). |
 | `-d, --dll <path>` | Emit a loadable .NET class library embedding the bundle, with a factory that hands back a ready engine. See [step 3b](#step-3b--producing-a-loadable-net-class-library---dll). Mutually exclusive with `--exe`. |
 | `-n, --native-dll <path>` | A native C library (DLL/.so/.dylib) backing `:- native` functions (resolved by P/Invoke). The bundle records its name so the engine auto-loads it at runtime; `--exe` copies each next to the executable. Repeatable. |
 | `--dll-namespace <ns>` | Namespace of the `--dll` factory class. Default: inferred from the DLL filename. |
@@ -702,8 +713,16 @@ story, including the Windows toolchain requirements.
 
 ## Debugging
 
-On Windows, Shumway has a source-level debugger for Visual Studio 2026:
-breakpoints in your `.pl` files, a call stack of your own predicates, the
-variables of each frame, and stepping through the Prolog ports. A program
-that calls out to C# or native C shows those frames in the *same* stack.
-See [`debugger.md`](debugger.md).
+Shumway has a source-level debugger with two IDE frontends over one engine
+core: breakpoints (including conditional ones whose condition is a Prolog
+goal) in your `.pl` files, a call stack of your own predicates, the variables
+of each frame, and stepping through the Prolog ports.
+
+- **Visual Studio 2026** (Windows): the richest integration — a program that
+  calls out to C# or native C shows those frames in the *same* mixed stack.
+  See [`debugger.md`](debugger.md).
+- **VS Code** (Windows and Linux): cross-platform, over the Debug Adapter
+  Protocol — launch or attach, Debug Console evaluation in the live engine,
+  variable editing, Jump to Cursor, logpoints. Works against the REPL
+  (`--dap`), any embedded host (`SHUMWAY_DAP_PORT`), and linked executables
+  (`--dap-port`). See [`debugger-vscode.md`](debugger-vscode.md).
