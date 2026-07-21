@@ -1,0 +1,144 @@
+{
+  "name": "shumway-debug",
+  "displayName": "Shumway Prolog Debugger",
+  "description": "Debug Shumway Prolog programs: breakpoints (incl. conditional), port-based stepping, call stack, variables. ADR-036 — a declarative extension over the shumway-dap adapter; no extension code.",
+  "version": "0.1.4",
+  "publisher": "shumway",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Debuggers",
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "prolog",
+        "extensions": [
+          ".pl",
+          ".pro",
+          ".prolog"
+        ],
+        "aliases": [
+          "Prolog"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "prolog",
+        "scopeName": "source.prolog",
+        "path": "./syntaxes/prolog.tmLanguage.json"
+      }
+    ],
+    "breakpoints": [
+      {
+        "language": "prolog"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "shumway",
+        "label": "Shumway Prolog",
+        "languages": [
+          "prolog"
+        ],
+        "windows": {
+          "program": "./bin/shumway-dap.exe"
+        },
+        "linux": {
+          "program": "./bin/shumway-dap"
+        },
+        "osx": {
+          "program": "./bin/shumway-dap"
+        },
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "program"
+            ],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "The Prolog source file to consult (started as `shumway --dap <port> <program>` in the integrated terminal).",
+                "default": "${file}"
+              },
+              "shumwayPath": {
+                "type": "string",
+                "description": "Path to the shumway executable (default: `shumway` from PATH).",
+                "default": "shumway"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Extra arguments for shumway (more .pl files, --clpfd, --foreign-dll ...).",
+                "default": []
+              },
+              "goal": {
+                "type": "string",
+                "description": "A goal to run after consulting (shumway -g). Omit to land at the interactive prompt."
+              },
+              "cwd": {
+                "type": "string",
+                "description": "Working directory for the debuggee (default: the program's directory).",
+                "default": "${workspaceFolder}"
+              },
+              "port": {
+                "type": "number",
+                "description": "Fixed DAP port for the debuggee (default: a free port is picked)."
+              }
+            }
+          },
+          "attach": {
+            "required": [
+              "port"
+            ],
+            "properties": {
+              "port": {
+                "type": "number",
+                "description": "The running debuggee's DAP port (its --dap value / SHUMWAY_DAP_PORT).",
+                "default": 4711
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "shumway",
+            "request": "launch",
+            "name": "Debug Prolog file",
+            "program": "${file}",
+            "shumwayPath": "shumway"
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Shumway: Launch Prolog file",
+            "description": "Consult and debug the current Prolog file in the integrated terminal",
+            "body": {
+              "type": "shumway",
+              "request": "launch",
+              "name": "Debug ${1:program.pl}",
+              "program": "^\"\\${workspaceFolder}/${1:program.pl}\"",
+              "shumwayPath": "${2:shumway}"
+            }
+          },
+          {
+            "label": "Shumway: Attach to running process",
+            "description": "Attach to a shumway process started with --dap <port>",
+            "body": {
+              "type": "shumway",
+              "request": "attach",
+              "name": "Attach to Shumway",
+              "port": 4711
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
