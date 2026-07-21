@@ -1,6 +1,9 @@
 # ADR-035: Source-level debugger (Visual Studio / Concord, interpreter-aware)
 
-**Status:** ACCEPTED — phased implementation in progress (phases D0–D4; see §9).
+**Status:** ACCEPTED and **IMPLEMENTED** — the arc is closed (D0–D4 delivered in
+full; every D5 deferred item except the project system shipped too; see *Final
+state* at the end). The VS Code / DAP frontend is **ADR-036**, which reuses this
+ADR's engine-side core unchanged.
 
 ## Context
 
@@ -67,7 +70,9 @@ extensibility API, `Microsoft.VisualStudio.Debugger.Engine`), as an
 - **DAP-first (VS Code).** No mixed call stack — VS Code composes separate
   sessions side-by-side. Remains possible later as a thin adapter over the
   same engine-side debug core (and Concord components can load in vsdbg —
-  unverified bonus).
+  unverified bonus). *This rejection is scoped to the VS frontend:* **ADR-036**
+  later adopts DAP as the *second* frontend, for VS Code and cross-platform
+  (Linux) debugging, over this same engine core.
 - **IL + PDB sequence points (the Iris model).** Only buys the *stock*
   frame-based stepping/breakpoints, which (a) cannot express redo/fail and
   (b) apply to Tier-1 IL — but debugging runs Tier-0 where the `.pl` source
@@ -223,16 +228,16 @@ method name + memory), so the VS pieces live outside the main solution:
 - **D0** — Concord spike: five de-risk legs (func-eval context matrix + pinned
   ReadMemory/WriteMemory; managed notify breakpoint on CoreCLR; `.pl` F9
   binding; stack filter + EE routing on VS 2026; step arbitration) before any
-  engine work.
+  engine work. ✅ **Done.**
 - **D1** — Engine debug core (metadata, `Break`, `debug_lastcall`, ports,
   DebugService + channel, `disable_debug`, tests, REPL tracer). ✅ **Done** —
   see *What D1 settled* below.
-- **D2** — Concord read side (stack, locals, watches).
-- **D3** — Concord control side (F9 binding, stepping).
+- **D2** — Concord read side (stack, locals, watches). ✅ **Done.**
+- **D3** — Concord control side (F9 binding, stepping). ✅ **Done.**
 - **D4** — VSIX + F5 command (`IVsDebugger4.LaunchDebugTargets4`) + the
-  arity-compat interop E2E gate + `docs/debugger.md`.
-- **D5 (deferred)** — conditional breakpoints, side-effect watches (opt-in),
-  debug tables in stripped bundles, VS Code/vsdbg exploration, project system.
+  arity-compat interop E2E gate + `docs/debugger.md`. ✅ **Done.**
+- **D5** — everything on the deferred list except the project system shipped,
+  plus a body of work the list never imagined. ✅ **Done** — see *Final state*.
 
 ## What D1 settled
 
@@ -300,3 +305,57 @@ process and reads that memory); drain the commands it wrote back. Nothing runs i
 the debuggee while it is stopped, because the answer was already there before the
 question could be asked — which is what keeps a func-eval out of
 breakpoint-notification context, where it deadlocks.
+
+## Final state (arc closed 2026-07-20)
+
+Delivered end to end, user-verified on real programs (Blint, ~2570 lines) across
+all three deployment shapes — REPL `--debug`, embedded `EnableDebugging`, and
+linked `--exe --debug` (`--debug-wait` blocks for attach and stops at the entry
+point). Wire format v7, VSIX 0.27. Gate at close: Core 444 / Interpreter 105 /
+Compiler 351 / Embedding 3275 / ISO 277. Beyond the D0–D4 sketch, the arc grew:
+
+- **Conditional breakpoints** (D5 item): the engine evaluates the condition goal
+  at the `Break`, BEFORE notifying — a failing condition is a silent resume that
+  never wakes the debugger; an erroring one stops with the error surfaced.
+- **Evaluation in the live engine**: Immediate-window goals run in the suspended
+  engine; solution bindings can be **unified into the suspended frame**
+  (bind-into-frame — trailed as if executed there, aliasing real). Watch/Locals
+  edits are **destructive by design** (`SetFrameVariable`: rebind is trailed so
+  backtracking restores it; `_` un-instantiates; Immediate deliberately stays
+  pure). Displays are writeq-quoted so values round-trip. DataTips honour
+  NoSideEffects — hovering a predicate name refuses the implicit eval instead of
+  running it.
+- **Set Next Statement** (never planned): a no-replay design — under a session
+  the engine **trails everything** (Hb pinned) and records **port marks**
+  (trail/heap/B tops) at debuggable call ports; forward moves skip, backward
+  moves unwind the trail to the mark (undoing all bindings since), refusal for
+  moves the model cannot honour (dead cut barriers, redo). Cross-frame SNS (pop
+  to the selected frame), **sibling-clause head SNS** with standard Prolog
+  fall-through (an IL-CP cursor over the following clauses; cut discards it
+  naturally), and head→restart-body. The heap GC **relocates marks** rather than
+  being suspended; cut-time trail compaction stands down under trail-everything.
+- **Control constructs are transparent** (`,`/`;`/`->`/`$call_*` raise no
+  stops/frames; `catch`/`once`/`\+`/`findall`-family stay visible), positions
+  survive every transform (DCG, phrase, native, ITE — pinned by a per-shape
+  tripwire suite), stepping stops at library calls by call site.
+- **Detach is clean**: a hit with no debugger attached disarms the Break bytes
+  and runs free; re-attach re-sends the full state.
+- **Lazy full debug**: `DebugOptions.ActivateOnAttach` /
+  `SHUMWAY_DEBUG_ACTIVATION=attach` opens the session with the runtime machinery
+  off (no ports, no trail-everything, LCO on) at near-release speed; attaching
+  arms it — mid-query, at a safe point — and detaching disarms. Measured on
+  Blint: full debug ≈ 2.2× release, lazy unattached ≈ 1.37× (the residual is
+  debug *codegen*: +11% dispatches). The armed-mode cost was then cut ~16% by
+  caching (per-port address→predicate range memo, transparency cache, and a
+  reference-identity guard that stops the per-query debug-table rebuild from
+  being O(program) — the hundreds-of-modules hazard).
+- **Func-eval works against Release-built engines**: the CLR refused to hijack a
+  thread stopped in optimized code (`NoOptimization` yields only MinOpts, whose
+  GC-safe points are call sites — `Notify` had none), so VS fell back to IL
+  interpretation, which dies on the first FCall. A zero-iteration call-free loop
+  in `Notify` forces fully-interruptible GC info, making the stop hijackable in
+  any build — the natural pairing of the lazy workflow (debug-compiled Prolog on
+  release engine bits).
+- **Not done**: the VS project system (Open-Folder launch profiles) — the one
+  D5 item left, unpursued for lack of demand. The VS Code exploration became
+  **ADR-036**.
