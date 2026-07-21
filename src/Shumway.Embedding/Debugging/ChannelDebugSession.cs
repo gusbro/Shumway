@@ -113,6 +113,19 @@ public sealed class ChannelDebugSession : IDisposable
     /// <see cref="OnStopLocked"/>.</summary>
     private readonly bool _detachAware;
 
+    /// <summary>ADR-036 — an EXTERNAL driver (the in-process DAP server, when a VS Code
+    /// client is connected) takes the stop instead of the native-debugger notify: it runs
+    /// on the engine thread, blocks until the client says how to resume, and returns true.
+    /// Returning false means the client is gone — treated exactly like a native detach
+    /// (disarm, run free). While set, the native-debugger detach checks stand down: a DAP
+    /// session has no native debugger and that is normal, not a detach.</summary>
+    internal Func<int, bool>? NotifyOverride;
+
+    /// <summary>ADR-036 — whether an external (DAP) client is connected. The idle watcher
+    /// services the channel for it just as it does for an attached native debugger, and a
+    /// lazy session arms on it just as it arms on <c>Debugger.IsAttached</c>.</summary>
+    internal volatile bool ExternalDriverConnected;
+
     /// <summary>ADR-035 D5+ — LAZY full debug (see
     /// <see cref="DebugOptions.ActivateOnAttach"/>): the runtime machinery stays off —
     /// near-release speed — until a debugger attaches (the idle watcher notices) or the
@@ -203,7 +216,11 @@ public sealed class ChannelDebugSession : IDisposable
             {
                 System.Threading.Thread.Sleep(IdleTickMs);
                 if (_disposed) break;
-                if (!System.Diagnostics.Debugger.IsAttached) continue;
+                // ADR-036 — an external (DAP) client counts as an attached debugger for
+                // everything this thread does: the channel gets serviced while the engine
+                // is idle, and a lazy session arms on the connection.
+                if (!System.Diagnostics.Debugger.IsAttached && !ExternalDriverConnected)
+                    continue;
 
                 // ADR-035 D5+ — a LAZY session arms itself the moment a debugger is
                 // seen. This tick is the detection; the machinery lands on the engine's
@@ -234,6 +251,25 @@ public sealed class ChannelDebugSession : IDisposable
     public const int IdleTickMs = 100;
 
     private void ServiceChannelWhileIdle()
+    {
+        // ADR-036 — the ARM gate first, and only by TRY: applying a breakpoint links
+        // code, and the engine links code under this same gate (consult, query setup).
+        // Taking it here in the engine's own order — arm gate, then stop gate — is what
+        // makes the two threads serialize instead of deadlocking by inversion (the
+        // engine thread holds the arm gate through a consult and takes the stop gate
+        // for the SourcesChanged stops inside it). Busy engine = skip the tick.
+        if (!System.Threading.Monitor.TryEnter(_engine.DebugArmGate)) return;
+        try
+        {
+            ServiceChannelWhileIdleUnderArmGate();
+        }
+        finally
+        {
+            System.Threading.Monitor.Exit(_engine.DebugArmGate);
+        }
+    }
+
+    private void ServiceChannelWhileIdleUnderArmGate()
     {
         // TRY for the gate; never wait for it. The engine holds it for the WHOLE of a stop —
         // it is stopped inside the lock, and does not come back until the user says so — and
@@ -641,7 +677,8 @@ public sealed class ChannelDebugSession : IDisposable
         // disarm and run free. The breakpoints are not lost — they live in Visual Studio,
         // and a re-attach re-sends the full set (the full-state write every attach begins
         // with).
-        if (DebuggerHasDetached())
+        var external = NotifyOverride;
+        if (external is null && DebuggerHasDetached())
         {
             DisarmAfterDetach();
             return;
@@ -650,19 +687,34 @@ public sealed class ChannelDebugSession : IDisposable
         // 1. Write, so the answer is there before the question.
         _channel.WriteSnapshot(stop);
 
-        // 2. Notify. A debugger is attached: this is where the process stops, and it
-        //    does not come back until the debugger says so — OR until it DETACHES, which
-        //    also resumes us. Telling the two apart is the check right after.
-        _notify((int)stop.Reason);
-
-        // The debugger resumed us BY LEAVING (detach, or Visual Studio closing): clean up
-        // now, before the query runs on, so not even one more breakpoint fires the pipeline.
-        // (Detach mid-run, without a stop to catch it here, is caught by the entry check
-        // above on the next hit — this is the no-extra-hit fast path, not the only one.)
-        if (DebuggerHasDetached())
+        if (external is not null)
         {
-            DisarmAfterDetach();
-            return;
+            // 2'. ADR-036 — the external (DAP) driver. Runs here, on the engine thread,
+            //     blocked until its client resumes; its answer is already in the command
+            //     region when it returns. False means the client vanished mid-stop —
+            //     the same situation as a native detach, with the same cleanup.
+            if (!external((int)stop.Reason))
+            {
+                DisarmAfterDetach();
+                return;
+            }
+        }
+        else
+        {
+            // 2. Notify. A debugger is attached: this is where the process stops, and it
+            //    does not come back until the debugger says so — OR until it DETACHES, which
+            //    also resumes us. Telling the two apart is the check right after.
+            _notify((int)stop.Reason);
+
+            // The debugger resumed us BY LEAVING (detach, or Visual Studio closing): clean up
+            // now, before the query runs on, so not even one more breakpoint fires the pipeline.
+            // (Detach mid-run, without a stop to catch it here, is caught by the entry check
+            // above on the next hit — this is the no-extra-hit fast path, not the only one.)
+            if (DebuggerHasDetached())
+            {
+                DisarmAfterDetach();
+                return;
+            }
         }
 
         // 3. Drain. Whatever the debugger decided while we were stopped is now waiting.
@@ -745,10 +797,43 @@ public sealed class ChannelDebugSession : IDisposable
         }
     }
 
+    /// <summary>ADR-036 — the DAP endpoint riding this session, when one was asked for.
+    /// Null until <see cref="StartDapServer"/>; disposed with the session.</summary>
+    private Dap.DapDebugServer? _dapServer;
+
+    /// <summary>The DAP server's actual loopback port, or null when the session has no
+    /// DAP endpoint — the readable answer when it was started on an ephemeral port.</summary>
+    public int? DapPort => _dapServer?.Port;
+
+    /// <summary>Opens the ADR-036 DAP endpoint on 127.0.0.1 (<paramref name="port"/> 0 =
+    /// ephemeral; see <see cref="DapPort"/>). One per session — two listeners would be
+    /// two doors to one seat.</summary>
+    public void StartDapServer(int port) => _ = new Dap.DapDebugServer(this, port);
+
+    /// <summary>The server's constructor registers itself here, however it was created,
+    /// so <see cref="DapPort"/>, <see cref="WaitForDapConfigured"/> and
+    /// dispose-with-the-session hold either way.</summary>
+    internal void AttachDapServer(Dap.DapDebugServer server)
+    {
+        if (_dapServer is not null)
+            throw new InvalidOperationException("this session already has a DAP endpoint");
+        _dapServer = server;
+    }
+
+    /// <summary>ADR-036 — <c>--dap-wait</c>: blocks until a DAP client has connected AND
+    /// sent <c>configurationDone</c> (its breakpoints are armed), or the timeout. The DAP
+    /// twin of <see cref="WaitForDebuggerCommands"/>: a program launched IN ORDER to be
+    /// debugged that shows its prompt first runs goals past every breakpoint drawn on it.
+    /// False when the session has no DAP endpoint, or nobody configured in time.</summary>
+    public bool WaitForDapConfigured(TimeSpan timeout)
+        => _dapServer is not null && _dapServer.WaitUntilConfigured(timeout);
+
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
+        _dapServer?.Dispose();
+        _dapServer = null;
         if (_firstChance is not null)
         {
             AppDomain.CurrentDomain.FirstChanceException -= _firstChance;

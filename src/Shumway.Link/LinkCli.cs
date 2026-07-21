@@ -235,7 +235,8 @@ internal static class LinkCli
                 foreignDllPaths: opts.ForeignDlls,
                 nativeDllPaths: opts.NativeDlls,
                 debug: opts.Debug,
-                debugWait: opts.DebugWait);
+                debugWait: opts.DebugWait,
+                dapPort: opts.DapPort);
             foreach (var d in exeResult.Diagnostics)
             {
                 var stream = d.Severity == LinkSeverity.Error
@@ -300,6 +301,7 @@ internal static class LinkCli
         // debugger has attached and armed its breakpoints (implies --debug).
         public bool Debug { get; set; }
         public bool DebugWait { get; set; }
+        public int? DapPort { get; set; }
         // Phase 31 — --dll: emit a .NET class library embedding the bundle, with a
         // generated factory (Namespace.Class.CreateEngine()) a host app calls. No
         // Prolog goal entry point. Namespace defaults to the inferred DLL file name,
@@ -431,6 +433,21 @@ internal static class LinkCli
                 case "--debug-wait":
                     opts.Debug = true;
                     opts.DebugWait = true;
+                    break;
+
+                case "--dap-port":
+                    // ADR-036 — bake a DAP endpoint into the executable: it listens on
+                    // 127.0.0.1:<port> whenever it runs (implies --debug). At run time
+                    // SHUMWAY_DAP_PORT overrides the baked value; =0 disables.
+                    if (++i >= args.Length) { ReportMissing(arg); return null; }
+                    if (!int.TryParse(args[i], out int dapPort) || dapPort <= 0)
+                    {
+                        Console.Error.WriteLine(
+                            "shumway-link: --dap-port needs a positive port number");
+                        return null;
+                    }
+                    opts.DapPort = dapPort;
+                    opts.Debug = true;
                     break;
 
                 case "--dll":
@@ -748,6 +765,10 @@ internal static class LinkCli
             + "                           startup until a debugger has attached and armed\n"
             + "                           its breakpoints — so the first goal can be stopped\n"
             + "                           in. Implies --debug.\n"
+            + "      --dap-port <port>    With --exe --debug, bake a VS Code (DAP) endpoint:\n"
+            + "                           the executable listens on 127.0.0.1:<port> when it\n"
+            + "                           runs. SHUMWAY_DAP_PORT at run time overrides the\n"
+            + "                           baked port (0 disables). Implies --debug.\n"
             + "  -d, --dll <path>         Produce a .NET class library (.dll) embedding the\n"
             + "                           bundle, with a generated factory a host app calls:\n"
             + "                           `var e = Ns.Class.CreateEngine();`. No Prolog goal —\n"

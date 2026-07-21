@@ -5,6 +5,7 @@
     <Project Path="src/Shumway.Compiler.Il/Shumway.Compiler.Il.csproj" />
     <Project Path="src/Shumway.Compiler/Shumway.Compiler.csproj" />
     <Project Path="src/Shumway.Core/Shumway.Core.csproj" />
+    <Project Path="src/Shumway.Dap/Shumway.Dap.csproj" />
     <Project Path="src/Shumway.Disasm/Shumway.Disasm.csproj" />
     <Project Path="src/Shumway.Embedding/Shumway.Embedding.csproj" />
     <Project Path="src/Shumway.Interpreter/Shumway.Interpreter.csproj" />

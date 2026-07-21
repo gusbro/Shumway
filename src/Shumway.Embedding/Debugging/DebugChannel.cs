@@ -306,6 +306,15 @@ public sealed class DebugChannel : IDisposable
         }
     }
 
+    /// <summary>ADR-036 — whether the engine has drained what was last written (the drain
+    /// zeroes the region's header). The DAP server writes its FULL state on every change,
+    /// and this is how it knows a one-shot command it included (a step, a resume) was
+    /// consumed and must not ride the next rewrite.</summary>
+    public bool CommandsConsumed
+    {
+        get { int at = 0; return DebugWire.ReadInt(_commands, ref at) == 0; }
+    }
+
     /// <summary>Takes everything the debugger left, and empties the region — a command
     /// is obeyed once. The engine does this before it resumes.</summary>
     public IReadOnlyList<DebugCommand> DrainCommands()

@@ -134,7 +134,8 @@ public static class ExecutableEmitter
         IReadOnlyList<string>? foreignDllPaths = null,
         IReadOnlyList<string>? nativeDllPaths = null,
         bool debug = false,
-        bool debugWait = false)
+        bool debugWait = false,
+        int? dapPort = null)
     {
         ArgumentNullException.ThrowIfNull(bundleBytes);
         ArgumentNullException.ThrowIfNull(goal);
@@ -194,7 +195,7 @@ public static class ExecutableEmitter
 
             // Write wrapper sources.
             File.WriteAllText(Path.Combine(tempDir, "Program.cs"),
-                GenerateProgramSource(normalisedGoal, debug, debugWait));
+                GenerateProgramSource(normalisedGoal, debug, debugWait, dapPort));
             File.WriteAllBytes(Path.Combine(tempDir, "bundle.shum"), bundleBytes);
             File.WriteAllText(Path.Combine(tempDir, $"{assemblyName}.csproj"),
                 GenerateProjectFile(assemblyName, rid, mode));
@@ -301,7 +302,7 @@ public static class ExecutableEmitter
     // ----- Wrapper source generation -----
 
     private static string GenerateProgramSource(
-        string goalWithTrailingDot, bool debug, bool debugWait)
+        string goalWithTrailingDot, bool debug, bool debugWait, int? dapPort)
     {
         // Escape for a C# string literal (verbatim form so backslashes
         // pass through cleanly).
@@ -316,10 +317,21 @@ public static class ExecutableEmitter
                 ""shumway: debug mode active; waiting for a debugger to attach..."");"
             : @"if (System.Environment.GetEnvironmentVariable(""SHUMWAY_DEBUG_DIAG"") == ""1"")
                 System.Console.Error.WriteLine(""shumway: debug mode active."");";
+        // ADR-036 — a baked DAP port: the executable listens for VS Code on
+        // 127.0.0.1:<port> whenever it runs. The SHUMWAY_DAP_PORT environment variable
+        // has PRECEDENCE over the bake (DebugOptions' own default reads it: any set
+        // value decides, 0/unparseable = off), so the bake fills in only when the
+        // environment says nothing.
+        string dapBake = dapPort is int p
+            ? $@"
+            if (System.Environment.GetEnvironmentVariable(""SHUMWAY_DAP_PORT"") is null)
+                debugOptions.DapPort = {p};"
+            : "";
         string engineConstruction = debug
             ? $@"{debugBanner}
-            var engine = PrologEngine.FromBundle(LoadEmbeddedBundle(),
-                new Shumway.Embedding.Debugging.DebugOptions {{ WaitForAttach = {(debugWait ? "true" : "false")} }});"
+            var debugOptions = new Shumway.Embedding.Debugging.DebugOptions
+            {{ WaitForAttach = {(debugWait ? "true" : "false")} }};{dapBake}
+            var engine = PrologEngine.FromBundle(LoadEmbeddedBundle(), debugOptions);"
             : @"var engine = PrologEngine.FromBundle(LoadEmbeddedBundle());";
 
         return $@"using Shumway.Embedding;

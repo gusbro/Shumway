@@ -66,11 +66,15 @@ internal static class ReplTopLevel
         var foreignDlls = new List<string>();
         var nativeDlls = new List<string>();
         string? startupGoalArg = null;   // --goal / -g: run after consulting, then stay
+        int? dapPortArg = null;          // --dap <port>: ADR-036 VS Code endpoint
+        bool dapWait = false;            // --dap-wait: hold the start until configured
         var flagArgs = new HashSet<int>();
         for (int i = 0; i < consultFiles.Length; i++)
         {
             string flag = consultFiles[i];
-            if (flag is not ("--foreign-dll" or "--native-dll" or "--goal" or "-g")) continue;
+            if (flag is not ("--foreign-dll" or "--native-dll" or "--goal" or "-g"
+                or "--dap" or "--dap-wait"))
+                continue;
             flagArgs.Add(i);
             if (i + 1 >= consultFiles.Length)
             {
@@ -82,6 +86,16 @@ internal static class ReplTopLevel
             {
                 case "--foreign-dll": foreignDlls.Add(consultFiles[i + 1]); break;
                 case "--native-dll": nativeDlls.Add(consultFiles[i + 1]); break;
+                case "--dap":
+                case "--dap-wait":
+                    if (int.TryParse(consultFiles[i + 1], out int dapPort) && dapPort >= 0)
+                    {
+                        dapPortArg = dapPort;
+                        dapWait = flag == "--dap-wait";
+                    }
+                    else
+                        Console.Error.WriteLine($"% {flag} needs a port number (0 = pick one)");
+                    break;
                 default: startupGoalArg = consultFiles[i + 1]; break;
             }
             i++;
@@ -138,7 +152,8 @@ internal static class ReplTopLevel
         // holds the process at the door until a debugger is actually attached, which is
         // what a launcher (D4's F5) needs and what an attach-by-hand does not.
         bool debug = Array.IndexOf(consultFiles, "--debug") >= 0
-            || Array.IndexOf(consultFiles, "--debug-wait") >= 0;
+            || Array.IndexOf(consultFiles, "--debug-wait") >= 0
+            || dapPortArg is not null;
         if (debug)
         {
             // The whole of --debug is now one embedding call: it sets the debug flags, turns
@@ -148,11 +163,28 @@ internal static class ReplTopLevel
             // embedded engine — the REPL is just the first caller. We keep the wait here so
             // the console can narrate it (the API's own WaitForAttach is the silent variant
             // for a host that has no console).
-            var session = engine.EnableDebugging(new Shumway.Embedding.Debugging.DebugOptions
+            var options = new Shumway.Embedding.Debugging.DebugOptions
             {
                 SourceFiles = sourceFiles,
-            });
+            };
+            if (dapPortArg is int p) options.DapPort = p;   // --dap wins over the env default
+            var session = engine.EnableDebugging(options);
             Console.WriteLine($"% debug session open (pid {Environment.ProcessId}) — attach a debugger.");
+            if (session.DapPort is int boundDap)
+                Console.WriteLine($"% DAP endpoint listening on 127.0.0.1:{boundDap} (VS Code).");
+
+            // --dap-wait: hold the door until the client's breakpoints are ARMED
+            // (configurationDone), so the very first goal typed at the prompt cannot
+            // run past them — the launch race the plain prompt otherwise loses. The
+            // DAP twin of --debug-wait, with the same no-deadline honesty: a program
+            // launched to be debugged that runs undebugged is useless (Ctrl+C exits).
+            if (dapWait)
+            {
+                Console.WriteLine("% waiting for the debugger to finish configuring...");
+                while (!session.WaitForDapConfigured(TimeSpan.FromMilliseconds(500)))
+                { /* no deadline — the client is coming */ }
+                Console.WriteLine("% debugger configured.");
+            }
             if (Array.IndexOf(consultFiles, "--debug-wait") >= 0)
             {
                 Console.WriteLine("% waiting for a debugger to attach...");
@@ -747,6 +779,11 @@ internal static class ReplTopLevel
             + "  --debug-wait          --debug, plus hold at startup until a debugger has\n"
             + "                        attached and armed its breakpoints (what an IDE\n"
             + "                        launcher uses).\n"
+            + "  --dap <port>          --debug, plus a DAP endpoint on 127.0.0.1:<port>\n"
+            + "                        for VS Code (0 picks a free port and prints it).\n"
+            + "  --dap-wait <port>     --dap, plus hold at startup until the client has\n"
+            + "                        finished configuring its breakpoints (what the\n"
+            + "                        VS Code launch uses — no goal can outrun them).\n"
             + "  -g, --goal <goal>     Run a goal after consulting, as if typed at the\n"
             + "                        prompt, then stay in the top level (end the goal\n"
             + "                        with halt to exit instead). With --debug-wait it\n"
@@ -766,6 +803,8 @@ internal static class ReplTopLevel
             + "                           machinery (ports, trail-everything, LCO off)\n"
             + "                           stays OFF — near-release speed — until a\n"
             + "                           debugger actually attaches.\n"
+            + "  SHUMWAY_DAP_PORT=<N>     Open the --dap endpoint whenever a debug session\n"
+            + "                           opens (any deployment shape, incl. linked exes).\n"
             + "  SHUMWAY_DEBUG_DIAG=1     Verbose debug-session diagnostics on stderr.");
     }
 

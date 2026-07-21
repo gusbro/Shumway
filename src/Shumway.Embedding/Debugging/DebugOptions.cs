@@ -39,6 +39,15 @@ public sealed class DebugOptions
     /// debugger connects whenever it does.</summary>
     public bool WaitForAttach { get; set; } = false;
 
+    /// <summary>ADR-036 — the DAP endpoint (VS Code). Null: none. 0: an ephemeral port
+    /// (read it back from <see cref="ChannelDebugSession.DapPort"/>). N: listen on
+    /// 127.0.0.1:N. Defaults from the <c>SHUMWAY_DAP_PORT</c> environment variable when
+    /// that names a positive port — which is how a linked executable or any embedded host
+    /// grows the endpoint with no code change (<c>=0</c> or unset leaves it off).</summary>
+    public int? DapPort { get; set; } =
+        int.TryParse(Environment.GetEnvironmentVariable("SHUMWAY_DAP_PORT"), out int p)
+            && p > 0 ? p : null;
+
     /// <summary>LAZY full debug: when true, the session opens with the RUNTIME debug
     /// machinery off — no ports raised, no trail-everything, last-call optimisation ON —
     /// so a debug-compiled program runs at near-release Tier-0 speed, and the machinery

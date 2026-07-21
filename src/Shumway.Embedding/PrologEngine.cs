@@ -5299,6 +5299,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             ActivateOnAttach = options.ActivateOnAttach,
         };
 
+        // ADR-036 — the second endpoint. When a port is configured (option, or the
+        // SHUMWAY_DAP_PORT environment default the option carries), the session also
+        // listens for a VS Code / DAP client on the loopback interface. Both endpoints
+        // coexist; whichever debugger connects first drives.
+        if (options.DapPort is int dapPort)
+            session.StartDapServer(dapPort);
+
         if (options.WaitForAttach)
             WaitForDebuggerReady(session, options.AttachTimeout);
 
@@ -8892,6 +8899,23 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private void ConsultStringInner(string source, bool recordInHistory,
         string? moduleNameFallback = null)
     {
+        // ADR-036 — serialized against AddBreakpoint (same gate as query setup): a
+        // debug session's idle watcher arms breakpoints from ITS OWN thread, and an
+        // arm's EnsureCodeLinked racing this method's cache invalidation tears the
+        // code space — predicates vanish (existence_error on a consulted predicate)
+        // and stray bytes read as reserved_invalid opcodes. The launch flow made the
+        // race routine: breakpoints arrive moments before the post-configure consult.
+        // Reentrancy is safe: a directive's query setup takes the same lock on this
+        // same thread.
+        lock (_debugArmGate)
+        {
+            ConsultStringLocked(source, recordInHistory, moduleNameFallback);
+        }
+    }
+
+    private void ConsultStringLocked(string source, bool recordInHistory,
+        string? moduleNameFallback)
+    {
         // Save-state chunk 264: record every user-visible consult so
         // SaveState can serialize it. The prelude (auto-loaded by the
         // ctor) and any other engine-internal source go through this
@@ -10238,6 +10262,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// per-query tables on the engine's thread, and the session's idle watcher arms
     /// breakpoints from its own. See <see cref="SetupQueryFromTerm"/>.</summary>
     private readonly object _debugArmGate = new();
+
+    /// <summary>ADR-036 — the arm gate, for the debug session's idle watcher: it must
+    /// take THIS before the session's own stop gate (the order the engine thread uses —
+    /// consult/setup under the arm gate, then a stop under the session gate), or the
+    /// two-thread arm-vs-consult pair deadlocks by lock inversion.</summary>
+    internal object DebugArmGate => _debugArmGate;
 
     private (Shumway.Core.ProgramView Program,
              List<string> VarNames,
