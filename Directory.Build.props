@@ -7,6 +7,19 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AnalysisLevel>latest</AnalysisLevel>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
+
+    <!--
+      ONE output tree per configuration, whatever the Platform. Historically
+      `dotnet build` (AnyCPU) wrote bin\<cfg> while Visual Studio and the
+      -p:Platform=x64 command line wrote bin\x64\<cfg> — two trees, each
+      refreshed only by its own invocation, so whichever one a script or a
+      launch config pointed at was stale half the time (the "x64 trap" that
+      bit the debugger arc repeatedly). Now both invocations land in
+      bin\<cfg>\net10.0: the last build wins, and there is nothing stale to
+      point at. Intermediates (obj\) keep the platform split so incremental
+      builds of different platforms do not clobber each other.
+    -->
+    <AppendPlatformToOutputPath>false</AppendPlatformToOutputPath>
   </PropertyGroup>
 
   <!--

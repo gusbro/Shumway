@@ -18,8 +18,8 @@ $work    = Join-Path $PSScriptRoot "bindframe-work"
 # DEBUG-config CLIs (the Release-engine shape is pinned separately by
 # run-funceval-release-smoke.ps1 — func-eval at a stop works on optimized engine DLLs
 # since ShumwayDebugHost.Notify was made fully interruptible).
-$compile = Join-Path $PSScriptRoot "..\..\src\Shumway.Compile\bin\x64\Debug\net10.0\shumway-compile.exe"
-$link    = Join-Path $PSScriptRoot "..\..\src\Shumway.Link\bin\x64\Debug\net10.0\shumway-link.exe"
+$compile = Join-Path $PSScriptRoot "..\..\src\Shumway.Compile\bin/Debug\net10.0\shumway-compile.exe"
+$link    = Join-Path $PSScriptRoot "..\..\src\Shumway.Link\bin/Debug\net10.0\shumway-link.exe"
 
 foreach ($f in @($devenv, $compile, $link)) { if (-not (Test-Path $f)) { throw "missing $f" } }
 

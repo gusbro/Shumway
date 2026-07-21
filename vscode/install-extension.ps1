@@ -11,10 +11,10 @@ $repo = Split-Path -Parent $PSScriptRoot
 $ext  = Join-Path $PSScriptRoot 'shumway-debug'
 $out  = Join-Path $PSScriptRoot 'shumway-debug-0.1.4.vsix'
 
-Write-Host '[1/4] publishing shumway-dap (Release x64)...'
-dotnet publish (Join-Path $repo 'src\Shumway.Dap') -c Release -p:Platform=x64 -v:q --nologo
+Write-Host '[1/4] publishing shumway-dap (Release)...'
+dotnet publish (Join-Path $repo 'src\Shumway.Dap') -c Release -v:q --nologo
 if ($LASTEXITCODE -ne 0) { throw 'publish failed' }
-$publish = Join-Path $repo 'src\Shumway.Dap\bin\x64\Release\net10.0\publish'
+$publish = Join-Path $repo 'src\Shumway.Dap\bin/Release\net10.0\publish'
 if (-not (Test-Path (Join-Path $publish 'shumway-dap.exe'))) { throw "no adapter at $publish" }
 
 Write-Host '[2/4] staging the adapter into the extension...'

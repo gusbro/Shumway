@@ -15,8 +15,8 @@ $ErrorActionPreference = 'Stop'
 
 $devenv  = "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\devenv.exe"
 $work    = Join-Path $PSScriptRoot "condbp-exe-work"
-$compile = Join-Path $PSScriptRoot "..\..\src\Shumway.Compile\bin\x64\Release\net10.0\shumway-compile.exe"
-$link    = Join-Path $PSScriptRoot "..\..\src\Shumway.Link\bin\x64\Release\net10.0\shumway-link.exe"
+$compile = Join-Path $PSScriptRoot "..\..\src\Shumway.Compile\bin/Release\net10.0\shumway-compile.exe"
+$link    = Join-Path $PSScriptRoot "..\..\src\Shumway.Link\bin/Release\net10.0\shumway-link.exe"
 
 foreach ($f in @($devenv, $compile, $link)) { if (-not (Test-Path $f)) { throw "missing $f" } }
 
