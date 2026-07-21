@@ -711,6 +711,13 @@ never even constructed) and the engine runs on the bytecode
 interpreter only. See [`native-aot.md`](native-aot.md) for the full
 story, including the Windows toolchain requirements.
 
+## Logtalk
+
+Shumway is a working backend for [Logtalk](https://logtalk.org/) — the glue
+(a backend adapter and a launcher) ships in the repository under `logtalk/`,
+and the standard Logtalk library test suites and benchmarks run on it
+(Tier-1 IL promotion included). See [`logtalk.md`](logtalk.md).
+
 ## Debugging
 
 Shumway has a source-level debugger with two IDE frontends over one engine
