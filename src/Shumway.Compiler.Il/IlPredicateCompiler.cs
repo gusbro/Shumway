@@ -433,6 +433,18 @@ public sealed class IlPredicateCompiler
     // ---------- get_list / put_list / pstr (chunk 49) ----------
     private static readonly MethodInfo EngineGetListMethod =
         typeof(Activation).GetMethod(nameof(Activation.GetList), new[] { typeof(int) })!;
+    private static readonly MethodInfo EngineGetListVarXVarXMethod =
+        typeof(Activation).GetMethod(nameof(Activation.GetListVarXVarX),
+            new[] { typeof(int), typeof(int), typeof(int) })!;
+    private static readonly MethodInfo EngineGetListValXVarXMethod =
+        typeof(Activation).GetMethod(nameof(Activation.GetListValXVarX),
+            new[] { typeof(int), typeof(int), typeof(int) })!;
+    private static readonly MethodInfo EngineGetStruct2VarXVarXMethod =
+        typeof(Activation).GetMethod(nameof(Activation.GetStruct2VarXVarX),
+            new[] { typeof(int), typeof(int), typeof(int), typeof(int) })!;
+    private static readonly MethodInfo EngineGetStruct2ValXValXMethod =
+        typeof(Activation).GetMethod(nameof(Activation.GetStruct2ValXValX),
+            new[] { typeof(int), typeof(int), typeof(int), typeof(int) })!;
     private static readonly MethodInfo EnginePutListMethod =
         typeof(Activation).GetMethod(nameof(Activation.PutList), new[] { typeof(int) })!;
     private static readonly MethodInfo EngineMakePstrMethod =
@@ -4184,12 +4196,48 @@ public sealed class IlPredicateCompiler
             {
                 int functorId = BytecodeIO.ReadInt32(code, pc + 1);
                 int arg = BytecodeIO.ReadInt32(code, pc + 5);
+                int sz = OpcodeTable.Get(op).Size;
+
+                // Fused binary-structure peephole (2026-07), the get_list twin: the
+                // window must consume the WHOLE structure — arity exactly 2 — or
+                // the ops after it would read the mode state the fused call skips.
+                int pc1 = pc + sz;
+                int pc2 = pc1 + 5;
+                if (pc2 + 5 <= end
+                    && FunctorTable.Lookup(functorId).Arity == 2
+                    && (jumpLabels is null
+                        || (!jumpLabels.ContainsKey(pc1) && !jumpLabels.ContainsKey(pc2)))
+                    && (iteElseLabels is null
+                        || (!iteElseLabels.ContainsKey(pc1) && !iteElseLabels.ContainsKey(pc2))))
+                {
+                    var op1 = (Opcode)code[pc1];
+                    var op2 = (Opcode)code[pc2];
+                    bool varVar = op1 == Opcode.UnifyVariableX && op2 == Opcode.UnifyVariableX;
+                    bool valVal = op1 == Opcode.UnifyValueX && op2 == Opcode.UnifyValueX;
+                    if (varVar || valVal)
+                    {
+                        int slot1 = BytecodeIO.ReadInt32(code, pc1 + 1);
+                        int slot2 = BytecodeIO.ReadInt32(code, pc2 + 1);
+                        emit.LoadArgument(0);
+                        EmitFunctorId(emit, functorId);
+                        emit.LoadConstant(arg);
+                        emit.LoadConstant(slot1);
+                        emit.LoadConstant(slot2);
+                        emit.Call(varVar
+                            ? EngineGetStruct2VarXVarXMethod
+                            : EngineGetStruct2ValXValXMethod);
+                        emit.BranchIfFalse(failLabel);
+                        pc = pc2 + 5;
+                        continue;
+                    }
+                }
+
                 emit.LoadArgument(0);
                 EmitFunctorId(emit, functorId);
                 emit.LoadConstant(arg);
                 emit.Call(EngineGetStructureMethod);
                 emit.BranchIfFalse(failLabel);
-                pc += OpcodeTable.Get(op).Size;
+                pc += sz;
                 continue;
             }
             if (op == Opcode.PutStructure)
@@ -4324,11 +4372,45 @@ public sealed class IlPredicateCompiler
             if (op == Opcode.GetList)
             {
                 int arg = BytecodeIO.ReadInt32(code, pc + 1);
+                int sz = OpcodeTable.Get(op).Size;
+
+                // Fused cons peephole (2026-07): `get_list; unify_*_x; unify_variable_x`
+                // — the complete match/build of one cons — becomes ONE Activation call
+                // (see GetListVarXVarX / GetListValXVarX). Only when the whole window
+                // is inside this range and no ADR-025 label lands mid-window (a branch
+                // into the middle would skip the fused prefix).
+                int pc1 = pc + sz;
+                int pc2 = pc1 + 5;               // unify_*_x is 1 + 4 bytes
+                if (pc2 + 5 <= end
+                    && (jumpLabels is null
+                        || (!jumpLabels.ContainsKey(pc1) && !jumpLabels.ContainsKey(pc2)))
+                    && (iteElseLabels is null
+                        || (!iteElseLabels.ContainsKey(pc1) && !iteElseLabels.ContainsKey(pc2)))
+                    && (Opcode)code[pc2] == Opcode.UnifyVariableX)
+                {
+                    var op1 = (Opcode)code[pc1];
+                    if (op1 is Opcode.UnifyVariableX or Opcode.UnifyValueX)
+                    {
+                        int slot1 = BytecodeIO.ReadInt32(code, pc1 + 1);
+                        int slot2 = BytecodeIO.ReadInt32(code, pc2 + 1);
+                        emit.LoadArgument(0);
+                        emit.LoadConstant(arg);
+                        emit.LoadConstant(slot1);
+                        emit.LoadConstant(slot2);
+                        emit.Call(op1 == Opcode.UnifyVariableX
+                            ? EngineGetListVarXVarXMethod
+                            : EngineGetListValXVarXMethod);
+                        emit.BranchIfFalse(failLabel);
+                        pc = pc2 + 5;
+                        continue;
+                    }
+                }
+
                 emit.LoadArgument(0);
                 emit.LoadConstant(arg);
                 emit.Call(EngineGetListMethod);
                 emit.BranchIfFalse(failLabel);
-                pc += OpcodeTable.Get(op).Size;
+                pc += sz;
                 continue;
             }
             if (op == Opcode.PutList)

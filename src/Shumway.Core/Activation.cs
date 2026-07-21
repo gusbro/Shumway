@@ -1673,6 +1673,212 @@ public sealed partial class Activation
         _unifyPointer = pair;
     }
 
+    // ----- Fused cons helpers for the Tier-1 IL emit (2026-07) -----
+    //
+    // The IL tier's twin of the chunk-415 interpreter superinstructions: the
+    // WAM window `get_list Ai; unify_* ; unify_*` — the complete match/build of
+    // one cons cell — becomes ONE call instead of three. The generic trio pays
+    // three call boundaries plus _writeMode/_unifyPointer field traffic between
+    // them, and the WRITE half (building a list) lived entirely in NoInlining
+    // slow paths; here both halves are straight-line, and the write half does
+    // ONE two-cell bump instead of two single-cell allocations. Anything off
+    // the two fast shapes (attvar, PSTR, bound non-list, register growth)
+    // delegates to the exact generic sequence, so semantics are preserved by
+    // construction. Emitted by IlPredicateCompiler's peephole; the bytecode
+    // itself is unchanged (no new opcodes).
+
+    /// <summary><c>get_list Ai; unify_variable_x H; unify_variable_x T</c> —
+    /// destructure (read) or build (write) a cons whose head and tail are both
+    /// fresh temp variables.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    public bool GetListVarXVarX(int reg, int h, int t)
+    {
+        Cell regCell = _registers[reg];
+        var regs = _registers;
+        if (regCell.Tag == Tag.Lis
+            && (uint)h < (uint)regs.Length && (uint)t < (uint)regs.Length)
+        {
+            int ptr = regCell.AsHeapIndex;
+            Cell hc = _heap[ptr];
+            regs[h] = hc.Tag == Tag.AttVar ? Cell.Ref(ptr) : hc;
+            Cell tc = _heap[ptr + 1];
+            regs[t] = tc.Tag == Tag.AttVar ? Cell.Ref(ptr + 1) : tc;
+            return true;
+        }
+        return GetListVarXVarXSlow(reg, h, t);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private bool GetListVarXVarXSlow(int reg, int h, int t)
+    {
+        Cell regCell = _registers[reg];
+        if (regCell.Tag == Tag.Ref
+            && h < _registers.Length && t < _registers.Length)
+        {
+            int home = Deref(regCell.AsHeapIndex);
+            Cell fc = _heap[home];
+            if (fc.Tag == Tag.Ref && fc.AsHeapIndex == home)
+            {
+                // WRITE: one bump for the pair; bind the var to an inline LIS
+                // (ADR-017 — no on-heap header), exactly GetListSlow's layout.
+                int pair = AllocateHeap(2);
+                _heap[pair] = Cell.UnboundVar(pair);
+                _heap[pair + 1] = Cell.UnboundVar(pair + 1);
+                Bind(home, Cell.Lis(pair));
+                _registers[h] = Cell.Ref(pair);
+                _registers[t] = Cell.Ref(pair + 1);
+                return true;
+            }
+        }
+        // Generic route — attvar, PSTR, bound non-list, register-bank growth.
+        if (!GetList(reg)) return false;
+        UnifyVariableX(h);
+        UnifyVariableX(t);
+        return true;
+    }
+
+    /// <summary><c>get_list Ai; unify_value_x V; unify_variable_x T</c> —
+    /// the cons whose head is an already-seen value (the classic list-builder
+    /// clause head <c>[H|R]</c> after <c>H</c> was extracted from another
+    /// argument — nreverse's <c>conc</c>, partition outputs).</summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    public bool GetListValXVarX(int reg, int v, int t)
+    {
+        Cell regCell = _registers[reg];
+        if (regCell.Tag == Tag.Lis && (uint)t < (uint)_registers.Length)
+        {
+            int ptr = regCell.AsHeapIndex;
+            if (!UnifyHeapWithCell(ptr, _registers[v])) return false;
+            Cell tc = _heap[ptr + 1];
+            _registers[t] = tc.Tag == Tag.AttVar ? Cell.Ref(ptr + 1) : tc;
+            return true;
+        }
+        return GetListValXVarXSlow(reg, v, t);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private bool GetListValXVarXSlow(int reg, int v, int t)
+    {
+        Cell regCell = _registers[reg];
+        if (regCell.Tag == Tag.Ref && t < _registers.Length)
+        {
+            int home = Deref(regCell.AsHeapIndex);
+            Cell fc = _heap[home];
+            if (fc.Tag == Tag.Ref && fc.AsHeapIndex == home)
+            {
+                // WRITE: store the value cell verbatim (unify_value_x write
+                // semantics — UnifyArgCell's write arm), tail fresh.
+                int pair = AllocateHeap(2);
+                _heap[pair] = _registers[v];
+                _heap[pair + 1] = Cell.UnboundVar(pair + 1);
+                Bind(home, Cell.Lis(pair));
+                _registers[t] = Cell.Ref(pair + 1);
+                return true;
+            }
+        }
+        if (!GetList(reg)) return false;
+        if (!UnifyValueX(v)) return false;
+        UnifyVariableX(t);
+        return true;
+    }
+
+    /// <summary><c>get_structure f/2 Ai; unify_variable_x A; unify_variable_x B</c> —
+    /// the arity-2 twin of <see cref="GetListVarXVarX"/> (serialize's
+    /// <c>pair(X,Y)</c> tree nodes and every binary-constructor head).</summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    public bool GetStruct2VarXVarX(int functorId, int reg, int a, int b)
+    {
+        Cell regCell = _registers[reg];
+        var regs = _registers;
+        if (regCell.Tag == Tag.Str
+            && (uint)a < (uint)regs.Length && (uint)b < (uint)regs.Length)
+        {
+            int f = regCell.AsHeapIndex;
+            if (_heap[f].AsFunctorId != functorId) return false;
+            Cell ac = _heap[f + 1];
+            regs[a] = ac.Tag == Tag.AttVar ? Cell.Ref(f + 1) : ac;
+            Cell bc = _heap[f + 2];
+            regs[b] = bc.Tag == Tag.AttVar ? Cell.Ref(f + 2) : bc;
+            return true;
+        }
+        return GetStruct2VarXVarXSlow(functorId, reg, a, b);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private bool GetStruct2VarXVarXSlow(int functorId, int reg, int a, int b)
+    {
+        Cell regCell = _registers[reg];
+        if (regCell.Tag == Tag.Ref
+            && a < _registers.Length && b < _registers.Length)
+        {
+            int home = Deref(regCell.AsHeapIndex);
+            Cell fc = _heap[home];
+            if (fc.Tag == Tag.Ref && fc.AsHeapIndex == home)
+            {
+                // WRITE: functor + both args in ONE bump; inline STR bind
+                // (ADR-017 phase 2 — no on-heap header).
+                int f = AllocateHeap(3);
+                _heap[f] = Cell.Functor(functorId);
+                _heap[f + 1] = Cell.UnboundVar(f + 1);
+                _heap[f + 2] = Cell.UnboundVar(f + 2);
+                Bind(home, Cell.Str(f));
+                _registers[a] = Cell.Ref(f + 1);
+                _registers[b] = Cell.Ref(f + 2);
+                return true;
+            }
+        }
+        if (!GetStructure(functorId, reg)) return false;
+        UnifyVariableX(a);
+        UnifyVariableX(b);
+        return true;
+    }
+
+    /// <summary><c>get_structure f/2 Ai; unify_value_x A; unify_value_x B</c> —
+    /// both args already-seen values (serialize's tree-rebuild heads).</summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    public bool GetStruct2ValXValX(int functorId, int reg, int a, int b)
+    {
+        Cell regCell = _registers[reg];
+        if (regCell.Tag == Tag.Str)
+        {
+            int f = regCell.AsHeapIndex;
+            if (_heap[f].AsFunctorId != functorId) return false;
+            return UnifyHeapWithCell(f + 1, _registers[a])
+                && UnifyHeapWithCell(f + 2, _registers[b]);
+        }
+        return GetStruct2ValXValXSlow(functorId, reg, a, b);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private bool GetStruct2ValXValXSlow(int functorId, int reg, int a, int b)
+    {
+        Cell regCell = _registers[reg];
+        if (regCell.Tag == Tag.Ref)
+        {
+            int home = Deref(regCell.AsHeapIndex);
+            Cell fc = _heap[home];
+            if (fc.Tag == Tag.Ref && fc.AsHeapIndex == home)
+            {
+                int f = AllocateHeap(3);
+                _heap[f] = Cell.Functor(functorId);
+                _heap[f + 1] = _registers[a];
+                _heap[f + 2] = _registers[b];
+                Bind(home, Cell.Str(f));
+                return true;
+            }
+        }
+        if (!GetStructure(functorId, reg)) return false;
+        return UnifyValueX(a) && UnifyValueX(b);
+    }
+
     /// <summary>
     /// Implements <c>get_list</c>: enters write mode against an unbound argument, read
     /// mode against a LIS, or fails. The <see cref="UnifyPointer"/> is positioned at
