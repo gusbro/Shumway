@@ -8544,10 +8544,18 @@ public sealed class IlPredicateCompiler
             if (addresses is null
                 || !addresses.TryGetValue(functorId, out int address))
             {
-                // Chunk 417: honour the `unknown` flag (throws on error).
-                if (UnknownProcedure.Fails(engine, functorId))
-                    return SyncFail;
-                throw PrologRuntimeException.UndefinedProcedure(functorId);   // unreachable
+                // Last chance: a runtime-assert MetaTransform helper linked by a
+                // DIFFERENT activation — materialize it here (the Logtalk
+                // suspended-outer-query shape; see ResolveLateHelper).
+                int late = engine.ResolveLateHelper?.Invoke(functorId) ?? -1;
+                if (late < 0)
+                {
+                    // Chunk 417: honour the `unknown` flag (throws on error).
+                    if (UnknownProcedure.Fails(engine, functorId))
+                        return SyncFail;
+                    throw PrologRuntimeException.UndefinedProcedure(functorId);   // unreachable
+                }
+                address = late;
             }
             if (routeCacheable)
                 cache[routeKey] = new MetaRoute(userKind, address);

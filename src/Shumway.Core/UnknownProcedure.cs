@@ -50,6 +50,7 @@ public static class UnknownProcedure
                     bool vis = engine.LiveConsultVisibleFids?.Contains(functorId) ?? false;
                     System.Console.Error.WriteLine(
                         $"[UNDEF] {AtomTable.GetById(aid2)?.Name}/{ar2} pc={engine.P}"
+                        + $" cp={engine.Cp} cpIsMarker={Activation.IsResumeMarker(engine.Cp)}"
                         + $" caller={engine.ResolveAddressToLabel?.Invoke(engine.P) ?? "?"}"
                         + $" {inMap} visible={vis}");
                 }

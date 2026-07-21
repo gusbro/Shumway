@@ -3221,6 +3221,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     private void LinkConsultedStaticPredicatesLive(
         Activation engine, IReadOnlyList<Clause> newStaticClauses, string moduleName)
     {
+        bool diagLive = Environment.GetEnvironmentVariable("SHUMWAY_UNDEF_DIAG") == "1";
         if (newStaticClauses.Count == 0) return;
         // Only meaningful with a live query in flight: a program buffer, a
         // mutable address map, and a mutable switch-table list. Absent any,
@@ -3228,9 +3229,20 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         if (engine.CurrentProgram is null
             || engine.CurrentFunctorAddresses is not Dictionary<int, int> addrMap
             || engine.SwitchTables is not { } switchTables)
+        {
+            if (diagLive) Console.Error.WriteLine(
+                $"[LIVE-LINK] skip(no-live-query) mod={moduleName} n={newStaticClauses.Count}"
+                + $" prog={(engine.CurrentProgram is null ? "null" : "ok")}"
+                + $" map={engine.CurrentFunctorAddresses?.GetType().Name ?? "null"}"
+                + $" swt={(engine.SwitchTables is null ? "null" : "ok")}");
             return;
+        }
         if (!_modules.TryGetValue(moduleName, out var manifest))
+        {
+            if (diagLive) Console.Error.WriteLine(
+                $"[LIVE-LINK] skip(no-manifest) mod={moduleName} n={newStaticClauses.Count}");
             return;
+        }
         // Phase 33 — capture buffer ownership before AppendCode below.
         bool ownsHost = EngineOwnsHostBuffer(engine);
 
@@ -3279,12 +3291,15 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 module.Predicates, loadOffset,
                 externalSymbols: addrMap,
                 switchTableIdBase: switchTables.Count);
+            RegisterLateHelpers(module.Predicates);   // cross-activation visibility
         }
-        catch (InvalidOperationException)
+        catch (InvalidOperationException ex)
         {
             // A structural issue (e.g. a duplicate head across the batch):
             // never fail the consult — the next top-level setup links the
             // whole module coherently.
+            if (diagLive) Console.Error.WriteLine(
+                $"[LIVE-LINK] skip(compile-throw) mod={moduleName}: {ex.Message}");
             return;
         }
 
@@ -5762,6 +5777,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // promotion store fires when a delegate installs (sync or drained async).
         _promotableCallSites?.Clear();
         _rewriteInterp = interp;
+        // ADR-034 cross-activation variant: mutation-time IlByFunctorId slot
+        // clearing must reach EVERY live interpreter, not just the current one
+        // (a suspended outer activation's table otherwise keeps dispatching an
+        // evicted dynamic snapshot — the Logtalk-under-promotion silent
+        // failure: '$lgt_current_object_'/11 served pre-assert answers).
+        for (int i = _liveInterps.Count - 1; i >= 0; i--)
+            if (!_liveInterps[i].TryGetTarget(out _)) _liveInterps.RemoveAt(i);
+        _liveInterps.Add(new WeakReference<Shumway.Interpreter.BytecodeInterpreter>(interp));
         IlPromotion.OnPromotionInstalled = OnCalleePromoted;
         // Snapshot every currently-promoted IL delegate, indexed by
         // functor id. The PredicateDelegate -> Func<Activation,int,bool>
@@ -5915,6 +5938,12 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
     // (see InstallCallIlRewrites); consumed by OnCalleePromoted.
     private Dictionary<int, List<(int AbsAddr, bool IsExecute)>>? _promotableCallSites;
     private Shumway.Interpreter.BytecodeInterpreter? _rewriteInterp;
+
+    /// <summary>Every live query's interpreter (weak — a finished query's interp
+    /// collects naturally), so mutation-time invalidation can clear a fid's
+    /// <c>IlByFunctorId</c> slot in ALL of them (see InvalidateDynamicCache).</summary>
+    private readonly List<WeakReference<Shumway.Interpreter.BytecodeInterpreter>>
+        _liveInterps = new();
 
     /// <summary>Phase 33 L1 — Stage B.4: called (on the engine thread, from
     /// <see cref="IlPromotionStore.OnPromotionInstalled"/>) when a delegate is
@@ -6927,15 +6956,26 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // Tier-0 bytecode (the current database); the predicate re-warms before
         // re-snapshotting, and past the churn limit stays on Tier 0.
         IlPromotion.EvictDelegate(functorId);
-        // ADR-023/034 — the CURRENT query's interpreter snapshotted the
+        // ADR-023/034 — every LIVE query's interpreter snapshotted the
         // delegate into its direct fid table at setup (IL callers dispatch
         // every callee by fid through it via resume markers). Clear the slot
-        // so the very next dispatch re-resolves live — TryGet misses, and the
-        // call falls back to the Tier-0 enter_dynamic chain (the logical
-        // update view).
-        var ilTable = _rewriteInterp?.IlByFunctorId;
-        if (ilTable is not null && (uint)functorId < (uint)ilTable.Length)
-            ilTable[functorId] = null;
+        // in ALL of them so the very next dispatch re-resolves live — TryGet
+        // misses, and the call falls back to the Tier-0 enter_dynamic chain
+        // (the logical update view). ALL, not just the current one: a
+        // SUSPENDED outer activation resumes with its own table, and a stale
+        // slot there dispatched an evicted dynamic snapshot (the
+        // Logtalk-under-promotion silent failure).
+        for (int i = _liveInterps.Count - 1; i >= 0; i--)
+        {
+            if (!_liveInterps[i].TryGetTarget(out var li))
+            {
+                _liveInterps.RemoveAt(i);
+                continue;
+            }
+            var ilTable = li.IlByFunctorId;
+            if (ilTable is not null && (uint)functorId < (uint)ilTable.Length)
+                ilTable[functorId] = null;
+        }
         // ADR-034 — and any CALLER whose IL embeds this predicate's inlined
         // snapshot must stop using it: the emitted clause-entry staleness test
         // reads this host-lifetime set (shared into every per-query engine),
@@ -7506,6 +7546,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         var addresses = engine.CurrentFunctorAddresses;
         if (addresses is not null && addresses.TryGetValue(functorId, out int address))
             return address;
+        // Last chance: a '$catchrec_N' compiled by a DIFFERENT activation's
+        // assert/setup (the Logtalk suspended-outer-query shape) — materialize
+        // it into this one. See TryMaterializeAssertHelper.
+        int late = engine.ResolveLateHelper?.Invoke(functorId) ?? -1;
+        if (late >= 0) return late;
         throw new InvalidOperationException(
             "catch/3 recovery helper predicate has no compiled address.");
     }
@@ -9264,6 +9309,17 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     if (_dynamicFunctors.Contains(fid))
                     {
                         GetOrCreateDynamicSlot(fid).Add(c);
+                        // ADR-023 — a CONSULT-borne clause is a mutation of the
+                        // dynamic predicate exactly like a runtime assertz, and
+                        // must invalidate the same things: the promoted IL
+                        // snapshot (evict), every live interpreter's
+                        // IlByFunctorId slot, the caller-inlined-snapshot
+                        // staleness set, the caches. Without this, Logtalk's
+                        // '$lgt_current_object_'/11 — whose registrations are
+                        // consulted generated facts, not runtime asserts — kept
+                        // serving a pre-consult snapshot under promotion and
+                        // the load failed silently on the missing objects.
+                        InvalidateDynamicCache(fid);
                         // ADR-023 priming — a `:- dynamic`/`:- visible`
                         // predicate declared WITH source clauses runs as its
                         // Tier-1 IL snapshot from the first call (evictable on
@@ -10396,6 +10452,13 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             _dynamicPredicateCache.Clear();
             _skipCompileMergedCache = null;
             _staticLink = null;
+            // The IL tier's promoted delegates are deliberately NOT evicted
+            // here: a delegate compiled under the previous derivation calls
+            // that derivation's '$disj_N' helper ids, and those stay
+            // resolvable forever through the late-helper registry
+            // (RegisterLateHelpers + TryMaterializeAssertHelper) — while a
+            // blanket eviction would unwire delegates whose resume markers
+            // are live in suspended frames ("no IL delegate is bound").
             allRewritten = new List<Clause>();
             userLocalsCache = null;
             moduleLocalsCache = new Dictionary<string, HashSet<int>>();
@@ -10679,6 +10742,11 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             allRewritten, skipCompileCache, unindexedFunctors, _literalPools,
             dynamicFunctors: _dynamicFunctors, failStubAddr: failStubAddr);
 
+        // Cross-activation helper visibility (the Logtalk-under-promotion fix):
+        // every helper compiled by this setup stays materializable on demand
+        // into any OTHER live activation (see TryMaterializeAssertHelper).
+        RegisterLateHelpers(module.Predicates);
+
         // Populate the dynamic cache with any newly-compiled dynamic
         // predicate whose bytecode is safe to reuse next query (no
         // pool-specific literal ids). A predicate is "dynamic" iff its
@@ -10780,6 +10848,27 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         // The static region links once at a fixed load offset (the prefix
         // length never varies) and is reused until the static program
         // changes — ConsultString / a bundle load null _staticLink.
+        //
+        // A compiled predicate must NEVER be silently dropped: when the static
+        // link is REUSED, any static-classified predicate absent from it (a
+        // MetaTransform helper freshly minted by a dynamic recompile — the
+        // '$disj_N' of a mutated predicate's new derivation, whose ids did not
+        // exist when the cached region was linked) is re-routed to the QUERY
+        // region so it still links and lands in the address map. Without this,
+        // the recompiled dynamic clause (linked on a persistent rebuild) calls
+        // — or meta-calls, via a findall collect-loop goal term — a helper
+        // nothing ever linked: existence_error('$disj_N'/K), hit by Logtalk
+        // under IL promotion.
+        if (_staticLink is { } cachedStatic)
+        {
+            for (int i = staticPreds.Count - 1; i >= 0; i--)
+            {
+                if (cachedStatic.Addresses.ContainsKey(staticPreds[i].FunctorId))
+                    continue;
+                queryPreds.Add(staticPreds[i]);
+                staticPreds.RemoveAt(i);
+            }
+        }
         var staticLink = _staticLink
             ?? (_staticLink = GetOrLinkStatic(staticPreds, prefix.Length));
 
@@ -11097,6 +11186,7 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
         var mutableSwitchTables =
             new List<Shumway.Core.SwitchTable>(linkResult.SwitchTables);
         engine.SwitchTables = mutableSwitchTables;
+        engine.ResolveLateHelper = fid => TryMaterializeAssertHelper(engine, fid);
 
         var interp = new BytecodeInterpreter(
             engine, module.StringLiterals, module.FloatLiterals,
@@ -11483,6 +11573,14 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
             }
             addrMap[fid] = addr;
             linked.Add((pred, addr));
+            // The compiled helper is kept host-side so ANOTHER live activation
+            // can materialize it on demand (see TryMaterializeAssertHelper):
+            // the asserted CLAUSE is visible to every activation through the
+            // shared ADR-015 chains, so its helper must be reachable from
+            // every activation too — this map + only this activation's map
+            // was the Logtalk-under-promotion existence_error. (Registered via
+            // RegisterLateHelpers so the bare alias is covered too.)
+            RegisterLateHelpers(new[] { pred });
         }
         var program = engine.CurrentProgram!;
         foreach (var (pred, addr) in linked)
@@ -11494,6 +11592,159 @@ public sealed class PrologEngine : Shumway.Builtins.IGlobalVarHost
                     : Shumway.Core.CallTarget.ForUndefined(site.CalleeFunctorId);
                 Shumway.Core.BytecodeIO.WriteInt32(program, operandPos, target);
             }
+    }
+
+    /// <summary>MetaTransform helper predicates by head fid — compiled at assert
+    /// time (<see cref="LinkRuntimeAssertHelpers"/>) or at a query setup's module
+    /// compile — kept so any LIVE activation can link one on demand
+    /// (<see cref="TryMaterializeAssertHelper"/>). Grows monotonically (helper ids
+    /// are never reused); each entry is a small one-or-two-clause predicate.</summary>
+    private readonly Dictionary<int, Shumway.Compiler.Wam.CompiledPredicate>
+        _runtimeAssertHelperPreds = new();
+
+    /// <summary>Whether a functor names a MetaTransform helper
+    /// (<c>[mod$]$disj_N</c> family) — the registry filter for
+    /// <see cref="RegisterLateHelpers"/>.</summary>
+    private static bool IsMetaHelperFunctorName(int fid)
+    {
+        var (atomId, _) = Shumway.Core.FunctorTable.Lookup(fid);
+        string? name = Shumway.Core.AtomTable.GetById(atomId)?.Name;
+        if (name is null) return false;
+        // MetaTransform helper names are '{prefix}${kind}_{id}' — after any
+        // module mangling, the segment following the LAST '$' is
+        // '<letters>_<digits>' (disj_12, catchrec_7, bagof_1739, …). Match the
+        // shape rather than an enumerated kind list, so a new helper kind can
+        // never silently fall outside the late-materialization registry.
+        int last = name.LastIndexOf('$');
+        if (last < 0 || last + 2 >= name.Length) return false;
+        // NEVER register the query-stub's own '$q…' helpers: their ids are
+        // deliberately REUSED query-to-query (MetaTransform.HelperPrefix "$q"),
+        // so a first-compile-wins registry would materialize a PREVIOUS query's
+        // body under the next query's name — silent wrong execution.
+        if (name[last + 1] == 'q') return false;
+        int i = last + 1;
+        int letters = 0;
+        while (i < name.Length && name[i] >= 'a' && name[i] <= 'z') { i++; letters++; }
+        if (letters == 0 || i >= name.Length || name[i] != '_') return false;
+        i++;
+        int digits = 0;
+        while (i < name.Length && name[i] >= '0' && name[i] <= '9') { i++; digits++; }
+        return digits > 0 && i == name.Length;
+    }
+
+    /// <summary>Registers every helper-shaped compiled predicate for on-demand
+    /// cross-activation materialization. First compile wins (ids are minted once,
+    /// so a fid's bytecode never legitimately changes). Each helper is ALSO
+    /// registered under its BARE (unmangled) functor: goal-as-data references —
+    /// the '$catchrec_N'(RecVars) recovery term '$catch_begin' stores, a
+    /// meta-called collect-loop goal — carry the bare name, which normally
+    /// resolves through the map's bare aliases but must resolve here too when
+    /// the asking activation never linked the helper.</summary>
+    private void RegisterLateHelpers(
+        IEnumerable<Shumway.Compiler.Wam.CompiledPredicate> preds)
+    {
+        foreach (var p in preds)
+        {
+            if (_runtimeAssertHelperPreds.ContainsKey(p.FunctorId)
+                || !IsMetaHelperFunctorName(p.FunctorId))
+                continue;
+            _runtimeAssertHelperPreds[p.FunctorId] = p;
+            var (atomId, arity) = Shumway.Core.FunctorTable.Lookup(p.FunctorId);
+            string? name = Shumway.Core.AtomTable.GetById(atomId)?.Name;
+            int dollar = name?.IndexOf('$') ?? -1;
+            if (name is not null && dollar > 0 && _modules.ContainsKey(name[..dollar]))
+            {
+                int bareFid = FunctorTable.Intern(
+                    AtomTable.Intern(name[(dollar + 1)..], permanent: true).Id, arity);
+                _runtimeAssertHelperPreds.TryAdd(bareFid, p);
+            }
+        }
+    }
+
+    /// <summary>The on-demand half of the ADR-015 visibility story for
+    /// runtime-assert helpers. An asserted clause is visible to EVERY live
+    /// activation through the shared dynamic chains — but its MetaTransform
+    /// helpers (<c>'$disj_N'</c>, <c>'$catchgoal_N'</c>, …) were linked only into
+    /// the ASSERTING activation's transient region and address map. A different
+    /// activation (the outer query suspended around a nested
+    /// consult-with-initialization — the Logtalk load shape) then runs the clause
+    /// and calls — or meta-calls, via a findall collect-loop goal term — a helper
+    /// its own map has never heard of. This materializes the compiled helper into
+    /// the asking activation, exactly like <see cref="MaterializeDynamicTrampoline"/>
+    /// does for freshly-promoted dynamics: append, relocate dispatch sites,
+    /// register, patch call sites (materializing callee helpers recursively —
+    /// registration-before-patch makes self/mutual recursion converge). Returns
+    /// the linked address, or -1 when the fid is not a known assert helper.</summary>
+    internal int TryMaterializeAssertHelper(Activation engine, int fid)
+    {
+        if (!_runtimeAssertHelperPreds.TryGetValue(fid, out var pred))
+        {
+            // Not an assert-time helper: a SETUP-minted one (the derivation of a
+            // NESTED query recompiled a mutated dynamic — or regenerated the
+            // statics — while THIS activation was suspended; its helpers were
+            // linked into that setup's regions only). Their ASTs are in the
+            // rewrite caches; compile the requested one on demand and memoize.
+            List<Clause>? clauses = null;
+            foreach (var entry in _dynamicRewriteCache.Values)
+            {
+                for (int i = 0; i < entry.HeadFids.Count; i++)
+                    if (entry.HeadFids[i] == fid)
+                        (clauses ??= new List<Clause>()).Add(entry.Clauses[i]);
+                if (clauses is not null) break;
+            }
+            if (clauses is null && _staticRewriteHeadFids is { } sh && sh.Contains(fid)
+                && _staticRewriteClauses is { } sc)
+            {
+                foreach (var c in sc)
+                    if (HeadFunctorIdOf(c) == fid)
+                        (clauses ??= new List<Clause>()).Add(c);
+            }
+            if (clauses is null) return -1;
+            pred = new Shumway.Compiler.Wam.PredicateCompiler
+                {
+                    EmitDebugInfo = _flags.EmitDebugInfo,
+                    DebugCodegen = _flags.DebugCodegen,
+                    DebugFileId = _debugFileId,
+                }.Compile(
+                clauses,
+                _literalPools.Strings, _literalPools.Floats, _literalPools.BigInts,
+                enableIndexing: false,
+                isDynamic: false);
+            _runtimeAssertHelperPreds[fid] = pred;
+        }
+        if (engine.CurrentProgram is null
+            || engine.CurrentFunctorAddresses is not Dictionary<int, int> addrMap)
+            return -1;
+        if (addrMap.TryGetValue(fid, out int existing)
+            && !Shumway.Core.CallTarget.IsUnresolved(existing)
+            && !Activation.IsResumeMarker(existing))
+            return existing;
+
+        int addr = engine.AppendCode(pred.Bytecode);
+        foreach (int siteRel in pred.DispatchSites)
+        {
+            int operandAbsPos = addr + siteRel;
+            int predLocalTarget = Shumway.Core.BytecodeIO.ReadInt32(
+                engine.CurrentProgram!, operandAbsPos);
+            Shumway.Core.BytecodeIO.WriteInt32(
+                engine.CurrentProgram!, operandAbsPos, addr + predLocalTarget);
+        }
+        addrMap[fid] = addr;   // before call-site patching: self-recursion lands here
+        foreach (var site in pred.CallSites)
+        {
+            if (!addrMap.TryGetValue(site.CalleeFunctorId, out int target)
+                || Shumway.Core.CallTarget.IsUnresolved(target))
+            {
+                int mat = TryMaterializeAssertHelper(engine, site.CalleeFunctorId);
+                target = mat >= 0
+                    ? mat
+                    : Shumway.Core.CallTarget.ForUndefined(site.CalleeFunctorId);
+            }
+            Shumway.Core.BytecodeIO.WriteInt32(
+                engine.CurrentProgram!, addr + site.OpcodeOffset + 1, target);
+        }
+        RefreshLiteralPoolsIfGrown(engine);
+        return addr;
     }
 
     /// <summary>Chunk 427 — refreshes the interpreter's literal pools only

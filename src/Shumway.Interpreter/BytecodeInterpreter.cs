@@ -327,6 +327,16 @@ public sealed class BytecodeInterpreter
                             _engine.SetPc(addr);   // run the callee's bytecode
                             continue;
                         }
+                        // Last chance: a MetaTransform helper whose delegate was
+                        // evicted and whose bytecode THIS activation never linked
+                        // (compiled by a different activation's setup/assert) —
+                        // materialize it on demand.
+                        int lateAddr = _engine.ResolveLateHelper?.Invoke(functorId) ?? -1;
+                        if (lateAddr >= 0)
+                        {
+                            _engine.SetPc(lateAddr);
+                            continue;
+                        }
                         // Chunk 417: honour the `unknown` flag (throws on error).
                         if (Shumway.Core.UnknownProcedure.Fails(_engine, functorId))
                         {
@@ -2590,6 +2600,10 @@ public sealed class BytecodeInterpreter
         if (addrs is not null && addrs.TryGetValue(functorId, out int addr))
             return RunGoalInEngine(code, addr);
 
+        // Last chance: materialize a cross-activation runtime-assert helper.
+        int lateAddr = _engine.ResolveLateHelper?.Invoke(functorId) ?? -1;
+        if (lateAddr >= 0) return RunGoalInEngine(code, lateAddr);
+
         // Chunk 417: honour the `unknown` flag (throws on error).
         return !Shumway.Core.UnknownProcedure.Fails(_engine, functorId);
     }
@@ -2794,6 +2808,10 @@ public sealed class BytecodeInterpreter
             return JumpToUserGoal(code, pc, address);
         }
 
+        // Last chance: materialize a cross-activation runtime-assert helper.
+        int lateHelper = _engine.ResolveLateHelper?.Invoke(functorId) ?? -1;
+        if (lateHelper >= 0) return JumpToUserGoal(code, pc, lateHelper);
+
         // No negative caching: an unresolved functor can become resolvable
         // later in the same query (chunk-207 auto-promotion).
         // Chunk 417: honour the `unknown` flag (throws on error).
@@ -2900,6 +2918,10 @@ public sealed class BytecodeInterpreter
             if (Activation.IsResumeMarker(latest))
                 return latest;
         }
+        // Last chance: a runtime-assert MetaTransform helper linked by a
+        // DIFFERENT activation — materialize it into this one on demand.
+        int late = _engine.ResolveLateHelper?.Invoke(fid) ?? -1;
+        if (late >= 0) return late;
         // Chunk 417: honour the `unknown` flag — error throws here,
         // fail/warning hand the caller the fail sentinel.
         if (Shumway.Core.UnknownProcedure.Fails(_engine, fid))

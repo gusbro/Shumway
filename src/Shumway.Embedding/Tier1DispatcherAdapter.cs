@@ -75,10 +75,23 @@ internal sealed class Tier1DispatcherAdapter : ITier1Dispatcher
         // emitted but we defend anyway).
         => _store.TryGetResumeWrapper(functorId);
 
+    // The store's eviction stamp this cache was built against. An eviction
+    // invalidates wrappers this address-keyed cache may hold (the store cannot
+    // reach them) — one int compare per dispatch, cache dropped when it moved.
+    private int _evictionStampSeen;
+
     public Func<Activation, bool>? OnDispatch(int targetAddress)
     {
         // Phase 18 chunk 202 hot path: a previously-resolved cache
-        // entry skips every lookup below.
+        // entry skips every lookup below — unless an eviction happened
+        // since the cache was filled (rare; assert/retract on a promoted
+        // dynamic), which drops the cache wholesale so a stale wrapper
+        // can never serve an evicted snapshot's answers.
+        if (_evictionStampSeen != _store.EvictionStamp)
+        {
+            _dispatchCache.Clear();
+            _evictionStampSeen = _store.EvictionStamp;
+        }
         if (_dispatchCache.TryGetValue(targetAddress, out var cached)) return cached;
 
         // Fast path: address has no associated predicate (it's a launcher

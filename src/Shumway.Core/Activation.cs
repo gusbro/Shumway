@@ -2421,6 +2421,13 @@ public sealed partial class Activation
     /// uses.</summary>
     public Func<int, string?>? ResolveAddressToLabel { get; set; }
 
+    /// <summary>Last-chance resolution of a functor the address map does not hold:
+    /// the host materializes a runtime-assert MetaTransform helper (compiled by a
+    /// DIFFERENT activation's assert — see PrologEngine.TryMaterializeAssertHelper)
+    /// into THIS activation on demand. Returns the linked address, or -1. Consulted
+    /// by the dispatchers right before raising existence_error.</summary>
+    public Func<int, int>? ResolveLateHelper { get; set; }
+
     /// <summary>Absolute byte position of the per-query fail-stub
     /// (ADR-015 chunk C step 4) — a tiny <c>call_builtin fail/0</c>
     /// emitted in the prefix. Dynamic predicates' last-clause chain

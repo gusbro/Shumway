@@ -158,8 +158,17 @@ public sealed class IlPromotionStore
     /// re-warms before re-snapshotting. Counts the eviction toward the churn limit
     /// only when a delegate was actually present (a real promote→evict cycle).
     /// A no-op for a predicate that was never promoted.</summary>
+    /// <summary>Rises on every eviction. Address-keyed dispatch caches OUTSIDE the
+    /// store (Tier1DispatcherAdapter's per-query cache) hold engine-lifetime
+    /// wrappers over delegates; eviction clears the store's own tables but cannot
+    /// reach those caches — so they compare this stamp per dispatch (one int) and
+    /// self-clear when it moved. THE Logtalk-under-promotion silent failure: a
+    /// cached wrapper kept serving an evicted dynamic snapshot's answers.</summary>
+    public int EvictionStamp { get; private set; }
+
     public void EvictDelegate(int functorId)
     {
+        EvictionStamp++;
         // Phase 33 L5 — any mutation breaks a churn-pinned predicate's
         // mutation-free streak, whether or not a delegate was present.
         _churnQuietCalls.Remove(functorId);
@@ -267,7 +276,8 @@ public sealed class IlPromotionStore
     private readonly HashSet<int> _pendingCompiles = new();
     private readonly ConcurrentQueue<CompletedCompile> _completedCompiles = new();
     private sealed record CompletedCompile(
-        int Fid, IlPredicateCompiler.PgoCompileResult? Result, int Stamp, string? Error);
+        int Fid, IlPredicateCompiler.PgoCompileResult? Result, int Stamp, string? Error,
+        bool IsDynamicSnapshot);
 
     // Per-fid mutation stamp: bumped by EvictDelegate on EVERY mutation, whether
     // or not a delegate was present, so a background compile of a dynamic
@@ -287,9 +297,12 @@ public sealed class IlPromotionStore
             }
             _mutationStamp.TryGetValue(c.Fid, out int now);
             if (now != c.Stamp) continue;   // mutated mid-compile: stale snapshot, re-warm
-            InstallDelegate(c.Fid, c.Result!.Value.Delegate);
+            var drainDel = c.IsDynamicSnapshot
+                ? GuardDynamicSnapshot(c.Fid, c.Result!.Value.Delegate)
+                : c.Result!.Value.Delegate;
+            InstallDelegate(c.Fid, drainDel);
             if (c.Result.Value.ProfileKey >= 0) _pgoProfileKeys[c.Fid] = c.Result.Value.ProfileKey;
-            OnPromotionInstalled?.Invoke(c.Fid, c.Result.Value.Delegate);
+            OnPromotionInstalled?.Invoke(c.Fid, drainDel);
         }
     }
 
@@ -463,20 +476,65 @@ public sealed class IlPromotionStore
                     functorId,
                     (IlPredicateCompiler.PgoCompileResult?)result,
                     stamp,
-                    error?.Message)));
+                    error?.Message,
+                    isDynamic)));
             return null;
         }
 
         var syncResult = RunOnLargeStack(() =>
             WithFloatPool(functorId, () =>
                 WithNativeInline(() => Compiler.CompileInstrumented(target, calleeMap))));
-        InstallDelegate(functorId, syncResult.Delegate);
+        var installedDel = isDynamic
+            ? GuardDynamicSnapshot(functorId, syncResult.Delegate)
+            : syncResult.Delegate;
+        InstallDelegate(functorId, installedDel);
         if (syncResult.ProfileKey >= 0)
             _pgoProfileKeys[functorId] = syncResult.ProfileKey;
         // Phase 33 L1 — let the engine patch this callee's remaining generic call
         // sites to CallIl/ExecuteIl for the rest of the running query.
-        OnPromotionInstalled?.Invoke(functorId, syncResult.Delegate);
-        return syncResult.Delegate;
+        OnPromotionInstalled?.Invoke(functorId, installedDel);
+        return installedDel;
+    }
+
+    /// <summary>ADR-023 — makes a dynamic-snapshot delegate SELF-GUARDING against
+    /// staleness: eviction removes it from every table, but a reference already
+    /// hoisted into a running frame (a region method's callee local, a threaded
+    /// resume) survives, and invoking a pre-mutation snapshot for a FRESH call
+    /// serves answers the logical update view forbids (Logtalk's create_object
+    /// registered an object the very next abolish_object could not see). The
+    /// guard: on a fresh entry (<c>clauseCursor == 0</c>) with the mutation stamp
+    /// moved, redirect to the live Tier-0 chain — SetPc + IlTailCallPending, the
+    /// tail-thread contract both dispatch-loop invocation sites honour. A RESUME
+    /// (<c>cursor &gt; 0</c>) deliberately keeps running the old snapshot: a call
+    /// that began before the mutation SHOULD enumerate the database as of its
+    /// call — that IS the logical update view.</summary>
+    private PredicateDelegate GuardDynamicSnapshot(int fid, PredicateDelegate inner)
+    {
+        _mutationStamp.TryGetValue(fid, out int stampAtInstall);
+        return (engine, clauseCursor) =>
+        {
+            if (clauseCursor == 0)
+            {
+                _mutationStamp.TryGetValue(fid, out int now);
+                if (now != stampAtInstall
+                    && engine.CurrentFunctorAddresses is { } map
+                    && map.TryGetValue(fid, out int addr)
+                    && !CallTarget.IsUnresolved(addr)
+                    && !Activation.IsResumeMarker(addr))
+                {
+                    // Self-evict: a stale snapshot must not keep answering — and
+                    // must not keep REDIRECTING either (a permanently-redirecting
+                    // delegate is pure overhead on every call). One redirect,
+                    // then the ordinary machinery re-warms and re-promotes a
+                    // fresh snapshot (or churn-pins a mutation-hot predicate).
+                    EvictDelegate(fid);
+                    engine.SetPc(addr);
+                    engine.IlTailCallPending = true;
+                    return true;
+                }
+            }
+            return inner(engine, clauseCursor);
+        };
     }
 
     /// <summary>Chunk 76 — phase-2 PGO pass. For every promoted,
