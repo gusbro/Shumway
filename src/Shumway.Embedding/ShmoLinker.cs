@@ -733,7 +733,8 @@ public static class ShmoLinker
                         new List<PredicateRef>(obj.EnsureLinked),
                         new List<QualifiedPredicateRef>(), ShmoBuildMode.Release, perrs,
                         arityCompat: obj.ArityCompat,
-                        operatorDefs: obj.Operators);   // preserve op/3 defs
+                        operatorDefs: obj.Operators,   // preserve op/3 defs
+                        multifileSet: MultifileSeedSet(obj));
                     if (recompiled.Success && recompiled.Object is { } robj
                         && robj.Bytecode.Length > 0)
                     {
@@ -1150,7 +1151,8 @@ public static class ShmoLinker
                 new List<PredicateRef>(obj.EnsureLinked),
                 new List<QualifiedPredicateRef>(), obj.BuildMode, errors,
                 arityCompat: obj.ArityCompat,
-                operatorDefs: obj.Operators);   // preserve op/3 defs
+                operatorDefs: obj.Operators,   // preserve op/3 defs
+                multifileSet: MultifileSeedSet(obj));
             if (!res.Success || res.Object is null)
             {
                 emit(LinkSeverity.Warning, "lto_unfold_recompile_failed",
@@ -1270,7 +1272,8 @@ public static class ShmoLinker
                 new List<PredicateRef>(obj.EnsureLinked),
                 new List<QualifiedPredicateRef>(), obj.BuildMode, errors,
                 arityCompat: obj.ArityCompat,
-                operatorDefs: obj.Operators);
+                operatorDefs: obj.Operators,
+                multifileSet: MultifileSeedSet(obj));
             if (!res.Success || res.Object is null)
             {
                 emit(LinkSeverity.Warning, "lto_cut_elision_recompile_failed",
@@ -1417,6 +1420,20 @@ public static class ShmoLinker
             VerboseOut = verboseOut,
             StripSource = stripSource,
         });
+    }
+
+    /// <summary>The multifile indicators of an object, recovered from its
+    /// seed flags — so a linker recompile (which re-enters CompileFromParts
+    /// from decoded clauses) re-marks them and the flag survives into the
+    /// recompiled object's seeds. Defined visibility alone can't tell a
+    /// multifile predicate from a plain dynamic one.</summary>
+    private static HashSet<PredicateRef>? MultifileSeedSet(ShmoObject obj)
+    {
+        HashSet<PredicateRef>? set = null;
+        foreach (var seed in obj.DynamicSeeds)
+            if (seed.Multifile)
+                (set ??= new HashSet<PredicateRef>()).Add(seed.Indicator);
+        return set;
     }
 
     private static string? ResolveDefiningModule(PredicateRef p,
@@ -1772,6 +1789,7 @@ public static class ShmoLinker
             {
                 WriteString(bw, seed.Indicator.Name);
                 bw.Write((uint)seed.Indicator.Arity);
+                bw.Write(seed.Multifile);
                 bw.Write((uint)seed.EncodedClauses.Count);
                 foreach (var enc in seed.EncodedClauses)
                 {

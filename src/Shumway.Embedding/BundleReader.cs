@@ -108,6 +108,7 @@ public static class BundleReader
             {
                 string seedName = ReadLengthPrefixedUtf8(br);
                 int seedArity = (int)br.ReadUInt32();
+                bool seedMultifile = br.ReadBoolean();
                 uint clauseCount = br.ReadUInt32();
                 var encoded = new byte[clauseCount][];
                 for (uint k = 0; k < clauseCount; k++)
@@ -121,7 +122,7 @@ public static class BundleReader
                     encoded[k] = bytes;
                 }
                 dynamicSeeds.Add(new ShmoDynamicSeed(
-                    new PredicateRef(seedName, seedArity), encoded));
+                    new PredicateRef(seedName, seedArity), encoded, seedMultifile));
             }
             // Native-blocks trailer (ADR-022).
             var nativeBlocks = ReadNativeBlocks(br);

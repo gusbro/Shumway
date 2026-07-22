@@ -81,6 +81,7 @@ public static class ShmoWriter
         {
             WriteLengthPrefixedUtf8(bw, seed.Indicator.Name);
             bw.Write((uint)seed.Indicator.Arity);
+            bw.Write(seed.Multifile);
             bw.Write((uint)seed.EncodedClauses.Count);
             foreach (var encoded in seed.EncodedClauses)
             {

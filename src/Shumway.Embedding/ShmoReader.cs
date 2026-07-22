@@ -129,6 +129,7 @@ public static class ShmoReader
         {
             string name = ReadLengthPrefixedUtf8(br);
             int arity = (int)br.ReadUInt32();
+            bool multifile = br.ReadBoolean();
             uint clauseCount = br.ReadUInt32();
             var encoded = new byte[clauseCount][];
             for (uint j = 0; j < clauseCount; j++)
@@ -142,7 +143,7 @@ public static class ShmoReader
                 encoded[j] = bytes;
             }
             dynamicSeeds[i] = new ShmoDynamicSeed(
-                new PredicateRef(name, arity), encoded);
+                new PredicateRef(name, arity), encoded, multifile);
         }
 
         // clauseTerms trailer (the LTO channel).

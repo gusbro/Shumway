@@ -282,9 +282,17 @@ public sealed class ShmoDynamicSeed
 {
     public PredicateRef Indicator { get; }
     public IReadOnlyList<byte[]> EncodedClauses { get; }
-    public ShmoDynamicSeed(PredicateRef indicator, IReadOnlyList<byte[]> encodedClauses)
+    /// <summary>True for a <c>:- multifile</c> predicate. Its clauses are
+    /// module-rewritten at COMPILE time under their origin module, so the
+    /// load path must NOT record a per-fid seed module for them — several
+    /// modules contribute to one fid, and a single module context would
+    /// rewrite the other contributors' clauses under the wrong locals.</summary>
+    public bool Multifile { get; }
+    public ShmoDynamicSeed(PredicateRef indicator, IReadOnlyList<byte[]> encodedClauses,
+        bool multifile = false)
     {
         Indicator = indicator;
         EncodedClauses = encodedClauses;
+        Multifile = multifile;
     }
 }

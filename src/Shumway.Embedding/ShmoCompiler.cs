@@ -230,6 +230,7 @@ public static class ShmoCompiler
             : moduleNameFallback;
         var publicSet = new HashSet<PredicateRef>();
         var dynamicSet = new HashSet<PredicateRef>();
+        var multifileSet = new HashSet<PredicateRef>();
         var nativeSet = new HashSet<PredicateRef>();
         var ensureLinked = new List<PredicateRef>();
         var tabledSet = new HashSet<PredicateRef>();
@@ -283,7 +284,8 @@ public static class ShmoCompiler
                 try
                 {
                     ProcessDirective(d.Args[0], ref moduleName,
-                        publicSet, dynamicSet, ensureLinked, tabledSet, nativeSet);
+                        publicSet, dynamicSet, multifileSet, ensureLinked,
+                        tabledSet, nativeSet);
                 }
                 catch (InvalidOperationException ex)
                 {
@@ -328,7 +330,7 @@ public static class ShmoCompiler
             source, rawClauses, publicSet, dynamicSet, ensureLinked,
             qualifiedRefs, buildMode, errors, warnings, arityEverOn, tabledSet,
             nativeDecls.Length > 0 ? nativeDecls.ToString() : null, nativeSet,
-            operatorDefs);
+            operatorDefs, multifileSet);
     }
 
     /// <summary>the compile back-half, shared by
@@ -355,7 +357,8 @@ public static class ShmoCompiler
         HashSet<PredicateRef>? tabledSet = null,
         string? nativeDecls = null,
         HashSet<PredicateRef>? nativeSet = null,
-        IReadOnlyList<ShmoOperatorDef>? operatorDefs = null)
+        IReadOnlyList<ShmoOperatorDef>? operatorDefs = null,
+        HashSet<PredicateRef>? multifileSet = null)
     {
         // Partition raw clauses: dynamic-head ones become DynamicSeeds
         // (RAW), the rest go through the same DcgTransform +
@@ -729,7 +732,24 @@ public static class ShmoCompiler
 
         var dynamicSeeds = new List<ShmoDynamicSeed>(dynamicSeedAccum.Count);
         foreach (var (ind, encodedList) in dynamicSeedAccum)
-            dynamicSeeds.Add(new ShmoDynamicSeed(ind, encodedList));
+        {
+            // A multifile seed is pre-mangled HERE, under its origin module —
+            // several modules contribute clauses to the same fid, so the
+            // load-time per-fid seed-module rewrite (one module context for
+            // ALL of a fid's clauses) cannot be used. The rewrite is
+            // idempotent for the linker's recompile paths: an already-mangled
+            // `module$name` never matches a local fid again.
+            if (multifileSet?.Contains(ind) == true)
+            {
+                var raw = dynamicClauseAccum[ind];
+                var pre = new List<byte[]>(raw.Count);
+                foreach (var c in raw)
+                    pre.Add(TermCodec.EncodeClause(ModuleRewrite.Rewrite(c, rewriteCtx)));
+                dynamicSeeds.Add(new ShmoDynamicSeed(ind, pre, multifile: true));
+            }
+            else
+                dynamicSeeds.Add(new ShmoDynamicSeed(ind, encodedList));
+        }
 
         // the LTO channel: persist the RAW static clauses
         // (pre-unfold, pre-pipeline) so the linker can re-run the full
@@ -785,6 +805,7 @@ public static class ShmoCompiler
     private static bool ProcessDirective(Term body, ref string moduleName,
         HashSet<PredicateRef> publicSet,
         HashSet<PredicateRef> dynamicSet,
+        HashSet<PredicateRef> multifileSet,
         List<PredicateRef> ensureLinked,
         HashSet<PredicateRef> tabledSet,
         HashSet<PredicateRef> nativeSet)
@@ -819,6 +840,22 @@ public static class ShmoCompiler
         {
             foreach (var spec in ReadFunctorSpecs(dyn.Args[0], dyn.Functor))
                 dynamicSet.Add(spec);
+            return false;
+        }
+        // `:- multifile foo/N` — several modules contribute clauses to one
+        // predicate. Multifile implies dynamic (matching the consult path:
+        // MarkDynamic + clause store), so visibility is Dynamic and the
+        // linker's globalDynamic namespace — a module LIST per indicator —
+        // merges the contributors with no duplicate_public error. The
+        // clauses are pre-mangled under THIS module at compile time (see
+        // CompileFromParts) so the load path needs no per-fid seed module.
+        if (body is CompoundTerm mf && mf.Functor == "multifile" && mf.Args.Length == 1)
+        {
+            foreach (var spec in ReadFunctorSpecs(mf.Args[0], "multifile"))
+            {
+                multifileSet.Add(spec);
+                dynamicSet.Add(spec);
+            }
             return false;
         }
         // :- ensure_linked(Indicator) — GNU-Prolog-style hint that the

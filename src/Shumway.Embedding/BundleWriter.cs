@@ -196,6 +196,7 @@ public static class BundleWriter
             {
                 WriteLengthPrefixedUtf8(bw, seed.Indicator.Name);
                 bw.Write((uint)seed.Indicator.Arity);
+                bw.Write(seed.Multifile);
                 bw.Write((uint)seed.EncodedClauses.Count);
                 foreach (var enc in seed.EncodedClauses)
                 {

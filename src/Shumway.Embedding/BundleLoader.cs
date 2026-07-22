@@ -1144,8 +1144,12 @@ internal sealed class BundleLoader
             // rehydrated clauses must run under the SAME module context
             // (module name + that module's locals) or a body call to a
             // module-local predicate stays bare while its target is
-            // `module$name`-mangled.
-            if (entry.ModuleName != PrologEngine.DefaultModuleName)
+            // `module$name`-mangled. NOT for multifile seeds: their clauses
+            // were pre-mangled at compile time under their origin module,
+            // and one fid holds several modules' contributions — a single
+            // seed module would rewrite the other contributors' clauses
+            // under the wrong locals.
+            if (entry.ModuleName != PrologEngine.DefaultModuleName && !seed.Multifile)
                 E._dynamicSeedModule[fid] = entry.ModuleName;
         }
 
