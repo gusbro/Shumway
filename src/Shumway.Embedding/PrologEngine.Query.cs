@@ -94,7 +94,7 @@ public sealed partial class PrologEngine
             // The activation is dead — the query failed, ran out of solutions, or the
             // caller stopped asking. Same as a yield, and more final.
             host.DebugSession?.OnLeaveProlog(engine);
-            host.ReturnHeapBuffer(engine);
+            host._heapPool.Return(engine);
         }
     }
 
@@ -1291,7 +1291,7 @@ public sealed partial class PrologEngine
         };
         // Heap-buffer pool: seed the fresh activation with the recycled
         // buffer (if any) BEFORE anything materializes onto the heap.
-        AdoptPooledHeap(engine);
+        _heapPool.Adopt(engine);
         // the persistent buffer is over-allocated, so the
         // engine's ProgramLength must reflect the live region (not the
         // raw byte[] capacity) for AppendCode's offset accounting. The
