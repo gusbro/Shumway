@@ -1078,6 +1078,90 @@ public static partial class MetaBuiltins
         }
     }
 
+    /// <summary><c>term_attvars(+Term, -Vars)</c> — unifies <c>Vars</c> with
+    /// the list of the distinct attributed variables reachable from
+    /// <c>Term</c>, first-occurrence order. The list holds the REAL
+    /// variables (references to their heap cells), not copies — binding one
+    /// of them fires its hooks.</summary>
+    public static bool TermAttvars(Activation engine)
+    {
+        var attvars = new System.Collections.Generic.List<int>();
+        var seen = new System.Collections.Generic.HashSet<int>();
+        CollectAttvars(engine, engine.GetRegister(0), attvars, seen);
+        return engine.UnifyRegisterWithHeapAt(1, BuildRefList(engine, attvars));
+    }
+
+    /// <summary><c>'$dif_check'(X, Y, Out)</c> — the C# core of
+    /// <c>dif/2</c>. Trial-unifies X and Y (fully rolled back, queued
+    /// hook wakeups included):
+    /// not unifiable → <c>Out = none</c> (the disequality holds forever);
+    /// unifiable with no bindings → the terms are identical, FAIL;
+    /// unifiable via bindings → <c>Out</c> is the list of the real
+    /// variables the trial bound — the suspension points the library
+    /// watches to re-check the disequality.</summary>
+    public static bool DifCheck(Activation engine)
+    {
+        if (!engine.TrialUnifyCollectingBoundVars(0, 1, out var boundVars))
+            return engine.UnifyRegisterWithCell(2,
+                Cell.Atom(AtomTable.Intern("none", permanent: true).Id));
+        if (boundVars.Count == 0) return false;
+        return engine.UnifyRegisterWithHeapAt(2, BuildRefList(engine, boundVars));
+    }
+
+    /// <summary><c>'$attv_snapshot'(-S)</c> — S is an opaque snapshot of the
+    /// set of attributed-variable homes known to the engine right now. The
+    /// C# half of <c>call_residue_vars/2</c>, paired with
+    /// <c>'$attv_new_since'/2</c>.</summary>
+    public static bool AttvSnapshot(Activation engine)
+    {
+        var set = new System.Collections.Generic.HashSet<int>(
+            engine.AttrTableKeysSnapshot());
+        return engine.UnifyRegisterWithCell(0, engine.MakeForeign(set));
+    }
+
+    /// <summary><c>'$attv_new_since'(+S, -Vars)</c> — Vars is the list of
+    /// the variables that gained attributes after snapshot <c>S</c> was
+    /// taken and are still unbound attributed variables now.</summary>
+    public static bool AttvNewSince(Activation engine)
+    {
+        var snapshot = engine.AsForeign<System.Collections.Generic.HashSet<int>>(
+                engine.GetRegister(0) is { Tag: Tag.Ref } r
+                    ? engine.GetHeap(engine.Deref(r.AsHeapIndex))
+                    : engine.GetRegister(0))
+            ?? throw new Shumway.Core.PrologRuntimeException("type_error", "attv_snapshot");
+        var fresh = new System.Collections.Generic.List<int>();
+        foreach (int addr in engine.AttrTableKeysSnapshot())
+            if (!snapshot.Contains(addr) && engine.IsAttVarAt(addr))
+                fresh.Add(addr);
+        fresh.Sort();   // stable first-created-first order (heap addresses grow)
+        return engine.UnifyRegisterWithHeapAt(1, BuildRefList(engine, fresh));
+    }
+
+    /// <summary>Builds a proper heap list whose elements are references to
+    /// the given heap addresses (the real cells — unbound/attributed
+    /// variables stay themselves) and returns the heap index of its
+    /// head.</summary>
+    private static int BuildRefList(Activation engine,
+        System.Collections.Generic.List<int> addrs)
+    {
+        int n = addrs.Count;
+        if (n == 0)
+        {
+            int e = engine.AllocateHeap(1);
+            engine.SetHeap(e, Cell.Atom(AtomTable.EmptyListId));
+            return e;
+        }
+        int start = engine.AllocateHeap(2 * n + 1);
+        for (int i = 0; i < n; i++)
+        {
+            int lisIdx = start + 2 * i;
+            engine.SetHeap(lisIdx, Cell.Lis(lisIdx + 1));
+            engine.SetHeap(lisIdx + 1, Cell.Ref(addrs[i]));
+        }
+        engine.SetHeap(start + 2 * n, Cell.Atom(AtomTable.EmptyListId));
+        return start;
+    }
+
     /// <summary>Builds a proper-list AST term from the given items.</summary>
     private static Term MakeListTerm(System.Collections.Generic.List<Term> items)
     {

@@ -51,6 +51,12 @@ public static partial class MetaBuiltins
         BuiltinsRegistry.Register("copy_term", 2, CopyTerm,
             Term, "copy_term(+Term, -Copy)", "Copies a term with fresh variables.");
         BuiltinsRegistry.Register("$copy_term_3_prep", 3, CopyTerm3Prep);
+        BuiltinsRegistry.Register("term_attvars", 2, TermAttvars,
+            Term, "term_attvars(+Term, -Vars)",
+            "Unifies Vars with the attributed variables reachable from Term.");
+        BuiltinsRegistry.Register("$dif_check", 3, DifCheck);
+        BuiltinsRegistry.Register("$attv_snapshot", 1, AttvSnapshot);
+        BuiltinsRegistry.Register("$attv_new_since", 2, AttvNewSince);
 
         BuiltinsRegistry.Register("call", 1, Call1,
             Control, "call(:Goal)", "Calls a goal.");

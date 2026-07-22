@@ -69,6 +69,7 @@ internal static class Prelude
         :- public false/0.
         :- public once/1.
         :- public ignore/1.
+        :- public call_residue_vars/2.
         :- public time/1.
         :- public chdir/1.
         :- public append/2.
@@ -519,6 +520,12 @@ internal static class Prelude
 
         %! ignore(:Goal) | Control | Runs Goal, succeeding whether or not Goal does.
         ignore(Goal) :- ( call(Goal) -> true ; true ).
+
+        %! call_residue_vars(:Goal, -Vars) | Attributed variables | Runs Goal, then unifies Vars with the attributed variables created during Goal that are still constrained (carry residual attributes). Needs an attribute library (e.g. use_module(library(coroutining)) for dif/2) to produce any.
+        call_residue_vars(Goal, Vars) :-
+            '$attv_snapshot'(S),
+            call(Goal),
+            '$attv_new_since'(S, Vars).
 
         %! time(:Goal) | Control | Calls Goal like call/1 and prints a per-answer resource report (SWI-style): inferences (Tier-0 goal dispatches), elapsed seconds, heap cells allocated, and Lips. Non-determinism is preserved - each further answer prints the cost since the previous one, and exhausting Goal prints a final report before failing. Under Tier-1 IL promotion the inference count undercounts (intra-region calls are raw branches); the REPL's default Tier-0 execution reports exact numbers.
         time(Goal) :-

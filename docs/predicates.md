@@ -86,6 +86,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `string_term(?Atom, ?Term)` | Bidirectional: parses Atom as a Prolog term (binding Term), or renders Term using write/1 form (binding Atom). 'string' in Arity-Prolog terminology means atom — the textual representation is interned as an atom, not stored as a Shumway StringTerm. |
 | `string_termq(?Atom, ?Term)` | writeq-style variant of string_term/2: atoms / functors are quoted when needed so the rendered atom re-parses to the same term. Equivalent to term_to_atom/2. |
 | `subsumes_term(@General, @Specific)` | Succeeds if General subsumes Specific (Specific is an instance of General) without binding any variable of either term. |
+| `term_attvars(+Term, -Vars)` | Unifies Vars with the attributed variables reachable from Term. |
 | `term_to_atom(?Term, ?Atom)` | Converts between a term and its textual atom representation. |
 | `term_variables(+Term, -Variables)` | Unifies Variables with the list of distinct unbound variables of Term, in first-occurrence (depth-first, left-to-right) order (ISO §8.5.5). |
 
@@ -255,6 +256,7 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 
 | Predicate | Description |
 | --- | --- |
+| `call_residue_vars(:Goal, -Vars)` | Runs Goal, then unifies Vars with the attributed variables created during Goal that are still constrained (carry residual attributes). Needs an attribute library (e.g. use_module(library(coroutining)) for dif/2) to produce any. |
 | `del_attr(+Var, +Module)` | Removes a module's attribute from a variable. |
 | `get_attr(+Var, +Module, -Value)` | Reads a module's attribute from a variable. |
 | `put_attr(+Var, +Module, +Value)` | Attaches (or replaces) a module's attribute on a variable. |
@@ -414,6 +416,14 @@ Each template names its parameters and their mode: `+` bound at call, `-` an out
 | `#==>(+Constraint1, +Constraint2)` | Constraint1 implies Constraint2. |
 | `#\(+Constraint)` | The constraint does not hold (negation). |
 | `#\/(+Constraint1, +Constraint2)` | At least one constraint holds (disjunction). |
+
+## Coroutining
+
+| Predicate | Description |
+| --- | --- |
+| `dif(?X, ?Y)` | Constrains X and Y to be different: fails when they become identical, succeeds once they cannot unify. |
+| `freeze(?Var, :Goal)` | Delays Goal until Var is bound; runs it at once when Var is already bound. |
+| `frozen(?Var, -Goal)` | Unifies Goal with the conjunction of goals delayed on Var (true when none). |
 
 ## Global variables
 

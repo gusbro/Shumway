@@ -33,6 +33,7 @@ public static class UnifyBuiltins
         int savedBindingTrail = engine.BindingTrailTop;
         int savedExtraTrail = engine.ExtraTrailTop;
         int savedHb = engine.Hb;
+        int savedWakeups = engine.PendingWakeupCount;
 
         // Push Hb up to the current heap top so any binding made by the trial
         // unify is trailed — even bindings to "old" variables get trail
@@ -43,10 +44,14 @@ public static class UnifyBuiltins
 
         // Unwind any bindings (whether the unify succeeded or partially
         // failed). Restore the heap top so trial-allocated cells are released,
-        // and put Hb back to its original value.
+        // and put Hb back to its original value. Wakeups the trial queued by
+        // binding an attributed variable are discarded with the bindings —
+        // running them would fire verify_attributes/4 for a binding that no
+        // longer exists.
         engine.UnwindTrails(savedBindingTrail, savedExtraTrail);
         engine.SetHeapTop(savedHeapTop);
         engine.SetHb(savedHb);
+        engine.TruncatePendingWakeups(savedWakeups);
 
         return !unified;
     }

@@ -77,6 +77,7 @@ public static class PredicateDoc
                 entries.Add(new Entry(b.Category, b.Name, b.Arity, b.Template, b.Summary));
         CollectDocComments(Prelude.Source, entries);
         CollectDocComments(Clpfd.Source, entries);
+        CollectDocComments(Coroutining.Source, entries);
 
         return Render(entries);
     }

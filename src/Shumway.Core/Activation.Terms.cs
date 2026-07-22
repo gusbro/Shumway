@@ -469,6 +469,22 @@ public sealed partial class Activation
     /// <summary>Number of attribute records allocated — diagnostic surface.</summary>
     internal int AttrTableCount => _attrTable.Count;
 
+    /// <summary>A snapshot of the attribute table's keys — the heap homes of
+    /// every variable that carries (or once carried; entries survive
+    /// binding) attributes. <c>call_residue_vars/2</c> diffs two snapshots.
+    /// Addresses are stable across the diff: the heap GC stands down while
+    /// the attribute table is non-empty.</summary>
+    public int[] AttrTableKeysSnapshot()
+    {
+        var keys = new int[_attrTable.Count];
+        _attrTable.Keys.CopyTo(keys, 0);
+        return keys;
+    }
+
+    /// <summary>True when the heap cell at <paramref name="addr"/> is an
+    /// (unbound) attributed variable.</summary>
+    public bool IsAttVarAt(int addr) => GetHeap(addr).Tag == Tag.AttVar;
+
     /// <summary>Attaches (or replaces) the attribute for
     /// <paramref name="moduleId"/> on the variable at
     /// <paramref name="varAddr"/>, whose value lives at
@@ -1407,6 +1423,126 @@ public sealed partial class Activation
     /// <summary>Discards every queued wakeup. Called by the interpreter
     /// on backtracking — wakeups belong to the abandoned computation.</summary>
     public void ClearPendingWakeups() => _pendingWakeups.Clear();
+
+    /// <summary>The number of queued wakeups — snapshot before a trial
+    /// unification so <see cref="TruncatePendingWakeups"/> can discard the
+    /// wakeups the trial queued after its bindings are unwound.</summary>
+    public int PendingWakeupCount => _pendingWakeups.Count;
+
+    /// <summary>Discards the wakeups queued after <paramref name="count"/>
+    /// was captured. A trial unification (<c>\=/2</c>, <c>dif/2</c>) unwinds
+    /// its bindings, so running the hooks it queued would fire
+    /// <c>verify_attributes/4</c> for bindings that no longer exist.</summary>
+    public void TruncatePendingWakeups(int count)
+    {
+        if (_pendingWakeups.Count > count)
+            _pendingWakeups.RemoveRange(count, _pendingWakeups.Count - count);
+    }
+
+    /// <summary>Trial-unifies the terms in registers <paramref name="regA"/>
+    /// and <paramref name="regB"/>, then rolls everything back — bindings,
+    /// heap top, Hb and any attribute-hook wakeups the trial queued. Returns
+    /// false when the terms cannot unify. When they can,
+    /// <paramref name="unifierVars"/> receives the distinct heap addresses of
+    /// every real variable participating in the unifier: the variables the
+    /// trial bound PLUS the unbound variables inside the values they were
+    /// bound to. Both sides matter — a <c>dif/2</c> suspension attributes
+    /// every one of them, because a plain variable aliasing to an attributed
+    /// one fires no hook (the attvar survives), so leaving the value-side
+    /// variable plain would let the pair become identical silently. An empty
+    /// list means the terms are already identical.</summary>
+    public bool TrialUnifyCollectingBoundVars(int regA, int regB,
+        out List<int> unifierVars)
+    {
+        int savedHeapTop = _heapTop;
+        int savedBindingTrail = _bindingTrailTop;
+        int savedExtraTrail = _extraTrailTop;
+        int savedHb = _hb;
+        int savedWakeups = _pendingWakeups.Count;
+
+        // Hb at the heap top makes every trial binding trail — even to "old"
+        // variables — which is both what the unwind needs and what lets the
+        // trail double as the record of WHICH variables the trial bound.
+        SetHb(_heapTop);
+        bool unified = UnifyRegisters(regA, regB);
+
+        unifierVars = new List<int>();
+        if (unified)
+        {
+            var seen = new HashSet<int>();
+            int firstBoundValue = unifierVars.Count;   // == 0; kept for clarity
+            for (int i = savedBindingTrail; i < _bindingTrailTop; i++)
+            {
+                int addr = _bindingTrail[i];
+                if (addr < savedHeapTop && seen.Add(addr)) unifierVars.Add(addr);
+            }
+            // Attributed variables bind via a ValueChange entry carrying the
+            // original ATTVAR cell, not a plain binding-trail address.
+            for (int i = savedExtraTrail; i < _extraTrailTop; i++)
+            {
+                ref var e = ref _extraTrail[i];
+                if (e.Type == TrailType.ValueChange && e.OldValue.Tag == Tag.AttVar
+                    && e.HeapIdx < savedHeapTop && seen.Add(e.HeapIdx))
+                    unifierVars.Add(e.HeapIdx);
+            }
+            // Value-side variables — walked BEFORE the unwind, while the
+            // bindings are still in place. The walk appends to unifierVars;
+            // the snapshot bound keeps it over the trial-bound vars only.
+            // Separate visited set for structure cells: a var home can BE a
+            // list-pair head slot, and sharing the set would skip that pair.
+            int boundCount = unifierVars.Count;
+            var visited = new HashSet<int>();
+            for (int i = firstBoundValue; i < boundCount; i++)
+                CollectUnboundVars(GetHeap(unifierVars[i]), savedHeapTop,
+                    unifierVars, seen, visited);
+        }
+
+        UnwindTrails(savedBindingTrail, savedExtraTrail);
+        SetHeapTop(savedHeapTop);
+        SetHb(savedHb);
+        TruncatePendingWakeups(savedWakeups);
+        return unified;
+    }
+
+    /// <summary>Appends to <paramref name="into"/> the distinct unbound
+    /// variables (plain or attributed) reachable from <paramref name="cell"/>
+    /// that live below <paramref name="heapLimit"/>. The shared visited set
+    /// also stops cyclic terms.</summary>
+    private void CollectUnboundVars(Cell cell, int heapLimit,
+        List<int> into, HashSet<int> seen, HashSet<int> visited)
+    {
+        while (cell.Tag == Tag.Ref)
+        {
+            int addr = Deref(cell.AsHeapIndex);
+            Cell at = GetHeap(addr);
+            if (at.Tag == Tag.Ref && at.AsHeapIndex == addr)
+            {
+                if (addr < heapLimit && seen.Add(addr)) into.Add(addr);
+                return;
+            }
+            cell = at;
+        }
+        switch (cell.Tag)
+        {
+            case Tag.AttVar:
+                int va = cell.AsHeapIndex;
+                if (va < heapLimit && seen.Add(va)) into.Add(va);
+                break;
+            case Tag.Str:
+                int fIdx = cell.AsHeapIndex;
+                if (!visited.Add(fIdx)) break;
+                var (_, arity) = FunctorTable.Lookup(GetHeap(fIdx).AsFunctorId);
+                for (int i = 0; i < arity; i++)
+                    CollectUnboundVars(GetHeap(fIdx + 1 + i), heapLimit, into, seen, visited);
+                break;
+            case Tag.Lis:
+                int h = cell.AsHeapIndex;
+                if (!visited.Add(h)) break;
+                CollectUnboundVars(GetHeap(h), heapLimit, into, seen, visited);
+                CollectUnboundVars(GetHeap(h + 1), heapLimit, into, seen, visited);
+                break;
+        }
+    }
 
     /// <summary>Returns the queued wakeups and empties the queue. The
     /// interpreter drains them at a goal boundary, building a

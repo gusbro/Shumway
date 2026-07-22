@@ -27,13 +27,24 @@ public sealed partial class PrologEngine
     /// through the <c>{Constraint}</c> wrapper. CLP(R) is opt-in: an engine
     /// that never calls this carries none of the library's weight.
     ///
-    /// <para>CLP(R) and CLP(FD) both define a <c>verify_attributes/4</c>
-    /// hook as a public predicate, so for now only one of the two may be
-    /// loaded into a given engine.</para></summary>
+    /// <para>CLP(R) and CLP(FD) can share an engine — both declare their
+    /// <c>verify_attributes/4</c> hook <c>:- multifile</c> — as long as no
+    /// variable carries both libraries' constraints.</para></summary>
     public void UseClpr()
     {
         ConsultString(Clpr.Source);
         MarkModuleNonDebuggable(Clpr.ModuleName);   // ADR-035 — a library, not the user's code
+    }
+
+    /// <summary>Loads the coroutining library into this engine:
+    /// <c>freeze/2</c>, <c>frozen/2</c> and the <c>dif/2</c> disequality
+    /// constraint. Opt-in like the CLP libraries, and built on the same
+    /// multifile <c>verify_attributes/4</c> hook, so it coexists with
+    /// CLP(FD)/CLP(R) on one engine.</summary>
+    public void UseCoroutining()
+    {
+        ConsultString(Coroutining.Source);
+        MarkModuleNonDebuggable(Coroutining.ModuleName);   // ADR-035 — a library, not the user's code
     }
 
     // Compatibility libraries loaded on demand by use_module(library(Name)),
@@ -74,6 +85,7 @@ public sealed partial class PrologEngine
             {
                 case "clpfd": UseClpfd(); return;
                 case "clpr":  UseClpr();  return;
+                case "coroutining": UseCoroutining(); return;
                 default:
                     if (UseCompatLibrary(lib.Name)) return;
                     Console.Error.WriteLine(

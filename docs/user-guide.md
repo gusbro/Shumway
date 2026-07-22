@@ -198,19 +198,28 @@ if (sol["L"] is CompoundTerm cons && cons.Functor == "." && cons.Args.Length == 
     Console.WriteLine($"list head = {cons.Args[0]}");
 ```
 
-### Loading constraint libraries
+### Loading constraint and coroutining libraries
 
-CLP(FD) and CLP(R) are opt-in:
+The attributed-variable libraries are opt-in:
 
 ```csharp
-engine.UseClpfd();   // module 'clpfd'  — finite-domain constraints
-engine.UseClpr();    // module 'clpr'   — linear-real constraints
+engine.UseClpfd();        // module 'clpfd'        — finite-domain constraints
+engine.UseClpr();         // module 'clpr'         — linear-real constraints
+engine.UseCoroutining();  // module 'coroutining'  — freeze/2, dif/2
 ```
 
-Both libraries can be enabled on one engine (their `verify_attributes/4`
+All three can be enabled on one engine (their `verify_attributes/4`
 hooks are `:- multifile`, dispatched by the attribute module); keep each
 variable's constraints within one library — mixed clpfd+clpr constraints
-on the same variable are not supported.
+on the same variable are not supported. From Prolog source, the same
+libraries load with `:- use_module(library(clpfd))` /
+`library(clpr)` / `library(coroutining))`.
+
+The coroutining library provides `freeze/2` (delay a goal until a
+variable is bound), `frozen/2`, and `dif/2` (a sound disequality that
+fails the moment its arguments become identical). `term_attvars/2` and
+`call_residue_vars/2` are always available (they need no library), the
+latter collecting the still-constrained variables a goal creates.
 
 ### Catching runtime exceptions
 
