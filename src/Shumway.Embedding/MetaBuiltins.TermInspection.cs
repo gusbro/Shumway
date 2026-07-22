@@ -1,0 +1,929 @@
+using Shumway.Builtins;
+using Shumway.Compiler.Ast;
+using Shumway.Core;
+
+namespace Shumway.Embedding;
+
+public static partial class MetaBuiltins
+{
+    /// <summary><c>stamp_date_time(+Stamp, -DateTime, +TimeZone)</c> —
+    /// converts a Unix-epoch stamp (float seconds) into the SWI
+    /// <c>date(Y, M, D, H, Mi, S, Off, TZ, DST)</c> compound. The
+    /// TimeZone arg is honoured for the atoms <c>'UTC'</c> and
+    /// <c>local</c>; any other atom is treated as the local zone
+    /// (full IANA-name lookup isn't worth the System.TimeZoneInfo
+    /// wiring for the typical caller).</summary>
+    public static bool StampDateTime(Activation engine)
+    {
+        Cell stampCell = ResolveLocal(engine, engine.GetRegister(0));
+        Cell tzCell = ResolveLocal(engine, engine.GetRegister(2));
+        if (stampCell.Tag == Tag.Ref)
+            throw new PrologRuntimeException("instantiation_error");
+        double stamp = stampCell.Tag switch
+        {
+            Tag.Float => Cell.DecodeFloat(stampCell, engine.GetHeap(stampCell.FloatPairedIndex)),
+            Tag.Int => stampCell.AsInt,
+            _ => throw new PrologRuntimeException("type_error", "number"),
+        };
+        string tzName = tzCell.Tag == Tag.Atom
+            ? (AtomTable.GetById(tzCell.AsAtomId)?.Name ?? "local")
+            : "local";
+
+        DateTime utc = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+            .AddSeconds(stamp);
+        DateTime local = string.Equals(tzName, "UTC", StringComparison.OrdinalIgnoreCase)
+            ? utc
+            : utc.ToLocalTime();
+        TimeSpan offset = string.Equals(tzName, "UTC", StringComparison.OrdinalIgnoreCase)
+            ? TimeSpan.Zero
+            : TimeZoneInfo.Local.GetUtcOffset(utc);
+
+        var dt = new CompoundTerm("date", new Term[]
+        {
+            new IntTerm(local.Year),
+            new IntTerm(local.Month),
+            new IntTerm(local.Day),
+            new IntTerm(local.Hour),
+            new IntTerm(local.Minute),
+            new FloatTerm(local.Second + local.Millisecond / 1000.0),
+            new IntTerm((long)offset.TotalSeconds),
+            new AtomTerm(tzName),
+            new AtomTerm("-"),  // DST flag — '-' = unknown/n-a.
+        });
+        Cell dtCell = Materializer.MaterializeAsCell(engine, dt);
+        return engine.UnifyRegisterWithCell(1, dtCell);
+    }
+
+    // ============================================================================
+    // functor/3, arg/3, =../2
+    // ============================================================================
+
+    /// <summary><c>functor(Term, Name, Arity)</c> — bidirectional term
+    /// introspection. With <c>Term</c> bound, decomposes into its functor
+    /// name and arity (atomic terms are name = themselves, arity = 0).
+    /// With <c>Term</c> unbound and <c>Name</c> + <c>Arity</c> ground,
+    /// builds a fresh compound with <c>Arity</c> anonymous unbound
+    /// arguments.</summary>
+    public static bool Functor(Activation engine)
+    {
+        Cell t = ResolveLocal(engine, engine.GetRegister(0));
+
+        if (t.Tag == Tag.Atom || t.Tag == Tag.Int || t.Tag == Tag.Float)
+        {
+            if (!engine.UnifyRegisterWithCell(1, t)) return false;
+            return engine.UnifyRegisterWithCell(2, Cell.Int(0));
+        }
+        if (t.Tag == Tag.Str)
+        {
+            int functorIdx = t.AsHeapIndex;
+            var (atomId, arity) = FunctorTable.Lookup(
+                engine.GetHeap(functorIdx).AsFunctorId);
+            if (!engine.UnifyRegisterWithCell(1, Cell.Atom(atomId))) return false;
+            return engine.UnifyRegisterWithCell(2, Cell.Int(arity));
+        }
+        if (t.Tag == Tag.Lis)
+        {
+            int dotId = AtomTable.Intern(".", permanent: true).Id;
+            if (!engine.UnifyRegisterWithCell(1, Cell.Atom(dotId))) return false;
+            return engine.UnifyRegisterWithCell(2, Cell.Int(2));
+        }
+        if (t.Tag == Tag.Ref)
+        {
+            // Construct mode: Name and Arity must be ground.
+            Cell n = ResolveLocal(engine, engine.GetRegister(1));
+            Cell a = ResolveLocal(engine, engine.GetRegister(2));
+            if (a.Tag != Tag.Int)
+                throw new ShumwayPrologException(
+                    IsoError.TypeError("integer", new VarTerm("_")));
+            long arity = a.AsInt;
+            if (arity < 0)
+                throw new ShumwayPrologException(
+                    IsoError.DomainError("not_less_than_zero", new VarTerm("_")));
+            if (arity == 0)
+            {
+                // T becomes Name itself (atomic).
+                if (n.Tag != Tag.Atom && n.Tag != Tag.Int && n.Tag != Tag.Float)
+                    throw new ShumwayPrologException(
+                        IsoError.TypeError("atomic", new VarTerm("_")));
+                return engine.UnifyRegisterWithCell(0, n);
+            }
+            if (n.Tag != Tag.Atom)
+                throw new ShumwayPrologException(
+                    IsoError.TypeError("atom", new VarTerm("_")));
+            int functorId = FunctorTable.Intern(n.AsAtomId, (int)arity);
+            int strBase = engine.AllocateHeap(2 + (int)arity);
+            engine.SetHeap(strBase, Cell.Str(strBase + 1));
+            engine.SetHeap(strBase + 1, Cell.Functor(functorId));
+            for (int i = 0; i < arity; i++)
+            {
+                int slot = strBase + 2 + i;
+                engine.SetHeap(slot, Cell.UnboundVar(slot));
+            }
+            return engine.UnifyRegisterWithCell(0, Cell.Ref(strBase));
+        }
+        return false;
+    }
+
+    /// <summary><c>arg(N, Term, Arg)</c> — the N-th argument (1-indexed)
+    /// of a compound term. Fails when N is out of range or <c>Term</c>
+    /// isn't a compound.</summary>
+    public static bool Arg(Activation engine)
+    {
+        Cell nCell = ResolveLocal(engine, engine.GetRegister(0));
+        Cell tCell = ResolveLocal(engine, engine.GetRegister(1));
+        if (nCell.Tag != Tag.Int)
+            throw new ShumwayPrologException(
+                IsoError.TypeError("integer", new VarTerm("_")));
+        long n = nCell.AsInt;
+
+        if (tCell.Tag == Tag.Str)
+        {
+            int functorIdx = tCell.AsHeapIndex;
+            var (_, arity) = FunctorTable.Lookup(
+                engine.GetHeap(functorIdx).AsFunctorId);
+            if (n < 1 || n > arity) return false;
+            return engine.UnifyRegisterWithHeapAt(2, functorIdx + (int)n);
+        }
+        if (tCell.Tag == Tag.Lis)
+        {
+            // List has arity 2: arg(1) = head, arg(2) = tail.
+            if (n < 1 || n > 2) return false;
+            int headIdx = tCell.AsHeapIndex;
+            return engine.UnifyRegisterWithHeapAt(2, headIdx + (int)(n - 1));
+        }
+        return false;
+    }
+
+    /// <summary><c>T =.. List</c> — the "univ" operator. Decomposes a
+    /// compound into <c>[Functor | Args]</c> (or yields <c>[Atom]</c>
+    /// for atomic <c>T</c>), or composes <c>T</c> from such a list.</summary>
+    // Cached atom ids — boyer hits =../2 in a tight loop; avoid the
+    // AtomTable hash lookup per call. Permanent atoms get permanent
+    // ids that never get reused, so caching is safe.
+    private static int _dotAtomIdCache;
+    private static int DotAtomId
+    {
+        get
+        {
+            if (_dotAtomIdCache == 0)
+                _dotAtomIdCache = AtomTable.Intern(".", permanent: true).Id;
+            return _dotAtomIdCache;
+        }
+    }
+
+    public static bool Univ(Activation engine)
+    {
+        Cell t = ResolveLocal(engine, engine.GetRegister(0));
+
+        // Decompose modes — build the list directly in the heap with
+        // a single allocation, no intermediate Cell[] buffer.
+        if (t.Tag == Tag.Atom || t.Tag == Tag.Int || t.Tag == Tag.Float)
+        {
+            // Single-element list: [t] = .(t, []).
+            int idx = engine.AllocateHeap(3);
+            engine.SetHeap(idx,     Cell.Lis(idx + 1));
+            engine.SetHeap(idx + 1, t);
+            engine.SetHeap(idx + 2, Cell.Atom(AtomTable.EmptyListId));
+            return engine.UnifyRegisterWithHeapAt(1, idx);
+        }
+        if (t.Tag == Tag.Str)
+        {
+            int functorIdx = t.AsHeapIndex;
+            var (atomId, arity) = FunctorTable.Lookup(
+                engine.GetHeap(functorIdx).AsFunctorId);
+            // Fast path: [Functor | Args] built directly. Layout:
+            //   idx+0: Lis(idx+1)        -- first cons
+            //   idx+1: Atom(functor)     -- head: the functor atom
+            //   idx+2: Lis(idx+3)        -- next cons (arg 0)
+            //   idx+3: <arg 0>           -- head: copied from STR
+            //   ...
+            //   idx+2k: Lis(idx+2k+1)    -- cons for arg k-1
+            //   idx+2k+1: <arg k-1>
+            //   idx+2(arity+1): Atom([]) -- terminating nil
+            int total = 2 * (1 + arity) + 1;
+            int idx = engine.AllocateHeap(total);
+            engine.SetHeap(idx,     Cell.Lis(idx + 1));
+            engine.SetHeap(idx + 1, Cell.Atom(atomId));
+            for (int i = 0; i < arity; i++)
+            {
+                int cons = idx + 2 + 2 * i;
+                engine.SetHeap(cons,     Cell.Lis(cons + 1));
+                engine.SetHeap(cons + 1, engine.GetHeap(functorIdx + 1 + i));
+            }
+            engine.SetHeap(idx + 2 * (1 + arity), Cell.Atom(AtomTable.EmptyListId));
+            return engine.UnifyRegisterWithHeapAt(1, idx);
+        }
+        if (t.Tag == Tag.Lis)
+        {
+            // Lis cell represents a [Head|Tail] cons — its =.. result
+            // is the 3-element list ['.', Head, Tail].
+            int headIdx = t.AsHeapIndex;
+            int idx = engine.AllocateHeap(7);
+            engine.SetHeap(idx,     Cell.Lis(idx + 1));
+            engine.SetHeap(idx + 1, Cell.Atom(DotAtomId));
+            engine.SetHeap(idx + 2, Cell.Lis(idx + 3));
+            engine.SetHeap(idx + 3, engine.GetHeap(headIdx));
+            engine.SetHeap(idx + 4, Cell.Lis(idx + 5));
+            engine.SetHeap(idx + 5, engine.GetHeap(headIdx + 1));
+            engine.SetHeap(idx + 6, Cell.Atom(AtomTable.EmptyListId));
+            return engine.UnifyRegisterWithHeapAt(1, idx);
+        }
+        if (t.Tag == Tag.Ref)
+        {
+            // Compose: walk the list twice — once to count, once to
+            // build the STR. The list is on the heap so the walk is a
+            // pointer chase, no allocation.
+            Cell listC = ResolveLocal(engine, engine.GetRegister(1));
+            int count = 0;
+            Cell cur = listC;
+            while (cur.Tag == Tag.Lis)
+            {
+                count++;
+                cur = ResolveLocal(engine, engine.GetHeap(cur.AsHeapIndex + 1));
+            }
+            if (cur.Tag != Tag.Atom || cur.AsAtomId != AtomTable.EmptyListId)
+                throw new ShumwayPrologException(
+                    IsoError.TypeError("list", new VarTerm("_")));
+            if (count == 0)
+                throw new ShumwayPrologException(
+                    IsoError.DomainError("non_empty_list", new VarTerm("_")));
+
+            // Fetch the functor cell (the first element).
+            int headIdx = listC.AsHeapIndex;
+            Cell first = ResolveLocal(engine, engine.GetHeap(headIdx));
+            if (count == 1)
+            {
+                if (first.Tag != Tag.Atom && first.Tag != Tag.Int && first.Tag != Tag.Float)
+                    throw new ShumwayPrologException(
+                        IsoError.TypeError("atomic", new VarTerm("_")));
+                return engine.UnifyRegisterWithCell(0, first);
+            }
+            if (first.Tag != Tag.Atom)
+                throw new ShumwayPrologException(
+                    IsoError.TypeError("atom", new VarTerm("_")));
+            int arity = count - 1;
+            int functorId = FunctorTable.Intern(first.AsAtomId, arity);
+            // Walk the list a second time to copy args into the STR.
+            int strBase = engine.AllocateHeap(2 + arity);
+            engine.SetHeap(strBase, Cell.Str(strBase + 1));
+            engine.SetHeap(strBase + 1, Cell.Functor(functorId));
+            // Skip the first element (functor name) and copy the rest.
+            cur = ResolveLocal(engine, engine.GetHeap(headIdx + 1));
+            for (int i = 0; i < arity; i++)
+            {
+                int curHead = cur.AsHeapIndex;
+                engine.SetHeap(strBase + 2 + i, engine.GetHeap(curHead));
+                cur = ResolveLocal(engine, engine.GetHeap(curHead + 1));
+            }
+            return engine.UnifyRegisterWithCell(0, Cell.Ref(strBase));
+        }
+        return false;
+    }
+
+    /// <summary>Builds a fresh proper list whose head slots hold the given
+    /// cell values. Same layout pattern as <c>SortBuiltins.BuildList</c>:
+    /// 2N + 1 contiguous cells, alternating Lis / head pairs terminated
+    /// by the empty-list atom.</summary>
+    private static int BuildListFromCells(Activation engine, IReadOnlyList<Cell> elements)
+    {
+        if (elements.Count == 0)
+        {
+            int nilSlot = engine.AllocateHeap(1);
+            engine.SetHeap(nilSlot, Cell.Atom(AtomTable.EmptyListId));
+            return nilSlot;
+        }
+        int start = engine.AllocateHeap(2 * elements.Count + 1);
+        for (int i = 0; i < elements.Count; i++)
+        {
+            int lisIdx = start + 2 * i;
+            int headIdx = lisIdx + 1;
+            engine.SetHeap(lisIdx, Cell.Lis(headIdx));
+            engine.SetHeap(headIdx, elements[i]);
+        }
+        engine.SetHeap(start + 2 * elements.Count, Cell.Atom(AtomTable.EmptyListId));
+        return start;
+    }
+
+    /// <summary><c>term_to_atom(Term, Atom)</c> — bidirectional bridge
+    /// between a Prolog term and its atom-text representation. With
+    /// <c>Term</c> ground the term is rendered through <see cref="TermReader"/>
+    /// (via the standard <see cref="Shumway.Builtins.TermRenderer"/> output)
+    /// and the result interned as an atom. With <c>Atom</c> ground the atom
+    /// text is parsed as a Prolog term via <see cref="Parser"/>.</summary>
+    public static bool TermToAtom(Activation engine)
+    {
+        Cell atomCell = ResolveLocal(engine, engine.GetRegister(1));
+
+        if (atomCell.Tag == Tag.Atom)
+        {
+            // Atom → Term direction: parse the atom name as a Prolog term.
+            string name = AtomTable.GetById(atomCell.AsAtomId)?.Name ?? "";
+            // The parser expects a clause-terminating dot; help it by
+            // appending one when the user-supplied text doesn't have one.
+            string source = name.TrimEnd().EndsWith(".", StringComparison.Ordinal)
+                ? name
+                : name + ".";
+            Term parsed = ParseClauseText(engine, source);
+            Cell newCell = Materializer.MaterializeAsCell(engine, parsed);
+            return engine.UnifyRegisterWithCell(0, newCell);
+        }
+
+        // Term → Atom direction: render and intern. Match SWI's
+        // term_to_atom/2 — render with operator notation (so `hola/2`
+        // comes out as `hola/2`, not `/(hola, 2)`) and quoting (so the
+        // atom round-trips back through the parser in the reverse
+        // direction).
+        using var sw = new System.IO.StringWriter();
+        Shumway.Builtins.TermRenderer.Render(engine, engine.GetRegister(0), sw,
+            new Shumway.Builtins.TermRenderOptions
+            {
+                Operators = engine.Operators,
+                Quoted = true,
+                // TightSymbolicOperators defaults true — symbolic ops
+                // render space-free, matching other Prologs.
+            });
+        string rendered = sw.ToString();
+        int newAtomId = AtomTable.Intern(rendered, permanent: false).Id;
+        return engine.UnifyRegisterWithCell(1, Cell.Atom(newAtomId));
+    }
+
+    private static Cell ResolveLocal(Activation engine, Cell c)
+    {
+        if (c.Tag != Tag.Ref) return c;
+        return engine.GetHeap(engine.Deref(c.AsHeapIndex));
+    }
+
+    // ============================================================================
+    // numbervars/3
+    // ============================================================================
+
+    /// <summary><c>numbervars(Term, Start, End)</c> — walks <c>Term</c>
+    /// left-to-right and binds every distinct unbound variable to a
+    /// compound <c>'$VAR'(N)</c> with consecutive integers starting at
+    /// <c>Start</c>. The next-free integer is unified with <c>End</c>.
+    ///
+    /// <para>Shared variables (same heap address visited twice) get the
+    /// same number — the walk derefs each cell before deciding. Already-
+    /// bound variables and non-variable subterms pass through unchanged.
+    /// Mostly used to make terms presentable before printing or
+    /// asserting.</para></summary>
+    public static bool NumberVars(Activation engine)
+    {
+        Cell startC = engine.GetRegister(1);
+        Cell startDeref = startC.Tag == Tag.Ref
+            ? engine.GetHeap(engine.Deref(startC.AsHeapIndex))
+            : startC;
+        // ISO precedence — var second arg →
+        // instantiation_error; bound non-int → type_error(integer, _).
+        if (startDeref.Tag == Tag.Ref)
+            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+        if (startDeref.Tag != Tag.Int)
+            throw new Shumway.Core.PrologRuntimeException("type_error", "integer");
+        long start = startDeref.AsInt;
+
+        // Copy the input register to a heap slot so we have a stable address
+        // to walk from. The walk visits each cell, derefs, and on the first
+        // sight of an unbound REF binds it to a fresh '$VAR'(N) compound.
+        int rootSlot = engine.AllocateHeap(1);
+        engine.SetHeap(rootSlot, engine.GetRegister(0));
+
+        var visited = new HashSet<int>();
+        long counter = start;
+        WalkAndNumber(engine, rootSlot, visited, ref counter);
+
+        return engine.UnifyRegisterWithCell(2, Cell.Int(counter));
+    }
+
+    /// <summary><c>term_variables(+Term, -Variables)</c> — ISO §8.5.5. Unifies
+    /// arg 2 with the list of distinct unbound variables of arg 1, in
+    /// first-occurrence (depth-first, left-to-right) order. Shared and cyclic
+    /// subterms are visited once (a <c>visited</c> address set).</summary>
+    public static bool TermVariables(Activation engine)
+    {
+        int rootSlot = engine.AllocateHeap(1);
+        engine.SetHeap(rootSlot, engine.GetRegister(0));
+        var visited = new HashSet<int>();
+        var vars = new List<int>();
+        CollectVars(engine, rootSlot, visited, vars);
+        // Build [Ref(v0), ..., Ref(vn-1)] bottom-up (ADR-017 inline cons:
+        // Cell.Lis(b) => heap[b]=head, heap[b+1]=tail).
+        Cell tail = Cell.Atom(AtomTable.EmptyListId);
+        for (int i = vars.Count - 1; i >= 0; i--)
+        {
+            int b = engine.AllocateHeap(2);
+            engine.SetHeap(b, Cell.Ref(vars[i]));
+            engine.SetHeap(b + 1, tail);
+            tail = Cell.Lis(b);
+        }
+        return engine.UnifyRegisterWithCell(1, tail);
+    }
+
+    private static void CollectVars(
+        Activation engine, int heapIdx, HashSet<int> visited, List<int> vars)
+    {
+        int addr = engine.Deref(heapIdx);
+        if (!visited.Add(addr)) return;
+        Cell cell = engine.GetHeap(addr);
+        switch (cell.Tag)
+        {
+            case Tag.Ref:
+                vars.Add(addr);
+                break;
+            case Tag.Str:
+            {
+                int functorIdx = cell.AsHeapIndex;
+                var (_, arity) = FunctorTable.Lookup(
+                    engine.GetHeap(functorIdx).AsFunctorId);
+                for (int i = 0; i < arity; i++)
+                    CollectVars(engine, functorIdx + 1 + i, visited, vars);
+                break;
+            }
+            case Tag.Lis:
+            {
+                int headIdx = cell.AsHeapIndex;
+                CollectVars(engine, headIdx, visited, vars);
+                CollectVars(engine, headIdx + 1, visited, vars);
+                break;
+            }
+            // Atoms, ints, floats, strings, PSTRs: leaf, no variables.
+        }
+    }
+
+    private static void WalkAndNumber(
+        Activation engine, int heapIdx, HashSet<int> visited, ref long counter)
+    {
+        int addr = engine.Deref(heapIdx);
+        if (!visited.Add(addr)) return;
+
+        Cell cell = engine.GetHeap(addr);
+        switch (cell.Tag)
+        {
+            case Tag.Ref:
+                // Unbound — bind to '$VAR'(counter).
+                int varAtom = AtomTable.Intern("$VAR", permanent: true).Id;
+                int functorId = FunctorTable.Intern(varAtom, 1);
+                int strBase = engine.AllocateHeap(3);
+                engine.SetHeap(strBase, Cell.Str(strBase + 1));
+                engine.SetHeap(strBase + 1, Cell.Functor(functorId));
+                engine.SetHeap(strBase + 2, Cell.Int(counter));
+                counter++;
+                // Bind addr to the new STR via a Ref to it (so trail catches it).
+                int strRefSlot = engine.AllocateHeap(1);
+                engine.SetHeap(strRefSlot, Cell.Ref(strBase));
+                engine.Unify(addr, strRefSlot);
+                break;
+
+            case Tag.Str:
+            {
+                int functorIdx = cell.AsHeapIndex;
+                var (_, arity) = FunctorTable.Lookup(
+                    engine.GetHeap(functorIdx).AsFunctorId);
+                for (int i = 0; i < arity; i++)
+                    WalkAndNumber(engine, functorIdx + 1 + i, visited, ref counter);
+                break;
+            }
+            case Tag.Lis:
+            {
+                int headIdx = cell.AsHeapIndex;
+                WalkAndNumber(engine, headIdx, visited, ref counter);
+                WalkAndNumber(engine, headIdx + 1, visited, ref counter);
+                break;
+            }
+            // Atoms, ints, floats, PSTRs: leaf, nothing to do.
+        }
+    }
+
+    // ============================================================================
+    // clause/2, current_predicate/1, abolish/1
+    // ============================================================================
+
+    /// <summary><c>'$all_clauses_of'(HeadPattern, Pairs)</c> — returns a
+    /// proper list of <c>Head-Body</c> pairs whose head functor matches
+    /// the <em>functor</em> of <paramref name="HeadPattern"/>. Each
+    /// returned head/body is a freshly materialised heap copy so the
+    /// caller can unify with each pair's first element (the head) and
+    /// then with the second element (the body) without sharing variable
+    /// identity between candidates.
+    ///
+    /// <para>The prelude's <c>clause/2</c> uses this helper to fan out
+    /// across candidates via <c>member/2</c>, so backtracking through
+    /// matching clauses happens via the standard WAM choice-point
+    /// machinery rather than through builtin-internal state.</para></summary>
+    public static bool AllClausesOf(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "'$all_clauses_of'/2 requires a PrologEngine host.");
+
+        Term headPattern = MaterializeRegister(engine, 0);
+        int fid = ExtractCallableFunctorId(headPattern, "'$all_clauses_of'/2");
+
+        var candidates = new List<Clause>();
+        candidates.AddRange(host.DynamicClausesFor(fid));
+        candidates.AddRange(host.StaticClausesFor(fid));
+
+        // Build the list of '-/2'(Head, Body) pairs as AST terms, then
+        // materialise the whole list onto the heap in one pass — that
+        // way each candidate's variables stay independent of the others
+        // and of the caller's head pattern.
+        Term tail = new AtomTerm("[]");
+        for (int i = candidates.Count - 1; i >= 0; i--)
+        {
+            var candidate = candidates[i];
+            Term head = candidate.Kind == ClauseKind.Rule
+                ? ((CompoundTerm)candidate.Term).Args[0]
+                : candidate.Term;
+            Term body = candidate.Kind == ClauseKind.Rule
+                ? ((CompoundTerm)candidate.Term).Args[1]
+                : new AtomTerm("true");
+            // Pair shape `-(Head, Body)` matches how Prolog spells
+            // `H-B` after operator parsing.
+            Term pair = new CompoundTerm("-", new[] { head, body });
+            tail = new CompoundTerm(".", new[] { pair, tail });
+        }
+        Cell listCell = Materializer.MaterializeAsCell(engine, tail);
+        return engine.UnifyRegisterWithCell(1, listCell);
+    }
+
+    /// <summary><c>'$clause_enum'(Head, Head-Body)</c> — the LAZY backing for
+    /// <c>clause/2</c>. The prelude passes the query's <c>Head-Body</c> pair as
+    /// the second argument (built Prolog-side, so its variables are the user's),
+    /// and this yields each matching clause one at a time on backtracking:
+    /// per candidate it materialises just that clause's <c>-(Head, Body)</c>
+    /// pair (head and body share variables, so the pair must be one
+    /// materialisation) and unifies the query pair against it. Replaces
+    /// <see cref="AllClausesOf"/> + <c>member/2</c>, which built the whole
+    /// O(#clauses) pair list on the heap up front — here only the candidate
+    /// being tried is on the heap, and a backtrack reclaims it.
+    ///
+    /// <para>The first register (Head) is used only to find the functor; the
+    /// actual unification is against the pair in the second register, so the
+    /// shared <c>Head</c> variable binds consistently from there.</para></summary>
+    public static bool ClauseEnum(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "'$clause_enum'/2 requires a PrologEngine host.");
+
+        Term headPattern = MaterializeRegister(engine, 0);
+        int fid = ExtractCallableFunctorId(headPattern, "clause/2");
+
+        var candidates = new List<Clause>();
+        candidates.AddRange(host.DynamicClausesFor(fid));
+        candidates.AddRange(host.StaticClausesFor(fid));
+
+        int returnPc = engine.BuiltinReturnPc;
+        // arity 2 (clause/2): save the arg registers across backtracks.
+        return Shumway.Core.IndexEnumCursor.Start(engine, candidates.Count, 2, returnPc,
+            (e, i) => ClauseEnumUnify(e, candidates[i]));
+    }
+
+    private static bool ClauseEnumUnify(Activation engine, Clause candidate)
+    {
+        Term head = candidate.Kind == ClauseKind.Rule
+            ? ((CompoundTerm)candidate.Term).Args[0]
+            : candidate.Term;
+        Term body = candidate.Kind == ClauseKind.Rule
+            ? ((CompoundTerm)candidate.Term).Args[1]
+            : new AtomTerm("true");
+        // One materialisation so the clause's Head and Body share variables;
+        // unify the query's Head-Body pair (register 1) against it.
+        Cell pairCell = Materializer.MaterializeAsCell(
+            engine, new CompoundTerm("-", new[] { head, body }));
+        return engine.UnifyRegisterWithCell(1, pairCell);
+    }
+
+    /// <summary><c>'$all_predicate_indicators'(List)</c> — returns a list
+    /// of <c>Name/Arity</c> terms covering every predicate the engine
+    /// knows about: builtins, dynamic functors, and static predicates
+    /// from every loaded module. The prelude's <c>current_predicate/1</c>
+    /// uses this helper to back-enumerate via <c>member/2</c>.</summary>
+    public static bool AllPredicateIndicators(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "'$all_predicate_indicators'/1 requires a PrologEngine host.");
+
+        var seen = new HashSet<int>();
+        var indicators = new List<Term>();
+
+        void AddIndicator(int functorId)
+        {
+            if (!seen.Add(functorId)) return;
+            var (atomId, arity) = FunctorTable.Lookup(functorId);
+            string name = AtomTable.GetById(atomId)?.Name ?? "?";
+            indicators.Add(new CompoundTerm("/",
+                new Term[] { new AtomTerm(name), new IntTerm(arity) }));
+        }
+
+        foreach (int fid in BuiltinsRegistry.AllRegisteredFunctorIds())
+            AddIndicator(fid);
+        foreach (int fid in host.AllStaticAndDynamicFunctors())
+            AddIndicator(fid);
+
+        Term listTerm = new AtomTerm("[]");
+        for (int i = indicators.Count - 1; i >= 0; i--)
+            listTerm = new CompoundTerm(".", new[] { indicators[i], listTerm });
+        Cell listCell = Materializer.MaterializeAsCell(engine, listTerm);
+        return engine.UnifyRegisterWithCell(0, listCell);
+    }
+
+    /// <summary><c>'$current_predicate_enum'(?PI)</c> — the LAZY backing for
+    /// <c>current_predicate/1</c>. Yields each known predicate's
+    /// <c>Name/Arity</c> indicator one at a time on backtracking (a cursor
+    /// over the snapshot), instead of building the whole O(n) indicator list
+    /// on the heap up front for <c>member/2</c> to walk. Indicators are ground,
+    /// so the per-step unification just filters against a bound <c>PI</c>.</summary>
+    public static bool CurrentPredicateEnum(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "'$current_predicate_enum'/1 requires a PrologEngine host.");
+
+        var seen = new HashSet<int>();
+        var indicators = new List<Term>();
+        void AddIndicator(int functorId)
+        {
+            if (!seen.Add(functorId)) return;
+            var (atomId, arity) = FunctorTable.Lookup(functorId);
+            string name = AtomTable.GetById(atomId)?.Name ?? "?";
+            indicators.Add(new CompoundTerm("/",
+                new Term[] { new AtomTerm(name), new IntTerm(arity) }));
+        }
+        foreach (int fid in BuiltinsRegistry.AllRegisteredFunctorIds())
+            AddIndicator(fid);
+        foreach (int fid in host.AllStaticAndDynamicFunctors())
+            AddIndicator(fid);
+
+        int returnPc = engine.BuiltinReturnPc;
+        return Shumway.Core.IndexEnumCursor.Start(engine, indicators.Count, 1, returnPc,
+            (e, i) => e.UnifyRegisterWithCell(0, Materializer.MaterializeAsCell(e, indicators[i])));
+    }
+
+    /// <summary><c>'$listable_predicates'/1</c> — the user-defined
+    /// predicates <c>listing/0,1</c> may print, each as a
+    /// <c>pi(Name, Arity, Dynamic)</c> term where <c>Dynamic</c> is
+    /// <c>true</c> or <c>false</c>. Builtins and the library predicates of
+    /// <c>$prelude</c> / <c>clpfd</c> are excluded.</summary>
+    public static bool ListablePredicates(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "'$listable_predicates'/1 requires a PrologEngine host.");
+
+        var entries = new List<Term>();
+        foreach (var (fid, isDynamic) in host.ListablePredicates())
+        {
+            var (atomId, arity) = FunctorTable.Lookup(fid);
+            string mangled = AtomTable.GetById(atomId)?.Name ?? "?";
+            // present the user-facing name. Local
+            // predicates carry a "user$" (or other module) prefix
+            // from ModuleRewrite; surface the unprefixed name so
+            // `listing(foo)` finds the predicate the user wrote
+            // as `foo(X) :- ...`.
+            string name = PrologEngine.DemangleLocalName(mangled);
+            entries.Add(new CompoundTerm("pi", new Term[]
+            {
+                new AtomTerm(name),
+                new IntTerm(arity),
+                new AtomTerm(isDynamic ? "true" : "false"),
+            }));
+        }
+
+        Term listTerm = new AtomTerm("[]");
+        for (int i = entries.Count - 1; i >= 0; i--)
+            listTerm = new CompoundTerm(".", new[] { entries[i], listTerm });
+        Cell listCell = Materializer.MaterializeAsCell(engine, listTerm);
+        return engine.UnifyRegisterWithCell(0, listCell);
+    }
+
+    /// <summary><c>$listing_pred_source(+Name, +Arity)</c>.
+    /// Prints every AST clause whose head functor matches
+    /// <c>Name/Arity</c>, using <see cref="AstTermRenderer"/> so the
+    /// original <see cref="Shumway.Compiler.Ast.VarTerm.Name"/> from
+    /// the parser survives — the user sees <c>greet(X, Y) :- Y = hello(X)</c>
+    /// instead of <c>greet(_G23, _G24) :- _G24 = hello(_G23)</c>.
+    ///
+    /// <para>The clauses come from both static-module sources
+    /// (parsed by <c>ConsultString</c>, names preserved) and
+    /// <c>:- dynamic foo/N. foo(a).</c>-seed clauses (also parsed
+    /// from source). Runtime-asserted clauses arrive via the heap
+    /// and carry synthetic <c>_G&lt;addr&gt;</c> names; this builtin
+    /// renders whatever names the AST holds — preserved when source
+    /// is available, synthetic otherwise.</para>
+    ///
+    /// <para>Output layout mirrors the prelude's portray_clause:
+    /// facts on one line, rules with the head and an indented body
+    /// line per goal.</para></summary>
+    public static bool ListingPredSource(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "'$listing_pred_source'/2 requires a PrologEngine host.");
+
+        Cell nameCell = MaterializeRegisterAsCell(engine, 0);
+        Cell arityCell = MaterializeRegisterAsCell(engine, 1);
+        if (nameCell.Tag != Tag.Atom || arityCell.Tag != Tag.Int)
+            return false;
+        string displayName = AtomTable.GetById(nameCell.AsAtomId)?.Name ?? "";
+        int arity = (int)arityCell.AsInt;
+
+        // ModuleRewrite mangles local predicates as
+        // <module>$<name>. The user's `listing(helper)` arrives
+        // here with the unmangled name; find every fid whose
+        // demangled name matches (the predicate may be stored
+        // under user$helper, foo$helper, or just helper if it's
+        // public).
+        var matchingFids = new List<int>();
+        foreach (var (fid, _) in host.ListablePredicates())
+        {
+            var (atomId, fidArity) = FunctorTable.Lookup(fid);
+            if (fidArity != arity) continue;
+            string mangled = AtomTable.GetById(atomId)?.Name ?? "";
+            if (mangled == displayName
+                || PrologEngine.DemangleLocalName(mangled) == displayName)
+                matchingFids.Add(fid);
+        }
+
+        var output = engine.Out;
+        int printed = 0;
+        foreach (int fid in matchingFids)
+        {
+            foreach (var clause in host.ClausesForListing(fid))
+            {
+                PrintAstClause(output, clause);
+                printed++;
+            }
+            // no AST clauses but the predicate may still
+            // exist as a precompiled record loaded from a source-
+            // stripped bundle. Surface a comment so the user sees the
+            // predicate is real — bare `true.` would lie by implying
+            // there's no body to show when there are clauses, just
+            // no source for them.
+            if (printed == 0)
+            {
+                var pre = host.PrecompiledRecordFor(fid);
+                if (pre is not null)
+                {
+                    string clauseWord = pre.ClauseCount == 1 ? "clause" : "clauses";
+                    output.WriteLine(
+                        $"% {displayName}/{arity}: {pre.ClauseCount} {clauseWord}, source stripped (no listing available)");
+                    printed++;
+                }
+            }
+        }
+        return true;
+    }
+
+    /// <summary>delegates to the shared
+    /// <see cref="ClausePortrayer"/>. The Clause's wrapping
+    /// (Fact's bare head vs Rule's <c>:-(H,B)</c> compound) is
+    /// detected by the portrayer from the Term's own shape — no
+    /// need to thread <see cref="Shumway.Compiler.Ast.ClauseKind"/>
+    /// through.</summary>
+    private static void PrintAstClause(
+        System.IO.TextWriter output, Shumway.Compiler.Ast.Clause clause)
+    {
+        ClausePortrayer.Print(output, clause.Term);
+    }
+
+    /// <summary><c>portray_clause(+Clause)</c>: prints
+    /// Clause to the engine's current output using the standard
+    /// portray layout (head + indented body goals, synthetic
+    /// variables renumbered to A, B, C, …).</summary>
+    public static bool PortrayClause1(Activation engine)
+    {
+        Term term = MaterializeRegister(engine, 0);
+        ClausePortrayer.Print(engine.Out, term);
+        return true;
+    }
+
+    /// <summary><c>portray_clause(+Stream, +Clause)</c>:
+    /// like <see cref="PortrayClause1"/> but writes to the given
+    /// output stream. The stream must be a Foreign cell bound to
+    /// a write-mode handle (the same shape current_output / open
+    /// produce).</summary>
+    public static bool PortrayClause2(Activation engine)
+    {
+        TextWriter writer = ResolveTextWriter(engine, engine.GetRegister(0));
+        Term term = MaterializeRegister(engine, 1);
+        ClausePortrayer.Print(writer, term);
+        return true;
+    }
+
+    /// <summary><c>abolish(Name/Arity)</c> — removes every asserted clause
+    /// of the named dynamic predicate and unregisters it so subsequent
+    /// assertions raise the "not declared dynamic" error until a new
+    /// <c>:- dynamic</c> declaration arrives.</summary>
+    public static bool Abolish(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "abolish/1 requires a PrologEngine host.");
+
+        Term spec = MaterializeRegister(engine, 0);
+        if (spec is CompoundTerm c && c.Functor == "/" && c.Args.Length == 2
+            && c.Args[0] is AtomTerm name && c.Args[1] is IntTerm arity)
+        {
+            int fid = FunctorTable.Intern(
+                AtomTable.Intern(name.Name, permanent: true).Id, (int)arity.Value);
+            host.AbolishDynamic(engine, fid);
+            return true;
+        }
+
+        if (spec is VarTerm)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        throw new ShumwayPrologException(
+            IsoError.TypeError("predicate_indicator", spec));
+    }
+
+    /// <summary><c>garbage_collect_clauses/0</c>. Walks
+    /// every dynamic predicate's chain and re-threads it through only
+    /// the live entries, bypassing the retracted ones still sitting
+    /// in the bytecode. The dispatch cost of subsequent calls then
+    /// drops from O(ever-asserted) back to O(live). The dead-clause
+    /// bytecode is left orphaned; the program buffer doesn't shrink.</summary>
+    public static bool GarbageCollectClauses0(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "garbage_collect_clauses/0 requires a PrologEngine host.");
+        foreach (int fid in host.AllDynamicFunctors())
+            host.GarbageCollectClauses(engine, fid);
+        return true;
+    }
+
+    /// <summary><c>garbage_collect_clauses(+Name/Arity)</c>.
+    /// Same as the 0-arg form but restricted to a single predicate.</summary>
+    public static bool GarbageCollectClauses1(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "garbage_collect_clauses/1 requires a PrologEngine host.");
+        Term spec = MaterializeRegister(engine, 0);
+        if (spec is CompoundTerm c && c.Functor == "/" && c.Args.Length == 2
+            && c.Args[0] is AtomTerm name && c.Args[1] is IntTerm arity)
+        {
+            int fid = FunctorTable.Intern(
+                AtomTable.Intern(name.Name, permanent: true).Id, (int)arity.Value);
+            host.GarbageCollectClauses(engine, fid);
+            return true;
+        }
+        if (spec is VarTerm)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        throw new ShumwayPrologException(
+            IsoError.TypeError("predicate_indicator", spec));
+    }
+
+    /// <summary><c>compact_dynamic_buffer/0</c>.
+    /// Invalidates the persistent dynamic-code buffer so the next
+    /// query rebuilds it from current <c>_dynamicClauses</c>.
+    /// Reclaims memory consumed by chain entries and clause bodies
+    /// appended by in-place assertz / asserta / retract that are no
+    /// longer reachable from any current clause. The rebuild cost
+    /// is one re-link of the dynamic region on the next query;
+    /// chunks 155b-f then start fresh at append-only growth, so
+    /// callers should invoke compaction periodically (e.g. after a
+    /// large batch of mutations) rather than per-mutation.
+    /// </summary>
+    public static bool CompactDynamicBuffer(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "compact_dynamic_buffer/0 requires a PrologEngine host.");
+        host.CompactDynamicCodeBuffer();
+        return true;
+    }
+
+    /// <summary><c>compact_dynamic_buffer(+Name/Arity)</c> — Phase-12
+    /// Per-predicate variant. Validates the predicate
+    /// indicator, errors on bad inputs (instantiation /
+    /// type_error / domain_error / permission_error for non-
+    /// dynamic), then falls through to the same full rebuild as
+    /// the 0-arg form. The persistent buffer holds every dynamic
+    /// predicate's bytecode interleaved, so independent per-
+    /// predicate compaction isn't feasible without partial-relink
+    /// support — the API surface is per-predicate as a forward-
+    /// compatibility hint.</summary>
+    public static bool CompactDynamicBuffer1(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "compact_dynamic_buffer/1 requires a PrologEngine host.");
+        Term spec = MaterializeRegister(engine, 0);
+        if (spec is VarTerm)
+            throw new ShumwayPrologException(IsoError.InstantiationError());
+        if (spec is not CompoundTerm c || c.Functor != "/" || c.Args.Length != 2
+            || c.Args[0] is not AtomTerm nameAtom || c.Args[1] is not IntTerm arityInt)
+            throw new ShumwayPrologException(
+                IsoError.TypeError("predicate_indicator", spec));
+        int fid = FunctorTable.Intern(
+            AtomTable.Intern(nameAtom.Name, permanent: true).Id, (int)arityInt.Value);
+        if (!host.IsDynamic(fid))
+            throw new Shumway.Core.PrologRuntimeException(
+                "permission_error", "modify,static_procedure");
+        host.CompactDynamicCodeBuffer();
+        return true;
+    }
+
+}

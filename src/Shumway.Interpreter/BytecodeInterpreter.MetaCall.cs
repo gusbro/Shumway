@@ -1,0 +1,550 @@
+using Shumway.Core;
+
+namespace Shumway.Interpreter;
+
+public sealed partial class BytecodeInterpreter
+{
+    /// <summary>Runs any <c>verify_attributes</c> wakeups queued by a
+    /// just-completed unification. Checked at every goal
+    /// boundary — Call / Execute / CallBuiltin / Proceed. The
+    /// <c>'$wakeup_attributes'/1</c> driver runs in the *live* engine
+    /// (via <see cref="RunGoalInEngine"/>) so the hooks observe the real
+    /// attributed variables. Returns false when a hook — or a goal it
+    /// returned — failed, which the caller turns into a backtrack so the
+    /// triggering unification fails. A no-op (returns true) when nothing
+    /// is queued, the overwhelmingly common case.
+    ///
+    /// <para>split into an aggressively-inlined guard over a
+    /// NoInlining slow body (the <see cref="Activation.FlushWakeupsForIlCut"/>
+    /// precedent), so the 12 goal-boundary call sites pay only the inline
+    /// queue-count check when nothing is queued instead of a call into a
+    /// method too large to inline.</para></summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private bool FlushPendingWakeups(ProgramView code)
+        => !_engine.HasPendingWakeups || FlushPendingWakeupsSlow(code);
+
+    /// <summary>Cold body of <see cref="FlushPendingWakeups"/> — only reached
+    /// when wakeups are actually queued.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(
+        System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private bool FlushPendingWakeupsSlow(ProgramView code)
+    {
+        var addrs = _engine.CurrentFunctorAddresses;
+        if (addrs is null || !addrs.ContainsKey(VerifyAttributesFunctorId))
+        {
+            // No verify_attributes/4 linked into this program — attributed
+            // variables stay hookless (the foundation).
+            _engine.ClearPendingWakeups();
+            return true;
+        }
+
+        // The wakeup processing clobbers X registers and may push choice
+        // points; snapshot the registers and the CP level so the goal
+        // boundary we resume into is left exactly as it was.
+        int regCount = _engine.RegisterCount;
+        Cell[] savedRegs = new Cell[regCount];
+        for (int i = 0; i < regCount; i++) savedRegs[i] = _engine.GetRegister(i);
+        int savedB = _engine.B;
+
+        bool ok = RunWakeups(code);
+
+        if (ok && _engine.B > savedB) _engine.Cut(savedB);   // once-semantics
+        for (int i = 0; i < regCount; i++) _engine.SetRegister(i, savedRegs[i]);
+        return ok;
+    }
+
+    /// <summary>Drains the wakeup queue: for each batch, runs
+    /// every module's <c>verify_attributes/4</c> hook, then every goal
+    /// the hooks returned — all in the live engine. A hook's goal can
+    /// unify further attributed variables and queue more wakeups, so the
+    /// queue is drained in a loop.</summary>
+    private bool RunWakeups(ProgramView code)
+    {
+        while (_engine.HasPendingWakeups)
+        {
+            var batch = _engine.TakePendingWakeups();
+            // All modules' hooks run first, then every returned goal —
+            // the SICStus/Scryer ordering, so each hook sees the
+            // pre-goal state.
+            var goalLists = new Cell[batch.Count];
+            for (int i = 0; i < batch.Count; i++)
+            {
+                var (moduleId, attrValueIdx, otherIdx) = batch[i];
+                int goalsVarIdx = _engine.AllocateHeapUnbound();
+                Cell verifyGoal = BuildVerifyGoal(moduleId, attrValueIdx, otherIdx, goalsVarIdx);
+                if (!MetaCallInEngine(code, verifyGoal)) return false;
+                goalLists[i] = Cell.Ref(goalsVarIdx);
+            }
+            for (int i = 0; i < batch.Count; i++)
+                if (!RunGoalList(code, goalLists[i])) return false;
+        }
+        return true;
+    }
+
+    /// <summary>Builds <c>verify_attributes(Module, AttrValue, Value,
+    /// Goals)</c> on the heap and returns the goal cell. <c>Goals</c> is
+    /// the fresh variable at <paramref name="goalsVarIdx"/> the hook
+    /// binds to its returned goal list.</summary>
+    private Cell BuildVerifyGoal(int moduleId, int attrValueIdx, int otherIdx, int goalsVarIdx)
+    {
+        int f = _engine.AllocateHeap(5);
+        _engine.SetHeap(f,     Cell.Functor(VerifyAttributesFunctorId));
+        _engine.SetHeap(f + 1, Cell.Atom(moduleId));
+        _engine.SetHeap(f + 2, Cell.Ref(attrValueIdx));
+        _engine.SetHeap(f + 3, Cell.Ref(otherIdx));
+        _engine.SetHeap(f + 4, Cell.Ref(goalsVarIdx));
+        return Cell.Str(f);
+    }
+
+    /// <summary>Meta-calls every goal in a hook's returned list, in
+    /// order. An unbound or empty list runs nothing; a non-list term is
+    /// a malformed hook result and fails.</summary>
+    private bool RunGoalList(ProgramView code, Cell listCell)
+    {
+        Cell cursor = DerefCell(listCell);
+        while (cursor.Tag == Tag.Lis)
+        {
+            int headIdx = cursor.AsHeapIndex;
+            if (!MetaCallInEngine(code, _engine.GetHeap(headIdx))) return false;
+            cursor = DerefCell(_engine.GetHeap(headIdx + 1));
+        }
+        // [] or an unbound tail → no (more) goals; anything else is malformed.
+        return cursor.Tag == Tag.Ref
+            || cursor.Tag == Tag.AttVar
+            || (cursor.Tag == Tag.Atom && cursor.AsAtomId == AtomTable.EmptyListId);
+    }
+
+    /// <summary>Runs one goal term in the live engine. Handles
+    /// the <c>,/2</c> conjunction and the <c>true</c> / <c>fail</c>
+    /// constants; any other goal is dispatched as a plain call — a
+    /// builtin runs directly, a user/prelude predicate runs via
+    /// <see cref="RunGoalInEngine"/>. An undefined predicate raises an
+    /// existence error.</summary>
+    private bool MetaCallInEngine(ProgramView code, Cell goal)
+    {
+        goal = DerefCell(goal);
+        int functorId;
+        int argBase;
+        int arity;
+        switch (goal.Tag)
+        {
+            case Tag.Atom:
+                functorId = FunctorTable.Intern(goal.AsAtomId, 0);
+                arity = 0;
+                argBase = -1;
+                break;
+            case Tag.Str:
+                int fIdx = goal.AsHeapIndex;
+                functorId = _engine.GetHeap(fIdx).AsFunctorId;
+                (_, arity) = FunctorTable.Lookup(functorId);
+                argBase = fIdx + 1;
+                break;
+            case Tag.Ref:
+            case Tag.AttVar:
+                throw new PrologRuntimeException("instantiation_error");
+            default:
+                throw new PrologRuntimeException("type_error", "callable");
+        }
+
+        if (functorId == ConjFunctorId)
+            return MetaCallInEngine(code, _engine.GetHeap(argBase))
+                && MetaCallInEngine(code, _engine.GetHeap(argBase + 1));
+        if (functorId == TrueFunctorId) return true;
+        if (functorId == FailFunctorId) return false;
+
+        // Plain goal: load X0..X[arity-1] from the goal's arguments.
+        for (int i = 0; i < arity; i++)
+            _engine.SetRegister(i, _engine.GetHeap(argBase + i));
+
+        if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out int builtinId))
+        {
+            var entry = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+            _engine.CurrentBuiltinName = entry.Name;
+            _engine.CurrentBuiltinArity = entry.Arity;
+            try { return entry.Impl(_engine); }
+            catch (PrologRuntimeException re)
+            { re.StampBuiltin(entry.Name, entry.Arity); throw; }
+        }
+
+        var addrs = _engine.CurrentFunctorAddresses;
+        if (addrs is not null && addrs.TryGetValue(functorId, out int addr))
+            return RunGoalInEngine(code, addr);
+
+        // Last chance: materialize a cross-activation runtime-assert helper.
+        int lateAddr = _engine.ResolveLateHelper?.Invoke(functorId) ?? -1;
+        if (lateAddr >= 0) return RunGoalInEngine(code, lateAddr);
+
+        // honour the `unknown` flag (throws on error).
+        return !Shumway.Core.UnknownProcedure.Fails(_engine, functorId);
+    }
+
+    /// <summary>Backtrackable runtime dispatch for <c>call/1..7</c>.
+    /// The goal in <c>X0</c> — with <c>call/N</c>'s extra arguments
+    /// <c>X1..X[callArity-1]</c> appended — is decoded and run as a real
+    /// goal in the live engine: a user or prelude predicate is entered with
+    /// a tail jump so it keeps its choice points and the call's
+    /// continuation flows on success; a builtin runs inline. Control
+    /// constructs in a runtime goal reach the prelude <c>$call_conj</c>,
+    /// <c>$call_disj</c>, <c>$call_arrow</c>, <c>$call_neg</c> helpers.
+    ///
+    /// <para><paramref name="barrier"/> is the choice-point level a
+    /// <c>!</c> reached as the goal cuts back to. For a
+    /// top-level <c>call/N</c> it is B at entry, so a bare <c>call(!)</c>
+    /// is a no-op; the conj/disj/arrow helpers thread it on through
+    /// <c>'$call'/2</c> so a <c>!</c> inside a runtime compound goal
+    /// commits exactly as far as the enclosing call — no further.</para>
+    ///
+    /// <para>Returns false only on an unrecoverable failure (no choice
+    /// point remains).</para></summary>
+    private bool DispatchCall(ProgramView code, int callArity, int barrier)
+    {
+        // Sizing diagnostic (profile builds only): how many goals are dispatched by
+        // runtime term inspection — the cost class the link-time meta-wrapper
+        // unfold (ADR-021 candidate #2) removes.
+        Shumway.Core.Profiler.Note("meta_dispatch (DispatchCall)");
+        int pc = _engine.P;
+        Cell goal = DerefCell(_engine.GetRegister(0));
+
+        // Save call/N's extra arguments before the registers are reloaded.
+        // The per-engine scratch is safe here: the extras are consumed into
+        // registers below, before any recursion or builtin can re-enter.
+        int extraCount = callArity - 1;
+        Cell[] extra = extraCount <= 0
+            ? System.Array.Empty<Cell>()
+            : extraCount <= _engine.MetaExtraScratch.Length
+                ? _engine.MetaExtraScratch
+                : new Cell[extraCount];
+        for (int i = 0; i < extraCount; i++)
+            extra[i] = _engine.GetRegister(i + 1);
+
+        int atomId;
+        int goalArity;
+        int argBase;
+        switch (goal.Tag)
+        {
+            case Tag.Atom:
+                atomId = goal.AsAtomId;
+                goalArity = 0;
+                argBase = -1;
+                break;
+            case Tag.Str:
+                int functorIdx = goal.AsHeapIndex;
+                (atomId, goalArity) =
+                    FunctorTable.Lookup(_engine.GetHeap(functorIdx).AsFunctorId);
+                argBase = functorIdx + 1;
+                break;
+            case Tag.Ref:
+            case Tag.AttVar:
+                throw new PrologRuntimeException("instantiation_error");
+            default:
+                throw new PrologRuntimeException("type_error", "callable");
+        }
+
+        int totalArity = goalArity + extraCount;
+        for (int i = 0; i < goalArity; i++)
+            _engine.SetRegister(i, _engine.GetHeap(argBase + i));
+        for (int i = 0; i < extraCount; i++)
+            _engine.SetRegister(goalArity + i, extra[i]);
+
+        // route cache. A repeat goal functor skips the intern,
+        // the control-construct compares and the registry/address probes.
+        // See MetaRoute.cs for the lifetime/soundness argument.
+        var addresses = _engine.CurrentFunctorAddresses;
+        var cache = _engine.MetaRouteCache;
+        if (cache is null || !ReferenceEquals(_engine.MetaRouteCacheStamp, addresses))
+        {
+            cache = _engine.MetaRouteCache =
+                new System.Collections.Generic.Dictionary<long, Shumway.Core.MetaRoute>();
+            _engine.MetaRouteCacheStamp = addresses;
+        }
+        bool routeCacheable = (uint)totalArity <= 0xFFFF;   // key packs arity in 16 bits
+        long routeKey = ((long)atomId << 16) | (uint)totalArity;
+        if (routeCacheable && cache.TryGetValue(routeKey, out var route))
+        {
+            switch (route.Kind)
+            {
+                case Shumway.Core.MetaRouteKind.Cut:
+                    _engine.Cut(barrier);
+                    _engine.AdvancePc(9);
+                    return true;
+                case Shumway.Core.MetaRouteKind.True:
+                    _engine.AdvancePc(9);
+                    return true;
+                case Shumway.Core.MetaRouteKind.Fail:
+                    return TryBacktrack();
+                case Shumway.Core.MetaRouteKind.CallRecurse:
+                    return DispatchCall(code,
+                        Shumway.Builtins.BuiltinsRegistry.GetById(route.Arg).Arity,
+                        _engine.B);
+                case Shumway.Core.MetaRouteKind.DollarCall:
+                case Shumway.Core.MetaRouteKind.Builtin:
+                    return InvokeBuiltinGoal(route.Arg);
+                case Shumway.Core.MetaRouteKind.BarrierHelperJump:
+                    _engine.SetRegister(2, Cell.Int(barrier));
+                    goto case Shumway.Core.MetaRouteKind.Jump;
+                case Shumway.Core.MetaRouteKind.Jump:
+                    return JumpToUserGoal(code, pc, route.Arg);
+            }
+        }
+
+        int functorId = FunctorTable.Intern(atomId, totalArity);
+
+        // A control construct in a runtime goal routes to its prelude
+        // helper. conj/disj/arrow are cut-transparent, so they take the
+        // barrier as a third argument (X2): a `!` threaded down through
+        // them commits to the enclosing call. \+ is opaque to
+        // cut, so $call_neg needs no barrier.
+        var userKind = Shumway.Core.MetaRouteKind.Jump;
+        if (functorId == ConjFunctorId)
+        {
+            Shumway.Core.Profiler.Note("meta_dispatch: control construct");
+            _engine.SetRegister(2, Cell.Int(barrier));
+            functorId = CallConjFunctorId;
+            userKind = Shumway.Core.MetaRouteKind.BarrierHelperJump;
+        }
+        else if (functorId == DisjFunctorId)
+        {
+            Shumway.Core.Profiler.Note("meta_dispatch: control construct");
+            _engine.SetRegister(2, Cell.Int(barrier));
+            functorId = CallDisjFunctorId;
+            userKind = Shumway.Core.MetaRouteKind.BarrierHelperJump;
+        }
+        else if (functorId == ArrowFunctorId)
+        {
+            Shumway.Core.Profiler.Note("meta_dispatch: control construct");
+            _engine.SetRegister(2, Cell.Int(barrier));
+            functorId = CallArrowFunctorId;
+            userKind = Shumway.Core.MetaRouteKind.BarrierHelperJump;
+        }
+        else if (functorId == NegFunctorId || functorId == NotFunctorId)
+        {
+            Shumway.Core.Profiler.Note("meta_dispatch: control construct");
+            functorId = CallNegFunctorId;
+        }
+
+        // ! as the whole goal: commit to the barrier the enclosing call
+        // established. For a top-level call(!) the barrier is B
+        // at call entry, so Cut() removes nothing; for a `!` threaded in
+        // from a $call_* helper it cuts the runtime goal's choice points,
+        // and no further — the parent's CPs sit at or below the barrier.
+        if (functorId == CutFunctorId)
+        {
+            if (routeCacheable)
+                cache[routeKey] = new Shumway.Core.MetaRoute(Shumway.Core.MetaRouteKind.Cut, 0);
+            _engine.Cut(barrier);
+            _engine.AdvancePc(9);
+            return true;
+        }
+        if (functorId == TrueFunctorId)
+        {
+            if (routeCacheable)
+                cache[routeKey] = new Shumway.Core.MetaRoute(Shumway.Core.MetaRouteKind.True, 0);
+            _engine.AdvancePc(9);
+            return true;
+        }
+        if (functorId == FailFunctorId)
+        {
+            if (routeCacheable)
+                cache[routeKey] = new Shumway.Core.MetaRoute(Shumway.Core.MetaRouteKind.Fail, 0);
+            return TryBacktrack();
+        }
+
+        if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out int builtinId))
+        {
+            var builtin = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+            // call(call(...)): recurse rather than invoking the call
+            // builtin. The inner call is itself a fresh cut barrier, so
+            // capture B again rather than passing the outer `barrier`.
+            if (builtin.IsCall)
+            {
+                if (routeCacheable)
+                    cache[routeKey] = new Shumway.Core.MetaRoute(
+                        Shumway.Core.MetaRouteKind.CallRecurse, builtinId);
+                return DispatchCall(code, builtin.Arity, _engine.B);
+            }
+            if (routeCacheable)
+                cache[routeKey] = new Shumway.Core.MetaRoute(
+                    builtin.IsDollarCall
+                        ? Shumway.Core.MetaRouteKind.DollarCall
+                        : Shumway.Core.MetaRouteKind.Builtin,
+                    builtinId);
+            return InvokeBuiltinGoal(builtinId);
+        }
+
+        if (addresses is not null && addresses.TryGetValue(functorId, out int address))
+        {
+            if (routeCacheable)
+                cache[routeKey] = new Shumway.Core.MetaRoute(userKind, address);
+            return JumpToUserGoal(code, pc, address);
+        }
+
+        // Last chance: materialize a cross-activation runtime-assert helper.
+        int lateHelper = _engine.ResolveLateHelper?.Invoke(functorId) ?? -1;
+        if (lateHelper >= 0) return JumpToUserGoal(code, pc, lateHelper);
+
+        // No negative caching: an unresolved functor can become resolvable
+        // later in the same query (auto-promotion).
+        // honour the `unknown` flag (throws on error).
+        if (Shumway.Core.UnknownProcedure.Fails(_engine, functorId))
+            return TryBacktrack();
+        throw PrologRuntimeException.UndefinedProcedure(functorId);   // unreachable
+    }
+
+    /// <summary>Invokes a builtin reached as a runtime meta-call goal
+    /// (shared by DispatchCall's slow path and its cached
+    /// Builtin/DollarCall routes).</summary>
+    private bool InvokeBuiltinGoal(int builtinId)
+    {
+        var builtin = Shumway.Builtins.BuiltinsRegistry.GetById(builtinId);
+        _engine.CurrentBuiltinName = builtin.Name;
+        _engine.CurrentBuiltinArity = builtin.Arity;
+        bool ok;
+        try { ok = builtin.Impl(_engine); }
+        catch (PrologRuntimeException re)
+        { re.StampBuiltin(builtin.Name, builtin.Arity); throw; }
+        if (!ok)
+            return TryBacktrack();
+        _engine.AdvancePc(9);
+        return true;
+    }
+
+    /// <summary>Transfers control to a user predicate reached as a runtime
+    /// meta-call goal (shared by DispatchCall's slow path and
+    /// its cached Jump/BarrierHelperJump routes).</summary>
+    private bool JumpToUserGoal(ProgramView code, int pc, int address)
+    {
+        // Last-call optimisation: when this call is the clause's final
+        // goal, tail-jump so the goal returns to the clause's caller.
+        // Setting Cp to the Proceed sitting right after this
+        // CallBuiltin would spin — Proceed does not advance Cp.
+        Opcode following = (Opcode)code[pc + 9];
+        if (following == Opcode.Deallocate)
+            _engine.Deallocate();              // last goal, frame: pop it
+        else if (following != Opcode.Proceed)
+            _engine.SetCp(pc + 9);             // non-last: resume after the call
+        _engine.SetB0(_engine.B);
+        // Cp untouched (Deallocate / Proceed follows) => the goal returns
+        // straight to our caller: a tail call, for the debug ports (ADR-035).
+        bool tail = following == Opcode.Deallocate || following == Opcode.Proceed;
+        DispatchToTier1OrBytecode(address, tail);
+        return true;
+    }
+
+    /// <summary>Dereferences a cell, following REF chains to the term it
+    /// names (or to an unbound REF / ATTVAR).</summary>
+    private Cell DerefCell(Cell c) =>
+        c.Tag == Tag.Ref ? _engine.GetHeap(_engine.Deref(c.AsHeapIndex)) : c;
+
+    /// <summary>When a Call/Execute target is an
+    /// unresolved-procedure sentinel baked into the bytecode at link
+    /// time, check whether the predicate has been auto-promoted
+    /// mid-query (the <c>implicit_dynamic</c> flag's runtime path
+    /// materialised a trampoline after the call site was already
+    /// linked). If the current address map now holds a real address
+    /// for the functor, use it. Otherwise raise the standard
+    /// <c>existence_error(procedure, Name/Arity)</c>.</summary>
+    private int ResolveTargetMaybeAutoPromoted(int target)
+    {
+        if (!CallTarget.IsUnresolved(target)) return target;
+        int fid = CallTarget.FunctorIdOf(target);
+        var map = _engine.CurrentFunctorAddresses;
+        if (map is not null
+            && map.TryGetValue(fid, out int latest)
+            && !CallTarget.IsUnresolved(latest))
+        {
+            // Restrict resolution to predicates whose layout starts
+            // with `enter_dynamic` — i.e. a dynamic trampoline emitted
+            // by the auto-promotion path. A non-dynamic predicate
+            // present in CurrentFunctorAddresses under the same fid
+            // (e.g. a module-local predicate that the link layer
+            // deliberately did NOT expose to this call site) must
+            // still raise the standard existence_error rather than
+            // breaking module visibility.
+            var prog = _engine.CurrentProgram;
+            if (prog is not null
+                && latest >= 0
+                && latest < prog.Length
+                && (Opcode)prog[latest] == Opcode.EnterDynamic)
+                return latest;
+            // a mid-query consult (consult/1 from a live query)
+            // live-links STATIC predicates into the running query's code
+            // space; a call site compiled at THIS query's setup (before the
+            // consult) baked the undefined sentinel for them. The consult
+            // made these fids globally visible exactly as a top-level
+            // consult would, so resolving the sentinel to the live-linked
+            // static address is sound — the fid is on the explicit
+            // visibility set the live-link populated, not an accidental
+            // module-local collision.
+            if (_engine.LiveConsultVisibleFids is { } visible
+                && visible.Contains(fid))
+                return latest;
+            // a --strip-wam predicate has no WAM address; its map entry is
+            // a resume MARKER (a standalone delegate's (fid, 0), or a region member's
+            // (rootFid, memberEntryCursor) alias). Accept it — the Call/Execute handler
+            // SetPc's it and the dispatch loop's marker route invokes the IL. Module
+            // visibility is not widened: the sentinel's fid was chosen by the LINK
+            // layer (mangled for a local), so resolving that exact fid's own alias
+            // grants nothing the link didn't already grant. Cold path — sentinels only.
+            if (Activation.IsResumeMarker(latest))
+                return latest;
+        }
+        // Last chance: a runtime-assert MetaTransform helper linked by a
+        // DIFFERENT activation — materialize it into this one on demand.
+        int late = _engine.ResolveLateHelper?.Invoke(fid) ?? -1;
+        if (late >= 0) return late;
+        // honour the `unknown` flag — error throws here,
+        // fail/warning hand the caller the fail sentinel.
+        if (Shumway.Core.UnknownProcedure.Fails(_engine, fid))
+            return UnknownFailTarget;
+        throw PrologRuntimeException.UndefinedProcedure(fid);   // unreachable
+    }
+
+    /// <summary>sentinel returned by
+    /// <see cref="ResolveTargetMaybeAutoPromoted"/> when the target is an
+    /// undefined procedure and the <c>unknown</c> flag says fail: the
+    /// Call/Execute handlers backtrack instead of dispatching.</summary>
+    private const int UnknownFailTarget = int.MinValue;
+
+    /// <summary>Runs the predicate at <paramref name="target"/> as a goal
+    /// in the <em>current</em> engine — same heap, trail, stack and
+    /// attribute table — then resumes the caller. Unlike
+    /// <see cref="RunSubroutine"/> this is safe for a goal that pushes
+    /// choice points or fails: a backtrack floor pins inner backtracking
+    /// at the entry choice-point level, and on success any choice points
+    /// the goal left are cut away (once semantics). Returns true iff the
+    /// goal succeeded. The caller saves/restores X registers.</summary>
+    private bool RunGoalInEngine(ProgramView code, int target)
+    {
+        int savedPc    = _engine.P;
+        int savedCp    = _engine.Cp;
+        int savedB0    = _engine.B0;
+        int savedB     = _engine.B;
+        int savedFloor = _backtrackFloor;
+
+        // Inner backtracking may not unwind past the entry CP level.
+        _backtrackFloor = savedB;
+        _engine.SetB0(savedB);               // a cut inside the goal stops here
+        _engine.SetCp(SubroutineSentinelCp); // the goal's final proceed → Halted
+        _engine.SetPc(target);
+
+        InterpreterResult result;
+        try { result = Dispatch(code); }
+        catch (TopLevelFailure) { result = InterpreterResult.Failed; }
+
+        _backtrackFloor = savedFloor;
+        _engine.SetPc(savedPc);
+        _engine.SetCp(savedCp);
+        _engine.SetB0(savedB0);
+
+        if (result == InterpreterResult.Halted)
+        {
+            // Once-semantics: discard any choice points the goal left so
+            // the outer computation never backtracks into it.
+            if (_engine.B > savedB) _engine.Cut(savedB);
+            return true;
+        }
+        return false;
+    }
+
+}

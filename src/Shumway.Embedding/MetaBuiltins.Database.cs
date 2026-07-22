@@ -1,0 +1,344 @@
+using Shumway.Builtins;
+using Shumway.Compiler.Ast;
+using Shumway.Core;
+
+namespace Shumway.Embedding;
+
+public static partial class MetaBuiltins
+{
+    /// <summary><c>predicate_property(+Head, ?Property)</c> — enumerates the
+    /// properties of the predicate named by <paramref name="Head"/>'s functor
+    /// (a callable). A defined predicate has <c>defined</c> plus exactly one of
+    /// <c>built_in</c> / <c>dynamic</c> / <c>static</c>; an undefined predicate
+    /// has none (the call fails). Non-deterministic: on backtracking it yields
+    /// each property in turn, so a bound <c>Property</c> acts as a filter. Head
+    /// must be instantiated (ISO instantiation_error / type_error(callable)).
+    /// Enough for the SWI/GNU-style introspection Logtalk's compiler relies on.</summary>
+    public static bool PredicateProperty(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException(
+                "predicate_property/2 requires a PrologEngine host.");
+        Term head = MaterializeRegister(engine, 0);
+        int fid;
+        switch (head)
+        {
+            case VarTerm:
+                throw new ShumwayPrologException(IsoError.InstantiationError());
+            case AtomTerm a:
+                fid = FunctorTable.Intern(AtomTable.Intern(a.Name, permanent: true).Id, 0);
+                break;
+            case CompoundTerm c:
+                fid = FunctorTable.Intern(
+                    AtomTable.Intern(c.Functor, permanent: true).Id, c.Args.Length);
+                break;
+            default:
+                throw new ShumwayPrologException(IsoError.TypeError("callable", head));
+        }
+        var props = host.PredicatePropertyAtomIds(fid);
+        if (props.Count == 0) return false;
+        int returnPc = engine.BuiltinReturnPc;
+        return Shumway.Core.IndexEnumCursor.Start(engine, props.Count, 2, returnPc,
+            (e, i) => e.UnifyRegisterWithCell(1, Cell.Atom(props[i])));
+    }
+
+    /// <summary>Promotes a Core-level <see cref="PrologRuntimeException"/>
+    /// into the canonical ISO <c>error(Kind, _)</c> Prolog term that
+    /// user-written catchers expect.</summary>
+    /// <summary>Builds the three-argument
+    /// <c>permission_error(Op, ObjType, Obj)</c> from a Detail string
+    /// shaped <c>"Op,ObjType"</c>. The Obj slot is a fresh anonymous
+    /// variable — PrologRuntimeException can't carry a Term payload
+    /// yet, so the offending object is lost in translation; a catcher
+    /// can still pattern-match on Op and ObjType.</summary>
+    private static Term BuildPermissionError(PrologRuntimeException re)
+    {
+        string[] parts = re.Detail.Split(',', 2);
+        string op = parts.Length > 0 ? parts[0] : "?";
+        string objType = parts.Length > 1 ? parts[1] : "?";
+        return new CompoundTerm("permission_error", new Term[]
+        {
+            new AtomTerm(op),
+            new AtomTerm(objType),
+            ValueTermOrVar(re),
+        });
+    }
+
+    /// <summary>Builds the ISO Context indicator <c>Name/Arity</c> from
+    /// the exception's stamped builtin identity, or returns
+    /// <c>null</c> when no builtin stamped it — meaning the throw arose
+    /// outside builtin dispatch (e.g. from the bytecode interpreter's
+    /// undefined-procedure resolver) and the Context should fall back
+    /// to a fresh anonymous variable.</summary>
+    private static Term? StampedContext(PrologRuntimeException re) =>
+        re.BuiltinName is string name
+            ? new CompoundTerm("/",
+                new Term[] { new AtomTerm(name), new IntTerm(re.BuiltinArity) })
+            : null;
+
+    /// <summary>Constructs <c>error(Inner, Context)</c> with the
+    /// stamped Context if one is available, falling back to a fresh
+    /// anonymous variable when the exception predates any builtin
+    /// dispatch.</summary>
+    private static Term WrapWithStampedContext(Term inner, PrologRuntimeException re) =>
+        new CompoundTerm("error",
+            new Term[] { inner, StampedContext(re) ?? new VarTerm("_") });
+
+    internal static Term TranslateRuntimeError(PrologRuntimeException re) => re.Kind switch
+    {
+        "evaluation_error" => WrapWithStampedContext(
+            new CompoundTerm("evaluation_error", new Term[] { new AtomTerm(re.Detail) }), re),
+        "instantiation_error" => WrapWithStampedContext(
+            new AtomTerm("instantiation_error"), re),
+        // type_error / domain_error now report the
+        // offending value in the second slot when the throw site
+        // captured it.
+        "type_error" => WrapWithStampedContext(
+            new CompoundTerm("type_error",
+                new Term[] { new AtomTerm(re.Detail), ValueTermOrVar(re) }), re),
+        "existence_error" => WrapWithStampedContext(
+            new CompoundTerm("existence_error",
+                new Term[] { new AtomTerm("procedure"), ProcedureIndicatorTerm(re.Detail) }), re),
+        "domain_error" => WrapWithStampedContext(
+            new CompoundTerm("domain_error",
+                new Term[] { new AtomTerm(re.Detail), ValueTermOrVar(re) }), re),
+        "representation_error" => WrapWithStampedContext(
+            new CompoundTerm("representation_error", new Term[] { new AtomTerm(re.Detail) }), re),
+        "syntax_error" => WrapWithStampedContext(
+            new CompoundTerm("syntax_error", new Term[] { new AtomTerm(re.Detail) }), re),
+        "resource_error" => WrapWithStampedContext(
+            new CompoundTerm("resource_error", new Term[] { new AtomTerm(re.Detail) }), re),
+        // ISO permission_error has three args. The Detail
+        // string encodes "Operation,ObjectType" (e.g. "modify,static_procedure");
+        // we split on the comma and put a fresh var in the Obj slot
+        // (the exception carries the offending object too when present).
+        "permission_error" => WrapWithStampedContext(
+            BuildPermissionError(re), re),
+        "system_error" => WrapWithStampedContext(
+            string.IsNullOrEmpty(re.Detail)
+                ? (Term)new AtomTerm("system_error")
+                : new CompoundTerm("system_error", new Term[] { new AtomTerm(re.Detail) }),
+            re),
+        _ => new CompoundTerm("error",
+            new Term[] { new AtomTerm(re.Kind), new AtomTerm(re.Detail) }),
+    };
+
+    /// <summary>Returns the captured offending term (from
+    /// <see cref="PrologRuntimeException.Value"/>) when the throw site
+    /// snapshotted one, or a fresh anonymous var otherwise.
+    /// </summary>
+    private static Term ValueTermOrVar(PrologRuntimeException re) =>
+        re.Value as Term ?? new VarTerm("_");
+
+    /// <summary>Builds the procedure-indicator term for an
+    /// <c>existence_error(procedure, Name/Arity)</c> from the
+    /// <see cref="PrologRuntimeException.Detail"/> string
+    /// <c>"Name/Arity"</c> (as written by
+    /// <see cref="PrologRuntimeException.UndefinedProcedure"/>). ISO requires
+    /// the culprit to be the COMPOUND <c>'/'(Name, Arity)</c>, not an atom whose
+    /// name happens to be <c>"Name/Arity"</c> — otherwise a catcher pattern
+    /// <c>error(existence_error(procedure, foo/3), _)</c> can never unify with
+    /// the ball. Splits on the LAST <c>/</c> (so a quoted name containing a
+    /// slash, e.g. <c>'a/b'/2</c>, still resolves correctly) and falls back to
+    /// the bare atom if the suffix isn't a non-negative integer.</summary>
+    private static Term ProcedureIndicatorTerm(string detail)
+    {
+        int slash = detail.LastIndexOf('/');
+        if (slash > 0 && slash < detail.Length - 1
+            && int.TryParse(detail.AsSpan(slash + 1), out int arity) && arity >= 0)
+            return new CompoundTerm("/",
+                new Term[] { new AtomTerm(detail.Substring(0, slash)), new IntTerm(arity) });
+        return new AtomTerm(detail);
+    }
+
+    private static int ExtractCallableFunctorId(Term head, string builtinName)
+    {
+        return head switch
+        {
+            AtomTerm a => FunctorTable.Intern(
+                AtomTable.Intern(a.Name, permanent: true).Id, 0),
+            CompoundTerm c => FunctorTable.Intern(
+                AtomTable.Intern(c.Functor, permanent: true).Id, c.Args.Length),
+            VarTerm => throw new ShumwayPrologException(IsoError.InstantiationError()),
+            _ => throw new ShumwayPrologException(
+                IsoError.TypeError("callable", head)),
+        };
+    }
+
+    // ============================================================================
+    // throw / catch
+    // ============================================================================
+
+    /// <summary><c>throw(Error)</c> — raises <see cref="ShumwayPrologException"/>
+    /// carrying <c>Error</c>'s materialised term. Propagates up the C# stack
+    /// until a <c>catch/3</c> or the engine's top-level intercepts it.</summary>
+    public static bool Throw(Activation engine)
+    {
+        Term error = MaterializeRegister(engine, 0);
+        // ISO §7.8.10.3.a — an unbound ball is
+        // instantiation_error. (Other shapes are user-defined and
+        // pass through verbatim.)
+        if (error is VarTerm)
+            throw new Shumway.Core.PrologRuntimeException("instantiation_error");
+        throw new ShumwayPrologException(error);
+    }
+
+    // catch/3 is now a prelude predicate built on the catch-frame
+    // plumbing ($catch_begin/$catch_end), running the guarded goal in the LIVE
+    // engine. The old isolated-sub-engine builtin (which ran Goal in a peer
+    // sub-engine and bound back only the first solution) was removed — it hid
+    // the guarded goal's assert/retract and other side effects from the caller,
+    // and was only ever the fallback for a variable Goal/Recovery anyway (a
+    // statically-callable catch/3 is rewritten inline by MetaTransform). See
+    // Prelude catch/3.
+
+    /// <summary><c>'$catch_begin'(Catcher, RecoveryGoal)</c> —
+    /// opens a catch/3 scope. Copies the catcher and the recovery-goal call
+    /// onto the heap (so they survive a caught throw's heap truncation) and
+    /// pushes a catch frame snapshotting the live machine. Emitted by the
+    /// MetaTransform rewrite of catch/3 as the first goal of the goal
+    /// helper, so the engine reads the recovery continuation off that
+    /// helper's environment header.</summary>
+    public static bool CatchBegin(Activation engine)
+    {
+        int catcherSlot = engine.AllocateHeap(1);
+        engine.SetHeap(catcherSlot, engine.GetRegister(0));
+        int recoverySlot = engine.AllocateHeap(1);
+        engine.SetHeap(recoverySlot, engine.GetRegister(1));
+        engine.PushCatchFrame(catcherSlot, recoverySlot);
+        return true;
+    }
+
+    /// <summary><c>'$catch_end'/0</c> — closes a catch/3 scope:
+    /// the guarded goal has produced a solution, so the catch frame is
+    /// deactivated and a throw from the continuation will no longer be
+    /// caught here. Backtracking into the guarded goal re-activates it.</summary>
+    public static bool CatchEnd(Activation engine)
+    {
+        engine.DeactivateTopCatchFrame();
+        return true;
+    }
+
+    /// <summary>Shared helper: walks a sub-engine solution's bindings and
+    /// unifies each caller-heap variable (identified by the <c>_GN</c> name
+    /// convention) with the bound value materialised onto the caller's
+    /// heap. Returns <c>false</c> at the first unification failure so the
+    /// outer builtin can give up its current iteration.</summary>
+    private static bool BindBack(Activation engine, IReadOnlyDictionary<string, Term> bindings)
+    {
+        foreach (var (name, value) in bindings)
+        {
+            int addr = ExtractAddrFromName(name);
+            if (addr < 0) continue;
+            Cell boundCell = Materializer.MaterializeAsCell(engine, value);
+            int slot = engine.AllocateHeap(1);
+            engine.SetHeap(slot, boundCell);
+            if (!engine.Unify(addr, slot)) return false;
+        }
+        return true;
+    }
+
+    // ============================================================================
+    // call/N — runtime meta-call via sub-engine + bind-back of input vars
+    // ============================================================================
+
+    public static bool Call1(Activation engine) => CallN(engine, totalArity: 1);
+    public static bool Call2(Activation engine) => CallN(engine, totalArity: 2);
+    public static bool Call3(Activation engine) => CallN(engine, totalArity: 3);
+    public static bool Call4(Activation engine) => CallN(engine, totalArity: 4);
+    public static bool Call5(Activation engine) => CallN(engine, totalArity: 5);
+    public static bool Call6(Activation engine) => CallN(engine, totalArity: 6);
+    public static bool Call7(Activation engine) => CallN(engine, totalArity: 7);
+    public static bool Call8(Activation engine) => CallN(engine, totalArity: 8);
+
+    /// <summary><c>'$call'(Goal, Barrier)</c> — the cut-barrier-carrying
+    /// meta-call. It is intercepted by the bytecode interpreter
+    /// exactly like <c>call/N</c> and never reaches this body; the entry
+    /// exists only so the compiler emits a <c>call_builtin</c> for it.</summary>
+    public static bool CallWithBarrier(Activation engine) =>
+        throw new InvalidOperationException(
+            "'$call'/2 must be dispatched by the interpreter, not invoked directly.");
+
+    /// <summary><c>call(Goal, ExtraArgs...)</c> — runs <c>Goal</c> (optionally
+    /// extended with extra args appended to its argument list) in a peer
+    /// sub-engine and propagates each solution's bindings back into the
+    /// caller's heap.
+    ///
+    /// <para>Implementation: the input registers are read as
+    /// <see cref="Term"/>s with synthetic <c>_GN</c> variable names that
+    /// encode the caller's heap address. The composed goal runs in the
+    /// sub-engine; the resulting <see cref="Solution"/> binds each
+    /// <c>_GN</c>, and we use the embedded address to find the caller's
+    /// variable cell and unify it with the materialised bound term.</para>
+    ///
+    /// <para><b>Multi-solution support</b>: when the goal has
+    /// alternatives the builtin pushes a runtime IL-style choice point
+    /// before binding the first solution. On backtrack the CP's resume
+    /// delegate advances the sub-engine's enumerator, undoing the current
+    /// bindings (via the standard trail unwind) and applying the next
+    /// solution. This is what makes <c>maplist</c>, <c>forall</c>, and
+    /// other prelude predicates that meta-call backtracking goals work
+    /// correctly when the goal has more than one solution.</para></summary>
+    private static bool CallN(Activation engine, int totalArity)
+    {
+        // DEAD PATH — must never run. call/N is dispatched IN THE LIVE ENGINE:
+        // the call_builtin opcode handler sees the builtin's IsCall flag and
+        // routes to BytecodeInterpreter.DispatchCall (Tier-0) — and the Tier-1
+        // IL emit routes through IlMetaCallHelper.Dispatch — both of which run
+        // the goal directly in this engine (so assert/retract from the called
+        // goal are visible to the caller). This
+        // builtin body (the historical isolated-sub-engine fallback) is never
+        // reached. The sub-engine deep-copies the dynamic store, so if it DID
+        // run, side effects from the called goal would silently not bleed back —
+        // a correctness bug. Fail loudly instead of producing wrong answers.
+        _ = totalArity;
+        throw new InvalidOperationException(
+            "call/N reached the sub-engine fallback in MetaBuiltins.CallN, but " +
+            "call/N must be dispatched in the live engine by DispatchCall (Tier-0) " +
+            "or IlMetaCallHelper (Tier-1). Reaching here means the IsCall meta-" +
+            "dispatch routing was bypassed — a bug to fix at the dispatch site, " +
+            "not here.");
+    }
+
+    /// <summary>Pulls the next solution from <paramref name="iter"/> and
+    /// binds it back into <paramref name="engine"/>. The first
+    /// invocation (<paramref name="isResume"/> <c>false</c>) is from
+    /// inside <see cref="CallN"/> — the interpreter's call_builtin
+    /// success path advances PC by 9 (the opcode's size) so we don't
+    /// need to set it ourselves. Subsequent invocations (from a
+    /// backtrack-popped CP) <em>do</em> need to set PC explicitly via
+    /// <see cref="Activation.ResumeAtReturnPc"/> because the
+    /// PopIlChoicePointAndRestore path would otherwise drop us at the
+    /// outer continuation (the saved Cp), not the next instruction
+    /// after the original call_builtin.
+    ///
+    /// <para>The CP push happens <em>before</em> the bind-back so the
+    /// trail unwind on backtrack peels off the current solution's
+    /// bindings and leaves the heap in the state expected by the next
+    /// solution.</para></summary>
+    /// <summary><c>repeat/0</c> — succeeds, and pushes a choice point that
+    /// re-succeeds on every backtrack, re-arming itself each time. The
+    /// classic non-terminating generator for failure-driven loops.</summary>
+    /// <summary><c>garbage_collect/0</c> (ADR-016) — mark-compacts the
+    /// heap. A no-op when attributed variables are in use (the collector
+    /// bails) or when there is nothing to reclaim.</summary>
+    public static bool GarbageCollect(Activation engine)
+    {
+        engine.CollectHeap();
+        return true;
+    }
+
+    /// <summary><c>trace/0</c> (ADR-035) — attaches the four-port tracer. It is
+    /// attached to the running activation as well as to the engine, so tracing
+    /// starts with the very next goal of the query that called <c>trace</c>
+    /// rather than at the next query.</summary>
+    public static bool Trace(Activation engine)
+    {
+        if (engine.Host is not PrologEngine host)
+            throw new InvalidOperationException("trace/0 requires a PrologEngine host.");
+        host.SetTracing(true, engine.Out);
+        engine.Debug = host.DebugSession;
+        return true;
+    }
+
+}
