@@ -39,7 +39,7 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost
     // so those are O(1) instead of a full clause scan — predicate_property/2
     // (which Logtalk's compiler calls per goal) was O(clauses × calls) without
     // it. Nulled at every static-clause mutation (consult / restore / bundle
-    // load); dynamic functors are checked live against _dynamicFunctors, so
+    // load); dynamic functors are checked live against _dynStore.Functors, so
     // assert/retract need not invalidate it.
     private HashSet<int>? _staticHeadFunctorsCache;
     // Set for the duration of a RUNTIME consult (consult/1 called from within a
@@ -99,13 +99,11 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// go through the builtin or a future host-side API.</summary>
     public PrologFlags Flags => _flags;
 
-    /// <summary>Runtime store for clauses added via <c>assertz/1</c> /
-    /// <c>asserta/1</c>. Keyed by functor id; the value is the ordered list
-    /// of clauses (in source / assertion order). Merged with each module's
-    /// static clauses at query-compile time so subsequent queries see every
-    /// asserted clause. Mutations made during an in-flight query are NOT
-    /// visible to that query — they take effect on the next compilation.</summary>
-    private readonly Dictionary<int, List<Clause>> _dynamicClauses = new();
+    /// <summary>The dynamic-predicate clause store (extracted component):
+    /// which functors are dynamic and the ordered clause list each holds.
+    /// The bytecode-level machinery (trampolines, chains, snapshots) stays
+    /// on this engine and consults the store as its source of truth.</summary>
+    private readonly DynamicClauseStore _dynStore = new();
 
     /// <summary>ADR-034 — dynamic functor ids mutated at any point in this
     /// host's lifetime. Shared BY REFERENCE into every per-query
@@ -410,12 +408,6 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// database changed since it last looked.</summary>
     public long DbGeneration => _dbGeneration.Value;
 
-    /// <summary>Set of functor ids declared <c>:- dynamic</c> across every
-    /// module. The set is global so a single shared store can satisfy
-    /// assertz / retract from any module; <see cref="ModuleRewrite"/> reads
-    /// it to skip mangling dynamic functors.</summary>
-    private readonly HashSet<int> _dynamicFunctors = new();
-
     /// <summary>Head functor ids of every predicate defined by the auto-loaded
     /// prelude (<see cref="Prelude.Source"/>). These are library predicates —
     /// ISO / de-facto standards like <c>member/2</c>, <c>sub_atom/5</c>,
@@ -473,8 +465,8 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost
     /// IL compiler now value-bakes.</summary>
     internal IEnumerable<int> DynamicFunctorsWithClauses()
     {
-        foreach (var fid in _dynamicFunctors)
-            if (_dynamicClauses.TryGetValue(fid, out var cs) && cs.Count > 0)
+        foreach (var fid in _dynStore.Functors)
+            if (_dynStore.TryGetClauses(fid, out var cs) && cs.Count > 0)
                 yield return fid;
     }
 
@@ -801,9 +793,9 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost
             copy.DynamicFunctors.UnionWith(manifest.DynamicFunctors);
             sub._modules[name] = copy;
         }
-        sub._dynamicFunctors.UnionWith(_dynamicFunctors);
-        foreach (var (fid, clauses) in _dynamicClauses)
-            sub._dynamicClauses[fid] = new List<Clause>(clauses);
+        _dynStore.CopyInto(sub._dynStore);
+        foreach (var (fid, clauses) in _dynStore.Slots)
+            sub._dynStore[fid] = new List<Clause>(clauses);
         foreach (var (fid, pred) in _dynamicPredicateCache)
             sub._dynamicPredicateCache[fid] = pred;
         // The sub-engine shares the parent's static program, so the
@@ -854,8 +846,8 @@ public sealed partial class PrologEngine : Shumway.Builtins.IGlobalVarHost
                 if (TryExtractHead(clause, out string n, out int a))
                     set.Add(FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a));
-        foreach (int fid in _dynamicFunctors) set.Add(fid);
-        foreach (int fid in _dynamicClauses.Keys) set.Add(fid);
+        foreach (int fid in _dynStore.Functors) set.Add(fid);
+        foreach (int fid in _dynStore.ClauseFunctors) set.Add(fid);
         return set;
     }
 

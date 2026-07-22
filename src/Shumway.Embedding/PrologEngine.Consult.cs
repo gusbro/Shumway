@@ -300,7 +300,7 @@ public sealed partial class PrologEngine
             manifest.ModeDeclarations.Remove(fid);
         }
 
-        if (_dynamicFunctors.Contains(fid) || _dynamicClauses.ContainsKey(fid))
+        if (_dynStore.IsDynamic(fid) || _dynStore.HasClauses(fid))
             AbolishDynamic(fid);
 
         // Compiled-code caches must be dropped so the next query
@@ -478,11 +478,11 @@ public sealed partial class PrologEngine
                 {
                     int fid = FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a);
-                    _dynamicFunctors.Add(fid);
+                    _dynStore.MarkDynamic(fid);
                     // Reserve an entry so retract on a never-asserted dynamic
                     // predicate fails cleanly instead of throwing.
-                    if (!_dynamicClauses.ContainsKey(fid))
-                        _dynamicClauses[fid] = new List<Clause>();
+                    if (!_dynStore.HasClauses(fid))
+                        _dynStore[fid] = new List<Clause>();
                 }
             }
             else if (TryReadFunctorIndicatorDirective(body, "native", out var nativeSpecs))
@@ -523,9 +523,9 @@ public sealed partial class PrologEngine
                     // dynamic + reserve an empty clause slot. (Logtalk's compiler
                     // declares its hook predicates `:- multifile` and calls them
                     // before any clause is added, relying on failure.)
-                    _dynamicFunctors.Add(fid);
-                    if (!_dynamicClauses.ContainsKey(fid))
-                        _dynamicClauses[fid] = new List<Clause>();
+                    _dynStore.MarkDynamic(fid);
+                    if (!_dynStore.HasClauses(fid))
+                        _dynStore[fid] = new List<Clause>();
                 }
             }
             else if (TryReadFunctorIndicatorDirective(body, "table", out var tableSpecs))
@@ -683,7 +683,7 @@ public sealed partial class PrologEngine
         // see them just like runtime-asserted clauses do. Without this
         // routing, source-declared facts for a `:- dynamic foo/N.`
         // predicate would be invisible to retract/2 and clause/2.
-        if (_dynamicFunctors.Count > 0)
+        if (_dynStore.FunctorCount > 0)
         {
             var keptClauses = new List<Clause>(clauses.Count);
             foreach (var c in clauses)
@@ -692,7 +692,7 @@ public sealed partial class PrologEngine
                 {
                     int fid = FunctorTable.Intern(
                         AtomTable.Intern(n, permanent: true).Id, a);
-                    if (_dynamicFunctors.Contains(fid))
+                    if (_dynStore.IsDynamic(fid))
                     {
                         GetOrCreateDynamicSlot(fid).Add(c);
                         // ADR-023 — a CONSULT-borne clause is a mutation of the
@@ -720,7 +720,7 @@ public sealed partial class PrologEngine
                         if (moduleName != DefaultModuleName)
                             _dynamicSeedModule[fid] = moduleName;
                         // Mid-query consult (consult/1 from a live query): the
-                        // clause is already in _dynamicClauses (above), so
+                        // clause is already in _dynStore.Slots (above), so
                         // clause/2 — which reads the live store — sees it in the
                         // SAME query; direct-call dispatch picks it up on the
                         // next query's clean recompile of the predicate.
@@ -778,7 +778,7 @@ public sealed partial class PrologEngine
         // implicit_dynamic pre-scan. When the flag is on
         // (the default), walk every clause body for a literal
         // `assertz(Head)` / `asserta(Head)` / `assert(Head)` call and
-        // auto-add Head's functor to _dynamicFunctors if it has no
+        // auto-add Head's functor to _dynStore.Functors if it has no
         // static clauses and no other declaration. This mirrors the
         // SWI / SICStus / GNU behaviour where assertz on an undefined
         // predicate creates it as dynamic — but at *consult* time, not

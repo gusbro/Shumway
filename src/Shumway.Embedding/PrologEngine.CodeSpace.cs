@@ -20,7 +20,7 @@ public sealed partial class PrologEngine
     /// pipeline used to build a fresh <see cref="ModuleRewrite.Context"/>
     /// (+ HashSet) and ClauseCompiler per call; both are safe to reuse
     /// (ClauseCompiler re-binds its pool refs at the top of every Compile;
-    /// the Context only holds set references, so <c>_dynamicFunctors</c>
+    /// the Context only holds set references, so <c>_dynStore.Functors</c>
     /// mutations stay visible through it), so one of each per engine
     /// suffices.</summary>
     private Shumway.Compiler.Wam.ClauseCompiler? _assertClauseCompiler;

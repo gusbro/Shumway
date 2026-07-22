@@ -623,7 +623,7 @@ public sealed partial class PrologEngine
                 if (name == DefaultModuleName) userLocalsCache = locals;
                 moduleLocalsCache[name] = locals;
 
-                var ctx = new ModuleRewrite.Context(name, locals, _dynamicFunctors);
+                var ctx = new ModuleRewrite.Context(name, locals, _dynStore.Functors);
                 // ADR-035 — a library's HELPERS are library code too. MetaTransform
                 // lowers control constructs into generated predicates ('$call_conj' and
                 // friends), which are not in manifest.Clauses and so cannot be marked at
@@ -673,7 +673,7 @@ public sealed partial class PrologEngine
         // clauses have no inherent module so user is the conventional
         // home. Multi-module hosts with per-module dynamic-clause
         // namespacing are a more invasive change parked for later.
-        if (_dynamicClauses.Count > 0)
+        if (_dynStore.ClauseFunctorCount > 0)
         {
             // per-functor transform cache. A functor's entry
             // is dropped by InvalidateDynamicCache when its clause list
@@ -690,13 +690,13 @@ public sealed partial class PrologEngine
             var dynCtx = new ModuleRewrite.Context(
                 DefaultModuleName,
                 userLocalsCache ?? new HashSet<int>(),
-                _dynamicFunctors);
+                _dynStore.Functors);
             // per-module contexts for dynamic predicates whose
             // clauses came from a named module (bundle seeds / source-
             // carrying entries). Built lazily; everything unattributed
             // keeps the user context above.
             Dictionary<string, ModuleRewrite.Context>? namedDynCtx = null;
-            foreach (var (fid, clauses) in _dynamicClauses)
+            foreach (var (fid, clauses) in _dynStore.Slots)
             {
                 if (clauses.Count == 0) continue;
                 if (!_dynamicRewriteCache.TryGetValue(fid, out var entry))
@@ -712,7 +712,7 @@ public sealed partial class PrologEngine
                             fidCtx = new ModuleRewrite.Context(
                                 seedModule,
                                 seedLocals ?? new HashSet<int>(),
-                                _dynamicFunctors);
+                                _dynStore.Functors);
                             namedDynCtx[seedModule] = fidCtx;
                         }
                     }
@@ -779,7 +779,7 @@ public sealed partial class PrologEngine
             var ctx = new ModuleRewrite.Context(
                 DefaultModuleName,
                 userLocalsCache ?? new HashSet<int>(),
-                _dynamicFunctors);
+                _dynStore.Functors);
             foreach (var clause in queryTransformed)
                 allRewritten.Add(ModuleRewrite.Rewrite(clause, ctx));
         }
@@ -792,7 +792,7 @@ public sealed partial class PrologEngine
         // every dynamic functor still below the threshold.
         var unindexedFunctors = new HashSet<int>();
         bool anyHotnessFlip = false;
-        foreach (int fid in _dynamicFunctors)
+        foreach (int fid in _dynStore.Functors)
         {
             if (_jitIndexProfile.HotnessChangedSinceCompile(fid))
             {
@@ -804,7 +804,7 @@ public sealed partial class PrologEngine
             if (!_jitIndexProfile.IsHot(fid))
                 unindexedFunctors.Add(fid);
         }
-        foreach (int fid in _dynamicClauses.Keys)
+        foreach (int fid in _dynStore.ClauseFunctors)
         {
             if (_jitIndexProfile.HotnessChangedSinceCompile(fid))
             {
@@ -866,7 +866,7 @@ public sealed partial class PrologEngine
             ElideRedundantCuts = _flags.ElideRedundantCuts,   // ADR-030
         }.Compile(
             allRewritten, skipCompileCache, unindexedFunctors, _literalPools,
-            dynamicFunctors: _dynamicFunctors, failStubAddr: failStubAddr);
+            dynamicFunctors: _dynStore.Functors, failStubAddr: failStubAddr);
 
         // Cross-activation helper visibility (the Logtalk-under-promotion fix):
         // every helper compiled by this setup stays materializable on demand
@@ -876,16 +876,16 @@ public sealed partial class PrologEngine
         // Populate the dynamic cache with any newly-compiled dynamic
         // predicate whose bytecode is safe to reuse next query (no
         // pool-specific literal ids). A predicate is "dynamic" iff its
-        // functor is in _dynamicFunctors — whether its clauses live in
+        // functor is in _dynStore.Functors — whether its clauses live in
         // _modules (source-declared `:- dynamic foo/N.` plus inline
         // facts) or _dynamicClauses (runtime assertz / asserta), both
         // contribute to the same predicate. Cached entries are kept
         // until the next assertz / retract / abolish invalidates them.
-        if (_dynamicFunctors.Count > 0)
+        if (_dynStore.FunctorCount > 0)
         {
             foreach (var pred in module.Predicates)
             {
-                if (!_dynamicFunctors.Contains(pred.FunctorId)) continue;
+                if (!_dynStore.IsDynamic(pred.FunctorId)) continue;
                 // Snapshot the JIT-indexing decision this compile used so
                 // a later query can detect a cold→hot flip.
                 _jitIndexProfile.RecordCompileDecision(
@@ -947,7 +947,7 @@ public sealed partial class PrologEngine
         foreach (var pred in module.Predicates)
         {
             bool isCacheable = cacheableFunctors.Contains(pred.FunctorId);
-            bool isDynamic = _dynamicFunctors.Contains(pred.FunctorId);
+            bool isDynamic = _dynStore.IsDynamic(pred.FunctorId);
             if (isCacheable && !isDynamic) staticPreds.Add(pred);
             else if (isCacheable && isDynamic) dynamicPreds.Add(pred);
             else queryPreds.Add(pred);
@@ -966,7 +966,7 @@ public sealed partial class PrologEngine
         foreach (var (fid, pred) in _precompiledStaticPredicates)
         {
             if (!addedFids.Add(fid)) continue;
-            bool isDynamic = _dynamicFunctors.Contains(fid);
+            bool isDynamic = _dynStore.IsDynamic(fid);
             if (!isDynamic) staticPreds.Add(pred);
             else dynamicPreds.Add(pred);
         }
@@ -1155,7 +1155,7 @@ public sealed partial class PrologEngine
         foreach (var pred in module.Predicates)
         {
             int fid = pred.FunctorId;
-            if (!cacheableFunctors.Contains(fid) || _dynamicFunctors.Contains(fid)) continue;
+            if (!cacheableFunctors.Contains(fid) || _dynStore.IsDynamic(fid)) continue;
             if (_staticPredicateCache.ContainsKey(fid)) continue;
             if (Shumway.Compiler.Wam.ModuleCompiler.IsCachedPredicateReusable(pred))
             {
@@ -1163,7 +1163,7 @@ public sealed partial class PrologEngine
                 // mirror into the merged skip-compile cache.
                 // Dynamic entries take precedence in the merge; a fid here
                 // is never in the dynamic cache (it isn't in
-                // _dynamicFunctors, and abolish drops cache entries when
+                // _dynStore.Functors, and abolish drops cache entries when
                 // a functor leaves the dynamic set), but keep the guard
                 // so the precedence is structural rather than assumed.
                 if (_skipCompileMergedCache is not null
@@ -1431,7 +1431,7 @@ public sealed partial class PrologEngine
                 AtomTable.Intern("$lgt_file_loading_stack_", permanent: true).Id, 2);
             int chainEntries = _dynChainTable.Chains.TryGetValue(probeFid, out var pch)
                 ? pch.Entries.Count : -1;
-            int storeCount = _dynamicClauses.TryGetValue(probeFid, out var pcs) ? pcs.Count : -1;
+            int storeCount = _dynStore.TryGetClauses(probeFid, out var pcs) ? pcs.Count : -1;
             Console.Error.WriteLine(
                 $"[STK-SETUP] eng={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(engine):X8}"
                 + $" builtNow={builtPersistentNow}"
@@ -1597,9 +1597,9 @@ public sealed partial class PrologEngine
         // every clause head. Stub fids are added to the set so the
         // caller's cacheableFunctors snapshot includes them, exactly as
         // the old post-stub HeadFunctorIdOf walk did.
-        if (_dynamicFunctors.Count == 0) return;
+        if (_dynStore.FunctorCount == 0) return;
 
-        foreach (int fid in _dynamicFunctors)
+        foreach (int fid in _dynStore.Functors)
         {
             if (!seen.Add(fid)) continue;
             var (atomId, arity) = FunctorTable.Lookup(fid);

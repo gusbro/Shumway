@@ -24,14 +24,14 @@ public static class ModuleRewrite
     {
         public string ModuleName { get; }
         public HashSet<int> LocalFunctors { get; }
-        public HashSet<int> DynamicFunctors { get; }
+        public IReadOnlySet<int> DynamicFunctors { get; }
 
         public Context(string moduleName, HashSet<int> localFunctors)
             : this(moduleName, localFunctors, new HashSet<int>())
         {
         }
 
-        public Context(string moduleName, HashSet<int> localFunctors, HashSet<int> dynamicFunctors)
+        public Context(string moduleName, HashSet<int> localFunctors, IReadOnlySet<int> dynamicFunctors)
         {
             ModuleName = moduleName;
             LocalFunctors = localFunctors;

@@ -496,12 +496,12 @@ public sealed partial class PrologEngine
     /// (so they'd be merged into every concrete bucket chain). The
     /// var chain enumerates clauses in source order, so its Nth
     /// entry's <c>execute &lt;body&gt;</c> target is the body of
-    /// <c>_dynamicClauses[functorId][N]</c>; the dynamic-store
+    /// <c>_dynStore[functorId][N]</c>; the dynamic-store
     /// clause carries the original arg-0 classification.</summary>
     private List<int> CollectVarArgBodies(Activation engine, int varChainHead, int functorId)
     {
         var result = new List<int>();
-        if (!_dynamicClauses.TryGetValue(functorId, out var clauses))
+        if (!_dynStore.TryGetClauses(functorId, out var clauses))
             return result;
         var prog = engine.CurrentProgram!;
         int failStub = engine.DynamicFailStubAddr;

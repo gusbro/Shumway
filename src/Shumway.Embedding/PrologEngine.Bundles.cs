@@ -502,7 +502,7 @@ public sealed partial class PrologEngine
                 // call and sees the eviction. (The pre-fix symptom:
                 // `assertz(f(7)), f(7)` FALSE through a baked-snapshot
                 // bundle — the ISO logical update view broken.)
-                bool hasIl = !_dynamicFunctors.Contains(calleeFid)
+                bool hasIl = !_dynStore.IsDynamic(calleeFid)
                     && ilTable is not null
                     && (uint)calleeFid < (uint)ilTable.Length
                     && ilTable[calleeFid] is not null;
@@ -1018,7 +1018,7 @@ public sealed partial class PrologEngine
     /// <see cref="ConsultString"/>. Populates the per-module
     /// <see cref="ModuleManifest"/> from the entry's
     /// <see cref="BundleEntry.Defined"/> list (publics → public set,
-    /// dynamics → dynamic set + engine-wide <c>_dynamicFunctors</c>),
+    /// dynamics → dynamic set + engine-wide <c>_dynStore.Functors</c>),
     /// then decodes the entry's <see cref="BundleEntry.CompiledBytecode"/>
     /// and registers each predicate in
     /// <see cref="_precompiledStaticPredicates"/>. The next
@@ -1094,9 +1094,9 @@ public sealed partial class PrologEngine
             else if (d.Visibility == PredicateVisibility.Dynamic)
             {
                 manifest.DynamicFunctors.Add(fid);
-                _dynamicFunctors.Add(fid);
-                if (!_dynamicClauses.ContainsKey(fid))
-                    _dynamicClauses[fid] = new List<Clause>();
+                _dynStore.MarkDynamic(fid);
+                if (!_dynStore.HasClauses(fid))
+                    _dynStore[fid] = new List<Clause>();
             }
             else // Local — record the bare fid so query setup can fold
                  // it into the module's locals.
@@ -1393,7 +1393,7 @@ public sealed partial class PrologEngine
             ? (IReadOnlyList<string>)Array.Empty<string>()
             : _consultHistory.ToArray();
         var dynamicSeeds = new List<ShmoDynamicSeed>();
-        foreach (var (fid, clauses) in _dynamicClauses)
+        foreach (var (fid, clauses) in _dynStore.Slots)
         {
             if (clauses.Count == 0) continue;
             var (atomId, arity) = FunctorTable.Lookup(fid);
@@ -1454,7 +1454,7 @@ public sealed partial class PrologEngine
             // replay the saved history.
             _modules.Clear();
             _modules[DefaultModuleName] = new ModuleManifest(DefaultModuleName);
-            _dynamicClauses.Clear();
+            _dynStore.ClearAllSlots();
             _dynChainTable = new DynChainTable();
             _staticPredicateCache.Clear();
             _dynamicPredicateCache.Clear();

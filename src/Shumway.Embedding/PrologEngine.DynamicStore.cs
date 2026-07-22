@@ -50,7 +50,7 @@ public sealed partial class PrologEngine
     internal bool RemoveDynamic(Clause clause)
     {
         int fid = ExtractHeadFunctorId(clause);
-        if (!_dynamicClauses.TryGetValue(fid, out var list)) return false;
+        if (!_dynStore.TryGetClauses(fid, out var list)) return false;
         for (int i = 0; i < list.Count; i++)
         {
             if (TermsStructurallyEqual(list[i].Term, clause.Term))
@@ -69,7 +69,7 @@ public sealed partial class PrologEngine
     /// before unifying with the user's pattern.</summary>
     internal IReadOnlyList<Clause> DynamicClausesFor(int functorId)
     {
-        return _dynamicClauses.TryGetValue(functorId, out var list)
+        return _dynStore.TryGetClauses(functorId, out var list)
             ? list
             : Array.Empty<Clause>();
     }
@@ -87,7 +87,7 @@ public sealed partial class PrologEngine
     /// <see cref="InvalidateDynamicCache"/>).</summary>
     internal Shumway.Compiler.Wam.CompiledPredicate? BuildDynamicSnapshot(int fid)
     {
-        if (!_dynamicClauses.TryGetValue(fid, out var raw) || raw.Count == 0) return null;
+        if (!_dynStore.TryGetClauses(fid, out var raw) || raw.Count == 0) return null;
         if (!_dynamicRewriteCache.TryGetValue(fid, out var entry)) return null;
         var own = new List<Clause>(entry.Clauses.Count);
         for (int i = 0; i < entry.Clauses.Count; i++)
@@ -142,12 +142,12 @@ public sealed partial class PrologEngine
     /// <c>Abolish</c> so they can raise the ISO
     /// <c>permission_error(modify, static_procedure, _)</c> rather than
     /// silently failing on a static predicate.</summary>
-    internal bool IsDynamic(int functorId) => _dynamicFunctors.Contains(functorId);
+    internal bool IsDynamic(int functorId) => _dynStore.IsDynamic(functorId);
 
     /// <summary>Snapshot of every functor declared <c>:- dynamic</c>.
     /// Used by <c>garbage_collect_clauses/0</c> to iterate them.
     ///</summary>
-    internal IEnumerable<int> AllDynamicFunctors() => _dynamicFunctors.ToArray();
+    internal IEnumerable<int> AllDynamicFunctors() => _dynStore.Functors.ToArray();
 
     // single spare buffer reused across retract/1's remaining-
     // candidates snapshots (the ISO call-time view copied at CP-push time).
@@ -161,35 +161,18 @@ public sealed partial class PrologEngine
     // cleared on pop so a resumed CP can never also prune). Discard paths
     // with no hook (exception unwind, query teardown) just drop the buffer
     // to the .NET GC — same as pre-431, never a double-hand-out.
-    private Clause[]? _retractSnapshotSpare;
-    private const int RetractSnapshotSpareMaxLen = 4096;
 
     /// <summary>returns a buffer with at least
     /// <paramref name="minLength"/> slots for a retract tail snapshot,
     /// reusing the per-engine spare when it fits.</summary>
-    internal Clause[] RentRetractSnapshot(int minLength)
-    {
-        Clause[]? spare = _retractSnapshotSpare;
-        if (spare is not null && spare.Length >= minLength)
-        {
-            _retractSnapshotSpare = null;
-            return spare;
-        }
-        return new Clause[minLength];
-    }
+    internal Clause[] RentRetractSnapshot(int minLength) => _dynStore.RentRetractSnapshot(minLength);
 
     /// <summary>hands a snapshot buffer back for reuse. Clears
     /// the used range so the pool never pins retracted clause ASTs alive,
     /// and keeps the larger of (current spare, returned buffer), capped so
     /// one huge predicate can't park a giant array on the engine.</summary>
     internal void ReturnRetractSnapshot(Clause[] buffer, int usedCount)
-    {
-        System.Array.Clear(buffer, 0, usedCount);
-        if (buffer.Length > RetractSnapshotSpareMaxLen) return;
-        Clause[]? spare = _retractSnapshotSpare;
-        if (spare is null || spare.Length < buffer.Length)
-            _retractSnapshotSpare = buffer;
-    }
+        => _dynStore.ReturnRetractSnapshot(buffer, usedCount);
 
     /// <summary>Removes the clause object identical to <paramref name="clause"/>
     /// from the dynamic store (used after the runtime caller has matched it
@@ -201,7 +184,7 @@ public sealed partial class PrologEngine
     internal bool RemoveDynamicByReference(
         Activation engine, int functorId, Clause clause, int knownIndex = -1)
     {
-        if (!_dynamicClauses.TryGetValue(functorId, out var list)) return false;
+        if (!_dynStore.TryGetClauses(functorId, out var list)) return false;
         // retract's first step scans the live list, so it
         // already knows the match's index — trust it after a cheap
         // reference check instead of an O(N) IndexOf (Blint: 80K
@@ -369,8 +352,8 @@ public sealed partial class PrologEngine
     /// <c>abolish/1</c>.</summary>
     internal void AbolishDynamic(int functorId)
     {
-        _dynamicClauses.Remove(functorId);
-        _dynamicFunctors.Remove(functorId);
+        _dynStore.RemoveSlot(functorId);
+        _dynStore.UnmarkDynamic(functorId);
         InvalidateDynamicCache(functorId);
         // dropping a dynamic functor changes the
         // dynamic-region layout — the next query has to rebuild
@@ -443,7 +426,7 @@ public sealed partial class PrologEngine
     /// (caches, IL eviction, the ADR-034 mutated-fids set).</summary>
     internal void ClearDynamicClauses(Activation engine, int functorId)
     {
-        if (_dynamicClauses.TryGetValue(functorId, out var list)) list.Clear();
+        if (_dynStore.TryGetClauses(functorId, out var list)) list.Clear();
         InvalidateDynamicCache(functorId);
         InvalidatePersistent();
         AbolishDynamicInChain(engine, functorId);
@@ -457,7 +440,7 @@ public sealed partial class PrologEngine
     internal void SaveDb()
     {
         var snap = new Dictionary<int, List<Clause>>();
-        foreach (var (fid, list) in _dynamicClauses)
+        foreach (var (fid, list) in _dynStore.Slots)
             if (list.Count > 0 && IsUserDynamicFid(fid))
                 snap[fid] = new List<Clause>(list);
         _dbSnapshot = snap;
@@ -473,7 +456,7 @@ public sealed partial class PrologEngine
     {
         // Wipe first — every user dynamic that currently has clauses.
         var toClear = new List<int>();
-        foreach (var (fid, list) in _dynamicClauses)
+        foreach (var (fid, list) in _dynStore.Slots)
             if (list.Count > 0 && IsUserDynamicFid(fid))
                 toClear.Add(fid);
         foreach (int fid in toClear)
@@ -510,7 +493,7 @@ public sealed partial class PrologEngine
         using var fs = new FileStream(path, FileMode.Create, FileAccess.Write);
         using var w = new BinaryWriter(fs, System.Text.Encoding.UTF8);
         var preds = new List<(int Fid, List<Clause> Clauses)>();
-        foreach (var (fid, list) in _dynamicClauses)
+        foreach (var (fid, list) in _dynStore.Slots)
             if (list.Count > 0 && IsUserDynamicFid(fid))
                 preds.Add((fid, list));
         w.Write(DbSnapshotMagic);
@@ -763,7 +746,7 @@ public sealed partial class PrologEngine
     /// <summary>enumerates the AST clauses backing
     /// <paramref name="functorId"/>. Pulls from every user module's
     /// <c>Clauses</c> list (filtering by head functor) for static
-    /// predicates, and from <c>_dynamicClauses[fid]</c> for dynamic
+    /// predicates, and from <c>_dynStore[fid]</c> for dynamic
     /// ones. The AST retains the original <see cref="VarTerm.Name"/>
     /// the parser captured — listing prints them as the user wrote
     /// them, without a heap round-trip that would replace them with
@@ -783,7 +766,7 @@ public sealed partial class PrologEngine
                 }
             }
         }
-        if (_dynamicClauses.TryGetValue(functorId, out var dyn))
+        if (_dynStore.TryGetClauses(functorId, out var dyn))
             foreach (var c in dyn) yield return c;
     }
 
@@ -801,7 +784,7 @@ public sealed partial class PrologEngine
                     if (seen.Add(fid)) yield return (fid, false);
                 }
         }
-        foreach (var (fid, clauses) in _dynamicClauses)
+        foreach (var (fid, clauses) in _dynStore.Slots)
             if (clauses.Count > 0 && seen.Add(fid)) yield return (fid, true);
         // source-stripped bundles populate
         // _precompiledStaticPredicates without ever touching
@@ -844,7 +827,7 @@ public sealed partial class PrologEngine
     internal IEnumerable<int> AllStaticAndDynamicFunctors()
     {
         var seen = new HashSet<int>();
-        foreach (int fid in _dynamicFunctors)
+        foreach (int fid in _dynStore.Functors)
             if (seen.Add(fid)) yield return fid;
         foreach (int fid in StaticHeadFunctors())
             if (seen.Add(fid)) yield return fid;
@@ -880,7 +863,7 @@ public sealed partial class PrologEngine
     {
         if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out _))
             return true;
-        if (_dynamicFunctors.Contains(functorId)) return true;
+        if (_dynStore.IsDynamic(functorId)) return true;
         return StaticHeadFunctors().Contains(functorId);
     }
 
@@ -899,7 +882,7 @@ public sealed partial class PrologEngine
         if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(functorId, out _)
             || _preludeFunctors.Contains(functorId))
             kind = AtomTable.Intern("built_in", permanent: true).Id;
-        else if (_dynamicFunctors.Contains(functorId))
+        else if (_dynStore.IsDynamic(functorId))
             kind = AtomTable.Intern("dynamic", permanent: true).Id;
         else
             kind = AtomTable.Intern("static", permanent: true).Id;
@@ -908,15 +891,7 @@ public sealed partial class PrologEngine
         return props;
     }
 
-    private List<Clause> GetOrCreateDynamicSlot(int fid)
-    {
-        if (!_dynamicClauses.TryGetValue(fid, out var list))
-        {
-            list = new List<Clause>();
-            _dynamicClauses[fid] = list;
-        }
-        return list;
-    }
+    private List<Clause> GetOrCreateDynamicSlot(int fid) => _dynStore.Slot(fid);
 
     /// <summary>retractall/1 modifiability check (SWI / SICStus semantics):
     /// returns <c>true</c> when the predicate is dynamic (so the retract loop
@@ -926,7 +901,7 @@ public sealed partial class PrologEngine
     /// for a static procedure or a builtin (you can't retractall those).</summary>
     internal bool IsRetractAllModifiable(int fid)
     {
-        if (_dynamicFunctors.Contains(fid)) return true;
+        if (_dynStore.IsDynamic(fid)) return true;
         if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _) || HasStaticClauses(fid))
             throw new Shumway.Core.PrologRuntimeException(
                 "permission_error", "modify,static_procedure");
@@ -935,7 +910,7 @@ public sealed partial class PrologEngine
 
     private void EnsureDynamic(int fid)
     {
-        if (_dynamicFunctors.Contains(fid)) return;
+        if (_dynStore.IsDynamic(fid)) return;
 
         // implicit_dynamic flag (default true) auto-
         // promotes an undefined predicate on its first assertz/asserta.
@@ -951,9 +926,9 @@ public sealed partial class PrologEngine
             && !Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _)
             && !HasStaticClauses(fid))
         {
-            _dynamicFunctors.Add(fid);
-            if (!_dynamicClauses.ContainsKey(fid))
-                _dynamicClauses[fid] = new List<Clause>();
+            _dynStore.MarkDynamic(fid);
+            if (!_dynStore.HasClauses(fid))
+                _dynStore[fid] = new List<Clause>();
             // the dynamic-functor set feeds the ModuleRewrite
             // contexts; this is the one mutation path that doesn't run
             // through InvalidatePersistent, so advance the derivation
@@ -1044,7 +1019,7 @@ public sealed partial class PrologEngine
         // trampoline.
         var transformed = ClausePipeline.Apply(new[] { stubClause }, Modes, helperPrefix: "$q");
         var dynCtx = new ModuleRewrite.Context(
-            DefaultModuleName, new HashSet<int>(), _dynamicFunctors);
+            DefaultModuleName, new HashSet<int>(), _dynStore.Functors);
         var rewritten = transformed.Select(c => ModuleRewrite.Rewrite(c, dynCtx)).ToList();
 
         var predicate = new Shumway.Compiler.Wam.PredicateCompiler
@@ -1106,7 +1081,7 @@ public sealed partial class PrologEngine
         // Populate _dynChains[fid] manually. We can't use
         // PopulateDynChainFor here because it would associate the
         // stub-clause's check_visible with whichever user clause is
-        // already in _dynamicClauses (host.Assertz appends to
+        // already in _dynStore.Slots (host.Assertz appends to
         // _dynamicClauses before calling AppendDynamicClauseIncremental,
         // so by the time MaterializeDynamicTrampoline runs the list
         // already holds the asserted clause). The mismatch would
@@ -1131,7 +1106,7 @@ public sealed partial class PrologEngine
         // Sync the host's persistent program reference — engine.AppendCode
         // may have reallocated the buffer (owner engine); a non-owner
         // engine's trampoline exists only in its own buffer, so force the
-        // next setup to rebuild from _dynamicFunctors/_dynamicClauses.
+        // next setup to rebuild from _dynStore.Functors/_dynamicClauses.
         SyncOrInvalidateAfterMutation(engine, ownsHost);
     }
 
@@ -1208,7 +1183,7 @@ public sealed partial class PrologEngine
         var locals = ComputeLocalFunctors(transformed, manifest.PublicFunctors);
         if (_precompiledModuleLocals.TryGetValue(moduleName, out var bundleLocals))
             locals.UnionWith(bundleLocals);
-        var ctx = new ModuleRewrite.Context(moduleName, locals, _dynamicFunctors);
+        var ctx = new ModuleRewrite.Context(moduleName, locals, _dynStore.Functors);
         var rewritten = new List<Clause>(transformed.Count);
         foreach (var c in transformed)
             rewritten.Add(ModuleRewrite.Rewrite(c, ctx));
@@ -1229,7 +1204,7 @@ public sealed partial class PrologEngine
                     ElideRedundantCuts = _flags.ElideRedundantCuts,   // ADR-030
                 }.Compile(
                 rewritten, cache: null, unindexedFunctors: null,
-                _literalPools, dynamicFunctors: _dynamicFunctors,
+                _literalPools, dynamicFunctors: _dynStore.Functors,
                 failStubAddr: failStubAddr);
             link = new Shumway.Compiler.Wam.Linker().Link(
                 module.Predicates, loadOffset,
@@ -1319,7 +1294,7 @@ public sealed partial class PrologEngine
         // unresolved sentinel, or no entry at all — means this dynamic
         // functor has no live home yet.
         List<int>? materialized = null;
-        foreach (int fid in _dynamicFunctors)
+        foreach (int fid in _dynStore.Functors)
         {
             bool hasTrampoline =
                 addrMap.TryGetValue(fid, out int addr)
@@ -1341,7 +1316,7 @@ public sealed partial class PrologEngine
         // would duplicate them there.
         if (materialized is not null)
             foreach (int fid in materialized)
-                if (_dynamicClauses.TryGetValue(fid, out var cs))
+                if (_dynStore.TryGetClauses(fid, out var cs))
                     foreach (var c in cs)
                         AppendDynamicClauseIncrementalCore(engine, fid, c);
     }
@@ -1410,7 +1385,7 @@ public sealed partial class PrologEngine
         }
         foreach (int fid in seen)
         {
-            if (_dynamicFunctors.Contains(fid)) continue;
+            if (_dynStore.IsDynamic(fid)) continue;
             if (Shumway.Builtins.BuiltinsRegistry.TryGetByFunctor(fid, out _)) continue;
             if (HasStaticClauses(fid)) continue;
             // Also skip if the same consult is about to define this
@@ -1418,9 +1393,9 @@ public sealed partial class PrologEngine
             // looking at publics + the about-to-be-added clauses.
             if (publicsInSameConsult.Contains(fid)) continue;
             if (ClausesDefineFunctor(clauses, fid)) continue;
-            _dynamicFunctors.Add(fid);
-            if (!_dynamicClauses.ContainsKey(fid))
-                _dynamicClauses[fid] = new List<Clause>();
+            _dynStore.MarkDynamic(fid);
+            if (!_dynStore.HasClauses(fid))
+                _dynStore[fid] = new List<Clause>();
         }
     }
 
@@ -1552,7 +1527,7 @@ public sealed partial class PrologEngine
             var transformed = ClausePipeline.Apply(new[] { newClause }, Modes, helperIdProvider: NextMetaHelperId);
             if (transformed.Count == 0) return null;
             _assertDynCtx ??= new ModuleRewrite.Context(
-                DefaultModuleName, new HashSet<int>(), _dynamicFunctors);
+                DefaultModuleName, new HashSet<int>(), _dynStore.Functors);
             toCompile = ModuleRewrite.Rewrite(transformed[0], _assertDynCtx);
             // the helpers used to be DROPPED here, leaving the
             // asserted clause's body calling a '$catchgoal_N' that nothing
@@ -1888,7 +1863,7 @@ public sealed partial class PrologEngine
         foreach (int fid in fids)
         {
             if (!tbl.Chains.TryGetValue(fid, out var chain)) continue;
-            var store = _dynamicClauses.TryGetValue(fid, out var cs)
+            var store = _dynStore.TryGetClauses(fid, out var cs)
                 ? cs : (IReadOnlyList<Clause>)Array.Empty<Clause>();
             // Set-compare by clause identity: equal → the view is exact.
             bool diverged = store.Count != chain.Entries.Count;
@@ -1952,7 +1927,7 @@ public sealed partial class PrologEngine
             // builds fresh state, then re-link the current store.
             GetOrCreateChainTable(target).Chains.Remove(functorId);
             MaterializeDynamicTrampoline(target, functorId);
-            if (_dynamicClauses.TryGetValue(functorId, out var cs))
+            if (_dynStore.TryGetClauses(functorId, out var cs))
                 foreach (var c in cs)
                     AppendDynamicClauseIncrementalCore(target, functorId, c);
             if (!addrMap.TryGetValue(functorId, out int newAddr) || newAddr == oldAddr)
@@ -2030,13 +2005,13 @@ public sealed partial class PrologEngine
         // mid-query trampoline materialisation. If the
         // predicate was auto-promoted mid-query via EnsureDynamic
         // (implicit_dynamic=true with a runtime-bound assertz head),
-        // _dynamicFunctors holds it but no chain state was ever
+        // _dynStore.Functors holds it but no chain state was ever
         // built — the trampoline lives in bytecode emitted by
         // SetupQueryFromTerm, and that ran before the auto-promote.
         // Build a fresh trampoline now so the extension
         // below has something to extend.
         if ((chainTable is null || !chainTable.Chains.ContainsKey(functorId))
-            && _dynamicFunctors.Contains(functorId)
+            && _dynStore.IsDynamic(functorId)
             && engine.CurrentProgram is not null
             && engine.DynamicFailStubAddr > 0)
         {
@@ -2235,7 +2210,7 @@ public sealed partial class PrologEngine
         bool ownsHost = EngineOwnsHostBuffer(engine);
         var chainTable = GetChainTable(engine);
         if ((chainTable is null || !chainTable.Chains.ContainsKey(functorId))
-            && _dynamicFunctors.Contains(functorId)
+            && _dynStore.IsDynamic(functorId)
             && engine.CurrentProgram is not null
             && engine.DynamicFailStubAddr > 0)
         {
@@ -2537,10 +2512,10 @@ public sealed partial class PrologEngine
     {
         _dynChainTable.Chains.Clear();
         var seen = new HashSet<int>();
-        foreach (int fid in _dynamicFunctors)
+        foreach (int fid in _dynStore.Functors)
             if (seen.Add(fid))
                 PopulateDynChainViaAddressMap(fid, program, addressMap, predicatesByAddress);
-        foreach (int fid in _dynamicClauses.Keys)
+        foreach (int fid in _dynStore.ClauseFunctors)
             if (seen.Add(fid))
                 PopulateDynChainViaAddressMap(fid, program, addressMap, predicatesByAddress);
     }
@@ -2568,7 +2543,7 @@ public sealed partial class PrologEngine
         // assertz — the empty-stub clause's try_me_else <fail-stub> is the
         // first patch target. So default to an empty clause list rather
         // than skipping when _dynamicClauses has no entry.
-        var clauses = _dynamicClauses.TryGetValue(fid, out var cs)
+        var clauses = _dynStore.TryGetClauses(fid, out var cs)
             ? cs : (IReadOnlyList<Clause>)Array.Empty<Clause>();
 
         var chain = new DynChainState();
